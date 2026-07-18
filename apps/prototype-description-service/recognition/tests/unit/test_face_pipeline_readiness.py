@@ -1,8 +1,13 @@
-"""FIR-4 S3: eager profile-aware face_pipeline readiness ([EMB-05][OBS-08])."""
+"""FIR-4 S3: eager profile-aware face_pipeline readiness ([EMB-05][OBS-08]).
+
+Real ONNX bytes are only required for the default-dir happy path. All other
+cases use a synthetic MODEL_MANIFEST + small files so the no-models CI gate
+still exercises control flow (cache, drift, tamper, probe branching).
+"""
 
 from __future__ import annotations
 
-import shutil
+import hashlib
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -12,9 +17,105 @@ from recognition.application import health as health_mod
 from recognition.infrastructure.face_pipeline.provenance import (
     DEFAULT_MODELS_DIR,
     MODEL_MANIFEST,
+    ModelProvenance,
     ModelVerifyOutcome,
     load_verified_model,
 )
+from recognition.tests.unit.face_pipeline_support import MODELS_PRESENT, MODELS_SKIP
+
+
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _make_entry(
+    *,
+    file_name: str,
+    sha256: str,
+    size_bytes: int,
+    license_file: str,
+    license_payload: bytes,
+    embedding_dim: int | None = None,
+    normalization: str | None = None,
+    metric: str | None = None,
+    license_id: str = "MIT",
+) -> ModelProvenance:
+    return ModelProvenance(
+        file_name=file_name,
+        sha256=sha256,
+        source_url=f"https://example.test/{file_name}",
+        source_ref="synthetic-readiness",
+        license_id=license_id,
+        license_file=license_file,
+        license_sha256=_sha256(license_payload),
+        size_bytes=size_bytes,
+        framework="opencv",
+        embedding_dim=embedding_dim,
+        normalization=normalization,
+        metric=metric,
+    )
+
+
+def _install_synthetic_pair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    yunet_payload: bytes = b"syn-yunet-v1",
+    sface_payload: bytes = b"syn-sface-v1",
+    write_yunet: bool = True,
+    write_sface: bool = True,
+    tamper_sface: bool = False,
+) -> tuple[bytes, bytes]:
+    """Install synthetic yunet+sface manifest entries and optional on-disk files."""
+    yunet_name = "face_detection_yunet_2026may.onnx"
+    sface_name = "face_recognition_sface_2021dec.onnx"
+    yunet_lic_name = "LICENSE.yunet"
+    sface_lic_name = "LICENSE.sface"
+    yunet_lic = b"MIT-yunet-syn"
+    sface_lic = b"Apache-sface-syn"
+
+    expected_sface = sface_payload
+    on_disk_sface = bytearray(sface_payload)
+    if tamper_sface:
+        on_disk_sface[0] ^= 0xFF
+    on_disk_sface_b = bytes(on_disk_sface)
+
+    monkeypatch.setitem(
+        MODEL_MANIFEST,
+        "yunet",
+        _make_entry(
+            file_name=yunet_name,
+            sha256=_sha256(yunet_payload),
+            size_bytes=len(yunet_payload),
+            license_file=yunet_lic_name,
+            license_payload=yunet_lic,
+            embedding_dim=None,
+        ),
+    )
+    monkeypatch.setitem(
+        MODEL_MANIFEST,
+        "sface",
+        _make_entry(
+            file_name=sface_name,
+            sha256=_sha256(expected_sface),
+            size_bytes=len(expected_sface),
+            license_file=sface_lic_name,
+            license_payload=sface_lic,
+            embedding_dim=128,
+            normalization="l2",
+            metric="cosine",
+            license_id="Apache-2.0",
+        ),
+    )
+
+    if write_yunet:
+        (tmp_path / yunet_name).write_bytes(yunet_payload)
+        (tmp_path / yunet_lic_name).write_bytes(yunet_lic)
+    if write_sface:
+        (tmp_path / sface_name).write_bytes(on_disk_sface_b)
+        (tmp_path / sface_lic_name).write_bytes(sface_lic)
+
+    return yunet_payload, expected_sface
 
 
 @pytest.fixture(autouse=True)
@@ -24,9 +125,9 @@ def _clear_verify_cache() -> None:
     health_mod.reset_face_pipeline_verify_cache_for_tests()
 
 
+@pytest.mark.skipif(not MODELS_PRESENT, reason=MODELS_SKIP)
 def test_check_face_pipeline_models_happy_path_real_models() -> None:
-    """Happy path: verify against real fetched models dir."""
-    # Precondition: models present (same as FIR-3 models-present gate).
+    """Happy path: verify against real fetched models dir (models-present only)."""
     load_verified_model("yunet", models_dir=DEFAULT_MODELS_DIR)
     load_verified_model("sface", models_dir=DEFAULT_MODELS_DIR)
 
@@ -35,28 +136,28 @@ def test_check_face_pipeline_models_happy_path_real_models() -> None:
     assert "yunet" in result.detail or "verified" in result.detail
 
 
-def test_check_face_pipeline_models_tampered_byte_unhealthy(tmp_path: Path) -> None:
-    """Copy real models, corrupt one byte → UNHEALTHY naming the artifact."""
-    for name in ("yunet", "sface"):
-        entry = MODEL_MANIFEST[name]
-        shutil.copy2(DEFAULT_MODELS_DIR / entry.file_name, tmp_path / entry.file_name)
-        shutil.copy2(DEFAULT_MODELS_DIR / entry.license_file, tmp_path / entry.license_file)
+def test_check_face_pipeline_models_happy_path_synthetic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Modelless happy path via synthetic manifest (CI coverage without ONNX)."""
+    _install_synthetic_pair(tmp_path, monkeypatch)
+    result = health_mod.check_face_pipeline_models(tmp_path)
+    assert result.status.value == "ok"
+    assert "yunet" in result.detail or "verified" in result.detail
 
-    sface = tmp_path / MODEL_MANIFEST["sface"].file_name
-    data = bytearray(sface.read_bytes())
-    data[0] ^= 0xFF
-    sface.write_bytes(data)
+
+def test_check_face_pipeline_models_tampered_byte_unhealthy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Corrupt one byte → UNHEALTHY naming the artifact (synthetic bytes)."""
+    _install_synthetic_pair(tmp_path, monkeypatch, tamper_sface=True)
 
     result = health_mod.check_face_pipeline_models(tmp_path)
     assert result.status.value == "unhealthy"
     assert "sface" in result.detail
 
 
-def test_check_face_pipeline_models_missing_sface_atomic_unhealthy(tmp_path: Path) -> None:
+def test_check_face_pipeline_models_missing_sface_atomic_unhealthy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Half-activation: YuNet present, SFace absent → UNHEALTHY (names sface)."""
-    yunet = MODEL_MANIFEST["yunet"]
-    shutil.copy2(DEFAULT_MODELS_DIR / yunet.file_name, tmp_path / yunet.file_name)
-    shutil.copy2(DEFAULT_MODELS_DIR / yunet.license_file, tmp_path / yunet.license_file)
+    _install_synthetic_pair(tmp_path, monkeypatch, write_sface=False)
 
     result = health_mod.check_face_pipeline_models(tmp_path)
     assert result.status.value == "unhealthy"
@@ -64,10 +165,7 @@ def test_check_face_pipeline_models_missing_sface_atomic_unhealthy(tmp_path: Pat
 
 
 def test_mtime_size_drift_triggers_reverify(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in ("yunet", "sface"):
-        entry = MODEL_MANIFEST[name]
-        shutil.copy2(DEFAULT_MODELS_DIR / entry.file_name, tmp_path / entry.file_name)
-        shutil.copy2(DEFAULT_MODELS_DIR / entry.license_file, tmp_path / entry.license_file)
+    _install_synthetic_pair(tmp_path, monkeypatch)
 
     verify_calls = {"n": 0}
     real = health_mod.verify_face_pipeline_model
@@ -87,10 +185,10 @@ def test_mtime_size_drift_triggers_reverify(tmp_path: Path, monkeypatch: pytest.
     assert second.status.value == "ok"
     assert verify_calls["n"] == 2
 
-    # Drift mtime/size by rewriting sface (same content is ok; touch size via append+truncate)
+    # Drift mtime/size by rewriting sface (size change → integrity fail on re-verify)
     sface = tmp_path / MODEL_MANIFEST["sface"].file_name
     original = sface.read_bytes()
-    sface.write_bytes(original + b"\x00")  # size drift → integrity fail on re-verify
+    sface.write_bytes(original + b"\x00")
     third = health_mod.check_face_pipeline_models(tmp_path)
     assert third.status.value == "unhealthy"
     assert verify_calls["n"] >= 3  # at least sface re-verified
@@ -99,15 +197,8 @@ def test_mtime_size_drift_triggers_reverify(tmp_path: Path, monkeypatch: pytest.
 
 def test_unverified_bytes_never_ok_via_call_count(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """mtime+size alone never green-lights never-verified bytes."""
-    for name in ("yunet", "sface"):
-        entry = MODEL_MANIFEST[name]
-        # Write arbitrary bytes with correct size? Size check fails unless exact.
-        # Use real files but force verifier to never have been called for cache OK.
-        shutil.copy2(DEFAULT_MODELS_DIR / entry.file_name, tmp_path / entry.file_name)
-        shutil.copy2(DEFAULT_MODELS_DIR / entry.license_file, tmp_path / entry.license_file)
+    _install_synthetic_pair(tmp_path, monkeypatch)
 
-    # Seed a cache entry that claims OK without going through verifier — should be
-    # ignored if we clear and ensure check always verifies on empty cache.
     health_mod.reset_face_pipeline_verify_cache_for_tests()
     calls = {"n": 0}
     real = health_mod.verify_face_pipeline_model
@@ -121,18 +212,10 @@ def test_unverified_bytes_never_ok_via_call_count(tmp_path: Path, monkeypatch: p
     assert result.status.value == "ok"
     assert calls["n"] == 2  # must have verified both before OK
 
-    # Inject a fake OK cache without sha256 — if someone put OK with wrong mtime it re-verifies.
-    # Clear cache then put wrong mtime OK-looking entry that won't match stat → re-verify.
-    health_mod.reset_face_pipeline_verify_cache_for_tests()
     # Without any cache, probe must call verifier — never report OK with zero verifies.
+    health_mod.reset_face_pipeline_verify_cache_for_tests()
     calls["n"] = 0
-    monkeypatch.setattr(
-        health_mod,
-        "verify_face_pipeline_model",
-        lambda name, *, models_dir=None: (_ for _ in ()).throw(AssertionError("blocked")),
-    )
 
-    # If verifier blocked, outcome path raises — but our helper catches ModelIntegrityError only.
     def _never_ok(name: str, *, models_dir: Path | None = None):
         calls["n"] += 1
         root = models_dir or DEFAULT_MODELS_DIR
@@ -167,10 +250,7 @@ def test_register_health_probes_branches_on_profile(monkeypatch: pytest.MonkeyPa
         initialize_session_dependency_circuit_breaker,
     )
 
-    for name in ("yunet", "sface"):
-        entry = MODEL_MANIFEST[name]
-        shutil.copy2(DEFAULT_MODELS_DIR / entry.file_name, tmp_path / entry.file_name)
-        shutil.copy2(DEFAULT_MODELS_DIR / entry.license_file, tmp_path / entry.license_file)
+    _install_synthetic_pair(tmp_path, monkeypatch)
 
     monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_PROFILE", "face_pipeline")
     monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_MODELS_DIR", str(tmp_path))

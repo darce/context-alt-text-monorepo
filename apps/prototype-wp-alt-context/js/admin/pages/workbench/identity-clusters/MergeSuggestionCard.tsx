@@ -10,6 +10,8 @@ export interface MergeSuggestionCardProps {
   onReject: () => void;
   onOpenOriginal?: (target: FaceOriginalTarget) => void;
   isPending: boolean;
+  /** BR-47: title when Accept/Reject disabled (e.g. selected for bulk). */
+  disabledReason?: string | null;
   /** Slice-2 hold/failure chrome — placed immediately after the actioned control. */
   actionAccessory?: React.ReactNode;
   actionAccessoryAfter?: 'accept' | 'reject';
@@ -62,6 +64,7 @@ export const MergeSuggestionCard = ({
   onReject,
   onOpenOriginal,
   isPending,
+  disabledReason = null,
   actionAccessory = null,
   actionAccessoryAfter = 'accept',
 }: MergeSuggestionCardProps): React.JSX.Element => {
@@ -130,11 +133,18 @@ export const MergeSuggestionCard = ({
           className="button button-primary acx-suggestion-card__accept"
           onClick={onAccept}
           disabled={isPending}
+          title={isPending && disabledReason ? disabledReason : undefined}
         >
           {__('Yes', 'alt-context')}
         </button>
         {actionAccessoryAfter === 'accept' ? actionAccessory : null}
-        <button type="button" className="button acx-suggestion-card__reject" onClick={onReject} disabled={isPending}>
+        <button
+          type="button"
+          className="button acx-suggestion-card__reject"
+          onClick={onReject}
+          disabled={isPending}
+          title={isPending && disabledReason ? disabledReason : undefined}
+        >
           {__('No', 'alt-context')}
         </button>
         {actionAccessoryAfter === 'reject' ? actionAccessory : null}

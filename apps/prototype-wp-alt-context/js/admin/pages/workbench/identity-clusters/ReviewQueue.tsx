@@ -51,6 +51,7 @@ import {
 import { useSelectedClusterTruncation } from './useSelectedClusterTruncation';
 import { useSuggestionReviewData } from './useSuggestionReviewData';
 import {
+  HOLD_COMMITTING_STATUS_COPY,
   HOLD_STATUS_COPY,
   type PersonCommitRequest,
   type PersonCommitResult,
@@ -325,6 +326,23 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       }
     }, [findings.queue, pruneMissingIds]);
 
+    // BR-54: announce tray count changes on select/deselect via polite live region.
+    const prevSelectionSizeRef = React.useRef(selectedIds.size);
+    React.useEffect(() => {
+      const prev = prevSelectionSizeRef.current;
+      prevSelectionSizeRef.current = selectedIds.size;
+      if (prev === selectedIds.size) {
+        return;
+      }
+      setLiveMessage(
+        sprintf(
+          /* translators: %d: number of selected review items */
+          __('%d selected', 'alt-context'),
+          selectedIds.size,
+        ),
+      );
+    }, [selectedIds.size]);
+
     // Reset truncation confirm when selection or gate changes.
     React.useEffect(() => {
       setTruncationConfirmed(false);
@@ -522,19 +540,24 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       [bulk, clearAdvanceFocus, data],
     );
 
+    // BR-52: fetch error fails closed — confirm cannot clear an error gate.
     const truncationBlocksCommit =
-      truncation.isTruncationGated && !truncationConfirmed && selectedIds.size > 0;
-    const truncationReason = truncation.isTruncationGated
-      ? sprintf(
-          /* translators: 1: total members, 2: hidden count beyond first page */
-          __(
-            'Selection includes groups with %1$d total faces (%2$d not shown). Expand or confirm before accepting.',
-            'alt-context',
-          ),
-          truncation.gatedTotal,
-          truncation.gatedHiddenCount,
-        )
-      : null;
+      selectedIds.size > 0 &&
+      (truncation.isError ||
+        (truncation.isTruncationGated && !truncationConfirmed && !truncation.isError));
+    const truncationReason = truncation.isError
+      ? __('Could not verify group sizes. Retry before accepting selected items.', 'alt-context')
+      : truncation.isTruncationGated
+        ? sprintf(
+            /* translators: 1: total members, 2: hidden count beyond first page */
+            __(
+              'Selection includes groups with %1$d total faces (%2$d not shown). Expand or confirm before accepting.',
+              'alt-context',
+            ),
+            truncation.gatedTotal,
+            truncation.gatedHiddenCount,
+          )
+        : null;
 
     const selectedPreviewItems = React.useMemo(() => {
       const rows: { id: string; label: string }[] = [];
@@ -714,13 +737,24 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               ))}
             </ul>
 
-            {truncation.isTruncationGated ? (
+            {truncationReason ? (
               <p className="acx-review-queue__truncation-reason" role="status">
                 {truncationReason}
               </p>
             ) : null}
 
-            {truncationBlocksCommit ? (
+            {truncation.isError ? (
+              <button
+                type="button"
+                className="button acx-review-queue__truncation-retry"
+                data-testid="acx-truncation-retry"
+                onClick={() => truncation.refetch()}
+              >
+                {__('Retry', 'alt-context')}
+              </button>
+            ) : null}
+
+            {truncationBlocksCommit && !truncation.isError ? (
               <button
                 type="button"
                 className="button acx-review-queue__truncation-confirm"
@@ -742,6 +776,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               disabled={
                 selectedIds.size === 0 ||
                 bulk.isBulkActive ||
+                bulk.bulkInitiatePending ||
                 truncationBlocksCommit ||
                 truncation.isLoading
               }
@@ -872,12 +907,27 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               nameById={nameById}
               topClustersById={topClustersById}
               isCardPending={(suggestionId, kinds) =>
-                data.isCardPending(suggestionId, kinds) || bulk.isBulkActive
+                // BR-47: selected cards cannot open a single hold (bulk exclusion).
+                data.isCardPending(suggestionId, kinds) ||
+                bulk.isBulkActive ||
+                bulk.isIdInBulkSelection(suggestionId)
+              }
+              cardActionsDisabledReason={
+                itemSuggestionId(currentItem) &&
+                bulk.isIdInBulkSelection(itemSuggestionId(currentItem)!)
+                  ? __(
+                      'Deselect this item to accept or reject it individually.',
+                      'alt-context',
+                    )
+                  : bulk.isBulkActive
+                    ? __('Bulk accept in progress.', 'alt-context')
+                    : null
               }
               hold={data.hold}
               retryPending={data.retryPending}
               personCommit={data.personCommit}
               personCommitPending={data.personCommitPending}
+              isBulkActive={bulk.isBulkActive || bulk.bulkInitiatePending}
               onReview={onReview}
               onLabel={onLabel}
               onOpenOriginal={(target) => setLightbox(target)}
@@ -937,10 +987,14 @@ interface CurrentCardProps {
   nameById: Map<string, PendingNameSuggestion>;
   topClustersById: Map<string, TopUnlabeledCluster>;
   isCardPending: (suggestionId: string, kinds: readonly SuggestionCommitKind[]) => boolean;
+  /** BR-47: title/reason when Accept/Reject disabled due to selection or bulk. */
+  cardActionsDisabledReason: string | null;
   hold: ReturnType<typeof useSuggestionReviewData>['hold'];
   retryPending: boolean;
   personCommit: PersonCommitState;
   personCommitPending: boolean;
+  /** BR-48: disable person-commit while bulk hold/sequence is active. */
+  isBulkActive: boolean;
   onReview?: (clusterId: string) => void;
   onLabel?: (clusterId: string) => void;
   onOpenOriginal: (target: FaceOriginalTarget) => void;
@@ -1030,6 +1084,9 @@ export const CommitHoldRegion = ({
     );
   }
 
+  const holdMessage =
+    phase === 'committing' ? HOLD_COMMITTING_STATUS_COPY : HOLD_STATUS_COPY;
+
   return (
     <div
       className="acx-review-queue__hold"
@@ -1045,7 +1102,7 @@ export const CommitHoldRegion = ({
       onPointerEnter={() => onPausedChange(true)}
       onPointerLeave={() => onPausedChange(false)}
     >
-      <span className="acx-review-queue__hold-message">{__(HOLD_STATUS_COPY, 'alt-context')}</span>
+      <span className="acx-review-queue__hold-message">{__(holdMessage, 'alt-context')}</span>
       {phase === 'holding' ? (
         <button type="button" className="button acx-review-queue__undo" onClick={onUndo}>
           {__('Undo', 'alt-context')}
@@ -1062,10 +1119,12 @@ const CurrentCard = ({
   nameById,
   topClustersById,
   isCardPending,
+  cardActionsDisabledReason,
   hold,
   retryPending,
   personCommit,
   personCommitPending,
+  isBulkActive,
   onReview,
   onLabel,
   onOpenOriginal,
@@ -1148,7 +1207,10 @@ const CurrentCard = ({
         errorMessage={errorForCard}
         // Stay interactive during accept hold — schedulePersonCommit flushes first.
         // BR-25: disable on schedule (personCommitPending), not only phase==='committing'.
-        disabled={personCommit.phase === 'committing' || personCommitPending}
+        // BR-48: disable while bulk hold/sequence is active (ordering via awaitBulk).
+        disabled={
+          personCommit.phase === 'committing' || personCommitPending || isBulkActive
+        }
         suggestedCreateName={options?.suggestedCreateName}
         onCommit={(request) => {
           // BR-27: person-commit success may remove the NAME card — arm advance focus.
@@ -1215,6 +1277,7 @@ const CurrentCard = ({
             }}
             onOpenOriginal={onOpenOriginal}
             isPending={isCardPending(suggestion.suggestionId, assignmentKinds)}
+            disabledReason={cardActionsDisabledReason}
             actionAccessory={assignmentHold}
             actionAccessoryAfter={hold.kind === 'reject' ? 'reject' : 'accept'}
           />
@@ -1248,6 +1311,7 @@ const CurrentCard = ({
             }}
             onOpenOriginal={onOpenOriginal}
             isPending={isCardPending(suggestion.id, mergeKinds)}
+            disabledReason={cardActionsDisabledReason}
             actionAccessory={mergeHold}
             actionAccessoryAfter={hold.kind === 'acceptMerge' ? 'accept' : 'reject'}
           />
@@ -1307,6 +1371,7 @@ const CurrentCard = ({
               type="button"
               className="button acx-suggestion-card__accept"
               disabled={namePending}
+              title={namePending && cardActionsDisabledReason ? cardActionsDisabledReason : undefined}
               onClick={() => {
                 runScheduled(() => scheduleAcceptName(suggestion.id));
               }}
@@ -1318,6 +1383,7 @@ const CurrentCard = ({
               type="button"
               className="button acx-suggestion-card__reject"
               disabled={namePending}
+              title={namePending && cardActionsDisabledReason ? cardActionsDisabledReason : undefined}
               onClick={() => {
                 runScheduled(() => scheduleRejectName(suggestion.id));
               }}

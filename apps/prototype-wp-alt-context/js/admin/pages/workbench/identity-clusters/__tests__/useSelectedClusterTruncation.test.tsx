@@ -5,7 +5,7 @@
 
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { fetchClusterMembers } from '../../../../api/recognition';
@@ -143,5 +143,33 @@ describe('useSelectedClusterTruncation', () => {
     });
 
     expect(result.current.targetClusterIds).toEqual(['c1', 'c2']);
+  });
+
+  it('BR-52: fetch error fails closed — isTruncationGated + isError; refetch retries', async () => {
+    vi.mocked(fetchClusterMembers).mockRejectedValueOnce(new Error('network down'));
+
+    const { result } = renderHook(() => useSelectedClusterTruncation(['cluster-err']), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    expect(result.current.isError).toBe(true);
+    expect(result.current.isTruncationGated).toBe(true);
+
+    vi.mocked(fetchClusterMembers).mockResolvedValue(
+      makeEnvelope([makeMember('m1')], { truncated: false, total: 1 }),
+    );
+
+    act(() => {
+      result.current.refetch();
+    });
+
+    await waitFor(() => {
+      expect(result.current.isError).toBe(false);
+    });
+    expect(result.current.isTruncationGated).toBe(false);
   });
 });

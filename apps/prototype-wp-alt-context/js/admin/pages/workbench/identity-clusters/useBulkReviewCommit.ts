@@ -7,7 +7,9 @@
  *
  * Bulk initiation flushes any held single commit first. A following single
  * action waits for this sequence via `awaitBulkIdleOrFlush` (wired into
- * useSuggestionReviewMutations). Unmount fires item 1 only + cancels remainder.
+ * useSuggestionReviewMutations — pre-enqueue, never inside chainRef).
+ * Unmount: holding → fire item 1 only; committing → cancel remainder after
+ * in-flight POST (live sequence-state ref).
  */
 
 import React from 'react';
@@ -18,8 +20,25 @@ import {
   type SuggestionCommitKind,
 } from './useSuggestionReviewMutations';
 
-/** Bulk hold announce — N is the selection size at initiate time. */
+/** Bulk hold announce — N is the selection size at initiate time. Holding only. */
 export const bulkHoldStatusCopy = (count: number): string => `Saving ${count}… — Undo`;
+
+/** BR-55: committing phase drops Undo suffix (Undo unreachable). */
+export const bulkCommittingStatusCopy = (count: number): string => `Saving ${count}…`;
+
+/**
+ * PA-27 partial-failure copy — single pinned structure (BR-53).
+ * Banned soft fillers: "some", "several", "a few", "failed to save".
+ */
+export const buildPartialFailureMessage = (
+  landed: number,
+  total: number,
+  failedLabel: string | null,
+  notAttempted: number,
+): string => {
+  const label = failedLabel && failedLabel.trim().length > 0 ? failedLabel.trim() : 'item';
+  return `${landed} of ${total} accepted — 'Accept' failed for ${label}; ${notAttempted} not attempted`;
+};
 
 /** PR-38: homogeneous label → "Accept N for <label>"; else "Accept N selected". */
 export const bulkCommitLabel = (count: number, sharedLabel: string | null): string => {
@@ -117,8 +136,15 @@ export interface UseBulkReviewCommitResult {
   commitLabelForSelection: string;
   sharedLabel: string | null;
   isBulkActive: boolean;
+  /**
+   * BR-56: true from initiate/retry click until hold opens or early-return.
+   * Disables the initiating control from the same sync signal.
+   */
+  bulkInitiatePending: boolean;
   isIdSelectable: (suggestionId: string) => boolean;
   isIdSelected: (suggestionId: string) => boolean;
+  /** BR-47: true when id is in the multi-select set (blocks single Accept/Reject). */
+  isIdInBulkSelection: (suggestionId: string) => boolean;
   toggleSelect: (suggestionId: string) => void;
   clearSelection: () => void;
   /** Drop ids that left the projection; returns dropped count (for announce). */
@@ -128,7 +154,8 @@ export interface UseBulkReviewCommitResult {
   setBulkHoldPaused: (paused: boolean) => void;
   /**
    * If holding: fire sequence. If committing: wait until idle.
-   * Used by single scheduleCommit (bulk→single flush ordering).
+   * Used by single scheduleCommit (bulk→single flush ordering) — MUST be
+   * awaited outside chainRef (BR-49), never from a chain link.
    */
   awaitBulkIdleOrFlush: () => Promise<void>;
   /** Retry remainder (failed + unattempted still selected). */
@@ -144,20 +171,15 @@ interface HeldBulk {
   deadlineMs: number;
   paused: boolean;
   timerId: ReturnType<typeof setTimeout> | null;
-  /** Cancel flag for remainder after unmount item-1 fire. */
-  cancelled: boolean;
 }
 
-const buildPartialFailureMessage = (
-  landed: number,
-  total: number,
-  failedLabel: string | null,
-  notAttempted: number,
-): string => {
-  const labelBit = failedLabel ? ` — Accept failed for ${failedLabel}` : '';
-  const remainderBit = notAttempted > 0 ? `; ${notAttempted} not attempted` : '';
-  return `${landed} of ${total} accepted${labelBit}${remainderBit}`;
-};
+/** BR-46: live sequence state the loop and unmount cleanup share. */
+interface RunningSequence {
+  items: BulkCommitItem[];
+  /** Index of the item currently in flight (or about to start). */
+  index: number;
+  cancelled: boolean;
+}
 
 export const useBulkReviewCommit = ({
   selectedIds,
@@ -177,13 +199,17 @@ export const useBulkReviewCommit = ({
     holdCount: 0,
     partialFailure: null,
   });
+  /** BR-56: sync latch for initiate/retry — disables control before phase flips. */
+  const [bulkInitiatePending, setBulkInitiatePending] = React.useState(false);
 
   const mountedRef = React.useRef(true);
   const heldBulkRef = React.useRef<HeldBulk | null>(null);
   const phaseRef = React.useRef<BulkCommitPhase>('idle');
   const sequencePromiseRef = React.useRef<Promise<void> | null>(null);
+  const runningSequenceRef = React.useRef<RunningSequence | null>(null);
   const nextEntryIdRef = React.useRef(1);
   const idleWaitersRef = React.useRef<(() => void)[]>([]);
+  const bulkInitiateInFlightRef = React.useRef(false);
   const selectedIdsRef = React.useRef(selectedIds);
   selectedIdsRef.current = selectedIds;
   const onSelectedIdsChangeRef = React.useRef(onSelectedIdsChange);
@@ -194,6 +220,10 @@ export const useBulkReviewCommit = ({
   setBulkActionActiveRef.current = setBulkActionActive;
   const onBulkSequenceSettledRef = React.useRef(onBulkSequenceSettled);
   onBulkSequenceSettledRef.current = onBulkSequenceSettled;
+  const resolveItemsRef = React.useRef(resolveItems);
+  resolveItemsRef.current = resolveItems;
+  const flushHeldSingleRef = React.useRef(flushHeldSingle);
+  flushHeldSingleRef.current = flushHeldSingle;
 
   const setBulkSafe = React.useCallback(
     (next: BulkCommitState) => {
@@ -251,6 +281,12 @@ export const useBulkReviewCommit = ({
   const isBulkActive = bulk.phase === 'holding' || bulk.phase === 'committing';
 
   const isIdSelected = React.useCallback(
+    (suggestionId: string) => selectedIds.has(suggestionId),
+    [selectedIds],
+  );
+
+  /** BR-47: selection membership blocks single-item Accept/Reject hold. */
+  const isIdInBulkSelection = React.useCallback(
     (suggestionId: string) => selectedIds.has(suggestionId),
     [selectedIds],
   );
@@ -313,8 +349,9 @@ export const useBulkReviewCommit = ({
   );
 
   /**
-   * Sequential per-id POSTs. `limitToFirstOnly` = unmount policy (item 1 only).
+   * Sequential per-id POSTs. `limitToFirstOnly` = unmount-while-holding policy.
    * Drops committed ids from selection as each POST succeeds (PA-27).
+   * BR-46: checks live runningSequenceRef.cancelled each iteration.
    */
   const runSequence = React.useCallback(
     async (
@@ -331,6 +368,13 @@ export const useBulkReviewCommit = ({
         notifyIdle();
         return;
       }
+
+      const sequence: RunningSequence = {
+        items,
+        index: 0,
+        cancelled: false,
+      };
+      runningSequenceRef.current = sequence;
 
       setBulkActionActiveRef.current(true);
       if (options.updateUi) {
@@ -350,10 +394,11 @@ export const useBulkReviewCommit = ({
 
       try {
         for (let i = 0; i < toRun.length; i += 1) {
-          const held = heldBulkRef.current;
-          if (held?.cancelled && i > 0) {
+          // BR-46: unmount (or cancel) stops further items; in-flight finishes.
+          if (sequence.cancelled) {
             break;
           }
+          sequence.index = i;
           const item = toRun[i];
           const outcome = await commitOneRef.current(item.commitKind, item.suggestionId);
           if (outcome === 'committed') {
@@ -366,6 +411,7 @@ export const useBulkReviewCommit = ({
           }
         }
       } finally {
+        runningSequenceRef.current = null;
         setBulkActionActiveRef.current(false);
         onBulkSequenceSettledRef.current?.();
       }
@@ -375,7 +421,8 @@ export const useBulkReviewCommit = ({
         return;
       }
 
-      if (options.limitToFirstOnly) {
+      if (options.limitToFirstOnly || sequence.cancelled) {
+        // Unmount cancel or hold-only first item: rest stay selected; idle chrome.
         setBulkSafe({
           phase: 'idle',
           heldIds: [],
@@ -423,7 +470,11 @@ export const useBulkReviewCommit = ({
       }
       clearHeldTimer();
       heldBulkRef.current = null;
-      const items = held.items;
+      // BR-50: re-filter snapshot against live selection at fire time (prune during hold).
+      // pruneMissingIds keeps selection honest, so intersection drops pruned ids.
+      const live = selectedIdsRef.current;
+      const filtered = held.items.filter((i) => live.has(i.suggestionId));
+      const items = options.limitToFirstOnly ? filtered.slice(0, 1) : filtered;
       held.resolve();
       const run = runSequence(items, options);
       sequencePromiseRef.current = run;
@@ -464,7 +515,6 @@ export const useBulkReviewCommit = ({
         deadlineMs: Date.now() + UNDO_HOLD_MS,
         paused: false,
         timerId: null,
-        cancelled: false,
       };
       heldBulkRef.current = entry;
       setBulkSafe({
@@ -478,32 +528,61 @@ export const useBulkReviewCommit = ({
     [armBulkTimer, setBulkSafe],
   );
 
+  const clearBulkInitiateLatch = React.useCallback((): void => {
+    bulkInitiateInFlightRef.current = false;
+    if (mountedRef.current) {
+      setBulkInitiatePending(false);
+    }
+  }, []);
+
   const initiateBulk = React.useCallback(async (): Promise<void> => {
+    // BR-56: sync re-entry latch (personCommitInFlightRef pattern).
+    if (bulkInitiateInFlightRef.current) {
+      return;
+    }
     if (phaseRef.current === 'holding' || phaseRef.current === 'committing') {
       return;
     }
-    if (selectedIds.size === 0) {
+    if (selectedIdsRef.current.size === 0) {
       return;
     }
 
-    const items = resolveItems([...selectedIds]);
-    if (items.length === 0) {
-      return;
+    bulkInitiateInFlightRef.current = true;
+    if (mountedRef.current) {
+      setBulkInitiatePending(true);
     }
 
-    // First flushes any held single commit (PR-30).
-    const prior = await flushHeldSingle();
-    if (prior?.outcome === 'failed') {
-      return;
-    }
+    try {
+      // Snapshot after latch; re-resolve post-flush (BR-47).
+      const prior = await flushHeldSingleRef.current();
+      if (prior?.outcome === 'failed') {
+        return;
+      }
 
-    if (!mountedRef.current) {
-      return;
-    }
+      if (!mountedRef.current) {
+        return;
+      }
 
-    // Open hold synchronously — do not await the hold lifetime (same model as scheduleCommit).
-    openBulkHold(items);
-  }, [flushHeldSingle, openBulkHold, resolveItems, selectedIds]);
+      // BR-47(a): drop the just-committed single id from selection + items.
+      if (prior?.outcome === 'committed') {
+        dropFromSelection(prior.suggestionId);
+      }
+
+      const liveIds = [...selectedIdsRef.current];
+      let items = resolveItemsRef.current(liveIds);
+      if (prior?.outcome === 'committed') {
+        items = items.filter((i) => i.suggestionId !== prior.suggestionId);
+      }
+      if (items.length === 0) {
+        return;
+      }
+
+      // Open hold synchronously — do not await the hold lifetime.
+      openBulkHold(items);
+    } finally {
+      clearBulkInitiateLatch();
+    }
+  }, [clearBulkInitiateLatch, dropFromSelection, openBulkHold]);
 
   const undoBulk = React.useCallback((): void => {
     const held = heldBulkRef.current;
@@ -512,7 +591,6 @@ export const useBulkReviewCommit = ({
     }
     clearHeldTimer();
     heldBulkRef.current = null;
-    held.cancelled = true;
     held.resolve();
     setBulkSafe({
       phase: 'idle',
@@ -564,14 +642,17 @@ export const useBulkReviewCommit = ({
 
   // Keep host ref current every render (scheduleCommit reads .current).
   awaitBulkIdleOrFlushRef.current = awaitBulkIdleOrFlush;
-  isBulkActiveRef.current = bulk.phase === 'holding' || bulk.phase === 'committing';
+  isBulkActiveRef.current =
+    bulk.phase === 'holding' ||
+    bulk.phase === 'committing' ||
+    bulkInitiatePending;
 
   const retryBulk = React.useCallback(async (): Promise<void> => {
-    if (selectedIds.size === 0) {
+    if (selectedIdsRef.current.size === 0) {
       return;
     }
     await initiateBulk();
-  }, [initiateBulk, selectedIds.size]);
+  }, [initiateBulk]);
 
   const clearPartialFailure = React.useCallback((): void => {
     if (bulk.phase === 'partial_failed') {
@@ -584,18 +665,23 @@ export const useBulkReviewCommit = ({
     }
   }, [bulk.phase, setBulkSafe]);
 
-  // Unmount: fire item 1 only; cancel remainder (PR-30).
+  // Unmount: holding → fire item 1 only; committing → cancel remainder (BR-46).
   React.useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      const running = runningSequenceRef.current;
+      if (running) {
+        // In-flight POST finishes; loop breaks before next item.
+        running.cancelled = true;
+        return;
+      }
       const held = heldBulkRef.current;
       if (!held) {
         return;
       }
       clearHeldTimer();
       heldBulkRef.current = null;
-      held.cancelled = true;
       held.resolve();
       const first = held.items[0];
       if (first) {
@@ -609,9 +695,11 @@ export const useBulkReviewCommit = ({
   }, [clearHeldTimer]);
 
   const bulkHoldAnnounce =
-    bulk.phase === 'holding' || bulk.phase === 'committing'
+    bulk.phase === 'holding'
       ? bulkHoldStatusCopy(bulk.holdCount)
-      : '';
+      : bulk.phase === 'committing'
+        ? bulkCommittingStatusCopy(bulk.holdCount)
+        : '';
 
   return {
     bulk,
@@ -619,8 +707,10 @@ export const useBulkReviewCommit = ({
     commitLabelForSelection,
     sharedLabel,
     isBulkActive,
+    bulkInitiatePending,
     isIdSelectable,
     isIdSelected,
+    isIdInBulkSelection,
     toggleSelect,
     clearSelection,
     pruneMissingIds,

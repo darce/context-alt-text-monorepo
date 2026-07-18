@@ -13,9 +13,10 @@ from db.models import IdentityClusteringJob
 from db.tenant_context import enable_rls_bypass
 from recognition.application.embedding.detector import FaceDetectorProtocol
 from recognition.application.embedding.generator import EmbeddingGeneratorProtocol
+from recognition.application.scan.capability import ScanWorkerCounters
 from recognition.application.scan.queue_repository import ScanQueueItem
 from recognition.application.scan.scan_queue_service import ScanQueueService
-from recognition.application.scan.service import ObjectStoreFactory, ScanService
+from recognition.application.scan.service import ObjectStoreFactory, ReconcileResult, ScanService
 from recognition.application.storage import ObjectStoreError
 from recognition.domain.job import JobStatus
 from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
@@ -39,6 +40,7 @@ class ScanItemHandler:
         max_attempts: int,
         max_concurrency: int,
         object_store_factory: ObjectStoreFactory | None = None,
+        counters: ScanWorkerCounters | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._detector = detector
@@ -51,6 +53,7 @@ class ScanItemHandler:
         # in _refresh_job_progress also goes through this factory once a
         # job completes.
         self._object_store_factory = object_store_factory
+        self._counters = counters
 
     async def process_items(self, *, claimed: list[ScanQueueItem]) -> None:
         if not claimed:
@@ -82,11 +85,21 @@ class ScanItemHandler:
                     item.media_id,
                 )
                 try:
-                    identities_detected = await scan_service.process_media_item(
+                    reconcile = await scan_service.process_media_item(
                         tenant_id=str(item.tenant_id),
                         media_id=item.media_id,
                         media_url=item.media_url,
+                        job_id=item.job_id,
                     )
+                    identities_detected = _identities_detected_count(reconcile)
+                    if self._counters is not None:
+                        self._counters.record(
+                            detected=reconcile.detected
+                            if isinstance(reconcile, ReconcileResult)
+                            else identities_detected,
+                            matched=reconcile.matched if isinstance(reconcile, ReconcileResult) else 0,
+                            new=reconcile.new if isinstance(reconcile, ReconcileResult) else 0,
+                        )
                     await repo.mark_item_completed(
                         item_id=item.id,
                         completed_at=now,
@@ -198,3 +211,10 @@ class ScanItemHandler:
             generator=self._generator,
             object_store_factory=self._object_store_factory,
         )
+
+
+def _identities_detected_count(result: ReconcileResult | int) -> int:
+    """Preserve pre-S4 int contract: matched + new (or plain int from mocks)."""
+    if isinstance(result, ReconcileResult):
+        return result.total
+    return int(result)

@@ -13,9 +13,10 @@ from db.models import IdentityClusteringJob
 from db.tenant_context import enable_rls_bypass
 from recognition.application.embedding.detector import FaceDetectorProtocol
 from recognition.application.embedding.generator import EmbeddingGeneratorProtocol
+from recognition.application.scan.capability import ScanWorkerCounters
 from recognition.application.scan.queue_repository import ScanQueueItem
 from recognition.application.scan.scan_queue_service import ScanQueueService
-from recognition.application.scan.service import ObjectStoreFactory, ScanService
+from recognition.application.scan.service import ObjectStoreFactory, ReconcileResult, ScanService
 from recognition.application.storage import ObjectStoreError
 from recognition.domain.job import JobStatus
 from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
@@ -39,6 +40,7 @@ class ScanItemHandler:
         max_attempts: int,
         max_concurrency: int,
         object_store_factory: ObjectStoreFactory | None = None,
+        counters: ScanWorkerCounters | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._detector = detector
@@ -51,6 +53,7 @@ class ScanItemHandler:
         # in _refresh_job_progress also goes through this factory once a
         # job completes.
         self._object_store_factory = object_store_factory
+        self._counters = counters
 
     async def process_items(self, *, claimed: list[ScanQueueItem]) -> None:
         if not claimed:
@@ -82,17 +85,32 @@ class ScanItemHandler:
                     item.media_id,
                 )
                 try:
-                    identities_detected = await scan_service.process_media_item(
+                    # process_media_item is flush-only (pre-S4); this session
+                    # commits identity rows + queue-item status together, then
+                    # emits scan_media_reconciled and bumps counters only after
+                    # the durable commit gate (S4CR-03, rg-002, E2E-01).
+                    reconcile = await scan_service.process_media_item(
                         tenant_id=str(item.tenant_id),
                         media_id=item.media_id,
                         media_url=item.media_url,
+                        job_id=item.job_id,
                     )
+                    identities_detected = _identities_detected_count(reconcile)
                     await repo.mark_item_completed(
                         item_id=item.id,
                         completed_at=now,
                         identities_detected=identities_detected,
                     )
                     await session.commit()
+                    if self._counters is not None:
+                        self._counters.record(
+                            detected=reconcile.detected
+                            if isinstance(reconcile, ReconcileResult)
+                            else identities_detected,
+                            matched=reconcile.matched if isinstance(reconcile, ReconcileResult) else 0,
+                            new=reconcile.new if isinstance(reconcile, ReconcileResult) else 0,
+                        )
+                    scan_service.emit_pending_scan_media_reconciled()
                     logger.info(
                         "[worker] COMPLETE scan_item request_id=%s job_id=%s item_id=%s identities=%s",
                         request_id,
@@ -100,7 +118,7 @@ class ScanItemHandler:
                         item.id,
                         identities_detected,
                     )
-                except Exception as exc:  # pragma: no cover
+                except Exception as exc:
                     error_message = str(exc)
                     await self._handle_item_failure(
                         repo=repo,
@@ -198,3 +216,10 @@ class ScanItemHandler:
             generator=self._generator,
             object_store_factory=self._object_store_factory,
         )
+
+
+def _identities_detected_count(result: ReconcileResult | int) -> int:
+    """Preserve pre-S4 int contract: matched + new (or plain int from mocks)."""
+    if isinstance(result, ReconcileResult):
+        return result.total
+    return int(result)

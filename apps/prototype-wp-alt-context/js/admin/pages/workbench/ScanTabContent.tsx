@@ -79,6 +79,10 @@ export const ScanTabContent = (): React.JSX.Element => {
   });
   const [userExpandedMedia, setUserExpandedMedia] = React.useState(false);
   const previousHasFindings = React.useRef(findings.hasFindings);
+  // §7 / BR-75: the queue reports whether a real card primary is on screen. This —
+  // not findings totals — drives footer demotion, so the signal that places the
+  // card's accent marker is the same one that steps the footer CTAs down.
+  const [cardPrimaryPresent, setCardPrimaryPresent] = React.useState(false);
 
   // Lifted queue index + kind + band — survives label/review panel unmount of ReviewQueue.
   const [queueIndex, setQueueIndex] = React.useState(queueState.index);
@@ -107,14 +111,17 @@ export const ScanTabContent = (): React.JSX.Element => {
     findings.hasFindings && !userExpandedMedia && !findings.isLoading && !findings.isError && !findings.isUnavailable;
 
   // §7 media-footer CTA hierarchy: a review card / label / review panel primary is
-  // on screen (mirrors the anchor's rendered branch below). When true the card owns
-  // the single viewport accent primary, so the footer's CTAs step down to secondary.
+  // on screen. When true the card/panel owns the single viewport accent primary, so
+  // the footer's CTAs step down to secondary. BR-75: the queue-mounted branch is
+  // driven by an ACTUALLY-rendered card primary (`cardPrimaryPresent`), not findings
+  // totals — chip-empty/drain, retired-head, and still-loading now correctly keep
+  // the footer's Analyze primary because no card marker is on screen.
   const reviewSurfaceActive =
     clusterPanel.mode === 'label'
       ? true
       : reviewClusterId !== null
         ? true
-        : findings.hasFindings && !findings.isLoading && !findings.isError && !findings.isUnavailable;
+        : cardPrimaryPresent;
 
   const handleIndexChange = React.useCallback(
     (nextIndex: number): void => {
@@ -220,6 +227,7 @@ export const ScanTabContent = (): React.JSX.Element => {
               emptyStateAnchorRef={findingsDetailRef}
               onLabel={(clusterId: string) => dispatchClusterPanel({ type: 'open_label', clusterId })}
               onReview={(clusterId: string) => dispatchClusterPanel({ type: 'open_review', clusterId })}
+              onCardPrimaryPresenceChange={setCardPrimaryPresent}
             />
           )}
         </div>

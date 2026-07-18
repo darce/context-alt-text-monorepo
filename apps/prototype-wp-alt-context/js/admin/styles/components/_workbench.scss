@@ -631,6 +631,9 @@
     border: 1px solid var(--acx-color-accent);
     background-color: var(--acx-color-accent);
     color: var(--acx-color-accent-contrast);
+    /* BR-78: primary carries the semibold token role so primary/secondary differ
+       by weight as well as color (§7 pinned token role). */
+    font-weight: var(--acx-font-weight-semibold);
 
     /* §7 media-footer hierarchy: when Analyze is not the state's accent primary
        it steps down to a neutral/ghost secondary — no accent (COL-03/COL-09). */
@@ -660,6 +663,28 @@
       margin: 0 0 var(--acx-space-16);
       color: var(--acx-color-text-muted);
     }
+  }
+}
+
+/**
+ * §7 single-accent-primary token role (COL-03/COL-09): the ONE element carrying
+ * `data-acx-accent-primary` in a rendered viewport is chromatically accented —
+ * accent bg + accent-contrast text + semibold. Shared by the review-card primary
+ * (accept / person-commit confirm) and the describe submit CTA so the marker and
+ * the accent chrome never drift apart. The footer Analyze primary keeps its own
+ * `.acx-apply-panel__scan` treatment. Scoped under `.button` to win over WP core
+ * `.button` / `.button-primary`. Not the `--acx-color-accent-soft` selection tint.
+ */
+.button.acx-accent-primary-action,
+button.acx-accent-primary-action {
+  border: 1px solid var(--acx-color-accent);
+  background-color: var(--acx-color-accent);
+  color: var(--acx-color-accent-contrast);
+  font-weight: var(--acx-font-weight-semibold);
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
 }
 

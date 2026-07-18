@@ -15,6 +15,8 @@ export interface MergeSuggestionCardProps {
   /** Slice-2 hold/failure chrome — placed immediately after the actioned control. */
   actionAccessory?: React.ReactNode;
   actionAccessoryAfter?: 'accept' | 'reject';
+  /** §7 single accent primary: mark + accent-style Accept as this card's primary (COL-03). */
+  accentPrimary?: boolean;
 }
 
 const FaceCropControl = ({
@@ -67,6 +69,7 @@ export const MergeSuggestionCard = ({
   disabledReason = null,
   actionAccessory = null,
   actionAccessoryAfter = 'accept',
+  accentPrimary = false,
 }: MergeSuggestionCardProps): React.JSX.Element => {
   const matchPercent = Math.round(suggestion.similarity * 100);
   const clusterALabel = suggestion.cluster_a_label ?? __('Unnamed cluster', 'alt-context');
@@ -130,10 +133,15 @@ export const MergeSuggestionCard = ({
       <div className="acx-suggestion-card__actions">
         <button
           type="button"
-          className="button button-primary acx-suggestion-card__accept"
+          className={
+            accentPrimary
+              ? 'button button-primary acx-suggestion-card__accept acx-accent-primary-action'
+              : 'button button-primary acx-suggestion-card__accept'
+          }
           onClick={onAccept}
           disabled={isPending}
           title={isPending && disabledReason ? disabledReason : undefined}
+          {...(accentPrimary ? { 'data-acx-accent-primary': true } : {})}
         >
           {__('Yes', 'alt-context')}
         </button>

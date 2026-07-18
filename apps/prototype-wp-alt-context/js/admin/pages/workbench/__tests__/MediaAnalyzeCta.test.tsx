@@ -109,6 +109,23 @@ describe('MediaAnalyzeCta', () => {
     expect(scan).not.toHaveBeenCalled();
   });
 
+  it('offline never HTML-disables even at zero selection — reason stays reachable (§7 / BR-74)', () => {
+    offline = true;
+    selectedMedia = [];
+    render(<MediaAnalyzeCta />);
+
+    const button = screen.getByRole('button', { name: 'Analyze selected media' });
+    // Airplane-mode reload with nothing selected: focusable (not HTML disabled) so the
+    // aria-describedby reason is perceivable; the onClick offline guard blocks activation.
+    expect(button).not.toBeDisabled();
+    expect(button).toHaveAttribute('aria-disabled', 'true');
+    const reasonId = button.getAttribute('aria-describedby');
+    expect(reasonId).toBeTruthy();
+    expect(document.getElementById(reasonId ?? '')).toHaveTextContent(
+      'Unavailable while the recognition service is offline',
+    );
+  });
+
   it('renders the accent-primary marker only in the primary variant (§7 hierarchy)', () => {
     selectedMedia = [{ id: 11 }];
     const { rerender } = render(<MediaAnalyzeCta accentPrimary />);

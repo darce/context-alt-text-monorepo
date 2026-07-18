@@ -17,6 +17,7 @@ import {
   type ReviewQueueHandle,
 } from './identity-clusters';
 import { useWorkbenchFindings } from './identity-clusters/useWorkbenchFindings';
+import { useOpenReviewTargetLifecycle } from './identity-clusters/useOpenReviewTargetLifecycle';
 import { MediaSelection } from './MediaSelection';
 import { useJobPipeline } from './JobPipelineContext';
 import { useClusterPanel } from './ClusterPanelContext';
@@ -51,6 +52,22 @@ export const ScanTabContent = (): React.JSX.Element => {
   // the review panel's rebind remount and retirement unmount.
   const [reviewLifecycleMessage, setReviewLifecycleMessage] = React.useState<string | null>(null);
   const findings = useWorkbenchFindings();
+
+  const focusQueueRoot = React.useCallback((): void => {
+    findingsDetailRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  // Open-target retirement lifecycle (§11 / FBT-1 ⑤). Owned here (always mounted)
+  // so the rebind/close transition resolves render-phase against the live target
+  // and survives the review panel's remount/unmount. `reviewClusterId` is the
+  // cluster the review panel is actually mounted on (rebound survivor after a
+  // merge, or null once retired).
+  const { reviewClusterId } = useOpenReviewTargetLifecycle({
+    requestedClusterId: clusterPanel.mode === 'review' ? clusterPanel.clusterId : null,
+    onAnnounce: setReviewLifecycleMessage,
+    onFocusQueueRoot: focusQueueRoot,
+    onRetireClose: () => dispatchClusterPanel({ type: 'close' }),
+  });
   const [userExpandedMedia, setUserExpandedMedia] = React.useState(false);
   const previousHasFindings = React.useRef(findings.hasFindings);
 
@@ -159,15 +176,11 @@ export const ScanTabContent = (): React.JSX.Element => {
                 dispatchClusterPanel({ type: 'close' });
               }}
             />
-          ) : clusterPanel.mode === 'review' && clusterPanel.clusterId ? (
+          ) : reviewClusterId !== null ? (
             <ClusterReviewPanel
-              key={clusterPanel.clusterId}
-              clusterId={clusterPanel.clusterId}
+              key={reviewClusterId}
+              clusterId={reviewClusterId}
               onClose={() => dispatchClusterPanel({ type: 'close' })}
-              onLifecycleAnnounce={setReviewLifecycleMessage}
-              onFocusQueueRoot={() => {
-                findingsDetailRef.current?.focus({ preventScroll: true });
-              }}
             />
           ) : (
             <ReviewQueue

@@ -100,6 +100,86 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
         result = await self._session.execute(stmt)
         return [self._to_domain(row) for row in result.scalars().all()]
 
+    async def list_for_identities(
+        self,
+        tenant_id: str,
+        identity_ids: Sequence[str],
+        *,
+        top_k: int,
+    ) -> list[SuggestionDetails]:
+        """Top-k pending labeled-cluster suggestions per identity in one windowed query.
+
+        Filter parity with the per-card route is literal: pending status + truthy
+        cluster label only (auto-labels like ``cluster-1234`` pass; ``user_confirmed``
+        is NOT required). The filter is applied inside the window so ranks are
+        computed over eligible rows only — an identity whose highest-similarity
+        suggestion targets an unlabeled cluster still resolves to its next labeled one.
+
+        ``ROW_NUMBER`` is used (never ``DISTINCT ON``: SQLAlchemy silently drops the
+        ``ON`` clause under SQLite). Portability is verified under sqlite+aiosqlite
+        by the batch integration suite, and under Postgres whenever the pg-marked
+        suite runs (``recognition/tests/integration/test_identity_suggestions_batch_pg.py``,
+        which skips when Postgres is unreachable).
+        """
+        tenant_uuid = _coerce_uuid(tenant_id)
+        identity_uuids = [item for item in (_coerce_uuid(value) for value in identity_ids) if item is not None]
+        if tenant_uuid is None or not identity_uuids or top_k < 1:
+            return []
+
+        ranked = (
+            select(
+                SuggestionModel.id.label("suggestion_id"),
+                func.row_number()
+                .over(
+                    partition_by=SuggestionModel.identity_id,
+                    order_by=(
+                        SuggestionModel.representative_similarity.desc(),
+                        SuggestionModel.created_at.desc(),
+                    ),
+                )
+                .label("suggestion_rank"),
+            )
+            .join(IdentityCluster, SuggestionModel.suggested_cluster_id == IdentityCluster.id)
+            .where(SuggestionModel.tenant_id == tenant_uuid)
+            .where(SuggestionModel.identity_id.in_(identity_uuids))
+            .where(SuggestionModel.resolution == SuggestionStatus.PENDING.value)
+            .where(IdentityCluster.label.is_not(None))
+            .where(IdentityCluster.label != "")
+            .subquery()
+        )
+
+        stmt = (
+            select(SuggestionModel)
+            .join(ranked, SuggestionModel.id == ranked.c.suggestion_id)
+            .where(ranked.c.suggestion_rank <= top_k)
+            .options(joinedload(SuggestionModel.suggested_cluster))
+            .order_by(SuggestionModel.identity_id, ranked.c.suggestion_rank)
+        )
+        result = await self._session.execute(stmt)
+        models = result.scalars().all()
+
+        details: list[SuggestionDetails] = []
+        for model in models:
+            cluster: IdentityCluster | None = model.suggested_cluster
+            details.append(
+                SuggestionDetails(
+                    id=str(model.id),
+                    identity_id=str(model.identity_id),
+                    cluster_id=str(model.suggested_cluster_id),
+                    representative_similarity=float(model.representative_similarity),
+                    member_similarity=float(model.avg_member_similarity),
+                    status=str(model.resolution),
+                    confidence_score=float(model.confidence_score) if model.confidence_score is not None else None,
+                    expires_at=model.expires_at,
+                    source_job_id=str(model.source_job_id) if model.source_job_id is not None else None,
+                    cluster_label=cluster.label if cluster else None,
+                    cluster_identity_count=int(cluster.identity_count)
+                    if cluster and cluster.identity_count is not None
+                    else None,
+                )
+            )
+        return details
+
     def _build_bbox(self, identity: MediaIdentity | None) -> FaceBox | None:
         if identity is None:
             return None

@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { queryKeys } from '../api/queryKeys';
 import { fetchMediaIdentities, type MediaIdentitiesResponse } from '../api/recognition';
-import { gateRefetchInterval } from '../utils/rateLimitCooldown';
+import { gateRefetchInterval } from '../utils/recognitionCooldown';
 
 /**
  * Check if any identities are pending clustering assignment.
@@ -24,6 +24,8 @@ export const useMediaIdentities = (mediaIds: number[], enabled = true) =>
     queryKey: queryKeys.media.identitiesByIds(mediaIds),
     queryFn: () => fetchMediaIdentities(mediaIds),
     enabled: enabled && mediaIds.length > 0,
+    // Deliberate exception to shared retry: conditional query already stops polling on error;
+    // next scheduled poll (recognition cooldown in slice 2) is the retry. [RES-06]
     retry: false,
     staleTime: 15_000,
     placeholderData: (previousData) => previousData,

@@ -1,0 +1,66 @@
+import { cleanup, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { InlineSuggestionPrompt } from '../InlineSuggestionPrompt';
+import type { ClusterSuggestion } from '../../../../api/recognition';
+
+const match: ClusterSuggestion = {
+  cluster_id: 'cluster-ada',
+  label: 'Ada Lovelace',
+  similarity: 0.92,
+  identity_count: 3,
+};
+
+afterEach(() => cleanup());
+
+describe('InlineSuggestionPrompt (presentational)', () => {
+  it('renders the supplied match by prop without fetching', () => {
+    render(<InlineSuggestionPrompt match={match} onConfirm={vi.fn()} onReject={vi.fn()} isPending={false} />);
+
+    expect(screen.getByText('Ada Lovelace')).toBeInTheDocument();
+    expect(screen.getByText('92%')).toBeInTheDocument();
+  });
+
+  it('renders nothing when no match is supplied', () => {
+    const { container } = render(
+      <InlineSuggestionPrompt match={undefined} onConfirm={vi.fn()} onReject={vi.fn()} isPending={false} />,
+    );
+
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('renders nothing when the match carries no label', () => {
+    const labelless = { ...match, label: '' };
+    const { container } = render(
+      <InlineSuggestionPrompt match={labelless} onConfirm={vi.fn()} onReject={vi.fn()} isPending={false} />,
+    );
+
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('fires onConfirm with the match cluster id and label on Yes', async () => {
+    const onConfirm = vi.fn();
+    const user = userEvent.setup();
+    render(<InlineSuggestionPrompt match={match} onConfirm={onConfirm} onReject={vi.fn()} isPending={false} />);
+
+    await user.click(screen.getByRole('button', { name: 'Yes' }));
+    expect(onConfirm).toHaveBeenCalledWith('cluster-ada', 'Ada Lovelace');
+  });
+
+  it('fires onReject on No', async () => {
+    const onReject = vi.fn();
+    const user = userEvent.setup();
+    render(<InlineSuggestionPrompt match={match} onConfirm={vi.fn()} onReject={onReject} isPending={false} />);
+
+    await user.click(screen.getByRole('button', { name: 'No' }));
+    expect(onReject).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables both actions while a mutation is pending', () => {
+    render(<InlineSuggestionPrompt match={match} onConfirm={vi.fn()} onReject={vi.fn()} isPending />);
+
+    expect(screen.getByRole('button', { name: 'Yes' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'No' })).toBeDisabled();
+  });
+});

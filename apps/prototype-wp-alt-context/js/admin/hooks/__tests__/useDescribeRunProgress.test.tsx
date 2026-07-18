@@ -118,6 +118,79 @@ describe('useDescribeRunProgress', () => {
       expect(result.current.stalledForSeconds ?? 0).toBeGreaterThanOrEqual(30);
     });
 
+    it('keeps polling through a transient timeout and freezes progress instead of dead-ending (BR-07)', async () => {
+      const timeoutError = Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' });
+      fetchBulkDescribeRunMock
+        .mockResolvedValueOnce(runResponse({ status: 'running', completed: 1, total: 4, eta_seconds: 60 }))
+        .mockRejectedValueOnce(timeoutError)
+        .mockResolvedValue(runResponse({ status: 'running', completed: 2, total: 4, eta_seconds: 40 }));
+
+      const { result } = renderHook(() => useDescribeRunProgress('run-1'), { wrapper });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(result.current.status).toBe('running');
+      expect(result.current.isFrozen).toBe(false);
+
+      // Poll 2 times out: progress freezes at last-known values, no dead-end.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+      expect(result.current.isFrozen).toBe(true);
+      expect(result.current.isError).toBe(false);
+      expect(result.current.isPolling).toBe(true);
+      expect(result.current.progressFraction).toBeCloseTo(0.25); // frozen, not lost
+      expect(result.current.stalledForSeconds).toBeNull(); // paused notice supersedes stall banner
+
+      // Poll 3 succeeds without any manual retry: progress thaws and advances.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+      expect(fetchBulkDescribeRunMock.mock.calls.length).toBeGreaterThanOrEqual(3);
+      expect(result.current.isFrozen).toBe(false);
+      expect(result.current.progressFraction).toBeCloseTo(0.5);
+    });
+
+    it('escalates a frozen run to a hard error after 5 consecutive abort-like polls', async () => {
+      const timeoutError = Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' });
+      fetchBulkDescribeRunMock
+        .mockResolvedValueOnce(runResponse({ status: 'running', completed: 1, total: 4, eta_seconds: 60 }))
+        .mockRejectedValue(timeoutError);
+
+      const { result } = renderHook(() => useDescribeRunProgress('run-1'), { wrapper });
+
+      // First poll succeeds: a baseline exists, nothing is frozen yet.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(result.current.status).toBe('running');
+      expect(result.current.isFrozen).toBe(false);
+
+      // Four consecutive 2s timeouts: still frozen (recoverable), not a hard error.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(8_000);
+      });
+      expect(result.current.isFrozen).toBe(true);
+      expect(result.current.isError).toBe(false);
+
+      // The 5th consecutive timeout (~>10s dead air) escalates: the frozen state
+      // flips to a hard error surfacing the Retry affordance, and polling stops.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4_000);
+      });
+      expect(result.current.isError).toBe(true);
+      expect(result.current.isFrozen).toBe(false);
+      expect(result.current.isPolling).toBe(false);
+
+      // The escalated run stops hammering the service (no unbounded retry loop).
+      const callsAtEscalation = fetchBulkDescribeRunMock.mock.calls.length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+      expect(fetchBulkDescribeRunMock.mock.calls.length).toBe(callsAtEscalation);
+    });
+
     it('surfaces a poll error after bounded retries and recovers via retry()', async () => {
       fetchBulkDescribeRunMock.mockRejectedValue(new Error('network down'));
 

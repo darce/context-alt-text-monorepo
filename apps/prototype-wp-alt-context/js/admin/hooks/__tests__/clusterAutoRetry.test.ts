@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { HTTPError } from '../../utils/http';
-import { DEFAULT_COOLDOWN_SECONDS } from '../../utils/rateLimitCooldown';
+import { DEFAULT_COOLDOWN_SECONDS } from '../../utils/recognitionCooldown';
 import { buildStatusText } from '../jobStateMachineProgress';
 import {
   CLUSTER_RETRY_MAX_ATTEMPTS,
@@ -13,12 +13,23 @@ import {
   resolveClusterRetryDelaySeconds,
 } from '../clusterAutoRetry';
 
-const rateLimited = (retryAfterSeconds: number | null = 2): HTTPError =>
-  new HTTPError('Request to /cluster failed (429): rate limited', 429, retryAfterSeconds);
+const clusterError = (status: number, message: string, retryAfterSeconds?: number): HTTPError =>
+  new HTTPError({
+    status,
+    retryAfterSeconds,
+    endpoint: '/cluster',
+    bodyPreview: '',
+    message,
+  });
 
-const serverError = (): HTTPError => new HTTPError('Request to /cluster failed (500): boom', 500, null);
+const rateLimited = (retryAfterSeconds: number | undefined = 2): HTTPError =>
+  clusterError(429, 'Request to /cluster failed (429): rate limited', retryAfterSeconds);
 
-const clientError = (): HTTPError => new HTTPError('Request to /cluster failed (400): bad', 400, null);
+const rateLimitedNoRetryAfter = (): HTTPError => clusterError(429, 'Request to /cluster failed (429): rate limited');
+
+const serverError = (): HTTPError => clusterError(500, 'Request to /cluster failed (500): boom');
+
+const clientError = (): HTTPError => clusterError(400, 'Request to /cluster failed (400): bad');
 
 describe('clusterAutoRetry pure helpers', () => {
   it('exports a hard ceiling of exactly 3 total attempts (RES-06)', () => {
@@ -34,7 +45,7 @@ describe('clusterAutoRetry pure helpers', () => {
 
   it('honors Retry-After and falls back to DEFAULT_COOLDOWN_SECONDS', () => {
     expect(resolveClusterRetryDelaySeconds(rateLimited(2))).toBe(2);
-    expect(resolveClusterRetryDelaySeconds(rateLimited(null))).toBe(DEFAULT_COOLDOWN_SECONDS);
+    expect(resolveClusterRetryDelaySeconds(rateLimitedNoRetryAfter())).toBe(DEFAULT_COOLDOWN_SECONDS);
   });
 
   it('allows auto-retry only while attempts remain under the ceiling', () => {
@@ -187,7 +198,7 @@ describe('createClusterAutoRetry', () => {
     const { mutate, onQueued, controller } = buildHarness();
 
     controller.start();
-    controller.noteError(rateLimited(null));
+    controller.noteError(rateLimitedNoRetryAfter());
     expect(onQueued).toHaveBeenLastCalledWith(DEFAULT_COOLDOWN_SECONDS);
 
     vi.advanceTimersByTime((DEFAULT_COOLDOWN_SECONDS - 1) * 1000);
@@ -216,5 +227,4 @@ describe('createClusterAutoRetry', () => {
     controller.manualRetry();
     expect(mutate).toHaveBeenCalledTimes(1);
   });
-
 });

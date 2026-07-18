@@ -24,7 +24,25 @@ export const useSuggestionReviewData = () => {
     reviewItems,
   } = useSuggestionReviewQueries();
 
-  const { mutations, invalidateSuggestionQueries, invalidateMediaIdentities } = useSuggestionReviewMutations({
+  const {
+    mutations,
+    invalidateSuggestionQueries,
+    invalidateMediaIdentities,
+    hold,
+    holdAnnounce,
+    isHoldActive,
+    isCommitting,
+    scheduleAccept,
+    scheduleReject,
+    scheduleAcceptMerge,
+    scheduleRejectMerge,
+    scheduleAcceptName,
+    scheduleRejectName,
+    undoHold,
+    retryFailure,
+    setHoldPaused,
+    flushHeld,
+  } = useSuggestionReviewMutations({
     queryClient,
     bulkActionRef,
   });
@@ -40,6 +58,8 @@ export const useSuggestionReviewData = () => {
   const failureCount = Math.max(assignmentQuery.failureCount, mergeQuery.failureCount);
   const tenantId = getConfig().tenant_id;
   const isAnyMutationPending =
+    isHoldActive ||
+    isCommitting ||
     mutations.accept.isPending ||
     mutations.reject.isPending ||
     mutations.acceptMerge.isPending ||
@@ -71,6 +91,20 @@ export const useSuggestionReviewData = () => {
     invalidateSuggestionQueries,
     invalidateMediaIdentities,
     mutations,
+    hold,
+    holdAnnounce,
+    isHoldActive,
+    isCommitting,
+    scheduleAccept,
+    scheduleReject,
+    scheduleAcceptMerge,
+    scheduleRejectMerge,
+    scheduleAcceptName,
+    scheduleRejectName,
+    undoHold,
+    retryFailure,
+    setHoldPaused,
+    flushHeld,
   };
 };
 

@@ -69,15 +69,17 @@ export const queryKeys = {
   },
   suggestions: {
     all: ['suggestions'] as const,
-    pending: () => [...queryKeys.suggestions.all, 'pending'] as const,
     mergePending: () => [...queryKeys.suggestions.all, 'merge'] as const,
     namePending: () => [...queryKeys.suggestions.all, 'name'] as const,
-    identity: () => [...queryKeys.suggestions.all, 'identity'] as const,
-    identityFor: (identityId: string | undefined) => [...queryKeys.suggestions.identity(), identityId] as const,
-    inline: () => [...queryKeys.suggestions.all, 'inline'] as const,
-    inlineFor: (identityId: string) => [...queryKeys.suggestions.inline(), identityId] as const,
-    inlineBatch: (identityIds: readonly string[]) =>
-      [...queryKeys.suggestions.inline(), 'batch', identityIds] as const,
+    /**
+     * Unified assignment-suggestion projection (identity-keyed + review).
+     * Nested under `suggestions.all` so root invalidation still reaches it.
+     */
+    projection: {
+      all: ['suggestions', 'projection'] as const,
+      identityBatch: (idsKey: string) => [...queryKeys.suggestions.projection.all, 'identity-batch', idsKey] as const,
+      reviewPage: (offset: number) => [...queryKeys.suggestions.projection.all, 'review-page', offset] as const,
+    },
   },
   dashboard: {
     all: ['dashboard'] as const,

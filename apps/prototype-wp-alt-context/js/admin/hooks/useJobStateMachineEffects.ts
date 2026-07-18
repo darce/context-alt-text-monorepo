@@ -29,7 +29,7 @@ const refetchFindingsQueries = (queryClient: QueryClient): Promise<unknown> => {
   }
 
   const refetches = [
-    queryClient.refetchQueries({ queryKey: queryKeys.suggestions.pending() }),
+    queryClient.refetchQueries({ queryKey: queryKeys.suggestions.projection.all }),
     queryClient.refetchQueries({ queryKey: queryKeys.suggestions.mergePending() }),
     queryClient.refetchQueries({ queryKey: queryKeys.suggestions.namePending() }),
     queryClient.refetchQueries({ queryKey: queryKeys.media.identities() }),

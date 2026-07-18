@@ -3,13 +3,14 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { InlineSuggestionPrompt } from '../InlineSuggestionPrompt';
-import type { ClusterSuggestion } from '../../../../api/recognition';
+import type { ProjectedSuggestion } from '../suggestionProjection';
 
-const match: ClusterSuggestion = {
-  cluster_id: 'cluster-ada',
+const match: ProjectedSuggestion = {
+  identityId: 'identity-ada',
+  clusterId: 'cluster-ada',
   label: 'Ada Lovelace',
   similarity: 0.92,
-  identity_count: 3,
+  identityCount: 3,
 };
 
 afterEach(() => cleanup());
@@ -39,7 +40,16 @@ describe('InlineSuggestionPrompt (presentational)', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it('fires onConfirm with the match cluster id and label on Yes', async () => {
+  it('renders nothing when the match label is whitespace-only (BR-14)', () => {
+    const blank = { ...match, label: '   ' };
+    const { container } = render(
+      <InlineSuggestionPrompt match={blank} onConfirm={vi.fn()} onReject={vi.fn()} isPending={false} />,
+    );
+
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('fires onConfirm with the match clusterId and label on Yes', async () => {
     const onConfirm = vi.fn();
     const user = userEvent.setup();
     render(<InlineSuggestionPrompt match={match} onConfirm={onConfirm} onReject={vi.fn()} isPending={false} />);

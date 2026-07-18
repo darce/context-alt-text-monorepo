@@ -215,10 +215,11 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 			return new WP_Error( 'missing_identity_id', 'Identity ID is required.', array( 'status' => 400 ) );
 		}
 
+		// No 'threshold': the recognition route accepts only min_confidence, so the
+		// old param never bound (UXP-3 0b-5 dead-param removal).
 		$query = array(
 			'tenant_id' => $this->get_tenant_id(),
 			'top_k'     => absint( $request->get_param( 'top_k' ) ?? 5 ),
-			'threshold' => (float) ( $request->get_param( 'threshold' ) ?? 0.6 ),
 		);
 
 		$response = $this->proxy_request(

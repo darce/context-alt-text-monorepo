@@ -7,6 +7,7 @@ type-safe defaults. Override by instantiating with explicit values in code.
 
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
 from typing import Literal
@@ -193,6 +194,28 @@ class FacePipelineSettings(BaseModel):
             raise ValueError(f"Invalid face_pipeline max_workers={value!r}; must be a positive integer")
         if value <= 0:
             raise ValueError(f"Invalid face_pipeline max_workers={value}; must be a positive integer")
+        return value
+
+    @field_validator("timeout_s", mode="before")
+    @classmethod
+    def _validate_timeout_s(cls, value: object) -> object:
+        """Fail closed on non-finite or non-positive detect timeouts ([CFG-01/02], [RES-03])."""
+        if isinstance(value, bool):
+            raise ValueError(f"Invalid face_pipeline timeout_s={value!r}; must be a finite positive number")
+        if isinstance(value, str):
+            stripped = value.strip()
+            try:
+                value = float(stripped)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid face_pipeline timeout_s={value!r}; must be a finite positive number"
+                ) from exc
+        if isinstance(value, int) and not isinstance(value, bool):
+            value = float(value)
+        if not isinstance(value, float):
+            raise ValueError(f"Invalid face_pipeline timeout_s={value!r}; must be a finite positive number")
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(f"Invalid face_pipeline timeout_s={value!r}; must be a finite positive number")
         return value
 
     @property

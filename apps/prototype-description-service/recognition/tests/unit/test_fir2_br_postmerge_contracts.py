@@ -303,8 +303,9 @@ class TestFir2Br02LandmarksSeam:
         emb /= float(np.linalg.norm(emb))
         runtime.embedder.embed.return_value = [emb]  # type: ignore[attr-defined]
 
-        from PIL import Image
         import io
+
+        from PIL import Image
 
         det = fpa.FacePipelineFaceDetector(runtime, timeout=5.0)
         img = Image.new("RGB", (64, 64), color=(12, 34, 56))
@@ -401,38 +402,33 @@ class TestFir2Br03PoseNeutralQuality:
     def _quality(
         self,
         *,
-        pose_pitch: float | None,
-        pose_yaw: float | None,
-        pose_roll: float | None,
         confidence: float = 0.9,
         bbox_width: int = 100,
         bbox_height: int = 100,
     ):
         return compute_identity_quality(
             confidence=confidence,
-            pose_pitch=pose_pitch,
-            pose_yaw=pose_yaw,
-            pose_roll=pose_roll,
             bbox_width=bbox_width,
             bbox_height=bbox_height,
         )
 
     def test_quality_identical_for_extreme_frontal_and_missing_pose(self) -> None:
-        extreme = self._quality(pose_pitch=45.0, pose_yaw=30.0, pose_roll=15.0)
-        frontal = self._quality(pose_pitch=0.0, pose_yaw=0.0, pose_roll=0.0)
-        missing = self._quality(pose_pitch=None, pose_yaw=None, pose_roll=None)
+        # Pose is no longer a quality input; score is confidence+bbox only.
+        a = self._quality(confidence=0.9, bbox_width=100, bbox_height=100)
+        b = self._quality(confidence=0.9, bbox_width=100, bbox_height=100)
+        c = self._quality(confidence=0.9, bbox_width=100, bbox_height=100)
 
-        assert extreme.score == frontal.score == missing.score
+        assert a.score == b.score == c.score
         assert (
-            extreme.threshold_adjustment
-            == frontal.threshold_adjustment
-            == missing.threshold_adjustment
+            a.threshold_adjustment
+            == b.threshold_adjustment
+            == c.threshold_adjustment
         )
 
     def test_extreme_pose_not_penalized_relative_to_frontal(self) -> None:
         """RED rewrite of the old extreme-pose-penalty expectation."""
-        info = self._quality(pose_pitch=45.0, pose_yaw=0.0, pose_roll=0.0)
-        frontal = self._quality(pose_pitch=0.0, pose_yaw=0.0, pose_roll=0.0)
+        info = self._quality(confidence=0.9, bbox_width=100, bbox_height=100)
+        frontal = self._quality(confidence=0.9, bbox_width=100, bbox_height=100)
         # Same confidence + bbox → same score (pose not in quality formula).
         assert info.score == frontal.score
         assert info.score == pytest.approx(0.9, abs=0.001)
@@ -459,17 +455,18 @@ class TestFir2Br03PoseNeutralQuality:
 
         conf = 0.88
         bbox = (10, 20, 110, 120)  # 100×100
-        extreme = _compute_detection_quality(conf, 60.0, -40.0, 20.0, bbox)
-        frontal = _compute_detection_quality(conf, 0.0, 0.0, 0.0, bbox)
-        missing = _compute_detection_quality(conf, None, None, None, bbox)
-        assert extreme == frontal == missing
+        # Signature is confidence+bbox only; repeated calls are identical.
+        a = _compute_detection_quality(conf, bbox)
+        b = _compute_detection_quality(conf, bbox)
+        c = _compute_detection_quality(conf, bbox)
+        assert a == b == c
 
     def test_threshold_adjustment_matches_for_pose_variants(self) -> None:
-        extreme = self._quality(pose_pitch=80.0, pose_yaw=80.0, pose_roll=80.0)
-        missing = self._quality(pose_pitch=None, pose_yaw=None, pose_roll=None)
-        assert extreme.threshold_adjustment == missing.threshold_adjustment
+        a = self._quality(confidence=0.9, bbox_width=100, bbox_height=100)
+        b = self._quality(confidence=0.9, bbox_width=100, bbox_height=100)
+        assert a.threshold_adjustment == b.threshold_adjustment
         # And matches adjustment derived from the shared score alone.
-        assert extreme.threshold_adjustment == compute_quality_adjustment(extreme.score)
+        assert a.threshold_adjustment == compute_quality_adjustment(a.score)
 
     def test_face_detection_still_carries_model_id_beside_quality(self) -> None:
         """model_id remains the provenance stamp next to quality (PROV-04/06)."""

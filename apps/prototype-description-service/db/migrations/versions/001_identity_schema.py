@@ -6,12 +6,15 @@ import sqlalchemy as sa
 from alembic import op
 from pgvector.sqlalchemy import Vector
 
+from db.settings import get_database_settings
+
 revision = "001_identity_schema"
 down_revision = None
 branch_labels = None
 depends_on = None
 
-EMBEDDING_DIMENSION = 512
+# Sole root: PGVECTOR_DIM → DatabaseSettings.pgvector_dimension (no bare 512).
+EMBEDDING_DIMENSION = int(get_database_settings().pgvector_dimension)
 SAFE_TENANT_EXPR = "NULLIF(current_setting('app.current_tenant', true), '')::uuid"
 BYPASS_RLS_EXPR = "COALESCE(NULLIF(current_setting('app.bypass_rls', true), ''), 'false')::boolean"
 

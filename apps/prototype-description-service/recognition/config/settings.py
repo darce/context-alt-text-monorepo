@@ -57,8 +57,14 @@ def _resolve_face_pipeline_models_dir() -> Path | None:
 
 
 def _resolve_embedding_dimension() -> int:
-    """Bind identity_detection.embedding_dimension to RECOGNITION_EMBEDDING_DIMENSION."""
-    return int(os.environ.get("RECOGNITION_EMBEDDING_DIMENSION", "512"))
+    """Bind identity_detection.embedding_dimension to DatabaseSettings.pgvector_dimension.
+
+    PGVECTOR_DIM is the sole dimension root. RECOGNITION_EMBEDDING_DIMENSION is
+    ignored so it cannot create a second root.
+    """
+    from db.settings import get_database_settings
+
+    return int(get_database_settings().pgvector_dimension)
 
 
 def _resolve_face_pipeline_timeout_s() -> float:
@@ -204,7 +210,10 @@ class IdentityDetectionSettings(BaseModel):
     max_identities_per_image: int = Field(default=999, description="Maximum faces to detect per image.")
     embedding_dimension: int = Field(
         default_factory=_resolve_embedding_dimension,
-        description="Embedding vector dimension (face identity only). Env: RECOGNITION_EMBEDDING_DIMENSION.",
+        description=(
+            "Embedding vector dimension (face identity only). "
+            "Derived from PGVECTOR_DIM / DatabaseSettings.pgvector_dimension."
+        ),
     )
     max_candidates: int = Field(default=10, description="Maximum candidate matches to consider.")
 

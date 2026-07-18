@@ -209,6 +209,21 @@ def canonicalize_local_postgres_dsn(
     )
 
 
+def _resolve_pgvector_dimension() -> int:
+    """Parse PGVECTOR_DIM as a positive integer (sole embedding-dimension root)."""
+
+    raw = os.getenv("PGVECTOR_DIM", "512")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Invalid PGVECTOR_DIM={raw!r}; must be a positive integer"
+        ) from exc
+    if value <= 0:
+        raise ValueError(f"Invalid PGVECTOR_DIM={value}; must be a positive integer")
+    return value
+
+
 @lru_cache(maxsize=1)
 def get_database_settings() -> DatabaseSettings:
     """Load settings from environment variables with sensible defaults."""
@@ -238,7 +253,7 @@ def get_database_settings() -> DatabaseSettings:
     else:
         sync_dsn = _infer_sync_dsn(async_dsn)
 
-    pgvector_dim = int(os.getenv("PGVECTOR_DIM", "512"))
+    pgvector_dim = _resolve_pgvector_dimension()
     embedding_timeout_s = float(os.getenv("DB_EMBEDDING_TIMEOUT_SECONDS", "30"))
     pool_size = int(os.getenv("DB_POOL_SIZE", "20"))
     max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "10"))

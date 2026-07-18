@@ -278,14 +278,11 @@ async def test_insightface_detector_maps_adapter_face_to_face_detection_fields()
     assert det.pose_yaw == -3.0
     assert det.pose_roll == 1.5
     assert det.model_id == model_id
-    # landmark_quality uses bbox[2]/bbox[3] as width/height (current behavior pin)
+    # landmark_quality is confidence + corner-derived bbox size (FIR2-BR-03)
     expected_quality = compute_identity_quality(
         confidence=confidence,
-        pose_pitch=pose[0],
-        pose_yaw=pose[1],
-        pose_roll=pose[2],
-        bbox_width=bbox[2],
-        bbox_height=bbox[3],
+        bbox_width=bbox[2] - bbox[0],
+        bbox_height=bbox[3] - bbox[1],
     ).score
     assert det.landmark_quality == expected_quality
     assert det.media_id  # filled from source hash

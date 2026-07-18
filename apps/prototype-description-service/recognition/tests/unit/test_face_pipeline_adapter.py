@@ -308,12 +308,9 @@ async def test_decode_failure_path_raises_adapter_error(monkeypatch: pytest.Monk
 
 
 def test_quality_with_pose_none_via_helper() -> None:
-    """CR-01 modelless: quality tolerates pose_*=None (same helper as adapter)."""
+    """CR-01 modelless: quality is confidence+bbox only (same helper as adapter)."""
     score = _compute_detection_quality(
         confidence=0.95,
-        pose_pitch=None,
-        pose_yaw=None,
-        pose_roll=None,
         bbox=(10, 20, 50, 80),  # corner (x1,y1,x2,y2) → 40×60
     )
     assert 0.0 <= score <= 1.0

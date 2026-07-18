@@ -22,24 +22,15 @@ def test_compute_detection_quality_uses_corner_bbox_not_edge_as_size() -> None:
     corner_80 = (500, 400, 580, 480)
     score_80 = _compute_detection_quality(
         confidence=conf,
-        pose_pitch=None,
-        pose_yaw=None,
-        pose_roll=None,
         bbox=corner_80,
     )
     expected_80 = compute_identity_quality(
         confidence=conf,
-        pose_pitch=None,
-        pose_yaw=None,
-        pose_roll=None,
         bbox_width=80,
         bbox_height=80,
     ).score
     wrong_edge_80 = compute_identity_quality(
         confidence=conf,
-        pose_pitch=None,
-        pose_yaw=None,
-        pose_roll=None,
         bbox_width=580,
         bbox_height=480,
     ).score
@@ -51,24 +42,15 @@ def test_compute_detection_quality_uses_corner_bbox_not_edge_as_size() -> None:
     corner_40 = (500, 400, 540, 440)  # 40×40 far from origin
     score_40 = _compute_detection_quality(
         confidence=conf,
-        pose_pitch=None,
-        pose_yaw=None,
-        pose_roll=None,
         bbox=corner_40,
     )
     expected_40 = compute_identity_quality(
         confidence=conf,
-        pose_pitch=None,
-        pose_yaw=None,
-        pose_roll=None,
         bbox_width=40,
         bbox_height=40,
     ).score
     wrong_edge_40 = compute_identity_quality(
         confidence=conf,
-        pose_pitch=None,
-        pose_yaw=None,
-        pose_roll=None,
         bbox_width=540,
         bbox_height=440,
     ).score
@@ -80,9 +62,6 @@ class TestComputeIdentityQuality:
     def test_high_confidence_frontal_large_face(self) -> None:
         info = compute_identity_quality(
             confidence=0.95,
-            pose_pitch=0.0,
-            pose_yaw=0.0,
-            pose_roll=0.0,
             bbox_width=200,
             bbox_height=200,
         )
@@ -92,9 +71,6 @@ class TestComputeIdentityQuality:
     def test_low_confidence_penalized(self) -> None:
         info = compute_identity_quality(
             confidence=0.5,
-            pose_pitch=0.0,
-            pose_yaw=0.0,
-            pose_roll=0.0,
             bbox_width=100,
             bbox_height=100,
         )
@@ -109,25 +85,16 @@ class TestComputeIdentityQuality:
         """
         extreme = compute_identity_quality(
             confidence=0.9,
-            pose_pitch=45.0,
-            pose_yaw=0.0,
-            pose_roll=0.0,
             bbox_width=100,
             bbox_height=100,
         )
         frontal = compute_identity_quality(
             confidence=0.9,
-            pose_pitch=0.0,
-            pose_yaw=0.0,
-            pose_roll=0.0,
             bbox_width=100,
             bbox_height=100,
         )
         missing = compute_identity_quality(
             confidence=0.9,
-            pose_pitch=None,
-            pose_yaw=None,
-            pose_roll=None,
             bbox_width=100,
             bbox_height=100,
         )
@@ -137,9 +104,6 @@ class TestComputeIdentityQuality:
     def test_small_face_penalized(self) -> None:
         info = compute_identity_quality(
             confidence=0.9,
-            pose_pitch=0.0,
-            pose_yaw=0.0,
-            pose_roll=0.0,
             bbox_width=32,
             bbox_height=32,
         )

@@ -69,7 +69,7 @@ Golden tests are the heart of this task (guide checklist: landmark order, affine
 - [x] S4 OpenCV pin ADR recorded; chosen pin lands with both suites green
 - [x] Import-purity test: `face_pipeline` imports nothing from worker/HTTP layers
 - [x] Real-corpus smoke run + distribution eyeballed, result recorded
-- [ ] `make check-remote` green; `/review-parallel`; zero open findings; handoff decisions per slice
+- [x] `make check-remote` green; `/review-parallel`; zero open findings; handoff decisions per slice
 
 ## Success Criteria
 

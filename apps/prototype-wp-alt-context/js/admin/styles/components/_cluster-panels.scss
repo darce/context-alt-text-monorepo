@@ -189,3 +189,25 @@
   align-items: center;
   gap: var(--acx-space-4);
 }
+
+/* Show-all members affordance (E21-5 Slice 4 / ③) — pages envelope, never fetch-all. */
+.acx-cluster-members-show-all {
+  margin-top: var(--acx-space-12);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--acx-space-8);
+
+  &__button {
+    min-width: var(--acx-space-24);
+    min-height: var(--acx-space-24);
+    font-size: var(--acx-text-sm);
+    font-weight: var(--acx-font-weight-medium);
+  }
+
+  &__error {
+    margin: 0;
+    font-size: var(--acx-text-sm);
+    color: var(--acx-color-danger-strong);
+  }
+}

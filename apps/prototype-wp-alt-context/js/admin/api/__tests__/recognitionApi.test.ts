@@ -179,6 +179,25 @@ describe('recognitionApi', () => {
       total: 0,
       truncated: false,
     });
+    expect(fetchApiMock).toHaveBeenCalledWith(
+      expect.stringMatching(/\/cluster-1\/members$/),
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('forwards optional limit and offset query params on cluster members', async () => {
+    fetchApiMock.mockResolvedValue({
+      members: [],
+      limit: 2,
+      total: 5,
+      truncated: true,
+    });
+
+    await fetchClusterMembers('cluster-1', { limit: 2, offset: 2 });
+
+    const [endpoint] = fetchApiMock.mock.calls[0] ?? [];
+    expect(String(endpoint)).toContain('limit=2');
+    expect(String(endpoint)).toContain('offset=2');
   });
 
   it('rejects cluster-members payloads without canonical envelope metadata', async () => {

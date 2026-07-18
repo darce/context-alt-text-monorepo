@@ -10,7 +10,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { __, sprintf } from '@wordpress/i18n';
 
 import {
-  fetchClusterMembers,
   listRecognitionClusters,
   mergeCluster,
   revertMergeCluster,
@@ -35,6 +34,7 @@ import {
 import { getProjectionNotReadyMessage, isProjectionNotReadyError } from './clusterMutationUtils';
 import { MergeUndoBanner } from './MergeUndoBanner';
 import { invalidateSuggestionProjection, isHumanLabeledTarget } from './suggestionProjection';
+import { useShowAllClusterMembers } from './useShowAllClusterMembers';
 
 interface ClusterLabelingPanelProps {
   clusterId: string;
@@ -156,12 +156,16 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     void invalidateSuggestionProjection(queryClient);
   };
 
-  const { data: membersResponse, isLoading } = useQuery({
-    queryKey: queryKeys.clusters.memberList(clusterId),
-    queryFn: () => fetchClusterMembers(clusterId),
-    enabled: Boolean(clusterId),
-  });
-  const members = membersResponse?.members ?? [];
+  const {
+    members,
+    isLoading,
+    truncated,
+    total,
+    isFullyLoaded,
+    isExpanding,
+    expandError,
+    showAll,
+  } = useShowAllClusterMembers(clusterId);
 
   const {
     data: persons = [],
@@ -481,6 +485,33 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
             <p>{__('No members found.', 'alt-context')}</p>
           )}
         </div>
+        {truncated && !isFullyLoaded ? (
+          <div className="acx-cluster-members-show-all">
+            <button
+              type="button"
+              className="button acx-cluster-members-show-all__button"
+              onClick={() => {
+                void showAll();
+              }}
+              disabled={isExpanding}
+              data-truncated={truncated ? 'true' : 'false'}
+              data-total={total}
+            >
+              {isExpanding
+                ? __('Loading all members…', 'alt-context')
+                : sprintf(
+                    /* translators: %d: total member count */
+                    __('Show all (%d)', 'alt-context'),
+                    total,
+                  )}
+            </button>
+            {expandError ? (
+              <p className="acx-cluster-members-show-all__error" role="alert">
+                {expandError}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
 
         <form
           onSubmit={(event) => {

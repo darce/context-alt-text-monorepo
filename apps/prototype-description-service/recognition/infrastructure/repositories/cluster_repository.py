@@ -880,6 +880,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         cluster_id: str,
         *,
         limit: int | None = None,
+        offset: int = 0,
     ) -> list[tuple[MediaIdentity, float]]:
         """Return identity ORM records with their membership similarity for a cluster.
 
@@ -888,6 +889,8 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         """
         if limit is not None and limit <= 0:
             return []
+        if offset < 0:
+            offset = 0
 
         stmt = (
             select(MediaIdentity, IdentityMemberModel.similarity)
@@ -895,6 +898,8 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             .where(IdentityMemberModel.cluster_id == _coerce_uuid(cluster_id))
             .order_by(IdentityMemberModel.assigned_at, IdentityMemberModel.identity_id)
         )
+        if offset:
+            stmt = stmt.offset(offset)
         if limit is not None:
             stmt = stmt.limit(limit)
         result = await self._session.execute(stmt)

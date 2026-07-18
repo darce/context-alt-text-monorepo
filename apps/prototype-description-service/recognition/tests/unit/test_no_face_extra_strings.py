@@ -13,28 +13,26 @@ from pathlib import Path
 
 # Install-extra forms only — not bare Python list literals like ``[face]`` vars.
 # Covers: '[face]' / ".[face]" / pkg[face] / extra == "face" / --extra face / face = [
+# Package-extra arm avoids Python subscripts used as assignment targets (``x[local] =``).
 _FORBIDDEN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "[face]",
-        re.compile(r"""(?:["']\[face\]["']|\.\[face\]|\w\[face\]|extra\s*==\s*["']face["']|--extra\s+face\b)"""),
+        re.compile(
+            r"""(?:["']\[face\]["']|\.\[face\]|(?<![A-Za-z0-9_.-])[\w.-]+\[face\](?!\s*=)|extra\s*==\s*["']face["']|--extra\s+face\b)"""
+        ),
     ),
     (
         "[local]",
-        re.compile(r"""(?:["']\[local\]["']|\.\[local\]|\w\[local\]|extra\s*==\s*["']local["']|--extra\s+local\b)"""),
+        re.compile(
+            r"""(?:["']\[local\]["']|\.\[local\]|(?<![A-Za-z0-9_.-])[\w.-]+\[local\](?!\s*=)|extra\s*==\s*["']local["']|--extra\s+local\b)"""
+        ),
     ),
     ("face extra table", re.compile(r"""(?m)^face\s*=\s*\[""")),
 )
 
-# Relative to monorepo root. Historical / plan docs may still describe the rename.
+# Relative to monorepo root. Guard tests document the forbidden strings; plan/
+# assessment/history trees are outside _SCAN_ROOTS so no allowlist needed there.
 _ALLOWLIST_PREFIXES: tuple[str, ...] = (
-    "docs/tasks/",
-    "docs/archive/",
-    "docs/assessments/",
-    "docs/adrs/",
-    "docs/scopes/",
-    "docs/epics/",
-    "docs/workbay/",
-    # The guard tests themselves document the forbidden strings.
     "apps/prototype-description-service/recognition/tests/unit/test_no_face_extra_strings.py",
     "apps/prototype-description-service/recognition/tests/unit/test_bench_extra_isolation.py",
 )
@@ -42,6 +40,9 @@ _ALLOWLIST_PREFIXES: tuple[str, ...] = (
 _SCAN_ROOTS: tuple[str, ...] = (
     "apps/prototype-description-service",
     "docs/runbooks",
+    "infra",
+    ".github",
+    "scripts",
 )
 
 _TEXT_SUFFIXES: frozenset[str] = frozenset(
@@ -149,3 +150,12 @@ def test_pyproject_defines_bench_not_face() -> None:
     gpu_block = re.search(r"(?ms)^gpu\s*=\s*\[(.*?)\]", pyproject)
     assert gpu_block is not None
     assert "insightface" not in gpu_block.group(1)
+
+
+def test_dockerfile_pip_installs_bench_extra() -> None:
+    """S5CR-01: recognition Dockerfile must install the ``.[bench]`` extra."""
+    dockerfile = (_service_root() / "Dockerfile").read_text(encoding="utf-8")
+    pip_lines = [ln for ln in dockerfile.splitlines() if "pip install" in ln]
+    assert any(".[bench]" in ln for ln in pip_lines), (
+        "Dockerfile pip install line must contain '.[bench]' (incumbent dark extra)"
+    )

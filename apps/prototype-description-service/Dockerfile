@@ -41,8 +41,8 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
     && pip install --no-cache-dir ".[bench]"
 
 # Fail closed if pip resolved onnxruntime outside the S1-evidenced 1.22+ line
-# (image install does not use uv.lock). [SERVE-07][PROV-08]
-RUN python -c "import onnxruntime as o; v=o.__version__; parts=v.split('.'); assert len(parts)>=2 and (int(parts[0]), int(parts[1])) >= (1, 22), v; print('ORT', v)"
+# (image install does not use uv.lock). Bounded to [1.22, 2.0). [SERVE-07][PROV-08]
+RUN python -c "import sys,onnxruntime as o; v=o.__version__; p=tuple(int(x) for x in v.split('.')[:2]); print('ORT', v); sys.exit(0 if (1,22)<=p<(2,0) else 1)"
 
 # ---------------------------------------------------------------------------
 # Stage 2: Runtime — slim image with only what's needed to run

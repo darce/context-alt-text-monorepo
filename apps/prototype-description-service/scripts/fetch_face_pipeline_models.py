@@ -12,8 +12,8 @@ Usage (from apps/prototype-description-service):
     uv run python scripts/fetch_face_pipeline_models.py --verify-only
 
 ``--verify-only`` checks local files against the manifest (no network) and
-exits non-zero on missing or hash-mismatched models — use for dark-env
-provisioning and deploy preflight.
+exits non-zero on missing, model hash mismatch, or license hash mismatch —
+use for dark-env provisioning and deploy preflight.
 
 ONNX files are gitignored; LICENSE files are committed for audit trail.
 
@@ -322,7 +322,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--verify-only",
         action="store_true",
-        help="Check local files against the manifest only (no network). Exit 1 on missing/hash mismatch.",
+        help=(
+            "Check local files against the manifest only (no network). "
+            "Exit 1 on missing, model hash mismatch, or license hash mismatch (no network)."
+        ),
     )
     args = parser.parse_args(argv)
     try:

@@ -127,11 +127,16 @@ from an older commit.
 - Local/manual deploy remains available and identical:
   `REMOTE_BUILD=1 scripts/deploy/recognition-service.sh deploy <env>`.
 - **Dark face_pipeline envs (FIR-4):** the image still ships insightface via
-  `.[bench]` (incumbent dark default) and does **not** include face_pipeline
-  ONNX weights. If an environment sets
-  `RECOGNITION_FACE_PIPELINE_PROFILE=face_pipeline`, provision models on the
-  host/volume first
-  (`uv run python scripts/fetch_face_pipeline_models.py` from
-  `apps/prototype-description-service`), then re-check offline with
-  `--verify-only` before flipping the profile. Missing/hash-mismatched models
-  fail closed at boot.
+  `.[bench]` (incumbent dark default) and does **not** bake face_pipeline ONNX
+  weights. Today the only host-mounted volume is `/data/cache`. Before setting
+  `RECOGNITION_FACE_PIPELINE_PROFILE=face_pipeline`:
+  1. Fetch models into a host path that maps into that volume, e.g.
+     `uv run python scripts/fetch_face_pipeline_models.py --dest /data/cache/face_pipeline_models`
+     (from `apps/prototype-description-service` on the host, or any path that
+     becomes the container mount).
+  2. Set `RECOGNITION_FACE_PIPELINE_MODELS_DIR` to the **container** path for
+     that directory (recommended: `/data/cache/face_pipeline_models`).
+  3. Re-check offline with
+     `uv run python scripts/fetch_face_pipeline_models.py --dest <same-path> --verify-only`
+     before flipping the profile. Missing, model-hash, or license-hash mismatches
+     fail closed at boot (no network on verify).

@@ -251,6 +251,54 @@ describe('useBulkReviewCommit (PR-30 state machine)', () => {
     expect(selectedIds.has('c')).toBe(true);
   });
 
+  it('TEST-15: unmount while holding after deselecting items[0] — commits next survivor, not deselected id', async () => {
+    // Discrimination guard: old unmount used raw held.items[0]; BR-50/BR-62 re-filter
+    // at unmount must skip the deselected first id and fire the next live survivor.
+    let liveSelection = new Set(['a', 'b', 'c']);
+    onSelectedIdsChange = (next: Set<string>) => {
+      liveSelection = next;
+      selectedIds = next;
+    };
+
+    const { result, unmount, rerender } = renderHook(() =>
+      useBulkReviewCommit({
+        selectedIds: liveSelection,
+        onSelectedIdsChange,
+        resolveItems,
+        flushHeldSingle,
+        commitOne,
+        heldSingleSuggestionId: null,
+        setBulkActionActive,
+        isBulkActiveRef,
+        awaitBulkIdleOrFlushRef,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.initiateBulk();
+    });
+    expect(result.current.bulk.phase).toBe('holding');
+    expect(result.current.bulk.heldIds[0]).toBe('a');
+
+    // Deselect the first held id during the hold (live selection leaves the set).
+    act(() => {
+      const next = new Set(liveSelection);
+      next.delete('a');
+      onSelectedIdsChange(next);
+    });
+    rerender();
+    expect(liveSelection.has('a')).toBe(false);
+
+    unmount();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(commitCalls).not.toContain('a');
+    expect(commitCalls).toEqual(['b']);
+  });
+
   it('BR-46: unmount mid-sequence after item1 — in-flight item2 finishes; remainder selected', async () => {
     let resolveB: ((v: 'committed' | 'failed') => void) | null = null;
     const bGate = new Promise<'committed' | 'failed'>((resolve) => {

@@ -1,0 +1,60 @@
+{
+  "detection": {
+    "bbox_xywh": [
+      99.22891235351562,
+      55.49568176269531,
+      302.497314453125,
+      343.0172424316406
+    ],
+    "landmarks_xy": [
+      [
+        179.10194396972656,
+        163.66177368164062
+      ],
+      [
+        312.83966064453125,
+        163.9061279296875
+      ],
+      [
+        245.4210662841797,
+        240.57662963867188
+      ],
+      [
+        183.67080688476562,
+        307.0216979980469
+      ],
+      [
+        300.813720703125,
+        308.989013671875
+      ]
+    ],
+    "score": 0.9023683071136475
+  },
+  "image_sha256": "281a6ce4602320edcc25be1f20897b8c971064f27fcd762e98a55274d26c21f6",
+  "image_shape": [
+    480,
+    480,
+    3
+  ],
+  "kind": "detector_golden",
+  "model": "face_detection_yunet_2026may.onnx",
+  "model_sha256": "ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0",
+  "nms_threshold": 0.3,
+  "procedure": {
+    "description": "seeded gaussian soft face (skin disc + dark eyes + nose + mouth)",
+    "eye_sep": 0.095,
+    "head_rx": 0.27,
+    "head_ry": 0.36,
+    "mouth_y": 0.155,
+    "noise_scale": 3.0,
+    "seed": 19,
+    "size": 480
+  },
+  "score_threshold": 0.9,
+  "status": "recorded",
+  "tolerances": {
+    "bbox_px": 2.0,
+    "landmarks_px": 2.0,
+    "score": 0.02
+  }
+}

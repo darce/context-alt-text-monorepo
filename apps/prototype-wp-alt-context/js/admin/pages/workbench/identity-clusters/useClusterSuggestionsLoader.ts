@@ -1,7 +1,8 @@
 /**
  * Loader hook for cluster label suggestions.
  *
- * Fetches identity-based similarity suggestions and label search results.
+ * Fetches identity-based similarity suggestions, label search results, and
+ * roster persons; builds the shared naming union via buildNamingOptions.
  */
 
 import React from 'react';
@@ -14,6 +15,8 @@ import {
   type ClusterSummary,
   type IdentityBatchSuggestionsResponse,
 } from '../../../api/recognition';
+import { useRosterEntries } from '../../../hooks/useRosterHooks';
+import { buildNamingOptions, type NamingOption } from './buildNamingOptions';
 import {
   PROJECTION_TOP_K,
   identityBatchIdsKey,
@@ -37,15 +40,22 @@ export interface ClusterSuggestionsLoaderOptions {
 export interface ClusterSuggestionsLoaderResult {
   /** Projected identity-keyed suggestions (server order; isHumanLabeledTarget filtered) */
   identityProjection?: ProjectedSuggestion[];
-  /** Raw label search matches */
+  /** Shared naming-union options (persons ∪ human-labeled clusters) */
+  namingOptions: readonly NamingOption[];
+  /** Pre-dedupe collision set for the duplicate guard */
+  collisionsByLabel: ReadonlyMap<string, readonly NamingOption[]>;
+  /** Raw label search matches (pre-builder) */
   labelMatches?: ClusterSummary[];
-  /** Whether suggestion queries are loading */
+  /** Whether suggestion / roster queries are loading */
   isLoading: boolean;
-  /** Find cluster ID by label (case-insensitive) */
+  /** Roster query failed — consumers degrade to cluster-only options */
+  rosterError: boolean;
+  /** Find cluster ID by label (case-insensitive); remote search only */
   findClusterByLabel: (label: string, signal?: AbortSignal) => Promise<{ id: string; label: string } | null>;
 }
 
 const DEFAULT_DEBOUNCE_MS = 300;
+const EMPTY_COLLISIONS: ReadonlyMap<string, readonly NamingOption[]> = new Map();
 
 export const useClusterSuggestionsLoader = ({
   identityId,
@@ -103,6 +113,19 @@ export const useClusterSuggestionsLoader = ({
     staleTime: 30000,
   });
 
+  const { data: rosterEntries = [], isLoading: rosterLoading, isError: rosterError } = useRosterEntries();
+
+  const { options: namingOptions, collisionsByLabel } = React.useMemo(() => {
+    // A11Y-24: roster error/empty degrade to cluster-only options.
+    const roster = rosterError ? [] : rosterEntries;
+    return buildNamingOptions({
+      rosterEntries: roster,
+      labelMatches: labelMatches ?? [],
+      filter: debouncedValue,
+      excludeClusterId: editableClusterId,
+    });
+  }, [rosterEntries, rosterError, labelMatches, debouncedValue, editableClusterId]);
+
   const findClusterByLabel = React.useCallback(
     async (label: string, signal?: AbortSignal): Promise<{ id: string; label: string } | null> => {
       const normalizedLabel = label.toLowerCase().trim();
@@ -135,8 +158,11 @@ export const useClusterSuggestionsLoader = ({
 
   return {
     identityProjection,
+    namingOptions,
+    collisionsByLabel: collisionsByLabel ?? EMPTY_COLLISIONS,
     labelMatches,
-    isLoading: suggestionsLoading || labelMatchesLoading,
+    isLoading: suggestionsLoading || labelMatchesLoading || (enabled && rosterLoading),
+    rosterError,
     findClusterByLabel,
   };
 };

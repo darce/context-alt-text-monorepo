@@ -1,10 +1,14 @@
 /**
  * Hook for executing matched cluster actions with optional confirmation.
+ *
+ * Match ids are bare cluster ids (source-gated / unwrapped by callers). Person
+ * option values never enter this path (PR-16).
  */
 
 import React from 'react';
 
 import type { ComboboxOption } from '../../../../components/ui/combobox';
+import { unwrapClusterOptionId } from './buildNamingOptions';
 import type { ClusterGroup } from './types';
 import type { SaveDialogAction } from './useClusterConfirmDialog';
 
@@ -22,6 +26,18 @@ interface UseClusterMatchActionOptions {
   requestConfirm: (action: SaveDialogAction, label: string) => Promise<boolean>;
 }
 
+const optionClusterId = (option: ComboboxOption): string | null => {
+  const unwrapped = unwrapClusterOptionId(String(option.value));
+  if (unwrapped) {
+    return unwrapped;
+  }
+  // Legacy bare cluster id (tests / callers that have not migrated values yet)
+  if (option.source === 'person') {
+    return null;
+  }
+  return typeof option.value === 'string' && option.value.length > 0 ? option.value : null;
+};
+
 export const useClusterMatchAction = ({
   members,
   editableClusterId,
@@ -32,7 +48,8 @@ export const useClusterMatchAction = ({
 }: UseClusterMatchActionOptions) => {
   const isDangerousMerge = React.useCallback(
     (clusterId: string) => {
-      const targetMemberCount = (options.find((option) => option.value === clusterId)?.identityCount ?? 0) as number;
+      const match = options.find((option) => optionClusterId(option) === clusterId);
+      const targetMemberCount = (match?.identityCount ?? 0) as number;
       return targetMemberCount >= 5;
     },
     [options],

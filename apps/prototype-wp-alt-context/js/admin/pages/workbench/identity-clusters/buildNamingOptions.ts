@@ -54,9 +54,7 @@ export interface BuildNamingOptionsResult {
 export const namingOptionValue = (source: NamingOptionSource, id: string | number): string =>
   source === 'person' ? `${PERSON_VALUE_PREFIX}${id}` : `${CLUSTER_VALUE_PREFIX}${id}`;
 
-export const parseNamingOptionValue = (
-  value: string,
-): { source: NamingOptionSource; id: string } | null => {
+export const parseNamingOptionValue = (value: string): { source: NamingOptionSource; id: string } | null => {
   if (value.startsWith(PERSON_VALUE_PREFIX)) {
     return { source: 'person', id: value.slice(PERSON_VALUE_PREFIX.length) };
   }

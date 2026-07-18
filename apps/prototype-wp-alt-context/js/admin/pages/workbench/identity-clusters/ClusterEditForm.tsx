@@ -6,9 +6,24 @@ import React, { useEffect, useRef } from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
 import type { ComboboxOption } from '../../../../components/ui/combobox';
+import { parseNamingOptionValue, unwrapClusterOptionId } from './buildNamingOptions';
 
 /** Similarity at-or-above this threshold uses the high match-score band. */
 const MATCH_BAND_HIGH_THRESHOLD = 0.7;
+
+const sourceBadgeLabel = (option: ComboboxOption): string | null => {
+  const source =
+    option.source === 'person' || option.source === 'cluster'
+      ? option.source
+      : parseNamingOptionValue(String(option.value))?.source;
+  if (source === 'person') {
+    return __('Person', 'alt-context');
+  }
+  if (source === 'cluster' && option.group === 'All Labels') {
+    return __('Cluster', 'alt-context');
+  }
+  return null;
+};
 
 interface ClusterEditFormProps {
   /** Current label input value */
@@ -79,8 +94,15 @@ export const ClusterEditForm = ({
   const handleConfirmSuggestionClick = React.useCallback(
     (option: ComboboxOption) => (event: React.MouseEvent<HTMLButtonElement>) => {
       event.stopPropagation();
-      if (onConfirmSuggestion) {
-        onConfirmSuggestion(option.value, option.label);
+      const parsed = parseNamingOptionValue(String(option.value));
+      // Person selection is rename/create with canonical casing only — never merge (PR-16).
+      if (parsed?.source === 'person' || option.source === 'person') {
+        onSave(option.label);
+        return;
+      }
+      const clusterId = unwrapClusterOptionId(String(option.value)) ?? (parsed ? null : String(option.value));
+      if (onConfirmSuggestion && clusterId) {
+        onConfirmSuggestion(clusterId, option.label);
       } else {
         onSave(option.label);
       }
@@ -125,8 +147,23 @@ export const ClusterEditForm = ({
                   className="acx-identity-cluster__suggestion-item"
                   onClick={handleSuggestionSelect(option.label)}
                   title={sprintf(__('Use label "%s"', 'alt-context'), option.label)}
+                  aria-label={
+                    sourceBadgeLabel(option)
+                      ? sprintf(
+                          /* translators: 1: person/cluster name, 2: source (Person or Cluster) */
+                          __('%1$s (%2$s)', 'alt-context'),
+                          option.label,
+                          sourceBadgeLabel(option) ?? '',
+                        )
+                      : option.label
+                  }
                 >
                   <span className="acx-identity-cluster__suggestion-label">{option.label}</span>
+                  {sourceBadgeLabel(option) && (
+                    <span className="acx-badge acx-badge--source" data-source={option.source ?? ''}>
+                      {sourceBadgeLabel(option)}
+                    </span>
+                  )}
                   {option.similarity !== undefined && (
                     <span
                       className={`acx-identity-cluster__match-score ${

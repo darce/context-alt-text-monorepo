@@ -20,7 +20,10 @@ import { DATA_SOURCE } from '../../../../api/recognition/types';
 import { resetConfigCache } from '../../../../api/config';
 import { queryKeys } from '../../../../api/queryKeys';
 import { commitClusterToRosterEntry, listRosterEntries } from '../../../../api/rosterApi';
-import type { ReviewQueueKindParam } from '../../../../hooks/workbenchQueueUrl';
+import type {
+  ReviewQueueBandParam,
+  ReviewQueueKindParam,
+} from '../../../../hooks/workbenchQueueUrl';
 import {
   JUST_LABEL_COPY,
   MODEL_OUTPUT_DISCLOSURE,
@@ -130,23 +133,32 @@ vi.mock('../../../../api/rosterApi', () => ({
 interface HarnessProps {
   initialIndex?: number;
   initialKind?: ReviewQueueKindParam;
+  initialBand?: ReviewQueueBandParam;
   emptyStateAnchorRef?: React.RefObject<HTMLElement | null>;
   queueRef?: React.RefObject<ReviewQueueHandle>;
   onLabel?: (clusterId: string) => void;
   onReview?: (clusterId: string) => void;
+  /** Expose selection for M2 asserts (optional). */
+  selectionRef?: React.MutableRefObject<Set<string>>;
 }
 
 const ReviewQueueHarness = ({
   initialIndex = 0,
   initialKind = 'all',
+  initialBand = 'all',
   emptyStateAnchorRef,
   queueRef,
   onLabel,
   onReview,
+  selectionRef,
 }: HarnessProps): React.JSX.Element => {
   const [index, setIndex] = React.useState(initialIndex);
   const [kind, setKind] = React.useState<ReviewQueueKindParam>(initialKind);
+  const [band, setBand] = React.useState<ReviewQueueBandParam>(initialBand);
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
+  if (selectionRef) {
+    selectionRef.current = selectedIds;
+  }
   return (
     <ReviewQueue
       ref={queueRef}
@@ -154,6 +166,8 @@ const ReviewQueueHarness = ({
       onIndexChange={setIndex}
       kind={kind}
       onKindChange={setKind}
+      band={band}
+      onBandChange={setBand}
       selectedIds={selectedIds}
       onSelectedIdsChange={setSelectedIds}
       emptyStateAnchorRef={emptyStateAnchorRef}
@@ -818,6 +832,7 @@ describe('ReviewQueue', () => {
     const Parent = (): React.JSX.Element => {
       const [index, setIndex] = React.useState(1);
       const [kind, setKind] = React.useState<ReviewQueueKindParam>('all');
+      const [band, setBand] = React.useState<ReviewQueueBandParam>('all');
       const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
       const [mounted, setMounted] = React.useState(true);
       return (
@@ -831,6 +846,8 @@ describe('ReviewQueue', () => {
               onIndexChange={setIndex}
               kind={kind}
               onKindChange={setKind}
+              band={band}
+              onBandChange={setBand}
               selectedIds={selectedIds}
               onSelectedIdsChange={setSelectedIds}
             />
@@ -1005,6 +1022,7 @@ describe('ReviewQueue', () => {
     const Parent = (): React.JSX.Element => {
       const [index, setIndex] = React.useState(3);
       const [kind, setKind] = React.useState<ReviewQueueKindParam>('all');
+      const [band, setBand] = React.useState<ReviewQueueBandParam>('all');
       const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
       return (
         <div>
@@ -1014,6 +1032,8 @@ describe('ReviewQueue', () => {
             onIndexChange={setIndex}
             kind={kind}
             onKindChange={setKind}
+            band={band}
+            onBandChange={setBand}
             selectedIds={selectedIds}
             onSelectedIdsChange={setSelectedIds}
           />
@@ -2012,6 +2032,7 @@ describe('ReviewQueue', () => {
       const Parent = (): React.JSX.Element => {
         const [index, setIndex] = React.useState(0);
         const [kind, setKind] = React.useState<ReviewQueueKindParam>('all');
+        const [band, setBand] = React.useState<ReviewQueueBandParam>('all');
         const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
         const [mounted, setMounted] = React.useState(true);
         return (
@@ -2026,6 +2047,8 @@ describe('ReviewQueue', () => {
                 onIndexChange={setIndex}
                 kind={kind}
                 onKindChange={setKind}
+                band={band}
+                onBandChange={setBand}
                 selectedIds={selectedIds}
                 onSelectedIdsChange={setSelectedIds}
               />
@@ -2057,6 +2080,214 @@ describe('ReviewQueue', () => {
       await screen.findByRole('button', { name: 'Yes' });
       expect(screen.getByTestId('acx-review-selection-tray')).toHaveTextContent('1 selected');
       expect(screen.getByTestId('acx-review-select')).toHaveAttribute('aria-pressed', 'true');
+    });
+  });
+
+  describe('Slice 6 band chips (④) + matrix M2 surface', () => {
+    it('band chips filter queue by similarity post-eligibility; compose with KIND', async () => {
+      vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+        suggestions: [
+          {
+            id: 'strong-1',
+            identity_id: 'id-1',
+            suggested_cluster_id: 'c-strong',
+            representative_similarity: 0.92,
+            cluster_label: 'Maria',
+            cluster_identity_count: 3,
+          },
+          {
+            id: 'weak-1',
+            identity_id: 'id-2',
+            suggested_cluster_id: 'c-weak',
+            representative_similarity: 0.55,
+            cluster_label: 'Alex',
+            cluster_identity_count: 2,
+          },
+        ],
+        limit: 10,
+        offset: 0,
+      });
+      vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+        suggestions: [
+          {
+            id: 'merge-strong',
+            cluster_a_id: 'a',
+            cluster_b_id: 'b',
+            similarity: 0.88,
+            status: 'pending',
+          },
+        ],
+        limit: 10,
+        offset: 0,
+      });
+
+      const user = userEvent.setup();
+      renderQueue();
+
+      await screen.findByText(/Is this/);
+      // 2 assignments + 1 merge
+      expect(screen.getByText('1 of 3')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Strong matches' })).toHaveAttribute(
+        'aria-pressed',
+        'false',
+      );
+
+      await user.click(screen.getByRole('button', { name: 'Strong matches' }));
+      await waitFor(() => {
+        // strong-1 (0.92) + merge-strong (0.88); weak-1 dropped
+        expect(screen.getByText('1 of 2')).toBeInTheDocument();
+      });
+      expect(screen.getByRole('button', { name: 'Strong matches' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+      expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Maria/);
+
+      // KIND ∩ band: Close matches ∩ Strong → only strong-1
+      await user.click(screen.getByRole('button', { name: 'Close matches' }));
+      await waitFor(() => {
+        expect(screen.getByText('1 of 1')).toBeInTheDocument();
+      });
+      expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Maria/);
+
+      // Toggle band active → all (band clears; KIND still assignment)
+      await user.click(screen.getByRole('button', { name: 'Strong matches' }));
+      await waitFor(() => {
+        // assignment only: strong + weak
+        expect(screen.getByText('1 of 2')).toBeInTheDocument();
+      });
+    });
+
+    it('matrix M2 surface: bulk preview/commit label uses selection ∩ band ∩ kind', async () => {
+      vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+        suggestions: [
+          {
+            id: 's-strong',
+            identity_id: 'id-1',
+            suggested_cluster_id: 'c1',
+            representative_similarity: 0.91,
+            cluster_label: 'Maria',
+            cluster_identity_count: 2,
+          },
+          {
+            id: 's-weak',
+            identity_id: 'id-2',
+            suggested_cluster_id: 'c2',
+            representative_similarity: 0.5,
+            cluster_label: 'Alex',
+            cluster_identity_count: 2,
+          },
+        ],
+        limit: 10,
+        offset: 0,
+      });
+
+      // Seed selection after settle (avoid prune-on-empty-queue wiping ids).
+      const Parent = (): React.JSX.Element => {
+        const [index, setIndex] = React.useState(0);
+        const [kind, setKind] = React.useState<ReviewQueueKindParam>('all');
+        const [band, setBand] = React.useState<ReviewQueueBandParam>('all');
+        const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
+        return (
+          <div>
+            <button
+              type="button"
+              data-testid="seed-selection"
+              onClick={() => setSelectedIds(new Set(['s-strong', 's-weak']))}
+            >
+              seed
+            </button>
+            <button
+              type="button"
+              data-testid="apply-strong-band"
+              onClick={() => {
+                setBand('strong');
+                setIndex(0);
+              }}
+            >
+              strong-band
+            </button>
+            <ReviewQueue
+              index={index}
+              onIndexChange={setIndex}
+              kind={kind}
+              onKindChange={setKind}
+              band={band}
+              onBandChange={setBand}
+              selectedIds={selectedIds}
+              onSelectedIdsChange={setSelectedIds}
+            />
+          </div>
+        );
+      };
+
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+      });
+      const user = userEvent.setup();
+      render(
+        <QueryClientProvider client={queryClient}>
+          <Parent />
+        </QueryClientProvider>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('1 of 2')).toBeInTheDocument();
+      });
+      await user.click(screen.getByTestId('seed-selection'));
+      expect(screen.getByTestId('acx-review-selection-tray')).toHaveTextContent('2 selected');
+
+      // Activate strong band → queue shows only s-strong; selection still 2.
+      await user.click(screen.getByTestId('apply-strong-band'));
+      await waitFor(() => {
+        expect(screen.getByText('1 of 1')).toBeInTheDocument();
+      });
+      expect(screen.getByTestId('acx-review-card')).toHaveTextContent('Maria');
+      expect(screen.getByTestId('acx-review-selection-tray')).toHaveTextContent('2 selected');
+
+      await user.click(screen.getByRole('button', { name: 'Review selection' }));
+
+      // Commit label + preview count only the filter-visible selection (M2 exact-id).
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-bulk-commit')).toHaveTextContent('Accept 1 for Maria');
+      });
+      const preview = screen.getByTestId('acx-review-selection-panel');
+      expect(within(preview).getAllByRole('listitem')).toHaveLength(1);
+    });
+
+    it('rq= band initial state filters on mount (round-trip seed)', async () => {
+      vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+        suggestions: [
+          {
+            id: 's-strong',
+            identity_id: 'id-1',
+            suggested_cluster_id: 'c1',
+            representative_similarity: 0.9,
+            cluster_label: 'StrongPerson',
+            cluster_identity_count: 1,
+          },
+          {
+            id: 's-weak',
+            identity_id: 'id-2',
+            suggested_cluster_id: 'c2',
+            representative_similarity: 0.4,
+            cluster_label: 'WeakPerson',
+            cluster_identity_count: 1,
+          },
+        ],
+        limit: 10,
+        offset: 0,
+      });
+
+      renderQueue({ initialBand: 'weaker' });
+      await waitFor(() => {
+        expect(screen.getByText('1 of 1')).toBeInTheDocument();
+      });
+      expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/WeakPerson/);
+      expect(screen.getByRole('button', { name: 'Weaker matches' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
     });
   });
 });

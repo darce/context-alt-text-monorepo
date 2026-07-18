@@ -3,6 +3,7 @@ import { __ } from '@wordpress/i18n';
 import { ErrorBoundary } from '../../../components/ErrorBoundary';
 import {
   useWorkbenchFilters,
+  type ReviewQueueBandParam,
   type ReviewQueueKindParam,
 } from '../../hooks/useWorkbenchFilters';
 import { useScrollRestoration } from '../../hooks/useScrollRestoration';
@@ -50,9 +51,10 @@ export const ScanTabContent = (): React.JSX.Element => {
   const [userExpandedMedia, setUserExpandedMedia] = React.useState(false);
   const previousHasFindings = React.useRef(findings.hasFindings);
 
-  // Lifted queue index + kind — survives label/review panel unmount of ReviewQueue.
+  // Lifted queue index + kind + band — survives label/review panel unmount of ReviewQueue.
   const [queueIndex, setQueueIndex] = React.useState(queueState.index);
   const [queueKind, setQueueKind] = React.useState<ReviewQueueKindParam>(queueState.kind);
+  const [queueBand, setQueueBand] = React.useState<ReviewQueueBandParam>(queueState.band);
   // PR-31: id-keyed selection lifted beside index — panel round-trips preserve it.
   const [selectedSuggestionIds, setSelectedSuggestionIds] = React.useState<Set<string>>(
     () => new Set(),
@@ -62,7 +64,8 @@ export const ScanTabContent = (): React.JSX.Element => {
   React.useEffect(() => {
     setQueueIndex(queueState.index);
     setQueueKind(queueState.kind);
-  }, [queueState.index, queueState.kind]);
+    setQueueBand(queueState.band);
+  }, [queueState.index, queueState.kind, queueState.band]);
 
   React.useEffect(() => {
     if (findings.hasFindings && !previousHasFindings.current) {
@@ -86,6 +89,15 @@ export const ScanTabContent = (): React.JSX.Element => {
     (nextKind: ReviewQueueKindParam): void => {
       setQueueKind(nextKind);
       setQueueState({ kind: nextKind, index: 0 });
+      setQueueIndex(0);
+    },
+    [setQueueState],
+  );
+
+  const handleBandChange = React.useCallback(
+    (nextBand: ReviewQueueBandParam): void => {
+      setQueueBand(nextBand);
+      setQueueState({ band: nextBand, index: 0 });
       setQueueIndex(0);
     },
     [setQueueState],
@@ -154,6 +166,8 @@ export const ScanTabContent = (): React.JSX.Element => {
               onIndexChange={handleIndexChange}
               kind={queueKind}
               onKindChange={handleKindChange}
+              band={queueBand}
+              onBandChange={handleBandChange}
               selectedIds={selectedSuggestionIds}
               onSelectedIdsChange={setSelectedSuggestionIds}
               emptyStateAnchorRef={findingsDetailRef}

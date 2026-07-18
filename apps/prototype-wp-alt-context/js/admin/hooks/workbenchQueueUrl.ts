@@ -1,16 +1,18 @@
 /**
- * E21-5 Slice 1b — `rq=` URL param encoding for the review queue.
+ * E21-5 — `rq=` URL param encoding for the review queue.
  *
  * Encoding (pinned): `rq=<kind>.<band>.<index>`
  *   kind ∈ {all, assignment, merge}
- *   band ∈ {all, strong, weaker}  (always `all` in 1b)
+ *   band ∈ {all, strong, weaker}  (Slice 6 wires band chips; 1b left band=`all`)
  *   index ≥ 0 integer
  *
  * Omitted-as-defaults; malformed → defaults (never crash).
  */
 
 import {
+  REVIEW_QUEUE_BAND,
   REVIEW_QUEUE_FILTER,
+  type ReviewQueueBand,
   type ReviewQueueFilter,
 } from '../pages/workbench/identity-clusters/reviewQueueDriver';
 
@@ -113,5 +115,29 @@ export const filterToKindParam = (filter: ReviewQueueFilter): ReviewQueueKindPar
       return REVIEW_QUEUE_KIND_PARAM.MERGE;
     default:
       return REVIEW_QUEUE_KIND_PARAM.ALL;
+  }
+};
+
+/** Map URL band param → driver band (sr-007). */
+export const bandParamToBand = (band: ReviewQueueBandParam): ReviewQueueBand => {
+  switch (band) {
+    case REVIEW_QUEUE_BAND_PARAM.STRONG:
+      return REVIEW_QUEUE_BAND.STRONG;
+    case REVIEW_QUEUE_BAND_PARAM.WEAKER:
+      return REVIEW_QUEUE_BAND.WEAKER;
+    default:
+      return REVIEW_QUEUE_BAND.ALL;
+  }
+};
+
+/** Map driver band → URL band param. */
+export const bandToBandParam = (band: ReviewQueueBand): ReviewQueueBandParam => {
+  switch (band) {
+    case REVIEW_QUEUE_BAND.STRONG:
+      return REVIEW_QUEUE_BAND_PARAM.STRONG;
+    case REVIEW_QUEUE_BAND.WEAKER:
+      return REVIEW_QUEUE_BAND_PARAM.WEAKER;
+    default:
+      return REVIEW_QUEUE_BAND_PARAM.ALL;
   }
 };

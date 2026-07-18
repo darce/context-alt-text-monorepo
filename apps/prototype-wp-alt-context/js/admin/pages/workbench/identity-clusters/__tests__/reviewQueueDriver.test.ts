@@ -9,15 +9,23 @@ import type { PendingMergeSuggestion, PendingNameSuggestion, PendingSuggestion }
 import type { TopUnlabeledCluster } from '../../../../api/recognition/types/cluster';
 import {
   buildReviewQueue,
+  bulkSelectableIdsInFilters,
   clampQueueIndex,
   filterReviewQueue,
+  filterReviewQueueByBand,
+  filterReviewQueueComposite,
+  intersectSelectionWithFilters,
+  matchesSimilarityBand,
   NEXT_ACTION_CHIP_LABEL,
   NEXT_ACTION_KIND,
   nextQueueIndex,
   prevQueueIndex,
   removeAtQueueCursor,
   removeAtQueueIndex,
+  REVIEW_QUEUE_BAND,
+  REVIEW_QUEUE_BAND_CHIP_LABEL,
   REVIEW_QUEUE_FILTER,
+  STRONG_SIMILARITY_MIN,
   queueItemToNextAction,
 } from '../reviewQueueDriver';
 import { fromPendingRow, projectReviewQueue } from '../suggestionProjection';
@@ -121,7 +129,11 @@ describe('buildReviewQueue — order (default priority)', () => {
       clusterId: 'c-high',
       label: 'Grace Hopper',
     });
-    expect(queue[2]).toEqual({ kind: NEXT_ACTION_KIND.MERGE, suggestionId: 'merge-7' });
+    expect(queue[2]).toEqual({
+      kind: NEXT_ACTION_KIND.MERGE,
+      suggestionId: 'merge-7',
+      similarity: 0.9,
+    });
     expect(queue[3]).toEqual({
       kind: NEXT_ACTION_KIND.NAME,
       suggestionId: 'name-9',
@@ -129,6 +141,12 @@ describe('buildReviewQueue — order (default priority)', () => {
     });
     expect(queue[4]).toEqual({ kind: NEXT_ACTION_KIND.CLUSTER, clusterId: 'large' });
     expect(queue[5]).toEqual({ kind: NEXT_ACTION_KIND.CLUSTER, clusterId: 'small' });
+    // Assignment items carry ProjectedSuggestion.similarity for band filtering.
+    expect(queue[0]).toMatchObject({
+      kind: NEXT_ACTION_KIND.ASSIGNMENT,
+      suggestionId: 'sugg-high',
+      similarity: 0.95,
+    });
   });
 
   it('orders assignment review leg via UXP-3 projectReviewQueue similarity (matrix fixture)', () => {
@@ -284,6 +302,153 @@ describe('buildReviewQueue — filter (KIND)', () => {
     expect(mergesOnly).toHaveLength(2);
     expect(mergesOnly.every((item) => item.kind === NEXT_ACTION_KIND.MERGE)).toBe(true);
     expect(filterReviewQueue(full, REVIEW_QUEUE_FILTER.ALL)).toEqual(full);
+  });
+});
+
+describe('band filter (④) + matrix M2 composition', () => {
+  it('pins STRONG_SIMILARITY_MIN and human band chip copy (sr-007)', () => {
+    expect(STRONG_SIMILARITY_MIN).toBe(0.8);
+    expect(REVIEW_QUEUE_BAND_CHIP_LABEL[REVIEW_QUEUE_BAND.STRONG]).toBe('Strong matches');
+    expect(REVIEW_QUEUE_BAND_CHIP_LABEL[REVIEW_QUEUE_BAND.WEAKER]).toBe('Weaker matches');
+  });
+
+  it('matchesSimilarityBand is a pure predicate over similarity (post-eligibility)', () => {
+    expect(matchesSimilarityBand(0.92, REVIEW_QUEUE_BAND.STRONG)).toBe(true);
+    expect(matchesSimilarityBand(0.8, REVIEW_QUEUE_BAND.STRONG)).toBe(true);
+    expect(matchesSimilarityBand(0.79, REVIEW_QUEUE_BAND.STRONG)).toBe(false);
+    expect(matchesSimilarityBand(0.79, REVIEW_QUEUE_BAND.WEAKER)).toBe(true);
+    expect(matchesSimilarityBand(0.8, REVIEW_QUEUE_BAND.WEAKER)).toBe(false);
+    expect(matchesSimilarityBand(undefined, REVIEW_QUEUE_BAND.STRONG)).toBe(false);
+    expect(matchesSimilarityBand(undefined, REVIEW_QUEUE_BAND.ALL)).toBe(true);
+    expect(matchesSimilarityBand(0.1, REVIEW_QUEUE_BAND.ALL)).toBe(true);
+  });
+
+  it('band predicate filters assignment + merge by ProjectedSuggestion.similarity', () => {
+    // multiSuggestionIdentity review order by similarity: 0.92, 0.81, 0.7
+    const { pendingRows, expectedReviewSuggestionIdsBySimilarity } =
+      suggestionProjectionMatrix.multiSuggestionIdentity;
+    const queue = buildReviewQueue({
+      reviewItems: buildSuggestionReviewItems(projectReviewQueue(pendingRows)),
+      mergeSuggestions: [makeMerge({ id: 'merge-strong', similarity: 0.91 }), makeMerge({ id: 'merge-weak', similarity: 0.55 })],
+      nameSuggestions: [makeName({ id: 'name-1' })],
+      sortedClusters: [makeCluster({ id: 'cluster-1' })],
+    });
+
+    const strong = filterReviewQueueByBand(queue, REVIEW_QUEUE_BAND.STRONG);
+    expect(
+      strong.map((item) => ('suggestionId' in item ? item.suggestionId : item.clusterId)),
+    ).toEqual(['sug-multi-a', 'sug-multi-b', 'merge-strong']);
+
+    const weaker = filterReviewQueueByBand(queue, REVIEW_QUEUE_BAND.WEAKER);
+    expect(
+      weaker.map((item) => ('suggestionId' in item ? item.suggestionId : item.clusterId)),
+    ).toEqual(['sug-multi-c', 'merge-weak']);
+
+    // Name/cluster have no similarity → only when band=all.
+    expect(queue.some((item) => item.kind === NEXT_ACTION_KIND.NAME)).toBe(true);
+    expect(strong.some((item) => item.kind === NEXT_ACTION_KIND.NAME)).toBe(false);
+    expect(weaker.some((item) => item.kind === NEXT_ACTION_KIND.CLUSTER)).toBe(false);
+
+    // Full review-leg order preserved under band=all.
+    const assignmentIds = queue
+      .filter((item) => item.kind === NEXT_ACTION_KIND.ASSIGNMENT)
+      .map((item) => ('suggestionId' in item ? item.suggestionId : null));
+    expect(assignmentIds).toEqual(expectedReviewSuggestionIdsBySimilarity);
+  });
+
+  it('KIND ∩ band compose by intersection', () => {
+    const queue = buildReviewQueue({
+      reviewItems: makeReviewItems(
+        makeSuggestion({
+          id: 'a-strong',
+          cluster_label: 'Alice',
+          representative_similarity: 0.95,
+        }),
+        makeSuggestion({
+          id: 'a-weak',
+          suggested_cluster_id: 'c-weak',
+          cluster_label: 'Bob',
+          representative_similarity: 0.5,
+        }),
+      ),
+      mergeSuggestions: [
+        makeMerge({ id: 'm-strong', similarity: 0.88 }),
+        makeMerge({ id: 'm-weak', similarity: 0.4 }),
+      ],
+      nameSuggestions: [],
+      sortedClusters: [],
+    });
+
+    const assignmentStrong = filterReviewQueueComposite(
+      queue,
+      REVIEW_QUEUE_FILTER.ASSIGNMENT,
+      REVIEW_QUEUE_BAND.STRONG,
+    );
+    expect(assignmentStrong.map((i) => ('suggestionId' in i ? i.suggestionId : null))).toEqual([
+      'a-strong',
+    ]);
+
+    const mergeWeaker = filterReviewQueueComposite(
+      queue,
+      REVIEW_QUEUE_FILTER.MERGE,
+      REVIEW_QUEUE_BAND.WEAKER,
+    );
+    expect(mergeWeaker.map((i) => ('suggestionId' in i ? i.suggestionId : null))).toEqual([
+      'm-weak',
+    ]);
+  });
+
+  it('matrix M2: bulk preview/commit id set is selection ∩ (KIND ∩ band) [TEST-08]', () => {
+    const queue = buildReviewQueue({
+      reviewItems: makeReviewItems(
+        makeSuggestion({
+          id: 's-strong',
+          cluster_label: 'Maria',
+          representative_similarity: 0.92,
+        }),
+        makeSuggestion({
+          id: 's-weak',
+          suggested_cluster_id: 'c2',
+          cluster_label: 'Maria',
+          representative_similarity: 0.55,
+        }),
+        makeSuggestion({
+          id: 's-strong-other',
+          suggested_cluster_id: 'c3',
+          cluster_label: 'Alex',
+          representative_similarity: 0.9,
+        }),
+      ),
+      mergeSuggestions: [makeMerge({ id: 'm-strong', similarity: 0.85 })],
+      nameSuggestions: [],
+      sortedClusters: [],
+    });
+
+    // Select everything; active filters = assignment + strong → only strong assignments.
+    const selected = new Set(['s-strong', 's-weak', 's-strong-other', 'm-strong', 'ghost']);
+    const previewIds = intersectSelectionWithFilters(
+      selected,
+      queue,
+      REVIEW_QUEUE_FILTER.ASSIGNMENT,
+      REVIEW_QUEUE_BAND.STRONG,
+    );
+    // Exact id set (TEST-08) — order follows selection iteration over allowed ids.
+    expect(previewIds).toEqual(['s-strong', 's-strong-other']);
+
+    // Band-only (kind=all): strong assignments + strong merge.
+    expect(
+      bulkSelectableIdsInFilters(queue, REVIEW_QUEUE_FILTER.ALL, REVIEW_QUEUE_BAND.STRONG).sort(),
+    ).toEqual(['m-strong', 's-strong', 's-strong-other'].sort());
+
+    // Weaker ∩ all kinds.
+    expect(
+      intersectSelectionWithFilters(
+        selected,
+        queue,
+        REVIEW_QUEUE_FILTER.ALL,
+        REVIEW_QUEUE_BAND.WEAKER,
+      ),
+    ).toEqual(['s-weak']);
   });
 });
 

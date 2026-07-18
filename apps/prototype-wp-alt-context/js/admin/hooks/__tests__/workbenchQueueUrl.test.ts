@@ -40,6 +40,9 @@ describe('workbenchQueueUrl', () => {
     expect(serializeQueueState(DEFAULT_QUEUE_STATE)).toBeNull();
     expect(serializeQueueState({ kind: 'assignment', band: 'all', index: 0 })).toBe('assignment.all.0');
     expect(serializeQueueState({ kind: 'all', band: 'all', index: 2 })).toBe('all.all.2');
+    expect(serializeQueueState({ kind: 'assignment', band: 'strong', index: 1 })).toBe(
+      'assignment.strong.1',
+    );
     expect(parseQueueState(serializeQueueState({ kind: 'merge', band: 'weaker', index: 9 }))).toEqual({
       kind: 'merge',
       band: 'weaker',

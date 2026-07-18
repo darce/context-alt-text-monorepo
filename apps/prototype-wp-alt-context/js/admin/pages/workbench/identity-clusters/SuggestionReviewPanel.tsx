@@ -8,10 +8,10 @@ import React from 'react';
 import { __ } from '@wordpress/i18n';
 
 import { DATA_SOURCE } from '../../../api/recognition/types';
-import type { PendingSuggestion } from '../../../api/recognition';
 import { CollapsibleMergeQueue } from './CollapsibleMergeQueue';
 import { EmptyStateWarning } from './EmptyStateWarning';
 import { GroupedSuggestionCard, SuggestionCard } from './SuggestionCards';
+import type { ReviewSuggestion } from './suggestionReviewItems';
 import { TopClustersSection } from './TopClustersSection';
 import { useSuggestionReviewData } from './useSuggestionReviewData';
 
@@ -64,14 +64,14 @@ export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPan
     });
   };
 
-  const acceptGroupedSuggestions = async (clusterId: string, suggestions: PendingSuggestion[]): Promise<void> => {
+  const acceptGroupedSuggestions = async (clusterId: string, suggestions: ReviewSuggestion[]): Promise<void> => {
     if (bulkActionClusterId) {
       return;
     }
     setBulkActionClusterId(clusterId);
     bulkActionRef.current = true;
     try {
-      await Promise.all(suggestions.map((suggestion) => mutations.accept.mutateAsync(suggestion.id)));
+      await Promise.all(suggestions.map((suggestion) => mutations.accept.mutateAsync(suggestion.suggestionId)));
       setExpandedGroups((current) => {
         if (!current.has(clusterId)) {
           return current;
@@ -88,14 +88,14 @@ export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPan
     }
   };
 
-  const rejectGroupedSuggestions = async (clusterId: string, suggestions: PendingSuggestion[]): Promise<void> => {
+  const rejectGroupedSuggestions = async (clusterId: string, suggestions: ReviewSuggestion[]): Promise<void> => {
     if (bulkActionClusterId) {
       return;
     }
     setBulkActionClusterId(clusterId);
     bulkActionRef.current = true;
     try {
-      await Promise.all(suggestions.map((suggestion) => mutations.reject.mutateAsync(suggestion.id)));
+      await Promise.all(suggestions.map((suggestion) => mutations.reject.mutateAsync(suggestion.suggestionId)));
       setExpandedGroups((current) => {
         if (!current.has(clusterId)) {
           return current;
@@ -111,16 +111,16 @@ export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPan
     }
   };
 
-  const renderSuggestionCard = (suggestion: PendingSuggestion): React.JSX.Element => (
+  const renderSuggestionCard = (suggestion: ReviewSuggestion): React.JSX.Element => (
     <SuggestionCard
-      key={`assign-${suggestion.id}`}
+      key={`assign-${suggestion.suggestionId}`}
       suggestion={suggestion}
       lowConfidenceThreshold={LOW_CONFIDENCE_THRESHOLD}
-      onAccept={() => mutations.accept.mutate(suggestion.id)}
-      onReject={() => mutations.reject.mutate(suggestion.id)}
+      onAccept={() => mutations.accept.mutate(suggestion.suggestionId)}
+      onReject={() => mutations.reject.mutate(suggestion.suggestionId)}
       onLabel={(clusterId) => {
         if (onLabel) {
-          onLabel(clusterId ?? suggestion.suggested_cluster_id);
+          onLabel(clusterId ?? suggestion.clusterId);
         }
       }}
       onReview={(clusterId) => {

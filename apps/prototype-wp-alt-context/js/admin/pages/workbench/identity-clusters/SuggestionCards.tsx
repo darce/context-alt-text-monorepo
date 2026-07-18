@@ -3,10 +3,12 @@ import { __ } from '@wordpress/i18n';
 
 import { Avatar } from '../../../../components/ui/avatar';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
-import type { PendingSuggestion } from '../../../api/recognition';
+import type { ReviewSuggestion, SuggestionReviewItem } from './suggestionReviewItems';
+
+export type { ReviewSuggestion, SuggestionReviewItem };
 
 interface SuggestionCardProps {
-  suggestion: PendingSuggestion;
+  suggestion: ReviewSuggestion;
   onAccept: () => void;
   onReject: () => void;
   onLabel: (clusterId?: string) => void;
@@ -18,7 +20,7 @@ interface SuggestionCardProps {
 interface GroupedSuggestionCardProps {
   clusterId: string;
   label: string;
-  suggestions: PendingSuggestion[];
+  suggestions: ReviewSuggestion[];
   onAcceptAll: () => void;
   onRejectAll: () => void;
   onToggleReviewEach: () => void;
@@ -27,20 +29,6 @@ interface GroupedSuggestionCardProps {
   lowConfidenceThreshold: number;
   children?: React.ReactNode;
 }
-
-export type SuggestionReviewItem =
-  | {
-      type: 'single';
-      score: number;
-      suggestion: PendingSuggestion;
-    }
-  | {
-      type: 'group';
-      clusterId: string;
-      score: number;
-      label: string;
-      suggestions: PendingSuggestion[];
-    };
 
 export const SuggestionCard = ({
   suggestion,
@@ -51,21 +39,26 @@ export const SuggestionCard = ({
   isPending,
   lowConfidenceThreshold,
 }: SuggestionCardProps): React.JSX.Element => {
-  const matchPercent = Math.round(suggestion.representative_similarity * 100);
-  const isLowConfidence = suggestion.representative_similarity < lowConfidenceThreshold;
-  const suggestedLabel = suggestion.suggested_label;
-  const hasLabel = Boolean(suggestion.cluster_label ?? suggestedLabel);
-  const displayLabel = suggestion.cluster_label ?? suggestedLabel ?? __('Unnamed cluster', 'alt-context');
+  const matchPercent = Math.round(suggestion.similarity * 100);
+  const isLowConfidence = suggestion.similarity < lowConfidenceThreshold;
+  const suggestedLabel = suggestion.enrichment?.suggestedLabel;
+  const hasLabel = Boolean(suggestion.label ?? suggestedLabel);
+  const displayLabel = suggestion.label ?? suggestedLabel ?? __('Unnamed cluster', 'alt-context');
   const identityFace =
-    suggestion.identity_media_url && suggestion.identity_bbox
-      ? { mediaUrl: suggestion.identity_media_url, bbox: suggestion.identity_bbox }
+    suggestion.enrichment?.identityMediaUrl && suggestion.enrichment?.identityBbox
+      ? { mediaUrl: suggestion.enrichment.identityMediaUrl, bbox: suggestion.enrichment.identityBbox }
       : null;
   const representativeFace =
-    suggestion.representative_media_url && suggestion.representative_bbox
-      ? { mediaUrl: suggestion.representative_media_url, bbox: suggestion.representative_bbox }
+    suggestion.enrichment?.representativeMediaUrl && suggestion.enrichment?.representativeBbox
+      ? {
+          mediaUrl: suggestion.enrichment.representativeMediaUrl,
+          bbox: suggestion.enrichment.representativeBbox,
+        }
       : null;
-  const identityThumbUrl = suggestion.identity_thumb_url ?? suggestion.identity_media_url ?? null;
-  const representativeThumbUrl = suggestion.representative_thumb_url ?? suggestion.representative_media_url ?? null;
+  const identityThumbUrl =
+    suggestion.enrichment?.identityThumbUrl ?? suggestion.enrichment?.identityMediaUrl ?? null;
+  const representativeThumbUrl =
+    suggestion.enrichment?.representativeThumbUrl ?? suggestion.enrichment?.representativeMediaUrl ?? null;
 
   return (
     <div className={`acx-suggestion-card${isLowConfidence ? ' acx-suggestion-card--low-confidence' : ''}`}>
@@ -119,13 +112,13 @@ export const SuggestionCard = ({
           {hasLabel ? (
             <>
               {__('Is this', 'alt-context')} <strong>{displayLabel}</strong>?
-              {suggestedLabel && !suggestion.cluster_label && (
+              {suggestedLabel && !suggestion.label && (
                 <span className="acx-badge acx-badge--inferred" title={__('Inferred label', 'alt-context')}>
-                  {suggestion.suggested_label_source === 'similar_cluster'
+                  {suggestion.enrichment?.suggestedLabelSource === 'similar_cluster'
                     ? __('Similar to labeled', 'alt-context')
-                    : suggestion.suggested_label_source === 'identity'
+                    : suggestion.enrichment?.suggestedLabelSource === 'identity'
                       ? __('Identity match', 'alt-context')
-                      : suggestion.suggested_label_source === 'roster'
+                      : suggestion.enrichment?.suggestedLabelSource === 'roster'
                         ? __('Roster match', 'alt-context')
                         : __('Suggested', 'alt-context')}
                 </span>
@@ -137,10 +130,10 @@ export const SuggestionCard = ({
         </p>
         <p className="acx-suggestion-card__match">
           {matchPercent}% {__('match', 'alt-context')}
-          {suggestion.cluster_identity_count && (
+          {suggestion.identityCount && (
             <span className="acx-suggestion-card__count">
               {' '}
-              ({suggestion.cluster_identity_count} {__('in cluster', 'alt-context')})
+              ({suggestion.identityCount} {__('in cluster', 'alt-context')})
             </span>
           )}
           {isLowConfidence && (
@@ -173,7 +166,7 @@ export const SuggestionCard = ({
           <button
             type="button"
             className="button button-primary acx-suggestion-card__label"
-            onClick={() => onLabel(suggestion.suggested_cluster_id)}
+            onClick={() => onLabel(suggestion.clusterId)}
             disabled={isPending}
           >
             {__('Name Person', 'alt-context')}
@@ -183,7 +176,7 @@ export const SuggestionCard = ({
           <button
             type="button"
             className="button button-link acx-suggestion-card__review"
-            onClick={() => onReview(suggestion.suggested_cluster_id)}
+            onClick={() => onReview(suggestion.clusterId)}
             title={__('Review cluster details', 'alt-context')}
           >
             {__('Review details', 'alt-context')}
@@ -206,7 +199,7 @@ export const GroupedSuggestionCard = ({
   lowConfidenceThreshold,
   children,
 }: GroupedSuggestionCardProps): React.JSX.Element => {
-  const topSimilarity = Math.max(...suggestions.map((suggestion) => suggestion.representative_similarity));
+  const topSimilarity = Math.max(...suggestions.map((suggestion) => suggestion.similarity));
   const matchPercent = Math.round(topSimilarity * 100);
   const visibleCandidates = suggestions.slice(0, 8);
   const extraCandidatesCount = Math.max(suggestions.length - visibleCandidates.length, 0);
@@ -221,19 +214,20 @@ export const GroupedSuggestionCard = ({
         <div className="acx-suggestion-card__face acx-suggestion-card__face--grid">
           <div className="acx-face-grid-preview acx-face-grid-preview--candidates">
             {visibleCandidates.map((suggestion) => {
-              const identityThumbUrl = suggestion.identity_thumb_url ?? suggestion.identity_media_url;
-              return suggestion.identity_media_url && suggestion.identity_bbox ? (
+              const identityThumbUrl =
+                suggestion.enrichment?.identityThumbUrl ?? suggestion.enrichment?.identityMediaUrl;
+              return suggestion.enrichment?.identityMediaUrl && suggestion.enrichment?.identityBbox ? (
                 <FaceThumbnail
-                  key={suggestion.id}
-                  mediaUrl={suggestion.identity_media_url}
-                  bbox={suggestion.identity_bbox}
+                  key={suggestion.suggestionId}
+                  mediaUrl={suggestion.enrichment.identityMediaUrl}
+                  bbox={suggestion.enrichment.identityBbox}
                   size="sm"
                   alt={__('Candidate face', 'alt-context')}
                   className="acx-suggestion-card__thumb"
                 />
               ) : identityThumbUrl ? (
                 <Avatar
-                  key={suggestion.id}
+                  key={suggestion.suggestionId}
                   src={identityThumbUrl}
                   size="md"
                   alt={__('Candidate face', 'alt-context')}
@@ -241,7 +235,7 @@ export const GroupedSuggestionCard = ({
                 />
               ) : (
                 <span
-                  key={suggestion.id}
+                  key={suggestion.suggestionId}
                   className="acx-suggestion-card__thumb acx-suggestion-card__thumb--placeholder"
                 />
               );

@@ -14,7 +14,9 @@ import { MergeSurvivorProvider, useMergeSurvivors } from '../MergeSurvivorContex
 import {
   LIVE_TARGET_CLOSE_ANNOUNCE,
   LIVE_TARGET_REBIND_ANNOUNCE,
+  useLiveReviewTarget,
 } from '../useLiveReviewTarget';
+import { useOpenReviewTargetLifecycle } from '../useOpenReviewTargetLifecycle';
 
 const membersNotFound = (clusterId = 'x'): HTTPError =>
   new HTTPError({
@@ -68,8 +70,11 @@ const PanelProviders = ({ children }: { children: React.ReactNode }) => (
   </ClusterPanelProvider>
 );
 
-/** Owner-level lifecycle live region (mirrors ScanTabContent): survives the
- * panel's rebind remount / retirement unmount. */
+/** Always-mounted owner (mirrors ScanTabContent): runs the retirement lifecycle
+ * hook and owns the persistent `role=status` live region so the announce
+ * survives the panel's rebind remount / retirement unmount. This harness renders
+ * the panel unconditionally (fixed cluster id) and routes the hook's retirement
+ * close to the provided spies. */
 const OwnedPanel = ({
   clusterId,
   onClose,
@@ -79,18 +84,22 @@ const OwnedPanel = ({
   onClose: () => void;
   onFocusQueueRoot?: () => void;
 }) => {
+  const { resolveSurvivor } = useMergeSurvivors();
   const [lifecycleMessage, setLifecycleMessage] = React.useState<string | null>(null);
+  useLiveReviewTarget(clusterId, {
+    resolveSurvivor: (retiredId) => resolveSurvivor(retiredId),
+    onAnnounce: setLifecycleMessage,
+    onClose: () => {
+      onClose();
+      onFocusQueueRoot?.();
+    },
+  });
   return (
     <>
       <p role="status" aria-live="polite">
         {lifecycleMessage}
       </p>
-      <ClusterReviewPanel
-        clusterId={clusterId}
-        onClose={onClose}
-        onFocusQueueRoot={onFocusQueueRoot}
-        onLifecycleAnnounce={setLifecycleMessage}
-      />
+      <ClusterReviewPanel clusterId={clusterId} onClose={onClose} />
     </>
   );
 };
@@ -117,7 +126,10 @@ const renderPanel = (
   return { queryClient, ...utils };
 };
 
-/** Mirrors ScanTabContent ownership: panel keyed by clusterPanel.clusterId. */
+/** Mirrors ScanTabContent ownership: the always-mounted owner opens the review
+ * via the panel reducer (user action), runs the retirement lifecycle through the
+ * shared owner wiring, and mounts the panel on the returned `reviewClusterId`
+ * (the rebound survivor, or null once retired). */
 const OwnedReviewHarness = ({
   initialClusterId,
   onFocusQueueRoot,
@@ -131,6 +143,13 @@ const OwnedReviewHarness = ({
   const { recordMergeSurvivor } = useMergeSurvivors();
   const [lifecycleMessage, setLifecycleMessage] = React.useState<string | null>(null);
   const seeded = React.useRef(false);
+
+  const { reviewClusterId } = useOpenReviewTargetLifecycle({
+    requestedClusterId: clusterPanel.mode === 'review' ? clusterPanel.clusterId : null,
+    onAnnounce: setLifecycleMessage,
+    onFocusQueueRoot,
+    onRetireClose: () => dispatchClusterPanel({ type: 'close' }),
+  });
 
   React.useEffect(() => {
     if (!seeded.current) {
@@ -147,15 +166,13 @@ const OwnedReviewHarness = ({
       <p role="status" aria-live="polite">
         {lifecycleMessage}
       </p>
-      {clusterPanel.mode !== 'review' || !clusterPanel.clusterId ? (
+      {reviewClusterId === null ? (
         <div data-testid="review-closed">closed</div>
       ) : (
         <ClusterReviewPanel
-          key={clusterPanel.clusterId}
-          clusterId={clusterPanel.clusterId}
+          key={reviewClusterId}
+          clusterId={reviewClusterId}
           onClose={() => dispatchClusterPanel({ type: 'close' })}
-          onFocusQueueRoot={onFocusQueueRoot}
-          onLifecycleAnnounce={setLifecycleMessage}
         />
       )}
     </>
@@ -493,8 +510,11 @@ describe('ClusterReviewPanel', () => {
       </QueryClientProvider>,
     );
 
+    // Persistent owner-owned live region announces the rebind (survives the
+    // panel remount). Target the text: the remounted survivor panel also renders
+    // its own (empty) show-all role=status region.
     await waitFor(() => {
-      expect(screen.getByRole('status')).toHaveTextContent(LIVE_TARGET_REBIND_ANNOUNCE);
+      expect(screen.getByText(LIVE_TARGET_REBIND_ANNOUNCE)).toHaveAttribute('role', 'status');
     });
     // Remounted on survivor — live membership of the survivor, never the retired id.
     await waitFor(() => {

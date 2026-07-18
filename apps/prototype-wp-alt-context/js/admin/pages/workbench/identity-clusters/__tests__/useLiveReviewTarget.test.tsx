@@ -219,7 +219,7 @@ describe('useLiveReviewTarget', () => {
     const { rerender } = renderHook(
       ({ id }: { id: string | null }) =>
         useLiveReviewTarget(id, { resolveSurvivor: () => null, onClose, onAnnounce }),
-      { wrapper: createWrapper(), initialProps: { id: 'cluster-x' as string | null } },
+      { wrapper: createWrapper(), initialProps: { id: 'cluster-x' } },
     );
 
     await waitFor(() => {

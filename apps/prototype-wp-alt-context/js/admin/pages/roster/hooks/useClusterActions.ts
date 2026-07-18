@@ -5,6 +5,7 @@ import { queryKeys } from '../../../api/queryKeys';
 import type { BatchAnalyzeResponse } from '../../../api/recognition';
 import { commitClusterToRosterEntry } from '../../../api/rosterApi';
 import { dismissCluster, mergeCluster, reassignClusterIdentity, scanFacesBatched } from '../../../api/recognition';
+import { invalidateSuggestionProjection } from '../../workbench/identity-clusters/suggestionProjection';
 import { useToast } from '../../../context/ToastContext';
 import { offlineActionReason, useRemoteActionGate } from '../../../hooks/useRemoteActionGate';
 import { useSyncOffline } from '../../../hooks/useSyncOffline';
@@ -120,6 +121,9 @@ export const useClusterActions = ({
       await Promise.all(clusterIds.map((id) => dismissCluster(id)));
     },
     onSuccess: () => {
+      // clusterDismiss event (SUGGESTION_PROJECTION_INVALIDATION_EVENTS): dismissed
+      // clusters may back pending assignment suggestions on any surface.
+      void invalidateSuggestionProjection(queryClient);
       void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
       success(__('Clusters dismissed.', 'alt-context'));
     },

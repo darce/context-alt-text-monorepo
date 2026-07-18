@@ -308,7 +308,7 @@ Proof:
 
 - [ ] `HTTPError` with `status` + delta-seconds `retryAfterSeconds`; `fetchApi` throws it.
 - [ ] Single QueryClient predicate: transport + 429/503-with-`Retry-After`; no other 4xx; no second 5xx layer.
-- [ ] All four private policies deleted (three in `useRecognitionHooks.ts`, one in `useDescribeRunProgress.ts`); 404 guards migrated to `error.status === 404`.
+- [x] All four private policies deleted (three in `useRecognitionHooks.ts`, one in `useDescribeRunProgress.ts`); 404 guards migrated to `error.status === 404`.
 - [ ] `useMediaIdentities`'s `retry: false` retained with its rationale recorded in code, not left as a silent divergence.
 - [ ] Characterization tests for current 404 behavior green before the migration.
 - [ ] Unit tests: 429 / 503+header / 503-bare / 403 / 404 / malformed header; each watched failing once.

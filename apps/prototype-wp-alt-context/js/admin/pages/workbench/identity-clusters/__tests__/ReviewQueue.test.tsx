@@ -17,9 +17,9 @@ import { DATA_SOURCE } from '../../../../api/recognition/types';
 import { resetConfigCache } from '../../../../api/config';
 import { queryKeys } from '../../../../api/queryKeys';
 import type { ReviewQueueKindParam } from '../../../../hooks/workbenchQueueUrl';
-import { ReviewQueue, type ReviewQueueHandle } from '../ReviewQueue';
+import { CommitHoldRegion, ReviewQueue, type ReviewQueueHandle } from '../ReviewQueue';
 import { REVIEW_QUEUE_DRAIN_MESSAGE } from '../reviewQueueDriver';
-import { UNDO_HOLD_MS } from '../useSuggestionReviewMutations';
+import { HOLD_STATUS_COPY, UNDO_HOLD_MS } from '../useSuggestionReviewMutations';
 
 /**
  * Click an accept/reject control under fake setTimeout so the Slice-2 hold can
@@ -501,6 +501,206 @@ describe('ReviewQueue', () => {
     });
   });
 
+  it('BR-16: undo before navigate yields 0 POSTs', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.95,
+          avg_member_similarity: 0.9,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+        {
+          id: 'sugg-2',
+          identity_id: 'identity-2',
+          suggested_cluster_id: 'cluster-2',
+          representative_similarity: 0.7,
+          avg_member_similarity: 0.65,
+          cluster_label: 'Jordan',
+          cluster_identity_count: 2,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(acceptSuggestion).mockResolvedValue({
+      suggestion_id: 'sugg-1',
+      resolution: 'accepted',
+      identity_id: 'identity-1',
+      cluster_id: 'cluster-1',
+      message: 'ok',
+    });
+
+    renderQueue();
+    await screen.findByRole('button', { name: 'Yes' });
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      act(() => {
+        screen.getByRole('button', { name: 'Yes' }).click();
+      });
+      expect(screen.getByText('Saving… — Undo')).toBeInTheDocument();
+      act(() => {
+        screen.getByRole('button', { name: 'Undo' }).click();
+      });
+      act(() => {
+        screen.getByRole('button', { name: 'Next review item' }).click();
+      });
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(acceptSuggestion).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('BR-16: navigate during hold flushes exactly 1 POST and announces', async () => {
+    let pendingRows = [
+      {
+        id: 'sugg-1',
+        identity_id: 'identity-1',
+        suggested_cluster_id: 'cluster-1',
+        representative_similarity: 0.95,
+        avg_member_similarity: 0.9,
+        cluster_label: 'Alex',
+        cluster_identity_count: 3,
+      },
+      {
+        id: 'sugg-2',
+        identity_id: 'identity-2',
+        suggested_cluster_id: 'cluster-2',
+        representative_similarity: 0.7,
+        avg_member_similarity: 0.65,
+        cluster_label: 'Jordan',
+        cluster_identity_count: 2,
+      },
+    ];
+    vi.mocked(fetchPendingSuggestions).mockImplementation(() =>
+      Promise.resolve({
+        suggestions: pendingRows.map((row) => ({ ...row })),
+        limit: 10,
+        offset: 0,
+      }),
+    );
+    vi.mocked(acceptSuggestion).mockImplementation((id: string) => {
+      pendingRows = pendingRows.filter((row) => row.id !== id);
+      return Promise.resolve({
+        suggestion_id: id,
+        resolution: 'accepted' as const,
+        identity_id: 'identity-1',
+        cluster_id: 'cluster-1',
+        message: 'ok',
+      });
+    });
+
+    renderQueue();
+    await screen.findByRole('button', { name: 'Yes' });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      act(() => {
+        screen.getByRole('button', { name: 'Yes' }).click();
+      });
+      expect(screen.getByText('Saving… — Undo')).toBeInTheDocument();
+
+      await act(async () => {
+        screen.getByRole('button', { name: 'Next review item' }).click();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(acceptSuggestion).toHaveBeenCalledTimes(1);
+      expect(acceptSuggestion).toHaveBeenCalledWith('sugg-1');
+      expect(screen.getByText('Saved. Moving to next review item.')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('BR-15: accept A, next to B (flush), accept B → 2 POSTs order preserved; held card disabled only', async () => {
+    const order: string[] = [];
+    let pendingRows = [
+      {
+        id: 'sugg-1',
+        identity_id: 'identity-1',
+        suggested_cluster_id: 'cluster-1',
+        representative_similarity: 0.95,
+        avg_member_similarity: 0.9,
+        cluster_label: 'Alex',
+        cluster_identity_count: 3,
+      },
+      {
+        id: 'sugg-2',
+        identity_id: 'identity-2',
+        suggested_cluster_id: 'cluster-2',
+        representative_similarity: 0.7,
+        avg_member_similarity: 0.65,
+        cluster_label: 'Jordan',
+        cluster_identity_count: 2,
+      },
+    ];
+    vi.mocked(fetchPendingSuggestions).mockImplementation(() =>
+      Promise.resolve({
+        suggestions: pendingRows.map((row) => ({ ...row })),
+        limit: 10,
+        offset: 0,
+      }),
+    );
+    vi.mocked(acceptSuggestion).mockImplementation((id: string) => {
+      order.push(id);
+      pendingRows = pendingRows.filter((row) => row.id !== id);
+      return Promise.resolve({
+        suggestion_id: id,
+        resolution: 'accepted' as const,
+        identity_id: `identity-${id}`,
+        cluster_id: 'cluster-1',
+        message: 'ok',
+      });
+    });
+
+    renderQueue();
+    const yes = await screen.findByRole('button', { name: 'Yes' });
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    act(() => {
+      yes.click();
+    });
+    // Held card accept disabled; Next remains enabled (not global hold-disable).
+    expect(screen.getByRole('button', { name: 'Yes' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Next review item' })).not.toBeDisabled();
+
+    act(() => {
+      screen.getByRole('button', { name: 'Next review item' }).click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    vi.useRealTimers();
+
+    await waitFor(() => {
+      expect(acceptSuggestion).toHaveBeenCalledTimes(1);
+      expect(acceptSuggestion).toHaveBeenCalledWith('sugg-1');
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Jordan/);
+    });
+
+    await clickAndCommitHold(screen.getByRole('button', { name: 'Yes' }));
+
+    await waitFor(() => {
+      expect(acceptSuggestion).toHaveBeenCalledTimes(2);
+    });
+    expect(order).toEqual(['sugg-1', 'sugg-2']);
+  });
+
   it('exposes focusCurrentCard imperative handle', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [
@@ -918,5 +1118,72 @@ describe('ReviewQueue', () => {
       expect(statuses.some((node) => within(node).queryByText(REVIEW_QUEUE_DRAIN_MESSAGE))).toBe(true);
       expect(screen.getByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeInTheDocument();
     });
+  });
+});
+
+describe('CommitHoldRegion (shipped hold chrome — BR-19)', () => {
+  it('renders role=status with HOLD_STATUS_COPY, pause-on-focus/hover, resume-on-leave, Undo tab order', async () => {
+    const onPausedChange = vi.fn();
+    const onUndo = vi.fn();
+    const user = userEvent.setup();
+
+    render(
+      <div>
+        <button type="button">Yes</button>
+        <CommitHoldRegion
+          phase="holding"
+          errorMessage={null}
+          onUndo={onUndo}
+          onRetry={() => undefined}
+          onPausedChange={onPausedChange}
+        />
+      </div>,
+    );
+
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent(HOLD_STATUS_COPY);
+    const undo = screen.getByRole('button', { name: 'Undo' });
+
+    // Undo follows the actioned control in tab order.
+    const yes = screen.getByRole('button', { name: 'Yes' });
+    yes.focus();
+    await user.tab();
+    expect(undo).toHaveFocus();
+    expect(onPausedChange).toHaveBeenCalledWith(true);
+    onPausedChange.mockClear();
+
+    await user.hover(status);
+    expect(onPausedChange).toHaveBeenCalledWith(true);
+    onPausedChange.mockClear();
+
+    await user.unhover(status);
+    expect(onPausedChange).toHaveBeenCalledWith(false);
+  });
+
+  it('failed phase renders persistent role=alert; Retry disabled while retryPending (BR-17)', () => {
+    const { rerender } = render(
+      <CommitHoldRegion
+        phase="failed"
+        errorMessage="Accept failed."
+        onUndo={() => undefined}
+        onRetry={() => undefined}
+        onPausedChange={() => undefined}
+        retryPending={false}
+      />,
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent('Accept failed.');
+    expect(screen.getByRole('button', { name: 'Retry' })).not.toBeDisabled();
+
+    rerender(
+      <CommitHoldRegion
+        phase="failed"
+        errorMessage="Accept failed."
+        onUndo={() => undefined}
+        onRetry={() => undefined}
+        onPausedChange={() => undefined}
+        retryPending
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeDisabled();
   });
 });

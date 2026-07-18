@@ -3,16 +3,22 @@
  *
  * Named exit criteria: rapid double-action, unmount-during-window, post-window
  * failure re-surface, undo-cancel=0, commit=1, advance-only-on-success,
- * invalidation presence, hold/failure announce.
+ * invalidation presence, hold/failure announce. BR-15..24 fix-round coverage.
  */
 
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, renderHook, screen } from '@testing-library/react';
+import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { queryKeys } from '../../../../api/queryKeys';
 import { DATA_SOURCE } from '../../../../api/recognition/types';
+import type {
+  PendingMergeSuggestion,
+  PendingMergeSuggestionsResponse,
+  PendingNameSuggestion,
+  PendingNameSuggestionsResponse,
+} from '../../../../api/recognition/types';
 import * as recognitionApi from '../../../../api/recognition';
 import {
   SUGGESTION_PROJECTION_INVALIDATION_EVENTS,
@@ -21,6 +27,7 @@ import {
 import type { ProjectedSuggestion } from '../suggestionProjection';
 import type { SuggestionReviewPage } from '../useSuggestionReviewQueries';
 import {
+  HOLD_STATUS_COPY,
   UNDO_HOLD_MS,
   useSuggestionReviewMutations,
 } from '../useSuggestionReviewMutations';
@@ -40,6 +47,8 @@ vi.mock('../../../../api/recognition', () => ({
 }));
 
 const reviewPageKey = queryKeys.suggestions.projection.reviewPage(0);
+const mergePendingKey = queryKeys.suggestions.mergePending();
+const namePendingKey = queryKeys.suggestions.namePending();
 
 const makeItem = (
   overrides: Partial<ProjectedSuggestion> & Pick<ProjectedSuggestion, 'suggestionId'>,
@@ -54,6 +63,40 @@ const makeItem = (
 const makePage = (items: ProjectedSuggestion[]): SuggestionReviewPage => ({
   items,
   dataSource: DATA_SOURCE.LOCAL_PROJECTION,
+});
+
+const makeMerge = (id: string): PendingMergeSuggestion => ({
+  id,
+  cluster_a_id: 'a',
+  cluster_b_id: 'b',
+  similarity: 0.9,
+  status: 'pending',
+  cluster_a_label: 'Alice',
+  cluster_b_label: 'Bob',
+});
+
+const makeMergePage = (suggestions: PendingMergeSuggestion[]): PendingMergeSuggestionsResponse => ({
+  suggestions,
+  limit: 10,
+  offset: 0,
+  data_source: DATA_SOURCE.LOCAL_PROJECTION,
+});
+
+const makeName = (id: string): PendingNameSuggestion => ({
+  id,
+  cluster_id: 'cluster-1',
+  suggested_name: 'Alex',
+  confidence_score: 0.9,
+  source: 'test',
+  created_at: '2026-01-01T00:00:00Z',
+  expires_at: null,
+});
+
+const makeNamePage = (suggestions: PendingNameSuggestion[]): PendingNameSuggestionsResponse => ({
+  suggestions,
+  limit: 25,
+  offset: 0,
+  data_source: DATA_SOURCE.LOCAL_PROJECTION,
 });
 
 const crossFamilyQueryKey = (target: string): readonly unknown[] => {
@@ -103,6 +146,14 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // mockImplementationOnce queues survive clearAllMocks — reset so prior tests
+    // cannot leave a hanging once-impl that steals the next call.
+    vi.mocked(recognitionApi.acceptSuggestion).mockReset();
+    vi.mocked(recognitionApi.rejectSuggestion).mockReset();
+    vi.mocked(recognitionApi.acceptMergeSuggestion).mockReset();
+    vi.mocked(recognitionApi.rejectMergeSuggestion).mockReset();
+    vi.mocked(recognitionApi.acceptNameSuggestion).mockReset();
+    vi.mocked(recognitionApi.rejectNameSuggestion).mockReset();
     vi.useFakeTimers();
     bulkActionRef = { current: false };
     queryClient = new QueryClient({
@@ -116,6 +167,10 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
 
   it('exports a single pinned UNDO_HOLD_MS = 5000', () => {
     expect(UNDO_HOLD_MS).toBe(5000);
+  });
+
+  it('exports a single HOLD_STATUS_COPY for component + tests (BR-24)', () => {
+    expect(HOLD_STATUS_COPY).toBe('Saving… — Undo');
   });
 
   it('undo-cancel: accept then Undo yields exactly 0 backend calls', async () => {
@@ -291,7 +346,8 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
     ]);
   });
 
-  it('unmount-during-window: unmount with held commit fires exactly 1 POST and no state update after unmount', async () => {
+  it('unmount-during-window: unmount with held commit fires exactly 1 POST and no setState-after-unmount warning (BR-19/23)', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     vi.mocked(recognitionApi.acceptSuggestion).mockResolvedValue({
       suggestion_id: 'sugg-a',
       resolution: 'accepted',
@@ -313,10 +369,18 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
     await act(async () => {
       await Promise.resolve();
       await Promise.resolve();
+      // Ensure a late-armed timer would have fired if present.
+      await vi.advanceTimersByTimeAsync(UNDO_HOLD_MS * 2);
+      await Promise.resolve();
     });
 
     expect(recognitionApi.acceptSuggestion).toHaveBeenCalledTimes(1);
     expect(recognitionApi.acceptSuggestion).toHaveBeenCalledWith('sugg-a');
+    const setStateWarnings = errorSpy.mock.calls.filter((args) =>
+      args.some((arg) => typeof arg === 'string' && /unmounted|Can't perform a React state update/i.test(arg)),
+    );
+    expect(setStateWarnings).toHaveLength(0);
+    errorSpy.mockRestore();
   });
 
   it('post-window failure re-surface: flushed POST rejects → failed phase + retry re-fires exactly 1 POST', async () => {
@@ -356,6 +420,223 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
     expect(recognitionApi.acceptSuggestion).toHaveBeenCalledTimes(2);
     expect(result.current.hold.phase).toBe('idle');
     expect(queryClient.getQueryData<SuggestionReviewPage>(reviewPageKey)?.items).toHaveLength(0);
+  });
+
+  it('BR-17: double-retry while first in flight yields exactly 1 POST', async () => {
+    let resolvePost!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      resolvePost = resolve;
+    });
+    vi.mocked(recognitionApi.acceptSuggestion)
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockImplementationOnce(async () => {
+        await gate;
+        return {
+          suggestion_id: 'sugg-a',
+          resolution: 'accepted' as const,
+          identity_id: 'identity-a',
+          cluster_id: 'cluster-1',
+          message: 'ok',
+        };
+      });
+
+    const { result } = renderMutations();
+    act(() => {
+      void result.current.scheduleAccept('sugg-a');
+    });
+    await expireHold();
+    expect(result.current.hold.phase).toBe('failed');
+
+    let first: Promise<unknown> | null = null;
+    let second: Promise<unknown> | null = null;
+    act(() => {
+      first = result.current.retryFailure();
+      second = result.current.retryFailure();
+    });
+
+    expect(first).not.toBeNull();
+    expect(second).toBeNull();
+    expect(result.current.retryPending).toBe(true);
+
+    await act(async () => {
+      resolvePost();
+      await first;
+      await Promise.resolve();
+    });
+
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledTimes(2); // fail + one retry
+    expect(result.current.retryPending).toBe(false);
+  });
+
+  it('BR-17: retry then accept-same-item does not interleave POSTs', async () => {
+    let resolveRetry!: () => void;
+    const retryGate = new Promise<void>((resolve) => {
+      resolveRetry = resolve;
+    });
+    const order: string[] = [];
+    vi.mocked(recognitionApi.acceptSuggestion)
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockImplementationOnce(async () => {
+        order.push('retry-start');
+        await retryGate;
+        order.push('retry-end');
+        return {
+          suggestion_id: 'sugg-a',
+          resolution: 'accepted' as const,
+          identity_id: 'identity-a',
+          cluster_id: 'cluster-1',
+          message: 'ok',
+        };
+      })
+      .mockImplementationOnce(() => {
+        order.push('accept-same');
+        return Promise.resolve({
+          suggestion_id: 'sugg-a',
+          resolution: 'accepted' as const,
+          identity_id: 'identity-a',
+          cluster_id: 'cluster-1',
+          message: 'ok',
+        });
+      });
+
+    const { result } = renderMutations();
+    act(() => {
+      void result.current.scheduleAccept('sugg-a');
+    });
+    await expireHold();
+
+    let acceptOutcome: string | undefined;
+    await act(async () => {
+      void result.current.retryFailure();
+      await Promise.resolve();
+      // Same item while failed/retrying must not open a new hold path.
+      void result.current.scheduleAccept('sugg-a').then((r) => {
+        acceptOutcome = r.outcome;
+      });
+      await Promise.resolve();
+    });
+
+    expect(acceptOutcome).toBe('failed');
+    expect(order).toEqual(['retry-start']);
+
+    await act(async () => {
+      resolveRetry();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(order).toEqual(['retry-start', 'retry-end']);
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledTimes(2);
+  });
+
+  it('BR-21: dropped queued action resolves with own kind/id and not_attempted_prior_failed', async () => {
+    vi.mocked(recognitionApi.acceptSuggestion).mockRejectedValue(new Error('prior fail'));
+
+    const { result } = renderMutations();
+    act(() => {
+      void result.current.scheduleAccept('sugg-a');
+    });
+
+    let dropped: { outcome: string; kind: string; suggestionId: string } | undefined;
+    await act(async () => {
+      // Busy path flushes A (fails) → B resolves not_attempted_prior_failed.
+      dropped = await result.current.scheduleReject('sugg-b');
+    });
+
+    expect(dropped).toEqual({
+      outcome: 'not_attempted_prior_failed',
+      kind: 'reject',
+      suggestionId: 'sugg-b',
+    });
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledTimes(1);
+    expect(recognitionApi.rejectSuggestion).not.toHaveBeenCalled();
+  });
+
+  it('BR-22: undo then immediately re-accept same item gets a fresh full window', async () => {
+    vi.mocked(recognitionApi.acceptSuggestion).mockResolvedValue({
+      suggestion_id: 'sugg-a',
+      resolution: 'accepted',
+      identity_id: 'identity-a',
+      cluster_id: 'cluster-1',
+      message: 'ok',
+    });
+
+    const { result } = renderMutations();
+
+    act(() => {
+      void result.current.scheduleAccept('sugg-a');
+    });
+    // Advance partway through first hold.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(UNDO_HOLD_MS - 500);
+    });
+    expect(recognitionApi.acceptSuggestion).not.toHaveBeenCalled();
+
+    act(() => {
+      result.current.undoHold();
+    });
+    act(() => {
+      void result.current.scheduleAccept('sugg-a');
+    });
+    expect(result.current.hold.phase).toBe('holding');
+
+    // Old remaining 500ms must NOT fire the new hold.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+      await Promise.resolve();
+    });
+    expect(recognitionApi.acceptSuggestion).not.toHaveBeenCalled();
+
+    // Full window for the new hold.
+    await expireHold();
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledTimes(1);
+  });
+
+  it('BR-23: unmount while prepare queued does not arm a post-unmount timer commit', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    let resolveA!: () => void;
+    const aGate = new Promise<void>((resolve) => {
+      resolveA = resolve;
+    });
+    vi.mocked(recognitionApi.acceptSuggestion).mockImplementation(async (id: string) => {
+      if (id === 'sugg-a') {
+        await aGate;
+      }
+      return {
+        suggestion_id: id,
+        resolution: 'accepted' as const,
+        identity_id: `identity-${id}`,
+        cluster_id: 'cluster-1',
+        message: 'ok',
+      };
+    });
+
+    const { result, unmount } = renderMutations();
+    act(() => {
+      void result.current.scheduleAccept('sugg-a');
+    });
+    // Queue B while A holding → busy prepare waits on A flush.
+    act(() => {
+      void result.current.scheduleAccept('sugg-b');
+    });
+    // Unmount before A resolves — cleanup fires A; B must not open a hold timer.
+    unmount();
+
+    await act(async () => {
+      resolveA();
+      await Promise.resolve();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(UNDO_HOLD_MS * 2);
+      await Promise.resolve();
+    });
+
+    // Cleanup fire + no second timer-fired B commit.
+    expect(vi.mocked(recognitionApi.acceptSuggestion).mock.calls.map((c) => c[0])).toEqual(['sugg-a']);
+    const setStateWarnings = errorSpy.mock.calls.filter((args) =>
+      args.some((arg) => typeof arg === 'string' && /unmounted|Can't perform a React state update/i.test(arg)),
+    );
+    expect(setStateWarnings).toHaveLength(0);
+    errorSpy.mockRestore();
   });
 
   it('invalidation presence: accept path keeps suggestionAccept cross-family targets', async () => {
@@ -398,6 +679,123 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
 
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.projection.all });
     expectCrossFamilyPresent(invalidateSpy, 'suggestionReject');
+  });
+
+  it('BR-18/20: acceptMerge hold→success removes from cache + invalidates mergePending/media/clusters', async () => {
+    queryClient.setQueryData(mergePendingKey, makeMergePage([makeMerge('merge-1'), makeMerge('merge-2')]));
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    vi.mocked(recognitionApi.acceptMergeSuggestion).mockResolvedValue(makeMerge('merge-1'));
+
+    const { result } = renderMutations();
+    act(() => {
+      void result.current.scheduleAcceptMerge('merge-1');
+    });
+    await expireHold();
+
+    expect(recognitionApi.acceptMergeSuggestion).toHaveBeenCalledTimes(1);
+    expect(
+      queryClient.getQueryData<PendingMergeSuggestionsResponse>(mergePendingKey)?.suggestions.map((s) => s.id),
+    ).toEqual(['merge-2']);
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: mergePendingKey });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.media.identities() });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.clusters.all });
+    // Re-schedule same id is possible at hook level but item is gone from queue cache.
+    expect(result.current.hold.phase).toBe('idle');
+  });
+
+  it('BR-18/20: rejectMerge hold→success removes from cache + invalidates mergePending', async () => {
+    queryClient.setQueryData(mergePendingKey, makeMergePage([makeMerge('merge-1')]));
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    vi.mocked(recognitionApi.rejectMergeSuggestion).mockResolvedValue(makeMerge('merge-1'));
+
+    const { result } = renderMutations();
+    act(() => {
+      void result.current.scheduleRejectMerge('merge-1');
+    });
+    await expireHold();
+
+    expect(
+      queryClient.getQueryData<PendingMergeSuggestionsResponse>(mergePendingKey)?.suggestions,
+    ).toHaveLength(0);
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: mergePendingKey });
+    expect(result.current.hold.phase).toBe('idle');
+  });
+
+  it('BR-18/20: acceptName hold→success removes from cache + invalidates namePending', async () => {
+    queryClient.setQueryData(namePendingKey, makeNamePage([makeName('name-1'), makeName('name-2')]));
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    vi.mocked(recognitionApi.acceptNameSuggestion).mockResolvedValue({
+      suggestion_id: 'name-1',
+      resolution: 'accepted',
+      identity_id: 'identity-1',
+      cluster_id: 'cluster-1',
+      message: 'ok',
+    });
+
+    const { result } = renderMutations();
+    act(() => {
+      void result.current.scheduleAcceptName('name-1');
+    });
+    await expireHold();
+
+    expect(
+      queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions.map((s) => s.id),
+    ).toEqual(['name-2']);
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: namePendingKey });
+    expect(result.current.hold.phase).toBe('idle');
+  });
+
+  it('BR-18/20: rejectName hold→success removes from cache + invalidates namePending', async () => {
+    queryClient.setQueryData(namePendingKey, makeNamePage([makeName('name-1')]));
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    vi.mocked(recognitionApi.rejectNameSuggestion).mockResolvedValue({
+      suggestion_id: 'name-1',
+      resolution: 'rejected',
+      identity_id: 'identity-1',
+      cluster_id: null,
+      message: 'ok',
+    });
+
+    const { result } = renderMutations();
+    act(() => {
+      void result.current.scheduleRejectName('name-1');
+    });
+    await expireHold();
+
+    expect(
+      queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions,
+    ).toHaveLength(0);
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: namePendingKey });
+  });
+
+  it('BR-20: name failure + retry re-fires exactly 1 POST', async () => {
+    vi.mocked(recognitionApi.acceptNameSuggestion)
+      .mockRejectedValueOnce(new Error('name fail'))
+      .mockResolvedValueOnce({
+        suggestion_id: 'name-1',
+        resolution: 'accepted',
+        identity_id: 'identity-1',
+        cluster_id: 'cluster-1',
+        message: 'ok',
+      });
+    queryClient.setQueryData(namePendingKey, makeNamePage([makeName('name-1')]));
+
+    const { result } = renderMutations();
+    act(() => {
+      void result.current.scheduleAcceptName('name-1');
+    });
+    await expireHold();
+    expect(result.current.hold.phase).toBe('failed');
+
+    await act(async () => {
+      await result.current.retryFailure();
+    });
+
+    expect(recognitionApi.acceptNameSuggestion).toHaveBeenCalledTimes(2);
+    expect(result.current.hold.phase).toBe('idle');
+    expect(
+      queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions,
+    ).toHaveLength(0);
   });
 
   it('merge accept failure surfaces failed phase (pending/error built from zero)', async () => {
@@ -449,114 +847,14 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
 
     expect(recognitionApi.acceptSuggestion).toHaveBeenCalledTimes(1);
   });
-});
 
-describe('useSuggestionReviewMutations announce harness', () => {
-  let queryClient: QueryClient;
-  let bulkActionRef: { current: boolean };
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.useFakeTimers();
-    bulkActionRef = { current: false };
-    queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-    });
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it('renders role=status hold and persistent role=alert on failure with retry', async () => {
-    vi.mocked(recognitionApi.acceptSuggestion)
-      .mockRejectedValueOnce(new Error('fail'))
-      .mockResolvedValueOnce({
-        suggestion_id: 'sugg-a',
-        resolution: 'accepted',
-        identity_id: 'identity-a',
-        cluster_id: 'cluster-1',
-        message: 'ok',
-      });
-
-    const Harness = function Harness() {
-      const api = useSuggestionReviewMutations({ queryClient, bulkActionRef });
-      return (
-        <div>
-          <button type="button" onClick={() => void api.scheduleAccept('sugg-a')}>
-            Accept
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              void api.flushHeld();
-            }}
-          >
-            Flush
-          </button>
-          {(api.hold.phase === 'holding' || api.hold.phase === 'committing') && (
-            <div role="status">
-              {api.holdAnnounce}
-              {api.hold.phase === 'holding' ? (
-                <button type="button" onClick={api.undoHold}>
-                  Undo
-                </button>
-              ) : null}
-            </div>
-          )}
-          {api.hold.phase === 'failed' && (
-            <div role="alert">
-              {api.hold.errorMessage}
-              <button
-                type="button"
-                onClick={() => {
-                  void api.retryFailure();
-                }}
-              >
-                Retry
-              </button>
-            </div>
-          )}
-        </div>
-      );
-    }
-
-    render(
-      <QueryClientProvider client={queryClient}>
-        <Harness />
-      </QueryClientProvider>,
-    );
-
+  it('BR-15: isCardActionsDisabled only for held card; other ids stay enabled', () => {
+    const { result } = renderMutations();
     act(() => {
-      screen.getByRole('button', { name: 'Accept' }).click();
+      void result.current.scheduleAccept('sugg-a');
     });
-
-    expect(screen.getByRole('status')).toHaveTextContent('Saving… — Undo');
-    expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument();
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-
-    await act(async () => {
-      screen.getByRole('button', { name: 'Flush' }).click();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(screen.getByRole('alert')).toBeInTheDocument();
-
-    // Persistent: still present after more ticks.
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(10_000);
-    });
-    expect(screen.getByRole('alert')).toBeInTheDocument();
-    expect(screen.queryByRole('status')).not.toBeInTheDocument();
-
-    await act(async () => {
-      screen.getByRole('button', { name: 'Retry' }).click();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledTimes(2);
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(result.current.hold.phase).toBe('holding');
+    expect(result.current.isCardActionsDisabled('sugg-a', ['accept', 'reject'])).toBe(true);
+    expect(result.current.isCardActionsDisabled('sugg-b', ['accept', 'reject'])).toBe(false);
   });
 });

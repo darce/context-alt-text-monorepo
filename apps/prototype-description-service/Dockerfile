@@ -3,6 +3,8 @@
 #          --build-arg GIT_COMMIT_SHA=$(git rev-parse HEAD) \
 #          -t iad.ocir.io/idu2kqqe2jxy/acx-backend:latest .
 # No VLM/torch — InsightFace + onnxruntime CPU only.
+#
+# Deps resolve from the checked-in uv.lock via `uv sync --frozen` (FIR4-BR-01).
 
 # Build-time provenance. Operators pass the current repo HEAD via
 # `--build-arg GIT_COMMIT_SHA=$(git rev-parse HEAD)`; see infra/oci/README.md.
@@ -10,10 +12,17 @@
 # api/main.py can surface it on /health and /version (E15-3a-BR-03).
 ARG GIT_COMMIT_SHA=unknown
 
+# Pin uv for reproducible multi-arch builds (ghcr.io/astral-sh/uv is multi-arch).
+# Bump deliberately when refreshing the service lock with a newer uv.
+ARG UV_VERSION=0.11.21
+FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
+
 # ---------------------------------------------------------------------------
 # Stage 1: Builder — compile native dependencies (InsightFace, onnxruntime)
 # ---------------------------------------------------------------------------
 FROM python:3.12-slim AS builder
+
+COPY --from=uv /uv /usr/local/bin/uv
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -27,22 +36,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 
-COPY pyproject.toml .
+# Lock is the system of record for runtime+[bench] image deps (FIR4-BR-01).
+COPY pyproject.toml uv.lock ./
 
-# Install the package deps (no editable install — just deps) plus the [bench] extra.
+# Install exact locked runtime+[bench] deps into a relocatable venv.
 # insightface remains installed through FIR-4: the production dark default still
 # uses the incumbent path (FIR-6 removes it). face_pipeline ONNX models are NOT
 # baked into the image here (operator fetch/verify for dark envs).
-# We install into a virtualenv so we can copy it cleanly to the runtime stage.
-RUN python -m venv /opt/venv
+# --no-install-project: app package is installed --no-deps in the runtime stage.
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv
+ENV UV_LINK_MODE=copy
+ENV UV_COMPILE_BYTECODE=1
+RUN uv venv /opt/venv \
+    && uv sync --frozen --no-dev --extra bench --no-install-project
+
 ENV PATH="/opt/venv/bin:$PATH"
-
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
-    && pip install --no-cache-dir ".[bench]"
-
-# Fail closed if pip resolved onnxruntime outside the S1-evidenced 1.22+ line
-# (image install does not use uv.lock). Bounded to [1.22, 2.0). [SERVE-07][PROV-08]
-RUN python -c "import sys,onnxruntime as o; v=o.__version__; p=tuple(int(x) for x in v.split('.')[:2]); print('ORT', v); sys.exit(0 if (1,22)<=p<(2,0) else 1)"
 
 # ---------------------------------------------------------------------------
 # Stage 2: Runtime — slim image with only what's needed to run
@@ -81,7 +89,7 @@ COPY shared/ shared/
 COPY scripts/ scripts/
 COPY pyproject.toml .
 
-# Install the app package itself (editable-style so imports resolve)
+# Install the app package itself (deps already present from frozen lock sync)
 RUN pip install --no-cache-dir -e . --no-deps
 
 # Default cache directory inside the container (mapped to a volume)

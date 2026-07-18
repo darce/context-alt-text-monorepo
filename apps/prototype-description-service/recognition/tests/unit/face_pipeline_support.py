@@ -19,14 +19,30 @@ import pytest
 from recognition.infrastructure.face_pipeline.provenance import (
     DEFAULT_MODELS_DIR,
     MODEL_MANIFEST,
+    ModelIntegrityError,
+    ModelMissingError,
+    load_verified_model,
 )
 
 _SERVICE_ROOT = Path(__file__).resolve().parents[3]
 _FIXTURE_DIR = _SERVICE_ROOT / "recognition" / "tests" / "fixtures" / "face_pipeline"
 
-MODELS_PRESENT = (DEFAULT_MODELS_DIR / MODEL_MANIFEST["yunet"].file_name).is_file() and (
-    DEFAULT_MODELS_DIR / MODEL_MANIFEST["sface"].file_name
-).is_file()
+
+def _models_present_verified() -> bool:
+    """True only when YuNet + SFace pass manifest size+sha256 (+ license) checks.
+
+    Existence alone is insufficient: a corrupt/partial ONNX must not look present
+    and produce a false-green skip or a late cryptic load error (FIR3-BR-01).
+    """
+    try:
+        for name in ("yunet", "sface"):
+            load_verified_model(name, models_dir=DEFAULT_MODELS_DIR)
+        return True
+    except (ModelMissingError, ModelIntegrityError):
+        return False
+
+
+MODELS_PRESENT = _models_present_verified()
 MODELS_SKIP = (
     "FIR-3 face models missing under recognition/infrastructure/face_pipeline/models/ — "
     "run: uv run python scripts/fetch_face_pipeline_models.py "

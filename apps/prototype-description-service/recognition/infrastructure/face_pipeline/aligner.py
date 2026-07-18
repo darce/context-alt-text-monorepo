@@ -185,6 +185,14 @@ class FivePointAligner:
             )
         if img.dtype != np.uint8:
             if np.issubdtype(img.dtype, np.floating):
+                # Reject [0,1]-float trap (would clip to near-black and poison crops).
+                finite = img[np.isfinite(img)]
+                peak = float(np.max(finite)) if finite.size else 0.0
+                if peak <= 1.5:
+                    raise AlignmentError(
+                        f"floating image max={peak} looks like a [0,1]-float trap "
+                        "(threshold max>1.5); convert to uint8 BGR in [0,255] before align"
+                    )
                 img = np.clip(img, 0, 255).astype(np.uint8)
             else:
                 img = img.astype(np.uint8)

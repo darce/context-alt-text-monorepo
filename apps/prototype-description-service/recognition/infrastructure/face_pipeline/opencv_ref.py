@@ -28,11 +28,23 @@ DEFAULT_NMS_THRESHOLD: Final[float] = 0.3
 DEFAULT_TOP_K: Final[int] = 5000
 DEFAULT_INPUT_SIZE: Final[tuple[int, int]] = (320, 320)
 
-# Manifest is the single source for dim when available (rg-015).
-_SFACE_DIM_FROM_MANIFEST = MODEL_MANIFEST["sface"].embedding_dim
-SFACE_EMBEDDING_DIM: Final[int] = (
-    int(_SFACE_DIM_FROM_MANIFEST) if _SFACE_DIM_FROM_MANIFEST is not None else 128
-)
+# Manifest is the single source for SFace dim (rg-015) — never invent a default.
+SFACE_CROP_SIZE: Final[int] = 112
+_FLOAT01_TRAP_MAX: Final[float] = 1.5
+
+
+def resolve_sface_embedding_dim() -> int:
+    """Return SFace embedding dim from the provenance manifest (fail-closed)."""
+    dim = MODEL_MANIFEST["sface"].embedding_dim
+    if dim is None:
+        raise ValueError(
+            "MODEL_MANIFEST['sface'].embedding_dim is None; "
+            "refusing to invent a default embedding dimension (rg-015)"
+        )
+    return int(dim)
+
+
+SFACE_EMBEDDING_DIM: Final[int] = resolve_sface_embedding_dim()
 
 
 class ZeroNormEmbeddingError(Exception):
@@ -57,7 +69,12 @@ class RawDetection:
 
 
 def _ensure_bgr_u8(image: np.ndarray, *, label: str = "image") -> np.ndarray:
-    """Coerce to contiguous H×W×3 uint8 BGR; raise on impossible shapes."""
+    """Coerce to contiguous H×W×3 uint8 BGR; raise on impossible shapes.
+
+    Floating inputs with max <= 1.5 are rejected as the common [0,1] float trap
+    (would otherwise clip to near-black uint8 and silently poison embeddings).
+    Floating inputs in ~[0,255] are clip-cast to uint8.
+    """
     if image is None:
         raise FacePipelineInputError(f"{label} is None")
     arr = np.asarray(image)
@@ -67,6 +84,14 @@ def _ensure_bgr_u8(image: np.ndarray, *, label: str = "image") -> np.ndarray:
         )
     if arr.dtype != np.uint8:
         if np.issubdtype(arr.dtype, np.floating):
+            finite = arr[np.isfinite(arr)]
+            peak = float(np.max(finite)) if finite.size else 0.0
+            if peak <= _FLOAT01_TRAP_MAX:
+                raise FacePipelineInputError(
+                    f"{label}: floating image max={peak} looks like a [0,1]-float "
+                    f"trap (threshold max>{_FLOAT01_TRAP_MAX}); convert to uint8 "
+                    "BGR in [0,255] before detect/embed/align"
+                )
             arr = np.clip(arr, 0, 255).astype(np.uint8)
         else:
             arr = arr.astype(np.uint8)
@@ -104,6 +129,10 @@ class OpenCVYuNetDetector:
 
     Batch API: ``detect(images) -> list[list[RawDetection]]``.
     Input size is set per image to the image's (width, height).
+
+    ``score_threshold`` / ``nms_threshold`` / ``top_k`` are constructor-only
+    (read-only properties). Native FaceDetectorYN is configured at create time;
+    post-construction assignment raises AttributeError (no silent no-op).
     """
 
     def __init__(
@@ -119,17 +148,29 @@ class OpenCVYuNetDetector:
         model_path = load_verified_model(model_name, models_dir=models_dir)
         self._model_name = model_name
         self._model_path = model_path
-        self.score_threshold = float(score_threshold)
-        self.nms_threshold = float(nms_threshold)
-        self.top_k = int(top_k)
+        self._score_threshold = float(score_threshold)
+        self._nms_threshold = float(nms_threshold)
+        self._top_k = int(top_k)
         self._detector = cv2.FaceDetectorYN.create(
             str(model_path),
             "",
             initial_input_size,
-            score_threshold=self.score_threshold,
-            nms_threshold=self.nms_threshold,
-            top_k=self.top_k,
+            score_threshold=self._score_threshold,
+            nms_threshold=self._nms_threshold,
+            top_k=self._top_k,
         )
+
+    @property
+    def score_threshold(self) -> float:
+        return self._score_threshold
+
+    @property
+    def nms_threshold(self) -> float:
+        return self._nms_threshold
+
+    @property
+    def top_k(self) -> int:
+        return self._top_k
 
     def detect(self, images: Sequence[np.ndarray]) -> list[list[RawDetection]]:
         """Detect faces in a batch of BGR images."""
@@ -146,7 +187,8 @@ class OpenCVYuNetDetector:
 class OpenCVSFaceEmbedder:
     """Reference SFace embedder wrapping ``cv2.FaceRecognizerSF``.
 
-    Batch API: ``embed(crops) -> (N, 128)`` L2-normalized float32.
+    Batch API: ``embed(crops) -> (N, dim)`` L2-normalized float32.
+    Crops must be exactly 112×112×3 BGR (alignment owns sizing; fail-closed).
     Zero-norm model output raises ``ZeroNormEmbeddingError`` (never silent fill).
     """
 
@@ -167,13 +209,22 @@ class OpenCVSFaceEmbedder:
         return self._recognizer.feature(crop)
 
     def embed(self, crops: Sequence[np.ndarray]) -> np.ndarray:
-        """Embed a batch of 112×112 (or any) BGR crops → L2-normalized (N, 128)."""
+        """Embed a batch of 112×112×3 BGR crops → L2-normalized (N, dim).
+
+        Non-(112, 112, 3) crops raise ``FacePipelineInputError`` (no silent resize).
+        """
         if not crops:
             return np.zeros((0, self.embedding_dim), dtype=np.float32)
 
+        expected_shape = (SFACE_CROP_SIZE, SFACE_CROP_SIZE, 3)
         vectors: list[np.ndarray] = []
         for i, crop in enumerate(crops):
             img = _ensure_bgr_u8(crop, label=f"crops[{i}]")
+            if img.shape != expected_shape:
+                raise FacePipelineInputError(
+                    f"crops[{i}]: expected shape {expected_shape} (SFace crop), "
+                    f"got {img.shape}; align via FivePointAligner before embed"
+                )
             raw = np.asarray(self._feature(img), dtype=np.float32).reshape(-1)
             if raw.size != self.embedding_dim:
                 raise FacePipelineInputError(
@@ -198,6 +249,8 @@ __all__ = [
     "OpenCVSFaceEmbedder",
     "OpenCVYuNetDetector",
     "RawDetection",
+    "SFACE_CROP_SIZE",
     "SFACE_EMBEDDING_DIM",
     "ZeroNormEmbeddingError",
+    "resolve_sface_embedding_dim",
 ]

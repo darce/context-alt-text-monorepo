@@ -33,21 +33,23 @@ export interface MediaFooterCtaInputs {
 
 /**
  * §7 per-state selector:
- *  - review active → the queue's card primary owns the accent; both footer CTAs
- *    render secondary (reconciled to a single viewport accent primary).
+ *  - review active → the queue owns the accent (its card marker or its bulk-commit
+ *    marker); both footer CTAs render secondary (reconciled to a single viewport
+ *    accent primary).
  *  - describe run in flight → its progress owns the footer surface; Analyze steps
  *    down to secondary.
  *  - select (default) → Analyze is the single accent primary, Describe secondary.
  *
- * Ordering matters: a review card outranks a describe run for accent ownership so
- * the card's on-screen primary is never doubled by the footer.
+ * Ordering matters: an active review surface outranks a describe run for accent
+ * ownership so the queue's on-screen primary is never doubled by the footer.
  *
  * This selector only decides which surface MAY carry the accent token; the single
- * accent-primary invariant is proven against the rendered DOM (`data-acx-accent-primary`
- * count) — see `mediaFooterSinglePrimary.dom.test.tsx` — not by arithmetic here.
- * `reviewActive` is the SAME signal the queue uses to place the card marker
- * (ScanTabContent wires ReviewQueue's card-primary presence into it), so the
- * footer demotion and the card marker can never disagree.
+ * accent-primary invariant is NOT guaranteed by construction here. `reviewActive` is
+ * the SAME signal the queue derives to place its own accent marker (ScanTabContent
+ * wires ReviewQueue's accent-ownership report into it), so footer demotion tracks the
+ * queue's marker across the modeled states — but only the rendered-DOM count
+ * (`data-acx-accent-primary`, see `mediaFooterSinglePrimary.dom.test.tsx`) is
+ * authoritative, not this arithmetic.
  */
 export const selectMediaFooterCtaState = ({
   reviewActive,

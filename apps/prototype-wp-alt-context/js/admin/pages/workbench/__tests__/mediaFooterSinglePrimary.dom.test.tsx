@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -16,23 +17,34 @@ import { commitClusterToRosterEntry, listRosterEntries } from '../../../api/rost
 import { HTTPError } from '../../../utils/http';
 import type { DescribeRunProgress } from '../../../hooks/useDescribeRunProgress';
 import { MergeSurvivorProvider } from '../identity-clusters/MergeSurvivorContext';
+import {
+  PERSON_COMMIT_CONFIRM_COPY,
+  VIEW_IN_ROSTER_COPY,
+} from '../identity-clusters/personCommitCopy';
 import { ReviewQueue } from '../identity-clusters';
 import { REVIEW_QUEUE_DRAIN_MESSAGE } from '../identity-clusters/reviewQueueDriver';
 import { MediaAnalyzeCta } from '../MediaAnalyzeCta';
 import { BulkDescribeCta } from '../MediaSelection';
-import { selectMediaFooterCtaState } from '../mediaFooterCtaState';
+import { ACCENT_PRIMARY_ATTR, selectMediaFooterCtaState } from '../mediaFooterCtaState';
+
+/** Single source of truth for the accent-primary marker selector (BR-83 — was a literal). */
+const ACCENT_PRIMARY_SELECTOR = `[${ACCENT_PRIMARY_ATTR}]`;
 
 /**
- * E21-5 Slice 8 — DOM proof of the §7 single-accent-primary invariant (BR-72).
+ * E21-5 Slice 8 — DOM proof of the §7 single-accent-primary invariant (BR-72 + the
+ * BR-80..83 re-review round).
  *
  * The invariant: exactly ONE element carrying `data-acx-accent-primary` (and the
- * accent chrome) is present in the rendered review viewport in EVERY screen state.
- * This test MOUNTS the real reconciled viewport — the real ReviewQueue (which
- * places the card marker and reports card-primary presence) + the real footer CTAs
- * (MediaAnalyzeCta / BulkDescribeCta) — wired by the real `selectMediaFooterCtaState`
- * reconciliation, then counts `[data-acx-accent-primary]` in the DOM. It is NOT
- * arithmetic over the selector's own output: a second accent, or a dropped one, is
- * caught (see the "guard" describe below, which deliberately mis-wires the harness).
+ * accent chrome) is present in the rendered review viewport. This test MOUNTS the real
+ * reconciled viewport — the real ReviewQueue (which places the card/bulk marker and
+ * reports whether the queue owns the accent) + the real footer CTAs (MediaAnalyzeCta /
+ * BulkDescribeCta) — wired by the real `selectMediaFooterCtaState` reconciliation, then
+ * counts `[data-acx-accent-primary]` in the DOM. It is NOT arithmetic over the
+ * selector's own output: a second accent, or a dropped one, is caught (see the "guard"
+ * describe below, which deliberately mis-wires the harness). The cases below cover the
+ * modeled screen states — select, describe-in-flight, review-active, chip-empty,
+ * loading, retired-head, person-commit succeeded (BR-81), bulk-tray open (BR-82) and
+ * panel-open (BR-83) — a representative set of the §7 matrix, not literally every state.
  * `--acx-color-accent-soft` selection/focus tints carry no marker and are exempt.
  */
 
@@ -119,19 +131,25 @@ const assignmentSuggestion = {
 };
 
 /**
- * Faithful copy of ScanTabContent's reconciliation, minus panels/collapse: the
- * SAME `cardPrimaryPresent` the queue reports drives footer demotion via the real
- * `selectMediaFooterCtaState`. `forceReviewActive` exists only for the guard tests
- * that deliberately break the reconciliation to prove the DOM count discriminates.
+ * Faithful copy of ScanTabContent's reconciliation, minus collapse: the SAME
+ * accent-ownership signal the queue reports drives footer demotion via the real
+ * `selectMediaFooterCtaState`. BR-83: ScanTabContent's `reviewSurfaceActive` is exactly
+ * `cardPrimaryPresent` — modeled here by `reviewActive = cardPrimaryPresent`. `panelOpen`
+ * models a label/review panel replacing the queue: a markerless panel with the queue
+ * UNMOUNTED, so `cardPrimaryPresent` falls to false (its layout-effect cleanup) and the
+ * footer re-owns the accent. `forceReviewActive` exists only for the guard tests that
+ * deliberately break the reconciliation to prove the DOM count discriminates.
  */
 const ReconciledViewport = ({
   describeRunning = false,
   initialKind = 'all',
   forceReviewActive,
+  panelOpen = false,
 }: {
   describeRunning?: boolean;
   initialKind?: 'all' | 'assignment' | 'merge';
   forceReviewActive?: boolean;
+  panelOpen?: boolean;
 }): React.JSX.Element => {
   const [cardPrimaryPresent, setCardPrimaryPresent] = React.useState(false);
   const [index, setIndex] = React.useState(0);
@@ -142,17 +160,22 @@ const ReconciledViewport = ({
 
   return (
     <div data-testid="reconciled-viewport">
-      <ReviewQueue
-        index={index}
-        onIndexChange={setIndex}
-        kind={kind}
-        onKindChange={setKind}
-        band="all"
-        onBandChange={vi.fn()}
-        selectedIds={selectedIds}
-        onSelectedIdsChange={setSelectedIds}
-        onCardPrimaryPresenceChange={setCardPrimaryPresent}
-      />
+      {panelOpen ? (
+        // A label/review panel: no accent marker, and the queue is unmounted.
+        <div data-testid="mock-review-panel" />
+      ) : (
+        <ReviewQueue
+          index={index}
+          onIndexChange={setIndex}
+          kind={kind}
+          onKindChange={setKind}
+          band="all"
+          onBandChange={vi.fn()}
+          selectedIds={selectedIds}
+          onSelectedIdsChange={setSelectedIds}
+          onCardPrimaryPresenceChange={setCardPrimaryPresent}
+        />
+      )}
       <MediaAnalyzeCta accentPrimary={footerCta.accentOwner === 'analyze'} />
       <BulkDescribeCta {...describeProps} accentPrimary={footerCta.accentOwner === 'describe'} />
     </div>
@@ -171,7 +194,7 @@ const renderViewport = (props: Parameters<typeof ReconciledViewport>[0] = {}) =>
 };
 
 const markerCount = (container: HTMLElement): number =>
-  container.querySelectorAll('[data-acx-accent-primary]').length;
+  container.querySelectorAll(ACCENT_PRIMARY_SELECTOR).length;
 
 const emptyQueues = (): void => {
   vi.mocked(fetchPendingSuggestions).mockResolvedValue({ suggestions: [], limit: 10, offset: 0 });
@@ -227,7 +250,7 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
     await screen.findByText(REVIEW_QUEUE_DRAIN_MESSAGE);
 
     expect(markerCount(container)).toBe(1);
-    const marked = container.querySelector('[data-acx-accent-primary]');
+    const marked = container.querySelector(ACCENT_PRIMARY_SELECTOR);
     expect(marked).toBe(screen.getByRole('button', { name: 'Analyze selected media' }));
   });
 
@@ -238,7 +261,7 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
     await screen.findByText(REVIEW_QUEUE_DRAIN_MESSAGE);
 
     expect(markerCount(container)).toBe(1);
-    const marked = container.querySelector('[data-acx-accent-primary]');
+    const marked = container.querySelector(ACCENT_PRIMARY_SELECTOR);
     expect(marked).toBe(screen.getByRole('button', { name: 'Describe selected' }));
   });
 
@@ -247,17 +270,18 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
     const { container } = renderViewport();
 
     const accept = await screen.findByRole('button', { name: 'Yes' });
-    // The card primary is present → footer demoted → the ONE marker is on the card accept.
-    await waitFor(() => expect(markerCount(container)).toBe(1));
-    const marked = container.querySelector('[data-acx-accent-primary]');
+    // BR-80: the useLayoutEffect presence report demotes the footer in the SAME frame the
+    // card marker mounts, so the count settles at 1 immediately — no 2→1 waitFor masking.
+    expect(markerCount(container)).toBe(1);
+    const marked = container.querySelector(ACCENT_PRIMARY_SELECTOR);
     expect(marked).toBe(accept);
     expect(accept.className).toContain('acx-accent-primary-action');
     // Footer CTAs carry no marker while the card owns the accent.
     expect(screen.getByRole('button', { name: 'Analyze selected media' })).not.toHaveAttribute(
-      'data-acx-accent-primary',
+      ACCENT_PRIMARY_ATTR,
     );
     expect(screen.getByRole('button', { name: 'Describe selected' })).not.toHaveAttribute(
-      'data-acx-accent-primary',
+      ACCENT_PRIMARY_ATTR,
     );
   });
 
@@ -270,7 +294,7 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
     await waitFor(() => expect(container.querySelector('.acx-review-queue__empty')).toBeTruthy());
 
     expect(markerCount(container)).toBe(1);
-    expect(container.querySelector('[data-acx-accent-primary]')).toBe(
+    expect(container.querySelector(ACCENT_PRIMARY_SELECTOR)).toBe(
       screen.getByRole('button', { name: 'Analyze selected media' }),
     );
   });
@@ -286,7 +310,7 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
     await waitFor(() => expect(container.querySelector('.acx-review-queue--loading')).toBeTruthy());
 
     expect(markerCount(container)).toBe(1);
-    expect(container.querySelector('[data-acx-accent-primary]')).toBe(
+    expect(container.querySelector(ACCENT_PRIMARY_SELECTOR)).toBe(
       screen.getByRole('button', { name: 'Analyze selected media' }),
     );
   });
@@ -310,7 +334,89 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
     );
 
     await waitFor(() => expect(markerCount(container)).toBe(1));
-    expect(container.querySelector('[data-acx-accent-primary]')).toBe(
+    expect(container.querySelector(ACCENT_PRIMARY_SELECTOR)).toBe(
+      screen.getByRole('button', { name: 'Analyze selected media' }),
+    );
+  });
+
+  it('person-commit succeeded on a CLUSTER card (markerless success surface): footer re-owns the single accent primary (BR-81)', async () => {
+    // A CLUSTER card is on screen; its person-commit Confirm is the accent primary and
+    // is pre-enabled by the suggested label (create path).
+    emptyQueues();
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [
+        {
+          id: 'cluster-top-1',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 4,
+          user_confirmed: false,
+          suggested_label: 'Alex',
+          suggested_target_cluster_id: null,
+          representatives: [],
+        },
+      ],
+      limit: 20,
+      total: 1,
+      truncated: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    const user = userEvent.setup();
+    const { container } = renderViewport();
+
+    // Before commit: the card's person-commit Confirm is the single accent primary.
+    const confirm = await screen.findByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY });
+    await waitFor(() => expect(markerCount(container)).toBe(1));
+    expect(container.querySelector(ACCENT_PRIMARY_SELECTOR)).toBe(confirm);
+
+    // Commit succeeds → the card renders a markerless success surface. CLUSTER lingers in
+    // topClustersById until the async refetch, so the footer must re-own the accent — one
+    // marker, on the footer Analyze (BR-81: no card marker ⇒ presence false ⇒ footer owns).
+    await user.click(confirm);
+    await screen.findByRole('link', { name: VIEW_IN_ROSTER_COPY });
+
+    await waitFor(() => expect(markerCount(container)).toBe(1));
+    expect(container.querySelector(ACCENT_PRIMARY_SELECTOR)).toBe(
+      screen.getByRole('button', { name: 'Analyze selected media' }),
+    );
+  });
+
+  it('bulk-tray open (committable selection): the bulk commit is the single accent primary (BR-82)', async () => {
+    // A card is on screen; selecting its item and opening the tray surfaces the bulk
+    // commit. It — not the card — owns the accent; the card primary steps down to neutral.
+    oneAssignment();
+    const user = userEvent.setup();
+    const { container } = renderViewport();
+
+    await screen.findByRole('button', { name: 'Yes' });
+    await user.click(screen.getByTestId('acx-review-select'));
+    await user.click(screen.getByRole('button', { name: 'Review selection' }));
+
+    const bulkCommit = await screen.findByTestId('acx-bulk-commit');
+    // Exactly one accent marker, on the bulk commit (the card accept stepped down).
+    await waitFor(() => expect(markerCount(container)).toBe(1));
+    expect(container.querySelector(ACCENT_PRIMARY_SELECTOR)).toBe(bulkCommit);
+    expect(bulkCommit).toHaveAttribute(ACCENT_PRIMARY_ATTR);
+    expect(bulkCommit.className).toContain('acx-accent-primary-action');
+    // Footer stays demoted — the queue still owns the accent, now via the bulk commit.
+    expect(screen.getByRole('button', { name: 'Analyze selected media' })).not.toHaveAttribute(
+      ACCENT_PRIMARY_ATTR,
+    );
+  });
+
+  it('panel open (queue unmounted, panels carry no marker): the footer keeps the single accent primary (BR-83)', async () => {
+    // A label/review panel replaces the queue. With the queue unmounted no card/bulk
+    // marker is on screen, so the footer's state-selected Analyze is the single primary.
+    emptyQueues();
+    const { container } = renderViewport({ panelOpen: true });
+
+    await screen.findByTestId('mock-review-panel');
+
+    expect(markerCount(container)).toBe(1);
+    expect(container.querySelector(ACCENT_PRIMARY_SELECTOR)).toBe(
       screen.getByRole('button', { name: 'Analyze selected media' }),
     );
   });

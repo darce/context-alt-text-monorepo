@@ -1,4 +1,4 @@
-.PHONY: help test test-integration lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready dev-setup dev-mint-key logs-tail logs-rotate logs-clean logs-archive worker-daemon db-reset reset admin-dev admin-test admin-open admin-token admin-status admin-down admin-oci-serve admin-oci provision-customer FORCE
+.PHONY: help test test-integration lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready dev-setup dev-mint-key logs-tail logs-rotate logs-clean logs-archive worker-daemon db-reset reset admin-dev admin-test admin-open admin-token admin-status admin-down admin-oci-serve admin-oci admin-oci-mint provision-customer FORCE
 
 PYTEST_WORKERS ?= 4
 
@@ -34,6 +34,7 @@ help:
 	@echo "  make admin-status - Show service/admin reachability state"
 	@echo "  make admin-down   - Stop the local service"
 	@echo "  make provision-customer EMAIL=<e> ENV=prod [PLAN=pro] [LABEL=\"Name\"] - Concierge mint real tenant+key (AP-7; ENV=prod required)"
+	@echo "  make admin-oci-mint TENANT=<uuid> [SITE_URL=<url>] - Mint a prod tenant key on the VM (no secret leaves the VM); prints the key once"
 	@echo "  make lane-*     - Worktree lane commands (forwarded to root Makefile; run 'make help' from repo root for full list)"
 	@echo "  make worker-daemon* - Worker daemon controls (run/status/stop/resume/tail) forwarded to root Makefile"
 	@echo ""
@@ -232,6 +233,31 @@ admin-oci:
 		000) echo "✗ $$url unreachable: not on the tailnet, MagicDNS/HTTPS off, or serve not published. Check 'tailscale status' and run 'make admin-oci-serve'." >&2; exit 1 ;; \
 		*) echo "✗ $$url -> $$code (unexpected); not opening." >&2; exit 1 ;; \
 	esac
+
+# Mint a prod API key for a tenant WITHOUT bringing any secret to the laptop. Runs the
+# canonical CLI inside the prod `api` container over the tailnet, so the container's own
+# DB creds do the write — the /admin HTTP route (and its RECOGNITION_ADMIN_TOKEN) are not
+# involved at all, and the prod token stays in /opt/acx-backend/prod/secrets/.env where it
+# belongs [WEB-16: secrets only in a secret store/env; SEC-04: least-privilege; SEC-01: the
+# laptop<->VM SSH is a trust boundary — don't cross it with the token]. The raw key prints
+# exactly once (api_key=…); copy it into the plugin Settings. Automated form of the
+# canonical prod mint in docs/runbooks/key-management.md Track 1.
+# Usage: make admin-oci-mint TENANT=<uuid> [SITE_URL=<url>]
+# TENANT/SITE_URL reach the shell via the environment (export) and are validated (UUID / URL
+# charset) BEFORE use — never textual make-expansion — so an operator-pasted value cannot inject
+# a command through the ssh double-hop [WEB-02]. The prod dir and --env are hardcoded so they
+# cannot diverge into a wrong-DB mint [MRG-D-02].
+export TENANT
+export SITE_URL
+admin-oci-mint:
+	@set -e; \
+	tenant="$${TENANT:-}"; site="$${SITE_URL:-http://localhost:10018}"; \
+	test -n "$$tenant" || { echo "usage: make admin-oci-mint TENANT=<uuid> [SITE_URL=<url>]" >&2; exit 2; }; \
+	printf '%s' "$$tenant" | grep -qiE '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$$' || { echo "✗ TENANT must be a UUID (got '$$tenant')" >&2; exit 2; }; \
+	printf '%s' "$$site" | grep -qE '^https?://[A-Za-z0-9:/._-]+$$' || { echo "✗ SITE_URL has invalid characters (allowed: A-Za-z0-9 : / . _ -)" >&2; exit 2; }; \
+	echo "→ minting a prod key for tenant $$tenant (site $$site) via $(OCI_HOST) ..."; \
+	ssh $(OCI_USER)@$(OCI_HOST) "set -e; cd /opt/acx-backend/prod; mk=\"docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod\"; \$$mk tenant create --tenant \"$$tenant\" --site-url \"$$site\"; \$$mk create --tenant \"$$tenant\""; \
+	echo "→ copy the 'api_key=' value above into wp-admin → Alt Context Settings (shown once; unrecoverable)."
 
 # Reset local database (db-reset is an alias)
 reset db-reset:

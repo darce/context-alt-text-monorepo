@@ -4,6 +4,11 @@
 
 .PHONY: lane-open lane-status lane-inbox lane-prompt lane-dispatch
 
+# OFFLOAD_BACKEND routes untrusted backends (grok*) to the secure shallow clone
+# inside worktree-lane create. Default empty = plain worktree (current behavior).
+# Example: make lane-open TASK=... LANE=... OFFLOAD_BACKEND=grok-cli
+OFFLOAD_BACKEND ?=
+
 lane-open: lane-guard
 	@set -eu; \
 	DRY_FLAG=""; \
@@ -18,6 +23,7 @@ lane-open: lane-guard
 		--owner-agent codex \
 		--status active \
 		--notes "Makefile-managed worker lane for $(TASK)." \
+		--offload-backend "$(OFFLOAD_BACKEND)" \
 		$$DRY_FLAG; \
 	echo ""; \
 	"$(ORCHESTRATOR_ROOT)/scripts/worktree-lane" brief \

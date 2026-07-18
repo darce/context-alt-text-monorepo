@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Description Bench — dashboard</title>
+<style>
+:root{--paper:#FAF9F6;--ink:#22221E;--muted:#6B6A61;--line:#E4E2D8;--accent:#0E6B6A;
+--card:#FFF;--good:#2E7D57;--good-bg:#E3F0E9;--warn:#8A5A13;--warn-bg:#F5EAD3;--pend:#6B6A61;--pend-bg:#ECEBE4}
+@media(prefers-color-scheme:dark){:root{--paper:#191A17;--ink:#E8E6DD;--muted:#98968A;--line:#33342E;--accent:#7FD1CE;
+--card:#20211D;--good:#7FCB9E;--good-bg:#173226;--warn:#E4B366;--warn-bg:#3A2E17;--pend:#98968A;--pend-bg:#26271F}}
+:root[data-theme=dark]{--paper:#191A17;--ink:#E8E6DD;--muted:#98968A;--line:#33342E;--accent:#7FD1CE;--card:#20211D;--good:#7FCB9E;--good-bg:#173226;--warn:#E4B366;--warn-bg:#3A2E17;--pend:#98968A;--pend-bg:#26271F}
+:root[data-theme=light]{--paper:#FAF9F6;--ink:#22221E;--muted:#6B6A61;--line:#E4E2D8;--accent:#0E6B6A;--card:#FFF;--good:#2E7D57;--good-bg:#E3F0E9;--warn:#8A5A13;--warn-bg:#F5EAD3;--pend:#6B6A61;--pend-bg:#ECEBE4}
+*{box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;margin:0;padding:0 0 4rem}
+.wrap{max-width:62rem;margin:0 auto;padding:1.5rem 1.25rem}
+h1{font-size:1.4rem;margin:0 0 .2rem;letter-spacing:-.015em}
+.sub{color:var(--muted);font-size:.82rem;margin:0 0 1.4rem}
+h2{font-size:.82rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:1.8rem 0 .7rem;font-weight:600}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.7rem}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:.8rem .9rem}
+.tile .v{font:600 1.5rem/1.05 ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.tile .k{font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-top:.15rem}
+.tile .note{font-size:.7rem;color:var(--muted);margin-top:.2rem}
+table{width:100%;border-collapse:collapse;font-size:.85rem}
+.scroll{overflow-x:auto;border:1px solid var(--line);border-radius:9px;background:var(--card)}
+th{text-align:left;font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600;padding:.6rem .8rem;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:.6rem .8rem;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td.num{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums;white-space:nowrap}
+.pill{display:inline-flex;align-items:center;gap:.3rem;border-radius:999px;padding:.12rem .55rem;font:600 .72rem/1.3 inherit}
+.pill.good{background:var(--good-bg);color:var(--good)} .pill.warn{background:var(--warn-bg);color:var(--warn)} .pill.pend{background:var(--pend-bg);color:var(--pend)}
+.pill::before{content:"";width:.5rem;height:.5rem;border-radius:50%;background:currentColor}
+a{color:var(--accent);text-decoration:none;font-weight:600} a:hover{text-decoration:underline}
+a:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:.7rem}
+.rc{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:.85rem .95rem;display:block}
+.rc .t{font-weight:600;margin-bottom:.15rem} .rc .d{font-size:.78rem;color:var(--muted)}
+ul.plans{list-style:none;padding:0;margin:0;columns:2;column-gap:1.4rem}
+@media(max-width:560px){ul.plans{columns:1}}
+ul.plans li{margin:0 0 .35rem;font-size:.86rem;break-inside:avoid}
+.foot{color:var(--muted);font-size:.74rem;margin-top:2rem;border-top:1px solid var(--line);padding-top:.8rem}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Description Bench</h1>
+  <p class="sub">Image-description &amp; vision-model bake-off harness · snapshot 2026-07-16 · scored gate = golden manifest</p>
+
+  <div class="tiles">
+    <div class="tile"><div class="v">2</div><div class="k">corpora</div><div class="note">golden-37 · 646 live</div></div>
+    <div class="tile"><div class="v">1</div><div class="k">models measured</div><div class="note">Qwen3-VL-30B-A3B</div></div>
+    <div class="tile"><div class="v">0.081</div><div class="k">two-pass wrong-name</div><div class="note">from 0.216 v1 (golden-37 distractor)</div></div>
+    <div class="tile"><div class="v">5.24s</div><div class="k">GPU p50 / image</div><div class="note">~80× CPU · v3 two-pass</div></div>
+    <div class="tile"><div class="v">640/646</div><div class="k">corpus woven</div><div class="note">title + alt + caption</div></div>
+  </div>
+
+  <h2>Reports</h2>
+  <div class="cards">
+    <a class="rc" href="reports/corpus646-three-surface-20260716.html"><div class="t">646 three-surface corpus</div><div class="d">Qwen3-VL-30B · title/alt/caption + baseline · text, searchable</div></a>
+    <a class="rc" href="reports/bakeoff-10img-20260716.html"><div class="t">10-image bake-off</div><div class="d">images embedded · media_id + per-image latency · challenger columns pending</div></a>
+  </div>
+
+  <h2>Runs</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>Run</th><th>Model</th><th>Corpus</th><th>Headline</th><th>p50/img</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>golden A/B matrix (v1·v2·two-pass·dual × modes)</td><td class="num">Qwen3-VL-30B</td><td class="num">golden-37</td><td>two-pass distractor 0.919 gated · v2 std 0.973</td><td class="num">2.6–5.8s</td><td><span class="pill good">scored</span></td></tr>
+      <tr><td>646 three-surface interleave (v3)</td><td class="num">Qwen3-VL-30B</td><td class="num">646</td><td>640/646 woven · corpus name-metrics not clean signal</td><td class="num">5.24s</td><td><span class="pill good">done</span></td></tr>
+      <tr><td>646 context-free baseline</td><td class="num">Qwen3-VL-30B</td><td class="num">646</td><td>captions + latency · 19 spontaneous celeb IDs</td><td class="num">2.02s</td><td><span class="pill good">done</span></td></tr>
+      <tr><td>10-image multi-model bake-off</td><td class="num">8B · MiniCPM · Gemma4 · Gemma3</td><td class="num">10</td><td>candidate matrix locked · runner staged</td><td class="num">—</td><td><span class="pill pend">staged</span></td></tr>
+      <tr><td>CPU fallback (Florence + 4B weave-bench)</td><td class="num">Florence-2 · Qwen-4B</td><td class="num">golden-37 / 646</td><td>tooling built · operator verifies GGUF URLs</td><td class="num">—</td><td><span class="pill pend">staged</span></td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Plans &amp; references</h2>
+  <ul class="plans">
+    <li><a href="plans/multi-model-bakeoff-plan-2026-07-16.md">Multi-model bake-off plan</a> — candidate matrix, 10 images</li>
+    <li><a href="plans/cpu-tiered-serving-plan-2026-07-16.md">CPU-first tiered serving</a> — fallback tier</li>
+    <li><a href="plans/opportunistic-gpu-provisioning-plan-2026-07-16.md">Opportunistic GPU provisioning</a> — reviewed</li>
+    <li><a href="plans/oci-vm-reachability-tailscale-vcn-plan.md">Reachability (Tailscale/VCN)</a></li>
+    <li><a href="plans/oci-vlm-batch-compute-learnings.md">OCI batch-compute learnings</a></li>
+  </ul>
+
+  <p class="foot">Harness code: <code>apps/prototype-description-service/scripts/eval_harness/</code> · seed dashboard, hand-authored — a harness script will regenerate it from <code>results/</code> as runs accumulate. See <a href="README.md">README</a>.</p>
+</div>
+<script>
+// theme toggle honors the viewer's stamped data-theme; nothing to do at runtime
+// beyond letting CSS resolve. Kept for parity with report pages.
+</script>
+</body>
+</html>

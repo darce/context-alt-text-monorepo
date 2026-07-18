@@ -11,6 +11,7 @@ import {
   isCoolingDown,
   openCooldown,
   openCooldownFromError,
+  runAfterCooldown,
   subscribeToCooldown,
 } from '../recognitionCooldown';
 
@@ -167,6 +168,25 @@ describe('recognitionCooldown', () => {
       expect(getCooldownExpiresAt()).toBe(0);
       openCooldown(10);
       expect(getCooldownExpiresAt()).toBe(Date.now() + 10_000);
+    });
+  });
+
+  describe('runAfterCooldown', () => {
+    it('executes immediately when idle and defers until expiry during cooldown', () => {
+      const fn = vi.fn();
+
+      runAfterCooldown(fn);
+      expect(fn).toHaveBeenCalledTimes(1);
+
+      openCooldown(5);
+      runAfterCooldown(fn);
+      expect(fn).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(4999);
+      expect(fn).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(1);
+      expect(fn).toHaveBeenCalledTimes(2);
     });
   });
 });

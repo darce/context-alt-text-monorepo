@@ -206,11 +206,27 @@ class SovereignProjectionIntegrationTest extends TestCase
         );
 
         global $wpdb;
+        // Three curated rows (two undisturbed) keep the single reassignment below
+        // the E15-35 storm threshold so the per-entity conflict path is exercised.
         $wpdb->mockResults = [
             [
                 'cluster_uuid' => 'cluster-curated-local',
                 'label' => 'Curated Local',
                 'identity_uuid' => 'identity-curated-local',
+                'is_curated' => 1,
+                'projection_version' => 40,
+            ],
+            [
+                'cluster_uuid' => 'cluster-curated-2',
+                'label' => 'Curated Two',
+                'identity_uuid' => 'identity-curated-2',
+                'is_curated' => 1,
+                'projection_version' => 40,
+            ],
+            [
+                'cluster_uuid' => 'cluster-curated-3',
+                'label' => 'Curated Three',
+                'identity_uuid' => 'identity-curated-3',
                 'is_curated' => 1,
                 'projection_version' => 40,
             ],
@@ -229,6 +245,22 @@ class SovereignProjectionIntegrationTest extends TestCase
                         'is_user_confirmed' => true,
                         'identity_count' => 1,
                         'representative_media_id' => 701,
+                    ],
+                    [
+                        'cluster_uuid' => 'cluster-curated-2',
+                        'label' => 'Curated Two',
+                        'curation_state' => 'confirmed',
+                        'is_user_confirmed' => true,
+                        'identity_count' => 1,
+                        'representative_media_id' => 704,
+                    ],
+                    [
+                        'cluster_uuid' => 'cluster-curated-3',
+                        'label' => 'Curated Three',
+                        'curation_state' => 'confirmed',
+                        'is_user_confirmed' => true,
+                        'identity_count' => 1,
+                        'representative_media_id' => 705,
                     ],
                     [
                         'cluster_uuid' => 'cluster-uncurated',
@@ -257,6 +289,16 @@ class SovereignProjectionIntegrationTest extends TestCase
                         'identity_uuid' => 'identity-uncurated',
                         'cluster_uuid' => 'cluster-machine-target',
                         'attachment_id' => 702,
+                    ],
+                    [
+                        'identity_uuid' => 'identity-curated-2',
+                        'cluster_uuid' => 'cluster-curated-2',
+                        'attachment_id' => 704,
+                    ],
+                    [
+                        'identity_uuid' => 'identity-curated-3',
+                        'cluster_uuid' => 'cluster-curated-3',
+                        'attachment_id' => 705,
                     ],
                     [
                         'identity_uuid' => 'identity-new',

@@ -375,6 +375,18 @@ class ConflictController extends AbstractRecognitionProxyController {
 			return array( 'accept_backend', 'dismissed' );
 		}
 
+		// E15-35 Slice 3 aggregate: restore_local is offered only while the
+		// persisted entity set is complete; a truncated aggregate fails closed to
+		// accept_backend / bulk recovery.
+		if ( ConflictRepository::CONFLICT_CODE_BACKEND_ROSTER_REGRESSED === $conflict_code ) {
+			$machine_payload = $conflict['machine_payload'] ?? array();
+			$entity_set_truncated = is_array( $machine_payload ) && ! empty( $machine_payload['entity_set_truncated'] );
+
+			return $entity_set_truncated
+				? array( 'accept_backend', 'dismissed' )
+				: array( 'restore_local', 'accept_backend', 'dismissed' );
+		}
+
 		if ( 0 === $outbox_id ) {
 			return array( 'accepted', 'dismissed' );
 		}

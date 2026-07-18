@@ -2,12 +2,15 @@ import { __, sprintf } from '@wordpress/i18n';
 
 import type { BatchRunStatus, JobProgress, JobStatusResponse } from '../api/recognition/types/scan';
 import { JOB_PHASE_PRESENTATION } from '../pages/workbench/phasePresentation';
+import { formatClusterQueuedStatus } from './clusterAutoRetry';
 import type { PersistedJob } from './useJobPersistence';
 import type { JobStatus } from './useJobProgressStream';
 import { isScanSuccessStatus, isScanTerminalStatus, type PipelinePhase } from './jobStateMachineUtils';
 
 interface StatusTextParams {
   clusterPending: boolean;
+  /** Seconds until the next bounded cluster auto-retry (honest queued status). */
+  clusterQueuedSeconds?: number | null;
   sseStatus: JobStatus;
   sseProgress: JobProgress | null;
   activeJobIds: string[];
@@ -19,6 +22,7 @@ interface StatusTextParams {
 
 export const buildStatusText = ({
   clusterPending,
+  clusterQueuedSeconds,
   sseStatus,
   sseProgress,
   activeJobIds,
@@ -29,6 +33,12 @@ export const buildStatusText = ({
 }: StatusTextParams): string | undefined => {
   // Cross-signal precedence below (which signal wins) is behavior and stays
   // here; every phase-derived string comes from JOB_PHASE_PRESENTATION.
+  // Queued auto-retry sits above live clustering progress so AGT-10 stays honest
+  // while the mutation is idle between 429 attempts.
+  if (typeof clusterQueuedSeconds === 'number' && clusterQueuedSeconds > 0) {
+    return formatClusterQueuedStatus(clusterQueuedSeconds);
+  }
+
   if (clusterPending || sseProgress?.phase === 'clustering') {
     if (sseProgress) {
       return JOB_PHASE_PRESENTATION.clustering.status({

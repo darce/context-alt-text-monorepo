@@ -9,11 +9,17 @@ import { useQuery } from '@tanstack/react-query';
 
 import { queryKeys } from '../../../api/queryKeys';
 import {
-  fetchIdentitySuggestions,
+  fetchIdentitiesSuggestions,
   listRecognitionClusters,
   type ClusterSummary,
-  type IdentitySuggestionsResponse,
+  type IdentityBatchSuggestionsResponse,
 } from '../../../api/recognition';
+import {
+  PROJECTION_TOP_K,
+  fromIdentityMatch,
+  identityBatchIdsKey,
+  type ProjectedSuggestion,
+} from './suggestionProjection';
 
 export interface ClusterSuggestionsLoaderOptions {
   /** Identity ID to fetch suggestions for */
@@ -29,8 +35,8 @@ export interface ClusterSuggestionsLoaderOptions {
 }
 
 export interface ClusterSuggestionsLoaderResult {
-  /** Raw suggestions from identity similarity */
-  identitySuggestions?: IdentitySuggestionsResponse;
+  /** Projected identity-keyed suggestions (server order; truthy-label filtered in 0b-1) */
+  identityProjection?: ProjectedSuggestion[];
   /** Raw label search matches */
   labelMatches?: ClusterSummary[];
   /** Whether suggestion queries are loading */
@@ -40,6 +46,9 @@ export interface ClusterSuggestionsLoaderResult {
 }
 
 const DEFAULT_DEBOUNCE_MS = 300;
+
+/** Commit-1 local eligibility: truthy trimmed label (auto cluster-* labels still surface). */
+const isTruthyLabel = (label: string | null | undefined): boolean => Boolean(label?.trim());
 
 export const useClusterSuggestionsLoader = ({
   identityId,
@@ -60,12 +69,30 @@ export const useClusterSuggestionsLoader = ({
     return () => window.clearTimeout(timer);
   }, [labelInput, debounceMs, enabled]);
 
-  const { data: identitySuggestions, isLoading: suggestionsLoading } = useQuery<IdentitySuggestionsResponse>({
-    queryKey: queryKeys.suggestions.identityFor(identityId),
-    queryFn: () => fetchIdentitySuggestions(identityId!, 5),
+  const { data: identityBatch, isLoading: suggestionsLoading } = useQuery<IdentityBatchSuggestionsResponse>({
+    queryKey: queryKeys.suggestions.projection.identityBatch(
+      identityBatchIdsKey(identityId !== undefined ? [identityId] : []),
+    ),
+    queryFn: () => {
+      // enabled requires identityId; guard here so we never need a non-null assertion.
+      if (!identityId) {
+        return Promise.resolve({ matches: {} });
+      }
+      return fetchIdentitiesSuggestions([identityId], PROJECTION_TOP_K);
+    },
     enabled: Boolean(identityId && enabled),
     staleTime: 30000,
   });
+
+  const identityProjection = React.useMemo((): ProjectedSuggestion[] | undefined => {
+    if (!identityId || identityBatch === undefined) {
+      return undefined;
+    }
+    const rows = identityBatch.matches[identityId] ?? [];
+    return rows
+      .map((match) => fromIdentityMatch(identityId, match))
+      .filter((projected) => isTruthyLabel(projected.label));
+  }, [identityId, identityBatch]);
 
   const { data: labelMatches, isLoading: labelMatchesLoading } = useQuery({
     queryKey: queryKeys.clusters.labelSearch(debouncedValue),
@@ -112,7 +139,7 @@ export const useClusterSuggestionsLoader = ({
   );
 
   return {
-    identitySuggestions,
+    identityProjection,
     labelMatches,
     isLoading: suggestionsLoading || labelMatchesLoading,
     findClusterByLabel,

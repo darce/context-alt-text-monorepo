@@ -5,7 +5,8 @@
 import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
-import type { ClusterSuggestion, MergeClusterResponse } from '../../../api/recognition';
+import type { MergeClusterResponse } from '../../../api/recognition';
+import type { ProjectedSuggestion } from './suggestionProjection';
 import type { ClusterGroup } from './types';
 import { filterEditableClusterMatch, formatClusterLabel, getEditableClusterId } from './utils';
 import { useClusterEditState } from './useClusterEditState';
@@ -38,7 +39,7 @@ interface IdentityClusterItemProps {
   canLabel?: boolean;
   canMutate?: boolean;
   /** Top server-ranked inline suggestion for this cluster's anchor identity. */
-  inlineSuggestionMatch?: ClusterSuggestion;
+  inlineSuggestionMatch?: ProjectedSuggestion;
 }
 
 /**

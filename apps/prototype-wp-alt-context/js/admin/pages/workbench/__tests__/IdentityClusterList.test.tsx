@@ -88,7 +88,6 @@ vi.mock('../../../hooks/useSyncOffline', () => ({
 vi.mock('../../../api/recognition', () => ({
   mergeCluster: vi.fn(),
   updateClusterLabel: vi.fn(),
-  fetchIdentitySuggestions: vi.fn(),
   fetchIdentitiesSuggestions: vi.fn(),
   listRecognitionClusters: vi.fn(),
   revertMergeCluster: vi.fn(),
@@ -210,12 +209,11 @@ describe('IdentityClusterList', () => {
       return deferred.promise;
     });
     useClusterSuggestionsLoaderMock.mockReturnValue({
-      identitySuggestions: { matches: [] },
+      identityProjection: [],
       labelMatches: [],
       isLoading: false,
       findClusterByLabel: defaultFindClusterByLabel,
     });
-    vi.mocked(api.fetchIdentitySuggestions).mockResolvedValue({ matches: [] });
     vi.mocked(api.fetchIdentitiesSuggestions).mockResolvedValue({ matches: {} });
     vi.mocked(api.listRecognitionClusters).mockResolvedValue({
       clusters: [],
@@ -433,16 +431,15 @@ describe('IdentityClusterList', () => {
 
   it('shows identity suggestions in the overlay', async () => {
     const loaderResult = {
-      identitySuggestions: {
-        matches: [
-          {
-            cluster_id: 'cluster-suggested',
-            label: 'Ada Lovelace',
-            similarity: 0.92,
-            identity_count: 3,
-          },
-        ],
-      },
+      identityProjection: [
+        {
+          identityId: baseIdentity.identity_id,
+          clusterId: 'cluster-suggested',
+          label: 'Ada Lovelace',
+          similarity: 0.92,
+          identityCount: 3,
+        },
+      ],
       labelMatches: [],
       isLoading: false,
       findClusterByLabel: defaultFindClusterByLabel,
@@ -479,7 +476,7 @@ describe('IdentityClusterList', () => {
     });
 
     const loaderResult = {
-      identitySuggestions: { matches: [] },
+      identityProjection: [],
       labelMatches: [],
       isLoading: false,
       findClusterByLabel: findClusterByLabelRemote,
@@ -557,7 +554,7 @@ describe('IdentityClusterList', () => {
     });
 
     useClusterSuggestionsLoaderMock.mockReturnValue({
-      identitySuggestions: { matches: [] },
+      identityProjection: [],
       labelMatches: [],
       isLoading: false,
       findClusterByLabel: findClusterByLabelRemote,
@@ -642,7 +639,7 @@ describe('IdentityClusterList', () => {
       },
     ];
     const loaderResult = {
-      identitySuggestions: { matches: [] },
+      identityProjection: [],
       labelMatches: existingClusters,
       isLoading: false,
       findClusterByLabel: defaultFindClusterByLabel,
@@ -706,7 +703,7 @@ describe('IdentityClusterList', () => {
       },
     ];
     const loaderResult = {
-      identitySuggestions: { matches: [] },
+      identityProjection: [],
       labelMatches: existingClusters,
       isLoading: false,
       findClusterByLabel: defaultFindClusterByLabel,
@@ -779,7 +776,7 @@ describe('IdentityClusterList', () => {
       },
     ];
     const loaderResult = {
-      identitySuggestions: { matches: [] },
+      identityProjection: [],
       labelMatches: existingClusters,
       isLoading: false,
       findClusterByLabel: defaultFindClusterByLabel,
@@ -1005,17 +1002,15 @@ describe('IdentityClusterList', () => {
         cluster_label: null,
       }));
 
-    it('issues exactly one batched suggestions fetch (top_k=1) for N unlabeled cards', async () => {
+    it('issues exactly one batched suggestions fetch at projection depth for N unlabeled cards', async () => {
       const identities = makeUnlabeled(5);
       await renderWithClient(<IdentityClusterList identities={identities} />);
 
       await waitFor(() => expect(api.fetchIdentitiesSuggestions).toHaveBeenCalledTimes(1));
       expect(api.fetchIdentitiesSuggestions).toHaveBeenCalledWith(
         ['id-0', 'id-1', 'id-2', 'id-3', 'id-4'],
-        1,
+        5,
       );
-      // The per-card fetch path is gone.
-      expect(api.fetchIdentitySuggestions).not.toHaveBeenCalled();
     });
 
     it('fetches no suggestions in label-only mode (zero fetches)', async () => {

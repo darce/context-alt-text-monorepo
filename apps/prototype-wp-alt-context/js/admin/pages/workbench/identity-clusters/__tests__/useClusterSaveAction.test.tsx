@@ -315,4 +315,60 @@ describe('useClusterSaveAction casing grid (B6)', () => {
     expect(cancelEditing).not.toHaveBeenCalled();
     expect(queueSaveStatus).toHaveBeenCalled();
   });
+
+  it('6. free-typed case-only edit no-ops when person canonical already matches current label (UXP-3-BR-43)', async () => {
+    // Cluster "bob" + person option "bob"; user types "Bob". Dirty check passes, person path
+    // would applyPersonLabel("bob") → rename to the label already held (false "Saved!").
+    const { result, mutations, cancelEditing, findClusterByLabel } = renderSaveAction({
+      clusterLabel: 'bob',
+      labelInput: 'Bob',
+      members: [member({ cluster_label: 'bob' })],
+      options: [
+        {
+          value: namingOptionValue('person', 1),
+          label: 'bob',
+          source: 'person',
+          group: 'All Labels',
+        },
+      ],
+    });
+
+    await act(async () => {
+      await result.current.handleSave();
+    });
+
+    expect(mutations.rename).not.toHaveBeenCalled();
+    expect(mutations.merge).not.toHaveBeenCalled();
+    expect(mutations.createClusterForIdentity).not.toHaveBeenCalled();
+    expect(findClusterByLabel).not.toHaveBeenCalled();
+    expect(cancelEditing).toHaveBeenCalled();
+  });
+
+  it('7. free-typed person match still renames when person canonical casing differs from current (UXP-3-BR-43)', async () => {
+    // Cluster "bob" + person option "Bob"; free-type that passes dirty check ("BOB" / "Bob")
+    // must still rename to person casing. Exact "bob" is the dirty-check no-op (test 2).
+    const personOption = {
+      value: namingOptionValue('person', 1),
+      label: 'Bob',
+      source: 'person' as const,
+      group: 'All Labels',
+    };
+
+    for (const labelInput of ['BOB', 'Bob'] as const) {
+      const { result, mutations, cancelEditing } = renderSaveAction({
+        clusterLabel: 'bob',
+        labelInput,
+        members: [member({ cluster_label: 'bob' })],
+        options: [personOption],
+      });
+
+      await act(async () => {
+        await result.current.handleSave();
+      });
+
+      expect(mutations.rename).toHaveBeenCalledWith('Bob', expect.any(AbortSignal));
+      expect(mutations.merge).not.toHaveBeenCalled();
+      expect(cancelEditing).not.toHaveBeenCalled();
+    }
+  });
 });

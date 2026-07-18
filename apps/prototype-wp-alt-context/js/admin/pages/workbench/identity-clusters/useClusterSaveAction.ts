@@ -212,6 +212,13 @@ export const useClusterSaveAction = ({
         // with canonical person casing (never merge into a same-named cluster).
         const personCanonical = findPersonOptionLabel(options, trimmed);
         if (personCanonical) {
+          // Already at person canonical casing: case-only free-type would rename to the
+          // same label (false "Saved!" + pointless mutation). Differing person casing still renames.
+          if (personCanonical === currentLabel) {
+            cancelEditing();
+            resetSaveStatus();
+            return;
+          }
           mutationStarted = applyPersonLabel(personCanonical, abortController);
           if (!mutationStarted) {
             resetSaveStatus();

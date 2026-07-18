@@ -11,8 +11,14 @@ interface IdentityMembersRepositoryInterface {
 	 * Merge identity-member rows from a snapshot payload.
 	 *
 	 * @param array<int,array<string,mixed>> $members
+	 * @param bool $suppress_conflict_storm When true, the merge skips per-entity
+	 *                                      conflict recording for the cycle (the
+	 *                                      projector recorded one aggregate
+	 *                                      backend_roster_regressed conflict
+	 *                                      instead, E15-35 Slice 3). Optional so
+	 *                                      the project_delta caller stays safe.
 	 */
-	public function merge_snapshot_for_tenant( string $tenant_id, array $members, int $snapshot_version ): void;
+	public function merge_snapshot_for_tenant( string $tenant_id, array $members, int $snapshot_version, bool $suppress_conflict_storm = false ): void;
 
 	/**
 	 * Return member rows for one projected cluster.

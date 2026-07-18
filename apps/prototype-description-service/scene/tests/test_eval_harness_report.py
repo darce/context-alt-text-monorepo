@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from scripts.eval_harness.report import ReportError, build_reports, score_run_record
+from scripts.eval_harness.report import Audience, ReportError, build_reports, score_run_record
 
 
 def _run_record() -> dict:
@@ -238,3 +238,197 @@ def test_all_items_failed_aggregate_paths():  # S3-08
     assert scored["caption"]["mean_gated_score"] is None
     assert scored["faces"]["detection"]["precision"] is None
     assert "null" in md  # _fmt(None) rendered
+
+
+# --- VLM-6 S1: audience-aware public vs local report split --------------------
+
+_LOCAL_PATH = "localwp/uploads/jane-doe-birthday.jpg"
+_LOCAL_NAME = "Jane Doe Private"
+_PUBLIC_PATH = "celebs01/obama-podium.jpg"
+_PUBLIC_NAME = "Barack Obama"
+
+
+def _audience_fixtures() -> tuple[dict, list[dict]]:
+    """One publishable celeb + one local-only personal photo (wrong-name risk)."""
+    record = {
+        "schema": "acx-eval/v1",
+        "kind": "run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "base_url": "https://api.example.com",
+            "head_sha": "0" * 40,
+            "started_at": "2026-07-06T00:00:00Z",
+        },
+        "items": [
+            {
+                "media_id": 10,
+                "path": _PUBLIC_PATH,
+                "describe": {
+                    "alt_text_draft": f"{_PUBLIC_NAME} at a podium.",
+                    "visual_facts": {"objects": ["podium"]},
+                    "adapter": "seeded",
+                    "model_id": "seeded-fixtures",
+                    "model_version": "1",
+                    "cached": False,
+                },
+                "identities": [_PUBLIC_NAME],
+                "face_count": 1,
+                "error": None,
+            },
+            {
+                "media_id": 20,
+                "path": _LOCAL_PATH,
+                "describe": {
+                    "alt_text_draft": f"{_LOCAL_NAME} at a party.",
+                    "visual_facts": {"objects": ["cake"]},
+                    "adapter": "seeded",
+                    "model_id": "seeded-fixtures",
+                    "model_version": "1",
+                    "cached": False,
+                },
+                # Wrong name asserted — must never leak into a public report.
+                "identities": ["Wrong Celebrity"],
+                "face_count": 1,
+                "error": None,
+            },
+        ],
+    }
+    entries = [
+        {
+            "path": _PUBLIC_PATH,
+            "media_id": 10,
+            "face_count": 1,
+            "present_identities": [_PUBLIC_NAME],
+            "must_right": [_PUBLIC_NAME],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+            "provenance": {
+                "source": "celeb",
+                "license": "public_domain",
+                "publishable": True,
+            },
+        },
+        {
+            "path": _LOCAL_PATH,
+            "media_id": 20,
+            "face_count": 1,
+            "present_identities": [_LOCAL_NAME],
+            "must_right": [],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+            "provenance": {
+                "source": "localwp",
+                "license": "consented",
+                "publishable": False,
+            },
+        },
+    ]
+    return record, entries
+
+
+def test_public_excludes_non_publishable_and_keeps_publishable():
+    record, entries = _audience_fixtures()
+    json_doc, _md = build_reports(record, entries, audience=Audience.PUBLIC)
+    scored = json.loads(json_doc)
+    media_ids = {p["media_id"] for p in scored["per_image"]}
+    assert 10 in media_ids
+    assert 20 not in media_ids
+    assert scored["counts"]["total"] == 1  # only publishable items scored
+    assert scored["counts"]["scored"] == 1
+
+
+def test_public_fail_closed_missing_entry():
+    record, entries = _audience_fixtures()
+    record["items"].append(
+        {
+            "media_id": 999,
+            "path": "ghost.jpg",
+            "describe": {"alt_text_draft": "ghost", "visual_facts": {"objects": []}},
+            "identities": [],
+            "face_count": 0,
+            "error": None,
+        }
+    )
+    json_doc, _md = build_reports(record, entries, audience=Audience.PUBLIC)
+    scored = json.loads(json_doc)
+    assert all(p["media_id"] != 999 for p in scored["per_image"])
+    assert scored["redaction"]["withheld_items"] == 2  # local + missing
+    assert scored["redaction"]["total_items"] == 3
+
+
+def test_public_fail_closed_missing_provenance():
+    record, entries = _audience_fixtures()
+    # Strip provenance from the public entry — fail-closed, not inferred publishable.
+    del entries[0]["provenance"]
+    json_doc, _md = build_reports(record, entries, audience=Audience.PUBLIC)
+    scored = json.loads(json_doc)
+    assert scored["per_image"] == []
+    assert scored["redaction"] == {
+        "audience": "public",
+        "withheld_items": 2,
+        "total_items": 2,
+    }
+
+
+def test_public_fail_closed_unparseable_provenance():
+    record, entries = _audience_fixtures()
+    entries[0]["provenance"] = {"source": "celeb"}  # missing required license
+    json_doc, _md = build_reports(record, entries, audience=Audience.PUBLIC)
+    scored = json.loads(json_doc)
+    assert all(p["media_id"] != 10 for p in scored["per_image"])
+    assert scored["redaction"]["withheld_items"] == 2
+
+
+def test_public_redaction_counts():
+    record, entries = _audience_fixtures()
+    json_doc, md = build_reports(record, entries, audience=Audience.PUBLIC)
+    scored = json.loads(json_doc)
+    assert scored["redaction"] == {
+        "audience": "public",
+        "withheld_items": 1,
+        "total_items": 2,
+    }
+    # Honest redaction must also surface in markdown (not silent drop).
+    assert "withheld" in md.lower()
+    assert "1" in md and "2" in md
+
+
+def test_public_serialized_output_leaks_no_local_path_or_name():
+    record, entries = _audience_fixtures()
+    json_doc, md = build_reports(record, entries, audience=Audience.PUBLIC)
+    for blob in (json_doc, md):
+        assert _LOCAL_PATH not in blob
+        assert _LOCAL_NAME not in blob
+        assert "Wrong Celebrity" not in blob  # wrong_names pair from local item
+    # Publishable identity still present.
+    assert _PUBLIC_NAME in json_doc
+    assert _PUBLIC_PATH in json_doc or "obama" in json_doc.lower()
+
+
+def test_local_output_unchanged_byte_identical_to_default():
+    """LOCAL is the default and must stay byte-identical to pre-audience behaviour."""
+    record, entries = _run_record(), _manifest_entries()
+    default_json, default_md = build_reports(record, entries)
+    local_json, local_md = build_reports(record, entries, audience=Audience.LOCAL)
+    assert default_json == local_json
+    assert default_md == local_md
+    assert "redaction" not in json.loads(local_json)
+
+
+def test_local_still_includes_non_publishable():
+    record, entries = _audience_fixtures()
+    json_doc, md = build_reports(record, entries, audience=Audience.LOCAL)
+    scored = json.loads(json_doc)
+    media_ids = {p["media_id"] for p in scored["per_image"]}
+    assert media_ids == {10, 20}
+    assert _LOCAL_PATH in json_doc
+    assert _LOCAL_PATH in md
+    assert "redaction" not in scored
+
+
+def test_public_reports_deterministic():
+    record, entries = _audience_fixtures()
+    a_json, a_md = build_reports(record, entries, audience=Audience.PUBLIC)
+    b_json, b_md = build_reports(record, entries, audience=Audience.PUBLIC)
+    assert a_json == b_json
+    assert a_md == b_md

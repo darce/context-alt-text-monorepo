@@ -113,6 +113,23 @@ class SyncHealthControllerTest extends TestCase
         $this->assertSame(25, $data['warnings'][0]['threshold']);
     }
 
+    public function testGetSyncHealthSurfacesBackendRosterRegressionWarning(): void
+    {
+        $conflictRepository = new class() extends \AltContext\Sovereign\Sync\ConflictRepository {
+            public function find_open_backend_roster_regression(string $tenant_id): ?array
+            {
+                return ['id' => 7, 'backend_version' => 41, 'resolution_status' => 'open'];
+            }
+        };
+
+        $controller = new SyncHealthController(new NullSyncStateRepository(), null, null, $conflictRepository);
+        $response = $controller->get_sync_health(new WP_REST_Request('GET', '/acx/v1/recognition/sync/health'));
+        $data = $response->get_data();
+
+        $codes = array_column($data['warnings'], 'code');
+        $this->assertContains('backend_roster_regressed', $codes, 'an open aggregate must surface as a degraded-mode warning');
+    }
+
     public function testGetSyncHealthReportsOpenBreakerFromTransient(): void
     {
         $baseUrl = 'http://recognition.test';

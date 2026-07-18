@@ -106,6 +106,20 @@ export function gateRefetchInterval<TQuery>(
   };
 }
 
+/**
+ * Run `fn` immediately when no cooldown is active, otherwise defer it until
+ * the window expires. Invalidation-triggered refetch bursts bypass
+ * refetchInterval gating, so job-completion handlers use this to hold them
+ * out of an active window (ported from UXP-NET-1's rateLimitCooldown).
+ */
+export const runAfterCooldown = (fn: () => void): void => {
+  if (!isCoolingDown()) {
+    fn();
+    return;
+  }
+  setTimeout(fn, cooldownRemainingMs());
+};
+
 /** Test-only: clear module state between tests. */
 export const _resetCooldownForTests = (): void => {
   expiresAtMs = 0;

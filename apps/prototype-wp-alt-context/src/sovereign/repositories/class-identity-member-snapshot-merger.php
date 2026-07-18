@@ -46,8 +46,11 @@ class IdentityMemberSnapshotMerger {
 
 	/**
 	 * @param array<int,array<string,mixed>> $members
+	 * @param bool $suppress_conflict_storm When true (degraded storm cycle, E15-35 Slice 3)
+	 *                                      per-entity conflict recording is skipped; curated
+	 *                                      rows stay protected from projection overwrites.
 	 */
-	public function merge_snapshot_for_tenant( string $tenant_id, array $members, int $snapshot_version ): void {
+	public function merge_snapshot_for_tenant( string $tenant_id, array $members, int $snapshot_version, bool $suppress_conflict_storm = false ): void {
 		global $wpdb;
 
 		$normalized_tenant_id = trim( $tenant_id );
@@ -82,7 +85,7 @@ class IdentityMemberSnapshotMerger {
 		);
 
 		$curated_members = $this->read_repository->get_curated_members_for_tenant( $normalized_tenant_id );
-		$this->conflict_recorder->record_missing_curated_member_conflicts( $normalized_tenant_id, $curated_members, $incoming_identity_ids, $snapshot_version );
+		$this->conflict_recorder->record_missing_curated_member_conflicts( $normalized_tenant_id, $curated_members, $incoming_identity_ids, $snapshot_version, $suppress_conflict_storm );
 
 		$this->delete_stale_non_curated_rows( $normalized_tenant_id, $incoming_identity_ids );
 		$this->delete_orphan_rows();
@@ -103,7 +106,8 @@ class IdentityMemberSnapshotMerger {
 					$cluster_uuid,
 					$this->normalize_similarity_value( $member ),
 					$snapshot_version,
-					$existing_curated_member
+					$existing_curated_member,
+					$suppress_conflict_storm
 				);
 				continue;
 			}

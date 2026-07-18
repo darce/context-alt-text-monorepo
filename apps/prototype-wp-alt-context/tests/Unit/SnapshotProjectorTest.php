@@ -13,6 +13,9 @@ use AltContext\Sovereign\Sync\SnapshotProjector;
 use AltContext\Tests\Stubs\NullClustersRepository;
 use AltContext\Tests\Stubs\NullIdentityMembersRepository;
 use AltContext\Tests\Stubs\NullSyncStateRepository;
+use AltContext\Tests\Stubs\SnapshotProjectorClustersSpy;
+use AltContext\Tests\Stubs\SnapshotProjectorMembersSpy;
+use AltContext\Tests\Stubs\SnapshotProjectorSyncStateSpy;
 use AltContext\Tests\TestCase;
 use RuntimeException;
 
@@ -418,6 +421,9 @@ class SnapshotProjectorTest extends TestCase
 
         $syncRepo = new SnapshotProjectorSyncStateSpy();
         $syncRepo->postRefreshConflictCount = 1;
+        // Two curated clusters survive in the incoming snapshot so the single
+        // missing cluster stays below the E15-35 storm threshold (1 of 3 <= 50%)
+        // and the per-entity conflict path is exercised.
         $projector = new SnapshotProjector(
             new SnapshotProjectorClustersSpy([
                 'cluster-missing' => [
@@ -427,6 +433,18 @@ class SnapshotProjectorTest extends TestCase
                     'curation_state' => 'dismissed',
                     'snapshot_version' => 12,
                     'local_revision' => 5,
+                ],
+                'cluster-kept-1' => [
+                    'cluster_uuid' => 'cluster-kept-1',
+                    'label' => 'Kept One',
+                    'snapshot_version' => 12,
+                    'local_revision' => 2,
+                ],
+                'cluster-kept-2' => [
+                    'cluster_uuid' => 'cluster-kept-2',
+                    'label' => 'Kept Two',
+                    'snapshot_version' => 12,
+                    'local_revision' => 2,
                 ],
             ]),
             new SnapshotProjectorMembersSpy(),
@@ -448,7 +466,10 @@ class SnapshotProjectorTest extends TestCase
             'tenant-conflicts',
             [
                 'snapshot_version' => 19,
-                'clusters' => [],
+                'clusters' => [
+                    ['cluster_uuid' => 'cluster-kept-1', 'label' => 'Kept One', 'identity_count' => 1],
+                    ['cluster_uuid' => 'cluster-kept-2', 'label' => 'Kept Two', 'identity_count' => 1],
+                ],
                 'members' => [],
             ]
         );
@@ -873,194 +894,5 @@ class SnapshotProjectorTest extends TestCase
         $this->assertSame(['cluster-visible', 'cluster-singleton'], array_column($result['clusters'], 'cluster_uuid'));
         $this->assertCount(1, $result['members']['cluster-visible']);
         $this->assertSame('identity-visible', $result['members']['cluster-visible'][0]['identity_uuid']);
-    }
-}
-
-class SnapshotProjectorClustersSpy extends NullClustersRepository
-{
-    public string $tenantId = '';
-    public int $snapshotVersion = 0;
-    public array $clusters = [];
-    public array $mergedClusters = [];
-    public array $mergedClusterBatches = [];
-    public bool $shouldThrow = false;
-    public int $tenantPageSize = 0;
-    /** @var array<int,array<string,mixed>> */
-    public array $topUnlabeledRows = [];
-    /** @var array<string,array<string,mixed>> */
-    private array $curatedClusters;
-
-    /**
-     * @param array<string,array<string,mixed>> $curatedClusters
-     */
-    public function __construct(array $curatedClusters = [])
-    {
-        $this->curatedClusters = $curatedClusters;
-    }
-
-    public function merge_snapshot_for_tenant(string $tenant_id, array $clusters, int $snapshot_version): void
-    {
-        if ($this->shouldThrow) {
-            throw new RuntimeException('clusters-failure');
-        }
-
-        $this->tenantId = $tenant_id;
-        $this->clusters = $clusters;
-        $this->mergedClusters = $clusters;
-        $this->mergedClusterBatches[] = $clusters;
-        $this->snapshotVersion = $snapshot_version;
-        $this->topUnlabeledRows = array_values(
-            array_filter(
-                $clusters,
-                static function ($cluster): bool {
-                    if (!is_array($cluster)) {
-                        return false;
-                    }
-
-                    $label = trim((string) ($cluster['label'] ?? ''));
-                    $curationState = trim((string) ($cluster['curation_state'] ?? ''));
-                    return '' === $label && 'dismissed' !== $curationState;
-                }
-            )
-        );
-        usort(
-            $this->topUnlabeledRows,
-            static function (array $left, array $right): int {
-                $countCompare = (int) ($right['identity_count'] ?? 0) <=> (int) ($left['identity_count'] ?? 0);
-                if (0 !== $countCompare) {
-                    return $countCompare;
-                }
-
-                return strcmp((string) ($right['updated_at'] ?? ''), (string) ($left['updated_at'] ?? ''));
-            }
-        );
-    }
-
-    public function prepare_snapshot_merge_for_tenant(string $tenant_id, array $incoming_cluster_ids): void
-    {
-        $this->tenantId = $tenant_id;
-    }
-
-    public function merge_snapshot_batch_for_tenant(string $tenant_id, array $clusters, int $snapshot_version): void
-    {
-        $this->merge_snapshot_for_tenant($tenant_id, $clusters, $snapshot_version);
-    }
-
-    public function list_top_unlabeled(string $tenant_id, int $limit = 10): array
-    {
-        return array_slice($this->topUnlabeledRows, 0, max(1, $limit));
-    }
-
-    public function list_for_tenant(string $tenant_id, int $limit = 50, int $offset = 0, array $filters = array()): array
-    {
-        $clusters = array_values($this->curatedClusters);
-        if ($this->tenantPageSize > 0) {
-            return array_slice($clusters, $offset, min($limit, $this->tenantPageSize));
-        }
-
-        return $clusters;
-    }
-
-    public function get_curated_clusters_for_tenant(string $tenant_id): array
-    {
-        return $this->curatedClusters;
-    }
-}
-
-class SnapshotProjectorMembersSpy extends NullIdentityMembersRepository
-{
-    public array $members = [];
-    public array $mergedMembers = [];
-    public array $mergedMemberBatches = [];
-    public int $memberPageSize = 0;
-    /** @var array<string,array<int,array<string,mixed>>> */
-    private array $membersByCluster;
-
-    /**
-     * @param array<string,array<int,array<string,mixed>>> $membersByCluster
-     */
-    public function __construct(array $membersByCluster = [])
-    {
-        $this->membersByCluster = $membersByCluster;
-    }
-
-    public function merge_snapshot_for_tenant(string $tenant_id, array $members, int $snapshot_version): void
-    {
-        $this->members = $members;
-        $this->mergedMembers = $members;
-        $this->mergedMemberBatches[] = $members;
-        $groupedMembers = [];
-        foreach ($members as $member) {
-            if (!is_array($member)) {
-                continue;
-            }
-
-            $clusterUuid = (string) ($member['cluster_uuid'] ?? '');
-            if ('' === $clusterUuid) {
-                continue;
-            }
-
-            if (!isset($groupedMembers[$clusterUuid])) {
-                $groupedMembers[$clusterUuid] = [];
-            }
-            $groupedMembers[$clusterUuid][] = $member;
-        }
-        $this->membersByCluster = $groupedMembers;
-    }
-
-    public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array
-    {
-        $result = [];
-        foreach ($cluster_uuids as $clusterUuid) {
-            $result[$clusterUuid] = $this->membersByCluster[$clusterUuid] ?? [];
-        }
-        return $result;
-    }
-
-    public function list_for_cluster(string $cluster_uuid, int $limit = 500, int $offset = 0, ?string $tenant_id = null): array
-    {
-        $members = $this->membersByCluster[$cluster_uuid] ?? [];
-        if ($this->memberPageSize > 0) {
-            return array_slice($members, $offset, min($limit, $this->memberPageSize));
-        }
-
-        return array_slice($members, $offset, $limit);
-    }
-}
-
-class SnapshotProjectorSyncStateSpy extends NullSyncStateRepository
-{
-    public int $snapshotVersion = 0;
-    public string $refreshedTenantId = '';
-    public int $conflictCount = 0;
-    public int $preRefreshConflictCount = 0;
-    public int $postRefreshConflictCount = 0;
-    public ?string $lastUpdated = null;
-
-    public function upsert_snapshot_version(string $tenant_id, int $snapshot_version): void
-    {
-        $this->snapshotVersion = $snapshot_version;
-        $this->lastUpdated = '2026-03-25 00:00:00';
-    }
-
-    public function get_snapshot_version(string $tenant_id): int
-    {
-        return $this->snapshotVersion;
-    }
-
-    public function get_last_updated(string $tenant_id): ?string
-    {
-        return $this->lastUpdated;
-    }
-
-    public function get_conflict_count(string $tenant_id): int
-    {
-        return $this->conflictCount;
-    }
-
-    public function refresh_curation_metrics(string $tenant_id): void
-    {
-        $this->refreshedTenantId = $tenant_id;
-        $this->conflictCount = $this->postRefreshConflictCount;
     }
 }

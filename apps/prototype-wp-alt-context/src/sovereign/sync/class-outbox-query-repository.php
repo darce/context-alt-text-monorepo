@@ -223,6 +223,53 @@ class OutboxQueryRepository {
 	}
 
 	/**
+	 * Failed row IDs for a tenant, oldest first (E15-35 Slice 2 bulk requeue).
+	 *
+	 * Ordered by id ASC (monotonic insert order) so the caller's paced
+	 * next_attempt_at spread is deterministic and oldest work drains first.
+	 *
+	 * @return int[]
+	 */
+	public function find_failed_operation_ids( string $tenant_id, int $limit ): array {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if (
+			'' === $normalized_tenant_id
+			|| ! isset( $wpdb )
+			|| ! is_object( $wpdb )
+			|| ! method_exists( $wpdb, 'prepare' )
+			|| ! method_exists( $wpdb, 'get_results' )
+		) {
+			return array();
+		}
+
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT id FROM %i WHERE tenant_id = %s AND status = %s ORDER BY id ASC LIMIT %d',
+				$this->table_name,
+				$normalized_tenant_id,
+				OutboxStatus::FAILED,
+				max( 1, $limit )
+			),
+			ARRAY_A
+		);
+		if ( ! is_array( $rows ) ) {
+			return array();
+		}
+
+		$outbox_ids = array();
+		foreach ( $rows as $row ) {
+			$outbox_id = is_array( $row ) ? (int) ( $row['id'] ?? 0 ) : 0;
+			if ( $outbox_id > 0 ) {
+				$outbox_ids[] = $outbox_id;
+			}
+		}
+
+		return $outbox_ids;
+	}
+
+	/**
 	 * @return array<int,array<string,mixed>>
 	 */
 	public function load_pending_operations( int $batch_size ): array {
@@ -232,16 +279,20 @@ class OutboxQueryRepository {
 			return array();
 		}
 
+		// E15-35 (PR-09): first_failed_at/next_attempt_at are projected because apply_result()
+		// operates only on this row array — the window-age terminal needs the values read out,
+		// not just gated in the WHERE. The gate skips rows whose backoff has not elapsed.
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
 				'SELECT id, tenant_id, operation_type, entity_type, entity_key, idempotency_key, expected_base_version, local_revision, payload, attempts
-				, created_at
+				, first_failed_at, next_attempt_at, created_at
 				FROM %i
-				WHERE status = %s
+				WHERE status = %s AND ( next_attempt_at IS NULL OR next_attempt_at <= %s )
 				ORDER BY created_at ASC, id ASC
 				LIMIT %d',
 				$this->table_name,
-				'pending',
+				OutboxStatus::PENDING,
+				current_time( 'mysql' ),
 				max( 1, $batch_size )
 			),
 			ARRAY_A
@@ -342,6 +393,32 @@ class OutboxQueryRepository {
 		return false !== $result ? max( 0, (int) $result ) : 0;
 	}
 
+	/**
+	 * Earliest moment any pending row becomes claimable, on the WP clock (E15-35).
+	 *
+	 * Rows with NULL next_attempt_at are due immediately, so they coalesce to created_at
+	 * (always in the past for an existing row). Returns null when nothing is pending or
+	 * the adapter is unavailable.
+	 */
+	public function earliest_pending_attempt_time(): ?string {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) ) {
+			return null;
+		}
+
+		$value = $wpdb->get_var(
+			$wpdb->prepare(
+				'SELECT MIN(COALESCE(next_attempt_at, created_at)) FROM %i WHERE status = %s',
+				$this->table_name,
+				OutboxStatus::PENDING
+			)
+		);
+
+		$normalized = is_string( $value ) ? trim( $value ) : '';
+		return '' !== $normalized ? $normalized : null;
+	}
+
 	public function has_pending_operations(): bool {
 		global $wpdb;
 
@@ -353,7 +430,7 @@ class OutboxQueryRepository {
 			$wpdb->prepare(
 				'SELECT id FROM %i WHERE status = %s ORDER BY created_at ASC LIMIT 1',
 				$this->table_name,
-				'pending'
+				OutboxStatus::PENDING
 			)
 		);
 

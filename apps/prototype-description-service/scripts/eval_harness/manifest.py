@@ -24,6 +24,7 @@ import json
 import re
 import unicodedata
 import warnings
+from enum import StrEnum
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -31,6 +32,109 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 SUPPORTED_MANIFEST_VERSION = 2
+
+
+# --- Golden-100 stratification vocabulary (VLM-6 S1) -------------------------
+# Centralized enums (sr-007) so difficulty/domain/fact-kind/relation are never
+# scattered magic strings. All Golden-100 additions are ADDITIVE and optional —
+# the legacy golden-38 entries omit them and still validate under extra='forbid'.
+
+
+class Difficulty(StrEnum):
+    """Coarse per-image difficulty tier used for stratified reporting."""
+
+    EASY = "easy"
+    MEDIUM = "medium"
+    HARD = "hard"
+
+
+class Domain(StrEnum):
+    """Stratum an image belongs to. Every stratum gets >=5 images (plan S1)."""
+
+    PEOPLE = "people"
+    FACES = "faces"
+    CROWDS = "crowds"
+    OCCLUSION = "occlusion"
+    MIRRORS = "mirrors"
+    ANIMALS = "animals"
+    ART = "art"
+    ABSTRACT = "abstract"
+    BLACK_AND_WHITE = "black_and_white"
+    DENSE_SCENE = "dense_scene"
+    TEXT_IN_IMAGE = "text_in_image"
+    CHARTS = "charts"
+    PRODUCTS = "products"
+    LOW_LIGHT = "low_light"
+
+
+class FactKind(StrEnum):
+    """What a reference fact asserts, so the hallucination scorer can bucket."""
+
+    OBJECT = "object"
+    ATTRIBUTE = "attribute"
+    COUNT = "count"
+    RELATION = "relation"
+    SCENE = "scene"
+    TEXT = "text"
+
+
+class FactPolarity(StrEnum):
+    """Whether a reference fact is TRUE of the image or a fabrication trap.
+
+    ``true`` facts are the ground truth a faithful caption may state (coverage);
+    ``false`` facts are things that are NOT true of the image — a caption that
+    asserts one has fabricated (the hallucination signal). Deterministic scoring
+    matches ``phrases`` with word-boundary anchoring (see caption_metrics).
+    """
+
+    TRUE = "true"
+    FALSE = "false"
+
+
+class SpatialRelation(StrEnum):
+    """Relative placement relations derived from curated face/object boxes."""
+
+    LEFT_OF = "left_of"
+    RIGHT_OF = "right_of"
+    BETWEEN = "between"
+    ABOVE = "above"
+    BELOW = "below"
+    FOREGROUND = "foreground"
+    BACKGROUND = "background"
+
+
+class LicenseTag(StrEnum):
+    """Provenance license classes accepted into the corpus (PII/license screen)."""
+
+    CC0 = "cc0"
+    PUBLIC_DOMAIN = "public_domain"
+    MOCK_ENTITY = "mock_entity"  # consented/synthetic roster material
+    CONSENTED = "consented"  # operator's own / explicitly consented
+    FIXTURE = "fixture"  # pre-existing vendored fixture pool
+
+
+class ProvenanceSource(StrEnum):
+    """Canonical corpus-source vocabulary (sr-007). One definition shared by the
+    manifest, the strata shortlister, and the identity bridge so a source label can
+    never mean three different things across modules (the celeb->stranger identity
+    loss that a scattered string set caused).
+
+    CELEB/WIKIMEDIA/OPENVERSE are public-eligible; LOCALWP/OPERATOR are PRIVATE
+    (real personal photos, never published — see ``Provenance.is_publishable`` and
+    ``PRIVATE_SOURCES``); FIXTURE is vendored test material.
+    """
+
+    CELEB = "celeb"
+    WIKIMEDIA = "wikimedia"
+    OPENVERSE = "openverse"
+    LOCALWP = "localwp"
+    OPERATOR = "operator"
+    FIXTURE = "fixture"
+
+
+# Private roots are LOCAL-ONLY: a personal photo is never publishable regardless of
+# license or an explicit flag (fail-closed on the "never publish uploads" invariant).
+PRIVATE_SOURCES: frozenset[ProvenanceSource] = frozenset({ProvenanceSource.LOCALWP, ProvenanceSource.OPERATOR})
 
 
 class ManifestError(Exception):
@@ -85,12 +189,140 @@ class ExpectedAttachment(BaseModel):
     fact_id: str | None = None
 
 
+class ReferenceFact(BaseModel):
+    """A ground-truth fact about an image (VLM-6 S1).
+
+    ``polarity=true`` facts are things a faithful caption may state; ``false``
+    facts are fabrication traps (untrue of the image). ``phrases`` are the
+    deterministic word-boundary match variants the hallucination scorer checks.
+    ``confirmed_by`` records whether an operator or the agent draft confirmed it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str
+    kind: FactKind
+    polarity: FactPolarity = FactPolarity.TRUE
+    phrases: list[str] = Field(default_factory=list)
+    confirmed_by: str | None = None  # operator | agent
+
+    @model_validator(mode="after")
+    def _has_a_matchable_phrase(self) -> ReferenceFact:
+        # A fact must expose at least one non-blank match target so scoring is never
+        # silently vacuous (rg-008): whitespace-only phrases do not count — match_targets
+        # would filter them to [""] and match nothing.
+        if not any(p.strip() for p in self.phrases) and not self.text.strip():
+            raise ValueError("reference_fact needs non-empty text or at least one non-blank phrase")
+        return self
+
+    def match_targets(self) -> list[str]:
+        """Non-empty phrases to match, defaulting to the fact text."""
+        targets = [p for p in self.phrases if p.strip()]
+        return targets or [self.text]
+
+
+class Provenance(BaseModel):
+    """Per-image sourcing + license record (PII/license screen, plan S1).
+
+    ``publishable`` gates the S5 gallery split: public figures + CC0/public-domain
+    are publishable to the research hub; private personal images (real contacts)
+    are LOCAL-ONLY and excluded from any rd-published artifact. It defaults to a
+    conservative value derived from the license so a missing flag never leaks a
+    private image (see ``is_publishable``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: ProvenanceSource
+    license: LicenseTag
+    url: str | None = None
+    note: str | None = None
+    publishable: bool | None = None  # None => derive conservatively from license
+
+    @property
+    def is_publishable(self) -> bool:
+        """Effective publishability: fail-closed on private source, then flag, then license.
+
+        A PRIVATE-source (localwp/operator) image is NEVER publishable — not by a
+        CC0/public-domain license and not by an explicit ``publishable=True`` — so a
+        mis-authored license or flag can never leak a personal photo (the crown-jewel
+        "never publish uploads" invariant). For public-eligible sources an explicit
+        flag wins, else only CC0 / public-domain publish by default (public figures
+        set the flag).
+        """
+        if self.source in PRIVATE_SOURCES:
+            return False
+        if self.publishable is not None:
+            return self.publishable
+        return self.license in (LicenseTag.CC0, LicenseTag.PUBLIC_DOMAIN)
+
+
+class SpatialFact(BaseModel):
+    """Relative-placement ground truth derived from curated boxes (plan S1).
+
+    ``reference`` is the second subject for binary relations (left_of/right_of/
+    above/below) and is null for foreground/background; ``between`` uses
+    ``reference`` plus ``reference2``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    subject: str
+    relation: SpatialRelation
+    reference: str | None = None
+    reference2: str | None = None
+    phrases: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _binary_relations_need_reference(self) -> SpatialFact:
+        binary = {
+            SpatialRelation.LEFT_OF,
+            SpatialRelation.RIGHT_OF,
+            SpatialRelation.ABOVE,
+            SpatialRelation.BELOW,
+        }
+        if self.relation in binary and not self.reference:
+            raise ValueError(f"{self.relation} requires a 'reference' subject")
+        if self.relation is SpatialRelation.BETWEEN and not (self.reference and self.reference2):
+            raise ValueError("between requires both 'reference' and 'reference2'")
+        return self
+
+    @property
+    def text(self) -> str:
+        """Human-readable label for reporting, e.g. 'Alice left_of Bob'."""
+        rel = self.relation.value
+        if self.relation is SpatialRelation.BETWEEN:
+            return f"{self.subject} between {self.reference} and {self.reference2}"
+        if self.reference:
+            return f"{self.subject} {rel} {self.reference}"
+        return f"{self.subject} {rel}"
+
+
+class FaceBox(BaseModel):
+    """A ground-truth face region: normalized centre (x, y) + size (w, h) in 0..1, an
+    optional confirmed identity name, and the region source (iptc | mwg).
+
+    Persisted for ALL curated faces — named people AND anonymous strangers
+    (``name=None``) — so a face-detection bake-off (FIR-1) has box-level ground truth,
+    not just ``face_count``. Coords mirror identity_sources.FaceRegion (centre-point).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    x: float
+    y: float
+    w: float
+    h: float
+    name: str | None = None
+    source: str  # iptc | mwg
+
+
 class GoldenEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     path: str
     sha256: str
-    media_id: int
+    media_id: int = Field(ge=1)  # synthetic, 1-based; never resets to zero (analyze keys image_<media_id>)
     face_count: int = Field(ge=0)
     present_identities: list[str]
     context_pack: ContextPack = Field(default_factory=ContextPack)
@@ -104,6 +336,15 @@ class GoldenEntry(BaseModel):
     # Per-entry opt-out for corpora that intentionally omit a reference caption
     # without using empty string (reserved; loader also rejects JSON null).
     base_caption_optional: bool = False
+    # --- VLM-6 S1 Golden-100 additions (all additive/optional) ---------------
+    difficulty: Difficulty | None = None
+    domain: Domain | None = None
+    reference_facts: list[ReferenceFact] = Field(default_factory=list)
+    spatial_facts: list[SpatialFact] = Field(default_factory=list)
+    # All curated face boxes incl. anonymous strangers (name=None) — detection ground
+    # truth for the FIR-1 bake-off; additive/optional (see FIR-1 §Coordination).
+    face_boxes: list[FaceBox] = Field(default_factory=list)
+    provenance: Provenance | None = None
 
     @field_validator("sha256")
     @classmethod

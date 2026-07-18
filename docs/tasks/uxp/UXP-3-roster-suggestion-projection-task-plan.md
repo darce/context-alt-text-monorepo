@@ -265,9 +265,9 @@ Proof: the five-case grid (§ slice 2) with characterization-first ordering; ann
 
 ### Slice 2
 
-- [ ] Exact dirty checks on both entry points; case-only rename mutates; merge path preserved (five-case grid).
-- [ ] Inline saved/error feedback + announcement.
-- [ ] Characterization tests green before the change ([TEST-03]); new tests watched failing ([TEST-06]).
+- [x] Exact dirty checks on both entry points; case-only rename mutates; merge path preserved (five-case grid).
+- [x] Inline saved/error feedback + announcement.
+- [x] Characterization tests green before the change ([TEST-03]); new tests watched failing ([TEST-06]).
 
 ## Review Readiness
 

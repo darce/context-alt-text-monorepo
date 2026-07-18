@@ -13,34 +13,25 @@ interface ClusterPreviewProps {
   representative: DetectedIdentity | undefined;
   /** Total number of members in the cluster */
   memberCount: number;
-  /** Called when the representative pin state should be toggled */
-  onTogglePin?: (representative: DetectedIdentity, nextPinned: boolean) => void;
-  /** Whether the pin toggle is currently in flight */
-  isPinning?: boolean;
 }
 
 /**
  * Displays the cluster's representative thumbnail with an optional count badge.
  * The thumbnail shows the face cropped from the original image using InsightFace bbox.
+ * Pin control removed (UXA-07) — mutation/API retained for a deferred relocation.
  */
-export const ClusterPreview = ({
-  representative,
-  memberCount,
-  onTogglePin,
-  isPinning = false,
-}: ClusterPreviewProps): React.JSX.Element => {
-  const hasValidThumbnail = representative?.media_url && representative?.bbox;
-  const representativeId = representative?.representative_id ?? representative?.identity_id ?? null;
-  const isPinned = Boolean(representative?.is_pinned);
-  const toggleLabel = isPinned ? __('Unpin representative', 'alt-context') : __('Pin representative', 'alt-context');
+export const ClusterPreview = ({ representative, memberCount }: ClusterPreviewProps): React.JSX.Element => {
+  const mediaUrl = representative?.media_url;
+  const bbox = representative?.bbox;
+  const hasValidThumbnail = Boolean(mediaUrl && bbox);
   const unavailableImageLabel = __('Representative image unavailable', 'alt-context');
 
   return (
     <div className="acx-identity-cluster__preview">
-      {hasValidThumbnail ? (
+      {hasValidThumbnail && mediaUrl && bbox ? (
         <FaceThumbnail
-          mediaUrl={representative.media_url!}
-          bbox={representative.bbox}
+          mediaUrl={mediaUrl}
+          bbox={bbox}
           size="md"
           alt={__('Detected identity thumbnail', 'alt-context')}
           className="acx-identity-cluster__thumb"
@@ -55,20 +46,6 @@ export const ClusterPreview = ({
         </span>
       )}
       {memberCount > 1 && <span className="acx-identity-cluster__count">+{memberCount - 1}</span>}
-      {representative && representativeId && onTogglePin && (
-        <button
-          type="button"
-          className={`button button-small acx-identity-cluster__pin-toggle${
-            isPinned ? ' acx-identity-cluster__pin-toggle--pinned' : ''
-          }`}
-          onClick={() => onTogglePin(representative, !isPinned)}
-          disabled={isPinning}
-          aria-label={toggleLabel}
-          title={toggleLabel}
-        >
-          {isPinned ? __('Pinned', 'alt-context') : __('Pin', 'alt-context')}
-        </button>
-      )}
     </div>
   );
 };

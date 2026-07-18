@@ -85,9 +85,9 @@ class ScanItemHandler:
                     item.media_id,
                 )
                 try:
-                    # process_media_item commits identity rows then emits
-                    # scan_media_reconciled (event only after durable commit).
-                    # Queue-item completion is a second commit below.
+                    # process_media_item is flush-only (pre-S4); this session
+                    # commits identity rows + queue-item status together, then
+                    # emits scan_media_reconciled (S4CR-03, rg-002).
                     reconcile = await scan_service.process_media_item(
                         tenant_id=str(item.tenant_id),
                         media_id=item.media_id,
@@ -109,6 +109,7 @@ class ScanItemHandler:
                         identities_detected=identities_detected,
                     )
                     await session.commit()
+                    scan_service.emit_pending_scan_media_reconciled()
                     logger.info(
                         "[worker] COMPLETE scan_item request_id=%s job_id=%s item_id=%s identities=%s",
                         request_id,

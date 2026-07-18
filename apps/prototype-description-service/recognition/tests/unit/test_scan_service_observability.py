@@ -222,6 +222,9 @@ async def test_wide_event_shape_both_profiles(
                 media_url="http://example.test/42.jpg",
                 job_id=job_id,
             )
+            # Worker path: flush-only until caller commit, then emit (S4CR-03).
+            await session.commit()
+            service.emit_pending_scan_media_reconciled()
     finally:
         _correlation_id_var.reset(token)
 
@@ -257,6 +260,10 @@ async def test_process_media_item_emits_one_event(caplog: pytest.LogCaptureFixtu
             media_id=1,
             media_url="http://example.test/1.jpg",
         )
+        # No event until after durable commit boundary.
+        assert sum(1 for r in caplog.records if getattr(r, "event", None) == "scan_media_reconciled") == 0
+        await session.commit()
+        service.emit_pending_scan_media_reconciled()
     assert sum(1 for r in caplog.records if getattr(r, "event", None) == "scan_media_reconciled") == 1
 
 
@@ -501,6 +508,9 @@ async def test_emit_failure_does_not_fail_scan(
             media_id=1,
             media_url="http://example.test/1.jpg",
         )
+        await session.commit()
+        # Telemetry runs post-commit; failure must not undo scan success.
+        service.emit_pending_scan_media_reconciled()
     assert result.total == 1
     assert session.commit_calls >= 1
     assert any("scan_media_reconciled emission failed" in r.getMessage() for r in caplog.records)

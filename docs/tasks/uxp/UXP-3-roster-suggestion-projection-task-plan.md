@@ -241,18 +241,18 @@ Proof: the five-case grid (§ slice 2) with characterization-first ordering; ann
 
 ### Context and Ownership
 
-- [ ] Frontend rules + testing-typescript loaded; UXP-2 plan §§ batch endpoint/filter parity/wire format read before touching its surfaces.
-- [ ] UXP-2 merge state checked at 0b start; coordination decision recorded if unmerged.
+- [x] Frontend rules + testing-typescript loaded; UXP-2 plan §§ batch endpoint/filter parity/wire format read before touching its surfaces.
+- [x] UXP-2 merge state checked at 0b start; coordination decision recorded if unmerged.
 
 ### Slice 0
 
-- [ ] `suggestionProjection.ts` exports predicate, per-leg comparator rule, `PROJECTION_TOP_K`, `ProjectedSuggestion` + adapters, keys, invalidation helper, event map (sr-007).
-- [ ] Matrix fixture exported; includes window-depth, all-ineligible-window, `"Person N"` labeled-unconfirmed, tied-similarity (per-leg), and stale-accepted rows.
-- [ ] 0b-1+0b-2 co-shipped (PR-19) as two commits (PR-22): structural migration preserving truthy-label eligibility first, named predicate-flip second; inline depth 5 + projection key; dropdown single-id batch at same depth; `identityFor` deleted; no consumer left on `fetchIdentitySuggestions`; `cluster-*` change pinned by test in the flip commit; route-retirement follow-up recorded for UXP-2 absorption, not implemented.
-- [ ] 0b-3 review: projection key + adapted `ProjectedSuggestion[]` cache (adapter in `queryFn`; optimistic filters on `suggestionId` — PR-20); per-cluster grouping kept; **optimistic setQueryData/cancelQueries/rollback re-keyed** with rollback-after-failed-accept test; `pending` deleted.
-- [ ] 0b-4 sweep: every D4-inventory site routed; per-event tests assert assignment family exactly **and** kept cross-family calls present.
-- [ ] 0b-5 proxy `threshold` dropped with PHP test.
-- [ ] Slice handoff decision names the `cluster-*` behavior change.
+- [x] `suggestionProjection.ts` exports predicate, per-leg comparator rule, `PROJECTION_TOP_K`, `ProjectedSuggestion` + adapters, keys, invalidation helper, event map (sr-007).
+- [x] Matrix fixture exported; includes window-depth, all-ineligible-window, `"Person N"` labeled-unconfirmed, tied-similarity (per-leg), and stale-accepted rows.
+- [x] 0b-1+0b-2 co-shipped (PR-19) as two commits (PR-22): structural migration preserving truthy-label eligibility first, named predicate-flip second; inline depth 5 + projection key; dropdown single-id batch at same depth; `identityFor` deleted; no consumer left on `fetchIdentitySuggestions`; `cluster-*` change pinned by test in the flip commit; route-retirement follow-up recorded for UXP-2 absorption, not implemented.
+- [x] 0b-3 review: projection key + adapted `ProjectedSuggestion[]` cache (adapter in `queryFn`; optimistic filters on `suggestionId` — PR-20); per-cluster grouping kept; **optimistic setQueryData/cancelQueries/rollback re-keyed** with rollback-after-failed-accept test; `pending` deleted.
+- [x] 0b-4 sweep: every D4-inventory site routed; per-event tests assert assignment family exactly **and** kept cross-family calls present.
+- [x] 0b-5 proxy `threshold` dropped with PHP test.
+- [x] Slice handoff decision names the `cluster-*` behavior change.
 
 ### Slice 1
 

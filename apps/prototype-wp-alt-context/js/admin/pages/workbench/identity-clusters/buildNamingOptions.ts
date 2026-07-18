@@ -13,6 +13,10 @@ export type NamingOptionSource = 'person' | 'cluster';
 export const PERSON_VALUE_PREFIX = 'person:' as const;
 export const CLUSTER_VALUE_PREFIX = 'cluster:' as const;
 
+/** Combobox option group labels (sr-007) — shared by dropdown + panel. */
+export const NAMING_GROUP_SUGGESTED = 'Suggested' as const;
+export const NAMING_GROUP_ALL_LABELS = 'All Labels' as const;
+
 /** Default max options after filter-before-slice. */
 export const NAMING_OPTIONS_LIMIT = 20;
 
@@ -77,7 +81,8 @@ export const isClusterNamingOption = (option: { source?: NamingOptionSource; val
   if (option.source === 'person') {
     return false;
   }
-  return unwrapClusterOptionId(option.value) !== null || !option.value.startsWith(PERSON_VALUE_PREFIX);
+  // Namespaced values only — bare legacy ids are not cluster options (FIX-10).
+  return unwrapClusterOptionId(option.value) !== null;
 };
 
 /**

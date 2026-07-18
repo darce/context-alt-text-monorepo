@@ -10,12 +10,15 @@ import React from 'react';
 import type { ComboboxOption } from '../../../../components/ui/combobox';
 import {
   isClusterNamingOption,
+  NAMING_GROUP_ALL_LABELS,
+  NAMING_GROUP_SUGGESTED,
   type NamingOption,
   unwrapClusterOptionId,
   namingOptionValue,
 } from './buildNamingOptions';
 import { useClusterSuggestionsLoader, type ClusterSuggestionsLoaderOptions } from './useClusterSuggestionsLoader';
 import type { ProjectedSuggestion } from './suggestionProjection';
+import type { ClusterLabelMatch } from './useClusterMatchAction';
 
 type UseClusterSuggestionsOptions = ClusterSuggestionsLoaderOptions;
 
@@ -27,7 +30,7 @@ interface UseClusterSuggestionsReturn {
   /** Pre-dedupe collisions for the duplicate guard */
   collisionsByLabel: ReadonlyMap<string, readonly NamingOption[]>;
   /** Find cluster ID by label (case-insensitive); cluster-source options only (PR-16) */
-  findClusterByLabel: (label: string, signal?: AbortSignal) => Promise<{ id: string; label: string } | null>;
+  findClusterByLabel: (label: string, signal?: AbortSignal) => Promise<ClusterLabelMatch | null>;
 }
 
 export const selectClusterSuggestions = ({
@@ -42,7 +45,8 @@ export const selectClusterSuggestions = ({
   labelInput?: string;
 }): ComboboxOption[] => {
   const result: ComboboxOption[] = [];
-  const seen = new Set<string>();
+  /** Cluster labels only — persons never suppress a same-named cluster (FIX-5). */
+  const seenClusterLabels = new Set<string>();
   const searchLower = labelInput.toLowerCase().trim();
 
   // 1. Identity-based suggestions (filtered by current input) — server order, no re-sort.
@@ -59,15 +63,15 @@ export const selectClusterSuggestions = ({
     if (searchLower && !key.includes(searchLower)) {
       return;
     }
-    if (seen.has(key)) {
+    if (seenClusterLabels.has(key)) {
       return;
     }
 
-    seen.add(key);
+    seenClusterLabels.add(key);
     result.push({
       value: namingOptionValue('cluster', projected.clusterId),
       label: normalizedLabel,
-      group: 'Suggested',
+      group: NAMING_GROUP_SUGGESTED,
       source: 'cluster',
       similarity: projected.similarity,
       identityCount: projected.identityCount,
@@ -75,21 +79,32 @@ export const selectClusterSuggestions = ({
     });
   });
 
-  // 2. Union naming options (persons badged, then labeled clusters) — seen-dedupe across groups.
+  // 2. Union naming options: person rows always render; cluster rows dedupe vs Suggested (FIX-5).
   (namingOptions ?? []).forEach((option) => {
     const key = option.label.toLowerCase();
-    if (seen.has(key)) {
-      return;
-    }
     if (searchLower && !key.includes(searchLower)) {
       return;
     }
 
-    seen.add(key);
+    if (option.source === 'person') {
+      result.push({
+        value: option.value,
+        label: option.label,
+        group: NAMING_GROUP_ALL_LABELS,
+        source: option.source,
+        identityCount: option.identityCount,
+      });
+      return;
+    }
+
+    if (seenClusterLabels.has(key)) {
+      return;
+    }
+    seenClusterLabels.add(key);
     result.push({
       value: option.value,
       label: option.label,
-      group: 'All Labels',
+      group: NAMING_GROUP_ALL_LABELS,
       source: option.source,
       identityCount: option.identityCount,
     });
@@ -105,7 +120,7 @@ export const selectClusterSuggestions = ({
 export const resolveClusterMatchFromOptions = (
   options: readonly ComboboxOption[],
   label: string,
-): { id: string; label: string } | null => {
+): ClusterLabelMatch | null => {
   const normalizedLabel = label.toLowerCase().trim();
   if (!normalizedLabel) {
     return null;
@@ -121,7 +136,9 @@ export const resolveClusterMatchFromOptions = (
     return null;
   }
 
-  return { id, label: fromOptions.label };
+  const identityCount = typeof fromOptions.identityCount === 'number' ? fromOptions.identityCount : undefined;
+
+  return { id, label: fromOptions.label, identityCount };
 };
 
 /**
@@ -161,7 +178,7 @@ export const useClusterSuggestions = ({
   );
 
   const findClusterByLabel = React.useCallback(
-    async (label: string, signal?: AbortSignal): Promise<{ id: string; label: string } | null> => {
+    async (label: string, signal?: AbortSignal): Promise<ClusterLabelMatch | null> => {
       const fromOptions = resolveClusterMatchFromOptions(options, label);
       if (fromOptions) {
         return fromOptions;

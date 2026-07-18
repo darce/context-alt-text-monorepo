@@ -24,6 +24,8 @@ _SERVICE_ROOT = Path(__file__).resolve().parents[3]
 if str(_SERVICE_ROOT) not in sys.path:
     sys.path.insert(0, str(_SERVICE_ROOT))
 
+import cv2  # noqa: E402
+
 from recognition.infrastructure.face_pipeline.aligner import (  # noqa: E402
     FivePointAligner,
     YUNET_LANDMARK_NAMES,
@@ -116,28 +118,86 @@ def write_embedding_goldens() -> dict:
     return meta
 
 
+def _face_box_from_landmarks(
+    landmarks: np.ndarray, *, image_shape: tuple[int, ...]
+) -> np.ndarray:
+    """Build FaceDetectorYN-style 15-vector for FaceRecognizerSF.alignCrop."""
+    h, w = int(image_shape[0]), int(image_shape[1])
+    box = np.zeros(15, dtype=np.float32)
+    box[0:4] = (0.0, 0.0, float(w), float(h))
+    box[4:14] = np.asarray(landmarks, dtype=np.float32).reshape(-1)
+    box[14] = 1.0
+    return box
+
+
+def oracle_align_crop(img: np.ndarray, landmarks: np.ndarray) -> np.ndarray:
+    """OpenCV FaceRecognizerSF.alignCrop oracle crop (semantic source of truth)."""
+    model_path = load_verified_model("sface")
+    recognizer = cv2.FaceRecognizerSF.create(str(model_path), "")
+    face_box = _face_box_from_landmarks(landmarks, image_shape=img.shape)
+    return recognizer.alignCrop(img, face_box)
+
+
 def write_aligner_goldens() -> dict:
+    """Write aligner goldens from FaceRecognizerSF.alignCrop (not FivePointAligner).
+
+    Breaks circularity (TEST-06 / BR-01): fixtures come from the OpenCV oracle;
+    unit tests check FivePointAligner against those fixtures and vs alignCrop.
+    """
     img, landmarks = aligner_source_image()
     np.save(FIXTURE_DIR / "aligner_source_image.npy", img)
     np.save(FIXTURE_DIR / "aligner_landmarks.npy", landmarks)
 
-    result = FivePointAligner().align(img, landmarks)
-    np.save(FIXTURE_DIR / "aligner_affine.npy", result.affine)
-    np.save(FIXTURE_DIR / "aligner_crop.npy", result.crop)
-    crop_sha = _sha256_bytes(result.crop.tobytes())
+    oracle_crop = oracle_align_crop(img, landmarks)
+    portable = FivePointAligner().align(img, landmarks)
+    # Same-host parity is currently bit-exact; fail golden regen if the port drifts.
+    if not np.array_equal(portable.crop, oracle_crop):
+        max_diff = int(np.max(np.abs(portable.crop.astype(np.int16) - oracle_crop.astype(np.int16))))
+        raise RuntimeError(
+            "FivePointAligner crop diverges from FaceRecognizerSF.alignCrop oracle "
+            f"(max abs pixel diff={max_diff}); refuse to write circular goldens"
+        )
+    np.save(FIXTURE_DIR / "aligner_affine.npy", portable.affine)
+    np.save(FIXTURE_DIR / "aligner_crop.npy", oracle_crop)
+    crop_sha = _sha256_bytes(oracle_crop.tobytes())
     meta = {
         "kind": "aligner_golden",
         "seed": SEED,
         "landmark_order": list(YUNET_LANDMARK_NAMES),
-        "crop_shape": list(result.crop.shape),
+        "crop_shape": list(oracle_crop.shape),
         "crop_sha256": crop_sha,
-        "affine_shape": list(result.affine.shape),
+        "affine_shape": list(portable.affine.shape),
         "output_size": 112,
+        "oracle": "cv2.FaceRecognizerSF.alignCrop",
+        "oracle_model": MODEL_MANIFEST["sface"].file_name,
     }
     (FIXTURE_DIR / "aligner_meta.json").write_text(
         json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     return meta
+
+
+def cartoon_drawn_feature_coords(
+    *,
+    size: int = 480,
+    eye_sep: float = 0.095,
+    mouth_y: float = 0.155,
+) -> dict[str, tuple[float, float]]:
+    """Pixel centers of procedural cartoon features (YuNet landmark name keys).
+
+    Matches the drawing procedure in ``cartoon_face_image`` (eye blobs at
+    ±eye_sep, nose at +0.02*size, mouth corners at ±0.08*size around mouth_y).
+    """
+    cx = size / 2.0
+    cy = size / 2.0
+    mouth_half = 0.08 * size
+    return {
+        "right_eye": (cx - eye_sep * size, cy - 0.08 * size),
+        "left_eye": (cx + eye_sep * size, cy - 0.08 * size),
+        "nose_tip": (cx, cy + 0.02 * size),
+        "right_mouth_corner": (cx - mouth_half, cy + mouth_y * size),
+        "left_mouth_corner": (cx + mouth_half, cy + mouth_y * size),
+    }
 
 
 def cartoon_face_image(
@@ -260,6 +320,13 @@ def write_detector_goldens() -> dict:
         return note
 
     d0 = detections[0]
+    # Expected YuNet landmark → nearest drawn cartoon feature (order contract).
+    drawn = cartoon_drawn_feature_coords(
+        size=int(procedure["size"]),
+        eye_sep=float(procedure["eye_sep"]),
+        mouth_y=float(procedure["mouth_y"]),
+    )
+    expected_nearest = list(YUNET_LANDMARK_NAMES)
     payload = {
         "kind": "detector_golden",
         "status": "recorded",
@@ -269,8 +336,16 @@ def write_detector_goldens() -> dict:
         "image_sha256": _sha256_bytes(img.tobytes()),
         "model": MODEL_MANIFEST["yunet"].file_name,
         "model_sha256": MODEL_MANIFEST["yunet"].sha256,
-        "tolerances": {"bbox_px": 2.0, "landmarks_px": 2.0, "score": 0.02},
+        "tolerances": {
+            "bbox_px": 2.0,
+            "landmarks_px": 2.0,
+            "score": 0.02,
+            # Absolute distance to drawn feature center (YuNet offset on soft blob).
+            "landmark_nearest_px": 50.0,
+        },
         "procedure": procedure,
+        "drawn_feature_coords": {k: [float(v[0]), float(v[1])] for k, v in drawn.items()},
+        "expected_landmark_nearest_names": expected_nearest,
         "detection": {
             "bbox_xywh": d0.bbox.astype(float).tolist(),
             "landmarks_xy": d0.landmarks.astype(float).tolist(),

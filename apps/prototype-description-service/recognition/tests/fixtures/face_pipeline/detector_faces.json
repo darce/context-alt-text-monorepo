@@ -30,6 +30,35 @@
     ],
     "score": 0.9023683071136475
   },
+  "drawn_feature_coords": {
+    "left_eye": [
+      285.6,
+      201.6
+    ],
+    "left_mouth_corner": [
+      278.4,
+      314.4
+    ],
+    "nose_tip": [
+      240.0,
+      249.6
+    ],
+    "right_eye": [
+      194.4,
+      201.6
+    ],
+    "right_mouth_corner": [
+      201.6,
+      314.4
+    ]
+  },
+  "expected_landmark_nearest_names": [
+    "right_eye",
+    "left_eye",
+    "nose_tip",
+    "right_mouth_corner",
+    "left_mouth_corner"
+  ],
   "image_sha256": "281a6ce4602320edcc25be1f20897b8c971064f27fcd762e98a55274d26c21f6",
   "image_shape": [
     480,
@@ -54,6 +83,7 @@
   "status": "recorded",
   "tolerances": {
     "bbox_px": 2.0,
+    "landmark_nearest_px": 50.0,
     "landmarks_px": 2.0,
     "score": 0.02
   }

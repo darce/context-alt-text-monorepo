@@ -17,6 +17,8 @@
     "right_mouth_corner",
     "left_mouth_corner"
   ],
+  "oracle": "cv2.FaceRecognizerSF.alignCrop",
+  "oracle_model": "face_recognition_sface_2021dec.onnx",
   "output_size": 112,
   "seed": 20260715
 }

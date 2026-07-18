@@ -1,0 +1,197 @@
+/**
+ * E21-5 ReviewQueue shell + face-crop control + card lightbox.
+ * Tokens only (sr-004); interactive floor ≥ --acx-space-24 (24px).
+ */
+
+.acx-review-queue {
+  background-color: var(--acx-color-surface);
+  border: 1px solid var(--acx-color-border);
+  border-radius: var(--acx-radius-md);
+  padding: var(--acx-space-16);
+  margin-bottom: var(--acx-space-16);
+  display: flex;
+  flex-direction: column;
+  gap: var(--acx-space-16);
+
+  &--loading,
+  &--error {
+    text-align: center;
+    color: var(--acx-color-text-secondary);
+  }
+
+  &__header {
+    display: flex;
+    align-items: center;
+    gap: var(--acx-space-8);
+  }
+
+  &__title {
+    margin: 0;
+    font-size: var(--acx-text-lg);
+    font-weight: var(--acx-font-weight-semibold);
+    color: var(--acx-color-text);
+  }
+
+  &__count {
+    background-color: var(--acx-color-surface-alt);
+    color: var(--acx-color-text-muted);
+    font-size: var(--acx-text-xs);
+    font-weight: var(--acx-font-weight-semibold);
+    padding: var(--acx-space-2) var(--acx-space-8);
+    border-radius: var(--acx-radius-lg);
+  }
+
+  /* G3 — recessed queue chrome */
+  &__chrome {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--acx-space-12);
+    padding-top: var(--acx-space-8);
+    border-top: 1px solid var(--acx-color-border);
+  }
+
+  &__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--acx-space-8);
+  }
+
+  &__chip {
+    min-width: var(--acx-space-24);
+    min-height: var(--acx-space-24);
+    padding: var(--acx-space-4) var(--acx-space-12);
+    border: 1px solid var(--acx-color-border);
+    border-radius: var(--acx-radius-lg);
+    background-color: var(--acx-color-surface-alt);
+    color: var(--acx-color-text-muted);
+    font-size: var(--acx-text-xs);
+    font-weight: var(--acx-font-weight-medium);
+    cursor: pointer;
+
+    &.is-active,
+    &[aria-pressed='true'] {
+      background-color: var(--acx-color-surface);
+      color: var(--acx-color-text);
+      border-color: var(--acx-color-text-muted);
+      font-weight: var(--acx-font-weight-semibold);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--acx-color-accent);
+      outline-offset: 2px;
+    }
+  }
+
+  &__nav {
+    display: flex;
+    align-items: center;
+    gap: var(--acx-space-8);
+  }
+
+  &__position {
+    font-size: var(--acx-text-xs);
+    color: var(--acx-color-text-muted);
+    min-width: var(--acx-space-48);
+    text-align: center;
+  }
+
+  &__nav-button {
+    min-width: var(--acx-space-24);
+    min-height: var(--acx-space-24);
+    padding: var(--acx-space-4) var(--acx-space-12);
+    border: 1px solid var(--acx-color-border);
+    border-radius: var(--acx-radius-md);
+    background-color: var(--acx-color-surface-alt);
+    color: var(--acx-color-text);
+    font-size: var(--acx-text-xs);
+    cursor: pointer;
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--acx-color-accent);
+      outline-offset: 2px;
+    }
+  }
+
+  &__live {
+    // Visually quiet; keeps polite status for AT without competing with G1.
+    font-size: var(--acx-text-xs);
+    color: var(--acx-color-text-muted);
+    min-height: var(--acx-space-16);
+  }
+
+  &__card-region {
+    min-height: var(--acx-space-80);
+  }
+
+  &__empty {
+    margin: 0;
+    color: var(--acx-color-text-secondary);
+    font-size: var(--acx-text-sm);
+  }
+
+  &__run-hint {
+    margin: 0 0 var(--acx-space-8);
+    font-size: var(--acx-text-xs);
+    color: var(--acx-color-text-muted);
+  }
+}
+
+/* ② Face crop control — ≥48×48 (FaceThumbnail size=md) */
+.acx-face-crop-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--acx-space-48);
+  min-height: var(--acx-space-48);
+  padding: 0;
+  border: none;
+  background: transparent;
+  border-radius: var(--acx-radius-circle);
+  cursor: pointer;
+
+  &:focus-visible {
+    outline: 2px solid var(--acx-color-accent);
+    outline-offset: 2px;
+  }
+}
+
+.acx-review-card-lightbox {
+  width: min(720px, 94vw);
+  max-height: 90vh;
+
+  &__frame {
+    position: relative;
+    width: 100%;
+    min-height: var(--acx-space-80);
+    max-height: 70vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--acx-color-surface);
+    border-radius: var(--acx-radius-md);
+    overflow: hidden;
+    margin-bottom: var(--acx-space-16);
+  }
+
+  &__image {
+    max-width: 100%;
+    max-height: 70vh;
+    height: auto;
+    display: block;
+  }
+
+  &__bbox {
+    position: absolute;
+    border: 2px solid var(--acx-color-accent);
+    box-shadow: var(--acx-shadow-1);
+    pointer-events: none;
+    border-radius: var(--acx-radius-sm);
+  }
+}

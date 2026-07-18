@@ -344,6 +344,9 @@ describe('WorkbenchPage', () => {
       setPerPage,
       handleSearchChange: vi.fn(),
       handleStatusChange: vi.fn(),
+      queueState: { kind: 'all' as const, band: 'all' as const, index: 0 },
+      getQueueState: () => ({ kind: 'all' as const, band: 'all' as const, index: 0 }),
+      setQueueState: vi.fn(),
     });
 
     mockUseScanStatus.mockReturnValue(
@@ -535,6 +538,9 @@ describe('WorkbenchPage', () => {
       setPerPage,
       handleSearchChange: vi.fn(),
       handleStatusChange: vi.fn(),
+      queueState: { kind: 'all' as const, band: 'all' as const, index: 0 },
+      getQueueState: () => ({ kind: 'all' as const, band: 'all' as const, index: 0 }),
+      setQueueState: vi.fn(),
     });
 
     renderWorkbench();
@@ -624,6 +630,9 @@ describe('WorkbenchPage', () => {
       setPerPage,
       handleSearchChange: vi.fn(),
       handleStatusChange: vi.fn(),
+      queueState: { kind: 'all' as const, band: 'all' as const, index: 0 },
+      getQueueState: () => ({ kind: 'all' as const, band: 'all' as const, index: 0 }),
+      setQueueState: vi.fn(),
     });
 
     mockUseWorkbenchMedia.mockReturnValue({
@@ -662,6 +671,9 @@ describe('WorkbenchPage', () => {
       setPerPage,
       handleSearchChange: vi.fn(),
       handleStatusChange: vi.fn(),
+      queueState: { kind: 'all' as const, band: 'all' as const, index: 0 },
+      getQueueState: () => ({ kind: 'all' as const, band: 'all' as const, index: 0 }),
+      setQueueState: vi.fn(),
     });
 
     renderWorkbench();

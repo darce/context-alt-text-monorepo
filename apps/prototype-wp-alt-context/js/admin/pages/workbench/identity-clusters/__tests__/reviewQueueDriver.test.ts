@@ -19,7 +19,7 @@ import {
   removeAtQueueIndex,
   REVIEW_QUEUE_FILTER,
   queueItemToNextAction,
-} from '../reviewQueue';
+} from '../reviewQueueDriver';
 import { fromPendingRow, projectReviewQueue } from '../suggestionProjection';
 import { buildSuggestionReviewItems } from '../suggestionReviewItems';
 import { suggestionProjectionMatrix } from './suggestionProjection.fixtures';

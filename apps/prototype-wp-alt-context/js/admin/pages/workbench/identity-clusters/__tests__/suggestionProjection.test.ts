@@ -335,8 +335,8 @@ describe('invalidateSuggestionProjection', () => {
 });
 
 describe('SUGGESTION_PROJECTION_INVALIDATION_EVENTS', () => {
-  it('enumerates exactly seven event rows', () => {
-    expect(Object.keys(SUGGESTION_PROJECTION_INVALIDATION_EVENTS)).toHaveLength(7);
+  it('enumerates exactly eight event rows', () => {
+    expect(Object.keys(SUGGESTION_PROJECTION_INVALIDATION_EVENTS)).toHaveLength(8);
   });
 
   it('marks every event as invalidating the assignment projection', () => {
@@ -346,10 +346,11 @@ describe('SUGGESTION_PROJECTION_INVALIDATION_EVENTS', () => {
   });
 
   it('preserves the live-verified cross-family targets per event', () => {
-    expect(SUGGESTION_PROJECTION_INVALIDATION_EVENTS.suggestionAcceptReject.keptCrossFamilyTargets).toEqual([
+    expect(SUGGESTION_PROJECTION_INVALIDATION_EVENTS.suggestionAccept.keptCrossFamilyTargets).toEqual([
       'clusters.all',
       'media.identities',
     ]);
+    expect(SUGGESTION_PROJECTION_INVALIDATION_EVENTS.suggestionReject.keptCrossFamilyTargets).toEqual(['clusters.all']);
     expect(SUGGESTION_PROJECTION_INVALIDATION_EVENTS.bulkAccept.keptCrossFamilyTargets).toEqual([
       'mergePending',
       'namePending',

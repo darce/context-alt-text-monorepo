@@ -5,7 +5,7 @@
 import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
-import type { MergeClusterResponse } from '../../../api/recognition';
+import type { ClusterSuggestion, MergeClusterResponse } from '../../../api/recognition';
 import type { ClusterGroup } from './types';
 import { filterEditableClusterMatch, formatClusterLabel, getEditableClusterId } from './utils';
 import { useClusterEditState } from './useClusterEditState';
@@ -37,6 +37,8 @@ interface IdentityClusterItemProps {
   cluster: ClusterGroup;
   canLabel?: boolean;
   canMutate?: boolean;
+  /** Top server-ranked inline suggestion for this cluster's anchor identity. */
+  inlineSuggestionMatch?: ClusterSuggestion;
 }
 
 /**
@@ -52,6 +54,7 @@ export const IdentityClusterItem = ({
   cluster,
   canLabel = true,
   canMutate = true,
+  inlineSuggestionMatch,
 }: IdentityClusterItemProps): React.JSX.Element => {
   // Compute derived values
   const derivedLabel = React.useMemo(
@@ -73,6 +76,11 @@ export const IdentityClusterItem = ({
 
   const representative = cluster.members[0];
   const anchorIdentityId = representative?.identity_id;
+
+  // Inline "Is this X?" prompt renders only for unlabeled, mutable clusters.
+  // The match is fetched once at the list level (batched) and supplied by prop.
+  const showInlinePrompt = Boolean(!cluster.label && anchorIdentityId && canMutate);
+
   const [isAnchorModalOpen, setIsAnchorModalOpen] = React.useState(false);
   const [isWrongPersonDialogOpen, setIsWrongPersonDialogOpen] = React.useState(false);
   const [matchedCluster, setMatchedCluster] = React.useState<{ id: string; label: string } | null>(null);
@@ -329,9 +337,9 @@ export const IdentityClusterItem = ({
               />
             )}
             {/* Show inline "Is this X?" prompt for unlabeled items */}
-            {!cluster.label && anchorIdentityId && canMutate && (
+            {showInlinePrompt && (
               <InlineSuggestionPrompt
-                identityId={anchorIdentityId}
+                match={inlineSuggestionMatch}
                 onConfirm={(clusterId, label) => void handleConfirmSuggestion(clusterId, label)}
                 onReject={startEditing}
                 isPending={mutations.isPending}

@@ -622,6 +622,96 @@ async def test_semaphore_timeout_queues_third(monkeypatch: pytest.MonkeyPatch) -
 
 
 @pytest.mark.asyncio
+async def test_admission_timeout_when_executor_slots_full(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GROK47C-01 [RES-02/03/04/14/15][OBS-05]: admission wait is timeout-bounded.
+
+    When both executor slots are held by workers that outlive ``timeout``, a third
+    ``detect`` must raise ``DetectionTimeoutError`` within the configured timeout
+    (not hang forever on ``_submit_semaphore.acquire``). Occupied slots must stay
+    held (no third submit; no premature release). Breaker failure accounting must
+    observe the admission timeout.
+    """
+    runtime = _mock_runtime(monkeypatch)
+    executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="face_pipeline_adm")
+    semaphore = asyncio.Semaphore(2)
+    submitted = 0
+    submit_lock = threading.Lock()
+    release_workers = threading.Event()
+    timeout_s = 0.05
+
+    def slow_detect(image_bytes: bytes, media_id: str) -> list:
+        nonlocal submitted
+        with submit_lock:
+            submitted += 1
+        # Hold beyond timeout so slots remain occupied after wait_for times out.
+        release_workers.wait(timeout=10.0)
+        return []
+
+    det = fpa.FacePipelineFaceDetector(
+        runtime,
+        timeout=timeout_s,
+        executor=executor,
+        submit_semaphore=semaphore,
+    )
+    monkeypatch.setattr(det, "_detect_sync", slow_detect)
+    payload = _png_bytes(Image.new("RGB", (4, 4), color=(11, 12, 13)))
+
+    async def fill_slot() -> None:
+        with pytest.raises(DetectionTimeoutError):
+            await det.detect([payload])
+
+    try:
+        # Occupy both process-executor slots with residual workers.
+        t1 = asyncio.create_task(fill_slot())
+        t2 = asyncio.create_task(fill_slot())
+        for _ in range(100):
+            with submit_lock:
+                if submitted >= 2:
+                    break
+            await asyncio.sleep(0.02)
+        with submit_lock:
+            assert submitted == 2
+
+        # First two timed out on in-flight work; residual workers still hold slots.
+        await asyncio.gather(t1, t2)
+        failures_after_fill = det._breaker.snapshot().failure_count
+        assert failures_after_fill == 2
+        with submit_lock:
+            assert submitted == 2
+        assert semaphore._value == 0  # both slots still held by residual workers
+
+        # Third caller: must fail within timeout (admission bound), not hang on acquire.
+        # Outer asyncio.wait_for is only a RED harness guard against infinite hang; the
+        # production path must raise DetectionTimeoutError on its own budget.
+        harness_cap_s = timeout_s * 8  # 0.4s — well above timeout, well below hang
+        t0 = time.perf_counter()
+        with pytest.raises(DetectionTimeoutError) as exc_info:
+            await asyncio.wait_for(det.detect([payload]), timeout=harness_cap_s)
+        elapsed = time.perf_counter() - t0
+
+        assert elapsed <= timeout_s * 4, (
+            f"admission timeout took {elapsed:.3f}s; expected within ~{timeout_s * 4:.3f}s "
+            f"(configured timeout={timeout_s}s)"
+        )
+        assert exc_info.value.timeout_s == timeout_s
+
+        # Must not submit a third worker or free either residual slot.
+        with submit_lock:
+            assert submitted == 2
+        assert semaphore._value == 0
+
+        # Breaker must count the admission timeout as a failure [RES-03][OBS-05].
+        assert det._breaker.snapshot().failure_count == failures_after_fill + 1
+    finally:
+        release_workers.set()
+        # Let residual workers finish and release callbacks run before loop teardown.
+        await asyncio.sleep(0.05)
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
+@pytest.mark.asyncio
 async def test_breaker_name_and_executor_thread(monkeypatch: pytest.MonkeyPatch) -> None:
     """CR-05(c)(d): breaker name face_pipeline.detect; work on dedicated pool thread."""
     runtime = _mock_runtime(monkeypatch)

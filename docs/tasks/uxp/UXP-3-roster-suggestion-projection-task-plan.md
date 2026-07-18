@@ -241,47 +241,47 @@ Proof: the five-case grid (§ slice 2) with characterization-first ordering; ann
 
 ### Context and Ownership
 
-- [ ] Frontend rules + testing-typescript loaded; UXP-2 plan §§ batch endpoint/filter parity/wire format read before touching its surfaces.
-- [ ] UXP-2 merge state checked at 0b start; coordination decision recorded if unmerged.
+- [x] Frontend rules + testing-typescript loaded; UXP-2 plan §§ batch endpoint/filter parity/wire format read before touching its surfaces.
+- [x] UXP-2 merge state checked at 0b start; coordination decision recorded if unmerged.
 
 ### Slice 0
 
-- [ ] `suggestionProjection.ts` exports predicate, per-leg comparator rule, `PROJECTION_TOP_K`, `ProjectedSuggestion` + adapters, keys, invalidation helper, event map (sr-007).
-- [ ] Matrix fixture exported; includes window-depth, all-ineligible-window, `"Person N"` labeled-unconfirmed, tied-similarity (per-leg), and stale-accepted rows.
-- [ ] 0b-1+0b-2 co-shipped (PR-19) as two commits (PR-22): structural migration preserving truthy-label eligibility first, named predicate-flip second; inline depth 5 + projection key; dropdown single-id batch at same depth; `identityFor` deleted; no consumer left on `fetchIdentitySuggestions`; `cluster-*` change pinned by test in the flip commit; route-retirement follow-up recorded for UXP-2 absorption, not implemented.
-- [ ] 0b-3 review: projection key + adapted `ProjectedSuggestion[]` cache (adapter in `queryFn`; optimistic filters on `suggestionId` — PR-20); per-cluster grouping kept; **optimistic setQueryData/cancelQueries/rollback re-keyed** with rollback-after-failed-accept test; `pending` deleted.
-- [ ] 0b-4 sweep: every D4-inventory site routed; per-event tests assert assignment family exactly **and** kept cross-family calls present.
-- [ ] 0b-5 proxy `threshold` dropped with PHP test.
-- [ ] Slice handoff decision names the `cluster-*` behavior change.
+- [x] `suggestionProjection.ts` exports predicate, per-leg comparator rule, `PROJECTION_TOP_K`, `ProjectedSuggestion` + adapters, keys, invalidation helper, event map (sr-007).
+- [x] Matrix fixture exported; includes window-depth, all-ineligible-window, `"Person N"` labeled-unconfirmed, tied-similarity (per-leg), and stale-accepted rows.
+- [x] 0b-1+0b-2 co-shipped (PR-19) as two commits (PR-22): structural migration preserving truthy-label eligibility first, named predicate-flip second; inline depth 5 + projection key; dropdown single-id batch at same depth; `identityFor` deleted; no consumer left on `fetchIdentitySuggestions`; `cluster-*` change pinned by test in the flip commit; route-retirement follow-up recorded for UXP-2 absorption, not implemented.
+- [x] 0b-3 review: projection key + adapted `ProjectedSuggestion[]` cache (adapter in `queryFn`; optimistic filters on `suggestionId` — PR-20); per-cluster grouping kept; **optimistic setQueryData/cancelQueries/rollback re-keyed** with rollback-after-failed-accept test; `pending` deleted.
+- [x] 0b-4 sweep: every D4-inventory site routed; per-event tests assert assignment family exactly **and** kept cross-family calls present.
+- [x] 0b-5 proxy `threshold` dropped with PHP test.
+- [x] Slice handoff decision names the `cluster-*` behavior change.
 
 ### Slice 1
 
-- [ ] `buildNamingOptions` single definition consumed by panel and loader; namespaced values (`person:`/`cluster:`); persons first; person-preferred case-insensitive dedupe; filter-before-slice; pre-dedupe collision set exposed.
-- [ ] Match pipeline source-gated (PR-16): `findClusterByLabel`/proactive match/merge resolve `cluster:` options only; person select never merges (test); `selectClusterSuggestions` group pipeline per plan.
-- [ ] Pre-save duplicate guard over the **pre-dedupe universe** with explicit merge/rename/cancel (person+cluster same-name fixture — PR-18); merge action names its target and shows label + member count before commit, disabled with no unique target (PR-23/PR-24); panel-path merge back-out verified; dead 409 `duplicateMatch` branch deleted.
-- [ ] Pin control removed from `ClusterPreview` **and** plumbing from `IdentityClusterItem`; mutation/API untouched.
-- [ ] Combobox a11y: names incl. source, live-region announcements, non-color badges, [A11Y-24] roster state matrix.
-- [ ] E21-9 pull-in decision (out) recorded in handoff at slice close.
+- [x] `buildNamingOptions` single definition consumed by panel and loader; namespaced values (`person:`/`cluster:`); persons first; person-preferred case-insensitive dedupe; filter-before-slice; pre-dedupe collision set exposed.
+- [x] Match pipeline source-gated (PR-16): `findClusterByLabel`/proactive match/merge resolve `cluster:` options only; person select never merges (test); `selectClusterSuggestions` group pipeline per plan.
+- [x] Pre-save duplicate guard over the **pre-dedupe universe** with explicit merge/rename/cancel (person+cluster same-name fixture — PR-18); merge action names its target and shows label + member count before commit, disabled with no unique target (PR-23/PR-24); panel-path merge back-out verified; dead 409 `duplicateMatch` branch deleted.
+- [x] Pin control removed from `ClusterPreview` **and** plumbing from `IdentityClusterItem`; mutation/API untouched.
+- [x] Combobox a11y: names incl. source, live-region announcements, non-color badges, [A11Y-24] roster state matrix.
+- [x] E21-9 pull-in decision (out) recorded in handoff at slice close.
 
 ### Slice 2
 
-- [ ] Exact dirty checks on both entry points; case-only rename mutates; merge path preserved (five-case grid).
-- [ ] Inline saved/error feedback + announcement.
-- [ ] Characterization tests green before the change ([TEST-03]); new tests watched failing ([TEST-06]).
+- [x] Exact dirty checks on both entry points; case-only rename mutates; merge path preserved (five-case grid).
+- [x] Inline saved/error feedback + announcement.
+- [x] Characterization tests green before the change ([TEST-03]); new tests watched failing ([TEST-06]).
 
 ## Review Readiness
 
-- [ ] Each slice: `/branch-review` with findings in MCP; remote grok as second reviewer at slice 0 and before merge.
-- [ ] Handoff decision per slice (record + notify), `render_handoff(kind='dashboard')` after writes.
-- [ ] Pre-merge gate: `handoff_close_check(enforce=True)` with fresh test evidence at HEAD.
+- [x] Each slice: `/branch-review` with findings in MCP; remote grok as second reviewer at slice 0 and before merge.
+- [x] Handoff decision per slice (record + notify), `render_handoff(kind='dashboard')` after writes.
+- [x] Pre-merge gate: `handoff_close_check(enforce=True)` with fresh test evidence at HEAD.
 
 ## Success Criteria
 
-- [ ] Inline prompt and curation dropdown derive the same top match for the same identity by construction (shared transport, depth, predicate, server order); accept/reject/label/merge/dismiss from **any** surface (including review cards) invalidates the projection so every surface converges on the next fetch (FBT-1 criterion 2, UXP-3's half; E21-5 owns the three-real-consumer harness).
-- [ ] The only review-queue divergences are the two defined ones (stale-accepted repair rows; page membership) — pinned by fixture, never a conflicting top match.
-- [ ] No identity-keyed surface shows an auto `cluster-*` target; the change is deliberate, tested, and recorded.
-- [ ] E21-5 ④ and UXP-5 consume the exported predicate/keys/invalidation map + fixture without re-deriving policy.
-- [ ] A name known to either the roster or labeled clusters surfaces on both naming surfaces, badged, before free-text create (criterion 6; E21-9 write-through residual accepted and recorded).
-- [ ] "bob"→"Bob" saves with inline feedback from both entry points (criterion 6).
-- [ ] No pin control overlaps a face thumbnail; no dangling pin plumbing.
-- [ ] Zero recognition-service changes (code or tests) on this branch.
+- [x] Inline prompt and curation dropdown derive the same top match for the same identity by construction (shared transport, depth, predicate, server order); accept/reject/label/merge/dismiss from **any** surface (including review cards) invalidates the projection so every surface converges on the next fetch (FBT-1 criterion 2, UXP-3's half; E21-5 owns the three-real-consumer harness).
+- [x] The only review-queue divergences are the two defined ones (stale-accepted repair rows; page membership) — pinned by fixture, never a conflicting top match.
+- [x] No identity-keyed surface shows an auto `cluster-*` target; the change is deliberate, tested, and recorded.
+- [x] E21-5 ④ and UXP-5 consume the exported predicate/keys/invalidation map + fixture without re-deriving policy.
+- [x] A name known to either the roster or labeled clusters surfaces on both naming surfaces, badged, before free-text create (criterion 6; E21-9 write-through residual accepted and recorded).
+- [x] "bob"→"Bob" saves with inline feedback from both entry points (criterion 6).
+- [x] No pin control overlaps a face thumbnail; no dangling pin plumbing.
+- [x] Zero recognition-service changes (code or tests) on this branch.

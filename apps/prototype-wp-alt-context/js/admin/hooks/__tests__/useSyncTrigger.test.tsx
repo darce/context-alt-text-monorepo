@@ -3,8 +3,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { useSyncTrigger } from '../useSyncTrigger';
+import { queryKeys } from '../../api/queryKeys';
 import * as recognitionApi from '../../api/recognition';
+import { useSyncTrigger } from '../useSyncTrigger';
 
 vi.mock('../../api/recognition', () => ({
   triggerSync: vi.fn(),
@@ -145,6 +146,25 @@ describe('useSyncTrigger', () => {
     });
 
     expect(triggerSyncMock).toHaveBeenCalledTimes(1);
+    queryClient.clear();
+  });
+
+  it('invalidates suggestions.all root on successful sync (projection nests under it)', async () => {
+    // TEST-06 predicted first failure if root invalidation regresses:
+    // "expected invalidateQueries to have been called with { queryKey: ['suggestions'] }"
+    // (viaSuggestionsAllRoot — projection is not targeted directly).
+    const triggerSyncMock = vi.mocked(recognitionApi.triggerSync);
+    triggerSyncMock.mockResolvedValue(successfulSyncResponse);
+
+    const { wrapper, queryClient } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    const { result } = renderHook(() => useSyncTrigger(false), { wrapper });
+
+    await act(async () => {
+      await result.current.mutateAsync();
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.all });
     queryClient.clear();
   });
 });

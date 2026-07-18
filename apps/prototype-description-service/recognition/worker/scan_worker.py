@@ -53,9 +53,13 @@ logger = logging.getLogger(__name__)
 # bind deterministically in the SQL `IN` filter (sr-007 single source of truth).
 _CLUSTERING_JOB_TYPE_VALUES: tuple[str, ...] = tuple(sorted(t.value for t in CLUSTERING_JOB_TYPES))
 
-# Process-wide guard: outer restart loop must not re-bind the metrics port.
-_METRICS_EXPORTER_STARTED = False
 _DEFAULT_WORKER_METRICS_PORT = 9108
+_DEFAULT_WORKER_METRICS_ADDR = "127.0.0.1"
+
+# Process exporter state: registry identity (not a bare bool) so a restart that
+# accidentally constructs a second FacePipelineMetrics fails loud instead of
+# silently serving a dead registry (COORD-FINAL-01).
+_process_metrics_exporter_registry: object | None = None
 
 
 def _resolve_worker_metrics_port() -> int:
@@ -74,6 +78,32 @@ def _resolve_worker_metrics_port() -> int:
     return port
 
 
+def _validate_worker_metrics_addr(raw: str) -> str:
+    """Reject empty / whitespace / control-character bind addresses (fail closed)."""
+    if not isinstance(raw, str):
+        raise ValueError(
+            f"Invalid RECOGNITION_SCAN_WORKER_METRICS_ADDR={raw!r}; must be a non-empty string"
+        )
+    addr = raw.strip()
+    if not addr:
+        raise ValueError(
+            f"Invalid RECOGNITION_SCAN_WORKER_METRICS_ADDR={raw!r}; must be non-empty "
+            "(default 127.0.0.1; empty would bind all interfaces in prometheus_client)"
+        )
+    if any(ord(ch) < 32 for ch in addr):
+        raise ValueError(
+            f"Invalid RECOGNITION_SCAN_WORKER_METRICS_ADDR={raw!r}; "
+            "must not contain control characters"
+        )
+    return addr
+
+
+def _resolve_worker_metrics_addr() -> str:
+    """Parse RECOGNITION_SCAN_WORKER_METRICS_ADDR (default 127.0.0.1)."""
+    raw = os.getenv("RECOGNITION_SCAN_WORKER_METRICS_ADDR", _DEFAULT_WORKER_METRICS_ADDR)
+    return _validate_worker_metrics_addr(raw)
+
+
 def _resolve_worker_metrics_export_enabled() -> bool:
     """Explicit export switch; default on. Set 0/false/no/off to disable."""
     raw = os.getenv("RECOGNITION_SCAN_WORKER_METRICS_EXPORT_ENABLED", "1").strip().lower()
@@ -85,6 +115,53 @@ def _resolve_worker_metrics_export_enabled() -> bool:
         f"Invalid RECOGNITION_SCAN_WORKER_METRICS_EXPORT_ENABLED={raw!r}; "
         "use 1/true/yes/on or 0/false/no/off"
     )
+
+
+def start_process_metrics_exporter(
+    *,
+    metrics: FacePipelineMetrics,
+    config: ScanWorkerConfig,
+) -> None:
+    """Start the process-local Prometheus HTTP exporter (composition root).
+
+    Called once from ``_main`` before the outer restart loop. Idempotent when
+    the same registry is already bound; fails loud if a *different* registry is
+    supplied after a prior start (prevents silent dead-registry scrapes).
+    Explicit ``metrics_export_enabled=False`` skips without binding.
+    """
+    global _process_metrics_exporter_registry
+    if not config.metrics_export_enabled:
+        logger.info(
+            "[worker] metrics export disabled (RECOGNITION_SCAN_WORKER_METRICS_EXPORT_ENABLED)"
+        )
+        return
+    registry = metrics.registry
+    if _process_metrics_exporter_registry is registry:
+        return
+    if _process_metrics_exporter_registry is not None:
+        raise RuntimeError(
+            "metrics exporter already started with a different registry; "
+            "hoist one FacePipelineMetrics before the outer restart loop "
+            "(COORD-FINAL-01)"
+        )
+    # Fail-loud: start_http_server exceptions propagate to process composition.
+    start_http_server(
+        int(config.metrics_port),
+        str(config.metrics_addr),
+        registry=registry,
+    )
+    _process_metrics_exporter_registry = registry
+    logger.info(
+        "[worker] Prometheus metrics exporter listening on %s:%s",
+        config.metrics_addr,
+        config.metrics_port,
+    )
+
+
+def reset_process_metrics_exporter_for_tests() -> None:
+    """Test hook: clear process exporter bind state (never used in production)."""
+    global _process_metrics_exporter_registry
+    _process_metrics_exporter_registry = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +177,8 @@ class ScanWorkerConfig:
     mv_refresh_interval_seconds: int = 60
     # FINALB-06: process-local Prometheus exporter (validated 1..65535).
     metrics_port: int = field(default_factory=_resolve_worker_metrics_port)
+    # COORD-FINAL-01: bind address (default loopback; operators may override).
+    metrics_addr: str = field(default_factory=_resolve_worker_metrics_addr)
     # Explicit disable only — never silently omit export (OBS-08).
     metrics_export_enabled: bool = field(default_factory=_resolve_worker_metrics_export_enabled)
 
@@ -108,12 +187,18 @@ class ScanWorkerConfig:
         if port < 1 or port > 65535:
             raise ValueError(f"metrics_port={port} out of range; must be 1..65535")
         object.__setattr__(self, "metrics_port", port)
+        object.__setattr__(self, "metrics_addr", _validate_worker_metrics_addr(str(self.metrics_addr)))
 
 
 class ScanWorker:
     """Background worker that claims and processes scan queue items."""
 
-    def __init__(self, config: ScanWorkerConfig) -> None:
+    def __init__(
+        self,
+        config: ScanWorkerConfig,
+        *,
+        metrics: FacePipelineMetrics | None = None,
+    ) -> None:
         self._config = config
         connect_args: dict[str, object] = {}
         if config.postgres_dsn.startswith("postgresql"):
@@ -132,8 +217,9 @@ class ScanWorker:
         self._generator: EmbeddingGeneratorProtocol = StubEmbeddingGenerator()
         self._embedding_runtime_ready = False
         self._embedding_retry_after: datetime | None = None
-        # Process-local face_pipeline metrics (not the API registry).
-        self._face_pipeline_metrics = FacePipelineMetrics()
+        # Process-local face_pipeline metrics (not the API registry). Injected
+        # from composition root so outer restart reuses one registry.
+        self._face_pipeline_metrics = metrics if metrics is not None else FacePipelineMetrics()
         self._metrics_exporter_started = False
 
         settings = get_recognition_settings()
@@ -182,35 +268,23 @@ class ScanWorker:
         }
 
     def start_metrics_exporter(self) -> None:
-        """Start process-local Prometheus HTTP exporter once (FINALB-06).
+        """Start process-local Prometheus HTTP exporter (test / direct-use seam).
 
-        Uses ``prometheus_client.start_http_server`` with this worker's
-        ``FacePipelineMetrics`` registry. Skips when export is explicitly
-        disabled. Process-wide guard prevents duplicate port bind across the
-        outer restart loop.
+        Production composition uses :func:`start_process_metrics_exporter` once
+        from ``_main``. This method delegates there with instance-level
+        idempotence so unit tests can exercise export without entering the
+        worker lifecycle (which must never bind a port).
         """
-        global _METRICS_EXPORTER_STARTED
-        if not self._config.metrics_export_enabled:
-            logger.info(
-                "[worker] metrics export disabled (RECOGNITION_SCAN_WORKER_METRICS_EXPORT_ENABLED)"
-            )
+        if self._metrics_exporter_started:
             return
-        if self._metrics_exporter_started or _METRICS_EXPORTER_STARTED:
-            return
-        start_http_server(
-            int(self._config.metrics_port),
-            registry=self._face_pipeline_metrics.registry,
+        start_process_metrics_exporter(
+            metrics=self._face_pipeline_metrics,
+            config=self._config,
         )
         self._metrics_exporter_started = True
-        _METRICS_EXPORTER_STARTED = True
-        logger.info(
-            "[worker] Prometheus metrics exporter listening on port %s",
-            self._config.metrics_port,
-        )
 
     async def __aenter__(self) -> ScanWorker:
-        """Prepare worker resources."""
-        self.start_metrics_exporter()
+        """Prepare worker resources (does not start the metrics exporter)."""
         await self._ensure_embedding_runtime()
         await self._heartbeat_embedding_runtime_capability()
         return self
@@ -640,10 +714,17 @@ async def _main() -> None:
         logger.error("Database unavailable after max retries. Exiting.")
         sys.exit(1)
 
+    # COORD-FINAL-01: one config + one metrics registry for the whole process.
+    # Exporter starts once here (fail-loud); replacement ScanWorkers share the
+    # same metrics object so post-restart scrapes stay live.
+    worker_config = ScanWorkerConfig(postgres_dsn=postgres_dsn)
+    process_metrics = FacePipelineMetrics()
+    start_process_metrics_exporter(metrics=process_metrics, config=worker_config)
+
     backoff = 2.0
     while True:
         try:
-            async with ScanWorker(ScanWorkerConfig(postgres_dsn=postgres_dsn)) as worker:
+            async with ScanWorker(worker_config, metrics=process_metrics) as worker:
                 await worker.run_forever()
             backoff = 2.0
         except asyncio.CancelledError:

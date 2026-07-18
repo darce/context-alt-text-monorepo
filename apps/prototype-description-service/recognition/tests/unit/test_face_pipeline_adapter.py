@@ -9,6 +9,7 @@ Heuristics: [TEST-06][SERVE-08][EMB-01][PROV-06][RLSE-05][PROV-08]
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import importlib
 import io
 import shutil
@@ -1045,10 +1046,8 @@ def test_admission_gate_safe_across_sequential_event_loops(
             asyncio.set_event_loop(loop)
             return loop.run_until_complete(coro_factory())
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 loop.run_until_complete(asyncio.sleep(0))
-            except Exception:
-                pass
             loop.close()
             asyncio.set_event_loop(None)
 
@@ -1133,10 +1132,8 @@ def test_admission_gate_safe_across_sequential_event_loops(
             assert submitted == submitted_mid, "must not exceed configured active workers"
     finally:
         release_workers.set()
-        try:
+        with contextlib.suppress(NameError):
             release_workers_b.set()  # type: ignore[name-defined]
-        except NameError:
-            pass
         time.sleep(0.05)
         # RED may leak process admission slots (closed-loop release). Restore a
         # fresh gate so sibling tests using process defaults are not poisoned.

@@ -50,8 +50,9 @@ async def test_scan_worker_main_uses_database_settings_dsn(monkeypatch: pytest.M
             return None
 
     class _FakeWorker:
-        def __init__(self, config) -> None:  # noqa: ANN001
+        def __init__(self, config, *, metrics=None) -> None:  # noqa: ANN001
             used["dsn"] = config.postgres_dsn
+            used["metrics"] = metrics
 
         async def __aenter__(self):
             return self
@@ -62,6 +63,11 @@ async def test_scan_worker_main_uses_database_settings_dsn(monkeypatch: pytest.M
         async def run_forever(self) -> None:
             raise asyncio.CancelledError()
 
+    exporter_calls: list[object] = []
+
+    def _fake_start_exporter(*, metrics, config) -> None:  # noqa: ANN001
+        exporter_calls.append((metrics, config))
+
     monkeypatch.setattr(
         scan_worker_module,
         "get_database_settings",
@@ -69,10 +75,15 @@ async def test_scan_worker_main_uses_database_settings_dsn(monkeypatch: pytest.M
     )
     monkeypatch.setattr(scan_worker_module, "create_async_engine", lambda dsn, **_kwargs: _FakeEngine())
     monkeypatch.setattr(scan_worker_module, "ScanWorker", _FakeWorker)
+    # Composition root starts the exporter once — never bind a real port in unit tests.
+    monkeypatch.setattr(scan_worker_module, "start_process_metrics_exporter", _fake_start_exporter)
 
     await scan_worker_module._main()
 
     assert used["dsn"] == "postgresql+asyncpg://context:context@localhost:5432/alt_context_service"
+    assert used["metrics"] is not None
+    assert len(exporter_calls) == 1
+    assert exporter_calls[0][0] is used["metrics"]
 
 
 @pytest.mark.asyncio

@@ -85,6 +85,9 @@ class ScanItemHandler:
                     item.media_id,
                 )
                 try:
+                    # process_media_item commits identity rows then emits
+                    # scan_media_reconciled (event only after durable commit).
+                    # Queue-item completion is a second commit below.
                     reconcile = await scan_service.process_media_item(
                         tenant_id=str(item.tenant_id),
                         media_id=item.media_id,

@@ -43,10 +43,12 @@ _DB_SETTINGS = get_database_settings()
 class ReconcileResult:
     """Per-media identity reconcile counts (row recycling, not assignment/unknown).
 
-    ``matched`` / ``new`` are re-scan MediaIdentity row recycling counts from IoU
-    matching. Assignment/unknown metrics live in clustering (FIR-6).
+    ``matched`` counts durable **writes** of IoU-matched rows (pairs that survive
+    embedding / ``model_id`` guards), not raw IoU pair count. ``new`` is newly
+    inserted rows. Assignment/unknown metrics live in clustering (FIR-6).
     ``detected`` is the inbound detection count; ``total`` is rows written/updated
-    (``matched + new``), preserving the pre-S4 ``process_media_item`` int semantics.
+    (``matched + new``), preserving the pre-S4 ``process_media_item`` int semantics
+    on the normal path where every IoU match is written.
     """
 
     detected: int
@@ -55,7 +57,7 @@ class ReconcileResult:
 
     @property
     def total(self) -> int:
-        """Rows matched or newly inserted (historical identities_detected count)."""
+        """Rows written/updated (historical identities_detected count)."""
         return self.matched + self.new
 
     def __int__(self) -> int:
@@ -100,6 +102,8 @@ class ScanService:
         # callers (tests, scan_worker before S1.5) leave this None and
         # the URL string is passed straight to the detector unchanged.
         self._object_store_factory = object_store_factory
+        # Cached once per service instance (S4CR-06); settings load is not free.
+        self._cached_face_pipeline_profile: str | None = None
 
     async def analyze_media(
         self,
@@ -165,7 +169,11 @@ class ScanService:
         media_sources: Iterable[str] | None,
         detections: list[FaceDetection],
     ) -> IdentityScanJob:
-        """Persist detection results and mark job as completed."""
+        """Persist detection results and mark job as completed.
+
+        Emits ``scan_media_reconciled`` only after the batch commit succeeds
+        (S4CR-03). Detect is out of scope here — events carry ``persist_ms`` only.
+        """
         media_ids_list = list(media_ids)
         sources_list = list(media_sources) if media_sources else media_ids_list
         source_to_media_id = dict(zip(sources_list, media_ids_list, strict=False))
@@ -174,8 +182,6 @@ class ScanService:
         scan_job = await self._session.get(IdentityScanJob, job_id)
         if scan_job is None:
             raise RuntimeError(f"scan job not found: {job_id}")
-
-        [_extract_media_id(mid) for mid in media_ids_list]
 
         # Group detections by media_id to process them per image for ID recycling
         detections_by_media: dict[int, list[FaceDetection]] = {}
@@ -187,8 +193,24 @@ class ScanService:
                 detections_by_media[mid_int] = []
             detections_by_media[mid_int].append(det)
 
+        # Union media_ids_list + detection keys so zero-detection media still
+        # run orphan cleanup and emit detected=0 events (S4CR-02).
+        ordered_media: list[int] = []
+        seen_media: set[int] = set()
+        for mid in media_ids_list:
+            mid_int = _extract_media_id(mid)
+            if mid_int not in seen_media:
+                ordered_media.append(mid_int)
+                seen_media.add(mid_int)
+        for mid_int in detections_by_media:
+            if mid_int not in seen_media:
+                ordered_media.append(mid_int)
+                seen_media.add(mid_int)
+
         total_persisted = 0
-        for mid_int, dets in detections_by_media.items():
+        pending_events: list[tuple[int, ReconcileResult, list[FaceDetection], float]] = []
+        for mid_int in ordered_media:
+            dets = detections_by_media.get(mid_int, [])
             # Use specific URL if available from sources
             url = None
             for s, m_int in source_to_media_id_int.items():
@@ -203,15 +225,8 @@ class ScanService:
                 detections=dets,
                 media_url=url,
             )
-            duration_ms = (time.perf_counter() - started) * 1000.0
-            _emit_scan_media_reconciled(
-                media_id=mid_int,
-                tenant_id=str(tenant_uuid),
-                job_id=str(job_id),
-                result=result,
-                detections=dets,
-                duration_ms=duration_ms,
-            )
+            persist_ms = (time.perf_counter() - started) * 1000.0
+            pending_events.append((mid_int, result, dets, persist_ms))
             total_persisted += result.total
 
         scan_job.processed_media = len(media_ids_list)
@@ -219,6 +234,17 @@ class ScanService:
         scan_job.status = JobStatus.COMPLETED
         scan_job.completed_at = datetime.now(tz=UTC)
         await self._session.commit()
+
+        for mid_int, result, dets, persist_ms in pending_events:
+            _emit_scan_media_reconciled(
+                media_id=mid_int,
+                tenant_id=str(tenant_uuid),
+                job_id=str(job_id),
+                result=result,
+                detections=dets,
+                persist_ms=persist_ms,
+                get_profile=self._face_pipeline_profile_cached,
+            )
         return scan_job
 
     async def process_scan_job(
@@ -284,28 +310,35 @@ class ScanService:
             the historical int (identities_detected = matched + new) use
             ``.total`` or ``int(result)``.
         """
-        started = time.perf_counter()
         tenant_uuid = uuid.UUID(str(tenant_id))
         detector_source: bytes | str = media_url
         if media_url.startswith("file://") and self._object_store_factory is not None:
             store = self._object_store_factory(str(tenant_id))
             with store.open(media_url) as fh:
                 detector_source = fh.read()
+        detect_started = time.perf_counter()
         detections: list[FaceDetection] = await self._detector.detect([detector_source])
+        detect_ms = (time.perf_counter() - detect_started) * 1000.0
+        persist_started = time.perf_counter()
         result = await self._persist_identities(
             tenant_uuid=tenant_uuid,
             media_id=media_id,
             detections=detections,
             media_url=media_url,
         )
-        duration_ms = (time.perf_counter() - started) * 1000.0
+        # Durable commit before telemetry so the event never outruns the DB
+        # (worker path previously flushed only; handler committed later).
+        await self._session.commit()
+        persist_ms = (time.perf_counter() - persist_started) * 1000.0
         _emit_scan_media_reconciled(
             media_id=media_id,
             tenant_id=str(tenant_uuid),
             job_id=str(job_id) if job_id is not None else None,
             result=result,
             detections=detections,
-            duration_ms=duration_ms,
+            persist_ms=persist_ms,
+            detect_ms=detect_ms,
+            get_profile=self._face_pipeline_profile_cached,
         )
         return result
 
@@ -363,7 +396,8 @@ class ScanService:
 
         expected_dim = int(_DB_SETTINGS.pgvector_dimension)
 
-        # 4. Update matched identities (preserves PK/UUID)
+        # 4. Update matched identities (preserves PK/UUID); count durable writes only.
+        matched_written = 0
         for old_row, det in matched:
             if det.embedding is None:
                 continue
@@ -384,6 +418,7 @@ class ScanService:
                 old_row.quality_score = det.landmark_quality
             old_row.image_phash = det.image_phash
             old_row.updated_at = datetime.now(tz=UTC)
+            matched_written += 1
 
         # 5. Insert new detections
         new_rows = []
@@ -423,12 +458,19 @@ class ScanService:
                 await self._session.delete(orphan)
 
         await self._session.flush()
-        # total = matched + new preserves pre-S4 int return (len(matched)+len(new_rows)).
+        # matched = durable IoU-match writes (not raw IoU pair count); total =
+        # matched + new is rows written/updated (pre-S4 identities_detected).
         return ReconcileResult(
             detected=len(detections),
-            matched=len(matched),
+            matched=matched_written,
             new=len(new_rows),
         )
+
+    def _face_pipeline_profile_cached(self) -> str:
+        """Return face_pipeline profile, loaded once per service instance."""
+        if self._cached_face_pipeline_profile is None:
+            self._cached_face_pipeline_profile = _face_pipeline_profile()
+        return self._cached_face_pipeline_profile
 
 
 def _assert_embedding_dimension(det: FaceDetection, *, expected_dim: int) -> None:
@@ -460,19 +502,32 @@ def _emit_scan_media_reconciled(
     job_id: str | None,
     result: ReconcileResult,
     detections: list[FaceDetection],
-    duration_ms: float,
+    persist_ms: float,
+    detect_ms: float | None = None,
+    get_profile: Callable[[], str] | None = None,
 ) -> None:
-    """Emit one wide structured log event per processed media item ([OBS-01..03]).
+    """Emit one wide structured log event per successfully reconciled media ([OBS-01..03]).
 
-    ``matched`` / ``new`` are re-scan row recycling counts, not assignment/unknown.
+    **Absence-means-failure contract (S4CR-05):** this event is success-only and
+    is emitted only after a durable commit. Detect/persist exceptions, batch
+    rollback, or pre-commit failure produce **no** ``scan_media_reconciled``
+    event for that media (or for earlier media in a failed ``save_job_results``
+    batch). Callers must not emit on the exception path.
+
+    ``matched`` is durable match-writes; ``new`` is inserts — not assignment/unknown.
+    Timing fields are scope-honest: ``persist_ms`` always; ``detect_ms`` only when
+    detect ran in the same call stack (worker ``process_media_item``). HTTP/inline
+    ``save_job_results`` omits ``detect_ms`` (detect is out of scope).
+
+    Telemetry failures are swallowed so logging can never fail the scan (S4CR-06).
     """
-    # Late import: correlation middleware lives under interface_adapters.http and
-    # importing it at module load would cycle through deps.services → ScanService.
-    from recognition.interface_adapters.http.middleware.correlation import get_correlation_id
+    try:
+        # Late import: correlation middleware lives under interface_adapters.http and
+        # importing it at module load would cycle through deps.services → ScanService.
+        from recognition.interface_adapters.http.middleware.correlation import get_correlation_id
 
-    logger.info(
-        "scan_media_reconciled",
-        extra={
+        profile = get_profile() if get_profile is not None else _face_pipeline_profile()
+        extra: dict[str, object] = {
             "event": "scan_media_reconciled",
             "media_id": media_id,
             "tenant_id": tenant_id,
@@ -482,10 +537,14 @@ def _emit_scan_media_reconciled(
             "matched": result.matched,
             "new": result.new,
             "embedding_model": _embedding_model_from_detections(detections),
-            "profile": _face_pipeline_profile(),
-            "duration_ms": round(duration_ms, 3),
-        },
-    )
+            "profile": profile,
+            "persist_ms": round(persist_ms, 3),
+        }
+        if detect_ms is not None:
+            extra["detect_ms"] = round(detect_ms, 3)
+        logger.info("scan_media_reconciled", extra=extra)
+    except Exception:
+        logger.exception("scan_media_reconciled emission failed")
 
 
 def _extract_media_id(value: str) -> int:

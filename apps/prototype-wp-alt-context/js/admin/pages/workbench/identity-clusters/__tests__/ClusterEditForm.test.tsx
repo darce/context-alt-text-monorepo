@@ -97,10 +97,45 @@ describe('ClusterEditForm', () => {
     expect(onLabelChange).toHaveBeenCalledWith('Person B');
     expect(onSave).not.toHaveBeenCalled();
 
-    // Clicking the confirm button calls onConfirmSuggestion
+    // Clicking the confirm button calls onConfirmSuggestion with bare cluster id
+    // (legacy bare values; namespaced cluster: ids are unwrapped the same way).
     const confirmButton = screen.getAllByRole('button', { name: /confirm match/i })[1]; // Index 1 for Person B
     fireEvent.click(confirmButton);
     await waitFor(() => expect(onConfirmSuggestion).toHaveBeenCalledWith('2', 'Person B'));
+  });
+
+  it('person-source confirm saves label and never calls onConfirmSuggestion (PR-16)', async () => {
+    // Predicted first failure: onConfirmSuggestion called with person:42
+    const onSave = vi.fn();
+    const onConfirmSuggestion = vi.fn();
+    render(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput="P"
+        options={[{ value: 'person:42', label: 'Pat Roster', source: 'person', group: 'All Labels' }]}
+        onSave={onSave}
+        onConfirmSuggestion={onConfirmSuggestion}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /confirm match/i }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith('Pat Roster'));
+    expect(onConfirmSuggestion).not.toHaveBeenCalled();
+  });
+
+  it('unwraps cluster: namespaced values on confirm', async () => {
+    const onConfirmSuggestion = vi.fn();
+    render(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput="B"
+        options={[{ value: 'cluster:c-bob', label: 'Bob', source: 'cluster', group: 'Suggested' }]}
+        onConfirmSuggestion={onConfirmSuggestion}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /confirm match/i }));
+    await waitFor(() => expect(onConfirmSuggestion).toHaveBeenCalledWith('c-bob', 'Bob'));
   });
 
   it('is disabled when isPending is true', () => {

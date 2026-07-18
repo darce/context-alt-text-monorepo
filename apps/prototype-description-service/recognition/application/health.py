@@ -13,11 +13,20 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from recognition.infrastructure.face_pipeline.provenance import (
+    MODEL_MANIFEST,
+    ModelVerifyOutcome,
+    verify_face_pipeline_model,
+)
 from recognition.interface_adapters.http.deps.circuit_breaker import (
     BreakerState,
     SessionDependencyCircuitBreaker,
 )
 from shared.health import HealthReport, HealthStatus
+
+# Process-local eager verify cache for face_pipeline readiness ([EMB-05]).
+# Keyed by absolute model path; value is last full-verify outcome.
+_FACE_PIPELINE_VERIFY_CACHE: dict[str, ModelVerifyOutcome] = {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +84,61 @@ def check_model_cache(cache_dir: Path, model_name: str = "buffalo_l") -> CheckRe
     if not onnx_files:
         return CheckResult("model_cache", HealthStatus.UNHEALTHY, f"no_onnx_files: {bundle}")
     return CheckResult("model_cache", HealthStatus.OK, f"{len(onnx_files)} bundle file(s)")
+
+
+def _cached_verify_outcome(name: str, *, models_dir: Path) -> ModelVerifyOutcome:
+    """Return last verified outcome, re-running full sha256 on miss or mtime/size drift.
+
+    Never reports OK for bytes that have not passed ``load_verified_model`` at
+    least once in this process ([EMB-05], [DRIFT-02]).
+    """
+    entry = MODEL_MANIFEST[name]
+    path = models_dir / entry.file_name
+    cache_key = str(path.resolve()) if path.exists() else str(path)
+
+    cached = _FACE_PIPELINE_VERIFY_CACHE.get(cache_key)
+    if path.is_file():
+        st = path.stat()
+        if cached is not None and cached.mtime_ns == st.st_mtime_ns and cached.size == st.st_size:
+            return cached
+    elif cached is not None and not cached.ok and cached.mtime_ns == 0 and cached.size == 0:
+        # Missing file already verified-failed with no stat; re-check so recovery works.
+        pass
+
+    outcome = verify_face_pipeline_model(name, models_dir=models_dir)
+    # Cache under resolved path when present so renames don't leak stale OK.
+    store_key = str(outcome.path.resolve()) if outcome.path.exists() else cache_key
+    _FACE_PIPELINE_VERIFY_CACHE[store_key] = outcome
+    if store_key != cache_key:
+        _FACE_PIPELINE_VERIFY_CACHE[cache_key] = outcome
+    return outcome
+
+
+def check_face_pipeline_models(models_dir: Path) -> CheckResult:
+    """Eager profile-aware readiness for YuNet+SFace ([EMB-05], [OBS-08]).
+
+    First probe (or API boot) runs full ``load_verified_model`` per artifact and
+    caches (ok|reason, mtime, size). Subsequent probes re-stat only; drift
+    triggers full re-verify. UNHEALTHY detail names the failing artifact.
+    """
+    root = Path(models_dir)
+    failures: list[str] = []
+    for name in ("yunet", "sface"):
+        outcome = _cached_verify_outcome(name, models_dir=root)
+        if not outcome.ok:
+            failures.append(f"{name}: {outcome.reason or 'unverified'}")
+    if failures:
+        return CheckResult(
+            "model_cache",
+            HealthStatus.UNHEALTHY,
+            "; ".join(failures),
+        )
+    return CheckResult("model_cache", HealthStatus.OK, f"verified: yunet+sface @ {root}")
+
+
+def reset_face_pipeline_verify_cache_for_tests() -> None:
+    """Clear the process-local verify cache (unit tests only)."""
+    _FACE_PIPELINE_VERIFY_CACHE.clear()
 
 
 def aggregate_status(checks: list[CheckResult]) -> HealthStatus:

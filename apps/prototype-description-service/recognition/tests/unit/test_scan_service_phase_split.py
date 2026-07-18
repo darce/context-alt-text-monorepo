@@ -130,16 +130,22 @@ async def test_process_scan_job_inline_uses_shared_three_phase_helper(
         detections = await detect()
         return await persist(detections)
 
-    import recognition.application.embedding.detector as detector_module
-    import recognition.application.embedding.generator as generator_module
     import recognition.config as recognition_config
+    import recognition.infrastructure.embeddings.runtime_factory as runtime_factory
 
-    monkeypatch.setattr(recognition_config, "get_settings", lambda: SimpleNamespace(runtime_mode="prod"))
+    monkeypatch.setattr(
+        recognition_config,
+        "get_settings",
+        lambda: SimpleNamespace(runtime_mode="prod", face_pipeline=SimpleNamespace(profile="insightface")),
+    )
     monkeypatch.setattr(scan_tasks, "set_tenant_context", AsyncMock())
     monkeypatch.setattr(scan_service_module, "ScanService", FakeScanService)
     monkeypatch.setattr(scan_service_module, "run_scan_three_phase", fake_run_scan_three_phase, raising=False)
-    monkeypatch.setattr(detector_module, "InsightFaceFaceDetector", lambda adapter: FakeDetector())
-    monkeypatch.setattr(generator_module, "InsightFaceEmbeddingGenerator", FakeGenerator)
+
+    async def _fake_build(*, settings, http_client=None, adapter_provider=None):
+        return FakeDetector(), FakeGenerator(object())
+
+    monkeypatch.setattr(runtime_factory, "build_embedding_runtime", _fake_build)
 
     async def fake_adapter_provider():
         return object()

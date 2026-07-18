@@ -15,6 +15,7 @@ from recognition.application.health import (
     aggregate_status,
     check_breaker,
     check_database,
+    check_face_pipeline_models,
     check_model_cache,
 )
 from recognition.application.scan.capability import (
@@ -27,6 +28,7 @@ from recognition.config.security import (
     validate_required_secrets,
 )
 from recognition.config.settings import RecognitionSettings
+from recognition.infrastructure.face_pipeline.provenance import MODEL_MANIFEST
 from recognition.interface_adapters.http import deps as http_deps
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps.auth import require_auth
@@ -281,12 +283,23 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
 
     Extracted from create_app so tests can mount the probes onto a bare
     FastAPI instance without spinning up every subsystem router.
-    """
-    settings = RecognitionSettings()
-    cache_dir = model_cache_dir or settings.insightface.model_cache_dir
-    model_name = settings.insightface.model_name
 
+    Model-cache probe is profile-aware ([OBS-08]): insightface uses the
+    existing onnx-count check; face_pipeline uses eager sha256 verification
+    with mtime/size drift re-verify ([EMB-05]).
+    """
     commit_sha = _resolve_version_commit_sha() or "unknown"
+
+    def _model_probe() -> tuple[object, Path, str]:
+        """Return (CheckResult, cache_dir_for_detail, model_label)."""
+        settings = RecognitionSettings()
+        profile = settings.face_pipeline.profile
+        if profile == "face_pipeline":
+            models_dir = settings.face_pipeline.resolved_models_dir
+            return check_face_pipeline_models(models_dir), models_dir, "yunet+sface"
+        cache_dir = model_cache_dir or settings.insightface.model_cache_dir
+        model_name = settings.insightface.model_name
+        return check_model_cache(cache_dir, model_name=model_name), cache_dir, model_name
 
     @app.get("/health", summary="Liveness probe (PR-01)")
     def liveness() -> dict[str, str]:
@@ -305,10 +318,11 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
         session: AsyncSession | None = Depends(http_deps.get_observability_session),
     ) -> dict[str, object]:
         breaker = get_or_create_session_dependency_circuit_breaker(app)
+        mc_check, _, _ = _model_probe()
         checks = [
             await check_database(session),
             check_breaker(breaker),
-            check_model_cache(cache_dir, model_name=model_name),
+            mc_check,
         ]
         status = aggregate_status(checks)
         # UNHEALTHY flips the HTTP code so load balancers pull the pod.
@@ -332,10 +346,16 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
         breaker = get_or_create_session_dependency_circuit_breaker(app)
         db_check = await check_database(session)
         breaker_check = check_breaker(breaker)
-        mc_check = check_model_cache(cache_dir, model_name=model_name)
+        mc_check, cache_dir, model_name = _model_probe()
         status = aggregate_status([db_check, breaker_check, mc_check])
-        bundle = cache_dir / model_name
-        bundle_files = len(list(bundle.glob("*.onnx"))) if bundle.is_dir() else 0
+        settings = RecognitionSettings()
+        if settings.face_pipeline.profile == "face_pipeline":
+            bundle_files = sum(
+                1 for name in ("yunet", "sface") if (cache_dir / MODEL_MANIFEST[name].file_name).is_file()
+            )
+        else:
+            bundle = cache_dir / model_name
+            bundle_files = len(list(bundle.glob("*.onnx"))) if bundle.is_dir() else 0
         embedding_runtime = {
             "available": False,
             "reason": "database unavailable",
@@ -362,6 +382,7 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
                 "bundle_files": bundle_files,
                 "status": mc_check.status.value,
                 "detail": mc_check.detail,
+                "profile": settings.face_pipeline.profile,
             },
             "embedding_runtime": embedding_runtime,
         }

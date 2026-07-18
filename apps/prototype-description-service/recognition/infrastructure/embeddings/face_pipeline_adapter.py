@@ -57,6 +57,7 @@ from recognition.infrastructure.face_pipeline.provenance import (
     MODEL_MANIFEST,
     ModelIntegrityError,
 )
+from recognition.observability.face_pipeline_metrics import FacePipelineMetricsObserver
 
 logger = logging.getLogger(__name__)
 
@@ -198,34 +199,22 @@ def reset_face_pipeline_pool_for_tests() -> None:
     reconfigure_face_pipeline_pool_from_settings()
 
 
-def _observe_submit_wait(metrics: Any | None, wait_s: float) -> None:
+def _observe_submit_wait(metrics: FacePipelineMetricsObserver | None, wait_s: float) -> None:
     """Record admission wait on an injected observer; never raise to detect path."""
     if metrics is None:
         return
     try:
-        observe = getattr(metrics, "observe_submit_wait", None)
-        if callable(observe):
-            observe(float(wait_s))
-            return
-        hist = getattr(metrics, "face_pipeline_submit_wait_seconds", None)
-        if hist is not None:
-            hist.observe(float(wait_s))
+        metrics.observe_submit_wait(float(wait_s))
     except Exception:  # pragma: no cover - metrics must never break detect path
         logger.debug("face_pipeline submit wait metric observe failed", exc_info=True)
 
 
-def _observe_admission_timeout(metrics: Any | None) -> None:
+def _observe_admission_timeout(metrics: FacePipelineMetricsObserver | None) -> None:
     """Increment admission-timeout counter on injected observer; never raise."""
     if metrics is None:
         return
     try:
-        record = getattr(metrics, "record_admission_timeout", None)
-        if callable(record):
-            record()
-            return
-        counter = getattr(metrics, "face_pipeline_admission_timeouts_total", None)
-        if counter is not None:
-            counter.inc()
+        metrics.record_admission_timeout()
     except Exception:  # pragma: no cover - metrics must never break detect path
         logger.debug("face_pipeline admission timeout metric inc failed", exc_info=True)
 
@@ -552,7 +541,7 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
         breaker: AdapterCircuitBreaker | None = None,
         executor: ThreadPoolExecutor | None = None,
         submit_semaphore: asyncio.Semaphore | FacePipelineAdmissionGate | None = None,
-        metrics: Any | None = None,
+        metrics: FacePipelineMetricsObserver | None = None,
     ) -> None:
         assert_three_way_embedding_dimensions(runtime.manifest)
         self._runtime = runtime
@@ -572,7 +561,7 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
             _exec, gate = _ensure_face_pipeline_pool()
             self._submit_semaphore = gate
         # Injected process-local observer (FINALB-06). No HTTP middleware import.
-        self._metrics = metrics
+        self._metrics: FacePipelineMetricsObserver | None = metrics
 
     async def _fetch_image(self, url: str) -> bytes | None:
         """Fetch image bytes from a URL (mirrors InsightFaceFaceDetector)."""

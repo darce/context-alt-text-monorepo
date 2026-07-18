@@ -230,9 +230,9 @@ async def test_injected_observer_records_wait_and_admission_timeout(
 
     Not the HTTP process singleton. Labels stay low-cardinality (no media/path/url).
     """
-    FacePipelineMetrics = _load_face_pipeline_metrics_cls()
+    metrics_cls = _load_face_pipeline_metrics_cls()
     registry = CollectorRegistry()
-    metrics = FacePipelineMetrics(registry=registry)
+    metrics = metrics_cls(registry=registry)
 
     param = _detector_metrics_param_name()
     assert param is not None, (
@@ -477,38 +477,48 @@ def test_worker_source_does_not_rely_on_api_metrics_endpoint_alone() -> None:
 # COORD-FINAL-01 — post-restart metrics continuity + exporter composition root
 # ---------------------------------------------------------------------------
 #
-# Finding: each ScanWorker.__init__ builds a fresh FacePipelineMetrics(),
-# __aenter__ starts the HTTP exporter, and a module-global flag prevents a
-# second bind. After the outer _main restart loop constructs a replacement
-# worker, detectors write to a new registry while the HTTP server still serves
-# the first (dead) registry — post-restart metrics silently disappear. Unit
-# tests that enter a worker also bind a real port 9108.
-#
 # Contracts: hoist one process metrics object before the restart loop, inject
 # it into every ScanWorker, start the exporter once from the composition root
 # (mocked start_http_server in tests), bind loopback by default, type the
 # observer protocol (not Any).
 
 
+_METRICS_PARAM_NAMES: tuple[str, ...] = (
+    "metrics",
+    "metrics_observer",
+    "observer",
+    "face_pipeline_metrics",
+)
+_ADDR_FIELD_NAMES: tuple[str, ...] = (
+    "metrics_addr",
+    "metrics_bind_address",
+    "prometheus_addr",
+    "metrics_host",
+)
+
+
 def _metrics_ctor_param_names() -> tuple[str, ...]:
-    return ("metrics", "metrics_observer", "observer", "face_pipeline_metrics")
+    return _METRICS_PARAM_NAMES
+
+
+def _first_param(sig: inspect.Signature, names: tuple[str, ...]) -> str | None:
+    for name in names:
+        if name in sig.parameters:
+            return name
+    return None
 
 
 def _scan_worker_metrics_param() -> str | None:
     from recognition.worker.scan_worker import ScanWorker
 
-    sig = inspect.signature(ScanWorker.__init__)
-    for name in _metrics_ctor_param_names():
-        if name in sig.parameters:
-            return name
-    return None
+    return _first_param(inspect.signature(ScanWorker.__init__), _METRICS_PARAM_NAMES)
 
 
 def _scan_worker_config_addr_field() -> str | None:
     from recognition.worker.scan_worker import ScanWorkerConfig
 
     fields = {f.name for f in dataclasses.fields(ScanWorkerConfig)}
-    for name in ("metrics_addr", "metrics_bind_address", "prometheus_addr", "metrics_host"):
+    for name in _ADDR_FIELD_NAMES:
         if name in fields:
             return name
     return None
@@ -540,44 +550,69 @@ def _worker_config_kwargs(**overrides: Any) -> dict[str, Any]:
     kwargs: dict[str, Any] = {"postgres_dsn": "sqlite+aiosqlite:///:memory:"}
     if "metrics_export_enabled" in field_names:
         kwargs["metrics_export_enabled"] = False
-    port_field = next(
-        (n for n in ("metrics_port", "prometheus_port", "metrics_http_port") if n in field_names),
-        None,
-    )
-    if port_field is not None and port_field not in overrides:
-        kwargs[port_field] = 9199
+    if "metrics_port" in field_names and "metrics_port" not in overrides:
+        kwargs["metrics_port"] = 9199
     kwargs.update(overrides)
     return kwargs
 
 
 def _reset_worker_metrics_guard(sw: Any) -> None:
-    """Clear process-wide exporter guard so unit tests stay isolated."""
-    for name in ("_METRICS_EXPORTER_STARTED", "METRICS_EXPORTER_STARTED"):
-        if hasattr(sw, name):
-            setattr(sw, name, False)
+    """Clear process exporter bind state so unit tests stay isolated."""
+    reset = getattr(sw, "reset_process_metrics_exporter_for_tests", None)
+    if callable(reset):
+        reset()
+        return
+    # Legacy names (pre COORD-FINAL-01) kept for transitional suites.
+    for name in (
+        "_process_metrics_exporter_registry",
+        "_METRICS_EXPORTER_STARTED",
+        "METRICS_EXPORTER_STARTED",
+    ):
+        if not hasattr(sw, name):
+            continue
+        current = getattr(sw, name)
+        setattr(sw, name, False if isinstance(current, bool) else None)
+
+
+def _assert_metrics_annotation(label: str, param: inspect.Parameter) -> None:
+    ann = param.annotation
+    if ann is inspect.Parameter.empty:
+        pytest.fail(
+            f"COORD-FINAL-01: {label} metrics param must be annotated with "
+            "FacePipelineMetricsObserver | None (not untyped)"
+        )
+    ann_str = str(ann)
+    if "Any" in ann_str and "FacePipelineMetricsObserver" not in ann_str:
+        pytest.fail(
+            f"COORD-FINAL-01: {label} metrics param is typed as {ann_str!r}; "
+            "use FacePipelineMetricsObserver | None instead of Any"
+        )
+    if "FacePipelineMetricsObserver" in ann_str:
+        return
+    # Postponed/string annotations: require protocol name in the defining module.
+    src_path = _ADAPTER_PATH if "FacePipelineFaceDetector" in label else _RUNTIME_FACTORY_PATH
+    if "FacePipelineMetricsObserver" not in src_path.read_text(encoding="utf-8"):
+        pytest.fail(
+            f"COORD-FINAL-01: {label} metrics annotation is {ann_str!r}; "
+            "require FacePipelineMetricsObserver protocol (not Any)"
+        )
 
 
 def test_scan_worker_accepts_injected_metrics_observer() -> None:
-    """COORD-FINAL-01: ScanWorker construction accepts an injected metrics observer.
+    """COORD-FINAL-01: ScanWorker construction accepts an injected metrics observer."""
+    from recognition.worker.scan_worker import ScanWorker
 
-    Default construction may still create one for direct use, but the restart
-    composition path must be able to inject a process-hoisted instance.
-    """
     param = _scan_worker_metrics_param()
     assert param is not None, (
         "COORD-FINAL-01: ScanWorker.__init__ must accept a metrics observer kwarg "
-        f"({', '.join(_metrics_ctor_param_names())}) so _main can hoist one "
+        f"({', '.join(_METRICS_PARAM_NAMES)}) so _main can hoist one "
         "FacePipelineMetrics across the outer restart loop. "
-        f"Current signature: {inspect.signature(__import__('recognition.worker.scan_worker', fromlist=['ScanWorker']).ScanWorker.__init__)}"
+        f"Current signature: {inspect.signature(ScanWorker.__init__)}"
     )
 
 
 def test_face_pipeline_metrics_observer_protocol_is_typed_not_any() -> None:
-    """COORD-FINAL-01: neutral FacePipelineMetricsObserver protocol (not Any).
-
-    Protocol must expose observe_submit_wait(float) and record_admission_timeout().
-    Adapter + factory signatures must annotate against the protocol, not Any.
-    """
+    """COORD-FINAL-01: FacePipelineMetricsObserver protocol (not bare Any)."""
     try:
         mod = importlib.import_module("recognition.observability.face_pipeline_metrics")
     except ImportError as exc:
@@ -590,95 +625,50 @@ def test_face_pipeline_metrics_observer_protocol_is_typed_not_any() -> None:
         "COORD-FINAL-01: export FacePipelineMetricsObserver (typing.Protocol) with "
         "observe_submit_wait(float) and record_admission_timeout()"
     )
-    # Structural members (Protocol methods or annotations).
     for method in ("observe_submit_wait", "record_admission_timeout"):
-        assert method in getattr(proto, "__annotations__", {}) or callable(
-            getattr(proto, method, None)
-        ) or method in getattr(proto, "__protocol_attrs__", set()) or method in dir(proto), (
+        assert callable(getattr(proto, method, None)) or method in dir(proto), (
             f"COORD-FINAL-01: FacePipelineMetricsObserver must declare {method}()"
         )
 
-    # Concrete metrics class should be a structural subtype.
-    FacePipelineMetrics = getattr(mod, "FacePipelineMetrics", None)
-    assert FacePipelineMetrics is not None
-    concrete = FacePipelineMetrics()
-    assert callable(getattr(concrete, "observe_submit_wait", None))
-    assert callable(getattr(concrete, "record_admission_timeout", None))
+    metrics_cls = getattr(mod, "FacePipelineMetrics", None)
+    assert metrics_cls is not None
+    concrete = metrics_cls()
+    assert callable(concrete.observe_submit_wait)
+    assert callable(concrete.record_admission_timeout)
 
-    # Adapter + factory: metrics param must not be typed as bare Any.
     from recognition.infrastructure.embeddings import runtime_factory as rf
 
-    det_hints = inspect.signature(fpa.FacePipelineFaceDetector.__init__).parameters
-    rf_hints = inspect.signature(rf.build_embedding_runtime).parameters
     for label, params in (
-        ("FacePipelineFaceDetector.__init__", det_hints),
-        ("build_embedding_runtime", rf_hints),
+        ("FacePipelineFaceDetector.__init__", inspect.signature(fpa.FacePipelineFaceDetector.__init__).parameters),
+        ("build_embedding_runtime", inspect.signature(rf.build_embedding_runtime).parameters),
     ):
-        metrics_param = next(
-            (params[n] for n in _metrics_ctor_param_names() if n in params),
-            None,
-        )
+        metrics_param = next((params[n] for n in _METRICS_PARAM_NAMES if n in params), None)
         assert metrics_param is not None, (
             f"COORD-FINAL-01: {label} must accept a metrics observer parameter"
         )
-        ann = metrics_param.annotation
-        ann_str = str(ann)
-        # Reject plain Any / Any | None without a protocol name.
-        if ann is inspect.Parameter.empty:
-            pytest.fail(
-                f"COORD-FINAL-01: {label} metrics param must be annotated with "
-                "FacePipelineMetricsObserver | None (not untyped)"
-            )
-        if "Any" in ann_str and "FacePipelineMetricsObserver" not in ann_str:
-            pytest.fail(
-                f"COORD-FINAL-01: {label} metrics param is typed as {ann_str!r}; "
-                "use FacePipelineMetricsObserver | None instead of Any"
-            )
-        if "FacePipelineMetricsObserver" not in ann_str:
-            # Also accept string annotations / from __future__ postponed.
-            src_name = (
-                _ADAPTER_PATH
-                if "FacePipelineFaceDetector" in label
-                else _RUNTIME_FACTORY_PATH
-            )
-            src = src_name.read_text(encoding="utf-8")
-            if "FacePipelineMetricsObserver" not in src:
-                pytest.fail(
-                    f"COORD-FINAL-01: {label} metrics annotation is {ann_str!r}; "
-                    "require FacePipelineMetricsObserver protocol (not Any)"
-                )
+        _assert_metrics_annotation(label, metrics_param)
 
 
 @pytest.mark.asyncio
 async def test_worker_construct_and_aenter_do_not_bind_metrics_listener(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """COORD-FINAL-01: construction + __aenter__ must not start the exporter.
-
-    Exporter startup belongs to the process composition root and is exercised
-    via explicit start_metrics_exporter() with start_http_server mocked.
-    Ordinary unit tests that enter a worker must not bind port 9108.
-    """
+    """COORD-FINAL-01: construction + __aenter__ must not start the exporter."""
     from recognition.worker import scan_worker as sw
 
     _reset_worker_metrics_guard(sw)
     started = _patch_start_http_server(monkeypatch, sw)
 
-    # Stub runtime so aenter does not touch models/network.
-    async def _fake_ensure(self: Any) -> None:
+    async def _noop(self: Any) -> None:
         return None
 
-    async def _fake_heartbeat(self: Any) -> None:
-        return None
+    monkeypatch.setattr(sw.ScanWorker, "_ensure_embedding_runtime", _noop)
+    monkeypatch.setattr(sw.ScanWorker, "_heartbeat_embedding_runtime_capability", _noop)
 
-    monkeypatch.setattr(sw.ScanWorker, "_ensure_embedding_runtime", _fake_ensure)
-    monkeypatch.setattr(
-        sw.ScanWorker, "_heartbeat_embedding_runtime_capability", _fake_heartbeat
+    cfg = sw.ScanWorkerConfig(
+        **_worker_config_kwargs(metrics_export_enabled=True, metrics_port=9199)
     )
-
-    # Export enabled so a RED auto-start path would actually call start_http_server.
-    cfg_kwargs = _worker_config_kwargs(metrics_export_enabled=True, metrics_port=9199)
-    worker = sw.ScanWorker(sw.ScanWorkerConfig(**cfg_kwargs))
+    worker = sw.ScanWorker(cfg)
     assert not started, (
         "COORD-FINAL-01: ScanWorker construction must not bind a metrics listener; "
         f"start_http_server already called: {started!r}"
@@ -689,10 +679,8 @@ async def test_worker_construct_and_aenter_do_not_bind_metrics_listener(
 
     assert not started, (
         "COORD-FINAL-01: ScanWorker.__aenter__ must not start the Prometheus "
-        "exporter (binds real port in unit tests; also couples restart to a "
-        "one-shot module guard that freezes the first dead registry). Start "
-        "the exporter once from the process composition root "
-        f"(_main / explicit start_metrics_exporter). Got calls: {started!r}"
+        "exporter. Start once from process composition root / start_metrics_exporter. "
+        f"Got calls: {started!r}"
     )
 
 
@@ -700,16 +688,11 @@ async def test_worker_construct_and_aenter_do_not_bind_metrics_listener(
 async def test_restart_workers_share_injected_metrics_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """COORD-FINAL-01: replacement ScanWorkers must share one metrics instance.
-
-    Two workers representing an outer restart must use the same object identity
-    for the injected observer and forward that same object into the detector
-    composition seam (build_embedding_runtime).
-    """
+    """COORD-FINAL-01: replacement ScanWorkers share one injected metrics instance."""
     from recognition.worker import scan_worker as sw
 
-    FacePipelineMetrics = _load_face_pipeline_metrics_cls()
-    shared = FacePipelineMetrics()
+    metrics_cls = _load_face_pipeline_metrics_cls()
+    shared = metrics_cls()
     param = _scan_worker_metrics_param()
     assert param is not None, (
         "COORD-FINAL-01: cannot prove shared injection without ScanWorker metrics kwarg"
@@ -752,101 +735,76 @@ async def test_restart_workers_share_injected_metrics_identity(
     cfg = sw.ScanWorkerConfig(**_worker_config_kwargs(metrics_export_enabled=False))
     w1 = sw.ScanWorker(cfg, **{param: shared})
     w2 = sw.ScanWorker(cfg, **{param: shared})
-
-    # Force embedding runtime init so metrics reach build_embedding_runtime.
     await w1._ensure_embedding_runtime()
     await w2._ensure_embedding_runtime()
 
     assert forwarded == [shared, shared], (
         "COORD-FINAL-01: both restart workers must inject the *same* process "
-        f"metrics object into build_embedding_runtime; got {forwarded!r} "
-        f"(shared id={id(shared)})"
+        f"metrics object into build_embedding_runtime; got {forwarded!r}"
     )
 
-    # Explicit exporter seam (composition root) must bind that shared registry.
+    # Explicit exporter seam serves the shared registry (composition / test path).
     _reset_worker_metrics_guard(sw)
     started = _patch_start_http_server(monkeypatch, sw)
-    # Re-enable export on a config clone for the exporter call only.
     export_cfg = sw.ScanWorkerConfig(
         **_worker_config_kwargs(metrics_export_enabled=True, metrics_port=9199)
     )
-    exporter_worker = sw.ScanWorker(export_cfg, **{param: shared})
-    start_fn = getattr(exporter_worker, "start_metrics_exporter", None)
-    assert callable(start_fn), (
-        "COORD-FINAL-01: start_metrics_exporter() required as explicit composition seam"
-    )
-    start_fn()
+    # Prefer process helper when present (no unused ScanWorker solely for bind).
+    process_start = getattr(sw, "start_process_metrics_exporter", None)
+    if callable(process_start):
+        process_start(metrics=shared, config=export_cfg)
+    else:
+        sw.ScanWorker(export_cfg, **{param: shared}).start_metrics_exporter()
     assert started, "COORD-FINAL-01: explicit exporter start must call start_http_server"
     assert started[0]["registry"] is shared.registry, (
-        "COORD-FINAL-01: exporter must serve the hoisted shared registry, not a "
-        "fresh per-worker CollectorRegistry"
+        "COORD-FINAL-01: exporter must serve the hoisted shared registry"
     )
 
 
 def test_main_hoists_process_metrics_outside_restart_loop() -> None:
-    """COORD-FINAL-01: _main creates one metrics instance before the restart loop.
-
-    Source contract (no execution): FacePipelineMetrics constructed outside the
-    ``while True`` restart body and passed into each ScanWorker construction.
-    """
+    """COORD-FINAL-01: _main hoists metrics + config before the restart loop."""
     from recognition.worker import scan_worker as sw
 
     src = inspect.getsource(sw._main)
-    assert "FacePipelineMetrics" in src or "face_pipeline_metrics" in src.lower(), (
-        "COORD-FINAL-01: _main must hoist FacePipelineMetrics (or equivalent process "
-        "metrics factory) so the outer restart loop reuses one registry"
-    )
-    # Heuristic: metrics construction must appear before the restart while-True,
-    # and ScanWorker(...) inside the loop must pass metrics=.
     while_idx = src.find("while True:")
     assert while_idx != -1, "COORD-FINAL-01: expected outer restart `while True` in _main"
+    before, after = src[:while_idx], src[while_idx:]
 
-    before = src[:while_idx]
-    after = src[while_idx:]
-    metrics_before = (
-        "FacePipelineMetrics(" in before
-        or "face_pipeline_metrics" in before
-        or re_search_process_metrics_hoist(before)
-    )
-    assert metrics_before, (
+    assert "FacePipelineMetrics(" in before or re.search(
+        r"process_.*metrics\s*=", before
+    ), (
         "COORD-FINAL-01: create the process FacePipelineMetrics *before* the "
-        "outer `while True` restart loop (not inside each ScanWorker())"
+        "outer `while True` restart loop"
     )
-    # Inside the loop: ScanWorker must receive the hoisted metrics.
+    assert "ScanWorkerConfig(" in before or "worker_config" in before, (
+        "COORD-FINAL-01: hoist one ScanWorkerConfig before the restart loop"
+    )
+    # Composition root starts exporter before the loop (not inside ScanWorker.__aenter__).
+    assert (
+        "start_process_metrics_exporter" in before
+        or "start_metrics_exporter" in before
+    ), (
+        "COORD-FINAL-01: start the metrics exporter once from process composition "
+        "before the restart loop"
+    )
     assert re.search(
         r"ScanWorker\s*\([^)]*\b(metrics|metrics_observer|observer|face_pipeline_metrics)\s*=",
         after,
         flags=re.DOTALL,
     ), (
         "COORD-FINAL-01: ScanWorker(...) inside the restart loop must inject the "
-        "hoisted process metrics (metrics=/metrics_observer=/...)"
-    )
-
-
-def re_search_process_metrics_hoist(src: str) -> bool:
-    import re
-
-    return bool(
-        re.search(
-            r"(FacePipelineMetrics\s*\(|create_.*metrics|process_.*metrics\s*=)",
-            src,
-        )
+        "hoisted process metrics"
     )
 
 
 def test_exporter_binds_once_to_shared_registry_across_restart(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """COORD-FINAL-01: one bind per process to the shared registry; restart reuses it.
-
-    A second worker (restart) must not call start_http_server again with a
-    different registry. Composition root starts once; subsequent workers only
-    reuse the already-served registry.
-    """
+    """COORD-FINAL-01: one bind per process to the shared registry; restart reuses it."""
     from recognition.worker import scan_worker as sw
 
-    FacePipelineMetrics = _load_face_pipeline_metrics_cls()
-    shared = FacePipelineMetrics()
+    metrics_cls = _load_face_pipeline_metrics_cls()
+    shared = metrics_cls()
     param = _scan_worker_metrics_param()
     assert param is not None, "COORD-FINAL-01: metrics injection required"
 
@@ -859,12 +817,8 @@ def test_exporter_binds_once_to_shared_registry_across_restart(
     w1 = sw.ScanWorker(cfg, **{param: shared})
     w2 = sw.ScanWorker(cfg, **{param: shared})
 
-    start1 = getattr(w1, "start_metrics_exporter", None)
-    start2 = getattr(w2, "start_metrics_exporter", None)
-    assert callable(start1) and callable(start2)
-
-    start1()
-    start2()  # restart path — must be a no-op for bind
+    w1.start_metrics_exporter()
+    w2.start_metrics_exporter()  # restart path — process-level idempotent no-op
 
     assert len(started) == 1, (
         "COORD-FINAL-01: exporter must bind exactly once per process; "
@@ -878,84 +832,58 @@ def test_exporter_binds_once_to_shared_registry_across_restart(
 def test_scan_worker_metrics_bind_address_defaults_to_loopback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """COORD-FINAL-01: unauthenticated exporter binds 127.0.0.1 by default.
-
-    Env: RECOGNITION_SCAN_WORKER_METRICS_ADDR (operators may override). Invalid
-    / empty values fail closed at config construction.
-    """
+    """COORD-FINAL-01: unauthenticated exporter binds 127.0.0.1 by default."""
     from recognition.worker import scan_worker as sw
 
     addr_field = _scan_worker_config_addr_field()
     assert addr_field is not None, (
         "COORD-FINAL-01: ScanWorkerConfig must expose a metrics bind address field "
-        "(metrics_addr / metrics_bind_address / prometheus_addr / metrics_host) "
-        "defaulting to 127.0.0.1 via RECOGNITION_SCAN_WORKER_METRICS_ADDR so the "
-        "exporter is not accidentally exposed on all interfaces"
+        f"({', '.join(_ADDR_FIELD_NAMES)}) defaulting to 127.0.0.1 via "
+        "RECOGNITION_SCAN_WORKER_METRICS_ADDR"
     )
 
     monkeypatch.delenv("RECOGNITION_SCAN_WORKER_METRICS_ADDR", raising=False)
-    # Prefer env-driven default when field uses default_factory; else check default.
     cfg = sw.ScanWorkerConfig(**_worker_config_kwargs())
     default_addr = getattr(cfg, addr_field)
     assert default_addr in {"127.0.0.1", "localhost"}, (
-        f"COORD-FINAL-01: default {addr_field}={default_addr!r}; expected loopback "
-        "127.0.0.1 (or localhost) — do not default to ''/0.0.0.0 all-interfaces"
+        f"COORD-FINAL-01: default {addr_field}={default_addr!r}; expected loopback"
     )
 
     monkeypatch.setenv("RECOGNITION_SCAN_WORKER_METRICS_ADDR", "127.0.0.1")
-    cfg_env = sw.ScanWorkerConfig(**_worker_config_kwargs())
-    assert getattr(cfg_env, addr_field) == "127.0.0.1"
+    assert getattr(sw.ScanWorkerConfig(**_worker_config_kwargs()), addr_field) == "127.0.0.1"
 
-    # Explicit operator override allowed.
     monkeypatch.setenv("RECOGNITION_SCAN_WORKER_METRICS_ADDR", "0.0.0.0")
-    try:
-        cfg_all = sw.ScanWorkerConfig(**_worker_config_kwargs())
-        assert getattr(cfg_all, addr_field) == "0.0.0.0"
-    except (ValueError, TypeError):
-        # If 0.0.0.0 is rejected at config time, constructor override must still work.
-        cfg_all = sw.ScanWorkerConfig(**_worker_config_kwargs(**{addr_field: "0.0.0.0"}))
-        assert getattr(cfg_all, addr_field) == "0.0.0.0"
+    cfg_all = sw.ScanWorkerConfig(**_worker_config_kwargs())
+    assert getattr(cfg_all, addr_field) == "0.0.0.0"
 
-    # Empty / whitespace must fail closed.
     for bad in ("", "   "):
         monkeypatch.setenv("RECOGNITION_SCAN_WORKER_METRICS_ADDR", bad)
-        try:
+        with pytest.raises((ValueError, TypeError)):
             sw.ScanWorkerConfig(**_worker_config_kwargs())
-        except (ValueError, TypeError):
-            continue
-        # Direct field override path.
-        try:
+        with pytest.raises((ValueError, TypeError)):
             sw.ScanWorkerConfig(**_worker_config_kwargs(**{addr_field: bad}))
-        except (ValueError, TypeError):
-            continue
-        pytest.fail(
-            f"COORD-FINAL-01: metrics bind address {bad!r} must be rejected "
-            "(fail closed; no accidental all-interfaces bind via empty addr)"
-        )
 
     # Exporter passes addr into start_http_server.
+    metrics_cls = _load_face_pipeline_metrics_cls()
+    shared = metrics_cls()
     param = _scan_worker_metrics_param()
-    FacePipelineMetrics = _load_face_pipeline_metrics_cls()
-    shared = FacePipelineMetrics()
+    assert param is not None
     _reset_worker_metrics_guard(sw)
     started = _patch_start_http_server(monkeypatch, sw)
-    monkeypatch.setenv("RECOGNITION_SCAN_WORKER_METRICS_ADDR", "127.0.0.1")
-    export_kwargs = _worker_config_kwargs(metrics_export_enabled=True, metrics_port=9199)
-    # Rebuild so env-driven addr is picked up when field uses default_factory.
-    cfg = sw.ScanWorkerConfig(**export_kwargs)
-    # If default_factory already evaluated at import, force field.
-    if getattr(cfg, addr_field) != "127.0.0.1":
-        cfg = sw.ScanWorkerConfig(**{**export_kwargs, addr_field: "127.0.0.1"})
-
-    ctor_kwargs = {param: shared} if param else {}
-    if param is None:
-        pytest.fail("COORD-FINAL-01: metrics injection required for exporter addr proof")
-    worker = sw.ScanWorker(cfg, **ctor_kwargs)
-    start_fn = getattr(worker, "start_metrics_exporter", None)
-    assert callable(start_fn)
-    start_fn()
+    export_cfg = sw.ScanWorkerConfig(
+        **_worker_config_kwargs(
+            metrics_export_enabled=True,
+            metrics_port=9199,
+            **{addr_field: "127.0.0.1"},
+        )
+    )
+    process_start = getattr(sw, "start_process_metrics_exporter", None)
+    if callable(process_start):
+        process_start(metrics=shared, config=export_cfg)
+    else:
+        sw.ScanWorker(export_cfg, **{param: shared}).start_metrics_exporter()
     assert started, "COORD-FINAL-01: expected mocked start_http_server invocation"
     assert started[0].get("addr") in {"127.0.0.1", "localhost"}, (
         "COORD-FINAL-01: start_http_server must receive the loopback bind address "
-        f"(got {started[0]!r}); prometheus defaults to all interfaces when addr=''"
+        f"(got {started[0]!r})"
     )

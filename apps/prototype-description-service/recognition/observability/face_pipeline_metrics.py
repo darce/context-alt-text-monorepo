@@ -8,6 +8,8 @@ no media/path/url labels.
 
 from __future__ import annotations
 
+from typing import Protocol
+
 from prometheus_client import CollectorRegistry, Counter, Histogram
 
 # Submit admission waits are usually sub-second under load; fine head + short tail.
@@ -26,12 +28,30 @@ FACE_PIPELINE_SUBMIT_WAIT_BUCKETS: tuple[float, ...] = (
 )
 
 
+class FacePipelineMetricsObserver(Protocol):
+    """Infrastructure-neutral observer seam for face_pipeline admission metrics.
+
+    Structural protocol: any object implementing these methods (including
+    ``FacePipelineMetrics``) may be injected into detectors / workers.
+    """
+
+    def observe_submit_wait(self, wait_s: float) -> None:
+        """Record admission wait duration (success or timeout path)."""
+        ...
+
+    def record_admission_timeout(self) -> None:
+        """Increment admission-timeout counter."""
+        ...
+
+
 class FacePipelineMetrics:
     """Process-local face-pipeline saturation collectors.
 
     Bound to an injected/new ``CollectorRegistry``. Safe to call from the
     detect path: observe/inc failures are swallowed by callers or optional
     thin wrappers — metrics must never break detection.
+
+    Structurally implements :class:`FacePipelineMetricsObserver`.
     """
 
     def __init__(self, registry: CollectorRegistry | None = None) -> None:
@@ -60,4 +80,5 @@ class FacePipelineMetrics:
 __all__ = [
     "FACE_PIPELINE_SUBMIT_WAIT_BUCKETS",
     "FacePipelineMetrics",
+    "FacePipelineMetricsObserver",
 ]

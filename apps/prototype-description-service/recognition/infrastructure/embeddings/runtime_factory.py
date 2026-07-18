@@ -27,6 +27,7 @@ from recognition.application.embedding.generator import (
 )
 from recognition.config.settings import RecognitionSettings
 from recognition.infrastructure.embeddings import get_shared_insightface_adapter
+from recognition.observability.face_pipeline_metrics import FacePipelineMetricsObserver
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ async def build_embedding_runtime(
     settings: RecognitionSettings,
     http_client: httpx.AsyncClient | None = None,
     adapter_provider: AdapterProvider | None = None,
-    metrics: Any | None = None,
+    metrics: FacePipelineMetricsObserver | None = None,
 ) -> tuple[FaceDetectorProtocol, EmbeddingGeneratorProtocol]:
     """Build (detector, generator) for the active runtime mode + face_pipeline profile.
 

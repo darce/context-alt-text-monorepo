@@ -53,6 +53,7 @@ async def test_block_repository_adds_and_removes_block(db_session, tenant: Tenan
         bbox_height=1,
         confidence=0.99,
         embedding=embedding,
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add(identity)
     await db_session.flush()
@@ -116,6 +117,7 @@ async def test_reassign_removal_creates_block_and_job(db_session, tenant: Tenant
         bbox_height=1,
         confidence=0.99,
         embedding=embedding,
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add(identity)
     await db_session.flush()
@@ -175,6 +177,7 @@ async def test_reassign_removal_rejects_pending_suggestion(db_session, tenant: T
         bbox_height=1,
         confidence=0.99,
         embedding=embedding,
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add(identity)
     await db_session.flush()

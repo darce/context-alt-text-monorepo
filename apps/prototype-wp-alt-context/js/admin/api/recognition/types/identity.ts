@@ -35,7 +35,8 @@ export interface ClusterIdentity {
 }
 
 /**
- * InsightFace debug metrics extracted from extended embeddings.
+ * Debug metrics from recognition include_debug responses.
+ * Age/gender removed (FIR-2 S4); pose retained for quality/clustering UI.
  * Only populated when include_debug=true query param is passed.
  */
 export interface DebugMetrics {
@@ -44,8 +45,6 @@ export interface DebugMetrics {
     yaw: number;
     roll: number;
   };
-  age: number;
-  gender: 'female' | 'male';
   det_score: number;
   bbox_area: number;
   landmark_quality: number;

@@ -1083,8 +1083,6 @@ class SqlAlchemyClusterRepository(ClusterRepository):
                             "yaw": float(identity.pose_yaw or 0),
                             "roll": float(identity.pose_roll or 0),
                         },
-                        "age": float(identity.age or 0),
-                        "gender": "male" if identity.gender == 1 else "female",
                         "det_score": float(identity.confidence),
                         "bbox_area": int(identity.bbox_width * identity.bbox_height),
                         "landmark_quality": float(identity.quality_score or 1.0),

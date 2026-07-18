@@ -649,6 +649,7 @@ async def test_apply_disposal_after_acknowledgement_marks_snapshot_rows(db_sessi
         bbox_height=10,
         confidence=0.95,
         embedding=[0.1] * 512,
+        embedding_model="buffalo_l@insightface",
         last_exported_snapshot_id=snapshot_generation_id,
     )
     cluster = IdentityCluster(
@@ -752,6 +753,7 @@ async def test_apply_disposal_after_acknowledgement_is_noop_for_retain_all(db_se
         bbox_height=10,
         confidence=0.95,
         embedding=[0.1] * 512,
+        embedding_model="buffalo_l@insightface",
         last_exported_snapshot_id=uuid.uuid4(),
     )
     db_session.add(identity)
@@ -809,6 +811,7 @@ async def test_apply_disposal_after_acknowledgement_skips_already_disposed_rows(
         bbox_height=10,
         confidence=0.95,
         embedding=[0.1] * 512,
+        embedding_model="buffalo_l@insightface",
         last_exported_snapshot_id=snapshot_generation_id,
         disposed_at=disposed_at,
     )

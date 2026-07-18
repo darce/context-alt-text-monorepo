@@ -26,7 +26,7 @@ from recognition.application.services.audit_service import AuditService
 from recognition.domain.job import JobStatus
 from recognition.infrastructure.repositories._helpers import coerce_uuid
 
-EXPORT_SCHEMA_VERSION = 2
+EXPORT_SCHEMA_VERSION = 3
 
 
 def _serialize_timestamp(value: datetime | None) -> str | None:
@@ -309,8 +309,6 @@ class TenantExportService:
             "pose_yaw": identity.pose_yaw,
             "pose_roll": identity.pose_roll,
             "quality_score": identity.quality_score,
-            "age": identity.age,
-            "gender": identity.gender,
             "image_phash": identity.image_phash,
             "last_exported_snapshot_id": _serialize_uuid(identity.last_exported_snapshot_id),
             "disposed_at": _serialize_timestamp(identity.disposed_at),

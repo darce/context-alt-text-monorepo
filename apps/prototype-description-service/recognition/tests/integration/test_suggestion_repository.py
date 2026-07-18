@@ -499,6 +499,7 @@ async def test_cluster_context_changed_true_for_newer_representative(db_session,
         bbox_height=1,
         confidence=0.99,
         embedding=_embedding(),
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add(identity)
     await db_session.flush()
@@ -545,6 +546,7 @@ async def test_rejected_suggestion_with_null_resolved_at_does_not_reopen(db_sess
         bbox_height=1,
         confidence=0.99,
         embedding=_embedding(),
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add(identity)
     await db_session.flush()
@@ -627,6 +629,7 @@ async def test_rejected_suggestion_skips_when_context_unchanged(db_session, tena
         bbox_height=1,
         confidence=0.99,
         embedding=_embedding(),
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add(identity)
     await db_session.flush()
@@ -687,6 +690,7 @@ async def test_rejected_suggestion_reopens_with_new_evidence(db_session, tenant)
         bbox_height=1,
         confidence=0.99,
         embedding=_embedding(),
+        embedding_model="buffalo_l@insightface",
     )
     rep_identity = MediaIdentity(
         tenant_id=tenant.id,
@@ -698,6 +702,7 @@ async def test_rejected_suggestion_reopens_with_new_evidence(db_session, tenant)
         bbox_height=1,
         confidence=0.99,
         embedding=_embedding(),
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add_all([identity, rep_identity])
     await db_session.flush()
@@ -778,6 +783,7 @@ async def test_rejected_suggestion_generation_increments_across_reopens(db_sessi
         bbox_height=1,
         confidence=0.99,
         embedding=_embedding(),
+        embedding_model="buffalo_l@insightface",
     )
     rep_a = MediaIdentity(
         tenant_id=tenant.id,
@@ -789,6 +795,7 @@ async def test_rejected_suggestion_generation_increments_across_reopens(db_sessi
         bbox_height=1,
         confidence=0.99,
         embedding=_embedding(),
+        embedding_model="buffalo_l@insightface",
     )
     rep_b = MediaIdentity(
         tenant_id=tenant.id,
@@ -800,6 +807,7 @@ async def test_rejected_suggestion_generation_increments_across_reopens(db_sessi
         bbox_height=1,
         confidence=0.99,
         embedding=_embedding(),
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add_all([subject, rep_a, rep_b])
     await db_session.flush()

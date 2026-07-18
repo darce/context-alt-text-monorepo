@@ -255,8 +255,6 @@ class MediaIdentityService:
                         "yaw": float(pose_yaw or 0),
                         "roll": float(pose_roll or 0),
                     },
-                    "age": float(row.MediaIdentity.age or 0),
-                    "gender": "male" if row.MediaIdentity.gender == 1 else "female",
                     "det_score": float(row.MediaIdentity.confidence),
                     "bbox_area": int(row.MediaIdentity.bbox_width * row.MediaIdentity.bbox_height),
                     "landmark_quality": quality_info.score,

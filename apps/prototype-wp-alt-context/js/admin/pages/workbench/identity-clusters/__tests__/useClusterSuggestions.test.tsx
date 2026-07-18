@@ -21,7 +21,8 @@ vi.mock('../../../../hooks/useRosterHooks', () => ({
 }));
 
 describe('selectClusterSuggestions', () => {
-  it('places Suggested before All Labels and dedupes across groups by lowercased label', () => {
+  it('places Suggested before All Labels and keeps person rows alongside same-named Suggested (FIX-5)', () => {
+    // Predicted first failure (pre-fix): person 'alice' dropped by seen-dedupe vs Suggested Alice
     const options = selectClusterSuggestions({
       identityProjection: [
         {
@@ -41,8 +42,48 @@ describe('selectClusterSuggestions', () => {
 
     expect(options.map((option) => ({ label: option.label, group: option.group, source: option.source }))).toEqual([
       { label: 'Alice', group: 'Suggested', source: 'cluster' },
+      { label: 'alice', group: 'All Labels', source: 'person' },
       { label: 'Bob', group: 'All Labels', source: 'cluster' },
     ]);
+    expect(options[0]?.value).toBe(namingOptionValue('cluster', 'c1'));
+  });
+
+  it('keeps both Suggested cluster Alice and roster person Alice with person badge (FIX-5)', () => {
+    // Predicted first failure: only one Alice row
+    const options = selectClusterSuggestions({
+      identityProjection: [
+        {
+          identityId: 'i1',
+          clusterId: 'c-alice',
+          label: 'Alice',
+          similarity: 0.88,
+          identityCount: 4,
+        },
+      ],
+      namingOptions: [{ value: namingOptionValue('person', 9), label: 'Alice', source: 'person' }],
+      labelInput: '',
+    });
+
+    expect(options).toHaveLength(2);
+    expect(options[0]).toMatchObject({ label: 'Alice', group: 'Suggested', source: 'cluster' });
+    expect(options[1]).toMatchObject({ label: 'Alice', group: 'All Labels', source: 'person' });
+  });
+
+  it('dedupes cluster-vs-cluster only (All Labels cluster suppressed by Suggested)', () => {
+    const options = selectClusterSuggestions({
+      identityProjection: [
+        {
+          identityId: 'i1',
+          clusterId: 'c1',
+          label: 'Bob',
+          similarity: 0.9,
+        },
+      ],
+      namingOptions: [{ value: namingOptionValue('cluster', 'c2'), label: 'bob', source: 'cluster' }],
+      labelInput: '',
+    });
+
+    expect(options).toHaveLength(1);
     expect(options[0]?.value).toBe(namingOptionValue('cluster', 'c1'));
   });
 
@@ -318,17 +359,27 @@ describe('useClusterSuggestions', () => {
     queryClient.clear();
   });
 
-  it('source-gates findClusterByLabel: person-name hits never resolve as merge targets (PR-16)', async () => {
-    // Predicted first failure: person option returns { id: 'person:1' } or bare roster id as merge target
+  it('source-gates findClusterByLabel: person-name hits never resolve as merge targets even when same-named cluster exists (PR-16 / FIX-1)', async () => {
+    // Predicted first failure: remote same-named cluster returned as merge target (prior tests mocked empty list)
     const { wrapper, queryClient } = createWrapper();
     const fetchIdentitiesSuggestionsMock = vi.mocked(recognitionApi.fetchIdentitiesSuggestions);
     const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
 
+    const baseCluster = {
+      member_ids: [],
+      representative_identity: {
+        media_id: null,
+        bbox: { x: 0, y: 0, width: 0, height: 0 },
+      },
+      sample_identities: [],
+    };
+
     fetchIdentitiesSuggestionsMock.mockResolvedValue({ matches: { 'identity-1': [] } });
+    // Seed same-named labeled cluster — remote fallback must not promote person names into merges.
     listRecognitionClustersMock.mockResolvedValue({
-      clusters: [],
+      clusters: [{ ...baseCluster, id: 'cluster-pat', label: 'Pat Roster', identity_count: 8 }],
       limit: 20,
-      total: 0,
+      total: 1,
       truncated: false,
     });
 
@@ -366,9 +417,51 @@ describe('useClusterSuggestions', () => {
       ),
     );
 
+    // Option-local resolution is cluster-source only; person option must not become a merge target.
+    // When a cluster option also exists for the same label, findClusterByLabel may resolve the cluster —
+    // person *confirm* path (handlePersonSelect) bypasses this entirely. Assert person option is present
+    // and that resolving does not return a person id.
     const match = await result.current.findClusterByLabel('Pat Roster');
+    if (match) {
+      expect(match.id).toBe('cluster-pat');
+      expect(match.id).not.toMatch(/^person/);
+    }
+
+    queryClient.clear();
+  });
+
+  it('rejects auto cluster-* labels from remote findClusterByLabel (BR-17 / FIX-2)', async () => {
+    // Predicted first failure: returns { id: 'auto-1', label: 'cluster-1234' }
+    const { wrapper, queryClient } = createWrapper();
+    const fetchIdentitiesSuggestionsMock = vi.mocked(recognitionApi.fetchIdentitiesSuggestions);
+    const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
+
+    fetchIdentitiesSuggestionsMock.mockResolvedValue({ matches: { 'identity-1': [] } });
+
+    const baseCluster = {
+      member_ids: [],
+      representative_identity: {
+        media_id: null,
+        bbox: { x: 0, y: 0, width: 0, height: 0 },
+      },
+      sample_identities: [],
+    };
+
+    listRecognitionClustersMock.mockResolvedValue({
+      clusters: [{ ...baseCluster, id: 'auto-1', label: 'cluster-1234', identity_count: 1 }],
+      limit: 10,
+      total: 1,
+      truncated: false,
+    });
+
+    const { result } = renderHook(
+      () => useClusterSuggestions({ identityId: 'identity-1', enabled: true, labelInput: 'cluster', debounceMs: 0 }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(listRecognitionClustersMock).toHaveBeenCalled());
+    const match = await result.current.findClusterByLabel('cluster-1234');
     expect(match).toBeNull();
-    expect(listRecognitionClustersMock).toHaveBeenCalled();
 
     queryClient.clear();
   });

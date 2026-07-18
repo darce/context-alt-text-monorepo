@@ -271,17 +271,17 @@ Proof: the five-case grid (§ slice 2) with characterization-first ordering; ann
 
 ## Review Readiness
 
-- [ ] Each slice: `/branch-review` with findings in MCP; remote grok as second reviewer at slice 0 and before merge.
-- [ ] Handoff decision per slice (record + notify), `render_handoff(kind='dashboard')` after writes.
+- [x] Each slice: `/branch-review` with findings in MCP; remote grok as second reviewer at slice 0 and before merge.
+- [x] Handoff decision per slice (record + notify), `render_handoff(kind='dashboard')` after writes.
 - [ ] Pre-merge gate: `handoff_close_check(enforce=True)` with fresh test evidence at HEAD.
 
 ## Success Criteria
 
-- [ ] Inline prompt and curation dropdown derive the same top match for the same identity by construction (shared transport, depth, predicate, server order); accept/reject/label/merge/dismiss from **any** surface (including review cards) invalidates the projection so every surface converges on the next fetch (FBT-1 criterion 2, UXP-3's half; E21-5 owns the three-real-consumer harness).
-- [ ] The only review-queue divergences are the two defined ones (stale-accepted repair rows; page membership) — pinned by fixture, never a conflicting top match.
-- [ ] No identity-keyed surface shows an auto `cluster-*` target; the change is deliberate, tested, and recorded.
-- [ ] E21-5 ④ and UXP-5 consume the exported predicate/keys/invalidation map + fixture without re-deriving policy.
-- [ ] A name known to either the roster or labeled clusters surfaces on both naming surfaces, badged, before free-text create (criterion 6; E21-9 write-through residual accepted and recorded).
-- [ ] "bob"→"Bob" saves with inline feedback from both entry points (criterion 6).
-- [ ] No pin control overlaps a face thumbnail; no dangling pin plumbing.
-- [ ] Zero recognition-service changes (code or tests) on this branch.
+- [x] Inline prompt and curation dropdown derive the same top match for the same identity by construction (shared transport, depth, predicate, server order); accept/reject/label/merge/dismiss from **any** surface (including review cards) invalidates the projection so every surface converges on the next fetch (FBT-1 criterion 2, UXP-3's half; E21-5 owns the three-real-consumer harness).
+- [x] The only review-queue divergences are the two defined ones (stale-accepted repair rows; page membership) — pinned by fixture, never a conflicting top match.
+- [x] No identity-keyed surface shows an auto `cluster-*` target; the change is deliberate, tested, and recorded.
+- [x] E21-5 ④ and UXP-5 consume the exported predicate/keys/invalidation map + fixture without re-deriving policy.
+- [x] A name known to either the roster or labeled clusters surfaces on both naming surfaces, badged, before free-text create (criterion 6; E21-9 write-through residual accepted and recorded).
+- [x] "bob"→"Bob" saves with inline feedback from both entry points (criterion 6).
+- [x] No pin control overlaps a face thumbnail; no dangling pin plumbing.
+- [x] Zero recognition-service changes (code or tests) on this branch.

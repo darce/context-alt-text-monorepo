@@ -48,9 +48,11 @@ From `apps/prototype-description-service`:
 uv run python scripts/fetch_face_pipeline_models.py
 ```
 
-The script downloads both ONNX files and their LICENSE files into this
-directory, verifies sha256 (and size) against `MODEL_MANIFEST`, and refuses to
-leave unverified artifacts in place.
+The script streams each download to a `.partial` file, verifies sha256 (and
+size for models) against `MODEL_MANIFEST`, and only then `replace()`s to the
+final path (publish-after-verify). A crash mid-download leaves at most a
+gitignored `.partial` — never an unverified final ONNX. Failure cleanup never
+unlinks git-tracked LICENSE files.
 
 ## Integrity
 

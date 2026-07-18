@@ -7,12 +7,6 @@ AGT-06 (name the skip), rg-013-style import purity for opencv_ref.
 from __future__ import annotations
 
 import hashlib
-import importlib.util
-import json
-import os
-import subprocess
-import sys
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -33,24 +27,21 @@ from recognition.infrastructure.face_pipeline.opencv_ref import (
     resolve_sface_embedding_dim,
 )
 from recognition.infrastructure.face_pipeline.provenance import (
-    DEFAULT_MODELS_DIR,
     MODEL_MANIFEST,
     load_verified_model,
 )
-
-_SERVICE_ROOT = Path(__file__).resolve().parents[3]
-_FIXTURE_DIR = _SERVICE_ROOT / "recognition" / "tests" / "fixtures" / "face_pipeline"
-
-_MODELS_PRESENT = (
-    (DEFAULT_MODELS_DIR / MODEL_MANIFEST["yunet"].file_name).is_file()
-    and (DEFAULT_MODELS_DIR / MODEL_MANIFEST["sface"].file_name).is_file()
+from recognition.tests.unit.face_pipeline_support import (
+    MODELS_PRESENT,
+    MODELS_SKIP,
+    SFACE_EMBEDDING_DIM,
+    _FIXTURE_DIR,
+    load_generate_goldens,
+    load_json,
+    run_import_purity_check,
 )
-_MODELS_SKIP = (
-    "FIR-3 face models missing under recognition/infrastructure/face_pipeline/models/ — "
-    "run: uv run python scripts/fetch_face_pipeline_models.py "
-    f"(expected yunet={MODEL_MANIFEST['yunet'].file_name}, "
-    f"sface={MODEL_MANIFEST['sface'].file_name})"
-)
+
+_MODELS_PRESENT = MODELS_PRESENT
+_MODELS_SKIP = MODELS_SKIP
 
 # Module-level skip marker for models-dependent suite (BR-05: skip reason names fetch).
 pytestmark_models = pytest.mark.skipif(not _MODELS_PRESENT, reason=_MODELS_SKIP)
@@ -64,17 +55,8 @@ def _sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _load_json(name: str) -> dict:
-    return json.loads((_FIXTURE_DIR / name).read_text(encoding="utf-8"))
-
-
-def _load_generate_goldens():
-    gen_path = _FIXTURE_DIR / "generate_goldens.py"
-    spec = importlib.util.spec_from_file_location("face_pipeline_generate_goldens", gen_path)
-    assert spec is not None and spec.loader is not None
-    gen = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(gen)
-    return gen
+_load_json = load_json
+_load_generate_goldens = load_generate_goldens
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +227,7 @@ def test_embedding_golden_dim_norm_cosine() -> None:
     meta = _load_json("embedding_meta.json")
 
     emb = OpenCVSFaceEmbedder().embed([crop])
-    assert emb.shape == (1, 128)
+    assert emb.shape == (1, SFACE_EMBEDDING_DIM)
     assert emb.shape[1] == meta["embedding_dim"]
     norm = float(np.linalg.norm(emb[0]))
     assert norm == pytest.approx(1.0, abs=1e-6)
@@ -273,7 +255,7 @@ def test_zero_norm_embedding_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     crop = np.load(_FIXTURE_DIR / "synthetic_112_crop.npy")
 
     def _zero_feature(_crop: np.ndarray) -> np.ndarray:
-        return np.zeros((1, 128), dtype=np.float32)
+        return np.zeros((1, SFACE_EMBEDDING_DIM), dtype=np.float32)
 
     monkeypatch.setattr(emb, "_feature", _zero_feature)
     with pytest.raises(ZeroNormEmbeddingError, match="zero"):
@@ -289,7 +271,7 @@ def test_nonfinite_norm_embedding_raises(monkeypatch: pytest.MonkeyPatch) -> Non
     crop = np.load(_FIXTURE_DIR / "synthetic_112_crop.npy")
 
     def _nan_feature(_crop: np.ndarray) -> np.ndarray:
-        return np.full((1, 128), np.nan, dtype=np.float32)
+        return np.full((1, SFACE_EMBEDDING_DIM), np.nan, dtype=np.float32)
 
     monkeypatch.setattr(emb, "_feature", _nan_feature)
     with pytest.raises(ZeroNormEmbeddingError, match="non-finite|zero"):
@@ -371,7 +353,7 @@ def test_embed_empty_batch_shape() -> None:
     from recognition.infrastructure.face_pipeline.opencv_ref import OpenCVSFaceEmbedder
 
     out = OpenCVSFaceEmbedder().embed([])
-    assert out.shape == (0, 128)
+    assert out.shape == (0, SFACE_EMBEDDING_DIM)
 
 
 @pytest.mark.skipif(not _MODELS_PRESENT, reason=_MODELS_SKIP)
@@ -526,73 +508,28 @@ def test_detector_cartoon_golden_within_tolerances() -> None:
 
 def test_opencv_ref_import_purity_no_worker_http() -> None:
     """opencv_ref may import cv2; must not import worker/HTTP layers (rg-013)."""
-    code = """
-import sys
-import recognition.infrastructure.face_pipeline.opencv_ref  # noqa: F401
-import recognition.infrastructure.face_pipeline.aligner  # noqa: F401
-forbidden_prefixes = (
-    "fastapi",
-    "starlette",
-    "recognition.worker",
-    "recognition.api",
-)
-for name in list(sys.modules):
-    for bad in forbidden_prefixes:
-        if name == bad or name.startswith(bad + "."):
-            raise SystemExit(f"forbidden import present: {name}")
-# cv2 is expected for the reference impl
-if "cv2" not in sys.modules:
-    raise SystemExit("expected cv2 to be imported by opencv_ref")
-print("ok")
-"""
-    env = os.environ.copy()
-    existing = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = (
-        str(_SERVICE_ROOT) if not existing else f"{_SERVICE_ROOT}{os.pathsep}{existing}"
+    run_import_purity_check(
+        import_stmt=(
+            "import recognition.infrastructure.face_pipeline.opencv_ref  # noqa: F401\n"
+            "import recognition.infrastructure.face_pipeline.aligner  # noqa: F401"
+        ),
+        forbidden_prefixes=(
+            "fastapi",
+            "starlette",
+            "recognition.worker",
+            "recognition.api",
+        ),
+        required_modules=("cv2",),
     )
-    result = subprocess.run(
-        [sys.executable, "-c", code],
-        capture_output=True,
-        text=True,
-        env=env,
-        cwd=str(_SERVICE_ROOT),
-        check=False,
-    )
-    assert result.returncode == 0, (
-        f"opencv_ref purity failed rc={result.returncode}\n"
-        f"stdout={result.stdout}\nstderr={result.stderr}"
-    )
-    assert "ok" in result.stdout
 
 
 def test_package_root_still_cv2_free() -> None:
     """Importing package root + provenance must not load cv2 (S1 BR-06)."""
-    code = """
-import sys
-import recognition.infrastructure.face_pipeline  # noqa: F401
-import recognition.infrastructure.face_pipeline.provenance  # noqa: F401
-for name in list(sys.modules):
-    if name == "cv2" or name.startswith("cv2."):
-        raise SystemExit(f"forbidden import present: {name}")
-    if name == "recognition.infrastructure.face_pipeline.opencv_ref":
-        raise SystemExit("opencv_ref must not load via package root")
-print("ok")
-"""
-    env = os.environ.copy()
-    existing = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = (
-        str(_SERVICE_ROOT) if not existing else f"{_SERVICE_ROOT}{os.pathsep}{existing}"
+    run_import_purity_check(
+        import_stmt=(
+            "import recognition.infrastructure.face_pipeline  # noqa: F401\n"
+            "import recognition.infrastructure.face_pipeline.provenance  # noqa: F401"
+        ),
+        forbidden_prefixes=(),
+        forbidden_modules=("cv2", "recognition.infrastructure.face_pipeline.opencv_ref"),
     )
-    result = subprocess.run(
-        [sys.executable, "-c", code],
-        capture_output=True,
-        text=True,
-        env=env,
-        cwd=str(_SERVICE_ROOT),
-        check=False,
-    )
-    assert result.returncode == 0, (
-        f"root purity failed rc={result.returncode}\n"
-        f"stdout={result.stdout}\nstderr={result.stderr}"
-    )
-    assert "ok" in result.stdout

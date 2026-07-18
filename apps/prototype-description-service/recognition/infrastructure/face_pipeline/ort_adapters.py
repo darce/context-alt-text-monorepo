@@ -2,17 +2,24 @@
 
 Production path with semantics pinned to OpenCV reference (S2):
 - YuNet post-process ports OpenCV ``FaceDetectorYNImpl::postProcess``
-  (strides 8/16/32, cls×obj score, bbox/kps decode, NMSBoxes).
+  (strides 8/16/32, score = sqrt(cls·obj) with upper-only clamp, bbox/kps
+  decode, FaceDetectorYN NMS).
 - SFace preprocessing matches ``FaceRecognizerSFImpl::feature``:
   ``blobFromImage(crop, 1, Size(112,112), Scalar(0,0,0), swapRB=true)``
   i.e. BGR→RGB, scale=1.0, mean=0, NCHW float32 — verified empirically
   (cosine 1.0 vs OpenCV feature on golden crop).
 
-Shared validation helpers live in ``opencv_ref`` (REF-19: no duplication).
-Alignment reuses ``FivePointAligner`` (no reimplementation).
+Shared validation + embed batch live in ``_common`` (cv2/onnxruntime-free).
+Alignment is owned by ``FivePointAligner`` (separate module); this module does
+not reimplement alignment.
+
+Parity is validated for real-signal scores (production threshold 0.9). OpenCV
+FaceDetectorYN is itself instance-nondeterministic at the noise floor
+(tiny/degenerate inputs); do not treat empty-image double-runs as a parity
+oracle.
 
 Heuristics: rg-015 (manifest dim, no invented contracts), AGT-06 (fail closed),
-rg-013-style purity (onnxruntime/numpy + face_pipeline siblings only).
+rg-013-style purity (onnxruntime/numpy + face_pipeline siblings only; no cv2).
 """
 
 from __future__ import annotations
@@ -23,16 +30,17 @@ from typing import Final, Sequence
 import numpy as np
 import onnxruntime as ort
 
-from recognition.infrastructure.face_pipeline.opencv_ref import (
+from recognition.infrastructure.face_pipeline._common import (
+    DEFAULT_INPUT_SIZE,
     DEFAULT_NMS_THRESHOLD,
     DEFAULT_SCORE_THRESHOLD,
     DEFAULT_TOP_K,
-    SFACE_CROP_SIZE,
     SFACE_EMBEDDING_DIM,
     FacePipelineInputError,
     RawDetection,
     ZeroNormEmbeddingError,
     _ensure_bgr_u8,
+    embed_batch,
 )
 from recognition.infrastructure.face_pipeline.provenance import load_verified_model
 
@@ -58,9 +66,14 @@ _YUNET_OUTPUT_NAMES: Final[tuple[str, ...]] = (
 
 
 def _ort_session(model_path: Path) -> ort.InferenceSession:
-    """CPU-only InferenceSession with reduced log noise from initializer inputs."""
+    """CPU-only InferenceSession with pinned single-thread + reduced log noise.
+
+    Thread counts fixed to 1 for reproducible parity/determinism builds (BR-05).
+    """
     opts = ort.SessionOptions()
     opts.log_severity_level = 3  # ERROR
+    opts.inter_op_num_threads = 1
+    opts.intra_op_num_threads = 1
     return ort.InferenceSession(
         str(model_path),
         sess_options=opts,
@@ -111,10 +124,12 @@ def decode_yunet_level(
     pad_h: int,
     score_threshold: float,
 ) -> list[RawDetection]:
-    """Decode one YuNet FPN level into pre-NMS detections (pure numpy).
+    """Decode one YuNet FPN level into pre-NMS detections (vectorized numpy).
 
-    Score: ``sqrt(clamp(cls,0,1) * clamp(obj,0,1))`` (OpenCV FaceDetectorYN).
-    Bbox: center/size prior decode with exp on w/h; landmarks offset by grid cell.
+    Score: ``sqrt(min(cls,1) * min(obj,1))`` — OpenCV FaceDetectorYN upper-only
+    ``MIN(x, 1.f)`` (no lower clamp; BR-06). Bbox: center/size prior decode with
+    exp on w/h; landmarks offset by grid cell. Survivors only are decoded after
+    a score mask (no per-anchor Python loop; BR-03 / REF-05 behavior-preserving).
     """
     cols = int(pad_w // stride)
     rows = int(pad_h // stride)
@@ -136,40 +151,52 @@ def decode_yunet_level(
             f"(bbox={bbox_v.shape[0]} kps={kps_v.shape[0]} expected={expected})"
         )
 
+    # OpenCV FaceDetectorYN: upper-only MIN(x, 1.f) — no lower clamp (BR-06).
+    cls_c = np.minimum(cls_v, 1.0)
+    obj_c = np.minimum(obj_v, 1.0)
+    # Negative product → NaN score → fails threshold (document in modelless tests).
+    with np.errstate(invalid="ignore"):
+        scores = np.sqrt(cls_c * obj_c)
+    keep = np.flatnonzero(scores >= score_threshold)
+    if keep.size == 0:
+        return []
+
+    rs = keep // cols
+    cs = keep % cols
+    bb = bbox_v[keep]
+    kp = kps_v[keep]
+    sc = scores[keep]
+
+    cs_f = cs.astype(np.float32)
+    rs_f = rs.astype(np.float32)
+    cx = (cs_f + bb[:, 0]) * stride
+    cy = (rs_f + bb[:, 1]) * stride
+    w = np.exp(bb[:, 2]) * float(stride)
+    h = np.exp(bb[:, 3]) * float(stride)
+    x1 = cx - w * 0.5
+    y1 = cy - h * 0.5
+
+    lm = kp.reshape(-1, 5, 2).astype(np.float32, copy=True)
+    lm[:, :, 0] = (lm[:, :, 0] + cs_f[:, None]) * float(stride)
+    lm[:, :, 1] = (lm[:, :, 1] + rs_f[:, None]) * float(stride)
+
     out: list[RawDetection] = []
-    for r in range(rows):
-        for c in range(cols):
-            idx = r * cols + c
-            cls_score = float(np.clip(cls_v[idx], 0.0, 1.0))
-            obj_score = float(np.clip(obj_v[idx], 0.0, 1.0))
-            score = float(np.sqrt(cls_score * obj_score))
-            if score < score_threshold:
-                continue
-
-            cx = (c + float(bbox_v[idx, 0])) * stride
-            cy = (r + float(bbox_v[idx, 1])) * stride
-            w = float(np.exp(bbox_v[idx, 2])) * stride
-            h = float(np.exp(bbox_v[idx, 3])) * stride
-            x1 = cx - w / 2.0
-            y1 = cy - h / 2.0
-
-            landmarks = np.empty((5, 2), dtype=np.float32)
-            for n in range(5):
-                landmarks[n, 0] = (float(kps_v[idx, 2 * n]) + c) * stride
-                landmarks[n, 1] = (float(kps_v[idx, 2 * n + 1]) + r) * stride
-
-            out.append(
-                RawDetection(
-                    bbox=np.array([x1, y1, w, h], dtype=np.float32),
-                    landmarks=landmarks,
-                    score=score,
-                )
+    for i in range(int(keep.size)):
+        out.append(
+            RawDetection(
+                bbox=np.array(
+                    [float(x1[i]), float(y1[i]), float(w[i]), float(h[i])],
+                    dtype=np.float32,
+                ),
+                landmarks=lm[i],
+                score=float(sc[i]),
             )
+        )
     return out
 
 
 def _box_iou_xywh_int(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
-    """IoU of integer xywh boxes (OpenCV Rect2i / NMSBoxes convention)."""
+    """IoU of integer xywh boxes (OpenCV Rect2i / FaceDetectorYN NMS convention)."""
     ax, ay, aw, ah = a
     bx, by, bw, bh = b
     ax2, ay2 = ax + aw, ay + ah
@@ -194,20 +221,21 @@ def nms_yunet(
     nms_threshold: float,
     top_k: int,
 ) -> list[RawDetection]:
-    """Greedy NMS matching OpenCV ``dnn::NMSBoxes`` on integer xywh boxes.
+    """Greedy NMS with FaceDetectorYN postProcess semantics (int xywh IoU, score >= thr).
 
-    OpenCV casts box coords to int before NMS; float boxes are retained on keep.
-    When ≤1 candidate survives the score gate, NMS is a no-op (FaceDetectorYN).
+    Not pure ``cv2.dnn.NMSBoxes`` float-IoU / strict-``>`` score-gate parity —
+    matches the int-cast path FaceDetectorYN uses (BR-04). Float boxes are
+    retained on keep. When ≤1 candidate survives the score gate, NMS is a no-op.
     """
     if not detections:
         return []
 
-    # Score gate again (NMSBoxes also filters by score_threshold).
+    # Score gate again (FaceDetectorYN NMS also filters by score_threshold).
     candidates = [d for d in detections if d.score >= score_threshold]
     if len(candidates) <= 1:
         return candidates
 
-    # Sort by score descending (OpenCV NMSBoxes).
+    # Sort by score descending.
     order = sorted(range(len(candidates)), key=lambda i: candidates[i].score, reverse=True)
     if top_k > 0 and len(order) > top_k:
         order = order[:top_k]
@@ -278,6 +306,10 @@ class OrtYuNetDetector:
 
     Batch API: ``detect(images) -> list[list[RawDetection]]``.
     Defaults match ``OpenCVYuNetDetector`` (score 0.9, nms 0.3, top_k 5000).
+
+    ``initial_input_size`` is accepted for kwargs parity with
+    ``OpenCVYuNetDetector`` (BR-07). ORT sets input size per image via padding;
+    the value is not used to configure a native detector.
     """
 
     def __init__(
@@ -288,6 +320,7 @@ class OrtYuNetDetector:
         score_threshold: float = DEFAULT_SCORE_THRESHOLD,
         nms_threshold: float = DEFAULT_NMS_THRESHOLD,
         top_k: int = DEFAULT_TOP_K,
+        initial_input_size: tuple[int, int] = DEFAULT_INPUT_SIZE,
     ) -> None:
         model_path = load_verified_model(model_name, models_dir=models_dir)
         self._model_name = model_name
@@ -295,9 +328,13 @@ class OrtYuNetDetector:
         self._score_threshold = float(score_threshold)
         self._nms_threshold = float(nms_threshold)
         self._top_k = int(top_k)
+        # Accepted for DI/factory kwargs parity; per-image pad resets size (BR-07).
+        self._initial_input_size = (int(initial_input_size[0]), int(initial_input_size[1]))
         self._session = _ort_session(model_path)
         self._input_name = self._session.get_inputs()[0].name
-        out_names = {o.name for o in self._session.get_outputs()}
+        # Cache output names once (BR-03) — do not re-fetch inside detect loop.
+        self._output_names: tuple[str, ...] = tuple(o.name for o in self._session.get_outputs())
+        out_names = set(self._output_names)
         missing = [n for n in _YUNET_OUTPUT_NAMES if n not in out_names]
         if missing:
             raise FacePipelineInputError(
@@ -324,8 +361,7 @@ class OrtYuNetDetector:
             padded, pad_w, pad_h = _pad_to_divisor(img)
             blob = _bgr_to_nchw_float(padded)
             raw_outs = self._session.run(None, {self._input_name: blob})
-            out_names = [o.name for o in self._session.get_outputs()]
-            outputs = {name: arr for name, arr in zip(out_names, raw_outs)}
+            outputs = {name: arr for name, arr in zip(self._output_names, raw_outs)}
             faces = decode_yunet_outputs(
                 outputs,
                 pad_w=pad_w,
@@ -343,6 +379,7 @@ class OrtSFaceEmbedder:
 
     Batch API: ``embed(crops) -> (N, dim)`` L2-normalized float32.
     Crops must be 112×112×3 BGR. Dim from manifest (rg-015). Zero-norm raises.
+    Validation/normalization lives in ``_common.embed_batch`` (shared with OpenCV).
     """
 
     def __init__(
@@ -366,31 +403,11 @@ class OrtSFaceEmbedder:
 
     def embed(self, crops: Sequence[np.ndarray]) -> np.ndarray:
         """Embed a batch of 112×112×3 BGR crops → L2-normalized (N, dim)."""
-        if not crops:
-            return np.zeros((0, self.embedding_dim), dtype=np.float32)
-
-        expected_shape = (SFACE_CROP_SIZE, SFACE_CROP_SIZE, 3)
-        vectors: list[np.ndarray] = []
-        for i, crop in enumerate(crops):
-            img = _ensure_bgr_u8(crop, label=f"crops[{i}]")
-            if img.shape != expected_shape:
-                raise FacePipelineInputError(
-                    f"crops[{i}]: expected shape {expected_shape} (SFace crop), "
-                    f"got {img.shape}; align via FivePointAligner before embed"
-                )
-            raw = np.asarray(self._feature(img), dtype=np.float32).reshape(-1)
-            if raw.size != self.embedding_dim:
-                raise FacePipelineInputError(
-                    f"crops[{i}]: expected embedding dim {self.embedding_dim}, got {raw.size}"
-                )
-            norm = float(np.linalg.norm(raw))
-            if norm == 0.0 or not np.isfinite(norm):
-                raise ZeroNormEmbeddingError(
-                    f"crops[{i}]: SFace embedding has zero/non-finite L2 norm "
-                    f"(norm={norm}); refusing silent zero-fill"
-                )
-            vectors.append(raw / norm)
-        return np.stack(vectors, axis=0).astype(np.float32, copy=False)
+        return embed_batch(
+            crops,
+            feature_fn=self._feature,
+            embedding_dim=self.embedding_dim,
+        )
 
 
 __all__ = [

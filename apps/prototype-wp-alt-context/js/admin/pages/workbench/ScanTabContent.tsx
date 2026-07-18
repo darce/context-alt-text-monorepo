@@ -158,6 +158,9 @@ export const ScanTabContent = (): React.JSX.Element => {
               key={clusterPanel.clusterId}
               clusterId={clusterPanel.clusterId}
               onClose={() => dispatchClusterPanel({ type: 'close' })}
+              onFocusQueueRoot={() => {
+                findingsDetailRef.current?.focus({ preventScroll: true });
+              }}
             />
           ) : (
             <ReviewQueue

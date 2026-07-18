@@ -2,6 +2,7 @@
  * ClusterReviewPanel
  *
  * Scaffolding stub for cluster review UI.
+ * Open-target lifecycle: live-derived rebind-else-close (E21-5 §11 / FBT-1 ⑤).
  */
 
 import React from 'react';
@@ -19,7 +20,10 @@ import {
   DialogRoot,
   DialogTitle,
 } from '../../../../components/ui/dialog';
+import { useClusterPanel } from '../ClusterPanelContext';
+import { useMergeSurvivors } from './MergeSurvivorContext';
 import { invalidateSuggestionProjection } from './suggestionProjection';
+import { useLiveReviewTarget } from './useLiveReviewTarget';
 import { useShowAllClusterMembers } from './useShowAllClusterMembers';
 
 const isDedicatedFaceThumbUrl = (thumbUrl: string | null | undefined): boolean => {
@@ -29,14 +33,35 @@ const isDedicatedFaceThumbUrl = (thumbUrl: string | null | undefined): boolean =
 interface ClusterReviewPanelProps {
   clusterId: string;
   onClose: () => void;
+  /** Focus the queue root anchor after retirement close (A11Y-21 companion). */
+  onFocusQueueRoot?: () => void;
 }
 
-export const ClusterReviewPanel = ({ clusterId, onClose }: ClusterReviewPanelProps): React.JSX.Element => {
+export const ClusterReviewPanel = ({
+  clusterId,
+  onClose,
+  onFocusQueueRoot,
+}: ClusterReviewPanelProps): React.JSX.Element => {
   const queryClient = useQueryClient();
+  const { dispatchClusterPanel } = useClusterPanel();
+  const { resolveSurvivor } = useMergeSurvivors();
   const [pendingRemovalIdentityId, setPendingRemovalIdentityId] = React.useState<string | null>(null);
   const [showAllAnnouncement, setShowAllAnnouncement] = React.useState<string | null>(null);
+  const [lifecycleMessage, setLifecycleMessage] = React.useState<string | null>(null);
   const memberGridRef = React.useRef<HTMLDivElement | null>(null);
   const wasExpandingRef = React.useRef(false);
+
+  const { status: liveTargetStatus } = useLiveReviewTarget(clusterId, {
+    resolveSurvivor: (retiredId) => resolveSurvivor(retiredId),
+    onAnnounce: (message) => setLifecycleMessage(message),
+    onRebind: (survivorId) => {
+      dispatchClusterPanel({ type: 'open_review', clusterId: survivorId });
+    },
+    onClose: () => {
+      onClose();
+      onFocusQueueRoot?.();
+    },
+  });
 
   const {
     members,
@@ -49,6 +74,9 @@ export const ClusterReviewPanel = ({ clusterId, onClose }: ClusterReviewPanelPro
     expandError,
     showAll,
   } = useShowAllClusterMembers(clusterId);
+
+  // Criterion 4: never paint retired/stale membership after retirement is known.
+  const suppressStaleMembership = liveTargetStatus === 'retired' || liveTargetStatus === 'rebound';
 
   // AT affordance: when expansion completes the show-all button unmounts, so
   // announce completion and move focus to the member grid before it drops.
@@ -95,7 +123,7 @@ export const ClusterReviewPanel = ({ clusterId, onClose }: ClusterReviewPanelPro
   };
 
   return (
-    <div className="acx-cluster-review-panel">
+    <div className="acx-cluster-review-panel" data-live-target-status={liveTargetStatus}>
       <div className="acx-cluster-review-panel__header">
         <h2>{__('Review Cluster', 'alt-context')}</h2>
         <button type="button" className="acx-close-button" onClick={onClose} aria-label={__('Close', 'alt-context')}>
@@ -103,8 +131,14 @@ export const ClusterReviewPanel = ({ clusterId, onClose }: ClusterReviewPanelPro
         </button>
       </div>
 
+      <p className="acx-cluster-review-panel__lifecycle" role="status" aria-live="polite">
+        {lifecycleMessage}
+      </p>
+
       <div className="acx-cluster-review-panel__content">
-        {isLoading ? (
+        {suppressStaleMembership ? (
+          <p>{lifecycleMessage ?? __('This review target is no longer available.', 'alt-context')}</p>
+        ) : isLoading ? (
           <p>{__('Loading members...', 'alt-context')}</p>
         ) : isError ? (
           <p>{__('Unable to load cluster members.', 'alt-context')}</p>

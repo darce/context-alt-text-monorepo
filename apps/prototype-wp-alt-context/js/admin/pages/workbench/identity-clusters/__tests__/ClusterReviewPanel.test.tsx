@@ -1,3 +1,4 @@
+import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -7,13 +8,19 @@ import { fetchClusterMembers, removeClusterMember } from '../../../../api/recogn
 import { queryKeys } from '../../../../api/queryKeys';
 import type { ClusterMembersResponse } from '../../../../api/recognition';
 import { HTTPError } from '../../../../utils/http';
+import { ClusterPanelProvider, useClusterPanel } from '../../ClusterPanelContext';
 import { ClusterReviewPanel } from '../ClusterReviewPanel';
+import { MergeSurvivorProvider, useMergeSurvivors } from '../MergeSurvivorContext';
+import {
+  LIVE_TARGET_CLOSE_ANNOUNCE,
+  LIVE_TARGET_REBIND_ANNOUNCE,
+} from '../useLiveReviewTarget';
 
-const membersNotFound = (): HTTPError =>
+const membersNotFound = (clusterId = 'x'): HTTPError =>
   new HTTPError({
     status: 404,
     retryAfterSeconds: undefined,
-    endpoint: '/acx/v1/recognition/clusters/x/members',
+    endpoint: `/acx/v1/recognition/clusters/${clusterId}/members`,
     bodyPreview: 'cluster_not_found',
     message: 'cluster not found',
   });
@@ -55,7 +62,17 @@ vi.mock('../../../../api/recognition', async () => {
   };
 });
 
-const renderPanel = (clusterId = 'cluster-123', onClose: () => void = () => undefined) => {
+const PanelProviders = ({ children }: { children: React.ReactNode }) => (
+  <ClusterPanelProvider>
+    <MergeSurvivorProvider>{children}</MergeSurvivorProvider>
+  </ClusterPanelProvider>
+);
+
+const renderPanel = (
+  clusterId = 'cluster-123',
+  onClose: () => void = () => undefined,
+  onFocusQueueRoot?: () => void,
+) => {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -64,11 +81,55 @@ const renderPanel = (clusterId = 'cluster-123', onClose: () => void = () => unde
 
   const utils = render(
     <QueryClientProvider client={queryClient}>
-      <ClusterReviewPanel clusterId={clusterId} onClose={onClose} />
+      <PanelProviders>
+        <ClusterReviewPanel
+          clusterId={clusterId}
+          onClose={onClose}
+          onFocusQueueRoot={onFocusQueueRoot}
+        />
+      </PanelProviders>
     </QueryClientProvider>,
   );
 
   return { queryClient, ...utils };
+};
+
+/** Mirrors ScanTabContent ownership: panel keyed by clusterPanel.clusterId. */
+const OwnedReviewHarness = ({
+  initialClusterId,
+  onFocusQueueRoot,
+  seedSurvivor,
+}: {
+  initialClusterId: string;
+  onFocusQueueRoot?: () => void;
+  seedSurvivor?: { retiredId: string; survivorId: string };
+}) => {
+  const { clusterPanel, dispatchClusterPanel } = useClusterPanel();
+  const { recordMergeSurvivor } = useMergeSurvivors();
+  const seeded = React.useRef(false);
+
+  React.useEffect(() => {
+    if (!seeded.current) {
+      seeded.current = true;
+      if (seedSurvivor) {
+        recordMergeSurvivor(seedSurvivor.retiredId, seedSurvivor.survivorId);
+      }
+      dispatchClusterPanel({ type: 'open_review', clusterId: initialClusterId });
+    }
+  }, [dispatchClusterPanel, initialClusterId, recordMergeSurvivor, seedSurvivor]);
+
+  if (clusterPanel.mode !== 'review' || !clusterPanel.clusterId) {
+    return <div data-testid="review-closed">closed</div>;
+  }
+
+  return (
+    <ClusterReviewPanel
+      key={clusterPanel.clusterId}
+      clusterId={clusterPanel.clusterId}
+      onClose={() => dispatchClusterPanel({ type: 'close' })}
+      onFocusQueueRoot={onFocusQueueRoot}
+    />
+  );
 };
 
 const makeClusterMembersResponse = (members: ClusterMembersResponse['members'] = []): ClusterMembersResponse => ({
@@ -347,27 +408,139 @@ describe('ClusterReviewPanel', () => {
   });
 
   /**
-   * Characterization (E21-5 Slice 7 / FBT-1 ⑤): open-target lifecycle is NOT live-derived yet.
-   * A 404 on the members query (cluster_not_found retirement) leaves the panel open —
-   * stale open-target. Slice 7 flips this to rebind-else-close + announce + focus.
+   * Flipped characterization (E21-5 Slice 7 / FBT-1 ⑤): members 404 is retirement.
+   * No recorded survivor → branch (A) close + announce + focus queue root.
    */
-  it('characterization: members 404 leaves panel open (stale open-target pre-fix)', async () => {
+  it('retire-no-survivor: members 404 closes panel, announces, and focuses queue root', async () => {
     const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
     const onClose = vi.fn();
-    fetchClusterMembersMock.mockRejectedValue(membersNotFound());
+    const onFocusQueueRoot = vi.fn();
+    fetchClusterMembersMock.mockRejectedValue(membersNotFound('cluster-retired-x'));
 
-    renderPanel('cluster-retired-x', onClose);
-
-    await waitFor(() => {
-      expect(fetchClusterMembersMock).toHaveBeenCalled();
-    });
+    renderPanel('cluster-retired-x', onClose, onFocusQueueRoot);
 
     await waitFor(() => {
-      expect(screen.getByText('Unable to load cluster members.')).toBeInTheDocument();
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+    expect(onFocusQueueRoot).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('status')).toHaveTextContent(LIVE_TARGET_CLOSE_ANNOUNCE);
+    // Criterion 4: no member faces painted for the retired cluster.
+    expect(screen.queryByRole('img', { name: 'Cluster member' })).not.toBeInTheDocument();
+  });
+
+  it('retire-while-open with recorded survivor rebinds panel to survivor and announces', async () => {
+    const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
+    fetchClusterMembersMock.mockImplementation((clusterId) => {
+      if (clusterId === 'cluster-retired') {
+        return Promise.reject(membersNotFound(clusterId));
+      }
+      return Promise.resolve(
+        makeClusterMembersResponse([
+          {
+            identity_id: 'surv-1',
+            media_id: 9,
+            similarity: 0.9,
+            confidence: 0.9,
+            bbox: { x: 0, y: 0, width: 10, height: 10 },
+            thumb_url: 'http://example.test/survivor.jpg',
+          },
+        ]),
+      );
     });
 
-    // Pre-fix: retirement does not close the open review pane.
-    expect(onClose).not.toHaveBeenCalled();
-    expect(screen.getByText('Review Cluster')).toBeInTheDocument();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PanelProviders>
+          <OwnedReviewHarness
+            initialClusterId="cluster-retired"
+            seedSurvivor={{ retiredId: 'cluster-retired', survivorId: 'cluster-survivor' }}
+          />
+        </PanelProviders>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(LIVE_TARGET_REBIND_ANNOUNCE);
+    });
+    // Remounted on survivor — live membership of the survivor, never the retired id.
+    await waitFor(() => {
+      expect(screen.getByRole('img', { name: 'Cluster member' })).toHaveAttribute(
+        'src',
+        'http://example.test/survivor.jpg',
+      );
+    });
+    expect(fetchClusterMembersMock).toHaveBeenCalledWith('cluster-survivor');
+  });
+
+  it('wrong-survivor-guess self-heals: rebind then close when survivor also 404s', async () => {
+    const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
+    fetchClusterMembersMock.mockImplementation((clusterId) => Promise.reject(membersNotFound(clusterId)));
+
+    const onFocusQueueRoot = vi.fn();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PanelProviders>
+          <OwnedReviewHarness
+            initialClusterId="cluster-retired"
+            seedSurvivor={{ retiredId: 'cluster-retired', survivorId: 'cluster-wrong' }}
+            onFocusQueueRoot={onFocusQueueRoot}
+          />
+        </PanelProviders>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('review-closed')).toBeInTheDocument();
+    });
+    expect(onFocusQueueRoot).toHaveBeenCalled();
+  });
+
+  it('FBT-1 criterion 4: open pane never shows retired membership after merge 404', async () => {
+    const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
+    // First paint members, then retirement 404 on existence/refetch paths.
+    let call = 0;
+    fetchClusterMembersMock.mockImplementation(() => {
+      call += 1;
+      if (call <= 2) {
+        // First page + live-target probe for initial open.
+        return Promise.resolve(
+          makeClusterMembersResponse([
+            {
+              identity_id: 'stale-face',
+              media_id: 1,
+              similarity: 0.9,
+              confidence: 0.9,
+              bbox: { x: 0, y: 0, width: 10, height: 10 },
+              thumb_url: 'http://example.test/stale.jpg',
+            },
+          ]),
+        );
+      }
+      return Promise.reject(membersNotFound('cluster-stale'));
+    });
+
+    const onClose = vi.fn();
+    const { queryClient } = renderPanel('cluster-stale', onClose);
+
+    await waitFor(() => {
+      expect(screen.getByRole('img', { name: 'Cluster member' })).toBeInTheDocument();
+    });
+
+    // Simulate post-merge invalidation → members queries re-run as 404.
+    await queryClient.invalidateQueries({ queryKey: queryKeys.clusters.memberList('cluster-stale') });
+
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalled();
+    });
+    expect(screen.queryByRole('img', { name: 'Cluster member' })).not.toBeInTheDocument();
+    expect(screen.queryByText('stale')).not.toBeInTheDocument();
   });
 });

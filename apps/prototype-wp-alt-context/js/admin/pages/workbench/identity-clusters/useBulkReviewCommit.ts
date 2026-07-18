@@ -480,7 +480,16 @@ export const useBulkReviewCommit = ({
       // BR-50: re-filter snapshot against live selection at fire time (prune during hold).
       // pruneMissingIds keeps selection honest, so intersection drops pruned ids.
       const live = selectedIdsRef.current;
-      const filtered = held.items.filter((i) => live.has(i.suggestionId));
+      const stillSelected = held.items.filter((i) => live.has(i.suggestionId));
+      // BR-62: also re-resolve against current filters at fire time — a URL-driven
+      // KIND/band change during the hold narrows the fired set to the live
+      // selection ∩ filters intersection (never wider than the current view).
+      const allowedNow = new Set(
+        resolveItemsRef.current(stillSelected.map((i) => i.suggestionId)).map(
+          (i) => i.suggestionId,
+        ),
+      );
+      const filtered = stillSelected.filter((i) => allowedNow.has(i.suggestionId));
       const items = options.limitToFirstOnly ? filtered.slice(0, 1) : filtered;
       held.resolve();
       const run = runSequence(items, options);

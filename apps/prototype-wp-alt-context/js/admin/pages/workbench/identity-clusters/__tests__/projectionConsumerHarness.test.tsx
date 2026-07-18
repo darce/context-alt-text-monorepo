@@ -8,8 +8,10 @@
  *   - useSuggestionReviewQueries → review leg (pendingRows / reviewQueueRows)
  *
  * Assertions are LEG-SPECIFIC (PR-50): never cross-leg same-top-match.
- * Invalidation: shared QueryClient, per SUGGESTION_PROJECTION_INVALIDATION_EVENTS
- * key — presence asserts on target sets; extras allowed (UXP-3 contract).
+ * Invalidation (BR-58): shared QueryClient, per SUGGESTION_PROJECTION_INVALIDATION_EVENTS
+ * key — production-code `invalidateSuggestionProjection` only, asserted via
+ * per-consumer fetch-mock call-count deltas (no circular self-invalidation of
+ * cross-family keys; those target sets are pinned as map data in the BR-23 test).
  *
  * BR-23 (dismiss-invalidation divergence): CONFIRMED-AS-DESIGNED — see named test.
  */
@@ -20,7 +22,6 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetConfigCache } from '../../../../api/config';
-import { queryKeys } from '../../../../api/queryKeys';
 import * as recognitionApi from '../../../../api/recognition';
 import { useRosterEntries } from '../../../../hooks/useRosterHooks';
 import { createMockQuery } from '../../../../test-utils/mockHooks';
@@ -115,26 +116,6 @@ const flattenReviewSuggestionIds = (
     }
   }
   return ids;
-};
-
-/** Resolve a D4 keptCrossFamilyTargets token to the live invalidate queryKey. */
-const crossFamilyQueryKey = (target: string, tenantId = 'tenant-1'): readonly unknown[] => {
-  switch (target) {
-    case 'clusters.all':
-      return queryKeys.clusters.all;
-    case 'clusters.labels':
-      return queryKeys.clusters.labels();
-    case 'clusters.topUnlabeled':
-      return queryKeys.clusters.topUnlabeled(tenantId);
-    case 'media.identities':
-      return queryKeys.media.identities();
-    case 'mergePending':
-      return queryKeys.suggestions.mergePending();
-    case 'namePending':
-      return queryKeys.suggestions.namePending();
-    default:
-      throw new Error(`Unknown keptCrossFamilyTargets token: ${target}`);
-  }
 };
 
 const makeQueryClient = (): QueryClient =>
@@ -261,18 +242,14 @@ describe('projectionConsumerHarness (FBT-1 criterion 2 / ④)', () => {
             { wrapper },
           );
           await waitFor(() => expect(cluster.current.isLoading).toBe(false));
-          const expectedLabels = expectedIdentityIds(matrixCase);
-          // Dropdown options are label-based Suggested rows in server order.
+          // BR-58: dropdown Suggested rows assert the exact identity-leg id set
+          // (server order), not just a row count.
           await waitFor(() => {
             const suggested = cluster.current.options.filter((o) => o.group === 'Suggested');
-            expect(suggested.map((o) => o.suggestion_id ?? o.value)).toHaveLength(
-              expectedLabels.length,
+            expect(suggested.map((o) => o.suggestion_id)).toEqual(
+              expectedIdentityIds(matrixCase),
             );
           });
-          if (top !== undefined) {
-            const firstSuggested = cluster.current.options.find((o) => o.group === 'Suggested');
-            expect(firstSuggested?.suggestion_id).toBe(top);
-          }
         }
 
         // --- Review leg (pendingRows / reviewQueueRows only) ---
@@ -295,7 +272,6 @@ describe('projectionConsumerHarness (FBT-1 criterion 2 / ④)', () => {
 
         const queryClient = makeQueryClient();
         const wrapper = wrapperFor(queryClient);
-        const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
         if (hasMatches(matrixCase)) {
           seedIdentityFetch(identityId, matrixCase.matches);
@@ -336,35 +312,59 @@ describe('projectionConsumerHarness (FBT-1 criterion 2 / ④)', () => {
         ) as SuggestionProjectionInvalidationEvent[];
 
         for (const event of events) {
-          invalidateSpy.mockClear();
           const entry = SUGGESTION_PROJECTION_INVALIDATION_EVENTS[event];
+          // Every event in the live map invalidates the assignment projection root.
+          expect(entry.invalidatesAssignmentProjection).toBe(true);
 
+          const identityCallsBefore = vi.mocked(recognitionApi.fetchIdentitiesSuggestions).mock
+            .calls.length;
+          const reviewCallsBefore = vi.mocked(recognitionApi.fetchPendingSuggestions).mock.calls
+            .length;
+          const mergeCallsBefore = vi.mocked(recognitionApi.fetchPendingMergeSuggestions).mock
+            .calls.length;
+          const nameCallsBefore = vi.mocked(recognitionApi.fetchPendingNameSuggestions).mock
+            .calls.length;
+
+          // BR-58: production-code invalidation ONLY (invalidateSuggestionProjection).
+          // No self-invalidation of cross-family keys here — those target sets are
+          // pinned as map data in the BR-23 test below; asserting them by firing
+          // them ourselves would be circular.
           await act(async () => {
-            // Simulate the event's invalidation surface: always projection root when flagged,
-            // plus each keptCrossFamilyTarget (presence assert; extras allowed).
-            if (entry.invalidatesAssignmentProjection) {
-              await invalidateSuggestionProjection(queryClient);
-            }
-            for (const target of entry.keptCrossFamilyTargets) {
-              await queryClient.invalidateQueries({ queryKey: crossFamilyQueryKey(target) });
-            }
-            // syncTrigger also notes viaSuggestionsAllRoot — presence-only signal.
-            if ('viaSuggestionsAllRoot' in entry && entry.viaSuggestionsAllRoot) {
-              await queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.all });
-            }
+            await invalidateSuggestionProjection(queryClient);
           });
 
-          // Presence asserts for the event's documented targets.
-          if (entry.invalidatesAssignmentProjection) {
-            expect(invalidateSpy).toHaveBeenCalledWith({
-              queryKey: queryKeys.suggestions.projection.all,
-            });
+          // Per-consumer fetch-mock deltas: projection-root consumers refetch…
+          if (hasMatches(matrixCase)) {
+            // Inline batch + cluster dropdown share the identityBatch cache entry
+            // (identityBatchIdsKey canon) → exactly one shared refetch.
+            await waitFor(() =>
+              expect(vi.mocked(recognitionApi.fetchIdentitiesSuggestions).mock.calls.length).toBe(
+                identityCallsBefore + 1,
+              ),
+            );
+          } else {
+            expect(vi.mocked(recognitionApi.fetchIdentitiesSuggestions).mock.calls.length).toBe(
+              identityCallsBefore,
+            );
           }
-          for (const target of entry.keptCrossFamilyTargets) {
-            expect(invalidateSpy).toHaveBeenCalledWith({
-              queryKey: crossFamilyQueryKey(target),
-            });
+          if (hasReviewLeg(matrixCase)) {
+            await waitFor(() =>
+              expect(vi.mocked(recognitionApi.fetchPendingSuggestions).mock.calls.length).toBe(
+                reviewCallsBefore + 1,
+              ),
+            );
+          } else {
+            expect(vi.mocked(recognitionApi.fetchPendingSuggestions).mock.calls.length).toBe(
+              reviewCallsBefore,
+            );
           }
+          // …and non-projection families are untouched by the projection root.
+          expect(vi.mocked(recognitionApi.fetchPendingMergeSuggestions).mock.calls.length).toBe(
+            mergeCallsBefore,
+          );
+          expect(vi.mocked(recognitionApi.fetchPendingNameSuggestions).mock.calls.length).toBe(
+            nameCallsBefore,
+          );
 
           // Consumers re-converge to their own leg expectations (PR-50).
           if (hooks.inline && hasMatches(matrixCase)) {
@@ -377,6 +377,17 @@ describe('projectionConsumerHarness (FBT-1 criterion 2 / ④)', () => {
                 expect(hooks.inline!.result.current.getMatch(identityId)?.suggestionId).toBe(top),
               );
             }
+          }
+          // BR-58: cluster dropdown participates in reconvergence with exact id sets.
+          if (hooks.cluster && hasMatches(matrixCase)) {
+            await waitFor(() => {
+              const suggested = hooks.cluster!.result.current.options.filter(
+                (o) => o.group === 'Suggested',
+              );
+              expect(suggested.map((o) => o.suggestion_id)).toEqual(
+                expectedIdentityIds(matrixCase),
+              );
+            });
           }
           if (hooks.review && hasReviewLeg(matrixCase)) {
             await waitFor(() =>

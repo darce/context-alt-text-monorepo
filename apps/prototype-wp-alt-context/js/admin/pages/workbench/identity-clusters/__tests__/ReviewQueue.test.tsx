@@ -2084,14 +2084,14 @@ describe('ReviewQueue', () => {
   });
 
   describe('Slice 6 band chips (④) + matrix M2 surface', () => {
-    it('band chips filter queue by similarity post-eligibility; compose with KIND', async () => {
+    it('band chips filter queue by similarity post-eligibility; compose with KIND; merge excluded (BR-60)', async () => {
       vi.mocked(fetchPendingSuggestions).mockResolvedValue({
         suggestions: [
           {
             id: 'strong-1',
             identity_id: 'id-1',
             suggested_cluster_id: 'c-strong',
-            representative_similarity: 0.92,
+            representative_similarity: 0.5,
             cluster_label: 'Maria',
             cluster_identity_count: 3,
           },
@@ -2099,7 +2099,7 @@ describe('ReviewQueue', () => {
             id: 'weak-1',
             identity_id: 'id-2',
             suggested_cluster_id: 'c-weak',
-            representative_similarity: 0.55,
+            representative_similarity: 0.4,
             cluster_label: 'Alex',
             cluster_identity_count: 2,
           },
@@ -2110,7 +2110,7 @@ describe('ReviewQueue', () => {
       vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
         suggestions: [
           {
-            id: 'merge-strong',
+            id: 'merge-1',
             cluster_a_id: 'a',
             cluster_b_id: 'b',
             similarity: 0.88,
@@ -2134,8 +2134,8 @@ describe('ReviewQueue', () => {
 
       await user.click(screen.getByRole('button', { name: 'Strong matches' }));
       await waitFor(() => {
-        // strong-1 (0.92) + merge-strong (0.88); weak-1 dropped
-        expect(screen.getByText('1 of 2')).toBeInTheDocument();
+        // strong-1 (0.50) only — merge-1 excluded from bands (BR-60); weak-1 dropped
+        expect(screen.getByText('1 of 1')).toBeInTheDocument();
       });
       expect(screen.getByRole('button', { name: 'Strong matches' })).toHaveAttribute(
         'aria-pressed',
@@ -2143,7 +2143,7 @@ describe('ReviewQueue', () => {
       );
       expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Maria/);
 
-      // KIND ∩ band: Close matches ∩ Strong → only strong-1
+      // KIND ∩ band: Close matches ∩ Strong → still only strong-1
       await user.click(screen.getByRole('button', { name: 'Close matches' }));
       await waitFor(() => {
         expect(screen.getByText('1 of 1')).toBeInTheDocument();
@@ -2156,16 +2156,28 @@ describe('ReviewQueue', () => {
         // assignment only: strong + weak
         expect(screen.getByText('1 of 2')).toBeInTheDocument();
       });
+
+      // Merge stays reachable under band=all via its KIND chip.
+      await user.click(screen.getByRole('button', { name: 'Close matches' }));
+      await user.click(screen.getByRole('button', { name: 'Possible duplicates' }));
+      await waitFor(() => {
+        expect(screen.getByText('1 of 1')).toBeInTheDocument();
+      });
+      // Merge ∩ strong band → empty (merge similarity is a different domain).
+      await user.click(screen.getByRole('button', { name: 'Strong matches' }));
+      await waitFor(() => {
+        expect(screen.getByText('0 of 0')).toBeInTheDocument();
+      });
     });
 
-    it('matrix M2 surface: bulk preview/commit label uses selection ∩ band ∩ kind', async () => {
+    it('matrix M2 surface: bulk preview/commit label uses selection ∩ band ∩ kind; fired ids = intersection (BR-61); split tray copy (BR-63)', async () => {
       vi.mocked(fetchPendingSuggestions).mockResolvedValue({
         suggestions: [
           {
             id: 's-strong',
             identity_id: 'id-1',
             suggested_cluster_id: 'c1',
-            representative_similarity: 0.91,
+            representative_similarity: 0.5,
             cluster_label: 'Maria',
             cluster_identity_count: 2,
           },
@@ -2173,7 +2185,7 @@ describe('ReviewQueue', () => {
             id: 's-weak',
             identity_id: 'id-2',
             suggested_cluster_id: 'c2',
-            representative_similarity: 0.5,
+            representative_similarity: 0.4,
             cluster_label: 'Alex',
             cluster_identity_count: 2,
           },
@@ -2181,6 +2193,21 @@ describe('ReviewQueue', () => {
         limit: 10,
         offset: 0,
       });
+      vi.mocked(fetchClusterMembers).mockResolvedValue({
+        members: [],
+        limit: 25,
+        total: 2,
+        truncated: false,
+      });
+      vi.mocked(acceptSuggestion).mockImplementation((id: string) =>
+        Promise.resolve({
+          suggestion_id: id,
+          resolution: 'accepted' as const,
+          identity_id: `identity-${id}`,
+          cluster_id: 'c1',
+          message: 'ok',
+        }),
+      );
 
       // Seed selection after settle (avoid prune-on-empty-queue wiping ids).
       const Parent = (): React.JSX.Element => {
@@ -2243,7 +2270,10 @@ describe('ReviewQueue', () => {
         expect(screen.getByText('1 of 1')).toBeInTheDocument();
       });
       expect(screen.getByTestId('acx-review-card')).toHaveTextContent('Maria');
-      expect(screen.getByTestId('acx-review-selection-tray')).toHaveTextContent('2 selected');
+      // BR-63: split copy — selection extends beyond the active filter view.
+      expect(screen.getByTestId('acx-review-selection-tray')).toHaveTextContent(
+        '2 selected — 1 in current filter',
+      );
 
       await user.click(screen.getByRole('button', { name: 'Review selection' }));
 
@@ -2253,6 +2283,167 @@ describe('ReviewQueue', () => {
       });
       const preview = screen.getByTestId('acx-review-selection-panel');
       expect(within(preview).getAllByRole('listitem')).toHaveLength(1);
+
+      // BR-61 (TEST-08): fire the bulk hold under the active band×kind — the
+      // exact acceptSuggestion id set equals the selection ∩ filters intersection.
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-bulk-commit')).not.toBeDisabled();
+      });
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await act(async () => {
+          screen.getByTestId('acx-bulk-commit').click();
+          await Promise.resolve();
+        });
+        expect(screen.getByTestId('acx-bulk-hold')).toHaveTextContent('Saving 1… — Undo');
+        await act(async () => {
+          vi.advanceTimersByTime(UNDO_HOLD_MS);
+          await Promise.resolve();
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+
+      await waitFor(() => {
+        expect(acceptSuggestion).toHaveBeenCalled();
+      });
+      const mutated = vi.mocked(acceptSuggestion).mock.calls.map((c) => c[0]);
+      expect(mutated).toEqual(['s-strong']);
+      expect(mutated).not.toContain('s-weak');
+      expect(bulkAcceptSuggestions).not.toHaveBeenCalled();
+    });
+
+    it('BR-59: truncation gate keys off the filter-intersected selection only', async () => {
+      // s-strong targets c-ok (not truncated); s-weak targets c-trunc (truncated).
+      vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+        suggestions: [
+          {
+            id: 's-strong',
+            identity_id: 'id-1',
+            suggested_cluster_id: 'c-ok',
+            representative_similarity: 0.5,
+            cluster_label: 'Maria',
+            cluster_identity_count: 2,
+          },
+          {
+            id: 's-weak',
+            identity_id: 'id-2',
+            suggested_cluster_id: 'c-trunc',
+            representative_similarity: 0.4,
+            cluster_label: 'Alex',
+            cluster_identity_count: 12,
+          },
+        ],
+        limit: 10,
+        offset: 0,
+      });
+      vi.mocked(fetchClusterMembers).mockImplementation((clusterId: string) =>
+        clusterId === 'c-trunc'
+          ? Promise.resolve({
+              members: [
+                {
+                  identity_id: 'i1',
+                  media_id: 1,
+                  similarity: 0.9,
+                  confidence: 0.9,
+                  bbox: { x: 0, y: 0, width: 1, height: 1 },
+                },
+              ],
+              limit: 1,
+              total: 12,
+              truncated: true,
+            })
+          : Promise.resolve({
+              members: [],
+              limit: 25,
+              total: 2,
+              truncated: false,
+            }),
+      );
+
+      const Parent = (): React.JSX.Element => {
+        const [index, setIndex] = React.useState(0);
+        const [kind, setKind] = React.useState<ReviewQueueKindParam>('all');
+        const [band, setBand] = React.useState<ReviewQueueBandParam>('all');
+        const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
+        return (
+          <div>
+            <button
+              type="button"
+              data-testid="seed-selection"
+              onClick={() => setSelectedIds(new Set(['s-strong', 's-weak']))}
+            >
+              seed
+            </button>
+            <button
+              type="button"
+              data-testid="apply-strong-band"
+              onClick={() => {
+                setBand('strong');
+                setIndex(0);
+              }}
+            >
+              strong-band
+            </button>
+            <button
+              type="button"
+              data-testid="apply-all-band"
+              onClick={() => {
+                setBand('all');
+                setIndex(0);
+              }}
+            >
+              all-band
+            </button>
+            <ReviewQueue
+              index={index}
+              onIndexChange={setIndex}
+              kind={kind}
+              onKindChange={setKind}
+              band={band}
+              onBandChange={setBand}
+              selectedIds={selectedIds}
+              onSelectedIdsChange={setSelectedIds}
+            />
+          </div>
+        );
+      };
+
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+      });
+      const user = userEvent.setup();
+      render(
+        <QueryClientProvider client={queryClient}>
+          <Parent />
+        </QueryClientProvider>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('1 of 2')).toBeInTheDocument();
+      });
+      await user.click(screen.getByTestId('seed-selection'));
+
+      // Strong band: truncated c-trunc is filtered OUT of the commit set → not blocked.
+      await user.click(screen.getByTestId('apply-strong-band'));
+      await user.click(screen.getByRole('button', { name: 'Review selection' }));
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-bulk-commit')).not.toBeDisabled();
+      });
+      expect(screen.queryByRole('button', { name: /Confirm 12 total/i })).not.toBeInTheDocument();
+
+      // band=all: truncated target back in the commit set → gate blocks as before.
+      await user.click(screen.getByTestId('apply-all-band'));
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-bulk-commit')).toBeDisabled();
+      });
+      expect(screen.getByRole('button', { name: /Confirm 12 total/i })).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: /Confirm 12 total/i }));
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-bulk-commit')).not.toBeDisabled();
+      });
     });
 
     it('rq= band initial state filters on mount (round-trip seed)', async () => {
@@ -2262,7 +2453,7 @@ describe('ReviewQueue', () => {
             id: 's-strong',
             identity_id: 'id-1',
             suggested_cluster_id: 'c1',
-            representative_similarity: 0.9,
+            representative_similarity: 0.5,
             cluster_label: 'StrongPerson',
             cluster_identity_count: 1,
           },

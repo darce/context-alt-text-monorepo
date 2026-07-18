@@ -20,6 +20,7 @@ import { Avatar } from '../../../../components/ui/avatar';
 import { Combobox } from '../../../../components/ui/combobox';
 import { useRosterEntries } from '../../../hooks/useRosterHooks';
 import { getProjectionNotReadyMessage, isProjectionNotReadyError } from './clusterMutationUtils';
+import { invalidateSuggestionProjection } from './suggestionProjection';
 
 interface ClusterLabelingPanelProps {
   clusterId: string;
@@ -97,7 +98,7 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     setDuplicateMatch(null);
     void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
     void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
-    void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.pending() });
+    void invalidateSuggestionProjection(queryClient);
     onLabel(label);
   };
 

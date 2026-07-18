@@ -136,7 +136,7 @@ describe('ClusterReviewPanel', () => {
     await waitFor(() => {
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.clusters.memberList(clusterId) });
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.clusters.all });
-      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.pending() });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.projection.all });
     });
   });
 

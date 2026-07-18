@@ -15,6 +15,7 @@ import { dismissCluster, fetchTopUnlabeledClusters, mergeCluster, updateClusterL
 import { DATA_SOURCE, PROJECTION_STATUS } from '../../../api/recognition/types/dataSource';
 import { EmptyStateWarning } from './EmptyStateWarning';
 import type { TopUnlabeledClustersResponse } from '../../../api/recognition/types/cluster';
+import { invalidateSuggestionProjection } from './suggestionProjection';
 import { TopClusterCard } from './TopClusterCard';
 
 interface TopClustersSectionProps {
@@ -80,6 +81,8 @@ export const TopClustersSection = ({
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.topUnlabeled(tenantId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
+      void invalidateSuggestionProjection(queryClient);
     },
     onSettled: (_data, _error, clusterId) => {
       setDismissingClusterIds((prev) => {
@@ -134,7 +137,7 @@ export const TopClustersSection = ({
       void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
       void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.topUnlabeled(tenantId) });
       void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.pending() });
+      void invalidateSuggestionProjection(queryClient);
       void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.mergePending() });
     },
     onSettled: (_data, _error, { clusterId }) => {

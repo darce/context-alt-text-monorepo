@@ -97,6 +97,36 @@ class SuggestionsControllerTest extends TestCase
         $this->assertNotEmpty($query['tenant_id'] ?? '');
     }
 
+    public function testGetIdentitySuggestionsForwardsNoThresholdParam(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"matches":[]}',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/identities/abc123/suggestions');
+        $request->set_param('identity_id', 'abc123');
+        $request->set_param('top_k', 5);
+        // Even an explicit client threshold must not reach the wire: the recognition
+        // route accepts only min_confidence, so the param never bound (0b-5).
+        $request->set_param('threshold', 0.42);
+
+        $response = $this->controller->get_identity_suggestions($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString('/recognition/identities/abc123/suggestions', $calls[0]['url']);
+
+        $query = [];
+        $queryString = parse_url($calls[0]['url'], PHP_URL_QUERY);
+        parse_str(is_string($queryString) ? $queryString : '', $query);
+
+        $this->assertArrayNotHasKey('threshold', $query);
+        $this->assertSame('5', (string) ($query['top_k'] ?? ''));
+        $this->assertNotEmpty($query['tenant_id'] ?? '');
+    }
+
     public function testGetIdentitiesSuggestionsRequiresIdentityIds(): void
     {
         $request = new WP_REST_Request('GET', '/acx/v1/recognition/identities/suggestions');

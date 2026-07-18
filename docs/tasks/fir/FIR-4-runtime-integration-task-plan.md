@@ -108,11 +108,11 @@ Scoped TDD per slice locally (never local full-suite); `make check-remote` green
 
 ### Checklist for S3: Wiring behind flag
 
-- [ ] Shared factory `build_embedding_runtime(*, settings, http_client=None, adapter_provider=None)`; `scan_worker._ensure_embedding_runtime`, `tasks/scan.py`, `deps/services.py get_scan_service_builder` all branch through it; per-site extras mapped (worker http_client honored; adapter_provider incumbent-only)
-- [ ] Production default = incumbent, asserted by test; `runtime_mode=="test"` still stubs
-- [ ] **Atomic activation**: any of YuNet/SFace missing/tampered → whole profile `Unavailable*` + reason (half-activation test: SFace absent, YuNet present)
-- [ ] `register_health_probes` profile-aware with **eager API-boot verification**: `load_verified_model` once per model at boot/first-probe, outcome cached (ok|reason, mtime, size); probes re-check mtime/size, UNHEALTHY + re-verify on drift; mtime+size never green-lights an unverified model; tampered-model boot test → UNHEALTHY ([EMB-05], [OBS-08])
-- [ ] Both flag branches tested at every site ([SERVE-03]); worker capability heartbeat reflects profile
+- [x] Shared factory `build_embedding_runtime(*, settings, http_client=None, adapter_provider=None)`; `scan_worker._ensure_embedding_runtime`, `tasks/scan.py`, `deps/services.py get_scan_service_builder` all branch through it; per-site extras mapped (worker http_client honored; adapter_provider incumbent-only)
+- [x] Production default = incumbent, asserted by test; `runtime_mode=="test"` still stubs
+- [x] **Atomic activation**: any of YuNet/SFace missing/tampered → whole profile `Unavailable*` + reason (half-activation test: SFace absent, YuNet present)
+- [x] `register_health_probes` profile-aware with **eager API-boot verification**: `load_verified_model` once per model at boot/first-probe, outcome cached (ok|reason, mtime, size); probes re-check mtime/size, UNHEALTHY + re-verify on drift; mtime+size never green-lights an unverified model; tampered-model boot test → UNHEALTHY ([EMB-05], [OBS-08])
+- [x] Both flag branches tested at every site ([SERVE-03]); worker capability heartbeat reflects profile
 
 ### Checklist for S4: Observability
 

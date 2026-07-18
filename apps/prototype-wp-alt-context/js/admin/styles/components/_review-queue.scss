@@ -186,7 +186,7 @@
   border-top: 1px solid var(--acx-color-border);
 
   &--primary {
-    border-top-color: var(--acx-color-border);
+    border-top-color: var(--acx-color-accent);
   }
 
   &--success {
@@ -214,12 +214,14 @@
 
   &__confirm,
   &__retry,
-  &__just-label {
+  &__just-label,
+  &__create-new {
     min-width: var(--acx-space-24);
     min-height: var(--acx-space-24);
   }
 
-  &__just-label {
+  &__just-label,
+  &__create-new {
     align-self: flex-start;
     font-size: var(--acx-text-xs);
   }

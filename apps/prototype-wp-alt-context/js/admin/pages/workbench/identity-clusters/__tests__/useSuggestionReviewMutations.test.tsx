@@ -109,6 +109,8 @@ const crossFamilyQueryKey = (target: string): readonly unknown[] => {
   switch (target) {
     case 'clusters.all':
       return queryKeys.clusters.all;
+    case 'clusters.labels':
+      return queryKeys.clusters.labels();
     case 'media.identities':
       return queryKeys.media.identities();
     case 'mergePending':
@@ -964,5 +966,187 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
 
     expect(rosterApi.commitClusterToRosterEntry).toHaveBeenCalledTimes(2);
     expect(result.current.personCommit.phase).toBe('succeeded');
+  });
+
+  it('BR-25: double schedulePersonCommit while first in flight yields exactly 1 POST', async () => {
+    let resolvePost!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      resolvePost = resolve;
+    });
+    vi.mocked(rosterApi.commitClusterToRosterEntry).mockImplementation(async () => {
+      await gate;
+    });
+
+    const { result } = renderMutations();
+
+    let first!: Promise<{ outcome: string }>;
+    let second!: Promise<{ outcome: string }>;
+    act(() => {
+      first = result.current.schedulePersonCommit({
+        clusterId: 'cluster-1',
+        newEntryName: 'Alex',
+      });
+      second = result.current.schedulePersonCommit({
+        clusterId: 'cluster-1',
+        newEntryName: 'Alex',
+      });
+    });
+
+    expect(result.current.personCommitPending).toBe(true);
+
+    await act(async () => {
+      resolvePost();
+      await first;
+      await second;
+      await Promise.resolve();
+    });
+
+    expect(rosterApi.commitClusterToRosterEntry).toHaveBeenCalledTimes(1);
+    expect(result.current.personCommitPending).toBe(false);
+  });
+
+  it('BR-25: schedule during held-accept flush latency still yields exactly 1 person-commit POST', async () => {
+    let resolveAccept!: () => void;
+    const acceptGate = new Promise<void>((resolve) => {
+      resolveAccept = resolve;
+    });
+    vi.mocked(recognitionApi.acceptSuggestion).mockImplementation(async () => {
+      await acceptGate;
+      return {
+        suggestion_id: 'sugg-a',
+        resolution: 'accepted' as const,
+        identity_id: 'identity-a',
+        cluster_id: 'cluster-1',
+        message: 'ok',
+      };
+    });
+    vi.mocked(rosterApi.commitClusterToRosterEntry).mockResolvedValue(undefined);
+
+    const { result } = renderMutations();
+    act(() => {
+      void result.current.scheduleAccept('sugg-a');
+    });
+    expect(result.current.hold.phase).toBe('holding');
+
+    let first!: Promise<{ outcome: string }>;
+    let second!: Promise<{ outcome: string }>;
+    act(() => {
+      first = result.current.schedulePersonCommit({
+        clusterId: 'cluster-1',
+        rosterEntryId: 7,
+      });
+      // Second click while phase still idle / flush in flight.
+      second = result.current.schedulePersonCommit({
+        clusterId: 'cluster-1',
+        rosterEntryId: 7,
+      });
+    });
+    expect(result.current.personCommitPending).toBe(true);
+
+    await act(async () => {
+      resolveAccept();
+      await first;
+      await second;
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(rosterApi.commitClusterToRosterEntry).toHaveBeenCalledTimes(1);
+  });
+
+  it('BR-26: double retryPersonCommit while first in flight yields exactly 1 POST', async () => {
+    let resolveRetry!: () => void;
+    const retryGate = new Promise<void>((resolve) => {
+      resolveRetry = resolve;
+    });
+    vi.mocked(rosterApi.commitClusterToRosterEntry)
+      .mockRejectedValueOnce(new Error('network'))
+      .mockImplementationOnce(async () => {
+        await retryGate;
+      });
+
+    const { result } = renderMutations();
+
+    await act(async () => {
+      const promise = result.current.schedulePersonCommit({
+        clusterId: 'cluster-1',
+        newEntryName: 'Alex',
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await promise;
+    });
+    expect(result.current.personCommit.phase).toBe('failed');
+
+    let first: Promise<unknown> | null = null;
+    let second: Promise<unknown> | null = null;
+    act(() => {
+      first = result.current.retryPersonCommit();
+      second = result.current.retryPersonCommit();
+    });
+
+    expect(first).not.toBeNull();
+    expect(second).toBeNull();
+    expect(result.current.personCommitPending).toBe(true);
+
+    await act(async () => {
+      resolveRetry();
+      await first;
+      await Promise.resolve();
+    });
+
+    // fail + one retry
+    expect(rosterApi.commitClusterToRosterEntry).toHaveBeenCalledTimes(2);
+    expect(result.current.personCommitPending).toBe(false);
+  });
+
+  it('BR-28: person-commit success invalidates clusterLabelSetClear kept targets', async () => {
+    vi.mocked(rosterApi.commitClusterToRosterEntry).mockResolvedValue(undefined);
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    const { result } = renderMutations();
+
+    await act(async () => {
+      const promise = result.current.schedulePersonCommit({
+        clusterId: 'cluster-1',
+        newEntryName: 'Alex',
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await promise;
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: queryKeys.suggestions.projection.all,
+    });
+    expectCrossFamilyPresent(invalidateSpy, 'clusterLabelSetClear');
+  });
+
+  it('BR-29: person-commit success removes namePending rows for the committed cluster', async () => {
+    queryClient.setQueryData(
+      namePendingKey,
+      makeNamePage([makeName('name-1'), makeName('name-other')]),
+    );
+    // name-other on a different cluster so only cluster-1 rows leave.
+    queryClient.setQueryData(namePendingKey, {
+      ...makeNamePage([
+        makeName('name-1'),
+        { ...makeName('name-other'), id: 'name-other', cluster_id: 'cluster-other' },
+      ]),
+    });
+    vi.mocked(rosterApi.commitClusterToRosterEntry).mockResolvedValue(undefined);
+
+    const { result } = renderMutations();
+    await act(async () => {
+      const promise = result.current.schedulePersonCommit({
+        clusterId: 'cluster-1',
+        newEntryName: 'Alex',
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await promise;
+    });
+
+    const remaining = queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey);
+    expect(remaining?.suggestions.map((s) => s.id)).toEqual(['name-other']);
   });
 });

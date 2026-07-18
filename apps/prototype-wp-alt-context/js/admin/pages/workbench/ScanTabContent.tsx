@@ -17,6 +17,7 @@ import {
   type ReviewQueueHandle,
 } from './identity-clusters';
 import { useWorkbenchFindings } from './identity-clusters/useWorkbenchFindings';
+import { useAriaAnnounce } from './identity-clusters/useAriaAnnounce';
 import { useOpenReviewTargetLifecycle } from './identity-clusters/useOpenReviewTargetLifecycle';
 import { MediaSelection } from './MediaSelection';
 import { useJobPipeline } from './JobPipelineContext';
@@ -49,8 +50,13 @@ export const ScanTabContent = (): React.JSX.Element => {
   const findingsDetailRef = React.useRef<HTMLDivElement>(null);
   const reviewQueueRef = React.useRef<ReviewQueueHandle>(null);
   // Open-target lifecycle announce (§11 / A11Y-21). Owned here so it survives
-  // the review panel's rebind remount and retirement unmount.
-  const [reviewLifecycleMessage, setReviewLifecycleMessage] = React.useState<string | null>(null);
+  // the review panel's rebind remount and retirement unmount. BR-68: seq-keyed so
+  // two consecutive identical closes both re-announce.
+  const {
+    message: reviewLifecycleMessage,
+    seq: reviewLifecycleSeq,
+    announce: announceReviewLifecycle,
+  } = useAriaAnnounce();
   const findings = useWorkbenchFindings();
 
   const focusQueueRoot = React.useCallback((): void => {
@@ -64,9 +70,12 @@ export const ScanTabContent = (): React.JSX.Element => {
   // merge, or null once retired).
   const { reviewClusterId } = useOpenReviewTargetLifecycle({
     requestedClusterId: clusterPanel.mode === 'review' ? clusterPanel.clusterId : null,
-    onAnnounce: setReviewLifecycleMessage,
+    onAnnounce: announceReviewLifecycle,
     onFocusQueueRoot: focusQueueRoot,
     onRetireClose: () => dispatchClusterPanel({ type: 'close' }),
+    // BR-66: after a merge rebind, advance the reducer to the survivor so the
+    // panel reducer and the mounted review target agree.
+    onRebindSync: (survivorId) => dispatchClusterPanel({ type: 'open_review', clusterId: survivorId }),
   });
   const [userExpandedMedia, setUserExpandedMedia] = React.useState(false);
   const previousHasFindings = React.useRef(findings.hasFindings);
@@ -163,7 +172,12 @@ export const ScanTabContent = (): React.JSX.Element => {
       <ScanScrollRestoration />
       {!scanRun.isScanning && !hasIdentities && <NoMediaPanel />}
       <ErrorBoundary>
-        <p className="acx-review-lifecycle-announce" role="status" aria-live="polite">
+        <p
+          key={reviewLifecycleSeq}
+          className="acx-review-lifecycle-announce"
+          role="status"
+          aria-live="polite"
+        >
           {reviewLifecycleMessage}
         </p>
         <div ref={findingsDetailRef} className="acx-findings-detail-anchor" tabIndex={-1}>

@@ -69,6 +69,23 @@ describe('resolveMergeSurvivor', () => {
     expect(aWinsById).toEqual({ survivorId: 'zzz', retiredId: 'aaa' });
   });
 
+  it('BR-69: matches the backend (no trim) — a whitespace-padded label is meaningful', () => {
+    // Backend `_is_meaningful_label` does not trim: '  cluster-auto' does NOT
+    // start with 'cluster-' (leading spaces), so it ranks as meaningful. The old
+    // trimming client replica disagreed and mis-picked the survivor.
+    const result = resolveMergeSurvivor(
+      base({
+        cluster_a_id: 'aaa',
+        cluster_b_id: 'bbb',
+        cluster_a_label: '  cluster-auto',
+        cluster_b_label: null,
+        cluster_a_identity_count: 1,
+        cluster_b_identity_count: 1,
+      }),
+    );
+    expect(result).toEqual({ survivorId: 'aaa', retiredId: 'bbb' });
+  });
+
   it('treats null identity counts as 0', () => {
     const result = resolveMergeSurvivor(
       base({

@@ -41,6 +41,12 @@ export interface UseOpenReviewTargetLifecycleParams {
   onFocusQueueRoot?: () => void;
   /** Reset the panel reducer to closed after a retirement close (canonical sync). */
   onRetireClose?: () => void;
+  /**
+   * BR-66: sync the panel reducer to the survivor after a rebind (canonical
+   * sync, mirroring onRetireClose). Fired post-commit — never render-phase — so
+   * it does not clobber the advanced open target.
+   */
+  onRebindSync?: (survivorClusterId: string) => void;
 }
 
 export interface UseOpenReviewTargetLifecycleResult {
@@ -53,12 +59,14 @@ export const useOpenReviewTargetLifecycle = ({
   onAnnounce,
   onFocusQueueRoot,
   onRetireClose,
+  onRebindSync,
 }: UseOpenReviewTargetLifecycleParams): UseOpenReviewTargetLifecycleResult => {
   const { resolveSurvivor } = useMergeSurvivors();
   const [openTarget, setOpenTarget] = useState<string | null>(requestedClusterId);
   const requestedRef = useRef<string | null>(requestedClusterId);
   const handledRef = useRef<string | null>(null);
   const retireCloseRef = useRef(false);
+  const rebindSyncRef = useRef<string | null>(null);
 
   // Sync user-driven open/close (reducer) into the local effective target. A
   // retirement advance below keeps `requestedRef` unchanged, so it is never
@@ -83,16 +91,26 @@ export const useOpenReviewTargetLifecycle = ({
     setOpenTarget(resolvedClusterId);
     if (resolvedClusterId === null) {
       retireCloseRef.current = true;
+    } else {
+      // BR-66: defer the reducer→survivor sync to the post-commit effect. On the
+      // next render requestedClusterId becomes the survivor (= openTarget), so
+      // the requestedRef sync above is a no-op — no clobber, no requestedRef loop.
+      rebindSyncRef.current = resolvedClusterId;
     }
   }
 
-  // Retirement close is imperative (focus + reducer reset): run after commit,
-  // where a plain call is reliable even in the act-wrapped harness.
+  // Retirement close / rebind sync are imperative (focus + reducer): run after
+  // commit, where a plain call is reliable even in the act-wrapped harness.
   useEffect(() => {
     if (retireCloseRef.current) {
       retireCloseRef.current = false;
       onFocusQueueRoot?.();
       onRetireClose?.();
+    }
+    if (rebindSyncRef.current !== null) {
+      const survivor = rebindSyncRef.current;
+      rebindSyncRef.current = null;
+      onRebindSync?.(survivor);
     }
   });
 

@@ -12,16 +12,25 @@
  */
 
 import type { PendingMergeSuggestion } from '../../../api/recognition/types';
-import { isHumanLabeledTarget } from './suggestionProjection';
+import { AUTO_LABEL_PREFIX } from './suggestionProjection';
 
 export interface MergeSurvivorResolution {
   survivorId: string;
   retiredId: string;
 }
 
-/** Meaningful label = non-empty trimmed ∧ not auto `cluster-*` (matches backend `_is_meaningful_label`). */
-export const isMeaningfulMergeLabel = (label: string | null | undefined): boolean =>
-  isHumanLabeledTarget(label);
+/**
+ * Meaningful label = non-empty ∧ not auto `cluster-*`. BR-69: mirror backend
+ * `_is_meaningful_label` byte-for-byte — it does NOT trim, so a whitespace-padded
+ * label ranks as meaningful on the server. The trimming `isHumanLabeledTarget`
+ * would disagree on padded labels and mis-rank the survivor guess.
+ */
+export const isMeaningfulMergeLabel = (label: string | null | undefined): boolean => {
+  if (!label) {
+    return false;
+  }
+  return !label.startsWith(AUTO_LABEL_PREFIX);
+};
 
 type RankTuple = readonly [number, number, string];
 

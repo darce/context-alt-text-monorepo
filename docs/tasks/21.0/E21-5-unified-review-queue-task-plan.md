@@ -298,8 +298,8 @@ Per-state single-primary gating (Analyze vs Describe) with the pinned token role
 ## Consolidated Checklist
 
 ### Checklist for Slice 1a: Queue driver contract
-- [ ] `selectNextAction` exposes ordered + filterable queue; groups flattened per-suggestion; `KIND`→chip-label map added (sr-007), no `queue_memberships` read
-- [ ] Existing consumers unchanged; zero rendered-UI diff; driver unit tests green
+- [x] `selectNextAction` exposes ordered + filterable queue; groups flattened per-suggestion; `KIND`→chip-label map added (sr-007), no `queue_memberships` read
+- [x] Existing consumers unchanged; zero rendered-UI diff; driver unit tests green
 
 ### Checklist for Slice 1b: Card-at-a-time shell swap
 - [ ] `ReviewQueue.tsx` renders exactly one card + chips + position/prev-next; reuses existing cards; index lifted to `ScanTabContent` + mirrored in `rq=` (§2), filter/hold state local; `focusCurrentCard()` ref handle; position survives a panel round-trip

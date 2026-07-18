@@ -70,6 +70,12 @@ export const useLiveReviewTarget = (
       return fetchClusterMembers(openClusterId, { limit: 1 });
     },
     enabled: openClusterId != null,
+    // BR-70: this limit:1 probe IS the criterion-4 retirement-detection
+    // mechanism — a 404 is the retirement signal. Modest staleTime/gcTime keep
+    // incidental re-renders (and brief remounts) from re-issuing it; an explicit
+    // invalidation still refetches, so a real retirement 404 still lands.
+    staleTime: 5_000,
+    gcTime: 30_000,
     // Never retry a definitive retirement 404; other errors may retry once.
     retry: (failureCount, error) => {
       if (isClusterNotFound(error)) {
@@ -90,7 +96,9 @@ export const useLiveReviewTarget = (
       return survivor;
     }
     return null;
-  }, [retired, openClusterId, existenceQuery.errorUpdatedAt]);
+    // BR-67: `retired` already recomputes on a fresh error (including
+    // re-error-after-refetch), so `errorUpdatedAt` is redundant here.
+  }, [retired, openClusterId]);
 
   const status: LiveReviewTargetStatus = !retired ? 'live' : survivorId ? 'rebound' : 'retired';
 
@@ -108,9 +116,13 @@ export const useLiveReviewTarget = (
     handledForRef.current = openClusterId;
 
     const { onAnnounce: announce, onRebind: rebind, onClose: close } = optsRef.current;
-    if (survivorId) {
+    // BR-64: only claim a rebind when this consumer can actually rebind. A queue
+    // head (onRebind undefined) owns no bound pane to advance, so the survivor is
+    // effectively gone for it — announcing the rebind copy there is a false AT
+    // claim. Fall to the honest close copy unless a real rebind sink is wired.
+    if (survivorId && rebind) {
       announce?.(__(LIVE_TARGET_REBIND_ANNOUNCE, 'alt-context'));
-      rebind?.(survivorId);
+      rebind(survivorId);
       return;
     }
     announce?.(__(LIVE_TARGET_CLOSE_ANNOUNCE, 'alt-context'));

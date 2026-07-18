@@ -118,6 +118,33 @@ describe('useLiveReviewTarget', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it('BR-64: survivor recorded but no onRebind sink announces the close copy, never the rebind claim', async () => {
+    vi.mocked(fetchClusterMembers).mockRejectedValue(notFound('cluster-x'));
+    const onAnnounce = vi.fn();
+
+    // Queue-head consumer shape: onAnnounce set, onRebind/onClose undefined. The
+    // queue owns no bound pane, so it must not claim a rebind it cannot perform.
+    const { result } = renderHook(
+      () =>
+        useLiveReviewTarget('cluster-x', {
+          resolveSurvivor: (id) => (id === 'cluster-x' ? 'cluster-survivor' : null),
+          onAnnounce,
+        }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => {
+      expect(result.current.status).toBe('rebound');
+    });
+    // Status still resolves the survivor (head suppression reads status), but the
+    // announcement is the honest close copy — never the rebind claim.
+    expect(result.current.resolvedClusterId).toBe('cluster-survivor');
+    await waitFor(() => {
+      expect(onAnnounce).toHaveBeenCalledWith(LIVE_TARGET_CLOSE_ANNOUNCE);
+    });
+    expect(onAnnounce).not.toHaveBeenCalledWith(LIVE_TARGET_REBIND_ANNOUNCE);
+  });
+
   it('branch (A): 404 without survivor closes + announces once', async () => {
     vi.mocked(fetchClusterMembers).mockRejectedValue(notFound('cluster-x'));
     const onAnnounce = vi.fn();

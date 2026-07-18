@@ -24,5 +24,8 @@ The previously-split `00`–`05` docs were merged into that one file after a heu
 - **E15** (`docs/epics/v0.4.0/…`) makes `demo.altcontext.com` live — §5 builds on it.
 - **E16 / SaaS-ops** (`docs/roadmaps/roadmap-saas-operations.md`) chose the vendor stack — §6/§7 sequence and connect it; the field-ownership map (§6.3) and CRM guidance (§6.4) are new.
 
+## Supporting analyses
+- [`inference-cost-and-unit-economics-forecast.md`](inference-cost-and-unit-economics-forecast.md) — per-image inference cost forecast (warm pre-baked images + multi-AD rotation, utilization sensitivity, CPU/GPU crossover), grounded in the VLM-6 bake-off measurements. Feeds §7 (payments/pricing — inference is ≤$0.003/img, a rounding error against price) and §12 (risks — capacity + idle-GPU spend, not inference cost).
+
 ## Canon grounding
 Strategy cites the [heuristics-canon](https://github.com/darce/heuristics-canon) lexicons by stable ID (`[GTM-01]`, `[DATA-14]`, `[COL-10]`). §0 of the plan lists what the canon review changed.

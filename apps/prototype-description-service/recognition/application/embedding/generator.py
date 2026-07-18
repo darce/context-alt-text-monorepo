@@ -166,6 +166,10 @@ class InsightFaceEmbeddingGenerator(EmbeddingGeneratorProtocol):
 
                 for face in face_results:
                     if face.embedding is None:
+                        logger.warning(
+                            "Skipping face with missing embedding for media_id=%s",
+                            media_id,
+                        )
                         continue
                     results.append(
                         EmbeddingResult(

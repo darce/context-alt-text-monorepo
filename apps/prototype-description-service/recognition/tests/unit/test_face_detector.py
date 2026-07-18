@@ -24,10 +24,12 @@ from recognition.application.embedding.detector import (
     InsightFaceFaceDetector,
     StubFaceDetector,
 )
+from recognition.application.embedding.manifest import incumbent_embedding_model_manifest
 from recognition.application.integrations import AdapterBreakerConfig, AdapterBreakerOpenError, AdapterCircuitBreaker
 from recognition.config import get_settings
 
 _EMBEDDING_DIM = get_settings().identity_detection.embedding_dimension
+_MANIFEST_MODEL_ID = incumbent_embedding_model_manifest().model_id
 
 
 def _adapter_face(
@@ -48,7 +50,7 @@ def _adapter_face(
         pose_pitch=pose_pitch,
         pose_yaw=pose_yaw,
         pose_roll=pose_roll,
-        model_id="buffalo_l@insightface",
+        model_id=_MANIFEST_MODEL_ID,
     )
 
 
@@ -137,7 +139,7 @@ class TestInsightFaceFaceDetector:
         assert detections[0].confidence == 0.95
         assert detections[0].embedding is not None
         assert detections[0].pose_pitch == 5.0
-        assert detections[0].model_id == "buffalo_l@insightface"
+        assert detections[0].model_id == _MANIFEST_MODEL_ID
         assert detections[0].landmark_quality is not None
         assert 0.0 <= detections[0].landmark_quality <= 1.0
         # FIR-2 S4: demographic attrs must stay off the seam payload.

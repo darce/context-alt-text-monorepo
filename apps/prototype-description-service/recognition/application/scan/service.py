@@ -308,6 +308,8 @@ class ScanService:
         for old_row, det in matched:
             if det.embedding is None:
                 continue
+            if not det.model_id:
+                raise ValueError("embedding_model provenance missing on FaceDetection")
             old_row.bbox_x = int(det.bbox[0])
             old_row.bbox_y = int(det.bbox[1])
             old_row.bbox_width = int(det.bbox[2] - det.bbox[0])
@@ -331,6 +333,8 @@ class ScanService:
         for det in unmatched_new:
             if det.embedding is None:
                 continue
+            if not det.model_id:
+                raise ValueError("embedding_model provenance missing on FaceDetection")
             new_rows.append(
                 MediaIdentity(
                     tenant_id=tenant_uuid,

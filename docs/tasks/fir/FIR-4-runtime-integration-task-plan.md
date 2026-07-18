@@ -123,12 +123,12 @@ Scoped TDD per slice locally (never local full-suite); `make check-remote` green
 
 ### Checklist for S5: License isolation + deps sweep
 
-- [ ] Extras: `[face]` → `[bench]` rename (insightface), `[gpu]` = onnxruntime-gpu only; every `[face]` consumer updated (README, setup.sh, Dockerfile, docs)
-- [ ] Dockerfile installs `".[bench]"` — insightface **remains** in the prod image (dark default requires it; removal is FIR-6); default target boot asserted
-- [ ] `fetch_face_pipeline_models.py --verify-only` added (exit non-zero on missing/tampered); wired into dev/eval provisioning + deploy runbook, **not** the image build (image ships no face_pipeline models in FIR-4)
-- [ ] `install_insightface_mac.sh` replaced by face_pipeline fetch flow; install strings referencing non-existent `[local]` extra corrected (deps/services.py:408, embeddings/__init__.py:66)
-- [ ] Docs/runbooks sweep: grep for buffalo/insightface/`[face]`/`[local]` clean or explicitly bench-annotated; `uv sync` matrix (default, `[bench]`, `[gpu]`) resolves
-- [ ] Image ORT smoke: image build prints `onnxruntime.__version__`, fails outside the S1-evidenced minor line; version recorded in close decision ([SERVE-07])
+- [x] Extras: `[face]` → `[bench]` rename (insightface), `[gpu]` = onnxruntime-gpu only; every `[face]` consumer updated (README, setup.sh, Dockerfile, docs)
+- [x] Dockerfile installs `".[bench]"` — insightface **remains** in the prod image (dark default requires it; removal is FIR-6); default target boot asserted
+- [x] `fetch_face_pipeline_models.py --verify-only` added (exit non-zero on missing/tampered); wired into dev/eval provisioning + deploy runbook, **not** the image build (image ships no face_pipeline models in FIR-4)
+- [x] `install_insightface_mac.sh` replaced by face_pipeline fetch flow; install strings referencing non-existent `[local]` extra corrected (deps/services.py:408, embeddings/__init__.py:66)
+- [x] Docs/runbooks sweep: grep for buffalo/insightface/`[face]`/`[local]` clean or explicitly bench-annotated; `uv sync` matrix (default, `[bench]`, `[gpu]`) resolves
+- [x] Image ORT smoke: image build prints `onnxruntime.__version__`, fails outside the S1-evidenced minor line; version recorded in close decision ([SERVE-07])
 
 ### Review Readiness
 

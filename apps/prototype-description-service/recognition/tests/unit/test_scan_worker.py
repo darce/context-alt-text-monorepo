@@ -80,7 +80,7 @@ async def test_scan_worker_reuses_shared_insightface_adapter(monkeypatch: pytest
     adapter = object()
     calls = 0
 
-    async def _fake_build_embedding_runtime(*, settings, http_client=None, adapter_provider=None):
+    async def _fake_build_embedding_runtime(*, settings, http_client=None, adapter_provider=None, metrics=None, **_kwargs):
         nonlocal calls
         calls += 1
         return _FakeDetector(adapter, client=http_client), _FakeGenerator(adapter)
@@ -119,7 +119,7 @@ async def test_scan_worker_retries_runtime_init_after_failure(monkeypatch: pytes
 
     calls = 0
 
-    async def _failing_build(*, settings, http_client=None, adapter_provider=None):
+    async def _failing_build(*, settings, http_client=None, adapter_provider=None, metrics=None, **_kwargs):
         nonlocal calls
         calls += 1
         return (
@@ -279,7 +279,7 @@ async def test_scan_handler_keeps_object_store_factory_after_embedding_init(
     strings to the detector and worker-side cleanup is silently disabled.
     """
 
-    async def _fake_build(*, settings, http_client=None, adapter_provider=None):
+    async def _fake_build(*, settings, http_client=None, adapter_provider=None, metrics=None, **_kwargs):
         return _FakeDetector(object(), client=http_client), _FakeGenerator(object())
 
     monkeypatch.setattr(
@@ -323,7 +323,7 @@ async def test_scan_handler_factory_persists_through_embedding_failure_fallback(
     factory must survive that failure rebuild as well — otherwise a
     transient adapter failure permanently disables multipart support."""
 
-    async def _failing_build(*, settings, http_client=None, adapter_provider=None):
+    async def _failing_build(*, settings, http_client=None, adapter_provider=None, metrics=None, **_kwargs):
         from recognition.application.embedding.detector import UnavailableFaceDetector
         from recognition.application.embedding.generator import UnavailableEmbeddingGenerator
 

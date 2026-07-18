@@ -198,22 +198,34 @@ def reset_face_pipeline_pool_for_tests() -> None:
     reconfigure_face_pipeline_pool_from_settings()
 
 
-def _observe_face_pipeline_submit_wait(wait_s: float) -> None:
-    """Record admission wait (success or timeout) via late-bound metrics seam."""
+def _observe_submit_wait(metrics: Any | None, wait_s: float) -> None:
+    """Record admission wait on an injected observer; never raise to detect path."""
+    if metrics is None:
+        return
     try:
-        from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
-
-        get_default_metrics().face_pipeline_submit_wait_seconds.observe(float(wait_s))
+        observe = getattr(metrics, "observe_submit_wait", None)
+        if callable(observe):
+            observe(float(wait_s))
+            return
+        hist = getattr(metrics, "face_pipeline_submit_wait_seconds", None)
+        if hist is not None:
+            hist.observe(float(wait_s))
     except Exception:  # pragma: no cover - metrics must never break detect path
         logger.debug("face_pipeline submit wait metric observe failed", exc_info=True)
 
 
-def _observe_face_pipeline_admission_timeout() -> None:
-    """Increment admission-timeout counter via late-bound metrics seam."""
+def _observe_admission_timeout(metrics: Any | None) -> None:
+    """Increment admission-timeout counter on injected observer; never raise."""
+    if metrics is None:
+        return
     try:
-        from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
-
-        get_default_metrics().face_pipeline_admission_timeouts_total.inc()
+        record = getattr(metrics, "record_admission_timeout", None)
+        if callable(record):
+            record()
+            return
+        counter = getattr(metrics, "face_pipeline_admission_timeouts_total", None)
+        if counter is not None:
+            counter.inc()
     except Exception:  # pragma: no cover - metrics must never break detect path
         logger.debug("face_pipeline admission timeout metric inc failed", exc_info=True)
 
@@ -540,6 +552,7 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
         breaker: AdapterCircuitBreaker | None = None,
         executor: ThreadPoolExecutor | None = None,
         submit_semaphore: asyncio.Semaphore | FacePipelineAdmissionGate | None = None,
+        metrics: Any | None = None,
     ) -> None:
         assert_three_way_embedding_dimensions(runtime.manifest)
         self._runtime = runtime
@@ -558,6 +571,8 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
         else:
             _exec, gate = _ensure_face_pipeline_pool()
             self._submit_semaphore = gate
+        # Injected process-local observer (FINALB-06). No HTTP middleware import.
+        self._metrics = metrics
 
     async def _fetch_image(self, url: str) -> bytes | None:
         """Fetch image bytes from a URL (mirrors InsightFaceFaceDetector)."""
@@ -746,8 +761,8 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
                     wait_started = time.perf_counter()
                     admit_budget = _remaining()
                     if admit_budget <= 0:
-                        _observe_face_pipeline_submit_wait(0.0)
-                        _observe_face_pipeline_admission_timeout()
+                        _observe_submit_wait(self._metrics, 0.0)
+                        _observe_admission_timeout(self._metrics)
                         _raise_timeout()
                     try:
                         await self._acquire_admission(admit_budget)
@@ -755,11 +770,11 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
                         # Never acquired: do not release. Cancellation of the wait
                         # must not over-release ([RES-15]). Record wait + timeout.
                         wait_s = time.perf_counter() - wait_started
-                        _observe_face_pipeline_submit_wait(wait_s)
-                        _observe_face_pipeline_admission_timeout()
+                        _observe_submit_wait(self._metrics, wait_s)
+                        _observe_admission_timeout(self._metrics)
                         _raise_timeout(exc)
                     wait_s = time.perf_counter() - wait_started
-                    _observe_face_pipeline_submit_wait(wait_s)
+                    _observe_submit_wait(self._metrics, wait_s)
                     if wait_s > 0.05:
                         logger.info(
                             "face_pipeline submit queue wait %.0fms",

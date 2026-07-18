@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 import httpx
+from prometheus_client import start_http_server
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -39,6 +41,7 @@ from recognition.config import get_settings as get_recognition_settings
 from recognition.domain.job import CLUSTERING_JOB_TYPES, JobStatus
 from recognition.infrastructure.embeddings.runtime_factory import build_embedding_runtime
 from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
+from recognition.observability.face_pipeline_metrics import FacePipelineMetrics
 from recognition.worker.handlers.clustering import ClusteringJobHandler, CurationJobHandler, SplitJobHandler
 from recognition.worker.handlers.scan import ScanItemHandler
 from recognition.worker.handlers.utils import ensure_job_context
@@ -49,6 +52,39 @@ logger = logging.getLogger(__name__)
 # ANALYZE). Sourced from the canonical CLUSTERING_JOB_TYPES frozenset; sorted to
 # bind deterministically in the SQL `IN` filter (sr-007 single source of truth).
 _CLUSTERING_JOB_TYPE_VALUES: tuple[str, ...] = tuple(sorted(t.value for t in CLUSTERING_JOB_TYPES))
+
+# Process-wide guard: outer restart loop must not re-bind the metrics port.
+_METRICS_EXPORTER_STARTED = False
+_DEFAULT_WORKER_METRICS_PORT = 9108
+
+
+def _resolve_worker_metrics_port() -> int:
+    """Parse RECOGNITION_SCAN_WORKER_METRICS_PORT (default 9108); range 1..65535."""
+    raw = os.getenv("RECOGNITION_SCAN_WORKER_METRICS_PORT", str(_DEFAULT_WORKER_METRICS_PORT))
+    try:
+        port = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Invalid RECOGNITION_SCAN_WORKER_METRICS_PORT={raw!r}; must be an integer 1..65535"
+        ) from exc
+    if port < 1 or port > 65535:
+        raise ValueError(
+            f"Invalid RECOGNITION_SCAN_WORKER_METRICS_PORT={port}; must be in range 1..65535"
+        )
+    return port
+
+
+def _resolve_worker_metrics_export_enabled() -> bool:
+    """Explicit export switch; default on. Set 0/false/no/off to disable."""
+    raw = os.getenv("RECOGNITION_SCAN_WORKER_METRICS_EXPORT_ENABLED", "1").strip().lower()
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    raise ValueError(
+        f"Invalid RECOGNITION_SCAN_WORKER_METRICS_EXPORT_ENABLED={raw!r}; "
+        "use 1/true/yes/on or 0/false/no/off"
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +98,16 @@ class ScanWorkerConfig:
     stale_after_seconds: int = 600
     max_attempts: int = 3
     mv_refresh_interval_seconds: int = 60
+    # FINALB-06: process-local Prometheus exporter (validated 1..65535).
+    metrics_port: int = field(default_factory=_resolve_worker_metrics_port)
+    # Explicit disable only — never silently omit export (OBS-08).
+    metrics_export_enabled: bool = field(default_factory=_resolve_worker_metrics_export_enabled)
+
+    def __post_init__(self) -> None:
+        port = int(self.metrics_port)
+        if port < 1 or port > 65535:
+            raise ValueError(f"metrics_port={port} out of range; must be 1..65535")
+        object.__setattr__(self, "metrics_port", port)
 
 
 class ScanWorker:
@@ -86,6 +132,9 @@ class ScanWorker:
         self._generator: EmbeddingGeneratorProtocol = StubEmbeddingGenerator()
         self._embedding_runtime_ready = False
         self._embedding_retry_after: datetime | None = None
+        # Process-local face_pipeline metrics (not the API registry).
+        self._face_pipeline_metrics = FacePipelineMetrics()
+        self._metrics_exporter_started = False
 
         settings = get_recognition_settings()
         self._runtime_mode = settings.runtime_mode
@@ -132,8 +181,36 @@ class ScanWorker:
             "clustering": ClusteringJobHandler(session_factory=self._session_factory),
         }
 
+    def start_metrics_exporter(self) -> None:
+        """Start process-local Prometheus HTTP exporter once (FINALB-06).
+
+        Uses ``prometheus_client.start_http_server`` with this worker's
+        ``FacePipelineMetrics`` registry. Skips when export is explicitly
+        disabled. Process-wide guard prevents duplicate port bind across the
+        outer restart loop.
+        """
+        global _METRICS_EXPORTER_STARTED
+        if not self._config.metrics_export_enabled:
+            logger.info(
+                "[worker] metrics export disabled (RECOGNITION_SCAN_WORKER_METRICS_EXPORT_ENABLED)"
+            )
+            return
+        if self._metrics_exporter_started or _METRICS_EXPORTER_STARTED:
+            return
+        start_http_server(
+            int(self._config.metrics_port),
+            registry=self._face_pipeline_metrics.registry,
+        )
+        self._metrics_exporter_started = True
+        _METRICS_EXPORTER_STARTED = True
+        logger.info(
+            "[worker] Prometheus metrics exporter listening on port %s",
+            self._config.metrics_port,
+        )
+
     async def __aenter__(self) -> ScanWorker:
         """Prepare worker resources."""
+        self.start_metrics_exporter()
         await self._ensure_embedding_runtime()
         await self._heartbeat_embedding_runtime_capability()
         return self
@@ -219,6 +296,7 @@ class ScanWorker:
         self._detector, self._generator = await build_embedding_runtime(
             settings=settings,
             http_client=self._http_client,
+            metrics=self._face_pipeline_metrics,
         )
         if isinstance(self._detector, UnavailableFaceDetector):
             self._embedding_runtime_ready = False

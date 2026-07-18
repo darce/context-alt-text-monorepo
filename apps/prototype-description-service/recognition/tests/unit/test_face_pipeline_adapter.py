@@ -1213,6 +1213,7 @@ async def test_submit_wait_and_admission_timeout_metrics_observed(
         timeout=timeout_s,
         executor=executor,
         submit_semaphore=semaphore,
+        metrics=isolated.face_pipeline,
     )
     monkeypatch.setattr(det, "_detect_sync", slow_detect)
     payload = _png_bytes(Image.new("RGB", (4, 4), color=(41, 42, 43)))

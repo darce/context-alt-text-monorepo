@@ -157,7 +157,7 @@ export const IdentityClusterItem = ({
     onAbort: resetSaveStatus,
   });
 
-  const { handleCancel, handleConfirmSuggestion, handleSave } = useClusterSaveHandlers({
+  const { handleCancel, handleConfirmSuggestion, handleSave, handlePersonSelect } = useClusterSaveHandlers({
     clusterLabel: cluster.label,
     members: cluster.members,
     editableClusterId,
@@ -339,6 +339,7 @@ export const IdentityClusterItem = ({
             isLoading={suggestionsLoading}
             isPending={mutations.isPending || saveStatus !== 'idle'}
             onSave={(labelOverride) => void handleSave(labelOverride)}
+            onPersonSelect={handlePersonSelect}
             onConfirmSuggestion={(clusterId, label) => void handleConfirmSuggestion(clusterId, label)}
             onCancel={handleCancel}
             onRejectSuggestion={(suggestionId) => mutations.rejectSuggestion(suggestionId)}

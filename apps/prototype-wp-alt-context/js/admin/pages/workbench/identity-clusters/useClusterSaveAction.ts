@@ -9,8 +9,10 @@ import type { ComboboxOption } from '../../../../components/ui/combobox';
 import type { ClusterGroup } from './types';
 import type { SaveDialogAction } from './useClusterConfirmDialog';
 import type { SaveStatus } from './useClusterSaveStatus';
-import { useClusterMatchAction } from './useClusterMatchAction';
+import { useClusterMatchAction, type ClusterLabelMatch } from './useClusterMatchAction';
 import { filterEditableClusterMatch } from './utils';
+
+export type { ClusterLabelMatch };
 
 interface ClusterSaveMutations {
   isPending: boolean;
@@ -28,11 +30,11 @@ interface UseClusterSaveActionOptions {
   canEdit: boolean;
   canSearchForMatch: boolean;
   labelInput: string;
-  matchedCluster: { id: string; label: string } | null;
+  matchedCluster: ClusterLabelMatch | null;
   options: ComboboxOption[];
   saveStatus: SaveStatus;
   mutations: ClusterSaveMutations;
-  findClusterByLabel: (label: string, signal?: AbortSignal) => Promise<{ id: string; label: string } | null>;
+  findClusterByLabel: (label: string, signal?: AbortSignal) => Promise<ClusterLabelMatch | null>;
   requestConfirm: (action: SaveDialogAction, label: string) => Promise<boolean>;
   cancelEditing: () => void;
   setError: (message: string) => void;
@@ -40,6 +42,21 @@ interface UseClusterSaveActionOptions {
   resetSaveStatus: () => void;
   saveAbortRef: React.MutableRefObject<AbortController | null>;
 }
+
+/**
+ * Resolve a person-source option matching the typed label (case-insensitive).
+ * Person rows win over same-named clusters so free-text never silent-merges.
+ */
+export const findPersonOptionLabel = (options: readonly ComboboxOption[], label: string): string | null => {
+  const normalized = label.toLowerCase().trim();
+  if (!normalized) {
+    return null;
+  }
+  const person = options.find(
+    (option) => option.source === 'person' && option.label.toLowerCase().trim() === normalized,
+  );
+  return person?.label ?? null;
+};
 
 export const useClusterSaveAction = ({
   clusterLabel,
@@ -69,6 +86,94 @@ export const useClusterSaveAction = ({
     mutations,
     requestConfirm,
   });
+
+  /**
+   * Explicit person-source path: rename/create only — never findClusterByLabel / merge / assign.
+   */
+  const applyPersonLabel = React.useCallback(
+    (label: string, abortController: AbortController): boolean => {
+      const trimmed = label.trim();
+      if (!trimmed) {
+        setError(__('Provide a label before saving.', 'alt-context'));
+        return false;
+      }
+      if (editableClusterId) {
+        mutations.rename(trimmed, abortController.signal);
+        return true;
+      }
+      if (anchorIdentityId) {
+        mutations.createClusterForIdentity(anchorIdentityId, trimmed, abortController.signal);
+        return true;
+      }
+      setError(__('Cannot create cluster: no identity ID', 'alt-context'));
+      return false;
+    },
+    [anchorIdentityId, editableClusterId, mutations, setError],
+  );
+
+  const handlePersonSelect = React.useCallback(
+    (label: string) => {
+      if (saveStatus !== 'idle' || mutations.isPending) {
+        return;
+      }
+      if (!canEdit && !canSearchForMatch) {
+        return;
+      }
+
+      const canonical = label.trim();
+      if (!canonical) {
+        setError(__('Provide a label before saving.', 'alt-context'));
+        return;
+      }
+
+      const currentLabel = clusterLabel ?? '';
+      if (currentLabel.toLowerCase() === canonical.toLowerCase()) {
+        cancelEditing();
+        return;
+      }
+
+      if (saveAbortRef.current) {
+        saveAbortRef.current.abort();
+      }
+      const abortController = new AbortController();
+      saveAbortRef.current = abortController;
+
+      queueSaveStatus();
+      let mutationStarted = false;
+      try {
+        mutationStarted = applyPersonLabel(canonical, abortController);
+        if (!mutationStarted) {
+          resetSaveStatus();
+        }
+      } catch (err) {
+        if (err && typeof err === 'object' && 'name' in err && (err as { name: string }).name === 'AbortError') {
+          resetSaveStatus();
+          return;
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        setError(message);
+        resetSaveStatus();
+      } finally {
+        if (!mutationStarted) {
+          saveAbortRef.current = null;
+          resetSaveStatus();
+        }
+      }
+    },
+    [
+      applyPersonLabel,
+      canEdit,
+      canSearchForMatch,
+      cancelEditing,
+      clusterLabel,
+      mutations.isPending,
+      queueSaveStatus,
+      resetSaveStatus,
+      saveAbortRef,
+      saveStatus,
+      setError,
+    ],
+  );
 
   const handleSave = React.useCallback(
     async (labelOverride?: string) => {
@@ -101,6 +206,17 @@ export const useClusterSaveAction = ({
       queueSaveStatus();
       let mutationStarted = false;
       try {
+        // Free-typed text that case-insensitively matches a person option → rename/create
+        // with canonical person casing (never merge into a same-named cluster).
+        const personCanonical = findPersonOptionLabel(options, trimmed);
+        if (personCanonical) {
+          mutationStarted = applyPersonLabel(personCanonical, abortController);
+          if (!mutationStarted) {
+            resetSaveStatus();
+          }
+          return;
+        }
+
         let match = filterEditableClusterMatch(matchedCluster, editableClusterId);
         if (match?.label.toLowerCase() !== trimmed.toLowerCase()) {
           match = filterEditableClusterMatch(
@@ -126,15 +242,8 @@ export const useClusterSaveAction = ({
             return;
           }
         } else {
-          if (editableClusterId) {
-            mutationStarted = true;
-            mutations.rename(trimmed, abortController.signal);
-          } else if (anchorIdentityId) {
-            mutationStarted = true;
-            mutations.createClusterForIdentity(anchorIdentityId, trimmed, abortController.signal);
-          } else {
-            const message = __('Cannot create cluster: no identity ID', 'alt-context');
-            setError(message);
+          mutationStarted = applyPersonLabel(trimmed, abortController);
+          if (!mutationStarted) {
             resetSaveStatus();
           }
         }
@@ -154,7 +263,7 @@ export const useClusterSaveAction = ({
       }
     },
     [
-      anchorIdentityId,
+      applyPersonLabel,
       canEdit,
       canSearchForMatch,
       cancelEditing,
@@ -164,6 +273,7 @@ export const useClusterSaveAction = ({
       labelInput,
       matchedCluster,
       mutations,
+      options,
       queueSaveStatus,
       resetSaveStatus,
       saveAbortRef,
@@ -182,5 +292,5 @@ export const useClusterSaveAction = ({
     cancelEditing();
   }, [cancelEditing, resetSaveStatus, saveAbortRef]);
 
-  return { handleSave, handleCancel };
+  return { handleSave, handleCancel, handlePersonSelect };
 };

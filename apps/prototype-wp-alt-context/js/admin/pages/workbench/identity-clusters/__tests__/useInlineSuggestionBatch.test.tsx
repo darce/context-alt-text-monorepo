@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useInlineSuggestionBatch } from '../useInlineSuggestionBatch';
 import { PROJECTION_TOP_K } from '../suggestionProjection';
+import { suggestionProjectionMatrix } from './suggestionProjection.fixtures';
 import * as recognitionApi from '../../../../api/recognition';
 
 vi.mock('../../../../api/recognition', () => ({
@@ -96,7 +97,8 @@ describe('useInlineSuggestionBatch', () => {
     expect(result.current.getMatch(undefined)).toBeUndefined();
   });
 
-  it('surfaces an auto cluster-* labeled match (commit-1 truthy eligibility characterization)', async () => {
+  it('excludes auto cluster-* labeled matches via isHumanLabeledTarget', async () => {
+    // Expected first failure under commit-1 predicate: expected undefined, received ProjectedSuggestion with label 'cluster-1234'
     const fetchMock = vi.mocked(recognitionApi.fetchIdentitiesSuggestions);
     fetchMock.mockResolvedValue({
       matches: {
@@ -107,8 +109,44 @@ describe('useInlineSuggestionBatch', () => {
     const { wrapper } = createWrapper();
     const { result } = renderHook(() => useInlineSuggestionBatch(['a']), { wrapper });
 
-    // Commit-1 keeps truthy-label eligibility: auto labels still surface.
-    await waitFor(() => expect(result.current.getMatch('a')?.label).toBe('cluster-1234'));
-    expect(result.current.getMatch('a')?.clusterId).toBe('cluster-1234');
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(result.current.getMatch('a')).toBeUndefined();
+  });
+
+  it('surfaces first human-labeled match inside PROJECTION_TOP_K window (clusterFirstThenHuman)', async () => {
+    // Expected first failure under commit-1: getMatch label is 'cluster-auto-1' (truthy auto rank-1), not 'Bob'
+    const { identityId, matches, expectedIdentityTopSuggestionId } = suggestionProjectionMatrix.clusterFirstThenHuman;
+    const fetchMock = vi.mocked(recognitionApi.fetchIdentitiesSuggestions);
+    fetchMock.mockResolvedValue({
+      matches: {
+        [identityId]: [...matches],
+      },
+    });
+
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useInlineSuggestionBatch([identityId]), { wrapper });
+
+    await waitFor(() =>
+      expect(result.current.getMatch(identityId)?.suggestionId).toBe(expectedIdentityTopSuggestionId),
+    );
+    expect(result.current.getMatch(identityId)?.label).toBe('Bob');
+    expect(result.current.getMatch(identityId)?.suggestionId).toBe('sug-cf-3');
+  });
+
+  it('returns no prompt when the entire PROJECTION_TOP_K window is ineligible (allIneligibleWindow)', async () => {
+    // Expected first failure under commit-1: getMatch is defined (auto/blank first row still truthy-or-auto), not undefined
+    const { identityId, matches } = suggestionProjectionMatrix.allIneligibleWindow;
+    const fetchMock = vi.mocked(recognitionApi.fetchIdentitiesSuggestions);
+    fetchMock.mockResolvedValue({
+      matches: {
+        [identityId]: [...matches],
+      },
+    });
+
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useInlineSuggestionBatch([identityId]), { wrapper });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(result.current.getMatch(identityId)).toBeUndefined();
   });
 });

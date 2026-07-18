@@ -154,6 +154,7 @@ const makeFindingsViewModel = (overrides: Partial<WorkbenchFindingsViewModel> = 
   isUnavailable: false,
   isReadOnly: false,
   nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.EMPTY },
+  queue: [],
   ...overrides,
 });
 

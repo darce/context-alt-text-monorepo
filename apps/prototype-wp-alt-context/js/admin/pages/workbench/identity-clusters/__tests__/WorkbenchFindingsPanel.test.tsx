@@ -57,6 +57,7 @@ const makeViewModel = (overrides: Partial<WorkbenchFindingsViewModel> = {}): Wor
   isUnavailable: false,
   isReadOnly: false,
   nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.EMPTY },
+  queue: [],
   ...overrides,
 });
 

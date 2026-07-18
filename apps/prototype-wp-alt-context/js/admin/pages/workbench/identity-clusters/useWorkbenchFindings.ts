@@ -3,44 +3,49 @@
  *
  * Combines assignment, merge, and name suggestions plus top unlabeled
  * clusters into one summary with a deterministic primary next action.
+ * E21-5 Slice 1a: nextAction is the head of the ordered review queue.
  */
 
 import { DATA_SOURCE, type DataSource } from '../../../api/recognition/types/dataSource';
 import type { PendingMergeSuggestion, PendingNameSuggestion } from '../../../api/recognition/types';
 import type { TopUnlabeledCluster } from '../../../api/recognition/types/cluster';
 import type { SuggestionReviewItem } from './SuggestionCards';
+import {
+  buildReviewQueue,
+  emptyNextAction,
+  NEXT_ACTION_CHIP_LABEL,
+  NEXT_ACTION_KIND,
+  NONE_REASON,
+  queueItemToNextAction,
+  type NextActionKind,
+  type NoneReason,
+  type ReviewQueueFilter,
+  type ReviewQueueItem,
+  type WorkbenchNextAction,
+} from './reviewQueue';
 import { useSuggestionReviewQueries } from './useSuggestionReviewQueries';
 
-export const NEXT_ACTION_KIND = {
-  ASSIGNMENT: 'assignment',
-  MERGE: 'merge',
-  NAME: 'name',
-  CLUSTER: 'cluster',
-  NONE: 'none',
-} as const;
+export {
+  NEXT_ACTION_CHIP_LABEL,
+  NEXT_ACTION_KIND,
+  NONE_REASON,
+  type NextActionKind,
+  type NoneReason,
+  type ReviewQueueFilter,
+  type ReviewQueueItem,
+  type WorkbenchNextAction,
+};
 
-export type NextActionKind = (typeof NEXT_ACTION_KIND)[keyof typeof NEXT_ACTION_KIND];
-
-export const NONE_REASON = {
-  LOADING: 'loading',
-  ERROR: 'error',
-  UNAVAILABLE: 'unavailable',
-  EMPTY: 'empty',
-} as const;
-
-export type NoneReason = (typeof NONE_REASON)[keyof typeof NONE_REASON];
-
-export type WorkbenchNextAction =
-  | {
-      kind: typeof NEXT_ACTION_KIND.ASSIGNMENT;
-      suggestionId: string;
-      clusterId: string | null;
-      label: string | null;
-    }
-  | { kind: typeof NEXT_ACTION_KIND.MERGE; suggestionId: string }
-  | { kind: typeof NEXT_ACTION_KIND.NAME; suggestionId: string; clusterId: string }
-  | { kind: typeof NEXT_ACTION_KIND.CLUSTER; clusterId: string }
-  | { kind: typeof NEXT_ACTION_KIND.NONE; reason: NoneReason };
+// Re-export pure driver surface for consumers that already import from this module.
+export {
+  buildReviewQueue,
+  clampQueueIndex,
+  nextQueueIndex,
+  prevQueueIndex,
+  removeAtQueueIndex,
+  REVIEW_QUEUE_FILTER,
+  queueItemToNextAction,
+} from './reviewQueue';
 
 export interface WorkbenchFindingsCounts {
   assignments: number;
@@ -84,7 +89,14 @@ export interface WorkbenchFindingsViewModel {
   isError: boolean;
   isUnavailable: boolean;
   isReadOnly: boolean;
+  /** Head of the ordered review queue (same as queue[0] when non-empty). */
   nextAction: WorkbenchNextAction;
+  /**
+   * Full ordered, unfiltered review queue (groups flattened per-suggestion).
+   * Filter with `buildReviewQueue(..., filter)` — not applied here so existing
+   * consumers of nextAction keep default priority semantics.
+   */
+  queue: ReviewQueueItem[];
 }
 
 const PREVIEW_LIMIT = 6;
@@ -92,55 +104,23 @@ const PREVIEW_LIMIT = 6;
 const sortClustersBySize = (clusters: TopUnlabeledCluster[]): TopUnlabeledCluster[] =>
   [...clusters].sort((a, b) => b.identity_count - a.identity_count);
 
-const assignmentAction = (item: SuggestionReviewItem): WorkbenchNextAction => {
-  if (item.type === 'group') {
-    return {
-      kind: NEXT_ACTION_KIND.ASSIGNMENT,
-      suggestionId: item.suggestions[0].suggestionId,
-      clusterId: item.clusterId,
-      label: item.label,
-    };
-  }
-  return {
-    kind: NEXT_ACTION_KIND.ASSIGNMENT,
-    suggestionId: item.suggestion.suggestionId,
-    clusterId: item.suggestion.clusterId,
-    label: item.suggestion.label ?? item.suggestion.enrichment?.suggestedLabel ?? null,
-  };
-};
-
 const selectNextAction = (
-  queues: WorkbenchFindingsQueues,
+  queue: readonly ReviewQueueItem[],
   state: { isLoading: boolean; isError: boolean; isUnavailable: boolean },
-  sortedClusters: TopUnlabeledCluster[],
 ): WorkbenchNextAction => {
-  // reviewItems are pre-sorted by descending score in buildSuggestionReviewItems.
-  if (queues.reviewItems.length > 0) {
-    return assignmentAction(queues.reviewItems[0]);
-  }
-  if (queues.mergeSuggestions.length > 0) {
-    return { kind: NEXT_ACTION_KIND.MERGE, suggestionId: queues.mergeSuggestions[0].id };
-  }
-  if (queues.nameSuggestions.length > 0) {
-    return {
-      kind: NEXT_ACTION_KIND.NAME,
-      suggestionId: queues.nameSuggestions[0].id,
-      clusterId: queues.nameSuggestions[0].cluster_id,
-    };
-  }
-  if (sortedClusters.length > 0) {
-    return { kind: NEXT_ACTION_KIND.CLUSTER, clusterId: sortedClusters[0].id };
+  if (queue.length > 0) {
+    return queueItemToNextAction(queue[0]);
   }
   if (state.isLoading) {
-    return { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.LOADING };
+    return emptyNextAction(NONE_REASON.LOADING);
   }
   if (state.isError) {
-    return { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR };
+    return emptyNextAction(NONE_REASON.ERROR);
   }
   if (state.isUnavailable) {
-    return { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.UNAVAILABLE };
+    return emptyNextAction(NONE_REASON.UNAVAILABLE);
   }
-  return { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.EMPTY };
+  return emptyNextAction(NONE_REASON.EMPTY);
 };
 
 const collectPreviews = (
@@ -216,6 +196,12 @@ export const buildWorkbenchFindings = (
     state.topUnlabeledDataSource === DATA_SOURCE.BACKEND_PROXY;
 
   const sortedClusters = sortClustersBySize(queues.topUnlabeledClusters);
+  const queue = buildReviewQueue({
+    reviewItems: queues.reviewItems,
+    mergeSuggestions: queues.mergeSuggestions,
+    nameSuggestions: queues.nameSuggestions,
+    sortedClusters,
+  });
 
   return {
     counts,
@@ -225,11 +211,12 @@ export const buildWorkbenchFindings = (
     isError: state.isError,
     isUnavailable,
     isReadOnly,
-    nextAction: selectNextAction(
-      queues,
-      { isLoading: state.isLoading, isError: state.isError, isUnavailable },
-      sortedClusters,
-    ),
+    queue,
+    nextAction: selectNextAction(queue, {
+      isLoading: state.isLoading,
+      isError: state.isError,
+      isUnavailable,
+    }),
   };
 };
 

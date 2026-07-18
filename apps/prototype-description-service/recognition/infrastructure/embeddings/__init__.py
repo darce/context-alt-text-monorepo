@@ -63,7 +63,9 @@ class InsightFaceAdapter:
                 from insightface.app import FaceAnalysis
             except ModuleNotFoundError as exc:
                 raise RuntimeError(
-                    "InsightFace is not installed. Install with: pip install 'prototype-description-service[local]'"
+                    "InsightFace is not installed. Install with: pip install 'prototype-description-service[bench]' "
+                    "(or: uv sync --extra bench). Required for the incumbent dark-default profile; "
+                    "face_pipeline uses core deps + scripts/fetch_face_pipeline_models.py."
                 ) from exc
 
             model_name = self.settings.insightface.model_name

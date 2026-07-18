@@ -36,3 +36,7 @@ Caddyfile
 # Documentation
 README.md
 Makefile
+
+# Face-pipeline ONNX weights are operator-provisioned at deploy (not baked in).
+# Keep LICENSE.* + README under recognition/infrastructure/face_pipeline/models/.
+recognition/infrastructure/face_pipeline/models/*.onnx

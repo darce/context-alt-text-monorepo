@@ -347,10 +347,10 @@ Per-state single-primary gating (Analyze vs Describe) with the pinned token role
 - [x] Matrix M2 green (band filter × bulk intersection); no policy re-derivation — contract imports only [REF-16]
 
 ### Checklist for Slice 7: Open-target lifecycle (⑤ / B1)
-- [ ] PA-06 recorded: built in E21-5 ⑤; E15-23 transfer note landed in that plan's intake (one build surface, never two)
-- [ ] Current stale-membership behavior characterized before the flip [TEST-03]
-- [ ] Local merge → rebind via the mutation response's survivor id; remote/no-survivor retirement → close + announce (A11Y-21) + focus to queue root — both unit-tested (invariant split A/B per §11)
-- [ ] FBT-1 criterion 4 assertion green (open pane never shows retired/stale membership after any merge)
+- [x] PA-06 recorded: built in E21-5 ⑤; E15-23 transfer note landed in that plan's intake (one build surface, never two)
+- [x] Current stale-membership behavior characterized before the flip [TEST-03]
+- [x] Local merge → rebind via the mutation response's survivor id; remote/no-survivor retirement → close + announce (A11Y-21) + focus to queue root — both unit-tested (invariant split A/B per §11)
+- [x] FBT-1 criterion 4 assertion green (open pane never shows retired/stale membership after any merge)
 
 ### Checklist for Slice 8: CTA hierarchy + state matrix
 - [ ] One primary CTA per screen state — state-driven, expressed via the pinned token roles (accent bg + contrast text + semibold vs neutral/ghost)

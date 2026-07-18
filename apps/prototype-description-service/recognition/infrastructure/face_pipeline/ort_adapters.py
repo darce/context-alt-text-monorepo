@@ -2,8 +2,8 @@
 
 Production path with semantics pinned to OpenCV reference (S2):
 - YuNet post-process ports OpenCV ``FaceDetectorYNImpl::postProcess``
-  (strides 8/16/32, score = sqrt(cls·obj) with upper-only clamp, bbox/kps
-  decode, FaceDetectorYN NMS).
+  (strides 8/16/32, score = sqrt(cls·obj) with cls/obj clamped to [0,1]
+  before sqrt, bbox/kps decode, FaceDetectorYN NMS).
 - SFace preprocessing matches ``FaceRecognizerSFImpl::feature``:
   ``blobFromImage(crop, 1, Size(112,112), Scalar(0,0,0), swapRB=true)``
   i.e. BGR→RGB, scale=1.0, mean=0, NCHW float32 — verified empirically
@@ -122,10 +122,12 @@ def decode_yunet_level(
 ) -> list[RawDetection]:
     """Decode one YuNet FPN level into pre-NMS detections (vectorized numpy).
 
-    Score: ``sqrt(min(cls,1) * min(obj,1))`` — OpenCV FaceDetectorYN upper-only
-    ``MIN(x, 1.f)`` (no lower clamp; BR-06). Bbox: center/size prior decode with
-    exp on w/h; landmarks offset by grid cell. Survivors only are decoded after
-    a score mask (no per-anchor Python loop; BR-03 / REF-05 behavior-preserving).
+    Score: ``sqrt(clip(cls,[0,1]) * clip(obj,[0,1]))`` — clamp both logits into
+    the unit interval before the product (FIR3-BR-02). Upper-only ``min(x,1)``
+    would keep both-negative pairs as a false positive (``sqrt(0.25)=0.5``).
+    Bbox: center/size prior decode with exp on w/h; landmarks offset by grid
+    cell. Survivors only are decoded after a score mask (no per-anchor Python
+    loop; BR-03 / REF-05 behavior-preserving).
     """
     cols = int(pad_w // stride)
     rows = int(pad_h // stride)
@@ -147,12 +149,10 @@ def decode_yunet_level(
             f"(bbox={bbox_v.shape[0]} kps={kps_v.shape[0]} expected={expected})"
         )
 
-    # OpenCV FaceDetectorYN: upper-only MIN(x, 1.f) — no lower clamp (BR-06).
-    cls_c = np.minimum(cls_v, 1.0)
-    obj_c = np.minimum(obj_v, 1.0)
-    # Negative product → NaN score → fails threshold (document in modelless tests).
-    with np.errstate(invalid="ignore"):
-        scores = np.sqrt(cls_c * obj_c)
+    # Clamp cls/obj to [0,1] before sqrt so both-negative never yields score>0.
+    cls_c = np.clip(cls_v, 0.0, 1.0)
+    obj_c = np.clip(obj_v, 0.0, 1.0)
+    scores = np.sqrt(cls_c * obj_c)
     keep = np.flatnonzero(scores >= score_threshold)
     if keep.size == 0:
         return []

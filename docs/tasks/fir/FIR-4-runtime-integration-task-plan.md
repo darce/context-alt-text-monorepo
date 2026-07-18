@@ -98,13 +98,13 @@ Scoped TDD per slice locally (never local full-suite); `make check-remote` green
 
 ### Checklist for S2: Bridge + settings
 
-- [ ] `FacePipelineSettings` on `RecognitionSettings` (flat `RECOGNITION_FACE_PIPELINE_*` envs; profile ∈ {insightface, face_pipeline}, invalid → load-time error); `RECOGNITION_EMBEDDING_DIMENSION` env binding added (default 512 unchanged)
-- [ ] `recognition/infrastructure/embeddings/face_pipeline_adapter.py`: `FacePipelineFaceDetector(FaceDetectorProtocol)` — **one-pass** detect→align→embed, returns `FaceDetection` with populated `embedding` + `model_id` from `MODEL_MANIFEST`-derived `EmbeddingModelManifest` ([PROV-06], [SERVE-08]); generator slot = `UnavailableEmbeddingGenerator` for this profile
-- [ ] Decode = incumbent `_bytes_to_cv2` semantics (PIL open → RGB convert → RGB2BGR; **no EXIF transpose**); bytes→array golden fixture generated from the incumbent helper, committed and asserted
-- [ ] `get_shared_face_pipeline_runtime()` process singleton (memo + test reset hook); dedicated bounded executor (explicit max_workers) used by the bridge in all processes
-- [ ] Three-way dim guard raises at construction ([EMB-01]); zero-face, decode-failure, timeout paths tested; executor + `wait_for_adapter` + named breakers wired ([RES-02..04]); pose stamped `None` and documented
-- [ ] Modelless CI tests green; **models-present local E2E** vs FIR-3 goldens recorded as evidence
-- [ ] Characterization: incumbent path byte-untouched ([TEST-03]); every new test observed failing first ([TEST-06])
+- [x] `FacePipelineSettings` on `RecognitionSettings` (flat `RECOGNITION_FACE_PIPELINE_*` envs; profile ∈ {insightface, face_pipeline}, invalid → load-time error); `RECOGNITION_EMBEDDING_DIMENSION` env binding added (default 512 unchanged)
+- [x] `recognition/infrastructure/embeddings/face_pipeline_adapter.py`: `FacePipelineFaceDetector(FaceDetectorProtocol)` — **one-pass** detect→align→embed, returns `FaceDetection` with populated `embedding` + `model_id` from `MODEL_MANIFEST`-derived `EmbeddingModelManifest` ([PROV-06], [SERVE-08]); generator slot = `UnavailableEmbeddingGenerator` for this profile
+- [x] Decode = incumbent `_bytes_to_cv2` semantics (PIL open → RGB convert → RGB2BGR; **no EXIF transpose**); bytes→array golden fixture generated from the incumbent helper, committed and asserted
+- [x] `get_shared_face_pipeline_runtime()` process singleton (memo + test reset hook); dedicated bounded executor (explicit max_workers) used by the bridge in all processes
+- [x] Three-way dim guard raises at construction ([EMB-01]); zero-face, decode-failure, timeout paths tested; executor + `wait_for_adapter` + named breakers wired ([RES-02..04]); pose stamped `None` and documented
+- [x] Modelless CI tests green; **models-present local E2E** vs FIR-3 goldens recorded as evidence
+- [x] Characterization: incumbent path byte-untouched ([TEST-03]); every new test observed failing first ([TEST-06])
 
 ### Checklist for S3: Wiring behind flag
 

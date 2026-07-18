@@ -558,7 +558,13 @@ async def test_detect_timeout_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.asyncio
 async def test_semaphore_timeout_queues_third(monkeypatch: pytest.MonkeyPatch) -> None:
-    """CR-04: tiny timeout + slow workers → third call queues on semaphore."""
+    """CR-04: saturated slots → third does not submit; admission is timeout-bounded.
+
+    Residual workers hold both semaphore slots after the first two detect calls
+    time out. A third call must not submit a worker (queues on semaphore) and
+    must raise DetectionTimeoutError within the overall deadline rather than
+    hang until residual workers finish (GROK47C-01 / single overall deadline).
+    """
     runtime = _mock_runtime(monkeypatch)
     executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="face_pipeline_test")
     semaphore = asyncio.Semaphore(2)
@@ -587,38 +593,35 @@ async def test_semaphore_timeout_queues_third(monkeypatch: pytest.MonkeyPatch) -
         with pytest.raises(DetectionTimeoutError):
             await det.detect([payload])
 
-    # Fill both slots with slow work that outlives the wait timeout.
-    t1 = asyncio.create_task(one())
-    t2 = asyncio.create_task(one())
-    # Wait until both workers have been submitted.
-    for _ in range(100):
+    try:
+        # Fill both slots with slow work that outlives the wait timeout.
+        t1 = asyncio.create_task(one())
+        t2 = asyncio.create_task(one())
+        # Wait until both workers have been submitted.
+        for _ in range(100):
+            with submit_lock:
+                if submitted >= 2:
+                    break
+            await asyncio.sleep(0.02)
         with submit_lock:
-            if submitted >= 2:
-                break
-        await asyncio.sleep(0.02)
-    with submit_lock:
-        assert submitted == 2
+            assert submitted == 2
 
-    # Third call should block on semaphore (not submit) while slots held after timeout.
-    third_started = asyncio.Event()
+        # First two timed out; residual workers still hold semaphore slots.
+        await asyncio.gather(t1, t2)
+        with submit_lock:
+            assert submitted == 2
+        assert semaphore._value == 0
 
-    async def third() -> None:
-        third_started.set()
-        await det.detect([payload])
-
-    t3 = asyncio.create_task(third())
-    await third_started.wait()
-    await asyncio.sleep(0.1)
-    with submit_lock:
-        # Still only two workers submitted — third queued on semaphore, not executor.
-        assert submitted == 2
-    assert not t3.done()
-
-    # First two timed out; release workers so semaphore slots free and third can run.
-    await asyncio.gather(t1, t2)
-    release_workers.set()
-    await t3
-    executor.shutdown(wait=False, cancel_futures=True)
+        # Third call: no third submit; admission deadline yields DetectionTimeoutError.
+        with pytest.raises(DetectionTimeoutError):
+            await det.detect([payload])
+        with submit_lock:
+            assert submitted == 2
+        assert semaphore._value == 0
+    finally:
+        release_workers.set()
+        await asyncio.sleep(0.05)
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 @pytest.mark.asyncio

@@ -16,8 +16,8 @@ import {
 } from '../../../api/recognition';
 import {
   PROJECTION_TOP_K,
-  fromIdentityMatch,
   identityBatchIdsKey,
+  projectIdentityWindow,
   type ProjectedSuggestion,
 } from './suggestionProjection';
 
@@ -35,7 +35,7 @@ export interface ClusterSuggestionsLoaderOptions {
 }
 
 export interface ClusterSuggestionsLoaderResult {
-  /** Projected identity-keyed suggestions (server order; truthy-label filtered in 0b-1) */
+  /** Projected identity-keyed suggestions (server order; isHumanLabeledTarget filtered) */
   identityProjection?: ProjectedSuggestion[];
   /** Raw label search matches */
   labelMatches?: ClusterSummary[];
@@ -46,9 +46,6 @@ export interface ClusterSuggestionsLoaderResult {
 }
 
 const DEFAULT_DEBOUNCE_MS = 300;
-
-/** Commit-1 local eligibility: truthy trimmed label (auto cluster-* labels still surface). */
-const isTruthyLabel = (label: string | null | undefined): boolean => Boolean(label?.trim());
 
 export const useClusterSuggestionsLoader = ({
   identityId,
@@ -89,9 +86,7 @@ export const useClusterSuggestionsLoader = ({
       return undefined;
     }
     const rows = identityBatch.matches[identityId] ?? [];
-    return rows
-      .map((match) => fromIdentityMatch(identityId, match))
-      .filter((projected) => isTruthyLabel(projected.label));
+    return projectIdentityWindow(identityId, rows);
   }, [identityId, identityBatch]);
 
   const { data: labelMatches, isLoading: labelMatchesLoading } = useQuery({

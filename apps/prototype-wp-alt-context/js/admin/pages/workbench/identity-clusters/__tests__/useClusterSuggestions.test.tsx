@@ -66,9 +66,7 @@ describe('useClusterSuggestions', () => {
       { wrapper },
     );
 
-    await waitFor(() =>
-      expect(fetchIdentitiesSuggestionsMock).toHaveBeenCalledWith(['identity-1'], PROJECTION_TOP_K),
-    );
+    await waitFor(() => expect(fetchIdentitiesSuggestionsMock).toHaveBeenCalledWith(['identity-1'], PROJECTION_TOP_K));
     await waitFor(() => expect(listRecognitionClustersMock).toHaveBeenCalled());
     const [params] = listRecognitionClustersMock.mock.calls[0] ?? [];
     expect(params).toEqual({ limit: 20, offset: 0, labeled_only: true, search: 'Al' });
@@ -167,6 +165,40 @@ describe('useClusterSuggestions', () => {
 
     const exactMatch = await result.current.findClusterByLabel('Emilie Chartrand');
     expect(exactMatch).toBeNull();
+
+    queryClient.clear();
+  });
+
+  it('does not render cluster-* auto-label options in Suggested group', async () => {
+    // Expected first failure under commit-1: options include label 'cluster-1234' (truthy auto still eligible)
+    const { wrapper, queryClient } = createWrapper();
+    const fetchIdentitiesSuggestionsMock = vi.mocked(recognitionApi.fetchIdentitiesSuggestions);
+    const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
+
+    fetchIdentitiesSuggestionsMock.mockResolvedValue({
+      matches: {
+        'identity-1': [
+          { cluster_id: 'cluster-auto', label: 'cluster-1234', similarity: 0.99, identity_count: 1 },
+          { cluster_id: 'cluster-bob', label: 'Bob', similarity: 0.88, identity_count: 7 },
+        ],
+      },
+    });
+
+    listRecognitionClustersMock.mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 0,
+      truncated: false,
+    });
+
+    const { result } = renderHook(
+      () => useClusterSuggestions({ identityId: 'identity-1', enabled: true, labelInput: '', debounceMs: 0 }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.options.some((option) => option.label === 'Bob')).toBe(true));
+    expect(result.current.options.map((option) => option.label)).toEqual(['Bob']);
+    expect(result.current.options.every((option) => !option.label.startsWith('cluster-'))).toBe(true);
 
     queryClient.clear();
   });

@@ -411,7 +411,7 @@ class ConflictResolutionServiceTest extends TestCase
                 return 1;
             }
 
-            public function count_for_cluster(string $cluster_uuid): int
+            public function count_for_cluster(string $cluster_uuid, ?string $tenant_id = null): int
             {
                 return 'cluster-restored' === $cluster_uuid ? 0 : 8;
             }
@@ -510,7 +510,7 @@ class ConflictResolutionServiceTest extends TestCase
                 return 1;
             }
 
-            public function count_for_cluster(string $cluster_uuid): int
+            public function count_for_cluster(string $cluster_uuid, ?string $tenant_id = null): int
             {
                 return 'cluster-machine' === $cluster_uuid ? 5 : 2;
             }
@@ -615,7 +615,7 @@ class ConflictResolutionServiceTest extends TestCase
                 return 1;
             }
 
-            public function count_for_cluster(string $cluster_uuid): int
+            public function count_for_cluster(string $cluster_uuid, ?string $tenant_id = null): int
             {
                 return 'cluster-created-local' === $cluster_uuid ? 0 : 6;
             }

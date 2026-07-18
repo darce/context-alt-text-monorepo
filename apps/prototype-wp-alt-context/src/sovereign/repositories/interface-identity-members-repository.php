@@ -66,7 +66,7 @@ interface IdentityMembersRepositoryInterface {
 	/**
 	 * Count projected members for one cluster.
 	 */
-	public function count_for_cluster( string $cluster_uuid ): int;
+	public function count_for_cluster( string $cluster_uuid, ?string $tenant_id = null ): int;
 
 	/**
 	 * Return one projected member row by identity UUID when present.

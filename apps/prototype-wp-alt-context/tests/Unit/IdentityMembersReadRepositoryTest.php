@@ -39,6 +39,52 @@ class IdentityMembersReadRepositoryTest extends TestCase
         $this->assertStringContainsString('INNER JOIN `wp_acx_clusters` c', $sql);
     }
 
+    /**
+     * Rows sharing an identical updated_at must page deterministically: without
+     * a unique tie-breaker, ORDER BY updated_at DESC with LIMIT/OFFSET can
+     * overlap or skip rows across pages. Pin the PK tie-breaker in both the
+     * tenant-scoped and unscoped query variants.
+     */
+    public function testListForClusterOrdersWithIdentityUuidTieBreakerInBothVariants(): void
+    {
+        global $wpdb;
+
+        $this->repository->list_for_cluster('cluster-page', 2, 0, self::currentTenantId());
+        $this->repository->list_for_cluster('cluster-page', 2, 2);
+
+        $this->assertCount(2, $wpdb->queries);
+        foreach ($wpdb->queries as $sql) {
+            $this->assertStringContainsString('ORDER BY m.updated_at DESC, m.identity_uuid LIMIT', $sql);
+        }
+    }
+
+    public function testCountForClusterScopesToTenantWhenProvided(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '2';
+
+        $count = $this->repository->count_for_cluster('cluster-count-scoped', self::currentTenantId());
+
+        $this->assertSame(2, $count);
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('INNER JOIN `wp_acx_clusters` c ON c.cluster_uuid = m.cluster_uuid', $sql);
+        $this->assertStringContainsString('c.tenant_id =', $sql);
+        $this->assertStringContainsString("'cluster-count-scoped'", $sql);
+    }
+
+    public function testCountForClusterWithoutTenantStaysUnscoped(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '3';
+
+        $count = $this->repository->count_for_cluster('cluster-count-open');
+
+        $this->assertSame(3, $count);
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('SELECT COUNT(*) FROM `wp_acx_identity_members`', $sql);
+        $this->assertStringNotContainsString('tenant_id', $sql);
+    }
+
     public function testFindByIdentityUuidReturnsRow(): void
     {
         global $wpdb;

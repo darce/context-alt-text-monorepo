@@ -109,8 +109,8 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 		return $this->curation_writer->reassign_cluster_members( $source_cluster_uuid, $target_cluster_uuid );
 	}
 
-	public function count_for_cluster( string $cluster_uuid ): int {
-		return $this->read_repository->count_for_cluster( $cluster_uuid );
+	public function count_for_cluster( string $cluster_uuid, ?string $tenant_id = null ): int {
+		return $this->read_repository->count_for_cluster( $cluster_uuid, $tenant_id );
 	}
 
 	public function find_by_identity_uuid( string $identity_uuid ): ?array {

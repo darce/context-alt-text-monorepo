@@ -338,6 +338,11 @@ describe('ClusterLabelingPanel', () => {
     });
     expect(screen.queryByRole('button', { name: 'Show all (2)' })).not.toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith('source-cluster-id', { limit: 1, offset: 1 });
+
+    // AT affordance: completion is announced and focus lands on the member
+    // grid because the show-all button just unmounted.
+    expect(screen.getByText('All 2 members shown')).toHaveAttribute('role', 'status');
+    expect(container.querySelector('.acx-cluster-labeling-panel__grid')).toHaveFocus();
   });
 
   it('prefers a face crop over a generic media thumbnail when bbox data is available', async () => {
@@ -508,7 +513,8 @@ describe('ClusterLabelingPanel', () => {
 
     const { rerender, queryClient } = renderPanel();
 
-    expect(screen.getByRole('status')).toHaveTextContent('Loading people…');
+    // Multiple status regions exist (result count + show-all announce).
+    expect(screen.getByText('Loading people…')).toHaveAttribute('role', 'status');
 
     vi.mocked(useRosterEntries).mockReturnValue(
       createMockQuery({

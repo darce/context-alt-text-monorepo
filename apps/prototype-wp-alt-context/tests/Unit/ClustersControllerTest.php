@@ -991,7 +991,7 @@ class ClustersControllerTest extends TestCase
                 ];
             }
 
-            public function count_for_cluster(string $cluster_uuid): int
+            public function count_for_cluster(string $cluster_uuid, ?string $tenant_id = null): int
             {
                 return IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT + 1;
             }
@@ -1052,7 +1052,7 @@ class ClustersControllerTest extends TestCase
                 return $this->projectionState->membersByCluster[$cluster_uuid] ?? [];
             }
 
-            public function count_for_cluster(string $cluster_uuid): int
+            public function count_for_cluster(string $cluster_uuid, ?string $tenant_id = null): int
             {
                 return count($this->projectionState->membersByCluster[$cluster_uuid] ?? []);
             }
@@ -1153,7 +1153,7 @@ class ClustersControllerTest extends TestCase
                 ];
             }
 
-            public function count_for_cluster(string $cluster_uuid): int
+            public function count_for_cluster(string $cluster_uuid, ?string $tenant_id = null): int
             {
                 throw new \RuntimeException('count_for_cluster should not be called when total_count metadata is present.');
             }
@@ -1193,7 +1193,12 @@ class ClustersControllerTest extends TestCase
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
-                ['identity_uuid' => 'id-1', 'media_id' => 10],
+                'members' => [
+                    ['identity_uuid' => 'id-1', 'media_id' => 10],
+                ],
+                'limit' => IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT,
+                'total' => 1,
+                'truncated' => false,
             ]),
         ]);
 
@@ -1207,6 +1212,38 @@ class ClustersControllerTest extends TestCase
         $this->assertSame(1, $data['total']);
         $this->assertFalse($data['truncated']);
         $this->assertSame('id-1', $data['members'][0]['identity_uuid']);
+    }
+
+    /**
+     * Legacy bare-array proxy payloads must not be normalized into a fabricated
+     * envelope [rg-015]; the recognition service always emits the canonical
+     * shape, so anything else is a contract violation.
+     */
+    public function testGetClusterMembersRejectsLegacyBareArrayProxyPayload(): void
+    {
+        $controller = new ClustersController(
+            new NullClustersRepository(),
+            new NullIdentityMembersRepository(),
+            new NullSyncStateRepository(),
+            null,
+            new ClusterResponseMapper(),
+            new MemberResponseMapper()
+        );
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                ['identity_uuid' => 'id-1', 'media_id' => 10],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cluster-123/members');
+        $request->set_param('cluster_id', 'cluster-123');
+        $response = $controller->get_cluster_members($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('invalid_cluster_members_envelope', $response->get_error_code());
+        $this->assertSame(502, $response->get_error_data()['status'] ?? null);
     }
 
     public function testGetClusterMembersRejectsPartialProxyEnvelope(): void
@@ -1276,7 +1313,7 @@ class ClustersControllerTest extends TestCase
                 ];
             }
 
-            public function count_for_cluster(string $cluster_uuid): int
+            public function count_for_cluster(string $cluster_uuid, ?string $tenant_id = null): int
             {
                 throw new \RuntimeException('count_for_cluster should not be called when total_count metadata is present.');
             }
@@ -1307,56 +1344,85 @@ class ClustersControllerTest extends TestCase
         $this->assertSame('identity-page-2', $data['members'][0]['identity_id']);
     }
 
-    public function testGetClusterMembersLocalProjectionCapsLimitAtMax(): void
+    /**
+     * Reject-not-clamp parity with recognition's validate_paging: out-of-range
+     * limits and negative offsets return 400 on the WP leg too, instead of
+     * silently clamping into a different page than the caller requested.
+     */
+    public function testGetClusterMembersRejectsLimitAboveMaxWith400(): void
     {
-        $clustersRepo = new class() extends NullClustersRepository {
-            public function has_projection_rows_for_tenant(string $tenant_id): bool
-            {
-                return true;
-            }
-
-            public function find_by_uuid(string $cluster_uuid): ?array
-            {
-                return [
-                    'cluster_uuid' => $cluster_uuid,
-                    'label' => 'Cap Local',
-                ];
-            }
-        };
-
-        $membersRepo = new class() extends NullIdentityMembersRepository {
-            public ?int $capturedLimit = null;
-
-            public function list_for_cluster(string $cluster_uuid, int $limit = 500, int $offset = 0, ?string $tenant_id = null): array
-            {
-                $this->capturedLimit = $limit;
-
-                return [];
-            }
-
-            public function count_for_cluster(string $cluster_uuid): int
-            {
-                return 0;
-            }
-        };
-
-        $syncRepo = new class() extends NullSyncStateRepository {
-            public function get_snapshot_version(string $tenant_id): int
-            {
-                return 1;
-            }
-        };
-
-        $controller = new ClustersController($clustersRepo, $membersRepo, $syncRepo, null, new ClusterResponseMapper(), new MemberResponseMapper());
+        $controller = new ClustersController(
+            new NullClustersRepository(),
+            new NullIdentityMembersRepository(),
+            new NullSyncStateRepository(),
+            null,
+            new ClusterResponseMapper(),
+            new MemberResponseMapper()
+        );
 
         $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cluster-local/members');
         $request->set_param('cluster_id', 'cluster-local');
         $request->set_param('limit', IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT + 100);
         $response = $controller->get_cluster_members($request);
 
-        $this->assertInstanceOf(\WP_REST_Response::class, $response);
-        $this->assertSame(IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT, $membersRepo->capturedLimit);
-        $this->assertSame(IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT, $response->get_data()['limit']);
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('invalid_limit', $response->get_error_code());
+        $this->assertSame(400, $response->get_error_data()['status'] ?? null);
+    }
+
+    public function testGetClusterMembersRejectsNonPositiveLimitWith400(): void
+    {
+        $controller = new ClustersController(
+            new NullClustersRepository(),
+            new NullIdentityMembersRepository(),
+            new NullSyncStateRepository(),
+            null,
+            new ClusterResponseMapper(),
+            new MemberResponseMapper()
+        );
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cluster-local/members');
+        $request->set_param('cluster_id', 'cluster-local');
+        $request->set_param('limit', 0);
+        $response = $controller->get_cluster_members($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('invalid_limit', $response->get_error_code());
+        $this->assertSame(400, $response->get_error_data()['status'] ?? null);
+    }
+
+    public function testGetClusterMembersRejectsNegativeOffsetWith400(): void
+    {
+        $controller = new ClustersController(
+            new NullClustersRepository(),
+            new NullIdentityMembersRepository(),
+            new NullSyncStateRepository(),
+            null,
+            new ClusterResponseMapper(),
+            new MemberResponseMapper()
+        );
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cluster-local/members');
+        $request->set_param('cluster_id', 'cluster-local');
+        $request->set_param('offset', -1);
+        $response = $controller->get_cluster_members($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('invalid_offset', $response->get_error_code());
+        $this->assertSame(400, $response->get_error_data()['status'] ?? null);
+    }
+
+    /**
+     * Literal-equality guard: the WP members page cap
+     * (IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT, aliased
+     * by ClusterReadService::GET_CLUSTER_MEMBERS_MAX_LIMIT) must stay equal to
+     * the recognition service's CLUSTER_MEMBERS_PAGE_LIMIT
+     * (recognition/interface_adapters/http/routers/clusters_snapshot.py). Both
+     * are 500; if either side changes, change the other in the same slice.
+     */
+    public function testClusterMembersPageLimitMatchesRecognitionConstant(): void
+    {
+        $this->assertSame(500, IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT);
     }
 
     public function testGetClusterMembersProxyForwardsLimitAndOffset(): void

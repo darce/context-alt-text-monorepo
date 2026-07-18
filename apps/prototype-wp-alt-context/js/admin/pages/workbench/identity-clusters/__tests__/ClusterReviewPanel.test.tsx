@@ -142,7 +142,7 @@ describe('ClusterReviewPanel', () => {
       });
     });
 
-    renderPanel('cluster-truncated');
+    const { container } = renderPanel('cluster-truncated');
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Show all (2)' })).toBeInTheDocument();
@@ -162,6 +162,11 @@ describe('ClusterReviewPanel', () => {
       limit: 1,
       offset: 1,
     });
+
+    // AT affordance: completion is announced and focus lands on the member
+    // grid because the show-all button just unmounted.
+    expect(screen.getByText('All 2 members shown')).toHaveAttribute('role', 'status');
+    expect(container.querySelector('.acx-cluster-review-panel__grid')).toHaveFocus();
   });
 
   it('removes a cluster member and invalidates related queries', async () => {

@@ -5,9 +5,19 @@
  * `fetchClusterMembers` calls that respect limit/offset and never request
  * beyond `total` [RES-05]. The first-page `truncated` flag stays available for
  * the Slice-5 bulk disabled-while-truncated gate.
+ *
+ * Slice-5 gate contract:
+ * - `truncated` is the FIRST-PAGE ENVELOPE flag — the server's statement that
+ *   the cluster has more members than one page. It never flips when this hook
+ *   finishes client-side expansion.
+ * - `isFullyLoaded` is INSTANCE-LOCAL — it reflects this hook instance's
+ *   expansion state only and resets on remount, cluster switch, or refetch.
+ * - The Slice-5 bulk disabled-while-truncated gate must therefore consume the
+ *   query-cache envelope (`membersResponse.truncated`), NOT this hook's
+ *   `isFullyLoaded`, which is a per-instance UI affordance signal.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import {
@@ -26,7 +36,7 @@ export interface UseShowAllClusterMembersResult {
   /** Envelope truncated flag from the first page (Slice-5 bulk gate). */
   truncated: boolean;
   total: number;
-  /** True once the client has loaded every member up to `total`. */
+  /** True once the client has loaded every member up to `total` (instance-local). */
   isFullyLoaded: boolean;
   isExpanding: boolean;
   expandError: string | null;
@@ -37,8 +47,13 @@ export const useShowAllClusterMembers = (clusterId: string): UseShowAllClusterMe
   const [expandedMembers, setExpandedMembers] = useState<ClusterIdentity[] | null>(null);
   const [isExpanding, setIsExpanding] = useState(false);
   const [expandError, setExpandError] = useState<string | null>(null);
+  // Bumped whenever the expansion baseline changes (cluster switch, refetch).
+  // In-flight showAll loops capture the generation at start and discard their
+  // results when it moves, so a stale closure never applies old-cluster pages.
+  const generationRef = useRef(0);
 
   useEffect(() => {
+    generationRef.current += 1;
     setExpandedMembers(null);
     setIsExpanding(false);
     setExpandError(null);
@@ -54,6 +69,15 @@ export const useShowAllClusterMembers = (clusterId: string): UseShowAllClusterMe
     enabled: Boolean(clusterId),
   });
 
+  // Any refetch that changes the envelope identity (invalidation after a
+  // mutation, background refetch) invalidates the expanded snapshot: drop back
+  // to the honest first page — show-all can be clicked again.
+  useEffect(() => {
+    generationRef.current += 1;
+    setExpandedMembers(null);
+    setIsExpanding(false);
+  }, [membersResponse]);
+
   const firstPageMembers = membersResponse?.members ?? [];
   const truncated = membersResponse?.truncated ?? false;
   const total = membersResponse?.total ?? 0;
@@ -65,6 +89,7 @@ export const useShowAllClusterMembers = (clusterId: string): UseShowAllClusterMe
       return;
     }
 
+    const generation = generationRef.current;
     setIsExpanding(true);
     setExpandError(null);
 
@@ -85,8 +110,16 @@ export const useShowAllClusterMembers = (clusterId: string): UseShowAllClusterMe
           offset,
         });
 
+        if (generationRef.current !== generation) {
+          return;
+        }
+
         if (page.members.length === 0) {
-          break;
+          // Empty page while accumulated < total: the snapshot shifted under
+          // us. Surface the error and keep the honest first page + affordance
+          // instead of stamping the run complete.
+          setExpandError('Unable to load remaining members.');
+          return;
         }
 
         accumulated = [...accumulated, ...page.members];
@@ -98,12 +131,20 @@ export const useShowAllClusterMembers = (clusterId: string): UseShowAllClusterMe
         }
       }
 
+      if (generationRef.current !== generation) {
+        return;
+      }
       setExpandedMembers(accumulated.slice(0, membersResponse.total));
     } catch (error) {
+      if (generationRef.current !== generation) {
+        return;
+      }
       const message = error instanceof Error ? error.message : 'Unable to load remaining members.';
       setExpandError(message);
     } finally {
-      setIsExpanding(false);
+      if (generationRef.current === generation) {
+        setIsExpanding(false);
+      }
     }
   }, [clusterId, isExpanding, membersResponse]);
 

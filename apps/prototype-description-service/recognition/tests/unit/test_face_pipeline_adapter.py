@@ -180,9 +180,9 @@ def test_face_pipeline_max_workers_rejects_zero_explicit() -> None:
 
 
 def test_embedding_dimension_env_binding(monkeypatch: pytest.MonkeyPatch) -> None:
-    # CR-09 pairing: both knobs must agree when only testing embedding_dimension env.
-    monkeypatch.setenv("RECOGNITION_EMBEDDING_DIMENSION", "128")
+    """FIR2-BR-01: PGVECTOR_DIM is the sole root for identity embedding_dimension."""
     monkeypatch.setenv("PGVECTOR_DIM", "128")
+    monkeypatch.delenv("RECOGNITION_EMBEDDING_DIMENSION", raising=False)
     _clear_settings_caches()
     mod = _fresh_settings_module()
     settings = mod.RecognitionSettings()
@@ -199,23 +199,25 @@ def test_embedding_dimension_default_unchanged(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_embedding_pgvector_pair_agree(monkeypatch: pytest.MonkeyPatch) -> None:
-    """CR-09: matching dims load cleanly."""
-    monkeypatch.setenv("RECOGNITION_EMBEDDING_DIMENSION", "256")
+    """FIR2-BR-01: recognition dim follows PGVECTOR_DIM (single root)."""
     monkeypatch.setenv("PGVECTOR_DIM", "256")
+    monkeypatch.delenv("RECOGNITION_EMBEDDING_DIMENSION", raising=False)
     _clear_settings_caches()
     mod = _fresh_settings_module()
     settings = mod.RecognitionSettings()
     assert settings.identity_detection.embedding_dimension == 256
 
 
-def test_embedding_pgvector_pair_disagree_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    """CR-09: mismatch fails at RecognitionSettings load."""
+def test_embedding_dimension_ignores_recognition_env_when_pgvector_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FIR2-BR-01: RECOGNITION_EMBEDDING_DIMENSION is not a second root."""
+    monkeypatch.setenv("PGVECTOR_DIM", "384")
     monkeypatch.setenv("RECOGNITION_EMBEDDING_DIMENSION", "128")
-    monkeypatch.setenv("PGVECTOR_DIM", "512")
     _clear_settings_caches()
     mod = _fresh_settings_module()
-    with pytest.raises((ValueError, ValidationError), match="pgvector_dimension"):
-        mod.RecognitionSettings()
+    settings = mod.RecognitionSettings()
+    assert settings.identity_detection.embedding_dimension == 384
 
 
 # ---------------------------------------------------------------------------

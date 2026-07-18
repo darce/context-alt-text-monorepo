@@ -33,6 +33,7 @@ from recognition.interface_adapters.http.deps.stores import MediaIdentityService
 # --- Expected field / key sets (pinned to current producers) ---
 
 # S4 deliberate pin update: age/gender removed from seam, export, debug metrics.
+# FIR2-BR-02: optional five-point landmarks on the neutral seam.
 FACE_DETECTION_FIELDS = frozenset(
     {
         "media_id",
@@ -45,6 +46,7 @@ FACE_DETECTION_FIELDS = frozenset(
         "image_phash",
         "landmark_quality",
         "model_id",
+        "landmarks",
     }
 )
 
@@ -163,7 +165,7 @@ def test_face_detection_field_set_is_pinned() -> None:
 
 
 def test_face_detection_accepts_none_optional_metadata() -> None:
-    """CHAR: degrade path — optional pose/embedding may be None."""
+    """CHAR: degrade path — optional pose/embedding/landmarks may be None."""
     detection = FaceDetection(
         media_id="media-1",
         bbox=(0, 0, 10, 10),
@@ -174,11 +176,13 @@ def test_face_detection_accepts_none_optional_metadata() -> None:
         pose_roll=None,
         image_phash=None,
         landmark_quality=None,
+        landmarks=None,
     )
     assert detection.embedding is None
     assert detection.pose_pitch is None
     assert detection.pose_yaw is None
     assert detection.pose_roll is None
+    assert detection.landmarks is None
 
 
 # ---------------------------------------------------------------------------
@@ -320,6 +324,9 @@ async def test_insightface_adapter_maps_raw_face_attrs_to_face_detection() -> No
     np.testing.assert_array_equal(det.embedding, embedding)
     assert det.model_id == incumbent_embedding_model_manifest().model_id
     assert det.media_id == ""
+    # FIR2-BR-02: kps present on IF faces must surface as five-point landmarks.
+    assert det.landmarks is not None
+    assert len(det.landmarks) == 5
 
 
 # ---------------------------------------------------------------------------

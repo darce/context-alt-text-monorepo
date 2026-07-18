@@ -96,6 +96,18 @@ export interface IdentitySuggestionsResponse {
   matches: ClusterSuggestion[];
 }
 
+/**
+ * Batch identity-suggestions envelope keyed by identity id (UXP-2 Slice 3b).
+ *
+ * Distinct from the flat {@link IdentitySuggestionsResponse}: matches are
+ * grouped per requested identity, ranked server-side, and bounded to `top_k`
+ * rows per identity. Requested identities with no eligible suggestion are
+ * omitted from the mapping (empty-match handling is the caller's).
+ */
+export interface IdentityBatchSuggestionsResponse {
+  matches: Record<string, ClusterSuggestion[]>;
+}
+
 // Cluster operation types
 
 export interface UpdateClusterLabelRequest {

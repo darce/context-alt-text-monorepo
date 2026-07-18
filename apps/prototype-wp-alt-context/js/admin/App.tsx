@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { DashboardPage } from './pages/DashboardPage';
 import { RetentionPage } from './pages/RetentionPage';
@@ -11,29 +11,9 @@ import { ErrorBoundary } from '../components/ErrorBoundary';
 import { ToastProvider } from './context/ToastContext';
 import { DegradedModeBanner } from './pages/workbench/DegradedModeBanner';
 import { extractRouteFromHash, ensureHashInitialized, type RoutePath, DEFAULT_ROUTE } from './utils/routeHelpers';
-import { getQueryRetryDelay, note429IfPresent, shouldRetryQuery } from './utils/queryRetry';
+import { createAppQueryClient } from './utils/appQueryClient';
 
-export { QUERY_MAX_RETRIES, shouldRetryQuery, getQueryRetryDelay } from './utils/queryRetry';
-
-const queryClient = new QueryClient({
-  queryCache: new QueryCache({
-    onError: (error) => {
-      note429IfPresent(error);
-    },
-  }),
-  mutationCache: new MutationCache({
-    onError: (error) => {
-      note429IfPresent(error);
-    },
-  }),
-  defaultOptions: {
-    queries: {
-      retry: shouldRetryQuery,
-      retryDelay: getQueryRetryDelay,
-      refetchOnWindowFocus: false,
-    },
-  },
-});
+const queryClient = createAppQueryClient();
 
 export const App = (): React.JSX.Element => {
   const initialRoute = useMemo(() => determineInitialRoute(), []);

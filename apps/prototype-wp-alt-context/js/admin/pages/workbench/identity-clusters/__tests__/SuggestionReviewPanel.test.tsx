@@ -315,7 +315,7 @@ describe('SuggestionReviewPanel', () => {
     });
 
     await waitFor(() => {
-      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.pending() });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.projection.all });
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.media.identities() });
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.clusters.all });
     });
@@ -576,7 +576,7 @@ describe('SuggestionReviewPanel', () => {
     });
 
     await waitFor(() => {
-      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.pending() });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.projection.all });
     });
   });
 
@@ -720,7 +720,8 @@ describe('SuggestionReviewPanel', () => {
     const fetchPendingSuggestionsMock = vi.mocked(fetchPendingSuggestions);
     const fetchPendingMergeSuggestionsMock = vi.mocked(fetchPendingMergeSuggestions);
 
-    // Suggestion with explicit suggested label (inferred)
+    // Human-labeled cluster with enrichment suggested_label still renders "Is this {label}?"
+    // (isHumanLabeledTarget filters on cluster_label/label; inferred-only rows are dropped).
     const pendingResponse: PendingSuggestionsResponse = {
       suggestions: [
         {
@@ -729,7 +730,7 @@ describe('SuggestionReviewPanel', () => {
           suggested_cluster_id: 'cluster-inf',
           representative_similarity: 0.92,
           avg_member_similarity: 0.88,
-          cluster_label: null, // Unlabeled cluster
+          cluster_label: 'Inferred Name',
           suggested_label: 'Inferred Name',
           suggested_label_source: 'identity',
           cluster_identity_count: 4,
@@ -754,11 +755,11 @@ describe('SuggestionReviewPanel', () => {
     expect(screen.getByText(/Is this/)).toBeInTheDocument();
   });
 
-  it('renders "Name this person" for unlabeled clusters without inference', async () => {
+  it('drops unlabeled assignment rows from reviewItems (human-label predicate)', async () => {
     const fetchPendingSuggestionsMock = vi.mocked(fetchPendingSuggestions);
     const fetchPendingMergeSuggestionsMock = vi.mocked(fetchPendingMergeSuggestions);
 
-    // Suggestion for unlabeled cluster, no inference
+    // Unlabeled target — isHumanLabeledTarget(label) fails; row stays in cache count but not reviewItems.
     const pendingResponse: PendingSuggestionsResponse = {
       suggestions: [
         {
@@ -785,12 +786,9 @@ describe('SuggestionReviewPanel', () => {
       expect(fetchPendingSuggestionsMock).toHaveBeenCalled();
     });
 
-    expect(await screen.findByText('Name this person')).toBeInTheDocument();
-
-    expect(screen.queryByRole('button', { name: 'Yes' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'No' })).not.toBeInTheDocument();
-
-    expect(screen.getByRole('button', { name: 'Name Person' })).toBeInTheDocument();
+    expect(await screen.findByText('No suggestions to review yet.')).toBeInTheDocument();
+    expect(screen.queryByText('Name this person')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Name Person' })).not.toBeInTheDocument();
   });
 
   it('renders "Review cluster" button', async () => {
@@ -1459,7 +1457,7 @@ describe('SuggestionReviewPanel', () => {
       );
     });
     await waitFor(() => {
-      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.pending() });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.projection.all });
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.namePending() });
     });
   });

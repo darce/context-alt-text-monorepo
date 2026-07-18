@@ -5,40 +5,87 @@ export interface HTTPOptions {
   signal?: AbortSignal;
 }
 
-/**
- * Typed non-ok HTTP failure. Message format matches the legacy bare Error so
- * catch sites that sniff `.message` keep working.
- * AbortError / timeout rejections are never wrapped — they pass through fetch.
- */
 export class HTTPError extends Error {
   readonly status: number;
-  readonly retryAfterSeconds: number | null;
+  readonly retryAfterSeconds: number | undefined;
+  readonly endpoint: string;
+  readonly bodyPreview: string;
 
-  constructor(message: string, status: number, retryAfterSeconds: number | null) {
+  constructor({
+    status,
+    retryAfterSeconds,
+    endpoint,
+    bodyPreview,
+    message,
+  }: {
+    status: number;
+    retryAfterSeconds: number | undefined;
+    endpoint: string;
+    bodyPreview: string;
+    message: string;
+  }) {
     super(message);
     this.name = 'HTTPError';
     this.status = status;
     this.retryAfterSeconds = retryAfterSeconds;
+    this.endpoint = endpoint;
+    this.bodyPreview = bodyPreview;
+  }
+}
+
+export class ResponseParseError extends Error {
+  readonly status: number;
+  readonly endpoint: string;
+  readonly bodyPreview: string;
+
+  constructor({
+    status,
+    endpoint,
+    bodyPreview,
+    message,
+  }: {
+    status: number;
+    endpoint: string;
+    bodyPreview: string;
+    message: string;
+  }) {
+    super(message);
+    this.name = 'ResponseParseError';
+    this.status = status;
+    this.endpoint = endpoint;
+    this.bodyPreview = bodyPreview;
   }
 }
 
 /**
- * Parse Retry-After as integer delta-seconds only. Absent or unparseable → null.
- * HTTP-date form is intentionally ignored (MVP uses the service's integer seconds).
+ * Parse Retry-After header value to delay seconds.
+ * Accepts delta-seconds or HTTP-date; never returns NaN.
  */
-export const parseRetryAfterSeconds = (value: string | null): number | null => {
+export const parseRetryAfter = (value: string | null): number | undefined => {
   if (value === null) {
-    return null;
+    return undefined;
   }
   const trimmed = value.trim();
-  if (!/^\d+$/.test(trimmed)) {
-    return null;
+  if (trimmed === '') {
+    return undefined;
   }
-  const seconds = Number(trimmed);
-  if (!Number.isFinite(seconds)) {
-    return null;
+  if (/^\d+$/.test(trimmed)) {
+    const seconds = Number(trimmed);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return seconds;
+    }
+    return undefined;
   }
-  return seconds;
+  // Negative / non-integer numerics are not delta-seconds and must not fall through
+  // to Date.parse (e.g. Date.parse('-3') can yield a past timestamp → 0s).
+  if (/^[+-]?\d+(\.\d+)?$/.test(trimmed)) {
+    return undefined;
+  }
+  const t = Date.parse(trimmed);
+  if (!Number.isNaN(t)) {
+    return Math.max(0, Math.ceil((t - Date.now()) / 1000));
+  }
+  return undefined;
 };
 
 /**
@@ -80,13 +127,14 @@ export const fetchApi = async <T>(endpoint: string, options: HTTPOptions = {}): 
 
   if (!response.ok) {
     const errorText = await response.text();
-    const status = response.status;
-    const retryAfterSeconds = parseRetryAfterSeconds(response.headers.get('Retry-After'));
-    throw new HTTPError(
-      `Request to ${endpoint} failed (${status}): ${errorText}`,
-      status,
+    const retryAfterSeconds = parseRetryAfter(response.headers.get('Retry-After'));
+    throw new HTTPError({
+      status: response.status,
       retryAfterSeconds,
-    );
+      endpoint,
+      bodyPreview: buildResponsePreview(errorText),
+      message: `Request to ${endpoint} failed (${response.status}): ${errorText}`,
+    });
   }
 
   // 204/205 intentionally return no body.
@@ -105,9 +153,12 @@ export const fetchApi = async <T>(endpoint: string, options: HTTPOptions = {}): 
   } catch (error) {
     const preview = buildResponsePreview(rawBody);
     const syntaxDetail = error instanceof Error ? error.message : 'Unknown JSON parse error.';
-    throw new Error(
-      `Request to ${endpoint} returned malformed JSON (${response.status}): ${syntaxDetail}. Response preview: ${preview}`,
-    );
+    throw new ResponseParseError({
+      status: response.status,
+      endpoint,
+      bodyPreview: preview,
+      message: `Request to ${endpoint} returned malformed JSON (${response.status}): ${syntaxDetail}. Response preview: ${preview}`,
+    });
   }
 };
 

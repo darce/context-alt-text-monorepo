@@ -6,7 +6,6 @@ import {
   fetchPendingNameSuggestions,
   fetchPendingSuggestions,
   fetchMediaIdentities,
-  fetchIdentitySuggestions,
   fetchClusterMembers,
   fetchRetentionStatus,
   fetchSyncStatus,
@@ -282,15 +281,6 @@ describe('recognitionApi', () => {
       moved_identity_ids: [],
       target_identity_count: 7,
     });
-  });
-
-  it('fetches identity suggestions with tenant nonce', async () => {
-    fetchApiMock.mockResolvedValue({ matches: [] });
-    await fetchIdentitySuggestions('identity-123', 3);
-    const call = fetchApiMock.mock.calls[0];
-    expect(call[0]).toContain('/identity-123/suggestions');
-    expect(call[0]).toContain('top_k=3');
-    expect(call[1]).toMatchObject({ method: 'GET', restNonce: 'nonce-123' });
   });
 
   it('posts revert merge payload', async () => {

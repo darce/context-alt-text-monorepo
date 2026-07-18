@@ -99,7 +99,7 @@ describe('ConflictInbox', () => {
       createMockMutation<
         ResolveConflictResponse,
         Error,
-        { id: number; request: { resolution_status: 'accepted' | 'dismissed' | 'accept_backend' | 'merge' } }
+        { id: number; request: { resolution_status: 'accepted' | 'dismissed' | 'accept_backend' | 'merge' | 'restore_local' } }
       >({
         mutateAsync: vi.fn().mockResolvedValue({ conflict: null }),
       }),
@@ -448,7 +448,7 @@ describe('ConflictInbox', () => {
       createMockMutation<
         ResolveConflictResponse,
         Error,
-        { id: number; request: { resolution_status: 'accepted' | 'dismissed' | 'accept_backend' | 'merge' } }
+        { id: number; request: { resolution_status: 'accepted' | 'dismissed' | 'accept_backend' | 'merge' | 'restore_local' } }
       >({
         mutateAsync,
       }),
@@ -573,7 +573,7 @@ describe('ConflictInbox', () => {
       createMockMutation<
         ResolveConflictResponse,
         Error,
-        { id: number; request: { resolution_status: 'accepted' | 'dismissed' | 'accept_backend' | 'merge' } }
+        { id: number; request: { resolution_status: 'accepted' | 'dismissed' | 'accept_backend' | 'merge' | 'restore_local' } }
       >({
         mutateAsync,
       }),
@@ -601,5 +601,66 @@ describe('ConflictInbox', () => {
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Sync now' }));
     expect(triggerSync).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders the backend-regression aggregate with both resolution actions', async () => {
+    const aggregate = buildConflict({
+      id: 61,
+      entity_type: 'roster',
+      entity_key: 'backend_roster',
+      outbox_id: 0,
+      conflict_code: 'backend_roster_regressed',
+      machine_payload: {
+        backend_version: 41,
+        counts: { curated_cluster_deleted: 25, curated_member_deleted: 2, member_cluster_reassignment: 1 },
+        entities: { curated_cluster_deleted: ['cluster-a'], curated_member_deleted: [], member_cluster_reassignment: [] },
+        entity_set_truncated: false,
+      },
+      local_payload: { curated_clusters: 25, curated_members: 3 },
+      allowed_resolutions: ['restore_local', 'accept_backend', 'dismissed'],
+    });
+    const mutateAsync = vi.fn().mockResolvedValue({ conflict: null });
+
+    mockedUseConflicts.mockReturnValue(
+      createMockQuery<ConflictListResponse>({
+        data: { items: [aggregate], total: 1, limit: 20, offset: 0 },
+      }),
+    );
+    mockedUseConflictDetail.mockReturnValue(
+      createMockQuery<ConflictDetailResponse>({
+        data: { conflict: aggregate },
+      }),
+    );
+    mockedUseResolveConflict.mockReturnValue(
+      createMockMutation<
+        ResolveConflictResponse,
+        Error,
+        { id: number; request: { resolution_status: 'accepted' | 'dismissed' | 'accept_backend' | 'merge' | 'restore_local' } }
+      >({
+        mutateAsync,
+      }),
+    );
+
+    renderInbox();
+    fireEvent.click(screen.getByRole('button', { name: 'Review conflict' }));
+
+    expect(screen.getAllByText('Backend roster appears rolled back').length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: 'Restore local curation' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Accept backend version' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Restore local curation' }));
+    expect(
+      screen.getByText(
+        'Restore local curation by re-sending every affected curated cluster and member to the backend? Local data is preserved.',
+      ),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() => {
+      expect(mutateAsync).toHaveBeenCalledWith({
+        id: 61,
+        request: { resolution_status: 'restore_local' },
+      });
+    });
   });
 });

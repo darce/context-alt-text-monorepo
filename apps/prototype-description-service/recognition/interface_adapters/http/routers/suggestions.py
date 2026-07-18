@@ -40,16 +40,21 @@ from recognition.interface_adapters.http.schemas.responses import (
     BulkAcceptResponse,
     ClusterSuggestionMatch,
     FaceBoxResponse,
+    IdentityBatchSuggestionsResponse,
     IdentitySuggestionsResponse,
     MergeSuggestionResponse,
     NameSuggestionResponse,
     SuggestionResponse,
 )
-from recognition.interface_adapters.http.validation import validate_entity_id, validate_paging
+from recognition.interface_adapters.http.validation import validate_entity_id, validate_paging, validate_top_k
 
 router = APIRouter(tags=["suggestions"], dependencies=[Depends(require_auth), Depends(enforce_rate_limit)])
 
 T_Suggestion = TypeVar("T_Suggestion")
+
+# URL-budget bound for the batch identity-suggestions route (UXP-2 3a): a
+# comma-joined list of 100 UUIDs is ~3.7 KB, safely inside proxy query limits.
+MAX_BATCH_IDENTITY_IDS = 100
 
 
 @router.get("/suggestions", response_model=list[SuggestionResponse])
@@ -103,11 +108,59 @@ async def list_pending_merge_suggestions(
     return [_to_merge_response(s) for s in suggestions]
 
 
+@router.get("/identities/suggestions", response_model=IdentityBatchSuggestionsResponse)
+async def list_identities_suggestions(
+    identity_ids: str = Query(description="Comma-joined identity UUIDs (max 100)."),
+    _tenant_id: str = Depends(get_tenant_id),
+    top_k: int = Query(default=1),
+    suggestion_service=Depends(get_suggestion_service),
+) -> IdentityBatchSuggestionsResponse:
+    """Top-k labeled-cluster suggestions for a batch of identities, keyed by identity id.
+
+    One bounded call for "top suggestion for each of these identities": response
+    row count is <= len(identity_ids) x top_k by construction. Filter parity with
+    the per-card route is literal (pending + truthy cluster label only).
+    Out-of-range ``top_k`` is rejected with 400, never clamped (``MAX_TOP_K``,
+    ``validate_paging`` convention).
+    """
+    raw_ids = [item.strip() for item in identity_ids.split(",")]
+    if len(raw_ids) > MAX_BATCH_IDENTITY_IDS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"identity_ids exceeds maximum of {MAX_BATCH_IDENTITY_IDS}",
+        )
+    validated_ids = [validate_entity_id(item, field_name="identity_ids") for item in raw_ids]
+    validate_top_k(top_k)
+
+    grouped = await suggestion_service.list_for_identities(validated_ids, top_k=top_k)
+    matches: dict[str, list[ClusterSuggestionMatch]] = {}
+    for identity_id, rows in grouped.items():
+        identity_matches: list[ClusterSuggestionMatch] = []
+        for row in rows:
+            if not row.cluster_label:
+                # The windowed query filters to truthy labels; guard narrows the optional type.
+                continue
+            identity_matches.append(
+                ClusterSuggestionMatch(
+                    suggestion_id=row.id,
+                    cluster_id=row.cluster_id,
+                    label=row.cluster_label,
+                    similarity=row.representative_similarity,
+                    identity_count=row.cluster_identity_count or 0,
+                )
+            )
+        if identity_matches:
+            matches[identity_id] = identity_matches
+
+    return IdentityBatchSuggestionsResponse(matches=matches)
+
+
 @router.get("/identities/{identity_id}/suggestions", response_model=IdentitySuggestionsResponse)
 async def list_suggestions(
     identity_id: str,
     _tenant_id: str = Depends(get_tenant_id),
     min_confidence: float | None = Query(default=None, ge=0.0, le=1.0),
+    top_k: int | None = Query(default=None),
     suggestion_service=Depends(get_suggestion_service),
     cluster_repo=Depends(get_cluster_repository),
 ) -> IdentitySuggestionsResponse:
@@ -116,17 +169,27 @@ async def list_suggestions(
     Returns suggestions in frontend-compatible format with cluster labels
     and member counts. Only returns suggestions for labeled clusters - unlabeled
     cluster suggestions are not actionable (asking "Is this Unnamed cluster?" is meaningless).
+
+    ``top_k`` bounds the match count after ranking (UXP-2 3a: previously accepted
+    but silently ignored); omitting it keeps the unbounded behavior. Out-of-range
+    ``top_k`` is rejected with 400, never clamped (``MAX_TOP_K``,
+    ``validate_paging`` convention).
     """
     validate_entity_id(identity_id, field_name="identity_id")
+    if top_k is not None:
+        validate_top_k(top_k)
     suggestions = await suggestion_service.list_for_identity(identity_id)
     if min_confidence is not None:
         suggestions = [suggestion for suggestion in suggestions if _meets_min_confidence(suggestion, min_confidence)]
 
-    # Enrich suggestions with cluster details - only include labeled clusters
+    # Enrich suggestions with cluster details in one batched fetch - only include labeled clusters
+    cluster_ids = list({suggestion.cluster_id for suggestion in suggestions})
+    clusters = await cluster_repo.get_by_ids(cluster_ids) if cluster_ids else []
+    clusters_by_id = {cluster.id: cluster for cluster in clusters}
+
     matches: list[ClusterSuggestionMatch] = []
     for suggestion in suggestions:
-        # Fetch cluster to get label and member count
-        cluster = await cluster_repo.get_by_id(suggestion.cluster_id)
+        cluster = clusters_by_id.get(suggestion.cluster_id)
         # Only include suggestions for clusters with actual labels
         if cluster and cluster.label:
             matches.append(
@@ -139,8 +202,11 @@ async def list_suggestions(
                 )
             )
 
-    # Sort by similarity descending
+    # Sort by similarity descending; the stable sort keeps the repository's
+    # created_at DESC ordering as the tie-break, matching the batch route's window.
     matches.sort(key=lambda m: m.similarity, reverse=True)
+    if top_k is not None:
+        matches = matches[:top_k]
 
     return IdentitySuggestionsResponse(matches=matches)
 

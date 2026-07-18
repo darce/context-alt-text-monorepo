@@ -8,4 +8,10 @@
             <directory>tests/Unit</directory>
         </testsuite>
     </testsuites>
+    <php>
+        <!-- Suite peak sits at ~128M (multipart transport fixtures allocate ~40M
+             payloads); the CLI default 128M limit OOMs intermittently near the end
+             of a full run. Give the suite real headroom. -->
+        <ini name="memory_limit" value="512M"/>
+    </php>
 </phpunit>

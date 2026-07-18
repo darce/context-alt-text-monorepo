@@ -92,6 +92,7 @@ export const ScanTabContent = (): React.JSX.Element => {
         <div ref={findingsDetailRef} className="acx-findings-detail-anchor" tabIndex={-1}>
           {clusterPanel.mode === 'label' && clusterPanel.clusterId ? (
             <ClusterLabelingPanel
+              key={clusterPanel.clusterId}
               clusterId={clusterPanel.clusterId}
               onClose={() => dispatchClusterPanel({ type: 'close' })}
               onLabel={() => {

@@ -1,7 +1,8 @@
 /**
  * Loader hook for cluster label suggestions.
  *
- * Fetches identity-based similarity suggestions and label search results.
+ * Fetches identity-based similarity suggestions, label search results, and
+ * roster persons; builds the shared naming union via buildNamingOptions.
  */
 
 import React from 'react';
@@ -9,11 +10,21 @@ import { useQuery } from '@tanstack/react-query';
 
 import { queryKeys } from '../../../api/queryKeys';
 import {
-  fetchIdentitySuggestions,
+  fetchIdentitiesSuggestions,
   listRecognitionClusters,
   type ClusterSummary,
-  type IdentitySuggestionsResponse,
+  type IdentityBatchSuggestionsResponse,
 } from '../../../api/recognition';
+import { useRosterEntries } from '../../../hooks/useRosterHooks';
+import { buildNamingOptions, type NamingOption } from './buildNamingOptions';
+import {
+  PROJECTION_TOP_K,
+  identityBatchIdsKey,
+  isHumanLabeledTarget,
+  projectIdentityWindow,
+  type ProjectedSuggestion,
+} from './suggestionProjection';
+import type { ClusterLabelMatch } from './useClusterMatchAction';
 
 export interface ClusterSuggestionsLoaderOptions {
   /** Identity ID to fetch suggestions for */
@@ -29,17 +40,24 @@ export interface ClusterSuggestionsLoaderOptions {
 }
 
 export interface ClusterSuggestionsLoaderResult {
-  /** Raw suggestions from identity similarity */
-  identitySuggestions?: IdentitySuggestionsResponse;
-  /** Raw label search matches */
+  /** Projected identity-keyed suggestions (server order; isHumanLabeledTarget filtered) */
+  identityProjection?: ProjectedSuggestion[];
+  /** Shared naming-union options (persons ∪ human-labeled clusters) */
+  namingOptions: readonly NamingOption[];
+  /** Pre-dedupe collision set for the duplicate guard */
+  collisionsByLabel: ReadonlyMap<string, readonly NamingOption[]>;
+  /** Raw label search matches (pre-builder) */
   labelMatches?: ClusterSummary[];
-  /** Whether suggestion queries are loading */
+  /** Whether suggestion / roster queries are loading */
   isLoading: boolean;
-  /** Find cluster ID by label (case-insensitive) */
-  findClusterByLabel: (label: string, signal?: AbortSignal) => Promise<{ id: string; label: string } | null>;
+  /** Roster query failed — consumers degrade to cluster-only options */
+  rosterError: boolean;
+  /** Find cluster ID by label (case-insensitive); remote search only; BR-17 gated */
+  findClusterByLabel: (label: string, signal?: AbortSignal) => Promise<ClusterLabelMatch | null>;
 }
 
 const DEFAULT_DEBOUNCE_MS = 300;
+const EMPTY_COLLISIONS: ReadonlyMap<string, readonly NamingOption[]> = new Map();
 
 export const useClusterSuggestionsLoader = ({
   identityId,
@@ -60,12 +78,28 @@ export const useClusterSuggestionsLoader = ({
     return () => window.clearTimeout(timer);
   }, [labelInput, debounceMs, enabled]);
 
-  const { data: identitySuggestions, isLoading: suggestionsLoading } = useQuery<IdentitySuggestionsResponse>({
-    queryKey: queryKeys.suggestions.identityFor(identityId),
-    queryFn: () => fetchIdentitySuggestions(identityId!, 5),
+  const { data: identityBatch, isLoading: suggestionsLoading } = useQuery<IdentityBatchSuggestionsResponse>({
+    queryKey: queryKeys.suggestions.projection.identityBatch(
+      identityBatchIdsKey(identityId !== undefined ? [identityId] : []),
+    ),
+    queryFn: () => {
+      // enabled requires identityId; guard here so we never need a non-null assertion.
+      if (!identityId) {
+        return Promise.resolve({ matches: {} });
+      }
+      return fetchIdentitiesSuggestions([identityId], PROJECTION_TOP_K);
+    },
     enabled: Boolean(identityId && enabled),
     staleTime: 30000,
   });
+
+  const identityProjection = React.useMemo((): ProjectedSuggestion[] | undefined => {
+    if (!identityId || identityBatch === undefined) {
+      return undefined;
+    }
+    const rows = identityBatch.matches[identityId] ?? [];
+    return projectIdentityWindow(identityId, rows);
+  }, [identityId, identityBatch]);
 
   const { data: labelMatches, isLoading: labelMatchesLoading } = useQuery({
     queryKey: queryKeys.clusters.labelSearch(debouncedValue),
@@ -81,8 +115,21 @@ export const useClusterSuggestionsLoader = ({
     staleTime: 30000,
   });
 
+  const { data: rosterEntries = [], isLoading: rosterLoading, isError: rosterError } = useRosterEntries();
+
+  const { options: namingOptions, collisionsByLabel } = React.useMemo(() => {
+    // A11Y-24: roster error/empty degrade to cluster-only options.
+    const roster = rosterError ? [] : rosterEntries;
+    return buildNamingOptions({
+      rosterEntries: roster,
+      labelMatches: labelMatches ?? [],
+      filter: debouncedValue,
+      excludeClusterId: editableClusterId,
+    });
+  }, [rosterEntries, rosterError, labelMatches, debouncedValue, editableClusterId]);
+
   const findClusterByLabel = React.useCallback(
-    async (label: string, signal?: AbortSignal): Promise<{ id: string; label: string } | null> => {
+    async (label: string, signal?: AbortSignal): Promise<ClusterLabelMatch | null> => {
       const normalizedLabel = label.toLowerCase().trim();
       if (!normalizedLabel) {
         return null;
@@ -91,10 +138,18 @@ export const useClusterSuggestionsLoader = ({
       try {
         const results = await listRecognitionClusters({ search: label, limit: 10, labeled_only: true }, signal);
         const match = results.clusters.find(
-          (cluster) => cluster.id !== editableClusterId && cluster.label.toLowerCase() === normalizedLabel,
+          (cluster) =>
+            cluster.id !== editableClusterId &&
+            cluster.label.toLowerCase() === normalizedLabel &&
+            // BR-17: auto cluster-* labels are never merge/assign targets (FIX-2).
+            isHumanLabeledTarget(cluster.label),
         );
         if (match?.id && match.label) {
-          return { id: match.id, label: match.label };
+          return {
+            id: match.id,
+            label: match.label,
+            identityCount: typeof match.identity_count === 'number' ? match.identity_count : undefined,
+          };
         }
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') {
@@ -112,9 +167,12 @@ export const useClusterSuggestionsLoader = ({
   );
 
   return {
-    identitySuggestions,
+    identityProjection,
+    namingOptions,
+    collisionsByLabel: collisionsByLabel ?? EMPTY_COLLISIONS,
     labelMatches,
-    isLoading: suggestionsLoading || labelMatchesLoading,
+    isLoading: suggestionsLoading || labelMatchesLoading || (enabled && rosterLoading),
+    rosterError,
     findClusterByLabel,
   };
 };

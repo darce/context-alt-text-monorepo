@@ -232,6 +232,7 @@ async def test_get_member_identities_for_clusters_groups_by_cluster(db_session, 
             bbox_height=120,
             confidence=0.9,
             embedding=[0.1] * 512,
+            embedding_model="buffalo_l@insightface",
             pose_pitch=25.0,
             pose_yaw=-30.0,
             pose_roll=-20.0,
@@ -354,6 +355,7 @@ async def test_get_snapshot_stamps_generation_id_and_excludes_disposed_rows(db_s
                 bbox_height=10,
                 confidence=0.9,
                 embedding=[0.1] * 512,
+                embedding_model="buffalo_l@insightface",
             ),
             MediaIdentityModel(
                 id=disposed_identity_uuid,
@@ -366,6 +368,7 @@ async def test_get_snapshot_stamps_generation_id_and_excludes_disposed_rows(db_s
                 bbox_height=10,
                 confidence=0.9,
                 embedding=[0.2] * 512,
+                embedding_model="buffalo_l@insightface",
                 disposed_at=datetime.now(tz=UTC),
             ),
         ]

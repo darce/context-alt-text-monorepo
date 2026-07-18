@@ -308,19 +308,20 @@ class ScanService:
         for old_row, det in matched:
             if det.embedding is None:
                 continue
+            if not det.model_id:
+                raise ValueError("embedding_model provenance missing on FaceDetection")
             old_row.bbox_x = int(det.bbox[0])
             old_row.bbox_y = int(det.bbox[1])
             old_row.bbox_width = int(det.bbox[2] - det.bbox[0])
             old_row.bbox_height = int(det.bbox[3] - det.bbox[1])
             old_row.confidence = float(det.confidence)
             old_row.embedding = det.embedding.tolist()
+            old_row.embedding_model = det.model_id
             old_row.pose_pitch = det.pose_pitch
             old_row.pose_yaw = det.pose_yaw
             old_row.pose_roll = det.pose_roll
             if det.landmark_quality is not None:
                 old_row.quality_score = det.landmark_quality
-            old_row.age = det.age
-            old_row.gender = det.gender
             old_row.image_phash = det.image_phash
             old_row.updated_at = datetime.now(tz=UTC)
 
@@ -332,6 +333,8 @@ class ScanService:
         for det in unmatched_new:
             if det.embedding is None:
                 continue
+            if not det.model_id:
+                raise ValueError("embedding_model provenance missing on FaceDetection")
             new_rows.append(
                 MediaIdentity(
                     tenant_id=tenant_uuid,
@@ -343,12 +346,11 @@ class ScanService:
                     bbox_height=int(det.bbox[3] - det.bbox[1]),
                     confidence=float(det.confidence),
                     embedding=det.embedding.tolist(),
+                    embedding_model=det.model_id,
                     pose_pitch=det.pose_pitch,
                     pose_yaw=det.pose_yaw,
                     pose_roll=det.pose_roll,
                     quality_score=det.landmark_quality,
-                    age=det.age,
-                    gender=det.gender,
                     image_phash=det.image_phash,
                 )
             )

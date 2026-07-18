@@ -3,7 +3,7 @@
 > **Status:** Decision document. Authored 2026-07-10 under `DURABILITY-UV-PLANNING`.
 > **Question:** Should pyenv be replaced with a uniform venv/uv surface across the monorepo? Goal: efficient venv management (recurring drift-linked errors) and the ability to reason about it.
 > **Verdict:** **Yes — finish the migration that is already 80% done.** uv is already the installer everywhere except Docker and CI; pyenv's live footprint is one `.python-version` file and one Makefile interpreter probe. The work is mostly *deleting* legacy paths, and the single biggest lever is a root `pyproject.toml` with `[tool.uv.workspace]` — a seam the lifecycle code already prefers and currently finds dormant.
-> **Heuristics basis:** [docs/strategy/engineering-heuristics.md](../../strategy/engineering-heuristics.md).
+> **Heuristics basis:** [heuristics-canon lexicons/engineering.md](https://github.com/darce/heuristics-canon/blob/main/lexicons/engineering.md) (canonical; gitignored mirror: `docs/workbay/rules/engineering-heuristics.md`).
 
 ## Current state (inventory, 2026-07-10)
 

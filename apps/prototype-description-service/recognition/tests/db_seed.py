@@ -44,6 +44,7 @@ async def ensure_media_identity(
         bbox_height=1,
         confidence=1.0,
         embedding=[0.0] * _DB_SETTINGS.pgvector_dimension,
+        embedding_model="buffalo_l@insightface",
     )
     session.add(media)
     await session.flush()

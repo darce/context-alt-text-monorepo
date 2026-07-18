@@ -69,7 +69,6 @@ export const queryKeys = {
   },
   suggestions: {
     all: ['suggestions'] as const,
-    pending: () => [...queryKeys.suggestions.all, 'pending'] as const,
     mergePending: () => [...queryKeys.suggestions.all, 'merge'] as const,
     namePending: () => [...queryKeys.suggestions.all, 'name'] as const,
     /**

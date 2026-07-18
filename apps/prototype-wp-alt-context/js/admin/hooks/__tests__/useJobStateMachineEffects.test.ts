@@ -220,7 +220,8 @@ describe('useJobStateMachineEffects', () => {
     });
 
     await waitFor(() => {
-      expect(refetchQueries).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.pending() });
+      // scanRecomputeCompletion: assignment family via projection.all; keep merge/name/media/topUnlabeled.
+      expect(refetchQueries).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.projection.all });
       expect(refetchQueries).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.mergePending() });
       expect(refetchQueries).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.namePending() });
       expect(refetchQueries).toHaveBeenCalledWith({ queryKey: queryKeys.clusters.topUnlabeled('test-tenant-id') });

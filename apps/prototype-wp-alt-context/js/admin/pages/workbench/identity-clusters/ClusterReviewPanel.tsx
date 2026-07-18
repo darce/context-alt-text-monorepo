@@ -19,6 +19,7 @@ import {
   DialogRoot,
   DialogTitle,
 } from '../../../../components/ui/dialog';
+import { invalidateSuggestionProjection } from './suggestionProjection';
 
 const isDedicatedFaceThumbUrl = (thumbUrl: string | null | undefined): boolean => {
   return typeof thumbUrl === 'string' && thumbUrl.includes('recognition/face-thumbs/');
@@ -49,8 +50,8 @@ export const ClusterReviewPanel = ({ clusterId, onClose }: ClusterReviewPanelPro
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.memberList(clusterId) });
       void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
-      // Invalidate suggestions as removal triggers recalibration
-      void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.pending() });
+      // Removal recalibrates assignment suggestions — shared projection family.
+      void invalidateSuggestionProjection(queryClient);
     },
   });
 

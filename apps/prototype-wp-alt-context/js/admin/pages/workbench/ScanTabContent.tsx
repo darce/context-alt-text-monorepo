@@ -79,9 +79,10 @@ export const ScanTabContent = (): React.JSX.Element => {
   });
   const [userExpandedMedia, setUserExpandedMedia] = React.useState(false);
   const previousHasFindings = React.useRef(findings.hasFindings);
-  // §7 / BR-75: the queue reports whether a real card primary is on screen. This —
-  // not findings totals — drives footer demotion, so the signal that places the
-  // card's accent marker is the same one that steps the footer CTAs down.
+  // §7 / BR-75/BR-82: the queue reports whether IT owns the viewport's single accent
+  // primary (its card marker or bulk-commit marker). This — not findings totals —
+  // drives footer demotion, so the signal that places the queue's accent marker is the
+  // same one that steps the footer CTAs down (BR-83: this is the ONLY footer input).
   const [cardPrimaryPresent, setCardPrimaryPresent] = React.useState(false);
 
   // Lifted queue index + kind + band — survives label/review panel unmount of ReviewQueue.
@@ -110,18 +111,14 @@ export const ScanTabContent = (): React.JSX.Element => {
   const isMediaCollapsed =
     findings.hasFindings && !userExpandedMedia && !findings.isLoading && !findings.isError && !findings.isUnavailable;
 
-  // §7 media-footer CTA hierarchy: a review card / label / review panel primary is
-  // on screen. When true the card/panel owns the single viewport accent primary, so
-  // the footer's CTAs step down to secondary. BR-75: the queue-mounted branch is
-  // driven by an ACTUALLY-rendered card primary (`cardPrimaryPresent`), not findings
-  // totals — chip-empty/drain, retired-head, and still-loading now correctly keep
-  // the footer's Analyze primary because no card marker is on screen.
-  const reviewSurfaceActive =
-    clusterPanel.mode === 'label'
-      ? true
-      : reviewClusterId !== null
-        ? true
-        : cardPrimaryPresent;
+  // §7 media-footer CTA hierarchy (BR-83): the footer steps its CTAs down to secondary
+  // exactly when the QUEUE owns the viewport's single accent primary (`cardPrimaryPresent`
+  // — the queue's card marker or its bulk-commit marker). A label/review panel carries NO
+  // accent marker and unmounts the queue, so on panel-open `cardPrimaryPresent` is false
+  // and the footer keeps its state-selected primary (§7 "no card ⇒ footer owns"). Adding
+  // label-mode / reviewClusterId terms here would demote the footer with nothing left to
+  // own the accent → zero primaries on panel-open, so they are deliberately excluded.
+  const reviewSurfaceActive = cardPrimaryPresent;
 
   const handleIndexChange = React.useCallback(
     (nextIndex: number): void => {

@@ -125,11 +125,12 @@ export interface ReviewQueueProps {
   /** Anchor div for drain-focus (tabIndex=-1). */
   emptyStateAnchorRef?: React.RefObject<HTMLElement | null>;
   /**
-   * §7 / BR-75: reports whether an actual review card with a single accent-primary
-   * action is currently rendered (not loading/error/warning/empty/drain/retired).
-   * ScanTabContent uses this — NOT findings totals — to drive footer demotion, so
-   * the SAME signal that places the card's `data-acx-accent-primary` marker also
-   * demotes the footer CTAs → exactly one accent primary per rendered viewport.
+   * §7 / BR-75/BR-82: reports whether the queue currently owns the viewport's single
+   * accent primary — either the review card's marked primary (accept / person-commit
+   * Confirm) or the bulk-commit button (BR-82) is rendered AND marked. ScanTabContent
+   * uses this — NOT findings totals — to drive footer demotion, so the SAME signal
+   * that places the queue's `data-acx-accent-primary` marker also demotes the footer
+   * CTAs → exactly one accent primary per rendered viewport.
    */
   onCardPrimaryPresenceChange?: (present: boolean) => void;
 }
@@ -723,9 +724,21 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       }
     })();
 
+    // BR-81: for NAME/CLUSTER the accent marker rides the person-commit Confirm, which
+    // is replaced by a markerless success surface once the commit succeeds. CLUSTER
+    // lingers in `topClustersById` until the async invalidation refetch, so across that
+    // window `currentCardResolvable` stays true while NO marked primary renders —
+    // presence must be false there so the footer re-owns the single accent.
+    const personCommitSucceededOnCurrentCard =
+      currentItem !== null &&
+      isPersonCommitPrimaryKind(currentItem.kind) &&
+      data.personCommit.phase === 'succeeded' &&
+      (data.personCommit.clusterId === null ||
+        data.personCommit.clusterId === currentClusterId);
+
     // BR-75: a single accent-primary card action is on screen iff CurrentCard's real
-    // branch renders. This is the SAME condition that mounts the marked primary, so
-    // the footer demotion it drives can never disagree with the card marker.
+    // branch renders its marked primary. This is the SAME condition that mounts the
+    // marker, so the footer demotion it drives cannot disagree with the card marker.
     const cardPrimaryPresent =
       !isInitialFailureBranch &&
       !isLoadingBranch &&
@@ -735,14 +748,31 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       length > 0 &&
       currentItem !== null &&
       !suppressRetiredHead &&
-      currentCardResolvable;
+      currentCardResolvable &&
+      !personCommitSucceededOnCurrentCard;
 
-    React.useEffect(() => {
-      onCardPrimaryPresenceChange?.(cardPrimaryPresent);
-    }, [cardPrimaryPresent, onCardPrimaryPresenceChange]);
+    // BR-82: when the bulk-commit button is on screen with a committable, non-ambiguous
+    // selection it is the viewport's single accent primary (the user is committing the
+    // selection); the per-card primary steps down to neutral. While the selection is
+    // truncation-ambiguous the bulk commit is never the accent (COL-03 / UI-06 §7.7),
+    // so the card keeps it. Guarded so exactly one element carries the accent.
+    const bulkCommitOwnsAccent =
+      selectionOpen && filteredSelectedIds.length > 0 && !truncationBlocksCommit;
+
+    // The queue owns the viewport's single accent primary when either the card marker
+    // renders or the bulk commit does — this is what drives footer demotion.
+    const queueOwnsAccentPrimary = cardPrimaryPresent || bulkCommitOwnsAccent;
+
+    // BR-80: report presence in a layout effect (fires before paint) so the footer
+    // demotion and the card/bulk marker commit in the SAME visual frame — no transient
+    // frame of two accents (card + still-primary footer) on entry, nor zero on drain.
+    React.useLayoutEffect(() => {
+      onCardPrimaryPresenceChange?.(queueOwnsAccentPrimary);
+    }, [queueOwnsAccentPrimary, onCardPrimaryPresenceChange]);
     // Report absence on unmount (e.g. a panel replaces the queue) so a stale "present"
-    // never lingers in the parent's footer-demotion state.
-    React.useEffect(
+    // never lingers in the parent's footer-demotion state. Layout-effect cleanup runs
+    // before paint so the footer re-owns the accent in the same frame the panel mounts.
+    React.useLayoutEffect(
       () => () => {
         onCardPrimaryPresenceChange?.(false);
       },
@@ -934,7 +964,14 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
 
             <button
               type="button"
-              className="button button-primary acx-review-queue__bulk-commit"
+              // BR-82: the bulk commit carries the accent chrome + single-primary marker
+              // only when it owns the accent (committable, non-ambiguous selection);
+              // otherwise it renders neutral so it is never a second chromatic primary.
+              className={
+                bulkCommitOwnsAccent
+                  ? 'button button-primary acx-review-queue__bulk-commit acx-accent-primary-action'
+                  : 'button acx-review-queue__bulk-commit'
+              }
               data-testid="acx-bulk-commit"
               disabled={
                 filteredSelectedIds.length === 0 ||
@@ -944,6 +981,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                 truncation.isLoading
               }
               title={truncationBlocksCommit ? (truncationReason ?? undefined) : undefined}
+              {...(bulkCommitOwnsAccent ? { 'data-acx-accent-primary': true } : {})}
               onClick={() => {
                 void bulk.initiateBulk();
               }}
@@ -1069,7 +1107,9 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           ) : (
             <CurrentCard
               item={currentItem}
-              accentPrimary
+              // BR-82: the card primary steps down to neutral while the bulk commit owns
+              // the accent, so exactly one element carries the accent per viewport.
+              accentPrimary={!bulkCommitOwnsAccent}
               assignmentById={assignmentById}
               mergeById={mergeById}
               nameById={nameById}
@@ -1151,9 +1191,11 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
 interface CurrentCardProps {
   item: ReviewQueueItem;
   /**
-   * §7: this is the mounted current card, so its single per-kind primary (accept
-   * for ASSIGNMENT/MERGE, person-commit confirm for NAME/CLUSTER) carries the
-   * `data-acx-accent-primary` marker + accent chrome — exactly one per viewport.
+   * §7: when true, this mounted card's single per-kind primary (accept for
+   * ASSIGNMENT/MERGE, person-commit Confirm for NAME/CLUSTER) carries the
+   * `data-acx-accent-primary` marker + accent chrome. BR-82: false while the
+   * bulk-commit button owns the accent, so the card steps down to neutral and
+   * exactly one element carries the accent per viewport.
    */
   accentPrimary: boolean;
   assignmentById: Map<string, ReviewSuggestion>;

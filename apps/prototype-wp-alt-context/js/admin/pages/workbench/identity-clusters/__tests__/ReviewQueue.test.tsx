@@ -12,11 +12,20 @@ import {
   fetchPendingSuggestions,
   fetchTopUnlabeledClusters,
   rejectSuggestion,
+  updateClusterLabel,
 } from '../../../../api/recognition';
 import { DATA_SOURCE } from '../../../../api/recognition/types';
 import { resetConfigCache } from '../../../../api/config';
 import { queryKeys } from '../../../../api/queryKeys';
+import { commitClusterToRosterEntry, listRosterEntries } from '../../../../api/rosterApi';
 import type { ReviewQueueKindParam } from '../../../../hooks/workbenchQueueUrl';
+import {
+  JUST_LABEL_COPY,
+  MODEL_OUTPUT_DISCLOSURE,
+  PERSON_COMMIT_CONFIRM_COPY,
+  VIEW_IN_ROSTER_COPY,
+  VIEW_IN_ROSTER_HREF,
+} from '../personCommitCopy';
 import { CommitHoldRegion, ReviewQueue, type ReviewQueueHandle } from '../ReviewQueue';
 import { REVIEW_QUEUE_DRAIN_MESSAGE } from '../reviewQueueDriver';
 import { HOLD_STATUS_COPY, UNDO_HOLD_MS } from '../useSuggestionReviewMutations';
@@ -91,11 +100,31 @@ vi.mock('../../../../api/recognition', async () => {
   };
 });
 
+vi.mock('../../../../api/rosterApi', () => ({
+  commitClusterToRosterEntry: vi.fn().mockResolvedValue(undefined),
+  listRosterEntries: vi.fn().mockResolvedValue([
+    {
+      id: 7,
+      person_uuid: 'person-uuid-7',
+      name: 'Alex',
+      tags: [],
+      cluster_count: 0,
+      clusters: [],
+      queue_memberships: [],
+      updated_at: '2026-01-01T00:00:00Z',
+      source_version: 1,
+      projection_status: 'current',
+      projection_refreshed_at: null,
+    },
+  ]),
+}));
+
 interface HarnessProps {
   initialIndex?: number;
   initialKind?: ReviewQueueKindParam;
   emptyStateAnchorRef?: React.RefObject<HTMLElement | null>;
   queueRef?: React.RefObject<ReviewQueueHandle>;
+  onLabel?: (clusterId: string) => void;
 }
 
 const ReviewQueueHarness = ({
@@ -103,6 +132,7 @@ const ReviewQueueHarness = ({
   initialKind = 'all',
   emptyStateAnchorRef,
   queueRef,
+  onLabel,
 }: HarnessProps): React.JSX.Element => {
   const [index, setIndex] = React.useState(initialIndex);
   const [kind, setKind] = React.useState<ReviewQueueKindParam>(initialKind);
@@ -114,6 +144,7 @@ const ReviewQueueHarness = ({
       kind={kind}
       onKindChange={setKind}
       emptyStateAnchorRef={emptyStateAnchorRef}
+      onLabel={onLabel}
     />
   );
 };
@@ -166,6 +197,22 @@ describe('ReviewQueue', () => {
       limit: 10,
       offset: 0,
     });
+    vi.mocked(listRosterEntries).mockResolvedValue([
+      {
+        id: 7,
+        person_uuid: 'person-uuid-7',
+        name: 'Alex',
+        tags: [],
+        cluster_count: 0,
+        clusters: [],
+        queue_memberships: [],
+        updated_at: '2026-01-01T00:00:00Z',
+        source_version: 1,
+        projection_status: 'current',
+        projection_refreshed_at: null,
+      },
+    ]);
+    vi.mocked(commitClusterToRosterEntry).mockResolvedValue(undefined);
     resetConfigCache();
   });
 
@@ -1118,6 +1165,308 @@ describe('ReviewQueue', () => {
       expect(statuses.some((node) => within(node).queryByText(REVIEW_QUEUE_DRAIN_MESSAGE))).toBe(true);
       expect(screen.getByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeInTheDocument();
     });
+  });
+
+  // --- Slice 3: person-commit on the card ---
+
+  it('shows person-commit + HAI-05 disclosure on ASSIGNMENT when clusterId present', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+
+    renderQueue();
+
+    await screen.findByRole('button', { name: 'Yes' });
+    expect(screen.getByTestId('acx-person-commit')).toBeInTheDocument();
+    expect(screen.getByText(MODEL_OUTPUT_DISCLOSURE)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY })).toBeInTheDocument();
+  });
+
+  it('hides person-commit on MERGE cards', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'merge-1',
+          cluster_a_id: 'a',
+          cluster_b_id: 'b',
+          similarity: 0.88,
+          status: 'pending',
+          cluster_a_label: 'Alex',
+          cluster_b_label: 'Jordan',
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+
+    renderQueue();
+
+    await screen.findByText('Are these the same person?');
+    expect(screen.queryByTestId('acx-person-commit')).not.toBeInTheDocument();
+  });
+
+  it('shows person-commit as primary on NAME cards with disclosure', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'name-1',
+          cluster_id: 'cluster-name-1',
+          suggested_name: 'Morgan',
+          confidence_score: 0.91,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+      ],
+      limit: 25,
+      offset: 0,
+    });
+
+    renderQueue();
+
+    await screen.findByText(/Suggested name:/);
+    const commit = screen.getByTestId('acx-person-commit');
+    expect(commit).toHaveAttribute('data-person-commit-primary', 'true');
+    expect(screen.getByText(MODEL_OUTPUT_DISCLOSURE)).toBeInTheDocument();
+  });
+
+  it('shows person-commit as primary on CLUSTER cards', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [
+        {
+          id: 'cluster-top-1',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 4,
+          user_confirmed: false,
+          suggested_label: null,
+          suggested_target_cluster_id: null,
+          representatives: [],
+        },
+      ],
+      limit: 20,
+      total: 1,
+      truncated: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    renderQueue();
+
+    await screen.findByTestId('acx-review-card');
+    expect(screen.getByTestId('acx-person-commit')).toHaveAttribute('data-person-commit-primary', 'true');
+  });
+
+  it('person-commit confirm calls commitClusterToRosterEntry not updateClusterLabel', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+
+    const user = userEvent.setup();
+    renderQueue();
+
+    await screen.findByTestId('acx-person-commit');
+    // Open combobox and select roster entry "Alex".
+    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
+    await user.click(await screen.findByRole('option', { name: /Alex/i }));
+    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+
+    await waitFor(() => {
+      expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
+        clusterId: 'cluster-1',
+        rosterEntryId: 7,
+        newEntryName: undefined,
+      });
+    });
+    expect(updateClusterLabel).not.toHaveBeenCalled();
+  });
+
+  it('person-commit success renders View in roster → link to #/roster', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(commitClusterToRosterEntry).mockResolvedValue(undefined);
+
+    const user = userEvent.setup();
+    renderQueue();
+
+    await screen.findByTestId('acx-person-commit');
+    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
+    await user.click(await screen.findByRole('option', { name: /Alex/i }));
+    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+
+    const link = await screen.findByRole('link', { name: VIEW_IN_ROSTER_COPY });
+    expect(link).toHaveAttribute('href', VIEW_IN_ROSTER_HREF);
+  });
+
+  it('person-commit failure shows persistent role=alert with retry', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(commitClusterToRosterEntry).mockRejectedValue(new Error('fail'));
+
+    const user = userEvent.setup();
+    renderQueue();
+
+    await screen.findByTestId('acx-person-commit');
+    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
+    await user.click(await screen.findByRole('option', { name: /Alex/i }));
+    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toBeInTheDocument();
+    expect(within(alert).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  });
+
+  it('tertiary just label dispatches open_label with the card clusterId', async () => {
+    const onLabel = vi.fn();
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ReviewQueueHarness onLabel={onLabel} />
+      </QueryClientProvider>,
+    );
+
+    await screen.findByTestId('acx-person-commit');
+    await user.click(screen.getByRole('button', { name: JUST_LABEL_COPY }));
+    expect(onLabel).toHaveBeenCalledWith('cluster-1');
+  });
+
+  it('person-commit while accept hold is open flushes held accept first', async () => {
+    const order: string[] = [];
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(acceptSuggestion).mockImplementation((id: string) => {
+      order.push(`accept:${id}`);
+      return Promise.resolve({
+        suggestion_id: id,
+        resolution: 'accepted' as const,
+        identity_id: 'identity-1',
+        cluster_id: 'cluster-1',
+        message: 'ok',
+      });
+    });
+    vi.mocked(commitClusterToRosterEntry).mockImplementation(() => {
+      order.push('person-commit');
+      return Promise.resolve();
+    });
+
+    const user = userEvent.setup();
+    renderQueue();
+
+    const yes = await screen.findByRole('button', { name: 'Yes' });
+    // Open hold without expiring it.
+    await user.click(yes);
+    expect(screen.getByText(HOLD_STATUS_COPY)).toBeInTheDocument();
+    expect(acceptSuggestion).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
+    await user.click(await screen.findByRole('option', { name: /Alex/i }));
+    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+
+    await waitFor(() => {
+      expect(commitClusterToRosterEntry).toHaveBeenCalled();
+    });
+    expect(order[0]).toBe('accept:sugg-1');
+    expect(order).toContain('person-commit');
+    expect(order.indexOf('accept:sugg-1')).toBeLessThan(order.indexOf('person-commit'));
   });
 });
 

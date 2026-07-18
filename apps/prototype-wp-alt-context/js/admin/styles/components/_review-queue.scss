@@ -176,6 +176,83 @@
   }
 }
 
+/* Slice 3 — person-commit (G2) on the review card */
+.acx-person-commit {
+  display: flex;
+  flex-direction: column;
+  gap: var(--acx-space-8);
+  margin-top: var(--acx-space-12);
+  padding-top: var(--acx-space-12);
+  border-top: 1px solid var(--acx-color-border);
+
+  &--primary {
+    border-top-color: var(--acx-color-border);
+  }
+
+  &--success {
+    border-top: none;
+    padding-top: 0;
+  }
+
+  &__disclosure {
+    margin: 0;
+    font-size: var(--acx-text-xs);
+    color: var(--acx-color-text-muted);
+  }
+
+  &__controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--acx-space-8);
+  }
+
+  &__combobox {
+    min-width: min(100%, 16rem);
+    flex: 1 1 12rem;
+  }
+
+  &__confirm,
+  &__retry,
+  &__just-label {
+    min-width: var(--acx-space-24);
+    min-height: var(--acx-space-24);
+  }
+
+  &__just-label {
+    align-self: flex-start;
+    font-size: var(--acx-text-xs);
+  }
+
+  &__failure {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--acx-space-8);
+    color: var(--acx-color-danger);
+    font-size: var(--acx-text-sm);
+  }
+
+  &__failure-message,
+  &__success-message {
+    margin: 0;
+  }
+
+  &__success-message {
+    font-size: var(--acx-text-sm);
+    color: var(--acx-color-text-secondary);
+  }
+
+  &__roster-link {
+    font-size: var(--acx-text-sm);
+    font-weight: var(--acx-font-weight-semibold);
+    color: var(--acx-color-accent);
+    min-height: var(--acx-space-24);
+    display: inline-flex;
+    align-items: center;
+  }
+}
+
 /* ② Face crop control — ≥48×48 (FaceThumbnail size=md) */
 .acx-face-crop-control {
   display: inline-flex;

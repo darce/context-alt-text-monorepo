@@ -20,6 +20,7 @@ import type {
   PendingNameSuggestionsResponse,
 } from '../../../../api/recognition/types';
 import * as recognitionApi from '../../../../api/recognition';
+import * as rosterApi from '../../../../api/rosterApi';
 import {
   SUGGESTION_PROJECTION_INVALIDATION_EVENTS,
   type SuggestionProjectionInvalidationEvent,
@@ -44,6 +45,11 @@ vi.mock('../../../../api/recognition', () => ({
   acceptNameSuggestion: vi.fn(),
   rejectNameSuggestion: vi.fn(),
   bulkAcceptSuggestions: vi.fn(),
+}));
+
+vi.mock('../../../../api/rosterApi', () => ({
+  commitClusterToRosterEntry: vi.fn(),
+  listRosterEntries: vi.fn().mockResolvedValue([]),
 }));
 
 const reviewPageKey = queryKeys.suggestions.projection.reviewPage(0);
@@ -856,5 +862,107 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
     expect(result.current.hold.phase).toBe('holding');
     expect(result.current.isCardActionsDisabled('sugg-a', ['accept', 'reject'])).toBe(true);
     expect(result.current.isCardActionsDisabled('sugg-b', ['accept', 'reject'])).toBe(false);
+  });
+
+  // --- Slice 3: person-commit (flush-then-immediate, no undo window) ---
+
+  it('person-commit routes to commitClusterToRosterEntry (not updateClusterLabel)', async () => {
+    vi.mocked(rosterApi.commitClusterToRosterEntry).mockResolvedValue(undefined);
+    const { result } = renderMutations();
+
+    let outcome: string | undefined;
+    await act(async () => {
+      const promise = result.current.schedulePersonCommit({
+        clusterId: 'cluster-1',
+        newEntryName: 'Alex',
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      outcome = (await promise).outcome;
+    });
+
+    expect(rosterApi.commitClusterToRosterEntry).toHaveBeenCalledTimes(1);
+    expect(rosterApi.commitClusterToRosterEntry).toHaveBeenCalledWith({
+      clusterId: 'cluster-1',
+      rosterEntryId: undefined,
+      newEntryName: 'Alex',
+    });
+    expect(outcome).toBe('committed');
+    expect(result.current.personCommit.phase).toBe('succeeded');
+  });
+
+  it('person-commit while accept hold is open flushes held commit first (single in-flight)', async () => {
+    const order: string[] = [];
+    vi.mocked(recognitionApi.acceptSuggestion).mockImplementation((id: string) => {
+      order.push(`accept:${id}`);
+      return Promise.resolve({
+        suggestion_id: id,
+        resolution: 'accepted' as const,
+        identity_id: 'identity-a',
+        cluster_id: 'cluster-1',
+        message: 'ok',
+      });
+    });
+    vi.mocked(rosterApi.commitClusterToRosterEntry).mockImplementation(() => {
+      order.push('person-commit');
+      return Promise.resolve();
+    });
+
+    const { result } = renderMutations();
+
+    act(() => {
+      void result.current.scheduleAccept('sugg-a');
+    });
+    expect(result.current.hold.phase).toBe('holding');
+    expect(recognitionApi.acceptSuggestion).not.toHaveBeenCalled();
+
+    let personOutcome: string | undefined;
+    await act(async () => {
+      const promise = result.current.schedulePersonCommit({
+        clusterId: 'cluster-1',
+        rosterEntryId: 42,
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      personOutcome = (await promise).outcome;
+    });
+
+    expect(order).toEqual(['accept:sugg-a', 'person-commit']);
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledTimes(1);
+    expect(rosterApi.commitClusterToRosterEntry).toHaveBeenCalledTimes(1);
+    expect(personOutcome).toBe('committed');
+  });
+
+  it('person-commit failure surfaces role=alert state + retry re-fires exactly 1 POST', async () => {
+    vi.mocked(rosterApi.commitClusterToRosterEntry)
+      .mockRejectedValueOnce(new Error('network'))
+      .mockResolvedValueOnce(undefined);
+
+    const { result } = renderMutations();
+
+    await act(async () => {
+      const promise = result.current.schedulePersonCommit({
+        clusterId: 'cluster-1',
+        newEntryName: 'Alex',
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await promise;
+    });
+
+    expect(result.current.personCommit.phase).toBe('failed');
+    expect(result.current.personCommit.errorMessage).toBeTruthy();
+    expect(rosterApi.commitClusterToRosterEntry).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      const retry = result.current.retryPersonCommit();
+      expect(retry).not.toBeNull();
+      await Promise.resolve();
+      await Promise.resolve();
+      await retry;
+    });
+
+    expect(rosterApi.commitClusterToRosterEntry).toHaveBeenCalledTimes(2);
+    expect(result.current.personCommit.phase).toBe('succeeded');
   });
 });

@@ -1,9 +1,10 @@
 /**
- * E21-5 Slice 1b/2 — card-at-a-time review queue shell + immediate-commit hold.
+ * E21-5 Slice 1b/2/3 — card-at-a-time review queue + hold + person-commit.
  *
  * Renders exactly one review card + filter chips + N-of-M + prev/next.
  * Index is controlled (lifted to ScanTabContent); filter mirrored via kind props.
  * Accept/reject rides the Slice-2 hold/flush/gated-advance mutation choreography.
+ * Person-commit (Slice 3) is flush-then-immediate; no undo window.
  */
 
 import React from 'react';
@@ -19,6 +20,8 @@ import {
 } from '../../../hooks/workbenchQueueUrl';
 import { EmptyStateWarning } from './EmptyStateWarning';
 import { MergeSuggestionCard } from './MergeSuggestionCard';
+import { PersonCommitControl } from './PersonCommitControl';
+import { shouldShowPersonCommit, isPersonCommitPrimaryKind } from './personCommitVisibility';
 import { ReviewCardLightbox } from './ReviewCardLightbox';
 import {
   clampQueueIndex,
@@ -37,6 +40,9 @@ import { TopClusterCard } from './TopClusterCard';
 import { useSuggestionReviewData } from './useSuggestionReviewData';
 import {
   HOLD_STATUS_COPY,
+  type PersonCommitRequest,
+  type PersonCommitResult,
+  type PersonCommitState,
   type ScheduleCommitResult,
   type SuggestionCommitKind,
 } from './useSuggestionReviewMutations';
@@ -411,6 +417,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               isCardPending={data.isCardPending}
               hold={data.hold}
               retryPending={data.retryPending}
+              personCommit={data.personCommit}
               onReview={onReview}
               onLabel={onLabel}
               onOpenOriginal={(target) => setLightbox(target)}
@@ -422,6 +429,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               scheduleRejectMerge={data.scheduleRejectMerge}
               scheduleAcceptName={data.scheduleAcceptName}
               scheduleRejectName={data.scheduleRejectName}
+              schedulePersonCommit={data.schedulePersonCommit}
+              retryPersonCommit={data.retryPersonCommit}
               undoHold={data.undoHold}
               retryFailure={data.retryFailure}
               setHoldPaused={data.setHoldPaused}
@@ -456,6 +465,7 @@ interface CurrentCardProps {
   isCardPending: (suggestionId: string, kinds: readonly SuggestionCommitKind[]) => boolean;
   hold: ReturnType<typeof useSuggestionReviewData>['hold'];
   retryPending: boolean;
+  personCommit: PersonCommitState;
   onReview?: (clusterId: string) => void;
   onLabel?: (clusterId: string) => void;
   onOpenOriginal: (target: FaceOriginalTarget) => void;
@@ -467,6 +477,8 @@ interface CurrentCardProps {
   scheduleRejectMerge: (suggestionId: string) => Promise<ScheduleCommitResult>;
   scheduleAcceptName: (suggestionId: string) => Promise<ScheduleCommitResult>;
   scheduleRejectName: (suggestionId: string) => Promise<ScheduleCommitResult>;
+  schedulePersonCommit: (request: PersonCommitRequest) => Promise<PersonCommitResult>;
+  retryPersonCommit: () => Promise<PersonCommitResult> | null;
   undoHold: () => void;
   retryFailure: () => Promise<ScheduleCommitResult> | null;
   setHoldPaused: (paused: boolean) => void;
@@ -547,6 +559,7 @@ const CurrentCard = ({
   isCardPending,
   hold,
   retryPending,
+  personCommit,
   onReview,
   onLabel,
   onOpenOriginal,
@@ -558,6 +571,8 @@ const CurrentCard = ({
   scheduleRejectMerge,
   scheduleAcceptName,
   scheduleRejectName,
+  schedulePersonCommit,
+  retryPersonCommit,
   undoHold,
   retryFailure,
   setHoldPaused,
@@ -600,6 +615,43 @@ const CurrentCard = ({
     );
   };
 
+  const personCommitFor = (
+    clusterId: string | null | undefined,
+    kind: ReviewQueueItem['kind'],
+    options?: { suggestedCreateName?: string | null },
+  ): React.ReactNode => {
+    if (!shouldShowPersonCommit(kind, clusterId) || !clusterId) {
+      return null;
+    }
+    // Only surface phase UI for this card's cluster (or idle — show chrome).
+    const phaseForCard =
+      personCommit.clusterId === null || personCommit.clusterId === clusterId
+        ? personCommit.phase
+        : 'idle';
+    const errorForCard =
+      personCommit.clusterId === clusterId ? personCommit.errorMessage : null;
+    const isPrimary = isPersonCommitPrimaryKind(kind);
+    return (
+      <PersonCommitControl
+        clusterId={clusterId}
+        isPrimary={isPrimary}
+        phase={phaseForCard}
+        errorMessage={errorForCard}
+        // Stay interactive during accept hold — schedulePersonCommit flushes first.
+        // Only block while a person-commit POST (this or another card) is in flight.
+        disabled={personCommit.phase === 'committing'}
+        suggestedCreateName={options?.suggestedCreateName}
+        onCommit={(request) => {
+          void schedulePersonCommit(request);
+        }}
+        onRetry={() => {
+          void retryPersonCommit();
+        }}
+        onJustLabel={onLabel}
+      />
+    );
+  };
+
   switch (item.kind) {
     case NEXT_ACTION_KIND.ASSIGNMENT: {
       const suggestion = assignmentById.get(item.suggestionId);
@@ -620,6 +672,8 @@ const CurrentCard = ({
           : null;
       const assignmentKinds = ['accept', 'reject'] as const;
       const assignmentHold = holdRegionFor(assignmentKinds, suggestion.suggestionId);
+      // Matrix: person-commit only when clusterId != null (item.clusterId is authoritative).
+      const commitClusterId = item.clusterId ?? suggestion.clusterId;
       return (
         <>
           {runHint ? <p className="acx-review-queue__run-hint">{runHint}</p> : null}
@@ -642,6 +696,7 @@ const CurrentCard = ({
             actionAccessory={assignmentHold}
             actionAccessoryAfter={hold.kind === 'reject' ? 'reject' : 'accept'}
           />
+          {personCommitFor(commitClusterId, NEXT_ACTION_KIND.ASSIGNMENT)}
         </>
       );
     }
@@ -669,6 +724,7 @@ const CurrentCard = ({
             actionAccessory={mergeHold}
             actionAccessoryAfter={hold.kind === 'acceptMerge' ? 'accept' : 'reject'}
           />
+          {/* MERGE: never person-commit (matrix). */}
         </>
       );
     }
@@ -707,16 +763,19 @@ const CurrentCard = ({
               </p>
             ) : null}
           </div>
+          {personCommitFor(item.clusterId, NEXT_ACTION_KIND.NAME, {
+            suggestedCreateName: suggestion.suggested_name,
+          })}
           <div className="acx-name-suggestion-card__actions acx-suggestion-card__actions">
             <button
               type="button"
-              className="button button-primary acx-suggestion-card__accept"
+              className="button acx-suggestion-card__accept"
               disabled={namePending}
               onClick={() => {
                 runScheduled(() => scheduleAcceptName(suggestion.id));
               }}
             >
-              {__('Accept', 'alt-context')}
+              {__('Accept suggestion', 'alt-context')}
             </button>
             {afterAccept ? nameHold : null}
             <button
@@ -743,11 +802,11 @@ const CurrentCard = ({
       }
       return (
         <div data-testid="acx-review-card" data-review-kind="cluster">
-          <TopClusterCard
-            cluster={cluster}
-            onLabel={(clusterId) => onLabel?.(clusterId)}
-            onReview={onReview}
-          />
+          {/* isReadOnly: person-commit is primary; label demoted to tertiary below. */}
+          <TopClusterCard cluster={cluster} onLabel={() => undefined} isReadOnly onReview={onReview} />
+          {personCommitFor(item.clusterId, NEXT_ACTION_KIND.CLUSTER, {
+            suggestedCreateName: cluster.suggested_label,
+          })}
         </div>
       );
     }

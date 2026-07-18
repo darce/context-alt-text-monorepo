@@ -23,6 +23,8 @@ import {
   rejectNameSuggestion,
   rejectSuggestion,
 } from '../../../api/recognition';
+import { commitClusterToRosterEntry } from '../../../api/rosterApi';
+import { PERSON_COMMIT_FAILURE_COPY } from './personCommitCopy';
 import { invalidateSuggestionProjection } from './suggestionProjection';
 import type { SuggestionReviewPage } from './useSuggestionReviewQueries';
 
@@ -60,6 +62,31 @@ export interface ScheduleCommitResult {
   outcome: ScheduleCommitOutcome;
   kind: SuggestionCommitKind;
   suggestionId: string;
+}
+
+/**
+ * Slice 3 person-commit — fires immediately after flushing any held accept/reject
+ * (no undo window; deliberate multi-step Confirm). Single-in-flight via chainRef.
+ */
+export type PersonCommitPhase = 'idle' | 'committing' | 'succeeded' | 'failed';
+
+export interface PersonCommitState {
+  phase: PersonCommitPhase;
+  clusterId: string | null;
+  errorMessage: string | null;
+}
+
+export interface PersonCommitRequest {
+  clusterId: string;
+  rosterEntryId?: number;
+  newEntryName?: string;
+}
+
+export type PersonCommitOutcome = 'committed' | 'failed' | 'not_attempted_prior_failed';
+
+export interface PersonCommitResult {
+  outcome: PersonCommitOutcome;
+  clusterId: string;
 }
 
 interface UseSuggestionReviewMutationsOptions {
@@ -107,11 +134,21 @@ export const useSuggestionReviewMutations = ({
     errorMessage: null,
   });
 
+  const [personCommit, setPersonCommit] = React.useState<PersonCommitState>({
+    phase: 'idle',
+    clusterId: null,
+    errorMessage: null,
+  });
+
   const mountedRef = React.useRef(true);
   const heldRef = React.useRef<HeldCommit | null>(null);
   /** Serializes flush/schedule so at most one commit is in flight and order is preserved. */
   const chainRef = React.useRef(Promise.resolve());
   const committingRef = React.useRef(false);
+  /** Person-commit in-flight (shares chainRef with accept/reject holds). */
+  const personCommittingRef = React.useRef(false);
+  /** Last person-commit request for retry (rg-002: re-fire exactly one POST). */
+  const lastPersonCommitRef = React.useRef<PersonCommitRequest | null>(null);
   /** Failed hold snapshot — used so schedule/retry can re-check without waiting on React state. */
   const failedHoldRef = React.useRef<{ kind: SuggestionCommitKind; suggestionId: string } | null>(null);
   /** BR-17: reject re-entry while a retry POST is in flight. */
@@ -119,6 +156,12 @@ export const useSuggestionReviewMutations = ({
   const [retryPending, setRetryPending] = React.useState(false);
   /** BR-22: per-hold monotonically increasing entry id. */
   const nextEntryIdRef = React.useRef(1);
+
+  const setPersonCommitSafe = React.useCallback((next: PersonCommitState) => {
+    if (mountedRef.current) {
+      setPersonCommit(next);
+    }
+  }, []);
 
   const removePendingSuggestionFromCache = React.useCallback(
     (suggestionId: string) => {
@@ -386,7 +429,7 @@ export const useSuggestionReviewMutations = ({
 
       // Idle path: open the hold synchronously so the Saving… state is visible in the
       // same turn as the click (tests and AT both observe this immediately).
-      if (!heldRef.current && !committingRef.current) {
+      if (!heldRef.current && !committingRef.current && !personCommittingRef.current) {
         return openHold(kind, suggestionId);
       }
 
@@ -413,7 +456,7 @@ export const useSuggestionReviewMutations = ({
               return;
             }
           }
-          while (committingRef.current) {
+          while (committingRef.current || personCommittingRef.current) {
             await Promise.resolve();
           }
           if (!mountedRef.current) {
@@ -527,6 +570,103 @@ export const useSuggestionReviewMutations = ({
     return scheduled;
   }, [flushHeldInternal]);
 
+  /**
+   * Slice 3: person-commit fires immediately (no undo hold) after flushing any
+   * held accept/reject. Shares chainRef so commits never overlap (rg-002 / §3).
+   */
+  const executePersonCommit = React.useCallback(
+    async (request: PersonCommitRequest): Promise<PersonCommitResult> => {
+      personCommittingRef.current = true;
+      lastPersonCommitRef.current = request;
+      setPersonCommitSafe({
+        phase: 'committing',
+        clusterId: request.clusterId,
+        errorMessage: null,
+      });
+
+      try {
+        await commitClusterToRosterEntry({
+          clusterId: request.clusterId,
+          rosterEntryId: request.rosterEntryId,
+          newEntryName: request.newEntryName,
+        });
+        // clusterLabelSetClear: committing labels a cluster (same as roster drawer).
+        void invalidateSuggestionProjection(queryClient);
+        void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.roster.entries() });
+        void queryClient.invalidateQueries({ queryKey: namePendingKey });
+        setPersonCommitSafe({
+          phase: 'succeeded',
+          clusterId: request.clusterId,
+          errorMessage: null,
+        });
+        return { outcome: 'committed', clusterId: request.clusterId };
+      } catch {
+        setPersonCommitSafe({
+          phase: 'failed',
+          clusterId: request.clusterId,
+          errorMessage: PERSON_COMMIT_FAILURE_COPY,
+        });
+        return { outcome: 'failed', clusterId: request.clusterId };
+      } finally {
+        personCommittingRef.current = false;
+      }
+    },
+    [queryClient, setPersonCommitSafe],
+  );
+
+  const schedulePersonCommit = React.useCallback(
+    (request: PersonCommitRequest): Promise<PersonCommitResult> =>
+      new Promise<PersonCommitResult>((resolve) => {
+        const prepare = async (): Promise<void> => {
+          if (!mountedRef.current) {
+            resolve({ outcome: 'failed', clusterId: request.clusterId });
+            return;
+          }
+          // Flush any held accept/reject first (single-in-flight).
+          if (heldRef.current) {
+            const prior = await flushHeldInternal({ updateUi: true });
+            if (prior?.outcome === 'failed') {
+              resolve({ outcome: 'not_attempted_prior_failed', clusterId: request.clusterId });
+              return;
+            }
+          }
+          while (committingRef.current || personCommittingRef.current) {
+            await Promise.resolve();
+          }
+          if (!mountedRef.current) {
+            resolve({ outcome: 'failed', clusterId: request.clusterId });
+            return;
+          }
+          const result = await executePersonCommit(request);
+          resolve(result);
+        };
+
+        chainRef.current = chainRef.current.then(prepare, prepare).then(
+          () => undefined,
+          () => undefined,
+        );
+      }),
+    [executePersonCommit, flushHeldInternal],
+  );
+
+  const retryPersonCommit = React.useCallback((): Promise<PersonCommitResult> | null => {
+    const last = lastPersonCommitRef.current;
+    if (!last || personCommit.phase !== 'failed') {
+      return null;
+    }
+    if (personCommittingRef.current || committingRef.current) {
+      return null;
+    }
+    return schedulePersonCommit(last);
+  }, [personCommit.phase, schedulePersonCommit]);
+
+  const clearPersonCommitSuccess = React.useCallback((): void => {
+    if (personCommit.phase === 'succeeded' || personCommit.phase === 'failed') {
+      setPersonCommitSafe({ phase: 'idle', clusterId: null, errorMessage: null });
+    }
+  }, [personCommit.phase, setPersonCommitSafe]);
+
   // Unmount: fire any held commit without awaiting in cleanup; never setState after unmount.
   React.useEffect(() => {
     mountedRef.current = true;
@@ -623,12 +763,13 @@ export const useSuggestionReviewMutations = ({
   });
 
   const isHoldActive = hold.phase === 'holding' || hold.phase === 'committing';
-  const isCommitting = hold.phase === 'committing';
+  const isCommitting = hold.phase === 'committing' || personCommit.phase === 'committing';
 
   /**
    * BR-15: only the held/failed card's accept/reject are disabled during a hold.
    * Other cards stay enabled so scheduleCommit's busy path can flush → open.
    * During 'committing' the committing card stays briefly disabled.
+   * Person-commit in flight also disables accept/reject (shared chain).
    */
   const isCardActionsDisabled = React.useCallback(
     (suggestionId: string, kinds: readonly SuggestionCommitKind[]): boolean => {
@@ -638,7 +779,8 @@ export const useSuggestionReviewMutations = ({
         acceptMergeMutation.isPending ||
         rejectMergeMutation.isPending ||
         acceptNameMutation.isPending ||
-        rejectNameMutation.isPending
+        rejectNameMutation.isPending ||
+        personCommit.phase === 'committing'
       ) {
         return true;
       }
@@ -663,6 +805,7 @@ export const useSuggestionReviewMutations = ({
       hold.kind,
       hold.phase,
       hold.suggestionId,
+      personCommit.phase,
       rejectMergeMutation.isPending,
       rejectMutation.isPending,
       rejectNameMutation.isPending,
@@ -676,12 +819,16 @@ export const useSuggestionReviewMutations = ({
     isCommitting,
     isCardActionsDisabled,
     retryPending,
+    personCommit,
     scheduleAccept: (suggestionId: string) => scheduleCommit('accept', suggestionId),
     scheduleReject: (suggestionId: string) => scheduleCommit('reject', suggestionId),
     scheduleAcceptMerge: (suggestionId: string) => scheduleCommit('acceptMerge', suggestionId),
     scheduleRejectMerge: (suggestionId: string) => scheduleCommit('rejectMerge', suggestionId),
     scheduleAcceptName: (suggestionId: string) => scheduleCommit('acceptName', suggestionId),
     scheduleRejectName: (suggestionId: string) => scheduleCommit('rejectName', suggestionId),
+    schedulePersonCommit,
+    retryPersonCommit,
+    clearPersonCommitSuccess,
     undoHold,
     retryFailure,
     setHoldPaused,

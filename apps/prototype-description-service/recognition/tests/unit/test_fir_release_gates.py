@@ -1,4 +1,4 @@
-"""FIR3-BR-01 / FIR4-BR-01 release-gate contracts (RED-first).
+"""FIR3-BR-01 / FIR4-BR-01 + FINALB release-gate contracts (RED-first).
 
 Static/behavior guards for:
 1. Docker image deps resolve from ``uv.lock`` via frozen lock consumption
@@ -7,18 +7,24 @@ Static/behavior guards for:
    fail-closed missing-model semantics.
 3. Test infrastructure distinguishes ordinary modelless skips from the
    required parity gate (covered here + face_pipeline_support helpers).
+4. FINALB-03 — parity workflow machine-enforces zero skips (JUnit + gate).
+5. FINALB-05 — Docker project install must not resolve build reqs outside lock.
+6. FINALB-07 — accepted FIR-4 plan must not retain stale claims vs HEAD.
 
-No Dockerfile/workflow edits in the RED pass — these tests must fail until
+No Dockerfile/workflow/plan edits in the RED pass — new FINALB tests fail until
 GREEN production surfaces land.
 
-Heuristics: RLSE-01/02/05/07, SERVE-07, EVAL-01/04, PROV-01/08, TEST-06,
-DEP-01, CFG-02.
+Heuristics: RLSE-01/02/05/07, SERVE-07, EVAL-01/04, PROV-01/08, TEST-06/08,
+DEP-01/02, CFG-02, rg-006.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import re
+import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -33,6 +39,10 @@ _SERVICE_ROOT = Path(__file__).resolve().parents[3]
 _REPO_ROOT = Path(__file__).resolve().parents[5]
 _DOCKERFILE = _SERVICE_ROOT / "Dockerfile"
 _UV_LOCK = _SERVICE_ROOT / "uv.lock"
+_FIR4_PLAN = _REPO_ROOT / "docs" / "tasks" / "fir" / "FIR-4-runtime-integration-task-plan.md"
+# FINALB-03: checked-in JUnit zero-skip gate (GREEN implements; RED asserts).
+_JUNIT_SKIP_GATE = _SERVICE_ROOT / "scripts" / "check_junit_no_skips.py"
+_JUNIT_SKIP_GATE_MODULE = "check_junit_no_skips"
 _PARITY_WORKFLOW_CANDIDATES = (
     _REPO_ROOT / ".github" / "workflows" / "face-pipeline-ort-parity.yml",
     _REPO_ROOT / ".github" / "workflows" / "face-pipeline-parity.yml",
@@ -140,6 +150,74 @@ def test_dockerfile_runtime_editable_install_may_remain_no_deps() -> None:
                 "Runtime app `pip install` of `.` must use --no-deps when deps "
                 f"come from the lock. Offending line: {ln.strip()}"
             )
+
+
+def _project_install_lines(text: str) -> list[str]:
+    """Lines that install the local project package into the image venv."""
+    lines: list[str] = []
+    for ln in text.splitlines():
+        stripped = ln.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if "pip install" not in stripped and "uv pip install" not in stripped:
+            continue
+        # Project package: `-e .` or bare `.` without extras; skip deps-only paths.
+        if ".[bench]" in stripped or ".[dev]" in stripped:
+            continue
+        if re.search(r"(?:^|\s)-e\s+\.(?:\s|$)", stripped) or re.search(
+            r"pip install[^\n]*\s\.(?:\s|$)", stripped
+        ):
+            lines.append(stripped)
+    return lines
+
+
+def test_dockerfile_project_install_disables_build_isolation() -> None:
+    """FINALB-05 [DEP-01/02]: project install must not resolve build reqs outside lock.
+
+    Frozen ``uv sync`` puts runtime deps in ``/opt/venv``, but a plain
+    ``pip install -e . --no-deps`` still runs a PEP 517 isolated build that can
+    pull ``setuptools>=68`` (etc.) from the network, unbound by ``uv.lock``.
+    GREEN must disable build isolation (and keep install inside ``/opt/venv``).
+    """
+    text = _dockerfile_text()
+    # Preserve frozen lock consumption for deps.
+    assert "uv sync" in text and ("--frozen" in text or "--locked" in text), (
+        "FINALB-05: Dockerfile must keep frozen uv sync for dependency install"
+    )
+    assert re.search(r"--extra\s+bench\b", text) or "extras=bench" in text, (
+        "FINALB-05: frozen sync must still enable the bench extra"
+    )
+
+    project_lines = _project_install_lines(text)
+    assert project_lines, (
+        "FINALB-05: expected a project install step "
+        "(`pip install -e .` / `uv pip install -e .`) after frozen dep sync"
+    )
+    for ln in project_lines:
+        assert "--no-deps" in ln, (
+            "FINALB-05: project install must keep --no-deps so runtime deps "
+            f"come only from the lock. Offending: {ln}"
+        )
+        assert "--no-build-isolation" in ln, (
+            "FINALB-05: project install must pass --no-build-isolation so PEP 517 "
+            "cannot resolve setuptools/build-system deps outside uv.lock. "
+            f"Offending: {ln}"
+        )
+        # Install executes with /opt/venv on PATH (builder/runtime copy pattern).
+        assert "/opt/venv" in text, (
+            "FINALB-05: image must install into /opt/venv (relocatable locked venv)"
+        )
+
+    # Reject unlocked bench dependency resolution (regression guard).
+    offenders = [
+        ln.strip()
+        for ln in text.splitlines()
+        if "pip install" in ln and ".[bench]" in ln.replace(" ", "") and "--no-deps" not in ln
+    ]
+    assert not offenders, (
+        "FINALB-05: unlocked `pip install .[bench]` must not resolve deps. Found:\n  - "
+        + "\n  - ".join(offenders)
+    )
 
 
 def test_dockerfile_no_hardcoded_ort_version_independent_of_lock() -> None:
@@ -327,3 +405,280 @@ def test_parity_required_env_name_is_stable() -> None:
     """Workflow contracts and helpers share one env name (CFG-02)."""
     assert FACE_PIPELINE_PARITY_REQUIRED_ENV == "FACE_PIPELINE_PARITY_REQUIRED"
     assert hasattr(fps, "FACE_PIPELINE_PARITY_REQUIRED_ENV")
+
+
+# ---------------------------------------------------------------------------
+# 4. FINALB-03 — machine-enforced zero skips (JUnit + checked-in gate)
+# ---------------------------------------------------------------------------
+#
+# Comments + FACE_PIPELINE_PARITY_REQUIRED alone are not enough: ordinary
+# pytest still exits 0 when tests are skipped. GREEN must emit JUnit XML and
+# run scripts/check_junit_no_skips.py (or equivalent) so any <skipped> fails CI.
+#
+# Gate contract (GREEN implements at scripts/check_junit_no_skips.py):
+#   count_skipped(path: Path | str) -> int
+#   main(argv: list[str] | None = None) -> int  # 0 iff total skipped == 0
+# CLI: python scripts/check_junit_no_skips.py <junit.xml>
+
+
+_ZERO_SKIP_JUNIT = """\
+<?xml version="1.0" encoding="utf-8"?>
+<testsuites tests="2" failures="0" errors="0" skipped="0">
+  <testsuite name="parity" tests="2" failures="0" errors="0" skipped="0">
+    <testcase classname="t" name="a" time="0.01"/>
+    <testcase classname="t" name="b" time="0.01"/>
+  </testsuite>
+</testsuites>
+"""
+
+_NONZERO_SKIP_JUNIT = """\
+<?xml version="1.0" encoding="utf-8"?>
+<testsuites tests="2" failures="0" errors="0" skipped="1">
+  <testsuite name="parity" tests="2" failures="0" errors="0" skipped="1">
+    <testcase classname="t" name="a" time="0.01"/>
+    <testcase classname="t" name="b" time="0.01">
+      <skipped message="models missing"/>
+    </testcase>
+  </testsuite>
+</testsuites>
+"""
+
+
+def _load_junit_skip_gate() -> ModuleType:
+    """Import the checked-in zero-skip gate (FINALB-03)."""
+    path = _JUNIT_SKIP_GATE
+    assert path.is_file(), (
+        "FINALB-03 [RLSE-05][TEST-08]: missing "
+        f"{path.relative_to(_REPO_ROOT).as_posix()}. "
+        "Parity CI must machine-check zero skips via a checked-in JUnit parser "
+        "that exits nonzero when <skipped> > 0 (comments are not a gate)."
+    )
+    # Unique module name avoids stale sys.modules across pytest rewrites.
+    mod_name = f"{_JUNIT_SKIP_GATE_MODULE}_{path.stat().st_mtime_ns}"
+    spec = importlib.util.spec_from_file_location(mod_name, path)
+    assert spec is not None and spec.loader is not None, f"cannot load gate from {path}"
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[mod_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _gate_count_skipped(module: ModuleType, report: Path) -> int:
+    for name in ("count_skipped", "count_junit_skipped", "skipped_count"):
+        fn = getattr(module, name, None)
+        if callable(fn):
+            return int(fn(report))
+    pytest.fail(
+        "FINALB-03: check_junit_no_skips.py must expose count_skipped(path) -> int "
+        "(or count_junit_skipped / skipped_count)"
+    )
+
+
+def _gate_main(module: ModuleType, report: Path) -> int:
+    main = getattr(module, "main", None)
+    assert callable(main), (
+        "FINALB-03: check_junit_no_skips.py must expose main(argv=None) -> int "
+        "for CLI use from the parity workflow"
+    )
+    return int(main([str(report)]))
+
+
+def test_junit_zero_skip_gate_module_exists() -> None:
+    """FINALB-03: checked-in gate script is part of the release surface."""
+    assert _JUNIT_SKIP_GATE.is_file(), (
+        "FINALB-03: expected "
+        f"{_JUNIT_SKIP_GATE.relative_to(_REPO_ROOT).as_posix()} "
+        "(JUnit XML zero-skip gate; RLSE-05 silent-green is failure)"
+    )
+
+
+def test_junit_gate_passes_synthetic_zero_skip_report(tmp_path: Path) -> None:
+    """FINALB-03: zero <skipped> → count 0 and main exits 0."""
+    gate = _load_junit_skip_gate()
+    report = tmp_path / "zero-skip.xml"
+    report.write_text(_ZERO_SKIP_JUNIT, encoding="utf-8")
+    assert _gate_count_skipped(gate, report) == 0
+    assert _gate_main(gate, report) == 0
+
+
+def test_junit_gate_fails_synthetic_nonzero_skip_report(tmp_path: Path) -> None:
+    """FINALB-03: any <skipped> → count > 0 and main exits nonzero."""
+    gate = _load_junit_skip_gate()
+    report = tmp_path / "with-skip.xml"
+    report.write_text(_NONZERO_SKIP_JUNIT, encoding="utf-8")
+    skipped = _gate_count_skipped(gate, report)
+    assert skipped > 0, f"expected skipped > 0 from synthetic report, got {skipped}"
+    rc = _gate_main(gate, report)
+    assert rc != 0, (
+        f"FINALB-03: main must exit nonzero when skipped={skipped} (got rc={rc})"
+    )
+
+
+def test_parity_workflow_wires_junit_and_zero_skip_gate() -> None:
+    """FINALB-03: workflow must emit JUnit and invoke the zero-skip gate.
+
+    FACE_PIPELINE_PARITY_REQUIRED comments alone leave silent greens when
+    pytest reports skips with exit code 0. Wire a deterministic mechanism.
+    """
+    text = _workflow_text()
+    emits_junit = bool(
+        re.search(r"--junitxml\b|=junitxml\b|junit-xml|JUnitXML", text, re.IGNORECASE)
+    )
+    assert emits_junit, (
+        "FINALB-03: parity workflow must emit JUnit XML "
+        "(e.g. pytest --junitxml=parity-junit.xml) so skips are machine-readable"
+    )
+    gate_name = _JUNIT_SKIP_GATE.name
+    assert gate_name in text or "check_junit_no_skips" in text, (
+        "FINALB-03: parity workflow must invoke "
+        f"{_JUNIT_SKIP_GATE.relative_to(_REPO_ROOT).as_posix()} "
+        "(or check_junit_no_skips) after pytest; exit nonzero on any skip. "
+        "Comments claiming 'skips are failures' are not enforcement."
+    )
+
+
+# ---------------------------------------------------------------------------
+# 5. FINALB-07 — accepted FIR-4 plan must match HEAD (stale claim sweep)
+# ---------------------------------------------------------------------------
+
+
+def _fir4_plan_text() -> str:
+    assert _FIR4_PLAN.is_file(), f"missing FIR-4 plan at {_FIR4_PLAN}"
+    return _FIR4_PLAN.read_text(encoding="utf-8")
+
+
+def test_fir4_plan_exists_for_contract_sweep() -> None:
+    assert _FIR4_PLAN.is_file(), (
+        "FINALB-07: expected accepted plan at "
+        f"{_FIR4_PLAN.relative_to(_REPO_ROOT).as_posix()}"
+    )
+
+
+def test_fir4_plan_no_two_active_dimension_knobs_claim() -> None:
+    """FINALB-07: plan must not require two active dimension knobs.
+
+    HEAD uses PGVECTOR_DIM as the single width root; dual-knob prose is stale.
+    """
+    text = _fir4_plan_text()
+    offenders: list[str] = []
+    patterns = (
+        r"two\s+active\s+dimension\s+knobs",
+        r"\*\*two\*\*\s+dimension\s+knobs",
+        r"two\s+dimension\s+knobs",
+        r"both\s+knobs\s+to\s+128",
+        r"set\s+both\s+knobs",
+    )
+    for pat in patterns:
+        for m in re.finditer(pat, text, flags=re.IGNORECASE):
+            # Context line for operators sweeping the plan.
+            line_no = text.count("\n", 0, m.start()) + 1
+            offenders.append(f"L{line_no}: ...{m.group(0)}...")
+    assert not offenders, (
+        "FINALB-07: FIR-4 plan still claims two (active) dimension knobs. "
+        "Rephrase for single-root PGVECTOR_DIM / remove dual-knob requirements. "
+        "Hits:\n  - " + "\n  - ".join(offenders)
+    )
+
+
+def test_fir4_plan_no_instruction_to_set_recognition_embedding_dimension() -> None:
+    """FINALB-07: do not instruct operators to set RECOGNITION_EMBEDDING_DIMENSION.
+
+    Mentions are allowed only to state the env is ignored/removed/no-op.
+    """
+    text = _fir4_plan_text()
+    env_name = "RECOGNITION_EMBEDDING_DIMENSION"
+    allowed_markers = (
+        "ignored",
+        "ignore",
+        "removed",
+        "no-op",
+        "noop",
+        "deprecated",
+        "not used",
+        "unused",
+        "do not set",
+        "must not set",
+        "no longer",
+    )
+    offenders: list[str] = []
+    for i, line in enumerate(text.splitlines(), start=1):
+        if env_name not in line:
+            continue
+        lower = line.lower()
+        if any(marker in lower for marker in allowed_markers):
+            continue
+        offenders.append(f"L{i}: {line.strip()[:160]}")
+    assert not offenders, (
+        "FINALB-07: plan still instructs or documents "
+        f"{env_name} as an active knob. Rephrase as ignored/removed, or delete. "
+        "Hits:\n  - " + "\n  - ".join(offenders)
+    )
+
+
+def test_fir4_plan_no_migration_001_hardcodes_512_claim() -> None:
+    """FINALB-07: plan must not claim migration 001 hardcodes 512."""
+    text = _fir4_plan_text()
+    patterns = (
+        r"001_identity_schema\.py\s+hardcodes\s+512",
+        r"greenfield\s+`?001_identity_schema\.py`?\s+hardcodes\s+512",
+        r"migration\s+001[^\n]{0,40}hardcodes\s+512",
+        r"hardcodes\s+512",
+    )
+    offenders: list[str] = []
+    for pat in patterns:
+        for m in re.finditer(pat, text, flags=re.IGNORECASE):
+            # Keep the hardcodes-512 hit only when migration/001 context is near.
+            start = max(0, m.start() - 80)
+            window = text[start : m.end() + 40]
+            if pat == r"hardcodes\s+512" and not re.search(
+                r"001|migration|identity_schema", window, flags=re.IGNORECASE
+            ):
+                continue
+            line_no = text.count("\n", 0, m.start()) + 1
+            offenders.append(f"L{line_no}: {m.group(0)}")
+    assert not offenders, (
+        "FINALB-07: plan still claims migration 001 hardcodes 512. "
+        "Update against HEAD schema/defaults. Hits:\n  - " + "\n  - ".join(offenders)
+    )
+
+
+def test_fir4_plan_no_docker_independently_pip_resolved_claim() -> None:
+    """FINALB-07: plan must not claim Docker remains independently pip-resolved."""
+    text = _fir4_plan_text()
+    patterns = (
+        r"pip resolves[^\n]{0,40}independently of\s+`?uv\.lock`?",
+        r"independently pip-resolved",
+        r"pip-vs-repo-uv install duality",
+        r"image remains independently pip",
+        r"Docker remains independently pip",
+    )
+    offenders: list[str] = []
+    for pat in patterns:
+        for m in re.finditer(pat, text, flags=re.IGNORECASE):
+            line_no = text.count("\n", 0, m.start()) + 1
+            offenders.append(f"L{line_no}: {m.group(0)}")
+    assert not offenders, (
+        "FINALB-07: plan still claims Docker/image is independently pip-resolved. "
+        "HEAD uses frozen uv.lock sync — rephrase. Hits:\n  - "
+        + "\n  - ".join(offenders)
+    )
+
+
+def test_fir4_plan_no_completed_image_ort_smoke_claim() -> None:
+    """FINALB-07: no completed checklist claim for an image ORT smoke that is gone."""
+    text = _fir4_plan_text()
+    patterns = (
+        r"\[x\]\s*Image ORT smoke",
+        r"Image ORT smoke:\s*image build prints",
+        r"image build prints\s+`?onnxruntime\.__version__`?",
+    )
+    offenders: list[str] = []
+    for pat in patterns:
+        for m in re.finditer(pat, text, flags=re.IGNORECASE):
+            line_no = text.count("\n", 0, m.start()) + 1
+            offenders.append(f"L{line_no}: {m.group(0)}")
+    assert not offenders, (
+        "FINALB-07: plan still marks completed image ORT-smoke work that no longer "
+        "exists on HEAD. Remove or rephrase the claim. Hits:\n  - "
+        + "\n  - ".join(offenders)
+    )

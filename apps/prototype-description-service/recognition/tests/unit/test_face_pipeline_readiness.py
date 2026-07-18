@@ -129,11 +129,38 @@ def _align_dims_to_sface(monkeypatch: pytest.MonkeyPatch) -> None:
     get_database_settings.cache_clear()
 
 
+def _stub_shared_runtime_loader(
+    monkeypatch: pytest.MonkeyPatch, models_dir: Path | None = None
+) -> None:
+    """Avoid real ORT session construction for synthetic-byte readiness tests."""
+    from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
+
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+
+    def loader(*, models_dir: Path, **kwargs: object) -> fpa.FacePipelineRuntime:
+        return fpa.FacePipelineRuntime(
+            detector=MagicMock(),
+            aligner=MagicMock(),
+            embedder=MagicMock(),
+            manifest=fpa.sface_embedding_model_manifest(),
+            models_dir=models_dir,
+            score_threshold=0.9,
+            nms_threshold=0.3,
+            top_k=5000,
+        )
+
+    monkeypatch.setattr(fpa, "_load_face_pipeline_runtime", loader)
+
+
 @pytest.fixture(autouse=True)
 def _clear_verify_cache() -> None:
+    from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
+
     health_mod.reset_face_pipeline_verify_cache_for_tests()
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
     yield
     health_mod.reset_face_pipeline_verify_cache_for_tests()
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
     from db.settings import get_database_settings
     from recognition.config import get_settings
 
@@ -157,6 +184,7 @@ def test_check_face_pipeline_models_happy_path_synthetic(tmp_path: Path, monkeyp
     """Modelless happy path via synthetic manifest (CI coverage without ONNX)."""
     _align_dims_to_sface(monkeypatch)
     _install_synthetic_pair(tmp_path, monkeypatch)
+    _stub_shared_runtime_loader(monkeypatch, tmp_path)
     result = health_mod.check_face_pipeline_models(tmp_path)
     assert result.status.value == "ok"
     assert "yunet" in result.detail or "verified" in result.detail
@@ -202,6 +230,7 @@ def test_check_face_pipeline_models_missing_sface_atomic_unhealthy(
 def test_mtime_size_drift_triggers_reverify(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _align_dims_to_sface(monkeypatch)
     _install_synthetic_pair(tmp_path, monkeypatch)
+    _stub_shared_runtime_loader(monkeypatch, tmp_path)
 
     verify_calls = {"n": 0}
     real = health_mod.verify_face_pipeline_model
@@ -235,6 +264,7 @@ def test_unverified_bytes_never_ok_via_call_count(tmp_path: Path, monkeypatch: p
     """mtime+size alone never green-lights never-verified bytes."""
     _align_dims_to_sface(monkeypatch)
     _install_synthetic_pair(tmp_path, monkeypatch)
+    _stub_shared_runtime_loader(monkeypatch, tmp_path)
 
     health_mod.reset_face_pipeline_verify_cache_for_tests()
     calls = {"n": 0}
@@ -311,6 +341,7 @@ def test_register_health_probes_branches_on_profile(monkeypatch: pytest.MonkeyPa
 
     _align_dims_to_sface(monkeypatch)
     _install_synthetic_pair(tmp_path, monkeypatch)
+    _stub_shared_runtime_loader(monkeypatch, tmp_path)
 
     monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_PROFILE", "face_pipeline")
     monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_MODELS_DIR", str(tmp_path))
@@ -368,6 +399,7 @@ def test_model_probe_verify_runs_off_event_loop(monkeypatch: pytest.MonkeyPatch,
 
     _align_dims_to_sface(monkeypatch)
     _install_synthetic_pair(tmp_path, monkeypatch)
+    _stub_shared_runtime_loader(monkeypatch, tmp_path)
     monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_PROFILE", "face_pipeline")
     monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_MODELS_DIR", str(tmp_path))
 

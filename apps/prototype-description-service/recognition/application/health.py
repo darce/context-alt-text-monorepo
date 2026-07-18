@@ -128,6 +128,10 @@ def check_face_pipeline_models(models_dir: Path) -> CheckResult:
     After model verification passes, also assert three-way embedding dimension
     equality (manifest == pgvector == identity_detection) so a 512-dim env with
     SFace-128 models cannot report ready (E2E-03).
+
+    Finally construct/prove the process-wide shared ORT runtime used by serve
+    so hashes+dims alone cannot green-light a broken InferenceSession
+    ([GROKHARM-04][SERVE-01]). Healthy readiness populates/reuses that singleton.
     """
     root = Path(models_dir)
     failures: list[str] = []
@@ -153,6 +157,28 @@ def check_face_pipeline_models(models_dir: Path) -> CheckResult:
             "model_cache",
             HealthStatus.UNHEALTHY,
             f"embedding dimension mismatch: {exc}",
+        )
+    try:
+        from recognition.config import get_settings
+        from recognition.infrastructure.embeddings.face_pipeline_adapter import (
+            get_shared_face_pipeline_runtime,
+        )
+
+        # Face-pipeline readiness only; pass configured thresholds so readiness
+        # and serve share the same runtime cache key (profile/models_dir/top-k).
+        fp = get_settings().face_pipeline
+        get_shared_face_pipeline_runtime(
+            profile="face_pipeline",
+            models_dir=root,
+            score_threshold=float(fp.score_threshold),
+            nms_threshold=float(fp.nms_threshold),
+            top_k=int(fp.top_k),
+        )
+    except Exception as exc:
+        return CheckResult(
+            "model_cache",
+            HealthStatus.UNHEALTHY,
+            f"runtime unavailable: {exc}",
         )
     return CheckResult("model_cache", HealthStatus.OK, f"verified: yunet+sface @ {root}")
 

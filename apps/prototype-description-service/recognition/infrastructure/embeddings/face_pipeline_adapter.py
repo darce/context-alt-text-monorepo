@@ -178,6 +178,36 @@ def face_pipeline_unavailable_generator() -> UnavailableEmbeddingGenerator:
     return UnavailableEmbeddingGenerator(FACE_PIPELINE_GENERATOR_REASON)
 
 
+def _artifact_stat_identity(path: Path) -> tuple[Any, ...]:
+    """Portable file identity for cache invalidation (no content hash).
+
+    Atomic operator replace changes size and/or mtime_ns (and typically
+    inode/ctime). Missing paths return a non-sticky sentinel so absence cannot
+    pin a ModelIntegrityError across provisioning.
+    """
+    try:
+        st = path.stat()
+    except (FileNotFoundError, OSError):
+        return ("missing",)
+    # st_ino / st_ctime_ns: useful on POSIX; fall back safely where absent.
+    ino = int(getattr(st, "st_ino", 0) or 0)
+    ctime_ns = int(getattr(st, "st_ctime_ns", 0) or 0)
+    if ctime_ns == 0:
+        ctime_ns = int(st.st_ctime * 1_000_000_000)
+    return (int(st.st_size), int(st.st_mtime_ns), ino, ctime_ns)
+
+
+def _resolved_model_artifact_identity(models_dir: Path) -> tuple[Any, ...]:
+    """YuNet+SFace artifact identity for shared-runtime cache keys ([GROKHARM-01])."""
+    root = Path(models_dir)
+    parts: list[tuple[Any, ...]] = []
+    for name in ("yunet", "sface"):
+        entry = MODEL_MANIFEST[name]
+        path = root / entry.file_name
+        parts.append((name, entry.file_name, _artifact_stat_identity(path)))
+    return tuple(parts)
+
+
 def _runtime_cache_key(
     *,
     profile: str,
@@ -187,15 +217,23 @@ def _runtime_cache_key(
     top_k: int,
     pgvector_dimension: int,
     embedding_dimension: int,
+    artifact_identity: tuple[Any, ...] | None = None,
 ) -> tuple[Any, ...]:
+    root = Path(models_dir)
+    artifacts = (
+        artifact_identity
+        if artifact_identity is not None
+        else _resolved_model_artifact_identity(root)
+    )
     return (
         profile,
-        str(models_dir.resolve()),
+        str(root.resolve()),
         float(score_threshold),
         float(nms_threshold),
         int(top_k),
         int(pgvector_dimension),
         int(embedding_dimension),
+        artifacts,
     )
 
 
@@ -238,13 +276,15 @@ def get_shared_face_pipeline_runtime(
     nms_threshold: float = DEFAULT_NMS_THRESHOLD,
     top_k: int = DEFAULT_TOP_K,
 ) -> FacePipelineRuntime:
-    """Process-wide face_pipeline runtime singleton (memo on profile+dir+thresholds+dims).
+    """Process-wide face_pipeline runtime singleton (memo on profile+dir+thresholds+dims+artifacts).
 
     Double-checked lock with a single ``_SHARED`` tuple read for the fast path.
     Only ``ModelIntegrityError`` (size/hash mismatch / tamper) is sticky-cached
-    as ``FacePipelineRuntimeUnavailableError``. ``ModelMissingError`` and other
-    config-class failures (dim-guard ``ValueError``, missing provisioned files)
-    fall through the non-sticky ``except Exception`` branch so a corrected
+    as ``FacePipelineRuntimeUnavailableError`` while the resolved YuNet/SFace
+    artifact identity is unchanged. Operator model replacement (stat identity
+    drift) invalidates the sticky entry and re-verifies/rebuilds. ``ModelMissingError``
+    and other config-class failures (dim-guard ``ValueError``, missing files)
+    fall through the non-sticky ``except Exception`` branch so corrected
     env/models_dir recovers without process restart.
     """
     global _SHARED

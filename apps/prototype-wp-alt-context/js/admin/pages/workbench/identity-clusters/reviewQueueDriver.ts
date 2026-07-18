@@ -269,15 +269,6 @@ export const intersectSelectionWithFilters = (
 ): string[] => {
   const allowed = new Set(bulkSelectableIdsInFilters(items, filter, band));
   const ordered: string[] = [];
-  // Iterate Set or array without Array.from (eslint-safe string narrowing).
-  if (selectedIds instanceof Set) {
-    for (const id of selectedIds) {
-      if (allowed.has(id)) {
-        ordered.push(id);
-      }
-    }
-    return ordered;
-  }
   for (const id of selectedIds) {
     if (allowed.has(id)) {
       ordered.push(id);

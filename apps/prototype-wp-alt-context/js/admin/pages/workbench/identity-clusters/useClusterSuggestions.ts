@@ -6,9 +6,10 @@
 
 import React from 'react';
 
-import type { ClusterSummary, IdentitySuggestionsResponse } from '../../../api/recognition';
+import type { ClusterSummary } from '../../../api/recognition';
 import type { ComboboxOption } from '../../../../components/ui/combobox';
 import { useClusterSuggestionsLoader, type ClusterSuggestionsLoaderOptions } from './useClusterSuggestionsLoader';
+import type { ProjectedSuggestion } from './suggestionProjection';
 
 type UseClusterSuggestionsOptions = ClusterSuggestionsLoaderOptions;
 
@@ -22,12 +23,12 @@ interface UseClusterSuggestionsReturn {
 }
 
 export const selectClusterSuggestions = ({
-  identitySuggestions,
+  identityProjection,
   labelMatches,
   editableClusterId,
   labelInput = '',
 }: {
-  identitySuggestions?: IdentitySuggestionsResponse;
+  identityProjection?: readonly ProjectedSuggestion[];
   labelMatches?: ClusterSummary[];
   editableClusterId?: string | null;
   labelInput?: string;
@@ -36,36 +37,34 @@ export const selectClusterSuggestions = ({
   const seen = new Set<string>();
   const searchLower = labelInput.toLowerCase().trim();
 
-  // 1. Identity-based suggestions (filtered by current input)
-  (identitySuggestions?.matches ?? [])
-    .sort((a, b) => b.similarity - a.similarity)
-    .forEach((match) => {
-      const normalizedLabel = match.label?.trim() ?? '';
-      if (!normalizedLabel) {
-        return;
-      }
-      if (match.cluster_id === editableClusterId) {
-        return;
-      }
-      const key = normalizedLabel.toLowerCase();
+  // 1. Identity-based suggestions (filtered by current input) — server order, no re-sort.
+  (identityProjection ?? []).forEach((projected) => {
+    const normalizedLabel = projected.label?.trim() ?? '';
+    if (!normalizedLabel) {
+      return;
+    }
+    if (projected.clusterId === editableClusterId) {
+      return;
+    }
+    const key = normalizedLabel.toLowerCase();
 
-      // Filter: label must match input if any provided
-      if (searchLower && !key.includes(searchLower)) {
-        return;
-      }
-      if (seen.has(key)) {
-        return;
-      }
+    // Filter: label must match input if any provided
+    if (searchLower && !key.includes(searchLower)) {
+      return;
+    }
+    if (seen.has(key)) {
+      return;
+    }
 
-      seen.add(key);
-      result.push({
-        value: match.cluster_id,
-        label: normalizedLabel,
-        group: 'Suggested',
-        similarity: match.similarity,
-        identityCount: match.identity_count,
-      });
+    seen.add(key);
+    result.push({
+      value: projected.clusterId,
+      label: normalizedLabel,
+      group: 'Suggested',
+      similarity: projected.similarity,
+      identityCount: projected.identityCount,
     });
+  });
 
   // 2. Label search matches (already filtered by API)
   (labelMatches ?? []).forEach((cluster) => {
@@ -81,9 +80,9 @@ export const selectClusterSuggestions = ({
       return;
     }
 
-    // Try to find similarity from identitySuggestions if this cluster label is also suggested for identity
-    const identityMatch = identitySuggestions?.matches?.find(
-      (match) => match.cluster_id === cluster.id || match.label?.toLowerCase() === key,
+    // Enrich All Labels with similarity when the same cluster appears in the identity projection.
+    const identityMatch = identityProjection?.find(
+      (projected) => projected.clusterId === cluster.id || projected.label?.toLowerCase() === key,
     );
 
     seen.add(key);
@@ -116,7 +115,7 @@ export const useClusterSuggestions = ({
   debounceMs,
 }: UseClusterSuggestionsOptions): UseClusterSuggestionsReturn => {
   const {
-    identitySuggestions,
+    identityProjection,
     labelMatches,
     isLoading,
     findClusterByLabel: findClusterByLabelRemote,
@@ -129,8 +128,8 @@ export const useClusterSuggestions = ({
   });
 
   const options = React.useMemo(
-    () => selectClusterSuggestions({ identitySuggestions, labelMatches, editableClusterId, labelInput }),
-    [identitySuggestions, labelMatches, editableClusterId, labelInput],
+    () => selectClusterSuggestions({ identityProjection, labelMatches, editableClusterId, labelInput }),
+    [identityProjection, labelMatches, editableClusterId, labelInput],
   );
 
   const findClusterByLabel = React.useCallback(

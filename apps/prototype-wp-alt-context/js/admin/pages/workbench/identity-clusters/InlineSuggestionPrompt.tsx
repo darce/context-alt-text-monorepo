@@ -11,11 +11,11 @@
 import React from 'react';
 import { __ } from '@wordpress/i18n';
 
-import { type ClusterSuggestion } from '../../../api/recognition';
+import type { ProjectedSuggestion } from './suggestionProjection';
 
 interface InlineSuggestionPromptProps {
   /** Top server-ranked suggestion for this identity, or undefined when none applies */
-  match: ClusterSuggestion | undefined;
+  match: ProjectedSuggestion | undefined;
   /** Called when user confirms the suggestion */
   onConfirm: (clusterId: string, label: string) => void;
   /** Called when user rejects the suggestion */
@@ -36,8 +36,9 @@ export const InlineSuggestionPrompt = ({
   onReject,
   isPending,
 }: InlineSuggestionPromptProps): React.JSX.Element | null => {
-  // Don't render without a suggestion that carries a label.
-  if (!match?.label) {
+  // Capture label so TS narrows string | null | undefined → string for onConfirm.
+  const label = match?.label;
+  if (!match || !label) {
     return null;
   }
 
@@ -47,7 +48,7 @@ export const InlineSuggestionPrompt = ({
     <div className="acx-inline-suggestion">
       <div className="acx-inline-suggestion__prompt">
         <span className="acx-inline-suggestion__question">
-          {__('Is this', 'alt-context')} <strong>{match.label}</strong>?
+          {__('Is this', 'alt-context')} <strong>{label}</strong>?
         </span>
         <span className="acx-inline-suggestion__confidence">{matchPercent}%</span>
       </div>
@@ -55,7 +56,7 @@ export const InlineSuggestionPrompt = ({
         <button
           type="button"
           className="button button-primary button-small acx-inline-suggestion__yes"
-          onClick={() => onConfirm(match.cluster_id, match.label)}
+          onClick={() => onConfirm(match.clusterId, label)}
           disabled={isPending}
         >
           {__('Yes', 'alt-context')}

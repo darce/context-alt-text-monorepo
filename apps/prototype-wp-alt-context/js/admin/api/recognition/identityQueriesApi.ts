@@ -3,7 +3,6 @@ import { getEndpoint, getConfig, isDevMode } from '../config';
 import { parseDataSource } from './types/dataSource';
 import type {
   IdentityBatchSuggestionsResponse,
-  IdentitySuggestionsResponse,
   MediaIdentitiesResponse,
   PendingMergeSuggestionsResponse,
   PendingNameSuggestionsResponse,
@@ -64,19 +63,6 @@ export const fetchMediaIdentities = async (mediaIds: number[]): Promise<MediaIde
     identities_by_media: response.identities_by_media,
     data_source: requireCanonicalDataSource(response.data_source, 'Media identities response'),
   };
-};
-
-export const fetchIdentitySuggestions = async (identityId: string, topK = 5): Promise<IdentitySuggestionsResponse> => {
-  const base = getEndpoint('recognitionIdentitySuggestions');
-  const normalized = stripTrailingSlash(base);
-  const url = new URL(`${normalized}/${identityId}/suggestions`, window.location.origin);
-  url.searchParams.set('top_k', String(topK));
-
-  return fetchRequiredApi<IdentitySuggestionsResponse>(url.toString(), {
-    method: 'GET',
-    restNonce: getConfig().nonce,
-    signal: createRecognitionTimeoutSignal(2_000),
-  });
 };
 
 export const fetchIdentitiesSuggestions = async (

@@ -289,9 +289,9 @@ describe('ClusterLabelingPanel', () => {
 
   it('pages through show-all when the members envelope is truncated', async () => {
     const fetchMock = vi.mocked(fetchClusterMembers);
-    fetchMock.mockImplementation(async (_clusterId, params = {}): Promise<ClusterMembersResponse> => {
+    fetchMock.mockImplementation((_clusterId, params = {}): Promise<ClusterMembersResponse> => {
       if ((params.offset ?? 0) === 0) {
-        return {
+        return Promise.resolve({
           members: [
             {
               identity_id: 'identity-1',
@@ -305,9 +305,9 @@ describe('ClusterLabelingPanel', () => {
           limit: 1,
           total: 2,
           truncated: true,
-        };
+        });
       }
-      return {
+      return Promise.resolve({
         members: [
           {
             identity_id: 'identity-2',
@@ -321,7 +321,7 @@ describe('ClusterLabelingPanel', () => {
         limit: 1,
         total: 2,
         truncated: false,
-      };
+      });
     });
 
     const { container } = renderPanel();

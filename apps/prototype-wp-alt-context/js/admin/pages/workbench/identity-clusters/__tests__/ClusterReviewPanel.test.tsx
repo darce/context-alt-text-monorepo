@@ -107,9 +107,9 @@ describe('ClusterReviewPanel', () => {
     const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
     const user = userEvent.setup();
 
-    fetchClusterMembersMock.mockImplementation(async (_clusterId, params = {}) => {
+    fetchClusterMembersMock.mockImplementation((_clusterId, params = {}) => {
       if ((params.offset ?? 0) === 0) {
-        return {
+        return Promise.resolve({
           members: [
             {
               identity_id: 'identity-1',
@@ -123,9 +123,9 @@ describe('ClusterReviewPanel', () => {
           limit: 1,
           total: 2,
           truncated: true,
-        };
+        });
       }
-      return {
+      return Promise.resolve({
         members: [
           {
             identity_id: 'identity-2',
@@ -139,7 +139,7 @@ describe('ClusterReviewPanel', () => {
         limit: 1,
         total: 2,
         truncated: false,
-      };
+      });
     });
 
     renderPanel('cluster-truncated');

@@ -118,11 +118,6 @@ export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPan
       lowConfidenceThreshold={LOW_CONFIDENCE_THRESHOLD}
       onAccept={() => mutations.accept.mutate(suggestion.suggestionId)}
       onReject={() => mutations.reject.mutate(suggestion.suggestionId)}
-      onLabel={(clusterId) => {
-        if (onLabel) {
-          onLabel(clusterId ?? suggestion.clusterId);
-        }
-      }}
       onReview={(clusterId) => {
         if (onReview && clusterId) {
           onReview(clusterId);

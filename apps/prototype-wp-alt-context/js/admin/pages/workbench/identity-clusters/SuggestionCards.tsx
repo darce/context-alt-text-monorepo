@@ -11,7 +11,6 @@ interface SuggestionCardProps {
   suggestion: ReviewSuggestion;
   onAccept: () => void;
   onReject: () => void;
-  onLabel: (clusterId?: string) => void;
   onReview?: (clusterId?: string) => void;
   isPending: boolean;
   lowConfidenceThreshold: number;
@@ -38,8 +37,6 @@ export const SuggestionCard = ({
   isPending,
   lowConfidenceThreshold,
 }: SuggestionCardProps): React.JSX.Element => {
-  // onLabel retained on the props interface for call-site stability; unlabeled
-  // rows never reach this card (buildSuggestionReviewItems / isHumanLabeledTarget).
   // buildSuggestionReviewItems guarantees a human-labeled target with truthy label (UXP-3-BR-22).
   const displayLabel = suggestion.label ?? '';
   const matchPercent = Math.round(suggestion.similarity * 100);

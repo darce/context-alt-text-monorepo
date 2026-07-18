@@ -21,7 +21,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from recognition.application.embedding.detector import FaceDetection
+from recognition.application.embedding.detector import FaceDetection, normalize_landmarks
 from recognition.application.embedding.manifest import incumbent_embedding_model_manifest
 from recognition.config import get_settings
 
@@ -154,7 +154,7 @@ class InsightFaceAdapter:
         for face in faces:
             bbox = tuple(int(x) for x in face.bbox)
 
-            # Pose angles feed quality scoring + clustering maturity (not product fields).
+            # Pose remains for pose-bucket / diversity (not threshold quality).
             pose_pitch: float | None = None
             pose_yaw: float | None = None
             pose_roll: float | None = None
@@ -162,6 +162,10 @@ class InsightFaceAdapter:
                 pose_pitch = float(face.pose[0])
                 pose_yaw = float(face.pose[1])
                 pose_roll = float(face.pose[2])
+
+            landmarks = None
+            if hasattr(face, "kps") and face.kps is not None:
+                landmarks = normalize_landmarks(face.kps)
 
             results.append(
                 FaceDetection(
@@ -173,6 +177,7 @@ class InsightFaceAdapter:
                     pose_yaw=pose_yaw,
                     pose_roll=pose_roll,
                     model_id=model_id,
+                    landmarks=landmarks,
                 )
             )
 

@@ -106,9 +106,6 @@ class ConfidenceCheck(AssignmentCheck):
         # We need detection metrics from the identity
         quality_info = compute_identity_quality(
             confidence=identity.confidence,
-            pose_pitch=identity.pose_pitch,
-            pose_yaw=identity.pose_yaw,
-            pose_roll=identity.pose_roll,
             bbox_width=identity.bbox_width,
             bbox_height=identity.bbox_height,
             maturity=maturity_level,

@@ -31,6 +31,7 @@ from recognition.application.embedding.detector import (
     FaceDetectorProtocol,
     InsightFaceFaceDetector,
     _compute_detection_quality,
+    normalize_landmarks,
 )
 from recognition.application.embedding.generator import UnavailableEmbeddingGenerator
 from recognition.application.embedding.manifest import EmbeddingModelManifest
@@ -626,9 +627,6 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
                 continue
             landmark_quality = _compute_detection_quality(
                 confidence=float(face.score),
-                pose_pitch=None,
-                pose_yaw=None,
-                pose_roll=None,
                 bbox=bbox,
             )
             results.append(
@@ -643,6 +641,7 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
                     image_phash=image_phash,
                     landmark_quality=landmark_quality,
                     model_id=model_id,
+                    landmarks=normalize_landmarks(face.landmarks),
                 )
             )
 

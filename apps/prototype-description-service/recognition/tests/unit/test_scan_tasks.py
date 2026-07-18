@@ -21,6 +21,9 @@ class _FakeSessionContext:
     async def __aexit__(self, exc_type, exc, tb) -> bool:
         return False
 
+    async def rollback(self) -> None:
+        return None
+
 
 def _prod_settings() -> SimpleNamespace:
     return SimpleNamespace(

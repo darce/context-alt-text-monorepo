@@ -280,6 +280,9 @@ async def test_generic_exception_still_releases_for_retry_under_max_attempts(
             failed.update(kwargs)
 
     class _Session:
+        async def rollback(self) -> None:
+            return None
+
         async def commit(self) -> None:
             return None
 

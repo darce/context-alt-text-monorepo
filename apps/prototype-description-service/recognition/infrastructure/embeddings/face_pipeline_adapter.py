@@ -336,13 +336,27 @@ def _artifact_stat_identity(path: Path) -> tuple[Any, ...]:
 
 
 def _resolved_model_artifact_identity(models_dir: Path) -> tuple[Any, ...]:
-    """YuNet+SFace artifact identity for shared-runtime cache keys ([GROKHARM-01])."""
+    """YuNet+SFace model+license identity for shared-runtime cache keys.
+
+    Includes each manifest license file so a license-only repair invalidates
+    sticky ModelIntegrityError entries (FIR-PM-01 / [DRIFT-02]). Missing
+    paths use the portable missing sentinel (non-sticky absence).
+    """
     root = Path(models_dir)
     parts: list[tuple[Any, ...]] = []
     for name in ("yunet", "sface"):
         entry = MODEL_MANIFEST[name]
-        path = root / entry.file_name
-        parts.append((name, entry.file_name, _artifact_stat_identity(path)))
+        model_path = root / entry.file_name
+        license_path = root / entry.license_file
+        parts.append(
+            (
+                name,
+                entry.file_name,
+                _artifact_stat_identity(model_path),
+                entry.license_file,
+                _artifact_stat_identity(license_path),
+            )
+        )
     return tuple(parts)
 
 
@@ -417,13 +431,14 @@ def get_shared_face_pipeline_runtime(
     """Process-wide face_pipeline runtime singleton (memo on profile+dir+thresholds+dims+artifacts).
 
     Double-checked lock with a single ``_SHARED`` tuple read for the fast path.
-    Only ``ModelIntegrityError`` (size/hash mismatch / tamper) is sticky-cached
-    as ``FacePipelineRuntimeUnavailableError`` while the resolved YuNet/SFace
-    artifact identity is unchanged. Operator model replacement (stat identity
-    drift) invalidates the sticky entry and re-verifies/rebuilds. ``ModelMissingError``
-    and other config-class failures (dim-guard ``ValueError``, missing files)
-    fall through the non-sticky ``except Exception`` branch so corrected
-    env/models_dir recovers without process restart.
+    Only ``ModelIntegrityError`` (size/hash mismatch / tamper, model or license)
+    is sticky-cached as ``FacePipelineRuntimeUnavailableError`` while the
+    resolved YuNet/SFace model+license artifact identity is unchanged. Operator
+    model or license replacement (stat identity drift) invalidates the sticky
+    entry and re-verifies/rebuilds. ``ModelMissingError`` and other config-class
+    failures (dim-guard ``ValueError``, missing files) fall through the
+    non-sticky ``except Exception`` branch so corrected env/models_dir recovers
+    without process restart.
     """
     global _SHARED
 

@@ -110,12 +110,12 @@ def test_resolve_sface_embedding_dim_none_raises(monkeypatch: pytest.MonkeyPatch
 
     from recognition.infrastructure.face_pipeline import opencv_ref as ocv
     from recognition.infrastructure.face_pipeline.provenance import (
-        MODEL_MANIFEST as canonical_manifest,
+        MODEL_MANIFEST as CANONICAL_MANIFEST,
     )
 
-    sface = canonical_manifest["sface"]
+    sface = CANONICAL_MANIFEST["sface"]
     monkeypatch.setitem(
-        canonical_manifest,
+        CANONICAL_MANIFEST,
         "sface",
         replace(sface, embedding_dim=None),
     )

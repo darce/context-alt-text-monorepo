@@ -128,6 +128,10 @@ class ScanItemHandler:
                     # Drop staged identity work before any failure-status write
                     # so FAILED/retry commits only queue state (LOCAL47C-03).
                     await session.rollback()
+                    # SET LOCAL bypass dies with the rolled-back txn; restore
+                    # before status writes so FORCE RLS still updates the row
+                    # (FIR-FINAL2-LOCAL-01).
+                    await enable_rls_bypass(session)
                     await self._handle_item_failure(
                         repo=repo,
                         item=item,

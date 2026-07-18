@@ -7,17 +7,10 @@ Gates (task plan / assignment):
 - modelless: pure decode/NMS unit-tested without ONNX
 
 Heuristics: TEST-06 (watch fail first), TEST-08 (determinism), AGT-06 (skip names fetch),
-rg-015 (manifest dim), sr-001 (do not loosen thresholds).
+rg-015 (manifest dim), sr-001 (do not loosen thresholds), REF-05 (decode refactor).
 """
 
 from __future__ import annotations
-
-import importlib.util
-import json
-import os
-import subprocess
-import sys
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -32,23 +25,22 @@ from recognition.infrastructure.face_pipeline.ort_adapters import (
     decode_yunet_outputs,
     nms_yunet,
 )
-from recognition.infrastructure.face_pipeline.provenance import (
-    DEFAULT_MODELS_DIR,
-    MODEL_MANIFEST,
-)
-
-_SERVICE_ROOT = Path(__file__).resolve().parents[3]
-_FIXTURE_DIR = _SERVICE_ROOT / "recognition" / "tests" / "fixtures" / "face_pipeline"
-
-_MODELS_PRESENT = (
-    (DEFAULT_MODELS_DIR / MODEL_MANIFEST["yunet"].file_name).is_file()
-    and (DEFAULT_MODELS_DIR / MODEL_MANIFEST["sface"].file_name).is_file()
-)
-_MODELS_SKIP = (
-    "FIR-3 face models missing under recognition/infrastructure/face_pipeline/models/ — "
-    "run: uv run python scripts/fetch_face_pipeline_models.py "
-    f"(expected yunet={MODEL_MANIFEST['yunet'].file_name}, "
-    f"sface={MODEL_MANIFEST['sface'].file_name})"
+from recognition.infrastructure.face_pipeline.provenance import MODEL_MANIFEST
+from recognition.tests.unit.face_pipeline_support import (
+    MODELS_PRESENT,
+    MODELS_SKIP,
+    SFACE_EMBEDDING_DIM,
+    _FIXTURE_DIR,
+    border_clipped_face_canvas,
+    cartoon_from_procedure,
+    cosine,
+    greedy_match_by_iou,
+    iou_xywh,
+    landmark_max_dist,
+    load_json,
+    non_multiple_of_32_canvas,
+    run_import_purity_check,
+    three_face_canvas_640x480,
 )
 
 # Parity budgets from FIR-3 S3 assignment (do not loosen — sr-001).
@@ -57,42 +49,9 @@ _IOU_MIN = 0.99
 _LANDMARK_MAX_DIST_PX = 2.0
 _SCORE_DELTA_MAX = 0.02
 
-
-def _load_json(name: str) -> dict:
-    return json.loads((_FIXTURE_DIR / name).read_text(encoding="utf-8"))
-
-
-def _load_generate_goldens():
-    gen_path = _FIXTURE_DIR / "generate_goldens.py"
-    spec = importlib.util.spec_from_file_location("face_pipeline_generate_goldens", gen_path)
-    assert spec is not None and spec.loader is not None
-    gen = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(gen)
-    return gen
-
-
-def _cosine(a: np.ndarray, b: np.ndarray) -> float:
-    a = np.asarray(a, dtype=np.float64).reshape(-1)
-    b = np.asarray(b, dtype=np.float64).reshape(-1)
-    return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-12))
-
-
-def _iou_xywh(a: np.ndarray, b: np.ndarray) -> float:
-    a = np.asarray(a, dtype=np.float64).reshape(4)
-    b = np.asarray(b, dtype=np.float64).reshape(4)
-    ax2, ay2 = a[0] + a[2], a[1] + a[3]
-    bx2, by2 = b[0] + b[2], b[1] + b[3]
-    ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
-    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
-    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
-    union = a[2] * a[3] + b[2] * b[3] - inter
-    return float(inter / union) if union > 0 else 0.0
-
-
-def _landmark_max_dist(a: np.ndarray, b: np.ndarray) -> float:
-    a = np.asarray(a, dtype=np.float64).reshape(5, 2)
-    b = np.asarray(b, dtype=np.float64).reshape(5, 2)
-    return float(np.max(np.linalg.norm(a - b, axis=1)))
+# Legacy aliases for skip markers (BR-08 shared source).
+_MODELS_PRESENT = MODELS_PRESENT
+_MODELS_SKIP = MODELS_SKIP
 
 
 # ---------------------------------------------------------------------------
@@ -101,8 +60,8 @@ def _landmark_max_dist(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def test_models_skip_reason_names_fetch_command() -> None:
-    assert "fetch_face_pipeline_models.py" in _MODELS_SKIP
-    assert "uv run python" in _MODELS_SKIP
+    assert "fetch_face_pipeline_models.py" in MODELS_SKIP
+    assert "uv run python" in MODELS_SKIP
 
 
 def test_decode_yunet_level_synthetic_prior() -> None:
@@ -179,6 +138,21 @@ def test_decode_clamps_scores_above_one() -> None:
     )
     assert len(dets) == 1
     assert dets[0].score == pytest.approx(1.0)
+
+
+def test_decode_negative_logits_upper_clamp_only() -> None:
+    """OpenCV MIN(x,1) only — negative product → NaN score → not kept (BR-06)."""
+    stride = 16
+    pad_w = pad_h = 16
+    cls = np.array([-0.5], dtype=np.float32)
+    obj = np.array([1.0], dtype=np.float32)
+    bbox = np.zeros((1, 4), dtype=np.float32)
+    kps = np.zeros((1, 10), dtype=np.float32)
+    # score_threshold=0.0 still drops NaN (NaN >= 0 is False)
+    dets = decode_yunet_level(
+        cls, obj, bbox, kps, stride=stride, pad_w=pad_w, pad_h=pad_h, score_threshold=0.0
+    )
+    assert dets == []
 
 
 def test_nms_suppresses_overlap_keeps_higher_score() -> None:
@@ -282,56 +256,43 @@ def test_decode_determinism_modelless() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(not _MODELS_PRESENT, reason=_MODELS_SKIP)
-def test_embedding_parity_synthetic_crop() -> None:
-    from recognition.infrastructure.face_pipeline.opencv_ref import OpenCVSFaceEmbedder
-    from recognition.infrastructure.face_pipeline.ort_adapters import OrtSFaceEmbedder
-
+@pytest.mark.skipif(not MODELS_PRESENT, reason=MODELS_SKIP)
+def test_embedding_parity_synthetic_crop(ort_sface_embedder, ocv_sface_embedder) -> None:
     crop = np.load(_FIXTURE_DIR / "synthetic_112_crop.npy")
-    ocv = OpenCVSFaceEmbedder().embed([crop])
-    ort_emb = OrtSFaceEmbedder().embed([crop])
-    assert ocv.shape == ort_emb.shape == (1, 128)
+    ocv = ocv_sface_embedder.embed([crop])
+    ort_emb = ort_sface_embedder.embed([crop])
+    assert ocv.shape == ort_emb.shape == (1, SFACE_EMBEDDING_DIM)
     assert float(np.linalg.norm(ort_emb[0])) == pytest.approx(1.0, abs=1e-5)
-    cos = _cosine(ocv[0], ort_emb[0])
+    cos = cosine(ocv[0], ort_emb[0])
     assert cos >= _COSINE_MIN, f"synthetic crop cosine={cos} < {_COSINE_MIN}"
-    # Print for worker report (AGT-04)
     print(f"PARITY_COSINE_synthetic={cos:.10f}")
 
 
-@pytest.mark.skipif(not _MODELS_PRESENT, reason=_MODELS_SKIP)
-def test_embedding_parity_aligner_golden_crop() -> None:
-    from recognition.infrastructure.face_pipeline.opencv_ref import OpenCVSFaceEmbedder
-    from recognition.infrastructure.face_pipeline.ort_adapters import OrtSFaceEmbedder
-
+@pytest.mark.skipif(not MODELS_PRESENT, reason=MODELS_SKIP)
+def test_embedding_parity_aligner_golden_crop(ort_sface_embedder, ocv_sface_embedder) -> None:
     crop = np.load(_FIXTURE_DIR / "aligner_crop.npy")
-    ocv = OpenCVSFaceEmbedder().embed([crop])
-    ort_emb = OrtSFaceEmbedder().embed([crop])
-    cos = _cosine(ocv[0], ort_emb[0])
+    ocv = ocv_sface_embedder.embed([crop])
+    ort_emb = ort_sface_embedder.embed([crop])
+    cos = cosine(ocv[0], ort_emb[0])
     assert cos >= _COSINE_MIN, f"aligner crop cosine={cos} < {_COSINE_MIN}"
     print(f"PARITY_COSINE_aligner={cos:.10f}")
 
 
-@pytest.mark.skipif(not _MODELS_PRESENT, reason=_MODELS_SKIP)
-def test_embedding_parity_vs_golden_fixture() -> None:
+@pytest.mark.skipif(not MODELS_PRESENT, reason=MODELS_SKIP)
+def test_embedding_parity_vs_golden_fixture(ort_sface_embedder) -> None:
     """ORT also matches committed golden embedding (cross-check)."""
-    from recognition.infrastructure.face_pipeline.ort_adapters import OrtSFaceEmbedder
-
     crop = np.load(_FIXTURE_DIR / "synthetic_112_crop.npy")
     expected = np.load(_FIXTURE_DIR / "synthetic_112_embedding.npy")
-    emb = OrtSFaceEmbedder().embed([crop])
-    cos = _cosine(emb[0], expected[0])
+    emb = ort_sface_embedder.embed([crop])
+    cos = cosine(emb[0], expected[0])
     assert cos >= _COSINE_MIN, f"golden cosine={cos}"
     print(f"PARITY_COSINE_golden={cos:.10f}")
 
 
-@pytest.mark.skipif(not _MODELS_PRESENT, reason=_MODELS_SKIP)
-def test_sface_preprocess_is_rgb_scale1() -> None:
+@pytest.mark.skipif(not MODELS_PRESENT, reason=MODELS_SKIP)
+def test_sface_preprocess_is_rgb_scale1(ort_sface_embedder, ocv_sface_embedder) -> None:
     """Document empirical SFace prep: RGB NCHW scale=1 (swapRB), not /255."""
-    from recognition.infrastructure.face_pipeline.opencv_ref import OpenCVSFaceEmbedder
-    from recognition.infrastructure.face_pipeline.ort_adapters import (
-        OrtSFaceEmbedder,
-        _bgr_to_sface_blob,
-    )
+    from recognition.infrastructure.face_pipeline.ort_adapters import _bgr_to_sface_blob
 
     crop = np.load(_FIXTURE_DIR / "synthetic_112_crop.npy")
     blob = _bgr_to_sface_blob(crop)
@@ -342,88 +303,72 @@ def test_sface_preprocess_is_rgb_scale1() -> None:
     # Values are raw 0–255 float, not /255
     assert float(blob.max()) > 1.5
 
-    raw_ocv = np.asarray(OpenCVSFaceEmbedder()._feature(crop), dtype=np.float32).reshape(-1)
-    raw_ort = np.asarray(OrtSFaceEmbedder()._feature(crop), dtype=np.float32).reshape(-1)
-    cos = _cosine(raw_ocv, raw_ort)
+    raw_ocv = np.asarray(ocv_sface_embedder._feature(crop), dtype=np.float32).reshape(-1)
+    raw_ort = np.asarray(ort_sface_embedder._feature(crop), dtype=np.float32).reshape(-1)
+    cos = cosine(raw_ocv, raw_ort)
     assert cos >= 0.9999
     print(f"PARITY_COSINE_raw_feature={cos:.10f}")
 
 
-@pytest.mark.skipif(not _MODELS_PRESENT, reason=_MODELS_SKIP)
-def test_ort_zero_norm_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    from recognition.infrastructure.face_pipeline.ort_adapters import OrtSFaceEmbedder
-
-    emb = OrtSFaceEmbedder()
+@pytest.mark.skipif(not MODELS_PRESENT, reason=MODELS_SKIP)
+def test_ort_zero_norm_raises(ort_sface_embedder, monkeypatch: pytest.MonkeyPatch) -> None:
     crop = np.load(_FIXTURE_DIR / "synthetic_112_crop.npy")
 
     def _zero(_crop: np.ndarray) -> np.ndarray:
-        return np.zeros((128,), dtype=np.float32)
+        return np.zeros((SFACE_EMBEDDING_DIM,), dtype=np.float32)
 
-    monkeypatch.setattr(emb, "_feature", _zero)
+    monkeypatch.setattr(ort_sface_embedder, "_feature", _zero)
     with pytest.raises(ZeroNormEmbeddingError, match="zero"):
-        emb.embed([crop])
+        ort_sface_embedder.embed([crop])
 
 
-@pytest.mark.skipif(not _MODELS_PRESENT, reason=_MODELS_SKIP)
-def test_ort_nonfinite_norm_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    from recognition.infrastructure.face_pipeline.ort_adapters import OrtSFaceEmbedder
-
-    emb = OrtSFaceEmbedder()
+@pytest.mark.skipif(not MODELS_PRESENT, reason=MODELS_SKIP)
+def test_ort_nonfinite_norm_raises(ort_sface_embedder, monkeypatch: pytest.MonkeyPatch) -> None:
     crop = np.load(_FIXTURE_DIR / "synthetic_112_crop.npy")
 
     def _nan(_crop: np.ndarray) -> np.ndarray:
-        return np.full((128,), np.nan, dtype=np.float32)
+        return np.full((SFACE_EMBEDDING_DIM,), np.nan, dtype=np.float32)
 
-    monkeypatch.setattr(emb, "_feature", _nan)
+    monkeypatch.setattr(ort_sface_embedder, "_feature", _nan)
     with pytest.raises(ZeroNormEmbeddingError, match="non-finite|zero"):
-        emb.embed([crop])
+        ort_sface_embedder.embed([crop])
 
 
-@pytest.mark.skipif(not _MODELS_PRESENT, reason=_MODELS_SKIP)
-def test_ort_embed_empty_batch() -> None:
-    from recognition.infrastructure.face_pipeline.ort_adapters import OrtSFaceEmbedder
-
-    out = OrtSFaceEmbedder().embed([])
+@pytest.mark.skipif(not MODELS_PRESENT, reason=MODELS_SKIP)
+def test_ort_embed_empty_batch(ort_sface_embedder) -> None:
+    out = ort_sface_embedder.embed([])
     assert out.shape == (0, MODEL_MANIFEST["sface"].embedding_dim)
+    assert out.shape == (0, SFACE_EMBEDDING_DIM)
 
 
-@pytest.mark.skipif(not _MODELS_PRESENT, reason=_MODELS_SKIP)
-def test_ort_embed_112_gate() -> None:
-    from recognition.infrastructure.face_pipeline.ort_adapters import OrtSFaceEmbedder
-
+@pytest.mark.skipif(not MODELS_PRESENT, reason=MODELS_SKIP)
+def test_ort_embed_112_gate(ort_sface_embedder) -> None:
     with pytest.raises(FacePipelineInputError, match="expected shape"):
-        OrtSFaceEmbedder().embed([np.zeros((64, 64, 3), dtype=np.uint8)])
+        ort_sface_embedder.embed([np.zeros((64, 64, 3), dtype=np.uint8)])
 
 
-@pytest.mark.skipif(not _MODELS_PRESENT, reason=_MODELS_SKIP)
-def test_ort_embed_float01_gate() -> None:
-    from recognition.infrastructure.face_pipeline.ort_adapters import OrtSFaceEmbedder
-
+@pytest.mark.skipif(not MODELS_PRESENT, reason=MODELS_SKIP)
+def test_ort_embed_float01_gate(ort_sface_embedder) -> None:
     with pytest.raises(FacePipelineInputError, match=r"\[0,1\]-float"):
-        OrtSFaceEmbedder().embed([np.full((112, 112, 3), 0.5, dtype=np.float32)])
+        ort_sface_embedder.embed([np.full((112, 112, 3), 0.5, dtype=np.float32)])
 
 
-@pytest.mark.skipif(not _MODELS_PRESENT, reason=_MODELS_SKIP)
-def test_ort_detector_float01_gate() -> None:
-    from recognition.infrastructure.face_pipeline.ort_adapters import OrtYuNetDetector
-
+@pytest.mark.skipif(not MODELS_PRESENT, reason=MODELS_SKIP)
+def test_ort_detector_float01_gate(ort_yunet_detector) -> None:
     with pytest.raises(FacePipelineInputError, match=r"\[0,1\]-float"):
-        OrtYuNetDetector().detect([np.full((64, 64, 3), 0.5, dtype=np.float32)])
+        ort_yunet_detector.detect([np.full((64, 64, 3), 0.5, dtype=np.float32)])
 
 
-@pytest.mark.skipif(not _MODELS_PRESENT, reason=_MODELS_SKIP)
-def test_ort_detector_empty_and_batch() -> None:
-    from recognition.infrastructure.face_pipeline.ort_adapters import OrtYuNetDetector
-
-    det = OrtYuNetDetector()
-    assert det.detect([np.zeros((100, 100, 3), dtype=np.uint8)]) == [[]]
-    out = det.detect(
+@pytest.mark.skipif(not MODELS_PRESENT, reason=MODELS_SKIP)
+def test_ort_detector_empty_and_batch(ort_yunet_detector) -> None:
+    assert ort_yunet_detector.detect([np.zeros((100, 100, 3), dtype=np.uint8)]) == [[]]
+    out = ort_yunet_detector.detect(
         [np.zeros((80, 80, 3), dtype=np.uint8), np.zeros((120, 90, 3), dtype=np.uint8)]
     )
     assert len(out) == 2
 
 
-@pytest.mark.skipif(not _MODELS_PRESENT, reason=_MODELS_SKIP)
+@pytest.mark.skipif(not MODELS_PRESENT, reason=MODELS_SKIP)
 def test_ort_detector_threshold_attrs_readonly() -> None:
     from recognition.infrastructure.face_pipeline.ort_adapters import OrtYuNetDetector
 
@@ -435,7 +380,45 @@ def test_ort_detector_threshold_attrs_readonly() -> None:
         det.score_threshold = 0.1  # type: ignore[misc]
 
 
-@pytest.mark.skipif(not _MODELS_PRESENT, reason=_MODELS_SKIP)
+@pytest.mark.skipif(not MODELS_PRESENT, reason=MODELS_SKIP)
+def test_ort_detector_accepts_initial_input_size_kwarg() -> None:
+    """BR-07: same kwargs dict constructs both detector classes."""
+    from recognition.infrastructure.face_pipeline.opencv_ref import OpenCVYuNetDetector
+    from recognition.infrastructure.face_pipeline.ort_adapters import OrtYuNetDetector
+
+    kwargs = {
+        "score_threshold": 0.85,
+        "nms_threshold": 0.3,
+        "top_k": 100,
+        "initial_input_size": (256, 256),
+    }
+    ocv = OpenCVYuNetDetector(**kwargs)
+    ort = OrtYuNetDetector(**kwargs)
+    assert ocv.score_threshold == ort.score_threshold == pytest.approx(0.85)
+    assert ort._initial_input_size == (256, 256)
+
+
+def _assert_detector_count_and_match(
+    ocv_faces: list,
+    ort_faces: list,
+    *,
+    expect_min: int = 1,
+) -> None:
+    assert len(ocv_faces) == len(ort_faces), (
+        f"detection count mismatch ocv={len(ocv_faces)} ort={len(ort_faces)}"
+    )
+    assert len(ocv_faces) >= expect_min
+    pairs = greedy_match_by_iou(ocv_faces, ort_faces)
+    assert len(pairs) == len(ocv_faces)
+    for ocv_d, ort_d, iou in pairs:
+        lm_dist = landmark_max_dist(ort_d.landmarks, ocv_d.landmarks)
+        score_delta = abs(float(ort_d.score) - float(ocv_d.score))
+        assert iou >= _IOU_MIN, f"IoU={iou} < {_IOU_MIN}"
+        assert lm_dist <= _LANDMARK_MAX_DIST_PX, f"landmark max dist={lm_dist}"
+        assert score_delta <= _SCORE_DELTA_MAX, f"score delta={score_delta}"
+
+
+@pytest.mark.skipif(not MODELS_PRESENT, reason=MODELS_SKIP)
 def test_detector_parity_cartoon_fixture() -> None:
     """ORT vs OpenCV on cartoon golden: IoU / landmarks / score budgets."""
     from recognition.infrastructure.face_pipeline.opencv_ref import OpenCVYuNetDetector
@@ -444,20 +427,10 @@ def test_detector_parity_cartoon_fixture() -> None:
     golden_path = _FIXTURE_DIR / "detector_faces.json"
     skip_path = _FIXTURE_DIR / "detector_golden_skip.json"
     if skip_path.is_file() and not golden_path.is_file():
-        note = _load_json("detector_golden_skip.json")
+        note = load_json("detector_golden_skip.json")
         pytest.skip(f"detector golden skipped: {note.get('reason', '')[:200]}")
-    meta = _load_json("detector_faces.json")
-    proc = meta["procedure"]
-    gen = _load_generate_goldens()
-    img = gen.cartoon_face_image(
-        size=int(proc["size"]),
-        seed=int(proc["seed"]),
-        eye_sep=float(proc["eye_sep"]),
-        mouth_y=float(proc["mouth_y"]),
-        head_rx=float(proc["head_rx"]),
-        head_ry=float(proc["head_ry"]),
-        noise_scale=float(proc["noise_scale"]),
-    )
+    meta = load_json("detector_faces.json")
+    img = cartoon_from_procedure(meta)
     score_th = float(meta["score_threshold"])
     nms_th = float(meta["nms_threshold"])
 
@@ -468,14 +441,14 @@ def test_detector_parity_cartoon_fixture() -> None:
         score_threshold=score_th, nms_threshold=nms_th
     ).detect([img])[0]
 
+    assert len(ocv_faces) == len(ort_faces)
     assert len(ocv_faces) >= 1
-    assert len(ort_faces) >= 1
     # Match primary (highest-score) detections
     ocv = max(ocv_faces, key=lambda d: d.score)
     ort_d = max(ort_faces, key=lambda d: d.score)
 
-    iou = _iou_xywh(ort_d.bbox, ocv.bbox)
-    lm_dist = _landmark_max_dist(ort_d.landmarks, ocv.landmarks)
+    iou = iou_xywh(ort_d.bbox, ocv.bbox)
+    lm_dist = landmark_max_dist(ort_d.landmarks, ocv.landmarks)
     score_delta = abs(float(ort_d.score) - float(ocv.score))
 
     print(f"PARITY_IOU={iou:.10f}")
@@ -487,17 +460,54 @@ def test_detector_parity_cartoon_fixture() -> None:
     assert score_delta <= _SCORE_DELTA_MAX, f"score delta={score_delta}"
 
 
-@pytest.mark.skipif(not _MODELS_PRESENT, reason=_MODELS_SKIP)
-def test_detector_and_embedder_determinism() -> None:
-    from recognition.infrastructure.face_pipeline.ort_adapters import (
-        OrtSFaceEmbedder,
-        OrtYuNetDetector,
-    )
+@pytest.mark.skipif(not MODELS_PRESENT, reason=MODELS_SKIP)
+def test_detector_parity_three_faces_640x480_th05() -> None:
+    """BR-01: multi-face count equality + greedy IoU ≥ 0.99 @ th=0.5."""
+    from recognition.infrastructure.face_pipeline.opencv_ref import OpenCVYuNetDetector
+    from recognition.infrastructure.face_pipeline.ort_adapters import OrtYuNetDetector
+
+    img = three_face_canvas_640x480()
+    ocv_faces = OpenCVYuNetDetector(score_threshold=0.5, nms_threshold=0.3).detect([img])[0]
+    ort_faces = OrtYuNetDetector(score_threshold=0.5, nms_threshold=0.3).detect([img])[0]
+    print(f"PARITY_MULTI_COUNT ocv={len(ocv_faces)} ort={len(ort_faces)}")
+    _assert_detector_count_and_match(ocv_faces, ort_faces, expect_min=3)
+
+
+@pytest.mark.skipif(not MODELS_PRESENT, reason=MODELS_SKIP)
+def test_detector_parity_non_multiple_of_32() -> None:
+    """BR-01: non-×32 canvas count equality + IoU budget."""
+    from recognition.infrastructure.face_pipeline.opencv_ref import OpenCVYuNetDetector
+    from recognition.infrastructure.face_pipeline.ort_adapters import OrtYuNetDetector
+
+    img = non_multiple_of_32_canvas()
+    assert img.shape[0] % 32 != 0 or img.shape[1] % 32 != 0
+    ocv_faces = OpenCVYuNetDetector(score_threshold=0.5, nms_threshold=0.3).detect([img])[0]
+    ort_faces = OrtYuNetDetector(score_threshold=0.5, nms_threshold=0.3).detect([img])[0]
+    print(f"PARITY_NON32_COUNT ocv={len(ocv_faces)} ort={len(ort_faces)}")
+    _assert_detector_count_and_match(ocv_faces, ort_faces, expect_min=1)
+
+
+@pytest.mark.skipif(not MODELS_PRESENT, reason=MODELS_SKIP)
+def test_detector_parity_border_clipped_face() -> None:
+    """BR-01: border-clipped face count equality + IoU budget."""
+    from recognition.infrastructure.face_pipeline.opencv_ref import OpenCVYuNetDetector
+    from recognition.infrastructure.face_pipeline.ort_adapters import OrtYuNetDetector
+
+    img = border_clipped_face_canvas()
+    ocv_faces = OpenCVYuNetDetector(score_threshold=0.5, nms_threshold=0.3).detect([img])[0]
+    ort_faces = OrtYuNetDetector(score_threshold=0.5, nms_threshold=0.3).detect([img])[0]
+    print(f"PARITY_BORDER_COUNT ocv={len(ocv_faces)} ort={len(ort_faces)}")
+    _assert_detector_count_and_match(ocv_faces, ort_faces, expect_min=1)
+
+
+@pytest.mark.skipif(not MODELS_PRESENT, reason=MODELS_SKIP)
+def test_detector_and_embedder_determinism(ort_sface_embedder) -> None:
+    """TEST-08 / BR-05: embed bit-stable; cartoon bbox/score double-run equality."""
+    from recognition.infrastructure.face_pipeline.ort_adapters import OrtYuNetDetector
 
     crop = np.load(_FIXTURE_DIR / "synthetic_112_crop.npy")
-    emb = OrtSFaceEmbedder()
-    a = emb.embed([crop])
-    b = emb.embed([crop])
+    a = ort_sface_embedder.embed([crop])
+    b = ort_sface_embedder.embed([crop])
     np.testing.assert_array_equal(a, b)
 
     empty = np.zeros((64, 64, 3), dtype=np.uint8)
@@ -506,57 +516,58 @@ def test_detector_and_embedder_determinism() -> None:
     d1 = det.detect([empty])
     assert d0 == d1
 
+    # Real-signal cartoon (production threshold path) — not noise-floor empty.
+    meta = load_json("detector_faces.json")
+    img = cartoon_from_procedure(meta)
+    score_th = float(meta["score_threshold"])
+    nms_th = float(meta["nms_threshold"])
+    det_real = OrtYuNetDetector(score_threshold=score_th, nms_threshold=nms_th)
+    r0 = det_real.detect([img])[0]
+    r1 = det_real.detect([img])[0]
+    assert len(r0) >= 1
+    assert len(r0) == len(r1)
+    for fa, fb in zip(r0, r1):
+        np.testing.assert_array_equal(fa.bbox, fb.bbox)
+        np.testing.assert_array_equal(fa.landmarks, fb.landmarks)
+        assert fa.score == fb.score
 
-@pytest.mark.skipif(not _MODELS_PRESENT, reason=_MODELS_SKIP)
-def test_shared_five_point_aligner_class() -> None:
-    """ORT path must use the same FivePointAligner class (no reimplementation)."""
-    from recognition.infrastructure.face_pipeline.aligner import FivePointAligner
+
+@pytest.mark.skipif(not MODELS_PRESENT, reason=MODELS_SKIP)
+def test_aligner_crop_is_valid_ort_sface_input(ort_sface_embedder) -> None:
+    """FivePointAligner crop is a valid SFace input for ORT (BR-04 replaces vacuous claim)."""
+    from recognition.infrastructure.face_pipeline.aligner import ALIGNED_SIZE, FivePointAligner
 
     img = np.load(_FIXTURE_DIR / "aligner_source_image.npy")
     landmarks = np.load(_FIXTURE_DIR / "aligner_landmarks.npy")
-    # Single shared class instance used before ORT embed
-    aligner = FivePointAligner()
-    crop = aligner.align(img, landmarks).crop
-    from recognition.infrastructure.face_pipeline.ort_adapters import OrtSFaceEmbedder
-
-    emb = OrtSFaceEmbedder().embed([crop])
-    assert emb.shape == (1, 128)
+    crop = FivePointAligner().align(img, landmarks).crop
+    assert crop.shape == (ALIGNED_SIZE, ALIGNED_SIZE, 3)
+    emb = ort_sface_embedder.embed([crop])
+    assert emb.shape == (1, SFACE_EMBEDDING_DIM)
     assert float(np.linalg.norm(emb[0])) == pytest.approx(1.0, abs=1e-5)
 
 
 def test_ort_adapters_import_purity_no_worker_http() -> None:
-    code = """
-import sys
-import recognition.infrastructure.face_pipeline.ort_adapters  # noqa: F401
-forbidden_prefixes = (
-    "fastapi",
-    "starlette",
-    "recognition.worker",
-    "recognition.api",
-)
-for name in list(sys.modules):
-    for bad in forbidden_prefixes:
-        if name == bad or name.startswith(bad + "."):
-            raise SystemExit(f"forbidden import present: {name}")
-if "onnxruntime" not in sys.modules:
-    raise SystemExit("expected onnxruntime imported by ort_adapters")
-print("ok")
-"""
-    env = os.environ.copy()
-    existing = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = (
-        str(_SERVICE_ROOT) if not existing else f"{_SERVICE_ROOT}{os.pathsep}{existing}"
+    run_import_purity_check(
+        import_stmt="import recognition.infrastructure.face_pipeline.ort_adapters  # noqa: F401",
+        forbidden_prefixes=(
+            "fastapi",
+            "starlette",
+            "recognition.worker",
+            "recognition.api",
+        ),
+        required_modules=("onnxruntime",),
     )
-    result = subprocess.run(
-        [sys.executable, "-c", code],
-        capture_output=True,
-        text=True,
-        env=env,
-        cwd=str(_SERVICE_ROOT),
-        check=False,
+
+
+def test_common_import_purity_no_cv2_or_ort() -> None:
+    """BR-02: _common must stay free of cv2 and onnxruntime."""
+    run_import_purity_check(
+        import_stmt="import recognition.infrastructure.face_pipeline._common  # noqa: F401",
+        forbidden_prefixes=(
+            "fastapi",
+            "starlette",
+            "recognition.worker",
+            "recognition.api",
+        ),
+        forbidden_modules=("cv2", "onnxruntime"),
     )
-    assert result.returncode == 0, (
-        f"ort_adapters purity failed rc={result.returncode}\n"
-        f"stdout={result.stdout}\nstderr={result.stderr}"
-    )
-    assert "ok" in result.stdout

@@ -102,13 +102,13 @@ class FacePipelineAdmissionGate:
     def capacity(self) -> int:
         return self._capacity
 
-    async def acquire(self, *, timeout: float) -> None:
-        """Acquire one slot within ``timeout`` seconds; raise ``TimeoutError`` on expiry."""
-        if timeout <= 0:
+    async def acquire(self, *, timeout_s: float) -> None:
+        """Acquire one slot within ``timeout_s`` seconds; raise ``TimeoutError`` on expiry."""
+        if timeout_s <= 0:
             if self._sem.acquire(blocking=False):
                 return
             raise TimeoutError("face pipeline admission timed out")
-        deadline = time.perf_counter() + timeout
+        deadline = time.perf_counter() + timeout_s
         if self._sem.acquire(blocking=False):
             return
         while True:
@@ -653,13 +653,13 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
             )
         return results
 
-    async def _acquire_admission(self, timeout: float) -> None:
-        """Acquire one submit slot within timeout; loop-agnostic for process gate."""
+    async def _acquire_admission(self, timeout_s: float) -> None:
+        """Acquire one submit slot within timeout_s; loop-agnostic for process gate."""
         gate = self._submit_semaphore
         if isinstance(gate, asyncio.Semaphore):
-            await asyncio.wait_for(gate.acquire(), timeout=timeout)
+            await asyncio.wait_for(gate.acquire(), timeout=timeout_s)
             return
-        await gate.acquire(timeout=timeout)
+        await gate.acquire(timeout_s=timeout_s)
 
     def _release_admission(self) -> None:
         """Release one submit slot (sync; process gate is thread-safe)."""

@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useClusterSuggestions } from '../useClusterSuggestions';
 import { PROJECTION_TOP_K } from '../suggestionProjection';
+import { suggestionProjectionMatrix } from './suggestionProjection.fixtures';
 import * as recognitionApi from '../../../../api/recognition';
 
 vi.mock('../../../../api/recognition', () => ({
@@ -165,6 +166,38 @@ describe('useClusterSuggestions', () => {
 
     const exactMatch = await result.current.findClusterByLabel('Emilie Chartrand');
     expect(exactMatch).toBeNull();
+
+    queryClient.clear();
+  });
+
+  it('surfaces the first human-labeled match inside the window in the dropdown (clusterFirstThenHuman, BR-15)', async () => {
+    const { wrapper, queryClient } = createWrapper();
+    const fetchIdentitiesSuggestionsMock = vi.mocked(recognitionApi.fetchIdentitiesSuggestions);
+    const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
+
+    const { identityId, matches } = suggestionProjectionMatrix.clusterFirstThenHuman;
+    fetchIdentitiesSuggestionsMock.mockResolvedValue({
+      matches: {
+        [identityId]: [...matches],
+      },
+    });
+
+    listRecognitionClustersMock.mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 0,
+      truncated: false,
+    });
+
+    const { result } = renderHook(
+      () => useClusterSuggestions({ identityId, enabled: true, labelInput: '', debounceMs: 0 }),
+      { wrapper },
+    );
+
+    // Auto rank-1/rank-2 rows drop; Bob (rank 3) leads, Bobby follows in server order.
+    await waitFor(() => expect(result.current.options).toHaveLength(2));
+    expect(result.current.options.map((option) => option.label)).toEqual(['Bob', 'Bobby']);
+    expect(result.current.options[0]?.value).toBe('cluster-bob');
 
     queryClient.clear();
   });

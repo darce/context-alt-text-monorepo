@@ -40,6 +40,15 @@ describe('InlineSuggestionPrompt (presentational)', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it('renders nothing when the match label is whitespace-only (BR-14)', () => {
+    const blank = { ...match, label: '   ' };
+    const { container } = render(
+      <InlineSuggestionPrompt match={blank} onConfirm={vi.fn()} onReject={vi.fn()} isPending={false} />,
+    );
+
+    expect(container).toBeEmptyDOMElement();
+  });
+
   it('fires onConfirm with the match clusterId and label on Yes', async () => {
     const onConfirm = vi.fn();
     const user = userEvent.setup();

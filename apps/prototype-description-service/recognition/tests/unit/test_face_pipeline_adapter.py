@@ -535,6 +535,88 @@ def test_selective_cache_value_error_not_sticky(monkeypatch: pytest.MonkeyPatch)
     assert calls == 2
 
 
+def test_sticky_integrity_recovers_after_operator_model_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GROKHARM-01 [RES-04/08, SERVE-01, RLSE-05]: ModelIntegrityError is sticky
+    for unchanged file identity, but an operator atomic model replace
+    (mtime/size/content identity change) must re-verify/rebuild and return a
+    runtime without process restart or reset_shared_face_pipeline_runtime_for_tests.
+    """
+    _align_dims_to_sface(monkeypatch)
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+
+    sface_name = "face_recognition_sface_2021dec.onnx"
+    sface_path = tmp_path / sface_name
+    sface_path.write_bytes(b"tampered-sface-bytes-v1")
+    # Touch companion artifact so dir looks provisioned for operators/re-stat.
+    (tmp_path / "face_detection_yunet_2026may.onnx").write_bytes(b"yunet-bytes")
+
+    load_calls = 0
+    allow_success = False
+
+    def loader(*, models_dir: Path, **kwargs: object) -> fpa.FacePipelineRuntime:
+        nonlocal load_calls
+        load_calls += 1
+        if not allow_success:
+            raise ModelIntegrityError("sha256 mismatch for 'sface'")
+        return fpa.FacePipelineRuntime(
+            detector=MagicMock(),
+            aligner=MagicMock(),
+            embedder=MagicMock(),
+            manifest=fpa.sface_embedding_model_manifest(),
+            models_dir=models_dir,
+            score_threshold=0.9,
+            nms_threshold=0.3,
+            top_k=5000,
+        )
+
+    monkeypatch.setattr(fpa, "_load_face_pipeline_runtime", loader)
+
+    with pytest.raises(fpa.FacePipelineRuntimeUnavailableError, match="sha256 mismatch"):
+        fpa.get_shared_face_pipeline_runtime(profile="face_pipeline", models_dir=tmp_path)
+    assert load_calls == 1
+
+    # Same file identity: integrity sticky — no second load attempt.
+    with pytest.raises(fpa.FacePipelineRuntimeUnavailableError):
+        fpa.get_shared_face_pipeline_runtime(profile="face_pipeline", models_dir=tmp_path)
+    assert load_calls == 1
+
+    # Operator atomically replaces model bytes (mtime/size/content identity change).
+    sface_path.write_bytes(b"good-sface-bytes-after-operator-replace-v2")
+    allow_success = True
+
+    runtime = fpa.get_shared_face_pipeline_runtime(profile="face_pipeline", models_dir=tmp_path)
+    assert runtime is not None
+    assert load_calls == 2  # must re-verify/rebuild after identity change
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+
+
+def test_grok47c_02_ort_inference_session_has_no_explicit_cleanup_contract() -> None:
+    """GROK47C-02 adjudication [RES-04]: onnxruntime InferenceSession exposes no
+    close/dispose/context-manager contract. Failed constructors leave no live
+    session requiring explicit teardown; inventing a partial-resource cleanup API
+    would be unsupported and brittle. Finding is false-positive / non-actionable.
+    """
+    import gc
+
+    import onnxruntime as ort
+
+    assert not hasattr(ort.InferenceSession, "close")
+    assert not hasattr(ort.InferenceSession, "dispose")
+    assert not hasattr(ort.InferenceSession, "release")
+    assert not hasattr(ort.InferenceSession, "__enter__")
+    assert not hasattr(ort.InferenceSession, "__exit__")
+
+    try:
+        ort.InferenceSession(b"not-a-valid-onnx-model", providers=["CPUExecutionProvider"])
+        pytest.fail("expected InferenceSession constructor to reject invalid protobuf")
+    except Exception:
+        # Constructor failed before returning a session; nothing to dispose.
+        pass
+    gc.collect()
+
+
 # ---------------------------------------------------------------------------
 # CR-04 / CR-05 — semaphore, timeout, breaker, executor identity
 # ---------------------------------------------------------------------------

@@ -418,3 +418,105 @@ def test_ready_invalid_profile_returns_503(monkeypatch: pytest.MonkeyPatch, tmp_
     assert mc["status"] == "unhealthy"
     assert "invalid face_pipeline profile" in mc["detail"]
     assert "not_a_real_profile" in mc["detail"]
+
+
+def test_check_face_pipeline_models_ort_construction_failure_unhealthy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GROKHARM-04 [OBS-08, EMB-05, SERVE-01]: hashes + dims alone are insufficient.
+
+    For face_pipeline profile, readiness must prove ORT session / shared runtime
+    construction. Valid verified files with InferenceSession construction failure
+    must return UNHEALTHY with a runtime-unavailable reason (not OK).
+    """
+    from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
+
+    _align_dims_to_sface(monkeypatch)
+    _install_synthetic_pair(tmp_path, monkeypatch)
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+
+    def boom_loader(*, models_dir: Path, **kwargs: object) -> fpa.FacePipelineRuntime:
+        raise RuntimeError("InferenceSession construction failed: synthetic ORT boom")
+
+    monkeypatch.setattr(fpa, "_load_face_pipeline_runtime", boom_loader)
+
+    result = health_mod.check_face_pipeline_models(tmp_path)
+    assert result.status.value == "unhealthy"
+    detail = result.detail.lower()
+    assert "runtime" in detail or "unavailable" in detail or "inferencesession" in detail
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+
+
+def test_check_face_pipeline_models_healthy_implies_usable_shared_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GROKHARM-04: healthy ready must correspond to a usable shared runtime.
+
+    Readiness and serve path must not diverge — a successful check must go
+    through (or populate) get_shared_face_pipeline_runtime so serve can reuse it.
+    """
+    from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
+
+    _align_dims_to_sface(monkeypatch)
+    _install_synthetic_pair(tmp_path, monkeypatch)
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+
+    load_calls = 0
+    mock_runtime = fpa.FacePipelineRuntime(
+        detector=MagicMock(),
+        aligner=MagicMock(),
+        embedder=MagicMock(),
+        manifest=fpa.sface_embedding_model_manifest(),
+        models_dir=tmp_path,
+        score_threshold=0.9,
+        nms_threshold=0.3,
+        top_k=5000,
+    )
+
+    def loader(*, models_dir: Path, **kwargs: object) -> fpa.FacePipelineRuntime:
+        nonlocal load_calls
+        load_calls += 1
+        return mock_runtime
+
+    monkeypatch.setattr(fpa, "_load_face_pipeline_runtime", loader)
+
+    result = health_mod.check_face_pipeline_models(tmp_path)
+    assert result.status.value == "ok"
+    assert load_calls >= 1, "readiness must construct/prove shared runtime, not only hashes+dims"
+
+    shared = fpa.get_shared_face_pipeline_runtime(profile="face_pipeline", models_dir=tmp_path)
+    assert shared is mock_runtime
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+
+
+def test_ready_ort_construction_failure_returns_503(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """GROKHARM-04: /ready must 503 when model verify passes but ORT runtime fails."""
+    from fastapi.testclient import TestClient
+
+    from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
+
+    _align_dims_to_sface(monkeypatch)
+    _install_synthetic_pair(tmp_path, monkeypatch)
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+
+    monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_PROFILE", "face_pipeline")
+    monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_MODELS_DIR", str(tmp_path))
+
+    def boom_loader(*, models_dir: Path, **kwargs: object) -> fpa.FacePipelineRuntime:
+        raise RuntimeError("InferenceSession construction failed: synthetic ORT boom")
+
+    monkeypatch.setattr(fpa, "_load_face_pipeline_runtime", boom_loader)
+
+    app = _standalone_ready_app(monkeypatch)
+    client = TestClient(app)
+    resp = client.get("/ready")
+    assert resp.status_code == 503, resp.text
+    body = resp.json()
+    assert body["status"] == "unhealthy"
+    mc = next(c for c in body["checks"] if c["name"] == "model_cache")
+    assert mc["status"] == "unhealthy"
+    detail = mc["detail"].lower()
+    assert "runtime" in detail or "unavailable" in detail or "inferencesession" in detail
+    fpa.reset_shared_face_pipeline_runtime_for_tests()

@@ -68,6 +68,34 @@ def _resolve_face_pipeline_timeout_s() -> float:
     return float(get_database_settings().embedding_timeout_s)
 
 
+def _resolve_face_pipeline_max_workers() -> int:
+    """Read RECOGNITION_FACE_PIPELINE_MAX_WORKERS; fail closed on empty/malformed/<=0."""
+    raw = os.environ.get("RECOGNITION_FACE_PIPELINE_MAX_WORKERS")
+    if raw is None:
+        return 2
+    stripped = raw.strip()
+    if not stripped:
+        raise ValueError(
+            "Invalid RECOGNITION_FACE_PIPELINE_MAX_WORKERS: empty value; "
+            "must be a positive integer"
+        )
+    # Reject floats ("1.5") and non-numeric tokens; only optional sign + digits.
+    if stripped[0] in "+-" and not stripped[1:].isdigit():
+        raise ValueError(
+            f"Invalid RECOGNITION_FACE_PIPELINE_MAX_WORKERS={raw!r}; must be a positive integer"
+        )
+    if stripped[0] not in "+-" and not stripped.isdigit():
+        raise ValueError(
+            f"Invalid RECOGNITION_FACE_PIPELINE_MAX_WORKERS={raw!r}; must be a positive integer"
+        )
+    value = int(stripped)
+    if value <= 0:
+        raise ValueError(
+            f"Invalid RECOGNITION_FACE_PIPELINE_MAX_WORKERS={value}; must be a positive integer"
+        )
+    return value
+
+
 class InsightFaceSettings(BaseModel):
     """Settings for InsightFace face detection and embedding."""
 
@@ -121,6 +149,13 @@ class FacePipelineSettings(BaseModel):
         default_factory=_resolve_face_pipeline_timeout_s,
         description="Per-image detect timeout (defaults to DB_EMBEDDING_TIMEOUT_SECONDS).",
     )
+    max_workers: int = Field(
+        default_factory=_resolve_face_pipeline_max_workers,
+        description=(
+            "Process-wide face_pipeline executor + admission capacity. "
+            "Env: RECOGNITION_FACE_PIPELINE_MAX_WORKERS (default 2)."
+        ),
+    )
 
     @field_validator("profile", mode="before")
     @classmethod
@@ -129,6 +164,29 @@ class FacePipelineSettings(BaseModel):
             raise ValueError(
                 f"Invalid face_pipeline profile={value!r}; allowed values: {sorted(_FACE_PIPELINE_PROFILES)}"
             )
+        return value
+
+    @field_validator("max_workers", mode="before")
+    @classmethod
+    def _validate_max_workers(cls, value: object) -> object:
+        """Fail closed on non-positive or non-integral capacity ([CFG-01/02])."""
+        if isinstance(value, bool):
+            raise ValueError(f"Invalid face_pipeline max_workers={value!r}; must be a positive integer")
+        if isinstance(value, float):
+            if not value.is_integer():
+                raise ValueError(f"Invalid face_pipeline max_workers={value!r}; must be a positive integer")
+            value = int(value)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped or (stripped[0] in "+-" and not stripped[1:].isdigit()) or (
+                stripped[0] not in "+-" and not stripped.isdigit()
+            ):
+                raise ValueError(f"Invalid face_pipeline max_workers={value!r}; must be a positive integer")
+            value = int(stripped)
+        if not isinstance(value, int):
+            raise ValueError(f"Invalid face_pipeline max_workers={value!r}; must be a positive integer")
+        if value <= 0:
+            raise ValueError(f"Invalid face_pipeline max_workers={value}; must be a positive integer")
         return value
 
     @property

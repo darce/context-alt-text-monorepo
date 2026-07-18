@@ -5,7 +5,7 @@
  * Naming options come from the shared person∪cluster union; duplicates block pre-save.
  */
 
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { __, sprintf } from '@wordpress/i18n';
 
@@ -25,6 +25,8 @@ import { useRosterEntries } from '../../../hooks/useRosterHooks';
 import {
   buildNamingOptions,
   findCollisionsForLabel,
+  NAMING_GROUP_ALL_LABELS,
+  namingOptionValue,
   parseNamingOptionValue,
   uniqueClusterCollisionTarget,
   unwrapClusterOptionId,
@@ -32,7 +34,7 @@ import {
 } from './buildNamingOptions';
 import { getProjectionNotReadyMessage, isProjectionNotReadyError } from './clusterMutationUtils';
 import { MergeUndoBanner } from './MergeUndoBanner';
-import { invalidateSuggestionProjection } from './suggestionProjection';
+import { invalidateSuggestionProjection, isHumanLabeledTarget } from './suggestionProjection';
 
 interface ClusterLabelingPanelProps {
   clusterId: string;
@@ -123,6 +125,17 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
   const skipGuardClearOnNextValueRef = useRef(false);
   const queryClient = useQueryClient();
 
+  // Reset panel-local state when the labeled cluster changes (FIX-4). key= at call site remounts;
+  // this effect covers non-key remounts / prop-only updates.
+  useEffect(() => {
+    setLabelInput('');
+    setError(null);
+    setDuplicateGuard(null);
+    setAllowRenameAnyway(false);
+    setLastMerge(null);
+    skipGuardClearOnNextValueRef.current = false;
+  }, [clusterId]);
+
   const handleLabelSuccess = (label: string) => {
     setError(null);
     setDuplicateGuard(null);
@@ -189,7 +202,7 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
         label: option.label,
         source: option.source,
         identityCount: option.identityCount,
-        group: 'All Labels',
+        group: NAMING_GROUP_ALL_LABELS,
       })),
     [namingOptions],
   );
@@ -263,6 +276,41 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     };
   };
 
+  /**
+   * When the local collision set is empty/pending (limit 20, disabled <2 chars),
+   * look up an exact remote labeled match so free-text create cannot silent-dupe (FIX-8).
+   */
+  const evaluateRemoteDuplicateGuard = async (trimmed: string): Promise<DuplicateGuardState | null> => {
+    try {
+      const results = await listRecognitionClusters({
+        search: trimmed,
+        limit: 10,
+        labeled_only: true,
+      });
+      const normalized = trimmed.toLowerCase();
+      const match = results.clusters.find(
+        (cluster) =>
+          cluster.id !== clusterId && cluster.label.toLowerCase() === normalized && isHumanLabeledTarget(cluster.label),
+      );
+      if (!match?.id || !match.label) {
+        return null;
+      }
+      const remoteOption: NamingOption = {
+        value: namingOptionValue('cluster', match.id),
+        label: match.label,
+        source: 'cluster',
+        identityCount: typeof match.identity_count === 'number' ? match.identity_count : undefined,
+      };
+      return {
+        label: trimmed,
+        collisions: [remoteOption],
+        mergeTarget: remoteOption,
+      };
+    } catch {
+      return null;
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = labelInput.trim();
@@ -272,7 +320,8 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     setError(null);
 
     if (!allowRenameAnyway) {
-      const guard = evaluateDuplicateGuard(trimmed);
+      const localGuard = evaluateDuplicateGuard(trimmed);
+      const guard = localGuard ?? (await evaluateRemoteDuplicateGuard(trimmed));
       if (guard) {
         setDuplicateGuard(guard);
         return;

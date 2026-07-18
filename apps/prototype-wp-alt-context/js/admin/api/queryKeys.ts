@@ -74,8 +74,10 @@ export const queryKeys = {
     namePending: () => [...queryKeys.suggestions.all, 'name'] as const,
     identity: () => [...queryKeys.suggestions.all, 'identity'] as const,
     identityFor: (identityId: string | undefined) => [...queryKeys.suggestions.identity(), identityId] as const,
-    /** Shared batched list for inline "Is this X?" prompts (one GET, client-side top-1). */
-    inlineBatch: () => [...queryKeys.suggestions.all, 'inline-batch'] as const,
+    inline: () => [...queryKeys.suggestions.all, 'inline'] as const,
+    inlineFor: (identityId: string) => [...queryKeys.suggestions.inline(), identityId] as const,
+    inlineBatch: (identityIds: readonly string[]) =>
+      [...queryKeys.suggestions.inline(), 'batch', identityIds] as const,
     /**
      * Unified assignment-suggestion projection (identity-keyed + review).
      * Nested under `suggestions.all` so root invalidation still reaches it.

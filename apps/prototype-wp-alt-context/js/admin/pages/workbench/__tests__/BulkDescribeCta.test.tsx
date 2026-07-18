@@ -1,8 +1,10 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { DescribeRunProgress } from '../../../hooks/useDescribeRunProgress';
+import type { DescribeRunResponse } from '../../../api/describeApi';
+import { _resetCooldownForTests, openCooldown } from '../../../utils/recognitionCooldown';
 import { BulkDescribeCta } from '../MediaSelection';
 
 vi.mock('@wordpress/i18n', () => ({
@@ -44,6 +46,10 @@ const baseProps = {
 };
 
 describe('BulkDescribeCta state matrix (A11Y-24)', () => {
+  afterEach(() => {
+    _resetCooldownForTests();
+  });
+
   // empty / loading / error fill gaps left by the offline column (Slice 2).
   it('disables submit in empty selection state (zero selection)', () => {
     render(<BulkDescribeCta {...baseProps} selectedCount={0} />);
@@ -91,6 +97,67 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
     expect(button).not.toBeDisabled();
     await userEvent.click(button);
     expect(onSubmit).toHaveBeenCalledOnce();
+  });
+
+  it('announces a frozen-progress waiting state instead of an error dead-end (BR-07 / A11Y-21)', () => {
+    const runningRun = {
+      run_id: 'run-1',
+      status: 'running',
+      completed: 2,
+      failed: 0,
+      skipped: 0,
+      total: 4,
+      eta_seconds: 30,
+    } as DescribeRunResponse;
+    const progress = {
+      ...idleProgress,
+      run: runningRun,
+      status: 'running',
+      isFrozen: true,
+      isPolling: true,
+      progressFraction: 0.5,
+      stalledForSeconds: null,
+    } as DescribeRunProgress;
+
+    render(<BulkDescribeCta {...baseProps} isRunning runId="run-1" progress={progress} isPanelVisible />);
+
+    const notice = screen.getByText(/Waiting for the service — progress updates paused/);
+    // Announced via the surrounding polite live region, not a visual-only hint.
+    expect(notice.closest('[role="status"]')).not.toBeNull();
+    // The frozen state keeps the last-known progress visible — no error dead-end.
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    expect(screen.getByRole('progressbar')).toBeInTheDocument();
+  });
+
+  it('announces the shared recognition cooldown with its remaining window', () => {
+    openCooldown(30);
+    const runningRun = {
+      run_id: 'run-1',
+      status: 'running',
+      completed: 1,
+      failed: 0,
+      skipped: 0,
+      total: 4,
+      eta_seconds: 60,
+    } as DescribeRunResponse;
+    const progress = {
+      ...idleProgress,
+      run: runningRun,
+      status: 'running',
+      isFrozen: false,
+      isPolling: true,
+      progressFraction: 0.25,
+      stalledForSeconds: null,
+    } as DescribeRunProgress;
+
+    render(<BulkDescribeCta {...baseProps} isRunning runId="run-1" progress={progress} isPanelVisible />);
+
+    // The remaining window is visible but aria-hidden so the polite live region
+    // is not re-announced every second (A11Y-21); the announced sentence stays
+    // static while only the countdown ticks.
+    const countdown = screen.getByText(/Retrying in 30s\./);
+    expect(countdown).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getByText('Waiting for the service — progress updates paused.')).toBeInTheDocument();
   });
 
   it('keeps cancel enabled while a run is active even when offline gate is set', async () => {

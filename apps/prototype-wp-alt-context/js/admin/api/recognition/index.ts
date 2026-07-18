@@ -30,6 +30,7 @@ export type {
   ClusterListParams,
   ClusterSuggestion,
   IdentitySuggestionsResponse,
+  IdentityBatchSuggestionsResponse,
   // Cluster operation types
   UpdateClusterLabelRequest,
   MergeClusterRequest,
@@ -117,6 +118,7 @@ export { listRecognitionClusters, getRecognitionCluster, fetchTopUnlabeledCluste
 export {
   fetchMediaIdentities,
   fetchIdentitySuggestions,
+  fetchIdentitiesSuggestions,
   fetchPendingSuggestions,
   fetchPendingMergeSuggestions,
   fetchPendingNameSuggestions,

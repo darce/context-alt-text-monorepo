@@ -89,12 +89,7 @@ vi.mock('../../../api/recognition', () => ({
   mergeCluster: vi.fn(),
   updateClusterLabel: vi.fn(),
   fetchIdentitySuggestions: vi.fn(),
-  fetchPendingSuggestions: vi.fn().mockResolvedValue({
-    suggestions: [],
-    limit: 500,
-    offset: 0,
-    data_source: 'backend_proxy',
-  }),
+  fetchIdentitiesSuggestions: vi.fn(),
   listRecognitionClusters: vi.fn(),
   revertMergeCluster: vi.fn(),
   reassignClusterIdentity: vi.fn(),
@@ -221,6 +216,7 @@ describe('IdentityClusterList', () => {
       findClusterByLabel: defaultFindClusterByLabel,
     });
     vi.mocked(api.fetchIdentitySuggestions).mockResolvedValue({ matches: [] });
+    vi.mocked(api.fetchIdentitiesSuggestions).mockResolvedValue({ matches: {} });
     vi.mocked(api.listRecognitionClusters).mockResolvedValue({
       clusters: [],
       limit: 20,
@@ -997,5 +993,77 @@ describe('IdentityClusterList', () => {
         mode: 'sync',
       }),
     );
+  });
+
+  describe('inline suggestion batching', () => {
+    const makeUnlabeled = (count: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        ...baseIdentity,
+        identity_id: `id-${i}`,
+        media_id: i + 1,
+        cluster_id: null,
+        cluster_label: null,
+      }));
+
+    it('issues exactly one batched suggestions fetch (top_k=1) for N unlabeled cards', async () => {
+      const identities = makeUnlabeled(5);
+      await renderWithClient(<IdentityClusterList identities={identities} />);
+
+      await waitFor(() => expect(api.fetchIdentitiesSuggestions).toHaveBeenCalledTimes(1));
+      expect(api.fetchIdentitiesSuggestions).toHaveBeenCalledWith(
+        ['id-0', 'id-1', 'id-2', 'id-3', 'id-4'],
+        1,
+      );
+      // The per-card fetch path is gone.
+      expect(api.fetchIdentitySuggestions).not.toHaveBeenCalled();
+    });
+
+    it('fetches no suggestions in label-only mode (zero fetches)', async () => {
+      const identities = makeUnlabeled(3);
+      await renderWithClient(
+        <IdentityClusterList identities={identities} dataSource={DATA_SOURCE.BACKEND_PROXY} />,
+      );
+
+      await flushTimers();
+      expect(api.fetchIdentitiesSuggestions).not.toHaveBeenCalled();
+    });
+
+    it('resolves an inline prompt on every one of 60 unlabeled cards from a single batch', async () => {
+      const identities = makeUnlabeled(60);
+      // Several identities carry >=2 pending suggestions (guards the row-vs-identity
+      // bound); the client keys by identity id and takes the first server-ranked match.
+      const matches = Object.fromEntries(
+        identities.map((identity, i) => {
+          const primary = { cluster_id: `c-${i}`, label: `Person ${i}`, similarity: 0.9, identity_count: 2 };
+          const rows =
+            i % 4 === 0
+              ? [primary, { cluster_id: `c-${i}-b`, label: `Person ${i} alt`, similarity: 0.8, identity_count: 1 }]
+              : [primary];
+          return [identity.identity_id, rows];
+        }),
+      );
+      vi.mocked(api.fetchIdentitiesSuggestions).mockResolvedValue({ matches });
+
+      await renderWithClient(<IdentityClusterList identities={identities} />);
+
+      await waitFor(() => expect(screen.getAllByRole('button', { name: 'Yes' })).toHaveLength(60));
+      expect(api.fetchIdentitiesSuggestions).toHaveBeenCalledTimes(1);
+      // First (server-ranked) match is the one shown, even where >=2 rows exist.
+      expect(screen.getByText('Person 0')).toBeInTheDocument();
+      expect(screen.queryByText('Person 0 alt')).not.toBeInTheDocument();
+    });
+
+    it('renders nothing for an identity absent from the keyed envelope (empty-match)', async () => {
+      const identities = makeUnlabeled(2);
+      vi.mocked(api.fetchIdentitiesSuggestions).mockResolvedValue({
+        matches: { 'id-0': [{ cluster_id: 'c-0', label: 'Ada', similarity: 0.9, identity_count: 2 }] },
+      });
+
+      await renderWithClient(<IdentityClusterList identities={identities} />);
+
+      await waitFor(() => expect(screen.getByText('Ada')).toBeInTheDocument());
+      // 'id-1' had no eligible suggestion → exactly one prompt renders.
+      expect(screen.getAllByRole('button', { name: 'Yes' })).toHaveLength(1);
+    });
   });
 });

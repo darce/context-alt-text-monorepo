@@ -39,6 +39,110 @@ class SuggestionsControllerTest extends TestCase
         $this->assertContains('/recognition/suggestions/merge/(?P<suggestion_id>[a-f0-9-]+)/reject', $routes);
     }
 
+    public function testRegisterRoutesDeclaresBatchIdentitySuggestionsWithStringIdentityIds(): void
+    {
+        $this->controller->register_routes();
+
+        $definitions = array_values(array_filter(
+            $GLOBALS['__ac_rest_routes'],
+            static fn (array $definition): bool => '/recognition/identities/suggestions' === $definition['route']
+        ));
+
+        $this->assertCount(1, $definitions);
+        $args = $definitions[0]['args']['args'] ?? [];
+
+        // Guard: 'array' would trigger rest_sanitize_array -> wp_parse_list, splitting
+        // the comma-joined scalar so add_query_arg emits identity_ids[0]=..., which
+        // binds nothing on the FastAPI side. Must stay 'string'.
+        $this->assertSame('string', $args['identity_ids']['type'] ?? null);
+        $this->assertSame('integer', $args['top_k']['type'] ?? null);
+    }
+
+    public function testGetIdentitiesSuggestionsForwardsUnchangedScalarIdentityIdsAndTopK(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"matches":{}}',
+        ]);
+
+        // 60 ids: proves the comma-joined scalar survives the hop intact past the
+        // $_GET last-wins and add_query_arg array-syntax traps.
+        $identityIds = implode(',', array_map(
+            static fn (int $i): string => sprintf('aaaaaaaa-bbbb-cccc-dddd-%012d', $i),
+            range(1, 60)
+        ));
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/identities/suggestions');
+        $request->set_param('identity_ids', $identityIds);
+        $request->set_param('top_k', 1);
+
+        $response = $this->controller->get_identities_suggestions($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString('/recognition/identities/suggestions', $calls[0]['url']);
+        // No PHP-array query syntax on the wire.
+        $this->assertStringNotContainsString('identity_ids%5B', $calls[0]['url']);
+        $this->assertStringNotContainsString('identity_ids[', $calls[0]['url']);
+
+        $query = [];
+        $queryString = parse_url($calls[0]['url'], PHP_URL_QUERY);
+        parse_str(is_string($queryString) ? $queryString : '', $query);
+
+        $this->assertSame($identityIds, $query['identity_ids'] ?? null);
+        $this->assertSame('1', (string) ($query['top_k'] ?? ''));
+        $this->assertNotEmpty($query['tenant_id'] ?? '');
+    }
+
+    public function testGetIdentitiesSuggestionsRequiresIdentityIds(): void
+    {
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/identities/suggestions');
+
+        $response = $this->controller->get_identities_suggestions($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('missing_identity_ids', $response->get_error_code());
+    }
+
+    public function testGetIdentitiesSuggestionsReturnsEmptyMatchesWhenProxyUnavailable(): void
+    {
+        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
+        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
+        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/identities/suggestions');
+        $request->set_param('identity_ids', 'aaaaaaaa-bbbb-cccc-dddd-000000000001');
+
+        $response = $this->controller->get_identities_suggestions($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+        // Keyed-by-id envelope: empty mapping must serialize as {} rather than [].
+        $this->assertEquals(new \stdClass(), $data['matches'] ?? null);
+    }
+
+    public function testGetIdentitiesSuggestionsPropagatesBackendOverloadedAs503(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+            'headers' => ['Retry-After' => '5'],
+            'body' => '{"error":"database_unavailable","trace_id":"trace-1","path":"/recognition/identities/suggestions"}',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/identities/suggestions');
+        $request->set_param('identity_ids', 'aaaaaaaa-bbbb-cccc-dddd-000000000001');
+
+        $response = $this->controller->get_identities_suggestions($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(503, $response->get_status());
+        $this->assertSame(['error' => 'backend_overloaded', 'retry_after' => 5], $response->get_data());
+    }
+
     public function testGetPendingSuggestionsForwardsLimitOffsetQuery(): void
     {
         $this->queueHttpResponse([

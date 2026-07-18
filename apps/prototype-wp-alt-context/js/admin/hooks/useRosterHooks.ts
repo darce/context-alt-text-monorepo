@@ -2,7 +2,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { queryKeys } from '../api/queryKeys';
 import { listRosterEntries, createPerson, updatePerson, deletePerson, type RosterEntry } from '../api/rosterApi';
-import { gateRefetchInterval } from '../utils/rateLimitCooldown';
 
 const rosterEntriesKey = queryKeys.roster.entries();
 
@@ -15,7 +14,7 @@ export const useRosterEntries = () =>
   useQuery<RosterEntry[]>({
     queryKey: rosterEntriesKey,
     queryFn: () => listRosterEntries(),
-    refetchInterval: gateRefetchInterval(60_000),
+    refetchInterval: 60_000,
   });
 
 export const useCreatePerson = () => {

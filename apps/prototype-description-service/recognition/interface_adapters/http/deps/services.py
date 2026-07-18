@@ -369,6 +369,12 @@ def get_scan_service_builder(
 
     Profile-aware via ``build_embedding_runtime`` (insightface default /
     face_pipeline dark). Set RECOGNITION_RUNTIME_MODE=test for stubs.
+
+    HTTP/inline paths intentionally omit a shared httpx client: URL-fetch
+    opens a per-image ``AsyncClient`` inside the detector (face_pipeline and
+    insightface) by design. The worker injects a process-scoped client for
+    connection reuse; wiring request-scoped lifecycle here would need app
+    lifespan plumbing and is out of scope for this surface (E2E-08).
     """
     from recognition.config import get_settings as get_recognition_settings
     from recognition.infrastructure.embeddings.runtime_factory import build_embedding_runtime

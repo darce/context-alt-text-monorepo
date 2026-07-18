@@ -26,7 +26,19 @@ DEFAULT_MODELS_DIR = Path(__file__).resolve().parent / "models"
 
 
 class ModelIntegrityError(Exception):
-    """Raised when a model cannot be loaded with verified integrity (fail-closed)."""
+    """Raised when on-disk bytes fail size/hash integrity (tamper / corrupt).
+
+    Sticky-cacheable in the process runtime singleton: a hash/size mismatch is
+    not expected to self-heal without operator intervention or process restart.
+    """
+
+
+class ModelMissingError(Exception):
+    """Raised when a known model is not provisioned (missing file or pending pin).
+
+    Not a subclass of ``ModelIntegrityError``. Non-sticky: correcting
+    ``models_dir`` (fetch + pin) must recover without process restart.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,9 +120,11 @@ def _file_sha256(path: Path) -> str:
 def load_verified_model(name: str, *, models_dir: Path | None = None) -> Path:
     """Return the path to a model only after model + license integrity checks pass.
 
-    Fail-closed: missing file, pending sentinel, size mismatch, model hash
-    mismatch, missing license, or license hash mismatch all raise
-    ``ModelIntegrityError``.
+    Fail-closed split:
+    - ``ModelMissingError``: not provisioned (missing model/license file, or
+      ``PENDING_OPERATOR_FETCH`` sentinel still on the pin).
+    - ``ModelIntegrityError``: size or sha256 mismatch (tamper / corrupt bytes).
+    Unknown logical names also raise ``ModelIntegrityError`` (config error).
 
     Integrity is checked at call time against the on-disk files. This is a
     verify-then-open TOCTOU window: a concurrent writer could replace the model
@@ -124,7 +138,7 @@ def load_verified_model(name: str, *, models_dir: Path | None = None) -> Path:
         raise ModelIntegrityError(f"unknown model name: {name!r}")
 
     if entry.sha256 == PENDING_OPERATOR_FETCH:
-        raise ModelIntegrityError(
+        raise ModelMissingError(
             f"model {name!r} hash is {PENDING_OPERATOR_FETCH}; "
             f"operator must fetch from {entry.source_url} @ {entry.source_ref} "
             "and pin the real sha256 before load"
@@ -133,7 +147,7 @@ def load_verified_model(name: str, *, models_dir: Path | None = None) -> Path:
     root = Path(models_dir) if models_dir is not None else DEFAULT_MODELS_DIR
     path = root / entry.file_name
     if not path.is_file():
-        raise ModelIntegrityError(
+        raise ModelMissingError(
             f"model file missing for {name!r}: {path} (expected {entry.file_name} from {entry.source_url})"
         )
 
@@ -149,13 +163,13 @@ def load_verified_model(name: str, *, models_dir: Path | None = None) -> Path:
 
     # License is part of the load-time integrity surface (fail-closed).
     if entry.license_sha256 == PENDING_OPERATOR_FETCH:
-        raise ModelIntegrityError(
+        raise ModelMissingError(
             f"license hash for {name!r} is {PENDING_OPERATOR_FETCH}; "
             "operator must pin the real license sha256 before load"
         )
     license_path = root / entry.license_file
     if not license_path.is_file():
-        raise ModelIntegrityError(
+        raise ModelMissingError(
             f"license file missing for {name!r}: {license_path} (expected {entry.license_file} next to model)"
         )
     actual_license = _file_sha256(license_path)
@@ -210,7 +224,7 @@ def verify_face_pipeline_model(name: str, *, models_dir: Path | None = None) -> 
             mtime_ns=st.st_mtime_ns,
             size=st.st_size,
         )
-    except ModelIntegrityError as exc:
+    except (ModelIntegrityError, ModelMissingError) as exc:
         mtime_ns = 0
         size = 0
         if path.is_file():
@@ -240,6 +254,7 @@ __all__ = [
     "LICENSE_SOURCE_URLS",
     "MODEL_MANIFEST",
     "ModelIntegrityError",
+    "ModelMissingError",
     "ModelProvenance",
     "ModelVerifyOutcome",
     "OPENCV_ZOO_COMMIT",

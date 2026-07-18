@@ -44,6 +44,7 @@ from recognition.infrastructure.face_pipeline.provenance import (  # noqa: E402
     MODEL_MANIFEST,
     PENDING_OPERATOR_FETCH,
     ModelIntegrityError,
+    ModelMissingError,
     ModelProvenance,
     load_verified_model,
 )
@@ -252,7 +253,7 @@ def fetch_one(name: str, *, dest_dir: Path) -> Path:
 
         # Final gate: loader path (same verification production will use).
         verified = load_verified_model(name, models_dir=dest_dir)
-    except (ModelFetchError, ModelIntegrityError):
+    except (ModelFetchError, ModelIntegrityError, ModelMissingError):
         # Fail-closed for model weights only — never unlink license_file
         # (LICENSE.yunet / LICENSE.sface are git-tracked audit artifacts).
         _unlink_quiet(model_path)
@@ -297,7 +298,7 @@ def verify_only(
             raise ModelFetchError(f"unknown model name: {name!r}")
         try:
             verified = load_verified_model(name, models_dir=root)
-        except ModelIntegrityError as exc:
+        except (ModelIntegrityError, ModelMissingError) as exc:
             raise ModelFetchError(str(exc)) from exc
         print(f"verified {name}: {verified} sha256={entry.sha256[:12]}…")
         paths.append(verified)
@@ -336,7 +337,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             paths = fetch_all(dest_dir=args.dest, models=model_names)
             print(f"ok: fetched {len(paths)} model(s)")
-    except (ModelFetchError, ModelIntegrityError) as exc:
+    except (ModelFetchError, ModelIntegrityError, ModelMissingError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
     return 0

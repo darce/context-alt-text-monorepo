@@ -613,6 +613,159 @@ async def test_worker_handler_emits_one_event_and_updates_counters(
     assert counters.rows_new == 1
 
 
+@pytest.mark.asyncio
+async def test_worker_handler_commit_failure_no_event_no_counter_bump(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """E2E-01/06: commit after successful flush fails → no event, no counter, retry."""
+    from recognition.application.scan.queue_repository import ScanQueueItem
+    from recognition.domain.job import JobStatus
+    from recognition.worker.handlers.scan import ScanItemHandler
+
+    tenant = uuid.uuid4()
+    job_id = uuid.uuid4()
+    item_id = uuid.uuid4()
+    item = ScanQueueItem(
+        id=item_id,
+        job_id=job_id,
+        tenant_id=tenant,
+        media_id=9,
+        media_url="http://example.test/9.jpg",
+        status=JobStatus.RUNNING,
+        attempts=1,
+        identities_detected=0,
+        last_error=None,
+        created_at=None,
+        started_at=None,
+        completed_at=None,
+        correlation_id="corr-worker-fail",
+        correlation_source=None,
+    )
+
+    released: dict[str, object] = {}
+
+    class _Repo:
+        async def mark_item_completed(self, **_kwargs):  # noqa: ANN001
+            return None
+
+        async def release_item_for_retry(self, *, item_id, error_message):  # noqa: ANN001
+            released["item_id"] = item_id
+            released["error_message"] = error_message
+
+        async def mark_item_failed(self, **_kwargs):  # noqa: ANN001
+            raise AssertionError("should retry, not permanent fail")
+
+    class _SessionCtx(_FakeSession):
+        def __init__(self) -> None:
+            super().__init__()
+            self._n = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def commit(self):
+            self._n += 1
+            # First commit is the success-path durable gate; fail it. Failure-path
+            # commit (retry state) must succeed so the handler finishes cleanly.
+            if self._n == 1:
+                raise RuntimeError("commit boom after flush")
+
+    session = _SessionCtx()
+
+    class _Factory:
+        def __call__(self):
+            return session
+
+    counters = ScanWorkerCounters()
+    detector = _FixedDetector([_det(media_id="9")])
+    handler = ScanItemHandler(
+        session_factory=_Factory(),  # type: ignore[arg-type]
+        detector=detector,
+        generator=MagicMock(),
+        max_attempts=3,
+        max_concurrency=1,
+        counters=counters,
+    )
+
+    monkeypatch.setattr(
+        "recognition.worker.handlers.scan.enable_rls_bypass",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        "recognition.worker.handlers.scan.SqlAlchemyScanQueueRepository",
+        lambda _session: _Repo(),
+    )
+    handler._refresh_job_progress = AsyncMock()  # type: ignore[method-assign]
+    handler._build_scan_service = lambda _session: ScanService(  # type: ignore[method-assign]
+        session=session,
+        detector=detector,
+        generator=MagicMock(),
+    )
+
+    with caplog.at_level(logging.INFO, logger="recognition.application.scan.service"):
+        await handler.process_items(claimed=[item])
+
+    events = [r for r in caplog.records if getattr(r, "event", None) == "scan_media_reconciled"]
+    assert events == []
+    assert counters.media_processed == 0
+    assert counters.faces_detected == 0
+    assert counters.rows_matched == 0
+    assert counters.rows_new == 0
+    assert released["item_id"] == item_id
+    assert "commit boom" in str(released["error_message"])
+
+
+@pytest.mark.asyncio
+async def test_process_media_item_blob_read_ms_on_file_uri(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """E2E-09: file:// ObjectStore path includes blob_read_ms; http omits it."""
+    import io
+
+    class _Store:
+        def open(self, _uri: str):
+            return io.BytesIO(b"fake-image-bytes")
+
+    session = _FakeSession()
+    service = ScanService(
+        session=session,
+        detector=_FixedDetector([_det()]),
+        object_store_factory=lambda _tenant: _Store(),  # type: ignore[arg-type,return-value]
+    )
+    with caplog.at_level(logging.INFO, logger="recognition.application.scan.service"):
+        await service.process_media_item(
+            tenant_id=str(uuid.uuid4()),
+            media_id=3,
+            media_url="file://tenant/job/blob.jpg",
+        )
+        await session.commit()
+        service.emit_pending_scan_media_reconciled()
+
+    records = [r for r in caplog.records if getattr(r, "event", None) == "scan_media_reconciled"]
+    assert len(records) == 1
+    assert isinstance(records[0].blob_read_ms, (int, float))
+    assert records[0].blob_read_ms >= 0
+
+    # Non-file path: field absent (scope-honest).
+    session2 = _FakeSession()
+    service2 = ScanService(session=session2, detector=_FixedDetector([_det()]))
+    with caplog.at_level(logging.INFO, logger="recognition.application.scan.service"):
+        await service2.process_media_item(
+            tenant_id=str(uuid.uuid4()),
+            media_id=4,
+            media_url="http://example.test/4.jpg",
+        )
+        await session2.commit()
+        service2.emit_pending_scan_media_reconciled()
+    http_recs = [r for r in caplog.records if getattr(r, "event", None) == "scan_media_reconciled" and r.media_id == 4]
+    assert len(http_recs) == 1
+    assert not hasattr(http_recs[0], "blob_read_ms") or getattr(http_recs[0], "blob_read_ms", None) is None
+
+
 def test_capability_reason_always_includes_zero_counters() -> None:
     reason = format_capability_reason(profile="insightface")
     assert reason.startswith("profile=insightface")

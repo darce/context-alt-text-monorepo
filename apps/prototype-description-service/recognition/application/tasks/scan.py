@@ -89,6 +89,8 @@ async def process_scan_job_inline(
 
     from recognition.infrastructure.embeddings.runtime_factory import build_embedding_runtime
 
+    # Inline/HTTP path: no shared httpx client (URL-fetch opens per-image clients
+    # by design). Worker injects a process-scoped client — see E2E-08 / services.py.
     detector: FaceDetectorProtocol
     generator: EmbeddingGeneratorProtocol
     detector, generator = await build_embedding_runtime(

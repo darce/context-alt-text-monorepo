@@ -13,6 +13,7 @@ import asyncio
 import hashlib
 import logging
 import threading
+import time
 from collections.abc import Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -48,7 +49,7 @@ from recognition.infrastructure.face_pipeline._common import (
     RawDetection,
     ZeroNormEmbeddingError,
 )
-from recognition.infrastructure.face_pipeline.aligner import FivePointAligner
+from recognition.infrastructure.face_pipeline.aligner import AlignmentError, FivePointAligner
 from recognition.infrastructure.face_pipeline.ort_adapters import OrtSFaceEmbedder, OrtYuNetDetector
 from recognition.infrastructure.face_pipeline.provenance import (
     DEFAULT_MODELS_DIR,
@@ -238,10 +239,11 @@ def get_shared_face_pipeline_runtime(
     """Process-wide face_pipeline runtime singleton (memo on profile+dir+thresholds+dims).
 
     Double-checked lock with a single ``_SHARED`` tuple read for the fast path.
-    Only ``ModelIntegrityError`` (tamper / verified-load failure) is sticky-cached
-    as ``FacePipelineRuntimeUnavailableError``. Config-class failures (dim-guard
-    ``ValueError``, ``FileNotFoundError`` / missing model) raise without caching so
-    a corrected env/models_dir recovers without process restart.
+    Only ``ModelIntegrityError`` (size/hash mismatch / tamper) is sticky-cached
+    as ``FacePipelineRuntimeUnavailableError``. ``ModelMissingError`` and other
+    config-class failures (dim-guard ``ValueError``, missing provisioned files)
+    fall through the non-sticky ``except Exception`` branch so a corrected
+    env/models_dir recovers without process restart.
     """
     global _SHARED
 
@@ -285,13 +287,14 @@ def get_shared_face_pipeline_runtime(
         except FacePipelineRuntimeUnavailableError:
             raise
         except ModelIntegrityError as exc:
-            # Sticky: verified-load / tamper failures only (CR-03).
+            # Sticky: size/hash mismatch only (CR-03). ModelMissingError is NOT
+            # a subclass and falls through to the non-sticky branch below.
             reason = f"face_pipeline runtime unavailable: {exc}"
             unavailable = FacePipelineRuntimeUnavailableError(reason)
             _SHARED = (key, unavailable)
             raise unavailable from exc
         except Exception as exc:
-            # Non-sticky: dim-guard, missing file, etc. — no cache (CR-03).
+            # Non-sticky: dim-guard, ModelMissingError, etc. — no cache (CR-03).
             reason = f"face_pipeline runtime unavailable: {exc}"
             raise FacePipelineRuntimeUnavailableError(reason) from exc
         _SHARED = (key, runtime)
@@ -399,23 +402,22 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
         if not kept:
             return []
 
-        crops: list[np.ndarray] = []
-        for face, _bbox in kept:
-            aligned = self._runtime.aligner.align(bgr, face.landmarks)
-            crops.append(aligned.crop)
-
-        try:
-            embeddings = self._runtime.embedder.embed(crops)
-        except ZeroNormEmbeddingError as exc:
-            raise DetectionAdapterError(
-                media_id=media_id,
-                error_message=f"zero_norm_embedding: {exc}",
-            ) from exc
-
+        # Per-face align+embed: one bad face must not fail the whole media (E2E-04).
         model_id = self._runtime.manifest.model_id
         results: list[FaceDetection] = []
-        for (face, bbox), embedding in zip(kept, embeddings, strict=True):
-            # Incumbent quality path (pose_* may be None) — CR-01.
+        for face, bbox in kept:
+            try:
+                aligned = self._runtime.aligner.align(bgr, face.landmarks)
+                embeddings = self._runtime.embedder.embed([aligned.crop])
+                embedding = embeddings[0]
+            except (AlignmentError, ZeroNormEmbeddingError) as exc:
+                dropped += 1
+                logger.debug(
+                    "Dropped face for %s during align/embed: %s",
+                    media_id[:20],
+                    type(exc).__name__,
+                )
+                continue
             landmark_quality = _compute_detection_quality(
                 confidence=float(face.score),
                 pose_pitch=None,
@@ -436,6 +438,13 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
                     landmark_quality=landmark_quality,
                     model_id=model_id,
                 )
+            )
+
+        if dropped:
+            logger.debug(
+                "Dropped %d face(s) for %s (bbox clamp / align / embed)",
+                dropped,
+                media_id[:20],
             )
         return results
 
@@ -475,7 +484,15 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
                     payload: bytes = current_bytes,
                     mid: str = current_media_id,
                 ) -> list[FaceDetection]:
+                    # Saturation signal: log when submit-queue wait exceeds ~50ms (E2E-07).
+                    wait_started = time.perf_counter()
                     await self._submit_semaphore.acquire()
+                    wait_ms = (time.perf_counter() - wait_started) * 1000.0
+                    if wait_ms > 50.0:
+                        logger.info(
+                            "face_pipeline submit queue wait %.0fms",
+                            wait_ms,
+                        )
                     # Submit via concurrent.futures so the release callback tracks the
                     # real worker, not the asyncio Future that wait_for may cancel on
                     # timeout (which would free the slot while the thread still runs).

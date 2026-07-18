@@ -75,6 +75,7 @@ class _PendingReconcileEvent:
     detections: list[FaceDetection]
     persist_ms: float
     detect_ms: float
+    blob_read_ms: float | None = None
 
 
 async def run_scan_three_phase[PersistResult](
@@ -334,10 +335,13 @@ class ScanService:
         self._pending_reconcile_event = None
         tenant_uuid = uuid.UUID(str(tenant_id))
         detector_source: bytes | str = media_url
+        blob_read_ms: float | None = None
         if media_url.startswith("file://") and self._object_store_factory is not None:
             store = self._object_store_factory(str(tenant_id))
+            blob_started = time.perf_counter()
             with store.open(media_url) as fh:
                 detector_source = fh.read()
+            blob_read_ms = (time.perf_counter() - blob_started) * 1000.0
         detect_started = time.perf_counter()
         detections: list[FaceDetection] = await self._detector.detect([detector_source])
         detect_ms = (time.perf_counter() - detect_started) * 1000.0
@@ -358,6 +362,7 @@ class ScanService:
             detections=detections,
             persist_ms=persist_ms,
             detect_ms=detect_ms,
+            blob_read_ms=blob_read_ms,
         )
         return result
 
@@ -378,6 +383,7 @@ class ScanService:
             detections=pending.detections,
             persist_ms=pending.persist_ms,
             detect_ms=pending.detect_ms,
+            blob_read_ms=pending.blob_read_ms,
             get_profile=self._face_pipeline_profile_cached,
         )
 
@@ -543,6 +549,7 @@ def _emit_scan_media_reconciled(
     detections: list[FaceDetection],
     persist_ms: float,
     detect_ms: float | None = None,
+    blob_read_ms: float | None = None,
     get_profile: Callable[[], str] | None = None,
 ) -> None:
     """Emit one wide structured log event per successfully reconciled media ([OBS-01..03]).
@@ -555,8 +562,9 @@ def _emit_scan_media_reconciled(
 
     ``matched`` is durable match-writes; ``new`` is inserts — not assignment/unknown.
     Timing fields are scope-honest: ``persist_ms`` always; ``detect_ms`` only when
-    detect ran in the same call stack (worker ``process_media_item``). HTTP/inline
-    ``save_job_results`` omits ``detect_ms`` (detect is out of scope).
+    detect ran in the same call stack (worker ``process_media_item``); ``blob_read_ms``
+    only when an ObjectStore ``file://`` blob was read (E2E-09). HTTP/inline
+    ``save_job_results`` omits ``detect_ms`` / ``blob_read_ms`` (out of scope).
 
     Telemetry failures are swallowed so logging can never fail the scan (S4CR-06).
     """
@@ -581,6 +589,8 @@ def _emit_scan_media_reconciled(
         }
         if detect_ms is not None:
             extra["detect_ms"] = round(detect_ms, 3)
+        if blob_read_ms is not None:
+            extra["blob_read_ms"] = round(blob_read_ms, 3)
         logger.info("scan_media_reconciled", extra=extra)
     except Exception:
         logger.exception("scan_media_reconciled emission failed")

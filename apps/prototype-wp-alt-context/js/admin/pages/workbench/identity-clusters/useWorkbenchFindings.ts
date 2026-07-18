@@ -45,6 +45,7 @@ export {
   prevQueueIndex,
   removeAtQueueCursor,
   removeAtQueueIndex,
+  REVIEW_QUEUE_DRAIN_MESSAGE,
   REVIEW_QUEUE_FILTER,
   queueItemToNextAction,
 } from './reviewQueueDriver';
@@ -81,6 +82,8 @@ export interface WorkbenchFindingsSourceState {
   topUnlabeledDataSource: DataSource | undefined;
   isLoading: boolean;
   isError: boolean;
+  /** All four queue-source queries finished initial load (data or error). */
+  queueSettled: boolean;
 }
 
 export interface WorkbenchFindingsViewModel {
@@ -91,6 +94,12 @@ export interface WorkbenchFindingsViewModel {
   isError: boolean;
   isUnavailable: boolean;
   isReadOnly: boolean;
+  /**
+   * True only when every queue source query has finished its initial load
+   * (has data or errored). Partial resolve must not look settled — clamp/index
+   * restore depends on the full queue (BR-06).
+   */
+  queueSettled: boolean;
   /** Head of the ordered review queue (same as queue[0] when non-empty). */
   nextAction: WorkbenchNextAction;
   /**
@@ -213,6 +222,7 @@ export const buildWorkbenchFindings = (
     isError: state.isError,
     isUnavailable,
     isReadOnly,
+    queueSettled: state.queueSettled,
     queue,
     nextAction: selectNextAction(queue, {
       isLoading: state.isLoading,
@@ -221,6 +231,10 @@ export const buildWorkbenchFindings = (
     }),
   };
 };
+
+/** Settled = finished initial load (data present, empty success, error, or disabled). */
+const isQuerySettled = (query: { isLoading: boolean; isError: boolean; data: unknown }): boolean =>
+  Boolean(query.data) || query.isError || !query.isLoading;
 
 export const useWorkbenchFindings = (): WorkbenchFindingsViewModel => {
   const {
@@ -246,6 +260,13 @@ export const useWorkbenchFindings = (): WorkbenchFindingsViewModel => {
   // WHY: surface a hard error only when nothing rendered at all; partial query
   // failures degrade gracefully to whatever findings did load.
   const isError = !hasAnyData && assignmentQuery.isError && mergeQuery.isError;
+  // BR-06: every source must settle before clamp/index restore — partial
+  // assignment+merge data must not look like a complete empty/short queue.
+  const queueSettled =
+    isQuerySettled(assignmentQuery) &&
+    isQuerySettled(mergeQuery) &&
+    isQuerySettled(nameQuery) &&
+    isQuerySettled(topUnlabeledQuery);
 
   // COR-3 (rg-015): no authoritative backlog total exists; count loaded items.
   const assignmentTotal = assignmentSuggestions?.length ?? 0;
@@ -270,6 +291,7 @@ export const useWorkbenchFindings = (): WorkbenchFindingsViewModel => {
       topUnlabeledDataSource,
       isLoading,
       isError,
+      queueSettled,
     },
   );
 };

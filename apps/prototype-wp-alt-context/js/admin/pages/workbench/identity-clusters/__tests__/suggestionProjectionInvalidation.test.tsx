@@ -1,19 +1,15 @@
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, renderHook, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetConfigCache } from '../../../../api/config';
 import { queryKeys } from '../../../../api/queryKeys';
 import * as recognitionApi from '../../../../api/recognition';
-import { DATA_SOURCE } from '../../../../api/recognition/types';
-import type { TopUnlabeledCluster, TopUnlabeledClustersResponse } from '../../../../api/recognition/types';
 import {
   SUGGESTION_PROJECTION_INVALIDATION_EVENTS,
   type SuggestionProjectionInvalidationEvent,
 } from '../suggestionProjection';
-import { TopClustersSection } from '../TopClustersSection';
 import { useClusterMutations } from '../useClusterMutations';
 import { useSuggestionReviewMutations } from '../useSuggestionReviewMutations';
 
@@ -100,38 +96,6 @@ const makeQueryClient = (): QueryClient =>
 const wrapperFor =
   (queryClient: QueryClient) =>
   ({ children }: { children: ReactNode }) => <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
-
-const clusterWithSuggestion = (): TopUnlabeledCluster => ({
-  id: 'cluster-1',
-  tenant_id: 'tenant-1',
-  label: null,
-  is_labeled: false,
-  is_auto_label: false,
-  identity_count: 3,
-  user_confirmed: false,
-  suggested_label: 'Maria Correonero',
-  suggested_label_source: 'similar_cluster',
-  suggested_label_confidence: 0.62,
-  suggested_target_cluster_id: 'cluster-target',
-  representatives: [
-    {
-      id: 'rep-1',
-      media_id: 10,
-      thumb_url: 'http://example.test/thumb-1.jpg',
-      is_pinned: false,
-    },
-  ],
-});
-
-const topUnlabeledResponse = (clusters: TopUnlabeledCluster[]): TopUnlabeledClustersResponse => ({
-  clusters,
-  limit: 20,
-  total: clusters.length,
-  truncated: false,
-  singleton_count: 0,
-  has_clusters: true,
-  data_source: DATA_SOURCE.LOCAL_PROJECTION,
-});
 
 describe('SUGGESTION_PROJECTION_INVALIDATION_EVENTS per-site wiring', () => {
   beforeEach(() => {
@@ -333,39 +297,16 @@ describe('SUGGESTION_PROJECTION_INVALIDATION_EVENTS per-site wiring', () => {
   });
 
   describe('clusterDismiss', () => {
-    it('card dismiss invalidates projection and keeps topUnlabeled + clusters.all', async () => {
-      // TEST-06 predicted first failure (pre-sweep dismiss only topUnlabeled, no projection):
-      // "expected invalidateQueries to have been called with { queryKey: ['suggestions','projection'] }"
-      // and/or missing clusters.all on the card dismiss path.
-      vi.mocked(recognitionApi.fetchTopUnlabeledClusters).mockResolvedValue(
-        topUnlabeledResponse([clusterWithSuggestion()]),
+    it('map requires topUnlabeled + clusters.all (live card site retired with TopClustersSection)', () => {
+      // D4 contract preserved for Slice 3 skip/dismiss wiring; production site
+      // was TopClustersSection (deleted BR-12). Assert the map entry only.
+      expect(SUGGESTION_PROJECTION_INVALIDATION_EVENTS.clusterDismiss.invalidatesAssignmentProjection).toBe(
+        true,
       );
-      vi.mocked(recognitionApi.dismissCluster).mockResolvedValue(undefined);
-
-      const queryClient = makeQueryClient();
-      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
-
-      render(
-        <QueryClientProvider client={queryClient}>
-          <TopClustersSection tenantId="tenant-1" onLabel={vi.fn()} onReview={vi.fn()} />
-        </QueryClientProvider>,
-      );
-
-      await waitFor(() => {
-        expect(recognitionApi.fetchTopUnlabeledClusters).toHaveBeenCalled();
-      });
-
-      const user = userEvent.setup();
-      await user.click(screen.getByRole('button', { name: 'No' }));
-
-      await waitFor(() => {
-        expect(recognitionApi.dismissCluster).toHaveBeenCalledWith('cluster-1');
-      });
-
-      await waitFor(() => {
-        expectProjectionInvalidated(invalidateSpy);
-        expectCrossFamilyPresent(invalidateSpy, 'clusterDismiss', 'tenant-1');
-      });
+      expect(SUGGESTION_PROJECTION_INVALIDATION_EVENTS.clusterDismiss.keptCrossFamilyTargets).toEqual([
+        'clusters.topUnlabeled',
+        'clusters.all',
+      ]);
     });
   });
 

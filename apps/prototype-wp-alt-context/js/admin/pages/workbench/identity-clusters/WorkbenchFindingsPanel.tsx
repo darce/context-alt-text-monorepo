@@ -40,7 +40,6 @@ const nextActionHint = (action: WorkbenchNextAction): string | null => {
 };
 
 export const WorkbenchFindingsPanel = ({
-  onLabel,
   onTargetFindings,
 }: WorkbenchFindingsPanelProps): React.JSX.Element => {
   const findings = useWorkbenchFindings();
@@ -72,18 +71,13 @@ export const WorkbenchFindingsPanel = ({
     );
   }
 
+  // BR-09: every actionable kind focuses the queue (cluster cards live there too).
+  // Do not label-route CLUSTER — that unmounted the queue via the labeling panel.
   const handleReviewNext = (): void => {
-    if (nextAction.kind === NEXT_ACTION_KIND.CLUSTER) {
-      onLabel(nextAction.clusterId);
+    if (nextAction.kind === NEXT_ACTION_KIND.NONE) {
       return;
     }
-    if (
-      nextAction.kind === NEXT_ACTION_KIND.ASSIGNMENT ||
-      nextAction.kind === NEXT_ACTION_KIND.MERGE ||
-      nextAction.kind === NEXT_ACTION_KIND.NAME
-    ) {
-      onTargetFindings?.();
-    }
+    onTargetFindings?.();
   };
 
   const hint = nextActionHint(nextAction);

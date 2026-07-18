@@ -27,6 +27,7 @@ import {
   NEXT_ACTION_KIND,
   nextQueueIndex,
   prevQueueIndex,
+  REVIEW_QUEUE_DRAIN_MESSAGE,
   REVIEW_QUEUE_FILTER,
   type ReviewQueueFilter,
   type ReviewQueueItem,
@@ -107,9 +108,9 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
 
     const length = filteredQueue.length;
     const safeIndex = clampQueueIndex(index, length);
-    // Gate clamp on settled data — empty queue during loading must not wipe a
-    // restored URL/panel index (panel round-trip + rq= reload).
-    const queueSettled = !data.isLoading && !findings.isLoading;
+    // BR-06: gate clamp on all four source queries settled — partial
+    // assignment+merge resolve must not wipe a restored rq= index.
+    const queueSettled = findings.queueSettled;
 
     // Clamp restored/oversized index back to parent (PR-54).
     React.useEffect(() => {
@@ -200,7 +201,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
 
       if (!currentKey && previousItemKeyRef.current !== null) {
         previousItemKeyRef.current = null;
-        setLiveMessage(__('Review queue is empty.', 'alt-context'));
+        setLiveMessage(__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context'));
         if (pendingFocusAfterRemovalRef.current) {
           pendingFocusAfterRemovalRef.current = false;
           requestAnimationFrame(() => {
@@ -214,7 +215,17 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       pendingFocusAfterRemovalRef.current = true;
     }, []);
 
+    const clearAdvanceFocus = React.useCallback((): void => {
+      pendingFocusAfterRemovalRef.current = false;
+    }, []);
+
     const handleFilterClick = (nextFilter: ReviewQueueFilter): void => {
+      // BR-14: KIND chips toggle — active chip returns to unfiltered/all.
+      if (nextFilter === filter) {
+        onKindChange(filterToKindParam(REVIEW_QUEUE_FILTER.ALL));
+        onIndexChange(0);
+        return;
+      }
       onKindChange(filterToKindParam(nextFilter));
       onIndexChange(0);
     };
@@ -272,14 +283,6 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
 
         <div className="acx-review-queue__chrome">
           <div className="acx-review-queue__chips" role="group" aria-label={__('Filter review queue', 'alt-context')}>
-            <button
-              type="button"
-              className={`acx-review-queue__chip${filter === REVIEW_QUEUE_FILTER.ALL ? ' is-active' : ''}`}
-              aria-pressed={filter === REVIEW_QUEUE_FILTER.ALL}
-              onClick={() => handleFilterClick(REVIEW_QUEUE_FILTER.ALL)}
-            >
-              {__('All', 'alt-context')}
-            </button>
             <button
               type="button"
               className={`acx-review-queue__chip${filter === REVIEW_QUEUE_FILTER.ASSIGNMENT ? ' is-active' : ''}`}
@@ -354,7 +357,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               onRetry={() => void data.refetchAssignment().then(() => data.refetchMerge())}
             />
           ) : length === 0 || !currentItem ? (
-            <p className="acx-review-queue__empty">{__('No suggestions to review yet.', 'alt-context')}</p>
+            <p className="acx-review-queue__empty">{__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context')}</p>
           ) : (
             <CurrentCard
               item={currentItem}
@@ -368,6 +371,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               onLabel={onLabel}
               onOpenOriginal={(target) => setLightbox(target)}
               markAdvanceFocus={markAdvanceFocus}
+              clearAdvanceFocus={clearAdvanceFocus}
             />
           )}
         </div>
@@ -402,6 +406,7 @@ interface CurrentCardProps {
   onLabel?: (clusterId: string) => void;
   onOpenOriginal: (target: FaceOriginalTarget) => void;
   markAdvanceFocus: () => void;
+  clearAdvanceFocus: () => void;
 }
 
 const CurrentCard = ({
@@ -416,7 +421,18 @@ const CurrentCard = ({
   onLabel,
   onOpenOriginal,
   markAdvanceFocus,
+  clearAdvanceFocus,
 }: CurrentCardProps): React.JSX.Element | null => {
+  // BR-13: drop stale pending-focus when the mutation fails so a later key
+  // change (e.g. Next) does not surprise-focus.
+  const mutateWithAdvanceFocus = <TVariables,>(
+    mutate: (variables: TVariables, options?: { onError?: () => void }) => void,
+    variables: TVariables,
+  ): void => {
+    markAdvanceFocus();
+    mutate(variables, { onError: clearAdvanceFocus });
+  };
+
   switch (item.kind) {
     case NEXT_ACTION_KIND.ASSIGNMENT: {
       const suggestion = assignmentById.get(item.suggestionId);
@@ -442,12 +458,10 @@ const CurrentCard = ({
             suggestion={suggestion}
             lowConfidenceThreshold={LOW_CONFIDENCE_THRESHOLD}
             onAccept={() => {
-              markAdvanceFocus();
-              mutations.accept.mutate(suggestion.suggestionId);
+              mutateWithAdvanceFocus(mutations.accept.mutate, suggestion.suggestionId);
             }}
             onReject={() => {
-              markAdvanceFocus();
-              mutations.reject.mutate(suggestion.suggestionId);
+              mutateWithAdvanceFocus(mutations.reject.mutate, suggestion.suggestionId);
             }}
             onReview={(clusterId) => {
               if (onReview && clusterId) {
@@ -471,12 +485,10 @@ const CurrentCard = ({
         <MergeSuggestionCard
           suggestion={suggestion}
           onAccept={() => {
-            markAdvanceFocus();
-            mutations.acceptMerge.mutate(suggestion.id);
+            mutateWithAdvanceFocus(mutations.acceptMerge.mutate, suggestion.id);
           }}
           onReject={() => {
-            markAdvanceFocus();
-            mutations.rejectMerge.mutate(suggestion.id);
+            mutateWithAdvanceFocus(mutations.rejectMerge.mutate, suggestion.id);
           }}
           onOpenOriginal={onOpenOriginal}
           isPending={mutations.acceptMerge.isPending || mutations.rejectMerge.isPending}
@@ -520,8 +532,7 @@ const CurrentCard = ({
               className="button button-primary acx-suggestion-card__accept"
               disabled={mutations.acceptName.isPending || mutations.rejectName.isPending}
               onClick={() => {
-                markAdvanceFocus();
-                mutations.acceptName.mutate(suggestion.id);
+                mutateWithAdvanceFocus(mutations.acceptName.mutate, suggestion.id);
               }}
             >
               {__('Accept', 'alt-context')}
@@ -531,8 +542,7 @@ const CurrentCard = ({
               className="button acx-suggestion-card__reject"
               disabled={mutations.acceptName.isPending || mutations.rejectName.isPending}
               onClick={() => {
-                markAdvanceFocus();
-                mutations.rejectName.mutate(suggestion.id);
+                mutateWithAdvanceFocus(mutations.rejectName.mutate, suggestion.id);
               }}
             >
               {__('Reject', 'alt-context')}

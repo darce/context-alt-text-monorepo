@@ -263,10 +263,17 @@ export const useBulkReviewCommit = ({
     onSelectedIdsChangeRef.current(next);
   }, []);
 
-  const selectedLabels = React.useMemo(() => {
-    const items = resolveItems([...selectedIds]);
-    return items.map((i) => i.label);
-  }, [resolveItems, selectedIds]);
+  // M2: resolveItems may drop ids outside active KIND∩band filters — label
+  // and commit size follow the resolved set, not the raw selection size.
+  const resolvedSelection = React.useMemo(
+    () => resolveItems([...selectedIds]),
+    [resolveItems, selectedIds],
+  );
+
+  const selectedLabels = React.useMemo(
+    () => resolvedSelection.map((i) => i.label),
+    [resolvedSelection],
+  );
 
   const sharedLabel = React.useMemo(
     () => sharedSelectionLabel(selectedLabels),
@@ -274,8 +281,8 @@ export const useBulkReviewCommit = ({
   );
 
   const commitLabelForSelection = React.useMemo(
-    () => bulkCommitLabel(selectedIds.size, sharedLabel),
-    [selectedIds.size, sharedLabel],
+    () => bulkCommitLabel(resolvedSelection.length, sharedLabel),
+    [resolvedSelection.length, sharedLabel],
   );
 
   const isBulkActive = bulk.phase === 'holding' || bulk.phase === 'committing';

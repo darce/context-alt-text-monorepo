@@ -16,6 +16,8 @@ const parseWorkbenchMediaStatus = (value: string | null): WorkbenchMediaStatus =
 
 export type { WorkbenchQueueState };
 export {
+  bandParamToBand,
+  bandToBandParam,
   DEFAULT_QUEUE_STATE,
   filterToKindParam,
   kindParamToFilter,

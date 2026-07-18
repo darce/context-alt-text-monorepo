@@ -52,10 +52,24 @@
     border-top: 1px solid var(--acx-color-border);
   }
 
+  /* KIND chips + band chips as two recessed groups (④). */
+  &__chip-groups {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--acx-space-12);
+  }
+
   &__chips {
     display: flex;
     flex-wrap: wrap;
     gap: var(--acx-space-8);
+
+    &--band {
+      /* Visual separation from KIND group without a second border rule. */
+      padding-left: var(--acx-space-8);
+      border-left: 1px solid var(--acx-color-border);
+    }
   }
 
   &__chip {

@@ -1,11 +1,12 @@
 /**
- * E21-5 Slice 1b–5 — card-at-a-time review queue + hold + person-commit + multi-select bulk.
+ * E21-5 Slice 1b–6 — card-at-a-time review queue + hold + person-commit + multi-select bulk + bands.
  *
- * Renders exactly one review card + filter chips + N-of-M + prev/next + selection tray.
- * Index + selection are controlled (lifted to ScanTabContent); filter mirrored via kind props.
+ * Renders exactly one review card + KIND/band filter chips + N-of-M + prev/next + selection tray.
+ * Index + selection are controlled (lifted to ScanTabContent); kind/band mirrored via props/`rq=`.
  * Accept/reject rides the Slice-2 hold/flush/gated-advance mutation choreography.
  * Person-commit (Slice 3) is flush-then-immediate; no undo window.
  * Multi-select bulk (Slice 5): sequential per-id accepts, PR-30 state machine, PR-38 labels.
+ * Band chips (Slice 6 ④): preset similarity filters; bulk preview/commit = selection ∩ filters (M2).
  */
 
 import React from 'react';
@@ -15,8 +16,11 @@ import { DATA_SOURCE } from '../../../api/recognition/types';
 import type { PendingMergeSuggestion, PendingNameSuggestion } from '../../../api/recognition/types';
 import type { TopUnlabeledCluster } from '../../../api/recognition/types/cluster';
 import {
+  bandParamToBand,
+  bandToBandParam,
   filterToKindParam,
   kindParamToFilter,
+  type ReviewQueueBandParam,
   type ReviewQueueKindParam,
 } from '../../../hooks/workbenchQueueUrl';
 import { EmptyStateWarning } from './EmptyStateWarning';
@@ -32,13 +36,17 @@ import { shouldShowPersonCommit, isPersonCommitPrimaryKind } from './personCommi
 import { ReviewCardLightbox } from './ReviewCardLightbox';
 import {
   clampQueueIndex,
-  filterReviewQueue,
+  filterReviewQueueComposite,
+  intersectSelectionWithFilters,
   NEXT_ACTION_CHIP_LABEL,
   NEXT_ACTION_KIND,
   nextQueueIndex,
   prevQueueIndex,
+  REVIEW_QUEUE_BAND,
+  REVIEW_QUEUE_BAND_CHIP_LABEL,
   REVIEW_QUEUE_DRAIN_MESSAGE,
   REVIEW_QUEUE_FILTER,
+  type ReviewQueueBand,
   type ReviewQueueFilter,
   type ReviewQueueItem,
 } from './reviewQueueDriver';
@@ -100,6 +108,9 @@ export interface ReviewQueueProps {
   /** Controlled kind filter from URL. */
   kind: ReviewQueueKindParam;
   onKindChange: (kind: ReviewQueueKindParam) => void;
+  /** Controlled band filter from URL (`rq=` band enum). */
+  band: ReviewQueueBandParam;
+  onBandChange: (band: ReviewQueueBandParam) => void;
   /**
    * PR-31: id-keyed selection set lifted to ScanTabContent (survives panel
    * unmount). Default empty; controlled prop pair into bulk hooks.
@@ -211,6 +222,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       onIndexChange,
       kind,
       onKindChange,
+      band,
+      onBandChange,
       selectedIds,
       onSelectedIdsChange,
       onLabel,
@@ -232,9 +245,11 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     const pendingFocusAfterRemovalRef = React.useRef(false);
 
     const filter: ReviewQueueFilter = kindParamToFilter(kind);
+    const activeBand: ReviewQueueBand = bandParamToBand(band);
+    // KIND ∩ band (④ composition = intersection).
     const filteredQueue = React.useMemo(
-      () => filterReviewQueue(findings.queue, filter),
-      [findings.queue, filter],
+      () => filterReviewQueueComposite(findings.queue, filter, activeBand),
+      [findings.queue, filter, activeBand],
     );
 
     const queueBySuggestionId = React.useMemo(() => {
@@ -248,10 +263,27 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       return map;
     }, [findings.queue]);
 
+    /**
+     * M2: bulk preview/commit resolves only selection ∩ active filters.
+     * Ids selected while unfiltered stay selected, but commit/preview ignore
+     * those outside the current KIND ∩ band view.
+     */
+    const filteredSelectedIds = React.useMemo(
+      () => intersectSelectionWithFilters(selectedIds, findings.queue, filter, activeBand),
+      [selectedIds, findings.queue, filter, activeBand],
+    );
+
     const resolveBulkItems = React.useCallback(
       (ids: readonly string[]): BulkCommitItem[] => {
+        // Guard: only ids still visible under active filters (M2).
+        const allowed = new Set(
+          intersectSelectionWithFilters(ids, findings.queue, filter, activeBand),
+        );
         const items: BulkCommitItem[] = [];
         for (const id of ids) {
+          if (!allowed.has(id)) {
+            continue;
+          }
           const item = queueBySuggestionId.get(id);
           if (!item) {
             continue;
@@ -268,7 +300,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         }
         return items;
       },
-      [queueBySuggestionId],
+      [queueBySuggestionId, findings.queue, filter, activeBand],
     );
 
     const bulk = useBulkReviewCommit({
@@ -559,9 +591,10 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           )
         : null;
 
+    // M2: preview enumerates the filter-intersected selection only.
     const selectedPreviewItems = React.useMemo(() => {
       const rows: { id: string; label: string }[] = [];
-      for (const id of selectedIds) {
+      for (const id of filteredSelectedIds) {
         const item = queueBySuggestionId.get(id);
         if (!item) {
           continue;
@@ -569,7 +602,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         rows.push({ id, label: itemPreviewLabel(item) });
       }
       return rows;
-    }, [queueBySuggestionId, selectedIds]);
+    }, [queueBySuggestionId, filteredSelectedIds]);
 
     // BR-30: when person-commit fails/succeeds after the card advanced away, surface
     // alert/status in queue chrome (card-scoped phase never mounts).
@@ -590,6 +623,19 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           return;
         }
         onKindChange(filterToKindParam(nextFilter));
+        onIndexChange(0);
+      });
+    };
+
+    const handleBandClick = (nextBand: ReviewQueueBand): void => {
+      navigateAfterFlush(() => {
+        // Band chips toggle like KIND chips — active → all.
+        if (nextBand === activeBand) {
+          onBandChange(bandToBandParam(REVIEW_QUEUE_BAND.ALL));
+          onIndexChange(0);
+          return;
+        }
+        onBandChange(bandToBandParam(nextBand));
         onIndexChange(0);
       });
     };
@@ -650,23 +696,52 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         </header>
 
         <div className="acx-review-queue__chrome">
-          <div className="acx-review-queue__chips" role="group" aria-label={__('Filter review queue', 'alt-context')}>
-            <button
-              type="button"
-              className={`acx-review-queue__chip${filter === REVIEW_QUEUE_FILTER.ASSIGNMENT ? ' is-active' : ''}`}
-              aria-pressed={filter === REVIEW_QUEUE_FILTER.ASSIGNMENT}
-              onClick={() => handleFilterClick(REVIEW_QUEUE_FILTER.ASSIGNMENT)}
+          <div className="acx-review-queue__chip-groups">
+            <div
+              className="acx-review-queue__chips"
+              role="group"
+              aria-label={__('Filter review queue', 'alt-context')}
             >
-              {NEXT_ACTION_CHIP_LABEL[NEXT_ACTION_KIND.ASSIGNMENT]}
-            </button>
-            <button
-              type="button"
-              className={`acx-review-queue__chip${filter === REVIEW_QUEUE_FILTER.MERGE ? ' is-active' : ''}`}
-              aria-pressed={filter === REVIEW_QUEUE_FILTER.MERGE}
-              onClick={() => handleFilterClick(REVIEW_QUEUE_FILTER.MERGE)}
+              <button
+                type="button"
+                className={`acx-review-queue__chip${filter === REVIEW_QUEUE_FILTER.ASSIGNMENT ? ' is-active' : ''}`}
+                aria-pressed={filter === REVIEW_QUEUE_FILTER.ASSIGNMENT}
+                onClick={() => handleFilterClick(REVIEW_QUEUE_FILTER.ASSIGNMENT)}
+              >
+                {NEXT_ACTION_CHIP_LABEL[NEXT_ACTION_KIND.ASSIGNMENT]}
+              </button>
+              <button
+                type="button"
+                className={`acx-review-queue__chip${filter === REVIEW_QUEUE_FILTER.MERGE ? ' is-active' : ''}`}
+                aria-pressed={filter === REVIEW_QUEUE_FILTER.MERGE}
+                onClick={() => handleFilterClick(REVIEW_QUEUE_FILTER.MERGE)}
+              >
+                {NEXT_ACTION_CHIP_LABEL[NEXT_ACTION_KIND.MERGE]}
+              </button>
+            </div>
+            {/* ④ band chips — second group; pure similarity predicate (post-eligibility). */}
+            <div
+              className="acx-review-queue__chips acx-review-queue__chips--band"
+              role="group"
+              aria-label={__('Filter by match strength', 'alt-context')}
             >
-              {NEXT_ACTION_CHIP_LABEL[NEXT_ACTION_KIND.MERGE]}
-            </button>
+              <button
+                type="button"
+                className={`acx-review-queue__chip${activeBand === REVIEW_QUEUE_BAND.STRONG ? ' is-active' : ''}`}
+                aria-pressed={activeBand === REVIEW_QUEUE_BAND.STRONG}
+                onClick={() => handleBandClick(REVIEW_QUEUE_BAND.STRONG)}
+              >
+                {REVIEW_QUEUE_BAND_CHIP_LABEL[REVIEW_QUEUE_BAND.STRONG]}
+              </button>
+              <button
+                type="button"
+                className={`acx-review-queue__chip${activeBand === REVIEW_QUEUE_BAND.WEAKER ? ' is-active' : ''}`}
+                aria-pressed={activeBand === REVIEW_QUEUE_BAND.WEAKER}
+                onClick={() => handleBandClick(REVIEW_QUEUE_BAND.WEAKER)}
+              >
+                {REVIEW_QUEUE_BAND_CHIP_LABEL[REVIEW_QUEUE_BAND.WEAKER]}
+              </button>
+            </div>
           </div>
 
           <div className="acx-review-queue__nav">
@@ -774,7 +849,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               className="button button-primary acx-review-queue__bulk-commit"
               data-testid="acx-bulk-commit"
               disabled={
-                selectedIds.size === 0 ||
+                filteredSelectedIds.length === 0 ||
                 bulk.isBulkActive ||
                 bulk.bulkInitiatePending ||
                 truncationBlocksCommit ||

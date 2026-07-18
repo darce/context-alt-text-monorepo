@@ -320,11 +320,11 @@ Per-state single-primary gating (Analyze vs Describe) with the pinned token role
 - [x] Every `invalidateSuggestionProjection` call + per-event `keptCrossFamilyTargets` preserved through the rewrite; presence asserts green (UXP-3 contract)
 
 ### Checklist for Slice 3: Person-commit
-- [ ] Creatable roster combobox on the card → `commitClusterToRosterEntry` (real person, not label)
-- [ ] Tertiary "just label" affordance added (`open_label` panel route; new chrome — FIX-10 removed the old control); generic "View in roster →" affordance emitted (no `?person=` deep-link — E21-10)
-- [ ] Two live KIND filter chips with human copy (no term-of-art labels; no coming-soon chip rendered)
-- [ ] HAI-05 model-output disclosure copy on the card
-- [ ] banned-vocabulary sweep extended to the queue incl. chip + disclosure copy and green
+- [x] Creatable roster combobox on the card → `commitClusterToRosterEntry` (real person, not label)
+- [x] Tertiary "just label" affordance added (`open_label` panel route; new chrome — FIX-10 removed the old control); generic "View in roster →" affordance emitted (no `?person=` deep-link — E21-10)
+- [x] Two live KIND filter chips with human copy (no term-of-art labels; no coming-soon chip rendered)
+- [x] HAI-05 model-output disclosure copy on the card
+- [x] banned-vocabulary sweep extended to the queue incl. chip + disclosure copy and green
 
 ### Checklist for Slice 4: Show-all members (③)
 - [ ] PA-10 server leg landed per §9 dual-path checklist (PHP local + proxy, recognition route + repo offset — verified absent today); additive params only; tests cover both PHP paths + recognition route

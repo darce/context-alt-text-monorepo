@@ -25,41 +25,53 @@ const baseMutations = () => ({
   assignToCluster: vi.fn(),
 });
 
-const renderConfirm = ({
-  mutations = baseMutations(),
-  cancelEditing = vi.fn(),
-  queueSaveStatus = vi.fn(),
-  resetSaveStatus = vi.fn(),
-  requestConfirm = vi.fn().mockResolvedValue(true),
-  setError = vi.fn(),
-  ...rest
-}: Partial<Parameters<typeof useClusterConfirmSuggestion>[0]> & {
+type ConfirmOpts = Parameters<typeof useClusterConfirmSuggestion>[0];
+
+type ConfirmOverrides = Partial<
+  Omit<
+    ConfirmOpts,
+    | 'mutations'
+    | 'cancelEditing'
+    | 'queueSaveStatus'
+    | 'resetSaveStatus'
+    | 'requestConfirm'
+    | 'setError'
+    | 'saveAbortRef'
+  >
+> & {
   mutations?: ReturnType<typeof baseMutations>;
   cancelEditing?: ReturnType<typeof vi.fn>;
   queueSaveStatus?: ReturnType<typeof vi.fn>;
   resetSaveStatus?: ReturnType<typeof vi.fn>;
   requestConfirm?: ReturnType<typeof vi.fn>;
   setError?: ReturnType<typeof vi.fn>;
-} = {}) => {
+};
+
+const renderConfirm = (overrides: ConfirmOverrides = {}) => {
+  const mutations = overrides.mutations ?? baseMutations();
+  const cancelEditing = overrides.cancelEditing ?? vi.fn();
+  const queueSaveStatus = overrides.queueSaveStatus ?? vi.fn();
+  const resetSaveStatus = overrides.resetSaveStatus ?? vi.fn();
+  const requestConfirm = overrides.requestConfirm ?? vi.fn().mockResolvedValue(true);
+  const setError = overrides.setError ?? vi.fn();
   const saveAbortRef = { current: null as AbortController | null };
 
   const { result } = renderHook(() =>
     useClusterConfirmSuggestion({
-      clusterLabel: 'bob',
-      members: [member()],
-      editableClusterId: 'editable',
-      canEdit: true,
-      canSearchForMatch: false,
-      options: [],
-      saveStatus: 'idle',
+      clusterLabel: overrides.clusterLabel ?? 'bob',
+      members: overrides.members ?? [member()],
+      editableClusterId: overrides.editableClusterId ?? 'editable',
+      canEdit: overrides.canEdit ?? true,
+      canSearchForMatch: overrides.canSearchForMatch ?? false,
+      options: overrides.options ?? [],
+      saveStatus: overrides.saveStatus ?? 'idle',
       mutations,
-      requestConfirm,
-      cancelEditing,
-      setError,
-      queueSaveStatus,
-      resetSaveStatus,
+      requestConfirm: requestConfirm as unknown as ConfirmOpts['requestConfirm'],
+      cancelEditing: cancelEditing as unknown as ConfirmOpts['cancelEditing'],
+      setError: setError as unknown as ConfirmOpts['setError'],
+      queueSaveStatus: queueSaveStatus as unknown as ConfirmOpts['queueSaveStatus'],
+      resetSaveStatus: resetSaveStatus as unknown as ConfirmOpts['resetSaveStatus'],
       saveAbortRef,
-      ...rest,
     }),
   );
 
@@ -67,13 +79,13 @@ const renderConfirm = ({
 };
 
 /**
- * Characterization (TEST-03 / B6): pin today's case-insensitive confirm no-op
- * before the exact-compare fix. Slice 2 flips this to apply the suggestion.
+ * Confirm-path casing (B6 / PR-09): exact compare so case-only confirm applies.
+ * Flipped from characterization (TEST-03 → desired). Predicted failures noted (TEST-06).
  */
-describe('useClusterConfirmSuggestion casing characterization (B6 / TEST-03)', () => {
-  it('TODAY: case-only confirm bob→Bob bails via cancelEditing without merge', async () => {
-    // Actual current: label.toLowerCase() === currentLabel.toLowerCase() → silent no-op
-    const { result, mutations, cancelEditing, resetSaveStatus } = renderConfirm({
+describe('useClusterConfirmSuggestion casing grid (B6)', () => {
+  it('case-only confirm bob→Bob applies merge (exact no-op before runMatchedAction)', async () => {
+    // Predicted first failure: cancelEditing; merge not called (case-insensitive bail)
+    const { result, mutations, cancelEditing, queueSaveStatus } = renderConfirm({
       clusterLabel: 'bob',
       options: [
         {
@@ -90,13 +102,13 @@ describe('useClusterConfirmSuggestion casing characterization (B6 / TEST-03)', (
       await result.current.handleConfirmSuggestion('other-bob', 'Bob');
     });
 
-    expect(cancelEditing).toHaveBeenCalled();
-    expect(resetSaveStatus).toHaveBeenCalled();
-    expect(mutations.merge).not.toHaveBeenCalled();
-    expect(mutations.assignToCluster).not.toHaveBeenCalled();
+    expect(mutations.merge).toHaveBeenCalledWith('other-bob', 'Bob', expect.any(AbortSignal));
+    expect(cancelEditing).not.toHaveBeenCalled();
+    expect(queueSaveStatus).toHaveBeenCalled();
   });
 
-  it('TODAY: exact same confirm Bob→Bob also bails without merge', async () => {
+  it('exact same confirm Bob→Bob still no-ops without merge', async () => {
+    // Predicted first failure: none if exact compare lands; stays green as no-op
     const { result, mutations, cancelEditing } = renderConfirm({
       clusterLabel: 'Bob',
       members: [member({ cluster_label: 'Bob' })],
@@ -110,7 +122,7 @@ describe('useClusterConfirmSuggestion casing characterization (B6 / TEST-03)', (
     expect(mutations.merge).not.toHaveBeenCalled();
   });
 
-  it('TODAY: confirm with a genuinely different label still merges', async () => {
+  it('confirm with a genuinely different label still merges', async () => {
     const { result, mutations, cancelEditing } = renderConfirm({
       clusterLabel: 'Alice',
       members: [member({ cluster_label: 'Alice' })],

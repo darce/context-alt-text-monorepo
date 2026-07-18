@@ -117,18 +117,20 @@ export const ClusterEditForm = ({
   // Per-group budget so Suggested rows cannot starve persons / All Labels (FIX-6).
   const displayedOptions = React.useMemo(() => budgetOverlayOptions(options), [options]);
 
+  const saveButtonLabel = saveLabel ?? (isPending ? __('Saving…', 'alt-context') : __('Save', 'alt-context'));
+
+  // Live-region status (A11Y-21): announce save progress/success at the field (PERC-05 fovea).
+  // saveLabel carries "Saving…" / "Saved!" from the parent save-status pipeline.
   const resultCountAnnouncement = React.useMemo(() => {
     if (isPending) {
-      return '';
+      return saveButtonLabel;
     }
     return sprintf(
       /* translators: %d: number of naming suggestions shown */
       __('%d naming options', 'alt-context'),
       displayedOptions.length,
     );
-  }, [displayedOptions.length, isPending]);
-
-  const saveButtonLabel = saveLabel ?? (isPending ? __('Saving…', 'alt-context') : __('Save', 'alt-context'));
+  }, [displayedOptions.length, isPending, saveButtonLabel]);
 
   const handleSuggestionSelect = React.useCallback(
     (label: string) => () => {

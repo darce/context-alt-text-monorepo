@@ -208,7 +208,7 @@ describe('ClusterEditForm', () => {
   it('is disabled when isPending is true', () => {
     render(<ClusterEditForm {...defaultProps} isPending={true} />);
     const input = screen.getByDisplayValue('Test Cluster');
-    const saveButton = screen.getByText('Saving…');
+    const saveButton = screen.getByRole('button', { name: 'Saving…' });
 
     expect(input).toBeDisabled();
     expect(saveButton).toBeDisabled();
@@ -217,6 +217,23 @@ describe('ClusterEditForm', () => {
   it('renders a custom save label when provided', () => {
     render(<ClusterEditForm {...defaultProps} saveLabel="Saving queued" />);
     expect(screen.getByText('Saving queued')).toBeInTheDocument();
+  });
+
+  it('announces Saved! in the field live region during case-only rename success (PERC-05 / A11Y-21)', () => {
+    // Predicted first failure: live region empty while isPending (prior behavior cleared status)
+    render(<ClusterEditForm {...defaultProps} isPending saveLabel="Saved!" />);
+
+    const status = screen.getByRole('status');
+    expect(status).toHaveAttribute('aria-live', 'polite');
+    expect(status).toHaveTextContent('Saved!');
+    // Fovea-first: same status also on the save button next to the field
+    expect(screen.getByRole('button', { name: 'Saved!' })).toBeInTheDocument();
+  });
+
+  it('announces Saving… in the field live region while pending without custom label', () => {
+    render(<ClusterEditForm {...defaultProps} isPending />);
+
+    expect(screen.getByRole('status')).toHaveTextContent('Saving…');
   });
 
   it('calls onRejectSuggestion when Reject button is clicked', () => {

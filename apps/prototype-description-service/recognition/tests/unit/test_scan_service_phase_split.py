@@ -9,7 +9,7 @@ import pytest
 from recognition.application.embedding.detector import DetectionAdapterError, DetectionTimeoutError
 from recognition.application.embedding.generator import EmbeddingAdapterError, EmbeddingTimeoutError
 from recognition.application.scan import service as scan_service_module
-from recognition.application.scan.service import ScanService
+from recognition.application.scan.service import PersistIntegrityError, ScanService
 from recognition.application.tasks import scan as scan_tasks
 from recognition.domain.job import JobStatus
 
@@ -130,16 +130,22 @@ async def test_process_scan_job_inline_uses_shared_three_phase_helper(
         detections = await detect()
         return await persist(detections)
 
-    import recognition.application.embedding.detector as detector_module
-    import recognition.application.embedding.generator as generator_module
     import recognition.config as recognition_config
+    import recognition.infrastructure.embeddings.runtime_factory as runtime_factory
 
-    monkeypatch.setattr(recognition_config, "get_settings", lambda: SimpleNamespace(runtime_mode="prod"))
+    monkeypatch.setattr(
+        recognition_config,
+        "get_settings",
+        lambda: SimpleNamespace(runtime_mode="prod", face_pipeline=SimpleNamespace(profile="insightface")),
+    )
     monkeypatch.setattr(scan_tasks, "set_tenant_context", AsyncMock())
     monkeypatch.setattr(scan_service_module, "ScanService", FakeScanService)
     monkeypatch.setattr(scan_service_module, "run_scan_three_phase", fake_run_scan_three_phase, raising=False)
-    monkeypatch.setattr(detector_module, "InsightFaceFaceDetector", lambda adapter: FakeDetector())
-    monkeypatch.setattr(generator_module, "InsightFaceEmbeddingGenerator", FakeGenerator)
+
+    async def _fake_build(*, settings, http_client=None, adapter_provider=None):
+        return FakeDetector(), FakeGenerator(object())
+
+    monkeypatch.setattr(runtime_factory, "build_embedding_runtime", _fake_build)
 
     async def fake_adapter_provider():
         return object()
@@ -216,4 +222,57 @@ async def test_process_scan_job_marks_job_failed_on_typed_adapter_failures(
     assert events[0] == ("running", str(job_id))
     assert session.job.status is JobStatus.FAILED
     assert expected_text in (session.job.error_message or "")
+    assert session.job.completed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_process_scan_job_marks_job_failed_on_persist_integrity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FIR4-BR-03 [RLSE-05, OBS-08]: PersistIntegrityError → mark_job_failed (not RUNNING).
+
+    Covers analyze_media / process_scan_job catch-set (batch/HTTP path).
+    """
+    session = _PhaseSession()
+    job_id = uuid.uuid4()
+    events: list[tuple[str, str | None]] = []
+    integrity_exc = PersistIntegrityError("embedding length 127 != pgvector_dimension 128")
+
+    class FakeDetector:
+        async def detect(self, sources):
+            events.append(("detect", None))
+            return []
+
+    service = ScanService(
+        session=session,
+        detector=FakeDetector(),
+        generator=MagicMock(),
+    )
+
+    original_mark_running = service.mark_job_running
+
+    async def tracking_mark_running(received_job_id):
+        events.append(("running", str(received_job_id)))
+        return await original_mark_running(received_job_id)
+
+    async def failing_save_job_results(**kwargs):
+        events.append(("persist", None))
+        raise integrity_exc
+
+    monkeypatch.setattr(service, "mark_job_running", tracking_mark_running)
+    monkeypatch.setattr(service, "save_job_results", failing_save_job_results)
+
+    with pytest.raises(PersistIntegrityError, match="embedding length"):
+        await service.process_scan_job(
+            tenant_id=str(uuid.uuid4()),
+            job_id=job_id,
+            media_ids=["1"],
+            media_sources=["http://example.test/1.jpg"],
+        )
+
+    assert events[0] == ("running", str(job_id))
+    assert ("persist", None) in events
+    assert session.job.status is JobStatus.FAILED
+    assert session.job.error_message
+    assert "embedding length" in (session.job.error_message or "")
     assert session.job.completed_at is not None

@@ -169,3 +169,10 @@ local/*-worktrees.txt
 
 # codemap MCP index artifact (local, regenerated)
 .codebase-memory/
+
+# Benchmark metrics/reports — local-only, privacy-sensitive (never in repo)
+/benchmarks/
+
+# Offload lane manifests — regenerated per task by materialize_offload_lane_manifest;
+# embed absolute local worktree paths, so machine-specific (never in repo)
+/config/lane-orchestration/

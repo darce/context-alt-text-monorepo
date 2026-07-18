@@ -166,7 +166,7 @@ def face_pipeline_pool_max_workers() -> int:
         if _FACE_PIPELINE_POOL_CAPACITY is not None:
             return int(_FACE_PIPELINE_POOL_CAPACITY)
     executor, _gate = _ensure_face_pipeline_pool()
-    return int(executor._max_workers)  # type: ignore[attr-defined]
+    return int(executor._max_workers)
 
 
 def face_pipeline_admission_capacity() -> int:
@@ -575,10 +575,7 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
             raise DetectionAdapterError(media_id=media_id, error_message=f"decode failed: {exc}") from exc
 
         # Same phash helper as InsightFaceFaceDetector (no forked math) — CR-01.
-        image_phash = InsightFaceFaceDetector._compute_phash(  # type: ignore[arg-type]
-            None,  # method does not use self
-            image_bytes,
-        )
+        image_phash = InsightFaceFaceDetector._compute_phash(image_bytes)
 
         raw_batches = self._runtime.detector.detect([bgr])
         raw_faces: list[RawDetection] = raw_batches[0] if raw_batches else []

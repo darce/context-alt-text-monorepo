@@ -255,7 +255,8 @@ class InsightFaceFaceDetector(FaceDetectorProtocol):
             logger.error("Failed to fetch image from %s: %s", url[:100], e)
             return None
 
-    def _compute_phash(self, image_bytes: bytes) -> str | None:
+    @staticmethod
+    def _compute_phash(image_bytes: bytes) -> str | None:
         """Compute perceptual hash for duplicate detection."""
         try:
             with Image.open(io.BytesIO(image_bytes)) as img:

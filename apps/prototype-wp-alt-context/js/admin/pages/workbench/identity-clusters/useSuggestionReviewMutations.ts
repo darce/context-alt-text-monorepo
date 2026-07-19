@@ -722,7 +722,11 @@ export const useSuggestionReviewMutations = ({
         void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.labels() });
         void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
         void queryClient.invalidateQueries({ queryKey: queryKeys.roster.entries() });
-        void queryClient.invalidateQueries({ queryKey: namePendingKey });
+        // S2-02 [CON-05]: mark namePending stale WITHOUT an immediate refetch. Backend
+        // curation lags the commit, so a refetch-now returns the just-committed cluster's
+        // row and clobbers the optimistic BR-29 removal below (row reappears). refetchType
+        // 'none' lets the optimistic drop win; a later natural refetch reconciles post-curation.
+        void queryClient.invalidateQueries({ queryKey: namePendingKey, refetchType: 'none' });
         // BR-29: drop namePending rows for this cluster immediately (async curation lag).
         removeNameSuggestionForCluster(request.clusterId);
         setPersonCommitSafe({

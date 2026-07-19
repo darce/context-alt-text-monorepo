@@ -7,7 +7,7 @@
  */
 
 import type { ReactNode } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -1262,6 +1262,55 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
       await promise;
     });
 
+    const remaining = queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey);
+    expect(remaining?.suggestions.map((s) => s.id)).toEqual(['name-other']);
+  });
+
+  it('S2-02: person-commit optimistic namePending drop survives the invalidation (no refetch clobber)', async () => {
+    // Backend still returns the just-committed cluster's row (curation lag).
+    const staleServer: PendingNameSuggestionsResponse = {
+      ...makeNamePage([
+        makeName('name-1'), // cluster-1 — about to be committed
+        { ...makeName('name-other'), id: 'name-other', cluster_id: 'cluster-other' },
+      ]),
+    };
+    const fetchName = vi.fn().mockResolvedValue(staleServer);
+    queryClient.setQueryData(namePendingKey, staleServer);
+    vi.mocked(rosterApi.commitClusterToRosterEntry).mockResolvedValue(undefined);
+
+    // An ACTIVE observer makes invalidateQueries refetch — this is what reproduces the race.
+    const { result } = renderHook(
+      () => {
+        const q = useQuery({ queryKey: namePendingKey, queryFn: fetchName, staleTime: 0 });
+        const m = useSuggestionReviewMutations({ queryClient, bulkActionRef });
+        return { q, m };
+      },
+      { wrapper },
+    );
+
+    // Let the observer's mount fetch settle before we measure the commit's behaviour.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    fetchName.mockClear();
+
+    await act(async () => {
+      const promise = result.current.m.schedulePersonCommit({
+        clusterId: 'cluster-1',
+        newEntryName: 'Alex',
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await promise;
+      // Give any (wrongly) triggered refetch a chance to resolve and clobber the removal.
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // The invalidation must NOT refetch namePending (refetchType 'none').
+    expect(fetchName).not.toHaveBeenCalled();
+    // The committed cluster's row stays dropped; the other cluster's row survives.
     const remaining = queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey);
     expect(remaining?.suggestions.map((s) => s.id)).toEqual(['name-other']);
   });

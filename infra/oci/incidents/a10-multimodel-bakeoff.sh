@@ -92,8 +92,17 @@ for spec in "${MODELS[@]}"; do
 done
 
 echo "== build the comparison report =="
-# Control run-record: from the interleave run; move/symlink it into $BENCH_DIR too.
-RUNS=(--run "Qwen3-VL-30B (control)=$BENCH_DIR/run-altq-646-interleave-v3.json")
+# Control run-record: from the interleave run; move/symlink it into $BENCH_DIR first.
+# Guarded like the candidate loop below so a missing control degrades the report to
+# candidates-only instead of crashing build_bakeoff_report (uncaught FileNotFoundError)
+# AFTER the A10 GPU spend. Warn loudly so the operator knows the baseline is absent.
+CONTROL_RUN="$BENCH_DIR/run-altq-646-interleave-v3.json"
+RUNS=()
+if [ -f "$CONTROL_RUN" ]; then
+  RUNS+=(--run "Qwen3-VL-30B (control)=$CONTROL_RUN")
+else
+  echo "  WARN: control run-record missing ($CONTROL_RUN) — move/symlink the interleave run into \$BENCH_DIR; report will omit the 30B control baseline." >&2
+fi
 for spec in "${MODELS[@]}"; do
   IFS='|' read -r label _ _ _ _ <<<"$spec"
   [ -f "$BENCH_DIR/run-bakeoff-$label.json" ] && RUNS+=(--run "$label=$BENCH_DIR/run-bakeoff-$label.json")

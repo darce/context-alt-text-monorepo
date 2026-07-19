@@ -1,1 +1,4 @@
 scripts/eval_harness/out/
+# bake-off scratch when run from the app root (canonical copies live in
+# docs/tasks/altq/bakeoff-results/)
+/out/

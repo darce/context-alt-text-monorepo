@@ -16,7 +16,14 @@ FIR-5 S3 extensions (§F):
 - face-level unknown-rejection over stranger probes
 - single-linkage clustering purity / false-merge / false-split (GRPH-18)
 
-Heuristics: EVAL-02/04, GRPH-18, PERF-05/GRPH-17 (O(n²) all-pairs fine at Golden-150).
+FIR-5 S3d (Fair-SA demographic rollup):
+- per-cohort face-level ID P/R keyed by roster identity (GoldenManifest.roster_cohorts)
+- single-subject celebs01 image-level demographic_cohort fallback only
+- multi-face image-only cohort EXCLUDED (anti-mis-attribution)
+- always DIRECTIONAL (no demographic n-floor); report-only (CAL-06 — no per-cohort τ)
+
+Heuristics: EVAL-02/04, GRPH-18, PERF-05/GRPH-17 (O(n²) all-pairs fine at Golden-150);
+FAIR-01/02/03/06, CAL-06, PROV-04, EVAL-04 (S3d).
 """
 
 from __future__ import annotations
@@ -249,6 +256,112 @@ def face_identification_pr(decisions: Sequence[Any]) -> FaceLevelIdPr:
         wrong_names=tuple(sorted(wrong)),
         detection_recall_coupling_flag=True,
     )
+
+
+# ---------------------------------------------------------------------------
+# FIR-5 S3d — demographic Fair-SA rollup (DIRECTIONAL always; no n-floor)
+# ---------------------------------------------------------------------------
+
+# Named probes whose identity is absent from roster_cohorts and ineligible for
+# single-subject celebs01 fallback. Legible bucket (PROV-04) — never silently drop.
+UNLABELED_COHORT_KEY = "unlabeled"
+
+DEMOGRAPHIC_SECTION_HEADER = "demographic Fair-SA (DIRECTIONAL)"
+
+
+@dataclass(frozen=True)
+class DemographicRollup:
+    """Per-cohort face-level ID P/R. Always DIRECTIONAL (no demographic n-floor).
+
+    FAIR-01/02/03/06: disaggregated P/R + n per cohort; CAL-06: report only
+    (never adjusts τ). Empty ``by_cohort`` still carries ``section_header`` so
+    missing cohorts are not a silent skip.
+    """
+
+    by_cohort: dict[str, FaceLevelIdPr]
+    directional: bool = True
+    directional_reasons: tuple[str, ...] = ("no demographic n-floor",)
+    section_header: str = DEMOGRAPHIC_SECTION_HEADER
+
+    def __post_init__(self) -> None:
+        # Frozen dataclass: directional is always True for this task (EVAL-04).
+        object.__setattr__(self, "directional", True)
+
+
+def _decision_media_id(d: Any) -> int | None:
+    if isinstance(d, Mapping):
+        mid = d.get("media_id")
+        return int(mid) if mid is not None else None
+    mid = getattr(d, "media_id", None)
+    return int(mid) if mid is not None else None
+
+
+def _resolve_cohort(
+    true_name: str,
+    media_id: int | None,
+    roster_cohorts: Mapping[str, str],
+    single_subject_cohort_by_media: Mapping[int, str] | None,
+) -> str:
+    """PRIMARY roster identity → FALLBACK single-subject celebs01 media map.
+
+    Multi-face image-level demographic_cohort must NOT appear in
+    ``single_subject_cohort_by_media`` (caller contract; S3d anti-mis-attribution).
+    """
+    cohort = roster_cohorts.get(true_name)
+    if cohort is not None:
+        return cohort
+    if single_subject_cohort_by_media is not None and media_id is not None:
+        fallback = single_subject_cohort_by_media.get(media_id)
+        if fallback is not None:
+            return fallback
+    return UNLABELED_COHORT_KEY
+
+
+def demographic_rollup(
+    decisions: Sequence[Any],
+    roster_cohorts: Mapping[str, str],
+    *,
+    single_subject_cohort_by_media: Mapping[int, str] | None = None,
+) -> DemographicRollup:
+    """Per-cohort face-level identification P/R (Fair-SA; always DIRECTIONAL).
+
+    Cohort resolution (load-bearing):
+    1. PRIMARY: ``roster_cohorts[true_name]`` — person attribute via matched
+       named GT box / roster identity.
+    2. FALLBACK: ``single_subject_cohort_by_media[media_id]`` — caller-built map
+       of *single-subject celebs01* entries only (exactly one named GT identity
+       and provenance CELEB). Multi-face entries MUST NOT be in this map; those
+       faces are excluded from image-level cohort attribution (anti-mis-
+       attribution invariant). Named probes with no roster/fallback cohort land
+       under ``UNLABELED_COHORT_KEY`` (never silently dropped).
+    3. Strangers (``true_name is None``) have no cohort — excluded.
+
+    Reuses ``face_identification_pr`` counting: accept&name*==true→TP;
+    accept&name*!=true→FP (+ FN iff enrolled); reject-of-enrolled→FN; 0/0→0.
+
+    Empty ``roster_cohorts`` / no eligible probes → empty ``by_cohort`` with
+    ``section_header`` still set (not KeyError, not silent skip). Does **not**
+    adjust τ (CAL-06).
+    """
+    buckets: dict[str, list[Any]] = {}
+    for d in decisions:
+        true_name = d.true_name if not isinstance(d, Mapping) else d.get("true_name")
+        if true_name is None:
+            continue  # strangers: no cohort
+        media_id = _decision_media_id(d)
+        cohort = _resolve_cohort(
+            str(true_name),
+            media_id,
+            roster_cohorts,
+            single_subject_cohort_by_media,
+        )
+        buckets.setdefault(cohort, []).append(d)
+
+    by_cohort = {
+        cohort: face_identification_pr(group)
+        for cohort, group in sorted(buckets.items())
+    }
+    return DemographicRollup(by_cohort=by_cohort)
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 """VLM-2A Slice 2: face metrics — detection + identification P/R, full scope edge ledger.
 
 FIR-5 S3 §F extensions: face-level ID P/R, unknown-rejection, single-linkage clustering.
+FIR-5 S3d: demographic Fair-SA per-cohort ID P/R (DIRECTIONAL; multi-face exclusion).
 TEST-15: each metric has a can-fail fixture proven to go red.
 """
 
@@ -11,10 +12,13 @@ import pytest
 
 from scripts.eval_harness.face_assignment import FaceDecision
 from scripts.eval_harness.face_metrics import (
+    DEMOGRAPHIC_SECTION_HEADER,
+    UNLABELED_COHORT_KEY,
     ImageDetection,
     ImageIdentities,
     clustering_metrics_at_cut,
     clustering_sweep,
+    demographic_rollup,
     detection_pr,
     face_identification_pr,
     face_unknown_rejection,
@@ -410,3 +414,141 @@ def test_face_identification_pr_reject_dict_without_media_id_keys():
     )
     assert pr.false_negatives == 1  # reject of an enrolled identity → FN
     assert pr.true_positives == 0 and pr.false_positives == 0
+
+
+# ---------------------------------------------------------------------------
+# FIR-5 S3d — demographic Fair-SA rollup (DIRECTIONAL; multi-face exclusion)
+# ---------------------------------------------------------------------------
+
+
+def test_demographic_rollup_per_cohort_id_pr():
+    """≥2-cohort fixture: Alice/Bob → cohort-a, Carol → cohort-b; per-cohort P/R."""
+    decisions = [
+        # cohort-a: Alice correct, Bob wrong-name (FP+FN)
+        _dec(media_id=1, true_name="Alice", decision="accept", predicted_name="Alice"),
+        _dec(media_id=2, true_name="Bob", decision="accept", predicted_name="Alice"),
+        # cohort-b: Carol correct + reject miss
+        _dec(media_id=3, true_name="Carol", decision="accept", predicted_name="Carol"),
+        _dec(media_id=4, true_name="Carol", decision="reject", predicted_name=None),
+    ]
+    roster_cohorts = {
+        "Alice": "cohort-a",
+        "Bob": "cohort-a",
+        "Carol": "cohort-b",
+    }
+    rollup = demographic_rollup(decisions, roster_cohorts)
+
+    assert rollup.directional is True
+    assert rollup.section_header == DEMOGRAPHIC_SECTION_HEADER
+    assert set(rollup.by_cohort) == {"cohort-a", "cohort-b"}
+
+    a = rollup.by_cohort["cohort-a"]
+    assert a.true_positives == 1
+    assert a.false_positives == 1
+    assert a.false_negatives == 1  # Bob enrolled wrong-name → FN
+    assert a.n_named_probes == 2
+    assert a.precision == pytest.approx(0.5)
+    assert a.recall == pytest.approx(0.5)
+
+    b = rollup.by_cohort["cohort-b"]
+    assert b.true_positives == 1
+    assert b.false_negatives == 1
+    assert b.false_positives == 0
+    assert b.n_named_probes == 2
+    assert b.precision == 1.0
+    assert b.recall == pytest.approx(0.5)
+
+
+def test_demographic_rollup_multi_face_image_cohort_excluded():
+    """ANTI-MIS-ATTRIBUTION (TEST-15 can-fail): multi-face image-level cohort NOT counted.
+
+    A multi-face entry may carry GoldenEntry.demographic_cohort, but the caller must
+    not put that media_id in single_subject_cohort_by_media. Faces without a roster
+    cohort must not appear under the image-level cohort label.
+    """
+    multi_face_media = 50
+    # Image-level tag would be "cohort-x" — multi-face, so NOT in fallback map.
+    decisions = [
+        _dec(
+            media_id=multi_face_media,
+            box_index=0,
+            true_name="Alice",
+            decision="accept",
+            predicted_name="Alice",
+        ),
+        _dec(
+            media_id=multi_face_media,
+            box_index=1,
+            true_name="Bob",
+            decision="accept",
+            predicted_name="Bob",
+        ),
+        # Single-subject celebs01 fallback IS counted.
+        _dec(
+            media_id=10,
+            true_name="Solo",
+            decision="accept",
+            predicted_name="Solo",
+        ),
+    ]
+    # No roster cohorts for Alice/Bob/Solo — only single-subject media 10 maps.
+    single_subject = {10: "cohort-x"}
+    rollup = demographic_rollup(
+        decisions,
+        roster_cohorts={},
+        single_subject_cohort_by_media=single_subject,
+    )
+
+    # Multi-face faces must NOT be under image-level cohort-x.
+    if "cohort-x" in rollup.by_cohort:
+        cx = rollup.by_cohort["cohort-x"]
+        assert cx.n_named_probes == 1  # Solo only
+        assert cx.true_positives == 1
+    else:
+        pytest.fail("single-subject celebs01 fallback must populate cohort-x")
+
+    # Alice/Bob land in unlabeled (legible), never silently under cohort-x.
+    assert UNLABELED_COHORT_KEY in rollup.by_cohort
+    unlabeled = rollup.by_cohort[UNLABELED_COHORT_KEY]
+    assert unlabeled.n_named_probes == 2
+    assert unlabeled.true_positives == 2
+
+
+def test_demographic_rollup_empty_roster_cohorts_has_directional_header():
+    """Missing/empty roster_cohorts → empty DIRECTIONAL section with header (not KeyError)."""
+    # Strangers only → no named probes → empty by_cohort.
+    decisions = [
+        _dec(media_id=1, true_name=None, decision="reject"),
+        _dec(media_id=2, true_name=None, decision="accept", predicted_name="Alice"),
+    ]
+    rollup = demographic_rollup(decisions, roster_cohorts={})
+    assert rollup.directional is True
+    assert rollup.section_header == DEMOGRAPHIC_SECTION_HEADER
+    assert "no demographic n-floor" in rollup.directional_reasons
+    assert rollup.by_cohort == {}
+
+    # Empty decisions + empty roster also keeps the header (silent skip forbidden).
+    empty = demographic_rollup([], {})
+    assert empty.directional is True
+    assert empty.section_header
+    assert empty.by_cohort == {}
+
+
+def test_demographic_rollup_strangers_excluded_and_unlabeled_legible():
+    """Strangers excluded; named identity with no cohort → unlabeled bucket."""
+    decisions = [
+        _dec(media_id=1, true_name=None, decision="reject"),
+        _dec(media_id=2, true_name="UnknownPerson", decision="accept", predicted_name="UnknownPerson"),
+        _dec(media_id=3, true_name="Alice", decision="accept", predicted_name="Alice"),
+    ]
+    rollup = demographic_rollup(
+        decisions,
+        roster_cohorts={"Alice": "cohort-a"},
+    )
+    assert "cohort-a" in rollup.by_cohort
+    assert rollup.by_cohort["cohort-a"].n_named_probes == 1
+    assert UNLABELED_COHORT_KEY in rollup.by_cohort
+    assert rollup.by_cohort[UNLABELED_COHORT_KEY].n_named_probes == 1
+    # Stranger not counted anywhere.
+    total_n = sum(pr.n_named_probes for pr in rollup.by_cohort.values())
+    assert total_n == 2

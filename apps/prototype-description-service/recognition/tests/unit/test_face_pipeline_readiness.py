@@ -129,11 +129,38 @@ def _align_dims_to_sface(monkeypatch: pytest.MonkeyPatch) -> None:
     get_database_settings.cache_clear()
 
 
+def _stub_shared_runtime_loader(
+    monkeypatch: pytest.MonkeyPatch, models_dir: Path | None = None
+) -> None:
+    """Avoid real ORT session construction for synthetic-byte readiness tests."""
+    from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
+
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+
+    def loader(*, models_dir: Path, **kwargs: object) -> fpa.FacePipelineRuntime:
+        return fpa.FacePipelineRuntime(
+            detector=MagicMock(),
+            aligner=MagicMock(),
+            embedder=MagicMock(),
+            manifest=fpa.sface_embedding_model_manifest(),
+            models_dir=models_dir,
+            score_threshold=0.9,
+            nms_threshold=0.3,
+            top_k=5000,
+        )
+
+    monkeypatch.setattr(fpa, "_load_face_pipeline_runtime", loader)
+
+
 @pytest.fixture(autouse=True)
 def _clear_verify_cache() -> None:
+    from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
+
     health_mod.reset_face_pipeline_verify_cache_for_tests()
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
     yield
     health_mod.reset_face_pipeline_verify_cache_for_tests()
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
     from db.settings import get_database_settings
     from recognition.config import get_settings
 
@@ -157,6 +184,7 @@ def test_check_face_pipeline_models_happy_path_synthetic(tmp_path: Path, monkeyp
     """Modelless happy path via synthetic manifest (CI coverage without ONNX)."""
     _align_dims_to_sface(monkeypatch)
     _install_synthetic_pair(tmp_path, monkeypatch)
+    _stub_shared_runtime_loader(monkeypatch, tmp_path)
     result = health_mod.check_face_pipeline_models(tmp_path)
     assert result.status.value == "ok"
     assert "yunet" in result.detail or "verified" in result.detail
@@ -202,6 +230,7 @@ def test_check_face_pipeline_models_missing_sface_atomic_unhealthy(
 def test_mtime_size_drift_triggers_reverify(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _align_dims_to_sface(monkeypatch)
     _install_synthetic_pair(tmp_path, monkeypatch)
+    _stub_shared_runtime_loader(monkeypatch, tmp_path)
 
     verify_calls = {"n": 0}
     real = health_mod.verify_face_pipeline_model
@@ -231,10 +260,92 @@ def test_mtime_size_drift_triggers_reverify(tmp_path: Path, monkeypatch: pytest.
     assert "sface" in third.detail
 
 
+def test_license_only_drift_triggers_unhealthy_without_model_byte_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FINALB-04 [EMB-05][DRIFT-02][OBS-08]: LICENSE.sface drift invalidates readiness.
+
+    After one successful synthetic model+license verification, tampering or
+    deleting only the license file (model bytes untouched) must make the next
+    probe UNHEALTHY and name sface/license. Cache freshness must restat license
+    identity — not only model mtime/size — while still avoiding full model
+    rehash on every healthy probe when both artifacts are stable.
+    """
+    _align_dims_to_sface(monkeypatch)
+    _install_synthetic_pair(tmp_path, monkeypatch)
+    _stub_shared_runtime_loader(monkeypatch, tmp_path)
+
+    model_hash_calls = {"n": 0}
+    # Count full model-file sha256 via provenance helper used by load_verified_model.
+    import recognition.infrastructure.face_pipeline.provenance as prov_mod
+
+    real_sha = prov_mod._file_sha256
+
+    def _counting_sha(path: Path) -> str:
+        # Only count model ONNX hashes (not license) so healthy re-probes stay cheap.
+        if path.suffix == ".onnx" or path.name.endswith(".onnx"):
+            model_hash_calls["n"] += 1
+        return real_sha(path)
+
+    monkeypatch.setattr(prov_mod, "_file_sha256", _counting_sha)
+
+    first = health_mod.check_face_pipeline_models(tmp_path)
+    assert first.status.value == "ok", first.detail
+    hashes_after_first = model_hash_calls["n"]
+    assert hashes_after_first >= 2  # yunet + sface model bytes verified once
+
+    # Stable re-probe: model + license unchanged → must not rehash large model
+    # on every healthy hit (efficient cache intent preserved).
+    second = health_mod.check_face_pipeline_models(tmp_path)
+    assert second.status.value == "ok", second.detail
+    assert model_hash_calls["n"] == hashes_after_first, (
+        "healthy re-probe must not rehash model bytes when model+license identity "
+        f"is stable; hashes first={hashes_after_first} second={model_hash_calls['n']}"
+    )
+
+    # Tamper only LICENSE.sface — model ONNX bytes and mtime/size untouched.
+    sface_lic = tmp_path / MODEL_MANIFEST["sface"].license_file
+    assert sface_lic.is_file()
+    sface_model = tmp_path / MODEL_MANIFEST["sface"].file_name
+    model_before = sface_model.read_bytes()
+    sface_lic.write_bytes(sface_lic.read_bytes() + b"\n#tampered-license\n")
+
+    third = health_mod.check_face_pipeline_models(tmp_path)
+    assert third.status.value == "unhealthy", (
+        "license-only drift must flip readiness UNHEALTHY; "
+        f"got status={third.status.value!r} detail={third.detail!r}"
+    )
+    detail_l = third.detail.lower()
+    assert "sface" in detail_l, f"detail must name sface: {third.detail!r}"
+    assert "license" in detail_l, f"detail must name license: {third.detail!r}"
+    # Model bytes truly unchanged (contract is license identity, not model rewrite).
+    assert sface_model.read_bytes() == model_before
+
+    # Delete-only path: restore valid license then remove it entirely.
+    health_mod.reset_face_pipeline_verify_cache_for_tests()
+    _install_synthetic_pair(tmp_path, monkeypatch)  # rewrite clean pair
+    _stub_shared_runtime_loader(monkeypatch, tmp_path)
+    ok_again = health_mod.check_face_pipeline_models(tmp_path)
+    assert ok_again.status.value == "ok", ok_again.detail
+
+    lic_path = tmp_path / MODEL_MANIFEST["sface"].license_file
+    model_path = tmp_path / MODEL_MANIFEST["sface"].file_name
+    model_snapshot = model_path.read_bytes()
+    lic_path.unlink()
+    assert model_path.read_bytes() == model_snapshot
+
+    deleted = health_mod.check_face_pipeline_models(tmp_path)
+    assert deleted.status.value == "unhealthy", deleted.detail
+    deleted_l = deleted.detail.lower()
+    assert "sface" in deleted_l
+    assert "license" in deleted_l
+
+
 def test_unverified_bytes_never_ok_via_call_count(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """mtime+size alone never green-lights never-verified bytes."""
     _align_dims_to_sface(monkeypatch)
     _install_synthetic_pair(tmp_path, monkeypatch)
+    _stub_shared_runtime_loader(monkeypatch, tmp_path)
 
     health_mod.reset_face_pipeline_verify_cache_for_tests()
     calls = {"n": 0}
@@ -279,6 +390,7 @@ def _standalone_ready_app(monkeypatch: pytest.MonkeyPatch):
     from fastapi import FastAPI
 
     from api.main import register_health_probes
+    from db.settings import get_database_settings
     from recognition.interface_adapters.http import deps as dependencies
     from recognition.interface_adapters.http.deps.auth import AuthContext, require_auth
     from recognition.interface_adapters.http.deps.circuit_breaker import (
@@ -292,8 +404,18 @@ def _standalone_ready_app(monkeypatch: pytest.MonkeyPatch):
     register_health_probes(app)
 
     async def _session_yielder():
+        # Live pgvector typmod probe (FINALA-02): return matching identity columns.
+        dim = int(get_database_settings().pgvector_dimension)
+        rows = [
+            ("media_identities", "embedding", dim),
+            ("identity_cluster_representatives", "embedding", dim),
+            ("mv_identity_cluster_centroids", "centroid", dim),
+        ]
+        result = MagicMock()
+        result.all = MagicMock(return_value=rows)
+        result.fetchall = MagicMock(return_value=rows)
         session = MagicMock()
-        session.execute = AsyncMock(return_value=None)
+        session.execute = AsyncMock(return_value=result)
         yield session
 
     app.dependency_overrides[dependencies.get_observability_session] = _session_yielder
@@ -311,6 +433,7 @@ def test_register_health_probes_branches_on_profile(monkeypatch: pytest.MonkeyPa
 
     _align_dims_to_sface(monkeypatch)
     _install_synthetic_pair(tmp_path, monkeypatch)
+    _stub_shared_runtime_loader(monkeypatch, tmp_path)
 
     monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_PROFILE", "face_pipeline")
     monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_MODELS_DIR", str(tmp_path))
@@ -368,6 +491,7 @@ def test_model_probe_verify_runs_off_event_loop(monkeypatch: pytest.MonkeyPatch,
 
     _align_dims_to_sface(monkeypatch)
     _install_synthetic_pair(tmp_path, monkeypatch)
+    _stub_shared_runtime_loader(monkeypatch, tmp_path)
     monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_PROFILE", "face_pipeline")
     monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_MODELS_DIR", str(tmp_path))
 
@@ -418,3 +542,105 @@ def test_ready_invalid_profile_returns_503(monkeypatch: pytest.MonkeyPatch, tmp_
     assert mc["status"] == "unhealthy"
     assert "invalid face_pipeline profile" in mc["detail"]
     assert "not_a_real_profile" in mc["detail"]
+
+
+def test_check_face_pipeline_models_ort_construction_failure_unhealthy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GROKHARM-04 [OBS-08, EMB-05, SERVE-01]: hashes + dims alone are insufficient.
+
+    For face_pipeline profile, readiness must prove ORT session / shared runtime
+    construction. Valid verified files with InferenceSession construction failure
+    must return UNHEALTHY with a runtime-unavailable reason (not OK).
+    """
+    from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
+
+    _align_dims_to_sface(monkeypatch)
+    _install_synthetic_pair(tmp_path, monkeypatch)
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+
+    def boom_loader(*, models_dir: Path, **kwargs: object) -> fpa.FacePipelineRuntime:
+        raise RuntimeError("InferenceSession construction failed: synthetic ORT boom")
+
+    monkeypatch.setattr(fpa, "_load_face_pipeline_runtime", boom_loader)
+
+    result = health_mod.check_face_pipeline_models(tmp_path)
+    assert result.status.value == "unhealthy"
+    detail = result.detail.lower()
+    assert "runtime" in detail or "unavailable" in detail or "inferencesession" in detail
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+
+
+def test_check_face_pipeline_models_healthy_implies_usable_shared_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GROKHARM-04: healthy ready must correspond to a usable shared runtime.
+
+    Readiness and serve path must not diverge — a successful check must go
+    through (or populate) get_shared_face_pipeline_runtime so serve can reuse it.
+    """
+    from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
+
+    _align_dims_to_sface(monkeypatch)
+    _install_synthetic_pair(tmp_path, monkeypatch)
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+
+    load_calls = 0
+    mock_runtime = fpa.FacePipelineRuntime(
+        detector=MagicMock(),
+        aligner=MagicMock(),
+        embedder=MagicMock(),
+        manifest=fpa.sface_embedding_model_manifest(),
+        models_dir=tmp_path,
+        score_threshold=0.9,
+        nms_threshold=0.3,
+        top_k=5000,
+    )
+
+    def loader(*, models_dir: Path, **kwargs: object) -> fpa.FacePipelineRuntime:
+        nonlocal load_calls
+        load_calls += 1
+        return mock_runtime
+
+    monkeypatch.setattr(fpa, "_load_face_pipeline_runtime", loader)
+
+    result = health_mod.check_face_pipeline_models(tmp_path)
+    assert result.status.value == "ok"
+    assert load_calls >= 1, "readiness must construct/prove shared runtime, not only hashes+dims"
+
+    shared = fpa.get_shared_face_pipeline_runtime(profile="face_pipeline", models_dir=tmp_path)
+    assert shared is mock_runtime
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+
+
+def test_ready_ort_construction_failure_returns_503(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """GROKHARM-04: /ready must 503 when model verify passes but ORT runtime fails."""
+    from fastapi.testclient import TestClient
+
+    from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
+
+    _align_dims_to_sface(monkeypatch)
+    _install_synthetic_pair(tmp_path, monkeypatch)
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+
+    monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_PROFILE", "face_pipeline")
+    monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_MODELS_DIR", str(tmp_path))
+
+    def boom_loader(*, models_dir: Path, **kwargs: object) -> fpa.FacePipelineRuntime:
+        raise RuntimeError("InferenceSession construction failed: synthetic ORT boom")
+
+    monkeypatch.setattr(fpa, "_load_face_pipeline_runtime", boom_loader)
+
+    app = _standalone_ready_app(monkeypatch)
+    client = TestClient(app)
+    resp = client.get("/ready")
+    assert resp.status_code == 503, resp.text
+    body = resp.json()
+    assert body["status"] == "unhealthy"
+    mc = next(c for c in body["checks"] if c["name"] == "model_cache")
+    assert mc["status"] == "unhealthy"
+    detail = mc["detail"].lower()
+    assert "runtime" in detail or "unavailable" in detail or "inferencesession" in detail
+    fpa.reset_shared_face_pipeline_runtime_for_tests()

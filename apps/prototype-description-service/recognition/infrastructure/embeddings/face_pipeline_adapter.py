@@ -31,6 +31,7 @@ from recognition.application.embedding.detector import (
     FaceDetectorProtocol,
     InsightFaceFaceDetector,
     _compute_detection_quality,
+    normalize_landmarks,
 )
 from recognition.application.embedding.generator import UnavailableEmbeddingGenerator
 from recognition.application.embedding.manifest import EmbeddingModelManifest
@@ -56,21 +57,21 @@ from recognition.infrastructure.face_pipeline.provenance import (
     MODEL_MANIFEST,
     ModelIntegrityError,
 )
+from recognition.observability.face_pipeline_metrics import FacePipelineMetricsObserver
 
 logger = logging.getLogger(__name__)
 
 # Dedicated bounded pool for sync ORT/CPU work — not the default asyncio pool.
-# Process-lifetime by design: reset_shared_face_pipeline_runtime_for_tests does
-# not shut it down (see that hook's docstring).
-_FACE_PIPELINE_MAX_WORKERS = 2
-_FACE_PIPELINE_EXECUTOR = ThreadPoolExecutor(
-    max_workers=_FACE_PIPELINE_MAX_WORKERS,
-    thread_name_prefix="face_pipeline",
-)
-# Gates run_in_executor submission. Value matches executor max_workers.
-# Timeouts do NOT reclaim a running worker: the slot stays held until the
-# executor future completes (head-of-line residual under load) — [RES-02].
-_FACE_PIPELINE_SUBMIT_SEMAPHORE = asyncio.Semaphore(_FACE_PIPELINE_MAX_WORKERS)
+# Lazy process-wide construction from RecognitionSettings.face_pipeline.max_workers
+# (RECOGNITION_FACE_PIPELINE_MAX_WORKERS). reset_shared_face_pipeline_runtime_for_tests
+# does not shut the pool down (see that hook's docstring). [FIR4-BR-05]
+_POOL_LOCK = threading.Lock()
+_FACE_PIPELINE_EXECUTOR: ThreadPoolExecutor | None = None
+_FACE_PIPELINE_ADMISSION: FacePipelineAdmissionGate | None = None
+_FACE_PIPELINE_POOL_CAPACITY: int | None = None
+# Legacy name retained only so attribute probes never see an import-time
+# asyncio.Semaphore. Process admission is FacePipelineAdmissionGate.
+_FACE_PIPELINE_SUBMIT_SEMAPHORE: FacePipelineAdmissionGate | None = None
 
 _SHARED_LOCK = threading.Lock()
 # Single atomic snapshot: (cache_key, runtime_or_sticky_error).
@@ -79,6 +80,143 @@ _SHARED: tuple[tuple[Any, ...], FacePipelineRuntime | FacePipelineRuntimeUnavail
 _SHARED_DETECT_BREAKER: AdapterCircuitBreaker | None = None
 
 FACE_PIPELINE_GENERATOR_REASON = "face_pipeline embeds in detect()"
+
+
+class FacePipelineAdmissionGate:
+    """Loop-agnostic process-wide admission using ``threading.BoundedSemaphore``.
+
+    Unlike ``asyncio.Semaphore``, release does not require a live event loop, so
+    residual workers completing after the caller's loop closes still free slots
+    ([RES-02][RES-04][RES-15] / FIR4-BR-05).
+    """
+
+    __slots__ = ("_capacity", "_sem")
+
+    def __init__(self, capacity: int) -> None:
+        n = int(capacity)
+        if n < 1:
+            raise ValueError(f"face pipeline admission capacity must be positive, got {capacity}")
+        self._capacity = n
+        self._sem = threading.BoundedSemaphore(n)
+
+    @property
+    def capacity(self) -> int:
+        return self._capacity
+
+    async def acquire(self, *, timeout_s: float) -> None:
+        """Acquire one slot within ``timeout_s`` seconds; raise ``TimeoutError`` on expiry.
+
+        Rechecks the monotonic deadline after every sleep/yield and never takes a
+        permit that became free only after the caller's budget expired ([RES-02]).
+        """
+        if timeout_s <= 0:
+            if self._sem.acquire(blocking=False):
+                return
+            raise TimeoutError("face pipeline admission timed out")
+        deadline = time.perf_counter() + timeout_s
+        if self._sem.acquire(blocking=False):
+            return
+        while True:
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0:
+                raise TimeoutError("face pipeline admission timed out")
+            # Short sleep keeps the event loop free; never call_soon_threadsafe.
+            await asyncio.sleep(min(0.005, remaining))
+            # Recheck after await: delayed wake must not steal a post-deadline permit.
+            if deadline - time.perf_counter() <= 0:
+                raise TimeoutError("face pipeline admission timed out")
+            if self._sem.acquire(blocking=False):
+                return
+
+    def release(self) -> None:
+        """Release one slot (thread-safe; safe after caller loop close)."""
+        self._sem.release()
+
+
+def _resolve_pool_capacity_from_settings() -> int:
+    """Load-time validated max_workers from settings (positive integer)."""
+    return int(get_settings().face_pipeline.max_workers)
+
+
+def _install_process_pool(capacity: int) -> tuple[ThreadPoolExecutor, FacePipelineAdmissionGate]:
+    """Replace process executor + admission under ``_POOL_LOCK`` (caller holds lock).
+
+    Prior executors are not shut down here so residual workers are not stranded;
+    callers rebind only after in-flight work completes (tests).
+    """
+    global _FACE_PIPELINE_EXECUTOR, _FACE_PIPELINE_ADMISSION, _FACE_PIPELINE_POOL_CAPACITY
+    global _FACE_PIPELINE_SUBMIT_SEMAPHORE
+
+    n = int(capacity)
+    if n < 1:
+        raise ValueError(f"face pipeline pool capacity must be positive, got {capacity}")
+    executor = ThreadPoolExecutor(max_workers=n, thread_name_prefix="face_pipeline")
+    gate = FacePipelineAdmissionGate(n)
+    _FACE_PIPELINE_EXECUTOR = executor
+    _FACE_PIPELINE_ADMISSION = gate
+    _FACE_PIPELINE_POOL_CAPACITY = n
+    _FACE_PIPELINE_SUBMIT_SEMAPHORE = gate
+    return executor, gate
+
+
+def _ensure_face_pipeline_pool() -> tuple[ThreadPoolExecutor, FacePipelineAdmissionGate]:
+    """Lazy process-wide pool: executor + admission sized from settings.max_workers."""
+    global _FACE_PIPELINE_EXECUTOR, _FACE_PIPELINE_ADMISSION
+    with _POOL_LOCK:
+        if _FACE_PIPELINE_EXECUTOR is not None and _FACE_PIPELINE_ADMISSION is not None:
+            return _FACE_PIPELINE_EXECUTOR, _FACE_PIPELINE_ADMISSION
+        return _install_process_pool(_resolve_pool_capacity_from_settings())
+
+
+def face_pipeline_pool_max_workers() -> int:
+    """Return configured process executor capacity (ensures lazy pool)."""
+    with _POOL_LOCK:
+        if _FACE_PIPELINE_POOL_CAPACITY is not None:
+            return int(_FACE_PIPELINE_POOL_CAPACITY)
+    executor, _gate = _ensure_face_pipeline_pool()
+    return int(executor._max_workers)
+
+
+def face_pipeline_admission_capacity() -> int:
+    """Return process admission gate capacity (matches executor max_workers)."""
+    _executor, gate = _ensure_face_pipeline_pool()
+    return int(gate.capacity)
+
+
+def reconfigure_face_pipeline_pool_from_settings() -> None:
+    """Rebind process executor + admission from live ``get_settings()``.
+
+    Safe only when no process-pool work still holds admission slots (tests rebind
+    after prior work completes). Does not shut down the previous executor so any
+    residual thread is not force-cancelled mid-flight.
+    """
+    with _POOL_LOCK:
+        _install_process_pool(_resolve_pool_capacity_from_settings())
+
+
+def reset_face_pipeline_pool_for_tests() -> None:
+    """Test hook: rebind process pool from current settings (alias of reconfigure)."""
+    reconfigure_face_pipeline_pool_from_settings()
+
+
+def _observe_submit_wait(metrics: FacePipelineMetricsObserver | None, wait_s: float) -> None:
+    """Record admission wait on an injected observer; never raise to detect path."""
+    if metrics is None:
+        return
+    try:
+        metrics.observe_submit_wait(float(wait_s))
+    except Exception:  # pragma: no cover - metrics must never break detect path
+        logger.debug("face_pipeline submit wait metric observe failed", exc_info=True)
+
+
+def _observe_admission_timeout(metrics: FacePipelineMetricsObserver | None) -> None:
+    """Increment admission-timeout counter on injected observer; never raise."""
+    if metrics is None:
+        return
+    try:
+        metrics.record_admission_timeout()
+    except Exception:  # pragma: no cover - metrics must never break detect path
+        logger.debug("face_pipeline admission timeout metric inc failed", exc_info=True)
 
 
 class FacePipelineRuntimeUnavailableError(RuntimeError):
@@ -178,6 +316,50 @@ def face_pipeline_unavailable_generator() -> UnavailableEmbeddingGenerator:
     return UnavailableEmbeddingGenerator(FACE_PIPELINE_GENERATOR_REASON)
 
 
+def _artifact_stat_identity(path: Path) -> tuple[Any, ...]:
+    """Portable file identity for cache invalidation (no content hash).
+
+    Atomic operator replace changes size and/or mtime_ns (and typically
+    inode/ctime). Missing paths return a non-sticky sentinel so absence cannot
+    pin a ModelIntegrityError across provisioning.
+    """
+    try:
+        st = path.stat()
+    except (FileNotFoundError, OSError):
+        return ("missing",)
+    # st_ino / st_ctime_ns: useful on POSIX; fall back safely where absent.
+    ino = int(getattr(st, "st_ino", 0) or 0)
+    ctime_ns = int(getattr(st, "st_ctime_ns", 0) or 0)
+    if ctime_ns == 0:
+        ctime_ns = int(st.st_ctime * 1_000_000_000)
+    return (int(st.st_size), int(st.st_mtime_ns), ino, ctime_ns)
+
+
+def _resolved_model_artifact_identity(models_dir: Path) -> tuple[Any, ...]:
+    """YuNet+SFace model+license identity for shared-runtime cache keys.
+
+    Includes each manifest license file so a license-only repair invalidates
+    sticky ModelIntegrityError entries (FIR-PM-01 / [DRIFT-02]). Missing
+    paths use the portable missing sentinel (non-sticky absence).
+    """
+    root = Path(models_dir)
+    parts: list[tuple[Any, ...]] = []
+    for name in ("yunet", "sface"):
+        entry = MODEL_MANIFEST[name]
+        model_path = root / entry.file_name
+        license_path = root / entry.license_file
+        parts.append(
+            (
+                name,
+                entry.file_name,
+                _artifact_stat_identity(model_path),
+                entry.license_file,
+                _artifact_stat_identity(license_path),
+            )
+        )
+    return tuple(parts)
+
+
 def _runtime_cache_key(
     *,
     profile: str,
@@ -187,15 +369,23 @@ def _runtime_cache_key(
     top_k: int,
     pgvector_dimension: int,
     embedding_dimension: int,
+    artifact_identity: tuple[Any, ...] | None = None,
 ) -> tuple[Any, ...]:
+    root = Path(models_dir)
+    artifacts = (
+        artifact_identity
+        if artifact_identity is not None
+        else _resolved_model_artifact_identity(root)
+    )
     return (
         profile,
-        str(models_dir.resolve()),
+        str(root.resolve()),
         float(score_threshold),
         float(nms_threshold),
         int(top_k),
         int(pgvector_dimension),
         int(embedding_dimension),
+        artifacts,
     )
 
 
@@ -238,14 +428,17 @@ def get_shared_face_pipeline_runtime(
     nms_threshold: float = DEFAULT_NMS_THRESHOLD,
     top_k: int = DEFAULT_TOP_K,
 ) -> FacePipelineRuntime:
-    """Process-wide face_pipeline runtime singleton (memo on profile+dir+thresholds+dims).
+    """Process-wide face_pipeline runtime singleton (memo on profile+dir+thresholds+dims+artifacts).
 
     Double-checked lock with a single ``_SHARED`` tuple read for the fast path.
-    Only ``ModelIntegrityError`` (size/hash mismatch / tamper) is sticky-cached
-    as ``FacePipelineRuntimeUnavailableError``. ``ModelMissingError`` and other
-    config-class failures (dim-guard ``ValueError``, missing provisioned files)
-    fall through the non-sticky ``except Exception`` branch so a corrected
-    env/models_dir recovers without process restart.
+    Only ``ModelIntegrityError`` (size/hash mismatch / tamper, model or license)
+    is sticky-cached as ``FacePipelineRuntimeUnavailableError`` while the
+    resolved YuNet/SFace model+license artifact identity is unchanged. Operator
+    model or license replacement (stat identity drift) invalidates the sticky
+    entry and re-verifies/rebuilds. ``ModelMissingError`` and other config-class
+    failures (dim-guard ``ValueError``, missing files) fall through the
+    non-sticky ``except Exception`` branch so corrected env/models_dir recovers
+    without process restart.
     """
     global _SHARED
 
@@ -324,10 +517,11 @@ def get_shared_face_pipeline_detect_breaker() -> AdapterCircuitBreaker:
 def reset_shared_face_pipeline_runtime_for_tests() -> None:
     """Clear the process singleton for isolated tests.
 
-    The dedicated ``_FACE_PIPELINE_EXECUTOR`` is intentionally process-lifetime
+    The dedicated face_pipeline executor is intentionally process-lifetime
     and is **not** shut down or replaced here. Workers may still be running when
     the runtime snapshot is cleared; tests that need a clean executor must not
-    assume reset reclaims in-flight work (CR-10).
+    assume reset reclaims in-flight work (CR-10). Pool capacity rebind is a
+    separate hook (``reconfigure_face_pipeline_pool_from_settings``).
 
     Also clears the shared ``face_pipeline.detect`` breaker so tests do not
     leak open/closed state across cases (GROKHARM-03).
@@ -342,10 +536,15 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
     """One-pass YuNet→align→SFace detector implementing FaceDetectorProtocol.
 
     ``detect()`` submits sync ORT work via a dedicated ThreadPoolExecutor gated
-    by an asyncio.Semaphore sized to ``max_workers``. A wait_for_adapter timeout
-    raises ``DetectionTimeoutError`` without cancelling the worker; the semaphore
-    slot is released only when the executor future completes (head-of-line
-    residual under sustained timeouts — [RES-02]).
+    by a loop-agnostic process admission gate sized to settings ``max_workers``.
+    One overall detection deadline bounds both submit admission and executor
+    result wait (no second independent full timeout window — [RES-02][RES-14]).
+    A timeout raises ``DetectionTimeoutError`` without cancelling the worker; the
+    admission slot is released only when the executor future completes
+    (head-of-line residual under sustained timeouts — [RES-02]). Release is
+    worker-owned and does not require the caller's event loop to remain open
+    ([RES-04][RES-15]). Admission timeout maps through ``AdapterTimeoutError``
+    so the shared breaker counts it ([RES-03][OBS-05]).
     """
 
     def __init__(
@@ -356,7 +555,8 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
         client: httpx.AsyncClient | None = None,
         breaker: AdapterCircuitBreaker | None = None,
         executor: ThreadPoolExecutor | None = None,
-        submit_semaphore: asyncio.Semaphore | None = None,
+        submit_semaphore: asyncio.Semaphore | FacePipelineAdmissionGate | None = None,
+        metrics: FacePipelineMetricsObserver | None = None,
     ) -> None:
         assert_three_way_embedding_dimensions(runtime.manifest)
         self._runtime = runtime
@@ -366,8 +566,17 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
             self._timeout = float(get_settings().face_pipeline.timeout_s)
         self._client = client
         self._breaker = breaker or create_adapter_circuit_breaker("face_pipeline.detect")
-        self._executor = executor if executor is not None else _FACE_PIPELINE_EXECUTOR
-        self._submit_semaphore = submit_semaphore if submit_semaphore is not None else _FACE_PIPELINE_SUBMIT_SEMAPHORE
+        if executor is not None:
+            self._executor = executor
+        else:
+            self._executor, _default_gate = _ensure_face_pipeline_pool()
+        if submit_semaphore is not None:
+            self._submit_semaphore: asyncio.Semaphore | FacePipelineAdmissionGate = submit_semaphore
+        else:
+            _exec, gate = _ensure_face_pipeline_pool()
+            self._submit_semaphore = gate
+        # Injected process-local observer (FINALB-06). No HTTP middleware import.
+        self._metrics: FacePipelineMetricsObserver | None = metrics
 
     async def _fetch_image(self, url: str) -> bytes | None:
         """Fetch image bytes from a URL (mirrors InsightFaceFaceDetector)."""
@@ -392,10 +601,7 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
             raise DetectionAdapterError(media_id=media_id, error_message=f"decode failed: {exc}") from exc
 
         # Same phash helper as InsightFaceFaceDetector (no forked math) — CR-01.
-        image_phash = InsightFaceFaceDetector._compute_phash(  # type: ignore[arg-type]
-            None,  # method does not use self
-            image_bytes,
-        )
+        image_phash = InsightFaceFaceDetector._compute_phash(image_bytes)
 
         raw_batches = self._runtime.detector.detect([bgr])
         raw_faces: list[RawDetection] = raw_batches[0] if raw_batches else []
@@ -444,9 +650,6 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
                 continue
             landmark_quality = _compute_detection_quality(
                 confidence=float(face.score),
-                pose_pitch=None,
-                pose_yaw=None,
-                pose_roll=None,
                 bbox=bbox,
             )
             results.append(
@@ -461,6 +664,7 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
                     image_phash=image_phash,
                     landmark_quality=landmark_quality,
                     model_id=model_id,
+                    landmarks=normalize_landmarks(face.landmarks),
                 )
             )
 
@@ -472,11 +676,43 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
             )
         return results
 
+    async def _acquire_admission(self, timeout_s: float) -> None:
+        """Acquire one submit slot within timeout_s; loop-agnostic for process gate."""
+        gate = self._submit_semaphore
+        if isinstance(gate, asyncio.Semaphore):
+            await asyncio.wait_for(gate.acquire(), timeout=timeout_s)
+            return
+        await gate.acquire(timeout_s=timeout_s)
+
+    def _release_admission(self) -> None:
+        """Release one submit slot (sync; process gate is thread-safe)."""
+        self._submit_semaphore.release()
+
+    def _release_admission_from_worker(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Worker-completion release: never requires a live loop for process gate.
+
+        Injected ``asyncio.Semaphore`` doubles still hop via call_soon_threadsafe
+        when the loop is open (constructor contract for test isolation).
+        """
+        gate = self._submit_semaphore
+        if isinstance(gate, asyncio.Semaphore):
+            try:
+                loop.call_soon_threadsafe(gate.release)
+            except RuntimeError:
+                # Loop closed: injected asyncio.Semaphore cannot safely release
+                # from a foreign thread. Process-wide path uses FacePipelineAdmissionGate.
+                logger.warning(
+                    "face_pipeline admission release skipped: event loop closed "
+                    "(injected asyncio.Semaphore)"
+                )
+            return
+        gate.release()
+
     async def detect(self, sources: Iterable[bytes | str]) -> list[FaceDetection]:
         """Detect faces and return embeddings in one pass per image.
 
-        Submission is gated by ``_submit_semaphore`` (== executor max_workers).
-        Timeouts raise without reclaiming a still-running worker; the semaphore
+        Submission is gated by process admission capacity (== executor max_workers).
+        Timeouts raise without reclaiming a still-running worker; the admission
         slot is released only when the executor future completes ([RES-02]).
         """
         detections: list[FaceDetection] = []
@@ -508,30 +744,76 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
                     payload: bytes = current_bytes,
                     mid: str = current_media_id,
                 ) -> list[FaceDetection]:
-                    # Saturation signal: log when submit-queue wait exceeds ~50ms (E2E-07).
+                    # One overall deadline covers admission + executor wait.
+                    # Do not give each stage a full independent timeout window.
+                    deadline = time.perf_counter() + self._timeout
+                    adapter_name = "face_pipeline.detect"
+
+                    def _remaining() -> float:
+                        return deadline - time.perf_counter()
+
+                    def _raise_timeout(cause: BaseException | None = None) -> None:
+                        err = AdapterTimeoutError(
+                            adapter_name=adapter_name,
+                            timeout_s=self._timeout,
+                        )
+                        if cause is not None:
+                            raise err from cause
+                        raise err
+
+                    # Saturation signal: metrics + log when wait exceeds ~50ms.
                     wait_started = time.perf_counter()
-                    await self._submit_semaphore.acquire()
-                    wait_ms = (time.perf_counter() - wait_started) * 1000.0
-                    if wait_ms > 50.0:
+                    admit_budget = _remaining()
+                    if admit_budget <= 0:
+                        _observe_submit_wait(self._metrics, 0.0)
+                        _observe_admission_timeout(self._metrics)
+                        _raise_timeout()
+                    try:
+                        await self._acquire_admission(admit_budget)
+                    except TimeoutError as exc:
+                        # Never acquired: do not release. Cancellation of the wait
+                        # must not over-release ([RES-15]). Record wait + timeout.
+                        wait_s = time.perf_counter() - wait_started
+                        _observe_submit_wait(self._metrics, wait_s)
+                        _observe_admission_timeout(self._metrics)
+                        _raise_timeout(exc)
+                    wait_s = time.perf_counter() - wait_started
+                    _observe_submit_wait(self._metrics, wait_s)
+                    if wait_s > 0.05:
                         logger.info(
                             "face_pipeline submit queue wait %.0fms",
-                            wait_ms,
+                            wait_s * 1000.0,
                         )
-                    # Submit via concurrent.futures so the release callback tracks the
-                    # real worker, not the asyncio Future that wait_for may cancel on
-                    # timeout (which would free the slot while the thread still runs).
-                    cfut = self._executor.submit(self._detect_sync, payload, mid)
+                    # Slot held. Release only via the real concurrent worker future
+                    # completion callback after a successful submit — never on
+                    # timeout of the asyncio waiter ([RES-02][RES-04]).
+                    # If submit fails before the callback is registered, release here.
+                    callback_owns_release = False
+                    try:
+                        # Submit via concurrent.futures so the release callback tracks the
+                        # real worker, not the asyncio Future that wait_for may cancel on
+                        # timeout (which would free the slot while the thread still runs).
+                        cfut = self._executor.submit(self._detect_sync, payload, mid)
 
-                    def _release_on_worker_done(_f: object) -> None:
-                        loop.call_soon_threadsafe(self._submit_semaphore.release)
+                        def _release_on_worker_done(_f: object) -> None:
+                            self._release_admission_from_worker(loop)
 
-                    cfut.add_done_callback(_release_on_worker_done)
-                    afut = asyncio.wrap_future(cfut, loop=loop)
-                    return await wait_for_adapter(
-                        afut,
-                        timeout_s=self._timeout,
-                        adapter_name="face_pipeline.detect",
-                    )
+                        cfut.add_done_callback(_release_on_worker_done)
+                        callback_owns_release = True
+                        afut = asyncio.wrap_future(cfut, loop=loop)
+                        exec_budget = _remaining()
+                        if exec_budget <= 0:
+                            # Worker already running; callback releases the slot.
+                            _raise_timeout()
+                        return await wait_for_adapter(
+                            afut,
+                            timeout_s=exec_budget,
+                            adapter_name=adapter_name,
+                        )
+                    except BaseException:
+                        if not callback_owns_release:
+                            self._release_admission()
+                        raise
 
                 faces = await self._breaker.call(detect_current)
                 detections.extend(faces)
@@ -556,6 +838,7 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
 
 __all__ = [
     "FACE_PIPELINE_GENERATOR_REASON",
+    "FacePipelineAdmissionGate",
     "FacePipelineFaceDetector",
     "FacePipelineRuntime",
     "FacePipelineRuntimeUnavailable",
@@ -563,9 +846,13 @@ __all__ = [
     "assert_embedding_pgvector_pair",
     "assert_three_way_embedding_dimensions",
     "decode_image_bytes",
+    "face_pipeline_admission_capacity",
+    "face_pipeline_pool_max_workers",
     "face_pipeline_unavailable_generator",
     "get_shared_face_pipeline_detect_breaker",
     "get_shared_face_pipeline_runtime",
+    "reconfigure_face_pipeline_pool_from_settings",
+    "reset_face_pipeline_pool_for_tests",
     "reset_shared_face_pipeline_runtime_for_tests",
     "sface_embedding_model_manifest",
     "xywh_to_corner_bbox",

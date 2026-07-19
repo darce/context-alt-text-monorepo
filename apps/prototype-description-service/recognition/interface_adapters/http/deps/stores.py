@@ -239,12 +239,9 @@ class MediaIdentityService:
                 pose_yaw = row.MediaIdentity.pose_yaw
                 pose_roll = row.MediaIdentity.pose_roll
 
-                # Compute quality on-the-fly from pose angles (not stale DB value)
+                # Compute quality on-the-fly (confidence + bbox; pose-neutral)
                 quality_info = compute_identity_quality(
                     confidence=row.MediaIdentity.confidence,
-                    pose_pitch=pose_pitch,
-                    pose_yaw=pose_yaw,
-                    pose_roll=pose_roll,
                     bbox_width=row.MediaIdentity.bbox_width,
                     bbox_height=row.MediaIdentity.bbox_height,
                 )

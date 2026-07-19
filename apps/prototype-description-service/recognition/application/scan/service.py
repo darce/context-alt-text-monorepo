@@ -308,6 +308,10 @@ class ScanService:
             EmbeddingAdapterError,
             PersistIntegrityError,
         ) as exc:
+            # Discard any staged identity/reconcile work before the FAILED
+            # status commit so partial rows never ride along (LOCAL47C-02).
+            # RUNNING is already committed and is intentionally preserved.
+            await self._session.rollback()
             await self.mark_job_failed(job_id, str(exc))
             raise
 

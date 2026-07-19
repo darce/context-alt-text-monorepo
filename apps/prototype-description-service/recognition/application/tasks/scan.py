@@ -139,13 +139,20 @@ async def process_scan_job_inline(
                 generator=generator,
             )
 
-            return await scan_service.save_job_results(
-                job_id=uuid.UUID(str(job_id)),
-                tenant_id=str(tenant_id),
-                media_ids=media_ids or [],
-                media_sources=media_sources,
-                detections=detections,
-            )
+            try:
+                return await scan_service.save_job_results(
+                    job_id=uuid.UUID(str(job_id)),
+                    tenant_id=str(tenant_id),
+                    media_ids=media_ids or [],
+                    media_sources=media_sources,
+                    detections=detections,
+                )
+            except Exception:
+                # Explicit rollback before context exit so staged identity work
+                # cannot ride a later failure-status session (LOCAL47C-02).
+                # Do not rely on AsyncSession.__aexit__ alone.
+                await session.rollback()
+                raise
 
     from recognition.application.scan.service import PersistIntegrityError, run_scan_three_phase
 

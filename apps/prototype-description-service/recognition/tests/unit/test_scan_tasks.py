@@ -21,6 +21,9 @@ class _FakeSessionContext:
     async def __aexit__(self, exc_type, exc, tb) -> bool:
         return False
 
+    async def rollback(self) -> None:
+        return None
+
 
 def _prod_settings() -> SimpleNamespace:
     return SimpleNamespace(
@@ -379,3 +382,135 @@ async def test_process_scan_job_inline_marks_job_failed_on_persist_integrity(
     assert events[1][0] == "failed"
     assert events[1][1]
     assert "embedding length" in (events[1][1] or "")
+
+
+class _InlineIntegritySession:
+    """Tracks per-session add/flush/rollback/commit for inline integrity RED tests."""
+
+    instances: list = []
+
+    def __init__(self) -> None:
+        self.ops: list[str] = []
+        self.pending: list[object] = []
+        self.committed_batches: list[list[object]] = []
+        self.job = SimpleNamespace(
+            status="pending",
+            started_at=None,
+            error_message=None,
+            completed_at=None,
+        )
+        type(self).instances.append(self)
+
+    async def __aenter__(self):
+        self.ops.append("enter")
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        # Do not auto-rollback: production must call rollback explicitly (or
+        # equivalent) before the failure-status transition when partial work
+        # was staged on this session.
+        self.ops.append("exit")
+        return False
+
+    async def get(self, _model, _job_id):
+        return self.job
+
+    def add(self, obj) -> None:
+        self.pending.append(obj)
+        self.ops.append("add")
+
+    async def flush(self) -> None:
+        self.ops.append("flush")
+
+    async def rollback(self) -> None:
+        self.ops.append("rollback")
+        self.pending.clear()
+
+    async def commit(self) -> None:
+        self.ops.append("commit")
+        self.committed_batches.append(list(self.pending))
+        self.pending.clear()
+
+
+@pytest.mark.asyncio
+async def test_process_scan_job_inline_rolls_back_partial_identity_before_mark_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LOCAL47C-02: inline path must rollback partial persist before FAILED.
+
+    When the persistence phase stages identity work then raises
+    PersistIntegrityError, process_scan_job_inline must rollback that
+    session before the failure-status transition so no partial identity
+    rows are committed.
+    """
+    from recognition.application.scan.service import PersistIntegrityError, ScanService
+
+    tenant_id = str(uuid.uuid4())
+    job_id = str(uuid.uuid4())
+    integrity_exc = PersistIntegrityError("embedding length 127 != pgvector_dimension 128")
+    partial_row = SimpleNamespace(kind="partial_identity", media_id=1)
+    _InlineIntegritySession.instances = []
+    events: list[tuple[str, str | None]] = []
+
+    class TrackingScanService:
+        def __init__(self, session, detector=None, generator=None, object_store_factory=None) -> None:
+            self.session = session
+            self._real = ScanService(session=session)
+
+        async def mark_job_running(self, received_job_id):
+            events.append(("running", str(received_job_id)))
+            return await self._real.mark_job_running(received_job_id)
+
+        async def mark_job_failed(self, received_job_id, error_message: str):
+            events.append(("failed", error_message))
+            return await self._real.mark_job_failed(received_job_id, error_message)
+
+        async def save_job_results(self, **kwargs):
+            # First media staged, later media raises deterministic integrity error.
+            self.session.add(partial_row)
+            await self.session.flush()
+            raise integrity_exc
+
+    class FakeDetector:
+        async def detect(self, sources):
+            return []
+
+    class FakeGenerator:
+        async def generate(self, face_images):
+            raise AssertionError("generator unused when detect returns empty")
+
+    import recognition.application.scan.service as scan_service_module
+    import recognition.config as recognition_config
+    import recognition.infrastructure.embeddings.runtime_factory as runtime_factory
+
+    monkeypatch.setattr(recognition_config, "get_settings", _prod_settings)
+    monkeypatch.setattr(scan_tasks, "set_tenant_context", AsyncMock())
+    monkeypatch.setattr(scan_service_module, "ScanService", TrackingScanService)
+
+    async def _fake_build(*, settings, http_client=None, adapter_provider=None):
+        return FakeDetector(), FakeGenerator()
+
+    monkeypatch.setattr(runtime_factory, "build_embedding_runtime", _fake_build)
+
+    with pytest.raises(PersistIntegrityError, match="embedding length"):
+        await scan_tasks.process_scan_job_inline(
+            tenant_id=tenant_id,
+            job_id=job_id,
+            media_ids=["1", "2"],
+            media_sources=["http://example.test/1.jpg", "http://example.test/2.jpg"],
+            session_factory=lambda: _InlineIntegritySession(),
+        )
+
+    assert events[0][0] == "running"
+    assert events[1][0] == "failed"
+    assert "embedding length" in (events[1][1] or "")
+
+    # The dirty persist session must have rolled back before FAILED was written.
+    dirty_sessions = [s for s in _InlineIntegritySession.instances if "add" in s.ops]
+    assert dirty_sessions, "persist phase must stage partial identity work"
+    dirty = dirty_sessions[0]
+    assert "rollback" in dirty.ops, "persist session must rollback before FAILED transition"
+    all_committed = [item for s in _InlineIntegritySession.instances for batch in s.committed_batches for item in batch]
+    assert not any(getattr(item, "kind", None) == "partial_identity" for item in all_committed), (
+        "partial identity rows must not be committed after integrity failure"
+    )

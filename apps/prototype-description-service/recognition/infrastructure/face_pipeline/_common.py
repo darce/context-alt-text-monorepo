@@ -25,15 +25,34 @@ DEFAULT_INPUT_SIZE: Final[tuple[int, int]] = (320, 320)
 
 # Manifest is the single source for SFace dim (rg-015) — never invent a default.
 SFACE_CROP_SIZE: Final[int] = 112
+# embed_batch implements exactly this contract (L2 unit vectors for cosine).
+SFACE_NORMALIZATION: Final[str] = "l2"
+SFACE_METRIC: Final[str] = "cosine"
 _FLOAT01_TRAP_MAX: Final[float] = 1.5
 
 
 def resolve_sface_embedding_dim() -> int:
-    """Return SFace embedding dim from the provenance manifest (fail-closed)."""
-    dim = MODEL_MANIFEST["sface"].embedding_dim
+    """Return SFace embedding dim from the provenance manifest (fail-closed).
+
+    Requires the operational contract that ``embed_batch`` implements:
+    non-null dim, ``normalization='l2'``, ``metric='cosine'``. Unsupported
+    provenance values raise before any feature execution (FIR3-BR-05).
+    """
+    entry = MODEL_MANIFEST["sface"]
+    dim = entry.embedding_dim
     if dim is None:
         raise ValueError(
             "MODEL_MANIFEST['sface'].embedding_dim is None; refusing to invent a default embedding dimension (rg-015)"
+        )
+    if entry.normalization != SFACE_NORMALIZATION:
+        raise ValueError(
+            f"unsupported SFace normalization {entry.normalization!r}; "
+            f"require {SFACE_NORMALIZATION!r} (embed_batch L2 contract)"
+        )
+    if entry.metric != SFACE_METRIC:
+        raise ValueError(
+            f"unsupported SFace metric {entry.metric!r}; "
+            f"require {SFACE_METRIC!r} (embed_batch cosine contract)"
         )
     return int(dim)
 
@@ -140,6 +159,8 @@ __all__ = [
     "RawDetection",
     "SFACE_CROP_SIZE",
     "SFACE_EMBEDDING_DIM",
+    "SFACE_METRIC",
+    "SFACE_NORMALIZATION",
     "ZeroNormEmbeddingError",
     "embed_batch",
     "ensure_bgr_u8",

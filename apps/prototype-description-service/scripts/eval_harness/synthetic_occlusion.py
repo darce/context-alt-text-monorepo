@@ -1,0 +1,662 @@
+"""Seeded synthetic occlusion + threshold-free occlusion Δ (FIR-5 S4 / §D).
+
+Generators (``masked`` / ``sunglasses`` / ``occlusion_other``) place fixed
+anatomy-anchor occluders via affine warp from the **frozen landmark cache**.
+No live leg detector during generation (firewall). Both legs re-detect+embed
+on the **identical** occluded pixels after generation.
+
+Occlusion metric = closed-set top-1 argmax paired accuracy (threshold-free):
+gallery = identity un-occluded faces excluding twin source media_id + other
+identities' un-occluded prototypes. Guards: distinct-image min-gallery,
+≥2-distinct-identity, re-detect-miss=0 kept-in-n, ≥90 eligible-pair floor,
+walk-stability bound (else DIRECTIONAL).
+
+Heuristics (docs/workbay/rules/engineering-heuristics.md +
+docs/workbay/rules/graph-theory-heuristics.md +
+docs/workbay/rules/ml-systems-heuristics.md — ids only):
+- TRACK-09: occlusion as degradation measurement
+- CAL-01 / GRPH-23: per-occlusion-stratum
+- TEST-08 / DATA-09: seed + pinned cv2 → hash-identical occluder pixels
+- MLDATA-02: ≥90 eligible-pair floor
+- EMB-03: occluded = low quality (re-detect miss counts as fail)
+- TEST-06 / TEST-15: can-fail + guard-fires fixtures
+"""
+
+from __future__ import annotations
+
+import hashlib
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any, Literal
+
+import cv2
+import numpy as np
+
+from .face_assignment import (
+    MatchedFace,
+    argmax_gallery,
+    cosine_similarity,
+    matched_named_by_identity,
+    mean_prototype,
+)
+from .landmark_cache import CachedLandmark, LandmarkCache
+from .manifest import SliceTag
+
+OcclusionKind = Literal["masked", "sunglasses", "occlusion_other"]
+
+OCCLUSION_KINDS: tuple[OcclusionKind, ...] = (
+    "masked",
+    "sunglasses",
+    "occlusion_other",
+)
+
+# Map generator kind → SliceTag value for reporting.
+KIND_TO_SLICE_TAG: dict[OcclusionKind, SliceTag] = {
+    "masked": SliceTag.MASKED,
+    "sunglasses": SliceTag.SUNGLASSES,
+    "occlusion_other": SliceTag.OCCLUSION_OTHER,
+}
+
+# ≥90 eligible-pair floor per tag (MLDATA-02). Below → DIRECTIONAL; not guaranteed.
+ELIGIBLE_PAIR_FLOOR = 90
+
+# Aggregate |Δ| bound across an independent re-run of ≥ floor pairs.
+# If not asserted or not met → DIRECTIONAL (flag alone is insufficient).
+WALK_STABILITY_DELTA_BOUND = 0.05
+
+# Determinism layer 2: pinned OpenCV warp (within one host profile).
+_WARP_FLAGS = cv2.INTER_LINEAR
+_WARP_BORDER_MODE = cv2.BORDER_CONSTANT
+_WARP_BORDER_VALUE = (0, 0, 0)
+
+# Occluder template size (pixels) before affine placement.
+_TEMPLATE_SIZE = 64
+
+# Solid BGR fill for occluder body (seed perturbs slightly but deterministically).
+_BASE_FILL_BGR = (32, 32, 32)
+
+
+def pin_cv2_threads() -> None:
+    """Pin OpenCV to single-thread for hash-stable warps (determinism layer 2)."""
+    cv2.setNumThreads(1)
+
+
+def pixel_buffer_hash(image_u8: np.ndarray) -> str:
+    """SHA-256 of the contiguous uint8 pixel buffer (within-host comparison)."""
+    arr = np.ascontiguousarray(image_u8, dtype=np.uint8)
+    return hashlib.sha256(arr.tobytes()).hexdigest()
+
+
+def _seeded_fill_bgr(seed: int) -> tuple[int, int, int]:
+    """Deterministic fill colour from seed (DATA-09 — no wall-clock RNG)."""
+    # Simple LCG step from seed; stays in uint8.
+    x = (int(seed) * 1103515245 + 12345) & 0x7FFFFFFF
+    b = 20 + (x % 40)
+    x = (x * 1103515245 + 12345) & 0x7FFFFFFF
+    g = 20 + (x % 40)
+    x = (x * 1103515245 + 12345) & 0x7FFFFFFF
+    r = 20 + (x % 40)
+    return (int(b), int(g), int(r))
+
+
+def _landmarks5(landmarks: np.ndarray | Sequence[Sequence[float]]) -> np.ndarray:
+    arr = np.asarray(landmarks, dtype=np.float64).reshape(5, 2)
+    if not np.isfinite(arr).all():
+        raise ValueError("landmarks contain non-finite values")
+    return arr
+
+
+def _template_occluder(
+    kind: OcclusionKind,
+    *,
+    seed: int,
+    size: int = _TEMPLATE_SIZE,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return (template BGRA/BGR, 3 source control points in template space).
+
+    Anatomy anchors (fixed):
+    - masked → lower-face / mouth bar (bottom half of template)
+    - sunglasses → eye-pair bar (upper-mid horizontal band)
+    - occlusion_other → cheek/forehead patch (seed chooses side/band)
+    """
+    fill = _seeded_fill_bgr(seed)
+    tpl = np.zeros((size, size, 3), dtype=np.uint8)
+    # Source control points in template coordinates (3 pts for getAffineTransform).
+    if kind == "masked":
+        # Lower-face bar: mouth region.
+        y0, y1 = int(size * 0.45), size
+        tpl[y0:y1, :, :] = fill
+        src = np.array(
+            [
+                [size * 0.15, size * 0.70],  # right mouth-ish
+                [size * 0.85, size * 0.70],  # left mouth-ish
+                [size * 0.50, size * 0.55],  # upper mask edge near nose
+            ],
+            dtype=np.float32,
+        )
+    elif kind == "sunglasses":
+        # Eye-pair horizontal band.
+        y0, y1 = int(size * 0.25), int(size * 0.55)
+        tpl[y0:y1, :, :] = fill
+        src = np.array(
+            [
+                [size * 0.20, size * 0.40],  # right eye
+                [size * 0.80, size * 0.40],  # left eye
+                [size * 0.50, size * 0.25],  # brow mid
+            ],
+            dtype=np.float32,
+        )
+    else:
+        # occlusion_other: cheek or forehead patch (seed bit).
+        use_forehead = (int(seed) % 2) == 0
+        if use_forehead:
+            y0, y1 = int(size * 0.05), int(size * 0.30)
+            x0, x1 = int(size * 0.25), int(size * 0.75)
+            tpl[y0:y1, x0:x1, :] = fill
+            src = np.array(
+                [
+                    [size * 0.30, size * 0.18],
+                    [size * 0.70, size * 0.18],
+                    [size * 0.50, size * 0.08],
+                ],
+                dtype=np.float32,
+            )
+        else:
+            # Right cheek patch (image-left for frontal YuNet right-eye side).
+            y0, y1 = int(size * 0.40), int(size * 0.75)
+            x0, x1 = int(size * 0.05), int(size * 0.40)
+            tpl[y0:y1, x0:x1, :] = fill
+            src = np.array(
+                [
+                    [size * 0.15, size * 0.50],
+                    [size * 0.35, size * 0.50],
+                    [size * 0.25, size * 0.65],
+                ],
+                dtype=np.float32,
+            )
+    return tpl, src
+
+
+def _destination_control_points(
+    landmarks: np.ndarray,
+    kind: OcclusionKind,
+    *,
+    seed: int,
+) -> np.ndarray:
+    """Map anatomy anchors from YuNet 5-point landmarks → 3 destination pts.
+
+    YuNet order: 0 right_eye, 1 left_eye, 2 nose, 3 right_mouth, 4 left_mouth.
+    """
+    re, le, nose, rm, lm = landmarks
+    eye_mid = 0.5 * (re + le)
+    mouth_mid = 0.5 * (rm + lm)
+    if kind == "masked":
+        # Lower face: mouth corners + point below nose toward mouth.
+        below_nose = nose + 0.35 * (mouth_mid - nose)
+        dst = np.stack([rm, lm, below_nose], axis=0)
+    elif kind == "sunglasses":
+        # Eye pair + brow above eye mid.
+        brow = eye_mid - 0.35 * (nose - eye_mid)
+        dst = np.stack([re, le, brow], axis=0)
+    else:
+        use_forehead = (int(seed) % 2) == 0
+        if use_forehead:
+            brow_l = le - 0.45 * (nose - le)
+            brow_r = re - 0.45 * (nose - re)
+            brow_mid = eye_mid - 0.55 * (nose - eye_mid)
+            dst = np.stack([brow_r, brow_l, brow_mid], axis=0)
+        else:
+            # Cheek near right eye / right mouth (anatomical right).
+            cheek = re + 0.55 * (rm - re) + 0.25 * (re - le)
+            dst = np.stack(
+                [
+                    re + 0.15 * (rm - re),
+                    re + 0.45 * (rm - re) + 0.20 * (re - le),
+                    cheek,
+                ],
+                axis=0,
+            )
+    return dst.astype(np.float32)
+
+
+def apply_occlusion(
+    image_bgr: np.ndarray,
+    landmarks_px: np.ndarray | Sequence[Sequence[float]],
+    kind: OcclusionKind,
+    *,
+    seed: int = 0,
+) -> np.ndarray:
+    """Paint a seeded anatomy-anchor occluder via ``cv2.warpAffine`` (layer 2).
+
+    Same ``(kind, seed, landmarks, image)`` → hash-identical uint8 pixels under
+    ``cv2.setNumThreads(1)`` + ``INTER_LINEAR`` + fixed ``borderMode`` on one host.
+    """
+    if kind not in OCCLUSION_KINDS:
+        raise ValueError(f"unknown occlusion kind {kind!r}; expected one of {OCCLUSION_KINDS}")
+    pin_cv2_threads()
+    img = np.ascontiguousarray(image_bgr, dtype=np.uint8)
+    if img.ndim != 3 or img.shape[2] != 3:
+        raise ValueError(f"expected HxWx3 BGR uint8, got shape {img.shape}")
+    lm = _landmarks5(landmarks_px)
+    tpl, src_pts = _template_occluder(kind, seed=seed)
+    dst_pts = _destination_control_points(lm, kind, seed=seed)
+    m = cv2.getAffineTransform(src_pts, dst_pts)
+    warped = cv2.warpAffine(
+        tpl,
+        m,
+        (img.shape[1], img.shape[0]),
+        flags=_WARP_FLAGS,
+        borderMode=_WARP_BORDER_MODE,
+        borderValue=_WARP_BORDER_VALUE,
+    )
+    # Alpha-less composite: non-zero template pixels overwrite (occluder body).
+    mask = np.any(warped != 0, axis=2)
+    out = img.copy()
+    out[mask] = warped[mask]
+    return out
+
+
+def occluder_pixel_mask(
+    image_shape: tuple[int, ...],
+    landmarks_px: np.ndarray | Sequence[Sequence[float]],
+    kind: OcclusionKind,
+    *,
+    seed: int = 0,
+) -> np.ndarray:
+    """Boolean mask of occluder coverage (for anatomy-anchor unit tests)."""
+    h, w = int(image_shape[0]), int(image_shape[1])
+    blank = np.zeros((h, w, 3), dtype=np.uint8)
+    painted = apply_occlusion(blank, landmarks_px, kind, seed=seed)
+    return np.any(painted != 0, axis=2)
+
+
+@dataclass(frozen=True)
+class OcclusionTwinSpec:
+    """Offline twin descriptor (no embedding — generation is leg-agnostic)."""
+
+    media_id: int
+    box_index: int
+    true_name: str
+    kind: OcclusionKind
+    seed: int
+    landmarks_px: tuple[tuple[float, float], ...]
+
+    @property
+    def source_key(self) -> tuple[int, int]:
+        return (self.media_id, self.box_index)
+
+
+def generate_twin_specs(
+    cache: LandmarkCache,
+    *,
+    kinds: Sequence[OcclusionKind] = OCCLUSION_KINDS,
+    seed: int = 0,
+) -> tuple[OcclusionTwinSpec, ...]:
+    """Offline twin universe: every cache-detected named roster face × kinds.
+
+    Decoupled from score-time probe sets (firewall). Coverage is detector-
+    recall-dependent via the cache, not structurally every roster face.
+    """
+    specs: list[OcclusionTwinSpec] = []
+    for entry in cache.named_roster_entries():
+        for kind in kinds:
+            # Per-face/kind sub-seed derived from global seed (DATA-09).
+            face_seed = (
+                int(seed)
+                + 1_000_003 * int(entry.media_id)
+                + 9_001 * int(entry.box_index)
+                + 17 * (OCCLUSION_KINDS.index(kind) + 1)
+            )
+            specs.append(
+                OcclusionTwinSpec(
+                    media_id=entry.media_id,
+                    box_index=entry.box_index,
+                    true_name=entry.name,
+                    kind=kind,
+                    seed=face_seed,
+                    landmarks_px=entry.landmarks_px,
+                )
+            )
+    return tuple(specs)
+
+
+def render_twin(
+    image_bgr: np.ndarray,
+    spec: OcclusionTwinSpec,
+) -> np.ndarray:
+    """Apply the twin's occluder to the source image pixels."""
+    return apply_occlusion(
+        image_bgr,
+        spec.landmarks_px,
+        spec.kind,
+        seed=spec.seed,
+    )
+
+
+# ---------------------------------------------------------------------------
+# §D occlusion scoring (threshold-free closed-set top-1 argmax)
+# ---------------------------------------------------------------------------
+
+
+def has_distinct_image_gallery_support(
+    true_name: str,
+    source_media_id: int,
+    by_identity: Mapping[str, Sequence[MatchedFace]],
+) -> bool:
+    """Min-gallery guard: ≥1 un-occluded face of true_name on media_id ≠ source.
+
+    Two faces on the **same** media_id both vanish when that image is excluded —
+    counting ≥2 faces is insufficient.
+    """
+    faces = by_identity.get(true_name, ())
+    return any(f.media_id != source_media_id for f in faces)
+
+
+def build_occlusion_gallery(
+    true_name: str,
+    source_media_id: int,
+    by_identity: Mapping[str, Sequence[MatchedFace]],
+) -> dict[str, np.ndarray]:
+    """Source-image-excluded LOO gallery for occlusion Δ (no τ / no reject).
+
+    - prototype_X = mean of X's un-occluded faces with media_id ≠ source
+    - prototype_Y = mean of all of Y's un-occluded faces (Y ≠ X)
+    """
+    gallery: dict[str, np.ndarray] = {}
+    for name, faces in by_identity.items():
+        if name == true_name:
+            others = [f for f in faces if f.media_id != source_media_id]
+            if not others:
+                continue
+            gallery[name] = mean_prototype([f.embedding_array() for f in others])
+        else:
+            if not faces:
+                continue
+            gallery[name] = mean_prototype([f.embedding_array() for f in faces])
+    return gallery
+
+
+def gallery_identity_count(gallery: Mapping[str, np.ndarray]) -> int:
+    return len(gallery)
+
+
+@dataclass(frozen=True)
+class OcclusionPairResult:
+    """One eligible twin pair score (or ineligible skip)."""
+
+    media_id: int
+    box_index: int
+    true_name: str
+    kind: OcclusionKind
+    eligible: bool
+    correct: bool | None  # None when ineligible
+    re_detect_miss: bool
+    predicted_name: str | None
+    gallery_n_identities: int
+    ineligible_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class OcclusionAccuracy:
+    """Top-1 accuracy rollup for one occlusion stratum (a_s / a_r / a_clean)."""
+
+    accuracy: float | None  # None when n_eligible == 0
+    n_eligible: int
+    n_correct: int
+    n_re_detect_miss: int
+    n_ineligible: int
+    directional: bool
+    directional_reasons: tuple[str, ...]
+    pair_results: tuple[OcclusionPairResult, ...] = ()
+    walk_stability_asserted: bool = False
+    walk_stability_delta: float | None = None
+
+    @property
+    def meets_pair_floor(self) -> bool:
+        return self.n_eligible >= ELIGIBLE_PAIR_FLOOR
+
+
+def score_occlusion_pair(
+    *,
+    twin_embedding: np.ndarray | Sequence[float] | None,
+    true_name: str,
+    source_media_id: int,
+    box_index: int,
+    kind: OcclusionKind,
+    by_identity: Mapping[str, Sequence[MatchedFace]],
+) -> OcclusionPairResult:
+    """Score one twin: re-detect miss → incorrect kept-in-n; else top-1 argmax.
+
+    ``twin_embedding is None`` means the leg failed to re-detect+match the
+    occluded face (§D re-detect-miss = accuracy 0, kept in n).
+    """
+    if not has_distinct_image_gallery_support(true_name, source_media_id, by_identity):
+        return OcclusionPairResult(
+            media_id=source_media_id,
+            box_index=box_index,
+            true_name=true_name,
+            kind=kind,
+            eligible=False,
+            correct=None,
+            re_detect_miss=False,
+            predicted_name=None,
+            gallery_n_identities=0,
+            ineligible_reason="distinct_image_min_gallery",
+        )
+
+    gallery = build_occlusion_gallery(true_name, source_media_id, by_identity)
+    n_ids = gallery_identity_count(gallery)
+
+    if twin_embedding is None:
+        return OcclusionPairResult(
+            media_id=source_media_id,
+            box_index=box_index,
+            true_name=true_name,
+            kind=kind,
+            eligible=True,
+            correct=False,
+            re_detect_miss=True,
+            predicted_name=None,
+            gallery_n_identities=n_ids,
+        )
+
+    emb = np.asarray(twin_embedding, dtype=np.float64)
+    _s_max, name_star = argmax_gallery(emb, gallery)
+    correct = name_star is not None and name_star == true_name
+    return OcclusionPairResult(
+        media_id=source_media_id,
+        box_index=box_index,
+        true_name=true_name,
+        kind=kind,
+        eligible=True,
+        correct=bool(correct),
+        re_detect_miss=False,
+        predicted_name=name_star,
+        gallery_n_identities=n_ids,
+    )
+
+
+def _rollup_pairs(
+    pairs: Sequence[OcclusionPairResult],
+    *,
+    walk_stability_asserted: bool = False,
+    walk_stability_delta: float | None = None,
+    walk_stability_bound: float = WALK_STABILITY_DELTA_BOUND,
+) -> OcclusionAccuracy:
+    eligible = [p for p in pairs if p.eligible]
+    ineligible = [p for p in pairs if not p.eligible]
+    n_eligible = len(eligible)
+    n_correct = sum(1 for p in eligible if p.correct)
+    n_miss = sum(1 for p in eligible if p.re_detect_miss)
+    accuracy = None if n_eligible == 0 else n_correct / n_eligible
+
+    reasons: list[str] = []
+    if n_eligible < ELIGIBLE_PAIR_FLOOR:
+        reasons.append(
+            f"eligible_pairs={n_eligible}<floor={ELIGIBLE_PAIR_FLOOR}"
+        )
+    # ≥2-distinct-identity: any eligible pair with <2 gallery identities → DIRECTIONAL
+    if any(p.eligible and p.gallery_n_identities < 2 for p in pairs):
+        reasons.append("gallery_lt_2_distinct_identities")
+    if not walk_stability_asserted:
+        reasons.append("walk_stability_not_asserted")
+    elif walk_stability_delta is not None and walk_stability_delta > walk_stability_bound:
+        reasons.append(
+            f"walk_stability_delta={walk_stability_delta}>bound={walk_stability_bound}"
+        )
+
+    return OcclusionAccuracy(
+        accuracy=accuracy,
+        n_eligible=n_eligible,
+        n_correct=n_correct,
+        n_re_detect_miss=n_miss,
+        n_ineligible=len(ineligible),
+        directional=bool(reasons),
+        directional_reasons=tuple(reasons),
+        pair_results=tuple(pairs),
+        walk_stability_asserted=walk_stability_asserted,
+        walk_stability_delta=walk_stability_delta,
+    )
+
+
+def score_occlusion_accuracy(
+    pair_inputs: Sequence[Mapping[str, Any]],
+    unoccluded_matched: Sequence[MatchedFace],
+    *,
+    walk_stability_asserted: bool = False,
+    walk_stability_delta: float | None = None,
+    walk_stability_bound: float = WALK_STABILITY_DELTA_BOUND,
+) -> OcclusionAccuracy:
+    """Compute a_s / a_r / a_clean-style top-1 accuracy over twin/real/clean pairs.
+
+    Each input mapping keys:
+      - media_id, box_index, true_name, kind
+      - embedding: sequence[float] | None  (None = re-detect miss)
+    """
+    by_identity = matched_named_by_identity(unoccluded_matched)
+    results: list[OcclusionPairResult] = []
+    for item in pair_inputs:
+        results.append(
+            score_occlusion_pair(
+                twin_embedding=item.get("embedding"),
+                true_name=str(item["true_name"]),
+                source_media_id=int(item["media_id"]),
+                box_index=int(item["box_index"]),
+                kind=item["kind"],  # type: ignore[arg-type]
+                by_identity=by_identity,
+            )
+        )
+    return _rollup_pairs(
+        results,
+        walk_stability_asserted=walk_stability_asserted,
+        walk_stability_delta=walk_stability_delta,
+        walk_stability_bound=walk_stability_bound,
+    )
+
+
+def assert_walk_stability(
+    accuracy_a: float | None,
+    accuracy_b: float | None,
+    *,
+    n_eligible: int,
+    bound: float = WALK_STABILITY_DELTA_BOUND,
+    floor: int = ELIGIBLE_PAIR_FLOOR,
+) -> tuple[bool, float | None]:
+    """Independent re-run aggregate-Δ check. Returns (met, |Δ|).
+
+    Only meaningful when both runs have ≥ floor eligible pairs and non-None
+    accuracy; otherwise returns (False, delta_or_None).
+    """
+    if accuracy_a is None or accuracy_b is None or n_eligible < floor:
+        delta = (
+            None
+            if accuracy_a is None or accuracy_b is None
+            else abs(float(accuracy_a) - float(accuracy_b))
+        )
+        return False, delta
+    delta = abs(float(accuracy_a) - float(accuracy_b))
+    return delta <= bound, delta
+
+
+def filter_headline_probes(
+    matched: Sequence[MatchedFace],
+    *,
+    occluded_probe_keys: set[tuple[int, int, str]] | None = None,
+) -> tuple[MatchedFace, ...]:
+    """Headline identification set: un-occluded matched faces only.
+
+    Twins never enter the headline set. ``occluded_probe_keys`` may mark
+    synthetic twin identities as ``(media_id, box_index, "occluded")``; any
+    face flagged as occluded is stripped. Default: pass-through of un-occluded
+    ``MatchedFace`` inputs (callers simply do not add twin MatchedFaces).
+    """
+    if not occluded_probe_keys:
+        return tuple(matched)
+    out: list[MatchedFace] = []
+    for face in matched:
+        key = (face.media_id, face.box_index, "occluded")
+        if key in occluded_probe_keys:
+            continue
+        out.append(face)
+    return tuple(out)
+
+
+def source_media_excluded_from_gallery(
+    gallery_faces: Sequence[MatchedFace],
+    source_media_id: int,
+) -> bool:
+    """Firewall helper: True iff no gallery face shares the twin's source media_id."""
+    return all(f.media_id != source_media_id for f in gallery_faces)
+
+
+def anatomy_region_stats(
+    mask: np.ndarray,
+    landmarks_px: np.ndarray | Sequence[Sequence[float]],
+) -> dict[str, float]:
+    """Fraction of occluder mass in lower-face / eye-band / upper for pin tests."""
+    lm = _landmarks5(landmarks_px)
+    re, le, nose, rm, lm_pt = lm
+    eye_y = float(0.5 * (re[1] + le[1]))
+    mouth_y = float(0.5 * (rm[1] + lm_pt[1]))
+    nose_y = float(nose[1])
+    # Bands relative to face vertical span.
+    ys, xs = np.where(mask)
+    if len(ys) == 0:
+        return {"lower_face_frac": 0.0, "eye_band_frac": 0.0, "upper_frac": 0.0}
+    total = float(len(ys))
+    lower = float(np.sum(ys >= (nose_y + mouth_y) / 2.0))
+    eye_band = float(np.sum((ys >= eye_y - 0.15 * abs(mouth_y - eye_y)) & (ys <= nose_y)))
+    upper = float(np.sum(ys < eye_y))
+    return {
+        "lower_face_frac": lower / total,
+        "eye_band_frac": eye_band / total,
+        "upper_frac": upper / total,
+    }
+
+
+__all__ = [
+    "OCCLUSION_KINDS",
+    "KIND_TO_SLICE_TAG",
+    "ELIGIBLE_PAIR_FLOOR",
+    "WALK_STABILITY_DELTA_BOUND",
+    "OcclusionKind",
+    "OcclusionTwinSpec",
+    "OcclusionPairResult",
+    "OcclusionAccuracy",
+    "pin_cv2_threads",
+    "pixel_buffer_hash",
+    "apply_occlusion",
+    "occluder_pixel_mask",
+    "generate_twin_specs",
+    "render_twin",
+    "has_distinct_image_gallery_support",
+    "build_occlusion_gallery",
+    "gallery_identity_count",
+    "score_occlusion_pair",
+    "score_occlusion_accuracy",
+    "assert_walk_stability",
+    "filter_headline_probes",
+    "source_media_excluded_from_gallery",
+    "anatomy_region_stats",
+    "cosine_similarity",
+]

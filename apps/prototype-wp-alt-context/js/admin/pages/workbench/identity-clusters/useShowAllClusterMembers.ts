@@ -27,6 +27,13 @@ import {
 } from '../../../api/recognition';
 import { queryKeys } from '../../../api/queryKeys';
 
+/**
+ * S4-03 [rg-007]: slack added to the declared-total page count for the show-all
+ * round-trip backstop, covering a snapshot that shifts (under-filled pages) under
+ * us. The loop can never fan out beyond `ceil(total/limit) + EXPAND_PAGE_SLACK`.
+ */
+const EXPAND_PAGE_SLACK = 2;
+
 export interface UseShowAllClusterMembersResult {
   members: ClusterIdentity[];
   /** First-page envelope; null while loading/error. */
@@ -95,11 +102,36 @@ export const useShowAllClusterMembers = (clusterId: string): UseShowAllClusterMe
 
     try {
       const pageLimit = Math.max(1, membersResponse.limit);
-      let accumulated = [...membersResponse.members];
-      let offset = accumulated.length;
+      const total = membersResponse.total;
+      // S4-03: explicit round-trip cap. `offset < total` already bounds a well-behaved
+      // server, but this makes the ceiling explicit and contains a shifting/malformed
+      // snapshot that under-fills pages so `offset` crawls toward `total`.
+      const maxPages = Math.ceil(total / pageLimit) + EXPAND_PAGE_SLACK;
 
-      while (offset < membersResponse.total) {
-        const remaining = membersResponse.total - offset;
+      // S4-02: dedup by identity_id. Offset paging over a mutating membership can
+      // re-return an already-seen member (a row inserted before the window shifts it);
+      // appending blindly would duplicate it. `offset` tracks the SERVER window position
+      // (raw page length), independent of how many rows survive dedup.
+      const seen = new Set<string>();
+      const accumulated: ClusterIdentity[] = [];
+      for (const member of membersResponse.members) {
+        if (!seen.has(member.identity_id)) {
+          seen.add(member.identity_id);
+          accumulated.push(member);
+        }
+      }
+      let offset = membersResponse.members.length;
+      let pages = 0;
+
+      while (accumulated.length < total && offset < total) {
+        if (pages >= maxPages) {
+          // Round-trip ceiling hit before convergence: the list changed under us.
+          setExpandError('Unable to load all members — the list changed while loading.');
+          return;
+        }
+        pages += 1;
+
+        const remaining = total - offset;
         const pageSize = Math.min(pageLimit, remaining);
         if (pageSize <= 0) {
           break;
@@ -122,19 +154,29 @@ export const useShowAllClusterMembers = (clusterId: string): UseShowAllClusterMe
           return;
         }
 
-        accumulated = [...accumulated, ...page.members];
-        offset = accumulated.length;
+        let added = 0;
+        for (const member of page.members) {
+          if (!seen.has(member.identity_id)) {
+            seen.add(member.identity_id);
+            accumulated.push(member);
+            added += 1;
+          }
+        }
+        // Advance by the server window, not the deduped count [RES-05].
+        offset += page.members.length;
 
-        // Never walk past the declared total [RES-05].
-        if (accumulated.length >= membersResponse.total) {
-          break;
+        if (added === 0) {
+          // The window returned only already-seen members — snapshot shifted; stop
+          // honestly rather than looping to the page cap.
+          setExpandError('Unable to load remaining members.');
+          return;
         }
       }
 
       if (generationRef.current !== generation) {
         return;
       }
-      setExpandedMembers(accumulated.slice(0, membersResponse.total));
+      setExpandedMembers(accumulated.slice(0, total));
     } catch (error) {
       if (generationRef.current !== generation) {
         return;

@@ -515,7 +515,8 @@ def test_demographic_rollup_multi_face_image_cohort_excluded():
 
 
 def test_demographic_rollup_empty_roster_cohorts_has_directional_header():
-    """Missing/empty roster_cohorts → empty DIRECTIONAL section with header (not KeyError)."""
+    """Empty/missing roster_cohorts: strangers-only → empty section; a NAMED probe
+    with no cohort → UNLABELED; header + DIRECTIONAL always present (no KeyError/skip)."""
     # Strangers only → no named probes → empty by_cohort.
     decisions = [
         _dec(media_id=1, true_name=None, decision="reject"),
@@ -532,6 +533,19 @@ def test_demographic_rollup_empty_roster_cohorts_has_directional_header():
     assert empty.directional is True
     assert empty.section_header
     assert empty.by_cohort == {}
+
+    # Empty roster WITH a named probe (and no single-subject fallback) must route to
+    # UNLABELED — a NON-empty by_cohort — so this test actually exercises the
+    # empty-roster branch (not only strangers-exclusion). A regression that dropped
+    # the unlabeled fallback in _resolve_cohort would go red here (TEST-15).
+    named_no_cohort = demographic_rollup(
+        [_dec(media_id=3, true_name="Nobody", decision="accept", predicted_name="Nobody")],
+        roster_cohorts={},
+    )
+    assert set(named_no_cohort.by_cohort) == {UNLABELED_COHORT_KEY}
+    assert named_no_cohort.by_cohort[UNLABELED_COHORT_KEY].n_named_probes == 1
+    assert named_no_cohort.section_header == DEMOGRAPHIC_SECTION_HEADER
+    assert named_no_cohort.directional is True
 
 
 def test_demographic_rollup_strangers_excluded_and_unlabeled_legible():

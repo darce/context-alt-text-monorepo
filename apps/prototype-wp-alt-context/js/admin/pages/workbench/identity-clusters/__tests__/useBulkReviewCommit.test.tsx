@@ -233,6 +233,94 @@ describe('useBulkReviewCommit (PR-30 state machine)', () => {
     expect(result.current.bulk.phase).toBe('idle');
   });
 
+  it('S3-02/GROK-03: awaitBulkIdleOrFlush serializes behind an in-flight bulk initiation (no TOCTOU no-op)', async () => {
+    // Gate the single-flush so initiateBulk parks in its flush window: phase still 'idle',
+    // hold not yet open, but a bulk initiation IS in flight.
+    let releaseFlush!: () => void;
+    const flushGate = new Promise<void>((r) => {
+      releaseFlush = r;
+    });
+    flushHeldSingle = () => flushGate.then(() => null);
+
+    const { result } = renderBulk();
+
+    // Fire initiate but do NOT await — it parks on flushGate.
+    let initiateDone = false;
+    act(() => {
+      void result.current.initiateBulk().then(() => {
+        initiateDone = true;
+      });
+    });
+    expect(result.current.bulk.phase).toBe('idle');
+    expect(commitCalls).toEqual([]);
+
+    // A concurrent single/person commit awaits the bulk. With the TOCTOU bug this resolves
+    // immediately (no-op) because phase is still 'idle' — letting the single interleave.
+    let awaitResolved = false;
+    let awaitP!: Promise<void>;
+    act(() => {
+      awaitP = result.current.awaitBulkIdleOrFlush();
+      void awaitP.then(() => {
+        awaitResolved = true;
+      });
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // FIXED: awaitBulk must still be pending — serialized behind the initiation.
+    expect(awaitResolved).toBe(false);
+    expect(commitCalls).toEqual([]);
+
+    // Release the flush → initiation opens the hold → awaitBulk (having waited) fires the
+    // sequence before it resolves, preserving bulk→single ordering.
+    await act(async () => {
+      releaseFlush();
+      await awaitP;
+    });
+
+    expect(initiateDone).toBe(true);
+    expect(commitCalls).toEqual(['a', 'b', 'c']);
+    expect(awaitResolved).toBe(true);
+    expect(result.current.bulk.phase).toBe('idle');
+  });
+
+  it('GROK-03 hardening: a rejecting initiation flush does not reject awaitBulkIdleOrFlush', async () => {
+    // flushHeldSingle should never throw in production, but if it does, awaitBulk must
+    // resolve to a deterministic idle no-op — never reject into the caller's commit path.
+    let rejectFlush!: (e: unknown) => void;
+    const flushGate = new Promise<void>((_, rej) => {
+      rejectFlush = rej;
+    });
+    flushHeldSingle = () => flushGate.then(() => null);
+
+    const { result } = renderBulk();
+
+    act(() => {
+      void result.current.initiateBulk().catch(() => undefined);
+    });
+
+    // Capture awaitBulk while the initiation promise is still in flight.
+    let awaitErr: unknown = null;
+    let awaitP!: Promise<void>;
+    act(() => {
+      awaitP = result.current.awaitBulkIdleOrFlush();
+      void awaitP.catch((e) => {
+        awaitErr = e;
+      });
+    });
+
+    await act(async () => {
+      rejectFlush(new Error('flush boom'));
+      await awaitP.catch(() => undefined);
+    });
+
+    expect(awaitErr).toBeNull();
+    expect(commitCalls).toEqual([]);
+    expect(result.current.bulk.phase).toBe('idle');
+  });
+
   it('bulk×unmount while holding: fires item 1 only; remainder stays selected', async () => {
     const { result, unmount } = renderBulk();
     await act(async () => {

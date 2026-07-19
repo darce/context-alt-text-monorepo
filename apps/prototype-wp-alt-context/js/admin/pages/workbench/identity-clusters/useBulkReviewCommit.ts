@@ -210,6 +210,13 @@ export const useBulkReviewCommit = ({
   const nextEntryIdRef = React.useRef(1);
   const idleWaitersRef = React.useRef<(() => void)[]>([]);
   const bulkInitiateInFlightRef = React.useRef(false);
+  /**
+   * S3-02/GROK-03: the promise of an in-flight initiateBulk (flushing the held single,
+   * about to open the bulk hold). Phase is still 'idle' during this window, so
+   * awaitBulkIdleOrFlush must await THIS before checking holding/committing — else a
+   * concurrent single interleaves with the opening bulk (TOCTOU on the pending gate).
+   */
+  const initiatePromiseRef = React.useRef<Promise<void> | null>(null);
   const selectedIdsRef = React.useRef(selectedIds);
   selectedIdsRef.current = selectedIds;
   const onSelectedIdsChangeRef = React.useRef(onSelectedIdsChange);
@@ -564,40 +571,54 @@ export const useBulkReviewCommit = ({
     }
 
     bulkInitiateInFlightRef.current = true;
+    // S3-02/GROK-03: mark bulk active SYNCHRONOUSLY at latch-arm (not only via the
+    // render-body OR of bulkInitiatePending). A same-turn scheduleCommit fired before the
+    // re-render would otherwise still read isBulkActiveRef.current===false, take the idle
+    // openHold path, and skip awaitBulk entirely. Next render recomputes it from phase.
+    isBulkActiveRef.current = true;
     if (mountedRef.current) {
       setBulkInitiatePending(true);
     }
 
-    try {
-      // Snapshot after latch; re-resolve post-flush (BR-47).
-      const prior = await flushHeldSingleRef.current();
-      if (prior?.outcome === 'failed') {
-        return;
-      }
+    // S3-02/GROK-03: publish the initiation promise BEFORE the first await so a concurrent
+    // awaitBulkIdleOrFlush (single/person busy path) can serialize behind it. The IIFE runs
+    // synchronously up to `await flushHeldSingle`, and no await sits between setting the
+    // in-flight latch and assigning this ref, so both are visible atomically to waiters.
+    const run = (async (): Promise<void> => {
+      try {
+        // Snapshot after latch; re-resolve post-flush (BR-47).
+        const prior = await flushHeldSingleRef.current();
+        if (prior?.outcome === 'failed') {
+          return;
+        }
 
-      if (!mountedRef.current) {
-        return;
-      }
+        if (!mountedRef.current) {
+          return;
+        }
 
-      // BR-47(a): drop the just-committed single id from selection + items.
-      if (prior?.outcome === 'committed') {
-        dropFromSelection(prior.suggestionId);
-      }
+        // BR-47(a): drop the just-committed single id from selection + items.
+        if (prior?.outcome === 'committed') {
+          dropFromSelection(prior.suggestionId);
+        }
 
-      const liveIds = [...selectedIdsRef.current];
-      let items = resolveItemsRef.current(liveIds);
-      if (prior?.outcome === 'committed') {
-        items = items.filter((i) => i.suggestionId !== prior.suggestionId);
-      }
-      if (items.length === 0) {
-        return;
-      }
+        const liveIds = [...selectedIdsRef.current];
+        let items = resolveItemsRef.current(liveIds);
+        if (prior?.outcome === 'committed') {
+          items = items.filter((i) => i.suggestionId !== prior.suggestionId);
+        }
+        if (items.length === 0) {
+          return;
+        }
 
-      // Open hold synchronously — do not await the hold lifetime.
-      openBulkHold(items);
-    } finally {
-      clearBulkInitiateLatch();
-    }
+        // Open hold synchronously — do not await the hold lifetime.
+        openBulkHold(items);
+      } finally {
+        clearBulkInitiateLatch();
+        initiatePromiseRef.current = null;
+      }
+    })();
+    initiatePromiseRef.current = run;
+    await run;
   }, [clearBulkInitiateLatch, dropFromSelection, openBulkHold]);
 
   const undoBulk = React.useCallback((): void => {
@@ -641,6 +662,19 @@ export const useBulkReviewCommit = ({
   );
 
   const awaitBulkIdleOrFlush = React.useCallback(async (): Promise<void> => {
+    // S3-02/GROK-03: an initiate is mid-flush (phase still 'idle', hold not yet open).
+    // Wait for it to settle before inspecting phase, otherwise this returns a no-op and
+    // the caller's single/person commit interleaves with the opening bulk sequence.
+    const pendingInitiate = initiatePromiseRef.current;
+    if (pendingInitiate) {
+      // Swallow an initiation failure: awaitBulk must resolve to a deterministic phase
+      // check, never reject into the caller's commit path. run's finally clears state.
+      try {
+        await pendingInitiate;
+      } catch {
+        // Initiation errored (no hold opened) — fall through; phase is idle → no-op.
+      }
+    }
     if (phaseRef.current === 'holding' && heldBulkRef.current) {
       await fireHeldBulk({ limitToFirstOnly: false, updateUi: true });
       return;

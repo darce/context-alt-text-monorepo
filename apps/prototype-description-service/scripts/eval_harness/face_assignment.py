@@ -385,17 +385,24 @@ def open_set_counts_at_tau(
 
 
 def _largest_contiguous_plateau_indices(values: Sequence[float], target: float) -> list[int]:
-    """Indices of the longest contiguous run where values[i] == target."""
+    """Indices of the longest contiguous run where values[i] == target.
+
+    On a LENGTH TIE between two equal-length runs, keep the LATER (higher-index)
+    run. Since ``TAU_GRID`` is ascending, higher index == larger τ, so this
+    honors §E's "residual ties → the larger τ" ACROSS equal-length plateaus, not
+    only within one (the ``>=`` — a strict ``>`` would keep the earliest /
+    most-permissive plateau, the false-accept bias §E forbids).
+    """
     best_run: list[int] = []
     current: list[int] = []
     for i, v in enumerate(values):
         if v == target:
             current.append(i)
         else:
-            if len(current) > len(best_run):
+            if len(current) >= len(best_run):
                 best_run = current
             current = []
-    if len(current) > len(best_run):
+    if len(current) >= len(best_run):
         best_run = current
     return best_run
 

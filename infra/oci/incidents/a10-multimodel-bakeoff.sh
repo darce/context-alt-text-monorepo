@@ -8,8 +8,11 @@
 # (docs/tasks/vlm/multi-model-bakeoff-plan-2026-07-16.md) names the HF repos but
 # exact filenames MUST be verified on each repo page (VLM tooling moves weekly).
 # The 30B control is NOT re-run here — its run-record already exists.
-# Requires llama.cpp >= b6887 on the box (Qwen3-VL vision). A wrong URL or an
-# unsupported-vision build fails that model loudly; the loop continues to the next.
+# Requires llama.cpp >= b6887 on the box (Qwen3-VL vision). The Qwen3.6 candidate
+# (qwen3_5-arch VLM) needs a NEWER llama.cpp build than b6887 — verify the box's
+# build serves Qwen3.6 vision before the run (a stale build fails it loudly; the
+# loop continues to the next model). A wrong URL or an unsupported-vision build
+# fails that model loudly; the loop continues to the next.
 set -uo pipefail
 
 PRIV_IP="${1:?usage: a10-multimodel-bakeoff.sh <A10_PRIVATE_IP>}"
@@ -22,7 +25,12 @@ export GOLDEN_IMAGES_DIR="/Volumes/Butter/WP/vlm/app/public/wp-content/uploads"
 SSHJ=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=12 -J "$JUMP" ubuntu@"$PRIV_IP")
 
 # label | gguf_url | mmproj_url | model_id | quant   (VERIFY URLs before running)
+# Qwen3.6-27B UD-Q4 (~17.6GB weights + ~0.9GB mmproj) is the headline A10 upgrade
+# candidate vs the 30B-A3B control — fits 24GB VRAM with 8192 ctx (VECVLM-1 assessment,
+# docs/assessments/current/vector-store-and-vlm-upgrade-evaluation-2026-07-18.md).
+# Filenames verified on the unsloth repo 2026-07-18; re-verify (VLM tooling moves weekly).
 MODELS=(
+  "qwen36-27b|https://huggingface.co/unsloth/Qwen3.6-27B-GGUF/resolve/main/Qwen3.6-27B-UD-Q4_K_XL.gguf|https://huggingface.co/unsloth/Qwen3.6-27B-GGUF/resolve/main/mmproj-F16.gguf|Qwen3.6-27B|UD-Q4_K_XL"
   "qwen8b|<TODO Qwen3-VL-8B-Instruct Q5_K_M GGUF url>|<TODO mmproj url>|Qwen3-VL-8B-Instruct|Q5_K_M"
   "minicpm45|<TODO MiniCPM-V-4_5 Q5 GGUF url>|<TODO mmproj url>|MiniCPM-V-4_5|Q5_K_M"
   "gemma4-12b|<TODO gemma-4-12b-it Q6 GGUF url>|<TODO mmproj url>|gemma-4-12b-it|Q6_K"

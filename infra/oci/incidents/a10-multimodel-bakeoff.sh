@@ -37,10 +37,19 @@ mkdir -p "$BENCH_DIR/reports"
 #   qwen36-35b-a3b MoE 35B/3B-active, UD-Q3_K_XL ~16.8GB + mmproj ~0.9GB — A10-deployable
 #                  quant (UD-Q4 22.4GB is too tight for 24GB VRAM w/ mmproj+KV; that tier
 #                  needs A10.2 48GB / A100). Q3 keeps 8192 ctx headroom.
-# Filenames verified on the unsloth repos 2026-07-18; re-verify (VLM tooling moves weekly).
+#   joycaption-b1  CAPTION-SPECIALIZED 8B (Llama 3.1 + LLaVA), Q8_0 ~8.5GB — near-lossless,
+#                  fits A10 easily. Different design point (tuned for dense captions, not a
+#                  general instruct-VLM). LICENSE: Llama 3.1 Community License governs the
+#                  derivative (OK <700M MAU, needs "Built with Llama" attribution) — the
+#                  author's "no restrictions on weights" does NOT override the base license.
+#                  Run on the SAME v3 prompt as all candidates for comparability; its
+#                  instruction-obedience (roster-name weaving + naming-policy compliance +
+#                  Easy-Wrong traps) is the make-or-break metric, not raw caption richness.
+# Filenames verified on the source repos 2026-07-19; re-verify (VLM tooling moves weekly).
 MODELS=(
   "qwen36-27b|https://huggingface.co/unsloth/Qwen3.6-27B-GGUF/resolve/main/Qwen3.6-27B-UD-Q4_K_XL.gguf|https://huggingface.co/unsloth/Qwen3.6-27B-GGUF/resolve/main/mmproj-F16.gguf|Qwen3.6-27B|UD-Q4_K_XL"
   "qwen36-35b-a3b|https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-Q3_K_XL.gguf|https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/mmproj-F16.gguf|Qwen3.6-35B-A3B|UD-Q3_K_XL"
+  "joycaption-b1|https://huggingface.co/concedo/llama-joycaption-beta-one-hf-llava-mmproj-gguf/resolve/main/Llama-Joycaption-Beta-One-Hf-Llava-Q8_0.gguf|https://huggingface.co/concedo/llama-joycaption-beta-one-hf-llava-mmproj-gguf/resolve/main/llama-joycaption-beta-one-llava-mmproj-model-f16.gguf|llama-joycaption-beta-one|Q8_0"
   "qwen8b|<TODO Qwen3-VL-8B-Instruct Q5_K_M GGUF url>|<TODO mmproj url>|Qwen3-VL-8B-Instruct|Q5_K_M"
   "minicpm45|<TODO MiniCPM-V-4_5 Q5 GGUF url>|<TODO mmproj url>|MiniCPM-V-4_5|Q5_K_M"
   "gemma4-12b|<TODO gemma-4-12b-it Q6 GGUF url>|<TODO mmproj url>|gemma-4-12b-it|Q6_K"

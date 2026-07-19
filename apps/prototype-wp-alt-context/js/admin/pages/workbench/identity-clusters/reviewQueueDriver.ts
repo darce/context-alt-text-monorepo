@@ -361,10 +361,11 @@ export const emptyNextAction = (reason: NoneReason): WorkbenchNextAction => ({
 /**
  * PR-54 index semantics (driver-level, pure).
  *
- * - Successful commit does **not** increment the index: removal advances the
- *   queue. Use `removeAtQueueCursor` — it returns the post-removal items and a
- *   range-safe cursor (same slot when a later item slides in; clamped when the
- *   removed item was the tail).
+ * - Successful commit does **not** increment the index: the item leaves the
+ *   review queue by cache removal (removePendingSuggestionFromCache in
+ *   useSuggestionReviewMutations), which advances the queue; the former next item
+ *   slides into the same slot. The driver only clamps a restored index (see
+ *   clampQueueIndex) — it does not own the removal.
  * - prev/next are the **only** intentional index steppers; both are range-safe.
  * - A restored index clamps to `min(index, length - 1)`; empty → 0 (empty state).
  */
@@ -403,36 +404,3 @@ export const nextQueueIndex = (index: number, length: number): number => {
   const clamped = clampQueueIndex(index, length);
   return Math.min(clamped + 1, length - 1);
 };
-
-/**
- * Successful commit/removal: drop the item at `index` and return a cursor-safe
- * result. The returned `index` is `clampQueueIndex(index, items.length)` after
- * removal:
- * - head/mid removal: same index now points at the former next item
- * - last-item removal: cursor lands on the new last item
- * - emptied queue: index is 0 (empty-state handling remains a caller obligation)
- * - out-of-bounds index: no-op copy of items; cursor clamped to the current length
- */
-export const removeAtQueueCursor = <T>(
-  items: readonly T[],
-  index: number,
-): { items: T[]; index: number } => {
-  if (index < 0 || index >= items.length) {
-    return {
-      items: [...items],
-      index: clampQueueIndex(index, items.length),
-    };
-  }
-  const nextItems = items.filter((_, i) => i !== index);
-  return {
-    items: nextItems,
-    index: clampQueueIndex(index, nextItems.length),
-  };
-};
-
-/**
- * Items-only removal helper. Prefer `removeAtQueueCursor` when the caller also
- * holds a cursor — this path does not return a post-removal index.
- */
-export const removeAtQueueIndex = <T>(items: readonly T[], index: number): T[] =>
-  removeAtQueueCursor(items, index).items;

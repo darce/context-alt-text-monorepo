@@ -39,6 +39,9 @@ class IdentityMemberSnapshotMergerTest extends TestCase
                     'identity_uuid' => 'identity-merger-1',
                     'cluster_uuid' => 'cluster-merger',
                     'attachment_id' => 5,
+                    // Discrimination guard: snapshot assigned_at must land in the INSERT
+                    // (a NULL/omitted write would break ORDER BY assigned_at ASC).
+                    'assigned_at' => '2024-06-01T10:15:30+00:00',
                 ],
             ],
             7
@@ -46,13 +49,17 @@ class IdentityMemberSnapshotMergerTest extends TestCase
 
         global $wpdb;
         $insertCount = 0;
+        $insert = '';
         foreach ($wpdb->queries as $query) {
             if (str_contains($query, 'INSERT INTO `wp_acx_identity_members`')) {
                 ++$insertCount;
+                $insert = $query;
             }
         }
 
         $this->assertSame(1, $insertCount);
+        $this->assertStringContainsString('assigned_at', $insert);
+        $this->assertStringContainsString('2024-06-01 10:15:30', $insert);
     }
 
     public function testMergeSnapshotGatesMemberDataAndKeepsProjectionVersionMonotonic(): void

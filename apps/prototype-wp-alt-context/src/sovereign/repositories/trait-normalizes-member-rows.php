@@ -9,6 +9,7 @@ use function array_filter;
 use function array_map;
 use function array_unique;
 use function array_values;
+use function gmdate;
 use function is_array;
 use function is_numeric;
 use function is_string;
@@ -16,6 +17,7 @@ use function max;
 use function preg_match;
 use function round;
 use function sprintf;
+use function strtotime;
 use function trim;
 use function wp_json_encode;
 
@@ -34,6 +36,39 @@ trait NormalizesMemberRows {
 		}
 
 		return (string) (float) $value;
+	}
+
+	/**
+	 * Normalize recognition assigned_at (ISO-8601 or MySQL datetime) to UTC MySQL form.
+	 * Falls back to created_at, then $fallback_utc, so ORDER BY assigned_at never sees NULL
+	 * (rg-005 / CON-11 paging determinism).
+	 *
+	 * @param array<string,mixed> $member
+	 */
+	public function normalize_assigned_at( array $member, string $fallback_utc ): string {
+		foreach ( array( $member['assigned_at'] ?? null, $member['created_at'] ?? null ) as $candidate ) {
+			if ( ! is_string( $candidate ) ) {
+				continue;
+			}
+
+			$trimmed = trim( $candidate );
+			if ( '' === $trimmed ) {
+				continue;
+			}
+
+			// Already MySQL-shaped (projection re-hydrate path).
+			if ( 1 === preg_match( '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $trimmed ) ) {
+				return $trimmed;
+			}
+
+			// Recognition export uses isoformat() (e.g. 2024-01-15T12:30:00+00:00).
+			$timestamp = strtotime( $trimmed );
+			if ( false !== $timestamp ) {
+				return gmdate( 'Y-m-d H:i:s', $timestamp );
+			}
+		}
+
+		return $fallback_utc;
 	}
 
 	/**

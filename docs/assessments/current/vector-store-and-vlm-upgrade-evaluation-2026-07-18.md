@@ -15,7 +15,7 @@
 
 Three questions, three answers:
 
-1. **Vector stores (turbovec / qdrant / faiss) — no adoption.** The embedding store is not an ANN-at-scale problem. It is **incremental online clustering of hundreds-to-low-thousands of 128-dim unit vectors per tenant (≤1000 clusters), done transactionally beside RLS/jobs in the same Postgres**. At that size exact cosine is sub-millisecond; pgvector `ivfflat` is already sufficient and arguably over-indexed. Every external option adds a second store (or a non-transactional index file) to keep consistent with Postgres for **zero measurable latency gain**. Revisit only if a single tenant credibly crosses **~100k–1M** vectors. The one narrow near-term use is **`faiss.Kmeans` as an in-process algorithm helper** if hand-rolled clustering is ever outgrown — not as storage.
+1. **Vector stores (turbovec / qdrant / faiss) — no adoption.** The embedding store is not an ANN-at-scale problem. It is **incremental online clustering of hundreds-to-low-thousands of 512-dim unit vectors per tenant (≤1000 clusters), done transactionally beside RLS/jobs in the same Postgres**. At that size exact cosine is sub-millisecond; pgvector `ivfflat` is already sufficient and arguably over-indexed. Every external option adds a second store (or a non-transactional index file) to keep consistent with Postgres for **zero measurable latency gain**. Revisit only if a single tenant credibly crosses **~100k–1M** vectors. The one narrow near-term use is **`faiss.Kmeans` as an in-process algorithm helper** if hand-rolled clustering is ever outgrown — not as storage.
 
 2. **VLM quantizations (Qwen3.6 / Qwen3.5 / MTP) — yes, benchmark, into the existing harness.** Qwen3.6-27B (dense VLM) and Qwen3.6/3.5-**35B-A3B** (MoE VLM) are real image-in→text-out models that fit the tiers we already run. They are legitimate upgrade candidates over the current `Qwen3-VL-30B-A3B @ Q4_K_M`, and the repo **already has the bake-off harness** (`scripts/eval_harness/bakeoff.py`, `infra/oci/incidents/a10-multimodel-bakeoff.sh`) to score them. Benchmark **caption quality on ACX images + s/img + cost/image**, not spec sheets — because **no vendor vision benchmarks exist** for these families. **MTP is worth a throughput leg** (llama.cpp-native, GGUF, 1.4–2.2× claimed, no accuracy loss) but is memory-bandwidth-bound, so measure it on the A1 CPU, not just the A10. Client fine-tunes are viable (Qwen3.5 VLM LoRA) but **out of scope for general use** — pull them in per paying client, bf16 LoRA only (never QLoRA-4bit on Qwen3.5).
 
@@ -44,7 +44,7 @@ Headroom shapes exist (`VM.GPU.A100.1` 40 GB, `VM.GPU.A10.2` 48 GB, and A100/H10
 
 ### A.1 What the workload actually is
 
-- **Storage/index**: 128-dim unit-normalized embeddings in Postgres via `pgvector`, `ivfflat` + `vector_cosine_ops` (`db/models/identity.py:98-99`, `001_identity_schema.py:1093,1198,1778`). Dimension is single-rooted through `PGVECTOR_DIM` (`db/settings.py`).
+- **Storage/index**: 512-dim unit-normalized embeddings in Postgres via `pgvector`, `ivfflat` + `vector_cosine_ops` (`db/models/identity.py:98-99`, `001_identity_schema.py:1093,1198,1778`). Dimension is single-rooted through `PGVECTOR_DIM` (`db/settings.py`, default `512` — the InsightFace `buffalo_l` model dimension; `128` is only the opt-in dark SFace `face_pipeline` profile).
 - **Access pattern**: **incremental online clustering** — representatives loaded per cluster (`RepresentativeCache`), in-memory cosine comparison, assign / merge / split (`recognition/application/tasks/clustering.py`, `.../suggestions/label_inference.py`). Batch surfacing bounded to `limit=1000` clusters, `chunk_target=1000` identities.
 - **Scale**: hundreds-to-low-thousands of vectors per tenant, **≤1000 clusters/tenant**. Not high-QPS ANN over millions.
 - **Coupling**: assign/merge/split are **transactional beside RLS, tenants, jobs** in the same Postgres. ACID + row-level security + joins in one store is a feature, not an accident.
@@ -56,7 +56,7 @@ At this size an **exact** cosine scan over a tenant's vectors is well under a mi
 | Project | License | In-proc / server | aarch64 | Index model | Verdict | Threshold to reconsider |
 | --- | --- | --- | --- | --- | --- | --- |
 | **pgvector** (incumbent) | permissive | in Postgres | ✅ | ivfflat / HNSW | **Keep — sufficient** | — (consider ivfflat→HNSW, or drop the index for exact scan, before anything external) |
-| **turbovec** | MIT | in-process (Rust+PyO3) | ✅ NEON first-class | **flat quantized scan only** (2/4-bit; no HNSW/IVF), v0.1.x experimental | **No** | Never for transactional clustering; its niche is RAM-bound flat scan over **many millions** of high-dim (768–3072d) vectors. We have 24 GB and a few thousand 128-d vectors — nothing to compress. |
+| **turbovec** | MIT | in-process (Rust+PyO3) | ✅ NEON first-class | **flat quantized scan only** (2/4-bit; no HNSW/IVF), v0.1.x experimental | **No** | Never for transactional clustering; its niche is RAM-bound flat scan over **many millions** of high-dim (768–3072d) vectors. We have 24 GB and a few thousand 512-d vectors — below that high-dim niche and 3–4 orders of magnitude below its millions-of-vectors floor, so nothing to compress. |
 | **faiss** (CPU) | MIT | in-process | ✅ manylinux aarch64 wheels | broadest: Flat/IVF/HNSW/PQ + **`faiss.Kmeans`** | **No for storage; maybe `Kmeans` helper** | Only if hand-rolled clustering is outgrown and we want a mature in-process k-means; still adds a non-transactional index beside PG. |
 | **qdrant** | Apache-2.0 | **separate server** | ✅ | HNSW + scalar/PQ/binary quant; GPU optional (index-only) | **No — operational overkill** | ~tens of millions of vectors and/or sustained high ANN QPS, or wanting vector search as its own scalable service decoupled from PG. |
 
@@ -66,7 +66,7 @@ At this size an **exact** cosine scan over a tenant's vectors is well under a mi
 
 - **Do nothing to the store now.** pgvector covers it.
 - **Cheap, optional pgvector tune** if a tenant grows: switch `ivfflat`→`hnsw` (higher recall, no list-tuning below 1M), or drop the index entirely and let PG do exact cosine until ~100k vectors/tenant.
-- **File `faiss.Kmeans`** as the fallback *algorithm* (not store) if clustering quality/purity ever needs a library instead of the current bespoke path — consistent with the FIR assessment's `chinese-whispers` note as a clustering alternative at 128-D.
+- **File `faiss.Kmeans`** as the fallback *algorithm* (not store) if clustering quality/purity ever needs a library instead of the current bespoke path — consistent with the FIR assessment's `chinese-whispers` note as a clustering alternative at 512-D.
 - **No benchmark spend** on turbovec/qdrant/faiss-as-store at current scale; the migration + dual-write consistency cost dominates any negligible latency delta.
 
 ---
@@ -129,7 +129,7 @@ All candidates serve on one caught A10 in turn (`llama.cpp --parallel 1`, `--ctx
 
 **Fair handling of "needs better prompting":** Stage 1 runs JoyCaption on the standard v3 prompt (comparable to all candidates — measures out-of-the-box contract obedience). Stage 2 (optional, **reported separately as non-comparable**) tries a JoyCaption-specific prompt to find its ceiling. Per-model prompt tuning is a finalist follow-up, never part of the apples-to-apples screen. (LLaVA-arch → the box's b6887 build serves it; no llama.cpp-version caveat, unlike Qwen3.6.)
 
-Notes: **35B-A3B UD-Q4 (22.4 GB) is deliberately *not* the bake-off quant** — with mmproj+KV it overruns 24 GB VRAM; that tier needs A10.2 48 GB / A100, so the A10-deployable **UD-Q3_K_XL** is used (fair to the deployment target). The **27B (dense) vs 35B-A3B (MoE) pairing is the interesting architecture read**: does MoE-3B-active caption quality beat a dense-27B at equal footprint on ACX images?
+Notes: **35B-A3B UD-Q4 (22.4 GB) is deliberately *not* the bake-off quant** — with mmproj+KV it overruns 24 GB VRAM; that tier needs A10.2 48 GB / A100, so the A10-deployable **UD-Q3_K_XL** is used (fair to the deployment target). The **27B (dense) vs 35B-A3B (MoE) pairing is the interesting architecture read**: does MoE-3B-active caption quality beat a dense-27B at equal footprint on ACX images? **Confound caveat:** on the A10 this runs 27B@UD-Q4_K_XL vs 35B-A3B@UD-Q3_K_XL, so the pairing varies *both* architecture and quant level — a quality delta ranks the two deployable configs but **cannot isolate dense-vs-MoE** (a Q3-vs-Q4 gap could be quantization loss, per B.3's undocumented-vision-quant caveat). Isolating architecture cleanly would need equal-quant on a 48 GB A10.2 / A100 shape.
 
 #### Sample size — increase, but stage it (don't flat-bump all candidates)
 
@@ -147,7 +147,7 @@ I.e. **yes, increase samples — to ~25–30 tagged for the screen, and to the f
 
 ### B.4 MTP (Multi-Token Prediction) — worth a throughput leg
 
-- Merged in **llama.cpp**, **GGUF-native** (prebuilt `*-MTP-GGUF` repos), ~**1.4–2.2× faster**, **no accuracy change** (speculative-decode: only verified tokens kept), ~1–2 GB extra RAM/VRAM.
+- Merged in **llama.cpp**, **GGUF-native** (prebuilt `*-MTP-GGUF` repos), ~**1.4–2.2× faster**, **accuracy-preserving only if verified-mode spec-decode** (kept tokens verified against the target distribution — llama.cpp MTP acceptance modes must be *confirmed* with an MTP-on vs MTP-off caption parity check on the golden manifest, not assumed), ~1–2 GB extra RAM/VRAM.
 - **Caveat that changes where to test it**: gains are **memory-bandwidth-bound**; the doc warns low-bandwidth hardware sees smaller speedups. The A1 CPU is exactly that class — so **benchmark MTP on the A1**, not just the A10, before crediting the headline number. On the A10 expect closer to published.
 - Cheap to add: it is a decoding flag + a swapped GGUF on candidates already in the bake-off.
 
@@ -239,7 +239,7 @@ In short: the grounding these architectures promise is **already present in a hi
 
 1. **Vector store**: no change. pgvector is sufficient. Keep `faiss.Kmeans` on the shelf as an algorithm fallback; keep `ivfflat→hnsw` / drop-index as cheap levers for a >100k-vector tenant. (COST-06: eliminate work before buying.)
 2. **Bench leg (do this one)**: add `Qwen3.6-27B UD-Q4` + `Qwen3.6-35B-A3B` to the existing A10 bake-off vs the 30B-A3B control; score **caption quality + s/img + cost/img** on the golden manifest. Bounded, rides built harness. (PERF-06: measure, don't guess.)
-3. **MTP leg**: add an MTP GGUF throughput measurement on **both A1 and A10** — cheap, llama.cpp-native, potential 1.4–2.2× with no quality cost.
+3. **MTP leg**: add an MTP GGUF throughput measurement on **both A1 and A10** — cheap, llama.cpp-native, potential 1.4–2.2×, quality-neutral **pending an MTP-on vs MTP-off caption parity check** (verified-mode spec-decode is lossless only if confirmed, not assumed).
 4. **A1 inline VLM**: if the CPU inline caption path wants better quality than Florence-2-base, benchmark **Qwen3.5-9B (Q4/Q6)** and **35B-A3B (Q2/Q3 MoE)** against the 20 s/30 s budgets before adopting.
 5. **Client fine-tune**: keep out of general scope; instantiate per paying client as its own task, bf16 LoRA, never QLoRA-4bit, GGUF export behind the profile/provenance seam.
 6. **Frontier tier (GLM-5.2/Inkling/DeepSeek-V4)**: no action. Watch Inkling only as a future frontier-multimodal item, not an alt-text upgrade.

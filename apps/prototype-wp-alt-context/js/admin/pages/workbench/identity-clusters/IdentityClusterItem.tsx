@@ -6,6 +6,7 @@ import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
 import type { MergeClusterResponse } from '../../../api/recognition';
+import type { ProjectedSuggestion } from './suggestionProjection';
 import type { ClusterGroup } from './types';
 import { filterEditableClusterMatch, formatClusterLabel, getEditableClusterId } from './utils';
 import { useClusterEditState } from './useClusterEditState';
@@ -37,6 +38,8 @@ interface IdentityClusterItemProps {
   cluster: ClusterGroup;
   canLabel?: boolean;
   canMutate?: boolean;
+  /** Top server-ranked inline suggestion for this cluster's anchor identity. */
+  inlineSuggestionMatch?: ProjectedSuggestion;
 }
 
 /**
@@ -52,6 +55,7 @@ export const IdentityClusterItem = ({
   cluster,
   canLabel = true,
   canMutate = true,
+  inlineSuggestionMatch,
 }: IdentityClusterItemProps): React.JSX.Element => {
   // Compute derived values
   const derivedLabel = React.useMemo(
@@ -73,6 +77,11 @@ export const IdentityClusterItem = ({
 
   const representative = cluster.members[0];
   const anchorIdentityId = representative?.identity_id;
+
+  // Inline "Is this X?" prompt renders only for unlabeled, mutable clusters.
+  // The match is fetched once at the list level (batched) and supplied by prop.
+  const showInlinePrompt = Boolean(!cluster.label && anchorIdentityId && canMutate);
+
   const [isAnchorModalOpen, setIsAnchorModalOpen] = React.useState(false);
   const [isWrongPersonDialogOpen, setIsWrongPersonDialogOpen] = React.useState(false);
   const [matchedCluster, setMatchedCluster] = React.useState<{ id: string; label: string } | null>(null);
@@ -148,7 +157,7 @@ export const IdentityClusterItem = ({
     onAbort: resetSaveStatus,
   });
 
-  const { handleCancel, handleConfirmSuggestion, handleSave } = useClusterSaveHandlers({
+  const { handleCancel, handleConfirmSuggestion, handleSave, handlePersonSelect } = useClusterSaveHandlers({
     clusterLabel: cluster.label,
     members: cluster.members,
     editableClusterId,
@@ -184,14 +193,25 @@ export const IdentityClusterItem = ({
 
   // Proactive matching while typing
   React.useEffect(() => {
+    // Bail paths must abort any in-flight lookup so a late response cannot re-arm
+    // matchedCluster after we cleared it (UXP-3-BR-45).
+    const abortInFlightMatch = () => {
+      matchAbortRef.current?.abort();
+      matchAbortRef.current = null;
+    };
+
     if (!editState.isEditing) {
+      abortInFlightMatch();
       setMatchedCluster(null);
       return;
     }
 
     const trimmed = editState.labelInput.trim();
     const currentLabel = cluster.label ?? '';
-    if (!trimmed || trimmed.toLowerCase() === currentLabel.toLowerCase()) {
+    // Exact bail (B6 / UXP-3-BR-39): case-only edits must still run proactive match so
+    // "bob"→"Bob" against a different "Bob" cluster arms the Merge-with preview.
+    if (!trimmed || trimmed === currentLabel) {
+      abortInFlightMatch();
       setMatchedCluster(null);
       return;
     }
@@ -204,7 +224,10 @@ export const IdentityClusterItem = ({
       try {
         const match = await findClusterByLabel(trimmed, abortController.signal);
         if (!abortController.signal.aborted) {
-          setMatchedCluster(filterEditableClusterMatch(match, editableClusterId));
+          // Mirror save-path BR-40: remote exact-dupe (match.label === currentLabel) renames,
+          // so the preview must not promise Merge/Assign (UXP-3-BR-44).
+          const filtered = filterEditableClusterMatch(match, editableClusterId);
+          setMatchedCluster(filtered?.label === currentLabel ? null : filtered);
         }
       } catch {
         // Ignore
@@ -260,17 +283,6 @@ export const IdentityClusterItem = ({
     [cluster, mutations],
   );
 
-  const handleToggleRepresentativePin = React.useCallback(
-    (representative: (typeof cluster.members)[number], nextPinned: boolean) => {
-      const representativeId = representative.representative_id ?? representative.identity_id;
-      if (!cluster.clusterId || !representativeId) {
-        return;
-      }
-      mutations.pinRepresentative(representativeId, nextPinned);
-    },
-    [cluster, mutations],
-  );
-
   const saveLabel = React.useMemo(() => {
     if (saveStatus === 'queued') {
       return __('Saving…', 'alt-context');
@@ -288,12 +300,7 @@ export const IdentityClusterItem = ({
 
   return (
     <div className={`acx-identity-cluster ${editState.isEditing ? 'acx-identity-cluster--editing' : ''}`}>
-      <ClusterPreview
-        representative={representative}
-        memberCount={cluster.members.length}
-        onTogglePin={canMutate ? handleToggleRepresentativePin : undefined}
-        isPinning={mutations.isPinningRepresentative}
-      />
+      <ClusterPreview representative={representative} memberCount={cluster.members.length} />
 
       <div className="acx-identity-cluster__info">
         {!editState.isEditing ? (
@@ -329,9 +336,9 @@ export const IdentityClusterItem = ({
               />
             )}
             {/* Show inline "Is this X?" prompt for unlabeled items */}
-            {!cluster.label && anchorIdentityId && canMutate && (
+            {showInlinePrompt && (
               <InlineSuggestionPrompt
-                identityId={anchorIdentityId}
+                match={inlineSuggestionMatch}
                 onConfirm={(clusterId, label) => void handleConfirmSuggestion(clusterId, label)}
                 onReject={startEditing}
                 isPending={mutations.isPending}
@@ -346,6 +353,7 @@ export const IdentityClusterItem = ({
             isLoading={suggestionsLoading}
             isPending={mutations.isPending || saveStatus !== 'idle'}
             onSave={(labelOverride) => void handleSave(labelOverride)}
+            onPersonSelect={handlePersonSelect}
             onConfirmSuggestion={(clusterId, label) => void handleConfirmSuggestion(clusterId, label)}
             onCancel={handleCancel}
             onRejectSuggestion={(suggestionId) => mutations.rejectSuggestion(suggestionId)}

@@ -10,6 +10,7 @@ require_once __DIR__ . '/../sovereign/repositories/interface-identity-members-re
 require_once __DIR__ . '/../sovereign/repositories/class-identity-members-repository.php';
 require_once __DIR__ . '/../sovereign/repositories/interface-sync-state-repository.php';
 require_once __DIR__ . '/../sovereign/repositories/class-sync-state-repository.php';
+require_once __DIR__ . '/../sovereign/sync/class-outbox-drain.php';
 require_once __DIR__ . '/../sovereign/sync/interface-snapshot-projector.php';
 require_once __DIR__ . '/../sovereign/sync/class-snapshot-client.php';
 require_once __DIR__ . '/../sovereign/sync/class-snapshot-projector.php';
@@ -22,6 +23,7 @@ use AltContext\Sovereign\Repositories\ClustersRepository;
 use AltContext\Sovereign\Repositories\IdentityMembersRepository;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
+use AltContext\Sovereign\Sync\OutboxDrain;
 use AltContext\Sovereign\Sync\SyncPullResult;
 use AltContext\Sovereign\Sync\SyncPullJobFactory;
 use AltContext\Sovereign\Sync\SyncPullJob;
@@ -47,17 +49,20 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 	private SyncStateRepositoryInterface $sync_state_repository;
 	private ?SyncPullJobInterface $sync_pull_job;
 	private ?SyncPullJobFactory $sync_pull_job_factory;
+	private OutboxDrain $outbox_drain;
 	private ?string $sync_pull_job_error;
 	private bool $sync_pull_job_resolution_failed;
 
 	public function __construct(
 		?SyncStateRepositoryInterface $sync_state_repository = null,
 		?SyncPullJobInterface $sync_pull_job = null,
-		?SyncPullJobFactory $sync_pull_job_factory = null
+		?SyncPullJobFactory $sync_pull_job_factory = null,
+		?OutboxDrain $outbox_drain = null
 	) {
 		$this->sync_state_repository = $sync_state_repository ?? new SyncStateRepository();
 		$this->sync_pull_job = $sync_pull_job;
 		$this->sync_pull_job_factory = $sync_pull_job_factory;
+		$this->outbox_drain = $outbox_drain ?? new OutboxDrain();
 		$this->sync_pull_job_error = null;
 		$this->sync_pull_job_resolution_failed = false;
 	}
@@ -92,6 +97,16 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 				'permission_callback' => array( $this, 'can_manage_recognition' ),
 			)
 		);
+
+		register_rest_route(
+			'acx/v1',
+			'/recognition/sync/retry-failed',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'bulk_retry_failed_operations' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
 	}
 
 	public function get_sync_status( WP_REST_Request $request ): WP_REST_Response {
@@ -109,6 +124,35 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 
 	public function trigger_sync( WP_REST_Request $request ): WP_REST_Response {
 		return $this->run_sync_action( false );
+	}
+
+	/**
+	 * Requeue every failed outbox push for the tenant in one action (E15-35 Slice 2).
+	 *
+	 * The maintenance service (via the OutboxDrain delegator) paces the requeued rows
+	 * across drain cycles and schedules the next drain, so recovery starts promptly
+	 * without re-creating the incident's thundering herd.
+	 */
+	public function bulk_retry_failed_operations( WP_REST_Request $request ): WP_REST_Response {
+		$tenant_id = $this->get_tenant_id();
+		$requeued = $this->outbox_drain->retry_failed_operations_bulk( $tenant_id );
+		if ( false === $requeued ) {
+			return new WP_REST_Response(
+				array(
+					'code'    => 'acx_bulk_retry_failed',
+					'message' => 'Could not requeue failed sync operations.',
+				),
+				500
+			);
+		}
+
+		return new WP_REST_Response(
+			array(
+				'requeued'         => $requeued,
+				'failed_remaining' => $this->outbox_drain->count_failed_operations( $tenant_id ),
+			),
+			200
+		);
 	}
 
 	public function reset_mirror( WP_REST_Request $request ): WP_REST_Response {

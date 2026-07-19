@@ -27,6 +27,7 @@ async def create_identity(session, tenant_id: str, media_id: int = 1) -> str:
         tenant_id=uuid.UUID(tenant_id),
         media_id=media_id,
         embedding=[0.1] * 512,
+        embedding_model="buffalo_l@insightface",
         confidence=0.9,
         media_url="http://example.com/test.jpg",
         bbox_x=0,

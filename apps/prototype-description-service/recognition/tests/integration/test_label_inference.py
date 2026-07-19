@@ -152,6 +152,7 @@ async def test_infer_suggested_label_from_merge_suggestion(
         bbox_height=1,
         confidence=0.9,
         embedding=[0.1] * 512,
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add(rep_a)
 
@@ -222,6 +223,7 @@ async def test_infer_suggested_label_from_identity_match(
         bbox_height=1,
         confidence=1.0,
         embedding=[0.0] * 512,
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add(member_identity)
 
@@ -306,6 +308,7 @@ async def test_infer_suggested_label_from_accepted_member_suggestion_without_rep
         bbox_height=1,
         confidence=1.0,
         embedding=[0.0] * 512,
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add(member_identity)
     db_session.add(
@@ -397,6 +400,7 @@ async def test_infer_suggested_label_prefers_accepted_member_signal_over_conflic
         bbox_height=1,
         confidence=1.0,
         embedding=[0.0] * 512,
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add(member_identity)
     db_session.add(
@@ -474,6 +478,7 @@ async def test_infer_suggested_label_from_roster_match(
         bbox_height=1,
         confidence=1.0,
         embedding=[0.0] * 512,
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add(rep)
 
@@ -532,6 +537,7 @@ async def test_infer_suggested_label_uses_representative_table_when_missing_rep_
         bbox_height=1,
         confidence=1.0,
         embedding=[1.0] + [0.0] * 511,
+        embedding_model="buffalo_l@insightface",
     )
     labeled_cluster = IdentityCluster(
         id=uuid.uuid4(),
@@ -612,6 +618,7 @@ async def test_infer_suggested_label_does_not_raise_on_numpy_embedding(
         bbox_height=1,
         confidence=1.0,
         embedding=embedding_array.tolist(),
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add(rep_identity)
 

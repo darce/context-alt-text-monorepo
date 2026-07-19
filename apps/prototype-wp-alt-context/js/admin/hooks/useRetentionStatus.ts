@@ -24,6 +24,7 @@ import {
   type UpdateRetentionPolicyRequest,
 } from '../api/recognition';
 import { queryKeys } from '../api/queryKeys';
+import { gateRefetchInterval } from '../utils/recognitionCooldown';
 
 export const useRetentionStatus = () =>
   useQuery<RetentionStatusResponse>({
@@ -64,13 +65,16 @@ export const useExportJobStatus = (jobId: string | null): UseQueryResult<ExportJ
       return getExportJobStatus(jobId);
     },
     enabled: jobId !== null,
-    refetchInterval: (query) => {
+    // Gated on the shared recognition cooldown (UXP-2 slice 2, 7th poller): the
+    // 2s status poll reaches recognition via RetentionController::get_export_job_status
+    // (proxy_request to /retention/export/{id}/status), so a 429 must quiet it too.
+    refetchInterval: gateRefetchInterval((query) => {
       const status = query.state.data?.status;
       if (status === 'completed' || status === 'failed') {
         return false;
       }
       return 2000;
-    },
+    }),
   });
 
 export const useDownloadExportJobData = () =>

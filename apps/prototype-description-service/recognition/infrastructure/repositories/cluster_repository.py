@@ -109,6 +109,17 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         model = result.scalar_one_or_none()
         return self._to_domain(model) if model else None
 
+    async def get_by_ids(self, cluster_ids: Sequence[str]) -> list[IdentityCluster]:
+        """Fetch multiple clusters in one query (batched ``get_by_id``, UXP-2 3a)."""
+        cluster_uuids = [item for item in (_coerce_uuid(value) for value in cluster_ids) if item is not None]
+        if not cluster_uuids:
+            return []
+        stmt: Select[tuple[ClusterModel]] = (
+            select(ClusterModel).where(ClusterModel.id.in_(cluster_uuids)).options(selectinload(ClusterModel.members))
+        )
+        result = await self._session.execute(stmt)
+        return [self._to_domain(model) for model in result.scalars().all()]
+
     async def get_by_tenant(
         self,
         tenant_id: str,
@@ -869,6 +880,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         cluster_id: str,
         *,
         limit: int | None = None,
+        offset: int = 0,
     ) -> list[tuple[MediaIdentity, float]]:
         """Return identity ORM records with their membership similarity for a cluster.
 
@@ -877,6 +889,8 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         """
         if limit is not None and limit <= 0:
             return []
+        if offset < 0:
+            offset = 0
 
         stmt = (
             select(MediaIdentity, IdentityMemberModel.similarity)
@@ -884,6 +898,8 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             .where(IdentityMemberModel.cluster_id == _coerce_uuid(cluster_id))
             .order_by(IdentityMemberModel.assigned_at, IdentityMemberModel.identity_id)
         )
+        if offset:
+            stmt = stmt.offset(offset)
         if limit is not None:
             stmt = stmt.limit(limit)
         result = await self._session.execute(stmt)
@@ -1072,8 +1088,6 @@ class SqlAlchemyClusterRepository(ClusterRepository):
                             "yaw": float(identity.pose_yaw or 0),
                             "roll": float(identity.pose_roll or 0),
                         },
-                        "age": float(identity.age or 0),
-                        "gender": "male" if identity.gender == 1 else "female",
                         "det_score": float(identity.confidence),
                         "bbox_area": int(identity.bbox_width * identity.bbox_height),
                         "landmark_quality": float(identity.quality_score or 1.0),

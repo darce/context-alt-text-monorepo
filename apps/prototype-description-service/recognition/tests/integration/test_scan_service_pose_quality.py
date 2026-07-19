@@ -26,6 +26,7 @@ class PoseDetector(FaceDetectorProtocol):
                 pose_yaw=-7.5,
                 pose_roll=1.5,
                 landmark_quality=0.42,
+                model_id="stub-detector@test",
             )
         ]
 
@@ -48,6 +49,7 @@ class ReplayBoundaryDetector(FaceDetectorProtocol):
                 pose_yaw=-7.5,
                 pose_roll=1.5,
                 landmark_quality=0.42,
+                model_id="stub-detector@test",
             )
         ]
 

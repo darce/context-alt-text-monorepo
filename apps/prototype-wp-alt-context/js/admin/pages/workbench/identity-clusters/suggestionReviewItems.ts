@@ -1,45 +1,74 @@
-import type { PendingSuggestion } from '../../../api/recognition';
-import type { SuggestionReviewItem } from './SuggestionCards';
+import {
+  compareSuggestions,
+  isHumanLabeledTarget,
+  type ProjectedSuggestion,
+} from './suggestionProjection';
 
-export const buildSuggestionReviewItems = (assignmentSuggestions?: PendingSuggestion[]): SuggestionReviewItem[] => {
-  const sortedSuggestions = [...(assignmentSuggestions ?? [])].sort(
-    (a, b) => b.representative_similarity - a.representative_similarity,
+/** Review adapter always sets suggestionId from row.id; narrow for card/mutation consumers. */
+export interface ReviewSuggestion extends ProjectedSuggestion {
+  suggestionId: string;
+}
+
+export type SuggestionReviewItem =
+  | {
+      type: 'single';
+      score: number;
+      suggestion: ReviewSuggestion;
+    }
+  | {
+      type: 'group';
+      clusterId: string;
+      score: number;
+      label: string;
+      suggestions: ReviewSuggestion[];
+    };
+
+const hasSuggestionId = (item: ProjectedSuggestion): item is ReviewSuggestion =>
+  typeof item.suggestionId === 'string' && item.suggestionId.length > 0;
+
+export const buildSuggestionReviewItems = (
+  items?: readonly ProjectedSuggestion[],
+): SuggestionReviewItem[] => {
+  // Server already filters stricter; re-apply predicate + drop rows without suggestionId (no assert).
+  const eligible = (items ?? []).filter(
+    (item): item is ReviewSuggestion => hasSuggestionId(item) && isHumanLabeledTarget(item.label),
   );
-  const suggestionsByCluster = new Map<string, PendingSuggestion[]>();
+  const sortedSuggestions = [...eligible].sort(compareSuggestions);
+  const suggestionsByCluster = new Map<string, ReviewSuggestion[]>();
 
   for (const suggestion of sortedSuggestions) {
-    const existing = suggestionsByCluster.get(suggestion.suggested_cluster_id);
+    const existing = suggestionsByCluster.get(suggestion.clusterId);
     if (existing) {
       existing.push(suggestion);
     } else {
-      suggestionsByCluster.set(suggestion.suggested_cluster_id, [suggestion]);
+      suggestionsByCluster.set(suggestion.clusterId, [suggestion]);
     }
   }
 
-  const items: SuggestionReviewItem[] = [];
+  const reviewItems: SuggestionReviewItem[] = [];
   for (const [clusterId, suggestions] of suggestionsByCluster.entries()) {
     const firstSuggestion = suggestions[0];
-    const label = firstSuggestion.cluster_label ?? firstSuggestion.suggested_label ?? '';
+    const label = firstSuggestion.label ?? firstSuggestion.enrichment?.suggestedLabel ?? '';
 
     if (suggestions.length > 1 && label) {
-      items.push({
+      reviewItems.push({
         type: 'group',
         clusterId,
         label,
         suggestions,
-        score: Math.max(...suggestions.map((suggestion) => suggestion.representative_similarity)),
+        score: Math.max(...suggestions.map((suggestion) => suggestion.similarity)),
       });
       continue;
     }
 
     for (const suggestion of suggestions) {
-      items.push({
+      reviewItems.push({
         type: 'single',
-        score: suggestion.representative_similarity,
+        score: suggestion.similarity,
         suggestion,
       });
     }
   }
 
-  return items.sort((a, b) => b.score - a.score);
+  return reviewItems.sort((a, b) => b.score - a.score);
 };

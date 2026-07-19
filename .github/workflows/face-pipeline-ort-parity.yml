@@ -1,0 +1,97 @@
+name: Face Pipeline ORT Parity
+
+# Dedicated fail-closed YuNet/SFace ORT-vs-OpenCV parity gate (FIR3-BR-01).
+# Ordinary unit inventory may skip when models are absent; this workflow fetches
+# pinned artifacts, verifies hashes, sets FACE_PIPELINE_PARITY_REQUIRED=1, and
+# runs the full parity suite so missing models cannot false-green as skips.
+
+on:
+  pull_request:
+    paths:
+      - "apps/prototype-description-service/recognition/infrastructure/face_pipeline/**"
+      - "apps/prototype-description-service/recognition/infrastructure/embeddings/face_pipeline_adapter.py"
+      - "apps/prototype-description-service/recognition/tests/unit/test_face_pipeline_ort_parity.py"
+      - "apps/prototype-description-service/recognition/tests/unit/face_pipeline_support.py"
+      - "apps/prototype-description-service/recognition/tests/unit/test_fir_release_gates.py"
+      - "apps/prototype-description-service/scripts/fetch_face_pipeline_models.py"
+      - "apps/prototype-description-service/scripts/check_junit_no_skips.py"
+      - "apps/prototype-description-service/pyproject.toml"
+      - "apps/prototype-description-service/uv.lock"
+      - ".github/workflows/face-pipeline-ort-parity.yml"
+  push:
+    branches:
+      - main
+      - master
+      - develop
+    paths:
+      - "apps/prototype-description-service/recognition/infrastructure/face_pipeline/**"
+      - "apps/prototype-description-service/recognition/infrastructure/embeddings/face_pipeline_adapter.py"
+      - "apps/prototype-description-service/recognition/tests/unit/test_face_pipeline_ort_parity.py"
+      - "apps/prototype-description-service/recognition/tests/unit/face_pipeline_support.py"
+      - "apps/prototype-description-service/recognition/tests/unit/test_fir_release_gates.py"
+      - "apps/prototype-description-service/scripts/fetch_face_pipeline_models.py"
+      - "apps/prototype-description-service/scripts/check_junit_no_skips.py"
+      - "apps/prototype-description-service/pyproject.toml"
+      - "apps/prototype-description-service/uv.lock"
+      - ".github/workflows/face-pipeline-ort-parity.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: face-pipeline-ort-parity-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ort-parity:
+    name: ORT vs OpenCV face pipeline parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/prototype-description-service
+    env:
+      FACE_PIPELINE_PARITY_REQUIRED: "1"
+      # Keep uv cache inside the workspace for Actions cache friendliness.
+      UV_LINK_MODE: copy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv (pinned)
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.21"
+          enable-cache: true
+          cache-dependency-glob: |
+            apps/prototype-description-service/uv.lock
+            apps/prototype-description-service/pyproject.toml
+
+      - name: Pin Python
+        run: uv python install 3.12
+
+      - name: Sync frozen dev + bench
+        run: uv sync --frozen --extra dev --extra bench
+
+      - name: Cache YuNet/SFace ONNX artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/prototype-description-service/recognition/infrastructure/face_pipeline/models/*.onnx
+          key: face-pipeline-onnx-${{ runner.os }}-${{ hashFiles('apps/prototype-description-service/recognition/infrastructure/face_pipeline/provenance.py', 'apps/prototype-description-service/recognition/infrastructure/face_pipeline/models/LICENSE.yunet', 'apps/prototype-description-service/recognition/infrastructure/face_pipeline/models/LICENSE.sface') }}
+
+      - name: Fetch pinned models (hash-verified)
+        run: uv run python scripts/fetch_face_pipeline_models.py
+
+      - name: Verify models against manifest (no network)
+        run: uv run python scripts/fetch_face_pipeline_models.py --verify-only
+
+      - name: Run ORT parity suite (JUnit + fail-closed on skips)
+        run: >
+          uv run --extra dev --extra bench pytest
+          recognition/tests/unit/test_face_pipeline_ort_parity.py -q
+          --junitxml=parity-junit.xml
+
+      - name: Fail if any parity test skipped
+        run: python scripts/check_junit_no_skips.py parity-junit.xml

@@ -51,6 +51,7 @@ async def test_purge_service_deletes_disposed_state_only(db_session, tenant: Ten
         bbox_height=10,
         confidence=0.95,
         embedding=_unit_embedding(),
+        embedding_model="buffalo_l@insightface",
         disposed_at=datetime.now(tz=UTC),
     )
     active_identity = MediaIdentity(
@@ -63,6 +64,7 @@ async def test_purge_service_deletes_disposed_state_only(db_session, tenant: Ten
         bbox_height=10,
         confidence=0.96,
         embedding=_unit_embedding(),
+        embedding_model="buffalo_l@insightface",
     )
     disposed_cluster = IdentityCluster(
         tenant_id=tenant.id,
@@ -235,6 +237,7 @@ async def test_purge_service_all_scope_deletes_all_machine_state(db_session, ten
         bbox_height=12,
         confidence=0.93,
         embedding=_unit_embedding(),
+        embedding_model="buffalo_l@insightface",
     )
     cluster = IdentityCluster(tenant_id=tenant.id, label="All", identity_count=1)
     job = IdentityScanJob(tenant_id=tenant.id, media_ids=[301], total_media=1)
@@ -379,6 +382,7 @@ async def test_purge_service_batches_large_table_deletes(
                 bbox_height=10,
                 confidence=0.9,
                 embedding=_unit_embedding(),
+                embedding_model="buffalo_l@insightface",
             )
             for index in range(5)
         ]

@@ -178,6 +178,9 @@ class FakeClusterRepository:
     async def get_by_id(self, cluster_id: str) -> FakeClusterForRepo | None:
         return self.clusters.get(cluster_id)
 
+    async def get_by_ids(self, cluster_ids: Sequence[str]) -> list[FakeClusterForRepo]:
+        return [self.clusters[cluster_id] for cluster_id in cluster_ids if cluster_id in self.clusters]
+
     async def get_members(self, cluster_id: str):
         return []
 
@@ -269,10 +272,14 @@ class FakeClusterRepository:
         cluster_id: str,
         *,
         limit: int | None = None,
+        offset: int = 0,
     ) -> list[tuple[MediaIdentity, float]]:
         rows = self.members_by_cluster.get(cluster_id, [])
+        start = max(0, offset)
         if limit is not None:
-            rows = rows[:limit]
+            rows = rows[start : start + limit]
+        elif start:
+            rows = rows[start:]
         return [(identity, member.similarity) for member, identity in rows]
 
     async def get_clusters_by_ids(self, tenant_id: str, cluster_ids: Sequence[str]) -> list[IdentityCluster]:

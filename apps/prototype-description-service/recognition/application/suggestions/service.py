@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -240,6 +241,23 @@ class SuggestionService:
     async def list_for_identity(self, identity_id: str) -> list[AssignmentSuggestion]:
         """Return suggestions for an identity, scoped to the service tenant."""
         return await self._repository.get_by_identity(self._tenant_id, identity_id)
+
+    async def list_for_identities(
+        self,
+        identity_ids: Sequence[str],
+        *,
+        top_k: int,
+    ) -> dict[str, list[SuggestionDetails]]:
+        """Batch counterpart to ``list_for_identity``: top-k labeled-cluster matches per identity.
+
+        One tenant-scoped windowed query; identities with no eligible pending
+        suggestion are omitted from the mapping.
+        """
+        rows = await self._repository.list_for_identities(self._tenant_id, identity_ids, top_k=top_k)
+        grouped: dict[str, list[SuggestionDetails]] = {}
+        for row in rows:
+            grouped.setdefault(row.identity_id, []).append(row)
+        return grouped
 
     async def get_by_cluster(self, cluster_id: str) -> list[AssignmentSuggestion]:
         """Return suggestions for a cluster, scoped to the service tenant."""

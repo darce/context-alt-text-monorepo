@@ -20,6 +20,7 @@ def _make_identity(identity_id: uuid.UUID, media_id: int, embedding: list[float]
         bbox_height=1,
         confidence=0.9,
         embedding=embedding,
+        embedding_model="buffalo_l@insightface",
     )
 
 

@@ -232,6 +232,7 @@ async def test_cluster_bind_queues_refresh_followup_with_bound_identity_ids(db_s
         bbox_height=1,
         confidence=1.0,
         embedding=[0.0] * 512,
+        embedding_model="buffalo_l@insightface",
     )
     cluster_member = IdentityMember(
         tenant_id=tenant.id,

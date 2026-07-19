@@ -269,7 +269,7 @@ class ClusterMutationsMembersSpy extends NullIdentityMembersRepository
         return $this->clusterCounts[$source_cluster_uuid] ?? 0;
     }
 
-    public function count_for_cluster(string $cluster_uuid): int
+    public function count_for_cluster(string $cluster_uuid, ?string $tenant_id = null): int
     {
         return $this->clusterCounts[$cluster_uuid] ?? 0;
     }

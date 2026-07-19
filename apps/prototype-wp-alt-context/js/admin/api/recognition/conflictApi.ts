@@ -1,6 +1,7 @@
 import { fetchRequiredApi, stripTrailingSlash } from '../../utils/http';
 import { getConfig, getEndpoint } from '../config';
 import type {
+  BulkRetryResponse,
   ConflictDetailResponse,
   ConflictListResponse,
   OutboxListResponse,
@@ -116,6 +117,17 @@ export const retryFailedOperation = async (id: number): Promise<OutboxMutationRe
     method: 'POST',
     restNonce: getConfig().nonce,
     signal: createRecognitionTimeoutSignal(5_000),
+  });
+};
+
+export const bulkRetryFailedOperations = async (): Promise<BulkRetryResponse> => {
+  // E15-35 Slice 2: requeues every failed push for the tenant in one guarded call;
+  // the backend paces the requeued rows across drain cycles.
+  const endpoint = getEndpoint('recognitionSyncRetryFailed');
+  return fetchRequiredApi<BulkRetryResponse>(endpoint, {
+    method: 'POST',
+    restNonce: getConfig().nonce,
+    signal: createRecognitionTimeoutSignal(30_000),
   });
 };
 

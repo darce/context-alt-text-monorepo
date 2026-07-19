@@ -3,81 +3,128 @@ import { __ } from '@wordpress/i18n';
 
 import { Avatar } from '../../../../components/ui/avatar';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
-import type { PendingSuggestion } from '../../../api/recognition';
+import type { BoundingBox } from '../../../api/recognition/types/identity';
+import type { ReviewSuggestion, SuggestionReviewItem } from './suggestionReviewItems';
+import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
+
+export type { ReviewSuggestion, SuggestionReviewItem };
+
+export interface FaceOriginalTarget {
+  mediaUrl: string;
+  bbox: BoundingBox;
+  label?: string;
+}
 
 interface SuggestionCardProps {
-  suggestion: PendingSuggestion;
+  suggestion: ReviewSuggestion;
   onAccept: () => void;
   onReject: () => void;
-  onLabel: (clusterId?: string) => void;
   onReview?: (clusterId?: string) => void;
+  /** Opens click-to-original lightbox for a face crop (E21-5 ②). */
+  onOpenOriginal?: (target: FaceOriginalTarget) => void;
   isPending: boolean;
+  /** BR-47: title when Accept/Reject disabled (e.g. selected for bulk). */
+  disabledReason?: string | null;
   lowConfidenceThreshold: number;
+  /** Slice-2 hold/failure chrome — placed immediately after the actioned control. */
+  actionAccessory?: React.ReactNode;
+  actionAccessoryAfter?: 'accept' | 'reject';
+  /**
+   * §7 single accent primary: when true, Accept is this card's accent-primary and
+   * carries the `data-acx-accent-primary` marker + accent chrome (COL-03). The
+   * ReviewQueue only sets this on the mounted current card, so exactly one marker
+   * is present per rendered viewport.
+   */
+  accentPrimary?: boolean;
 }
 
-interface GroupedSuggestionCardProps {
-  clusterId: string;
-  label: string;
-  suggestions: PendingSuggestion[];
-  onAcceptAll: () => void;
-  onRejectAll: () => void;
-  onToggleReviewEach: () => void;
-  isExpanded: boolean;
-  isPending: boolean;
-  lowConfidenceThreshold: number;
-  children?: React.ReactNode;
-}
+const FaceCropControl = ({
+  mediaUrl,
+  bbox,
+  alt,
+  onOpen,
+}: {
+  mediaUrl: string;
+  bbox: BoundingBox;
+  alt: string;
+  onOpen?: (target: FaceOriginalTarget) => void;
+}): React.JSX.Element => {
+  if (!onOpen) {
+    return (
+      <FaceThumbnail
+        mediaUrl={mediaUrl}
+        bbox={bbox}
+        size="md"
+        alt={alt}
+        className="acx-suggestion-card__thumb"
+      />
+    );
+  }
 
-export type SuggestionReviewItem =
-  | {
-      type: 'single';
-      score: number;
-      suggestion: PendingSuggestion;
-    }
-  | {
-      type: 'group';
-      clusterId: string;
-      score: number;
-      label: string;
-      suggestions: PendingSuggestion[];
-    };
+  return (
+    <button
+      type="button"
+      className="acx-face-crop-control"
+      onClick={() => onOpen({ mediaUrl, bbox, label: alt })}
+      aria-label={__('View original photo', 'alt-context')}
+    >
+      <FaceThumbnail
+        mediaUrl={mediaUrl}
+        bbox={bbox}
+        size="md"
+        alt={alt}
+        className="acx-suggestion-card__thumb"
+      />
+    </button>
+  );
+};
 
 export const SuggestionCard = ({
   suggestion,
   onAccept,
   onReject,
-  onLabel,
   onReview,
+  onOpenOriginal,
   isPending,
+  disabledReason = null,
   lowConfidenceThreshold,
+  actionAccessory = null,
+  actionAccessoryAfter = 'accept',
+  accentPrimary = false,
 }: SuggestionCardProps): React.JSX.Element => {
-  const matchPercent = Math.round(suggestion.representative_similarity * 100);
-  const isLowConfidence = suggestion.representative_similarity < lowConfidenceThreshold;
-  const suggestedLabel = suggestion.suggested_label;
-  const hasLabel = Boolean(suggestion.cluster_label ?? suggestedLabel);
-  const displayLabel = suggestion.cluster_label ?? suggestedLabel ?? __('Unnamed cluster', 'alt-context');
+  // buildSuggestionReviewItems guarantees a human-labeled target with truthy label (UXP-3-BR-22).
+  const displayLabel = suggestion.label ?? '';
+  const matchPercent = Math.round(suggestion.similarity * 100);
+  const isLowConfidence = suggestion.similarity < lowConfidenceThreshold;
   const identityFace =
-    suggestion.identity_media_url && suggestion.identity_bbox
-      ? { mediaUrl: suggestion.identity_media_url, bbox: suggestion.identity_bbox }
+    suggestion.enrichment?.identityMediaUrl && suggestion.enrichment?.identityBbox
+      ? { mediaUrl: suggestion.enrichment.identityMediaUrl, bbox: suggestion.enrichment.identityBbox }
       : null;
   const representativeFace =
-    suggestion.representative_media_url && suggestion.representative_bbox
-      ? { mediaUrl: suggestion.representative_media_url, bbox: suggestion.representative_bbox }
+    suggestion.enrichment?.representativeMediaUrl && suggestion.enrichment?.representativeBbox
+      ? {
+          mediaUrl: suggestion.enrichment.representativeMediaUrl,
+          bbox: suggestion.enrichment.representativeBbox,
+        }
       : null;
-  const identityThumbUrl = suggestion.identity_thumb_url ?? suggestion.identity_media_url ?? null;
-  const representativeThumbUrl = suggestion.representative_thumb_url ?? suggestion.representative_media_url ?? null;
+  const identityThumbUrl = suggestion.enrichment?.identityThumbUrl ?? suggestion.enrichment?.identityMediaUrl ?? null;
+  const representativeThumbUrl =
+    suggestion.enrichment?.representativeThumbUrl ?? suggestion.enrichment?.representativeMediaUrl ?? null;
 
   return (
-    <div className={`acx-suggestion-card${isLowConfidence ? ' acx-suggestion-card--low-confidence' : ''}`}>
+    <div
+      className={`acx-suggestion-card${isLowConfidence ? ' acx-suggestion-card--low-confidence' : ''}`}
+      data-testid="acx-review-card"
+      data-review-kind="assignment"
+    >
       <div className="acx-suggestion-card__faces">
         <div className="acx-suggestion-card__face">
           {identityFace ? (
-            <FaceThumbnail
+            <FaceCropControl
               mediaUrl={identityFace.mediaUrl}
               bbox={identityFace.bbox}
-              size="md"
               alt={__('Candidate face', 'alt-context')}
-              className="acx-suggestion-card__thumb"
+              onOpen={onOpenOriginal}
             />
           ) : identityThumbUrl ? (
             <Avatar
@@ -94,12 +141,11 @@ export const SuggestionCard = ({
 
         <div className="acx-suggestion-card__face">
           {representativeFace ? (
-            <FaceThumbnail
+            <FaceCropControl
               mediaUrl={representativeFace.mediaUrl}
               bbox={representativeFace.bbox}
-              size="md"
-              alt={__('Cluster representative', 'alt-context')}
-              className="acx-suggestion-card__thumb"
+              alt={displayLabel || __('Cluster representative', 'alt-context')}
+              onOpen={onOpenOriginal}
             />
           ) : representativeThumbUrl ? (
             <Avatar
@@ -116,31 +162,14 @@ export const SuggestionCard = ({
       </div>
       <div className="acx-suggestion-card__content">
         <p className="acx-suggestion-card__question">
-          {hasLabel ? (
-            <>
-              {__('Is this', 'alt-context')} <strong>{displayLabel}</strong>?
-              {suggestedLabel && !suggestion.cluster_label && (
-                <span className="acx-badge acx-badge--inferred" title={__('Inferred label', 'alt-context')}>
-                  {suggestion.suggested_label_source === 'similar_cluster'
-                    ? __('Similar to labeled', 'alt-context')
-                    : suggestion.suggested_label_source === 'identity'
-                      ? __('Identity match', 'alt-context')
-                      : suggestion.suggested_label_source === 'roster'
-                        ? __('Roster match', 'alt-context')
-                        : __('Suggested', 'alt-context')}
-                </span>
-              )}
-            </>
-          ) : (
-            <strong>{__('Name this person', 'alt-context')}</strong>
-          )}
+          {__('Is this', 'alt-context')} <strong>{displayLabel}</strong>?
         </p>
         <p className="acx-suggestion-card__match">
           {matchPercent}% {__('match', 'alt-context')}
-          {suggestion.cluster_identity_count && (
+          {suggestion.identityCount && (
             <span className="acx-suggestion-card__count">
               {' '}
-              ({suggestion.cluster_identity_count} {__('in cluster', 'alt-context')})
+              ({suggestion.identityCount} {__('in cluster', 'alt-context')})
             </span>
           )}
           {isLowConfidence && (
@@ -150,149 +179,42 @@ export const SuggestionCard = ({
       </div>
 
       <div className="acx-suggestion-card__actions">
-        {hasLabel ? (
-          <>
-            <button
-              type="button"
-              className="button button-primary acx-suggestion-card__accept"
-              onClick={onAccept}
-              disabled={isPending}
-            >
-              {__('Yes', 'alt-context')}
-            </button>
-            <button
-              type="button"
-              className="button acx-suggestion-card__reject"
-              onClick={onReject}
-              disabled={isPending}
-            >
-              {__('No', 'alt-context')}
-            </button>
-          </>
-        ) : (
-          <button
-            type="button"
-            className="button button-primary acx-suggestion-card__label"
-            onClick={() => onLabel(suggestion.suggested_cluster_id)}
-            disabled={isPending}
-          >
-            {__('Name Person', 'alt-context')}
-          </button>
-        )}
+        <button
+          type="button"
+          className={
+            accentPrimary
+              ? 'button button-primary acx-suggestion-card__accept acx-accent-primary-action'
+              : 'button button-primary acx-suggestion-card__accept'
+          }
+          onClick={onAccept}
+          disabled={isPending}
+          title={isPending && disabledReason ? disabledReason : undefined}
+          {...(accentPrimary ? { [ACCENT_PRIMARY_ATTR]: true } : {})}
+        >
+          {__('Yes', 'alt-context')}
+        </button>
+        {actionAccessoryAfter === 'accept' ? actionAccessory : null}
+        <button
+          type="button"
+          className="button acx-suggestion-card__reject"
+          onClick={onReject}
+          disabled={isPending}
+          title={isPending && disabledReason ? disabledReason : undefined}
+        >
+          {__('No', 'alt-context')}
+        </button>
+        {actionAccessoryAfter === 'reject' ? actionAccessory : null}
         {onReview ? (
           <button
             type="button"
             className="button button-link acx-suggestion-card__review"
-            onClick={() => onReview(suggestion.suggested_cluster_id)}
+            onClick={() => onReview(suggestion.clusterId)}
             title={__('Review cluster details', 'alt-context')}
           >
             {__('Review details', 'alt-context')}
           </button>
         ) : null}
       </div>
-    </div>
-  );
-};
-
-export const GroupedSuggestionCard = ({
-  clusterId,
-  label,
-  suggestions,
-  onAcceptAll,
-  onRejectAll,
-  onToggleReviewEach,
-  isExpanded,
-  isPending,
-  lowConfidenceThreshold,
-  children,
-}: GroupedSuggestionCardProps): React.JSX.Element => {
-  const topSimilarity = Math.max(...suggestions.map((suggestion) => suggestion.representative_similarity));
-  const matchPercent = Math.round(topSimilarity * 100);
-  const visibleCandidates = suggestions.slice(0, 8);
-  const extraCandidatesCount = Math.max(suggestions.length - visibleCandidates.length, 0);
-  const isLowConfidence = topSimilarity < lowConfidenceThreshold;
-
-  return (
-    <div
-      className={`acx-suggestion-card acx-suggestion-card--group${isLowConfidence ? ' acx-suggestion-card--low-confidence' : ''}`}
-      data-cluster-id={clusterId}
-    >
-      <div className="acx-suggestion-card__faces">
-        <div className="acx-suggestion-card__face acx-suggestion-card__face--grid">
-          <div className="acx-face-grid-preview acx-face-grid-preview--candidates">
-            {visibleCandidates.map((suggestion) => {
-              const identityThumbUrl = suggestion.identity_thumb_url ?? suggestion.identity_media_url;
-              return suggestion.identity_media_url && suggestion.identity_bbox ? (
-                <FaceThumbnail
-                  key={suggestion.id}
-                  mediaUrl={suggestion.identity_media_url}
-                  bbox={suggestion.identity_bbox}
-                  size="sm"
-                  alt={__('Candidate face', 'alt-context')}
-                  className="acx-suggestion-card__thumb"
-                />
-              ) : identityThumbUrl ? (
-                <Avatar
-                  key={suggestion.id}
-                  src={identityThumbUrl}
-                  size="md"
-                  alt={__('Candidate face', 'alt-context')}
-                  className="acx-suggestion-card__thumb"
-                />
-              ) : (
-                <span
-                  key={suggestion.id}
-                  className="acx-suggestion-card__thumb acx-suggestion-card__thumb--placeholder"
-                />
-              );
-            })}
-            {extraCandidatesCount > 0 && (
-              <span className="acx-suggestion-card__thumb acx-suggestion-card__thumb--more">
-                +{extraCandidatesCount}
-              </span>
-            )}
-          </div>
-          <span className="acx-suggestion-card__face-label">
-            {suggestions.length} {__('candidates', 'alt-context')}
-          </span>
-        </div>
-      </div>
-
-      <div className="acx-suggestion-card__content">
-        <p className="acx-suggestion-card__question">
-          <strong>{suggestions.length}</strong> {__('candidates may be', 'alt-context')} <strong>{label}</strong>
-        </p>
-        <p className="acx-suggestion-card__match">
-          {__('Top match', 'alt-context')} {matchPercent}%
-          {isLowConfidence && (
-            <span className="acx-suggestion-card__confidence-flag">{__('Low confidence', 'alt-context')}</span>
-          )}
-        </p>
-      </div>
-
-      <div className="acx-suggestion-card__actions">
-        <button
-          type="button"
-          className="button button-primary acx-suggestion-card__accept"
-          onClick={onAcceptAll}
-          disabled={isPending}
-        >
-          {__('Yes all', 'alt-context')}
-        </button>
-        <button type="button" className="button acx-suggestion-card__reject" onClick={onRejectAll} disabled={isPending}>
-          {__('No all', 'alt-context')}
-        </button>
-        <button
-          type="button"
-          className="button acx-suggestion-card__review-each"
-          onClick={onToggleReviewEach}
-          disabled={isPending}
-        >
-          {isExpanded ? __('Hide details', 'alt-context') : __('Review each', 'alt-context')}
-        </button>
-      </div>
-
-      {isExpanded ? <div className="acx-suggestion-card__group-items">{children}</div> : null}
     </div>
   );
 };

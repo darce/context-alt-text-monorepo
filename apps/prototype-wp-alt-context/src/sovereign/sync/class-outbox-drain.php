@@ -16,6 +16,8 @@ require_once __DIR__ . '/class-topology-command-repository.php';
 
 use AltContext\Api\TenantIdentity;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
+use DateTimeImmutable;
+use DateTimeZone;
 use Throwable;
 
 use function add_action;
@@ -23,26 +25,49 @@ use function apply_filters;
 use function array_keys;
 use function current_time;
 use function do_action;
+use function floor;
 use function function_exists;
+use function gmdate;
 use function is_array;
+use function is_finite;
+use function is_float;
+use function is_int;
+use function is_numeric;
 use function is_object;
 use function is_string;
 use function max;
 use function method_exists;
+use function min;
 use function time;
 use function trim;
+use function wp_rand;
 use function wp_clear_scheduled_hook;
 use function wp_next_scheduled;
 use function wp_schedule_event;
 use function wp_schedule_single_event;
+use function wp_unschedule_event;
 
 class OutboxDrain {
 	private const DRAIN_HOOK = 'acx_sync_drain_curation_outbox';
 	private const PURGE_HOOK = 'acx_sync_purge_terminal_rows';
 	private const ACTION_SCHEDULER_GROUP = 'acx-sync';
-	private const DEFAULT_BATCH_SIZE = 25;
-	private const DEFAULT_MAX_ATTEMPTS = 5;
+	// Public so OutboxMaintenanceService can pace bulk requeue in drain-batch-sized
+	// chunks against the same 'acx_outbox_drain_batch_size' filter (E15-35 Slice 2).
+	public const DEFAULT_BATCH_SIZE = 25;
 	private const DEFAULT_CLAIM_LEASE_SECONDS = 300;
+
+	// E15-35 Slice 1 retry tunables. Window-first by construction: the exponential ramp
+	// 60,120,240,480,960,1920 then 3600s/attempt reaches the 24h window at ~attempt 29,
+	// well before the 40-attempt hard cap (~35h) — the window is the primary terminal and
+	// the count is a backstop for a wedged clock. Each value is apply_filters-overridable
+	// and fail-safe validated at read time (rg-008); the superseded count-only
+	// acx_outbox_max_attempts filter is retired (PR-12).
+	private const DEFAULT_BACKOFF_BASE_SECONDS = 60;
+	private const DEFAULT_BACKOFF_CAP_SECONDS = 3600;
+	private const DEFAULT_RETRY_WINDOW_SECONDS = 86400;
+	private const DEFAULT_RETRY_HARD_CAP_ATTEMPTS = 40;
+	private const BACKOFF_MAX_EXPONENT = 30;
+	private const BACKOFF_JITTER_DIVISOR = 10;
 
 	private OutboxDispatcher $dispatcher;
 	private ConflictRepository $conflict_repository;
@@ -100,8 +125,7 @@ class OutboxDrain {
 	public static function maybe_schedule_drain(): void {
 		if ( function_exists( 'as_enqueue_async_action' ) && function_exists( 'as_next_scheduled_action' ) ) {
 			$group = self::action_scheduler_group();
-			$existing = as_next_scheduled_action( self::DRAIN_HOOK, array(), $group );
-			if ( false !== $existing && null !== $existing ) {
+			if ( self::existing_action_satisfies( time(), $group ) ) {
 				return;
 			}
 
@@ -116,9 +140,80 @@ class OutboxDrain {
 			}
 		}
 
-		if ( false === wp_next_scheduled( self::DRAIN_HOOK, array() ) ) {
-			wp_schedule_single_event( time(), self::DRAIN_HOOK, array() );
+		self::schedule_wp_cron_drain_at( time() );
+	}
+
+	/**
+	 * Schedule a single future drain (E15-35): Action Scheduler when available, WP-Cron fallback.
+	 * Skipped when a drain is already queued at or before the requested time, so backoff
+	 * wake-ups never stack; a drain parked LATER than the requested time is advanced
+	 * (E15-35-BR-01: a parked backoff anchor must never make earlier-due work wait).
+	 */
+	private static function schedule_drain_at( int $timestamp ): void {
+		if ( function_exists( 'as_schedule_single_action' ) && function_exists( 'as_next_scheduled_action' ) ) {
+			$group = self::action_scheduler_group();
+			if ( self::existing_action_satisfies( $timestamp, $group ) ) {
+				return;
+			}
+
+			try {
+				$action_id = as_schedule_single_action( $timestamp, self::DRAIN_HOOK, array(), $group );
+				if ( (int) $action_id > 0 ) {
+					return;
+				}
+			} catch ( Throwable $exception ) {
+				do_action( 'acx_outbox_action_scheduler_enqueue_failed', $exception );
+				// Fall through to WP-Cron when Action Scheduler is available but cannot schedule.
+			}
 		}
+
+		self::schedule_wp_cron_drain_at( $timestamp );
+	}
+
+	/**
+	 * True when an existing Action Scheduler drain already runs at or before $desired
+	 * (skip scheduling: the queued drain covers the work). A drain parked LATER than
+	 * $desired is unscheduled so the caller can book the earlier slot (E15-35-BR-01):
+	 * enqueue and operator retry make rows due NOW, and a parked backoff anchor of up
+	 * to ~66min must not defer them.
+	 */
+	private static function existing_action_satisfies( int $desired, string $group ): bool {
+		$existing = as_next_scheduled_action( self::DRAIN_HOOK, array(), $group );
+		if ( true === $existing ) {
+			// A pending async action or one running right now: due immediately.
+			return true;
+		}
+
+		if ( false === $existing || null === $existing || ! is_numeric( $existing ) ) {
+			return false;
+		}
+
+		if ( (int) $existing <= $desired ) {
+			return true;
+		}
+
+		if ( function_exists( 'as_unschedule_action' ) ) {
+			as_unschedule_action( self::DRAIN_HOOK, array(), $group );
+		}
+
+		return false;
+	}
+
+	/**
+	 * WP-Cron mirror of the same policy: keep an existing event at or before $timestamp,
+	 * advance a later-parked one, book one when none exists.
+	 */
+	private static function schedule_wp_cron_drain_at( int $timestamp ): void {
+		$existing = wp_next_scheduled( self::DRAIN_HOOK, array() );
+		if ( false !== $existing && (int) $existing <= $timestamp ) {
+			return;
+		}
+
+		if ( false !== $existing ) {
+			wp_unschedule_event( (int) $existing, self::DRAIN_HOOK, array() );
+		}
+
+		wp_schedule_single_event( $timestamp, self::DRAIN_HOOK, array() );
 	}
 
 	public static function clear_scheduled_drain(): void {
@@ -143,17 +238,13 @@ class OutboxDrain {
 			$this->query_repository->load_pending_operations( $this->batch_size )
 		);
 		if ( empty( $operations ) ) {
-			if ( $this->query_repository->has_pending_operations() ) {
-				self::maybe_schedule_drain();
-			}
+			$this->schedule_drain_for_pending_backlog();
 			return;
 		}
 
 		$claimed = $this->claim_operations( $operations );
 		if ( empty( $claimed ) ) {
-			if ( $this->query_repository->has_pending_operations() ) {
-				self::maybe_schedule_drain();
-			}
+			$this->schedule_drain_for_pending_backlog();
 			return;
 		}
 
@@ -162,11 +253,34 @@ class OutboxDrain {
 		$this->refresh_curation_metrics_for_tenants( $tenant_ids );
 		$this->purge_terminal_rows_for_tenants( $tenant_ids );
 
-		// Reschedule on the pre-claim ready count: when concurrent drains split a full batch,
-		// count( $claimed ) can fall below the batch size even though a backlog remains.
-		if ( count( $operations ) >= $this->batch_size && $this->query_repository->has_pending_operations() ) {
-			self::maybe_schedule_drain();
+		// E15-35: always re-anchor on the remaining backlog. Rows this batch pushed into
+		// backoff are still `pending` but not yet due, so the next drain lands at the
+		// earliest pending attempt instead of busy-looping (rg-007).
+		$this->schedule_drain_for_pending_backlog();
+	}
+
+	/**
+	 * Schedule the next drain for the earliest pending attempt (E15-35).
+	 *
+	 * Rows that are due now (NULL/elapsed next_attempt_at) trigger an immediate async drain;
+	 * a backlog that is entirely mid-backoff schedules one future single event at the
+	 * earliest next_attempt_at. No pending rows schedules nothing.
+	 */
+	private function schedule_drain_for_pending_backlog(): void {
+		if ( ! $this->query_repository->has_pending_operations() ) {
+			return;
 		}
+
+		$earliest = $this->query_repository->earliest_pending_attempt_time();
+		$earliest_timestamp = is_string( $earliest ) ? $this->wp_datetime_to_epoch( $earliest ) : null;
+		$now_timestamp = $this->wp_datetime_to_epoch( current_time( 'mysql' ) );
+
+		if ( null === $earliest_timestamp || null === $now_timestamp || $earliest_timestamp <= $now_timestamp ) {
+			self::maybe_schedule_drain();
+			return;
+		}
+
+		self::schedule_drain_at( time() + ( $earliest_timestamp - $now_timestamp ) );
 	}
 
 	/**
@@ -231,6 +345,16 @@ class OutboxDrain {
 
 	public function retry_failed_operation( int $outbox_id, string $tenant_id ): bool {
 		return $this->maintenance_service->retry_failed_operation( $outbox_id, $tenant_id );
+	}
+
+	/**
+	 * Thin delegator (REFA-6 convention) for E15-35 Slice 2 bulk dead-letter recovery.
+	 *
+	 * @return int|false Number of rows requeued, or false when the tenant id is invalid
+	 *                   or the database adapter is unavailable.
+	 */
+	public function retry_failed_operations_bulk( string $tenant_id ): int|false {
+		return $this->maintenance_service->retry_failed_operations_bulk( $tenant_id );
 	}
 
 	public function discard_operation( int $outbox_id, string $tenant_id ): bool {
@@ -343,10 +467,12 @@ class OutboxDrain {
 					'last_error_message' => null,
 					'acknowledged_version' => max( 0, (int) ( $result['backend_version'] ?? 0 ) ),
 					'last_attempted_at' => $attempted_at,
+					'first_failed_at' => null,
+					'next_attempt_at' => null,
 					'acknowledged_at' => $attempted_at,
 				),
 				array( 'id' => $outbox_id, 'status' => OutboxStatus::IN_FLIGHT ),
-				array( '%s', '%d', '%s', '%s', '%d', '%s', '%s' ),
+				array( '%s', '%d', '%s', '%s', '%d', '%s', '%s', '%s', '%s' ),
 				array( '%d', '%s' )
 			);
 			return;
@@ -363,17 +489,34 @@ class OutboxDrain {
 					'last_error_code' => $this->normalize_text( $result['conflict_code'] ?? '', 'version_conflict' ),
 					'last_error_message' => $this->normalize_text( $result['error_message'] ?? '', 'Remote curation replay conflict.' ),
 					'last_attempted_at' => $attempted_at,
+					'next_attempt_at' => null,
 				),
 				array( 'id' => $outbox_id, 'status' => OutboxStatus::IN_FLIGHT ),
-				array( '%s', '%d', '%s', '%s', '%s' ),
+				array( '%s', '%d', '%s', '%s', '%s', '%s' ),
 				array( '%d', '%s' )
 			);
 			return;
 		}
 
+		// E15-35 Slice 1: combined time+count terminal. Non-retryable failures (auth/4xx/invalid
+		// payload) still dead-letter at the first attempt — backoff applies to the retryable
+		// class only. A retryable failure stamps first_failed_at on its first failure and is
+		// terminal only when its first-failure age exceeds the retry window (primary, 24h) or
+		// attempts reach the hard cap (backstop, 40).
 		$retryable = (bool) ( $result['retryable'] ?? true );
-		$max_attempts = $this->resolve_max_attempts();
-		$next_status = ( $retryable && $attempts < $max_attempts ) ? OutboxStatus::PENDING : OutboxStatus::FAILED;
+
+		$existing_first_failed_at = $this->normalize_text( $operation['first_failed_at'] ?? '', '' );
+		$first_failed_at = null !== $this->wp_datetime_to_epoch( $existing_first_failed_at )
+			? $existing_first_failed_at
+			: $attempted_at;
+		$failure_age_seconds = $this->wp_datetime_diff_seconds( $first_failed_at, $attempted_at );
+
+		$is_terminal = ! $retryable
+			|| $attempts >= $this->resolve_retry_hard_cap_attempts()
+			|| $failure_age_seconds > $this->resolve_retry_window_seconds();
+
+		$next_status = $is_terminal ? OutboxStatus::FAILED : OutboxStatus::PENDING;
+		$next_attempt_at = $is_terminal ? null : $this->compute_next_attempt_at( $attempts, $attempted_at );
 
 		$wpdb->update(
 			$this->table_name,
@@ -383,15 +526,105 @@ class OutboxDrain {
 				'last_error_code' => $this->normalize_text( $result['error_code'] ?? '', 'dispatch_failed' ),
 				'last_error_message' => $this->normalize_text( $result['error_message'] ?? '', 'Outbox dispatch failed.' ),
 				'last_attempted_at' => $attempted_at,
+				'first_failed_at' => $first_failed_at,
+				'next_attempt_at' => $next_attempt_at,
 			),
 			array( 'id' => $outbox_id, 'status' => OutboxStatus::IN_FLIGHT ),
-			array( '%s', '%d', '%s', '%s', '%s' ),
+			array( '%s', '%d', '%s', '%s', '%s', '%s', '%s' ),
 			array( '%d', '%s' )
 		);
 	}
 
-	private function resolve_max_attempts(): int {
-		return max( 1, (int) apply_filters( 'acx_outbox_max_attempts', self::DEFAULT_MAX_ATTEMPTS ) );
+	/**
+	 * Next attempt on the WP clock: min( base * 2^(n-1), cap ) + additive jitter (E15-35).
+	 *
+	 * `n = max(1, attempts)` is the post-increment attempt count, floored at 1 so a
+	 * just-requeued attempts=0 row uses the base delay. Jitter is additive-only
+	 * `[0, delay/10]` (PR-08), so the schedule is always strictly in the future.
+	 */
+	private function compute_next_attempt_at( int $attempts, string $attempted_at ): string {
+		$base = $this->resolve_backoff_base_seconds();
+		$cap = $this->resolve_backoff_cap_seconds();
+
+		$attempt = max( 1, $attempts );
+		$exponent = min( $attempt - 1, self::BACKOFF_MAX_EXPONENT );
+		$delay = max( 1, (int) min( (float) $base * (float) ( 2 ** $exponent ), (float) $cap ) );
+
+		$jitter_ceiling = (int) floor( $delay / self::BACKOFF_JITTER_DIVISOR );
+		$jitter = $jitter_ceiling > 0 ? wp_rand( 0, $jitter_ceiling ) : 0;
+
+		$from = $this->wp_datetime_to_epoch( $attempted_at )
+			?? $this->wp_datetime_to_epoch( current_time( 'mysql' ) )
+			?? time();
+
+		return gmdate( 'Y-m-d H:i:s', $from + $delay + $jitter );
+	}
+
+	private function resolve_backoff_base_seconds(): int {
+		return $this->resolve_positive_int_tunable( 'acx_outbox_retry_backoff_base_seconds', self::DEFAULT_BACKOFF_BASE_SECONDS );
+	}
+
+	private function resolve_backoff_cap_seconds(): int {
+		return $this->resolve_positive_int_tunable( 'acx_outbox_retry_backoff_cap_seconds', self::DEFAULT_BACKOFF_CAP_SECONDS );
+	}
+
+	private function resolve_retry_window_seconds(): int {
+		return $this->resolve_positive_int_tunable( 'acx_outbox_retry_window_seconds', self::DEFAULT_RETRY_WINDOW_SECONDS );
+	}
+
+	private function resolve_retry_hard_cap_attempts(): int {
+		return $this->resolve_positive_int_tunable( 'acx_outbox_retry_hard_cap_attempts', self::DEFAULT_RETRY_HARD_CAP_ATTEMPTS );
+	}
+
+	/**
+	 * Fail-safe tunable read (rg-008): a filter returning a non-finite, non-numeric, or
+	 * non-positive value falls back to the default — a bad filter can never disable the
+	 * terminal ceiling or zero-out the backoff.
+	 */
+	private function resolve_positive_int_tunable( string $filter_name, int $default ): int {
+		$value = apply_filters( $filter_name, $default );
+
+		if ( is_int( $value ) ) {
+			return $value > 0 ? $value : $default;
+		}
+
+		if ( is_float( $value ) ) {
+			return is_finite( $value ) && $value > 0.0 ? max( 1, (int) $value ) : $default;
+		}
+
+		if ( is_string( $value ) && is_numeric( $value ) ) {
+			$numeric = (float) $value;
+			return is_finite( $numeric ) && $numeric > 0.0 ? max( 1, (int) $numeric ) : $default;
+		}
+
+		return $default;
+	}
+
+	/**
+	 * Parse a WP-clock 'Y-m-d H:i:s' wall-clock string to an epoch for interval math.
+	 *
+	 * The string is interpreted as UTC regardless of the site timezone: every outbox
+	 * timestamp is written with current_time('mysql') on the same WP clock, so offsets
+	 * cancel in diffs and additions (see CON-3-FU-REV-A1 for the clock-domain rationale).
+	 */
+	private function wp_datetime_to_epoch( string $datetime ): ?int {
+		$normalized = trim( $datetime );
+		if ( '' === $normalized ) {
+			return null;
+		}
+
+		$parsed = DateTimeImmutable::createFromFormat( 'Y-m-d H:i:s', $normalized, new DateTimeZone( 'UTC' ) );
+		return false !== $parsed ? $parsed->getTimestamp() : null;
+	}
+
+	private function wp_datetime_diff_seconds( string $from, string $to ): int {
+		$from_timestamp = $this->wp_datetime_to_epoch( $from );
+		$to_timestamp = $this->wp_datetime_to_epoch( $to );
+		if ( null === $from_timestamp || null === $to_timestamp ) {
+			return 0;
+		}
+
+		return max( 0, $to_timestamp - $from_timestamp );
 	}
 
 	private function resolve_claim_lease_seconds(): int {

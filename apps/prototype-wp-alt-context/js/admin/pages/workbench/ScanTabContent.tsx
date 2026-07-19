@@ -1,16 +1,24 @@
 import React from 'react';
 import { __ } from '@wordpress/i18n';
 import { ErrorBoundary } from '../../../components/ErrorBoundary';
+import {
+  useWorkbenchFilters,
+  type ReviewQueueBandParam,
+  type ReviewQueueKindParam,
+} from '../../hooks/useWorkbenchFilters';
 import { useScrollRestoration } from '../../hooks/useScrollRestoration';
 import { ScanActionPanel } from './Panels';
 import { JobTimeline } from './JobTimeline';
 import {
   ClusterLabelingPanel,
   ClusterReviewPanel,
-  SuggestionReviewPanel,
+  ReviewQueue,
   WorkbenchFindingsPanel,
+  type ReviewQueueHandle,
 } from './identity-clusters';
 import { useWorkbenchFindings } from './identity-clusters/useWorkbenchFindings';
+import { useAriaAnnounce } from './identity-clusters/useAriaAnnounce';
+import { useOpenReviewTargetLifecycle } from './identity-clusters/useOpenReviewTargetLifecycle';
 import { MediaSelection } from './MediaSelection';
 import { useJobPipeline } from './JobPipelineContext';
 import { useClusterPanel } from './ClusterPanelContext';
@@ -37,11 +45,61 @@ export const ScanTabContent = (): React.JSX.Element => {
   const { scanRun, status, history, cancelScan, retryScanStream } = useJobPipeline();
   const { clusterPanel, dispatchClusterPanel } = useClusterPanel();
   const { hasIdentities } = useWorkbenchMediaContext().mediaQueue;
+  const { queueState, setQueueState } = useWorkbenchFilters();
 
   const findingsDetailRef = React.useRef<HTMLDivElement>(null);
+  const reviewQueueRef = React.useRef<ReviewQueueHandle>(null);
+  // Open-target lifecycle announce (§11 / A11Y-21). Owned here so it survives
+  // the review panel's rebind remount and retirement unmount. BR-68: seq-keyed so
+  // two consecutive identical closes both re-announce.
+  const {
+    message: reviewLifecycleMessage,
+    seq: reviewLifecycleSeq,
+    announce: announceReviewLifecycle,
+  } = useAriaAnnounce();
   const findings = useWorkbenchFindings();
+
+  const focusQueueRoot = React.useCallback((): void => {
+    findingsDetailRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  // Open-target retirement lifecycle (§11 / FBT-1 ⑤). Owned here (always mounted)
+  // so the rebind/close transition resolves render-phase against the live target
+  // and survives the review panel's remount/unmount. `reviewClusterId` is the
+  // cluster the review panel is actually mounted on (rebound survivor after a
+  // merge, or null once retired).
+  const { reviewClusterId } = useOpenReviewTargetLifecycle({
+    requestedClusterId: clusterPanel.mode === 'review' ? clusterPanel.clusterId : null,
+    onAnnounce: announceReviewLifecycle,
+    onFocusQueueRoot: focusQueueRoot,
+    onRetireClose: () => dispatchClusterPanel({ type: 'close' }),
+    // BR-66: after a merge rebind, advance the reducer to the survivor so the
+    // panel reducer and the mounted review target agree.
+    onRebindSync: (survivorId) => dispatchClusterPanel({ type: 'open_review', clusterId: survivorId }),
+  });
   const [userExpandedMedia, setUserExpandedMedia] = React.useState(false);
   const previousHasFindings = React.useRef(findings.hasFindings);
+  // §7 / BR-75/BR-82: the queue reports whether IT owns the viewport's single accent
+  // primary (its card marker or bulk-commit marker). This — not findings totals —
+  // drives footer demotion, so the signal that places the queue's accent marker is the
+  // same one that steps the footer CTAs down (BR-83: this is the ONLY footer input).
+  const [cardPrimaryPresent, setCardPrimaryPresent] = React.useState(false);
+
+  // Lifted queue index + kind + band — survives label/review panel unmount of ReviewQueue.
+  const [queueIndex, setQueueIndex] = React.useState(queueState.index);
+  const [queueKind, setQueueKind] = React.useState<ReviewQueueKindParam>(queueState.kind);
+  const [queueBand, setQueueBand] = React.useState<ReviewQueueBandParam>(queueState.band);
+  // PR-31: id-keyed selection lifted beside index — panel round-trips preserve it.
+  const [selectedSuggestionIds, setSelectedSuggestionIds] = React.useState<Set<string>>(
+    () => new Set(),
+  );
+
+  // URL → local (reload / external writer).
+  React.useEffect(() => {
+    setQueueIndex(queueState.index);
+    setQueueKind(queueState.kind);
+    setQueueBand(queueState.band);
+  }, [queueState.index, queueState.kind, queueState.band]);
 
   React.useEffect(() => {
     if (findings.hasFindings && !previousHasFindings.current) {
@@ -53,14 +111,53 @@ export const ScanTabContent = (): React.JSX.Element => {
   const isMediaCollapsed =
     findings.hasFindings && !userExpandedMedia && !findings.isLoading && !findings.isError && !findings.isUnavailable;
 
+  // §7 media-footer CTA hierarchy (BR-83): the footer steps its CTAs down to secondary
+  // exactly when the QUEUE owns the viewport's single accent primary (`cardPrimaryPresent`
+  // — the queue's card marker or its bulk-commit marker). A label/review panel carries NO
+  // accent marker and unmounts the queue, so on panel-open `cardPrimaryPresent` is false
+  // and the footer keeps its state-selected primary (§7 "no card ⇒ footer owns"). Adding
+  // label-mode / reviewClusterId terms here would demote the footer with nothing left to
+  // own the accent → zero primaries on panel-open, so they are deliberately excluded.
+  const reviewSurfaceActive = cardPrimaryPresent;
+
+  const handleIndexChange = React.useCallback(
+    (nextIndex: number): void => {
+      setQueueIndex(nextIndex);
+      setQueueState({ index: nextIndex });
+    },
+    [setQueueState],
+  );
+
+  const handleKindChange = React.useCallback(
+    (nextKind: ReviewQueueKindParam): void => {
+      setQueueKind(nextKind);
+      setQueueState({ kind: nextKind, index: 0 });
+      setQueueIndex(0);
+    },
+    [setQueueState],
+  );
+
+  const handleBandChange = React.useCallback(
+    (nextBand: ReviewQueueBandParam): void => {
+      setQueueBand(nextBand);
+      setQueueState({ band: nextBand, index: 0 });
+      setQueueIndex(0);
+    },
+    [setQueueState],
+  );
+
   const handleTargetFindings = (): void => {
     const anchor = findingsDetailRef.current;
-    if (!anchor) {
+    if (anchor) {
+      anchor.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    }
+    // Drive the mounted queue (not scroll-only): focus current card primary.
+    if (reviewQueueRef.current) {
+      reviewQueueRef.current.focusCurrentCard();
       return;
     }
-    anchor.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
-    // WHY: move keyboard/SR focus with the scroll so "Review next" lands users on the queues.
-    anchor.focus({ preventScroll: true });
+    // Panel mode or empty: fall back to anchor focus.
+    anchor?.focus({ preventScroll: true });
   };
 
   const handleCancelScan = (): void => {
@@ -89,29 +186,54 @@ export const ScanTabContent = (): React.JSX.Element => {
       <ScanScrollRestoration />
       {!scanRun.isScanning && !hasIdentities && <NoMediaPanel />}
       <ErrorBoundary>
+        <p
+          key={reviewLifecycleSeq}
+          className="acx-review-lifecycle-announce"
+          role="status"
+          aria-live="polite"
+        >
+          {reviewLifecycleMessage}
+        </p>
         <div ref={findingsDetailRef} className="acx-findings-detail-anchor" tabIndex={-1}>
           {clusterPanel.mode === 'label' && clusterPanel.clusterId ? (
             <ClusterLabelingPanel
+              key={clusterPanel.clusterId}
               clusterId={clusterPanel.clusterId}
               onClose={() => dispatchClusterPanel({ type: 'close' })}
               onLabel={() => {
                 dispatchClusterPanel({ type: 'close' });
               }}
             />
-          ) : clusterPanel.mode === 'review' && clusterPanel.clusterId ? (
+          ) : reviewClusterId !== null ? (
             <ClusterReviewPanel
-              clusterId={clusterPanel.clusterId}
+              key={reviewClusterId}
+              clusterId={reviewClusterId}
               onClose={() => dispatchClusterPanel({ type: 'close' })}
             />
           ) : (
-            <SuggestionReviewPanel
+            <ReviewQueue
+              ref={reviewQueueRef}
+              index={queueIndex}
+              onIndexChange={handleIndexChange}
+              kind={queueKind}
+              onKindChange={handleKindChange}
+              band={queueBand}
+              onBandChange={handleBandChange}
+              selectedIds={selectedSuggestionIds}
+              onSelectedIdsChange={setSelectedSuggestionIds}
+              emptyStateAnchorRef={findingsDetailRef}
               onLabel={(clusterId: string) => dispatchClusterPanel({ type: 'open_label', clusterId })}
               onReview={(clusterId: string) => dispatchClusterPanel({ type: 'open_review', clusterId })}
+              onCardPrimaryPresenceChange={setCardPrimaryPresent}
             />
           )}
         </div>
       </ErrorBoundary>
-      <MediaSelection collapsed={isMediaCollapsed} onExpand={() => setUserExpandedMedia(true)} />
+      <MediaSelection
+        collapsed={isMediaCollapsed}
+        onExpand={() => setUserExpandedMedia(true)}
+        reviewActive={reviewSurfaceActive}
+      />
     </>
   );
 };

@@ -6,8 +6,12 @@ from __future__ import annotations
 
 import numpy as np
 
-# Embedding layout constants
-FACE_EMBEDDING_DIM = 512
+from recognition.config import get_settings
+
+
+def face_embedding_dim() -> int:
+    """Live embedding dimension from recognition settings (not import-time)."""
+    return get_settings().identity_detection.embedding_dimension
 
 
 def extract_face_embedding(embedding: np.ndarray) -> np.ndarray:
@@ -15,14 +19,15 @@ def extract_face_embedding(embedding: np.ndarray) -> np.ndarray:
     if embedding is None:
         raise ValueError("embedding must not be None")
 
+    dim = face_embedding_dim()
     vector = np.asarray(embedding, dtype=np.float32)
-    if len(vector) < FACE_EMBEDDING_DIM:
+    if len(vector) < dim:
         # Unknown layout; return as-is to avoid slicing errors
         return vector
-    if len(vector) == FACE_EMBEDDING_DIM:
+    if len(vector) == dim:
         return vector
     # Take only the face portion if larger
-    return vector[:FACE_EMBEDDING_DIM]
+    return vector[:dim]
 
 
 def normalize_vector(vector: np.ndarray) -> np.ndarray:

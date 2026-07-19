@@ -144,6 +144,57 @@ Stay on the ~30B-class VLM on the A10. The right upgrade axis is **within** that
 
 ---
 
+## Part D — Qwen3.6 architecture & unquantized weights (does it change pipeline design?)
+
+### D.1 Is there an unquantized Qwen3.6, and is it worth benchmarking?
+
+Yes — `unsloth/Qwen3.6-27B-GGUF` ships **BF16 (53.8 GB)** and **Q8_0 (28.6 GB)**; base weights at `Qwen/Qwen3.6-27B`. **Neither fits the A10's 24 GB VRAM.** Only ≤~20 GB quants (UD-Q4 ~18.5 GB) are deployable on current hardware.
+
+**So the unquantized version is not benchmarkable on the A10 — and it is not the point.** Its only value is as a **quality-ceiling reference** to answer the one real open risk (undocumented **vision-quant degradation** — Part B.3, and [caption-context-enrichment §13](./caption-context-enrichment-assessment-2026-07-05.md)): *how much caption quality does Q4 lose vs full precision?* That reference needs an **A100 40 GB** (holds Q8 28.6 GB + mmproj + KV) or A100 80 GB (BF16) — a headroom shape requiring its own OCI limit increase.
+
+**Recommendation**: run the **Q4 bake-off on the A10 first** (already folded in). Escalate to a **one-off Q8 reference leg on a rented A100 only if** Q4 underperforms the 30B-A3B control and you need to know whether the culprit is the *quant* or the *model*. Do **not** stand up an A100 tier for a standing unquantized deployment — Q4 is the deployable ceiling, and the eval harness (caption-context-enrichment §6) is the instrument.
+
+### D.2 Does the Qwen3.6 architecture influence pipeline design? — No redesign
+
+Qwen3.6-27B is a **dense hybrid** — Gated DeltaNet (linear attention) interleaved with periodic Gated Attention (`16 × (3×[DeltaNet→FFN] → 1×[GatedAttn→FFN])`, 64 layers), 262K native context (→1M YaRN). Architecture implications for *our* pipelines:
+
+- **VLM tier**: it is a **drop-in candidate behind the existing `DescriptionAdapter` port** (`scene/`), not an architecture change. The ports-and-adapters seam ([caption-context-enrichment §7](./caption-context-enrichment-assessment-2026-07-05.md)) makes it a one-adapter swap. No change to the visual-facts pass, identity merge, or fusion contract.
+- **Long context (262K)** relaxes the pressure that motivated the Stage-2 *relevance filter* / CIAN summarize-before-inject — you *could* inject a full post body + large roster without truncation. **But the disciplined-injection contract still wins**: dumping raw context is a documented quality regression (CIAN; MosAIC free-form enrichment *dropped* correctness). So long context is a mild convenience, not a redesign lever.
+- **Linear-attention (Gated DeltaNet)** mainly buys cheaper long-context decode → a throughput edge, which is measured in the **bake-off + MTP leg** (Part B), not an architectural input to the pipeline.
+
+**Verdict**: the architecture is interesting but pipeline-neutral. It is measured as a model candidate; it does not reshape clustering, FIR, the describe pipeline, or storage.
+
+## Part E — GraphRAG & agentic architecture (NeoConverse / Graph-R1) for `prototype-description-service`
+
+Inputs: [NeoConverse GraphRAG](https://neo4j.com/blog/developer/graphrag-and-agentic-architecture-with-neoconverse/) (single-agent LLM orchestrating Neo4j graph traversal / vector / Text2Cypher tools, grounding answers on graph nodes to cut hallucination) and [Graph-R1 (2507.21892)](https://arxiv.org/html/2507.21892v2) (agentic GraphRAG trained end-to-end with RL — knowledge-hypergraph + multi-turn *think-retrieve-rethink-generate* — for multi-hop **text QA**).
+
+### E.1 The core insight is already implemented here — without a graph DB
+
+The value both projects sell is **node-anchored grounding: attach generated text to specific, source-tagged graph facts so the model cannot free-associate** (NeoConverse's WeWork-vs-Palantir hallucination example). **The describe service already does exactly this, and it built it deliberately** (see [caption-context-enrichment](./caption-context-enrichment-assessment-2026-07-05.md) + [anti-hallucination-caption-generation-scope](../../scopes/anti-hallucination-caption-generation-scope.md)):
+
+- **Pre-resolved, node-anchored context**: `ContextPack` + roster-bound `IdentityContextItem(name, identity_id, cluster_id, source)`; identities join to face-boxes (`scene/application/identity_merge/join.py`), not retrieved by fuzzy similarity.
+- **Constrain-then-map naming** (Eluvio, deployed): no stage *generates* a name; detectors emit only roster-checkable IDs, names are mapped deterministically — the strongest possible anchoring, stronger than a Text2Cypher lookup.
+- **Source-precedence fact arbitration** (RE-VLM): every fact carries its source; identity facts only from the roster, appearance only from the VLM. **Merge-only fusion** (CoTalk `units_out ⊆ units_in`) — machine-checkable, which a free-form agentic loop is not.
+- **Analyze-in-isolation visual prior** (`scene/application/visual_facts_pass.py`): the anti-hallucination equivalent of Graph-R1's "rethink" — pixels anchor before context text can override them.
+
+In short: the grounding these architectures promise is **already present in a higher-precision, deterministic form** appropriate to a per-tenant, single-image workload.
+
+### E.2 Why not adopt Neo4j / NeoConverse
+
+- **Second stateful service.** NeoConverse needs Neo4j (graph + full-text + vector indices) beside Postgres. This directly contradicts **Part A's** conclusion (keep one transactional store; a second store means hand-rolled consistency for no gain) — and the "graph" here (one tenant's roster + photos + co-occurrence) is **tiny** and already relational.
+- **No native use case.** The product is image→caption, not natural-language querying of a knowledge graph. Text2Cypher, community detection, multi-hop traversal solve problems we don't have.
+- **The one genuinely graph-shaped signal — identity co-occurrence** ("photographed together with X", relationship context) — is a **Postgres recursive-CTE / junction-table query**, or **PG19's SQL/PGQ property-graph queries** (already earmarked in [caption-context-enrichment §8](./caption-context-enrichment-assessment-2026-07-05.md)). If the eval harness ever shows relationship context lifts caption quality, model it in Postgres — **not** a Neo4j adoption.
+
+### E.3 Why not adopt Graph-R1's agentic loop
+
+- **Wrong task**: multi-hop **text QA**, not single-image captioning. The "complex query needs multi-turn retrieval" premise doesn't hold when the query is one image and the context is a small, pre-resolved pack.
+- **Training-heavy**: end-to-end **RL (GRPO)** + hypergraph construction — off-mission for a small alt-text product; the caption corpus already rejected LoRA/RL tuning as GPU-gated non-goals.
+- **Multi-pass latency/cost**: an agentic think-retrieve-rethink loop multiplies VLM passes — the exact economics ruled **prohibitive** for this hardware in [segmentation-vlm-pipeline-feasibility](./segmentation-vlm-pipeline-feasibility-2026-06-15.md) and where MosAIC multi-agent captioning *hurt* correctness. The **bounded** version of "iterate to reduce hallucination" that survives the cost gate already exists as scoped work: the analyze-in-isolation prior + **bounded-N ensemble decoding** (`VLM-4`, N≈4 hard cap), gated on the eval harness.
+
+**Verdict (Part E)**: **Reject Neo4j/NeoConverse and Graph-R1's framework.** The grounding benefit is already implemented deterministically; the only borrowable idea (relationship/co-occurrence context) is Postgres-native and gated on the caption eval harness. No pipeline redesign, no new service.
+
+---
+
 ## Consolidated recommendations (prioritized)
 
 1. **Vector store**: no change. pgvector is sufficient. Keep `faiss.Kmeans` on the shelf as an algorithm fallback; keep `ivfflat→hnsw` / drop-index as cheap levers for a >100k-vector tenant. (COST-06: eliminate work before buying.)
@@ -152,10 +203,12 @@ Stay on the ~30B-class VLM on the A10. The right upgrade axis is **within** that
 4. **A1 inline VLM**: if the CPU inline caption path wants better quality than Florence-2-base, benchmark **Qwen3.5-9B (Q4/Q6)** and **35B-A3B (Q2/Q3 MoE)** against the 20 s/30 s budgets before adopting.
 5. **Client fine-tune**: keep out of general scope; instantiate per paying client as its own task, bf16 LoRA, never QLoRA-4bit, GGUF export behind the profile/provenance seam.
 6. **Frontier tier (GLM-5.2/Inkling/DeepSeek-V4)**: no action. Watch Inkling only as a future frontier-multimodal item, not an alt-text upgrade.
+7. **Unquantized Qwen3.6**: don't deploy (won't fit A10). Only run a **Q8 reference leg on a rented A100** if the A10 Q4 bake-off underperforms the control and the quant-vs-model cause needs isolating.
+8. **GraphRAG / agentic (Neo4j / Graph-R1)**: no adoption. Grounding is already deterministic in `identity_merge`/`ContextPack`. If relationship/co-occurrence context is ever wanted, model it **in Postgres** (recursive CTE / PG19 SQL/PGQ), gated on the caption eval harness — never a second graph service.
 
 ## What would flip each verdict
 
-- **Vector store → adopt**: a single tenant's embedding count credibly heading to **~100k–1M+**, or vector search becoming a latency/QPS-bound service in its own right. Then: pgvector-HNSW / pgvectorscale first, Qdrant only if it must decouple from PG.
+- **Vector store / graph DB → adopt**: a single tenant's embedding count credibly heading to **~100k–1M+**, or vector search becoming a latency/QPS-bound service in its own right (then pgvector-HNSW / pgvectorscale first, Qdrant only if it must decouple from PG); **or** relationship queries growing beyond what PG recursive-CTE / SQL/PGQ can serve (a scale we are nowhere near) before a graph DB is worth its second-service cost.
 - **Larger VLM → adopt**: a confirmed **image API path** on a right-sized model, *and* a feature that needs frontier multimodal **reasoning** (not captioning), *and* an OCI GPU tier + budget that makes multi-GPU serving economic. None hold today.
 - **Qwen3.6 upgrade → ship**: the bake-off leg shows a real caption-quality win over the 30B-A3B control at equal-or-better s/img and cost/img on ACX images.
 
@@ -175,6 +228,8 @@ Stay on the ~30B-class VLM on the A10. The right upgrade axis is **within** that
 **VLM quant / MTP / fine-tune**: [Qwen3.6 doc](https://unsloth.ai/docs/models/qwen3.6) · [Qwen3.6-27B-GGUF](https://huggingface.co/unsloth/Qwen3.6-27B-GGUF) · [Qwen3.6-35B-A3B-GGUF](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF) · [MTP doc](https://unsloth.ai/docs/models/mtp) · [Qwen3.5 fine-tune doc](https://unsloth.ai/docs/models/qwen3.5/fine-tune) · [Qwen3.5-9B-GGUF](https://huggingface.co/unsloth/Qwen3.5-9B-GGUF).
 
 **Larger models**: [GLM-5.2 doc](https://unsloth.ai/docs/models/glm-5.2) · [Inkling doc](https://unsloth.ai/docs/models/inkling) · [Inkling (HF blog)](https://huggingface.co/blog/thinkingmachines-inkling) · [DeepSeek-V4 doc](https://unsloth.ai/docs/models/deepseek-v4) · [DeepSeek-V4-Pro (HF)](https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro) · [V4 modes writeup (SitePoint)](https://www.sitepoint.com/deepseek-v4-preview-what-the-fast-expert-and-vision-modes-suggest/).
+
+**Architecture / GraphRAG**: [Qwen3.6-27B-GGUF (sizes + arch)](https://huggingface.co/unsloth/Qwen3.6-27B-GGUF) · [NeoConverse GraphRAG (Neo4j)](https://neo4j.com/blog/developer/graphrag-and-agentic-architecture-with-neoconverse/) · [Graph-R1 (arXiv 2507.21892)](https://arxiv.org/html/2507.21892v2) · in-repo: [caption-context-enrichment-assessment-2026-07-05.md](./caption-context-enrichment-assessment-2026-07-05.md), [anti-hallucination-caption-generation-scope.md](../../scopes/anti-hallucination-caption-generation-scope.md), `scene/application/identity_merge/`, `scene/application/visual_facts_pass.py`.
 
 **Hardware/infra**: `infra/oci/main.tf`, `infra/oci/GPU-BURST-PROVISIONING.md`, `docs/runbooks/oci-instance-state-and-cost.md`, `scene/config/profiles.py`, `scripts/eval_harness/bakeoff.py`, `infra/oci/incidents/a10-multimodel-bakeoff.sh`.
 

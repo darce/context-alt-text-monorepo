@@ -9,6 +9,8 @@ from __future__ import annotations
 import importlib
 import inspect
 import io
+import json
+import subprocess
 import sys
 import tokenize
 from pathlib import Path
@@ -331,32 +333,41 @@ def test_buffalo_import_fails_when_eval_bench_zero(monkeypatch: pytest.MonkeyPat
 # ---------------------------------------------------------------------------
 
 
-def test_negative_import_module_graph(monkeypatch: pytest.MonkeyPatch) -> None:
-    """(a) Import graph has no face_pass/seed_roster/remote_client/embeddings.*."""
-    monkeypatch.setenv("ACX_EVAL_BENCH", "1")
-    # Drop prior buffalo_bench if a failed-guard load left nothing; force fresh.
-    sys.modules.pop("scripts.eval_harness.buffalo_bench", None)
+def test_negative_import_module_graph() -> None:
+    """(a) The THREE S2 modules' OWN transitive import closure excludes
+    face_pass / seed_roster / remote_client and recognition.infrastructure.embeddings.*.
 
-    importlib.import_module("scripts.eval_harness.face_run_record")
-    importlib.import_module("scripts.eval_harness.face_bakeoff")
-    importlib.import_module("scripts.eval_harness.buffalo_bench")
-
-    loaded = set(sys.modules)
-    offenders: list[str] = []
-    for name in loaded:
-        base = name.rsplit(".", 1)[-1]
-        if base in _FORBIDDEN_MODULE_SUFFIXES or any(
-            name == s or name.startswith(s + ".") for s in _FORBIDDEN_MODULE_SUFFIXES
-        ):
-            # Match module path segments, not arbitrary substrings.
-            parts = name.split(".")
-            if any(p in _FORBIDDEN_MODULE_SUFFIXES for p in parts):
-                offenders.append(name)
-        if name == _FORBIDDEN_EMBEDDINGS_PREFIX or name.startswith(_FORBIDDEN_EMBEDDINGS_PREFIX + "."):
-            offenders.append(name)
-
-    # Also scan the full graph of our three modules' transitive deps by name.
-    assert not offenders, f"forbidden modules in import graph: {sorted(offenders)}"
+    Runs in a FRESH subprocess (clean interpreter). Checking the parent pytest
+    session's global ``sys.modules`` is wrong: sibling test modules
+    (test_eval_harness_face_pass / _remote_client / _seed_roster) import the
+    forbidden modules at collection time, so a global check is spurious-red in
+    the full-suite gate yet vacuous in isolation. A clean interpreter attributes
+    every loaded module to what these three actually import — the gate goes red
+    only on a real S2 leak (TEST-15; SC-1/PROV-05).
+    """
+    code = (
+        "import os, sys, json, importlib\n"
+        "os.environ['ACX_EVAL_BENCH'] = '1'\n"
+        "for _m in ('scripts.eval_harness.face_run_record',\n"
+        "           'scripts.eval_harness.face_bakeoff',\n"
+        "           'scripts.eval_harness.buffalo_bench'):\n"
+        "    importlib.import_module(_m)\n"
+        "_forbidden = ('face_pass', 'seed_roster', 'remote_client')\n"
+        "_prefix = 'recognition.infrastructure.embeddings'\n"
+        "_off = sorted({n for n in sys.modules\n"
+        "               if any(p in _forbidden for p in n.split('.'))\n"
+        "               or n == _prefix or n.startswith(_prefix + '.')})\n"
+        "print(json.dumps(_off))\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        cwd=str(_SERVICE_ROOT),
+    )
+    assert proc.returncode == 0, f"import-graph subprocess failed: {proc.stderr}"
+    offenders = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert not offenders, f"forbidden modules in S2 import graph: {offenders}"
 
 
 def _name_tokens(src: str) -> list[tuple[int, str]]:
@@ -396,74 +407,31 @@ def test_negative_import_gate_is_non_vacuous() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _models_or_feature_hook_available() -> tuple[Any | None, str]:
-    """Return (embedder_or_None, skip_reason). Prefer real weights; else hookable instance."""
-    try:
-        from recognition.infrastructure.face_pipeline.ort_adapters import OrtSFaceEmbedder
-        from recognition.infrastructure.face_pipeline.provenance import (
-            ModelIntegrityError,
-            ModelMissingError,
-            load_verified_model,
-        )
-        from recognition.tests.unit.face_pipeline_support import DEFAULT_MODELS_DIR, MODELS_PRESENT
+def test_embedder_only_determinism_layer3() -> None:
+    """Identical frozen 112×112 crops → cosine ≥ EMB_DET_TAU on the REAL SFace embedder.
 
-        if MODELS_PRESENT:
-            emb = OrtSFaceEmbedder(models_dir=DEFAULT_MODELS_DIR)
-            return emb, ""
-        # Construct without loading weights by injecting _feature (FIR-3 pattern).
-        # OrtSFaceEmbedder.__init__ calls load_verified_model — if models missing, skip.
-        try:
-            load_verified_model("sface", models_dir=DEFAULT_MODELS_DIR)
-        except (ModelMissingError, ModelIntegrityError) as exc:
-            return None, f"ORT SFace weights unavailable ({exc}); skip layer-3 determinism"
-    except Exception as exc:  # noqa: BLE001 — clean skip when ORT path unavailable
-        return None, f"OrtSFaceEmbedder unavailable: {exc}"
-    return None, "ORT SFace weights unavailable; skip layer-3 determinism"
-
-
-def test_embedder_only_determinism_layer3(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Identical frozen 112×112 crops → cosine ≥ EMB_DET_TAU (not float identity)."""
+    Real-ORT-only (TEST-15). A synthetic stand-in embedder is deterministic by
+    construction, so cosine ≡ 1.0 can never go red and would certify the layer-3
+    constraint without ever exercising OrtSFaceEmbedder. When the SFace ONNX
+    weights are absent we SKIP (naming the remedy, AGT-06) — the posture FIR-3
+    uses (pytest.mark.skipif MODELS_PRESENT) — rather than assert a vacuous truth.
+    """
     if not _SYNTH_CROP.is_file():
         pytest.skip(f"missing frozen crop fixture {_SYNTH_CROP}")
 
     from recognition.infrastructure.face_pipeline.ort_adapters import OrtSFaceEmbedder
     from recognition.tests.unit.face_pipeline_support import DEFAULT_MODELS_DIR, MODELS_PRESENT
 
+    if not MODELS_PRESENT:
+        pytest.skip(
+            "ORT SFace weights unavailable; layer-3 determinism requires the real "
+            "OrtSFaceEmbedder (a synthetic embedder is trivially deterministic — "
+            "TEST-15). Fetch the face_pipeline models before running this gate."
+        )
+
     crop = np.load(_SYNTH_CROP)
     assert crop.shape == (112, 112, 3)
-
-    if MODELS_PRESENT:
-        emb = OrtSFaceEmbedder(models_dir=DEFAULT_MODELS_DIR)
-    else:
-        # Inject _feature without real ORT session (FIR-3 zero-norm test pattern).
-        # We still need a constructed instance; if __init__ requires weights, skip.
-        try:
-            emb = OrtSFaceEmbedder(models_dir=DEFAULT_MODELS_DIR)
-        except Exception as exc:  # noqa: BLE001
-            # Build a minimal stand-in that uses embed_batch + hookable _feature.
-            from recognition.infrastructure.face_pipeline._common import (
-                SFACE_EMBEDDING_DIM,
-                embed_batch,
-            )
-
-            class _HookableEmbedder:
-                embedding_dim = SFACE_EMBEDDING_DIM
-
-                def _feature(self, crop: np.ndarray) -> np.ndarray:
-                    # Deterministic pseudo-feature from crop bytes (stable re-run).
-                    rng = np.random.default_rng(int(crop.sum()) % (2**32))
-                    return rng.standard_normal(self.embedding_dim).astype(np.float32)
-
-                def embed(self, crops: list[np.ndarray]) -> np.ndarray:
-                    return embed_batch(
-                        crops,
-                        feature_fn=self._feature,
-                        embedding_dim=self.embedding_dim,
-                    )
-
-            emb = _HookableEmbedder()
-            _ = exc  # models truly missing — hook path still proves cosine gate
-
+    emb = OrtSFaceEmbedder(models_dir=DEFAULT_MODELS_DIR)
     a = emb.embed([crop])
     b = emb.embed([crop])
     assert a.shape == b.shape

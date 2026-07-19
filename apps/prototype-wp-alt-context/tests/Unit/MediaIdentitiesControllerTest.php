@@ -77,8 +77,7 @@ class MediaIdentitiesControllerTest extends TestCase
 
         $syncRepo = new NullSyncStateRepository();
 
-        $pullJob = new SpySyncPullJob();
-        $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper(), $pullJob);
+        $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper());
         $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
         $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
         $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
@@ -91,12 +90,42 @@ class MediaIdentitiesControllerTest extends TestCase
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $this->assertSame(200, $response->get_status());
         $data = $response->get_data();
-        $this->assertSame([], $data['identities_by_media'] ?? null);
+        // BR-01: empty identities_by_media must serialize as a JSON object ({}), not [] (the workbench guard rejects arrays).
+        $this->assertEquals(new \stdClass(), $data['identities_by_media'] ?? null);
+        // BR-05: a transport-unreachable backend (WP_Error) is 'unavailable', distinct from a reachable 5xx 'endpoint_error'.
         $this->assertSame('unavailable', $data['data_source'] ?? null);
-        // E15-37 Slice 1: a dead backend triggers neither an inline pull nor a scheduled bootstrap.
-        $this->assertSame([], $pullJob->performCalls);
-        $this->assertSame([], $pullJob->bypassCalls);
+        // A dead backend returns the degraded state immediately and schedules no async heal.
         $this->assertSame([], $this->scheduledBootstrapEvents());
+    }
+
+    public function testMediaIdentitiesReturnsEndpointErrorWhenBackendReturns5xx(): void
+    {
+        $membersRepo = new class() extends NullIdentityMembersRepository {
+            public function list_for_media_ids(string $tenant_id, array $media_ids): array {
+                return [];
+            }
+        };
+        $syncRepo = new NullSyncStateRepository();
+
+        $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper());
+        // A reachable backend that answers 500 (not a transport failure, not the 503 overload signal).
+        $this->queueHttpResponse([
+            'response' => ['code' => 500, 'message' => 'Internal Server Error'],
+            'body' => '{"error":"boom"}',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/media-identities');
+        $request->set_param('media_ids', [22]);
+
+        $response = $controller->get_media_identities($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+        // BR-05: reachable-but-erroring (5xx) is honestly labeled endpoint_error, not unavailable.
+        $this->assertSame(RecognitionDataSource::ENDPOINT_ERROR, $data['data_source'] ?? null);
+        // BR-01: object-shaped empty payload so the workbench renders the degraded state.
+        $this->assertEquals(new \stdClass(), $data['identities_by_media'] ?? null);
     }
 
     public function testMediaIdentitiesServesLocalProjectionWithoutSyncState(): void
@@ -163,13 +192,14 @@ class MediaIdentitiesControllerTest extends TestCase
         $this->assertSame([], $this->getHttpCalls());
     }
 
-    public function testMediaIdentitiesColdStartProxySuccessRunsInlineBootstrapPull(): void
+    public function testMediaIdentitiesColdStartProxySuccessSchedulesAsyncBootstrap(): void
     {
+        // BR-02: a successful proxy read converges the projection via the deduped
+        // async cron event only. It must NOT block the response on an inline pull.
         $membersRepo = new NullIdentityMembersRepository();
         $syncRepo = new NullSyncStateRepository();
-        $pullJob = new SpySyncPullJob();
 
-        $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper(), $pullJob);
+        $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper());
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => '[{"identity_id":"identity-1","media_id":22}]',
@@ -182,19 +212,19 @@ class MediaIdentitiesControllerTest extends TestCase
 
         $data = $response->get_data();
         $this->assertSame(RecognitionDataSource::BACKEND_PROXY, $data['data_source'] ?? null);
-        $this->assertSame([self::currentTenantId()], $pullJob->performCalls, 'Inline bootstrap pull expected in-request.');
-        $this->assertSame([], $pullJob->bypassCalls, 'Inline leg is cooldown-gated; bypass is reserved for the cron handler.');
-        $this->assertSame([], $this->scheduledBootstrapEvents(), 'No cron fallback when the inline pull succeeds.');
+        // The proxy leg (post_scan_read) is the only synchronous HTTP call; convergence is off-path.
+        $this->assertCount(1, $this->getHttpCalls(), 'Successful proxy read must not issue an inline convergence pull.');
+        $events = $this->scheduledBootstrapEvents();
+        $this->assertCount(1, $events, 'A successful proxy read schedules the deduped async bootstrap heal.');
+        $this->assertSame([self::currentTenantId()], array_values($events)[0]['args']);
     }
 
-    public function testMediaIdentitiesColdStartSchedulesDedupedFallbackWhenInlinePullFails(): void
+    public function testMediaIdentitiesColdStartProxyReadDedupsAsyncBootstrapAcrossReads(): void
     {
         $membersRepo = new NullIdentityMembersRepository();
         $syncRepo = new NullSyncStateRepository();
-        $pullJob = new SpySyncPullJob();
-        $pullJob->performResult = SyncPullResult::failed();
 
-        $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper(), $pullJob);
+        $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper());
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => '[{"identity_id":"identity-1","media_id":22}]',
@@ -209,79 +239,18 @@ class MediaIdentitiesControllerTest extends TestCase
 
         $controller->get_media_identities($request);
         $events = $this->scheduledBootstrapEvents();
-        $this->assertCount(1, $events, 'Failed inline pull must schedule the cron fallback.');
+        $this->assertCount(1, $events, 'A successful proxy read schedules the async bootstrap heal.');
         $this->assertSame([self::currentTenantId()], array_values($events)[0]['args']);
 
         $controller->get_media_identities($request);
         $this->assertCount(1, $this->scheduledBootstrapEvents(), 'Queued event must dedup the second read.');
     }
 
-    public function testMediaIdentitiesColdStartCooldownSkippedInlinePullStillSchedulesFallback(): void
+    public function testMediaIdentitiesConvergesViaAsyncHealSoFollowUpReadServesLocalProjection(): void
     {
-        $membersRepo = new NullIdentityMembersRepository();
-        $syncRepo = new NullSyncStateRepository();
-        $pullJob = new SpySyncPullJob();
-        $pullJob->performResult = SyncPullResult::skipped();
-
-        $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper(), $pullJob);
-        $this->queueHttpResponse([
-            'response' => ['code' => 200, 'message' => 'OK'],
-            'body' => '[{"identity_id":"identity-1","media_id":22}]',
-        ]);
-
-        $request = new WP_REST_Request('GET', '/acx/v1/recognition/media-identities');
-        $request->set_param('media_ids', [22]);
-
-        $response = $controller->get_media_identities($request);
-
-        $data = $response->get_data();
-        $this->assertSame(RecognitionDataSource::BACKEND_PROXY, $data['data_source'] ?? null);
-        $this->assertSame([self::currentTenantId()], $pullJob->performCalls);
-        $events = $this->scheduledBootstrapEvents();
-        $this->assertCount(1, $events, 'Cooldown-skipped inline pull must leave the deduped cron fallback scheduled.');
-        $this->assertSame([self::currentTenantId()], array_values($events)[0]['args']);
-    }
-
-    public function testMediaIdentitiesInlinePullThrowableKeepsProxyResponseIntact(): void
-    {
-        $membersRepo = new NullIdentityMembersRepository();
-        $syncRepo = new NullSyncStateRepository();
-        $pullJob = new SpySyncPullJob();
-        $pullJob->performThrows = new \RuntimeException('pull boom');
-
-        $received = [];
-        add_action('acx_sync_pull_failed', static function (array $payload) use (&$received): void {
-            $received[] = $payload;
-        });
-
-        $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper(), $pullJob);
-        $this->queueHttpResponse([
-            'response' => ['code' => 200, 'message' => 'OK'],
-            'body' => '[{"identity_id":"identity-1","media_id":22}]',
-        ]);
-
-        $request = new WP_REST_Request('GET', '/acx/v1/recognition/media-identities');
-        $request->set_param('media_ids', [22]);
-
-        $response = $controller->get_media_identities($request);
-
-        $this->assertInstanceOf(\WP_REST_Response::class, $response);
-        $this->assertSame(200, $response->get_status());
-        $data = $response->get_data();
-        $this->assertSame(RecognitionDataSource::BACKEND_PROXY, $data['data_source'] ?? null);
-        $this->assertArrayHasKey('22', $data['identities_by_media'] ?? []);
-
-        $this->assertCount(1, $received, 'A throwing inline pull must fire the failure action.');
-        $this->assertSame('bootstrap_after_proxy_read', $received[0]['context'] ?? null);
-        $this->assertSame('pull boom', $received[0]['message'] ?? null);
-
-        $events = $this->scheduledBootstrapEvents();
-        $this->assertCount(1, $events, 'A throwing inline pull must schedule the deduped cron fallback.');
-        $this->assertSame([self::currentTenantId()], array_values($events)[0]['args']);
-    }
-
-    public function testMediaIdentitiesColdStartProxyReadConvergesSoFollowUpReadServesLocalProjection(): void
-    {
+        // BR-02: the proxy read schedules an async heal (never an inline pull). Once
+        // the cron handler completes the pull (projection rows land), follow-up reads
+        // are sovereign. Here the completed heal is simulated by flipping hasRows.
         $membersRepo = new class() extends NullIdentityMembersRepository {
             public bool $hasRows = false;
             public function has_projection_rows_for_tenant(string $tenant_id): bool
@@ -303,12 +272,8 @@ class MediaIdentitiesControllerTest extends TestCase
             }
         };
         $syncRepo = new NullSyncStateRepository();
-        $pullJob = new SpySyncPullJob();
-        $pullJob->onPerform = static function () use ($membersRepo): void {
-            $membersRepo->hasRows = true;
-        };
 
-        $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper(), $pullJob);
+        $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper());
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => '[{"identity_id":"identity-1","media_id":22}]',
@@ -319,7 +284,12 @@ class MediaIdentitiesControllerTest extends TestCase
 
         $first = $controller->get_media_identities($request);
         $this->assertSame(RecognitionDataSource::BACKEND_PROXY, $first->get_data()['data_source'] ?? null);
+        // The proxy read schedules the async heal but does not pull inline.
+        $this->assertCount(1, $this->scheduledBootstrapEvents(), 'Proxy read must schedule the async heal.');
         $httpCallsAfterProxyRead = count($this->getHttpCalls());
+
+        // Simulate the cron handler completing the convergence pull.
+        $membersRepo->hasRows = true;
 
         $second = $controller->get_media_identities($request);
         $data = $second->get_data();

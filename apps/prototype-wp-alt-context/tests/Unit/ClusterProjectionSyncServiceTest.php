@@ -123,7 +123,7 @@ class ClusterProjectionSyncServiceTest extends TestCase
         $this->assertCount(0, $GLOBALS['__ac_scheduled']);
     }
 
-    public function testPreviouslyQualifyingStaleStillPullsInline(): void
+    public function testPreviouslyQualifyingStaleSchedulesAsyncHealWithoutInlinePull(): void
     {
         $GLOBALS['__ac_scheduled'] = [];
         $syncJob = new SpySyncPullJob();
@@ -135,8 +135,16 @@ class ClusterProjectionSyncServiceTest extends TestCase
         );
 
         $this->assertTrue($service->should_use_local_projection('tenant-1'));
-        $this->assertSame(['tenant-1'], $syncJob->performCalls, 'Previously-qualifying stale path keeps its inline pull.');
-        $this->assertCount(0, $GLOBALS['__ac_scheduled']);
+        // BR-03: the gate-pass+stale path heals async — no inline pull blocks the
+        // read. Unlike the old ignored-result inline pull, it always leaves a
+        // deduped cron fallback scheduled so the projection actually converges.
+        $this->assertSame([], $syncJob->performCalls, 'Stale qualifying read must not pull inline.');
+        $this->assertSame([], $syncJob->bypassCalls);
+        $this->assertCount(1, $GLOBALS['__ac_scheduled']);
+        $scheduled_key = array_key_first($GLOBALS['__ac_scheduled']);
+        $this->assertIsString($scheduled_key);
+        $this->assertStringStartsWith(self::BOOTSTRAP_HOOK . '::', $scheduled_key);
+        $this->assertSame(['tenant-1'], $GLOBALS['__ac_scheduled'][$scheduled_key]['args']);
     }
 
     public function testPreviouslyQualifyingFreshSchedulesNothing(): void

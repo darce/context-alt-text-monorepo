@@ -153,6 +153,37 @@ class SuggestionsControllerTest extends TestCase
         $data = $response->get_data();
         // Keyed-by-id envelope: empty mapping must serialize as {} rather than [].
         $this->assertEquals(new \stdClass(), $data['matches'] ?? null);
+        // BR-08: the offline path must carry data_source so the UI distinguishes
+        // "unreachable" from a genuine empty result. Transport error => unavailable.
+        $this->assertSame('unavailable', $data['data_source'] ?? null);
+    }
+
+    public function testGetIdentitiesSuggestionsReturnsEndpointErrorWhenBackendReturns5xx(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 500, 'message' => 'Internal Server Error'],
+            'body' => '{"error":"boom"}',
+        ]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 500, 'message' => 'Internal Server Error'],
+            'body' => '{"error":"boom"}',
+        ]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 500, 'message' => 'Internal Server Error'],
+            'body' => '{"error":"boom"}',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/identities/suggestions');
+        $request->set_param('identity_ids', 'aaaaaaaa-bbbb-cccc-dddd-000000000001');
+
+        $response = $this->controller->get_identities_suggestions($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+        // BR-08/BR-05: a reachable-but-erroring backend is endpoint_error, not unavailable.
+        $this->assertEquals(new \stdClass(), $data['matches'] ?? null);
+        $this->assertSame('endpoint_error', $data['data_source'] ?? null);
     }
 
     public function testGetIdentitiesSuggestionsPropagatesBackendOverloadedAs503(): void

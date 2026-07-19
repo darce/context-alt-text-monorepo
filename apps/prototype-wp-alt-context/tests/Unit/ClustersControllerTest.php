@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Api\ClustersController;
+use AltContext\Api\RecognitionDataSource;
 use AltContext\Sovereign\Mappers\ClusterResponseMapper;
 use AltContext\Sovereign\Mappers\MemberResponseMapper;
 use AltContext\Sovereign\Repositories\ClustersRepositoryInterface;
@@ -31,6 +32,24 @@ class ClustersControllerTest extends TestCase
         parent::setUp();
         $this->setOption('acx_recognition_url', 'http://localhost:8000');
         $this->controller = new ClustersController();
+    }
+
+    /**
+     * Deduped async heal events scheduled on the read path, keyed by the
+     * wp-cron stub as BOOTSTRAP_SYNC_HOOK . '::' . md5(serialize($args)).
+     *
+     * @return array<string,array{timestamp:int,args:array<int,string>}>
+     */
+    private function scheduledBootstrapEvents(): array
+    {
+        $events = [];
+        foreach (($GLOBALS['__ac_scheduled'] ?? []) as $key => $event) {
+            if (str_starts_with((string) $key, RecognitionDataSource::BOOTSTRAP_SYNC_HOOK . '::')) {
+                $events[$key] = $event;
+            }
+        }
+
+        return $events;
     }
 
     public function testRegisterRoutesIncludesReadOnlyClusterSurfaces(): void
@@ -163,9 +182,8 @@ class ClustersControllerTest extends TestCase
         );
     }
 
-    public function testTopUnlabeledClustersRepairMissingLocalMembersBeforeServing(): void
+    public function testTopUnlabeledClustersScheduleAsyncHealForMissingMembersWithoutBlocking(): void
     {
-        $GLOBALS['__ac_attachment_urls'][202] = 'http://example.test/media/202.jpg';
         $projectionState = new \stdClass();
         $projectionState->membersByCluster = [];
         $projectionState->targetedClusterIds = [];
@@ -261,10 +279,22 @@ class ClustersControllerTest extends TestCase
         $response = $controller->list_top_unlabeled_clusters($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
         $data = $response->get_data();
-        $this->assertSame(['cluster-needs-members'], $projectionState->targetedClusterIds);
-        $this->assertSame('identity-repaired', $data['clusters'][0]['representatives'][0]['id']);
-        $this->assertSame('http://example.test/media/202.jpg', $data['clusters'][0]['representatives'][0]['thumb_url']);
+
+        // Missing members converge off the request path: repair_targeted_projection
+        // now returns false and never pulls inline, so perform_targeted_snapshot
+        // must not run (the projection would regress to a synchronous repair if it did).
+        $this->assertSame([], $projectionState->targetedClusterIds);
+
+        // The current (unrepaired) projection is served immediately as-is.
+        $this->assertSame('cluster-needs-members', $data['clusters'][0]['id']);
+        $this->assertSame([], $data['clusters'][0]['representatives']);
+
+        // Exactly one deduped async heal event is scheduled for this tenant instead.
+        $events = $this->scheduledBootstrapEvents();
+        $this->assertCount(1, $events);
+        $this->assertSame([self::currentTenantId()], array_values($events)[0]['args']);
     }
 
     public function testTopUnlabeledClustersClampExcessiveRequestLimit(): void
@@ -339,15 +369,6 @@ class ClustersControllerTest extends TestCase
                 ],
             ]),
         ]);
-        $this->queueHttpResponse([
-            'response' => ['code' => 200, 'message' => 'OK'],
-            'body' => json_encode([
-                'snapshot_version' => 0,
-                'clusters' => [],
-                'members' => [],
-                'empty' => true,
-            ]),
-        ]);
 
         $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled');
         $response = $controller->list_top_unlabeled_clusters($request);
@@ -372,12 +393,16 @@ class ClustersControllerTest extends TestCase
             $response->get_data()
         );
 
+        // The proxy read is the only synchronous HTTP call; convergence is off-path.
+        // A regression to an inline delta/bootstrap pull would add a second call.
         $calls = $this->getHttpCalls();
-        $this->assertCount(2, $calls);
+        $this->assertCount(1, $calls);
         $this->assertStringContainsString('/recognition/clusters/top-unlabeled', $calls[0]['url']);
-        $this->assertStringContainsString('/clusters/delta', $calls[1]['url']);
-        $this->assertStringContainsString('since_version=0', $calls[1]['url']);
-        $this->assertCount(0, $GLOBALS['__ac_scheduled']);
+
+        // The successful proxy read schedules exactly one deduped async bootstrap heal.
+        $events = $this->scheduledBootstrapEvents();
+        $this->assertCount(1, $events);
+        $this->assertSame([self::currentTenantId()], array_values($events)[0]['args']);
     }
 
     public function testTopUnlabeledClustersRejectPartialProxyEnvelope(): void
@@ -777,7 +802,7 @@ class ClustersControllerTest extends TestCase
         $this->assertCount(0, $this->getHttpCalls());
     }
 
-    public function testSuccessfulProxyReadTriggersInlineBootstrapSyncWithoutSchedulingCron(): void
+    public function testSuccessfulProxyReadSchedulesAsyncBootstrapCronWithoutInlinePull(): void
     {
         $syncRepo = new NullSyncStateRepository();
         $syncSpy = new ClustersControllerSyncPullSpy();
@@ -802,36 +827,16 @@ class ClustersControllerTest extends TestCase
         $response = $controller->list_clusters($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
-        $this->assertTrue($syncSpy->performedBypass);
+
+        // BR-04/BR-02: a successful proxy read converges via the deduped async cron
+        // event only. It must NOT block the response on an inline bypass/perform pull
+        // (the spy records either call, so a regression to inline pulling fails here).
+        $this->assertFalse($syncSpy->performedBypass);
         $this->assertFalse($syncSpy->performed);
-        $this->assertCount(0, $GLOBALS['__ac_scheduled']);
-    }
 
-    public function testFailedInlineBootstrapSchedulesCronRetry(): void
-    {
-        $syncRepo = new NullSyncStateRepository();
-        $syncJob = new ClustersControllerFailingSyncPull();
-        $controller = new ClustersController(
-            new NullClustersRepository(),
-            new NullIdentityMembersRepository(),
-            $syncRepo,
-            $syncJob,
-            new ClusterResponseMapper(),
-            new MemberResponseMapper()
-        );
-
-        $this->queueHttpResponse([
-            'response' => ['code' => 200, 'message' => 'OK'],
-            'body' => json_encode([
-                ['id' => 'cluster-proxy', 'label' => 'Proxied'],
-            ]),
-        ]);
-
-        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters');
-        $response = $controller->list_clusters($request);
-
-        $this->assertInstanceOf(\WP_REST_Response::class, $response);
-        $this->assertCount(1, $GLOBALS['__ac_scheduled']);
+        $events = $this->scheduledBootstrapEvents();
+        $this->assertCount(1, $events);
+        $this->assertSame([self::currentTenantId()], array_values($events)[0]['args']);
     }
 
     public function testFailedProxyReadDoesNotTriggerBootstrapSyncOrCron(): void
@@ -1017,7 +1022,7 @@ class ClustersControllerTest extends TestCase
         $this->assertSame('identity-local-1', $data['members'][0]['identity_id']);
     }
 
-    public function testGetClusterMembersRepairsMissingLocalMembersBeforeServing(): void
+    public function testGetClusterMembersScheduleAsyncHealForMissingMembersWithoutBlocking(): void
     {
         $projectionState = new \stdClass();
         $projectionState->membersByCluster = [];
@@ -1115,11 +1120,23 @@ class ClustersControllerTest extends TestCase
         $response = $controller->get_cluster_members($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
         $data = $response->get_data();
-        $this->assertSame(['cluster-needs-members'], $projectionState->targetedClusterIds);
-        $this->assertSame('identity-repaired', $data['members'][0]['identity_id']);
-        $this->assertSame(1, $data['total']);
+
+        // repair_targeted_projection now returns false and schedules the async heal
+        // instead of pulling inline, so perform_targeted_snapshot must not run (a
+        // regression to synchronous repair would repopulate targetedClusterIds).
+        $this->assertSame([], $projectionState->targetedClusterIds);
+
+        // The current (unrepaired) projection is served immediately: no members yet.
+        $this->assertSame([], $data['members']);
+        $this->assertSame(0, $data['total']);
         $this->assertFalse($data['truncated']);
+
+        // Exactly one deduped async heal event is scheduled for this tenant instead.
+        $events = $this->scheduledBootstrapEvents();
+        $this->assertCount(1, $events);
+        $this->assertSame([self::currentTenantId()], array_values($events)[0]['args']);
     }
 
     public function testGetClusterMembersUsesRepositoryTotalMetadataBeforeFallbackCount(): void
@@ -1468,7 +1485,7 @@ class ClustersControllerTest extends TestCase
         $this->assertStringContainsString('offset=2', $calls[0]['url']);
     }
 
-    public function testStaleProjectionTriggersSyncPullBeforeServing(): void
+    public function testStaleProjectionSchedulesAsyncHealWithoutBlocking(): void
     {
         $clustersRepo = new class() extends NullClustersRepository {
             public function has_projection_rows_for_tenant(string $tenant_id): bool
@@ -1517,10 +1534,19 @@ class ClustersControllerTest extends TestCase
         $response = $controller->list_clusters($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
-        $this->assertTrue($syncSpy->performed, 'SyncPullJob::perform() must be called when projection is stale');
-        $this->assertNotEmpty($syncSpy->tenantId, 'SyncPullJob must receive the tenant_id');
+        $this->assertSame(200, $response->get_status());
 
-        // Even though sync was triggered, stale data is still served immediately
+        // BR-03: heal async, never inline. The prior inline perform() blocked the
+        // read on a possibly-offline backend; a stale read must schedule the deduped
+        // cron event and leave the sync job untouched on the request path.
+        $this->assertFalse($syncSpy->performed, 'Stale read must not pull inline via perform()');
+        $this->assertFalse($syncSpy->performedBypass, 'Stale read must not pull inline via perform_bypass_cooldown()');
+
+        $events = $this->scheduledBootstrapEvents();
+        $this->assertCount(1, $events);
+        $this->assertSame([self::currentTenantId()], array_values($events)[0]['args']);
+
+        // Stale data is still served immediately, off the convergence path.
         $data = $response->get_data();
         $this->assertIsArray($data);
         $this->assertSame('cluster-stale', $data['clusters'][0]['id']);
@@ -1584,7 +1610,7 @@ class ClustersControllerTest extends TestCase
         $this->assertSame('cluster-resilient', $data['clusters'][0]['id']);
     }
 
-    public function testNullSyncPullJobDoesNotCrashOnStaleProjection(): void
+    public function testNullSyncPullJobOnStaleProjectionSchedulesAsyncHealWithoutCrashing(): void
     {
         $clustersRepo = new class() extends NullClustersRepository {
             public function has_projection_rows_for_tenant(string $tenant_id): bool
@@ -1628,30 +1654,24 @@ class ClustersControllerTest extends TestCase
             new MemberResponseMapper()
         );
 
-        $this->queueHttpResponse([
-            'response' => ['code' => 200, 'message' => 'OK'],
-            'body' => json_encode([
-                'fallback_to_snapshot' => true,
-            ]),
-        ]);
-        $this->queueHttpResponse([
-            'response' => ['code' => 200, 'message' => 'OK'],
-            'body' => '"invalid"',
-        ]);
-
         $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters');
         $response = $controller->list_clusters($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+
+        // The stale local projection is served immediately without crashing on the
+        // null sync job.
         $data = $response->get_data();
         $this->assertIsArray($data);
         $this->assertSame('cluster-no-sync', $data['clusters'][0]['id']);
 
-        $calls = $this->getHttpCalls();
-        $this->assertCount(2, $calls);
-        $this->assertStringContainsString('/recognition/tenants/', $calls[0]['url']);
-        $this->assertStringContainsString('/clusters/delta', $calls[0]['url']);
-        $this->assertStringContainsString('/clusters/snapshot', $calls[1]['url']);
+        // No inline pull: convergence is deferred to the deduped async cron event,
+        // so the read path issues zero HTTP requests even with a null job.
+        $this->assertSame([], $this->getHttpCalls());
+        $events = $this->scheduledBootstrapEvents();
+        $this->assertCount(1, $events);
+        $this->assertSame([self::currentTenantId()], array_values($events)[0]['args']);
     }
 }
 

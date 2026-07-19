@@ -101,7 +101,7 @@ All Qwen3.6/3.5 variants below are **confirmed VLMs** (ship `mmproj-*.gguf`, HF 
 
 Run it through the **existing** harness, as a bounded leg on a caught A10:
 
-- **Candidates**: `Qwen3.6-27B @ UD-Q4_K_XL` and `Qwen3.6-35B-A3B @ UD-Q4/Q3`, against the current `Qwen3-VL-30B-A3B @ Q4_K_M` **control** (control run-record already exists).
+- **Candidates**: `Qwen3.6-27B @ UD-Q4_K_XL` and `Qwen3.6-35B-A3B @ UD-Q4/Q3`, against the current `Qwen3-VL-30B-A3B @ Q4_K_M` **control** (control run-record already exists). The **27B candidate is folded into `a10-multimodel-bakeoff.sh`** (exact `Qwen3.6-27B-UD-Q4_K_XL.gguf` + `mmproj-F16.gguf` URLs wired, 2026-07-18). **Caveat**: Qwen3.6 (qwen3_5 arch) needs a **newer llama.cpp build than the box's b6887** for vision — verify before the run.
 - **Metrics** (per house rule — every report carries total cost + **cost/image**; A10 ~$2/GPU-hr): caption quality vs the golden manifest (v3 two-pass interleave, names bound to face-box order), **s/img**, **cost/1k-img**, p95 latency.
 - **Quant sweep discipline**: if dropping below Q4 for any VLM, verify caption quality holds — vision-quality-vs-quant is undocumented, so it must be observed, not assumed.
 

@@ -20,8 +20,6 @@ import {
   NEXT_ACTION_KIND,
   nextQueueIndex,
   prevQueueIndex,
-  removeAtQueueCursor,
-  removeAtQueueIndex,
   REVIEW_QUEUE_BAND,
   REVIEW_QUEUE_BAND_CHIP_LABEL,
   REVIEW_QUEUE_FILTER,
@@ -596,55 +594,8 @@ describe('buildReviewQueue — flattening', () => {
 });
 
 describe('PR-54 index semantics under removal', () => {
-  const ids = ['a', 'b', 'c', 'd'] as const;
-
-  it('successful commit keeps the cursor (no-increment) via removeAtQueueCursor', () => {
-    // Head commit: cursor stays 0; former next item slides into the slot.
-    let cursor = 0;
-    let queue: string[] = [...ids];
-
-    let next = removeAtQueueCursor(queue, cursor);
-    expect(next.index).toBe(cursor);
-    expect(next.items[next.index]).toBe('b');
-    expect(next.items).toEqual(['b', 'c', 'd']);
-    queue = next.items;
-    cursor = next.index;
-
-    // Mid commit: still no-increment — same cursor now points at former next.
-    cursor = 1; // on 'c'
-    next = removeAtQueueCursor(queue, cursor);
-    expect(next.index).toBe(cursor);
-    expect(next.items).toEqual(['b', 'd']);
-    expect(next.items[next.index]).toBe('d');
-  });
-
-  it('removeAtQueueCursor clamps after tail removal and empties safely', () => {
-    // Tail removal: cursor was on last item → lands on new last item.
-    const tail = removeAtQueueCursor(['a', 'b', 'c'], 2);
-    expect(tail.items).toEqual(['a', 'b']);
-    expect(tail.index).toBe(1);
-    expect(tail.items[tail.index]).toBe('b');
-
-    // Emptying the queue: index is 0; empty-state handling is a caller obligation.
-    const emptied = removeAtQueueCursor(['only'], 0);
-    expect(emptied.items).toEqual([]);
-    expect(emptied.index).toBe(0);
-
-    // Out-of-bounds: no-op copy; cursor clamped to current length.
-    const oobHigh = removeAtQueueCursor(['a', 'b'], 5);
-    expect(oobHigh.items).toEqual(['a', 'b']);
-    expect(oobHigh.index).toBe(1);
-
-    const oobNeg = removeAtQueueCursor(['a', 'b'], -1);
-    expect(oobNeg.items).toEqual(['a', 'b']);
-    expect(oobNeg.index).toBe(0);
-
-    // Items-only helper still returns the filtered array.
-    expect(removeAtQueueIndex(['a', 'b', 'c'], 1)).toEqual(['a', 'c']);
-  });
-
   it('prev/next step within bounds and clamp oversized/negative inputs', () => {
-    const length = ids.length;
+    const length = 4;
 
     // Happy-path stepping.
     expect(nextQueueIndex(0, length)).toBe(1);

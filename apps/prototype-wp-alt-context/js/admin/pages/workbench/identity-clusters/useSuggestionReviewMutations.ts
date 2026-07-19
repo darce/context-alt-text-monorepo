@@ -170,6 +170,15 @@ export const useSuggestionReviewMutations = ({
 
   const mountedRef = React.useRef(true);
   const heldRef = React.useRef<HeldCommit | null>(null);
+  /**
+   * A-01: synchronous mirror of the VISIBLE single-item hold state. The busy path
+   * awaits bulk before opening a hold, during which a DIFFERENT item's failure can
+   * materialize (e.g. bulk-initiate flushes and fails a held single). The render-time
+   * `hold` captured in scheduleCommit is stale by then, so async guards read this ref
+   * instead. It reflects only updateUi (visible) transitions — bulk's silent
+   * commitOneNow never touches it, preserving the S2-01 "gate on visible state" rule.
+   */
+  const holdStateRef = React.useRef<CommitHoldState>(hold);
   /** Serializes flush/schedule so at most one commit is in flight and order is preserved. */
   const chainRef = React.useRef(Promise.resolve());
   const committingRef = React.useRef(false);
@@ -347,6 +356,9 @@ export const useSuggestionReviewMutations = ({
   }, []);
 
   const setHoldSafe = React.useCallback((next: CommitHoldState) => {
+    // A-01: mirror synchronously so async busy-path guards see the latest visible
+    // hold even before React commits the re-render.
+    holdStateRef.current = next;
     if (mountedRef.current) {
       setHold(next);
     }
@@ -482,6 +494,18 @@ export const useSuggestionReviewMutations = ({
         return Promise.resolve({ outcome: 'failed', kind, suggestionId });
       }
 
+      // S2-01 [CON-05]: the single-item hold/failure slot is a single slot. A DIFFERENT
+      // item's unresolved failure must NOT be silently cleared by openHold — that erases
+      // the error surface and abandons an un-committed item the user believes was saved.
+      // Refuse the new action (resolve with ITS own identity) until the failed item is
+      // retried to success. Key off the VISIBLE hold state, not failedHoldRef: bulk's
+      // commitOneNow sets failedHoldRef with updateUi:false (bulk owns its own partial-
+      // failure surface + Retry), so gating on failedHoldRef would wrongly block singles
+      // after a bulk partial failure with no single-item Retry path (grok GFR review).
+      if (hold.phase === 'failed' && hold.suggestionId && hold.suggestionId !== suggestionId) {
+        return Promise.resolve({ outcome: 'not_attempted_prior_failed', kind, suggestionId });
+      }
+
       // Idle path: open the hold synchronously so the Saving… state is visible in the
       // same turn as the click (tests and AT both observe this immediately).
       // When bulk is holding/committing, take the busy path so bulk flushes first (PR-30).
@@ -541,6 +565,20 @@ export const useSuggestionReviewMutations = ({
             // BR-17: same item still failed after chain — do not open a second path.
             if (failedHoldRef.current?.suggestionId === suggestionId) {
               resolve({ outcome: 'failed', kind, suggestionId });
+              return;
+            }
+            // S2-01 (A-01): a DIFFERENT item's VISIBLE failure may have materialized
+            // during awaitBulk (e.g. bulk-initiate flushed and failed the held single
+            // A while this B was parked). openHold would null failedHoldRef + overwrite
+            // the hold, silently erasing A's failure surface. Re-check the LIVE hold
+            // (not the stale entry-time closure) and refuse instead of opening.
+            const liveHold = holdStateRef.current;
+            if (
+              liveHold.phase === 'failed' &&
+              liveHold.suggestionId &&
+              liveHold.suggestionId !== suggestionId
+            ) {
+              resolve({ outcome: 'not_attempted_prior_failed', kind, suggestionId });
               return;
             }
             void openHold(kind, suggestionId).then(resolve);
@@ -710,7 +748,11 @@ export const useSuggestionReviewMutations = ({
         void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.labels() });
         void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
         void queryClient.invalidateQueries({ queryKey: queryKeys.roster.entries() });
-        void queryClient.invalidateQueries({ queryKey: namePendingKey });
+        // S2-02 [CON-05]: mark namePending stale WITHOUT an immediate refetch. Backend
+        // curation lags the commit, so a refetch-now returns the just-committed cluster's
+        // row and clobbers the optimistic BR-29 removal below (row reappears). refetchType
+        // 'none' lets the optimistic drop win; a later natural refetch reconciles post-curation.
+        void queryClient.invalidateQueries({ queryKey: namePendingKey, refetchType: 'none' });
         // BR-29: drop namePending rows for this cluster immediately (async curation lag).
         removeNameSuggestionForCluster(request.clusterId);
         setPersonCommitSafe({
@@ -735,6 +777,13 @@ export const useSuggestionReviewMutations = ({
 
   const schedulePersonCommit = React.useCallback(
     (request: PersonCommitRequest): Promise<PersonCommitResult> => {
+      // S2-01 [CON-05]: a person-commit must not proceed while a single-item accept/reject
+      // failure is unresolved. Its success invalidates the projection and can drop the
+      // failed card from cache — stranding the failed slot with no reachable Retry. Refuse
+      // until the failure is retried to success (same single-slot honesty as scheduleCommit).
+      if (hold.phase === 'failed' && hold.suggestionId) {
+        return Promise.resolve({ outcome: 'not_attempted_prior_failed', clusterId: request.clusterId });
+      }
       // BR-25: synchronous re-entry gate before any async work / flush latency.
       if (personCommitInFlightRef.current) {
         return Promise.resolve({ outcome: 'failed', clusterId: request.clusterId });
@@ -783,6 +832,15 @@ export const useSuggestionReviewMutations = ({
                   resolve({ outcome: 'failed', clusterId: request.clusterId });
                   return;
                 }
+                // S2-01 (A-01): an accept/reject failure that materialized during the
+                // awaited window must block the person-commit (its success invalidates
+                // the projection and can drop the failed card). Re-check LIVE hold, not
+                // the stale entry-time closure.
+                const liveHold = holdStateRef.current;
+                if (liveHold.phase === 'failed' && liveHold.suggestionId) {
+                  resolve({ outcome: 'not_attempted_prior_failed', clusterId: request.clusterId });
+                  return;
+                }
                 const result = await executePersonCommit(request);
                 resolve(result);
               } catch {
@@ -805,7 +863,7 @@ export const useSuggestionReviewMutations = ({
 
       return run();
     },
-    [awaitBulkIdleOrFlushRef, executePersonCommit, flushHeldInternal],
+    [awaitBulkIdleOrFlushRef, executePersonCommit, flushHeldInternal, hold.phase, hold.suggestionId],
   );
 
   const retryPersonCommit = React.useCallback((): Promise<PersonCommitResult> | null => {

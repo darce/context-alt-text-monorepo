@@ -12,10 +12,23 @@
  * are exempt from the single-primary count and are not modelled here.
  */
 
-/** Which surface owns the single accent-primary in a given viewport state. */
-export type FooterAccentOwner = 'analyze' | 'describe' | 'card';
+/**
+ * Which surface owns the single accent-primary in a given viewport state.
+ * sr-007: values centralized as an `as const` object; the type derives from it so
+ * comparisons import the member instead of scattering bare string literals.
+ */
+export const FOOTER_ACCENT_OWNER = {
+  ANALYZE: 'analyze',
+  DESCRIBE: 'describe',
+  CARD: 'card',
+} as const;
+export type FooterAccentOwner = (typeof FOOTER_ACCENT_OWNER)[keyof typeof FOOTER_ACCENT_OWNER];
 
-export type FooterCtaVariant = 'primary' | 'secondary';
+export const FOOTER_CTA_VARIANT = {
+  PRIMARY: 'primary',
+  SECONDARY: 'secondary',
+} as const;
+export type FooterCtaVariant = (typeof FOOTER_CTA_VARIANT)[keyof typeof FOOTER_CTA_VARIANT];
 
 export interface MediaFooterCtaState {
   /** Surface carrying the accent-primary token; `card` → no footer CTA is accent. */
@@ -56,12 +69,24 @@ export const selectMediaFooterCtaState = ({
   describeRunning,
 }: MediaFooterCtaInputs): MediaFooterCtaState => {
   if (reviewActive) {
-    return { accentOwner: 'card', analyzeVariant: 'secondary', describeVariant: 'secondary' };
+    return {
+      accentOwner: FOOTER_ACCENT_OWNER.CARD,
+      analyzeVariant: FOOTER_CTA_VARIANT.SECONDARY,
+      describeVariant: FOOTER_CTA_VARIANT.SECONDARY,
+    };
   }
   if (describeRunning) {
-    return { accentOwner: 'describe', analyzeVariant: 'secondary', describeVariant: 'secondary' };
+    return {
+      accentOwner: FOOTER_ACCENT_OWNER.DESCRIBE,
+      analyzeVariant: FOOTER_CTA_VARIANT.SECONDARY,
+      describeVariant: FOOTER_CTA_VARIANT.SECONDARY,
+    };
   }
-  return { accentOwner: 'analyze', analyzeVariant: 'primary', describeVariant: 'secondary' };
+  return {
+    accentOwner: FOOTER_ACCENT_OWNER.ANALYZE,
+    analyzeVariant: FOOTER_CTA_VARIANT.PRIMARY,
+    describeVariant: FOOTER_CTA_VARIANT.SECONDARY,
+  };
 };
 
 /** DOM marker for the single accent-primary element — counted by the DOM invariant test. */

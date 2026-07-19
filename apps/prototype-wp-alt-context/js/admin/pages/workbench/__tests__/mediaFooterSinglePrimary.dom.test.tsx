@@ -25,7 +25,7 @@ import { ReviewQueue } from '../identity-clusters';
 import { REVIEW_QUEUE_DRAIN_MESSAGE } from '../identity-clusters/reviewQueueDriver';
 import { MediaAnalyzeCta } from '../MediaAnalyzeCta';
 import { BulkDescribeCta } from '../MediaSelection';
-import { ACCENT_PRIMARY_ATTR, selectMediaFooterCtaState } from '../mediaFooterCtaState';
+import { ACCENT_PRIMARY_ATTR, FOOTER_ACCENT_OWNER, selectMediaFooterCtaState } from '../mediaFooterCtaState';
 
 /** Single source of truth for the accent-primary marker selector (BR-83 — was a literal). */
 const ACCENT_PRIMARY_SELECTOR = `[${ACCENT_PRIMARY_ATTR}]`;
@@ -176,8 +176,19 @@ const ReconciledViewport = ({
           onCardPrimaryPresenceChange={setCardPrimaryPresent}
         />
       )}
-      <MediaAnalyzeCta accentPrimary={footerCta.accentOwner === 'analyze'} />
-      <BulkDescribeCta {...describeProps} accentPrimary={footerCta.accentOwner === 'describe'} />
+      <MediaAnalyzeCta accentPrimary={footerCta.accentOwner === FOOTER_ACCENT_OWNER.ANALYZE} />
+      {/*
+        S6-01: couple the describe CTA's isRunning to the SAME describeRunning signal that
+        drives footer accent ownership — the production-reachable config. A describe run in
+        flight disables the submit button while it keeps the accent marker; wiring isRunning
+        independently (false) modelled an impossible state and never exercised the disabled
+        accent submit.
+      */}
+      <BulkDescribeCta
+        {...describeProps}
+        isRunning={describeRunning}
+        accentPrimary={footerCta.accentOwner === FOOTER_ACCENT_OWNER.DESCRIBE}
+      />
     </div>
   );
 };
@@ -254,7 +265,7 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
     expect(marked).toBe(screen.getByRole('button', { name: 'Analyze selected media' }));
   });
 
-  it('describe-in-flight: the describe submit button is the single accent primary', async () => {
+  it('describe-in-flight: the disabled describe submit is the single accent primary', async () => {
     emptyQueues();
     const { container } = renderViewport({ describeRunning: true });
 
@@ -262,7 +273,10 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
 
     expect(markerCount(container)).toBe(1);
     const marked = container.querySelector(ACCENT_PRIMARY_SELECTOR);
-    expect(marked).toBe(screen.getByRole('button', { name: 'Describe selected' }));
+    const describeSubmit = screen.getByRole('button', { name: 'Describe selected' });
+    expect(marked).toBe(describeSubmit);
+    // Real describe-run state: the submit is disabled (isRunning) yet still owns the accent.
+    expect(describeSubmit).toBeDisabled();
   });
 
   it('review-active-with-a-card: the card accept is the single accent primary, footer demoted', async () => {

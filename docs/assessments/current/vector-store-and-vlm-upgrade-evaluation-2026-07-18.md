@@ -101,9 +101,27 @@ All Qwen3.6/3.5 variants below are **confirmed VLMs** (ship `mmproj-*.gguf`, HF 
 
 Run it through the **existing** harness, as a bounded leg on a caught A10:
 
-- **Candidates**: `Qwen3.6-27B @ UD-Q4_K_XL` and `Qwen3.6-35B-A3B @ UD-Q4/Q3`, against the current `Qwen3-VL-30B-A3B @ Q4_K_M` **control** (control run-record already exists). The **27B candidate is folded into `a10-multimodel-bakeoff.sh`** (exact `Qwen3.6-27B-UD-Q4_K_XL.gguf` + `mmproj-F16.gguf` URLs wired, 2026-07-18). **Caveat**: Qwen3.6 (qwen3_5 arch) needs a **newer llama.cpp build than the box's b6887** for vision — verify before the run.
+- **Both Qwen3.6 candidates are folded into `a10-multimodel-bakeoff.sh`** (exact GGUF + `mmproj-F16.gguf` URLs wired + verified 2026-07-18) against the current `Qwen3-VL-30B-A3B @ Q4_K_M` **control** (control run-record already exists).
 - **Metrics** (per house rule — every report carries total cost + **cost/image**; A10 ~$2/GPU-hr): caption quality vs the golden manifest (v3 two-pass interleave, names bound to face-box order), **s/img**, **cost/1k-img**, p95 latency.
 - **Quant sweep discipline**: if dropping below Q4 for any VLM, verify caption quality holds — vision-quality-vs-quant is undocumented, so it must be observed, not assumed.
+- **Caveat**: Qwen3.6 (qwen3_5 arch) needs a **newer llama.cpp build than the box's b6887** for vision — verify before the run or the candidate fails loudly (the loop continues to the next model).
+- **Artifact sink (privacy resolved)**: roster labels are **pseudonyms** and the bench dir is **gitignored** (`.gitignore: /benchmarks/`), so all run-records + image-embedded reports are written to `benchmarks/vlm-bakeoff/` — never a tracked `docs/` path. The script's output paths were repointed there.
+
+#### Compiled candidate matrix — next A10 bake-off
+
+All candidates serve on one caught A10 in turn (`llama.cpp --parallel 1`, `--ctx-size 8192 --image-max-tokens 1536`), scored by the v3 two-pass harness. Qwen3.6 sizes verified on the unsloth repos 2026-07-18; the pre-existing shortlist sizes are approximate and their URLs are still `TODO` (operator fills + verifies).
+
+| label | model | arch | quant | ~VRAM (wts+mmproj) | A10 24 GB | URL |
+| --- | --- | --- | --- | --- | --- | --- |
+| `qwen36-27b` | Qwen3.6-27B | dense (Gated DeltaNet+Attn) VLM | UD-Q4_K_XL | ~18.5 GB (17.6+0.9) | ✅ fits w/ ctx | **wired ✓** |
+| `qwen36-35b-a3b` | Qwen3.6-35B-A3B | MoE 35B/3B-active VLM | UD-Q3_K_XL | ~17.7 GB (16.8+0.9) | ✅ fits w/ ctx | **wired ✓** |
+| `qwen8b` | Qwen3-VL-8B-Instruct | dense VLM | Q5_K_M | ~7 GB | ✅ easy | TODO |
+| `minicpm45` | MiniCPM-V-4.5 | ~8B VLM | Q5_K_M | ~6 GB | ✅ easy | TODO |
+| `gemma4-12b` | gemma-4-12b-it | dense VLM | Q6_K | ~10 GB | ✅ | TODO |
+| `gemma3-27b` | gemma-3-27b-it | dense VLM | Q4_K_M | ~16–17 GB | ✅ | TODO |
+| **control** | **Qwen3-VL-30B-A3B** | MoE 30B/3B VLM | Q4_K_M | ~18–19 GB | ✅ (deployed) | run-record exists |
+
+Notes: **35B-A3B UD-Q4 (22.4 GB) is deliberately *not* the bake-off quant** — with mmproj+KV it overruns 24 GB VRAM; that tier needs A10.2 48 GB / A100, so the A10-deployable **UD-Q3_K_XL** is used (fair to the deployment target). The **27B (dense) vs 35B-A3B (MoE) pairing is the interesting architecture read**: does MoE-3B-active caption quality beat a dense-27B at equal footprint on ACX images?
 
 ### B.4 MTP (Multi-Token Prediction) — worth a throughput leg
 

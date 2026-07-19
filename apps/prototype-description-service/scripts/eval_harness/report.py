@@ -13,16 +13,36 @@ triaged away.
 
 from __future__ import annotations
 
+import copy
 import json
+import math
+from collections.abc import Mapping, Sequence
 from enum import StrEnum
 from typing import Any
 
 from pydantic import ValidationError
 
 from .caption_metrics import CaptionScores, insertion_rate, score_caption
-from .face_metrics import ImageDetection, ImageIdentities, detection_pr, identification_pr
-from .manifest import Provenance
+from .face_assignment import TAU_GRID, score_face_assignment
+from .face_metrics import (
+    CLUSTER_PAIR_FLOOR,
+    UNKNOWN_REJECTION_N_FLOOR,
+    ImageDetection,
+    ImageIdentities,
+    clustering_sweep,
+    demographic_rollup,
+    detection_pr,
+    face_identification_pr,
+    face_unknown_rejection,
+    identification_pr,
+)
+from .manifest import PRIVATE_SOURCES, Provenance, ProvenanceSource
 from .schema import SCHEMA, DocKind
+from .synthetic_occlusion import (
+    ELIGIBLE_PAIR_FLOOR,
+    assert_walk_stability,
+    score_occlusion_accuracy,
+)
 
 
 class Audience(StrEnum):
@@ -414,3 +434,768 @@ def build_reports(
     if redaction is not None:
         scored["redaction"] = redaction
     return json.dumps(scored, indent=2, sort_keys=True, ensure_ascii=False) + "\n", _markdown(scored)
+
+
+# ---------------------------------------------------------------------------
+# FIR-5 S5 — face bake-off scorer (§G) + post-score public redaction
+# ---------------------------------------------------------------------------
+#
+# Heuristics (docs/workbay/rules/engineering-heuristics.md + ml-systems — cite ids):
+# EVAL-01/03/04, FAIR-01/03, PROV-01/02, COST-04/15, CAL-02, RLSE-02/03, TEST-06/15.
+#
+# Two-stage publishability (PROV-01): score the FULL unfiltered corpus, then
+# redact via ``redact_face_report_for_public`` — NEVER reuse Audience.PUBLIC /
+# ``_filter_for_public_audience`` (that zeros the unknown-rejection gate).
+
+# Floor units (§Headline / floor policy). Under-floor → DIRECTIONAL only (SC4).
+HEADLINE_ID_RECALL_ELIGIBLE_FLOOR = 100
+DIRECTIONAL_LABEL = "UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion"
+GATING_LABEL = "gating_candidate"  # only when floor met; FIR-6 operator decides
+WILSON_Z = 1.96
+DIVERGENCE_ABS_FLOOR = 0.20
+
+
+def wilson_half_width(p: float, n: int, *, z: float = WILSON_Z) -> float:
+    """Wilson score-interval half-width at measured proportion ``p`` with sample ``n``."""
+    if n <= 0:
+        return 1.0
+    p = max(0.0, min(1.0, float(p)))
+    z2 = z * z
+    denom = 1.0 + z2 / n
+    rad = (z / denom) * math.sqrt(p * (1.0 - p) / n + z2 / (4.0 * n * n))
+    return float(rad)
+
+
+def synthetic_real_divergence(
+    a_s: float | None,
+    a_r: float | None,
+    *,
+    n_real: int,
+    real_floor: int = ELIGIBLE_PAIR_FLOOR,
+    abs_floor: float = DIVERGENCE_ABS_FLOOR,
+) -> dict[str, Any]:
+    """Operational synthetic↔real divergence rule (scope amendment).
+
+    Auto-demote synthetic only when ``d = |a_s − a_r|`` exceeds
+    ``max(Wilson half-width at a_r, abs_floor)``. If real n < floor, real is
+    qualitative only — no auto-demote. Always prints d + threshold.
+    """
+    if a_s is None or a_r is None:
+        return {
+            "d": None,
+            "threshold": None,
+            "wilson_half_width": None,
+            "auto_demote": False,
+            "reason": "missing_accuracy",
+            "n_real": int(n_real),
+            "real_floor": int(real_floor),
+        }
+    d = abs(float(a_s) - float(a_r))
+    if n_real < real_floor:
+        return {
+            "d": round(d, 6),
+            "threshold": None,
+            "wilson_half_width": None,
+            "auto_demote": False,
+            "reason": "real_n_below_floor_qualitative_only",
+            "n_real": int(n_real),
+            "real_floor": int(real_floor),
+        }
+    half = wilson_half_width(float(a_r), int(n_real))
+    threshold = max(half, float(abs_floor))
+    return {
+        "d": round(d, 6),
+        "threshold": round(threshold, 6),
+        "wilson_half_width": round(half, 6),
+        "auto_demote": bool(d > threshold),
+        "reason": "d_exceeds_threshold" if d > threshold else "within_threshold",
+        "n_real": int(n_real),
+        "real_floor": int(real_floor),
+    }
+
+
+def _face_pr_dict(pr: Any) -> dict[str, Any]:
+    return {
+        "precision": pr.precision,
+        "recall": pr.recall,
+        "tp": pr.true_positives,
+        "fp": pr.false_positives,
+        "fn": pr.false_negatives,
+        "n_named_probes": pr.n_named_probes,
+        "n_recall_eligible": pr.n_recall_eligible,
+        "wrong_names": [list(w) for w in pr.wrong_names],
+        "detection_recall_coupling_flag": pr.detection_recall_coupling_flag,
+    }
+
+
+def _slice_status(*, meets_floor: bool, reasons: Sequence[str] | None = None) -> dict[str, Any]:
+    if meets_floor:
+        return {
+            "status": GATING_LABEL,
+            "directional": False,
+            "label": GATING_LABEL,
+            "reasons": [],
+        }
+    reason_list = list(reasons) if reasons else ["under_floor"]
+    return {
+        "status": DIRECTIONAL_LABEL,
+        "directional": True,
+        "label": DIRECTIONAL_LABEL,
+        "reasons": sorted(reason_list),
+    }
+
+
+def _entries_as_dicts(manifest: Any) -> tuple[list[dict[str, Any]], dict[str, str], list[str]]:
+    """Normalize GoldenManifest | mapping | entry-list into plain dicts."""
+    if hasattr(manifest, "entries") and hasattr(manifest, "roster"):
+        entries = [e.model_dump() if hasattr(e, "model_dump") else dict(e) for e in manifest.entries]
+        roster_cohorts = dict(getattr(manifest, "roster_cohorts", {}) or {})
+        roster = list(getattr(manifest, "roster", []) or [])
+        return entries, roster_cohorts, roster
+    if isinstance(manifest, Mapping):
+        raw_entries = list(manifest.get("entries") or [])
+        entries = [e.model_dump() if hasattr(e, "model_dump") else dict(e) for e in raw_entries]
+        return entries, dict(manifest.get("roster_cohorts") or {}), list(manifest.get("roster") or [])
+    # bare entry list
+    entries = [e.model_dump() if hasattr(e, "model_dump") else dict(e) for e in manifest]
+    return entries, {}, []
+
+
+def _build_single_subject_cohort_by_media(entries: Sequence[Mapping[str, Any]]) -> dict[int, str]:
+    """celebs01 single-subject image-level cohort only; multi-face EXCLUDED (S3d)."""
+    out: dict[int, str] = {}
+    for entry in entries:
+        cohort = entry.get("demographic_cohort")
+        if not cohort:
+            continue
+        prov = entry.get("provenance") or {}
+        source = prov.get("source") if isinstance(prov, Mapping) else getattr(prov, "source", None)
+        if source != ProvenanceSource.CELEB.value and source != ProvenanceSource.CELEB:
+            continue
+        boxes = list(entry.get("face_boxes") or [])
+        named: set[str] = set()
+        for b in boxes:
+            name = b.get("name") if isinstance(b, Mapping) else getattr(b, "name", None)
+            if name:
+                named.add(str(name))
+        # multi-face / multi-identity media EXCLUDED from image-level fallback
+        if len(named) != 1:
+            continue
+        if len(boxes) > 1 or int(entry.get("face_count") or 0) > 1:
+            continue
+        out[int(entry["media_id"])] = str(cohort)
+    return out
+
+
+def _is_celebs01(entry: Mapping[str, Any] | None) -> bool:
+    if entry is None:
+        return False
+    prov = entry.get("provenance") or {}
+    source = prov.get("source") if isinstance(prov, Mapping) else None
+    return source == ProvenanceSource.CELEB.value or source == "celeb"
+
+
+def _gt_by_media(entries: Sequence[Mapping[str, Any]]) -> dict[int, list[Any]]:
+    out: dict[int, list[Any]] = {}
+    for e in entries:
+        boxes = e.get("face_boxes") or []
+        out[int(e["media_id"])] = list(boxes)
+    return out
+
+
+def _total_gt_boxes(entries: Sequence[Mapping[str, Any]]) -> int:
+    return sum(len(e.get("face_boxes") or []) for e in entries)
+
+
+def _sort_nested_lists(obj: Any) -> Any:
+    """Recursively sort every list for bit-identical serialization (§G)."""
+    if isinstance(obj, dict):
+        return {k: _sort_nested_lists(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        items = [_sort_nested_lists(v) for v in obj]
+        try:
+            return sorted(items, key=lambda x: json.dumps(x, sort_keys=True, default=str))
+        except TypeError:
+            return items
+    if isinstance(obj, tuple):
+        return _sort_nested_lists(list(obj))
+    return obj
+
+
+def _validate_face_record_kind(face_run_record: dict[str, Any]) -> None:
+    kind = face_run_record.get("kind")
+    if kind is not None and kind != DocKind.FACE_RUN_RECORD.value:
+        raise ReportError(
+            f"expected a '{DocKind.FACE_RUN_RECORD.value}' document but got kind={kind!r}; "
+            "did you pass a caption run-record or report to score-face?"
+        )
+    schema = face_run_record.get("schema")
+    if schema is not None and schema != SCHEMA:
+        raise ReportError(f"unknown face run-record schema {schema!r}; expected {SCHEMA!r}")
+    if "items" not in face_run_record:
+        raise ReportError("face run record has no 'items' key")
+    if "provenance" not in face_run_record:
+        raise ReportError("face run record has no 'provenance' block")
+
+
+def _detection_from_assignment(assignment: Any) -> dict[str, Any]:
+    tp = sum(len(a.pairs) for a in assignment.association_by_media.values())
+    fp = int(assignment.false_detections)
+    fn = int(assignment.missed_gt)
+    precision = (tp / (tp + fp)) if (tp + fp) else 0.0
+    recall = (tp / (tp + fn)) if (tp + fn) else 0.0
+    return {
+        "precision": precision,
+        "recall": recall,
+        "tp": tp,
+        "fp": fp,
+        "fn": fn,
+    }
+
+
+def _clustering_dict(metrics: Any) -> dict[str, Any]:
+    status = _slice_status(
+        meets_floor=not metrics.directional,
+        reasons=list(metrics.directional_reasons),
+    )
+    return {
+        "d_cut": metrics.d_cut,
+        "n_faces": metrics.n_faces,
+        "n_clusters": metrics.n_clusters,
+        "purity": metrics.purity,
+        "false_merge": metrics.false_merge,
+        "false_split": metrics.false_split,
+        "p_same": metrics.p_same,
+        "p_diff": metrics.p_diff,
+        "m_co_clustered": metrics.m_co_clustered,
+        "labels": list(metrics.labels),
+        **status,
+    }
+
+
+def score_face_run_record(
+    face_run_record: dict[str, Any],
+    manifest: Any,
+    *,
+    score_manifest_sha256: str | None = None,
+    occlusion_pairs_by_tag: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
+    real_occlusion_pairs_by_tag: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
+    walk_stability_by_tag: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Pure §C–§G face scorer over the FULL UNFILTERED corpus (FIR-5 S5).
+
+    Never applies ``Audience.PUBLIC`` / ``_filter_for_public_audience`` — strangers
+    from LOCALWP/OPERATOR are required for the unknown-rejection gating slice.
+    Published artifacts go through ``redact_face_report_for_public`` *after* scoring.
+
+    Floor policy (SC4): every under-floor slice is DIRECTIONAL; the gate-proposal
+    section EXCLUDES every DIRECTIONAL slice. No code path emits a gating verdict
+    for an under-floor slice. 0-box corpus → all DIRECTIONAL.
+    """
+    _validate_face_record_kind(face_run_record)
+    entries, roster_cohorts, _roster = _entries_as_dicts(manifest)
+    entry_by_id = _entry_index(entries)
+    gt_by_media = _gt_by_media(entries)
+    total_boxes = _total_gt_boxes(entries)
+    zero_box_corpus = total_boxes == 0
+
+    items = list(face_run_record.get("items") or [])
+    # Keep error items out of assignment but count them as failures.
+    scoreable: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+    for item in items:
+        media_id = int(item["media_id"])
+        entry = entry_by_id.get(media_id)
+        if entry is None:
+            failures.append(
+                {
+                    "path": str(item.get("path", f"media_id:{media_id}")),
+                    "media_id": media_id,
+                    "error": f"media_id {media_id} not in score-time manifest",
+                }
+            )
+            continue
+        if item.get("error"):
+            failures.append(
+                {
+                    "path": str(entry.get("path", item.get("path", ""))),
+                    "media_id": media_id,
+                    "error": str(item["error"]),
+                }
+            )
+            continue
+        scoreable.append(item)
+
+    assignment = score_face_assignment(scoreable, gt_by_media)
+    detection = _detection_from_assignment(assignment)
+
+    # Full-corpus identification + unknown-rejection (includes private strangers).
+    id_pr = face_identification_pr(assignment.decisions)
+    unknown = face_unknown_rejection(assignment.decisions)
+
+    # Headline = celebs01 named probes only (provenance.source == CELEB).
+    celebs01_ids = {mid for mid, e in entry_by_id.items() if _is_celebs01(e)}
+    headline_decisions = [
+        d
+        for d in assignment.decisions
+        if d.media_id in celebs01_ids and d.true_name is not None
+    ]
+    headline_id = face_identification_pr(headline_decisions)
+    headline_floor_met = (
+        not zero_box_corpus and headline_id.n_recall_eligible >= HEADLINE_ID_RECALL_ELIGIBLE_FLOOR
+    )
+    headline_status = _slice_status(
+        meets_floor=headline_floor_met,
+        reasons=(
+            ["zero_box_corpus"]
+            if zero_box_corpus
+            else [f"n_recall_eligible={headline_id.n_recall_eligible}<{HEADLINE_ID_RECALL_ELIGIBLE_FLOOR}"]
+        ),
+    )
+
+    unknown_floor_met = not zero_box_corpus and unknown.meets_floor
+    unknown_status = _slice_status(
+        meets_floor=unknown_floor_met,
+        reasons=(
+            ["zero_box_corpus"]
+            if zero_box_corpus
+            else [f"n={unknown.n}<{UNKNOWN_REJECTION_N_FLOOR}"]
+        ),
+    )
+
+    # Clustering on named matched faces only (strangers excluded).
+    named_matched = [m for m in assignment.matched if m.true_name is not None]
+    # Stable order for determinism
+    named_matched_sorted = sorted(
+        named_matched,
+        key=lambda m: (m.true_name or "", m.media_id, m.box_index, m.det_index),
+    )
+    if named_matched_sorted:
+        emb = [list(m.embedding) for m in named_matched_sorted]
+        labels = [str(m.true_name) for m in named_matched_sorted]
+        _sweep, cluster_headline = clustering_sweep(
+            emb,
+            labels,
+            tau_grid=TAU_GRID,
+            tau_op=assignment.tau_op,
+            pair_floor=CLUSTER_PAIR_FLOOR,
+        )
+        cluster_block = _clustering_dict(cluster_headline)
+        if zero_box_corpus:
+            cluster_block.update(_slice_status(meets_floor=False, reasons=["zero_box_corpus"]))
+    else:
+        cluster_block = {
+            "d_cut": round(1.0 - float(assignment.tau_op), 4),
+            "n_faces": 0,
+            "n_clusters": 0,
+            "purity": 0.0,
+            "false_merge": 0.0,
+            "false_split": 0.0,
+            "p_same": 0,
+            "p_diff": 0,
+            "m_co_clustered": 0,
+            "labels": [],
+            **_slice_status(
+                meets_floor=False,
+                reasons=["zero_box_corpus"] if zero_box_corpus else ["empty", "p_same<20", "p_diff<20", "m==0"],
+            ),
+        }
+
+    # Demographic Fair-SA (always DIRECTIONAL — no floor).
+    single_subject = _build_single_subject_cohort_by_media(entries)
+    demo = demographic_rollup(
+        assignment.decisions,
+        roster_cohorts,
+        single_subject_cohort_by_media=single_subject,
+    )
+    demo_block = {
+        "section_header": demo.section_header,
+        "directional": True,
+        "directional_reasons": list(demo.directional_reasons),
+        "status": DIRECTIONAL_LABEL,
+        "label": DIRECTIONAL_LABEL,
+        "by_cohort": {
+            cohort: _face_pr_dict(pr) for cohort, pr in sorted(demo.by_cohort.items())
+        },
+    }
+
+    # Occlusion slices (synthetic + real divergence).
+    occlusion_out: dict[str, Any] = {}
+    occlusion_pairs_by_tag = occlusion_pairs_by_tag or {}
+    real_occlusion_pairs_by_tag = real_occlusion_pairs_by_tag or {}
+    walk_stability_by_tag = walk_stability_by_tag or {}
+    for tag in sorted(set(occlusion_pairs_by_tag) | set(real_occlusion_pairs_by_tag) | {"masked", "sunglasses", "occlusion_other"}):
+        synth_inputs = list(occlusion_pairs_by_tag.get(tag) or [])
+        real_inputs = list(real_occlusion_pairs_by_tag.get(tag) or [])
+        ws = walk_stability_by_tag.get(tag) or {}
+        walk_asserted = bool(ws.get("asserted", False))
+        walk_delta = ws.get("delta")
+        # Optional independent re-run pair for stability
+        if "accuracy_a" in ws and "accuracy_b" in ws:
+            met, delta = assert_walk_stability(
+                ws.get("accuracy_a"),
+                ws.get("accuracy_b"),
+                n_eligible_a=int(ws.get("n_eligible_a", 0)),
+                n_eligible_b=int(ws.get("n_eligible_b", 0)),
+            )
+            walk_asserted = met
+            walk_delta = delta
+
+        if synth_inputs:
+            synth_acc = score_occlusion_accuracy(
+                synth_inputs,
+                assignment.matched,
+                walk_stability_asserted=walk_asserted,
+                walk_stability_delta=walk_delta,
+            )
+        else:
+            synth_acc = score_occlusion_accuracy(
+                [],
+                assignment.matched,
+                walk_stability_asserted=False,
+                walk_stability_delta=None,
+            )
+
+        if real_inputs:
+            real_acc = score_occlusion_accuracy(
+                real_inputs,
+                assignment.matched,
+                walk_stability_asserted=True,  # real tags have no walk twin
+                walk_stability_delta=0.0,
+            )
+        else:
+            real_acc = None
+
+        divergence = synthetic_real_divergence(
+            synth_acc.accuracy,
+            real_acc.accuracy if real_acc is not None else None,
+            n_real=real_acc.n_eligible if real_acc is not None else 0,
+        )
+        # Auto-demote synthetic when divergence fires.
+        synth_directional = bool(synth_acc.directional) or zero_box_corpus or divergence["auto_demote"]
+        synth_reasons = list(synth_acc.directional_reasons)
+        if zero_box_corpus:
+            synth_reasons.append("zero_box_corpus")
+        if divergence["auto_demote"]:
+            synth_reasons.append(
+                f"synthetic_real_divergence d={divergence['d']}>threshold={divergence['threshold']}"
+            )
+        status = _slice_status(meets_floor=not synth_directional, reasons=synth_reasons)
+        occlusion_out[tag] = {
+            "synthetic": {
+                "accuracy": synth_acc.accuracy,
+                "n_eligible": synth_acc.n_eligible,
+                "n_correct": synth_acc.n_correct,
+                "n_re_detect_miss": synth_acc.n_re_detect_miss,
+                "n_ineligible": synth_acc.n_ineligible,
+                "walk_stability_asserted": synth_acc.walk_stability_asserted,
+                "walk_stability_delta": synth_acc.walk_stability_delta,
+                **status,
+            },
+            "real": (
+                {
+                    "accuracy": real_acc.accuracy,
+                    "n_eligible": real_acc.n_eligible,
+                    "n_correct": real_acc.n_correct,
+                    "directional": True,  # real n floors small — never gating alone here
+                    "status": DIRECTIONAL_LABEL,
+                }
+                if real_acc is not None
+                else None
+            ),
+            "divergence": divergence,
+        }
+
+    # Floor-gated rollup of every gating slice.
+    slices: dict[str, Any] = {
+        "headline_identification": {
+            **_face_pr_dict(headline_id),
+            "n_floor": HEADLINE_ID_RECALL_ELIGIBLE_FLOOR,
+            "floor_unit": "recall_eligible_celebs01",
+            **headline_status,
+        },
+        "unknown_rejection": {
+            "rate": unknown.rate,
+            "correct_rejects": unknown.correct_rejects,
+            "false_accepts": unknown.false_accepts,
+            "n": unknown.n,
+            "n_floor": UNKNOWN_REJECTION_N_FLOOR,
+            **unknown_status,
+        },
+        "clustering": cluster_block,
+        "occlusion": occlusion_out,
+        "demographic": demo_block,
+        "full_corpus_identification": _face_pr_dict(id_pr),
+    }
+
+    # Gate-proposal: EXCLUDE every DIRECTIONAL slice (SC4). Never emit demoted verdict.
+    proposed: dict[str, Any] = {}
+    excluded: list[str] = []
+
+    def _maybe_propose(name: str, block: Mapping[str, Any]) -> None:
+        if block.get("directional", True):
+            excluded.append(name)
+        else:
+            proposed[name] = {
+                k: v
+                for k, v in block.items()
+                if k not in ("wrong_names", "labels")  # keep proposal compact; aggregates only
+            }
+
+    _maybe_propose("headline_identification", slices["headline_identification"])
+    _maybe_propose("unknown_rejection", slices["unknown_rejection"])
+    _maybe_propose("clustering", slices["clustering"])
+    for tag, block in sorted(occlusion_out.items()):
+        synth = block.get("synthetic") or {}
+        _maybe_propose(f"occlusion.{tag}", synth)
+
+    gate_proposal = {
+        "role": "proposal_only",
+        "operator_authority": "FIR-6 human operator records gate/deferral; FIR-5 cannot self-promote",
+        "proposed_slices": proposed,
+        "excluded_directional": sorted(excluded),
+        "identification_detection_coupling": {
+            "identification_recall": headline_id.recall,
+            "detection_recall": detection["recall"],
+            "flag": (
+                "identification recall is computed only over faces this leg detected and "
+                "§C-matched (enrolled); weak detection can inflate id-recall on the easy "
+                "detected subset — report id-recall ALONGSIDE detection-recall"
+            ),
+        },
+        "p95_scan_latency": "FIR-6-owned; not measured here.",
+        "scope_amendments_for_operator_ack": [
+            "p95 full-scan latency deferred to FIR-6 (not measured in FIR-5)",
+            "A10 eval throughput deferred to named follow-up FIR-5a (NOT FIR-7 prod GPU)",
+            "synthetic↔real divergence uses Wilson half-width rule (replaces scope >1/3)",
+            "clustering local floor P_same≥20 ∧ P_diff≥20 and M==0 all-singletons guard",
+        ],
+        "perf_label": "detect+embed-only (COST-04/15); not full-scan p95",
+    }
+
+    decisions_json = [
+        {
+            "media_id": d.media_id,
+            "path": d.path,
+            "box_index": d.box_index,
+            "det_index": d.det_index,
+            "true_name": d.true_name,
+            "decision": d.decision,
+            "predicted_name": d.predicted_name,
+            "s_max": d.s_max if d.s_max != float("-inf") else None,
+            "name_star": d.name_star,
+            "tau_k": d.tau_k,
+            "fold": d.fold,
+            "enrolled": d.enrolled,
+            "excluded_single_face_recall": d.excluded_single_face_recall,
+        }
+        for d in assignment.decisions
+    ]
+
+    fetch_provenance = dict(face_run_record.get("provenance") or {})
+    model_ids = sorted({str(i.get("model_id")) for i in items if i.get("model_id")})
+    emb_dims = sorted({int(i["embedding_dim"]) for i in items if i.get("embedding_dim") is not None})
+    provenance = {
+        **fetch_provenance,
+        "score_manifest_sha256": score_manifest_sha256,
+        "manifest_matches_fetch": (
+            None
+            if score_manifest_sha256 is None
+            else score_manifest_sha256 == fetch_provenance.get("manifest_sha256")
+        ),
+        "model": {
+            "model_ids": model_ids,
+            "embedding_dims": emb_dims,
+            "leg": fetch_provenance.get("leg"),
+        },
+        "zero_box_corpus": zero_box_corpus,
+        "total_gt_boxes": total_boxes,
+    }
+
+    report: dict[str, Any] = {
+        "schema": SCHEMA,
+        "kind": DocKind.REPORT.value,
+        "report_kind": "face_bakeoff",
+        "provenance": provenance,
+        "counts": {
+            "total": len(items),
+            "scored": len(scoreable),
+            "failed": len(failures),
+            "matched_faces": len(assignment.matched),
+            "named_matched": len(named_matched_sorted),
+            "stranger_matched": sum(1 for m in assignment.matched if m.true_name is None),
+        },
+        "tau": {
+            "tau_k": list(assignment.tau_k),
+            "tau_op": assignment.tau_op,
+            "note": "PROVISIONAL — not product defaults (FIR-6 owns calibration)",
+        },
+        "detection": detection,
+        "slices": slices,
+        "gate_proposal": gate_proposal,
+        "decisions": decisions_json,
+        "failures": sorted(failures, key=lambda f: (f.get("media_id", -1), f.get("path", ""))),
+    }
+    return _sort_nested_lists(report)
+
+
+def redact_face_report_for_public(report: dict[str, Any]) -> dict[str, Any]:
+    """POST-SCORE public redaction (PROV-01) — distinct from pre-score Audience.PUBLIC.
+
+    Scores keep unpublishable strangers in unknown-rejection aggregates. This
+    function strips private-source (LOCALWP/OPERATOR / non-publishable) crops,
+    paths, and per-face metadata while PRESERVING aggregate rates. Fail-closed:
+    missing/unparseable provenance ⇒ redact detail.
+    """
+    redacted = copy.deepcopy(report)
+    private_tokens = {s.value for s in PRIVATE_SOURCES} | {"localwp", "operator"}
+
+    def _is_private_path(path: str | None) -> bool:
+        if not path:
+            return False
+        lower = path.lower()
+        return any(tok in lower for tok in ("localwp", "operator", "/uploads/"))
+
+    # Drop per-decision rows that name private paths or lack celebs01-safe identity.
+    kept_decisions: list[dict[str, Any]] = []
+    stripped = 0
+    for d in redacted.get("decisions") or []:
+        path = str(d.get("path") or "")
+        # Strip strangers + private-path rows from detail; keep celebs01 named only.
+        if d.get("true_name") is None or _is_private_path(path):
+            stripped += 1
+            continue
+        kept_decisions.append(d)
+    redacted["decisions"] = kept_decisions
+
+    # Strip wrong_names that reference private media paths.
+    slices = redacted.get("slices") or {}
+    for key in ("headline_identification", "full_corpus_identification"):
+        block = slices.get(key)
+        if not isinstance(block, dict):
+            continue
+        cleaned = []
+        for w in block.get("wrong_names") or []:
+            # wrong_names rows: [media_id, box_index, true, pred] — no path; keep
+            # aggregates only for public: drop wrong_names detail from full corpus
+            # when it may include private (fail-closed: drop all wrong_names from
+            # full_corpus; headline is celebs01-only so keep).
+            if key == "full_corpus_identification":
+                continue
+            cleaned.append(w)
+        block["wrong_names"] = cleaned if key == "headline_identification" else []
+
+    # Failures: drop private-path failures.
+    redacted["failures"] = [
+        f for f in (redacted.get("failures") or []) if not _is_private_path(str(f.get("path") or ""))
+    ]
+
+    # Demographic / occlusion detail may embed private media_ids — leave aggregate rates.
+    redacted["redaction"] = {
+        "audience": "public",
+        "mode": "post_score_redact_face_report_for_public",
+        "stripped_decision_rows": stripped,
+        "note": (
+            "Aggregate rates (incl. unknown-rejection) preserved from full-corpus score; "
+            "private-source crops/metadata stripped. Distinct from pre-score "
+            "_filter_for_public_audience / Audience.PUBLIC."
+        ),
+        "private_sources": sorted(private_tokens),
+    }
+    # Do NOT drop unknown_rejection aggregates — they must stay.
+    return _sort_nested_lists(redacted)
+
+
+def _markdown_face(scored: dict[str, Any]) -> str:
+    prov = scored.get("provenance") or {}
+    model = prov.get("model") or {}
+    gp = scored.get("gate_proposal") or {}
+    slices = scored.get("slices") or {}
+    det = scored.get("detection") or {}
+    lines = [
+        "# Face Bake-off Eval Report",
+        "",
+        f"- schema: `{scored.get('schema')}` kind: `{scored.get('kind')}` report_kind: `{scored.get('report_kind')}`",
+        f"- model_ids: `{', '.join(model.get('model_ids') or []) or 'unknown'}` "
+        f"embedding_dims: `{model.get('embedding_dims')}` leg: `{model.get('leg')}`",
+        f"- head_sha: `{prov.get('head_sha', 'unknown')}`",
+        f"- score manifest_sha256: `{prov.get('score_manifest_sha256', 'unknown')}`",
+        f"- zero_box_corpus: {prov.get('zero_box_corpus')} total_gt_boxes: {prov.get('total_gt_boxes')}",
+        f"- images: {scored.get('counts', {}).get('scored')}/{scored.get('counts', {}).get('total')} scored, "
+        f"{scored.get('counts', {}).get('failed')} failed; matched_faces={scored.get('counts', {}).get('matched_faces')}",
+        "",
+        "## Detection",
+        "",
+        f"- precision: {_fmt(det.get('precision'))} recall: {_fmt(det.get('recall'))} "
+        f"(tp={det.get('tp')} fp={det.get('fp')} fn={det.get('fn')})",
+        "",
+        "## Floor-gated slices",
+        "",
+    ]
+    for name in ("headline_identification", "unknown_rejection", "clustering"):
+        block = slices.get(name) or {}
+        lines.append(
+            f"- **{name}**: status=`{block.get('status', block.get('label', '?'))}` "
+            f"directional={block.get('directional')}"
+        )
+    lines += ["", "## Gate proposal (excludes DIRECTIONAL)", ""]
+    lines.append(f"- role: {gp.get('role')}")
+    lines.append(f"- proposed_slices: {sorted((gp.get('proposed_slices') or {}).keys())}")
+    lines.append(f"- excluded_directional: {gp.get('excluded_directional')}")
+    couple = gp.get("identification_detection_coupling") or {}
+    lines.append(
+        f"- id-recall: {_fmt(couple.get('identification_recall'))} "
+        f"alongside detection-recall: {_fmt(couple.get('detection_recall'))} "
+        f"— {couple.get('flag', '')}"
+    )
+    lines.append(f"- p95 scan latency: {gp.get('p95_scan_latency')}")
+    lines.append("- scope amendments (operator ack required):")
+    for a in gp.get("scope_amendments_for_operator_ack") or []:
+        lines.append(f"  - {a}")
+    if scored.get("redaction"):
+        r = scored["redaction"]
+        lines += [
+            "",
+            "## Redaction",
+            "",
+            f"- audience=`{r.get('audience')}` mode=`{r.get('mode')}` "
+            f"stripped_decision_rows={r.get('stripped_decision_rows')}",
+        ]
+    lines += ["", "## Failures", ""]
+    if scored.get("failures"):
+        lines += [f"- `{f.get('path')}` (media_id={f.get('media_id')}): {f.get('error')}" for f in scored["failures"]]
+    else:
+        lines.append("- none")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def build_face_reports(
+    face_run_record: dict[str, Any],
+    manifest: Any,
+    *,
+    score_manifest_sha256: str | None = None,
+    occlusion_pairs_by_tag: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
+    real_occlusion_pairs_by_tag: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
+    walk_stability_by_tag: Mapping[str, Mapping[str, Any]] | None = None,
+    public: bool = False,
+) -> tuple[str, str]:
+    """Return (json_report, markdown_report) for a face run-record.
+
+    Always scores the full corpus. When ``public=True``, applies
+    ``redact_face_report_for_public`` post-score (never pre-score filter).
+    """
+    scored = score_face_run_record(
+        face_run_record,
+        manifest,
+        score_manifest_sha256=score_manifest_sha256,
+        occlusion_pairs_by_tag=occlusion_pairs_by_tag,
+        real_occlusion_pairs_by_tag=real_occlusion_pairs_by_tag,
+        walk_stability_by_tag=walk_stability_by_tag,
+    )
+    if public:
+        scored = redact_face_report_for_public(scored)
+    return (
+        json.dumps(scored, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
+        _markdown_face(scored),
+    )

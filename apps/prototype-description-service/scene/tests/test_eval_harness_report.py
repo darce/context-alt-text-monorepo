@@ -432,3 +432,339 @@ def test_public_reports_deterministic():
     b_json, b_md = build_reports(record, entries, audience=Audience.PUBLIC)
     assert a_json == b_json
     assert a_md == b_md
+
+
+# --- FIR-5 S5: face score path, floors, redaction, divergence, determinism ---
+
+import math
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import numpy as np
+
+from scripts.eval_harness.report import (
+    DIRECTIONAL_LABEL,
+    HEADLINE_ID_RECALL_ELIGIBLE_FLOOR,
+    build_face_reports,
+    redact_face_report_for_public,
+    score_face_run_record,
+    synthetic_real_divergence,
+    wilson_half_width,
+)
+from scripts.eval_harness.schema import DocKind
+
+
+def _unit(vec: list[float]) -> list[float]:
+    a = np.asarray(vec, dtype=np.float64)
+    n = float(np.linalg.norm(a))
+    assert n > 0
+    return (a / n).tolist()
+
+
+def _face_det(bbox_px: list[float], emb: list[float], *, det_score: float = 0.95) -> dict:
+    return {
+        "bbox_px": bbox_px,
+        "landmarks_px": [[0.0, 0.0]] * 5,
+        "embedding": _unit(emb),
+        "det_score": det_score,
+    }
+
+
+def _gt_box(x: float, y: float, w: float, h: float, name: str | None) -> dict:
+    return {"x": x, "y": y, "w": w, "h": h, "name": name, "source": "iptc"}
+
+
+def _face_fixture_corpus() -> tuple[dict, dict]:
+    """Full unfiltered corpus: celebs01 Alice (2 faces) + LOCALWP stranger.
+
+    Alice has ≥2 matched faces so she is recall-eligible; stranger is private.
+    Embeddings: Alice faces near [1,0,...]; stranger near [0,1,...] so open-set
+    reject is natural at typical τ.
+    """
+    dim = 8
+    alice_a = _unit([1.0] + [0.0] * (dim - 1))
+    alice_b = _unit([0.98, 0.1] + [0.0] * (dim - 2))
+    stranger = _unit([0.0, 1.0] + [0.0] * (dim - 2))
+
+    # image 100x100; GT centre boxes that match the pixel bboxes via IoU
+    # det bbox_px [x,y,w,h] = [20,20,40,40] → centre (0.4, 0.4) size (0.4, 0.4) on 100x100
+    face_run = {
+        "schema": "acx-eval/v1",
+        "kind": DocKind.FACE_RUN_RECORD.value,
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "head_sha": "0" * 40,
+            "started_at": "2026-07-18T00:00:00Z",
+            "leg": "candidate",
+            "model_id": "ort-yunet-sface",
+            "embedding_dim": dim,
+        },
+        "items": [
+            {
+                "media_id": 1,
+                "path": "celebs01/alice-a.jpg",
+                "model_id": "ort-yunet-sface",
+                "embedding_dim": dim,
+                "image_size": [100, 100],
+                "faces": [_face_det([20.0, 20.0, 40.0, 40.0], alice_a)],
+            },
+            {
+                "media_id": 2,
+                "path": "celebs01/alice-b.jpg",
+                "model_id": "ort-yunet-sface",
+                "embedding_dim": dim,
+                "image_size": [100, 100],
+                "faces": [_face_det([20.0, 20.0, 40.0, 40.0], alice_b)],
+            },
+            {
+                "media_id": 3,
+                "path": "localwp/uploads/stranger-party.jpg",
+                "model_id": "ort-yunet-sface",
+                "embedding_dim": dim,
+                "image_size": [100, 100],
+                "faces": [_face_det([20.0, 20.0, 40.0, 40.0], stranger)],
+            },
+        ],
+    }
+    manifest = {
+        "roster": ["Alice Example"],
+        "roster_cohorts": {"Alice Example": "cohort_a"},
+        "entries": [
+            {
+                "path": "celebs01/alice-a.jpg",
+                "media_id": 1,
+                "face_count": 1,
+                "present_identities": ["Alice Example"],
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "face_boxes": [_gt_box(0.4, 0.4, 0.4, 0.4, "Alice Example")],
+                "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
+                "demographic_cohort": "cohort_a",
+            },
+            {
+                "path": "celebs01/alice-b.jpg",
+                "media_id": 2,
+                "face_count": 1,
+                "present_identities": ["Alice Example"],
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "face_boxes": [_gt_box(0.4, 0.4, 0.4, 0.4, "Alice Example")],
+                "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
+                "demographic_cohort": "cohort_a",
+            },
+            {
+                "path": "localwp/uploads/stranger-party.jpg",
+                "media_id": 3,
+                "face_count": 1,
+                "present_identities": [],
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "face_boxes": [_gt_box(0.4, 0.4, 0.4, 0.4, None)],  # stranger
+                "provenance": {"source": "localwp", "license": "consented", "publishable": False},
+            },
+        ],
+    }
+    return face_run, manifest
+
+
+def test_score_face_run_record_full_corpus_and_floor_gated_rollup():
+    face_run, manifest = _face_fixture_corpus()
+    scored = score_face_run_record(face_run, manifest, score_manifest_sha256="s" * 64)
+    assert scored["report_kind"] == "face_bakeoff"
+    # Full corpus: private stranger is scored (matched)
+    assert scored["counts"]["matched_faces"] == 3
+    assert scored["counts"]["stranger_matched"] == 1
+    # Under-floor → DIRECTIONAL
+    hl = scored["slices"]["headline_identification"]
+    assert hl["directional"] is True
+    assert hl["n_recall_eligible"] < HEADLINE_ID_RECALL_ELIGIBLE_FLOOR
+    assert DIRECTIONAL_LABEL in hl["status"]
+    unk = scored["slices"]["unknown_rejection"]
+    assert unk["n"] == 1  # private stranger counted
+    assert unk["directional"] is True
+    # Gate proposal EXCLUDES every DIRECTIONAL slice (SC4)
+    gp = scored["gate_proposal"]
+    assert gp["proposed_slices"] == {} or all(
+        not (scored["slices"].get(k) or {}).get("directional", True)
+        for k in gp["proposed_slices"]
+    )
+    for name in ("headline_identification", "unknown_rejection", "clustering"):
+        assert name in gp["excluded_directional"] or any(
+            name in e for e in gp["excluded_directional"]
+        )
+    # Coupling flag + p95 deferral + scope amendments present
+    assert "identification_recall" in gp["identification_detection_coupling"]
+    assert "detection_recall" in gp["identification_detection_coupling"]
+    assert "FIR-6-owned" in gp["p95_scan_latency"]
+    assert any("FIR-5a" in a for a in gp["scope_amendments_for_operator_ack"])
+    assert any("Wilson" in a for a in gp["scope_amendments_for_operator_ack"])
+    # Nested lists sorted (wrong_names already sorted; decisions sorted)
+    decisions = scored["decisions"]
+    keys = [(d["true_name"] or "\uffff", d["media_id"], d["box_index"]) for d in decisions]
+    assert keys == sorted(keys)
+
+
+def test_zero_box_corpus_all_directional():
+    face_run = {
+        "schema": "acx-eval/v1",
+        "kind": DocKind.FACE_RUN_RECORD.value,
+        "provenance": {"manifest_sha256": "m" * 64, "head_sha": "0" * 40, "leg": "candidate"},
+        "items": [
+            {
+                "media_id": 1,
+                "path": "x.jpg",
+                "model_id": "m",
+                "embedding_dim": 4,
+                "image_size": [10, 10],
+                "faces": [],
+            }
+        ],
+    }
+    manifest = {
+        "roster": [],
+        "roster_cohorts": {},
+        "entries": [
+            {
+                "path": "x.jpg",
+                "media_id": 1,
+                "face_count": 0,
+                "present_identities": [],
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "face_boxes": [],
+            }
+        ],
+    }
+    scored = score_face_run_record(face_run, manifest)
+    assert scored["provenance"]["zero_box_corpus"] is True
+    assert scored["slices"]["headline_identification"]["directional"] is True
+    assert scored["slices"]["unknown_rejection"]["directional"] is True
+    assert scored["slices"]["clustering"]["directional"] is True
+    assert scored["gate_proposal"]["proposed_slices"] == {}
+
+
+def test_below_floor_never_in_gate_proposal():
+    face_run, manifest = _face_fixture_corpus()
+    scored = score_face_run_record(face_run, manifest)
+    for name, block in scored["gate_proposal"]["proposed_slices"].items():
+        assert block.get("directional") is not True, name
+        assert DIRECTIONAL_LABEL not in str(block.get("status", ""))
+
+
+def test_publishability_private_stranger_scored_then_redacted():
+    """LOCALWP stranger is SCORED into unknown-rejection yet ABSENT from redacted report."""
+    face_run, manifest = _face_fixture_corpus()
+    scored = score_face_run_record(face_run, manifest)
+    unk = scored["slices"]["unknown_rejection"]
+    assert unk["n"] >= 1
+    assert any(
+        d["true_name"] is None and "localwp" in d["path"] for d in scored["decisions"]
+    )
+    redacted = redact_face_report_for_public(scored)
+    # Aggregate rates preserved
+    assert redacted["slices"]["unknown_rejection"]["n"] == unk["n"]
+    assert redacted["slices"]["unknown_rejection"]["rate"] == unk["rate"]
+    # Private detail absent
+    blob = json.dumps(redacted)
+    assert "localwp/uploads/stranger-party.jpg" not in blob
+    assert redacted["redaction"]["mode"] == "post_score_redact_face_report_for_public"
+    assert redacted["redaction"]["stripped_decision_rows"] >= 1
+    # Not the pre-score Audience.PUBLIC path
+    assert "pre-score" in redacted["redaction"]["note"] or "Distinct" in redacted["redaction"]["note"]
+
+
+def test_synthetic_real_divergence_demotion_and_qualitative():
+    # d > threshold → auto_demote
+    # a_r=0.5, n=100 → wilson half-width small; d=0.5 > max(wilson, 0.20)
+    d1 = synthetic_real_divergence(0.0, 0.5, n_real=100, real_floor=90)
+    assert d1["d"] == pytest.approx(0.5)
+    assert d1["threshold"] is not None and d1["threshold"] >= 0.20
+    assert d1["auto_demote"] is True
+    # real n < floor → no auto-demote (qualitative only)
+    d2 = synthetic_real_divergence(0.0, 0.5, n_real=10, real_floor=90)
+    assert d2["auto_demote"] is False
+    assert d2["reason"] == "real_n_below_floor_qualitative_only"
+    assert d2["threshold"] is None
+    # within threshold → no demote
+    d3 = synthetic_real_divergence(0.55, 0.50, n_real=200, real_floor=90)
+    assert d3["auto_demote"] is False
+    assert wilson_half_width(0.5, 100) > 0
+
+
+def test_face_score_check_determinism_cross_process(tmp_path):
+    face_run, manifest = _face_fixture_corpus()
+    # Write record + a minimal loadable manifest JSON for subprocess path via pure score
+    a = score_face_run_record(face_run, manifest, score_manifest_sha256="s" * 64)
+    b = score_face_run_record(face_run, manifest, score_manifest_sha256="s" * 64)
+    assert a == b
+    ja, ma = build_face_reports(face_run, manifest, score_manifest_sha256="s" * 64)
+    jb, mb = build_face_reports(face_run, manifest, score_manifest_sha256="s" * 64)
+    assert ja == jb and ma == mb
+
+    # Cross-process with varied PYTHONHASHSEED
+    rec_path = tmp_path / "face-run.json"
+    rec_path.write_text(json.dumps(face_run))
+    # Use in-process score as baseline; subprocess imports score_face_run_record with same dicts
+    script = (
+        "import json,sys; "
+        "from scripts.eval_harness.report import score_face_run_record; "
+        "rec=json.loads(open(sys.argv[1]).read()); "
+        "man=json.loads(open(sys.argv[2]).read()); "
+        "print(json.dumps(score_face_run_record(rec,man,score_manifest_sha256='s'*64),sort_keys=True))"
+    )
+    man_path = tmp_path / "man.json"
+    man_path.write_text(json.dumps(manifest))
+    baseline = json.dumps(a, sort_keys=True)
+    service_root = Path(__file__).resolve().parents[2]  # apps/prototype-description-service
+    for seed in ("0", "1", "42"):
+        env = dict(os.environ)
+        env["PYTHONHASHSEED"] = seed
+        env["PYTHONPATH"] = str(service_root) + os.pathsep + env.get("PYTHONPATH", "")
+        proc = subprocess.run(
+            [sys.executable, "-c", script, str(rec_path), str(man_path)],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=str(service_root),
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert proc.stdout.strip() == baseline
+
+
+def test_buffalo_non_promotion_no_512d_under_docs_tasks():
+    """PROV-01: no *.json under docs/tasks/** has a 512D embedding array."""
+    repo_root = Path(__file__).resolve().parents[4]
+    docs_tasks = repo_root / "docs" / "tasks"
+    if not docs_tasks.is_dir():
+        pytest.skip("docs/tasks not present in this checkout")
+    offenders = []
+    for path in docs_tasks.rglob("*.json"):
+        try:
+            data = json.loads(path.read_text())
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            continue
+
+        def _walk(obj, trail=""):
+            if isinstance(obj, dict):
+                emb = obj.get("embedding")
+                if isinstance(emb, list) and len(emb) == 512 and emb and isinstance(emb[0], (int, float)):
+                    offenders.append(f"{path}:{trail}.embedding len=512")
+                for k, v in obj.items():
+                    _walk(v, f"{trail}.{k}")
+            elif isinstance(obj, list):
+                for i, v in enumerate(obj):
+                    _walk(v, f"{trail}[{i}]")
+
+        _walk(data)
+    assert offenders == [], f"buffalo 512D embeddings promoted: {offenders[:5]}"
+
+
+def test_score_face_rejects_caption_run_record():
+    with pytest.raises(ReportError, match="face_run_record"):
+        score_face_run_record(_run_record(), _manifest_entries())

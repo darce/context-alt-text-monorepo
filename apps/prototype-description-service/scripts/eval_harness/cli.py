@@ -38,7 +38,20 @@ from shared.secrets import get_secret_provider
 
 from .manifest import GoldenManifest, ManifestError, _resolve_image, load_manifest
 from .remote_client import RemoteClientError, RemoteSceneClient
-from .report import ReportError, build_reports, score_run_record
+from .report import (
+    ReportError,
+    build_face_reports,
+    build_reports,
+    score_face_run_record,
+    score_run_record,
+)
+from .face_bakeoff import (
+    BoundedStallError as FaceBoundedStallError,
+    build_candidate_leg,
+    walk_face_run_record,
+)
+from .face_run_record import FaceRunRecordError, validate_face_run_record
+from .perf_leg import PerfLegError
 from .schema import SCHEMA, DocKind
 from .seed_roster import seed, seed_scenes
 
@@ -518,6 +531,143 @@ def _cmd_seed_scenes(args: argparse.Namespace) -> None:
         sys.exit(f"seeding incomplete: no identity rows detected for media_ids {summary.unverified_media_ids}")
 
 
+
+def _cmd_face_bakeoff(args: argparse.Namespace) -> None:
+    """Offline candidate-leg walk → face_run_record JSON in out/ (no tenant writes)."""
+    images_dir = _images_dir()
+    manifest = load_manifest(args.manifest)
+    detector, aligner, embedder = build_candidate_leg()
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    try:
+        record = walk_face_run_record(
+            manifest,
+            images_dir,
+            detector=detector,
+            embedder=embedder,
+            aligner=aligner,
+            head_sha=_head_sha(),
+            limit=args.limit,
+            stall_limit=args.stall_limit,
+            started_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
+    except FaceBoundedStallError as exc:
+        record = exc.partial_record
+        OUT_DIR.mkdir(parents=True, exist_ok=True)
+        path = OUT_DIR / f"face-run-{stamp}-aborted.json"
+        path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+        prune_out_dir(str(OUT_DIR), keep=args.keep)
+        print(path)
+        sys.exit(f"FaceBoundedStallError: {exc}")
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    path = OUT_DIR / f"face-run-{stamp}.json"
+    path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+    prune_out_dir(str(OUT_DIR), keep=args.keep)
+    print(path)
+    print(
+        f"face-bakeoff items={len(record['items'])} "
+        f"leg={record['provenance'].get('leg')} "
+        f"model_id={record['provenance'].get('model_id')}"
+    )
+
+
+def _face_score_once(
+    record: dict[str, Any],
+    manifest: GoldenManifest,
+    *,
+    score_manifest_sha256: str,
+    public: bool,
+) -> tuple[str, str]:
+    return build_face_reports(
+        record,
+        manifest,
+        score_manifest_sha256=score_manifest_sha256,
+        public=public,
+    )
+
+
+def _check_face_determinism_cross_process(
+    record_path: Path,
+    manifest_path: str,
+    *,
+    public: bool,
+) -> None:
+    """Re-run score-face in a FRESH process under varied PYTHONHASHSEED (§G)."""
+    # Baseline: current process
+    record = json.loads(record_path.read_text())
+    manifest = load_manifest(manifest_path)
+    manifest_sha = _manifest_sha(manifest)
+    base_json, base_md = _face_score_once(
+        record, manifest, score_manifest_sha256=manifest_sha, public=public
+    )
+
+    script = (
+        "import json,sys; "
+        "from scripts.eval_harness.manifest import load_manifest; "
+        "from scripts.eval_harness.cli import _manifest_sha; "
+        "from scripts.eval_harness.report import build_face_reports; "
+        "rec=json.loads(open(sys.argv[1]).read()); "
+        "man=load_manifest(sys.argv[2]); "
+        "pub=sys.argv[3]=='1'; "
+        "j,m=build_face_reports(rec,man,score_manifest_sha256=_manifest_sha(man),public=pub); "
+        "sys.stdout.write(j); sys.stdout.write('---MD---'); sys.stdout.write(m)"
+    )
+    for seed in ("0", "1", "42"):
+        env = dict(os.environ)
+        env["PYTHONHASHSEED"] = seed
+        proc = subprocess.run(
+            [sys.executable, "-c", script, str(record_path), manifest_path, "1" if public else "0"],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=str(Path.cwd()),
+        )
+        if proc.returncode != 0:
+            sys.exit(
+                f"determinism check FAILED: subprocess seed={seed} rc={proc.returncode}: {proc.stderr}"
+            )
+        out = proc.stdout
+        if "---MD---" not in out:
+            sys.exit(f"determinism check FAILED: malformed subprocess output seed={seed}")
+        sub_json, sub_md = out.split("---MD---", 1)
+        if sub_json != base_json or sub_md != base_md:
+            sys.exit(
+                f"determinism check FAILED: cross-process re-score differs under PYTHONHASHSEED={seed}"
+            )
+    print("determinism check passed: cross-process re-score is bit-identical under varied PYTHONHASHSEED")
+
+
+def _cmd_score_face(args: argparse.Namespace) -> None:
+    """Pure offline face score over the full unfiltered corpus (§G)."""
+    record_path = Path(args.run_record)
+    record = json.loads(record_path.read_text())
+    if record.get("kind") == DocKind.FACE_RUN_RECORD.value:
+        validate_face_run_record(record)
+    manifest = load_manifest(args.manifest)
+    manifest_sha = _manifest_sha(manifest)
+    public = bool(getattr(args, "public", False))
+    json_doc, md_doc = _face_score_once(
+        record, manifest, score_manifest_sha256=manifest_sha, public=public
+    )
+    if args.check_determinism:
+        _check_face_determinism_cross_process(record_path, args.manifest, public=public)
+    base = record_path.with_suffix("")
+    json_path, md_path = Path(f"{base}-face-report.json"), Path(f"{base}-face-report.md")
+    json_path.write_text(json_doc)
+    md_path.write_text(md_doc)
+    scored = score_face_run_record(record, manifest, score_manifest_sha256=manifest_sha)
+    print(md_path)
+    print(
+        f"scored={scored['counts']['scored']}/{scored['counts']['total']} "
+        f"matched_faces={scored['counts']['matched_faces']} "
+        f"directional_excluded={len(scored['gate_proposal']['excluded_directional'])}"
+    )
+    failed = int(scored["counts"]["failed"])
+    if failed > 0:
+        sys.exit(
+            f"score-face gate failed: {failed} item(s) not scored (see failures[] in {json_path})"
+        )
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="eval_harness", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -579,6 +729,41 @@ def main(argv: list[str] | None = None) -> None:
     scenes_p.add_argument("--manifest", default="scene/tests/seed/golden.json")
     scenes_p.set_defaults(func=_cmd_seed_scenes)
 
+    face_bo = sub.add_parser(
+        "face-bakeoff",
+        help="offline face walk (detect→align→embed) → face_run_record (FIR-5; no tenant writes)",
+    )
+    face_bo.add_argument("--manifest", default="scene/tests/seed/golden.json")
+    face_bo.add_argument("--limit", type=_limit_arg, default=None)
+    face_bo.add_argument("--stall-limit", type=int, default=DEFAULT_STALL_LIMIT)
+    face_bo.add_argument("--keep", type=_keep_arg, default=DEFAULT_KEEP)
+    face_bo.add_argument(
+        "--leg",
+        choices=("candidate",),
+        default="candidate",
+        help="face leg (candidate=YuNet+SFace; buffalo is ACX_EVAL_BENCH-only and not default)",
+    )
+    face_bo.set_defaults(func=_cmd_face_bakeoff)
+
+    score_face_p = sub.add_parser(
+        "score-face",
+        help="face run-record → face report (pure, offline; full unfiltered corpus)",
+    )
+    score_face_p.add_argument("--manifest", default="scene/tests/seed/golden.json")
+    score_face_p.add_argument("--run-record", required=True)
+    score_face_p.add_argument(
+        "--check-determinism",
+        action="store_true",
+        help="re-score in a fresh process under varied PYTHONHASHSEED; bit-identical JSON/MD required",
+    )
+    score_face_p.add_argument(
+        "--public",
+        action="store_true",
+        help="post-score redact via redact_face_report_for_public (never pre-score drop)",
+    )
+    score_face_p.set_defaults(func=_cmd_score_face)
+
+
     args = parser.parse_args(argv)
     if getattr(args, "max_cost", None) is not None and getattr(args, "cost_per_image", None) is None:
         parser.error("--max-cost requires --cost-per-image (the cap is estimated spend; without a price it is a no-op)")
@@ -588,9 +773,12 @@ def main(argv: list[str] | None = None) -> None:
         ManifestError,
         RemoteClientError,
         BoundedStallError,
+        FaceBoundedStallError,
         MaxCostExceededError,
         ProviderMismatchError,
         ReportError,
+        FaceRunRecordError,
+        PerfLegError,
     ) as exc:
         sys.exit(f"{type(exc).__name__}: {exc}")
 

@@ -30,7 +30,13 @@ under the never-guess contract, with measurable quality/cost trade-offs.
 - Slices 1, 2, 4 are landed on `feature/altq-1` (commits `0ddf1d99`/`79bbf48c`
   Slices 1–2, `c34aaa94`/`9e8c7439`/`ff8b6af7` Slice 4); the scoped harness
   suite is green at HEAD (416 passed) and 66 py + 79 php Slice-4 tests pass.
-- Slice 3 (measurement) is the only unstarted work.
+- Slice 3 (measurement) is **delivered from collected data**: the golden-37 A/B
+  matrix (v1/v2/two_pass/dual_length × standard/distractor + ablation) is
+  committed under `docs/tasks/altq/bakeoff-results/`, the cost/latency tooling is
+  landed, and the decision memo (findings §8) names **dual_length** the
+  detailed-tier default. Three cells stay operator-gated and deferred (golden-37
+  face-box enrichment, fresh A10 re-run, live CPU-weave) — see §8.6 + handoff
+  `cc_altq1_slice3_close_scoping`.
 - `alt_text_long` is plumbing-complete service-side but always null until an
   adapter populates it (dual-length generation lives in the eval harness; the
   async describe worker is the future service conduit). Bulk/async run
@@ -176,24 +182,23 @@ cost/latency axes; CPU cells never blocked by GPU capacity.
 **Proof**: run-records + reports in `docs/tasks/altq/bakeoff-results/`,
 `test_result` events per cell, decision-rule table filled in the findings doc.
 
-- [ ] **Prerequisite — face_boxes enrichment**: populate `face_boxes` for
-      `golden.json` entries from curated ground truth via
-      `export_identities.py:enrich_entry` (0/37 today; the face-gate cell is
-      vacuous without it — fail-closed gate ablates every name). If curated
-      boxes cover < 30/37 entries, run the face-gate cell on the covered
-      subset and say so in the report.
+- [ ] **Prerequisite — face_boxes enrichment** — **DEFERRED (operator-gated)**:
+      golden-37 still 0/37; enrichment via the curation tenant is operator/
+      tenant-touching. The face-weave path was instead exercised on the
+      646-corpus interleave (584 boxes, 530 named). See findings §8.6 + handoff
+      decision `cc_altq1_slice3_close_scoping`.
 - [x] **New tooling (test-first, before any bench)**: `--weave-bench` replay
       mode (pass-2 text-only from a recorded pass-1; no `image_part`) and
       `report.py:_latency_summary` (p50/p95 per image + model-call count per
       config). Transport-stubbed tests green.
-- [ ] **GPU acquisition** per the batch-compute runbook: fresh `VM.GPU.A10.1`
+- [x] **GPU acquisition** per the batch-compute runbook: fresh `VM.GPU.A10.1`
       launch from the custom image (runbook §Working solution;
       `acx-gpu-vlm-multiad-20260716` — supersedes the research-findings'
       `acx-gpu-qwen3vl30b-golden`, which predates the multi-AD image), rotating
       AD-1/2/3, public-subnet + on-box; bounded acquisition window (≤24 h
       spaced retries). **Capacity-miss contingency**: no host in the window ⇒
       record a blocker, run CPU cells, re-attempt next window [RES-13].
-- [ ] **GPU A/B matrix** on `--manifest scene/tests/seed/golden.json`
+- [x] **GPU A/B matrix** on `--manifest scene/tests/seed/golden.json`
       (explicit override; harness default is `bakeoff_golden.json`), env
       `ACX_EVAL_LIVE=1` + `GOLDEN_IMAGES_DIR=<originals dir>`; GPU-on ≤1 h,
       terminate after. Five configs, exact flags:
@@ -204,16 +209,19 @@ cost/latency axes; CPU cells never blocked by GPU capacity.
       5. dual-length — `--prompt-variant v2 --dual-length`
       × eval modes `standard`, `context_distractor` (all), `name_ablation`
       (configs 1–2 suffice; two-pass ablation optional if window allows).
-- [ ] **CPU weave cell** (capacity-safe; runs even if GPU starves): replay
+- [ ] **CPU weave cell** — **DEFERRED (operator-gated: live CPU endpoint)**;
+      `--weave-bench` tooling + `_latency_summary` landed & unit-tested, only the
+      live run is deferred (findings §8.6): replay
       config-3's pass-1 facts through `--weave-bench` against a CPU llama.cpp
       endpoint (Qwen3-VL-4B-Instruct Q4_K_M text-only — the tiered plan's
       zero-new-weights T1d candidate) on a dedicated CPU box per the runbook;
       report weave latency p50/p95 + the same name-safety metrics.
-- [ ] **Cost/latency axis** per config from `_latency_summary` + $/1k images
+- [x] **Cost/latency axis** per config from `_latency_summary` + $/1k images
       (formula: `instance $/hr × wall_hours ÷ images × 1000`; A10 ≈ $2/hr, CPU
       box ≈ $0.45/hr) [PERF-01, PERF-07].
-- [ ] Findings + decision-rule table appended to the research doc; winning
-      config named.
+- [x] Findings + decision-rule table appended to the research doc; winning
+      config named (findings §8 — **dual_length** detailed-tier default;
+      grok-cross-checked).
 
 ### Checklist for Slice 4: Service integration + contract change
 
@@ -240,16 +248,15 @@ cost/latency axes; CPU cells never blocked by GPU capacity.
       on the committed 7b winner output — proven by test fixtures derived from it.
 - [x] Distractor + ablation modes runnable end-to-end and asserted in tests
       without a live GPU (transport-stubbed).
-- [ ] **Decision rule (Slice 3)** — the winning config must, vs the same-window
-      v1 baseline on `golden.json`: (a) reduce or hold hallucinated-name rate
-      AND wrong-name image rate with zero new Must-Right failures and zero
-      policy violations (hard gates); (b) improve at least one of
-      name_precision / mean gated score / long-rubric score; (c) keep median
-      per-image wall-clock ≤ 2× v1, or the decision memo explicitly accepts the
-      trade with the $/1k delta stated. Ties break toward fewer model calls.
-- [ ] Both output surfaces measured (dual-length cell) AND landed in WP with
-      `acx_alt_style` control — WP landing done (Slice 4); measurement pending
-      (Slice 3, config 5).
+- [x] **Decision rule (Slice 3)** — winner **dual_length** satisfies vs the
+      same-window v1 baseline on `golden.json`: (a) holds halluc-rate (0) and
+      reduces wrong-name (0.216→0.108) with zero new Must-Right/policy failures;
+      (b) improves name_precision (0.818→0.90) and ships the long-rubric surface;
+      (c) median wall-clock 1.36× v1 (inside the 2× gate) at +36% $/1k. two_pass
+      is the name-safety upper bound (0.081) but breaches (c) and ships no long
+      surface. Findings §8.
+- [x] Both output surfaces measured (dual-length cell, §8) AND landed in WP with
+      `acx_alt_style` control (Slice 4).
 
 ## Not-Doing
 

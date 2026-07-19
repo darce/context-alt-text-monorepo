@@ -55,7 +55,7 @@ class IdentityMembersReadRepository {
 				INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
 				LEFT JOIN %i p ON p.id = c.person_id
 				WHERE m.cluster_uuid = %s AND c.tenant_id = %s
-				ORDER BY m.updated_at DESC, m.identity_uuid LIMIT %d OFFSET %d',
+				ORDER BY m.assigned_at ASC, m.identity_uuid LIMIT %d OFFSET %d',
 				array(
 					$this->members_table_name,
 					$this->clusters_table_name,
@@ -73,7 +73,7 @@ class IdentityMembersReadRepository {
 				LEFT JOIN %i c ON c.cluster_uuid = m.cluster_uuid
 				LEFT JOIN %i p ON p.id = c.person_id
 				WHERE m.cluster_uuid = %s
-				ORDER BY m.updated_at DESC, m.identity_uuid LIMIT %d OFFSET %d',
+				ORDER BY m.assigned_at ASC, m.identity_uuid LIMIT %d OFFSET %d',
 				array(
 					$this->members_table_name,
 					$this->clusters_table_name,

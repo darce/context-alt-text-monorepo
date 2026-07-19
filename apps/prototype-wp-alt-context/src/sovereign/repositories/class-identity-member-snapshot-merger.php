@@ -117,13 +117,16 @@ class IdentityMemberSnapshotMerger {
 			$similarity_threshold_value = $this->normalize_optional_float_value( $member['similarity_threshold'] ?? null );
 			$thumb_path       = $this->normalize_thumb_path( $member, $identity_uuid, $attachment_id );
 			$bbox_json        = $this->encode_bbox_json( $member );
+			// CON-11/CON-12 / rg-005: populate assigned_at so members ORDER BY matches
+			// recognition source-of-truth (assigned_at ASC, identity_uuid).
+			$assigned_at      = $this->normalize_assigned_at( $member, $now_utc );
 
 			// COR-1: gate member data on projection_version (kept monotonic via
 			// GREATEST) so a stale snapshot cannot regress newer member rows.
 			$sql = $this->prepare_query(
 				"INSERT INTO %i
-					(identity_uuid, cluster_uuid, attachment_id, bbox_json, thumb_path, similarity, similarity_threshold, is_curated, projection_version, created_at, updated_at)
-				SELECT %s, %s, %d, %s, %s, NULLIF(%s, ''), NULLIF(%s, ''), %d, %d, %s, %s
+					(identity_uuid, cluster_uuid, attachment_id, bbox_json, thumb_path, similarity, similarity_threshold, is_curated, projection_version, assigned_at, created_at, updated_at)
+				SELECT %s, %s, %d, %s, %s, NULLIF(%s, ''), NULLIF(%s, ''), %d, %d, %s, %s, %s
 				FROM DUAL
 				WHERE EXISTS (
 					SELECT 1
@@ -138,6 +141,7 @@ class IdentityMemberSnapshotMerger {
 					thumb_path = IF(VALUES(projection_version) >= projection_version, VALUES(thumb_path), thumb_path),
 					similarity = IF(VALUES(projection_version) >= projection_version, NULLIF(%s, ''), similarity),
 					similarity_threshold = IF(VALUES(projection_version) >= projection_version, NULLIF(%s, ''), similarity_threshold),
+					assigned_at = IF(VALUES(projection_version) >= projection_version, VALUES(assigned_at), assigned_at),
 					projection_version = IF(is_curated = 1, projection_version, GREATEST(projection_version, VALUES(projection_version))),
 					updated_at = VALUES(updated_at)",
 				array(
@@ -151,6 +155,7 @@ class IdentityMemberSnapshotMerger {
 					$similarity_threshold_value,
 					0,
 					max( 0, $snapshot_version ),
+					$assigned_at,
 					$now_utc,
 					$now_utc,
 					$this->clusters_table_name,

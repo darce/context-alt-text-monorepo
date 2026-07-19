@@ -5,20 +5,13 @@ declare(strict_types=1);
 namespace AltContext\Api;
 
 require_once __DIR__ . '/class-recognition-data-source.php';
-require_once __DIR__ . '/../sovereign/repositories/class-clusters-repository.php';
-require_once __DIR__ . '/../sovereign/sync/interface-sync-pull-job.php';
-require_once __DIR__ . '/../sovereign/sync/class-sync-pull-job-factory.php';
 
 use AltContext\Sovereign\Mappers\MemberResponseMapper;
-use AltContext\Sovereign\Repositories\ClustersRepository;
 use AltContext\Sovereign\Repositories\IdentityMembersRepository;
 use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
-use AltContext\Sovereign\Sync\SnapshotClient;
-use AltContext\Sovereign\Sync\SyncPullJobFactory;
-use AltContext\Sovereign\Sync\SyncPullJobInterface;
-use Throwable;
+use stdClass;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -26,7 +19,6 @@ use WP_REST_Response;
 use function absint;
 use function array_keys;
 use function count;
-use function do_action;
 use function is_array;
 use function range;
 use function rest_sanitize_boolean;
@@ -37,26 +29,21 @@ use function wp_schedule_single_event;
 class MediaIdentitiesController extends AbstractRecognitionProxyController {
 	private const DATA_SOURCE_LOCAL_PROJECTION = RecognitionDataSource::LOCAL_PROJECTION;
 	private const DATA_SOURCE_BACKEND_PROXY = RecognitionDataSource::BACKEND_PROXY;
+	private const DATA_SOURCE_ENDPOINT_ERROR = RecognitionDataSource::ENDPOINT_ERROR;
 	private const DATA_SOURCE_UNAVAILABLE = RecognitionDataSource::UNAVAILABLE;
 	private const REQUEST_CLASS_POST_SCAN_READ = 'post_scan_read';
 	private IdentityMembersRepositoryInterface $members_repository;
 	private SyncStateRepositoryInterface $sync_state_repository;
 	private MemberResponseMapper $member_mapper;
-	private ?SyncPullJobInterface $sync_pull_job;
-	private ?SyncPullJobFactory $sync_pull_job_factory;
 
 	public function __construct(
 		?IdentityMembersRepositoryInterface $members_repository = null,
 		?SyncStateRepositoryInterface $sync_state_repository = null,
-		?MemberResponseMapper $member_mapper = null,
-		?SyncPullJobInterface $sync_pull_job = null,
-		?SyncPullJobFactory $sync_pull_job_factory = null
+		?MemberResponseMapper $member_mapper = null
 	) {
 		$this->members_repository = $members_repository ?? new IdentityMembersRepository();
 		$this->sync_state_repository = $sync_state_repository ?? new SyncStateRepository();
 		$this->member_mapper = $member_mapper ?? new MemberResponseMapper();
-		$this->sync_pull_job = $sync_pull_job;
-		$this->sync_pull_job_factory = $sync_pull_job_factory;
 	}
 
 	public function register_routes(): void {
@@ -106,7 +93,7 @@ class MediaIdentitiesController extends AbstractRecognitionProxyController {
 		if ( $this->should_use_local_projection( $tenant_id ) ) {
 			$rows = $this->members_repository->list_for_media_ids( $tenant_id, $ids );
 			$payload = array(
-				'identities_by_media' => $this->member_mapper->map_media_identities( $rows ),
+				'identities_by_media' => $this->as_identities_map( $this->member_mapper->map_media_identities( $rows ) ),
 				'data_source' => self::DATA_SOURCE_LOCAL_PROJECTION,
 			);
 			// Async heal only: the sovereign read must return immediately even offline.
@@ -128,14 +115,11 @@ class MediaIdentitiesController extends AbstractRecognitionProxyController {
 		if ( $this->is_backend_overloaded( $response ) ) {
 			return parent::backend_overloaded_response( $response );
 		}
-		if ( $this->is_proxy_unavailable( $response ) ) {
-			return new WP_REST_Response(
-				array(
-					'identities_by_media' => array(),
-					'data_source' => self::DATA_SOURCE_UNAVAILABLE,
-				),
-				200
-			);
+		if ( $this->is_proxy_transport_unreachable( $response ) ) {
+			return $this->degraded_media_identities_response( self::DATA_SOURCE_UNAVAILABLE );
+		}
+		if ( $this->is_proxy_endpoint_error( $response ) ) {
+			return $this->degraded_media_identities_response( self::DATA_SOURCE_ENDPOINT_ERROR );
 		}
 
 		if ( $response instanceof WP_REST_Response && 200 === $response->get_status() ) {
@@ -167,7 +151,7 @@ class MediaIdentitiesController extends AbstractRecognitionProxyController {
 
 			return new WP_REST_Response(
 				array(
-					'identities_by_media' => $data['identities_by_media'],
+					'identities_by_media' => $this->as_identities_map( $data['identities_by_media'] ),
 					'data_source'        => self::DATA_SOURCE_BACKEND_PROXY,
 				),
 				200
@@ -210,7 +194,7 @@ class MediaIdentitiesController extends AbstractRecognitionProxyController {
 
 		return new WP_REST_Response(
 			array(
-				'identities_by_media' => $grouped,
+				'identities_by_media' => $this->as_identities_map( $grouped ),
 				'data_source'        => self::DATA_SOURCE_BACKEND_PROXY,
 			),
 			200
@@ -227,14 +211,14 @@ class MediaIdentitiesController extends AbstractRecognitionProxyController {
 	}
 
 	/**
-	 * After a successful proxy read, converge the projection via an inline
-	 * pull, falling back to one deduped cron event when the inline pull does
-	 * not succeed. Unlike ClusterProjectionSyncService::maybe_bootstrap_after_proxy_read
-	 * the inline leg is cooldown-gated (`perform()`, not the bypass): this runs on
-	 * the visitor read path, so SyncPullJob's failure cooldowns bound repeated
-	 * pull cost during partial outages and dedup concurrent requests; a
-	 * cooldown-skipped pull still schedules the cron fallback, which performs
-	 * the bypass pull. A throwing pull must never break the proxy response.
+	 * BR-02: after a successful proxy read, converge the projection via the
+	 * deduped async cron event only — never an inline pull. The successful
+	 * proxy response must return immediately; blocking it on a background_sync
+	 * pull (30s x3) exceeds the workbench client abort budget and withholds
+	 * data the response already carries. This mirrors the sovereign local-read
+	 * path ("return immediately even offline") and the ClusterProjectionSyncService
+	 * newly-qualifying branch. The cron handler (Api::handle_bootstrap_sync)
+	 * performs the actual convergence pull off the request path.
 	 */
 	private function maybe_bootstrap_after_proxy_read( string $tenant_id, WP_REST_Response|WP_Error $response ): WP_REST_Response|WP_Error {
 		if ( ! ( $response instanceof WP_REST_Response ) ) {
@@ -245,29 +229,7 @@ class MediaIdentitiesController extends AbstractRecognitionProxyController {
 			return $response;
 		}
 
-		$sync_pull_job = $this->resolve_sync_pull_job();
-		if ( null === $sync_pull_job ) {
-			return $response;
-		}
-
-		try {
-			$inline_result = $sync_pull_job->perform( $tenant_id );
-		} catch ( Throwable $throwable ) {
-			do_action(
-				'acx_sync_pull_failed',
-				array(
-					'tenant_id' => $tenant_id,
-					'context' => 'bootstrap_after_proxy_read',
-					'message' => $throwable->getMessage(),
-				)
-			);
-			$this->schedule_bootstrap_sync_event( $tenant_id );
-			return $response;
-		}
-
-		if ( ! $inline_result->is_success() ) {
-			$this->schedule_bootstrap_sync_event( $tenant_id );
-		}
+		$this->schedule_bootstrap_sync_event( $tenant_id );
 
 		return $response;
 	}
@@ -288,32 +250,27 @@ class MediaIdentitiesController extends AbstractRecognitionProxyController {
 		}
 	}
 
-	private function resolve_sync_pull_job(): ?SyncPullJobInterface {
-		if ( null !== $this->sync_pull_job ) {
-			return $this->sync_pull_job;
-		}
+	/**
+	 * BR-01: an empty identities_by_media must serialize as a JSON object ({}),
+	 * not a JSON array ([]). The workbench guard (fetchMediaIdentities) rejects
+	 * arrays, so an empty [] would throw client-side and collapse the honest
+	 * degraded state (data_source) into an error the UI cannot render.
+	 *
+	 * @param array<array-key,mixed> $identities_by_media
+	 * @return array<array-key,mixed>|stdClass
+	 */
+	private function as_identities_map( array $identities_by_media ): array|stdClass {
+		return array() === $identities_by_media ? new stdClass() : $identities_by_media;
+	}
 
-		try {
-			$factory = $this->sync_pull_job_factory ?? new SyncPullJobFactory(
-				new ClustersRepository(),
-				$this->members_repository,
-				$this->sync_state_repository,
-				new SnapshotClient()
-			);
-			$this->sync_pull_job = $factory->create();
-		} catch ( Throwable $e ) {
-			do_action(
-				'acx_recognition_composition_failed',
-				array(
-					'message' => $e->getMessage(),
-					'controller' => __CLASS__,
-					'context' => 'media_identities_lazy_sync_pull_job',
-				)
-			);
-			return null;
-		}
-
-		return $this->sync_pull_job;
+	private function degraded_media_identities_response( string $data_source ): WP_REST_Response {
+		return new WP_REST_Response(
+			array(
+				'identities_by_media' => new stdClass(),
+				'data_source' => $data_source,
+			),
+			200
+		);
 	}
 
 	private function is_list_payload( array $data ): bool {

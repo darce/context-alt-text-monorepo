@@ -13,7 +13,6 @@ use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
 use AltContext\Sovereign\Sync\SnapshotClient;
 use AltContext\Sovereign\Sync\SyncPullJobFactory;
 use AltContext\Sovereign\Sync\SyncPullJobInterface;
-use AltContext\Sovereign\Sync\TargetedSyncPullJobInterface;
 use Throwable;
 use WP_Error;
 use WP_REST_Response;
@@ -64,21 +63,14 @@ class ClusterProjectionSyncService {
 	 */
 	public function should_use_local_projection( string $tenant_id ): bool {
 		if ( $this->host->host_should_use_local_projection_gate( $this->sync_state_repository, $tenant_id ) ) {
-			$updated_at    = $this->sync_state_repository->get_last_updated( $tenant_id );
-			$sync_pull_job = $this->resolve_sync_pull_job();
-			if ( $this->host->host_is_projection_stale( $updated_at ) && null !== $sync_pull_job ) {
-				try {
-					$sync_pull_job->perform( $tenant_id );
-				} catch ( Throwable $e ) {
-					do_action(
-						'acx_sync_pull_failed',
-						array(
-							'tenant_id' => $tenant_id,
-							'context' => 'stale_projection_read',
-							'message' => $e->getMessage(),
-						)
-					);
-				}
+			$updated_at = $this->sync_state_repository->get_last_updated( $tenant_id );
+			if ( $this->host->host_is_projection_stale( $updated_at ) ) {
+				// BR-03: heal async, never inline. The prior inline perform() blocked
+				// the read on an offline/degraded backend and ignored its result, so a
+				// failed refresh left no cron fallback and the projection never healed.
+				// Serve local immediately; the deduped cron event converges off-path,
+				// matching the newly-qualifying branch and MediaIdentitiesController.
+				$this->schedule_bootstrap_sync_event( $tenant_id );
 			}
 
 			return true;
@@ -106,15 +98,12 @@ class ClusterProjectionSyncService {
 			return $response;
 		}
 
-		$sync_pull_job = $this->resolve_sync_pull_job();
-		if ( null === $sync_pull_job ) {
-			return $response;
-		}
-
-		$inline_result = $sync_pull_job->perform_bypass_cooldown( $tenant_id );
-		if ( ! $inline_result->is_success() ) {
-			$this->schedule_bootstrap_sync_event( $tenant_id );
-		}
+		// BR-04/BR-02: converge via the deduped async cron event only. The prior
+		// inline perform_bypass_cooldown blocked the successful proxy response,
+		// coalesced nothing (bypassing the cooldown thundering-herds concurrent
+		// reads), and was not throw-guarded (a throwing pull turned a 200 into a
+		// 500). The cron handler performs the bypass pull off the request path.
+		$this->schedule_bootstrap_sync_event( $tenant_id );
 
 		return $response;
 	}
@@ -173,28 +162,24 @@ class ClusterProjectionSyncService {
 	}
 
 	/**
+	 * BR-07: never pull synchronously on the read path. The prior
+	 * perform_targeted_snapshot blocked the sovereign read for the full
+	 * targeted-snapshot timeout budget whenever the backend was offline/degraded
+	 * — exactly the state rows-first routing must keep serving through. Schedule
+	 * the deduped async bootstrap heal and serve the current projection; missing
+	 * members converge off the request path. Returns false so callers do not
+	 * re-read (nothing was repaired synchronously).
+	 *
 	 * @param string[] $cluster_ids
 	 */
 	public function repair_targeted_projection( string $tenant_id, array $cluster_ids ): bool {
-		$sync_pull_job = $this->resolve_sync_pull_job();
-		if ( ! ( $sync_pull_job instanceof TargetedSyncPullJobInterface ) ) {
+		if ( empty( $cluster_ids ) ) {
 			return false;
 		}
 
-		try {
-			$result = $sync_pull_job->perform_targeted_snapshot( $tenant_id, $cluster_ids );
-			return $result->is_success();
-		} catch ( Throwable $throwable ) {
-			do_action(
-				'acx_sync_pull_failed',
-				array(
-					'tenant_id' => $tenant_id,
-					'context' => 'targeted_projection_read_repair',
-					'message' => $throwable->getMessage(),
-				)
-			);
-			return false;
-		}
+		$this->schedule_bootstrap_sync_event( $tenant_id );
+
+		return false;
 	}
 
 	private function resolve_sync_pull_job(): ?SyncPullJobInterface {

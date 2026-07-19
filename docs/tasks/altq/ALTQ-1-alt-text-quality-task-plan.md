@@ -185,7 +185,7 @@ cost/latency axes; CPU cells never blocked by GPU capacity.
 - [ ] **Prerequisite — face_boxes enrichment** — **DEFERRED (operator-gated)**:
       golden-37 still 0/37; enrichment via the curation tenant is operator/
       tenant-touching. The face-weave path was instead exercised on the
-      646-corpus interleave (584 boxes, 530 named). See findings §8.6 + handoff
+      646-corpus interleave (584 manifest boxes, 530 named). See findings §8.6 + handoff
       decision `cc_altq1_slice3_close_scoping`.
 - [x] **New tooling (test-first, before any bench)**: `--weave-bench` replay
       mode (pass-2 text-only from a recorded pass-1; no `image_part`) and
@@ -198,7 +198,9 @@ cost/latency axes; CPU cells never blocked by GPU capacity.
       AD-1/2/3, public-subnet + on-box; bounded acquisition window (≤24 h
       spaced retries). **Capacity-miss contingency**: no host in the window ⇒
       record a blocker, run CPU cells, re-attempt next window [RES-13].
-- [x] **GPU A/B matrix** on `--manifest scene/tests/seed/golden.json`
+- [x] **GPU A/B matrix** (4/5 configs measured; config-4 face-gate is vacuous on
+      golden-37 → deferred, see the prerequisite line + findings §8) on
+      `--manifest scene/tests/seed/golden.json`
       (explicit override; harness default is `bakeoff_golden.json`), env
       `ACX_EVAL_LIVE=1` + `GOLDEN_IMAGES_DIR=<originals dir>`; GPU-on ≤1 h,
       terminate after. Five configs, exact flags:
@@ -252,7 +254,7 @@ cost/latency axes; CPU cells never blocked by GPU capacity.
       same-window v1 baseline on `golden.json`: (a) holds halluc-rate (0) and
       reduces wrong-name (0.216→0.108) with zero new Must-Right/policy failures;
       (b) improves name_precision (0.818→0.90) and ships the long-rubric surface;
-      (c) median wall-clock 1.36× v1 (inside the 2× gate) at +36% $/1k. two_pass
+      (c) median wall-clock 1.36× v1 (inside the 2× gate) at +24% $/1k (mean-based). two_pass
       is the name-safety upper bound (0.081) but breaches (c) and ships no long
       surface. Findings §8.
 - [x] Both output surfaces measured (dual-length cell, §8) AND landed in WP with

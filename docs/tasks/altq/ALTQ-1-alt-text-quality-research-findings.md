@@ -209,16 +209,23 @@ which converged on the same winner and corrected two coordinator misreads (see
 §8.7). Config-4 (two-pass + face-gate) is **not** in this matrix — golden-37
 carries 0/37 `face_boxes`, so the fail-closed gate ablates every name and the
 cell is vacuous; the face-weave path was exercised on the separate 646-image
-interleave corpus (584 centre-point boxes, 530 named) — see §8.6.
+interleave corpus (584 manifest face boxes, 530 named; 575 grounded in the scored
+report) — see §8.6.
 
 ### 8.1 Standard mode — name-safety saturated under clean context
 
+`meta-frame` is the **short**-surface count; `p50 s`/`×v1` are median wall-clock
+(the latency-**gate** axis); `$/1k` is **mean**-derived cost (§8.4).
+
 | config | insertion | name_prec | wrong-name | mean_gated | MR-fail | meta-frame | ctx-dup | p50 s | ×v1 | $/1k |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| **v1** | 1.00 | 1.00 | 0.00 | 1.000 | 0 | 0 | 0.281 | 2.595 | 1.0× | 1.44 |
-| v2 | 0.97 | 1.00 | 0.00 | 0.973 | **1** | **2** | 0.199 | 2.572 | 0.99× | 1.43 |
-| two_pass | 1.00 | 1.00 | 0.00 | 1.000 | 0 | 0 | **0.125** | 5.744 | 2.21× | 3.19 |
-| dual_length | 1.00 | 1.00 | 0.00 | 1.000 | 0 | 0 | 0.219 | 3.539 | 1.36× | 1.97 |
+| **v1** | 1.00 | 1.00 | 0.00 | 1.000 | 0 | 0 | 0.281 | 2.595 | 1.0× | 2.33 |
+| v2 | 0.97 | 1.00 | 0.00 | 0.973 | **1** | **2** | 0.199 | 2.572 | 0.99× | 2.39 |
+| two_pass | 1.00 | 1.00 | 0.00 | 1.000 | 0 | 0 | **0.125** | 5.744 | 2.21× | 5.06 |
+| dual_length | 1.00 | 1.00 | 0.00 | 1.000 | 0 | 0 | 0.219 | 3.539 | 1.36× | 2.89 |
+
+(dual_length's **long** surface carries 5 meta-framing images — the short-surface
+0 above understates the product surface; see §8.6.)
 
 With a **clean** context pack every config names people (insertion ≈ 1.0) and
 names them **correctly** (name_prec 1.0, 0 wrong) — so the name-safety axes are
@@ -256,17 +263,21 @@ Must-Right failures, zero policy violations (all configs hold policy at 0).
 
 | config | (a) hard gates | (b) improves prec/gated/long | (c) ≤2× latency (gate 5.19s) | verdict |
 | --- | --- | --- | --- | --- |
-| v2 | **FAIL** — new Must-Right failure + 2 meta-framing on standard; no distractor gain | no | pass (2.57s) | **eliminated** |
+| v2 | **FAIL** — the sole Must-Right failure in the matrix on standard is the hard-gate breach (+2 meta-framing is supporting, report-only); no distractor gain | no | pass (2.57s) | **eliminated** |
 | two_pass | pass — wrong-name reduced, zero new MR/policy | yes (prec 0.818→0.923) | **FAIL** — 5.74s = 2.21× | pass *with explicit cost trade* |
 | dual_length | pass — wrong-name reduced, zero new MR/policy | yes (prec→0.90; **ships long surface**) | **pass** — 3.54s = 1.36× | **pass, all gates** |
 
 ### 8.4 Cost/latency axis [COST-04]
 
-$/1k images is **derived** (not a stored report field) = A10 $2/hr × p50/3600 ×
-1000, rendered per-image in the HTML report via `build_bakeoff_report.py
---hourly-rate` / `--cost-total` (Slice-3 tooling): v1 **1.44**, v2 1.43,
-two_pass **3.19** (+121%), dual_length **1.97** (+36%). Latency gate = 2× v1 p50
-(2.595s) = **5.19s**.
+Two distinct axes, deliberately on different statistics: the **latency gate** (c)
+is on **median** (p50) per the decision rule, while **cost** follows the plan's
+formula `instance $/hr × wall_hours ÷ images × 1000`, which is **mean**-based.
+$/1k images (derived, not a stored field; A10 $2/hr × **mean** per-image
+wall-clock / 3600 × 1000): v1 **2.33**, v2 2.39, two_pass **5.06** (+117%),
+dual_length **2.89** (+24%). (A p50-based proxy would understate these by
+1.47–1.68× because per-image latency is right-skewed.) Per-image cost is rendered
+in the HTML report via `build_bakeoff_report.py --hourly-rate` / `--cost-total`
+(Slice-3 tooling). Latency gate = 2× v1 p50 (2.595s) = **5.19s**.
 
 ### 8.5 Decision — detailed-tier default = **dual_length** (`--prompt-variant v2 --dual-length`)
 
@@ -274,7 +285,7 @@ It is the only measured config that simultaneously (1) ships **both** product
 surfaces the detailed tier requires (long: 37/37 imgs, mean 78.9 words, long
 name_prec 1.0, long mean_gated 1.0, sentence-band-ok 1.0), (2) clears every hard
 gate vs v1, (3) improves name-safety under distractor (wrong-name 0.216→0.108,
-prec 0.818→0.90), and (4) stays inside the 2× latency gate (1.36×) at +36% cost.
+prec 0.818→0.90), and (4) stays inside the 2× latency gate (1.36×) at +24% cost.
 **two_pass** is the superior *pure* name-safety mechanism (wrong-name 0.081) but
 emits no long surface and breaches the latency gate — so promoting it as the
 detailed default would violate the decision rule, not apply it. Its

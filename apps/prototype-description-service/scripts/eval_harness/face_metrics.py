@@ -218,8 +218,6 @@ def face_identification_pr(decisions: Sequence[Any]) -> FaceLevelIdPr:
             d.predicted_name if not isinstance(d, Mapping) else d.get("predicted_name")
         )
         enrolled = d.enrolled if not isinstance(d, Mapping) else bool(d.get("enrolled"))
-        media_id = d.media_id if not isinstance(d, Mapping) else int(d["media_id"])
-        box_index = d.box_index if not isinstance(d, Mapping) else int(d["box_index"])
 
         if enrolled:
             n_recall_eligible += 1
@@ -231,6 +229,11 @@ def face_identification_pr(decisions: Sequence[Any]) -> FaceLevelIdPr:
                 fp += 1
                 if enrolled:
                     fn += 1
+                # media_id/box_index only label a wrong-name row — read them here
+                # (tolerantly on the Mapping path) so a reject decision supplied as
+                # a dict without those keys does not KeyError before the branch.
+                media_id = d.media_id if not isinstance(d, Mapping) else int(d.get("media_id", -1))
+                box_index = d.box_index if not isinstance(d, Mapping) else int(d.get("box_index", -1))
                 wrong.append((media_id, box_index, str(true_name), str(predicted)))
         else:
             # reject

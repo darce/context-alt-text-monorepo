@@ -394,3 +394,19 @@ def test_face_id_detection_recall_coupling_flag_always_set():
         [_dec(true_name="Alice", decision="accept", predicted_name="Alice")]
     )
     assert result.detection_recall_coupling_flag is True
+
+
+def test_face_identification_pr_reject_dict_without_media_id_keys():
+    """BR-05: a reject decision as a dict omitting media_id/box_index must not KeyError.
+
+    Those keys only label a wrong-name row; a reject legitimately omits them.
+    Regression: reading them before the accept/reject branch raised KeyError on
+    every named reject dict, aborting the whole pooled-metric computation (TEST-15).
+    """
+    from scripts.eval_harness.face_metrics import face_identification_pr
+
+    pr = face_identification_pr(
+        [{"true_name": "Alice", "decision": "reject", "enrolled": True}]
+    )
+    assert pr.false_negatives == 1  # reject of an enrolled identity → FN
+    assert pr.true_positives == 0 and pr.false_positives == 0

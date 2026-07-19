@@ -285,26 +285,40 @@ def test_pooled_decisions_cover_all_matched_named_n():
 
 
 def test_metrics_consume_pooled_not_single_tau_op_rescore():
-    """Different folds may use different τ_k — decisions are not one global threshold."""
-    # Build faces where scores straddle the grid so fold τ can differ.
+    """Metrics read each face's POOLED per-fold decision, never a re-score at τ_op (EVAL-07)."""
+    from scripts.eval_harness.face_assignment import FaceDecision
+    from scripts.eval_harness.face_metrics import face_identification_pr
+
     rng = np.random.default_rng(0)
     faces: list[MatchedFace] = []
     for i in range(10):
-        # Alice cluster near e0
         faces.append(_matched(i, 0, [1.0, 0.05 * i, 0.0], "Alice"))
     for i in range(10):
         faces.append(_matched(100 + i, 0, [0.0, 1.0, 0.05 * i], "Bob"))
     for i in range(5):
-        # strangers far from both
         faces.append(_matched(200 + i, 0, list(rng.normal(size=3)), None))
 
     result = assign_open_set_kfold(faces, k_folds=5)
-    # τ_k need not be identical across folds for this to be valid; pooled uses each face's fold τ.
     assert len(result.tau_k) == 5
     assert result.tau_op == pytest.approx(float(np.median(result.tau_k)))
-    # Each decision's tau_k matches its fold's entry.
-    for d in result.decisions:
-        assert d.tau_k == result.tau_k[d.fold]
+    # Structural: every pooled decision carries its OWN fold's τ_k.
+    assert all(d.tau_k == result.tau_k[d.fold] for d in result.decisions)
+
+    # Discrimination (TEST-15, not tautology): a pooled REJECT whose s_max sits
+    # ABOVE τ_op must be counted as a reject (FN for an enrolled identity), NOT
+    # silently re-scored to an accept at a single global τ_op. If a metric
+    # regressed to `accept = s_max >= tau_op`, this face would flip to a TP and
+    # the assertions below would go red.
+    tau_op = 0.5
+    rejected_above_tau_op = FaceDecision(
+        media_id=1, path="p.jpg", box_index=0, det_index=0,
+        true_name="Alice", decision="reject", predicted_name=None,
+        s_max=0.90, name_star="Alice", tau_k=0.95, fold=0,
+        enrolled=True, excluded_single_face_recall=False,
+    )
+    assert rejected_above_tau_op.s_max > tau_op  # a τ_op re-score WOULD accept
+    pr = face_identification_pr([rejected_above_tau_op])
+    assert pr.true_positives == 0 and pr.false_negatives == 1
 
 
 def test_open_set_f1_zero_over_zero_is_zero():
@@ -335,9 +349,12 @@ def test_select_tau_tiebreak_largest_contiguous_plateau_mean():
         identity_counts=counts,
         tau_grid=TAU_GRID,
     )
-    assert tau in TAU_GRID
-    # Residual ties → larger τ within plateau-mean closest; value is provisional.
-    assert 0.20 <= tau <= 0.90
+    # Full-grid plateau (perfect separation → F1==1.0 at every grid τ): the mean
+    # of 0.20..0.90 is 0.55, which is on the grid. Assert the CONCRETE tie-break
+    # value — a smallest-τ regression would return 0.20 (the §E-forbidden
+    # most-permissive τ) yet still pass a bare `0.20<=tau<=0.90` range check
+    # (TEST-15: the assertion must be able to go red on that regression).
+    assert tau == pytest.approx(0.55)
 
 
 def test_select_tau_empty_probes_returns_grid_mid():
@@ -348,6 +365,21 @@ def test_select_tau_empty_probes_returns_grid_mid():
         tau_grid=TAU_GRID,
     )
     assert tau == TAU_GRID[len(TAU_GRID) // 2]
+
+
+def test_largest_contiguous_plateau_prefers_larger_tau_on_length_tie():
+    """§E: on two EQUAL-length max-F1 plateaus, keep the LATER (larger-τ) run.
+
+    Ascending τ grid → later index == larger τ. A strict-`>` regression keeps the
+    earliest (smallest-τ) plateau — the most-permissive τ §E forbids as a
+    false-accept bias. TEST-15 can-fail guard for the tie-break selector.
+    """
+    from scripts.eval_harness.face_assignment import _largest_contiguous_plateau_indices
+
+    # Two isolated equal-length (len-2) max runs: indices [1,2] and [4,5] → later wins.
+    assert _largest_contiguous_plateau_indices([0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 0.0], 1.0) == [4, 5]
+    # A strictly-longer earlier run still wins over a shorter later one.
+    assert _largest_contiguous_plateau_indices([1.0, 1.0, 1.0, 0.0, 1.0], 1.0) == [0, 1, 2]
 
 
 # ---------------------------------------------------------------------------
@@ -437,7 +469,7 @@ def test_score_face_assignment_end_to_end():
 
 
 def test_determinism_loo_kfold_cross_process(tmp_path: Path):
-    """LOO + k-fold pooled decisions re-derive identically under varied PYTHONHASHSEED."""
+    """LOO + k-fold pooled decisions AND §F clustering re-derive identically under varied PYTHONHASHSEED."""
     script = tmp_path / "run_score.py"
     script.write_text(
         """
@@ -481,6 +513,24 @@ out = {
         for d in r.decisions
     ],
 }
+# Clustering (§F single-linkage) must ALSO re-derive identically cross-process:
+# union-find + pair-counting can be dict/set-iteration-order sensitive.
+from scripts.eval_harness.face_metrics import clustering_sweep
+_named_m = [m for m in matched if m.true_name is not None]
+_sweep, _headline = clustering_sweep(
+    [list(m.embedding) for m in _named_m],
+    [m.true_name for m in _named_m],
+    tau_grid=(0.2, 0.4, 0.6, 0.8),
+    tau_op=r.tau_op,
+)
+out["clustering_headline"] = {
+    "labels": list(_headline.labels),
+    "purity": _headline.purity,
+    "false_merge": _headline.false_merge,
+    "false_split": _headline.false_split,
+    "directional": _headline.directional,
+}
+out["clustering_sweep_labels"] = [list(c.labels) for c in _sweep]
 print(json.dumps(out, sort_keys=True))
 """
     )

@@ -248,7 +248,13 @@ def test_worker_timeout_marks_failed_exactly_once(monkeypatch: pytest.MonkeyPatc
             session_factory=sf,
             cpu_adapter=_Adapter(kind=DescriptionAdapterKind.LOCAL_CPU, caption="slow", delay_s=2.0),
             gpu_adapter=_Adapter(kind=DescriptionAdapterKind.GPU, caption="never"),
-            job_timeout_seconds=0.05,
+            # Timeout must fire during the 2.0s CPU adapter sleep — after phase-1's
+            # DB writes commit — so cancellation lands at an await with no open
+            # session. Too small (0.05s) and a slow runner cancels mid-aiosqlite
+            # query, invalidating the StaticPool's single :memory: connection and
+            # destroying the schema ("no such table"). 0.5s clears phase-1 with
+            # margin (the degraded-projection test proves 0.3s is safe on CI).
+            job_timeout_seconds=0.5,
             audit_sink=None,
             metrics=None,
         )

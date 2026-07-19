@@ -59,6 +59,7 @@ def _identity(tenant_id, *, media_id=MEDIA_ID, bbox=(100, 50, 60, 80), confidenc
         bbox_height=h,
         confidence=confidence,
         embedding=_embedding(),
+        embedding_model="buffalo_l@insightface",
     )
 
 

@@ -2,7 +2,7 @@
 
 > **Status:** Planning seed (pre-task-plan). Authored 2026-07-10 under `DURABILITY-UV-PLANNING`.
 > **Source:** Gap inventory in [roadmap-pg-durable-evaluation.md](../../roadmaps/roadmap-pg-durable-evaluation.md) (decision: harden the hand-rolled job layer in place instead of vendoring pg_durable).
-> **Heuristics basis:** [docs/strategy/engineering-heuristics.md](../../strategy/engineering-heuristics.md) — IDs cited per slice.
+> **Heuristics basis:** [heuristics-canon lexicons/engineering.md](https://github.com/darce/heuristics-canon/blob/main/lexicons/engineering.md) (canonical; gitignored mirror: `docs/workbay/rules/engineering-heuristics.md`) — IDs cited per slice.
 
 ## Objective
 

@@ -56,7 +56,9 @@ const makeViewModel = (overrides: Partial<WorkbenchFindingsViewModel> = {}): Wor
   isError: false,
   isUnavailable: false,
   isReadOnly: false,
+  queueSettled: true,
   nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.EMPTY },
+  queue: [],
   ...overrides,
 });
 
@@ -100,8 +102,9 @@ describe('WorkbenchFindingsPanel', () => {
     expect(onTargetFindings).toHaveBeenCalledTimes(1);
   });
 
-  it('opens the label drawer when the next action targets an unlabeled cluster', async () => {
+  it('routes cluster next-actions through onTargetFindings (queue owns cluster cards)', async () => {
     const onLabel = vi.fn();
+    const onTargetFindings = vi.fn();
     vi.mocked(useWorkbenchFindings).mockReturnValue(
       makeViewModel({
         counts: { assignments: 0, merges: 0, names: 0, unlabeledClusters: 1, total: 1 },
@@ -110,10 +113,11 @@ describe('WorkbenchFindingsPanel', () => {
       }),
     );
 
-    render(<WorkbenchFindingsPanel onLabel={onLabel} onTargetFindings={vi.fn()} />);
+    render(<WorkbenchFindingsPanel onLabel={onLabel} onTargetFindings={onTargetFindings} />);
 
     await userEvent.click(screen.getByRole('button', { name: /Review next/ }));
-    expect(onLabel).toHaveBeenCalledWith('cluster-9');
+    expect(onTargetFindings).toHaveBeenCalledTimes(1);
+    expect(onLabel).not.toHaveBeenCalled();
   });
 
   it('disables the primary action and explains population in the empty state', () => {

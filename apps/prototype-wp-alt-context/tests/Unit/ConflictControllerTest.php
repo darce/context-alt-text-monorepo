@@ -1187,6 +1187,69 @@ class ConflictControllerTest extends TestCase
      * @param array<string,mixed> $overrides
      * @return array<string,mixed>
      */
+    public function testBackendRosterRegressionExposesRestoreLocalAndAcceptBackend(): void
+    {
+        $tenantId = self::currentTenantId();
+        $repository = new InMemoryConflictRepository([
+            $this->buildConflictRecord([
+                'id' => 61,
+                'entity_type' => 'roster',
+                'entity_key' => 'backend_roster',
+                'outbox_id' => 0,
+                'conflict_code' => 'backend_roster_regressed',
+                'machine_payload' => [
+                    'backend_version' => 41,
+                    'counts' => ['curated_cluster_deleted' => 25, 'curated_member_deleted' => 2, 'member_cluster_reassignment' => 1],
+                    'entities' => ['curated_cluster_deleted' => ['cluster-a'], 'curated_member_deleted' => [], 'member_cluster_reassignment' => []],
+                    'entity_set_truncated' => false,
+                ],
+            ]),
+        ]);
+
+        $controller = new ConflictController($repository, new ConflictResolutionService(), new InMemoryOutboxDrain());
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/conflicts/61');
+        $request->set_param('id', 61);
+        $response = $controller->get_conflict_detail($request);
+        $data = $response->get_data();
+
+        $this->assertSame(
+            ['restore_local', 'accept_backend', 'dismissed'],
+            $data['conflict']['allowed_resolutions'],
+            'a non-truncated aggregate must offer both resolution directions'
+        );
+    }
+
+    public function testTruncatedBackendRosterRegressionFailsRestoreLocalClosed(): void
+    {
+        $tenantId = self::currentTenantId();
+        $repository = new InMemoryConflictRepository([
+            $this->buildConflictRecord([
+                'id' => 62,
+                'entity_type' => 'roster',
+                'entity_key' => 'backend_roster',
+                'outbox_id' => 0,
+                'conflict_code' => 'backend_roster_regressed',
+                'machine_payload' => [
+                    'backend_version' => 41,
+                    'entities' => ['curated_cluster_deleted' => ['cluster-a']],
+                    'entity_set_truncated' => true,
+                ],
+            ]),
+        ]);
+
+        $controller = new ConflictController($repository, new ConflictResolutionService(), new InMemoryOutboxDrain());
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/conflicts/62');
+        $request->set_param('id', 62);
+        $response = $controller->get_conflict_detail($request);
+        $data = $response->get_data();
+
+        $this->assertSame(
+            ['accept_backend', 'dismissed'],
+            $data['conflict']['allowed_resolutions'],
+            'a truncated aggregate must not offer restore_local'
+        );
+    }
+
     private function buildConflictRecord(array $overrides = []): array
     {
         return array_merge([

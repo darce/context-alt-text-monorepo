@@ -15,3 +15,5 @@ Decision records for durable architecture choices that both agents and humans ma
 - [ADR-011-retire-on-device-recognition-remote-only.md](ADR-011-retire-on-device-recognition-remote-only.md)
 - [ADR-012-customer-tenant-management-crm-ready-admin.md](ADR-012-customer-tenant-management-crm-ready-admin.md)
 - [ADR-013-oci-vault-secrets-backend.md](ADR-013-oci-vault-secrets-backend.md)
+- [ADR-014-payment-processor-merchant-of-record-selection.md](ADR-014-payment-processor-merchant-of-record-selection.md)
+- [ADR-ARCH-07-opencv-pin-for-face-pipeline-reference.md](ADR-ARCH-07-opencv-pin-for-face-pipeline-reference.md)

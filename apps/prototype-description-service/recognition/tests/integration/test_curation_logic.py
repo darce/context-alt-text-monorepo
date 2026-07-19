@@ -40,6 +40,7 @@ async def test_reassign_identity_between_clusters(
         bbox_height=100,
         confidence=0.9,
         embedding=embedding_a,
+        embedding_model="buffalo_l@insightface",
         quality_score=0.8,
         pose_pitch=10.0,
         pose_yaw=10.0,
@@ -56,6 +57,7 @@ async def test_reassign_identity_between_clusters(
         bbox_height=100,
         confidence=0.9,
         embedding=embedding_b,
+        embedding_model="buffalo_l@insightface",
         quality_score=0.8,
         pose_pitch=10.0,
         pose_yaw=10.0,
@@ -158,6 +160,7 @@ async def test_assign_outlier_computes_real_similarity(
         bbox_width=100,
         bbox_height=100,
         embedding=[float(x) for x in embedding_a],  # Ensure list format for JSON/Array types
+        embedding_model="buffalo_l@insightface",
         confidence=0.9,
     )
     media2 = MediaIdentityModel(
@@ -170,6 +173,7 @@ async def test_assign_outlier_computes_real_similarity(
         bbox_width=100,
         bbox_height=100,
         embedding=[float(x) for x in embedding_b],
+        embedding_model="buffalo_l@insightface",
         confidence=0.9,
     )
     db_session.add_all([media1, media2])
@@ -252,6 +256,7 @@ async def test_remove_representative_triggers_refresh(
         bbox_width=100,
         bbox_height=100,
         embedding=[float(x) for x in embedding],
+        embedding_model="buffalo_l@insightface",
         confidence=0.9,
     )
     media2 = MediaIdentityModel(
@@ -264,6 +269,7 @@ async def test_remove_representative_triggers_refresh(
         bbox_width=100,
         bbox_height=100,
         embedding=[float(x) for x in embedding],
+        embedding_model="buffalo_l@insightface",
         confidence=0.9,
     )
     db_session.add_all([media1, media2])
@@ -341,6 +347,7 @@ async def test_remove_representative_deferred_recompute(
         bbox_width=100,
         bbox_height=100,
         embedding=[float(x) for x in embedding],
+        embedding_model="buffalo_l@insightface",
         confidence=0.9,
     )
     db_session.add(media1)
@@ -394,6 +401,7 @@ async def test_manual_assign_increases_curriculum_t(cluster_service, db_session,
         bbox_width=100,
         bbox_height=100,
         embedding=embedding,
+        embedding_model="buffalo_l@insightface",
         confidence=0.9,
     )
     media2 = MediaIdentityModel(
@@ -406,6 +414,7 @@ async def test_manual_assign_increases_curriculum_t(cluster_service, db_session,
         bbox_width=100,
         bbox_height=100,
         embedding=embedding,
+        embedding_model="buffalo_l@insightface",
         confidence=0.9,
     )
     db_session.add_all([media1, media2])
@@ -445,6 +454,7 @@ async def test_manual_remove_decreases_curriculum_t(cluster_service, db_session,
         bbox_width=100,
         bbox_height=100,
         embedding=embedding,
+        embedding_model="buffalo_l@insightface",
         confidence=0.9,
     )
     media2 = MediaIdentityModel(
@@ -457,6 +467,7 @@ async def test_manual_remove_decreases_curriculum_t(cluster_service, db_session,
         bbox_width=100,
         bbox_height=100,
         embedding=embedding,
+        embedding_model="buffalo_l@insightface",
         confidence=0.9,
     )
     db_session.add_all([media1, media2])

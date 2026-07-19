@@ -13,11 +13,14 @@ _default_settings = QualitySettings()
 
 @dataclass(frozen=True, slots=True)
 class IdentityQualityInfo:
-    """Quality information for an identity."""
+    """Quality information for an identity.
+
+    Canonical threshold quality is pose-neutral (confidence + bbox size only)
+    so model profiles that cannot emit pose are not silently disadvantaged.
+    """
 
     score: float  # 0.0 to 1.0
     confidence: float
-    pose_penalty: float
     size_factor: float
     threshold_adjustment: float  # Delta to apply
 
@@ -25,9 +28,6 @@ class IdentityQualityInfo:
 def compute_identity_quality(
     *,
     confidence: float,
-    pose_pitch: float | None,
-    pose_yaw: float | None,
-    pose_roll: float | None,
     bbox_width: int,
     bbox_height: int,
     settings: QualitySettings | None = None,
@@ -35,11 +35,12 @@ def compute_identity_quality(
 ) -> IdentityQualityInfo:
     """Compute identity quality score from detection metrics.
 
+    Score depends only on confidence and bbox size (FIR2-BR-03). Pose remains
+    available on FaceDetection / MediaIdentity for explicit pose-bucket /
+    diversity logic, not for threshold quality.
+
     Args:
         confidence: Detection confidence (0-1).
-        pose_pitch: Head pitch angle in degrees.
-        pose_yaw: Head yaw angle in degrees.
-        pose_roll: Head roll angle in degrees.
         bbox_width: Bounding box width in pixels.
         bbox_height: Bounding box height in pixels.
         settings: Optional quality settings. Uses defaults if not provided.
@@ -50,22 +51,17 @@ def compute_identity_quality(
     """
     s = settings or _default_settings
 
-    # 1. Pose penalty: angles > threshold start reducing quality rapidly
-    total_angle = abs(pose_pitch or 0) + abs(pose_yaw or 0) + abs(pose_roll or 0)
-    pose_penalty = max(0.0, 1.0 - (total_angle / s.pose_penalty_divisor))
-
-    # 2. Size factor: punish faces below min_face_size
+    # Size factor: punish faces below min_face_size
     min_dim = min(bbox_width, bbox_height)
     size_factor = min(1.0, min_dim / s.min_face_size)
 
-    # 3. Combined score
-    raw_score = confidence * pose_penalty * size_factor
+    # Combined score (confidence × size only)
+    raw_score = confidence * size_factor
     score = round(max(0.0, min(1.0, raw_score)), 3)
 
     return IdentityQualityInfo(
         score=score,
         confidence=confidence,
-        pose_penalty=pose_penalty,
         size_factor=size_factor,
         threshold_adjustment=compute_quality_adjustment(score, settings=s, maturity=maturity),
     )

@@ -103,4 +103,11 @@ export const SYNC_VOCABULARY = {
   syncModeFull: __('Full sync', 'alt-context'),
   attentionSummary: __('Sync attention needed.', 'alt-context'),
   offlineSummary: __('The recognition backend is currently unreachable.', 'alt-context'),
+  // E15-35 Slice 3: aggregate backend-regression signal (degraded mode).
+  backendRegressionWarning: __(
+    'The service roster looks rolled back. Your local curation is preserved — resolve the roster conflict to restore or accept.',
+    'alt-context',
+  ),
+  backendRegressionRestoreLocal: __('Restore local curation', 'alt-context'),
+  backendRegressionAcceptBackend: __('Accept backend version', 'alt-context'),
 } as const;

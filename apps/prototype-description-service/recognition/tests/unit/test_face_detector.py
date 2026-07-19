@@ -24,7 +24,34 @@ from recognition.application.embedding.detector import (
     InsightFaceFaceDetector,
     StubFaceDetector,
 )
+from recognition.application.embedding.manifest import incumbent_embedding_model_manifest
 from recognition.application.integrations import AdapterBreakerConfig, AdapterBreakerOpenError, AdapterCircuitBreaker
+from recognition.config import get_settings
+
+_EMBEDDING_DIM = get_settings().identity_detection.embedding_dimension
+_MANIFEST_MODEL_ID = incumbent_embedding_model_manifest().model_id
+
+
+def _adapter_face(
+    *,
+    bbox: tuple[int, int, int, int] = (10, 20, 100, 150),
+    confidence: float = 0.95,
+    pose: tuple[float, float, float] | None = (5.0, -3.0, 1.0),
+) -> FaceDetection:
+    """Build a FaceDetection as returned by InsightFaceAdapter (media_id filled later)."""
+    pose_pitch = pose[0] if pose else None
+    pose_yaw = pose[1] if pose else None
+    pose_roll = pose[2] if pose else None
+    return FaceDetection(
+        media_id="",
+        bbox=bbox,
+        confidence=confidence,
+        embedding=np.random.randn(_EMBEDDING_DIM).astype(np.float32),
+        pose_pitch=pose_pitch,
+        pose_yaw=pose_yaw,
+        pose_roll=pose_roll,
+        model_id=_MANIFEST_MODEL_ID,
+    )
 
 
 class TestStubFaceDetector:
@@ -100,14 +127,7 @@ class TestInsightFaceFaceDetector:
     async def test_calls_adapter_for_bytes_source(self) -> None:
         """Should call adapter.detect_faces for bytes input."""
         mock_adapter = MagicMock()
-        mock_face = MagicMock()
-        mock_face.bbox = (10, 20, 100, 150)
-        mock_face.confidence = 0.95
-        mock_face.embedding_512 = np.random.randn(512).astype(np.float32)
-        mock_face.pose = (5.0, -3.0, 1.0)
-        mock_face.age = 30
-        mock_face.gender = 1
-        mock_face.landmarks = np.array([[10.0, 12.0], [20.0, 18.0], [15.0, 25.0], [9.0, 30.0], [24.0, 33.0]])
+        mock_face = _adapter_face()
         mock_adapter.detect_faces = AsyncMock(return_value=[mock_face])
 
         detector = InsightFaceFaceDetector(mock_adapter)
@@ -119,23 +139,18 @@ class TestInsightFaceFaceDetector:
         assert detections[0].confidence == 0.95
         assert detections[0].embedding is not None
         assert detections[0].pose_pitch == 5.0
-        assert detections[0].age == 30
-        assert detections[0].gender == 1
+        assert detections[0].model_id == _MANIFEST_MODEL_ID
         assert detections[0].landmark_quality is not None
         assert 0.0 <= detections[0].landmark_quality <= 1.0
+        # FIR-2 S4: demographic attrs must stay off the seam payload.
+        assert not hasattr(detections[0], "age")
+        assert not hasattr(detections[0], "gender")
 
     @pytest.mark.asyncio
     async def test_fetches_url_sources(self) -> None:
         """URL sources should be fetched and processed."""
         mock_adapter = MagicMock()
-        mock_face = MagicMock(
-            bbox=(10, 20, 100, 150),
-            confidence=0.95,
-            embedding_512=np.random.randn(512).astype(np.float32),
-            pose=None,
-            age=None,
-            gender=None,
-        )
+        mock_face = _adapter_face(pose=None)
         mock_adapter.detect_faces = AsyncMock(return_value=[mock_face])
 
         detector = InsightFaceFaceDetector(mock_adapter)
@@ -166,14 +181,7 @@ class TestInsightFaceFaceDetector:
     async def test_uses_shared_client_when_provided(self) -> None:
         """Should use provided AsyncClient instead of creating a new one."""
         mock_adapter = MagicMock()
-        mock_face = MagicMock(
-            bbox=(10, 20, 100, 150),
-            confidence=0.95,
-            embedding_512=np.random.randn(512).astype(np.float32),
-            pose=None,
-            age=None,
-            gender=None,
-        )
+        mock_face = _adapter_face(pose=None)
         mock_adapter.detect_faces = AsyncMock(return_value=[mock_face])
 
         mock_response = MagicMock()
@@ -200,21 +208,15 @@ class TestInsightFaceFaceDetector:
     async def test_handles_multiple_faces_per_image(self) -> None:
         """Should return multiple detections if adapter finds multiple faces."""
         mock_adapter = MagicMock()
-        mock_face1 = MagicMock(
+        mock_face1 = _adapter_face(
             bbox=(10, 10, 50, 50),
             confidence=0.9,
-            embedding_512=np.random.randn(512).astype(np.float32),
             pose=(1.0, 2.0, 3.0),
-            age=25,
-            gender=0,
         )
-        mock_face2 = MagicMock(
+        mock_face2 = _adapter_face(
             bbox=(100, 100, 150, 150),
             confidence=0.85,
-            embedding_512=np.random.randn(512).astype(np.float32),
             pose=(-1.0, -2.0, -3.0),
-            age=35,
-            gender=1,
         )
         mock_adapter.detect_faces = AsyncMock(return_value=[mock_face1, mock_face2])
 

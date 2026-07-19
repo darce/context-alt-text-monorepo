@@ -299,12 +299,14 @@ class FakeSuggestion:
         suggested_label_source: str | None = None,
         suggested_label_confidence: float | None = None,
         expires_at=None,  # noqa: ANN001
+        created_at: datetime | None = None,
     ) -> None:
         self.id = str(uuid.uuid4())
         self.identity_id = identity_id
         self.cluster_id = cluster_id
         self.representative_similarity = 0.9
         self.member_similarity = 0.85
+        self.created_at = created_at if created_at is not None else datetime.now(UTC)
         self.status = FakeSuggestionStatus()
         self.cluster_label = cluster_label
         self.cluster_identity_count = cluster_identity_count
@@ -504,6 +506,26 @@ class FakeSuggestionService:
     async def list_for_identity(self, identity_id: str) -> list[FakeSuggestion]:
         return [s for s in self.suggestions.values() if isinstance(s, FakeSuggestion) and s.identity_id == identity_id]
 
+    async def list_for_identities(self, identity_ids, *, top_k):  # noqa: ANN001, ANN201
+        """Mirror SuggestionService.list_for_identities: top-k pending truthy-label rows per identity."""
+        grouped = {}
+        for identity_id in identity_ids:
+            rows = [
+                s
+                for s in self.suggestions.values()
+                if isinstance(s, FakeSuggestion)
+                and s.identity_id == identity_id
+                and s.status.value == "pending"
+                and s.cluster_label
+            ]
+            # Match the real window's full sort key (similarity DESC, created_at DESC);
+            # ranking authority lives in the integration tests, this fake only mirrors it.
+            rows.sort(key=lambda s: (s.representative_similarity, s.created_at), reverse=True)
+            top_rows = rows[:top_k]
+            if top_rows:
+                grouped[identity_id] = [s.as_details() for s in top_rows]
+        return grouped
+
     async def accept(self, suggestion_id: str) -> FakeSuggestion | None:
         suggestion = self.suggestions.get(suggestion_id)
         if not isinstance(suggestion, FakeSuggestion):
@@ -619,8 +641,6 @@ class FakeMediaIdentity:
         self.pose_pitch = 10.0
         self.pose_yaw = -5.0
         self.pose_roll = 0.0
-        self.age = 30
-        self.gender = 1
         self.quality_score = 0.9
 
 
@@ -656,8 +676,6 @@ class FakeMediaIdentityService:
                         "yaw": identity.pose_yaw,
                         "roll": identity.pose_roll,
                     },
-                    "age": identity.age,
-                    "gender": "male" if identity.gender == 1 else "female",
                     "det_score": identity.confidence,
                     "bbox_area": identity.bbox["width"] * identity.bbox["height"],
                     "landmark_quality": identity.quality_score,

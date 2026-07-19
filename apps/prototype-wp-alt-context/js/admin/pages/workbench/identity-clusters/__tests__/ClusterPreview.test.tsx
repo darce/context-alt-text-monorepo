@@ -35,4 +35,12 @@ describe('ClusterPreview', () => {
     expect(screen.getByLabelText('Representative image unavailable')).toBeInTheDocument();
     expect(screen.getByText('No image')).toBeInTheDocument();
   });
+
+  it('does not render a pin control (UXA-07)', () => {
+    render(<ClusterPreview representative={buildRepresentative({ is_pinned: true })} memberCount={3} />);
+
+    expect(screen.queryByRole('button', { name: /pin/i })).not.toBeInTheDocument();
+    expect(screen.queryByText('Pinned')).not.toBeInTheDocument();
+    expect(screen.queryByText('Pin')).not.toBeInTheDocument();
+  });
 });

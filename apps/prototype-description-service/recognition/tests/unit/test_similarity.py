@@ -6,9 +6,9 @@ import numpy as np
 import pytest
 
 from recognition.shared.similarity import (
-    FACE_EMBEDDING_DIM,
     compute_face_similarity,
     extract_face_embedding,
+    face_embedding_dim,
     normalize_face_embedding,
     normalize_vector,
 )
@@ -16,28 +16,28 @@ from recognition.shared.similarity import (
 
 def test_extract_face_embedding_truncates_larger_vectors() -> None:
     """Should return only the face portion from a larger embedding vector."""
-    larger_dim = FACE_EMBEDDING_DIM + 100
+    larger_dim = face_embedding_dim() + 100
     extended = np.arange(larger_dim, dtype=np.float32)
     face = extract_face_embedding(extended)
 
-    assert face.shape[0] == FACE_EMBEDDING_DIM
-    assert np.array_equal(face, extended[:FACE_EMBEDDING_DIM])
+    assert face.shape[0] == face_embedding_dim()
+    assert np.array_equal(face, extended[: face_embedding_dim()])
 
 
 def test_extract_face_embedding_512d() -> None:
     """Should return the embedding unchanged when already face-only."""
-    face_only = np.arange(FACE_EMBEDDING_DIM, dtype=np.float32)
+    face_only = np.arange(face_embedding_dim(), dtype=np.float32)
     face = extract_face_embedding(face_only)
 
-    assert face.shape[0] == FACE_EMBEDDING_DIM
+    assert face.shape[0] == face_embedding_dim()
     assert np.array_equal(face, face_only)
 
 
 def test_compute_face_similarity_uses_face_only() -> None:
     """Similarity should ignore metadata dimensions and use normalized face vectors."""
-    face = np.ones(FACE_EMBEDDING_DIM, dtype=np.float32)
-    embedding_a = np.concatenate([face, np.zeros(FACE_EMBEDDING_DIM, dtype=np.float32)])
-    embedding_b = np.concatenate([face, np.ones(FACE_EMBEDDING_DIM, dtype=np.float32) * 10.0])
+    face = np.ones(face_embedding_dim(), dtype=np.float32)
+    embedding_a = np.concatenate([face, np.zeros(face_embedding_dim(), dtype=np.float32)])
+    embedding_b = np.concatenate([face, np.ones(face_embedding_dim(), dtype=np.float32) * 10.0])
 
     similarity = compute_face_similarity(embedding_a, embedding_b)
 
@@ -64,8 +64,8 @@ def test_normalize_vector_zero_vector() -> None:
 
 def test_normalize_face_embedding_512d() -> None:
     """Should normalize a 512D face embedding."""
-    vec = np.array([10.0] * FACE_EMBEDDING_DIM, dtype=np.float32)
+    vec = np.array([10.0] * face_embedding_dim(), dtype=np.float32)
     normalized = normalize_face_embedding(vec)
 
     assert float(np.linalg.norm(normalized)) == pytest.approx(1.0)
-    assert normalized.shape == (FACE_EMBEDDING_DIM,)
+    assert normalized.shape == (face_embedding_dim(),)

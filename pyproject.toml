@@ -1,0 +1,11 @@
+# Virtual root project — exists so the remote grok sandbox's root `uv sync`
+# (scripts/remote_agent.sh) succeeds in this monorepo, whose real Python
+# projects live under apps/*. Not a build target; installs nothing.
+[project]
+name = "context-alt-text-monorepo-root"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.uv]
+package = false

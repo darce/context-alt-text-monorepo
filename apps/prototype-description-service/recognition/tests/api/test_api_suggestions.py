@@ -496,6 +496,148 @@ def test_reject_name_suggestion_returns_404_when_not_found(
 
 
 @pytest.mark.asyncio
+async def test_list_suggestions_top_k_bounds_match_count(
+    api_client, tenant_id, fake_suggestion_service, fake_cluster_repository
+) -> None:
+    """UXP-2 3a: top_k on the per-card route bounds the match count (proxy sends top_k=5 today)."""
+    identity_id = str(uuid.uuid4())
+    cluster_ids = []
+    for index, similarity in enumerate([0.95, 0.90, 0.85]):
+        cluster_id = str(uuid.uuid4())
+        cluster_ids.append(cluster_id)
+        fake_cluster_repository.seed(cluster_id, tenant_id=tenant_id, label=f"Person {index}", identity_count=1)
+        suggestion = await fake_suggestion_service.create(identity_id=identity_id, cluster_id=cluster_id)
+        suggestion.representative_similarity = similarity
+
+    resp = api_client.get(
+        f"/recognition/identities/{identity_id}/suggestions",
+        headers={"X-Tenant-ID": tenant_id},
+        params={"top_k": 2},
+    )
+
+    assert resp.status_code == 200
+    matches = resp.json()["matches"]
+    assert [item["cluster_id"] for item in matches] == cluster_ids[:2]
+
+
+@pytest.mark.asyncio
+async def test_list_suggestions_without_top_k_returns_all_matches(
+    api_client, tenant_id, fake_suggestion_service, fake_cluster_repository
+) -> None:
+    """Callers that omit top_k keep the current unbounded behavior."""
+    identity_id = str(uuid.uuid4())
+    for index in range(3):
+        cluster_id = str(uuid.uuid4())
+        fake_cluster_repository.seed(cluster_id, tenant_id=tenant_id, label=f"Person {index}", identity_count=1)
+        await fake_suggestion_service.create(identity_id=identity_id, cluster_id=cluster_id)
+
+    resp = api_client.get(
+        f"/recognition/identities/{identity_id}/suggestions",
+        headers={"X-Tenant-ID": tenant_id},
+    )
+
+    assert resp.status_code == 200
+    assert len(resp.json()["matches"]) == 3
+
+
+def test_list_suggestions_top_k_out_of_range_rejected(api_client, tenant_id) -> None:
+    for bad_top_k in (0, -1, 100000):
+        resp = api_client.get(
+            f"/recognition/identities/{uuid.uuid4()}/suggestions",
+            headers={"X-Tenant-ID": tenant_id},
+            params={"top_k": bad_top_k},
+        )
+        assert resp.status_code == 400, f"top_k={bad_top_k} should be rejected"
+
+
+@pytest.mark.asyncio
+async def test_batch_identity_suggestions_keyed_by_identity(api_client, tenant_id, fake_suggestion_service) -> None:
+    """UXP-2 3a: GET /identities/suggestions returns the requested subset keyed by identity id."""
+    identity_a = str(uuid.uuid4())
+    identity_b = str(uuid.uuid4())
+    identity_unrequested = str(uuid.uuid4())
+
+    low = await fake_suggestion_service.create(
+        identity_id=identity_a,
+        cluster_id=str(uuid.uuid4()),
+        cluster_label="Person A Low",
+        cluster_identity_count=1,
+    )
+    low.representative_similarity = 0.80
+    high = await fake_suggestion_service.create(
+        identity_id=identity_a,
+        cluster_id=str(uuid.uuid4()),
+        cluster_label="Person A High",
+        cluster_identity_count=2,
+    )
+    high.representative_similarity = 0.95
+    b_only = await fake_suggestion_service.create(
+        identity_id=identity_b,
+        cluster_id=str(uuid.uuid4()),
+        cluster_label="Person B",
+        cluster_identity_count=3,
+    )
+    await fake_suggestion_service.create(
+        identity_id=identity_unrequested,
+        cluster_id=str(uuid.uuid4()),
+        cluster_label="Not Requested",
+        cluster_identity_count=1,
+    )
+
+    resp = api_client.get(
+        "/recognition/identities/suggestions",
+        headers={"X-Tenant-ID": tenant_id},
+        params={"identity_ids": f"{identity_a},{identity_b}", "top_k": 1},
+    )
+
+    assert resp.status_code == 200
+    matches = resp.json()["matches"]
+    assert set(matches.keys()) == {identity_a, identity_b}
+    assert [item["cluster_id"] for item in matches[identity_a]] == [high.cluster_id]
+    assert matches[identity_a][0]["label"] == "Person A High"
+    assert [item["cluster_id"] for item in matches[identity_b]] == [b_only.cluster_id]
+
+
+def test_batch_identity_suggestions_rejects_over_limit(api_client, tenant_id) -> None:
+    ids = ",".join(str(uuid.uuid4()) for _ in range(101))
+    resp = api_client.get(
+        "/recognition/identities/suggestions",
+        headers={"X-Tenant-ID": tenant_id},
+        params={"identity_ids": ids, "top_k": 1},
+    )
+    assert resp.status_code == 400
+
+
+def test_batch_identity_suggestions_accepts_max_limit(api_client, tenant_id) -> None:
+    ids = ",".join(str(uuid.uuid4()) for _ in range(100))
+    resp = api_client.get(
+        "/recognition/identities/suggestions",
+        headers={"X-Tenant-ID": tenant_id},
+        params={"identity_ids": ids, "top_k": 1},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"matches": {}}
+
+
+def test_batch_identity_suggestions_rejects_invalid_id(api_client, tenant_id) -> None:
+    resp = api_client.get(
+        "/recognition/identities/suggestions",
+        headers={"X-Tenant-ID": tenant_id},
+        params={"identity_ids": f"{uuid.uuid4()},not-a-uuid", "top_k": 1},
+    )
+    assert resp.status_code == 400
+
+
+def test_batch_identity_suggestions_rejects_out_of_range_top_k(api_client, tenant_id) -> None:
+    resp = api_client.get(
+        "/recognition/identities/suggestions",
+        headers={"X-Tenant-ID": tenant_id},
+        params={"identity_ids": str(uuid.uuid4()), "top_k": 0},
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_accept_rejects_other_pending_suggestions(
     api_client, tenant_id, fake_suggestion_service, fake_cluster_service
 ) -> None:

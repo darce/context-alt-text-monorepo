@@ -12,7 +12,7 @@ use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
  * Extend this class and override only the methods your test needs.
  */
 class NullIdentityMembersRepository implements IdentityMembersRepositoryInterface {
-	public function merge_snapshot_for_tenant( string $tenant_id, array $members, int $snapshot_version ): void {}
+	public function merge_snapshot_for_tenant( string $tenant_id, array $members, int $snapshot_version, bool $suppress_conflict_storm = false ): void {}
 
 	public function list_for_cluster( string $cluster_uuid, int $limit = IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT, int $offset = 0, ?string $tenant_id = null ): array {
 		return array();
@@ -46,7 +46,7 @@ class NullIdentityMembersRepository implements IdentityMembersRepositoryInterfac
 		return 0;
 	}
 
-	public function count_for_cluster( string $cluster_uuid ): int {
+	public function count_for_cluster( string $cluster_uuid, ?string $tenant_id = null ): int {
 		return 0;
 	}
 

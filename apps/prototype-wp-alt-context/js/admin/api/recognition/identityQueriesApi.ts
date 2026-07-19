@@ -2,7 +2,7 @@ import { fetchRequiredApi, stripTrailingSlash } from '../../utils/http';
 import { getEndpoint, getConfig, isDevMode } from '../config';
 import { parseDataSource } from './types/dataSource';
 import type {
-  IdentitySuggestionsResponse,
+  IdentityBatchSuggestionsResponse,
   MediaIdentitiesResponse,
   PendingMergeSuggestionsResponse,
   PendingNameSuggestionsResponse,
@@ -65,13 +65,26 @@ export const fetchMediaIdentities = async (mediaIds: number[]): Promise<MediaIde
   };
 };
 
-export const fetchIdentitySuggestions = async (identityId: string, topK = 5): Promise<IdentitySuggestionsResponse> => {
+export const fetchIdentitiesSuggestions = async (
+  identityIds: string[],
+  topK = 1,
+): Promise<IdentityBatchSuggestionsResponse> => {
+  if (identityIds.length === 0) {
+    throw new Error(
+      "fetchIdentitiesSuggestions requires at least one identity ID. Use the hook's enabled guard to prevent empty calls.",
+    );
+  }
+
   const base = getEndpoint('recognitionIdentitySuggestions');
   const normalized = stripTrailingSlash(base);
-  const url = new URL(`${normalized}/${identityId}/suggestions`, window.location.origin);
+  const url = new URL(`${normalized}/suggestions`, window.location.origin);
+  // Comma-joined scalar: the PHP proxy forwards `identity_ids` unchanged so the
+  // FastAPI batch route binds every id (array syntax would split into indexed
+  // params that bind nothing). The endpoint is bounded per identity by `top_k`.
+  url.searchParams.set('identity_ids', identityIds.join(','));
   url.searchParams.set('top_k', String(topK));
 
-  return fetchRequiredApi<IdentitySuggestionsResponse>(url.toString(), {
+  return fetchRequiredApi<IdentityBatchSuggestionsResponse>(url.toString(), {
     method: 'GET',
     restNonce: getConfig().nonce,
     signal: createRecognitionTimeoutSignal(2_000),

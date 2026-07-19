@@ -39,7 +39,7 @@ from .face_assignment import (
     matched_named_by_identity,
     mean_prototype,
 )
-from .landmark_cache import CachedLandmark, LandmarkCache
+from .landmark_cache import LandmarkCache
 from .manifest import SliceTag
 
 OcclusionKind = Literal["masked", "sunglasses", "occlusion_other"]
@@ -498,9 +498,11 @@ def _rollup_pairs(
     # ≥2-distinct-identity: any eligible pair with <2 gallery identities → DIRECTIONAL
     if any(p.eligible and p.gallery_n_identities < 2 for p in pairs):
         reasons.append("gallery_lt_2_distinct_identities")
-    if not walk_stability_asserted:
+    if not walk_stability_asserted or walk_stability_delta is None:
+        # A bare asserted=True with NO measured |Δ| must NOT keep a gating number
+        # (flag alone is insufficient — the aggregate-Δ bound must be measured).
         reasons.append("walk_stability_not_asserted")
-    elif walk_stability_delta is not None and walk_stability_delta > walk_stability_bound:
+    elif walk_stability_delta > walk_stability_bound:
         reasons.append(
             f"walk_stability_delta={walk_stability_delta}>bound={walk_stability_bound}"
         )
@@ -558,16 +560,23 @@ def assert_walk_stability(
     accuracy_a: float | None,
     accuracy_b: float | None,
     *,
-    n_eligible: int,
+    n_eligible_a: int,
+    n_eligible_b: int,
     bound: float = WALK_STABILITY_DELTA_BOUND,
     floor: int = ELIGIBLE_PAIR_FLOOR,
 ) -> tuple[bool, float | None]:
     """Independent re-run aggregate-Δ check. Returns (met, |Δ|).
 
-    Only meaningful when both runs have ≥ floor eligible pairs and non-None
-    accuracy; otherwise returns (False, delta_or_None).
+    Only meaningful when BOTH independent runs have ≥ floor eligible pairs and
+    non-None accuracy; otherwise returns (False, delta_or_None). A single run
+    clearing the floor is insufficient — both re-runs must be adequately powered.
     """
-    if accuracy_a is None or accuracy_b is None or n_eligible < floor:
+    if (
+        accuracy_a is None
+        or accuracy_b is None
+        or n_eligible_a < floor
+        or n_eligible_b < floor
+    ):
         delta = (
             None
             if accuracy_a is None or accuracy_b is None

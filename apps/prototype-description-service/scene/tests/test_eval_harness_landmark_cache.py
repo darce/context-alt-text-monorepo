@@ -46,17 +46,6 @@ class FakeDetector:
         return out
 
 
-class SpyDetector:
-    """Records detect() calls; used to assert generation never invokes a live leg."""
-
-    def __init__(self) -> None:
-        self.detect_calls = 0
-
-    def detect(self, images: Sequence[np.ndarray]) -> list[list[RawDetection]]:
-        self.detect_calls += 1
-        return [[] for _ in images]
-
-
 def _raw(
     bbox: list[float],
     landmarks: list[list[float]],
@@ -87,7 +76,7 @@ def _frontal_landmarks(cx: float, cy: float, scale: float = 20.0) -> list[list[f
 def test_pinned_model_id_and_sha256_in_cache_provenance():
     """PROV-01: cache provenance records model_id=yunet + MODEL_MANIFEST sha256."""
     assert LANDMARK_CACHE_MODEL_ID == "yunet"
-    assert LANDMARK_CACHE_WEIGHTS_SHA256 == MODEL_MANIFEST["yunet"].sha256
+    assert MODEL_MANIFEST["yunet"].sha256 == LANDMARK_CACHE_WEIGHTS_SHA256
     assert len(LANDMARK_CACHE_WEIGHTS_SHA256) == 64
 
     img = np.zeros((100, 100, 3), dtype=np.uint8)
@@ -184,28 +173,49 @@ def test_cache_roundtrip_json(tmp_path):
 
 
 def test_no_live_detector_call_during_synthetic_generation():
-    """Firewall: spy detector detect() must NOT run while occluders are generated."""
+    """Firewall (TEST-15, ARCH-06): synthetic occluder GENERATION reads ONLY the frozen
+    landmark cache and must never construct or call a face-pipeline leg. Enforced
+    STRUCTURALLY: the generation functions expose no detector/embedder seam and the
+    synthetic_occlusion module never NAMES a leg symbol, so a regression adding a live
+    detect()/embed() during generation makes an assertion below go red.
+    """
+    import inspect
+    import io
+    import tokenize
+    from pathlib import Path
+
+    from scripts.eval_harness import synthetic_occlusion as so
+
+    # (1) Generation surface exposes NO detector/embedder parameter.
+    for fn in (so.generate_twin_specs, so.render_twin, so.apply_occlusion):
+        params = set(inspect.signature(fn).parameters)
+        assert not (params & {"detector", "embedder", "detect", "embed"}), fn.__name__
+
+    # (2) Source-symbol firewall: the generation module never NAMES a face-pipeline
+    #     leg (tokenize NAME tokens skip strings/comments, so docstrings may mention it).
+    src = Path(so.__file__).read_text(encoding="utf-8")
+    names = {t.string for t in tokenize.generate_tokens(io.StringIO(src).readline) if t.type == tokenize.NAME}
+    assert "OrtYuNetDetector" not in names
+    assert "OrtSFaceEmbedder" not in names
+
+    # (3) Non-vacuity: prove the source gate catches a planted live-leg leak.
+    leak = "y = OrtYuNetDetector().detect(x)\n"
+    leak_names = {t.string for t in tokenize.generate_tokens(io.StringIO(leak).readline) if t.type == tokenize.NAME}
+    assert "OrtYuNetDetector" in leak_names
+
+    # (4) Runtime smoke: the offline build calls the injected detector exactly once;
+    #     generation runs on cache landmarks only — the build detector count is unchanged.
     img = np.full((120, 120, 3), 180, dtype=np.uint8)
     gt = [_gt(0.5, 0.5, 0.5, 0.5, "Alice")]
     lm = _frontal_landmarks(60.0, 60.0, 18.0)
     fake = FakeDetector([[_raw([30.0, 30.0, 60.0, 60.0], lm)]])
-    cache = build_landmark_cache(
-        images_by_media={1: img},
-        gt_by_media={1: gt},
-        detector=fake,
-    )
-    assert len(fake.calls) == 1  # offline pass only
-    assert len(cache.entries) == 1
-
-    spy = SpyDetector()
-    # Generation path uses cache landmarks only — never spy.detect.
+    cache = build_landmark_cache(images_by_media={1: img}, gt_by_media={1: gt}, detector=fake)
+    assert len(fake.calls) == 1 and len(cache.entries) == 1
     specs = generate_twin_specs(cache, kinds=("masked",), seed=42)
-    assert len(specs) == 1
     occluded = render_twin(img, specs[0])
     assert occluded.shape == img.shape
-    # Direct apply also must not need a detector.
     _ = apply_occlusion(img, cache.entries[0].landmarks_px, "sunglasses", seed=7)
-    assert spy.detect_calls == 0
+    assert len(fake.calls) == 1  # generation did NOT invoke the detector
 
 
 def test_injectable_detector_used_when_provided():
@@ -233,6 +243,7 @@ def test_real_yunet_optional_skip_when_models_absent():
         pytest.skip(MODELS_SKIP)
     # Models present: construct real detector and run a trivial empty-GT pass.
     from recognition.infrastructure.face_pipeline.ort_adapters import OrtYuNetDetector
+    from recognition.infrastructure.face_pipeline.provenance import MODEL_MANIFEST
 
     det = OrtYuNetDetector()
     img = np.zeros((64, 64, 3), dtype=np.uint8)
@@ -242,4 +253,7 @@ def test_real_yunet_optional_skip_when_models_absent():
         detector=det,
     )
     assert cache.provenance.model_id == "yunet"
+    # PROV-01: the cache pins the ACTUAL verified yunet weights sha (load-bearing even
+    # on an empty-GT pass — this is the cache's provenance guarantee).
+    assert cache.provenance.weights_sha256 == MODEL_MANIFEST["yunet"].sha256
     assert cache.entries == ()

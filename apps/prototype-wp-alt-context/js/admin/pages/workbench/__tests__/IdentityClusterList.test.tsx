@@ -287,9 +287,32 @@ describe('IdentityClusterList', () => {
     );
 
     expect(screen.getByText(/Identity data unavailable/i)).toBeInTheDocument();
+    expect(screen.getByText(/could not load identities/i)).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Retry' }));
     expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('BR-05: renders a distinct "reachable but erroring" warning for endpoint_error, not a confident empty', async () => {
+    const onRetry = vi.fn();
+    const { user } = await renderWithClient(
+      <IdentityClusterList identities={[]} dataSource={DATA_SOURCE.ENDPOINT_ERROR} onRetry={onRetry} />,
+    );
+
+    expect(screen.getByText(/reachable but returned an error/i)).toBeInTheDocument();
+    // Must NOT collapse a 5xx into the confident "none detected" state.
+    expect(screen.queryByText(/No identities detected yet/i)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('BR-09: an empty local projection reads as "not synced yet", not a confident "none detected"', async () => {
+    await renderWithClient(<IdentityClusterList identities={[]} dataSource={DATA_SOURCE.LOCAL_PROJECTION} />);
+
+    expect(screen.getByText(/No identities synced for this item yet/i)).toBeInTheDocument();
+    // The offline projection must not assert a final "analyzed, none found" result.
+    expect(screen.queryByText(/No identities detected yet/i)).not.toBeInTheDocument();
   });
 
   it('keeps backend-fallback clusters labelable while hiding local-only corrective actions', async () => {

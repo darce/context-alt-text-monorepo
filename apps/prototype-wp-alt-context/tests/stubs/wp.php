@@ -1101,6 +1101,19 @@ if (!function_exists('wp_schedule_single_event')) {
             'timestamp' => $timestamp,
             'args' => $args,
         ];
+
+        // Append-only invocation log so tests can pin the caller-side dedup
+        // guard (wp_next_scheduled before wp_schedule_single_event). The
+        // keyed __ac_scheduled map overwrites on collision and therefore
+        // cannot distinguish one schedule from two — the call log can.
+        if (!isset($GLOBALS['__ac_schedule_single_event_calls'])) {
+            $GLOBALS['__ac_schedule_single_event_calls'] = [];
+        }
+        $GLOBALS['__ac_schedule_single_event_calls'][] = [
+            'hook' => $hook,
+            'args' => $args,
+            'timestamp' => $timestamp,
+        ];
     }
 }
 

@@ -5,16 +5,29 @@ declare(strict_types=1);
 namespace AltContext\Api;
 
 require_once __DIR__ . '/class-media-detail-controller.php';
+require_once __DIR__ . '/class-recognition-data-source.php';
+require_once __DIR__ . '/../sovereign/repositories/class-clusters-repository.php';
+require_once __DIR__ . '/../sovereign/repositories/class-identity-members-repository.php';
 require_once __DIR__ . '/../sovereign/repositories/class-roster-entry-projection-repository.php';
+require_once __DIR__ . '/../sovereign/repositories/class-sync-state-repository.php';
+require_once __DIR__ . '/../sovereign/sync/interface-sync-pull-job.php';
 require_once __DIR__ . '/../sovereign/sync/class-outbox-drain.php';
 require_once __DIR__ . '/../sovereign/sync/class-outbox-writer.php';
 require_once __DIR__ . '/../sovereign/sync/class-split-topology-command-drain.php';
+require_once __DIR__ . '/../sovereign/sync/class-sync-pull-job-factory.php';
 
 use AltContext\Api\RecognitionController;
+use AltContext\Sovereign\Repositories\ClustersRepository;
+use AltContext\Sovereign\Repositories\IdentityMembersRepository;
 use AltContext\Sovereign\Repositories\RosterEntryProjectionRepository;
+use AltContext\Sovereign\Repositories\SyncStateRepository;
 use AltContext\Sovereign\Sync\OutboxDrain;
 use AltContext\Sovereign\Sync\OutboxWriter;
+use AltContext\Sovereign\Sync\SnapshotClient;
 use AltContext\Sovereign\Sync\SplitTopologyCommandDrain;
+use AltContext\Sovereign\Sync\SyncPullJobFactory;
+use AltContext\Sovereign\Sync\SyncPullJobInterface;
+use Throwable;
 use WP_Error;
 use WP_Query;
 use WP_REST_Request;
@@ -22,6 +35,8 @@ use WP_REST_Response;
 use function absint;
 use function add_action;
 use function current_time;
+use function do_action;
+use function trim;
 use function current_user_can;
 use function get_edit_post_link;
 use function get_option;
@@ -55,20 +70,67 @@ class Api {
 	private ?XmpEmbedController $xmpEmbedController;
 	private OutboxDrain $outboxDrain;
 	private SplitTopologyCommandDrain $splitTopologyCommandDrain;
+	private ?SyncPullJobInterface $bootstrapSyncPullJob;
 
-	public function __construct( ?XmpEmbedController $xmp_embed_controller = null, ?OutboxDrain $outbox_drain = null, ?SplitTopologyCommandDrain $split_topology_command_drain = null ) {
+	public function __construct( ?XmpEmbedController $xmp_embed_controller = null, ?OutboxDrain $outbox_drain = null, ?SplitTopologyCommandDrain $split_topology_command_drain = null, ?SyncPullJobInterface $bootstrap_sync_pull_job = null ) {
 		$this->recognitionController = new RecognitionController();
 		$this->mediaDetailController = new MediaDetailController();
 		$this->settingsController = new SettingsController();
 		$this->xmpEmbedController = $xmp_embed_controller;
 		$this->outboxDrain = $outbox_drain ?? new OutboxDrain();
 		$this->splitTopologyCommandDrain = $split_topology_command_drain ?? new SplitTopologyCommandDrain();
+		$this->bootstrapSyncPullJob = $bootstrap_sync_pull_job;
 	}
 
 	public function init(): void {
 		$this->outboxDrain->register();
 		$this->splitTopologyCommandDrain->register();
+		// E15-37: wp-cron never fires rest_api_init, so the bootstrap-sync handler
+		// must be bound at plugin load or scheduled events dispatch to zero listeners.
+		add_action( RecognitionDataSource::BOOTSTRAP_SYNC_HOOK, array( $this, 'handle_bootstrap_sync' ), 10, 1 );
 		add_action( 'rest_api_init', array( $this, 'register_routes' ) );
+	}
+
+	public function handle_bootstrap_sync( string $tenant_id ): void {
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			return;
+		}
+
+		$sync_pull_job = $this->resolve_bootstrap_sync_pull_job();
+		if ( null === $sync_pull_job ) {
+			return;
+		}
+
+		$sync_pull_job->perform_bypass_cooldown( $normalized_tenant_id );
+	}
+
+	private function resolve_bootstrap_sync_pull_job(): ?SyncPullJobInterface {
+		if ( null !== $this->bootstrapSyncPullJob ) {
+			return $this->bootstrapSyncPullJob;
+		}
+
+		try {
+			$factory = new SyncPullJobFactory(
+				new ClustersRepository(),
+				new IdentityMembersRepository(),
+				new SyncStateRepository(),
+				new SnapshotClient()
+			);
+			$this->bootstrapSyncPullJob = $factory->create();
+		} catch ( Throwable $e ) {
+			do_action(
+				'acx_recognition_composition_failed',
+				array(
+					'message' => $e->getMessage(),
+					'controller' => __CLASS__,
+					'context' => 'bootstrap_sync_cron_handler',
+				)
+			);
+			return null;
+		}
+
+		return $this->bootstrapSyncPullJob;
 	}
 
 	public function register_routes(): void {

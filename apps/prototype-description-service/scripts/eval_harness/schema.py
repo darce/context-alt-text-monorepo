@@ -17,4 +17,5 @@ class DocKind(StrEnum):
     """Document-kind discriminator carried alongside ``schema``."""
 
     RUN_RECORD = "run_record"
+    FACE_RUN_RECORD = "face_run_record"
     REPORT = "report"

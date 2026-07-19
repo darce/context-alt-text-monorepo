@@ -197,3 +197,117 @@ Bench protocol for pipeline upgrades: fresh A10 from golden image
 (`acx-gpu-qwen3vl30b-golden`), 37-image manifest, configs = {single-pass v1,
 prompt v2, two-pass, two-pass + face-gating}, plus distractor and ablation modes;
 GPU-on budget ≤ 1 h (~$2).
+
+## 8. Slice-3 A/B bench results & adoption decision (golden-37, A10 2026-07-16)
+
+Four configs measured on the 37-image golden manifest against a black-box
+Qwen3-VL-30B-A3B Q4 llama.cpp endpoint (A10, greedy), comparator = the
+same-window **v1 baseline** [EVAL-01]. Raw + scored run-records in
+`docs/tasks/altq/bakeoff-results/`; re-score is bit-identical. **Independently
+cross-checked** by a remote-grok high-effort pass over the same committed JSONs,
+which converged on the same winner and corrected two coordinator misreads (see
+§8.7). Config-4 (two-pass + face-gate) is **not** in this matrix — golden-37
+carries 0/37 `face_boxes`, so the fail-closed gate ablates every name and the
+cell is vacuous; the face-weave path was exercised on the separate 646-image
+interleave corpus (584 centre-point boxes, 530 named) — see §8.6.
+
+### 8.1 Standard mode — name-safety saturated under clean context
+
+| config | insertion | name_prec | wrong-name | mean_gated | MR-fail | meta-frame | ctx-dup | p50 s | ×v1 | $/1k |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **v1** | 1.00 | 1.00 | 0.00 | 1.000 | 0 | 0 | 0.281 | 2.595 | 1.0× | 1.44 |
+| v2 | 0.97 | 1.00 | 0.00 | 0.973 | **1** | **2** | 0.199 | 2.572 | 0.99× | 1.43 |
+| two_pass | 1.00 | 1.00 | 0.00 | 1.000 | 0 | 0 | **0.125** | 5.744 | 2.21× | 3.19 |
+| dual_length | 1.00 | 1.00 | 0.00 | 1.000 | 0 | 0 | 0.219 | 3.539 | 1.36× | 1.97 |
+
+With a **clean** context pack every config names people (insertion ≈ 1.0) and
+names them **correctly** (name_prec 1.0, 0 wrong) — so the name-safety axes are
+**saturated** and non-discriminating here [EVAL-04]; the abstention contract
+[CAL-02] is exercised only under stress (§8.2). `policy_violations = 0` in every
+cell (omitted). `faces.*` is transport-stubbed in the bake-off and is **not**
+recognition evidence. Standard-mode signal is therefore style/latency only:
+**v2 regresses** — the sole Must-Right failure in the whole matrix, +2
+meta-framing images, mean_gated 1.0→0.973 — a prompt-only change that hurt with
+no offsetting name gain [EVAL-08]. two_pass wins ctx-duplication (0.125) but at
+2.2× latency.
+
+### 8.2 Context-distractor mode — the discriminating name-safety test
+
+Wrong context names injected to probe the never-guess contract [CAL-02] under
+pressure.
+
+| config | name_prec | wrong-name rate | mean_gated | meta-frame | Δ wrong-name vs v1 |
+| --- | --- | --- | --- | --- | --- |
+| **v1** | 0.818 | 0.216 (8/37) | 0.784 | 2 | — |
+| v2 | 0.818 | 0.216 (8/37) | 0.784 | 2 | 0% (no change) |
+| **two_pass** | **0.923** | **0.081 (3/37)** | **0.919** | 1 | **−62.5%** |
+| dual_length | 0.900 | 0.108 (4/37) | 0.892 | 1 | −50.0% |
+
+Prompt v2 alone buys **nothing** under distractor (identical to v1); the
+describe-then-ground **structure** is what moves name-safety. two_pass is
+strongest (wrong-name 0.216→0.081), dual_length close behind (→0.108). At n=37
+the two_pass↔dual_length gap is a single image (3 vs 4) — within sampling noise;
+do not over-rank the two on peak safety.
+
+### 8.3 Decision-rule evaluation vs v1
+
+Hard gates (a): halluc-rate held (0), wrong-name held-or-reduced, zero new
+Must-Right failures, zero policy violations (all configs hold policy at 0).
+
+| config | (a) hard gates | (b) improves prec/gated/long | (c) ≤2× latency (gate 5.19s) | verdict |
+| --- | --- | --- | --- | --- |
+| v2 | **FAIL** — new Must-Right failure + 2 meta-framing on standard; no distractor gain | no | pass (2.57s) | **eliminated** |
+| two_pass | pass — wrong-name reduced, zero new MR/policy | yes (prec 0.818→0.923) | **FAIL** — 5.74s = 2.21× | pass *with explicit cost trade* |
+| dual_length | pass — wrong-name reduced, zero new MR/policy | yes (prec→0.90; **ships long surface**) | **pass** — 3.54s = 1.36× | **pass, all gates** |
+
+### 8.4 Cost/latency axis [COST-04]
+
+$/1k images is **derived** (not a stored report field) = A10 $2/hr × p50/3600 ×
+1000, rendered per-image in the HTML report via `build_bakeoff_report.py
+--hourly-rate` / `--cost-total` (Slice-3 tooling): v1 **1.44**, v2 1.43,
+two_pass **3.19** (+121%), dual_length **1.97** (+36%). Latency gate = 2× v1 p50
+(2.595s) = **5.19s**.
+
+### 8.5 Decision — detailed-tier default = **dual_length** (`--prompt-variant v2 --dual-length`)
+
+It is the only measured config that simultaneously (1) ships **both** product
+surfaces the detailed tier requires (long: 37/37 imgs, mean 78.9 words, long
+name_prec 1.0, long mean_gated 1.0, sentence-band-ok 1.0), (2) clears every hard
+gate vs v1, (3) improves name-safety under distractor (wrong-name 0.216→0.108,
+prec 0.818→0.90), and (4) stays inside the 2× latency gate (1.36×) at +36% cost.
+**two_pass** is the superior *pure* name-safety mechanism (wrong-name 0.081) but
+emits no long surface and breaches the latency gate — so promoting it as the
+detailed default would violate the decision rule, not apply it. Its
+describe-then-ground structure is the recommended **next lever to stack onto**
+dual-length (+ face-gate) in a follow-up, targeting two_pass's 0.081 wrong-name
+at dual-length's surface coverage [COST-07]. Tie-break moot (dual_length uniquely
+clears (c)).
+
+### 8.6 Caveats & operator-deferred cells
+
+- **Distractor-only signal**: standard-mode name axes are saturated, so the
+  entire name-safety comparison rests on the distractor slice (n=37) [EVAL-04].
+  Treat deltas as directional, not tight confidence intervals.
+- **Long-surface quality debt**: dual_length's long surface carries 5 (standard)
+  / 3 (distractor) meta-framing images — report-only, not a hard gate, but a
+  tightening target for the long rubric.
+- **Same-window**: standard cells scored @`4be31eae`; the two_pass/dual_length
+  distractor cells @`c6dfc1fc` — a **docs-only** commit (eval_harness + scene are
+  byte-identical between the two heads), so the comparison stays same-window.
+- **Face-gate unmeasured on golden-37** (0/37 boxes → vacuous fail-closed cell);
+  exercised on the 646-corpus interleave instead. Golden-37 face enrichment via
+  the curation tenant is **operator-deferred**.
+- **Deferred (operator-gated, real $/infra)**: fresh A10 re-run; the live
+  **CPU-weave** cell (`--weave-bench` against a CPU llama.cpp T1d candidate). The
+  weave + latency-summary tooling is landed and unit-tested — only the live
+  endpoint execution is deferred.
+
+### 8.7 Independent cross-check (remote-grok high-effort)
+
+An independent grok-4.5 high-effort pass over the same committed report JSONs
+(ZDR, history-stripped cwd) reached the **same** detailed-tier default
+(dual_length) by the same gate logic, and caught two coordinator misreads that
+are corrected above: (1) `policy_violations` is 0 in every cell (an earlier draft
+mis-copied meta-framing counts into a policy column); (2) `faces.identification`
+is a transport stub, so its `macro_recall` is not a valid name-recall axis and
+was removed. The winner and its rationale are unchanged by both corrections.

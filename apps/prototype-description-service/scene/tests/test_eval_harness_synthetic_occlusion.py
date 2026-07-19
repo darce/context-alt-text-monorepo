@@ -185,7 +185,7 @@ def test_occluded_faces_absent_from_headline_probe_list():
     # Synthetic twin would be tagged (media_id, box_index, "occluded").
     occluded_keys = {(1, 0, "occluded")}
     headline = filter_headline_probes(unoccluded, occluded_probe_keys=occluded_keys)
-    assert all(not ((f.media_id, f.box_index, "occluded") in occluded_keys) for f in headline)
+    assert all((f.media_id, f.box_index, "occluded") not in occluded_keys for f in headline)
     # Default path: callers simply do not add twin MatchedFaces.
     assert len(filter_headline_probes(unoccluded)) == 3
 
@@ -373,14 +373,24 @@ def test_walk_stability_not_asserted_is_directional():
 
 
 def test_walk_stability_bound_helper():
-    met, delta = assert_walk_stability(0.90, 0.91, n_eligible=ELIGIBLE_PAIR_FLOOR)
+    met, delta = assert_walk_stability(
+        0.90, 0.91, n_eligible_a=ELIGIBLE_PAIR_FLOOR, n_eligible_b=ELIGIBLE_PAIR_FLOOR
+    )
     assert met is True
     assert delta == pytest.approx(0.01)
     met2, delta2 = assert_walk_stability(
-        0.90, 0.90 + WALK_STABILITY_DELTA_BOUND + 0.01, n_eligible=ELIGIBLE_PAIR_FLOOR
+        0.90,
+        0.90 + WALK_STABILITY_DELTA_BOUND + 0.01,
+        n_eligible_a=ELIGIBLE_PAIR_FLOOR,
+        n_eligible_b=ELIGIBLE_PAIR_FLOOR,
     )
     assert met2 is False
     assert delta2 is not None and delta2 > WALK_STABILITY_DELTA_BOUND
+    # BOTH independent re-runs must clear the floor — one powered run is insufficient.
+    met3, _ = assert_walk_stability(
+        0.90, 0.90, n_eligible_a=ELIGIBLE_PAIR_FLOOR, n_eligible_b=ELIGIBLE_PAIR_FLOOR - 1
+    )
+    assert met3 is False  # under-powered re-run B → not met (would be True on a single-count bug)
 
 
 # ---------------------------------------------------------------------------
@@ -436,7 +446,56 @@ def test_occlusion_can_fail_misassign_drives_a_s_down():
     )
     assert good.accuracy == 1.0
     assert bad.accuracy == 0.0
-    assert bad.accuracy < good.accuracy  # gating occlusion Δ goes red
+    # With n_eligible=1 < floor BOTH are DIRECTIONAL — this proves the raw a_s
+    # ACCURACY drops on a forced mis-assign. That the GATING (non-directional)
+    # number can go red is proven separately below with >= floor eligible pairs.
+    assert bad.accuracy < good.accuracy
+    assert good.directional is True and bad.directional is True  # under-floor here
+
+
+def _orthogonal_eligible_corpus(n: int) -> list:
+    """n identities, each with 2 matched faces on DISTINCT media (distinct-image
+    eligible) + mutually-orthogonal one-hot embeddings (argmax is unambiguous)."""
+    faces = []
+    mid = 1
+    for i in range(n):
+        e = [0.0] * n
+        e[i] = 1.0
+        faces.append(_matched(mid, 0, list(e), f"P{i}"))
+        mid += 1
+        faces.append(_matched(mid, 0, list(e), f"P{i}"))
+        mid += 1
+    return faces
+
+
+def test_occlusion_gate_goes_red_when_floors_met():
+    """With >= floor eligible pairs + asserted walk-stability the result is a GATING
+    (non-directional) number; a forced mis-assign lowers IT — not just raw accuracy."""
+    n = ELIGIBLE_PAIR_FLOOR  # 90
+    faces = _orthogonal_eligible_corpus(n)
+
+    def onehot(i: int) -> list:
+        e = [0.0] * n
+        e[i] = 1.0
+        return e
+
+    # One twin per identity, source = its first media (2*i+1); all argmax-correct.
+    correct = [
+        {"media_id": 2 * i + 1, "box_index": 0, "true_name": f"P{i}", "kind": "masked", "embedding": onehot(i)}
+        for i in range(n)
+    ]
+    clean = score_occlusion_accuracy(correct, faces, walk_stability_asserted=True, walk_stability_delta=0.0)
+    assert clean.n_eligible == n
+    assert clean.directional is False  # floors met + walk-stability → a GATING number
+    assert clean.accuracy == pytest.approx(1.0)
+
+    # Flip one twin to a wrong identity → argmax mis-assigns → the GATING number drops.
+    bad = list(correct)
+    bad[0] = {**bad[0], "embedding": onehot(1)}  # P0 twin now looks like P1
+    red = score_occlusion_accuracy(bad, faces, walk_stability_asserted=True, walk_stability_delta=0.0)
+    assert red.directional is False  # still a gating number (floors still met)
+    assert red.accuracy == pytest.approx((n - 1) / n)
+    assert red.accuracy < clean.accuracy  # the GATE went RED
 
 
 def test_render_twin_uses_cached_landmarks_only():
@@ -458,7 +517,8 @@ def test_a_s_a_r_a_clean_are_distinct_quantities():
         _matched(3, 0, [0, 1, 0], "Bob"),
         _matched(4, 0, [0, 1, 0.05], "Bob"),
     ]
-    # Synthetic occluded twin of Alice — embedding still good.
+    # Synthetic occluded twin of Alice whose occluded embedding now looks like Bob
+    # → argmax MUST mis-assign, so a_s degrades below the clean baseline.
     a_s = score_occlusion_accuracy(
         [
             {
@@ -466,7 +526,7 @@ def test_a_s_a_r_a_clean_are_distinct_quantities():
                 "box_index": 0,
                 "true_name": "Alice",
                 "kind": "masked",
-                "embedding": _unit([1, 0, 0]),
+                "embedding": _unit([0, 1, 0]),
             }
         ],
         faces,
@@ -503,8 +563,10 @@ def test_a_s_a_r_a_clean_are_distinct_quantities():
         walk_stability_asserted=True,
         walk_stability_delta=0.0,
     )
-    assert a_s.accuracy == 1.0
-    assert a_r.accuracy == 1.0
-    assert a_clean.accuracy == 1.0
-    # Distinct result objects (S5 demotion rule consumes these separately).
-    assert a_s is not a_r
+    assert a_s.accuracy == 0.0  # occluded Alice twin mis-assigned to Bob
+    assert a_r.accuracy == 1.0  # real-tagged Bob correct
+    assert a_clean.accuracy == 1.0  # un-occluded Alice baseline correct
+    # NUMERICALLY distinct quantities from separate inputs (not object-identity):
+    assert a_s.accuracy != a_clean.accuracy
+    assert a_s.accuracy < a_clean.accuracy  # occlusion degrades vs clean baseline
+    assert a_s is not a_r and a_s is not a_clean

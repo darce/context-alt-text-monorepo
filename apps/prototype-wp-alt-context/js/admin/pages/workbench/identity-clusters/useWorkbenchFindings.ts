@@ -3,44 +3,61 @@
  *
  * Combines assignment, merge, and name suggestions plus top unlabeled
  * clusters into one summary with a deterministic primary next action.
+ * E21-5 Slice 1a: nextAction is the head of the ordered review queue.
  */
 
 import { DATA_SOURCE, type DataSource } from '../../../api/recognition/types/dataSource';
 import type { PendingMergeSuggestion, PendingNameSuggestion } from '../../../api/recognition/types';
 import type { TopUnlabeledCluster } from '../../../api/recognition/types/cluster';
 import type { SuggestionReviewItem } from './SuggestionCards';
+import {
+  buildReviewQueue,
+  emptyNextAction,
+  NEXT_ACTION_CHIP_LABEL,
+  NEXT_ACTION_KIND,
+  NONE_REASON,
+  queueItemToNextAction,
+  type NextActionKind,
+  type NoneReason,
+  type ReviewQueueBand,
+  type ReviewQueueFilter,
+  type ReviewQueueItem,
+  type WorkbenchNextAction,
+} from './reviewQueueDriver';
 import { useSuggestionReviewQueries } from './useSuggestionReviewQueries';
 
-export const NEXT_ACTION_KIND = {
-  ASSIGNMENT: 'assignment',
-  MERGE: 'merge',
-  NAME: 'name',
-  CLUSTER: 'cluster',
-  NONE: 'none',
-} as const;
+export {
+  NEXT_ACTION_CHIP_LABEL,
+  NEXT_ACTION_KIND,
+  NONE_REASON,
+  type NextActionKind,
+  type NoneReason,
+  type ReviewQueueBand,
+  type ReviewQueueFilter,
+  type ReviewQueueItem,
+  type WorkbenchNextAction,
+};
 
-export type NextActionKind = (typeof NEXT_ACTION_KIND)[keyof typeof NEXT_ACTION_KIND];
-
-export const NONE_REASON = {
-  LOADING: 'loading',
-  ERROR: 'error',
-  UNAVAILABLE: 'unavailable',
-  EMPTY: 'empty',
-} as const;
-
-export type NoneReason = (typeof NONE_REASON)[keyof typeof NONE_REASON];
-
-export type WorkbenchNextAction =
-  | {
-      kind: typeof NEXT_ACTION_KIND.ASSIGNMENT;
-      suggestionId: string;
-      clusterId: string | null;
-      label: string | null;
-    }
-  | { kind: typeof NEXT_ACTION_KIND.MERGE; suggestionId: string }
-  | { kind: typeof NEXT_ACTION_KIND.NAME; suggestionId: string; clusterId: string }
-  | { kind: typeof NEXT_ACTION_KIND.CLUSTER; clusterId: string }
-  | { kind: typeof NEXT_ACTION_KIND.NONE; reason: NoneReason };
+// Re-export pure driver surface for consumers that already import from this module.
+export {
+  buildReviewQueue,
+  bulkSelectableIdsInFilters,
+  clampQueueIndex,
+  filterReviewQueue,
+  filterReviewQueueByBand,
+  filterReviewQueueComposite,
+  intersectSelectionWithFilters,
+  matchesSimilarityBand,
+  nextQueueIndex,
+  prevQueueIndex,
+  queueItemSimilarity,
+  REVIEW_QUEUE_BAND,
+  REVIEW_QUEUE_BAND_CHIP_LABEL,
+  REVIEW_QUEUE_DRAIN_MESSAGE,
+  REVIEW_QUEUE_FILTER,
+  STRONG_SIMILARITY_MIN,
+  queueItemToNextAction,
+} from './reviewQueueDriver';
 
 export interface WorkbenchFindingsCounts {
   assignments: number;
@@ -74,6 +91,8 @@ export interface WorkbenchFindingsSourceState {
   topUnlabeledDataSource: DataSource | undefined;
   isLoading: boolean;
   isError: boolean;
+  /** All four queue-source queries finished initial load (data or error). */
+  queueSettled: boolean;
 }
 
 export interface WorkbenchFindingsViewModel {
@@ -84,7 +103,20 @@ export interface WorkbenchFindingsViewModel {
   isError: boolean;
   isUnavailable: boolean;
   isReadOnly: boolean;
+  /**
+   * True only when every queue source query has finished its initial load
+   * (has data or errored). Partial resolve must not look settled — clamp/index
+   * restore depends on the full queue (BR-06).
+   */
+  queueSettled: boolean;
+  /** Head of the ordered review queue (same as queue[0] when non-empty). */
   nextAction: WorkbenchNextAction;
+  /**
+   * Full ordered, unfiltered review queue (groups flattened per-suggestion).
+   * Filter with `filterReviewQueue(queue, filter)` — not applied here so existing
+   * consumers of nextAction keep default priority semantics.
+   */
+  queue: ReviewQueueItem[];
 }
 
 const PREVIEW_LIMIT = 6;
@@ -92,55 +124,23 @@ const PREVIEW_LIMIT = 6;
 const sortClustersBySize = (clusters: TopUnlabeledCluster[]): TopUnlabeledCluster[] =>
   [...clusters].sort((a, b) => b.identity_count - a.identity_count);
 
-const assignmentAction = (item: SuggestionReviewItem): WorkbenchNextAction => {
-  if (item.type === 'group') {
-    return {
-      kind: NEXT_ACTION_KIND.ASSIGNMENT,
-      suggestionId: item.suggestions[0].id,
-      clusterId: item.clusterId,
-      label: item.label,
-    };
-  }
-  return {
-    kind: NEXT_ACTION_KIND.ASSIGNMENT,
-    suggestionId: item.suggestion.id,
-    clusterId: item.suggestion.suggested_cluster_id,
-    label: item.suggestion.cluster_label ?? item.suggestion.suggested_label ?? null,
-  };
-};
-
 const selectNextAction = (
-  queues: WorkbenchFindingsQueues,
+  queue: readonly ReviewQueueItem[],
   state: { isLoading: boolean; isError: boolean; isUnavailable: boolean },
-  sortedClusters: TopUnlabeledCluster[],
 ): WorkbenchNextAction => {
-  // reviewItems are pre-sorted by descending score in buildSuggestionReviewItems.
-  if (queues.reviewItems.length > 0) {
-    return assignmentAction(queues.reviewItems[0]);
-  }
-  if (queues.mergeSuggestions.length > 0) {
-    return { kind: NEXT_ACTION_KIND.MERGE, suggestionId: queues.mergeSuggestions[0].id };
-  }
-  if (queues.nameSuggestions.length > 0) {
-    return {
-      kind: NEXT_ACTION_KIND.NAME,
-      suggestionId: queues.nameSuggestions[0].id,
-      clusterId: queues.nameSuggestions[0].cluster_id,
-    };
-  }
-  if (sortedClusters.length > 0) {
-    return { kind: NEXT_ACTION_KIND.CLUSTER, clusterId: sortedClusters[0].id };
+  if (queue.length > 0) {
+    return queueItemToNextAction(queue[0]);
   }
   if (state.isLoading) {
-    return { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.LOADING };
+    return emptyNextAction(NONE_REASON.LOADING);
   }
   if (state.isError) {
-    return { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR };
+    return emptyNextAction(NONE_REASON.ERROR);
   }
   if (state.isUnavailable) {
-    return { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.UNAVAILABLE };
+    return emptyNextAction(NONE_REASON.UNAVAILABLE);
   }
-  return { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.EMPTY };
+  return emptyNextAction(NONE_REASON.EMPTY);
 };
 
 const collectPreviews = (
@@ -152,10 +152,13 @@ const collectPreviews = (
   for (const item of queues.reviewItems) {
     const suggestion = item.type === 'group' ? item.suggestions[0] : item.suggestion;
     previews.push({
-      key: `assignment-${suggestion.id}`,
-      thumbUrl: suggestion.identity_thumb_url ?? null,
-      mediaUrl: suggestion.identity_media_url ?? null,
-      label: item.type === 'group' ? item.label : (suggestion.cluster_label ?? suggestion.suggested_label ?? null),
+      key: `assignment-${suggestion.suggestionId}`,
+      thumbUrl: suggestion.enrichment?.identityThumbUrl ?? null,
+      mediaUrl: suggestion.enrichment?.identityMediaUrl ?? null,
+      label:
+        item.type === 'group'
+          ? item.label
+          : (suggestion.label ?? suggestion.enrichment?.suggestedLabel ?? null),
     });
   }
 
@@ -213,6 +216,12 @@ export const buildWorkbenchFindings = (
     state.topUnlabeledDataSource === DATA_SOURCE.BACKEND_PROXY;
 
   const sortedClusters = sortClustersBySize(queues.topUnlabeledClusters);
+  const queue = buildReviewQueue({
+    reviewItems: queues.reviewItems,
+    mergeSuggestions: queues.mergeSuggestions,
+    nameSuggestions: queues.nameSuggestions,
+    sortedClusters,
+  });
 
   return {
     counts,
@@ -222,13 +231,19 @@ export const buildWorkbenchFindings = (
     isError: state.isError,
     isUnavailable,
     isReadOnly,
-    nextAction: selectNextAction(
-      queues,
-      { isLoading: state.isLoading, isError: state.isError, isUnavailable },
-      sortedClusters,
-    ),
+    queueSettled: state.queueSettled,
+    queue,
+    nextAction: selectNextAction(queue, {
+      isLoading: state.isLoading,
+      isError: state.isError,
+      isUnavailable,
+    }),
   };
 };
+
+/** Settled = finished initial load (data present, empty success, error, or disabled). */
+const isQuerySettled = (query: { isLoading: boolean; isError: boolean; data: unknown }): boolean =>
+  Boolean(query.data) || query.isError || !query.isLoading;
 
 export const useWorkbenchFindings = (): WorkbenchFindingsViewModel => {
   const {
@@ -254,6 +269,13 @@ export const useWorkbenchFindings = (): WorkbenchFindingsViewModel => {
   // WHY: surface a hard error only when nothing rendered at all; partial query
   // failures degrade gracefully to whatever findings did load.
   const isError = !hasAnyData && assignmentQuery.isError && mergeQuery.isError;
+  // BR-06: every source must settle before clamp/index restore — partial
+  // assignment+merge data must not look like a complete empty/short queue.
+  const queueSettled =
+    isQuerySettled(assignmentQuery) &&
+    isQuerySettled(mergeQuery) &&
+    isQuerySettled(nameQuery) &&
+    isQuerySettled(topUnlabeledQuery);
 
   // COR-3 (rg-015): no authoritative backlog total exists; count loaded items.
   const assignmentTotal = assignmentSuggestions?.length ?? 0;
@@ -278,6 +300,7 @@ export const useWorkbenchFindings = (): WorkbenchFindingsViewModel => {
       topUnlabeledDataSource,
       isLoading,
       isError,
+      queueSettled,
     },
   );
 };

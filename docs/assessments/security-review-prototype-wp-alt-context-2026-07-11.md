@@ -6,7 +6,7 @@
 | **Task** | `SECREV-1` (branch `feature/secrev-1`) |
 | **Scope** | `apps/prototype-wp-alt-context/` — focus `src/`, `alt-context.php`, `public/`, `scripts/`, admin SPA `js/` (read-only review) |
 | **Commit reviewed** | `da9a08f11221e5040aed81ebd9eb59bfd938f68d` |
-| **Rubric** | heuristics-canon security lexicon (§§1–5 inlined for SECREV-1); engineering heuristics cited where reinforcing (`docs/strategy/engineering-heuristics.md`) |
+| **Rubric** | heuristics-canon security lexicon (§§1–5 inlined for SECREV-1); engineering heuristics cited where reinforcing (heuristics-canon `lexicons/engineering.md` — https://github.com/darce/heuristics-canon) |
 | **Method** | Attack-surface enumeration → per-controller authz/SQL/SSRF/LLM/secrets/deserial/DOM/upload review → evidence-backed findings |
 | **Status** | Assessment / decision input. Not a task plan. Findings live here for later decomposition; do not paste into task plans. |
 

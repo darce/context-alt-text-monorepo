@@ -730,7 +730,7 @@ def test_import_service_error_returns_422(monkeypatch) -> None:
     client, _, _, _, _ = _build_client(
         monkeypatch,
         tenant_id=tenant_id,
-        import_raises="unsupported schema_version 999; maximum supported version is 2",
+        import_raises="unsupported schema_version 999; maximum supported version is 3",
     )
 
     async def _fake_lookup(api_key, settings, session):  # noqa: ANN001

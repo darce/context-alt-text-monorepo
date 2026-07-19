@@ -440,13 +440,17 @@ async def list_cluster_members(
     cluster_id: str,
     tenant_id: str = Depends(get_authenticated_tenant_id),
     cluster_service_builder=Depends(get_cluster_service_builder),
+    limit: int = Query(CLUSTER_MEMBERS_PAGE_LIMIT),
+    offset: int = Query(0),
 ) -> ClusterMembersEnvelopeResponse:
-    """List all identities in a cluster with membership data.
+    """List identities in a cluster with membership data (paged).
 
     Returns identity details combined with membership similarity scores,
-    formatted for the frontend ClusterReviewPanel.
+    formatted for the frontend ClusterReviewPanel. Envelope shape is
+    ``{members, limit, total, truncated}``; clients page via limit/offset.
     """
     validate_entity_id(cluster_id, field_name="cluster_id")
+    validate_paging(limit, offset, CLUSTER_MEMBERS_PAGE_LIMIT)
     cluster_service = await cluster_service_builder(tenant_id)
     cluster_repo = cluster_service.cluster_repository
 
@@ -457,11 +461,12 @@ async def list_cluster_members(
     representative_id = str(representative_id) if representative_id else None
 
     total = await cluster_repo.get_member_identity_count(cluster_id)
-    truncated = total > CLUSTER_MEMBERS_PAGE_LIMIT
     visible_members = await cluster_repo.get_member_identities_with_similarity(
         cluster_id,
-        limit=CLUSTER_MEMBERS_PAGE_LIMIT,
+        limit=limit,
+        offset=offset,
     )
+    truncated = (offset + len(visible_members)) < total
 
     return ClusterMembersEnvelopeResponse(
         members=[
@@ -483,7 +488,7 @@ async def list_cluster_members(
             )
             for identity, similarity in visible_members
         ],
-        limit=CLUSTER_MEMBERS_PAGE_LIMIT,
+        limit=limit,
         total=total,
         truncated=truncated,
     )

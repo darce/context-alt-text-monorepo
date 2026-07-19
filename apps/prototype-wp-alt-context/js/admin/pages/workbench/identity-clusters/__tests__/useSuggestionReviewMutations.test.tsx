@@ -1,0 +1,1317 @@
+/**
+ * E21-5 Slice 2 — gated advance + undo hold concurrency tests.
+ *
+ * Named exit criteria: rapid double-action, unmount-during-window, post-window
+ * failure re-surface, undo-cancel=0, commit=1, advance-only-on-success,
+ * invalidation presence, hold/failure announce. BR-15..24 fix-round coverage.
+ */
+
+import type { ReactNode } from 'react';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { act, renderHook } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { queryKeys } from '../../../../api/queryKeys';
+import { DATA_SOURCE } from '../../../../api/recognition/types';
+import type {
+  PendingMergeSuggestion,
+  PendingMergeSuggestionsResponse,
+  PendingNameSuggestion,
+  PendingNameSuggestionsResponse,
+} from '../../../../api/recognition/types';
+import * as recognitionApi from '../../../../api/recognition';
+import * as rosterApi from '../../../../api/rosterApi';
+import {
+  SUGGESTION_PROJECTION_INVALIDATION_EVENTS,
+  type SuggestionProjectionInvalidationEvent,
+} from '../suggestionProjection';
+import type { ProjectedSuggestion } from '../suggestionProjection';
+import type { SuggestionReviewPage } from '../useSuggestionReviewQueries';
+import {
+  HOLD_STATUS_COPY,
+  UNDO_HOLD_MS,
+  useSuggestionReviewMutations,
+} from '../useSuggestionReviewMutations';
+
+vi.mock('@wordpress/i18n', () => ({
+  __: (text: string) => text,
+}));
+
+vi.mock('../../../../api/recognition', () => ({
+  acceptSuggestion: vi.fn(),
+  rejectSuggestion: vi.fn(),
+  acceptMergeSuggestion: vi.fn(),
+  rejectMergeSuggestion: vi.fn(),
+  acceptNameSuggestion: vi.fn(),
+  rejectNameSuggestion: vi.fn(),
+  bulkAcceptSuggestions: vi.fn(),
+}));
+
+vi.mock('../../../../api/rosterApi', () => ({
+  commitClusterToRosterEntry: vi.fn(),
+  listRosterEntries: vi.fn().mockResolvedValue([]),
+}));
+
+const reviewPageKey = queryKeys.suggestions.projection.reviewPage(0);
+const mergePendingKey = queryKeys.suggestions.mergePending();
+const namePendingKey = queryKeys.suggestions.namePending();
+
+const makeItem = (
+  overrides: Partial<ProjectedSuggestion> & Pick<ProjectedSuggestion, 'suggestionId'>,
+): ProjectedSuggestion => ({
+  identityId: `identity-${overrides.suggestionId}`,
+  clusterId: 'cluster-1',
+  label: 'Alice',
+  similarity: 0.9,
+  ...overrides,
+});
+
+const makePage = (items: ProjectedSuggestion[]): SuggestionReviewPage => ({
+  items,
+  dataSource: DATA_SOURCE.LOCAL_PROJECTION,
+});
+
+const makeMerge = (id: string): PendingMergeSuggestion => ({
+  id,
+  cluster_a_id: 'a',
+  cluster_b_id: 'b',
+  similarity: 0.9,
+  status: 'pending',
+  cluster_a_label: 'Alice',
+  cluster_b_label: 'Bob',
+});
+
+const makeMergePage = (suggestions: PendingMergeSuggestion[]): PendingMergeSuggestionsResponse => ({
+  suggestions,
+  limit: 10,
+  offset: 0,
+  data_source: DATA_SOURCE.LOCAL_PROJECTION,
+});
+
+const makeName = (id: string): PendingNameSuggestion => ({
+  id,
+  cluster_id: 'cluster-1',
+  suggested_name: 'Alex',
+  confidence_score: 0.9,
+  source: 'test',
+  created_at: '2026-01-01T00:00:00Z',
+  expires_at: null,
+});
+
+const makeNamePage = (suggestions: PendingNameSuggestion[]): PendingNameSuggestionsResponse => ({
+  suggestions,
+  limit: 25,
+  offset: 0,
+  data_source: DATA_SOURCE.LOCAL_PROJECTION,
+});
+
+const crossFamilyQueryKey = (target: string): readonly unknown[] => {
+  switch (target) {
+    case 'clusters.all':
+      return queryKeys.clusters.all;
+    case 'clusters.labels':
+      return queryKeys.clusters.labels();
+    case 'media.identities':
+      return queryKeys.media.identities();
+    case 'mergePending':
+      return queryKeys.suggestions.mergePending();
+    case 'namePending':
+      return queryKeys.suggestions.namePending();
+    default:
+      throw new Error(`Unknown keptCrossFamilyTargets token: ${target}`);
+  }
+};
+
+const expectCrossFamilyPresent = (
+  spy: ReturnType<typeof vi.spyOn>,
+  event: SuggestionProjectionInvalidationEvent,
+): void => {
+  for (const target of SUGGESTION_PROJECTION_INVALIDATION_EVENTS[event].keptCrossFamilyTargets) {
+    expect(spy).toHaveBeenCalledWith({ queryKey: crossFamilyQueryKey(target) });
+  }
+};
+
+/** Advance the hold timer and flush pending promise chains (TEST-08 deterministic). */
+const expireHold = async (): Promise<void> => {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(UNDO_HOLD_MS);
+    // Flush the timer's promise chain + any nested microtasks from the POST.
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+};
+
+describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
+  let queryClient: QueryClient;
+  let bulkActionRef: { current: boolean };
+
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  );
+
+  const renderMutations = () =>
+    renderHook(() => useSuggestionReviewMutations({ queryClient, bulkActionRef }), { wrapper });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // mockImplementationOnce queues survive clearAllMocks — reset so prior tests
+    // cannot leave a hanging once-impl that steals the next call.
+    vi.mocked(recognitionApi.acceptSuggestion).mockReset();
+    vi.mocked(recognitionApi.rejectSuggestion).mockReset();
+    vi.mocked(recognitionApi.acceptMergeSuggestion).mockReset();
+    vi.mocked(recognitionApi.rejectMergeSuggestion).mockReset();
+    vi.mocked(recognitionApi.acceptNameSuggestion).mockReset();
+    vi.mocked(recognitionApi.rejectNameSuggestion).mockReset();
+    vi.useFakeTimers();
+    bulkActionRef = { current: false };
+    queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('exports a single pinned UNDO_HOLD_MS = 5000', () => {
+    expect(UNDO_HOLD_MS).toBe(5000);
+  });
+
+  it('exports a single HOLD_STATUS_COPY for component + tests (BR-24)', () => {
+    expect(HOLD_STATUS_COPY).toBe('Saving… — Undo');
+  });
+
+  it('undo-cancel: accept then Undo yields exactly 0 backend calls', async () => {
+    vi.mocked(recognitionApi.acceptSuggestion).mockResolvedValue({
+      suggestion_id: 'sugg-a',
+      resolution: 'accepted',
+      identity_id: 'identity-a',
+      cluster_id: 'cluster-1',
+      message: 'ok',
+    });
+
+    const { result } = renderMutations();
+
+    let outcome: string | undefined;
+    act(() => {
+      void result.current.scheduleAccept('sugg-a').then((r) => {
+        outcome = r.outcome;
+      });
+    });
+
+    expect(result.current.hold.phase).toBe('holding');
+    expect(recognitionApi.acceptSuggestion).not.toHaveBeenCalled();
+
+    act(() => {
+      result.current.undoHold();
+    });
+    // Flush the scheduleAccept promise .then microtask.
+    await Promise.resolve();
+
+    expect(outcome).toBe('undone');
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledTimes(0);
+    expect(result.current.hold.phase).toBe('idle');
+  });
+
+  it('commit: hold window expiry fires exactly 1 POST and removes from cache only on success', async () => {
+    const itemA = makeItem({ suggestionId: 'sugg-a', similarity: 0.95 });
+    const itemB = makeItem({ suggestionId: 'sugg-b', similarity: 0.85, clusterId: 'cluster-2', label: 'Bob' });
+    queryClient.setQueryData(reviewPageKey, makePage([itemA, itemB]));
+
+    vi.mocked(recognitionApi.acceptSuggestion).mockResolvedValue({
+      suggestion_id: 'sugg-a',
+      resolution: 'accepted',
+      identity_id: 'identity-a',
+      cluster_id: 'cluster-1',
+      message: 'ok',
+    });
+
+    const { result } = renderMutations();
+
+    let outcome: string | undefined;
+    act(() => {
+      void result.current.scheduleAccept('sugg-a').then((r) => {
+        outcome = r.outcome;
+      });
+    });
+
+    // During hold: item still at head (no optimistic remove).
+    expect(queryClient.getQueryData<SuggestionReviewPage>(reviewPageKey)?.items.map((i) => i.suggestionId)).toEqual([
+      'sugg-a',
+      'sugg-b',
+    ]);
+    expect(recognitionApi.acceptSuggestion).not.toHaveBeenCalled();
+
+    await expireHold();
+
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledTimes(1);
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledWith('sugg-a');
+    expect(outcome).toBe('committed');
+    expect(queryClient.getQueryData<SuggestionReviewPage>(reviewPageKey)?.items.map((i) => i.suggestionId)).toEqual([
+      'sugg-b',
+    ]);
+  });
+
+  it('advance-only-on-success: rejected POST leaves item at queue head', async () => {
+    const itemA = makeItem({ suggestionId: 'sugg-a' });
+    queryClient.setQueryData(reviewPageKey, makePage([itemA]));
+
+    vi.mocked(recognitionApi.acceptSuggestion).mockRejectedValue(new Error('network'));
+
+    const { result } = renderMutations();
+
+    let outcome: string | undefined;
+    act(() => {
+      void result.current.scheduleAccept('sugg-a').then((r) => {
+        outcome = r.outcome;
+      });
+    });
+
+    await expireHold();
+
+    expect(outcome).toBe('failed');
+    expect(queryClient.getQueryData<SuggestionReviewPage>(reviewPageKey)?.items.map((i) => i.suggestionId)).toEqual([
+      'sugg-a',
+    ]);
+    expect(result.current.hold.phase).toBe('failed');
+    expect(result.current.hold.errorMessage).toBeTruthy();
+  });
+
+  it('rapid double-action: accept A then immediately accept B flushes A before B hold; 2 POSTs order preserved', async () => {
+    const order: string[] = [];
+    let resolveA!: () => void;
+    const aGate = new Promise<void>((resolve) => {
+      resolveA = resolve;
+    });
+
+    vi.mocked(recognitionApi.acceptSuggestion).mockImplementation(async (id: string) => {
+      order.push(`start:${id}`);
+      if (id === 'sugg-a') {
+        await aGate;
+      }
+      order.push(`end:${id}`);
+      return {
+        suggestion_id: id,
+        resolution: 'accepted' as const,
+        identity_id: `identity-${id}`,
+        cluster_id: 'cluster-1',
+        message: 'ok',
+      };
+    });
+
+    const { result } = renderMutations();
+
+    let outcomeA: string | undefined;
+    let outcomeB: string | undefined;
+
+    act(() => {
+      void result.current.scheduleAccept('sugg-a').then((r) => {
+        outcomeA = r.outcome;
+      });
+    });
+
+    expect(result.current.hold.phase).toBe('holding');
+    expect(result.current.hold.suggestionId).toBe('sugg-a');
+    expect(recognitionApi.acceptSuggestion).not.toHaveBeenCalled();
+
+    // Immediately schedule B — must flush A first and await its POST before B's window.
+    await act(async () => {
+      void result.current.scheduleAccept('sugg-b').then((r) => {
+        outcomeB = r.outcome;
+      });
+      // Let the flush chain start.
+      await Promise.resolve();
+    });
+
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledTimes(1);
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledWith('sugg-a');
+    // B's hold must not open until A resolves.
+    expect(result.current.hold.phase).toBe('committing');
+    expect(result.current.hold.suggestionId).toBe('sugg-a');
+
+    await act(async () => {
+      resolveA();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(result.current.hold.phase).toBe('holding');
+    expect(result.current.hold.suggestionId).toBe('sugg-b');
+    expect(outcomeA).toBe('committed');
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledTimes(1);
+
+    // Flush B's hold (timer path covered by the commit test); assert order + count.
+    await act(async () => {
+      await result.current.flushHeld();
+    });
+
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledTimes(2);
+    expect(outcomeB).toBe('committed');
+    expect(order).toEqual(['start:sugg-a', 'end:sugg-a', 'start:sugg-b', 'end:sugg-b']);
+    expect(vi.mocked(recognitionApi.acceptSuggestion).mock.calls.map((c) => c[0])).toEqual([
+      'sugg-a',
+      'sugg-b',
+    ]);
+  });
+
+  it('unmount-during-window: unmount with held commit fires exactly 1 POST and no setState-after-unmount warning (BR-19/23)', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.mocked(recognitionApi.acceptSuggestion).mockResolvedValue({
+      suggestion_id: 'sugg-a',
+      resolution: 'accepted',
+      identity_id: 'identity-a',
+      cluster_id: 'cluster-1',
+      message: 'ok',
+    });
+
+    const { result, unmount } = renderMutations();
+
+    act(() => {
+      void result.current.scheduleAccept('sugg-a');
+    });
+    expect(result.current.hold.phase).toBe('holding');
+    expect(recognitionApi.acceptSuggestion).not.toHaveBeenCalled();
+
+    unmount();
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      // Ensure a late-armed timer would have fired if present.
+      await vi.advanceTimersByTimeAsync(UNDO_HOLD_MS * 2);
+      await Promise.resolve();
+    });
+
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledTimes(1);
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledWith('sugg-a');
+    const setStateWarnings = errorSpy.mock.calls.filter((args) =>
+      args.some((arg) => typeof arg === 'string' && /unmounted|Can't perform a React state update/i.test(arg)),
+    );
+    expect(setStateWarnings).toHaveLength(0);
+    errorSpy.mockRestore();
+  });
+
+  it('post-window failure re-surface: flushed POST rejects → failed phase + retry re-fires exactly 1 POST', async () => {
+    vi.mocked(recognitionApi.acceptSuggestion)
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce({
+        suggestion_id: 'sugg-a',
+        resolution: 'accepted',
+        identity_id: 'identity-a',
+        cluster_id: 'cluster-1',
+        message: 'ok',
+      });
+
+    const itemA = makeItem({ suggestionId: 'sugg-a' });
+    queryClient.setQueryData(reviewPageKey, makePage([itemA]));
+
+    const { result } = renderMutations();
+
+    act(() => {
+      void result.current.scheduleAccept('sugg-a');
+    });
+
+    await expireHold();
+
+    expect(result.current.hold.phase).toBe('failed');
+    expect(result.current.hold.suggestionId).toBe('sugg-a');
+    // Item still at head.
+    expect(queryClient.getQueryData<SuggestionReviewPage>(reviewPageKey)?.items).toHaveLength(1);
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      const retry = result.current.retryFailure();
+      expect(retry).not.toBeNull();
+      await retry;
+    });
+
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledTimes(2);
+    expect(result.current.hold.phase).toBe('idle');
+    expect(queryClient.getQueryData<SuggestionReviewPage>(reviewPageKey)?.items).toHaveLength(0);
+  });
+
+  it('S2-01: a different item cannot be scheduled while another item is failed; the failure surface is preserved and no POST fires', async () => {
+    vi.mocked(recognitionApi.acceptSuggestion).mockRejectedValue(new Error('boom'));
+    const itemA = makeItem({ suggestionId: 'sugg-a' });
+    const itemB = makeItem({ suggestionId: 'sugg-b' });
+    queryClient.setQueryData(reviewPageKey, makePage([itemA, itemB]));
+
+    const { result } = renderMutations();
+
+    act(() => {
+      void result.current.scheduleAccept('sugg-a');
+    });
+    await expireHold();
+
+    // Item A is now in the single failed slot.
+    expect(result.current.hold.phase).toBe('failed');
+    expect(result.current.hold.suggestionId).toBe('sugg-a');
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledTimes(1);
+
+    // Acting on B must be refused — not silently swallow A's unresolved failure.
+    let outcomeB: string | undefined;
+    act(() => {
+      void result.current.scheduleReject('sugg-b').then((r) => {
+        outcomeB = r.outcome;
+      });
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(outcomeB).toBe('not_attempted_prior_failed');
+    // A's failure surface is intact — NOT replaced by a B hold.
+    expect(result.current.hold.phase).toBe('failed');
+    expect(result.current.hold.suggestionId).toBe('sugg-a');
+    // No accept/reject POST fired for B.
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledTimes(1);
+    expect(recognitionApi.rejectSuggestion).not.toHaveBeenCalled();
+
+    // Recovery: a successful retry of A clears the slot and unblocks other items.
+    vi.mocked(recognitionApi.acceptSuggestion).mockResolvedValueOnce({
+      suggestion_id: 'sugg-a',
+      resolution: 'accepted',
+      identity_id: 'identity-a',
+      cluster_id: 'cluster-1',
+      message: 'ok',
+    });
+    await act(async () => {
+      await result.current.retryFailure();
+    });
+    expect(result.current.hold.phase).toBe('idle');
+
+    let outcomeB2: string | undefined;
+    act(() => {
+      void result.current.scheduleReject('sugg-b').then((r) => {
+        outcomeB2 = r.outcome;
+      });
+    });
+    // B now opens its own hold (holding), no longer blocked.
+    expect(result.current.hold.phase).toBe('holding');
+    expect(result.current.hold.suggestionId).toBe('sugg-b');
+    void outcomeB2;
+  });
+
+  it('S2-01 (bulk-safe): a bulk commitOneNow failure does not block single scheduling of other items', async () => {
+    // Bulk path fails via updateUi:false — sets the internal failedHold latch but NOT the
+    // visible hold surface (bulk owns its own partial-failure Retry). The S2-01 guard must
+    // key off the visible hold.phase, so single scheduling of other items stays open.
+    vi.mocked(recognitionApi.acceptSuggestion).mockRejectedValueOnce(new Error('bulk-boom'));
+
+    const { result } = renderMutations();
+
+    let bulkOutcome: string | undefined;
+    await act(async () => {
+      bulkOutcome = await result.current.commitOneNow('accept', 'sugg-bulk');
+    });
+    expect(bulkOutcome).toBe('failed');
+    // Bulk failure leaves the single-item hold surface idle.
+    expect(result.current.hold.phase).toBe('idle');
+
+    // A different single item must still open its hold (not silently refused).
+    act(() => {
+      void result.current.scheduleAccept('sugg-other');
+    });
+    expect(result.current.hold.phase).toBe('holding');
+    expect(result.current.hold.suggestionId).toBe('sugg-other');
+  });
+
+  it('S2-01: a person-commit is refused while a single-item accept/reject failure is unresolved', async () => {
+    vi.mocked(recognitionApi.acceptSuggestion).mockRejectedValue(new Error('boom'));
+    const itemA = makeItem({ suggestionId: 'sugg-a' });
+    queryClient.setQueryData(reviewPageKey, makePage([itemA]));
+
+    const { result } = renderMutations();
+
+    act(() => {
+      void result.current.scheduleAccept('sugg-a');
+    });
+    await expireHold();
+    expect(result.current.hold.phase).toBe('failed');
+
+    // Person-commit would otherwise invalidate the projection and drop the failed card,
+    // stranding the failed slot. It must be refused until the failure is retried.
+    let pcOutcome: string | undefined;
+    await act(async () => {
+      pcOutcome = (
+        await result.current.schedulePersonCommit({ clusterId: 'cluster-1', newEntryName: 'X' })
+      ).outcome;
+    });
+
+    expect(pcOutcome).toBe('not_attempted_prior_failed');
+    expect(rosterApi.commitClusterToRosterEntry).not.toHaveBeenCalled();
+    // Failed surface preserved.
+    expect(result.current.hold.phase).toBe('failed');
+    expect(result.current.hold.suggestionId).toBe('sugg-a');
+  });
+
+  it('BR-17: double-retry while first in flight yields exactly 1 POST', async () => {
+    let resolvePost!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      resolvePost = resolve;
+    });
+    vi.mocked(recognitionApi.acceptSuggestion)
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockImplementationOnce(async () => {
+        await gate;
+        return {
+          suggestion_id: 'sugg-a',
+          resolution: 'accepted' as const,
+          identity_id: 'identity-a',
+          cluster_id: 'cluster-1',
+          message: 'ok',
+        };
+      });
+
+    const { result } = renderMutations();
+    act(() => {
+      void result.current.scheduleAccept('sugg-a');
+    });
+    await expireHold();
+    expect(result.current.hold.phase).toBe('failed');
+
+    let first: Promise<unknown> | null = null;
+    let second: Promise<unknown> | null = null;
+    act(() => {
+      first = result.current.retryFailure();
+      second = result.current.retryFailure();
+    });
+
+    expect(first).not.toBeNull();
+    expect(second).toBeNull();
+    expect(result.current.retryPending).toBe(true);
+
+    await act(async () => {
+      resolvePost();
+      await first;
+      await Promise.resolve();
+    });
+
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledTimes(2); // fail + one retry
+    expect(result.current.retryPending).toBe(false);
+  });
+
+  it('BR-17: retry then accept-same-item does not interleave POSTs', async () => {
+    let resolveRetry!: () => void;
+    const retryGate = new Promise<void>((resolve) => {
+      resolveRetry = resolve;
+    });
+    const order: string[] = [];
+    vi.mocked(recognitionApi.acceptSuggestion)
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockImplementationOnce(async () => {
+        order.push('retry-start');
+        await retryGate;
+        order.push('retry-end');
+        return {
+          suggestion_id: 'sugg-a',
+          resolution: 'accepted' as const,
+          identity_id: 'identity-a',
+          cluster_id: 'cluster-1',
+          message: 'ok',
+        };
+      })
+      .mockImplementationOnce(() => {
+        order.push('accept-same');
+        return Promise.resolve({
+          suggestion_id: 'sugg-a',
+          resolution: 'accepted' as const,
+          identity_id: 'identity-a',
+          cluster_id: 'cluster-1',
+          message: 'ok',
+        });
+      });
+
+    const { result } = renderMutations();
+    act(() => {
+      void result.current.scheduleAccept('sugg-a');
+    });
+    await expireHold();
+
+    let acceptOutcome: string | undefined;
+    await act(async () => {
+      void result.current.retryFailure();
+      await Promise.resolve();
+      // Same item while failed/retrying must not open a new hold path.
+      void result.current.scheduleAccept('sugg-a').then((r) => {
+        acceptOutcome = r.outcome;
+      });
+      await Promise.resolve();
+    });
+
+    expect(acceptOutcome).toBe('failed');
+    expect(order).toEqual(['retry-start']);
+
+    await act(async () => {
+      resolveRetry();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(order).toEqual(['retry-start', 'retry-end']);
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledTimes(2);
+  });
+
+  it('BR-21: dropped queued action resolves with own kind/id and not_attempted_prior_failed', async () => {
+    vi.mocked(recognitionApi.acceptSuggestion).mockRejectedValue(new Error('prior fail'));
+
+    const { result } = renderMutations();
+    act(() => {
+      void result.current.scheduleAccept('sugg-a');
+    });
+
+    let dropped: { outcome: string; kind: string; suggestionId: string } | undefined;
+    await act(async () => {
+      // Busy path flushes A (fails) → B resolves not_attempted_prior_failed.
+      dropped = await result.current.scheduleReject('sugg-b');
+    });
+
+    expect(dropped).toEqual({
+      outcome: 'not_attempted_prior_failed',
+      kind: 'reject',
+      suggestionId: 'sugg-b',
+    });
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledTimes(1);
+    expect(recognitionApi.rejectSuggestion).not.toHaveBeenCalled();
+  });
+
+  it('BR-22: undo then immediately re-accept same item gets a fresh full window', async () => {
+    vi.mocked(recognitionApi.acceptSuggestion).mockResolvedValue({
+      suggestion_id: 'sugg-a',
+      resolution: 'accepted',
+      identity_id: 'identity-a',
+      cluster_id: 'cluster-1',
+      message: 'ok',
+    });
+
+    const { result } = renderMutations();
+
+    act(() => {
+      void result.current.scheduleAccept('sugg-a');
+    });
+    // Advance partway through first hold.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(UNDO_HOLD_MS - 500);
+    });
+    expect(recognitionApi.acceptSuggestion).not.toHaveBeenCalled();
+
+    act(() => {
+      result.current.undoHold();
+    });
+    act(() => {
+      void result.current.scheduleAccept('sugg-a');
+    });
+    expect(result.current.hold.phase).toBe('holding');
+
+    // Old remaining 500ms must NOT fire the new hold.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+      await Promise.resolve();
+    });
+    expect(recognitionApi.acceptSuggestion).not.toHaveBeenCalled();
+
+    // Full window for the new hold.
+    await expireHold();
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledTimes(1);
+  });
+
+  it('BR-23: unmount while prepare queued does not arm a post-unmount timer commit', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    let resolveA!: () => void;
+    const aGate = new Promise<void>((resolve) => {
+      resolveA = resolve;
+    });
+    vi.mocked(recognitionApi.acceptSuggestion).mockImplementation(async (id: string) => {
+      if (id === 'sugg-a') {
+        await aGate;
+      }
+      return {
+        suggestion_id: id,
+        resolution: 'accepted' as const,
+        identity_id: `identity-${id}`,
+        cluster_id: 'cluster-1',
+        message: 'ok',
+      };
+    });
+
+    const { result, unmount } = renderMutations();
+    act(() => {
+      void result.current.scheduleAccept('sugg-a');
+    });
+    // Queue B while A holding → busy prepare waits on A flush.
+    act(() => {
+      void result.current.scheduleAccept('sugg-b');
+    });
+    // Unmount before A resolves — cleanup fires A; B must not open a hold timer.
+    unmount();
+
+    await act(async () => {
+      resolveA();
+      await Promise.resolve();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(UNDO_HOLD_MS * 2);
+      await Promise.resolve();
+    });
+
+    // Cleanup fire + no second timer-fired B commit.
+    expect(vi.mocked(recognitionApi.acceptSuggestion).mock.calls.map((c) => c[0])).toEqual(['sugg-a']);
+    const setStateWarnings = errorSpy.mock.calls.filter((args) =>
+      args.some((arg) => typeof arg === 'string' && /unmounted|Can't perform a React state update/i.test(arg)),
+    );
+    expect(setStateWarnings).toHaveLength(0);
+    errorSpy.mockRestore();
+  });
+
+  it('invalidation presence: accept path keeps suggestionAccept cross-family targets', async () => {
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    vi.mocked(recognitionApi.acceptSuggestion).mockResolvedValue({
+      suggestion_id: 'sugg-a',
+      resolution: 'accepted',
+      identity_id: 'identity-a',
+      cluster_id: 'cluster-1',
+      message: 'ok',
+    });
+
+    const { result } = renderMutations();
+
+    act(() => {
+      void result.current.scheduleAccept('sugg-a');
+    });
+    await expireHold();
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.projection.all });
+    expectCrossFamilyPresent(invalidateSpy, 'suggestionAccept');
+  });
+
+  it('invalidation presence: reject path keeps suggestionReject cross-family targets', async () => {
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    vi.mocked(recognitionApi.rejectSuggestion).mockResolvedValue({
+      suggestion_id: 'sugg-a',
+      resolution: 'rejected',
+      identity_id: 'identity-a',
+      cluster_id: null,
+      message: 'ok',
+    });
+
+    const { result } = renderMutations();
+
+    act(() => {
+      void result.current.scheduleReject('sugg-a');
+    });
+    await expireHold();
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.projection.all });
+    expectCrossFamilyPresent(invalidateSpy, 'suggestionReject');
+  });
+
+  it('BR-18/20: acceptMerge hold→success removes from cache + invalidates mergePending/media/clusters', async () => {
+    queryClient.setQueryData(mergePendingKey, makeMergePage([makeMerge('merge-1'), makeMerge('merge-2')]));
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    vi.mocked(recognitionApi.acceptMergeSuggestion).mockResolvedValue(makeMerge('merge-1'));
+
+    const { result } = renderMutations();
+    act(() => {
+      void result.current.scheduleAcceptMerge('merge-1');
+    });
+    await expireHold();
+
+    expect(recognitionApi.acceptMergeSuggestion).toHaveBeenCalledTimes(1);
+    expect(
+      queryClient.getQueryData<PendingMergeSuggestionsResponse>(mergePendingKey)?.suggestions.map((s) => s.id),
+    ).toEqual(['merge-2']);
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: mergePendingKey });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.media.identities() });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.clusters.all });
+    // Re-schedule same id is possible at hook level but item is gone from queue cache.
+    expect(result.current.hold.phase).toBe('idle');
+  });
+
+  it('BR-18/20: rejectMerge hold→success removes from cache + invalidates mergePending', async () => {
+    queryClient.setQueryData(mergePendingKey, makeMergePage([makeMerge('merge-1')]));
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    vi.mocked(recognitionApi.rejectMergeSuggestion).mockResolvedValue(makeMerge('merge-1'));
+
+    const { result } = renderMutations();
+    act(() => {
+      void result.current.scheduleRejectMerge('merge-1');
+    });
+    await expireHold();
+
+    expect(
+      queryClient.getQueryData<PendingMergeSuggestionsResponse>(mergePendingKey)?.suggestions,
+    ).toHaveLength(0);
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: mergePendingKey });
+    expect(result.current.hold.phase).toBe('idle');
+  });
+
+  it('BR-18/20: acceptName hold→success removes from cache + invalidates namePending', async () => {
+    queryClient.setQueryData(namePendingKey, makeNamePage([makeName('name-1'), makeName('name-2')]));
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    vi.mocked(recognitionApi.acceptNameSuggestion).mockResolvedValue({
+      suggestion_id: 'name-1',
+      resolution: 'accepted',
+      identity_id: 'identity-1',
+      cluster_id: 'cluster-1',
+      message: 'ok',
+    });
+
+    const { result } = renderMutations();
+    act(() => {
+      void result.current.scheduleAcceptName('name-1');
+    });
+    await expireHold();
+
+    expect(
+      queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions.map((s) => s.id),
+    ).toEqual(['name-2']);
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: namePendingKey });
+    expect(result.current.hold.phase).toBe('idle');
+  });
+
+  it('BR-18/20: rejectName hold→success removes from cache + invalidates namePending', async () => {
+    queryClient.setQueryData(namePendingKey, makeNamePage([makeName('name-1')]));
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    vi.mocked(recognitionApi.rejectNameSuggestion).mockResolvedValue({
+      suggestion_id: 'name-1',
+      resolution: 'rejected',
+      identity_id: 'identity-1',
+      cluster_id: null,
+      message: 'ok',
+    });
+
+    const { result } = renderMutations();
+    act(() => {
+      void result.current.scheduleRejectName('name-1');
+    });
+    await expireHold();
+
+    expect(
+      queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions,
+    ).toHaveLength(0);
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: namePendingKey });
+  });
+
+  it('BR-20: name failure + retry re-fires exactly 1 POST', async () => {
+    vi.mocked(recognitionApi.acceptNameSuggestion)
+      .mockRejectedValueOnce(new Error('name fail'))
+      .mockResolvedValueOnce({
+        suggestion_id: 'name-1',
+        resolution: 'accepted',
+        identity_id: 'identity-1',
+        cluster_id: 'cluster-1',
+        message: 'ok',
+      });
+    queryClient.setQueryData(namePendingKey, makeNamePage([makeName('name-1')]));
+
+    const { result } = renderMutations();
+    act(() => {
+      void result.current.scheduleAcceptName('name-1');
+    });
+    await expireHold();
+    expect(result.current.hold.phase).toBe('failed');
+
+    await act(async () => {
+      await result.current.retryFailure();
+    });
+
+    expect(recognitionApi.acceptNameSuggestion).toHaveBeenCalledTimes(2);
+    expect(result.current.hold.phase).toBe('idle');
+    expect(
+      queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions,
+    ).toHaveLength(0);
+  });
+
+  it('merge accept failure surfaces failed phase (pending/error built from zero)', async () => {
+    vi.mocked(recognitionApi.acceptMergeSuggestion).mockRejectedValue(new Error('merge fail'));
+    const { result } = renderMutations();
+
+    act(() => {
+      void result.current.scheduleAcceptMerge('merge-1');
+    });
+    await expireHold();
+
+    expect(result.current.hold.phase).toBe('failed');
+    expect(result.current.hold.kind).toBe('acceptMerge');
+    expect(result.current.hold.errorMessage).toBeTruthy();
+  });
+
+  it('hold countdown pauses while setHoldPaused(true)', async () => {
+    vi.mocked(recognitionApi.acceptSuggestion).mockResolvedValue({
+      suggestion_id: 'sugg-a',
+      resolution: 'accepted',
+      identity_id: 'identity-a',
+      cluster_id: 'cluster-1',
+      message: 'ok',
+    });
+
+    const { result } = renderMutations();
+
+    act(() => {
+      void result.current.scheduleAccept('sugg-a');
+    });
+
+    act(() => {
+      result.current.setHoldPaused(true);
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(UNDO_HOLD_MS * 2);
+      await Promise.resolve();
+    });
+
+    expect(recognitionApi.acceptSuggestion).not.toHaveBeenCalled();
+    expect(result.current.hold.phase).toBe('holding');
+
+    act(() => {
+      result.current.setHoldPaused(false);
+    });
+
+    await expireHold();
+
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledTimes(1);
+  });
+
+  it('BR-15: isCardActionsDisabled only for held card; other ids stay enabled', () => {
+    const { result } = renderMutations();
+    act(() => {
+      void result.current.scheduleAccept('sugg-a');
+    });
+    expect(result.current.hold.phase).toBe('holding');
+    expect(result.current.isCardActionsDisabled('sugg-a', ['accept', 'reject'])).toBe(true);
+    expect(result.current.isCardActionsDisabled('sugg-b', ['accept', 'reject'])).toBe(false);
+  });
+
+  // --- Slice 3: person-commit (flush-then-immediate, no undo window) ---
+
+  it('person-commit routes to commitClusterToRosterEntry (not updateClusterLabel)', async () => {
+    vi.mocked(rosterApi.commitClusterToRosterEntry).mockResolvedValue(undefined);
+    const { result } = renderMutations();
+
+    let outcome: string | undefined;
+    await act(async () => {
+      const promise = result.current.schedulePersonCommit({
+        clusterId: 'cluster-1',
+        newEntryName: 'Alex',
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      outcome = (await promise).outcome;
+    });
+
+    expect(rosterApi.commitClusterToRosterEntry).toHaveBeenCalledTimes(1);
+    expect(rosterApi.commitClusterToRosterEntry).toHaveBeenCalledWith({
+      clusterId: 'cluster-1',
+      rosterEntryId: undefined,
+      newEntryName: 'Alex',
+    });
+    expect(outcome).toBe('committed');
+    expect(result.current.personCommit.phase).toBe('succeeded');
+  });
+
+  it('person-commit while accept hold is open flushes held commit first (single in-flight)', async () => {
+    const order: string[] = [];
+    vi.mocked(recognitionApi.acceptSuggestion).mockImplementation((id: string) => {
+      order.push(`accept:${id}`);
+      return Promise.resolve({
+        suggestion_id: id,
+        resolution: 'accepted' as const,
+        identity_id: 'identity-a',
+        cluster_id: 'cluster-1',
+        message: 'ok',
+      });
+    });
+    vi.mocked(rosterApi.commitClusterToRosterEntry).mockImplementation(() => {
+      order.push('person-commit');
+      return Promise.resolve();
+    });
+
+    const { result } = renderMutations();
+
+    act(() => {
+      void result.current.scheduleAccept('sugg-a');
+    });
+    expect(result.current.hold.phase).toBe('holding');
+    expect(recognitionApi.acceptSuggestion).not.toHaveBeenCalled();
+
+    let personOutcome: string | undefined;
+    await act(async () => {
+      const promise = result.current.schedulePersonCommit({
+        clusterId: 'cluster-1',
+        rosterEntryId: 42,
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      personOutcome = (await promise).outcome;
+    });
+
+    expect(order).toEqual(['accept:sugg-a', 'person-commit']);
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledTimes(1);
+    expect(rosterApi.commitClusterToRosterEntry).toHaveBeenCalledTimes(1);
+    expect(personOutcome).toBe('committed');
+  });
+
+  it('person-commit failure surfaces role=alert state + retry re-fires exactly 1 POST', async () => {
+    vi.mocked(rosterApi.commitClusterToRosterEntry)
+      .mockRejectedValueOnce(new Error('network'))
+      .mockResolvedValueOnce(undefined);
+
+    const { result } = renderMutations();
+
+    await act(async () => {
+      const promise = result.current.schedulePersonCommit({
+        clusterId: 'cluster-1',
+        newEntryName: 'Alex',
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await promise;
+    });
+
+    expect(result.current.personCommit.phase).toBe('failed');
+    expect(result.current.personCommit.errorMessage).toBeTruthy();
+    expect(rosterApi.commitClusterToRosterEntry).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      const retry = result.current.retryPersonCommit();
+      expect(retry).not.toBeNull();
+      await Promise.resolve();
+      await Promise.resolve();
+      await retry;
+    });
+
+    expect(rosterApi.commitClusterToRosterEntry).toHaveBeenCalledTimes(2);
+    expect(result.current.personCommit.phase).toBe('succeeded');
+  });
+
+  it('BR-25: double schedulePersonCommit while first in flight yields exactly 1 POST', async () => {
+    let resolvePost!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      resolvePost = resolve;
+    });
+    vi.mocked(rosterApi.commitClusterToRosterEntry).mockImplementation(async () => {
+      await gate;
+    });
+
+    const { result } = renderMutations();
+
+    let first!: Promise<{ outcome: string }>;
+    let second!: Promise<{ outcome: string }>;
+    act(() => {
+      first = result.current.schedulePersonCommit({
+        clusterId: 'cluster-1',
+        newEntryName: 'Alex',
+      });
+      second = result.current.schedulePersonCommit({
+        clusterId: 'cluster-1',
+        newEntryName: 'Alex',
+      });
+    });
+
+    expect(result.current.personCommitPending).toBe(true);
+
+    await act(async () => {
+      resolvePost();
+      await first;
+      await second;
+      await Promise.resolve();
+    });
+
+    expect(rosterApi.commitClusterToRosterEntry).toHaveBeenCalledTimes(1);
+    expect(result.current.personCommitPending).toBe(false);
+  });
+
+  it('BR-25: schedule during held-accept flush latency still yields exactly 1 person-commit POST', async () => {
+    let resolveAccept!: () => void;
+    const acceptGate = new Promise<void>((resolve) => {
+      resolveAccept = resolve;
+    });
+    vi.mocked(recognitionApi.acceptSuggestion).mockImplementation(async () => {
+      await acceptGate;
+      return {
+        suggestion_id: 'sugg-a',
+        resolution: 'accepted' as const,
+        identity_id: 'identity-a',
+        cluster_id: 'cluster-1',
+        message: 'ok',
+      };
+    });
+    vi.mocked(rosterApi.commitClusterToRosterEntry).mockResolvedValue(undefined);
+
+    const { result } = renderMutations();
+    act(() => {
+      void result.current.scheduleAccept('sugg-a');
+    });
+    expect(result.current.hold.phase).toBe('holding');
+
+    let first!: Promise<{ outcome: string }>;
+    let second!: Promise<{ outcome: string }>;
+    act(() => {
+      first = result.current.schedulePersonCommit({
+        clusterId: 'cluster-1',
+        rosterEntryId: 7,
+      });
+      // Second click while phase still idle / flush in flight.
+      second = result.current.schedulePersonCommit({
+        clusterId: 'cluster-1',
+        rosterEntryId: 7,
+      });
+    });
+    expect(result.current.personCommitPending).toBe(true);
+
+    await act(async () => {
+      resolveAccept();
+      await first;
+      await second;
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(rosterApi.commitClusterToRosterEntry).toHaveBeenCalledTimes(1);
+  });
+
+  it('BR-26: double retryPersonCommit while first in flight yields exactly 1 POST', async () => {
+    let resolveRetry!: () => void;
+    const retryGate = new Promise<void>((resolve) => {
+      resolveRetry = resolve;
+    });
+    vi.mocked(rosterApi.commitClusterToRosterEntry)
+      .mockRejectedValueOnce(new Error('network'))
+      .mockImplementationOnce(async () => {
+        await retryGate;
+      });
+
+    const { result } = renderMutations();
+
+    await act(async () => {
+      const promise = result.current.schedulePersonCommit({
+        clusterId: 'cluster-1',
+        newEntryName: 'Alex',
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await promise;
+    });
+    expect(result.current.personCommit.phase).toBe('failed');
+
+    let first: Promise<unknown> | null = null;
+    let second: Promise<unknown> | null = null;
+    act(() => {
+      first = result.current.retryPersonCommit();
+      second = result.current.retryPersonCommit();
+    });
+
+    expect(first).not.toBeNull();
+    expect(second).toBeNull();
+    expect(result.current.personCommitPending).toBe(true);
+
+    await act(async () => {
+      resolveRetry();
+      await first;
+      await Promise.resolve();
+    });
+
+    // fail + one retry
+    expect(rosterApi.commitClusterToRosterEntry).toHaveBeenCalledTimes(2);
+    expect(result.current.personCommitPending).toBe(false);
+  });
+
+  it('BR-28: person-commit success invalidates clusterLabelSetClear kept targets', async () => {
+    vi.mocked(rosterApi.commitClusterToRosterEntry).mockResolvedValue(undefined);
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    const { result } = renderMutations();
+
+    await act(async () => {
+      const promise = result.current.schedulePersonCommit({
+        clusterId: 'cluster-1',
+        newEntryName: 'Alex',
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await promise;
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: queryKeys.suggestions.projection.all,
+    });
+    expectCrossFamilyPresent(invalidateSpy, 'clusterLabelSetClear');
+  });
+
+  it('BR-29: person-commit success removes namePending rows for the committed cluster', async () => {
+    queryClient.setQueryData(
+      namePendingKey,
+      makeNamePage([makeName('name-1'), makeName('name-other')]),
+    );
+    // name-other on a different cluster so only cluster-1 rows leave.
+    queryClient.setQueryData(namePendingKey, {
+      ...makeNamePage([
+        makeName('name-1'),
+        { ...makeName('name-other'), id: 'name-other', cluster_id: 'cluster-other' },
+      ]),
+    });
+    vi.mocked(rosterApi.commitClusterToRosterEntry).mockResolvedValue(undefined);
+
+    const { result } = renderMutations();
+    await act(async () => {
+      const promise = result.current.schedulePersonCommit({
+        clusterId: 'cluster-1',
+        newEntryName: 'Alex',
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await promise;
+    });
+
+    const remaining = queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey);
+    expect(remaining?.suggestions.map((s) => s.id)).toEqual(['name-other']);
+  });
+
+  it('S2-02: person-commit optimistic namePending drop survives the invalidation (no refetch clobber)', async () => {
+    // Backend still returns the just-committed cluster's row (curation lag).
+    const staleServer: PendingNameSuggestionsResponse = {
+      ...makeNamePage([
+        makeName('name-1'), // cluster-1 — about to be committed
+        { ...makeName('name-other'), id: 'name-other', cluster_id: 'cluster-other' },
+      ]),
+    };
+    const fetchName = vi.fn().mockResolvedValue(staleServer);
+    queryClient.setQueryData(namePendingKey, staleServer);
+    vi.mocked(rosterApi.commitClusterToRosterEntry).mockResolvedValue(undefined);
+
+    // An ACTIVE observer makes invalidateQueries refetch — this is what reproduces the race.
+    const { result } = renderHook(
+      () => {
+        const q = useQuery({ queryKey: namePendingKey, queryFn: fetchName, staleTime: 0 });
+        const m = useSuggestionReviewMutations({ queryClient, bulkActionRef });
+        return { q, m };
+      },
+      { wrapper },
+    );
+
+    // Let the observer's mount fetch settle before we measure the commit's behaviour.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    fetchName.mockClear();
+
+    await act(async () => {
+      const promise = result.current.m.schedulePersonCommit({
+        clusterId: 'cluster-1',
+        newEntryName: 'Alex',
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await promise;
+      // Give any (wrongly) triggered refetch a chance to resolve and clobber the removal.
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // The invalidation must NOT refetch namePending (refetchType 'none').
+    expect(fetchName).not.toHaveBeenCalled();
+    // The committed cluster's row stays dropped; the other cluster's row survives.
+    const remaining = queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey);
+    expect(remaining?.suggestions.map((s) => s.id)).toEqual(['name-other']);
+  });
+});

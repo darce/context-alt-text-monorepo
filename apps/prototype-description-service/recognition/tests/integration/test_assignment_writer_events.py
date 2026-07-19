@@ -51,6 +51,7 @@ def _make_identity(
         bbox_height=10,
         confidence=0.95,
         embedding=[float(x) for x in embedding.tolist()],
+        embedding_model="buffalo_l@insightface",
         created_at=datetime.now(tz=UTC),
     )
     return domain_identity, model_identity

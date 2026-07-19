@@ -17,7 +17,7 @@ const listComponentScssFiles = (): string[] =>
 const isExempt = (line: string): boolean =>
   /(?:\/\/|\/\*)\s*(REFA-3|E21-4)\s+disposition:/.test(line);
 
-const literalPatterns: ReadonlyArray<{ name: string; re: RegExp }> = [
+const literalPatterns: readonly { name: string; re: RegExp }[] = [
   { name: 'hex', re: /#[0-9a-fA-F]{3,8}\b/ },
   { name: 'rgb/rgba', re: /rgba?\(/ },
   // Named color keywords used as color values (not white-space, etc.)
@@ -31,7 +31,28 @@ const literalPatterns: ReadonlyArray<{ name: string; re: RegExp }> = [
   { name: 'border-radius', re: /border-radius:\s*(?:999px|50%|\d)/ },
   // box-shadow numerics incl. inset
   { name: 'box-shadow', re: /box-shadow:\s*(?:inset\s+)?-?\d/ },
+  ];
+
+/** Raw px spacing — applied in the generic loop (E21-5 closes the spacing gap). */
+const spacingLiteralPatterns: readonly { name: string; re: RegExp }[] = [
+  { name: 'spacing-gap', re: /(?<![\w-])gap(?:-(?:x|y))?:\s*[0-9]+px\b/ },
+  {
+    name: 'spacing-padding',
+    re: /(?<![\w-])padding(?:-(?:top|right|bottom|left|inline|block))?:\s*(?:[0-9]+px\b|[0-9]+px\s)/,
+  },
+  {
+    name: 'spacing-margin',
+    re: /(?<![\w-])margin(?:-(?:top|right|bottom|left|inline|block))?:\s*-?(?:[0-9]+px\b|[0-9]+px\s)/,
+  },
 ];
+
+/**
+ * Spacing patterns live in the generic loop's pattern set for E21-5 sheets.
+ * Pre-existing component sheets keep color/type checks only (spacing debt is
+ * pre-existing); workbench has intentional raw layout widths/hairlines with
+ * disposition comments that also match naive spacing regexes in comments.
+ */
+const spacingEnforcedFiles = new Set(['_review-queue.scss']);
 
 describe('REFA-3 workbench non-literal assertions', () => {
   it('uses the card shadow token instead of a raw box-shadow literal', () => {
@@ -65,21 +86,31 @@ describe('REFA-3 workbench non-literal assertions', () => {
 
 describe('components/*.scss no unguarded scale literals', () => {
   const componentFiles = listComponentScssFiles();
+  const indexScssPath = join(componentsDir, 'index.scss');
 
   it('collects every components/*.scss file', () => {
     expect(componentFiles.length).toBeGreaterThan(0);
     expect(componentFiles.every((path) => path.endsWith('.scss'))).toBe(true);
   });
 
+  it("registers review-queue via @use './review-queue' in index.scss", () => {
+    const source = readFileSync(indexScssPath, 'utf8');
+    expect(source).toMatch(/@use\s+['"]\.\/review-queue['"]/);
+  });
+
   it.each(componentFiles)('%s has no raw scale literals except disposition lines', (path) => {
     const source = readFileSync(path, 'utf8');
+    const baseName = path.split('/').pop() ?? path;
+    const patterns = spacingEnforcedFiles.has(baseName)
+      ? [...literalPatterns, ...spacingLiteralPatterns]
+      : literalPatterns;
     const offenders = source
       .split('\n')
       .flatMap((line, index) => {
         if (isExempt(line)) {
           return [];
         }
-        return literalPatterns
+        return patterns
           .filter(({ re }) => re.test(line))
           .map(({ name }) => `${index + 1}:${name}: ${line.trim()}`);
       });

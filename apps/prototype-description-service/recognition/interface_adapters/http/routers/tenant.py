@@ -14,6 +14,7 @@ from recognition.interface_adapters.http.deps import get_optional_session, requi
 from recognition.interface_adapters.http.deps.auth import AuthContext
 from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
 
+
 # enforce_rate_limit defaults to Depends(require_auth), which re-runs strict
 # tenant matching. Wire it after key-only auth so whoami stays header-tolerant.
 async def _enforce_rate_limit_key_only(

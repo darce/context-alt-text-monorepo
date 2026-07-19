@@ -7,8 +7,8 @@ describe('ClusterEditForm', () => {
     labelInput: 'Test Cluster',
     onLabelChange: vi.fn(),
     options: [
-      { value: '1', label: 'Person A', similarity: 0.95 },
-      { value: '2', label: 'Person B', similarity: 0.85 },
+      { value: 'cluster:1', label: 'Person A', source: 'cluster' as const, group: 'Suggested', similarity: 0.95 },
+      { value: 'cluster:2', label: 'Person B', source: 'cluster' as const, group: 'Suggested', similarity: 0.85 },
     ],
     isLoading: false,
     isPending: false,
@@ -63,8 +63,8 @@ describe('ClusterEditForm', () => {
         {...defaultProps}
         labelInput="P"
         options={[
-          { value: '1', label: 'Person A', similarity: 0.95 },
-          { value: '2', label: 'Person B', similarity: 0.55 },
+          { value: 'cluster:1', label: 'Person A', source: 'cluster', group: 'Suggested', similarity: 0.95 },
+          { value: 'cluster:2', label: 'Person B', source: 'cluster', group: 'Suggested', similarity: 0.55 },
         ]}
       />,
     );
@@ -97,16 +97,118 @@ describe('ClusterEditForm', () => {
     expect(onLabelChange).toHaveBeenCalledWith('Person B');
     expect(onSave).not.toHaveBeenCalled();
 
-    // Clicking the confirm button calls onConfirmSuggestion
+    // Clicking the confirm button unwraps namespaced cluster: ids.
     const confirmButton = screen.getAllByRole('button', { name: /confirm match/i })[1]; // Index 1 for Person B
     fireEvent.click(confirmButton);
     await waitFor(() => expect(onConfirmSuggestion).toHaveBeenCalledWith('2', 'Person B'));
   });
 
+  it('person-source confirm uses onPersonSelect and never onConfirmSuggestion (PR-16 / FIX-1)', async () => {
+    // Predicted first failure: onConfirmSuggestion or onSave called instead of onPersonSelect
+    const onSave = vi.fn();
+    const onPersonSelect = vi.fn();
+    const onConfirmSuggestion = vi.fn();
+    render(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput="P"
+        options={[{ value: 'person:42', label: 'Pat Roster', source: 'person', group: 'All Labels' }]}
+        onSave={onSave}
+        onPersonSelect={onPersonSelect}
+        onConfirmSuggestion={onConfirmSuggestion}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /confirm match/i }));
+    await waitFor(() => expect(onPersonSelect).toHaveBeenCalledWith('Pat Roster'));
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onConfirmSuggestion).not.toHaveBeenCalled();
+  });
+
+  it('falls back to onSave for person confirm when onPersonSelect is absent', async () => {
+    const onSave = vi.fn();
+    render(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput="P"
+        options={[{ value: 'person:42', label: 'Pat Roster', source: 'person', group: 'All Labels' }]}
+        onSave={onSave}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /confirm match/i }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith('Pat Roster'));
+  });
+
+  it('budgets overlay so a person survives five Suggested rows (FIX-6)', () => {
+    // Predicted first failure: person not rendered when options.slice(0,5) is all Suggested
+    const options = [
+      ...Array.from({ length: 5 }, (_, index) => ({
+        value: `cluster:s${index}`,
+        label: `Suggested ${index}`,
+        source: 'cluster' as const,
+        group: 'Suggested',
+        similarity: 0.9 - index * 0.05,
+      })),
+      { value: 'person:1', label: 'Alice Person', source: 'person' as const, group: 'All Labels' },
+    ];
+    render(<ClusterEditForm {...defaultProps} labelInput="A" options={options} />);
+
+    expect(screen.getByText('Alice Person')).toBeInTheDocument();
+    expect(screen.queryByText('Suggested 3')).not.toBeInTheDocument();
+    expect(screen.queryByText('Suggested 4')).not.toBeInTheDocument();
+  });
+
+  it('announces option count in a polite live region (A11Y-21 / FIX-7)', () => {
+    // Predicted first failure: no role=status live region
+    render(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput="P"
+        options={[
+          { value: 'cluster:1', label: 'Person A', source: 'cluster', group: 'Suggested', similarity: 0.9 },
+          { value: 'person:2', label: 'Pat', source: 'person', group: 'All Labels' },
+        ]}
+      />,
+    );
+
+    const status = screen.getByRole('status');
+    expect(status).toHaveAttribute('aria-live', 'polite');
+    expect(status).toHaveTextContent(/2 naming options/);
+  });
+
+  it('includes source in Suggested cluster accessible names (A11Y-04 / FIX-7)', () => {
+    // Predicted first failure: aria-label is bare "Person A" without Cluster source
+    render(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput="P"
+        options={[{ value: 'cluster:1', label: 'Person A', source: 'cluster', group: 'Suggested', similarity: 0.95 }]}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: /Person A \(Cluster\)/i })).toBeInTheDocument();
+  });
+
+  it('unwraps cluster: namespaced values on confirm', async () => {
+    const onConfirmSuggestion = vi.fn();
+    render(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput="B"
+        options={[{ value: 'cluster:c-bob', label: 'Bob', source: 'cluster', group: 'Suggested' }]}
+        onConfirmSuggestion={onConfirmSuggestion}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /confirm match/i }));
+    await waitFor(() => expect(onConfirmSuggestion).toHaveBeenCalledWith('c-bob', 'Bob'));
+  });
+
   it('is disabled when isPending is true', () => {
     render(<ClusterEditForm {...defaultProps} isPending={true} />);
     const input = screen.getByDisplayValue('Test Cluster');
-    const saveButton = screen.getByText('Saving…');
+    const saveButton = screen.getByRole('button', { name: 'Saving…' });
 
     expect(input).toBeDisabled();
     expect(saveButton).toBeDisabled();
@@ -117,11 +219,35 @@ describe('ClusterEditForm', () => {
     expect(screen.getByText('Saving queued')).toBeInTheDocument();
   });
 
+  it('announces Saved! in the field live region during case-only rename success (PERC-05 / A11Y-21)', () => {
+    // Predicted first failure: live region empty while isPending (prior behavior cleared status)
+    render(<ClusterEditForm {...defaultProps} isPending saveLabel="Saved!" />);
+
+    const status = screen.getByRole('status');
+    expect(status).toHaveAttribute('aria-live', 'polite');
+    expect(status).toHaveTextContent('Saved!');
+    // Fovea-first: same status also on the save button next to the field
+    expect(screen.getByRole('button', { name: 'Saved!' })).toBeInTheDocument();
+  });
+
+  it('announces Saving… in the field live region while pending without custom label', () => {
+    render(<ClusterEditForm {...defaultProps} isPending />);
+
+    expect(screen.getByRole('status')).toHaveTextContent('Saving…');
+  });
+
   it('calls onRejectSuggestion when Reject button is clicked', () => {
     const onRejectSuggestion = vi.fn();
     const optionsWithSuggestion = [
-      { value: '1', label: 'Person A', similarity: 0.95, suggestion_id: 's-1' },
-      { value: '2', label: 'Person B', similarity: 0.85 },
+      {
+        value: 'cluster:1',
+        label: 'Person A',
+        source: 'cluster' as const,
+        group: 'Suggested',
+        similarity: 0.95,
+        suggestion_id: 's-1',
+      },
+      { value: 'cluster:2', label: 'Person B', source: 'cluster' as const, group: 'Suggested', similarity: 0.85 },
     ];
 
     render(

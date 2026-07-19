@@ -111,8 +111,19 @@ def _build_ready_app(
 
     async def _session_yielder():
         if db_ok:
+            from db.settings import get_database_settings
+
+            dim = int(get_database_settings().pgvector_dimension)
+            rows = [
+                ("media_identities", "embedding", dim),
+                ("identity_cluster_representatives", "embedding", dim),
+                ("mv_identity_cluster_centroids", "centroid", dim),
+            ]
+            result = MagicMock()
+            result.all = MagicMock(return_value=rows)
+            result.fetchall = MagicMock(return_value=rows)
             session = MagicMock()
-            session.execute = AsyncMock(return_value=None)
+            session.execute = AsyncMock(return_value=result)
             yield session
         else:
             yield None

@@ -416,4 +416,49 @@ describe('banned vocabulary across js/admin pages', () => {
     const text = collectVisibleText(container);
     expect(text.toLowerCase()).toContain('topology');
   });
+
+  /**
+   * Slice 3: WorkbenchPage mocks ScanTabContent, so chip + HAI-05 + person-commit
+   * copy are swept here as constants that render on the review-queue surface.
+   */
+  it('review-queue chip + person-commit + HAI-05 copy are free of banned jargon', async () => {
+    const {
+      NEXT_ACTION_CHIP_LABEL,
+      NEXT_ACTION_KIND,
+      REVIEW_QUEUE_BAND,
+      REVIEW_QUEUE_BAND_CHIP_LABEL,
+    } = await import('../pages/workbench/identity-clusters/reviewQueueDriver');
+    // BR-33: sweep every exported person-commit copy constant (import *).
+    const personCommitCopy = await import('../pages/workbench/identity-clusters/personCommitCopy');
+    // Slice 5: bulk commit / hold / PR-38 labels.
+    const bulkCopy = await import('../pages/workbench/identity-clusters/useBulkReviewCommit');
+
+    const personCommitStrings = Object.values(personCommitCopy).filter(
+      (value) => typeof value === 'string',
+    ) as string[];
+    const surface = [
+      NEXT_ACTION_CHIP_LABEL[NEXT_ACTION_KIND.ASSIGNMENT],
+      NEXT_ACTION_CHIP_LABEL[NEXT_ACTION_KIND.MERGE],
+      // Slice 6 ④ band chip labels.
+      REVIEW_QUEUE_BAND_CHIP_LABEL[REVIEW_QUEUE_BAND.STRONG],
+      REVIEW_QUEUE_BAND_CHIP_LABEL[REVIEW_QUEUE_BAND.WEAKER],
+      ...personCommitStrings,
+      bulkCopy.bulkCommitLabel(4, 'Maria'),
+      bulkCopy.bulkCommitLabel(3, null),
+      bulkCopy.bulkHoldStatusCopy(5),
+    ].join(' ');
+
+    for (const banned of BANNED_STRINGS) {
+      expect(surface.toLowerCase()).not.toContain(banned.toLowerCase());
+    }
+    expect(surface).toContain(personCommitCopy.MODEL_OUTPUT_DISCLOSURE);
+    expect(surface).toContain(personCommitCopy.PERSON_COMMIT_SUCCESS_COPY);
+    expect(surface).toContain(personCommitCopy.PERSON_COMMIT_COMBOBOX_ARIA);
+    expect(surface).toContain(personCommitCopy.PERSON_COMMIT_PLACEHOLDER);
+    expect(surface).toContain(personCommitCopy.PERSON_COMMIT_COMMITTING_COPY);
+    expect(surface).toContain('Accept 4 for Maria');
+    expect(surface).toContain('Accept 3 selected');
+    expect(surface).toContain('Saving 5… — Undo');
+    expect(surface).not.toMatch(UUID_REGEX);
+  });
 });

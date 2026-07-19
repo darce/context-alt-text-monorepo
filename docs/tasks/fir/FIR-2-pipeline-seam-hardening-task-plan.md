@@ -69,14 +69,14 @@ Scoped TDD per slice locally; `make check-remote` per slice close (never local f
 
 ## Consolidated Checklist
 
-- [ ] S1 tenant enumeration + operator sign-off decision (or blocker) recorded
-- [ ] S2a characterization tests landed green against unmodified code
-- [ ] S2b `FaceDetection` is the single seam type; `DetectedFace` deleted; characterization suite untouched
-- [ ] S2b dim referenced from a single settings constant (stubs/tests parametrized)
-- [ ] S3 `embedding_model` column (NOT NULL, no DEFAULT) + explicit write-path + INSERT-without-provenance failure test
-- [ ] S4 consumer audit decision recorded naming remove-now vs defer path
-- [ ] S4 executed per that decision (removal + test updates, or deferral decision with migration owner)
-- [ ] `make check-remote` green at branch end; `/review-parallel` run; zero open findings
+- [x] S1 tenant enumeration + operator sign-off decision (or blocker) recorded
+- [x] S2a characterization tests landed green against unmodified code
+- [x] S2b `FaceDetection` is the single seam type; `DetectedFace` deleted; characterization suite untouched
+- [x] S2b dim referenced from a single settings constant (stubs/tests parametrized)
+- [x] S3 `embedding_model` column (NOT NULL, no DEFAULT) + explicit write-path + INSERT-without-provenance failure test
+- [x] S4 consumer audit decision recorded naming remove-now vs defer path
+- [x] S4 executed per that decision (removal + test updates, or deferral decision with migration owner)
+- [x] `make check-remote` green at branch end; `/review-parallel` run; zero open findings
 - [ ] Handoff: decisions per slice, `update_task_status(done)` + archive at close
 
 ## Success Criteria

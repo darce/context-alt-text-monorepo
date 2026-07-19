@@ -6,7 +6,6 @@ import {
   fetchPendingNameSuggestions,
   fetchPendingSuggestions,
   fetchMediaIdentities,
-  fetchIdentitySuggestions,
   fetchClusterMembers,
   fetchRetentionStatus,
   fetchSyncStatus,
@@ -180,6 +179,25 @@ describe('recognitionApi', () => {
       total: 0,
       truncated: false,
     });
+    expect(fetchApiMock).toHaveBeenCalledWith(
+      expect.stringMatching(/\/cluster-1\/members$/),
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('forwards optional limit and offset query params on cluster members', async () => {
+    fetchApiMock.mockResolvedValue({
+      members: [],
+      limit: 2,
+      total: 5,
+      truncated: true,
+    });
+
+    await fetchClusterMembers('cluster-1', { limit: 2, offset: 2 });
+
+    const [endpoint] = fetchApiMock.mock.calls[0] ?? [];
+    expect(String(endpoint)).toContain('limit=2');
+    expect(String(endpoint)).toContain('offset=2');
   });
 
   it('rejects cluster-members payloads without canonical envelope metadata', async () => {
@@ -282,15 +300,6 @@ describe('recognitionApi', () => {
       moved_identity_ids: [],
       target_identity_count: 7,
     });
-  });
-
-  it('fetches identity suggestions with tenant nonce', async () => {
-    fetchApiMock.mockResolvedValue({ matches: [] });
-    await fetchIdentitySuggestions('identity-123', 3);
-    const call = fetchApiMock.mock.calls[0];
-    expect(call[0]).toContain('/identity-123/suggestions');
-    expect(call[0]).toContain('top_k=3');
-    expect(call[1]).toMatchObject({ method: 'GET', restNonce: 'nonce-123' });
   });
 
   it('posts revert merge payload', async () => {

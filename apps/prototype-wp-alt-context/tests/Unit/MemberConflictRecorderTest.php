@@ -76,4 +76,63 @@ class MemberConflictRecorderTest extends TestCase
         $sql = implode("\n", $wpdb->queries);
         $this->assertStringContainsString("'curated_member_deleted'", $sql);
     }
+
+    public function testSuppressionSkipsMissingCuratedMemberConflictWrites(): void
+    {
+        $recorder = new MemberConflictRecorder(new ConflictRepository());
+        $recorder->record_missing_curated_member_conflicts(
+            'tenant-suppressed',
+            [
+                'identity-missing' => [
+                    'identity_uuid' => 'identity-missing',
+                    'cluster_uuid' => 'cluster-missing',
+                    'projection_version' => 3,
+                ],
+            ],
+            [],
+            4,
+            true
+        );
+
+        global $wpdb;
+        $this->assertSame([], $wpdb->queries, 'suppressed cycle must not write per-entity conflicts');
+    }
+
+    public function testSuppressionSkipsMemberClusterReassignmentConflictWrites(): void
+    {
+        $recorder = new MemberConflictRecorder(new ConflictRepository());
+        $recorder->record_member_cluster_reassignment_conflict(
+            'tenant-suppressed',
+            'identity-moved',
+            'cluster-remote',
+            '0.91',
+            5,
+            ['cluster_uuid' => 'cluster-local', 'projection_version' => 4],
+            true
+        );
+
+        global $wpdb;
+        $this->assertSame([], $wpdb->queries, 'suppressed cycle must not write per-entity conflicts');
+    }
+
+    public function testCollectMemberDivergencePartitionsDeletionsAndReassignments(): void
+    {
+        $recorder = new MemberConflictRecorder(new ConflictRepository());
+
+        $divergence = $recorder->collect_member_divergence(
+            [
+                'identity-deleted' => ['identity_uuid' => 'identity-deleted', 'cluster_uuid' => 'cluster-1'],
+                'identity-moved' => ['identity_uuid' => 'identity-moved', 'cluster_uuid' => 'cluster-1'],
+                'identity-stable' => ['identity_uuid' => 'identity-stable', 'cluster_uuid' => 'cluster-2'],
+            ],
+            [
+                ['identity_uuid' => 'identity-moved', 'cluster_uuid' => 'cluster-9'],
+                ['identity_uuid' => 'identity-stable', 'cluster_uuid' => 'cluster-2'],
+                ['identity_uuid' => '', 'cluster_uuid' => 'cluster-ignored'],
+            ]
+        );
+
+        $this->assertSame(['identity-deleted'], $divergence['curated_member_deleted']);
+        $this->assertSame(['identity-moved' => 'cluster-9'], $divergence['member_cluster_reassignment']);
+    }
 }

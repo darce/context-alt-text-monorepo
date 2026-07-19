@@ -41,6 +41,7 @@ async def test_reassign_single_member_preserves_cluster(
             bbox_width=10,
             bbox_height=10,
             embedding=[0.1] * 512,
+            embedding_model="buffalo_l@insightface",
         )
         db_session.add(mi)
         identities.append(mi)

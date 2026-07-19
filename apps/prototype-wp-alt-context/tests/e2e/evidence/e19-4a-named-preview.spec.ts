@@ -25,7 +25,7 @@ interface DescribeResponse {
   generic_draft: string | null;
   named_draft: string | null;
   naming_provenance: {
-    injected_names: Array<{ name: string; cluster_id: string; roster_id: string | null; detection_confidence: number }>;
+    injected_names: { name: string; cluster_id: string; roster_id: string | null; detection_confidence: number }[];
     naming_allowed: boolean;
     reason: string | null;
     mode: string | null;

@@ -15,12 +15,6 @@ class QualitySettings(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    # Pose penalty settings
-    pose_penalty_divisor: float = Field(
-        default=90.0,
-        description="Total angle at which pose_penalty becomes zero.",
-    )
-
     # Size factor settings
     min_face_size: float = Field(
         default=80.0,

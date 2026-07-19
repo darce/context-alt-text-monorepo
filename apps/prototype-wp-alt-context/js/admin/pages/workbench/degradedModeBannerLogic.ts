@@ -2,6 +2,7 @@ import { __ } from '@wordpress/i18n';
 
 import type { SyncHealth, SyncHealthResponse, SyncHealthWarning } from '../../api/recognition/types/sync';
 
+import { SYNC_VOCABULARY } from './syncVocabulary';
 import { SCAN_CONFLICTS_HREF, SCAN_DEAD_LETTER_HREF } from './workbenchOverlayLinks';
 
 // "Offline" means the recognition service is *currently unreachable*, which is
@@ -64,6 +65,8 @@ export const translateSyncHealthWarning = (warning: SyncHealthWarning): string =
   switch (warning.code) {
     case 'open_conflicts_high':
       return __('Open sync conflicts exceed the configured warning threshold.', 'alt-context');
+    case 'backend_roster_regressed':
+      return SYNC_VOCABULARY.backendRegressionWarning;
     default:
       return warning.message;
   }

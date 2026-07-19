@@ -345,6 +345,7 @@ class Admin {
 					'recognitionSyncHealth'          => rest_url( 'acx/v1/recognition/sync/health' ),
 					'recognitionSyncTrigger'         => rest_url( 'acx/v1/recognition/sync/trigger' ),
 					'recognitionSyncResetMirror'     => rest_url( 'acx/v1/recognition/sync/reset-mirror' ),
+					'recognitionSyncRetryFailed'     => rest_url( 'acx/v1/recognition/sync/retry-failed' ),
 					'recognitionMediaIdentities'     => rest_url( 'acx/v1/recognition/media-identities' ),
 					'retentionStatus'                => rest_url( 'acx/v1/retention/status' ),
 					'retentionPolicy'                => rest_url( 'acx/v1/retention/policy' ),

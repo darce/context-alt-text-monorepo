@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Iterable
+from dataclasses import fields
 from pathlib import Path
+
+from recognition.application.embedding.detector import FaceDetection
 
 # These are the only application-layer files that should mention InsightFaceAdapter.
 # tasks/scan.py belongs here because it wires adapter providers, even though it
@@ -164,3 +167,51 @@ def test_only_known_application_seams_make_remote_adapter_calls() -> None:
     repo_root = _repo_root()
 
     assert _find_remote_call_sites(repo_root) == _ALLOWED_REMOTE_CALL_SITES
+
+
+# Exact neutral seam field set (must match FaceDetection). Pose retained for
+# pose-bucket/diversity + API; landmarks optional five-point geometry (FIR2-BR-02);
+# age/gender excluded (FIR-2 S4). Canonical quality is pose-neutral (FIR2-BR-03).
+_ALLOWED_SEAM_FIELDS = frozenset(
+    {
+        "media_id",
+        "bbox",
+        "confidence",
+        "embedding",
+        "pose_pitch",
+        "pose_yaw",
+        "pose_roll",
+        "image_phash",
+        "landmark_quality",
+        "model_id",
+        "landmarks",
+    }
+)
+
+# Model-specific field names that must not reappear on the neutral seam type.
+_FORBIDDEN_SEAM_FIELDS = frozenset(
+    {
+        "embedding_512",
+        "embedding_1024",
+        "normed_embedding",
+        "det_score",
+        "kps",
+        # InsightFace demographic attributes (FIR-2 S4 removed)
+        "age",
+        "gender",
+    }
+)
+
+
+def test_face_detection_seam_rejects_model_specific_fields() -> None:
+    """Neutral FaceDetection must match allowlist and reject InsightFace-only fields."""
+    field_names = {f.name for f in fields(FaceDetection)}
+    assert field_names == _ALLOWED_SEAM_FIELDS, (
+        f"FaceDetection fields drifted: extra={sorted(field_names - _ALLOWED_SEAM_FIELDS)} "
+        f"missing={sorted(_ALLOWED_SEAM_FIELDS - field_names)}"
+    )
+    leaked = field_names & _FORBIDDEN_SEAM_FIELDS
+    assert not leaked, f"model-specific fields on FaceDetection: {sorted(leaked)}"
+    # Re-add pins would fail both equality and forbidden intersection.
+    assert "age" not in field_names
+    assert "gender" not in field_names

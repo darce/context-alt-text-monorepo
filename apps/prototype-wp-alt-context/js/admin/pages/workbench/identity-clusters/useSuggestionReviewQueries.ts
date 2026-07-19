@@ -7,19 +7,36 @@ import {
   fetchPendingMergeSuggestions,
   fetchPendingNameSuggestions,
   fetchPendingSuggestions,
-  type PendingSuggestionsResponse,
 } from '../../../api/recognition';
+import type { DataSource } from '../../../api/recognition/types';
 import { buildSuggestionReviewItems } from './suggestionReviewItems';
+import { fromPendingRow, type ProjectedSuggestion } from './suggestionProjection';
 
 export const SUGGESTION_PAGE_SIZE = 25;
 const TOP_UNLABELED_LIMIT = 20;
+
+/**
+ * Cached review-queue page: adapted ProjectedSuggestion rows + honest envelope dataSource.
+ * Adapter lives in queryFn so optimistic filters match on suggestionId (PR-20).
+ */
+export interface SuggestionReviewPage {
+  items: ProjectedSuggestion[];
+  /** From envelope only — never defaulted (rg-015). */
+  dataSource: DataSource | undefined;
+}
 
 export const useSuggestionReviewQueries = () => {
   const tenantId = getConfig().tenant_id ?? '';
 
   const assignmentQuery = useQuery({
-    queryKey: queryKeys.suggestions.pending(),
-    queryFn: () => fetchPendingSuggestions(SUGGESTION_PAGE_SIZE, 0),
+    queryKey: queryKeys.suggestions.projection.reviewPage(0),
+    queryFn: async (): Promise<SuggestionReviewPage> => {
+      const response = await fetchPendingSuggestions(SUGGESTION_PAGE_SIZE, 0);
+      return {
+        items: response.suggestions.map(fromPendingRow),
+        dataSource: response.data_source,
+      };
+    },
     refetchInterval: false,
     retry: false,
   });
@@ -46,7 +63,7 @@ export const useSuggestionReviewQueries = () => {
     refetchOnMount: 'always',
   });
 
-  const assignmentSuggestions = assignmentQuery.data?.suggestions;
+  const assignmentSuggestions = assignmentQuery.data?.items;
 
   return {
     assignmentQuery,
@@ -54,7 +71,7 @@ export const useSuggestionReviewQueries = () => {
     nameQuery,
     topUnlabeledQuery,
     assignmentSuggestions,
-    assignmentDataSource: assignmentQuery.data?.data_source,
+    assignmentDataSource: assignmentQuery.data?.dataSource,
     mergeSuggestions: mergeQuery.data?.suggestions ?? [],
     nameSuggestions: nameQuery.data?.suggestions ?? [],
     nameDataSource: nameQuery.data?.data_source,
@@ -65,5 +82,3 @@ export const useSuggestionReviewQueries = () => {
     reviewItems: buildSuggestionReviewItems(assignmentSuggestions),
   };
 };
-
-export type { PendingSuggestionsResponse };

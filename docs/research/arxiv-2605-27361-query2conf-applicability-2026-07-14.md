@@ -30,9 +30,9 @@ The paper is RAG-centric, but its core move — *decompose input understanding f
 
 ## Why full BRANE is premature
 
-1. **Profiling data scale:** per-config predictors train on labeled profiling runs (600+ queries/benchmark in the paper). Our labeled set is `scene/tests/seed/golden.json` — 37 entries. ~16× short of the smallest benchmark, and it labels recognition ground truth, not caption-quality-per-config.
+1. **Profiling data scale:** per-config predictors train on labeled profiling runs (600+ queries/benchmark in the paper). Our labeled set is `scene/tests/seed/golden.json` — 37 entries. ~16× short of the smallest benchmark, and it labels recognition ground truth plus per-image caption constraints (`base_caption`/`must_right`/`easy_wrong`), not caption-quality-per-config.
 2. **No traffic:** greenfield, no production users (per project policy) — no real query distribution to learn characteristics from; a learned router would be fit to synthetic data.
-3. **Config space is small:** with effectively 2–3 live configs (seeded / florence_small / gpu_qwen30b[_ensemble]), Pareto pruning and Lagrangian selection are overkill; a heuristic gate captures most of the win.
+3. **Config space is small:** with 3 live config families (4 available profiles: seeded / florence_small / gpu_qwen30b[_ensemble]), Pareto pruning and Lagrangian selection are overkill; a heuristic gate captures most of the win.
 4. **Per-config cost/outcome accounting doesn't exist yet** — nothing records which config produced which caption at what cost, so there is nothing to train or even evaluate a router against.
 
 ## Recommended adoption path (cheap → learned)

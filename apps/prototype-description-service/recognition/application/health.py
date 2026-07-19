@@ -8,10 +8,12 @@ functions — the HTTP layer owns wiring them to FastAPI dependencies.
 from __future__ import annotations
 
 import threading
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from recognition.infrastructure.face_pipeline.provenance import (
@@ -31,6 +33,36 @@ from shared.health import HealthReport, HealthStatus
 _FACE_PIPELINE_VERIFY_CACHE: dict[str, ModelVerifyOutcome] = {}
 _FACE_PIPELINE_VERIFY_CACHE_LOCK = threading.Lock()
 
+# Identity embedding columns that must share configured PGVECTOR_DIM ([EMB-05], [rg-005]).
+IDENTITY_VECTOR_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("media_identities", "embedding"),
+    ("identity_cluster_representatives", "embedding"),
+    ("mv_identity_cluster_centroids", "centroid"),
+)
+
+# Live pgvector typmod probe: tables + matview via pg_catalog (no convenience guesses).
+# atttypmod for pgvector ``vector(N)`` is the dimension N (or -1 when unspecified).
+_IDENTITY_VECTOR_TYPMOD_SQL = """
+SELECT
+  c.relname::text AS table_name,
+  a.attname::text AS column_name,
+  a.atttypmod AS vector_dim
+FROM pg_catalog.pg_attribute AS a
+JOIN pg_catalog.pg_class AS c ON a.attrelid = c.oid
+JOIN pg_catalog.pg_namespace AS n ON c.relnamespace = n.oid
+JOIN pg_catalog.pg_type AS t ON a.atttypid = t.oid
+WHERE n.nspname = current_schema()
+  AND c.relkind IN ('r', 'm', 'p')
+  AND NOT a.attisdropped
+  AND a.attnum > 0
+  AND t.typname = 'vector'
+  AND (
+    (c.relname = 'media_identities' AND a.attname = 'embedding')
+    OR (c.relname = 'identity_cluster_representatives' AND a.attname = 'embedding')
+    OR (c.relname = 'mv_identity_cluster_centroids' AND a.attname = 'centroid')
+  )
+"""
+
 
 @dataclass(frozen=True, slots=True)
 class CheckResult:
@@ -49,16 +81,152 @@ def check_health() -> HealthReport:
     return HealthReport.ok("recognition")
 
 
-async def check_database(session: AsyncSession | None) -> CheckResult:
-    """Reuse the session dependency's built-in SELECT 1 probe.
+def _row_triple(row: Any) -> tuple[str, str, Any]:
+    """Normalize a catalog row to (relation, column, dim)."""
+    if isinstance(row, (tuple, list)) and len(row) >= 3:
+        return str(row[0]), str(row[1]), row[2]
+    # SQLAlchemy Row: indexable / _mapping
+    try:
+        return str(row[0]), str(row[1]), row[2]
+    except Exception as exc:
+        raise ValueError(f"malformed vector typmod row: {row!r}") from exc
 
-    `get_observability_session` already runs SELECT 1 before yielding a live
-    session and yields None when the probe fails. A second SELECT 1 here would
-    double DB load on every /ready hit (BR-03) without adding signal.
+
+def validate_identity_vector_dimensions(
+    rows: Sequence[Any],
+    *,
+    configured_dim: int,
+) -> CheckResult:
+    """Pure validator for live identity-vector typmods vs configured PGVECTOR_DIM.
+
+    Fail closed on empty/missing/duplicate/malformed rows, non-positive dims,
+    or any configured-vs-live mismatch. Does not mutate the database.
+    """
+    expected = set(IDENTITY_VECTOR_COLUMNS)
+    if configured_dim <= 0:
+        return CheckResult(
+            "database",
+            HealthStatus.UNHEALTHY,
+            f"invalid configured pgvector dimension={configured_dim}",
+        )
+    if not rows:
+        return CheckResult(
+            "database",
+            HealthStatus.UNHEALTHY,
+            (
+                "missing identity vector schema (no pgvector typmod rows); "
+                f"configured_dimension={configured_dim}"
+            ),
+        )
+
+    seen: dict[tuple[str, str], int] = {}
+    try:
+        for raw in rows:
+            table, column, raw_dim = _row_triple(raw)
+            key = (table, column)
+            if key not in expected:
+                return CheckResult(
+                    "database",
+                    HealthStatus.UNHEALTHY,
+                    (
+                        f"unexpected vector column {table}.{column}; "
+                        f"configured_dimension={configured_dim}"
+                    ),
+                )
+            if key in seen:
+                return CheckResult(
+                    "database",
+                    HealthStatus.UNHEALTHY,
+                    (
+                        f"duplicate vector typmod for {table}.{column}; "
+                        f"configured_dimension={configured_dim}"
+                    ),
+                )
+            try:
+                dim = int(raw_dim)
+            except (TypeError, ValueError):
+                return CheckResult(
+                    "database",
+                    HealthStatus.UNHEALTHY,
+                    (
+                        f"malformed vector dimension for {table}.{column}={raw_dim!r}; "
+                        f"configured_dimension={configured_dim}"
+                    ),
+                )
+            if dim <= 0:
+                return CheckResult(
+                    "database",
+                    HealthStatus.UNHEALTHY,
+                    (
+                        f"non-positive vector dimension for {table}.{column}={dim}; "
+                        f"configured_dimension={configured_dim}"
+                    ),
+                )
+            seen[key] = dim
+    except ValueError as exc:
+        return CheckResult(
+            "database",
+            HealthStatus.UNHEALTHY,
+            f"malformed vector typmod rows: {exc}; configured_dimension={configured_dim}",
+        )
+
+    missing = expected - set(seen)
+    if missing:
+        missing_s = ", ".join(f"{t}.{c}" for t, c in sorted(missing))
+        return CheckResult(
+            "database",
+            HealthStatus.UNHEALTHY,
+            (
+                f"missing identity vector columns: {missing_s}; "
+                f"configured_dimension={configured_dim}"
+            ),
+        )
+
+    mismatches = [(f"{t}.{c}", d) for (t, c), d in sorted(seen.items()) if d != configured_dim]
+    if mismatches:
+        live_s = ", ".join(f"{name}={dim}" for name, dim in mismatches)
+        all_live = ", ".join(f"{t}.{c}={d}" for (t, c), d in sorted(seen.items()))
+        return CheckResult(
+            "database",
+            HealthStatus.UNHEALTHY,
+            (
+                f"pgvector dimension mismatch: configured={configured_dim}, "
+                f"live_mismatch={live_s}, live_all=[{all_live}]"
+            ),
+        )
+
+    return CheckResult(
+        "database",
+        HealthStatus.OK,
+        f"reachable; pgvector_dimension={configured_dim}",
+    )
+
+
+async def check_database(session: AsyncSession | None) -> CheckResult:
+    """Probe DB reachability and live identity-vector width vs PGVECTOR_DIM.
+
+    The session dependency already ran SELECT 1 (or yielded None). This probe
+    additionally reads pgvector typmods for identity embedding columns so
+    configured-vs-live dimension drift cannot report ready ([EMB-05], [rg-005],
+    [OBS-08]). Fail closed; never mutate/heal schema here.
     """
     if session is None:
         return CheckResult("database", HealthStatus.UNHEALTHY, "connection_unavailable")
-    return CheckResult("database", HealthStatus.OK, "reachable")
+
+    from db.settings import get_database_settings
+
+    configured_dim = int(get_database_settings().pgvector_dimension)
+    try:
+        result = await session.execute(text(_IDENTITY_VECTOR_TYPMOD_SQL))
+        rows = result.all()
+    except Exception as exc:
+        return CheckResult(
+            "database",
+            HealthStatus.UNHEALTHY,
+            f"vector dimension probe failed: {type(exc).__name__}",
+        )
+
+    return validate_identity_vector_dimensions(rows, configured_dim=configured_dim)
 
 
 def check_breaker(breaker: SessionDependencyCircuitBreaker) -> CheckResult:
@@ -89,24 +257,53 @@ def check_model_cache(cache_dir: Path, model_name: str = "buffalo_l") -> CheckRe
     return CheckResult("model_cache", HealthStatus.OK, f"{len(onnx_files)} bundle file(s)")
 
 
-def _cached_verify_outcome(name: str, *, models_dir: Path) -> ModelVerifyOutcome:
-    """Return last verified outcome, re-running full sha256 on miss or mtime/size drift.
+def _stat_file_identity(path: Path) -> tuple[int, int] | None:
+    """Return (mtime_ns, size) for an existing file; None on missing/race ([DRIFT-02])."""
+    try:
+        if not path.is_file():
+            return None
+        st = path.stat()
+        return (int(st.st_mtime_ns), int(st.st_size))
+    except OSError:
+        return None
 
-    Never reports OK for bytes that have not passed ``load_verified_model`` at
-    least once in this process ([EMB-05], [DRIFT-02]).
+
+def _cached_verify_outcome(name: str, *, models_dir: Path) -> ModelVerifyOutcome:
+    """Return last verified outcome, re-running full sha256 on miss or identity drift.
+
+    Cache freshness observes both model and license path identity (existence,
+    mtime_ns, size). Stable model+license hits avoid rehashing large ONNX files;
+    license-only drift forces full re-verify ([EMB-05], [DRIFT-02]).
     """
     entry = MODEL_MANIFEST[name]
     path = models_dir / entry.file_name
+    license_path = models_dir / entry.license_file
     cache_key = str(path.resolve()) if path.exists() else str(path)
 
     with _FACE_PIPELINE_VERIFY_CACHE_LOCK:
         cached = _FACE_PIPELINE_VERIFY_CACHE.get(cache_key)
-        if path.is_file():
-            st = path.stat()
-            if cached is not None and cached.mtime_ns == st.st_mtime_ns and cached.size == st.st_size:
+        model_id = _stat_file_identity(path)
+        license_id = _stat_file_identity(license_path)
+
+        if cached is not None and model_id is not None and license_id is not None:
+            if (
+                cached.mtime_ns == model_id[0]
+                and cached.size == model_id[1]
+                and cached.license_mtime_ns == license_id[0]
+                and cached.license_size == license_id[1]
+            ):
                 return cached
-        elif cached is not None and not cached.ok and cached.mtime_ns == 0 and cached.size == 0:
-            # Missing file already verified-failed with no stat; re-check so recovery works.
+        elif (
+            cached is not None
+            and not cached.ok
+            and cached.mtime_ns == 0
+            and cached.size == 0
+            and cached.license_mtime_ns == 0
+            and cached.license_size == 0
+            and model_id is None
+            and license_id is None
+        ):
+            # Both artifacts still missing after a prior fail; re-check recovery.
             pass
 
         outcome = verify_face_pipeline_model(name, models_dir=models_dir)
@@ -128,6 +325,10 @@ def check_face_pipeline_models(models_dir: Path) -> CheckResult:
     After model verification passes, also assert three-way embedding dimension
     equality (manifest == pgvector == identity_detection) so a 512-dim env with
     SFace-128 models cannot report ready (E2E-03).
+
+    Finally construct/prove the process-wide shared ORT runtime used by serve
+    so hashes+dims alone cannot green-light a broken InferenceSession
+    ([GROKHARM-04][SERVE-01]). Healthy readiness populates/reuses that singleton.
     """
     root = Path(models_dir)
     failures: list[str] = []
@@ -153,6 +354,28 @@ def check_face_pipeline_models(models_dir: Path) -> CheckResult:
             "model_cache",
             HealthStatus.UNHEALTHY,
             f"embedding dimension mismatch: {exc}",
+        )
+    try:
+        from recognition.config import get_settings
+        from recognition.infrastructure.embeddings.face_pipeline_adapter import (
+            get_shared_face_pipeline_runtime,
+        )
+
+        # Face-pipeline readiness only; pass configured thresholds so readiness
+        # and serve share the same runtime cache key (profile/models_dir/top-k).
+        fp = get_settings().face_pipeline
+        get_shared_face_pipeline_runtime(
+            profile="face_pipeline",
+            models_dir=root,
+            score_threshold=float(fp.score_threshold),
+            nms_threshold=float(fp.nms_threshold),
+            top_k=int(fp.top_k),
+        )
+    except Exception as exc:
+        return CheckResult(
+            "model_cache",
+            HealthStatus.UNHEALTHY,
+            f"runtime unavailable: {exc}",
         )
     return CheckResult("model_cache", HealthStatus.OK, f"verified: yunet+sface @ {root}")
 

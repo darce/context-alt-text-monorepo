@@ -21,6 +21,46 @@ from recognition.domain.maturity import ClusterMaturityLevel, compute_maturity_a
 from recognition.domain.repositories import ClusterRepository
 
 
+def _pose_risk_score(
+    *,
+    pose_pitch: float | None,
+    pose_yaw: float | None,
+    pose_roll: float | None,
+) -> float | None:
+    """Return prior pose risk (|pitch|+|yaw|+|roll|)/90, or None when pose is incomplete.
+
+    Missing any component is fail-closed (caller treats as no leniency). Present
+    pose uses the historical absolute-angle risk floor separate from canonical
+    quality score ([CAL-01], FIR2-BR-03).
+    """
+    if pose_pitch is None or pose_yaw is None or pose_roll is None:
+        return None
+    return (abs(float(pose_pitch)) + abs(float(pose_yaw)) + abs(float(pose_roll))) / 90.0
+
+
+def apply_pose_safety_to_quality_adj(
+    quality_adj: float,
+    *,
+    pose_pitch: float | None,
+    pose_yaw: float | None,
+    pose_roll: float | None,
+) -> float:
+    """Remove quality-derived leniency for extreme or missing pose.
+
+    Canonical ``IdentityQualityInfo.score`` stays pose-neutral. Assignment only
+    gates *negative* quality_adj (leniency): missing pose → 0; present pose scales
+    leniency by ``max(0, 1 - pose_risk)`` so extreme angles lose all leniency.
+    Non-negative (stricter) quality adjustments are unchanged.
+    """
+    if quality_adj >= 0.0:
+        return quality_adj
+    risk = _pose_risk_score(pose_pitch=pose_pitch, pose_yaw=pose_yaw, pose_roll=pose_roll)
+    if risk is None:
+        return 0.0
+    frontal_factor = max(0.0, 1.0 - risk)
+    return quality_adj * frontal_factor
+
+
 class ConfidenceCheck(AssignmentCheck):
     """Handles confidence gating with adaptive thresholds based on cluster maturity and identity quality."""
 
@@ -55,6 +95,7 @@ class ConfidenceCheck(AssignmentCheck):
         1. Base threshold (from settings)
         2. Cluster maturity adjustment (stricter for new clusters, lenient for mature)
         3. Identity quality adjustment (stricter for poor quality faces, lenient for high confidence)
+        4. Pose safety floor on quality-derived leniency (assignment policy only)
 
         Args:
             candidate: Proposed assignment to evaluate.
@@ -103,17 +144,19 @@ class ConfidenceCheck(AssignmentCheck):
         curriculum_adj = self.settings.curriculum_coefficient * curriculum_t
 
         # 2. Compute Identity Quality Adjustment for the candidate
-        # We need detection metrics from the identity
+        # Canonical score remains pose-neutral (confidence × bbox only).
         quality_info = compute_identity_quality(
             confidence=identity.confidence,
-            pose_pitch=identity.pose_pitch,
-            pose_yaw=identity.pose_yaw,
-            pose_roll=identity.pose_roll,
             bbox_width=identity.bbox_width,
             bbox_height=identity.bbox_height,
             maturity=maturity_level,
         )
-        quality_adj = quality_info.threshold_adjustment
+        quality_adj = apply_pose_safety_to_quality_adj(
+            quality_info.threshold_adjustment,
+            pose_pitch=identity.pose_pitch,
+            pose_yaw=identity.pose_yaw,
+            pose_roll=identity.pose_roll,
+        )
 
         # 3. Compute Final Threshold + Suggestion Band
         base = self.settings.similarity_threshold

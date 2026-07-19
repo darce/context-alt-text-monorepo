@@ -19,20 +19,70 @@ import pytest
 from recognition.infrastructure.face_pipeline.provenance import (
     DEFAULT_MODELS_DIR,
     MODEL_MANIFEST,
+    ModelIntegrityError,
+    ModelMissingError,
+    load_verified_model,
 )
 
 _SERVICE_ROOT = Path(__file__).resolve().parents[3]
 _FIXTURE_DIR = _SERVICE_ROOT / "recognition" / "tests" / "fixtures" / "face_pipeline"
 
-MODELS_PRESENT = (DEFAULT_MODELS_DIR / MODEL_MANIFEST["yunet"].file_name).is_file() and (
-    DEFAULT_MODELS_DIR / MODEL_MANIFEST["sface"].file_name
-).is_file()
+
+def _models_present_verified() -> bool:
+    """True only when YuNet + SFace pass manifest size+sha256 (+ license) checks.
+
+    Existence alone is insufficient: a corrupt/partial ONNX must not look present
+    and produce a false-green skip or a late cryptic load error (FIR3-BR-01).
+    """
+    try:
+        for name in ("yunet", "sface"):
+            load_verified_model(name, models_dir=DEFAULT_MODELS_DIR)
+        return True
+    except (ModelMissingError, ModelIntegrityError):
+        return False
+
+
+MODELS_PRESENT = _models_present_verified()
 MODELS_SKIP = (
     "FIR-3 face models missing under recognition/infrastructure/face_pipeline/models/ — "
     "run: uv run python scripts/fetch_face_pipeline_models.py "
     f"(expected yunet={MODEL_MANIFEST['yunet'].file_name}, "
     f"sface={MODEL_MANIFEST['sface'].file_name})"
 )
+
+# Fail-closed parity gate (FIR3-BR-01 / FIR4-BR-01). Ordinary unit runs leave
+# this unset and may skip model-gated tests; the dedicated CI parity workflow
+# sets FACE_PIPELINE_PARITY_REQUIRED=1 so missing models are a hard failure.
+FACE_PIPELINE_PARITY_REQUIRED_ENV = "FACE_PIPELINE_PARITY_REQUIRED"
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def parity_required() -> bool:
+    """True when the dedicated face-pipeline parity gate is fail-closed."""
+    return os.environ.get(FACE_PIPELINE_PARITY_REQUIRED_ENV, "").strip().lower() in _TRUTHY
+
+
+def models_absent_allows_skip() -> bool:
+    """Skip condition for ordinary modelless runs (not the required parity gate)."""
+    return (not MODELS_PRESENT) and (not parity_required())
+
+
+def ensure_face_pipeline_models() -> None:
+    """Skip when models are optional and missing; fail clearly when required.
+
+    Ordinary unit/CI inventory runs leave FACE_PIPELINE_PARITY_REQUIRED unset so
+    missing ONNX bytes still skip. The dedicated parity workflow sets the env
+    so a missing fetch becomes a red failure rather than N skips.
+    """
+    if MODELS_PRESENT:
+        return
+    if parity_required():
+        pytest.fail(
+            f"{FACE_PIPELINE_PARITY_REQUIRED_ENV}=1 but face pipeline models are missing. "
+            f"{MODELS_SKIP}"
+        )
+    pytest.skip(MODELS_SKIP)
+
 
 # Manifest dim is the only allowed embedding-size constant (sr-007 / rg-015).
 SFACE_EMBEDDING_DIM = int(MODEL_MANIFEST["sface"].embedding_dim)  # type: ignore[arg-type]
@@ -192,8 +242,7 @@ def border_clipped_face_canvas() -> np.ndarray:
 
 @pytest.fixture(scope="module")
 def ort_sface_embedder():
-    if not MODELS_PRESENT:
-        pytest.skip(MODELS_SKIP)
+    ensure_face_pipeline_models()
     from recognition.infrastructure.face_pipeline.ort_adapters import OrtSFaceEmbedder
 
     return OrtSFaceEmbedder()
@@ -201,8 +250,7 @@ def ort_sface_embedder():
 
 @pytest.fixture(scope="module")
 def ocv_sface_embedder():
-    if not MODELS_PRESENT:
-        pytest.skip(MODELS_SKIP)
+    ensure_face_pipeline_models()
     from recognition.infrastructure.face_pipeline.opencv_ref import OpenCVSFaceEmbedder
 
     return OpenCVSFaceEmbedder()
@@ -210,8 +258,7 @@ def ocv_sface_embedder():
 
 @pytest.fixture(scope="module")
 def ort_yunet_detector():
-    if not MODELS_PRESENT:
-        pytest.skip(MODELS_SKIP)
+    ensure_face_pipeline_models()
     from recognition.infrastructure.face_pipeline.ort_adapters import OrtYuNetDetector
 
     return OrtYuNetDetector()
@@ -219,8 +266,7 @@ def ort_yunet_detector():
 
 @pytest.fixture(scope="module")
 def ocv_yunet_detector():
-    if not MODELS_PRESENT:
-        pytest.skip(MODELS_SKIP)
+    ensure_face_pipeline_models()
     from recognition.infrastructure.face_pipeline.opencv_ref import OpenCVYuNetDetector
 
     return OpenCVYuNetDetector()

@@ -7,6 +7,7 @@ type-safe defaults. Override by instantiating with explicit values in code.
 
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
 from typing import Literal
@@ -57,8 +58,14 @@ def _resolve_face_pipeline_models_dir() -> Path | None:
 
 
 def _resolve_embedding_dimension() -> int:
-    """Bind identity_detection.embedding_dimension to RECOGNITION_EMBEDDING_DIMENSION."""
-    return int(os.environ.get("RECOGNITION_EMBEDDING_DIMENSION", "512"))
+    """Bind identity_detection.embedding_dimension to DatabaseSettings.pgvector_dimension.
+
+    PGVECTOR_DIM is the sole dimension root. RECOGNITION_EMBEDDING_DIMENSION is
+    ignored so it cannot create a second root.
+    """
+    from db.settings import get_database_settings
+
+    return int(get_database_settings().pgvector_dimension)
 
 
 def _resolve_face_pipeline_timeout_s() -> float:
@@ -66,6 +73,34 @@ def _resolve_face_pipeline_timeout_s() -> float:
     from db.settings import get_database_settings
 
     return float(get_database_settings().embedding_timeout_s)
+
+
+def _resolve_face_pipeline_max_workers() -> int:
+    """Read RECOGNITION_FACE_PIPELINE_MAX_WORKERS; fail closed on empty/malformed/<=0."""
+    raw = os.environ.get("RECOGNITION_FACE_PIPELINE_MAX_WORKERS")
+    if raw is None:
+        return 2
+    stripped = raw.strip()
+    if not stripped:
+        raise ValueError(
+            "Invalid RECOGNITION_FACE_PIPELINE_MAX_WORKERS: empty value; "
+            "must be a positive integer"
+        )
+    # Reject floats ("1.5") and non-numeric tokens; only optional sign + digits.
+    if stripped[0] in "+-" and not stripped[1:].isdigit():
+        raise ValueError(
+            f"Invalid RECOGNITION_FACE_PIPELINE_MAX_WORKERS={raw!r}; must be a positive integer"
+        )
+    if stripped[0] not in "+-" and not stripped.isdigit():
+        raise ValueError(
+            f"Invalid RECOGNITION_FACE_PIPELINE_MAX_WORKERS={raw!r}; must be a positive integer"
+        )
+    value = int(stripped)
+    if value <= 0:
+        raise ValueError(
+            f"Invalid RECOGNITION_FACE_PIPELINE_MAX_WORKERS={value}; must be a positive integer"
+        )
+    return value
 
 
 class InsightFaceSettings(BaseModel):
@@ -121,6 +156,13 @@ class FacePipelineSettings(BaseModel):
         default_factory=_resolve_face_pipeline_timeout_s,
         description="Per-image detect timeout (defaults to DB_EMBEDDING_TIMEOUT_SECONDS).",
     )
+    max_workers: int = Field(
+        default_factory=_resolve_face_pipeline_max_workers,
+        description=(
+            "Process-wide face_pipeline executor + admission capacity. "
+            "Env: RECOGNITION_FACE_PIPELINE_MAX_WORKERS (default 2)."
+        ),
+    )
 
     @field_validator("profile", mode="before")
     @classmethod
@@ -129,6 +171,51 @@ class FacePipelineSettings(BaseModel):
             raise ValueError(
                 f"Invalid face_pipeline profile={value!r}; allowed values: {sorted(_FACE_PIPELINE_PROFILES)}"
             )
+        return value
+
+    @field_validator("max_workers", mode="before")
+    @classmethod
+    def _validate_max_workers(cls, value: object) -> object:
+        """Fail closed on non-positive or non-integral capacity ([CFG-01/02])."""
+        if isinstance(value, bool):
+            raise ValueError(f"Invalid face_pipeline max_workers={value!r}; must be a positive integer")
+        if isinstance(value, float):
+            if not value.is_integer():
+                raise ValueError(f"Invalid face_pipeline max_workers={value!r}; must be a positive integer")
+            value = int(value)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped or (stripped[0] in "+-" and not stripped[1:].isdigit()) or (
+                stripped[0] not in "+-" and not stripped.isdigit()
+            ):
+                raise ValueError(f"Invalid face_pipeline max_workers={value!r}; must be a positive integer")
+            value = int(stripped)
+        if not isinstance(value, int):
+            raise ValueError(f"Invalid face_pipeline max_workers={value!r}; must be a positive integer")
+        if value <= 0:
+            raise ValueError(f"Invalid face_pipeline max_workers={value}; must be a positive integer")
+        return value
+
+    @field_validator("timeout_s", mode="before")
+    @classmethod
+    def _validate_timeout_s(cls, value: object) -> object:
+        """Fail closed on non-finite or non-positive detect timeouts ([CFG-01/02], [RES-03])."""
+        if isinstance(value, bool):
+            raise ValueError(f"Invalid face_pipeline timeout_s={value!r}; must be a finite positive number")
+        if isinstance(value, str):
+            stripped = value.strip()
+            try:
+                value = float(stripped)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid face_pipeline timeout_s={value!r}; must be a finite positive number"
+                ) from exc
+        if isinstance(value, int) and not isinstance(value, bool):
+            value = float(value)
+        if not isinstance(value, float):
+            raise ValueError(f"Invalid face_pipeline timeout_s={value!r}; must be a finite positive number")
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(f"Invalid face_pipeline timeout_s={value!r}; must be a finite positive number")
         return value
 
     @property
@@ -146,7 +233,10 @@ class IdentityDetectionSettings(BaseModel):
     max_identities_per_image: int = Field(default=999, description="Maximum faces to detect per image.")
     embedding_dimension: int = Field(
         default_factory=_resolve_embedding_dimension,
-        description="Embedding vector dimension (face identity only). Env: RECOGNITION_EMBEDDING_DIMENSION.",
+        description=(
+            "Embedding vector dimension (face identity only). "
+            "Derived from PGVECTOR_DIM / DatabaseSettings.pgvector_dimension."
+        ),
     )
     max_candidates: int = Field(default=10, description="Maximum candidate matches to consider.")
 

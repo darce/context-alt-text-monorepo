@@ -13,10 +13,11 @@ from __future__ import annotations
 import hashlib
 import io
 import logging
+import math
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import imagehash
@@ -36,28 +37,75 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+LandmarkPoint = tuple[float, float]
+LandmarkSet = tuple[LandmarkPoint, LandmarkPoint, LandmarkPoint, LandmarkPoint, LandmarkPoint]
+
+
+def normalize_landmarks(raw: Any) -> LandmarkSet | None:
+    """Normalize boundary landmark input to five finite (x, y) float points.
+
+    Accepts None (passthrough) or exactly five numeric point pairs. Rejects
+    wrong arity, non-numeric coords, and non-finite values explicitly.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, (str, bytes)):
+        raise TypeError(f"landmarks must be a sequence of 5 (x, y) points, got {type(raw).__name__}")
+    try:
+        points = list(raw)
+    except TypeError as exc:
+        raise TypeError(
+            f"landmarks must be a sequence of 5 (x, y) points, got {type(raw).__name__}"
+        ) from exc
+    if len(points) != 5:
+        raise ValueError(f"landmarks must contain exactly 5 points, got {len(points)}")
+
+    normalized: list[LandmarkPoint] = []
+    for i, point in enumerate(points):
+        if isinstance(point, (str, bytes)):
+            raise TypeError(f"landmark[{i}] must be an (x, y) pair, got {type(point).__name__}")
+        try:
+            coords = list(point)
+        except TypeError as exc:
+            raise TypeError(
+                f"landmark[{i}] must be an (x, y) pair, got {type(point).__name__}"
+            ) from exc
+        if len(coords) != 2:
+            raise ValueError(f"landmark[{i}] must have exactly 2 coordinates, got {len(coords)}")
+        try:
+            x = float(coords[0])
+            y = float(coords[1])
+        except (TypeError, ValueError) as exc:
+            raise TypeError(f"landmark[{i}] coordinates must be numeric") from exc
+        if not math.isfinite(x) or not math.isfinite(y):
+            raise ValueError(f"landmark[{i}] coordinates must be finite, got ({x}, {y})")
+        normalized.append((x, y))
+
+    return (
+        normalized[0],
+        normalized[1],
+        normalized[2],
+        normalized[3],
+        normalized[4],
+    )
+
 
 def _compute_detection_quality(
     confidence: float,
-    pose_pitch: float | None,
-    pose_yaw: float | None,
-    pose_roll: float | None,
     bbox: tuple[int, int, int, int],
 ) -> float:
     """Compute quality score from detection metrics.
 
     Delegates to the canonical compute_identity_quality() to ensure consistency
-    between detection-time quality and clustering-time quality.
+    between detection-time quality and clustering-time quality. Pose is not part
+    of threshold quality (FIR2-BR-03).
 
     Args:
         confidence: Detection confidence from the model (0-1).
-        pose_pitch: Head pitch angle in degrees (up/down).
-        pose_yaw: Head yaw angle in degrees (left/right).
-        pose_roll: Head roll angle in degrees (tilt).
         bbox: Bounding box (x1, y1, x2, y2) corner.
 
     Returns:
-        Quality score in [0.0, 1.0]. Lower scores for extreme poses or low confidence.
+        Quality score in [0.0, 1.0] from confidence and bbox size only.
     """
     # Import here to avoid circular dependency
     from recognition.application.assignment.quality import compute_identity_quality
@@ -68,9 +116,6 @@ def _compute_detection_quality(
     bbox_height = int(bbox[3] - bbox[1])
     info = compute_identity_quality(
         confidence=confidence,
-        pose_pitch=pose_pitch,
-        pose_yaw=pose_yaw,
-        pose_roll=pose_roll,
         bbox_width=bbox_width,
         bbox_height=bbox_height,
     )
@@ -81,8 +126,10 @@ def _compute_detection_quality(
 class FaceDetection:
     """Neutral detection/embedding seam type (model-agnostic).
 
-    Age/gender removed (FIR-2 S4). Pose angles remain for quality scoring and
-    clustering maturity; ``model_id`` is stamped by the producing adapter.
+    Age/gender removed (FIR-2 S4). Pose angles remain for pose-bucket /
+    diversity logic (not threshold quality). Optional five-point landmarks
+    surface when the producer has them (FIR2-BR-02). ``model_id`` is stamped
+    by the producing adapter.
     """
 
     media_id: str
@@ -96,6 +143,7 @@ class FaceDetection:
     image_phash: str | None = None
     landmark_quality: float | None = None
     model_id: str = ""
+    landmarks: LandmarkSet | None = None
 
 
 class DetectionTimeoutError(TimeoutError):
@@ -207,7 +255,8 @@ class InsightFaceFaceDetector(FaceDetectorProtocol):
             logger.error("Failed to fetch image from %s: %s", url[:100], e)
             return None
 
-    def _compute_phash(self, image_bytes: bytes) -> str | None:
+    @staticmethod
+    def _compute_phash(image_bytes: bytes) -> str | None:
         """Compute perceptual hash for duplicate detection."""
         try:
             with Image.open(io.BytesIO(image_bytes)) as img:
@@ -259,12 +308,9 @@ class InsightFaceFaceDetector(FaceDetectorProtocol):
 
                 faces: list[FaceDetection] = await self._breaker.call(detect_current_image)
                 for face in faces:
-                    # Compute quality from detection metrics (confidence + pose + size)
+                    # Canonical quality: confidence + bbox size only (FIR2-BR-03)
                     detection_quality = _compute_detection_quality(
                         confidence=face.confidence,
-                        pose_pitch=face.pose_pitch,
-                        pose_yaw=face.pose_yaw,
-                        pose_roll=face.pose_roll,
                         bbox=face.bbox,
                     )
 
@@ -302,4 +348,7 @@ __all__ = [
     "UnavailableFaceDetector",
     "InsightFaceFaceDetector",
     "FaceDetector",
+    "normalize_landmarks",
+    "LandmarkPoint",
+    "LandmarkSet",
 ]

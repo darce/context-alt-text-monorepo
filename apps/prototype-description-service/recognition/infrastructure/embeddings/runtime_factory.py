@@ -27,6 +27,7 @@ from recognition.application.embedding.generator import (
 )
 from recognition.config.settings import RecognitionSettings
 from recognition.infrastructure.embeddings import get_shared_insightface_adapter
+from recognition.observability.face_pipeline_metrics import FacePipelineMetricsObserver
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ async def build_embedding_runtime(
     settings: RecognitionSettings,
     http_client: httpx.AsyncClient | None = None,
     adapter_provider: AdapterProvider | None = None,
+    metrics: FacePipelineMetricsObserver | None = None,
 ) -> tuple[FaceDetectorProtocol, EmbeddingGeneratorProtocol]:
     """Build (detector, generator) for the active runtime mode + face_pipeline profile.
 
@@ -47,6 +49,9 @@ async def build_embedding_runtime(
     - ``profile == "face_pipeline"`` → shared face_pipeline runtime; generator slot
       is ``UnavailableEmbeddingGenerator`` (embeds happen in detect). ``adapter_provider``
       is ignored. Any load/verify failure yields Unavailable* for **both** slots.
+    - ``metrics`` is a process-local observer forwarded into
+      ``FacePipelineFaceDetector`` (FINALB-06); shared runtime singleton does not
+      own process-specific collectors. Other profiles ignore it.
     """
     if settings.runtime_mode == "test":
         return StubFaceDetector(), StubEmbeddingGenerator()
@@ -72,6 +77,7 @@ async def build_embedding_runtime(
             )
             detector: FaceDetectorProtocol = FacePipelineFaceDetector(
                 runtime,
+                metrics=metrics,
                 client=http_client,
                 timeout=float(settings.face_pipeline.timeout_s),
                 breaker=get_shared_face_pipeline_detect_breaker(),

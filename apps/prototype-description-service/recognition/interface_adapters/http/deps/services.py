@@ -378,13 +378,18 @@ def get_scan_service_builder(
     """
     from recognition.config import get_settings as get_recognition_settings
     from recognition.infrastructure.embeddings.runtime_factory import build_embedding_runtime
+    from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
 
     async def _builder(tenant_id: str) -> ScanService:
         if session is None:
             raise RuntimeError("Database session is required for ScanService")
 
         settings = get_recognition_settings()
-        detector, generator = await build_embedding_runtime(settings=settings)
+        # API process observer: same registry as /metrics (FINALB-06).
+        detector, generator = await build_embedding_runtime(
+            settings=settings,
+            metrics=get_default_metrics().face_pipeline,
+        )
 
         return ScanService(
             session=session,

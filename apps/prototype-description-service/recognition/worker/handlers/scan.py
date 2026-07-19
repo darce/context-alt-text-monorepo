@@ -16,7 +16,12 @@ from recognition.application.embedding.generator import EmbeddingGeneratorProtoc
 from recognition.application.scan.capability import ScanWorkerCounters
 from recognition.application.scan.queue_repository import ScanQueueItem
 from recognition.application.scan.scan_queue_service import ScanQueueService
-from recognition.application.scan.service import ObjectStoreFactory, ReconcileResult, ScanService
+from recognition.application.scan.service import (
+    ObjectStoreFactory,
+    PersistIntegrityError,
+    ReconcileResult,
+    ScanService,
+)
 from recognition.application.storage import ObjectStoreError
 from recognition.domain.job import JobStatus
 from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
@@ -120,11 +125,19 @@ class ScanItemHandler:
                     )
                 except Exception as exc:
                     error_message = str(exc)
+                    # Drop staged identity work before any failure-status write
+                    # so FAILED/retry commits only queue state (LOCAL47C-03).
+                    await session.rollback()
+                    # SET LOCAL bypass dies with the rolled-back txn; restore
+                    # before status writes so FORCE RLS still updates the row
+                    # (FIR-FINAL2-LOCAL-01).
+                    await enable_rls_bypass(session)
                     await self._handle_item_failure(
                         repo=repo,
                         item=item,
                         now=now,
                         error_message=error_message,
+                        exc=exc,
                     )
                     await session.commit()
                     logger.exception(
@@ -202,11 +215,14 @@ class ScanItemHandler:
         item: ScanQueueItem,
         now: datetime,
         error_message: str,
+        exc: BaseException | None = None,
     ) -> None:
-        if item.attempts < self._max_attempts:
-            await repo.release_item_for_retry(item_id=item.id, error_message=error_message)
+        # Deterministic persistence failures never succeed on retry: fail the
+        # item immediately regardless of remaining attempts (LOCAL47C-03).
+        if isinstance(exc, PersistIntegrityError) or item.attempts >= self._max_attempts:
+            await repo.mark_item_failed(item_id=item.id, completed_at=now, error_message=error_message)
             return
-        await repo.mark_item_failed(item_id=item.id, completed_at=now, error_message=error_message)
+        await repo.release_item_for_retry(item_id=item.id, error_message=error_message)
 
     def _build_scan_service(self, session: AsyncSession) -> ScanService:
         """Create a ScanService bound to the provided session."""

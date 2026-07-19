@@ -113,11 +113,12 @@ async def test_factory_face_pipeline_success(monkeypatch: pytest.MonkeyPatch) ->
         return runtime
 
     class _FPDet:
-        def __init__(self, rt, *, client=None, timeout=None, breaker=None) -> None:
+        def __init__(self, rt, *, client=None, timeout=None, breaker=None, metrics=None) -> None:
             self.runtime = rt
             self.client = client
             self.timeout = timeout
             self.breaker = breaker
+            self.metrics = metrics
 
     # Lazy import reads from face_pipeline_adapter (S3CR-01); patch there.
     monkeypatch.setattr(fpa, "get_shared_face_pipeline_runtime", _get_runtime)
@@ -160,7 +161,7 @@ async def test_factory_face_pipeline_ignores_adapter_provider(monkeypatch: pytes
     runtime = object()
 
     class _FPDet:
-        def __init__(self, rt, *, client=None, timeout=None, breaker=None) -> None:
+        def __init__(self, rt, *, client=None, timeout=None, breaker=None, metrics=None) -> None:
             self.runtime = rt
 
     monkeypatch.setattr(fpa, "get_shared_face_pipeline_runtime", lambda **kw: runtime)
@@ -261,7 +262,7 @@ async def test_scan_worker_insightface_and_face_pipeline_and_test_mode(
 
     calls: list[str] = []
 
-    async def _fake_build(*, settings, http_client=None, adapter_provider=None):
+    async def _fake_build(*, settings, http_client=None, adapter_provider=None, metrics=None, **_kwargs):
         calls.append(settings.face_pipeline.profile if settings.runtime_mode != "test" else "test")
         if settings.runtime_mode == "test":
             return StubFaceDetector(), StubEmbeddingGenerator()
@@ -309,7 +310,7 @@ async def test_scan_worker_insightface_and_face_pipeline_and_test_mode(
     await worker.__aexit__(None, None, None)
 
     # face_pipeline failure → both Unavailable, not ready, 30s retry
-    async def _fail_build(*, settings, http_client=None, adapter_provider=None):
+    async def _fail_build(*, settings, http_client=None, adapter_provider=None, metrics=None, **_kwargs):
         return UnavailableFaceDetector("half"), UnavailableEmbeddingGenerator("half")
 
     monkeypatch.setattr(sw, "build_embedding_runtime", _fail_build)
@@ -368,7 +369,7 @@ async def test_scan_tasks_site_both_profiles(monkeypatch: pytest.MonkeyPatch) ->
             lambda m=mode, p=profile: SimpleNamespace(runtime_mode=m, face_pipeline=SimpleNamespace(profile=p)),
         )
 
-        async def _build2(*, settings, http_client=None, adapter_provider=None):
+        async def _build2(*, settings, http_client=None, adapter_provider=None, metrics=None, **_kwargs):
             class _D:
                 async def detect(self, sources):
                     return []
@@ -401,7 +402,7 @@ async def test_http_builder_site_both_profiles(monkeypatch: pytest.MonkeyPatch) 
 
     built: list[str] = []
 
-    async def _fake_build(*, settings, http_client=None, adapter_provider=None):
+    async def _fake_build(*, settings, http_client=None, adapter_provider=None, metrics=None, **_kwargs):
         if settings.runtime_mode == "test":
             built.append("test")
             return StubFaceDetector(), StubEmbeddingGenerator()
@@ -453,7 +454,7 @@ async def test_worker_capability_heartbeat_includes_profile(monkeypatch: pytest.
         ),
     )
 
-    async def _ok_build(*, settings, http_client=None, adapter_provider=None):
+    async def _ok_build(*, settings, http_client=None, adapter_provider=None, metrics=None, **_kwargs):
         return object(), UnavailableEmbeddingGenerator(FACE_PIPELINE_GENERATOR_REASON)
 
     monkeypatch.setattr(sw, "build_embedding_runtime", _ok_build)

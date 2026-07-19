@@ -170,7 +170,8 @@ def test_only_known_application_seams_make_remote_adapter_calls() -> None:
 
 
 # Exact neutral seam field set (must match FaceDetection). Pose retained for
-# quality/clustering + API (orchestrator-accepted); age/gender excluded (FIR-2 S4).
+# pose-bucket/diversity + API; landmarks optional five-point geometry (FIR2-BR-02);
+# age/gender excluded (FIR-2 S4). Canonical quality is pose-neutral (FIR2-BR-03).
 _ALLOWED_SEAM_FIELDS = frozenset(
     {
         "media_id",
@@ -183,6 +184,7 @@ _ALLOWED_SEAM_FIELDS = frozenset(
         "image_phash",
         "landmark_quality",
         "model_id",
+        "landmarks",
     }
 )
 

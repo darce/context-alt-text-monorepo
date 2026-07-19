@@ -51,7 +51,7 @@ def _compute_identity_quality(identity: MediaIdentity, settings: ClusteringSetti
     """Compute quality score for a media identity.
 
     Delegates to the canonical compute_identity_quality in quality.py which
-    considers detection confidence, pose angles, and face size.
+    considers detection confidence and face size (pose-neutral, FIR2-BR-03).
 
     Args:
         identity: MediaIdentity with confidence and bbox dimensions.
@@ -62,9 +62,6 @@ def _compute_identity_quality(identity: MediaIdentity, settings: ClusteringSetti
     """
     info = _compute_quality_info(
         confidence=identity.confidence,
-        pose_pitch=identity.pose_pitch,
-        pose_yaw=identity.pose_yaw,
-        pose_roll=identity.pose_roll,
         bbox_width=identity.bbox_width,
         bbox_height=identity.bbox_height,
         settings=settings.quality,

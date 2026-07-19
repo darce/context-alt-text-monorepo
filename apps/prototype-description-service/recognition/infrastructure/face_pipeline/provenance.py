@@ -184,7 +184,11 @@ def load_verified_model(name: str, *, models_dir: Path | None = None) -> Path:
 
 @dataclass(frozen=True, slots=True)
 class ModelVerifyOutcome:
-    """One-shot verified-load outcome for eager readiness probes ([EMB-05])."""
+    """One-shot verified-load outcome for eager readiness probes ([EMB-05]).
+
+    Cache identity covers model and license path stamps so license-only drift
+    invalidates readiness without requiring model byte changes ([DRIFT-02]).
+    """
 
     name: str
     ok: bool
@@ -192,10 +196,24 @@ class ModelVerifyOutcome:
     path: Path
     mtime_ns: int
     size: int
+    license_path: Path | None = None
+    license_mtime_ns: int = 0
+    license_size: int = 0
+
+
+def _stamp_path(path: Path) -> tuple[int, int]:
+    """Return (mtime_ns, size) or (0, 0) when the path is missing/unreadable."""
+    try:
+        if not path.is_file():
+            return (0, 0)
+        st = path.stat()
+        return (int(st.st_mtime_ns), int(st.st_size))
+    except OSError:
+        return (0, 0)
 
 
 def verify_face_pipeline_model(name: str, *, models_dir: Path | None = None) -> ModelVerifyOutcome:
-    """Run ``load_verified_model`` and return a cacheable outcome (mtime/size stamp).
+    """Run ``load_verified_model`` and return a cacheable outcome (model+license stamp).
 
     Used by profile-aware readiness so probes never report OK for bytes that
     have not passed sha256 at least once in this process ([EMB-05], [DRIFT-02]).
@@ -210,27 +228,44 @@ def verify_face_pipeline_model(name: str, *, models_dir: Path | None = None) -> 
             path=root / name,
             mtime_ns=0,
             size=0,
+            license_path=None,
+            license_mtime_ns=0,
+            license_size=0,
         )
     root = Path(models_dir) if models_dir is not None else DEFAULT_MODELS_DIR
     path = root / entry.file_name
+    license_path = root / entry.license_file
     try:
         verified = load_verified_model(name, models_dir=root)
-        st = verified.stat()
+        mtime_ns, size = _stamp_path(verified)
+        lic_mtime_ns, lic_size = _stamp_path(license_path)
+        # Fail closed if we cannot stamp license after a successful verify (stat race).
+        if lic_mtime_ns == 0 and lic_size == 0 and not license_path.is_file():
+            return ModelVerifyOutcome(
+                name=name,
+                ok=False,
+                reason=f"license file missing for {name!r} after verify: {license_path}",
+                path=verified,
+                mtime_ns=mtime_ns,
+                size=size,
+                license_path=license_path,
+                license_mtime_ns=0,
+                license_size=0,
+            )
         return ModelVerifyOutcome(
             name=name,
             ok=True,
             reason=None,
             path=verified,
-            mtime_ns=st.st_mtime_ns,
-            size=st.st_size,
+            mtime_ns=mtime_ns,
+            size=size,
+            license_path=license_path.resolve() if license_path.exists() else license_path,
+            license_mtime_ns=lic_mtime_ns,
+            license_size=lic_size,
         )
     except (ModelIntegrityError, ModelMissingError) as exc:
-        mtime_ns = 0
-        size = 0
-        if path.is_file():
-            st = path.stat()
-            mtime_ns = st.st_mtime_ns
-            size = st.st_size
+        mtime_ns, size = _stamp_path(path)
+        lic_mtime_ns, lic_size = _stamp_path(license_path)
         return ModelVerifyOutcome(
             name=name,
             ok=False,
@@ -238,6 +273,9 @@ def verify_face_pipeline_model(name: str, *, models_dir: Path | None = None) -> 
             path=path,
             mtime_ns=mtime_ns,
             size=size,
+            license_path=license_path,
+            license_mtime_ns=lic_mtime_ns,
+            license_size=lic_size,
         )
 
 

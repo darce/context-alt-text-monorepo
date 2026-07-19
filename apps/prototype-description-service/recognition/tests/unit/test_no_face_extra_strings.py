@@ -153,9 +153,25 @@ def test_pyproject_defines_bench_not_face() -> None:
 
 
 def test_dockerfile_pip_installs_bench_extra() -> None:
-    """S5CR-01: recognition Dockerfile must install the ``.[bench]`` extra."""
+    """S5CR-01 / FIR4-BR-01: image install must pull the bench extra via frozen lock.
+
+    Unlocked ``pip install .[bench]`` is rejected; deps come from ``uv.lock``
+    with ``uv sync --frozen`` (or equivalent exact lock consumption) and the
+    bench extra enabled so insightface remains the dark default until FIR-6.
+    """
     dockerfile = (_service_root() / "Dockerfile").read_text(encoding="utf-8")
-    pip_lines = [ln for ln in dockerfile.splitlines() if "pip install" in ln]
-    assert any(".[bench]" in ln for ln in pip_lines), (
-        "Dockerfile pip install line must contain '.[bench]' (incumbent dark extra)"
+    assert "uv.lock" in dockerfile, "Dockerfile must COPY/consume apps/.../uv.lock"
+    has_frozen = "uv sync" in dockerfile and ("--frozen" in dockerfile or "--locked" in dockerfile)
+    assert has_frozen, "Dockerfile must install deps with `uv sync --frozen` (or --locked)"
+    has_bench = "--extra bench" in dockerfile or "extras=bench" in dockerfile or ".[bench]" in dockerfile
+    assert has_bench, "Dockerfile must enable the bench extra for the incumbent dark path"
+    # Unlocked pip dep install of .[bench] is the pre-BR-01 anti-pattern.
+    unlocked_bench = [
+        ln
+        for ln in dockerfile.splitlines()
+        if "pip install" in ln and ".[bench]" in ln and "--no-deps" not in ln
+    ]
+    assert not unlocked_bench, (
+        "Dockerfile must not use unlocked `pip install .[bench]` for dependency "
+        f"resolution; use frozen uv sync instead. Found: {unlocked_bench}"
     )

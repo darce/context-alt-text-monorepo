@@ -131,7 +131,7 @@ class IdentityMembersReadRepository {
 
 		$sql = $this->prepare_query(
 			"SELECT * FROM (
-				SELECT m.*, COALESCE(p.name, c.label) AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned, ROW_NUMBER() OVER (PARTITION BY m.cluster_uuid ORDER BY m.updated_at DESC, m.identity_uuid) as rn
+				SELECT m.*, COALESCE(p.name, c.label) AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned, ROW_NUMBER() OVER (PARTITION BY m.cluster_uuid ORDER BY m.assigned_at ASC, m.identity_uuid) as rn
 				FROM %i m
 				LEFT JOIN %i c ON c.cluster_uuid = m.cluster_uuid
 				LEFT JOIN %i p ON p.id = c.person_id
@@ -219,7 +219,7 @@ class IdentityMembersReadRepository {
 			INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
 			LEFT JOIN %i p ON p.id = c.person_id
 			WHERE c.tenant_id = %s AND m.attachment_id IN ($placeholders)
-			ORDER BY m.updated_at DESC, m.identity_uuid",
+			ORDER BY m.assigned_at ASC, m.identity_uuid",
 			array_merge(
 				array(
 					$this->members_table_name,

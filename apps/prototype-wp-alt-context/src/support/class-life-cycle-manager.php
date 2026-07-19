@@ -542,8 +542,9 @@ class LifecycleManager {
 			KEY tenant_revision (tenant_id, local_revision)
 		) {$charset_collate};";
 
-		// rg-005 / CON-11 / CON-12: assigned_at is the recognition source-of-truth
-		// membership-order key (ORDER BY assigned_at ASC, identity_uuid). Greenfield —
+		// rg-005 / DATA-09: assigned_at is the recognition source-of-truth membership-order
+		// key (ORDER BY assigned_at ASC, identity_uuid); datetime(6) preserves recognition's
+		// sub-second precision so same-second members keep true order. Greenfield —
 		// no migration; CREATE TABLE is authoritative after wipe-on-deploy.
 		$members_sql = "CREATE TABLE {$members_table} (
 			identity_uuid varchar(64) NOT NULL,
@@ -555,7 +556,7 @@ class LifecycleManager {
 			similarity_threshold double NULL,
 			is_curated tinyint(1) NOT NULL DEFAULT 0,
 			projection_version bigint(20) unsigned NOT NULL DEFAULT 0,
-			assigned_at datetime NOT NULL,
+			assigned_at datetime(6) NOT NULL,
 			created_at datetime NOT NULL,
 			updated_at datetime NOT NULL,
 			PRIMARY KEY  (identity_uuid),

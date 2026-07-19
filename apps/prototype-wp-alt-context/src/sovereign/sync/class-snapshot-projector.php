@@ -524,7 +524,7 @@ class SnapshotProjector implements SnapshotProjectorInterface {
 	 * @return array<string,mixed>
 	 */
 	private function hydrate_existing_member_snapshot_row( array $member ): array {
-		// CON-11/CON-12: pass assigned_at through delta re-merge so ORDER BY parity
+		// rg-005 / DATA-09: pass assigned_at through delta re-merge so ORDER BY parity
 		// with recognition (assigned_at ASC) is not lost when re-hydrating existing rows.
 		$assigned_at = trim( (string) ( $member['assigned_at'] ?? '' ) );
 		if ( '' === $assigned_at ) {

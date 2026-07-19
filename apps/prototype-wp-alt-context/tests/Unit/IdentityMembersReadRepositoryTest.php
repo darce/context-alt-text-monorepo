@@ -40,7 +40,7 @@ class IdentityMembersReadRepositoryTest extends TestCase
     }
 
     /**
-     * CON-11/CON-12: members list order must match recognition source-of-truth
+     * rg-005: members list order must match recognition source-of-truth
      * (assigned_at ASC, identity_uuid). Rows sharing an identical assigned_at
      * must page deterministically — without the PK tie-breaker, LIMIT/OFFSET
      * can overlap or skip rows across pages. Pin both query variants.
@@ -59,12 +59,16 @@ class IdentityMembersReadRepositoryTest extends TestCase
     }
 
     /**
-     * S4-05 / CON-11: the show-all preview query ranks members per cluster with a
-     * ROW_NUMBER() window. Without the identity_uuid tie-breaker, the top-N preview
-     * slice is non-deterministic across queries when rows share an updated_at. Pin it
-     * (the sibling LIMIT/OFFSET variants already carry the tie-breaker above).
+     * S4-05 / rg-005: the show-all preview window must rank members by the SAME
+     * key as the detail path (assigned_at ASC, identity_uuid) so the top-N card
+     * preview is a prefix of the opened cluster's first page and of recognition
+     * source-of-truth order. updated_at is projection-sync time (curation bumps it
+     * without moving assignment order), so ranking the preview by updated_at DESC
+     * showed a different, differently-ordered set than the detail list. The
+     * identity_uuid tie-breaker keeps the top-N slice deterministic when rows share
+     * an assigned_at.
      */
-    public function testListForClusterUuidsPreviewWindowCarriesIdentityUuidTieBreaker(): void
+    public function testListForClusterUuidsPreviewWindowMatchesDetailOrder(): void
     {
         global $wpdb;
 
@@ -72,7 +76,7 @@ class IdentityMembersReadRepositoryTest extends TestCase
 
         $sql = implode("\n", $wpdb->queries);
         $this->assertStringContainsString(
-            'ROW_NUMBER() OVER (PARTITION BY m.cluster_uuid ORDER BY m.updated_at DESC, m.identity_uuid)',
+            'ROW_NUMBER() OVER (PARTITION BY m.cluster_uuid ORDER BY m.assigned_at ASC, m.identity_uuid)',
             $sql
         );
     }

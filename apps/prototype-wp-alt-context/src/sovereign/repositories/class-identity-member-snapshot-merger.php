@@ -27,6 +27,13 @@ class IdentityMemberSnapshotMerger {
 	use PreparesSqlQueries;
 	use NormalizesMemberRows;
 
+	/**
+	 * B-03: stable epoch fallback for the defensive both-timestamps-missing case, so a
+	 * re-merge at equal projection_version is idempotent instead of stamping a fresh now()
+	 * that churns the row's ORDER BY assigned_at position each sync. datetime(6)-shaped.
+	 */
+	private const ASSIGNED_AT_FALLBACK_UTC = '1970-01-01 00:00:00.000000';
+
 	private string $members_table_name;
 	private string $clusters_table_name;
 	private IdentityMembersReadRepository $read_repository;
@@ -117,9 +124,10 @@ class IdentityMemberSnapshotMerger {
 			$similarity_threshold_value = $this->normalize_optional_float_value( $member['similarity_threshold'] ?? null );
 			$thumb_path       = $this->normalize_thumb_path( $member, $identity_uuid, $attachment_id );
 			$bbox_json        = $this->encode_bbox_json( $member );
-			// CON-11/CON-12 / rg-005: populate assigned_at so members ORDER BY matches
-			// recognition source-of-truth (assigned_at ASC, identity_uuid).
-			$assigned_at      = $this->normalize_assigned_at( $member, $now_utc );
+			// rg-005 / DATA-09: populate assigned_at so members ORDER BY matches recognition
+			// source-of-truth (assigned_at ASC, identity_uuid). Fallback is a STABLE epoch
+			// (not $now_utc) so a timestamp-less re-merge is idempotent (B-03).
+			$assigned_at      = $this->normalize_assigned_at( $member, self::ASSIGNED_AT_FALLBACK_UTC );
 
 			// COR-1: gate member data on projection_version (kept monotonic via
 			// GREATEST) so a stale snapshot cannot regress newer member rows.

@@ -170,6 +170,15 @@ export const useSuggestionReviewMutations = ({
 
   const mountedRef = React.useRef(true);
   const heldRef = React.useRef<HeldCommit | null>(null);
+  /**
+   * A-01: synchronous mirror of the VISIBLE single-item hold state. The busy path
+   * awaits bulk before opening a hold, during which a DIFFERENT item's failure can
+   * materialize (e.g. bulk-initiate flushes and fails a held single). The render-time
+   * `hold` captured in scheduleCommit is stale by then, so async guards read this ref
+   * instead. It reflects only updateUi (visible) transitions — bulk's silent
+   * commitOneNow never touches it, preserving the S2-01 "gate on visible state" rule.
+   */
+  const holdStateRef = React.useRef<CommitHoldState>(hold);
   /** Serializes flush/schedule so at most one commit is in flight and order is preserved. */
   const chainRef = React.useRef(Promise.resolve());
   const committingRef = React.useRef(false);
@@ -347,6 +356,9 @@ export const useSuggestionReviewMutations = ({
   }, []);
 
   const setHoldSafe = React.useCallback((next: CommitHoldState) => {
+    // A-01: mirror synchronously so async busy-path guards see the latest visible
+    // hold even before React commits the re-render.
+    holdStateRef.current = next;
     if (mountedRef.current) {
       setHold(next);
     }
@@ -553,6 +565,20 @@ export const useSuggestionReviewMutations = ({
             // BR-17: same item still failed after chain — do not open a second path.
             if (failedHoldRef.current?.suggestionId === suggestionId) {
               resolve({ outcome: 'failed', kind, suggestionId });
+              return;
+            }
+            // S2-01 (A-01): a DIFFERENT item's VISIBLE failure may have materialized
+            // during awaitBulk (e.g. bulk-initiate flushed and failed the held single
+            // A while this B was parked). openHold would null failedHoldRef + overwrite
+            // the hold, silently erasing A's failure surface. Re-check the LIVE hold
+            // (not the stale entry-time closure) and refuse instead of opening.
+            const liveHold = holdStateRef.current;
+            if (
+              liveHold.phase === 'failed' &&
+              liveHold.suggestionId &&
+              liveHold.suggestionId !== suggestionId
+            ) {
+              resolve({ outcome: 'not_attempted_prior_failed', kind, suggestionId });
               return;
             }
             void openHold(kind, suggestionId).then(resolve);
@@ -804,6 +830,15 @@ export const useSuggestionReviewMutations = ({
                 }
                 if (!mountedRef.current) {
                   resolve({ outcome: 'failed', clusterId: request.clusterId });
+                  return;
+                }
+                // S2-01 (A-01): an accept/reject failure that materialized during the
+                // awaited window must block the person-commit (its success invalidates
+                // the projection and can drop the failed card). Re-check LIVE hold, not
+                // the stale entry-time closure.
+                const liveHold = holdStateRef.current;
+                if (liveHold.phase === 'failed' && liveHold.suggestionId) {
+                  resolve({ outcome: 'not_attempted_prior_failed', clusterId: request.clusterId });
                   return;
                 }
                 const result = await executePersonCommit(request);

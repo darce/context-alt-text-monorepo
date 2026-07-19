@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts.eval_harness.build_bakeoff_report import _card_html, main
 
 _ENTRY = {"path": "mock_images/alice-pool.jpg", "present_identities": ["Alice Example"]}
@@ -55,6 +57,44 @@ def _write_fixtures(tmp_path: Path) -> tuple[Path, Path]:
     mpath.write_text(json.dumps(manifest))
     rpath.write_text(json.dumps(record))
     return mpath, rpath
+
+
+def test_main_hourly_rate_renders_per_image_cost(tmp_path: Path) -> None:
+    mpath, rpath = _write_fixtures(tmp_path)  # media 1,2 with pass latency 4.0s, 6.0s
+    out = tmp_path / "report.html"
+
+    # 7.2 $/hr x 4.0 s / 3600 = $0.00800/img ; x 6.0 s = $0.01200/img
+    rc = main(["--manifest", str(mpath), "--run", f"M={rpath}",
+               "--media-ids", "1,2", "--out", str(out), "--hourly-rate", "7.2"])
+    assert rc == 0
+    doc = out.read_text()
+    assert "$0.00800/img" in doc
+    assert "$0.01200/img" in doc
+
+    # Discrimination guard: no --hourly-rate => the per-image cost token vanishes.
+    rc = main(["--manifest", str(mpath), "--run", f"M={rpath}",
+               "--media-ids", "1,2", "--out", str(out)])
+    assert rc == 0
+    assert "/img" not in out.read_text()
+
+
+def test_main_hourly_rate_zero_is_free_not_suppressed(tmp_path: Path) -> None:
+    # 0 $/hr is a legitimate free-tier rate; it must render $0, not be dropped as falsy.
+    mpath, rpath = _write_fixtures(tmp_path)
+    out = tmp_path / "report.html"
+    rc = main(["--manifest", str(mpath), "--run", f"M={rpath}",
+               "--media-ids", "1,2", "--out", str(out), "--hourly-rate", "0"])
+    assert rc == 0
+    assert "$0.00000/img" in out.read_text()
+
+
+def test_main_rejects_negative_cost_args(tmp_path: Path) -> None:
+    mpath, rpath = _write_fixtures(tmp_path)
+    out = tmp_path / "report.html"
+    for bad in (["--hourly-rate", "-1"], ["--cost-total", "-5"]):
+        with pytest.raises(SystemExit):  # argparse .error() exits non-zero
+            main(["--manifest", str(mpath), "--run", f"M={rpath}",
+                  "--media-ids", "1,2", "--out", str(out), *bad])
 
 
 def test_subtitle_cost_total_rendered_only_with_flag(tmp_path: Path) -> None:

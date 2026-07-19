@@ -168,7 +168,7 @@ def _card_html(mid: int, entry: dict, runs: dict[str, dict], thumb: str | None, 
             lat = f"{lat_v:.2f}s" if isinstance(lat_v, (int, float)) else "—"
             # Deterministic per-image cost = flat instance rate x inference seconds.
             cost = (f' · ${hourly_rate * lat_v / 3600:.5f}/img'
-                    if hourly_rate and isinstance(lat_v, (int, float)) else "")
+                    if hourly_rate is not None and isinstance(lat_v, (int, float)) else "")
             perf = f'<span class="perf">{lat}{cost} · {s.get("model_calls", "?")} call(s)</span>'
         blocks.append(
             f'<div class="run"><div class="runhead"><span class="model">{html.escape(label)}</span>{perf}</div>{body}</div>'
@@ -290,6 +290,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--hourly-rate", type=float, default=None,
                     help="instance $/hr; renders deterministic per-image cost = rate x inference seconds")
     args = ap.parse_args(argv)
+    for _name, _val in (("--hourly-rate", args.hourly_rate), ("--cost-total", args.cost_total)):
+        if _val is not None and _val < 0:
+            ap.error(f"{_name} must be non-negative, got {_val}")
 
     manifest = _load_manifest(args.manifest)
     runs: dict[str, dict[int, dict]] = {}

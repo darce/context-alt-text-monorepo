@@ -430,6 +430,122 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
     expect(queryClient.getQueryData<SuggestionReviewPage>(reviewPageKey)?.items).toHaveLength(0);
   });
 
+  it('S2-01: a different item cannot be scheduled while another item is failed; the failure surface is preserved and no POST fires', async () => {
+    vi.mocked(recognitionApi.acceptSuggestion).mockRejectedValue(new Error('boom'));
+    const itemA = makeItem({ suggestionId: 'sugg-a' });
+    const itemB = makeItem({ suggestionId: 'sugg-b' });
+    queryClient.setQueryData(reviewPageKey, makePage([itemA, itemB]));
+
+    const { result } = renderMutations();
+
+    act(() => {
+      void result.current.scheduleAccept('sugg-a');
+    });
+    await expireHold();
+
+    // Item A is now in the single failed slot.
+    expect(result.current.hold.phase).toBe('failed');
+    expect(result.current.hold.suggestionId).toBe('sugg-a');
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledTimes(1);
+
+    // Acting on B must be refused — not silently swallow A's unresolved failure.
+    let outcomeB: string | undefined;
+    act(() => {
+      void result.current.scheduleReject('sugg-b').then((r) => {
+        outcomeB = r.outcome;
+      });
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(outcomeB).toBe('not_attempted_prior_failed');
+    // A's failure surface is intact — NOT replaced by a B hold.
+    expect(result.current.hold.phase).toBe('failed');
+    expect(result.current.hold.suggestionId).toBe('sugg-a');
+    // No accept/reject POST fired for B.
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledTimes(1);
+    expect(recognitionApi.rejectSuggestion).not.toHaveBeenCalled();
+
+    // Recovery: a successful retry of A clears the slot and unblocks other items.
+    vi.mocked(recognitionApi.acceptSuggestion).mockResolvedValueOnce({
+      suggestion_id: 'sugg-a',
+      resolution: 'accepted',
+      identity_id: 'identity-a',
+      cluster_id: 'cluster-1',
+      message: 'ok',
+    });
+    await act(async () => {
+      await result.current.retryFailure();
+    });
+    expect(result.current.hold.phase).toBe('idle');
+
+    let outcomeB2: string | undefined;
+    act(() => {
+      void result.current.scheduleReject('sugg-b').then((r) => {
+        outcomeB2 = r.outcome;
+      });
+    });
+    // B now opens its own hold (holding), no longer blocked.
+    expect(result.current.hold.phase).toBe('holding');
+    expect(result.current.hold.suggestionId).toBe('sugg-b');
+    void outcomeB2;
+  });
+
+  it('S2-01 (bulk-safe): a bulk commitOneNow failure does not block single scheduling of other items', async () => {
+    // Bulk path fails via updateUi:false — sets the internal failedHold latch but NOT the
+    // visible hold surface (bulk owns its own partial-failure Retry). The S2-01 guard must
+    // key off the visible hold.phase, so single scheduling of other items stays open.
+    vi.mocked(recognitionApi.acceptSuggestion).mockRejectedValueOnce(new Error('bulk-boom'));
+
+    const { result } = renderMutations();
+
+    let bulkOutcome: string | undefined;
+    await act(async () => {
+      bulkOutcome = await result.current.commitOneNow('accept', 'sugg-bulk');
+    });
+    expect(bulkOutcome).toBe('failed');
+    // Bulk failure leaves the single-item hold surface idle.
+    expect(result.current.hold.phase).toBe('idle');
+
+    // A different single item must still open its hold (not silently refused).
+    act(() => {
+      void result.current.scheduleAccept('sugg-other');
+    });
+    expect(result.current.hold.phase).toBe('holding');
+    expect(result.current.hold.suggestionId).toBe('sugg-other');
+  });
+
+  it('S2-01: a person-commit is refused while a single-item accept/reject failure is unresolved', async () => {
+    vi.mocked(recognitionApi.acceptSuggestion).mockRejectedValue(new Error('boom'));
+    const itemA = makeItem({ suggestionId: 'sugg-a' });
+    queryClient.setQueryData(reviewPageKey, makePage([itemA]));
+
+    const { result } = renderMutations();
+
+    act(() => {
+      void result.current.scheduleAccept('sugg-a');
+    });
+    await expireHold();
+    expect(result.current.hold.phase).toBe('failed');
+
+    // Person-commit would otherwise invalidate the projection and drop the failed card,
+    // stranding the failed slot. It must be refused until the failure is retried.
+    let pcOutcome: string | undefined;
+    await act(async () => {
+      pcOutcome = (
+        await result.current.schedulePersonCommit({ clusterId: 'cluster-1', newEntryName: 'X' })
+      ).outcome;
+    });
+
+    expect(pcOutcome).toBe('not_attempted_prior_failed');
+    expect(rosterApi.commitClusterToRosterEntry).not.toHaveBeenCalled();
+    // Failed surface preserved.
+    expect(result.current.hold.phase).toBe('failed');
+    expect(result.current.hold.suggestionId).toBe('sugg-a');
+  });
+
   it('BR-17: double-retry while first in flight yields exactly 1 POST', async () => {
     let resolvePost!: () => void;
     const gate = new Promise<void>((resolve) => {

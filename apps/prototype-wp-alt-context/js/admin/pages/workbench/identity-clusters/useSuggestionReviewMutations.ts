@@ -482,6 +482,18 @@ export const useSuggestionReviewMutations = ({
         return Promise.resolve({ outcome: 'failed', kind, suggestionId });
       }
 
+      // S2-01 [CON-05]: the single-item hold/failure slot is a single slot. A DIFFERENT
+      // item's unresolved failure must NOT be silently cleared by openHold — that erases
+      // the error surface and abandons an un-committed item the user believes was saved.
+      // Refuse the new action (resolve with ITS own identity) until the failed item is
+      // retried to success. Key off the VISIBLE hold state, not failedHoldRef: bulk's
+      // commitOneNow sets failedHoldRef with updateUi:false (bulk owns its own partial-
+      // failure surface + Retry), so gating on failedHoldRef would wrongly block singles
+      // after a bulk partial failure with no single-item Retry path (grok GFR review).
+      if (hold.phase === 'failed' && hold.suggestionId && hold.suggestionId !== suggestionId) {
+        return Promise.resolve({ outcome: 'not_attempted_prior_failed', kind, suggestionId });
+      }
+
       // Idle path: open the hold synchronously so the Saving… state is visible in the
       // same turn as the click (tests and AT both observe this immediately).
       // When bulk is holding/committing, take the busy path so bulk flushes first (PR-30).
@@ -735,6 +747,13 @@ export const useSuggestionReviewMutations = ({
 
   const schedulePersonCommit = React.useCallback(
     (request: PersonCommitRequest): Promise<PersonCommitResult> => {
+      // S2-01 [CON-05]: a person-commit must not proceed while a single-item accept/reject
+      // failure is unresolved. Its success invalidates the projection and can drop the
+      // failed card from cache — stranding the failed slot with no reachable Retry. Refuse
+      // until the failure is retried to success (same single-slot honesty as scheduleCommit).
+      if (hold.phase === 'failed' && hold.suggestionId) {
+        return Promise.resolve({ outcome: 'not_attempted_prior_failed', clusterId: request.clusterId });
+      }
       // BR-25: synchronous re-entry gate before any async work / flush latency.
       if (personCommitInFlightRef.current) {
         return Promise.resolve({ outcome: 'failed', clusterId: request.clusterId });
@@ -805,7 +824,7 @@ export const useSuggestionReviewMutations = ({
 
       return run();
     },
-    [awaitBulkIdleOrFlushRef, executePersonCommit, flushHeldInternal],
+    [awaitBulkIdleOrFlushRef, executePersonCommit, flushHeldInternal, hold.phase, hold.suggestionId],
   );
 
   const retryPersonCommit = React.useCallback((): Promise<PersonCommitResult> | null => {

@@ -39,8 +39,10 @@ class IdentityMemberSnapshotMergerTest extends TestCase
                     'identity_uuid' => 'identity-merger-1',
                     'cluster_uuid' => 'cluster-merger',
                     'attachment_id' => 5,
-                    // Discrimination guard: snapshot assigned_at must land in the INSERT
-                    // (a NULL/omitted write would break ORDER BY assigned_at ASC).
+                    // GFR-02 discrimination: the snapshot's assigned_at VALUE must land in
+                    // the INSERT (asserting the column name alone is vacuous — it is always
+                    // in the column list). A far-past value distinguishes it from any $now_utc
+                    // write, so the assertion goes red if the merger stops honoring the snapshot.
                     'assigned_at' => '2024-06-01T10:15:30+00:00',
                 ],
             ],
@@ -58,8 +60,42 @@ class IdentityMemberSnapshotMergerTest extends TestCase
         }
 
         $this->assertSame(1, $insertCount);
-        $this->assertStringContainsString('assigned_at', $insert);
         $this->assertStringContainsString('2024-06-01 10:15:30', $insert);
+    }
+
+    /**
+     * GFR-02 / rg-005: when a member snapshot OMITS assigned_at, the merger must fall back to
+     * the snapshot's created_at (converted to MySQL UTC), NOT $now_utc. Injecting a far-past
+     * created_at makes this discriminate — a $now_utc (current-time) write would drop the fixed
+     * past value, so this goes red if the merger silently timestamps every row with "now".
+     */
+    public function testMergeSnapshotAssignedAtFallsBackToCreatedAtNotNow(): void
+    {
+        $this->merger->merge_snapshot_for_tenant(
+            'tenant-merger-fallback',
+            [
+                [
+                    'identity_uuid' => 'identity-fallback-1',
+                    'cluster_uuid' => 'cluster-merger',
+                    'attachment_id' => 9,
+                    // No assigned_at → the merger must use created_at, never a fresh $now_utc.
+                    'created_at' => '2024-01-15T00:00:00+00:00',
+                ],
+            ],
+            7
+        );
+
+        global $wpdb;
+        $insert = '';
+        foreach ($wpdb->queries as $query) {
+            if (str_contains($query, 'INSERT INTO `wp_acx_identity_members`')) {
+                $insert = $query;
+            }
+        }
+
+        $this->assertNotSame('', $insert, 'expected a per-member INSERT query');
+        // The created_at fallback flows into assigned_at (created_at/updated_at columns are $now_utc).
+        $this->assertStringContainsString('2024-01-15 00:00:00', $insert);
     }
 
     public function testMergeSnapshotGatesMemberDataAndKeepsProjectionVersionMonotonic(): void

@@ -58,6 +58,25 @@ class IdentityMembersReadRepositoryTest extends TestCase
         }
     }
 
+    /**
+     * S4-05 / CON-11: the show-all preview query ranks members per cluster with a
+     * ROW_NUMBER() window. Without the identity_uuid tie-breaker, the top-N preview
+     * slice is non-deterministic across queries when rows share an updated_at. Pin it
+     * (the sibling LIMIT/OFFSET variants already carry the tie-breaker above).
+     */
+    public function testListForClusterUuidsPreviewWindowCarriesIdentityUuidTieBreaker(): void
+    {
+        global $wpdb;
+
+        $this->repository->list_for_cluster_uuids(['cluster-a', 'cluster-b'], 3);
+
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString(
+            'ROW_NUMBER() OVER (PARTITION BY m.cluster_uuid ORDER BY m.updated_at DESC, m.identity_uuid)',
+            $sql
+        );
+    }
+
     public function testCountForClusterScopesToTenantWhenProvided(): void
     {
         global $wpdb;

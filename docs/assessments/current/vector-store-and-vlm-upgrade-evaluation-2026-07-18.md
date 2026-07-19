@@ -123,6 +123,20 @@ All candidates serve on one caught A10 in turn (`llama.cpp --parallel 1`, `--ctx
 
 Notes: **35B-A3B UD-Q4 (22.4 GB) is deliberately *not* the bake-off quant** — with mmproj+KV it overruns 24 GB VRAM; that tier needs A10.2 48 GB / A100, so the A10-deployable **UD-Q3_K_XL** is used (fair to the deployment target). The **27B (dense) vs 35B-A3B (MoE) pairing is the interesting architecture read**: does MoE-3B-active caption quality beat a dense-27B at equal footprint on ACX images?
 
+#### Sample size — increase, but stage it (don't flat-bump all candidates)
+
+Available corpora: `bakeoff_golden.json` (**10**, the current default), `golden.json` (**37**), and the interleave **646**-image corpus. Scaling is mechanical (`--manifest` / `--limit`), but a flat bump across all 6–7 candidates is poor value:
+
+- **10 is thin for ranking** — close candidates won't separate, and s/img / cost-per-image estimates are noisy. That argues for *more*.
+- **But more of the same distribution ≠ better discrimination.** A model screen is separated by *hard slices* (crowds, look-alikes, policy-disabled naming, abstract art, legible text/logo, context-conflict — the §6b taxonomy in [caption-context-enrichment](./caption-context-enrichment-assessment-2026-07-05.md)), not by volume. An untagged 646-set yields one blended average that hides *where* a model fails. Same lesson as FIR-5 golden slices: **tag entries with `domain` slices** so the report rolls up per-slice, not a single mean.
+- **Cost is real** (house rule; A10 ~$2/GPU-hr, ~5 s/img × two passes, serial per candidate + per-swap GGUF download): 10-img × 6 ≈ minutes; **25–30-img × 6 ≈ ~15–20 min ≈ ~$0.5**; **646 × 6 ≈ ~6–7 GPU-hrs ≈ ~$13** + download overhead (the interleave 646 run was ~62 min for *one* model).
+
+**Recommended two-stage design:**
+1. **Wide screen** — grow the bake-off manifest from 10 → a **~25–30-image slice-tagged discriminating set** (extend `bakeoff_golden.json` per §6b). Cheap, ranks all candidates, per-slice rollups.
+2. **Deep confirm** — run only the **winner (or top-2)** over the full **646** corpus for stable s/img, cost/1k-img, p95 latency, and tail-quality before shipping (~1 GPU-hr ≈ ~$2 for one model).
+
+I.e. **yes, increase samples — to ~25–30 tagged for the screen, and to the full corpus only for the finalist** — never the full corpus across every candidate.
+
 ### B.4 MTP (Multi-Token Prediction) — worth a throughput leg
 
 - Merged in **llama.cpp**, **GGUF-native** (prebuilt `*-MTP-GGUF` repos), ~**1.4–2.2× faster**, **no accuracy change** (speculative-decode: only verified tokens kept), ~1–2 GB extra RAM/VRAM.

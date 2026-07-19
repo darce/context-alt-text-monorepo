@@ -131,7 +131,7 @@ def _pick_varied(manifest: dict[int, dict], runs: dict[str, dict[int, dict]], n:
     return pick[:n]
 
 
-def _card_html(mid: int, entry: dict, runs: dict[str, dict], thumb: str | None) -> str:
+def _card_html(mid: int, entry: dict, runs: dict[str, dict], thumb: str | None, hourly_rate: float | None = None) -> str:
     fname = html.escape(Path(entry.get("path", "")).name)
     idents = entry.get("present_identities", [])
     chips = (
@@ -164,8 +164,12 @@ def _card_html(mid: int, entry: dict, runs: dict[str, dict], thumb: str | None) 
             if not parts and s.get("caption") is None and s.get("alt") is None:
                 parts.append('<p class="none">empty output</p>')
             body = "".join(parts)
-            lat = f"{s['latency_s']:.2f}s" if isinstance(s.get("latency_s"), (int, float)) else "—"
-            perf = f'<span class="perf">{lat} · {s.get("model_calls", "?")} call(s)</span>'
+            lat_v = s.get("latency_s")
+            lat = f"{lat_v:.2f}s" if isinstance(lat_v, (int, float)) else "—"
+            # Deterministic per-image cost = flat instance rate x inference seconds.
+            cost = (f' · ${hourly_rate * lat_v / 3600:.5f}/img'
+                    if hourly_rate and isinstance(lat_v, (int, float)) else "")
+            perf = f'<span class="perf">{lat}{cost} · {s.get("model_calls", "?")} call(s)</span>'
         blocks.append(
             f'<div class="run"><div class="runhead"><span class="model">{html.escape(label)}</span>{perf}</div>{body}</div>'
         )
@@ -236,6 +240,7 @@ def build(
     thumb_px: int,
     title: str,
     subtitle: str,
+    hourly_rate: float | None = None,
 ) -> str:
     cards = []
     for mid in media_ids:
@@ -254,7 +259,7 @@ def build(
                 if v
             ]
         ).lower()
-        card = _card_html(mid, entry, runs, thumb)
+        card = _card_html(mid, entry, runs, thumb, hourly_rate)
         cards.append(
             card.replace('<article class="card">', f'<article class="card" data-search="{html.escape(search)}">')
         )
@@ -280,6 +285,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--embed-images", action="store_true")
     ap.add_argument("--thumb-px", type=int, default=_THUMB_DEFAULT)
     ap.add_argument("--title", default="Bake-off report")
+    ap.add_argument("--cost-total", type=float, default=None,
+                    help="total run cost in USD; report renders total + cost-per-image")
+    ap.add_argument("--hourly-rate", type=float, default=None,
+                    help="instance $/hr; renders deterministic per-image cost = rate x inference seconds")
     args = ap.parse_args(argv)
 
     manifest = _load_manifest(args.manifest)
@@ -300,7 +309,9 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("--embed-images requires --images-dir")
 
     subtitle = f"{len(media_ids)} images · {len(runs)} run(s): {', '.join(runs)} · self-contained, offline"
-    doc = build(manifest, runs, media_ids, images_dir, args.embed_images, args.thumb_px, args.title, subtitle)
+    if args.cost_total is not None and media_ids:
+        subtitle += f" · total ${args.cost_total:.2f} · ${args.cost_total / len(media_ids):.4f}/image"
+    doc = build(manifest, runs, media_ids, images_dir, args.embed_images, args.thumb_px, args.title, subtitle, args.hourly_rate)
     Path(args.out).write_text(doc)
     print(f"wrote {args.out} ({len(doc) / 1024:.0f}KB, {len(media_ids)} images, {len(runs)} run(s))")
     return 0

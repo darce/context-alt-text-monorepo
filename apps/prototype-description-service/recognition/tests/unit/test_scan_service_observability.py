@@ -63,6 +63,7 @@ class _FakeSession:
         self.deleted: list[object] = []
         self.flush_calls = 0
         self.commit_calls = 0
+        self.rollback_calls = 0
 
     async def execute(self, _stmt):  # noqa: ANN001
         return _FakeResult(self.existing)
@@ -81,6 +82,12 @@ class _FakeSession:
 
     async def commit(self) -> None:
         self.commit_calls += 1
+
+    async def rollback(self) -> None:
+        # The worker drops staged identity work via session.rollback() before any
+        # failure-status write (scan.py failure path, LOCAL47C-03); the fake must
+        # model it or the retry-release path is never reached.
+        self.rollback_calls += 1
 
 
 def _det(

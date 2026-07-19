@@ -23,14 +23,24 @@ PY="$HOME/.pyenv/versions/description-service/bin/python"
 MANIFEST="scripts/eval_harness/bakeoff10-manifest-20260716.json"
 export GOLDEN_IMAGES_DIR="/Volumes/Butter/WP/vlm/app/public/wp-content/uploads"
 SSHJ=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=12 -J "$JUMP" ubuntu@"$PRIV_IP")
+# Bench artifacts (run records + image-embedded reports) reference real tenant media
+# with pseudonymised roster labels — write them ONLY to the gitignored /benchmarks/
+# sink (repo .gitignore: "/benchmarks/  # local-only, privacy-sensitive"), never a
+# tracked docs path. Absolute so they escape $SVC when the harness runs with `cd "$SVC"`.
+BENCH_DIR="$HOME/Development/context-alt-text-monorepo/benchmarks/vlm-bakeoff"
+mkdir -p "$BENCH_DIR/reports"
 
 # label | gguf_url | mmproj_url | model_id | quant   (VERIFY URLs before running)
-# Qwen3.6-27B UD-Q4 (~17.6GB weights + ~0.9GB mmproj) is the headline A10 upgrade
-# candidate vs the 30B-A3B control — fits 24GB VRAM with 8192 ctx (VECVLM-1 assessment,
-# docs/assessments/current/vector-store-and-vlm-upgrade-evaluation-2026-07-18.md).
-# Filenames verified on the unsloth repo 2026-07-18; re-verify (VLM tooling moves weekly).
+# Two Qwen3.6 VLM candidates vs the Qwen3-VL-30B-A3B@Q4_K_M control (VECVLM-1 assessment,
+# docs/assessments/current/vector-store-and-vlm-upgrade-evaluation-2026-07-18.md):
+#   qwen36-27b     dense 27B, UD-Q4_K_XL ~17.6GB + mmproj ~0.9GB — headline A10 fit.
+#   qwen36-35b-a3b MoE 35B/3B-active, UD-Q3_K_XL ~16.8GB + mmproj ~0.9GB — A10-deployable
+#                  quant (UD-Q4 22.4GB is too tight for 24GB VRAM w/ mmproj+KV; that tier
+#                  needs A10.2 48GB / A100). Q3 keeps 8192 ctx headroom.
+# Filenames verified on the unsloth repos 2026-07-18; re-verify (VLM tooling moves weekly).
 MODELS=(
   "qwen36-27b|https://huggingface.co/unsloth/Qwen3.6-27B-GGUF/resolve/main/Qwen3.6-27B-UD-Q4_K_XL.gguf|https://huggingface.co/unsloth/Qwen3.6-27B-GGUF/resolve/main/mmproj-F16.gguf|Qwen3.6-27B|UD-Q4_K_XL"
+  "qwen36-35b-a3b|https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-Q3_K_XL.gguf|https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/mmproj-F16.gguf|Qwen3.6-35B-A3B|UD-Q3_K_XL"
   "qwen8b|<TODO Qwen3-VL-8B-Instruct Q5_K_M GGUF url>|<TODO mmproj url>|Qwen3-VL-8B-Instruct|Q5_K_M"
   "minicpm45|<TODO MiniCPM-V-4_5 Q5 GGUF url>|<TODO mmproj url>|MiniCPM-V-4_5|Q5_K_M"
   "gemma4-12b|<TODO gemma-4-12b-it Q6 GGUF url>|<TODO mmproj url>|gemma-4-12b-it|Q6_K"
@@ -67,21 +77,22 @@ for spec in "${MODELS[@]}"; do
   ( cd "$SVC" && ACX_EVAL_LIVE=1 GOLDEN_IMAGES_DIR="$GOLDEN_IMAGES_DIR" \
     "$PY" -m scripts.eval_harness.bakeoff --endpoint "http://localhost:$PORT" \
       --model-id "$mid" --model-version "$quant" --manifest "$MANIFEST" \
-      --prompt-variant v3 --two-pass --out "out/run-bakeoff-$label.json" ) \
-    && echo "  $label done -> out/run-bakeoff-$label.json" || echo "  $label fetch FAILED"
+      --prompt-variant v3 --two-pass --out "$BENCH_DIR/run-bakeoff-$label.json" ) \
+    && echo "  $label done -> $BENCH_DIR/run-bakeoff-$label.json" || echo "  $label fetch FAILED"
   pkill -f "ssh -f -N .* -L $PORT:localhost:8000" 2>/dev/null
 done
 
 echo "== build the comparison report =="
-RUNS=(--run "Qwen3-VL-30B (control)=out/run-altq-646-interleave-v3.json")
+# Control run-record: from the interleave run; move/symlink it into $BENCH_DIR too.
+RUNS=(--run "Qwen3-VL-30B (control)=$BENCH_DIR/run-altq-646-interleave-v3.json")
 for spec in "${MODELS[@]}"; do
   IFS='|' read -r label _ _ _ _ <<<"$spec"
-  [ -f "$SVC/out/run-bakeoff-$label.json" ] && RUNS+=(--run "$label=out/run-bakeoff-$label.json")
+  [ -f "$BENCH_DIR/run-bakeoff-$label.json" ] && RUNS+=(--run "$label=$BENCH_DIR/run-bakeoff-$label.json")
 done
 ( cd "$SVC" && "$PY" -m scripts.eval_harness.build_bakeoff_report \
     --manifest "$MANIFEST" --images-dir "$GOLDEN_IMAGES_DIR" \
     --media-ids 93,154,200,46,62,98,6,11,400,378 --embed-images \
     "${RUNS[@]}" --title "10-image multi-model bake-off" \
-    --out "$HOME/Development/context-alt-text-monorepo-altq-1/docs/tasks/altq/bakeoff-results/reports/bakeoff-10img-multimodel.html" )
-echo "report -> docs/tasks/altq/bakeoff-results/reports/bakeoff-10img-multimodel.html"
+    --out "$BENCH_DIR/reports/bakeoff-10img-multimodel.html" )
+echo "report -> $BENCH_DIR/reports/bakeoff-10img-multimodel.html (gitignored)"
 echo "TEARDOWN (owed): terminate the A10 when done."

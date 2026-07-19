@@ -36,7 +36,7 @@ from .face_metrics import (
     face_unknown_rejection,
     identification_pr,
 )
-from .manifest import PRIVATE_SOURCES, Provenance, ProvenanceSource
+from .manifest import Provenance, ProvenanceSource
 from .schema import SCHEMA, DocKind
 from .synthetic_occlusion import (
     ELIGIBLE_PAIR_FLOOR,
@@ -608,11 +608,20 @@ def _total_gt_boxes(entries: Sequence[Mapping[str, Any]]) -> int:
 
 
 def _sort_nested_lists(obj: Any) -> Any:
-    """Recursively sort every list for bit-identical serialization (§G)."""
+    """Canonicalize for bit-identical serialization (§G) WITHOUT corrupting rows.
+
+    Sorts each *collection of rows* by a stable key so build-order variance is
+    absorbed, but treats list/tuple elements — fixed-schema rows like
+    ``wrong_names`` ``[media_id, box_index, true, pred]`` or a ``tau_k`` per-fold
+    threshold vector — as ATOMIC: their internal element order is positionally
+    meaningful and must never be reordered. Only dict elements are recursed into
+    (to canonicalize their own list-valued fields).
+    """
     if isinstance(obj, dict):
         return {k: _sort_nested_lists(v) for k, v in obj.items()}
     if isinstance(obj, list):
-        items = [_sort_nested_lists(v) for v in obj]
+        # Recurse into dict elements only; leave list/scalar rows atomic.
+        items = [_sort_nested_lists(v) if isinstance(v, dict) else v for v in obj]
         try:
             return sorted(items, key=lambda x: json.dumps(x, sort_keys=True, default=str))
         except TypeError:
@@ -988,6 +997,10 @@ def score_face_run_record(
             "fold": d.fold,
             "enrolled": d.enrolled,
             "excluded_single_face_recall": d.excluded_single_face_recall,
+            # PROV-01: manifest-grounded publishability stamped at score time so the
+            # post-score public redaction can key on Provenance.is_publishable
+            # (fail-closed) instead of guessing from path spelling.
+            "publishable": _entry_is_publishable(entry_by_id.get(int(d.media_id))),
         }
         for d in assignment.decisions
     ]
@@ -1040,67 +1053,74 @@ def score_face_run_record(
 
 
 def redact_face_report_for_public(report: dict[str, Any]) -> dict[str, Any]:
-    """POST-SCORE public redaction (PROV-01) — distinct from pre-score Audience.PUBLIC.
+    """POST-SCORE public redaction (PROV-01) — provenance-grounded, fail-CLOSED.
 
-    Scores keep unpublishable strangers in unknown-rejection aggregates. This
-    function strips private-source (LOCALWP/OPERATOR / non-publishable) crops,
-    paths, and per-face metadata while PRESERVING aggregate rates. Fail-closed:
-    missing/unparseable provenance ⇒ redact detail.
+    Scoring keeps unpublishable strangers/persons in the aggregate rates (the
+    unknown-rejection gate needs them). This function strips every per-face
+    DETAIL row and identity-bearing list that could name or locate a
+    non-publishable individual, while PRESERVING aggregate rates. Publishability
+    is decided by the manifest-derived ``publishable`` flag stamped on each
+    decision at score time (``_entry_is_publishable`` / Provenance.is_publishable)
+    — NOT by path-string guessing, which fails open for a named private person
+    whose path lacks the expected tokens. Fail-closed: a decision row without
+    ``publishable is True`` is dropped; identity lists with no per-element
+    publishability signal (clustering labels, wrong_names, failures) are stripped
+    wholesale. Distinct from the pre-score ``_filter_for_public_audience`` /
+    ``Audience.PUBLIC`` path.
     """
     redacted = copy.deepcopy(report)
-    private_tokens = {s.value for s in PRIVATE_SOURCES} | {"localwp", "operator"}
 
-    def _is_private_path(path: str | None) -> bool:
-        if not path:
-            return False
-        lower = path.lower()
-        return any(tok in lower for tok in ("localwp", "operator", "/uploads/"))
-
-    # Drop per-decision rows that name private paths or lack celebs01-safe identity.
+    # (1) Per-decision detail: keep ONLY publishable AND named (celebs01) rows.
+    #     Fail-closed — a missing or False publishable flag drops the row. A
+    #     stranger (true_name None) is private detail even from a publishable
+    #     source, so it is dropped too (its count stays in the aggregate rate).
     kept_decisions: list[dict[str, Any]] = []
     stripped = 0
     for d in redacted.get("decisions") or []:
-        path = str(d.get("path") or "")
-        # Strip strangers + private-path rows from detail; keep celebs01 named only.
-        if d.get("true_name") is None or _is_private_path(path):
+        if d.get("publishable") is True and d.get("true_name") is not None:
+            kept_decisions.append(d)
+        else:
             stripped += 1
-            continue
-        kept_decisions.append(d)
     redacted["decisions"] = kept_decisions
 
-    # Strip wrong_names that reference private media paths.
     slices = redacted.get("slices") or {}
+
+    # (2) Clustering ``labels`` is the per-face cluster assignment (one integer id
+    #     per matched face) — per-face detail with no per-element publishability
+    #     signal ⇒ strip wholesale to keep the public artifact aggregate-only.
+    #     Public keeps the aggregate clustering metrics (purity, false_merge/split,
+    #     counts).
+    clustering = slices.get("clustering")
+    if isinstance(clustering, dict) and "labels" in clustering:
+        clustering["labels"] = []
+
+    # (3) wrong_names rows [media_id, box_index, true, pred] can name a private
+    #     individual and carry no publishability signal ⇒ drop the detail from
+    #     BOTH identification slices (aggregate precision/recall already preserved
+    #     in each block). Same for ignored_wrong_names.
     for key in ("headline_identification", "full_corpus_identification"):
         block = slices.get(key)
-        if not isinstance(block, dict):
-            continue
-        cleaned = []
-        for w in block.get("wrong_names") or []:
-            # wrong_names rows: [media_id, box_index, true, pred] — no path; keep
-            # aggregates only for public: drop wrong_names detail from full corpus
-            # when it may include private (fail-closed: drop all wrong_names from
-            # full_corpus; headline is celebs01-only so keep).
-            if key == "full_corpus_identification":
-                continue
-            cleaned.append(w)
-        block["wrong_names"] = cleaned if key == "headline_identification" else []
+        if isinstance(block, dict):
+            block["wrong_names"] = []
+            block["ignored_wrong_names"] = []
 
-    # Failures: drop private-path failures.
-    redacted["failures"] = [
-        f for f in (redacted.get("failures") or []) if not _is_private_path(str(f.get("path") or ""))
-    ]
+    # (4) Failure rows embed media paths and carry no publishability signal ⇒ drop
+    #     wholesale (operator-triage detail only). Aggregate failed-count stays in
+    #     ``counts``.
+    redacted["failures"] = []
 
-    # Demographic / occlusion detail may embed private media_ids — leave aggregate rates.
     redacted["redaction"] = {
         "audience": "public",
         "mode": "post_score_redact_face_report_for_public",
+        "grounded_on": "manifest.Provenance.is_publishable (stamped per decision at score time)",
         "stripped_decision_rows": stripped,
         "note": (
-            "Aggregate rates (incl. unknown-rejection) preserved from full-corpus score; "
-            "private-source crops/metadata stripped. Distinct from pre-score "
-            "_filter_for_public_audience / Audience.PUBLIC."
+            "Aggregate rates (incl. unknown-rejection) preserved from full-corpus "
+            "score; every non-publishable per-face detail row + identity list "
+            "(clustering labels, wrong_names, failures) stripped. Fail-closed on "
+            "missing provenance. Distinct from pre-score _filter_for_public_audience "
+            "/ Audience.PUBLIC."
         ),
-        "private_sources": sorted(private_tokens),
     }
     # Do NOT drop unknown_rejection aggregates — they must stay.
     return _sort_nested_lists(redacted)

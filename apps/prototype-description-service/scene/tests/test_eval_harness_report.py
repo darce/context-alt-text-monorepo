@@ -1,10 +1,29 @@
 """VLM-2A Slice 3: report builder + scoring pipeline — deterministic, golden-file style."""
 
 import json
+import math
+import os
+import subprocess
+import sys
+from pathlib import Path
 
+import numpy as np
 import pytest
 
-from scripts.eval_harness.report import Audience, ReportError, build_reports, score_run_record
+from scripts.eval_harness.report import (
+    DIRECTIONAL_LABEL,
+    HEADLINE_ID_RECALL_ELIGIBLE_FLOOR,
+    Audience,
+    ReportError,
+    build_face_reports,
+    build_reports,
+    redact_face_report_for_public,
+    score_face_run_record,
+    score_run_record,
+    synthetic_real_divergence,
+    wilson_half_width,
+)
+from scripts.eval_harness.schema import DocKind
 
 
 def _run_record() -> dict:
@@ -436,25 +455,6 @@ def test_public_reports_deterministic():
 
 # --- FIR-5 S5: face score path, floors, redaction, divergence, determinism ---
 
-import math
-import os
-import subprocess
-import sys
-from pathlib import Path
-
-import numpy as np
-
-from scripts.eval_harness.report import (
-    DIRECTIONAL_LABEL,
-    HEADLINE_ID_RECALL_ELIGIBLE_FLOOR,
-    build_face_reports,
-    redact_face_report_for_public,
-    score_face_run_record,
-    synthetic_real_divergence,
-    wilson_half_width,
-)
-from scripts.eval_harness.schema import DocKind
-
 
 def _unit(vec: list[float]) -> list[float]:
     a = np.asarray(vec, dtype=np.float64)
@@ -679,6 +679,103 @@ def test_publishability_private_stranger_scored_then_redacted():
     assert "pre-score" in redacted["redaction"]["note"] or "Distinct" in redacted["redaction"]["note"]
 
 
+def test_publishability_named_private_source_redacted():
+    """A NAMED private-source person (publishable=False) whose path lacks the
+    localwp/operator/uploads tokens must be ABSENT from the redacted public
+    artifact — decisions, clustering.labels, wrong_names — while aggregate rates
+    are preserved. Guards the path-substring fail-open (FIR5-S5-BR-01): redaction
+    must key on manifest Provenance.is_publishable, not on path spelling.
+    """
+    face_run, manifest = _face_fixture_corpus()
+    dim = 8
+    jane_a = _unit([0.0, 0.0, 1.0] + [0.0] * (dim - 3))
+    jane_b = _unit([0.0, 0.05, 0.99] + [0.0] * (dim - 3))
+    # Two named faces from an OPERATOR source at a path WITHOUT any private token.
+    for mid, emb, path in (
+        (4, jane_a, "corpus/private/jane-01.jpg"),
+        (5, jane_b, "corpus/private/jane-02.jpg"),
+    ):
+        face_run["items"].append(
+            {
+                "media_id": mid,
+                "path": path,
+                "model_id": "ort-yunet-sface",
+                "embedding_dim": dim,
+                "image_size": [100, 100],
+                "faces": [_face_det([20.0, 20.0, 40.0, 40.0], emb)],
+            }
+        )
+        manifest["entries"].append(
+            {
+                "path": path,
+                "media_id": mid,
+                "face_count": 1,
+                "present_identities": ["Jane Roster"],
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "face_boxes": [_gt_box(0.4, 0.4, 0.4, 0.4, "Jane Roster")],
+                "provenance": {"source": "operator", "license": "consented", "publishable": False},
+            }
+        )
+    manifest["roster"].append("Jane Roster")
+
+    scored = score_face_run_record(face_run, manifest)
+    # Jane IS scored into the full-corpus report — her named decision rows are the
+    # fail-open leak vector the path heuristic missed (name present pre-redaction).
+    jane_rows = [d for d in scored["decisions"] if d.get("true_name") == "Jane Roster"]
+    assert jane_rows, "named private person must be scored into the full corpus"
+    assert all(d["publishable"] is False for d in jane_rows)
+    # The fixture path is the fail-open vector: no substring the old heuristic keyed on.
+    assert not any(
+        tok in d["path"] for d in jane_rows for tok in ("operator", "localwp", "uploads")
+    )
+    assert "Jane Roster" in json.dumps(scored)  # present somewhere pre-redaction
+
+    redacted = redact_face_report_for_public(scored)
+    blob = json.dumps(redacted)
+    # PRIMARY: the named private individual is nowhere in the public artifact.
+    assert "Jane Roster" not in blob
+    assert "corpus/private/jane-01.jpg" not in blob
+    assert "corpus/private/jane-02.jpg" not in blob
+    # Publishable celeb detail survives; every surviving row is publishable + named.
+    assert redacted["decisions"]
+    assert all(
+        d.get("publishable") is True and d.get("true_name") is not None
+        for d in redacted["decisions"]
+    )
+    # Per-face clustering labels stripped (aggregate-only public artifact).
+    assert redacted["slices"]["clustering"]["labels"] == []
+    # Aggregate rates preserved (unknown-rejection count/rate unchanged by redaction).
+    assert redacted["slices"]["unknown_rejection"]["n"] == scored["slices"]["unknown_rejection"]["n"]
+    assert (
+        redacted["slices"]["unknown_rejection"]["rate"]
+        == scored["slices"]["unknown_rejection"]["rate"]
+    )
+
+
+def test_sort_nested_lists_preserves_fixed_schema_row_order():
+    """§G determinism (FIR5-S5-BR-02): the collection of rows is canonicalized for
+    order-independence, but the positional internals of a fixed-schema row (e.g.
+    a ``wrong_names`` ``[media_id, box_index, true, pred]`` tuple) must NOT be
+    reordered — the confirmed corruption was element-wise sorting inside rows.
+    """
+    from scripts.eval_harness.report import _sort_nested_lists
+
+    # Two fixed-schema rows whose element order is positionally meaningful and would
+    # be corrupted by an element-wise sort ("Zed" would sort after 0/5/"Al").
+    rows = [[5, 0, "Zed", "Al"], [2, 1, "Bo", "Cy"]]
+    out = _sort_nested_lists({"wrong_names": rows})
+    # Row internals preserved (NOT reordered within each row)...
+    assert [5, 0, "Zed", "Al"] in out["wrong_names"]
+    assert [2, 1, "Bo", "Cy"] in out["wrong_names"]
+    for r in out["wrong_names"]:
+        assert r in ([5, 0, "Zed", "Al"], [2, 1, "Bo", "Cy"])
+
+    # ...while the COLLECTION of rows (dicts) is still canonicalized for determinism.
+    assert _sort_nested_lists([{"m": 2}, {"m": 1}]) == [{"m": 1}, {"m": 2}]
+
+
 def test_synthetic_real_divergence_demotion_and_qualitative():
     # d > threshold → auto_demote
     # a_r=0.5, n=100 → wilson half-width small; d=0.5 > max(wilson, 0.20)
@@ -750,7 +847,7 @@ def test_buffalo_non_promotion_no_512d_under_docs_tasks():
         except (json.JSONDecodeError, UnicodeDecodeError):
             continue
 
-        def _walk(obj, trail=""):
+        def _walk(obj, trail="", path=path):
             if isinstance(obj, dict):
                 emb = obj.get("embedding")
                 if isinstance(emb, list) and len(emb) == 512 and emb and isinstance(emb[0], (int, float)):

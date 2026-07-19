@@ -453,13 +453,8 @@ def test_cmd_score_exits_nonzero_when_items_failed(tmp_path, monkeypatch):  # S7
 
 # --- FIR-5 S5: face-bakeoff / score-face CLI surface ---
 
-import argparse
-
-from scripts.eval_harness import cli as cli_mod
-
 
 def test_cli_face_bakeoff_and_score_face_subcommands_present():
-    parser = argparse.ArgumentParser(prog="eval_harness")
     # Re-run main's parser construction by invoking with --help on each
     with pytest.raises(SystemExit) as exc:
         main(["face-bakeoff", "--help"])
@@ -469,16 +464,118 @@ def test_cli_face_bakeoff_and_score_face_subcommands_present():
     assert exc2.value.code == 0
 
 
-def test_cli_score_face_check_determinism_flag_present():
-    """--check-determinism is wired on the face score path (not only caption score)."""
-    with pytest.raises(SystemExit) as exc:
-        main(["score-face", "--help"])
-    assert exc.value.code == 0
-    # argparse help goes to stdout; capture via constructing the parser the same way
-    # Inspect the subparser option strings via a dry parse error.
+def _valid_face_manifest_and_record(dim: int = 8) -> tuple[dict, dict]:
+    """A load_manifest-valid manifest + matching face-run-record (FIR5-S5-BR-05/06)."""
+    import numpy as np
+
+    def _unit(v):
+        a = np.asarray(v, dtype=float)
+        return (a / np.linalg.norm(a)).tolist()
+
+    def _fd(bbox, emb):
+        return {"bbox_px": bbox, "embedding": emb, "det_score": 0.95, "landmarks_px": [[0.0, 0.0]] * 5}
+
+    def _gt(name):
+        return {"x": 0.4, "y": 0.4, "w": 0.4, "h": 0.4, "name": name, "source": "iptc"}
+
+    def _ent(path, mid, name, src, pub):
+        return {
+            "path": path,
+            "sha256": "a" * 64,
+            "media_id": mid,
+            "face_count": 1,
+            "base_caption": "",
+            "present_identities": ([name] if name else []),
+            "must_right": [],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+            "face_boxes": [_gt(name)],
+            "provenance": {
+                "source": src,
+                "license": "public_domain" if pub else "consented",
+                "publishable": pub,
+            },
+        }
+
+    record = {
+        "schema": "acx-eval/v1",
+        "kind": "face_run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "head_sha": "0" * 40,
+            "started_at": "2026-07-18T00:00:00Z",
+            "leg": "candidate",
+            "model_id": "ort-yunet-sface",
+            "embedding_dim": dim,
+        },
+        "items": [
+            {"media_id": 1, "path": "celebs01/alice-a.jpg", "model_id": "ort-yunet-sface",
+             "embedding_dim": dim, "image_size": [100, 100],
+             "faces": [_fd([20.0, 20.0, 40.0, 40.0], _unit([1.0] + [0.0] * (dim - 1)))]},
+            {"media_id": 2, "path": "celebs01/alice-b.jpg", "model_id": "ort-yunet-sface",
+             "embedding_dim": dim, "image_size": [100, 100],
+             "faces": [_fd([20.0, 20.0, 40.0, 40.0], _unit([0.98, 0.1] + [0.0] * (dim - 2)))]},
+            {"media_id": 3, "path": "localwp/uploads/stranger-party.jpg", "model_id": "ort-yunet-sface",
+             "embedding_dim": dim, "image_size": [100, 100],
+             "faces": [_fd([20.0, 20.0, 40.0, 40.0], _unit([0.0, 1.0] + [0.0] * (dim - 2)))]},
+        ],
+    }
+    manifest = {
+        "manifest_version": 2,
+        "roster": ["Alice Example"],
+        "roster_cohorts": {"Alice Example": "cohort_a"},
+        "entries": [
+            _ent("celebs01/alice-a.jpg", 1, "Alice Example", "celeb", True),
+            _ent("celebs01/alice-b.jpg", 2, "Alice Example", "celeb", True),
+            _ent("localwp/uploads/stranger-party.jpg", 3, None, "localwp", False),
+        ],
+    }
+    return record, manifest
+
+
+def test_cli_score_face_check_determinism_runs_shipped_guard(tmp_path):
+    """--check-determinism drives the SHIPPED cross-process guard end-to-end
+    (FIR5-S5-BR-05/06): score-face re-scores in fresh PYTHONHASHSEED-varied
+    subprocesses via _check_face_determinism_cross_process and exits 0 iff
+    bit-identical. Reaching the write (no SystemExit) means the shipped guard ran
+    and passed — not an inline re-implementation.
+    """
+    record, manifest = _valid_face_manifest_and_record()
+    rec_path = tmp_path / "face-run.json"
+    rec_path.write_text(json.dumps(record))
+    man_path = tmp_path / "man.json"
+    man_path.write_text(json.dumps(manifest))
+    main(["score-face", "--run-record", str(rec_path), "--manifest", str(man_path), "--check-determinism"])
+    assert (tmp_path / "face-run-face-report.json").exists()
+
+    # Missing --run-record is still a parse error (flag recognized, not consumed as positional).
     with pytest.raises(SystemExit) as missing:
-        main(["score-face"])  # missing --run-record
+        main(["score-face", "--check-determinism"])
     assert missing.value.code == 2
+
+
+def test_cli_score_face_determinism_guard_detects_nondeterminism(tmp_path, monkeypatch):
+    """Non-vacuity (TEST-15): the shipped guard's cross-process comparison CAN go
+    red. A subprocess whose re-score differs from the in-process baseline makes
+    _check_face_determinism_cross_process sys.exit with 'determinism check FAILED'.
+    """
+    from scripts.eval_harness import cli as cli_mod
+
+    record, manifest = _valid_face_manifest_and_record()
+    rec_path = tmp_path / "face-run.json"
+    rec_path.write_text(json.dumps(record))
+    man_path = tmp_path / "man.json"
+    man_path.write_text(json.dumps(manifest))
+
+    class _Proc:
+        returncode = 0
+        stdout = "DIFFERENT-JSON---MD---DIFFERENT-MD"
+        stderr = ""
+
+    monkeypatch.setattr(cli_mod.subprocess, "run", lambda *a, **k: _Proc())
+    with pytest.raises(SystemExit) as exc:
+        cli_mod._check_face_determinism_cross_process(rec_path, str(man_path), public=False)
+    assert "determinism check FAILED" in str(exc.value)
 
 
 def test_cli_score_face_parse_run_record_required(tmp_path, monkeypatch, capsys):

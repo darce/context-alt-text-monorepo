@@ -73,6 +73,7 @@ import { useSuggestionReviewQueries } from './useSuggestionReviewQueries';
 import { useAriaAnnounce } from './useAriaAnnounce';
 import { useLiveReviewTarget } from './useLiveReviewTarget';
 import { useWorkbenchFindings } from './useWorkbenchFindings';
+import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
 
 /**
  * Filtered-empty copy — visual + AT share one string.
@@ -1007,7 +1008,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                 truncation.isLoading
               }
               title={truncationBlocksCommit ? (truncationReason ?? undefined) : undefined}
-              {...(bulkCommitOwnsAccent ? { 'data-acx-accent-primary': true } : {})}
+              {...(bulkCommitOwnsAccent ? { [ACCENT_PRIMARY_ATTR]: true } : {})}
               onClick={() => {
                 void bulk.initiateBulk();
               }}

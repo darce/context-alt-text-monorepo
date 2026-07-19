@@ -27,6 +27,7 @@ import {
   VIEW_IN_ROSTER_HREF,
 } from './personCommitCopy';
 import type { PersonCommitPhase, PersonCommitRequest } from './useSuggestionReviewMutations';
+import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
 
 export interface PersonCommitControlProps {
   clusterId: string;
@@ -186,7 +187,7 @@ export const PersonCommitControl = ({
           }
           onClick={handleConfirm}
           disabled={!canCommit}
-          {...(isPrimary && accentPrimary ? { 'data-acx-accent-primary': true } : {})}
+          {...(isPrimary && accentPrimary ? { [ACCENT_PRIMARY_ATTR]: true } : {})}
         >
           {phase === 'committing'
             ? __(PERSON_COMMIT_COMMITTING_COPY, 'alt-context')

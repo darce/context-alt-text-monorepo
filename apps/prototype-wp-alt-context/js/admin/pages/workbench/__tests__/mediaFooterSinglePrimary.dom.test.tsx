@@ -25,7 +25,7 @@ import { ReviewQueue } from '../identity-clusters';
 import { REVIEW_QUEUE_DRAIN_MESSAGE } from '../identity-clusters/reviewQueueDriver';
 import { MediaAnalyzeCta } from '../MediaAnalyzeCta';
 import { BulkDescribeCta } from '../MediaSelection';
-import { ACCENT_PRIMARY_ATTR, selectMediaFooterCtaState } from '../mediaFooterCtaState';
+import { ACCENT_PRIMARY_ATTR, FOOTER_ACCENT_OWNER, selectMediaFooterCtaState } from '../mediaFooterCtaState';
 
 /** Single source of truth for the accent-primary marker selector (BR-83 — was a literal). */
 const ACCENT_PRIMARY_SELECTOR = `[${ACCENT_PRIMARY_ATTR}]`;
@@ -176,8 +176,8 @@ const ReconciledViewport = ({
           onCardPrimaryPresenceChange={setCardPrimaryPresent}
         />
       )}
-      <MediaAnalyzeCta accentPrimary={footerCta.accentOwner === 'analyze'} />
-      <BulkDescribeCta {...describeProps} accentPrimary={footerCta.accentOwner === 'describe'} />
+      <MediaAnalyzeCta accentPrimary={footerCta.accentOwner === FOOTER_ACCENT_OWNER.ANALYZE} />
+      <BulkDescribeCta {...describeProps} accentPrimary={footerCta.accentOwner === FOOTER_ACCENT_OWNER.DESCRIBE} />
     </div>
   );
 };

@@ -51,8 +51,6 @@ export {
   nextQueueIndex,
   prevQueueIndex,
   queueItemSimilarity,
-  removeAtQueueCursor,
-  removeAtQueueIndex,
   REVIEW_QUEUE_BAND,
   REVIEW_QUEUE_BAND_CHIP_LABEL,
   REVIEW_QUEUE_DRAIN_MESSAGE,

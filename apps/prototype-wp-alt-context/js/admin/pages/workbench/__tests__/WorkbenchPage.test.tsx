@@ -153,7 +153,9 @@ const makeFindingsViewModel = (overrides: Partial<WorkbenchFindingsViewModel> = 
   isError: false,
   isUnavailable: false,
   isReadOnly: false,
+  queueSettled: true,
   nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.EMPTY },
+  queue: [],
   ...overrides,
 });
 
@@ -343,6 +345,9 @@ describe('WorkbenchPage', () => {
       setPerPage,
       handleSearchChange: vi.fn(),
       handleStatusChange: vi.fn(),
+      queueState: { kind: 'all' as const, band: 'all' as const, index: 0 },
+      getQueueState: () => ({ kind: 'all' as const, band: 'all' as const, index: 0 }),
+      setQueueState: vi.fn(),
     });
 
     mockUseScanStatus.mockReturnValue(
@@ -534,6 +539,9 @@ describe('WorkbenchPage', () => {
       setPerPage,
       handleSearchChange: vi.fn(),
       handleStatusChange: vi.fn(),
+      queueState: { kind: 'all' as const, band: 'all' as const, index: 0 },
+      getQueueState: () => ({ kind: 'all' as const, band: 'all' as const, index: 0 }),
+      setQueueState: vi.fn(),
     });
 
     renderWorkbench();
@@ -623,6 +631,9 @@ describe('WorkbenchPage', () => {
       setPerPage,
       handleSearchChange: vi.fn(),
       handleStatusChange: vi.fn(),
+      queueState: { kind: 'all' as const, band: 'all' as const, index: 0 },
+      getQueueState: () => ({ kind: 'all' as const, band: 'all' as const, index: 0 }),
+      setQueueState: vi.fn(),
     });
 
     mockUseWorkbenchMedia.mockReturnValue({
@@ -661,6 +672,9 @@ describe('WorkbenchPage', () => {
       setPerPage,
       handleSearchChange: vi.fn(),
       handleStatusChange: vi.fn(),
+      queueState: { kind: 'all' as const, band: 'all' as const, index: 0 },
+      getQueueState: () => ({ kind: 'all' as const, band: 'all' as const, index: 0 }),
+      setQueueState: vi.fn(),
     });
 
     renderWorkbench();

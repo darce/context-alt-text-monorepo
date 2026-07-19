@@ -317,6 +317,28 @@ describe('SyncStatusIndicator', () => {
     expect(container.firstChild).toHaveClass('acx-sync-status--warning');
   });
 
+  it('announces the offline transition through the role=status sync-status strip (§7 announce channel, Slice-8 / BR-77)', () => {
+    // The §7 offline matrix routes the offline announcement through the EXISTING
+    // sync-status live region — the CTAs only carry a static aria-describedby reason
+    // and must not add a duplicate live region. This asserts that channel is present.
+    mockReturn.data = buildSyncStatus({
+      sync_health: 'offline',
+      is_stale: false,
+      last_sync_result: 'unreachable',
+    });
+
+    render(<SyncStatusIndicator />);
+
+    const strip = screen.getByTestId('acx-sync-status-strip');
+    expect(strip).toHaveAttribute('role', 'status');
+    expect(strip).toHaveAttribute('aria-live', 'polite');
+    // The offline reason is surfaced inside that one live region.
+    expect(strip).toHaveTextContent('Waiting for service…');
+    expect(strip).toHaveTextContent('Offline');
+    // Exactly one status live region — no duplicate channel introduced by Slice-8.
+    expect(document.querySelectorAll('[data-testid="acx-sync-status-strip"]')).toHaveLength(1);
+  });
+
   it('overrides healthy sync-status when sync-health envelope reports offline', () => {
     mockReturn.data = buildSyncStatus({
       sync_health: 'healthy',

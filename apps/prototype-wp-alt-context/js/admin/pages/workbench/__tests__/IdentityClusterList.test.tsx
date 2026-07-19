@@ -9,6 +9,7 @@ import { resetConfigCache } from '../../../api/config';
 import { queryKeys } from '../../../api/queryKeys';
 import type { MediaIdentitiesResponse } from '../../../api/recognition';
 import { DATA_SOURCE } from '../../../api/recognition/types';
+import { buildNamingOptions } from '../identity-clusters/buildNamingOptions';
 import type {
   ClusterSuggestionsLoaderOptions,
   ClusterSuggestionsLoaderResult,
@@ -16,9 +17,41 @@ import type {
 
 const useClusterSuggestionsLoaderMock = vi.hoisted(() => vi.fn<() => ClusterSuggestionsLoaderResult>());
 
-type FindClusterByLabel = (label: string, signal?: AbortSignal) => Promise<{ id: string; label: string } | null>;
+const emptyCollisions = new Map() as ReadonlyMap<string, readonly never[]>;
+
+const loaderResultFrom = (
+  partial: Partial<ClusterSuggestionsLoaderResult> & {
+    labelMatches?: ClusterSuggestionsLoaderResult['labelMatches'];
+  },
+): ClusterSuggestionsLoaderResult => {
+  const labelMatches = partial.labelMatches ?? [];
+  const built =
+    partial.namingOptions !== undefined
+      ? null
+      : buildNamingOptions({
+          rosterEntries: [],
+          labelMatches,
+          limit: null,
+        });
+  return {
+    identityProjection: partial.identityProjection ?? [],
+    namingOptions: partial.namingOptions ?? built?.options ?? [],
+    collisionsByLabel: partial.collisionsByLabel ?? built?.collisionsByLabel ?? emptyCollisions,
+    labelMatches,
+    isLoading: partial.isLoading ?? false,
+    rosterError: partial.rosterError ?? false,
+    findClusterByLabel: partial.findClusterByLabel ?? defaultFindClusterByLabel,
+  };
+};
+
+interface ClusterLabelMatch {
+  id: string;
+  label: string;
+  identityCount?: number;
+}
+type FindClusterByLabel = (label: string, signal?: AbortSignal) => Promise<ClusterLabelMatch | null>;
 let defaultFindClusterByLabel: ReturnType<typeof vi.fn<FindClusterByLabel>>;
-let findClusterDeferreds: Deferred<{ id: string; label: string } | null>[] = [];
+let findClusterDeferreds: Deferred<ClusterLabelMatch | null>[] = [];
 
 // Mock ResizeObserver for Radix UI
 window.ResizeObserver = class ResizeObserver {
@@ -88,13 +121,7 @@ vi.mock('../../../hooks/useSyncOffline', () => ({
 vi.mock('../../../api/recognition', () => ({
   mergeCluster: vi.fn(),
   updateClusterLabel: vi.fn(),
-  fetchIdentitySuggestions: vi.fn(),
-  fetchPendingSuggestions: vi.fn().mockResolvedValue({
-    suggestions: [],
-    limit: 500,
-    offset: 0,
-    data_source: 'backend_proxy',
-  }),
+  fetchIdentitiesSuggestions: vi.fn(),
   listRecognitionClusters: vi.fn(),
   revertMergeCluster: vi.fn(),
   reassignClusterIdentity: vi.fn(),
@@ -172,7 +199,7 @@ const resolveDeferred = async <T,>(deferred: Deferred<T>, value: T, advanceMs = 
   await flushTimers(advanceMs);
 };
 
-const resolveFindClusterDeferreds = async (value: { id: string; label: string } | null) => {
+const resolveFindClusterDeferreds = async (value: ClusterLabelMatch | null) => {
   while (findClusterDeferreds.length > 0) {
     const deferred = findClusterDeferreds.shift();
     if (deferred) {
@@ -210,17 +237,16 @@ describe('IdentityClusterList', () => {
     setupMocks();
     findClusterDeferreds = [];
     defaultFindClusterByLabel = vi.fn(() => {
-      const deferred = createDeferred<{ id: string; label: string } | null>();
+      const deferred = createDeferred<ClusterLabelMatch | null>();
       findClusterDeferreds.push(deferred);
       return deferred.promise;
     });
-    useClusterSuggestionsLoaderMock.mockReturnValue({
-      identitySuggestions: { matches: [] },
-      labelMatches: [],
-      isLoading: false,
-      findClusterByLabel: defaultFindClusterByLabel,
-    });
-    vi.mocked(api.fetchIdentitySuggestions).mockResolvedValue({ matches: [] });
+    useClusterSuggestionsLoaderMock.mockReturnValue(
+      loaderResultFrom({
+        findClusterByLabel: defaultFindClusterByLabel,
+      }),
+    );
+    vi.mocked(api.fetchIdentitiesSuggestions).mockResolvedValue({ matches: {} });
     vi.mocked(api.listRecognitionClusters).mockResolvedValue({
       clusters: [],
       limit: 20,
@@ -279,17 +305,18 @@ describe('IdentityClusterList', () => {
     expect(screen.queryByRole('button', { name: /Pin representative|Unpin representative/i })).not.toBeInTheDocument();
   });
 
-  it('pins and unpins the representative from the cluster preview', async () => {
+  it('does not render pin plumbing on the cluster preview (UXA-07)', async () => {
     const pinRepresentativeMock = vi.mocked(api.pinRepresentative);
     pinRepresentativeMock.mockResolvedValue(undefined);
 
-    const { client, user } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} />);
+    const { client } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} />);
 
     const cacheData: MediaIdentitiesResponse = {
       identities_by_media: {
         '1': [
           {
             ...baseIdentity,
+            is_pinned: true,
           },
         ],
       },
@@ -298,43 +325,9 @@ describe('IdentityClusterList', () => {
       setMediaIdentitiesCache(client, cacheData);
     });
 
-    const pinButton = await screen.findByRole('button', { name: /pin representative/i });
-    await actFlow(async () => {
-      await user.click(pinButton);
-    });
-
-    await waitFor(() => {
-      expect(pinRepresentativeMock).toHaveBeenCalledWith('cluster-1', 'rep-1', true, undefined);
-    });
-  });
-
-  it('shows an unpin action when the representative is already pinned', async () => {
-    const pinRepresentativeMock = vi.mocked(api.pinRepresentative);
-    pinRepresentativeMock.mockResolvedValue(undefined);
-    const pinnedIdentity = {
-      ...baseIdentity,
-      is_pinned: true,
-    };
-
-    const { client, user } = await renderWithClient(<IdentityClusterList identities={[pinnedIdentity]} />);
-
-    const cacheData: MediaIdentitiesResponse = {
-      identities_by_media: {
-        '1': [pinnedIdentity],
-      },
-    };
-    await actFlow(async () => {
-      setMediaIdentitiesCache(client, cacheData);
-    });
-
-    const unpinButton = await screen.findByRole('button', { name: /unpin representative/i });
-    await actFlow(async () => {
-      await user.click(unpinButton);
-    });
-
-    await waitFor(() => {
-      expect(pinRepresentativeMock).toHaveBeenCalledWith('cluster-1', 'rep-1', false, undefined);
-    });
+    expect(screen.queryByRole('button', { name: /pin representative/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /unpin representative/i })).not.toBeInTheDocument();
+    expect(pinRepresentativeMock).not.toHaveBeenCalled();
   });
 
   it('allows renaming a manually labeled cluster', async () => {
@@ -436,22 +429,20 @@ describe('IdentityClusterList', () => {
   });
 
   it('shows identity suggestions in the overlay', async () => {
-    const loaderResult = {
-      identitySuggestions: {
-        matches: [
+    useClusterSuggestionsLoaderMock.mockReturnValue(
+      loaderResultFrom({
+        identityProjection: [
           {
-            cluster_id: 'cluster-suggested',
+            identityId: baseIdentity.identity_id,
+            clusterId: 'cluster-suggested',
             label: 'Ada Lovelace',
             similarity: 0.92,
-            identity_count: 3,
+            identityCount: 3,
           },
         ],
-      },
-      labelMatches: [],
-      isLoading: false,
-      findClusterByLabel: defaultFindClusterByLabel,
-    };
-    useClusterSuggestionsLoaderMock.mockReturnValue(loaderResult);
+        findClusterByLabel: defaultFindClusterByLabel,
+      }),
+    );
 
     const { user } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} />);
 
@@ -475,20 +466,18 @@ describe('IdentityClusterList', () => {
 
   it('uses search to find cluster by label when saving to an existing label', async () => {
     const existingCluster = { id: 'cluster-500', label: 'Erin McCleod', identity_count: 1 };
-    const matchDeferreds: Deferred<{ id: string; label: string } | null>[] = [];
+    const matchDeferreds: Deferred<ClusterLabelMatch | null>[] = [];
     const findClusterByLabelRemote = vi.fn(() => {
-      const deferred = createDeferred<{ id: string; label: string } | null>();
+      const deferred = createDeferred<ClusterLabelMatch | null>();
       matchDeferreds.push(deferred);
       return deferred.promise;
     });
 
-    const loaderResult = {
-      identitySuggestions: { matches: [] },
-      labelMatches: [],
-      isLoading: false,
-      findClusterByLabel: findClusterByLabelRemote,
-    };
-    useClusterSuggestionsLoaderMock.mockReturnValue(loaderResult);
+    useClusterSuggestionsLoaderMock.mockReturnValue(
+      loaderResultFrom({
+        findClusterByLabel: findClusterByLabelRemote,
+      }),
+    );
 
     const mergeDeferred = createDeferred<unknown>();
     (api.mergeCluster as Mock).mockReturnValue(mergeDeferred.promise);
@@ -532,7 +521,11 @@ describe('IdentityClusterList', () => {
       if (!matchDeferred) {
         throw new Error('Expected match deferred to be defined.');
       }
-      await resolveDeferred(matchDeferred, { id: existingCluster.id, label: existingCluster.label });
+      await resolveDeferred(matchDeferred, {
+        id: existingCluster.id,
+        label: existingCluster.label,
+        identityCount: existingCluster.identity_count,
+      });
     });
 
     await actFlow(async () => {
@@ -542,7 +535,7 @@ describe('IdentityClusterList', () => {
     await waitFor(() => expect(findClusterByLabelRemote).toHaveBeenCalled());
     await waitForEditClosed();
 
-    // No merge modal expected since identity_count is 1 (< 5)
+    // No merge modal expected since identityCount is 1 (< 5)
 
     await waitFor(() =>
       expect(api.mergeCluster).toHaveBeenCalledWith('cluster-1', 'cluster-500', 'Erin McCleod', expect.anything()),
@@ -553,19 +546,18 @@ describe('IdentityClusterList', () => {
     const updateDeferred = createDeferred<unknown>();
     (api.updateClusterLabel as Mock).mockReturnValue(updateDeferred.promise);
 
-    const matchDeferreds: Deferred<{ id: string; label: string } | null>[] = [];
+    const matchDeferreds: Deferred<ClusterLabelMatch | null>[] = [];
     const findClusterByLabelRemote = vi.fn(() => {
-      const deferred = createDeferred<{ id: string; label: string } | null>();
+      const deferred = createDeferred<ClusterLabelMatch | null>();
       matchDeferreds.push(deferred);
       return deferred.promise;
     });
 
-    useClusterSuggestionsLoaderMock.mockReturnValue({
-      identitySuggestions: { matches: [] },
-      labelMatches: [],
-      isLoading: false,
-      findClusterByLabel: findClusterByLabelRemote,
-    });
+    useClusterSuggestionsLoaderMock.mockReturnValue(
+      loaderResultFrom({
+        findClusterByLabel: findClusterByLabelRemote,
+      }),
+    );
 
     const { client, user } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} />);
     const cacheData: MediaIdentitiesResponse = {
@@ -645,13 +637,12 @@ describe('IdentityClusterList', () => {
         sample_identities: [],
       },
     ];
-    const loaderResult = {
-      identitySuggestions: { matches: [] },
-      labelMatches: existingClusters,
-      isLoading: false,
-      findClusterByLabel: defaultFindClusterByLabel,
-    };
-    useClusterSuggestionsLoaderMock.mockReturnValue(loaderResult);
+    useClusterSuggestionsLoaderMock.mockReturnValue(
+      loaderResultFrom({
+        labelMatches: existingClusters,
+        findClusterByLabel: defaultFindClusterByLabel,
+      }),
+    );
 
     const { client, user } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} />);
 
@@ -709,13 +700,12 @@ describe('IdentityClusterList', () => {
         sample_identities: [],
       },
     ];
-    const loaderResult = {
-      identitySuggestions: { matches: [] },
-      labelMatches: existingClusters,
-      isLoading: false,
-      findClusterByLabel: defaultFindClusterByLabel,
-    };
-    useClusterSuggestionsLoaderMock.mockReturnValue(loaderResult);
+    useClusterSuggestionsLoaderMock.mockReturnValue(
+      loaderResultFrom({
+        labelMatches: existingClusters,
+        findClusterByLabel: defaultFindClusterByLabel,
+      }),
+    );
 
     const { client, user } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} />);
     const cacheData: MediaIdentitiesResponse = {
@@ -782,13 +772,12 @@ describe('IdentityClusterList', () => {
         sample_identities: [],
       },
     ];
-    const loaderResult = {
-      identitySuggestions: { matches: [] },
-      labelMatches: existingClusters,
-      isLoading: false,
-      findClusterByLabel: defaultFindClusterByLabel,
-    };
-    useClusterSuggestionsLoaderMock.mockReturnValue(loaderResult);
+    useClusterSuggestionsLoaderMock.mockReturnValue(
+      loaderResultFrom({
+        labelMatches: existingClusters,
+        findClusterByLabel: defaultFindClusterByLabel,
+      }),
+    );
 
     const { client, user } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} />);
     const cacheData: MediaIdentitiesResponse = {
@@ -997,5 +986,70 @@ describe('IdentityClusterList', () => {
         mode: 'sync',
       }),
     );
+  });
+
+  describe('inline suggestion batching', () => {
+    const makeUnlabeled = (count: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        ...baseIdentity,
+        identity_id: `id-${i}`,
+        media_id: i + 1,
+        cluster_id: null,
+        cluster_label: null,
+      }));
+
+    it('issues exactly one batched suggestions fetch at projection depth for N unlabeled cards', async () => {
+      const identities = makeUnlabeled(5);
+      await renderWithClient(<IdentityClusterList identities={identities} />);
+
+      await waitFor(() => expect(api.fetchIdentitiesSuggestions).toHaveBeenCalledTimes(1));
+      expect(api.fetchIdentitiesSuggestions).toHaveBeenCalledWith(['id-0', 'id-1', 'id-2', 'id-3', 'id-4'], 5);
+    });
+
+    it('fetches no suggestions in label-only mode (zero fetches)', async () => {
+      const identities = makeUnlabeled(3);
+      await renderWithClient(<IdentityClusterList identities={identities} dataSource={DATA_SOURCE.BACKEND_PROXY} />);
+
+      await flushTimers();
+      expect(api.fetchIdentitiesSuggestions).not.toHaveBeenCalled();
+    });
+
+    it('resolves an inline prompt on every one of 60 unlabeled cards from a single batch', async () => {
+      const identities = makeUnlabeled(60);
+      // Several identities carry >=2 pending suggestions (guards the row-vs-identity
+      // bound); the client keys by identity id and takes the first server-ranked match.
+      const matches = Object.fromEntries(
+        identities.map((identity, i) => {
+          const primary = { cluster_id: `c-${i}`, label: `Person ${i}`, similarity: 0.9, identity_count: 2 };
+          const rows =
+            i % 4 === 0
+              ? [primary, { cluster_id: `c-${i}-b`, label: `Person ${i} alt`, similarity: 0.8, identity_count: 1 }]
+              : [primary];
+          return [identity.identity_id, rows];
+        }),
+      );
+      vi.mocked(api.fetchIdentitiesSuggestions).mockResolvedValue({ matches });
+
+      await renderWithClient(<IdentityClusterList identities={identities} />);
+
+      await waitFor(() => expect(screen.getAllByRole('button', { name: 'Yes' })).toHaveLength(60));
+      expect(api.fetchIdentitiesSuggestions).toHaveBeenCalledTimes(1);
+      // First (server-ranked) match is the one shown, even where >=2 rows exist.
+      expect(screen.getByText('Person 0')).toBeInTheDocument();
+      expect(screen.queryByText('Person 0 alt')).not.toBeInTheDocument();
+    });
+
+    it('renders nothing for an identity absent from the keyed envelope (empty-match)', async () => {
+      const identities = makeUnlabeled(2);
+      vi.mocked(api.fetchIdentitiesSuggestions).mockResolvedValue({
+        matches: { 'id-0': [{ cluster_id: 'c-0', label: 'Ada', similarity: 0.9, identity_count: 2 }] },
+      });
+
+      await renderWithClient(<IdentityClusterList identities={identities} />);
+
+      await waitFor(() => expect(screen.getByText('Ada')).toBeInTheDocument());
+      // 'id-1' had no eligible suggestion → exactly one prompt renders.
+      expect(screen.getAllByRole('button', { name: 'Yes' })).toHaveLength(1);
+    });
   });
 });

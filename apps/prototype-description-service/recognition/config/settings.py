@@ -7,14 +7,23 @@ type-safe defaults. Override by instantiating with explicit values in code.
 
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from recognition.application.settings import ClusteringSettings
 from recognition.application.settings.scan import ScanSettings
+from recognition.infrastructure.face_pipeline._common import (
+    DEFAULT_NMS_THRESHOLD,
+    DEFAULT_SCORE_THRESHOLD,
+    DEFAULT_TOP_K,
+)
+from recognition.infrastructure.face_pipeline.provenance import DEFAULT_MODELS_DIR
+
+_FACE_PIPELINE_PROFILES: frozenset[str] = frozenset({"insightface", "face_pipeline"})
 
 
 def _resolve_insightface_cache_root() -> Path:
@@ -28,6 +37,70 @@ def _resolve_insightface_cache_root() -> Path:
         return Path(explicit_home)
 
     return Path.home() / ".insightface"
+
+
+def _resolve_face_pipeline_profile() -> str:
+    """Read RECOGNITION_FACE_PIPELINE_PROFILE; fail closed on unknown values (rg-008)."""
+    raw = os.environ.get("RECOGNITION_FACE_PIPELINE_PROFILE", "insightface").strip()
+    if raw not in _FACE_PIPELINE_PROFILES:
+        raise ValueError(
+            f"Invalid RECOGNITION_FACE_PIPELINE_PROFILE={raw!r}; allowed values: {sorted(_FACE_PIPELINE_PROFILES)}"
+        )
+    return raw
+
+
+def _resolve_face_pipeline_models_dir() -> Path | None:
+    """Optional models dir override; None means face_pipeline DEFAULT_MODELS_DIR."""
+    raw = os.environ.get("RECOGNITION_FACE_PIPELINE_MODELS_DIR", "").strip()
+    if not raw:
+        return None
+    return Path(raw)
+
+
+def _resolve_embedding_dimension() -> int:
+    """Bind identity_detection.embedding_dimension to DatabaseSettings.pgvector_dimension.
+
+    PGVECTOR_DIM is the sole dimension root. RECOGNITION_EMBEDDING_DIMENSION is
+    ignored so it cannot create a second root.
+    """
+    from db.settings import get_database_settings
+
+    return int(get_database_settings().pgvector_dimension)
+
+
+def _resolve_face_pipeline_timeout_s() -> float:
+    """Default detector timeout matches the incumbent embedding timeout source."""
+    from db.settings import get_database_settings
+
+    return float(get_database_settings().embedding_timeout_s)
+
+
+def _resolve_face_pipeline_max_workers() -> int:
+    """Read RECOGNITION_FACE_PIPELINE_MAX_WORKERS; fail closed on empty/malformed/<=0."""
+    raw = os.environ.get("RECOGNITION_FACE_PIPELINE_MAX_WORKERS")
+    if raw is None:
+        return 2
+    stripped = raw.strip()
+    if not stripped:
+        raise ValueError(
+            "Invalid RECOGNITION_FACE_PIPELINE_MAX_WORKERS: empty value; "
+            "must be a positive integer"
+        )
+    # Reject floats ("1.5") and non-numeric tokens; only optional sign + digits.
+    if stripped[0] in "+-" and not stripped[1:].isdigit():
+        raise ValueError(
+            f"Invalid RECOGNITION_FACE_PIPELINE_MAX_WORKERS={raw!r}; must be a positive integer"
+        )
+    if stripped[0] not in "+-" and not stripped.isdigit():
+        raise ValueError(
+            f"Invalid RECOGNITION_FACE_PIPELINE_MAX_WORKERS={raw!r}; must be a positive integer"
+        )
+    value = int(stripped)
+    if value <= 0:
+        raise ValueError(
+            f"Invalid RECOGNITION_FACE_PIPELINE_MAX_WORKERS={value}; must be a positive integer"
+        )
+    return value
 
 
 class InsightFaceSettings(BaseModel):
@@ -49,6 +122,108 @@ class InsightFaceSettings(BaseModel):
         return self.cache_dir / "models"
 
 
+class FacePipelineSettings(BaseModel):
+    """Dark-launch settings for the FIR-3 YuNet+SFace runtime (FIR-4 S2).
+
+    Production default profile remains ``insightface``. Flat env vars follow the
+    existing ``RecognitionSettings`` convention (no nested pydantic-settings delimiter).
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    profile: Literal["insightface", "face_pipeline"] = Field(
+        default_factory=_resolve_face_pipeline_profile,  # type: ignore[arg-type]
+        validate_default=True,
+        description="Active face pipeline profile (dark default: insightface).",
+    )
+    models_dir: Path | None = Field(
+        default_factory=_resolve_face_pipeline_models_dir,
+        description="Override for face_pipeline ONNX models dir (None → DEFAULT_MODELS_DIR).",
+    )
+    score_threshold: float = Field(
+        default=DEFAULT_SCORE_THRESHOLD,
+        description="YuNet score threshold pass-through (FIR-3 default).",
+    )
+    nms_threshold: float = Field(
+        default=DEFAULT_NMS_THRESHOLD,
+        description="YuNet NMS threshold pass-through (FIR-3 default).",
+    )
+    top_k: int = Field(
+        default=DEFAULT_TOP_K,
+        description="YuNet top-k pass-through (FIR-3 default).",
+    )
+    timeout_s: float = Field(
+        default_factory=_resolve_face_pipeline_timeout_s,
+        description="Per-image detect timeout (defaults to DB_EMBEDDING_TIMEOUT_SECONDS).",
+    )
+    max_workers: int = Field(
+        default_factory=_resolve_face_pipeline_max_workers,
+        description=(
+            "Process-wide face_pipeline executor + admission capacity. "
+            "Env: RECOGNITION_FACE_PIPELINE_MAX_WORKERS (default 2)."
+        ),
+    )
+
+    @field_validator("profile", mode="before")
+    @classmethod
+    def _validate_profile(cls, value: object) -> object:
+        if isinstance(value, str) and value not in _FACE_PIPELINE_PROFILES:
+            raise ValueError(
+                f"Invalid face_pipeline profile={value!r}; allowed values: {sorted(_FACE_PIPELINE_PROFILES)}"
+            )
+        return value
+
+    @field_validator("max_workers", mode="before")
+    @classmethod
+    def _validate_max_workers(cls, value: object) -> object:
+        """Fail closed on non-positive or non-integral capacity ([CFG-01/02])."""
+        if isinstance(value, bool):
+            raise ValueError(f"Invalid face_pipeline max_workers={value!r}; must be a positive integer")
+        if isinstance(value, float):
+            if not value.is_integer():
+                raise ValueError(f"Invalid face_pipeline max_workers={value!r}; must be a positive integer")
+            value = int(value)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped or (stripped[0] in "+-" and not stripped[1:].isdigit()) or (
+                stripped[0] not in "+-" and not stripped.isdigit()
+            ):
+                raise ValueError(f"Invalid face_pipeline max_workers={value!r}; must be a positive integer")
+            value = int(stripped)
+        if not isinstance(value, int):
+            raise ValueError(f"Invalid face_pipeline max_workers={value!r}; must be a positive integer")
+        if value <= 0:
+            raise ValueError(f"Invalid face_pipeline max_workers={value}; must be a positive integer")
+        return value
+
+    @field_validator("timeout_s", mode="before")
+    @classmethod
+    def _validate_timeout_s(cls, value: object) -> object:
+        """Fail closed on non-finite or non-positive detect timeouts ([CFG-01/02], [RES-03])."""
+        if isinstance(value, bool):
+            raise ValueError(f"Invalid face_pipeline timeout_s={value!r}; must be a finite positive number")
+        if isinstance(value, str):
+            stripped = value.strip()
+            try:
+                value = float(stripped)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid face_pipeline timeout_s={value!r}; must be a finite positive number"
+                ) from exc
+        if isinstance(value, int) and not isinstance(value, bool):
+            value = float(value)
+        if not isinstance(value, float):
+            raise ValueError(f"Invalid face_pipeline timeout_s={value!r}; must be a finite positive number")
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(f"Invalid face_pipeline timeout_s={value!r}; must be a finite positive number")
+        return value
+
+    @property
+    def resolved_models_dir(self) -> Path:
+        """Models directory used for verified load (None → package DEFAULT_MODELS_DIR)."""
+        return self.models_dir if self.models_dir is not None else DEFAULT_MODELS_DIR
+
+
 class IdentityDetectionSettings(BaseModel):
     """Settings for identity detection and embedding generation."""
 
@@ -56,7 +231,13 @@ class IdentityDetectionSettings(BaseModel):
 
     default_threshold: float = Field(default=0.45, description="Default detection confidence threshold.")
     max_identities_per_image: int = Field(default=999, description="Maximum faces to detect per image.")
-    embedding_dimension: int = Field(default=512, description="Embedding vector dimension (face identity only).")
+    embedding_dimension: int = Field(
+        default_factory=_resolve_embedding_dimension,
+        description=(
+            "Embedding vector dimension (face identity only). "
+            "Derived from PGVECTOR_DIM / DatabaseSettings.pgvector_dimension."
+        ),
+    )
     max_candidates: int = Field(default=10, description="Maximum candidate matches to consider.")
 
 
@@ -94,6 +275,7 @@ class RecognitionSettings(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     insightface: InsightFaceSettings = Field(default_factory=InsightFaceSettings)
+    face_pipeline: FacePipelineSettings = Field(default_factory=FacePipelineSettings)
     identity_detection: IdentityDetectionSettings = Field(default_factory=IdentityDetectionSettings)
     clustering_limits: ClusteringLimitsSettings = Field(default_factory=ClusteringLimitsSettings)
     clustering: ClusteringSettings = Field(default_factory=ClusteringSettings)
@@ -135,3 +317,18 @@ class RecognitionSettings(BaseModel):
         ),
         description="MIME allow-list for image_<media_id> parts on the multipart route.",
     )
+
+    @model_validator(mode="after")
+    def _check_embedding_pgvector_pair(self) -> RecognitionSettings:
+        """Fail fast when identity embedding dim != DB pgvector dim (CR-09).
+
+        Lazy-import db settings to avoid import cycles at module load.
+        Pairing is profile-independent (insightface and face_pipeline).
+        """
+        from db.settings import get_database_settings
+
+        pg_dim = int(get_database_settings().pgvector_dimension)
+        id_dim = int(self.identity_detection.embedding_dimension)
+        if id_dim != pg_dim:
+            raise ValueError(f"identity_detection.embedding_dimension ({id_dim}) != pgvector_dimension ({pg_dim})")
+        return self

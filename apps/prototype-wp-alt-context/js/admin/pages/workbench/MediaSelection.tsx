@@ -1,14 +1,6 @@
 import { ChangeEvent, useState } from 'react';
 import * as Select from '@radix-ui/react-select';
-import {
-  AlertTriangle,
-  Check,
-  CheckCircle2,
-  ChevronDown,
-  Clock,
-  Loader2,
-  XCircle,
-} from 'lucide-react';
+import { AlertTriangle, Check, CheckCircle2, ChevronDown, Clock, Loader2, XCircle } from 'lucide-react';
 import { __, sprintf } from '@wordpress/i18n';
 import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
 import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
@@ -20,18 +12,30 @@ import { BulkDescribeReviewLink } from './BulkDescribeReviewLink';
 import { Checkbox } from '../../../components/ui/checkbox';
 import { useBulkDescribe } from '../../hooks/useBulkDescribe';
 import type { DescribeRunProgress } from '../../hooks/useDescribeRunProgress';
+import { useRecognitionCooldown } from '../../hooks/useRecognitionCooldown';
 import { useRemoteActionGate } from '../../hooks/useRemoteActionGate';
 import { useSyncOffline } from '../../hooks/useSyncOffline';
 import { DESCRIBE_RUN_STATUS, type DescribeRunStatus } from '../../api/describeApi';
+import { isCooldownSignal } from '../../utils/retryPolicy';
 import { useWorkbenchMediaContext } from './WorkbenchMediaContext';
 import { SYNC_VOCABULARY } from './syncPresentation';
+import { ACCENT_PRIMARY_ATTR, FOOTER_ACCENT_OWNER, selectMediaFooterCtaState } from './mediaFooterCtaState';
 
 interface MediaSelectionProps {
   collapsed?: boolean;
   onExpand?: () => void;
+  /**
+   * §7: a review card / label / review panel primary is on screen. When true the
+   * card owns the single viewport accent primary, so both footer CTAs step down.
+   */
+  reviewActive?: boolean;
 }
 
-export const MediaSelection = ({ collapsed = false, onExpand }: MediaSelectionProps): React.JSX.Element => {
+export const MediaSelection = ({
+  collapsed = false,
+  onExpand,
+  reviewActive = false,
+}: MediaSelectionProps): React.JSX.Element => {
   const { selection: mediaSelection, filters, mediaQueue } = useWorkbenchMediaContext();
   // RES-15: container owns offline signal; BulkDescribeCta is pure presentational.
   const offline = useSyncOffline();
@@ -90,6 +94,10 @@ export const MediaSelection = ({ collapsed = false, onExpand }: MediaSelectionPr
     : identityQuery.isError
       ? __('Unable to load identity data.', 'alt-context')
       : null;
+
+  // §7 media-footer CTA hierarchy: a per-state selector resolves the SINGLE
+  // accent primary across the footer, reconciled against the review card.
+  const footerCta = selectMediaFooterCtaState({ reviewActive, describeRunning: isDescribeRunning });
 
   if (collapsed) {
     return <MediaSummaryBar onExpand={onExpand ?? (() => undefined)} />;
@@ -155,9 +163,9 @@ export const MediaSelection = ({ collapsed = false, onExpand }: MediaSelectionPr
             progress={describeProgress}
             isPanelVisible={isDescribePanelVisible}
             errorMessage={bulkDescribe.submit.error?.message ?? bulkDescribe.cancel.error?.message ?? null}
-            remoteActionDisabled={remoteGate.disabled}
             remoteActionTitle={remoteGate.title}
             remoteActionAriaDisabled={remoteGate['aria-disabled']}
+            accentPrimary={footerCta.accentOwner === FOOTER_ACCENT_OWNER.DESCRIBE}
             onSubmit={() => {
               if (offline) {
                 return;
@@ -173,7 +181,7 @@ export const MediaSelection = ({ collapsed = false, onExpand }: MediaSelectionPr
             onDismiss={() => setDismissedRunId(activeDescribeRunId)}
             onRetryPolling={() => describeProgress.retry()}
           />
-          <MediaAnalyzeCta />
+          <MediaAnalyzeCta accentPrimary={footerCta.accentOwner === FOOTER_ACCENT_OWNER.ANALYZE} />
         </div>
       </div>
       {detailStatusMessage && (
@@ -272,6 +280,9 @@ const MediaSelectionToolbar = ({
   </div>
 );
 
+/** aria-describedby target for the §7 offline reason on the describe submit CTA. */
+const DESCRIBE_OFFLINE_REASON_ID = 'acx-describe-offline-reason';
+
 interface BulkDescribeCtaProps {
   selectedCount: number;
   isSubmitting: boolean;
@@ -281,10 +292,14 @@ interface BulkDescribeCtaProps {
   progress: DescribeRunProgress;
   isPanelVisible: boolean;
   errorMessage: string | null;
-  /** Remote-compute offline gate (RES-15) — never applied to cancel. */
-  remoteActionDisabled?: boolean;
+  /**
+   * Remote-compute offline gate (RES-15). §7: aria-disabled only (still focusable,
+   * reason via aria-describedby) — never HTML `disabled`. Never applied to cancel.
+   */
   remoteActionTitle?: string;
   remoteActionAriaDisabled?: true;
+  /** §7 accent ownership: mark the describe surface as the single accent primary. */
+  accentPrimary?: boolean;
   onSubmit: () => void;
   onCancel: () => void;
   onDismiss: () => void;
@@ -301,9 +316,9 @@ export const BulkDescribeCta = ({
   progress,
   isPanelVisible,
   errorMessage,
-  remoteActionDisabled = false,
   remoteActionTitle,
   remoteActionAriaDisabled,
+  accentPrimary = false,
   onSubmit,
   onCancel,
   onDismiss,
@@ -313,20 +328,40 @@ export const BulkDescribeCta = ({
   // Cannot cancel an errored/finished run — offer to clear the panel instead so a
   // new run can start from the terminal state (FE-01, rg-003).
   const canDismiss = isPanelVisible && (progress.isTerminal || progress.isError);
+  const offlineGated = Boolean(remoteActionAriaDisabled);
 
   return (
     <div className="acx-media-selection__bulk-describe">
       <div className="acx-media-selection__bulk-describe-actions">
         <button
           type="button"
-          className="button"
-          disabled={selectedCount === 0 || isSubmitting || isRunning || remoteActionDisabled}
+          // BR-73: the accent marker + accent chrome live on the submit button (the
+          // actually-accent-styled primary), never on the neutral wrapper div.
+          className={accentPrimary ? 'button acx-accent-primary-action' : 'button'}
+          // BR-74: offline never HTML-disables — the aria-describedby reason must stay
+          // reachable on a focusable control. Offline is gated by aria-disabled + the
+          // onClick guard; zero-selection/submitting/running still disable when online.
+          disabled={!offlineGated && (selectedCount === 0 || isSubmitting || isRunning)}
           aria-disabled={remoteActionAriaDisabled}
+          aria-describedby={offlineGated ? DESCRIBE_OFFLINE_REASON_ID : undefined}
           title={remoteActionTitle}
-          onClick={onSubmit}
+          onClick={() => {
+            // BR-76: presentational offline guard mirrors MediaAnalyzeCta — activation is
+            // a no-op while offline-gated (the container onSubmit also fail-fasts offline).
+            if (offlineGated) {
+              return;
+            }
+            onSubmit();
+          }}
+          {...(accentPrimary ? { [ACCENT_PRIMARY_ATTR]: true } : {})}
         >
           {isSubmitting ? SYNC_VOCABULARY.describeStarting : __('Describe selected', 'alt-context')}
         </button>
+        {offlineGated && remoteActionTitle ? (
+          <span id={DESCRIBE_OFFLINE_REASON_ID} className="screen-reader-text">
+            {remoteActionTitle}
+          </span>
+        ) : null}
         {canCancel ? (
           <button type="button" className="button button-link" disabled={isCancelling} onClick={onCancel}>
             {isCancelling ? __('Cancelling…', 'alt-context') : __('Cancel describe run', 'alt-context')}
@@ -391,16 +426,42 @@ const formatEtaLabel = (etaSeconds: number | null): string => {
   return sprintf(__('~%1$dm %2$ds remaining', 'alt-context'), minutes, seconds);
 };
 
-const BulkDescribeProgress = ({
-  progress,
-  onRetry,
-}: {
-  progress: DescribeRunProgress;
-  onRetry: () => void;
-}) => {
-  const { run, status, progressFraction, etaSeconds, stalledForSeconds, isTerminal, isError } = progress;
+export const BulkDescribeProgress = ({ progress, onRetry }: { progress: DescribeRunProgress; onRetry: () => void }) => {
+  const { run, status, progressFraction, etaSeconds, stalledForSeconds, isTerminal, isError, isFrozen } = progress;
+  const cooldown = useRecognitionCooldown();
 
-  if (isError) {
+  // A hard error whose cause IS the armed cooldown (429/503-with-Retry-After)
+  // is the same signal as the waiting state, not a dead run: prefer the calm
+  // paused notice over the assertive role=alert Retry so the two breakers don't
+  // shout past each other (BR review). A non-cooldown hard error still alerts.
+  const errorIsArmedCooldown = isError && cooldown.isCoolingDown && isCooldownSignal(progress.error);
+  const hardError = isError && !errorIsArmedCooldown;
+
+  // Frozen surface is a designed state (RLSE-04): a transient poll timeout
+  // (BR-07), the shared recognition cooldown, or a cooldown-caused hard error
+  // pauses updates, so say so — otherwise a stopped bar reads as a hang and
+  // invites the reload traffic the cooldown exists to prevent. Announced by the
+  // surrounding polite live region (A11Y-21); icon paired with color (sr-004).
+  //
+  // The announced sentence is static so the polite region does not re-announce
+  // every second (A11Y-21); the ticking countdown lives in an aria-hidden span
+  // — visible, never re-read by a screen reader.
+  const isWaiting = !isTerminal && !hardError && (isFrozen || cooldown.isCoolingDown);
+  const waitingNotice = isWaiting ? (
+    <span className="acx-media-selection__bulk-describe-paused">
+      <Clock aria-hidden="true" size={16} />
+      <span className="acx-media-selection__bulk-describe-paused-label">
+        {__('Waiting for the service — progress updates paused.', 'alt-context')}
+      </span>
+      {cooldown.isCoolingDown && cooldown.remainingSeconds > 0 ? (
+        <span className="acx-media-selection__bulk-describe-countdown" aria-hidden="true">
+          {sprintf(__('Retrying in %ds.', 'alt-context'), cooldown.remainingSeconds)}
+        </span>
+      ) : null}
+    </span>
+  ) : null;
+
+  if (hardError) {
     return (
       <div className="acx-media-selection__bulk-describe-progress" role="alert" aria-live="assertive">
         <span className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--danger">
@@ -424,6 +485,7 @@ const BulkDescribeProgress = ({
           <Loader2 className="acx-media-selection__bulk-describe-spin" aria-hidden="true" size={16} />
           {SYNC_VOCABULARY.describeStarting}
         </span>
+        {waitingNotice}
       </div>
     );
   }
@@ -433,11 +495,7 @@ const BulkDescribeProgress = ({
   // Processed = every terminal item (completed + failed + skipped) so the bar
   // and count reflect true progress, not just successes.
   const processed = run.completed + run.failed + run.skipped;
-  const countsLabel = sprintf(
-    __('%1$d of %2$d processed', 'alt-context'),
-    processed,
-    run.total,
-  );
+  const countsLabel = sprintf(__('%1$d of %2$d processed', 'alt-context'), processed, run.total);
 
   return (
     <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
@@ -476,13 +534,11 @@ const BulkDescribeProgress = ({
           <span className="acx-media-selection__bulk-describe-eta">{formatEtaLabel(etaSeconds)}</span>
         ) : null}
       </div>
+      {waitingNotice}
       {stalledForSeconds !== null ? (
         <span className="acx-media-selection__bulk-describe-stall">
           <AlertTriangle aria-hidden="true" size={16} />
-          {sprintf(
-            __('No progress for %ds — the run may be stalled.', 'alt-context'),
-            stalledForSeconds,
-          )}
+          {sprintf(__('No progress for %ds — the run may be stalled.', 'alt-context'), stalledForSeconds)}
         </span>
       ) : null}
     </div>

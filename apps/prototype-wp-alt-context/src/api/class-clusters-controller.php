@@ -166,6 +166,20 @@ class ClustersController extends AbstractRecognitionProxyController implements C
 				'methods'             => 'GET',
 				'callback'            => array( $this, 'get_cluster_members' ),
 				'permission_callback' => array( $this, 'can_manage_recognition' ),
+				'args'                => array(
+					'limit'  => array(
+						'description'       => 'Maximum members to return (capped server-side).',
+						'type'              => 'integer',
+						'required'          => false,
+						'sanitize_callback' => 'absint',
+					),
+					'offset' => array(
+						'description'       => 'Number of members to skip before returning results.',
+						'type'              => 'integer',
+						'required'          => false,
+						'sanitize_callback' => 'absint',
+					),
+				),
 			)
 		);
 	}

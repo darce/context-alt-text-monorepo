@@ -14,6 +14,7 @@ require_once __DIR__ . '/services/class-cluster-membership-service.php';
 require_once __DIR__ . '/services/class-cluster-representative-service.php';
 require_once __DIR__ . '/../sovereign/sync/interface-outbox-writer.php';
 require_once __DIR__ . '/../sovereign/sync/class-outbox-writer.php';
+require_once __DIR__ . '/../sovereign/sync/class-curation-idempotency-key.php';
 require_once __DIR__ . '/../sovereign/sync/interface-topology-command-repository.php';
 require_once __DIR__ . '/../sovereign/sync/class-topology-command-repository.php';
 require_once __DIR__ . '/../sovereign/sync/class-split-topology-command-drain.php';
@@ -30,6 +31,7 @@ use AltContext\Sovereign\Repositories\IdentityMembersRepository;
 use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
+use AltContext\Sovereign\Sync\CurationIdempotencyKey;
 use AltContext\Sovereign\Sync\OutboxWriter;
 use AltContext\Sovereign\Sync\OutboxWriterInterface;
 use AltContext\Sovereign\Sync\TopologyCommandRepository;
@@ -347,25 +349,13 @@ class ClusterMutationsController extends AbstractRecognitionProxyController impl
 	 * mirroring resolve_split_idempotency_key. A genuinely distinct operation (different entity
 	 * or a newer local revision) yields a different key and is enqueued normally.
 	 *
+	 * Thin delegate to the shared CurationIdempotencyKey helper (E15-35 Slice 3);
+	 * existing keys stay byte-identical (characterization-tested).
+	 *
 	 * @param array<string,mixed> $payload
 	 */
 	private function derive_curation_idempotency_key( string $tenant_id, string $operation_type, string $entity_type, string $entity_key, int $target_revision, array $payload ): string {
-		$basis = wp_json_encode(
-			array(
-				'tenant_id'       => $tenant_id,
-				'operation_type'  => $operation_type,
-				'entity_type'     => $entity_type,
-				'entity_key'      => $entity_key,
-				'target_revision' => $target_revision,
-				'payload'         => $payload,
-			)
-		);
-
-		if ( ! is_string( $basis ) || '' === $basis ) {
-			return wp_generate_uuid4();
-		}
-
-		return $this->format_idempotency_key( $basis );
+		return CurationIdempotencyKey::derive( $tenant_id, $operation_type, $entity_type, $entity_key, $target_revision, $payload );
 	}
 
 	public function trigger_xmp_refresh_for_cluster_ids( array $cluster_ids, string $context ): void {
@@ -410,16 +400,7 @@ class ClusterMutationsController extends AbstractRecognitionProxyController impl
 	}
 
 	private function format_idempotency_key( string $basis ): string {
-		$hash = md5( $basis );
-
-		return sprintf(
-			'%s-%s-%s-%s-%s',
-			substr( $hash, 0, 8 ),
-			substr( $hash, 8, 4 ),
-			substr( $hash, 12, 4 ),
-			substr( $hash, 16, 4 ),
-			substr( $hash, 20, 12 )
-		);
+		return CurationIdempotencyKey::format( $basis );
 	}
 
 	/**

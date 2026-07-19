@@ -9,6 +9,7 @@ const CONFLICT_LABELS: Record<string, string> = {
   person_name_conflict: __('Person name conflict', 'alt-context'),
   version_conflict: __('Version conflict', 'alt-context'),
   drift_conflict: __('Projection drift', 'alt-context'),
+  backend_roster_regressed: __('Backend roster appears rolled back', 'alt-context'),
 };
 
 export interface DifferenceEntry {
@@ -94,6 +95,8 @@ export const getResolutionButtonLabel = (choice: ConflictResolutionChoice): stri
       return __('Keep local version', 'alt-context');
     case 'merge':
       return __('Merge versions', 'alt-context');
+    case 'restore_local':
+      return __('Restore local curation', 'alt-context');
   }
 };
 
@@ -127,6 +130,20 @@ const getAffectedMemberCount = (conflict: ConflictRecord): number | null => {
 export const getResolutionConfirmation = (conflict: ConflictRecord, choice: ConflictResolutionChoice): string => {
   if (choice === 'merge') {
     return __('Merge the backend and local versions for this conflict?', 'alt-context');
+  }
+
+  if (choice === 'restore_local') {
+    return __(
+      'Restore local curation by re-sending every affected curated cluster and member to the backend? Local data is preserved.',
+      'alt-context',
+    );
+  }
+
+  if ((choice === 'accepted' || choice === 'accept_backend') && conflict.conflict_code === 'backend_roster_regressed') {
+    return __(
+      'Accepting the backend roster deletes or reassigns every curated entity listed in this aggregate conflict.',
+      'alt-context',
+    );
   }
 
   if ((choice === 'accepted' || choice === 'accept_backend') && conflict.conflict_code === 'curated_cluster_deleted') {
@@ -244,6 +261,16 @@ export const getAcceptBackendPreview = (conflict: ConflictRecord): AcceptPreview
         ...conflict.machine_payload,
         is_curated: false,
       },
+    };
+  }
+
+  if (conflict.conflict_code === 'backend_roster_regressed') {
+    return {
+      summary: __(
+        'Accepting the backend roster applies every recorded deletion and reassignment across the affected curated entities.',
+        'alt-context',
+      ),
+      payload: conflict.machine_payload,
     };
   }
 

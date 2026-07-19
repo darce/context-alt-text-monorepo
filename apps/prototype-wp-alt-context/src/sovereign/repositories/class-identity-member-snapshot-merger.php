@@ -27,6 +27,13 @@ class IdentityMemberSnapshotMerger {
 	use PreparesSqlQueries;
 	use NormalizesMemberRows;
 
+	/**
+	 * B-03: stable epoch fallback for the defensive both-timestamps-missing case, so a
+	 * re-merge at equal projection_version is idempotent instead of stamping a fresh now()
+	 * that churns the row's ORDER BY assigned_at position each sync. datetime(6)-shaped.
+	 */
+	private const ASSIGNED_AT_FALLBACK_UTC = '1970-01-01 00:00:00.000000';
+
 	private string $members_table_name;
 	private string $clusters_table_name;
 	private IdentityMembersReadRepository $read_repository;
@@ -46,8 +53,11 @@ class IdentityMemberSnapshotMerger {
 
 	/**
 	 * @param array<int,array<string,mixed>> $members
+	 * @param bool $suppress_conflict_storm When true (degraded storm cycle, E15-35 Slice 3)
+	 *                                      per-entity conflict recording is skipped; curated
+	 *                                      rows stay protected from projection overwrites.
 	 */
-	public function merge_snapshot_for_tenant( string $tenant_id, array $members, int $snapshot_version ): void {
+	public function merge_snapshot_for_tenant( string $tenant_id, array $members, int $snapshot_version, bool $suppress_conflict_storm = false ): void {
 		global $wpdb;
 
 		$normalized_tenant_id = trim( $tenant_id );
@@ -82,7 +92,7 @@ class IdentityMemberSnapshotMerger {
 		);
 
 		$curated_members = $this->read_repository->get_curated_members_for_tenant( $normalized_tenant_id );
-		$this->conflict_recorder->record_missing_curated_member_conflicts( $normalized_tenant_id, $curated_members, $incoming_identity_ids, $snapshot_version );
+		$this->conflict_recorder->record_missing_curated_member_conflicts( $normalized_tenant_id, $curated_members, $incoming_identity_ids, $snapshot_version, $suppress_conflict_storm );
 
 		$this->delete_stale_non_curated_rows( $normalized_tenant_id, $incoming_identity_ids );
 		$this->delete_orphan_rows();
@@ -103,7 +113,8 @@ class IdentityMemberSnapshotMerger {
 					$cluster_uuid,
 					$this->normalize_similarity_value( $member ),
 					$snapshot_version,
-					$existing_curated_member
+					$existing_curated_member,
+					$suppress_conflict_storm
 				);
 				continue;
 			}
@@ -113,13 +124,17 @@ class IdentityMemberSnapshotMerger {
 			$similarity_threshold_value = $this->normalize_optional_float_value( $member['similarity_threshold'] ?? null );
 			$thumb_path       = $this->normalize_thumb_path( $member, $identity_uuid, $attachment_id );
 			$bbox_json        = $this->encode_bbox_json( $member );
+			// rg-005 / DATA-09: populate assigned_at so members ORDER BY matches recognition
+			// source-of-truth (assigned_at ASC, identity_uuid). Fallback is a STABLE epoch
+			// (not $now_utc) so a timestamp-less re-merge is idempotent (B-03).
+			$assigned_at      = $this->normalize_assigned_at( $member, self::ASSIGNED_AT_FALLBACK_UTC );
 
 			// COR-1: gate member data on projection_version (kept monotonic via
 			// GREATEST) so a stale snapshot cannot regress newer member rows.
 			$sql = $this->prepare_query(
 				"INSERT INTO %i
-					(identity_uuid, cluster_uuid, attachment_id, bbox_json, thumb_path, similarity, similarity_threshold, is_curated, projection_version, created_at, updated_at)
-				SELECT %s, %s, %d, %s, %s, NULLIF(%s, ''), NULLIF(%s, ''), %d, %d, %s, %s
+					(identity_uuid, cluster_uuid, attachment_id, bbox_json, thumb_path, similarity, similarity_threshold, is_curated, projection_version, assigned_at, created_at, updated_at)
+				SELECT %s, %s, %d, %s, %s, NULLIF(%s, ''), NULLIF(%s, ''), %d, %d, %s, %s, %s
 				FROM DUAL
 				WHERE EXISTS (
 					SELECT 1
@@ -134,6 +149,7 @@ class IdentityMemberSnapshotMerger {
 					thumb_path = IF(VALUES(projection_version) >= projection_version, VALUES(thumb_path), thumb_path),
 					similarity = IF(VALUES(projection_version) >= projection_version, NULLIF(%s, ''), similarity),
 					similarity_threshold = IF(VALUES(projection_version) >= projection_version, NULLIF(%s, ''), similarity_threshold),
+					assigned_at = IF(VALUES(projection_version) >= projection_version, VALUES(assigned_at), assigned_at),
 					projection_version = IF(is_curated = 1, projection_version, GREATEST(projection_version, VALUES(projection_version))),
 					updated_at = VALUES(updated_at)",
 				array(
@@ -147,6 +163,7 @@ class IdentityMemberSnapshotMerger {
 					$similarity_threshold_value,
 					0,
 					max( 0, $snapshot_version ),
+					$assigned_at,
 					$now_utc,
 					$now_utc,
 					$this->clusters_table_name,

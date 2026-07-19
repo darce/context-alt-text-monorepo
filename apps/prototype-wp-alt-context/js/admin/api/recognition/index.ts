@@ -29,7 +29,7 @@ export type {
   ClusterMembersResponse,
   ClusterListParams,
   ClusterSuggestion,
-  IdentitySuggestionsResponse,
+  IdentityBatchSuggestionsResponse,
   // Cluster operation types
   UpdateClusterLabelRequest,
   MergeClusterRequest,
@@ -81,6 +81,7 @@ export type {
   OutboxOperation,
   OutboxListResponse,
   OutboxMutationResponse,
+  BulkRetryResponse,
   WorkbenchOverlay,
 } from './types';
 
@@ -110,12 +111,13 @@ export {
   dismissCluster,
 } from './clusterApiMutations';
 export { fetchClusterMembers, removeClusterMember } from './clusterApiMembers';
+export type { FetchClusterMembersParams } from './clusterApiMembers';
 export { listRecognitionClusters, getRecognitionCluster, fetchTopUnlabeledClusters } from './clusterApiQueries';
 
 // Identity operations
 export {
   fetchMediaIdentities,
-  fetchIdentitySuggestions,
+  fetchIdentitiesSuggestions,
   fetchPendingSuggestions,
   fetchPendingMergeSuggestions,
   fetchPendingNameSuggestions,
@@ -155,5 +157,6 @@ export {
   fetchOutboxOperations,
   fetchFailedOutboxOperations,
   retryFailedOperation,
+  bulkRetryFailedOperations,
   discardFailedOperation,
 } from './conflictApi';

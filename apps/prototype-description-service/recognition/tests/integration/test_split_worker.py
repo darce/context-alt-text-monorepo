@@ -36,6 +36,7 @@ async def test_worker_executes_split_job(db_session, tenant) -> None:
             bbox_height=1,
             confidence=0.99,
             embedding=embedding_a,
+            embedding_model="buffalo_l@insightface",
         ),
         MediaIdentityModel(
             tenant_id=tenant.id,
@@ -47,6 +48,7 @@ async def test_worker_executes_split_job(db_session, tenant) -> None:
             bbox_height=1,
             confidence=0.99,
             embedding=embedding_a,
+            embedding_model="buffalo_l@insightface",
         ),
         MediaIdentityModel(
             tenant_id=tenant.id,
@@ -58,6 +60,7 @@ async def test_worker_executes_split_job(db_session, tenant) -> None:
             bbox_height=1,
             confidence=0.99,
             embedding=embedding_b,
+            embedding_model="buffalo_l@insightface",
         ),
         MediaIdentityModel(
             tenant_id=tenant.id,
@@ -69,6 +72,7 @@ async def test_worker_executes_split_job(db_session, tenant) -> None:
             bbox_height=1,
             confidence=0.99,
             embedding=embedding_b,
+            embedding_model="buffalo_l@insightface",
         ),
     ]
     db_session.add_all(identities)

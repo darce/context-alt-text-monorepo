@@ -239,12 +239,9 @@ class MediaIdentityService:
                 pose_yaw = row.MediaIdentity.pose_yaw
                 pose_roll = row.MediaIdentity.pose_roll
 
-                # Compute quality on-the-fly from pose angles (not stale DB value)
+                # Compute quality on-the-fly (confidence + bbox; pose-neutral)
                 quality_info = compute_identity_quality(
                     confidence=row.MediaIdentity.confidence,
-                    pose_pitch=pose_pitch,
-                    pose_yaw=pose_yaw,
-                    pose_roll=pose_roll,
                     bbox_width=row.MediaIdentity.bbox_width,
                     bbox_height=row.MediaIdentity.bbox_height,
                 )
@@ -255,8 +252,6 @@ class MediaIdentityService:
                         "yaw": float(pose_yaw or 0),
                         "roll": float(pose_roll or 0),
                     },
-                    "age": float(row.MediaIdentity.age or 0),
-                    "gender": "male" if row.MediaIdentity.gender == 1 else "female",
                     "det_score": float(row.MediaIdentity.confidence),
                     "bbox_area": int(row.MediaIdentity.bbox_width * row.MediaIdentity.bbox_height),
                     "landmark_quality": quality_info.score,

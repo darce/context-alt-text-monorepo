@@ -1,0 +1,13 @@
+{
+  "crop_sha256": "fe200b72f9e75a9751f37f0fb7761867dd0365fa37b7b723b7fbfbb0a48903a8",
+  "embedding_dim": 128,
+  "embedding_shape": [
+    1,
+    128
+  ],
+  "kind": "embedding_golden",
+  "l2_norm": 1.0,
+  "model": "face_recognition_sface_2021dec.onnx",
+  "model_sha256": "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
+  "seed": 20260716
+}

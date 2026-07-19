@@ -1,13 +1,13 @@
 /**
  * Bounded post-batch cluster auto-retry on 429 (RES-06, API-08, RES-01, AGT-10).
  * Mutations never blind-retry: only HTTP 429 is retried, with a hard ceiling.
- * Shared poller cooldown is armed globally via MutationCache — do not noteRateLimited here.
+ * Shared poller cooldown is armed globally via MutationCache — do not open the cooldown here.
  */
 
 import { __, sprintf } from '@wordpress/i18n';
 
 import { HTTPError } from '../utils/http';
-import { DEFAULT_COOLDOWN_SECONDS } from '../utils/rateLimitCooldown';
+import { DEFAULT_COOLDOWN_SECONDS } from '../utils/recognitionCooldown';
 
 /** Total attempts including the first (first + 2 auto-retries). */
 export const CLUSTER_RETRY_MAX_ATTEMPTS = 3;
@@ -28,7 +28,7 @@ export const formatClusterQueuedStatus = (seconds: number): string =>
 export const formatClusterRetryExhaustedMessage = (): string =>
   __('Clustering failed after rate-limit retries. Use Retry clustering to try again.', 'alt-context');
 
-export type ClusterAutoRetryListener = {
+export interface ClusterAutoRetryListener {
   /** Fire one cluster mutation attempt (should not itself schedule retries). */
   mutate: () => void;
   /** Queued wait between auto-retries; null clears the queued status surface. */
@@ -39,7 +39,7 @@ export type ClusterAutoRetryListener = {
   onTerminalError: (message: string) => void;
   /** Fallback when error is not an Error instance. */
   fallbackErrorMessage: string;
-};
+}
 
 /**
  * Imperative controller for cluster 429 auto-retry. Owns attempt count + delay timer.
@@ -126,8 +126,7 @@ export const createClusterAutoRetry = (listener: ClusterAutoRetryListener) => {
         return false;
       }
 
-      const message =
-        error instanceof Error ? error.message : listener.fallbackErrorMessage;
+      const message = error instanceof Error ? error.message : listener.fallbackErrorMessage;
       listener.onTerminalError(message);
       return false;
     },

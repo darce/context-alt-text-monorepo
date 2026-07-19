@@ -243,7 +243,9 @@ export const TopClusterCard = ({
             </button>
           </>
         ) : null}
-        {!isReadOnly && onReview && (
+        {/* BR-31: Review (members) stays available in read-only review-queue mode;
+            isReadOnly only demotes LABEL / confirm / dismiss. */}
+        {onReview && (
           <button
             type="button"
             className="button acx-top-cluster-card__review-btn"

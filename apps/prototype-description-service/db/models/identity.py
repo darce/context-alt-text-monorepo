@@ -56,14 +56,14 @@ class MediaIdentity(Base):
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
 
     embedding: Mapped[list[float]] = mapped_column(Vector(_DB_SETTINGS.pgvector_dimension), nullable=False)
+    # Provenance of the embedding vector (manifest model_id). NOT NULL, no default.
+    embedding_model: Mapped[str] = mapped_column(Text, nullable=False)
 
     # InsightFace metadata
     pose_pitch: Mapped[float | None] = mapped_column(Float, nullable=True)
     pose_yaw: Mapped[float | None] = mapped_column(Float, nullable=True)
     pose_roll: Mapped[float | None] = mapped_column(Float, nullable=True)
     quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
-    age: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    gender: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 0=female, 1=male
     image_phash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_exported_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     moved_by_merge_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)

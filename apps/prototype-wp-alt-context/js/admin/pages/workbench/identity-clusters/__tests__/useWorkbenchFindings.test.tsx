@@ -17,6 +17,7 @@ import type {
   PendingSuggestion,
   TopUnlabeledCluster,
 } from '../../../../api/recognition/types';
+import { fromPendingRow } from '../suggestionProjection';
 import { buildSuggestionReviewItems } from '../suggestionReviewItems';
 import {
   buildWorkbenchFindings,
@@ -43,8 +44,13 @@ const makeSuggestion = (overrides: Partial<PendingSuggestion> = {}): PendingSugg
   identity_id: 'identity-1',
   suggested_cluster_id: 'cluster-1',
   representative_similarity: 0.8,
+  // Human-labeled by default so buildSuggestionReviewItems keeps the row (isHumanLabeledTarget).
+  cluster_label: 'Default Label',
   ...overrides,
 });
+
+const makeReviewItems = (...rows: PendingSuggestion[]) =>
+  buildSuggestionReviewItems(rows.map(fromPendingRow));
 
 const makeMerge = (overrides: Partial<PendingMergeSuggestion> = {}): PendingMergeSuggestion => ({
   id: 'merge-1',
@@ -97,6 +103,7 @@ const makeState = (overrides: Partial<WorkbenchFindingsSourceState> = {}): Workb
   topUnlabeledDataSource: DATA_SOURCE.LOCAL_PROJECTION,
   isLoading: false,
   isError: false,
+  queueSettled: true,
   ...overrides,
 });
 
@@ -104,7 +111,7 @@ describe('buildWorkbenchFindings', () => {
   it('summarizes counts from queue totals and unlabeled cluster list', () => {
     const model = buildWorkbenchFindings(
       makeQueues({
-        reviewItems: buildSuggestionReviewItems([makeSuggestion()]),
+        reviewItems: makeReviewItems(makeSuggestion()),
         assignmentTotal: 3,
         mergeSuggestions: [makeMerge()],
         mergeTotal: 2,
@@ -150,7 +157,7 @@ describe('buildWorkbenchFindings', () => {
     });
     const model = buildWorkbenchFindings(
       makeQueues({
-        reviewItems: buildSuggestionReviewItems([low, high]),
+        reviewItems: makeReviewItems(low, high),
         assignmentTotal: 2,
         mergeSuggestions: [makeMerge()],
         mergeTotal: 1,
@@ -265,9 +272,9 @@ describe('buildWorkbenchFindings', () => {
   it('collects representative previews in priority order and drops entries without imagery', () => {
     const model = buildWorkbenchFindings(
       makeQueues({
-        reviewItems: buildSuggestionReviewItems([
+        reviewItems: makeReviewItems(
           makeSuggestion({ identity_thumb_url: 'http://example.test/assign-thumb.jpg' }),
-        ]),
+        ),
         assignmentTotal: 1,
         mergeSuggestions: [makeMerge({ cluster_a_representative_thumb_url: 'http://example.test/merge-thumb.jpg' })],
         mergeTotal: 1,
@@ -375,7 +382,7 @@ describe('useWorkbenchFindings', () => {
       kind: NEXT_ACTION_KIND.ASSIGNMENT,
       suggestionId: 'live-sugg',
       clusterId: 'live-cluster',
-      label: null,
+      label: 'Default Label',
     });
     expect(result.current.isReadOnly).toBe(false);
   });

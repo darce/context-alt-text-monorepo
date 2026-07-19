@@ -7,8 +7,9 @@ import {
   type DescribeRunResponse,
   type DescribeRunStatus,
 } from '../api/describeApi';
-import { gateRefetchInterval } from '../utils/rateLimitCooldown';
 import { JOB_PROGRESS_STALL_THRESHOLD_MS } from './useJobProgressStream';
+import { gateRefetchInterval } from '../utils/recognitionCooldown';
+import { isAbortLike } from '../utils/retryPolicy';
 
 /**
  * Honest per-image progress for a bulk describe run (WBUX-3 S6-02).
@@ -21,8 +22,15 @@ import { JOB_PROGRESS_STALL_THRESHOLD_MS } from './useJobProgressStream';
  * the time since `completed` last advanced, mirroring useJobProgressStream.
  */
 const DESCRIBE_RUN_POLL_INTERVAL_MS = 2_000;
-// Bounded retry so a single transient poll failure self-heals instead of freezing
-// the run (FE-02). Backoff caps at 8s; after these attempts the error is surfaced.
+
+/**
+ * Consecutive abort-like poll failures that flip a frozen run to a hard error
+ * (UXP-2 BR review). A single timeout freezes-and-thaws (BR-07), but a frozen
+ * bar that never recovers is a silent hang: at the 2s cadence, 5 dead polls is
+ * ~>10s of dead air, at which point the run stops polling and surfaces the
+ * Retry affordance instead of freezing forever.
+ */
+const FROZEN_POLL_ESCALATION_THRESHOLD = 5;
 
 export interface DescribeRunProgress {
   run: DescribeRunResponse | null;
@@ -32,12 +40,26 @@ export interface DescribeRunProgress {
   isTerminal: boolean;
   stalledForSeconds: number | null;
   isPolling: boolean;
+  /**
+   * The last status poll failed transiently (abort/timeout) but polling
+   * continues — progress is frozen at the last known values, not dead
+   * (UXP-2 BR-07). Distinct from isError, which is a hard stop with a Retry
+   * affordance.
+   */
+  isFrozen: boolean;
   isError: boolean;
   error: Error | null;
   retry: () => void;
 }
 
 export const useDescribeRunProgress = (runId: string | null): DescribeRunProgress => {
+  // Consecutive abort-like poll failures, tracked across renders. Read inside
+  // the refetchInterval predicate (stops the poll once escalated) and surfaced
+  // as a hard error below. A ref drives the poll decision; the mirrored state
+  // forces the re-render that flips isFrozen -> isError.
+  const consecutiveFrozenPollsRef = useRef(0);
+  const [frozenPollStreak, setFrozenPollStreak] = useState(0);
+
   const query = useQuery<DescribeRunResponse, Error>({
     queryKey: ['bulkDescribeRun', runId],
     queryFn: () => {
@@ -48,8 +70,17 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
       return fetchBulkDescribeRun(runId);
     },
     enabled: runId !== null,
+    // Gated on the shared recognition cooldown (UXP-2 slice 2).
     refetchInterval: gateRefetchInterval((q) => {
-      if (q.state.status === 'error') {
+      // BR-07: a transient abort/timeout on a 2s status poll must not dead-end
+      // the progress bar — the shared policy never retries abort-like errors,
+      // so the next scheduled poll IS the retry. Only hard failures stop.
+      if (q.state.status === 'error' && !isAbortLike(q.state.error)) {
+        return false;
+      }
+      // Bounded frozen state: once too many consecutive polls abort, stop
+      // retrying and let the hard-error Retry affordance take over.
+      if (consecutiveFrozenPollsRef.current >= FROZEN_POLL_ESCALATION_THRESHOLD) {
         return false;
       }
       const data = q.state.data;
@@ -60,10 +91,40 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
     }),
   });
 
+  // Count consecutive abort-like poll failures off the query's update
+  // watermarks: a fresh abort-like error advances the streak; any fresh data
+  // resets it. Watermarks are unambiguous regardless of whether retained data
+  // keeps the query's status 'success' or 'error'.
+  const { dataUpdatedAt, errorUpdatedAt, error: queryError } = query;
+  const lastCountedErrorAtRef = useRef(0);
+  const lastCountedDataAtRef = useRef(0);
+  useEffect(() => {
+    if (dataUpdatedAt > lastCountedDataAtRef.current) {
+      lastCountedDataAtRef.current = dataUpdatedAt;
+      consecutiveFrozenPollsRef.current = 0;
+      setFrozenPollStreak(0);
+    }
+    if (errorUpdatedAt > lastCountedErrorAtRef.current && isAbortLike(queryError)) {
+      lastCountedErrorAtRef.current = errorUpdatedAt;
+      consecutiveFrozenPollsRef.current += 1;
+      setFrozenPollStreak(consecutiveFrozenPollsRef.current);
+    }
+  }, [dataUpdatedAt, errorUpdatedAt, queryError]);
+
+  // Reset the frozen-streak accounting whenever the tracked run changes.
+  useEffect(() => {
+    consecutiveFrozenPollsRef.current = 0;
+    lastCountedErrorAtRef.current = 0;
+    lastCountedDataAtRef.current = 0;
+    setFrozenPollStreak(0);
+  }, [runId]);
+
   const run = query.data ?? null;
   const status = run?.status ?? null;
   const isTerminal = status !== null && isDescribeRunTerminal(status);
-  const isError = query.isError;
+  const frozenStreakExceeded = frozenPollStreak >= FROZEN_POLL_ESCALATION_THRESHOLD;
+  const isFrozen = query.isError && isAbortLike(query.error) && !frozenStreakExceeded;
+  const isError = query.isError && !isFrozen;
 
   const { refetch } = query;
   const retry = useCallback(() => {
@@ -98,9 +159,10 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
   }, [run]);
 
   // Tick the stall indicator once per second while the run is live. A polling
-  // error surfaces its own Retry affordance, so suppress the stall banner then.
+  // error surfaces its own Retry affordance, and a frozen poll already shows
+  // the paused notice, so suppress the speculative stall banner in both.
   useEffect(() => {
-    if (runId === null || isTerminal || isError) {
+    if (runId === null || isTerminal || isError || isFrozen) {
       setStalledForSeconds(null);
       return;
     }
@@ -112,15 +174,13 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
         return;
       }
       const elapsedMs = Date.now() - baseline;
-      setStalledForSeconds(
-        elapsedMs >= JOB_PROGRESS_STALL_THRESHOLD_MS ? Math.floor(elapsedMs / 1000) : null,
-      );
+      setStalledForSeconds(elapsedMs >= JOB_PROGRESS_STALL_THRESHOLD_MS ? Math.floor(elapsedMs / 1000) : null);
     };
 
     updateStallState();
     const intervalId = window.setInterval(updateStallState, 1_000);
     return () => window.clearInterval(intervalId);
-  }, [runId, isTerminal, isError]);
+  }, [runId, isTerminal, isError, isFrozen]);
 
   // Terminal (processed) items over total: completed + failed + skipped, so the
   // bar reaches 100% when every item is done regardless of per-item outcome.
@@ -137,6 +197,7 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
     isTerminal,
     stalledForSeconds,
     isPolling: runId !== null && !isTerminal && !isError,
+    isFrozen,
     isError,
     error: query.error ?? null,
     retry,

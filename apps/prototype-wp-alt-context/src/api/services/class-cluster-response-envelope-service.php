@@ -45,12 +45,13 @@ class ClusterResponseEnvelopeService {
 	 * @param array<int,array<string,mixed>> $members
 	 * @return array<string,mixed>
 	 */
-	public function build_cluster_members_envelope( array $members, int $limit, int $total ): array {
+	public function build_cluster_members_envelope( array $members, int $limit, int $total, int $offset = 0 ): array {
+		$offset = max( 0, $offset );
 		return array(
 			'members' => $members,
 			'limit' => $limit,
 			'total' => $total,
-			'truncated' => $total > count( $members ),
+			'truncated' => ( $offset + count( $members ) ) < $total,
 		);
 	}
 
@@ -114,7 +115,7 @@ class ClusterResponseEnvelopeService {
 		);
 	}
 
-	public function normalize_cluster_members_response( WP_REST_Response|WP_Error $response, int $requested_limit ): WP_REST_Response|WP_Error {
+	public function normalize_cluster_members_response( WP_REST_Response|WP_Error $response ): WP_REST_Response|WP_Error {
 		if ( ! ( $response instanceof WP_REST_Response ) ) {
 			return $response;
 		}
@@ -139,15 +140,23 @@ class ClusterResponseEnvelopeService {
 			$truncated = $data['truncated'];
 
 			return new WP_REST_Response(
-				$this->build_cluster_members_envelope( $members, $limit, $total ),
+				array(
+					'members' => $members,
+					'limit' => $limit,
+					'total' => $total,
+					'truncated' => $truncated,
+				),
 				$response->get_status()
 			);
 		}
 
-		$members = $data;
-		return new WP_REST_Response(
-			$this->build_cluster_members_envelope( $members, $requested_limit, count( $members ) ),
-			$response->get_status()
+		// Legacy bare-array member payloads carry no total/limit metadata; the
+		// recognition service always emits the canonical envelope, so fabricating
+		// one here would invent contract metadata [rg-015]. Fail loudly instead.
+		return new WP_Error(
+			'invalid_cluster_members_envelope',
+			'Cluster members response must be a canonical envelope with members, limit, total, and truncated.',
+			array( 'status' => 502 )
 		);
 	}
 

@@ -5,7 +5,7 @@ import { getConfig } from '../api/config';
 import { queryKeys } from '../api/queryKeys';
 import type { SyncTriggerResponse } from '../api/recognition';
 import type { BatchRunStatus, JobStatusResponse } from '../api/recognition/types/scan';
-import { runAfterCooldown } from '../utils/rateLimitCooldown';
+import { runAfterCooldown } from '../utils/recognitionCooldown';
 import { isScanSuccessStatus, type PipelinePhase } from './jobStateMachineUtils';
 import type { PersistedJob } from './useJobPersistence';
 import type { JobStatus } from './useJobProgressStream';
@@ -29,7 +29,7 @@ const refetchFindingsQueries = (queryClient: QueryClient): Promise<unknown> => {
   }
 
   const refetches = [
-    queryClient.refetchQueries({ queryKey: queryKeys.suggestions.pending() }),
+    queryClient.refetchQueries({ queryKey: queryKeys.suggestions.projection.all }),
     queryClient.refetchQueries({ queryKey: queryKeys.suggestions.mergePending() }),
     queryClient.refetchQueries({ queryKey: queryKeys.suggestions.namePending() }),
     queryClient.refetchQueries({ queryKey: queryKeys.media.identities() }),

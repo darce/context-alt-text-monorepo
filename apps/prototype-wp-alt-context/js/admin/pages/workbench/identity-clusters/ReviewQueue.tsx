@@ -1193,6 +1193,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               onOpenOriginal={(target) => setLightbox(target)}
               markAdvanceFocus={markAdvanceFocus}
               clearAdvanceFocus={clearAdvanceFocus}
+              announce={setLiveMessage}
               scheduleAccept={data.scheduleAccept}
               scheduleReject={data.scheduleReject}
               scheduleAcceptMerge={data.scheduleAcceptMerge}
@@ -1268,6 +1269,8 @@ interface CurrentCardProps {
   onOpenOriginal: (target: FaceOriginalTarget) => void;
   markAdvanceFocus: () => void;
   clearAdvanceFocus: () => void;
+  /** C-05: live-region announce for a refused action (single failed-slot occupied). */
+  announce: (message: string) => void;
   scheduleAccept: (suggestionId: string) => Promise<ScheduleCommitResult>;
   scheduleReject: (suggestionId: string) => Promise<ScheduleCommitResult>;
   scheduleAcceptMerge: (suggestionId: string) => Promise<ScheduleCommitResult>;
@@ -1399,6 +1402,7 @@ const CurrentCard = ({
   onOpenOriginal,
   markAdvanceFocus,
   clearAdvanceFocus,
+  announce,
   scheduleAccept,
   scheduleReject,
   scheduleAcceptMerge,
@@ -1421,6 +1425,12 @@ const CurrentCard = ({
     void schedule().then((result) => {
       if (result.outcome !== 'committed') {
         clearAdvanceFocus();
+      }
+      // C-05: the single failed-item slot refused this action because another item's
+      // save is still failed. Announce it instead of a silent no-op (the click would
+      // otherwise look dead and invite a retry/double-click).
+      if (result.outcome === 'not_attempted_prior_failed') {
+        announce(__('Retry the item that failed to save before reviewing another.', 'alt-context'));
       }
     });
   };
@@ -1489,6 +1499,9 @@ const CurrentCard = ({
           void schedulePersonCommit(request).then((result) => {
             if (result.outcome === 'committed') {
               markAdvanceFocus();
+            } else if (result.outcome === 'not_attempted_prior_failed') {
+              // C-05: refused because an accept/reject failure is unresolved.
+              announce(__('Retry the item that failed to save before assigning a person.', 'alt-context'));
             }
           });
         }}

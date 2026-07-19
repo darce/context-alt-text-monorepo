@@ -9,7 +9,7 @@ use function array_filter;
 use function array_map;
 use function array_unique;
 use function array_values;
-use function gmdate;
+use function date_create_immutable;
 use function is_array;
 use function is_numeric;
 use function is_string;
@@ -17,7 +17,6 @@ use function max;
 use function preg_match;
 use function round;
 use function sprintf;
-use function strtotime;
 use function trim;
 use function wp_json_encode;
 
@@ -39,9 +38,12 @@ trait NormalizesMemberRows {
 	}
 
 	/**
-	 * Normalize recognition assigned_at (ISO-8601 or MySQL datetime) to UTC MySQL form.
-	 * Falls back to created_at, then $fallback_utc, so ORDER BY assigned_at never sees NULL
-	 * (rg-005 / CON-11 paging determinism).
+	 * Normalize recognition assigned_at (ISO-8601 or MySQL datetime) to UTC MySQL form,
+	 * PRESERVING sub-second precision (rg-005 / DATA-09 ordering fidelity). Recognition
+	 * stores assigned_at as TIMESTAMP(tz) at microsecond resolution and exports it via
+	 * isoformat(); truncating to whole seconds would collapse members assigned within the
+	 * same second onto the random identity_uuid tie-break and flip PHP order vs recognition.
+	 * Falls back to created_at, then $fallback_utc, so ORDER BY assigned_at never sees NULL.
 	 *
 	 * @param array<string,mixed> $member
 	 */
@@ -56,15 +58,17 @@ trait NormalizesMemberRows {
 				continue;
 			}
 
-			// Already MySQL-shaped (projection re-hydrate path).
-			if ( 1 === preg_match( '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $trimmed ) ) {
+			// Already MySQL-shaped, with or without a fractional part (projection re-hydrate path).
+			if ( 1 === preg_match( '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d{1,6})?$/', $trimmed ) ) {
 				return $trimmed;
 			}
 
-			// Recognition export uses isoformat() (e.g. 2024-01-15T12:30:00+00:00).
-			$timestamp = strtotime( $trimmed );
-			if ( false !== $timestamp ) {
-				return gmdate( 'Y-m-d H:i:s', $timestamp );
+			// Recognition export uses isoformat() (e.g. 2024-01-15T12:30:00.123456+00:00).
+			// Parse via DateTimeImmutable (NOT strtotime, which floors to whole seconds) and
+			// keep microseconds; normalize any offset to UTC.
+			$parsed = date_create_immutable( $trimmed );
+			if ( false !== $parsed ) {
+				return $parsed->setTimezone( new \DateTimeZone( 'UTC' ) )->format( 'Y-m-d H:i:s.u' );
 			}
 		}
 

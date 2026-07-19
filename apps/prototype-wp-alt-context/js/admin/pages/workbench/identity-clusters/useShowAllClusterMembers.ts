@@ -83,6 +83,9 @@ export const useShowAllClusterMembers = (clusterId: string): UseShowAllClusterMe
     generationRef.current += 1;
     setExpandedMembers(null);
     setIsExpanding(false);
+    // A-04: a new envelope snapshot invalidates any prior expansion error too —
+    // otherwise a stale 'Unable to load…' banner lingers over the honest first page.
+    setExpandError(null);
   }, [membersResponse]);
 
   const firstPageMembers = membersResponse?.members ?? [];
@@ -174,6 +177,15 @@ export const useShowAllClusterMembers = (clusterId: string): UseShowAllClusterMe
       }
 
       if (generationRef.current !== generation) {
+        return;
+      }
+      // C-02: the loop can exit via `offset >= total` while dedup left fewer unique
+      // members than `total` — overlapping windows under a mid-expand membership shift
+      // (page re-returns an already-seen identity_id, so `offset` reaches `total` before
+      // `accumulated` does). Surface the shortfall instead of stamping a partial set as
+      // fully loaded, which would silently hide members the server still has.
+      if (accumulated.length < total) {
+        setExpandError('Unable to load all members — the list changed while loading.');
         return;
       }
       setExpandedMembers(accumulated.slice(0, total));

@@ -299,12 +299,12 @@ describe('useShowAllClusterMembers', () => {
       const offset = params.offset ?? 0;
       if (offset === 0) {
         return Promise.resolve(
-          makeEnvelope([makeMember('m1'), makeMember('m2')], { limit: 2, total: 4, truncated: true }),
+          makeEnvelope([makeMember('m1'), makeMember('m2')], { limit: 2, total: 3, truncated: true }),
         );
       }
       // Membership shifted under us: the window re-returns m2 (already seen) plus a new m3.
       return Promise.resolve(
-        makeEnvelope([makeMember('m2'), makeMember('m3')], { limit: 2, total: 4, truncated: true }),
+        makeEnvelope([makeMember('m2'), makeMember('m3')], { limit: 2, total: 3, truncated: true }),
       );
     });
 
@@ -321,9 +321,48 @@ describe('useShowAllClusterMembers', () => {
     });
 
     const ids = result.current.members.map((m) => m.identity_id);
-    // m2 must appear exactly once — no duplicate from the overlapping page.
+    // m2 must appear exactly once — no duplicate from the overlapping page — and all
+    // three unique members (== total) are loaded, so no shortfall error.
     expect(ids).toEqual(['m1', 'm2', 'm3']);
     expect(ids.filter((id) => id === 'm2')).toHaveLength(1);
+    expect(result.current.expandError).toBeNull();
+    expect(result.current.isFullyLoaded).toBe(true);
+  });
+
+  it('C-02: surfaces an error (not a silent "fully loaded") when overlap leaves fewer unique members than total', async () => {
+    const fetchMock = vi.mocked(fetchClusterMembers);
+    // Server declares total=4 but its windows only ever yield 3 unique members — the 4th is
+    // unreachable after a mid-run shift, so dedup can never reach `total`. The loop exits via
+    // `offset >= total` while accumulated < total; the hook must NOT stamp the partial set as
+    // complete (that would silently hide a member the server still reports).
+    fetchMock.mockImplementation((_clusterId, params = {}) => {
+      const offset = params.offset ?? 0;
+      if (offset === 0) {
+        return Promise.resolve(
+          makeEnvelope([makeMember('m1'), makeMember('m2')], { limit: 2, total: 4, truncated: true }),
+        );
+      }
+      return Promise.resolve(
+        makeEnvelope([makeMember('m2'), makeMember('m3')], { limit: 2, total: 4, truncated: true }),
+      );
+    });
+
+    const { result } = renderHook(() => useShowAllClusterMembers('cluster-shortfall'), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    await act(async () => {
+      await result.current.showAll();
+    });
+
+    expect(result.current.expandError).not.toBeNull();
+    expect(result.current.isFullyLoaded).toBe(false);
+    // Falls back to the honest first page instead of a partial set claimed as complete.
+    expect(result.current.members.map((m) => m.identity_id)).toEqual(['m1', 'm2']);
   });
 
   it('S4-03: caps the show-all round-trips and surfaces an error when pages never converge', async () => {

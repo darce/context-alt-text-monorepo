@@ -292,4 +292,74 @@ describe('useShowAllClusterMembers', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it('S4-02: dedups by identity_id when a mid-run page re-returns an already-seen member', async () => {
+    const fetchMock = vi.mocked(fetchClusterMembers);
+    fetchMock.mockImplementation((_clusterId, params = {}) => {
+      const offset = params.offset ?? 0;
+      if (offset === 0) {
+        return Promise.resolve(
+          makeEnvelope([makeMember('m1'), makeMember('m2')], { limit: 2, total: 4, truncated: true }),
+        );
+      }
+      // Membership shifted under us: the window re-returns m2 (already seen) plus a new m3.
+      return Promise.resolve(
+        makeEnvelope([makeMember('m2'), makeMember('m3')], { limit: 2, total: 4, truncated: true }),
+      );
+    });
+
+    const { result } = renderHook(() => useShowAllClusterMembers('cluster-dedup'), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    await act(async () => {
+      await result.current.showAll();
+    });
+
+    const ids = result.current.members.map((m) => m.identity_id);
+    // m2 must appear exactly once — no duplicate from the overlapping page.
+    expect(ids).toEqual(['m1', 'm2', 'm3']);
+    expect(ids.filter((id) => id === 'm2')).toHaveLength(1);
+  });
+
+  it('S4-03: caps the show-all round-trips and surfaces an error when pages never converge', async () => {
+    const fetchMock = vi.mocked(fetchClusterMembers);
+    // Server declares total=20 but under-fills every page to 1 fresh member, so `offset`
+    // crawls and would drive ~18 serial fetches without a cap.
+    let nextId = 3;
+    fetchMock.mockImplementation((_clusterId, params = {}) => {
+      const offset = params.offset ?? 0;
+      if (offset === 0) {
+        return Promise.resolve(
+          makeEnvelope([makeMember('m1'), makeMember('m2')], { limit: 2, total: 20, truncated: true }),
+        );
+      }
+      const member = makeMember(`m${nextId}`);
+      nextId += 1;
+      return Promise.resolve(makeEnvelope([member], { limit: 2, total: 20, truncated: true }));
+    });
+
+    const { result } = renderHook(() => useShowAllClusterMembers('cluster-cap'), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    await act(async () => {
+      await result.current.showAll();
+    });
+
+    // maxPages = ceil(20/2) + 2 = 12 — the loop stops there instead of ~18 round-trips.
+    const pagedCalls = fetchMock.mock.calls.filter((call) => call[1] !== undefined);
+    expect(pagedCalls.length).toBeLessThanOrEqual(12);
+    expect(result.current.expandError).toBeTruthy();
+    // Honest first page is retained (not stamped fully-loaded).
+    expect(result.current.isFullyLoaded).toBe(false);
+  });
 });

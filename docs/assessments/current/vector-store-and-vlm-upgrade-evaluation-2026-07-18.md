@@ -115,11 +115,19 @@ All candidates serve on one caught A10 in turn (`llama.cpp --parallel 1`, `--ctx
 | --- | --- | --- | --- | --- | --- | --- |
 | `qwen36-27b` | Qwen3.6-27B | dense (Gated DeltaNet+Attn) VLM | UD-Q4_K_XL | ~18.5 GB (17.6+0.9) | ✅ fits w/ ctx | **wired ✓** |
 | `qwen36-35b-a3b` | Qwen3.6-35B-A3B | MoE 35B/3B-active VLM | UD-Q3_K_XL | ~17.7 GB (16.8+0.9) | ✅ fits w/ ctx | **wired ✓** |
+| `joycaption-b1` | llama-joycaption-beta-one | **caption-specialized** 8B (Llama 3.1 + LLaVA) | Q8_0 | ~9.4 GB (8.5+0.9) | ✅ easy | **wired ✓** |
 | `qwen8b` | Qwen3-VL-8B-Instruct | dense VLM | Q5_K_M | ~7 GB | ✅ easy | TODO |
 | `minicpm45` | MiniCPM-V-4.5 | ~8B VLM | Q5_K_M | ~6 GB | ✅ easy | TODO |
 | `gemma4-12b` | gemma-4-12b-it | dense VLM | Q6_K | ~10 GB | ✅ | TODO |
 | `gemma3-27b` | gemma-3-27b-it | dense VLM | Q4_K_M | ~16–17 GB | ✅ | TODO |
 | **control** | **Qwen3-VL-30B-A3B** | MoE 30B/3B VLM | Q4_K_M | ~18–19 GB | ✅ (deployed) | run-record exists |
+
+**JoyCaption Beta One — added as the caption-specialized entry (2026-07-19).** It is the different design point the [caption-context-enrichment §10](./caption-context-enrichment-assessment-2026-07-05.md) sweep wanted to bake off (alongside CapRL) — a model *tuned for captioning* rather than a general instruct-VLM. Operator reported good raw results but "needs better prompting"; that phrase is precisely the risk to test, so it enters the screen with **three gates recorded**:
+1. **License (base governs)**: JoyCaption weights are released "no restrictions," but it is built on **Llama 3.1 8B** → the **Llama 3.1 Community License** flows through the derivative — commercial use OK under 700 M MAU (fine here), but requires **"Built with Llama" attribution** + acceptable-use compliance. Same weights-≠-code discipline as the face pipeline; record it, don't take "no restrictions" at face value.
+2. **Instruction-obedience is the make-or-break metric, not caption richness.** A caption-specialized model may **fight the injection contract** (the CapRL risk in §10). The screen scores it on **insertion rate** (roster names on the right faces), **naming-policy compliance** (must NOT name when disabled), and **Easy-Wrong hallucination traps** — under the **same fixed v3 prompt** as every candidate. "Good but needs better prompting" is the warning that it may only shine with a *per-model* prompt, which breaks one-prompt comparability.
+3. **Style mismatch**: JoyCaption is built for dense/uncensored **diffusion-training** captions; the product wants BLV **WCAG alt-text** (summary-first, hedge uncertainty, no invented facts). "Good results" from a captioning lens ≠ good alt-text — the gated BLV rubric (§6c) decides, not eyeball quality.
+
+**Fair handling of "needs better prompting":** Stage 1 runs JoyCaption on the standard v3 prompt (comparable to all candidates — measures out-of-the-box contract obedience). Stage 2 (optional, **reported separately as non-comparable**) tries a JoyCaption-specific prompt to find its ceiling. Per-model prompt tuning is a finalist follow-up, never part of the apples-to-apples screen. (LLaVA-arch → the box's b6887 build serves it; no llama.cpp-version caveat, unlike Qwen3.6.)
 
 Notes: **35B-A3B UD-Q4 (22.4 GB) is deliberately *not* the bake-off quant** — with mmproj+KV it overruns 24 GB VRAM; that tier needs A10.2 48 GB / A100, so the A10-deployable **UD-Q3_K_XL** is used (fair to the deployment target). The **27B (dense) vs 35B-A3B (MoE) pairing is the interesting architecture read**: does MoE-3B-active caption quality beat a dense-27B at equal footprint on ACX images?
 

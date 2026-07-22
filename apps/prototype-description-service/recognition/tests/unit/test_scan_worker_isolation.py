@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -56,6 +56,7 @@ async def test_process_items_isolates_poisoned_tenant_among_three(
     repo = SqlAlchemyScanQueueRepository(db_session)
     job_ids: list[uuid.UUID] = []
     claimed: list[ScanQueueItem] = []
+    now = datetime.now(tz=UTC)
     for index, tenant in enumerate(tenants):
         job_id = await repo.create_job(tenant_id=tenant.id, media_ids=[index + 1])
         job_ids.append(job_id)
@@ -64,17 +65,13 @@ async def test_process_items_isolates_poisoned_tenant_among_three(
             tenant_id=tenant.id,
             items=[(index + 1, f"http://example.test/{index + 1}.jpg")],
         )
-        item_row = (
-            await db_session.execute(select(IdentityScanJobItem).where(IdentityScanJobItem.job_id == job_id))
-        ).scalar_one()
-        claimed.append(
-            _claimed_item(
-                item_id=item_row.id,
-                job_id=job_id,
-                tenant_id=tenant.id,
-                media_id=index + 1,
-            )
+        # Claim so DB status is processing — release_item_for_retry is
+        # status-guarded (R2-05) and no-ops on still-pending rows.
+        batch = await repo.claim_pending_items(
+            tenant_id=tenant.id, job_id=job_id, limit=1, now=now
         )
+        assert len(batch) == 1
+        claimed.append(batch[0])
     await db_session.commit()
 
     session_factory = async_sessionmaker(bind=db_session.bind, expire_on_commit=False)
@@ -158,10 +155,14 @@ async def test_persist_integrity_error_is_terminal_no_retry(
         async def mark_item_completed(self, **_kwargs):  # noqa: ANN001
             raise AssertionError("integrity failure must not complete the item")
 
-        async def release_item_for_retry(self, *, item_id, error_message):  # noqa: ANN001
+        async def release_item_for_retry(self, *, item_id, error_message, attempts, now=None):  # noqa: ANN001
+            # Strict fake: attempts has no default so omitting it fails the call.
             ops.append("release_item_for_retry")
             released["item_id"] = item_id
             released["error_message"] = error_message
+            released["attempts"] = attempts
+            released["now"] = now
+            return True
 
         async def mark_item_failed(self, *, item_id, completed_at, error_message):  # noqa: ANN001
             ops.append("mark_item_failed")
@@ -272,9 +273,13 @@ async def test_generic_exception_still_releases_for_retry_under_max_attempts(
         async def mark_item_completed(self, **_kwargs):  # noqa: ANN001
             raise AssertionError("transient failure must not complete")
 
-        async def release_item_for_retry(self, *, item_id, error_message):  # noqa: ANN001
+        async def release_item_for_retry(self, *, item_id, error_message, attempts, now=None):  # noqa: ANN001
+            # Strict fake (R2-01): attempts required — no default of 0.
             released["item_id"] = item_id
             released["error_message"] = error_message
+            released["attempts"] = attempts
+            released["now"] = now
+            return True
 
         async def mark_item_failed(self, **kwargs):  # noqa: ANN001
             failed.update(kwargs)
@@ -326,6 +331,9 @@ async def test_generic_exception_still_releases_for_retry_under_max_attempts(
 
     assert released.get("item_id") == item_id
     assert "transient adapter blip" in str(released.get("error_message") or "")
+    # R2-01: handler must plumb the claimed attempt count into release.
+    assert released.get("attempts") == item.attempts == 1
+    assert isinstance(released.get("now"), datetime)
     assert failed == {}, "generic exceptions under max attempts must not mark FAILED"
 
 
@@ -359,10 +367,13 @@ async def test_failure_path_restores_rls_bypass_after_rollback(
         async def mark_item_completed(self, **_kwargs):  # noqa: ANN001
             raise AssertionError("failure path must not complete")
 
-        async def release_item_for_retry(self, *, item_id, error_message):  # noqa: ANN001
+        async def release_item_for_retry(self, *, item_id, error_message, attempts, now=None):  # noqa: ANN001
             ops.append("release_item_for_retry")
             released["item_id"] = item_id
             released["error_message"] = error_message
+            released["attempts"] = attempts
+            released["now"] = now
+            return True
 
         async def mark_item_failed(self, *, item_id, completed_at, error_message):  # noqa: ANN001
             ops.append("mark_item_failed")
@@ -422,6 +433,7 @@ async def test_failure_path_restores_rls_bypass_after_rollback(
     # Durable status: retry release (attempts < max), not silent no-op.
     assert released.get("item_id") == item_id
     assert "adapter boom" in str(released.get("error_message") or "")
+    assert released.get("attempts") == item.attempts == 1
     assert failed == {}
 
     assert ops.count("enable_rls_bypass") >= 2, (
@@ -447,4 +459,183 @@ async def test_failure_path_restores_rls_bypass_after_rollback(
     assert second_bypass_rel < failure_rel < commit_rel, (
         "contract: rollback → enable_rls_bypass → failure update → commit; "
         f"ops={ops}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_release_plumbs_non_one_attempt_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R2-01: attempts plumbing must carry values other than the default/1.
+
+    A fake that defaults attempts=0 would hide a regression where the handler
+    omits attempts and backoff collapses to constant 2s.
+    """
+    tenant_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    item_id = uuid.uuid4()
+    # Simulate a re-claimed item already at attempts=3 (discriminating value).
+    item = ScanQueueItem(
+        id=item_id,
+        job_id=job_id,
+        tenant_id=tenant_id,
+        media_id=99,
+        media_url="http://example.test/99.jpg",
+        status=ScanItemStatus.PROCESSING.value,
+        attempts=3,
+        identities_detected=0,
+        last_error=None,
+        created_at=datetime.now(tz=UTC),
+        started_at=datetime.now(tz=UTC),
+    )
+
+    released: dict[str, object] = {}
+
+    class _Repo:
+        async def mark_item_completed(self, **_kwargs):  # noqa: ANN001
+            raise AssertionError("must not complete")
+
+        async def release_item_for_retry(self, *, item_id, error_message, attempts, now=None):  # noqa: ANN001
+            released["item_id"] = item_id
+            released["attempts"] = attempts
+            released["now"] = now
+            return True
+
+        async def mark_item_failed(self, **_kwargs):  # noqa: ANN001
+            raise AssertionError("attempts=3 < max=5 must retry, not fail")
+
+    class _Session:
+        async def rollback(self) -> None:
+            return None
+
+        async def commit(self) -> None:
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    class _Factory:
+        def __call__(self):
+            return _Session()
+
+    class _ScanService:
+        async def process_media_item(self, **_kwargs):  # noqa: ANN001
+            raise RuntimeError("boom")
+
+        def emit_pending_scan_media_reconciled(self) -> None:
+            raise AssertionError("must not emit on failure")
+
+    handler = ScanItemHandler(
+        session_factory=_Factory(),  # type: ignore[arg-type]
+        detector=AsyncMock(),
+        generator=AsyncMock(),
+        max_attempts=5,
+        max_concurrency=1,
+    )
+    monkeypatch.setattr(
+        "recognition.worker.handlers.scan.enable_rls_bypass",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        "recognition.worker.handlers.scan.SqlAlchemyScanQueueRepository",
+        lambda _session: _Repo(),
+    )
+    handler._refresh_job_progress = AsyncMock()  # type: ignore[method-assign]
+    handler._build_scan_service = lambda _session: _ScanService()  # type: ignore[method-assign]
+
+    await handler.process_items(claimed=[item])
+
+    assert released.get("attempts") == 3, (
+        f"handler must pass claimed attempts=3, got {released.get('attempts')!r}"
+    )
+    assert isinstance(released.get("now"), datetime)
+
+
+@pytest.mark.asyncio
+async def test_failure_backoff_anchor_is_after_slow_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R2-04: release now must be failure-time, not processing-start."""
+    import asyncio as _asyncio
+
+    tenant_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    item_id = uuid.uuid4()
+    item = _claimed_item(
+        item_id=item_id,
+        job_id=job_id,
+        tenant_id=tenant_id,
+        media_id=77,
+    )
+
+    released: dict[str, object] = {}
+    process_started_at: dict[str, datetime] = {}
+
+    class _Repo:
+        async def mark_item_completed(self, **_kwargs):  # noqa: ANN001
+            raise AssertionError("must not complete")
+
+        async def release_item_for_retry(self, *, item_id, error_message, attempts, now=None):  # noqa: ANN001
+            released["now"] = now
+            released["attempts"] = attempts
+            return True
+
+        async def mark_item_failed(self, **_kwargs):  # noqa: ANN001
+            raise AssertionError("must retry")
+
+    class _Session:
+        async def rollback(self) -> None:
+            return None
+
+        async def commit(self) -> None:
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    class _Factory:
+        def __call__(self):
+            return _Session()
+
+    class _ScanService:
+        async def process_media_item(self, **_kwargs):  # noqa: ANN001
+            process_started_at["t"] = datetime.now(tz=UTC)
+            await _asyncio.sleep(0.05)
+            raise RuntimeError("slow timeout-class failure")
+
+        def emit_pending_scan_media_reconciled(self) -> None:
+            raise AssertionError("must not emit on failure")
+
+    handler = ScanItemHandler(
+        session_factory=_Factory(),  # type: ignore[arg-type]
+        detector=AsyncMock(),
+        generator=AsyncMock(),
+        max_attempts=3,
+        max_concurrency=1,
+    )
+    monkeypatch.setattr(
+        "recognition.worker.handlers.scan.enable_rls_bypass",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        "recognition.worker.handlers.scan.SqlAlchemyScanQueueRepository",
+        lambda _session: _Repo(),
+    )
+    handler._refresh_job_progress = AsyncMock()  # type: ignore[method-assign]
+    handler._build_scan_service = lambda _session: _ScanService()  # type: ignore[method-assign]
+
+    await handler.process_items(claimed=[item])
+
+    failure_now = released.get("now")
+    assert isinstance(failure_now, datetime)
+    started = process_started_at["t"]
+    # Failure anchor must land after the slow process work, not at process start.
+    assert failure_now >= started + timedelta(milliseconds=40), (
+        f"backoff now={failure_now} should be after process start+delay ({started})"
     )

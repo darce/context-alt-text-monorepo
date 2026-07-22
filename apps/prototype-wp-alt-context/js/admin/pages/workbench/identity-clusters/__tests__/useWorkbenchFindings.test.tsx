@@ -542,8 +542,10 @@ describe('useWorkbenchFindings', () => {
     rerender();
     const second = result.current;
 
-    // Fresh object each render is expected (no useMemo); counts must stay total-backed.
-    expect(second).not.toBe(first);
+    // REV-A-02 (no-op useMemo) is enforced by review, not by this test: a no-op
+    // memo is behaviorally invisible, and pinning object identity would
+    // spuriously fail if a correctly-stable memo were ever added. This test
+    // only pins rerender consistency of the view model.
     expect(second.counts).toEqual({
       assignments: 1,
       merges: 0,

@@ -220,7 +220,7 @@ describe('RosterPage projection-aware workspace shell', () => {
     expect(screen.getByRole('button', { name: /Add Person/ })).toBeInTheDocument();
   });
 
-  it('[PAG-M3-S2] keeps the default workspace visible after switching to clusters and back to entries', async () => {
+  it('[PAG-M3-S2] keeps the default workspace visible after switching to clusters and back to entries', () => {
     mockedUseRosterEntries.mockReturnValue(
       createMockQuery({
         data: [projectionEntry({ projection_status: 'current', person_uuid: 'person-uuid-1', name: 'Alice' })],

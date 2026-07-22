@@ -101,9 +101,18 @@ export const useWorkbenchMedia = ({ page, perPage, search, status = 'all', enabl
       data: identitiesQuery.data,
       isLoading: identitiesQuery.isLoading,
       isError: identitiesQuery.isError,
+      isPlaceholderData: identitiesQuery.isPlaceholderData,
+      isFetching: identitiesQuery.isFetching,
       refetch: identitiesQuery.refetch,
     }),
-    [identitiesQuery.data, identitiesQuery.isLoading, identitiesQuery.isError, identitiesQuery.refetch],
+    [
+      identitiesQuery.data,
+      identitiesQuery.isLoading,
+      identitiesQuery.isError,
+      identitiesQuery.isPlaceholderData,
+      identitiesQuery.isFetching,
+      identitiesQuery.refetch,
+    ],
   );
 
   return useMemo(

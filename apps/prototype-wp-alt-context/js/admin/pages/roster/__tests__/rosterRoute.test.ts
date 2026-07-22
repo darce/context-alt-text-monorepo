@@ -103,9 +103,8 @@ describe('isUnlabeledCluster + workbench deep link (E21-9 Slice 5b contract)', (
   });
 
   it('deep-links unlabeled clusters into the workbench review queue', () => {
+    // cluster= dropped (jobId precedent): workbench has no cluster reader.
     expect(workbenchReviewQueueUrl()).toBe('#/workbench?tab=scan&rq=assignment.all.0');
-    expect(workbenchReviewQueueUrl({ clusterId: 'c-9' })).toBe(
-      '#/workbench?tab=scan&rq=assignment.all.0&cluster=c-9',
-    );
+    expect(workbenchReviewQueueUrl()).not.toContain('cluster=');
   });
 });

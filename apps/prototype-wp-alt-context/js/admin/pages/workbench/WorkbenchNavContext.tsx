@@ -4,6 +4,7 @@ import { getConfig } from '../../api/config';
 import { useTabParam } from '../../hooks/useTabParam';
 import { useOverlayParam } from '../../hooks/useOverlayParam';
 import type { WorkbenchOverlay } from '../../api/recognition';
+import { APP_LINK_PARAMS, APP_LINK_VALUES } from '../../navigation/appLinks';
 
 export const TAB_IDS = {
   scan: 'scan',
@@ -12,8 +13,9 @@ export const TAB_IDS = {
 export type WorkbenchTab = (typeof TAB_IDS)[keyof typeof TAB_IDS];
 export type { WorkbenchOverlay } from '../../api/recognition';
 
-export const ADVANCED_PARAM = 'advanced';
-export const ADVANCED_OPEN_VALUE = 'open';
+/** Re-export contract keys — appLinks is the single declaration owner (E2110-BR-06). */
+export const ADVANCED_PARAM = APP_LINK_PARAMS.advanced;
+export const ADVANCED_OPEN_VALUE = APP_LINK_VALUES.advancedOpen;
 
 export interface WorkbenchNavContextValue {
   activeSection: WorkbenchTab;

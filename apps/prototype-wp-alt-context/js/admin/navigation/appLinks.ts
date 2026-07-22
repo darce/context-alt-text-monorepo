@@ -118,24 +118,6 @@ export const toRosterPerson = (personUuid: string): string => {
 
 export const toDescriptionHistory = (): string => href(ROUTE.descriptionHistory);
 
-export const toDescriptionHistoryRun = (runId: string): string => {
-  const params = new URLSearchParams();
-  params.set(APP_LINK_PARAMS.run, runId);
-  return href(ROUTE.descriptionHistory, params);
-};
-
-// ── Folded from workbenchOverlayLinks (deleted; single owner) ─────────────
-
-export const buildWorkbenchOverlayHref = (
-  section: WorkbenchTab,
-  overlay: Exclude<WorkbenchOverlay, null>,
-): string => toWorkbench({ tab: section, panel: overlay });
-
-export const SCAN_CONFLICTS_HREF = buildWorkbenchOverlayHref('scan', 'conflicts');
-export const SCAN_DEAD_LETTER_HREF = buildWorkbenchOverlayHref('scan', 'dead-letter');
-
-// ── Codecs (malformed → default, never throw) ─────────────────────────────
-
 /**
  * Parse `run` search param. Empty / whitespace / missing → null (list surface).
  * Non-empty trimmed string is the run id (apply surface).
@@ -156,6 +138,28 @@ export const serializeRunParam = (runId: string | null | undefined): string | nu
   const trimmed = runId.trim();
   return trimmed === '' ? null : trimmed;
 };
+
+/** Deep-link to a description-history apply view; empty/whitespace ids omit `run` (list). */
+export const toDescriptionHistoryRun = (runId: string): string => {
+  const params = new URLSearchParams();
+  const serialized = serializeRunParam(runId);
+  if (serialized !== null) {
+    params.set(APP_LINK_PARAMS.run, serialized);
+  }
+  return href(ROUTE.descriptionHistory, params);
+};
+
+// ── Folded from workbenchOverlayLinks (deleted; single owner) ─────────────
+
+export const buildWorkbenchOverlayHref = (
+  section: WorkbenchTab,
+  overlay: Exclude<WorkbenchOverlay, null>,
+): string => toWorkbench({ tab: section, panel: overlay });
+
+export const SCAN_CONFLICTS_HREF = buildWorkbenchOverlayHref('scan', 'conflicts');
+export const SCAN_DEAD_LETTER_HREF = buildWorkbenchOverlayHref('scan', 'dead-letter');
+
+// ── Codecs (malformed → default, never throw) ─────────────────────────────
 
 /**
  * Parse `media` search param. Only `expanded` is true; absent/other → false

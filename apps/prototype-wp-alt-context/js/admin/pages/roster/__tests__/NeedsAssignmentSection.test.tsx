@@ -130,10 +130,9 @@ describe('NeedsAssignmentSection rail mount discrimination (E21-9 Slice 5b)', ()
     );
 
     const link = screen.getByRole('link', { name: /Review in workbench/i });
-    expect(link).toHaveAttribute(
-      'href',
-      '#/workbench?tab=scan&rq=assignment.all.0&cluster=cluster-deep',
-    );
+    // cluster= dropped (jobId precedent): workbench has no cluster reader.
+    expect(link).toHaveAttribute('href', '#/workbench?tab=scan&rq=assignment.all.0');
+    expect(link.getAttribute('href')).not.toContain('cluster=');
   });
 
   it('opens the local drawer when the cluster row is activated', async () => {

@@ -429,6 +429,21 @@ describe('RosterPage route container (E21-9 single surface)', () => {
       count: 3,
     });
 
+    mockedUseRecognitionClusters.mockReturnValue(
+      createMockQuery({
+        data: makeClusterListResponse({
+          clusters: [
+            makeCluster(),
+            makeCluster({ id: 'cluster-2', member_ids: ['identity-3'] }),
+            makeCluster({ id: 'cluster-3', member_ids: ['identity-4'] }),
+          ],
+        }),
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      }),
+    );
+
     render(
       <MemoryRouter>
         <RosterPage />
@@ -448,6 +463,21 @@ describe('RosterPage route container (E21-9 single surface)', () => {
       selectedIds: new Set(['cluster-1', 'cluster-2', 'cluster-3']),
       count: 3,
     });
+
+    mockedUseRecognitionClusters.mockReturnValue(
+      createMockQuery({
+        data: makeClusterListResponse({
+          clusters: [
+            makeCluster(),
+            makeCluster({ id: 'cluster-2', member_ids: ['identity-3'] }),
+            makeCluster({ id: 'cluster-3', member_ids: ['identity-4'] }),
+          ],
+        }),
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      }),
+    );
 
     render(
       <MemoryRouter>

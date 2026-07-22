@@ -431,6 +431,9 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         """
         if is_sqlite(self._session):
             await self._session.execute(text("DELETE FROM mv_identity_cluster_centroids"))
+            # FIR6V11-03: frame membership to the majority embedding_model per
+            # cluster (lex-stable tie-break). SQLite shadow table keeps centroid
+            # NULL (no vector avg); the model predicate still gates identity_count.
             await self._session.execute(
                 text(
                     """
@@ -441,16 +444,53 @@ class SqlAlchemyClusterRepository(ClusterRepository):
                         centroid,
                         refreshed_at
                     )
+                    WITH member_rows AS (
+                        SELECT
+                            im.cluster_id AS cluster_id,
+                            ic.tenant_id AS tenant_id,
+                            mi.embedding_model AS embedding_model,
+                            mi.updated_at AS updated_at,
+                            ic.updated_at AS cluster_updated_at
+                        FROM identity_members im
+                        JOIN identity_clusters ic ON ic.id = im.cluster_id
+                        JOIN media_identities mi ON mi.id = im.identity_id
+                        WHERE mi.embedding IS NOT NULL
+                          AND mi.embedding_model IS NOT NULL
+                    ),
+                    model_counts AS (
+                        SELECT
+                            cluster_id,
+                            embedding_model,
+                            COUNT(*) AS n
+                        FROM member_rows
+                        GROUP BY cluster_id, embedding_model
+                    ),
+                    chosen_model AS (
+                        SELECT
+                            mc.cluster_id AS cluster_id,
+                            mc.embedding_model AS embedding_model
+                        FROM model_counts mc
+                        WHERE mc.n = (
+                            SELECT MAX(mc2.n) FROM model_counts mc2
+                            WHERE mc2.cluster_id = mc.cluster_id
+                        )
+                        AND mc.embedding_model = (
+                            SELECT MIN(mc3.embedding_model) FROM model_counts mc3
+                            WHERE mc3.cluster_id = mc.cluster_id
+                              AND mc3.n = mc.n
+                        )
+                    )
                     SELECT
-                        im.cluster_id,
-                        ic.tenant_id,
-                        COUNT(im.identity_id) AS identity_count,
+                        mr.cluster_id,
+                        mr.tenant_id,
+                        COUNT(*) AS identity_count,
                         NULL AS centroid,
-                        COALESCE(MAX(mi.updated_at), MAX(ic.updated_at), CURRENT_TIMESTAMP) AS refreshed_at
-                    FROM identity_members im
-                    JOIN identity_clusters ic ON ic.id = im.cluster_id
-                    JOIN media_identities mi ON mi.id = im.identity_id
-                    GROUP BY im.cluster_id, ic.tenant_id
+                        COALESCE(MAX(mr.updated_at), MAX(mr.cluster_updated_at), CURRENT_TIMESTAMP) AS refreshed_at
+                    FROM member_rows mr
+                    JOIN chosen_model cm
+                      ON cm.cluster_id = mr.cluster_id
+                     AND cm.embedding_model = mr.embedding_model
+                    GROUP BY mr.cluster_id, mr.tenant_id
                     """
                 )
             )

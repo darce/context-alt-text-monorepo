@@ -112,20 +112,15 @@ def _resolve_one_photo(
 
     cost = np.full((n_faces, n_clusters), _UNASSIGNED_COST, dtype=np.float64)
     for (fi, ci), decision in edge.items():
-        # LAP minimizes cost. Primary: higher similarity (more negative).
-        # Secondary: higher confidence. Tertiary: lexicographically smaller id
-        # wins — sign is +lex_key so smaller key ⇒ lower cost (FIR6RC-04).
+        # LAP minimizes cost. Primary objective only: higher similarity → lower
+        # cost. Confidence + lex id are applied in pure-Python post-solve
+        # canonicalization (FIR6V11-01) — micro-offsets in the cost matrix are
+        # float64-absorbed inside the Hungarian solver and were inert.
         sim = float(decision.candidate.discovery_similarity)
         if not np.isfinite(sim):
             # Non-finite edges stay at the unassigned sentinel (predrop / LC-11).
             continue
-        conf = float(decision.candidate.identity.confidence)
-        # Offsets bounded well below any real similarity delta of interest.
-        cost[fi, ci] = (
-            -sim
-            - (conf * 1.0e-9)
-            + (_lex_id_key(decision.candidate.identity.id) * 1.0e-12)
-        )
+        cost[fi, ci] = -sim
 
     # Drop faces whose every edge is missing (would be all-below-threshold under top-k).
     active_faces = [fi for fi in range(n_faces) if bool(np.any(cost[fi] < (_UNASSIGNED_COST * 0.5)))]
@@ -147,12 +142,78 @@ def _resolve_one_photo(
         kept.append(decision)
         assigned_faces.add(face_ids[face_i])
 
-    losers = set(face_ids) - assigned_faces
+    kept, losers = _canonicalize_lap_ties(
+        kept=kept,
+        assigned_faces=assigned_faces,
+        all_face_ids=face_ids,
+        edge=edge,
+    )
     return kept, losers
 
 
+def _canonicalize_lap_ties(
+    *,
+    kept: list[AssignmentDecision],
+    assigned_faces: set[str],
+    all_face_ids: list[str],
+    edge: dict[tuple[int, int], AssignmentDecision],
+) -> tuple[list[AssignmentDecision], set[str]]:
+    """Post-solve conf/lex preference among equal-similarity contenders (FIR6V11-01).
+
+    LAP cost encodes only ``-sim``. When multiple faces share the same
+    discovery similarity to a cluster, pure Python re-picks the winner by
+    higher confidence then lexicographically smaller identity id — without
+    relying on float micro-offsets the solver absorbs.
+    """
+    if not kept:
+        return [], set(all_face_ids)
+
+    kept_by_cluster: dict[str, AssignmentDecision] = {
+        d.candidate.cluster_id: d for d in kept
+    }
+    edges_by_cluster: dict[str, list[AssignmentDecision]] = {}
+    for decision in edge.values():
+        edges_by_cluster.setdefault(decision.candidate.cluster_id, []).append(decision)
+
+    assigned = set(assigned_faces)
+    for cluster_id, winner in list(kept_by_cluster.items()):
+        win_sim = float(winner.candidate.discovery_similarity)
+        if not np.isfinite(win_sim):
+            continue
+        contenders = [
+            d
+            for d in edges_by_cluster.get(cluster_id, ())
+            if np.isfinite(float(d.candidate.discovery_similarity))
+            and float(d.candidate.discovery_similarity) == win_sim
+        ]
+        if len(contenders) <= 1:
+            continue
+        preferred = contenders[0]
+        for cand in contenders[1:]:
+            if _edge_prefers(cand, preferred):
+                preferred = cand
+        if preferred.candidate.identity.id == winner.candidate.identity.id:
+            continue
+        pref_id = preferred.candidate.identity.id
+        # Promote preferred only when it is currently unassigned (top-1 conflict
+        # path). Multi-edge reassignment is out of scope for discovery top-1.
+        if pref_id in assigned:
+            continue
+        kept_by_cluster[cluster_id] = preferred
+        assigned.discard(winner.candidate.identity.id)
+        assigned.add(pref_id)
+
+    new_kept = list(kept_by_cluster.values())
+    losers = set(all_face_ids) - {d.candidate.identity.id for d in new_kept}
+    return new_kept, losers
+
+
 def _edge_prefers(candidate: AssignmentDecision, incumbent: AssignmentDecision) -> bool:
-    """True when candidate should replace incumbent on the same (face, cluster) edge."""
+    """True when candidate should replace incumbent on the same (face, cluster) edge.
+
+    Order: higher discovery similarity, then higher confidence, then
+    lexicographically smaller identity id (FIR6RC-04 / FIR6V11-01).
+    """
     c_sim = float(candidate.candidate.discovery_similarity)
     i_sim = float(incumbent.candidate.discovery_similarity)
     if c_sim != i_sim:
@@ -162,21 +223,3 @@ def _edge_prefers(candidate: AssignmentDecision, incumbent: AssignmentDecision) 
     if c_conf != i_conf:
         return c_conf > i_conf
     return candidate.candidate.identity.id < incumbent.candidate.identity.id
-
-
-def _lex_id_key(identity_id: str) -> float:
-    """Monotone lex key in [0, 1) for LAP cost tertiary tie-break (FIR6RC-04).
-
-    Smaller identity ids yield smaller keys. Combined with a **positive** sign
-    in the cost formula (``+ key * 1e-12``), lexicographically smaller ids win
-    equal-sim / equal-conf conflicts under cost minimization.
-    """
-    if not identity_id:
-        return 1.0
-    # Base-256 encoding of the first bytes, scaled into [0, 1).
-    total = 0.0
-    scale = 1.0
-    for ch in identity_id[:16]:
-        scale /= 256.0
-        total += (ord(ch) % 256) * scale
-    return total

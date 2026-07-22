@@ -119,6 +119,17 @@ def test_golden_numeric_pins_on_committed_fixture(
     assert "pre-registered" in disclosure.lower()
     assert "deterministic" in disclosure.lower()
     assert "fit-side" in disclosure.lower() or "fit set" in disclosure.lower()
+    # FIR6V11-02: silent-drop + clustering note + named sampling frames + honest tax labels.
+    assert artifact["protocol"]["clustering_note"]
+    assert "pair-level" in artifact["protocol"]["clustering_note"].lower()
+    assert "silent_drop_disclosure" in artifact["protocol"]
+    assert "excluded_single_face_recall" in artifact["protocol"]["silent_drop_disclosure"]
+    assert "sampling_frames" in artifact["protocol"]
+    assert (
+        artifact["protocol"]["sampling_frames"]["fnmr_tax_genuine"]
+        == "stratum_oof_genuine_non_abstained_folds"
+    )
+    assert "n_silent_drop_decisions" in artifact["protocol"]
 
     g = artifact["global"]
     assert g["tau_proposed"] == pytest.approx(GOLDEN_GLOBAL_TAU)
@@ -151,6 +162,14 @@ def test_golden_numeric_pins_on_committed_fixture(
     assert "global_vs_stratum" in tax
     assert "global_oact_coefficient" in tax
     assert tax["global_oact_coefficient"]["coefficient"] == 0.0
+    # FIR6V11-02: honest tax labels + named sampling frames on denominators.
+    for name, row in tax["global_vs_stratum"].items():
+        assert "stratum_fnmr_at_global_tau" in row, name
+        assert row["global_fnmr"] == row["stratum_fnmr_at_global_tau"]
+        assert row["sampling_frame"]["genuine_scores"] == (
+            "stratum_oof_genuine_non_abstained_folds"
+        )
+        assert "n_genuine" in row["sampling_frame"]
     # Non-tautological OACT pin: coefficient 0 keeps elevated_tau == base_tau and tax 0
     # when a base tau exists; abstained strata stay null (not silently zero).
     for name, row in tax["global_oact_coefficient"]["per_stratum_tax"].items():
@@ -160,6 +179,9 @@ def test_golden_numeric_pins_on_committed_fixture(
         else:
             assert row["elevated_tau"] == pytest.approx(row["base_tau"]), name
             assert row["tax"] == pytest.approx(0.0), name
+        assert row["sampling_frame"]["genuine_scores"] == (
+            "stratum_oof_genuine_non_abstained_folds"
+        )
     # Positive control: non-zero coefficient raises FNMR tax on a stratum with
     # genuines straddling the elevated threshold — strict numeric pin.
     tax_pos = calibrate(

@@ -178,15 +178,18 @@ class ClusterLabelService {
 
 				$this->sync_state_repository->touch_local_curation_marker( $tenant_id );
 
+				// Contract Impact (E21-9 plan §Contract and Boundary Impact):
+				// PATCH cluster-label gains person-binding side effects; request/response
+				// shapes remain unchanged. Bound person identity is observable on the next
+				// roster read (write-through-to-read), not via response-field enrichment.
+				// Slice 1 response-schema parity (person_id/uuid/name) applies to
+				// commit_roster_cluster create+rebind only — not this surface.
 				return new WP_REST_Response(
 					array(
-						'cluster_id'  => $cluster_id,
-						'label'       => $label,
-						'person_id'   => $resolved['person_id'],
-						'person_uuid' => $resolved['person_uuid'],
-						'person_name' => $resolved['name'],
-						'synced'      => false,
-						'status'      => 'pending',
+						'cluster_id' => $cluster_id,
+						'label'      => $label,
+						'synced'     => false,
+						'status'     => 'pending',
 					),
 					200
 				);

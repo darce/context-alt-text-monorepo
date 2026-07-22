@@ -77,10 +77,19 @@ class ClusterLabelServiceTest extends TestCase
         $this->assertStringContainsString("'person_created'", $joined);
         $this->assertStringContainsString("'cluster_person_bound'", $joined);
 
+        // Response shape stays pre-slice-2 (plan: request/response shapes unchanged).
         $data = $response->get_data();
-        $this->assertSame(77, $data['person_id']);
-        $this->assertSame('Known Person', $data['person_name']);
-        $this->assertNotSame('', trim((string) ($data['person_uuid'] ?? '')));
+        $this->assertSame(
+            [
+                'cluster_id' => 'cluster-xyz',
+                'label' => 'Known Person',
+                'synced' => false,
+                'status' => 'pending',
+            ],
+            $data
+        );
+        $bindUpdate = $this->findQueryContaining($wpdb->queries, 'person_id = 77');
+        $this->assertStringContainsString("cluster_uuid = 'cluster-xyz'", $bindUpdate);
     }
 
     public function testUpdateClusterLabelCreatesPersonAndBindingOnUnlabeledCluster(): void
@@ -157,9 +166,16 @@ class ClusterLabelServiceTest extends TestCase
 
         $this->assertInstanceOf(WP_REST_Response::class, $response);
         $data = $response->get_data();
-        $this->assertSame(42, $data['person_id']);
-        $this->assertSame($existingUuid, $data['person_uuid']);
-        $this->assertSame('Ada Lovelace', $data['person_name']);
+        // Response shape unchanged; rebind identity is a side effect (DB + outbox).
+        $this->assertSame(
+            [
+                'cluster_id' => 'cluster-xyz',
+                'label' => 'ada lovelace',
+                'synced' => false,
+                'status' => 'pending',
+            ],
+            $data
+        );
 
         $personInserts = array_values(
             array_filter(

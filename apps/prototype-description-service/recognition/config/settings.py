@@ -15,7 +15,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from recognition.application.settings import ClusteringSettings
+from recognition.application.settings import ClusteringSettings, QualitySettings
 from recognition.application.settings.scan import ScanSettings
 from recognition.infrastructure.face_pipeline._common import (
     DEFAULT_NMS_THRESHOLD,
@@ -580,6 +580,21 @@ def resolve_face_pipeline_knobs(
     raise ValueError(
         f"Invalid face_pipeline profile={profile!r}; allowed values: {sorted(_FACE_PIPELINE_PROFILES)}"
     )
+
+
+def bridge_oact_into_quality_settings(
+    quality: QualitySettings,
+    knobs: ResolvedFacePipelineKnobs,
+) -> QualitySettings:
+    """Bridge FacePipelineSettings.oact_coefficient into QualitySettings (FIR-6 S1).
+
+    Consumers of ``compute_identity_quality`` read OACT from quality settings.
+    Default coefficient 0.0 keeps threshold adjustments bitwise-identical.
+    """
+    coeff = float(knobs.oact_coefficient)
+    if float(getattr(quality, "oact_coefficient", 0.0) or 0.0) == coeff:
+        return quality
+    return quality.model_copy(update={"oact_coefficient": coeff})
 
 
 class IdentityDetectionSettings(BaseModel):

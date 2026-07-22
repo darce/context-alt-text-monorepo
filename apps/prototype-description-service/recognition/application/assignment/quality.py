@@ -17,6 +17,8 @@ class IdentityQualityInfo:
 
     Canonical threshold quality is pose-neutral (confidence + bbox size only)
     so model profiles that cannot emit pose are not silently disadvantaged.
+    OACT may add a separate threshold_adjustment term from occlusion_severity
+    (FIR-6 S1); the score formula itself stays pose/occlusion-neutral (EVAL-08).
     """
 
     score: float  # 0.0 to 1.0
@@ -32,12 +34,14 @@ def compute_identity_quality(
     bbox_height: int,
     settings: QualitySettings | None = None,
     maturity: ClusterMaturityLevel | None = None,
+    occlusion_severity: float | None = None,
 ) -> IdentityQualityInfo:
     """Compute identity quality score from detection metrics.
 
     Score depends only on confidence and bbox size (FIR2-BR-03). Pose remains
     available on FaceDetection / MediaIdentity for explicit pose-bucket /
-    diversity logic, not for threshold quality.
+    diversity logic, not for threshold quality. Occlusion severity feeds the
+    OACT ``threshold_adjustment`` channel only (never the score).
 
     Args:
         confidence: Detection confidence (0-1).
@@ -45,6 +49,7 @@ def compute_identity_quality(
         bbox_height: Bounding box height in pixels.
         settings: Optional quality settings. Uses defaults if not provided.
         maturity: Optional cluster maturity level to dampen adjustments.
+        occlusion_severity: Optional [0,1] occlusion factor for OACT; None ⇒ 0 term.
 
     Returns:
         IdentityQualityInfo with computed score and adjustment.
@@ -63,7 +68,12 @@ def compute_identity_quality(
         score=score,
         confidence=confidence,
         size_factor=size_factor,
-        threshold_adjustment=compute_quality_adjustment(score, settings=s, maturity=maturity),
+        threshold_adjustment=compute_quality_adjustment(
+            score,
+            settings=s,
+            maturity=maturity,
+            occlusion_severity=occlusion_severity,
+        ),
     )
 
 
@@ -71,12 +81,16 @@ def compute_quality_adjustment(
     quality_score: float,
     settings: QualitySettings | None = None,
     maturity: ClusterMaturityLevel | None = None,
+    occlusion_severity: float | None = None,
 ) -> float:
-    """Return threshold adjustment for a quality score.
+    """Return threshold adjustment for a quality score (+ optional OACT term).
 
     Args:
         quality_score: Identity quality (0-1).
         settings: Optional quality settings. Uses defaults if not provided.
+        maturity: Optional maturity dampening for the base quality band.
+        occlusion_severity: Optional occlusion for OACT; None or coefficient 0
+            ⇒ no extra term (dark default).
 
     Returns:
         Float adjustment (positive = stricter, negative = more lenient).
@@ -92,14 +106,21 @@ def compute_quality_adjustment(
     else:
         base_adjustment = s.poor_quality_adjustment
 
-    if maturity is None:
-        return base_adjustment
+    if maturity is not None:
+        dampening = {
+            ClusterMaturityLevel.COLD: 0.25,
+            ClusterMaturityLevel.NASCENT: 0.50,
+            ClusterMaturityLevel.CONFIRMED: 0.75,
+            ClusterMaturityLevel.MATURE: 1.0,
+        }
+        base_adjustment = base_adjustment * dampening.get(maturity, 1.0)
 
-    dampening = {
-        ClusterMaturityLevel.COLD: 0.25,
-        ClusterMaturityLevel.NASCENT: 0.50,
-        ClusterMaturityLevel.CONFIRMED: 0.75,
-        ClusterMaturityLevel.MATURE: 1.0,
-    }
+    # OACT: -(oact_coefficient × occlusion_severity); default coefficient 0.0.
+    oact_term = 0.0
+    if occlusion_severity is not None:
+        coeff = float(getattr(s, "oact_coefficient", 0.0) or 0.0)
+        if coeff != 0.0:
+            severity = max(0.0, min(1.0, float(occlusion_severity)))
+            oact_term = -(coeff * severity)
 
-    return base_adjustment * dampening.get(maturity, 1.0)
+    return base_adjustment + oact_term

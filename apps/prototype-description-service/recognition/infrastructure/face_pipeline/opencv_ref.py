@@ -146,8 +146,8 @@ class OpenCVSFaceEmbedder:
         """Raw model feature for one crop (hookable in tests)."""
         return self._recognizer.feature(crop)
 
-    def embed(self, crops: Sequence[np.ndarray]) -> np.ndarray:
-        """Embed a batch of 112×112×3 BGR crops → L2-normalized (N, dim).
+    def embed(self, crops: Sequence[np.ndarray]):
+        """Embed a batch of 112×112×3 BGR crops → EmbedBatchResult (vectors + pre-norm norms).
 
         Non-(112, 112, 3) crops raise ``FacePipelineInputError`` (no silent resize).
         """

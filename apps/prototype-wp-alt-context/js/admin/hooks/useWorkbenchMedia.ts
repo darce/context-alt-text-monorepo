@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useMediaIdentities } from './useMediaIdentities';
@@ -27,8 +27,29 @@ interface Params {
   enabled: boolean;
 }
 
+/** Serialize the page-view key that owns a single next-page prefetch. */
+const serializePageKey = (
+  page: number,
+  perPage: number,
+  search: string | undefined,
+  status: WorkbenchMediaStatus,
+): string => JSON.stringify({ page, perPage, search: search ?? '', status });
+
 export const useWorkbenchMedia = ({ page, perPage, search, status = 'all', enabled }: Params) => {
   const queryClient = useQueryClient();
+  /**
+   * Once-per-page-key prefetch latch: records the serialized next-page key after
+   * issuing its one fetchQuery. Resets when the current page-view key changes.
+   * Status-level settle is not enough (placeholderData keeps status 'success'
+   * while isFetching); settle is fetch-level below.
+   */
+  const prefetchedNextKeyRef = useRef<string | null>(null);
+  const pageViewKey = serializePageKey(page, perPage, search, status);
+  const prevPageViewKeyRef = useRef(pageViewKey);
+  if (prevPageViewKeyRef.current !== pageViewKey) {
+    prevPageViewKeyRef.current = pageViewKey;
+    prefetchedNextKeyRef.current = null;
+  }
 
   const mediaQuery = useQuery<WorkbenchMediaResponse, Error>({
     queryKey: queryKeys.media.workbenchPage({ page, perPage, search, status }),
@@ -57,9 +78,16 @@ export const useWorkbenchMedia = ({ page, perPage, search, status = 'all', enabl
   }, [detailQuery.data, mediaQuery.data?.items, identitiesQuery.data]);
 
   useEffect(() => {
-    if (!mediaQuery.isSuccess) {
+    if (!enabled || !mediaQuery.isSuccess) {
       return;
     }
+    // Fetch-level settle only: status 'success' is true under placeholderData
+    // while the real stage-2 fetch is still in flight.
+    if (detailQuery.isFetching || identitiesQuery.isFetching) {
+      return;
+    }
+    // Empty mediaIds: stage-2 queries are disabled (isFetching false). Prefetch
+    // is still allowed once page-1 media settled — no stage-2 competitor.
     const totalPages = mediaQuery.data?.totalPages ?? 1;
     const nextPage = page + 1;
     if (nextPage > totalPages) {
@@ -67,13 +95,30 @@ export const useWorkbenchMedia = ({ page, perPage, search, status = 'all', enabl
     }
 
     const nextKey = queryKeys.media.workbenchPage({ page: nextPage, perPage, search, status });
+    const nextKeySerialized = serializePageKey(nextPage, perPage, search, status);
+    if (prefetchedNextKeyRef.current === nextKeySerialized) {
+      return;
+    }
+    prefetchedNextKeyRef.current = nextKeySerialized;
+
     void queryClient
       .fetchQuery<WorkbenchMediaResponse>({
         queryKey: nextKey,
         queryFn: () => fetchWorkbenchMedia({ page: nextPage, perPage, search, status }),
       })
       .catch(() => undefined);
-  }, [mediaQuery.isSuccess, mediaQuery.data?.totalPages, page, perPage, search, status, queryClient]);
+  }, [
+    enabled,
+    mediaQuery.isSuccess,
+    mediaQuery.data?.totalPages,
+    detailQuery.isFetching,
+    identitiesQuery.isFetching,
+    page,
+    perPage,
+    search,
+    status,
+    queryClient,
+  ]);
 
   // useQuery results are fresh tracked proxies every render; memoize on the
   // leaf fields consumers read so the hook's return identity is stable.

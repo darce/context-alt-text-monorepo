@@ -41,7 +41,31 @@ def incumbent_embedding_model_manifest() -> EmbeddingModelManifest:
     )
 
 
+def active_embedding_model_id() -> str:
+    """Resolve the runtime embedding space id for the active profile (FIR23-01).
+
+    Fail-closed: returns a non-empty model_id or raises. Single-model tenants
+    that already stamp this id see a no-op filter on read paths.
+    """
+    settings = get_settings()
+    if settings.runtime_mode == "test":
+        model_id = "stub-detector@test"
+    elif settings.face_pipeline.profile == "face_pipeline":
+        # Lazy import: keep insightface dark-default free of face_pipeline graph.
+        from recognition.infrastructure.embeddings.face_pipeline_adapter import (
+            sface_embedding_model_manifest,
+        )
+
+        model_id = sface_embedding_model_manifest().model_id
+    else:
+        model_id = incumbent_embedding_model_manifest().model_id
+    if not model_id or not str(model_id).strip():
+        raise RuntimeError("active embedding_model unresolved (empty model_id)")
+    return str(model_id).strip()
+
+
 __all__ = [
     "EmbeddingModelManifest",
+    "active_embedding_model_id",
     "incumbent_embedding_model_manifest",
 ]

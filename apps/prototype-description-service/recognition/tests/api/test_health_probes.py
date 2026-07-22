@@ -151,7 +151,8 @@ def test_ready_healthy_when_all_deps_up(tmp_path) -> None:
     body = resp.json()
     assert body["status"] == HealthStatus.OK.value
     names = {check["name"] for check in body["checks"]}
-    assert names == {"database", "breaker", "model_cache"}
+    # FIR23-01: embedding_model readiness is fail-closed with the other deps.
+    assert names == {"database", "breaker", "model_cache", "embedding_model"}
     for check in body["checks"]:
         assert check["status"] == HealthStatus.OK.value, check
 

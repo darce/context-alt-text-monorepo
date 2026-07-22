@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BatchRunStatus } from '../../api/recognition';
 import { resetConfigCache } from '../../api/config';
 import { queryKeys } from '../../api/queryKeys';
+import { SYNC_VOCABULARY } from '../../pages/workbench/syncVocabulary';
 import type { PipelinePhase } from '../jobStateMachineUtils';
 import { useJobStateMachineEffects, type ProjectionSyncState } from '../useJobStateMachineEffects';
 
@@ -165,13 +166,16 @@ describe('useJobStateMachineEffects', () => {
 
   it('keeps projection failures retryable after the backend leaves projecting', async () => {
     const options = buildBaseOptions();
-    const syncMutateAsync = vi.fn().mockRejectedValueOnce(new Error('Waiting for service…')).mockResolvedValueOnce({
-      synced: true,
-      reason: 'ok',
-      last_snapshot_version: 123,
-      last_synced_at: '2026-03-09T10:00:00Z',
-      is_stale: false,
-    });
+    const syncMutateAsync = vi
+      .fn()
+      .mockRejectedValueOnce(new Error(SYNC_VOCABULARY.resultsErrorHeadline))
+      .mockResolvedValueOnce({
+        synced: true,
+        reason: 'ok',
+        last_snapshot_version: 123,
+        last_synced_at: '2026-03-09T10:00:00Z',
+        is_stale: false,
+      });
 
     options.syncTrigger = { mutateAsync: syncMutateAsync } as never;
 
@@ -181,7 +185,7 @@ describe('useJobStateMachineEffects', () => {
 
     await waitFor(() => {
       expect(options.setProjectionSyncState).toHaveBeenCalledWith('error');
-      expect(options.setProjectionError).toHaveBeenCalledWith('Waiting for service…');
+      expect(options.setProjectionError).toHaveBeenCalledWith(SYNC_VOCABULARY.resultsErrorHeadline);
     });
 
     rerender({

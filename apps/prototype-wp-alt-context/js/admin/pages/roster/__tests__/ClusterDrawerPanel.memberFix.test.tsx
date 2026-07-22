@@ -71,15 +71,17 @@ describe('ClusterDrawerPanel keyboard member-fix (E21-9 Slice 3)', () => {
     const moveButton = screen.getByRole('button', { name: /Move to… identity from media 10/i });
     await user.click(moveButton);
 
-    const picker = screen.getByRole('listbox', { name: /Choose a target cluster/i });
+    const picker = screen.getByRole('menu', { name: /Choose a target cluster/i });
     expect(picker).toBeInTheDocument();
-    expect(within(picker).queryByRole('option', { name: 'Source Cluster' })).not.toBeInTheDocument();
-    expect(within(picker).queryByRole('option', { name: /cluster-1/i })).not.toBeInTheDocument();
+    expect(within(picker).queryByRole('menuitem', { name: 'Source Cluster' })).not.toBeInTheDocument();
+    expect(within(picker).queryByRole('menuitem', { name: /cluster-1/i })).not.toBeInTheDocument();
 
-    await user.click(within(picker).getByRole('option', { name: 'Target Alpha' }));
+    await user.click(within(picker).getByRole('menuitem', { name: 'Target Alpha' }));
 
     expect(onReassignFace).toHaveBeenCalledTimes(1);
     expect(onReassignFace).toHaveBeenCalledWith('identity-1', 'cluster-2');
+    // BR-05: focus returns to the originating Move-to button after selection.
+    expect(moveButton).toHaveFocus();
   });
 
   it('announces the reassignment outcome via role=status', async () => {
@@ -91,7 +93,7 @@ describe('ClusterDrawerPanel keyboard member-fix (E21-9 Slice 3)', () => {
     );
 
     await user.click(screen.getByRole('button', { name: /Move to… identity from media 10/i }));
-    await user.click(screen.getByRole('option', { name: 'Target Beta' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Target Beta' }));
 
     const status = screen.getByRole('status', { name: '' });
     // role=status region is present and carries the outcome copy (A11Y-21).
@@ -114,23 +116,28 @@ describe('ClusterDrawerPanel keyboard member-fix (E21-9 Slice 3)', () => {
     const moveButton = screen.getByRole('button', { name: /Move to… identity from media 10/i });
     expect(moveButton).toBeEnabled();
     fireEvent.click(moveButton);
-    expect(screen.queryByRole('option', { name: 'Source Cluster' })).not.toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'Other' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Source Cluster' })).not.toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Other' })).toBeInTheDocument();
 
     rerender(
       <ClusterDrawerPanel {...baseProps} reassignTargets={[]} onReassignFace={onReassignFace} />,
     );
 
-    const disabledMove = screen.getByRole('button', { name: /Move to… identity from media 10/i });
-    expect(disabledMove).toBeDisabled();
-    expect(disabledMove).toHaveAttribute('aria-disabled', 'true');
-    expect(disabledMove).toHaveAttribute(
-      'title',
-      'No other clusters available to move this identity into.',
+    const emptyTargetsMove = screen.getByRole('button', { name: /Move to… identity from media 10/i });
+    // BR-09: aria-disabled (not native disabled) so the control stays focusable.
+    expect(emptyTargetsMove).not.toBeDisabled();
+    expect(emptyTargetsMove).toHaveAttribute('aria-disabled', 'true');
+    expect(emptyTargetsMove).toHaveAttribute(
+      'aria-describedby',
+      'acx-cluster-drawer-no-move-targets-reason',
     );
+    expect(emptyTargetsMove).not.toHaveAttribute('title');
+    expect(screen.getByText('No other clusters available to move this identity into.')).toBeInTheDocument();
+    emptyTargetsMove.focus();
+    expect(emptyTargetsMove).toHaveFocus();
     // Never hidden when empty (rg-003 / A11Y-14): control remains in the DOM.
-    expect(disabledMove).toBeVisible();
-    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    expect(emptyTargetsMove).toBeVisible();
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
 
   it('keeps Move to… always visible without hover (A11Y-14 no-hover query)', () => {
@@ -146,15 +153,13 @@ describe('ClusterDrawerPanel keyboard member-fix (E21-9 Slice 3)', () => {
     // Discriminating: control exists in the default (no-hover) tree and is not hover-gated.
     expect(moveButton).toBeVisible();
     expect(moveButton).toHaveClass('acx-cluster-drawer__move-btn');
-    expect(moveButton.closest('.acx-cluster-drawer__face-actions')).not.toBeNull();
 
     const actions = moveButton.closest('.acx-cluster-drawer__face-actions')!;
-    const actionsStyle = window.getComputedStyle(actions);
-    const buttonStyle = window.getComputedStyle(moveButton);
-    // jsdom may not load SCSS; assert no inline hover-gate and presence of the always-visible class surface.
-    expect(actionsStyle.opacity === '' || Number.parseFloat(actionsStyle.opacity) > 0).toBe(true);
-    expect(actionsStyle.visibility === '' || actionsStyle.visibility === 'visible').toBe(true);
-    expect(buttonStyle.opacity === '' || Number.parseFloat(buttonStyle.opacity) > 0).toBe(true);
+    expect(actions).not.toBeNull();
+    // BR-10: class-contract — actions container must not carry a hover-gated class.
+    // SCSS always-visible gate on `.acx-cluster-drawer__face-actions` is review-enforced.
+    expect(actions.className).not.toMatch(/hover/i);
+    expect(actions).toHaveClass('acx-cluster-drawer__face-actions');
     // Touch-target floor is owned by `.acx-cluster-drawer__move-btn` min 24×24 CSS px.
     expect(moveButton.className).toContain('acx-cluster-drawer__move-btn');
   });
@@ -172,13 +177,15 @@ describe('ClusterDrawerPanel keyboard member-fix (E21-9 Slice 3)', () => {
     expect(moveButton).toHaveFocus();
 
     await user.keyboard('{Enter}');
-    const firstOption = screen.getByRole('option', { name: 'Target Alpha' });
+    const firstOption = screen.getByRole('menuitem', { name: 'Target Alpha' });
     expect(firstOption).toHaveFocus();
 
     await user.keyboard('{Enter}');
     expect(onReassignFace).toHaveBeenCalledTimes(1);
     expect(onReassignFace).toHaveBeenCalledWith('identity-1', 'cluster-2');
     expect(screen.getByRole('status')).toHaveTextContent(/Target Alpha/i);
+    // BR-05: focus returns to Move-to after selection.
+    expect(moveButton).toHaveFocus();
   });
 
   it('closes the picker on Escape without closing the drawer', async () => {
@@ -195,12 +202,32 @@ describe('ClusterDrawerPanel keyboard member-fix (E21-9 Slice 3)', () => {
       />,
     );
 
-    await user.click(screen.getByRole('button', { name: /Move to… identity from media 10/i }));
-    expect(screen.getByRole('listbox')).toBeInTheDocument();
+    const moveButton = screen.getByRole('button', { name: /Move to… identity from media 10/i });
+    await user.click(moveButton);
+    expect(screen.getByRole('menu')).toBeInTheDocument();
 
     await user.keyboard('{Escape}');
-    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
     expect(onReassignFace).not.toHaveBeenCalled();
+    // BR-05: focus returns to the originating Move-to button after Escape.
+    expect(moveButton).toHaveFocus();
+  });
+
+  it('restores focus to Move-to when Cancel closes the picker', async () => {
+    const user = userEvent.setup();
+    const onReassignFace = vi.fn();
+
+    render(
+      <ClusterDrawerPanel {...baseProps} reassignTargets={reassignTargets} onReassignFace={onReassignFace} />,
+    );
+
+    const moveButton = screen.getByRole('button', { name: /Move to… identity from media 10/i });
+    await user.click(moveButton);
+    await user.click(screen.getByRole('menuitem', { name: 'Cancel' }));
+
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(onReassignFace).not.toHaveBeenCalled();
+    expect(moveButton).toHaveFocus();
   });
 });

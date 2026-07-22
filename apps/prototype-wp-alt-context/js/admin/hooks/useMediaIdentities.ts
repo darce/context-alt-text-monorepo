@@ -107,14 +107,16 @@ export const useMediaIdentities = (mediaIds: number[], enabled = true) => {
       if (cancelled) {
         return;
       }
-      // Consume the episode at fire time so a failed recovery refetch does not re-arm.
-      recoveryLatchKeyRef.current = keySerialized;
       pendingRecoveryKeyRef.current = null;
       // Defer further if a cooldown opened/extended during the floor wait.
+      // Latch is set only at actual refetch so cancel between floor-fire and
+      // cooldown-callback does not permanently consume the episode (BR-03).
       runAfterCooldown(() => {
-        if (!cancelled) {
-          void refetchRef.current();
+        if (cancelled) {
+          return;
         }
+        recoveryLatchKeyRef.current = keySerialized;
+        void refetchRef.current();
       });
     }, delayMs);
 

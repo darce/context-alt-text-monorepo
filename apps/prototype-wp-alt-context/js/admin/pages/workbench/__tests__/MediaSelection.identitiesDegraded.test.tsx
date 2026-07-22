@@ -4,7 +4,7 @@
  * S3-T3 cached-persistence presentation, S3-T6 a11y on the unavailable affordance.
  */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -197,9 +197,8 @@ describe('MediaSelection Slice 3 — honest degraded identity state', () => {
     const user = userEvent.setup();
     // Prefer the row-level EmptyStateWarning Retry (status live region), not the footer status bar.
     const affordance = screen.getByRole('status');
-    const retry = affordance.querySelector('button');
-    expect(retry).not.toBeNull();
-    await user.click(retry!);
+    const retry = within(affordance).getByRole('button', { name: 'Retry' });
+    await user.click(retry);
     expect(refetchIdentities).toHaveBeenCalled();
   });
 
@@ -272,14 +271,12 @@ describe('MediaSelection Slice 3 — honest degraded identity state', () => {
     expect(status).toHaveAttribute('aria-live', 'polite');
     expect(status).toHaveTextContent(/Identity data unavailable/i);
 
-    const retry = status.querySelector('button');
-    expect(retry).not.toBeNull();
-    expect(retry!.textContent).toMatch(/Retry/i);
-    expect(retry!.tagName).toBe('BUTTON');
+    const retry = within(status).getByRole('button', { name: 'Retry' });
+    expect(retry.tagName).toBe('BUTTON');
 
     const user = userEvent.setup();
-    retry!.focus();
-    expect(retry!).toHaveFocus();
+    retry.focus();
+    expect(retry).toHaveFocus();
     await user.keyboard('{Enter}');
     expect(refetchIdentities).toHaveBeenCalled();
   });

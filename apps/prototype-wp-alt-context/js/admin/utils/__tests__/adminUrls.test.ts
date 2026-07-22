@@ -140,9 +140,9 @@ describe('E21-9 retired surface producer guard', () => {
     const importHits = adminJs.filter((file) => {
       const text = readFileSync(file, 'utf8');
       return (
-        /RosterClustersTab/.test(text) ||
-        /ROSTER_TABS/.test(text) ||
-        /rosterClustersUrl/.test(text)
+        text.includes('RosterClustersTab') ||
+        text.includes('ROSTER_TABS') ||
+        text.includes('rosterClustersUrl')
       );
     });
     expect(importHits.map((f) => path.relative(pluginRoot, f))).toEqual([]);

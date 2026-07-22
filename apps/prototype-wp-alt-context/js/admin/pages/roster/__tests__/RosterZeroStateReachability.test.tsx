@@ -111,6 +111,8 @@ const clusterActionState = {
     isPending: false,
   }),
   bulkMergeProgress: null,
+  bulkMergeFailure: null,
+  clearBulkMergeFailure: vi.fn(),
   rescanGate: {
     disabled: false,
     'aria-disabled': undefined as true | undefined,
@@ -188,6 +190,10 @@ describe('Roster zero-state reachability (rg-003)', () => {
     expect(zeroState).toHaveTextContent(/No people yet/i);
     expect(zeroState.querySelector('.acx-roster-section__empty-icon')).toBeTruthy();
     expect(screen.getByRole('link', { name: /run a scan/i })).toBeInTheDocument();
+    // rg-003: Needs-assignment rail stays reachable at zero state (disabled-with-reason).
+    expect(screen.getByTestId('needs-assignment-section')).toBeInTheDocument();
+    expect(screen.getByTestId('needs-assignment-zero')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Merge$/i })).toBeDisabled();
   });
 
   it('pairs the active filter badge with an icon second channel', () => {

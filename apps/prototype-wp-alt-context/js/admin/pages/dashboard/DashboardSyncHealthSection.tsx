@@ -5,7 +5,7 @@ import { AlertTriangle } from 'lucide-react';
 import type { SyncHealth, SyncHealthResponse } from '../../api/recognition/types/sync';
 import { getDashboardSyncHealthSummary } from '../workbench/degradedModeBannerLogic';
 import { SYNC_VOCABULARY } from '../workbench/syncPresentation';
-import { SCAN_CONFLICTS_HREF, SCAN_DEAD_LETTER_HREF } from '../workbench/workbenchOverlayLinks';
+import { SCAN_CONFLICTS_HREF, SCAN_DEAD_LETTER_HREF } from '../../navigation/appLinks';
 
 interface SyncStatusData {
   last_snapshot_version?: number | null;

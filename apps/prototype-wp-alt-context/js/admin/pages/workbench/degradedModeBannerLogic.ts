@@ -3,7 +3,7 @@ import { __ } from '@wordpress/i18n';
 import type { SyncHealth, SyncHealthResponse, SyncHealthWarning } from '../../api/recognition/types/sync';
 
 import { SYNC_VOCABULARY } from './syncVocabulary';
-import { SCAN_CONFLICTS_HREF, SCAN_DEAD_LETTER_HREF } from './workbenchOverlayLinks';
+import { SCAN_CONFLICTS_HREF, SCAN_DEAD_LETTER_HREF } from '../../navigation/appLinks';
 
 // "Offline" means the recognition service is *currently unreachable*, which is
 // the breaker's job (2-failure threshold, self-healing / 60s auto-expire).

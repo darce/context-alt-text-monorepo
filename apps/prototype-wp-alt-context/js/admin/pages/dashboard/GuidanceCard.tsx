@@ -2,6 +2,7 @@ import React from 'react';
 import { __, _n, sprintf } from '@wordpress/i18n';
 
 import type { DashboardStats } from '../../api/dashboardApi';
+import { toRoster, toWorkbench } from '../../navigation/appLinks';
 
 interface GuidanceCardProps {
   stats: DashboardStats;
@@ -18,7 +19,7 @@ export const GuidanceCard = ({ stats }: GuidanceCardProps): React.JSX.Element =>
             stats.pending_clusters_count,
           )}
         </p>
-        <a href="#/workbench?advanced=open" className="acx-link-button">
+        <a href={toWorkbench({ advanced: true })} className="acx-link-button">
           {__('Go to Workbench', 'alt-context')}
         </a>
       </>
@@ -47,7 +48,7 @@ export const GuidanceCard = ({ stats }: GuidanceCardProps): React.JSX.Element =>
           )}
         </p>
         <a
-          href="#/roster?tab=entries&personFilter=unassigned"
+          href={toRoster({ personFilter: 'unassigned' })}
           className="acx-link-button acx-dashboard__guidance-link"
           aria-label={reviewLabel}
         >
@@ -62,7 +63,7 @@ export const GuidanceCard = ({ stats }: GuidanceCardProps): React.JSX.Element =>
     return (
       <>
         <p>{__('Start by scanning your media library for faces.', 'alt-context')}</p>
-        <a href="#/workbench?tab=scan" className="acx-link-button">
+        <a href={toWorkbench({ tab: 'scan' })} className="acx-link-button">
           {__('Go to Scan tab', 'alt-context')}
         </a>
       </>

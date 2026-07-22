@@ -19,7 +19,7 @@ import {
   syncPresentationToneClass,
   type SyncPresentation,
 } from './syncPresentation';
-import { buildWorkbenchOverlayHref } from '../../navigation/appLinks';
+import { buildWorkbenchOverlayHref, toRetention } from '../../navigation/appLinks';
 
 /** Badge second-channel state derived from tone/status (not binary ok/attention). */
 type SyncBadgeState = 'ok' | 'attention' | 'error' | 'syncing' | 'queued' | 'in-progress';
@@ -226,7 +226,7 @@ export const SyncStatusIndicator = ({
   const retentionDetails =
     retentionMode && retentionMode !== 'retain_all' ? (
       <div className="acx-sync-status__meta">
-        <a href="#/retention" className="acx-sync-status__link">
+        <a href={toRetention()} className="acx-sync-status__link">
           {formatRetentionModeLabel(retentionMode)}
         </a>
       </div>

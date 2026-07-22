@@ -5,7 +5,7 @@ import { AlertTriangle } from 'lucide-react';
 import type { SyncHealth, SyncHealthResponse } from '../../api/recognition/types/sync';
 import { getDashboardSyncHealthSummary } from '../workbench/degradedModeBannerLogic';
 import { SYNC_VOCABULARY } from '../workbench/syncPresentation';
-import { SCAN_CONFLICTS_HREF, SCAN_DEAD_LETTER_HREF } from '../../navigation/appLinks';
+import { SCAN_CONFLICTS_HREF, SCAN_DEAD_LETTER_HREF, toWorkbench } from '../../navigation/appLinks';
 
 interface SyncStatusData {
   last_snapshot_version?: number | null;
@@ -120,7 +120,7 @@ export const DashboardSyncHealthSection = ({
           <p>{sprintf(SYNC_VOCABULARY.lastFailure, lastFailureDate)}</p>
         ) : null}
         <div className="acx-dashboard__actions">
-          <a href="#/workbench?tab=scan" className="acx-dashboard__action-card">
+          <a href={toWorkbench({ tab: 'scan' })} className="acx-dashboard__action-card">
             <h3>{__('Open Workbench', 'alt-context')}</h3>
             <p>{SYNC_VOCABULARY.openWorkbenchDetail}</p>
           </a>

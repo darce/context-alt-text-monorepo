@@ -118,6 +118,22 @@ def get_settings() -> ClusteringSettings:
     return resolve_effective_clustering_settings(recognition=get_recognition_settings())
 
 
+@lru_cache
+def get_clustering_limits_settings():
+    """Profile-resolved ClusteringLimitsSettings (S2 limits-threshold rebinding)."""
+    from recognition.config.settings import resolve_effective_limits_settings
+
+    return resolve_effective_limits_settings(recognition=get_recognition_settings())
+
+
+@lru_cache
+def get_identity_detection_settings():
+    """Profile-resolved IdentityDetectionSettings (S2 detection-threshold rebinding)."""
+    from recognition.config.settings import resolve_effective_detection_settings
+
+    return resolve_effective_detection_settings(recognition=get_recognition_settings())
+
+
 async def get_suggestion_service(
     session: AsyncSession = Depends(get_session), tenant_id: str | None = Depends(get_tenant_id_optional)
 ) -> SuggestionService:
@@ -601,6 +617,8 @@ async def get_persisted_cluster_job_service_clustering(
 
 __all__ = [
     "get_settings",
+    "get_clustering_limits_settings",
+    "get_identity_detection_settings",
     "get_shared_insightface_adapter",
     "get_suggestion_service",
     "get_cluster_repository",

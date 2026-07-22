@@ -77,13 +77,19 @@ def _resolve_one_photo(
     if len(set(face_ids_ordered)) == len(decisions) and len(set(cluster_ids_ordered)) == len(decisions):
         return list(decisions), set()
 
+    # Stable face order: higher confidence first, then identity id (tie-break).
     face_ids: list[str] = []
     face_index: dict[str, int] = {}
+    face_meta: dict[str, tuple[float, str]] = {}
     for decision in decisions:
         face_id = decision.candidate.identity.id
+        conf = float(decision.candidate.identity.confidence)
+        face_meta[face_id] = (conf, face_id)
         if face_id not in face_index:
             face_index[face_id] = len(face_ids)
             face_ids.append(face_id)
+    face_ids = sorted(face_ids, key=lambda fid: (-face_meta[fid][0], face_meta[fid][1]))
+    face_index = {face_id: i for i, face_id in enumerate(face_ids)}
 
     cluster_ids: list[str] = []
     cluster_index: dict[str, int] = {}
@@ -96,10 +102,7 @@ def _resolve_one_photo(
         fi = face_index[decision.candidate.identity.id]
         ci = cluster_index[cluster_id]
         previous = edge.get((fi, ci))
-        if (
-            previous is None
-            or decision.candidate.discovery_similarity > previous.candidate.discovery_similarity
-        ):
+        if previous is None or _edge_prefers(decision, previous):
             edge[(fi, ci)] = decision
 
     n_faces = len(face_ids)
@@ -109,7 +112,12 @@ def _resolve_one_photo(
 
     cost = np.full((n_faces, n_clusters), _UNASSIGNED_COST, dtype=np.float64)
     for (fi, ci), decision in edge.items():
-        cost[fi, ci] = -float(decision.candidate.discovery_similarity)
+        # Secondary tie-break inside cost so equal similarities still prefer
+        # higher confidence / lower identity id via a tiny stable offset.
+        sim = float(decision.candidate.discovery_similarity)
+        conf = float(decision.candidate.identity.confidence)
+        # Offset bounded well below any real similarity delta of interest.
+        cost[fi, ci] = -sim - (conf * 1.0e-9) - (_stable_id_offset(decision.candidate.identity.id) * 1.0e-12)
 
     # Drop faces whose every edge is missing (would be all-below-threshold under top-k).
     active_faces = [fi for fi in range(n_faces) if bool(np.any(cost[fi] < (_UNASSIGNED_COST * 0.5)))]
@@ -133,3 +141,28 @@ def _resolve_one_photo(
 
     losers = set(face_ids) - assigned_faces
     return kept, losers
+
+
+def _edge_prefers(candidate: AssignmentDecision, incumbent: AssignmentDecision) -> bool:
+    """True when candidate should replace incumbent on the same (face, cluster) edge."""
+    c_sim = float(candidate.candidate.discovery_similarity)
+    i_sim = float(incumbent.candidate.discovery_similarity)
+    if c_sim != i_sim:
+        return c_sim > i_sim
+    c_conf = float(candidate.candidate.identity.confidence)
+    i_conf = float(incumbent.candidate.identity.confidence)
+    if c_conf != i_conf:
+        return c_conf > i_conf
+    return candidate.candidate.identity.id < incumbent.candidate.identity.id
+
+
+def _stable_id_offset(identity_id: str) -> float:
+    """Map identity id to a deterministic [0, 1) offset for LAP cost tie-breaks."""
+    # Prefer lexicographically smaller ids (lower offset → slightly better cost).
+    if not identity_id:
+        return 1.0
+    # Hash-free: use first code points so equal-sim conflicts are order-stable.
+    total = 0
+    for ch in identity_id[:16]:
+        total = (total * 131 + ord(ch)) % 1_000_003
+    return total / 1_000_003.0

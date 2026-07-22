@@ -107,14 +107,17 @@ export const useMediaIdentities = (mediaIds: number[], enabled = true) => {
       if (cancelled) {
         return;
       }
-      pendingRecoveryKeyRef.current = null;
       // Defer further if a cooldown opened/extended during the floor wait.
       // Latch is set only at actual refetch so cancel between floor-fire and
       // cooldown-callback does not permanently consume the episode (BR-03).
+      // The pending marker stays set through that gap so effect re-entry on
+      // the same key cannot arm a second floor timer (BRV-01); it clears
+      // only when the latch is taken or cleanup cancels the episode.
       runAfterCooldown(() => {
         if (cancelled) {
           return;
         }
+        pendingRecoveryKeyRef.current = null;
         recoveryLatchKeyRef.current = keySerialized;
         void refetchRef.current();
       });

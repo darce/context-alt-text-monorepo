@@ -5,6 +5,7 @@ export interface AdminUrlsConfig {
 
 export interface ApiConfig {
   nonce: string;
+  ajaxUrl: string;
   endpoints: Record<string, string>;
   tenant_id?: string;
   tier?: string;
@@ -17,6 +18,7 @@ export interface ApiConfig {
 
 export interface NormalizedConfig {
   nonce: string;
+  ajaxUrl: string;
   endpoints: Record<string, string>;
   tenant_id?: string;
   tier?: string;
@@ -31,8 +33,38 @@ export interface NormalizedConfig {
 // See docs/tasks/4.0/4.11.0/progress-tracking-investigation-2026-01-20.md
 const DEFAULT_MAX_MEDIA_PER_BATCH = 10000;
 
+/** WP rest-nonce handler exits the raw nonce string; reject sentinels and HTML. */
+const NONCE_BODY_PATTERN = /^[a-f0-9]{8,20}$/i;
+
+export class NonceRefreshFailedError extends Error {
+  readonly causeStatus: number | undefined;
+  readonly bodyPreview: string;
+
+  constructor({
+    message,
+    causeStatus,
+    bodyPreview,
+  }: {
+    message: string;
+    causeStatus?: number;
+    bodyPreview?: string;
+  }) {
+    super(message);
+    this.name = 'NonceRefreshFailedError';
+    this.causeStatus = causeStatus;
+    this.bodyPreview = bodyPreview ?? '';
+  }
+}
+
 const normalizeOptionalString = (value: unknown): string | undefined =>
   typeof value === 'string' && value.trim() !== '' ? value : undefined;
+
+const requireNonEmptyString = (value: unknown, field: string): string => {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error(`AltContextAdmin configuration field "${field}" must be a non-empty string.`);
+  }
+  return value;
+};
 
 export const normalizeConfig = (raw: ApiConfig): NormalizedConfig => {
   const rawMax = Number(raw.max_media_per_batch ?? DEFAULT_MAX_MEDIA_PER_BATCH);
@@ -44,7 +76,8 @@ export const normalizeConfig = (raw: ApiConfig): NormalizedConfig => {
   };
 
   return {
-    nonce: raw.nonce,
+    nonce: requireNonEmptyString(raw.nonce, 'nonce'),
+    ajaxUrl: requireNonEmptyString(raw.ajaxUrl, 'ajaxUrl'),
     endpoints: raw.endpoints,
     tenant_id: raw.tenant_id,
     tier: raw.tier,
@@ -62,6 +95,7 @@ export const normalizeConfig = (raw: ApiConfig): NormalizedConfig => {
 };
 
 let cachedConfig: NormalizedConfig | null = null;
+let refreshInFlight: Promise<string> | null = null;
 
 /**
  * Inject config for non-SPA surfaces (post.php attachment-edit).
@@ -86,8 +120,66 @@ export const getConfig = (): NormalizedConfig => {
   return cachedConfig;
 };
 
+/**
+ * Live nonce from the cached config. After setNonce / refreshRestNonce, existing
+ * getConfig().nonce call sites stay correct because the cached object is mutated.
+ */
+export const getNonce = (): string => getConfig().nonce;
+
+/**
+ * Mutate the cached config nonce in place so all live readers see the refresh.
+ */
+export const setNonce = (nonce: string): void => {
+  const config = getConfig();
+  config.nonce = nonce;
+};
+
+/**
+ * Refresh the WP REST nonce via core admin-ajax rest-nonce action.
+ * GET-only, raw-string body (not JSON). Single-flight; slot cleared in finally
+ * so a rejection does not poison later attempts ([RES-06]).
+ */
+export const refreshRestNonce = (): Promise<string> => {
+  if (refreshInFlight) {
+    return refreshInFlight;
+  }
+
+  refreshInFlight = (async (): Promise<string> => {
+    const { ajaxUrl } = getConfig();
+    const url = `${ajaxUrl}${ajaxUrl.includes('?') ? '&' : '?'}action=rest-nonce`;
+    const response = await fetch(url, {
+      method: 'GET',
+      credentials: 'same-origin',
+    });
+    const rawBody = await response.text();
+    const body = rawBody.trim();
+
+    if (
+      response.ok &&
+      body !== '' &&
+      body !== '0' &&
+      body !== '-1' &&
+      NONCE_BODY_PATTERN.test(body)
+    ) {
+      setNonce(body);
+      return body;
+    }
+
+    throw new NonceRefreshFailedError({
+      message: `REST nonce refresh failed (${response.status}): unexpected body.`,
+      causeStatus: response.status,
+      bodyPreview: body.slice(0, 240),
+    });
+  })().finally(() => {
+    refreshInFlight = null;
+  });
+
+  return refreshInFlight;
+};
+
 export const resetConfigCache = (): void => {
   cachedConfig = null;
+  refreshInFlight = null;
 };
 
 /**
@@ -119,6 +211,7 @@ export const getEndpoint = (primary: string, ...fallbacks: string[]): string => 
 /** Minimal localized payload for the attachment-edit entry (not AltContextAdmin). */
 export interface AttachmentEditLocalizedConfig {
   nonce: string;
+  ajaxUrl: string;
   attachmentId: number | string;
   imageUrl: string;
   imageWidth: number | string;

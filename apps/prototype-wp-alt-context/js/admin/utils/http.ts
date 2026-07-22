@@ -1,3 +1,5 @@
+import { getNonce, refreshRestNonce } from '../api/config';
+
 export interface HTTPOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
@@ -58,6 +60,22 @@ export class ResponseParseError extends Error {
 }
 
 /**
+ * Session/auth expiry (nonce-403 after refresh failure, or rest_not_logged_in).
+ * Not an HTTPError subclass — surfaces distinct recovery UI (Slice 3).
+ */
+export class AuthExpiredError extends Error {
+  readonly endpoint: string;
+  readonly status: number;
+
+  constructor({ endpoint, status, message }: { endpoint: string; status: number; message?: string }) {
+    super(message ?? `Authentication expired for ${endpoint} (${status}).`);
+    this.name = 'AuthExpiredError';
+    this.endpoint = endpoint;
+    this.status = status;
+  }
+}
+
+/**
  * Parse Retry-After header value to delay seconds.
  * Accepts delta-seconds or HTTP-date; never returns NaN.
  */
@@ -101,7 +119,7 @@ const buildResponsePreview = (rawBody: string): string => {
   return `${normalized.slice(0, 240)}...`;
 };
 
-const buildHeaders = (options: HTTPOptions): Record<string, string> => {
+const buildHeaders = (options: HTTPOptions, restNonce: string | undefined): Record<string, string> => {
   const headers: Record<string, string> = {
     Accept: 'application/json',
   };
@@ -110,33 +128,57 @@ const buildHeaders = (options: HTTPOptions): Record<string, string> => {
     headers['Content-Type'] = 'application/json';
   }
 
-  if (options.restNonce) {
-    headers['X-WP-Nonce'] = options.restNonce;
+  if (restNonce) {
+    headers['X-WP-Nonce'] = restNonce;
   }
 
   return headers;
 };
 
-export const fetchApi = async <T>(endpoint: string, options: HTTPOptions = {}): Promise<T | undefined> => {
-  const response = await fetch(endpoint, {
-    method: options.method ?? 'GET',
-    headers: buildHeaders(options),
-    body: options.body ? JSON.stringify(options.body) : null,
-    signal: options.signal,
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    const retryAfterSeconds = parseRetryAfter(response.headers.get('Retry-After'));
-    throw new HTTPError({
-      status: response.status,
-      retryAfterSeconds,
-      endpoint,
-      bodyPreview: buildResponsePreview(errorText),
-      message: `Request to ${endpoint} failed (${response.status}): ${errorText}`,
-    });
+const parseErrorCode = (errorText: string): string | undefined => {
+  try {
+    const parsed: unknown = JSON.parse(errorText);
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      'code' in parsed &&
+      typeof (parsed as { code: unknown }).code === 'string'
+    ) {
+      return (parsed as { code: string }).code;
+    }
+  } catch {
+    // non-JSON body (WAF/proxy) → no code
   }
+  return undefined;
+};
 
+const throwIfAborted = (signal: AbortSignal | undefined): void => {
+  if (signal?.aborted) {
+    const reason = signal.reason;
+    if (reason instanceof DOMException) {
+      throw reason;
+    }
+    throw new DOMException('The operation was aborted.', 'AbortError');
+  }
+};
+
+const throwHttpError = (
+  endpoint: string,
+  status: number,
+  errorText: string,
+  retryAfterHeader: string | null,
+): never => {
+  const retryAfterSeconds = parseRetryAfter(retryAfterHeader);
+  throw new HTTPError({
+    status,
+    retryAfterSeconds,
+    endpoint,
+    bodyPreview: buildResponsePreview(errorText),
+    message: `Request to ${endpoint} failed (${status}): ${errorText}`,
+  });
+};
+
+const parseSuccessBody = async <T>(response: Response, endpoint: string): Promise<T | undefined> => {
   // 204/205 intentionally return no body.
   if (response.status === 204 || response.status === 205) {
     return undefined;
@@ -160,6 +202,78 @@ export const fetchApi = async <T>(endpoint: string, options: HTTPOptions = {}): 
       message: `Request to ${endpoint} returned malformed JSON (${response.status}): ${syntaxDetail}. Response preview: ${preview}`,
     });
   }
+};
+
+export const fetchApi = async <T>(endpoint: string, options: HTTPOptions = {}): Promise<T | undefined> => {
+  const method = options.method ?? 'GET';
+  const body = options.body ? JSON.stringify(options.body) : null;
+
+  const send = async (restNonce: string | undefined): Promise<Response> =>
+    fetch(endpoint, {
+      method,
+      headers: buildHeaders(options, restNonce),
+      body,
+      signal: options.signal,
+    });
+
+  // First attempt: caller-supplied nonce or live cached nonce ([WP-02]/[SECD-03]).
+  const firstNonce = options.restNonce ?? getNonce();
+  const response = await send(firstNonce);
+
+  if (response.ok) {
+    return parseSuccessBody<T>(response, endpoint);
+  }
+
+  const errorText = await response.text();
+  const retryAfterHeader = response.headers.get('Retry-After');
+
+  if (response.status === 401) {
+    const code = parseErrorCode(errorText);
+    if (code === 'rest_not_logged_in') {
+      throw new AuthExpiredError({ endpoint, status: 401 });
+    }
+    throwHttpError(endpoint, response.status, errorText, retryAfterHeader);
+  }
+
+  if (response.status === 403) {
+    const code = parseErrorCode(errorText);
+    if (code !== 'rest_cookie_invalid_nonce') {
+      // Non-nonce 403 or non-JSON body → ordinary HTTPError, no refresh ([API-08]).
+      throwHttpError(endpoint, response.status, errorText, retryAfterHeader);
+    }
+
+    // Nonce-403: auth phase rejected before route execution — one safe retry ([RES-01][API-02]).
+    throwIfAborted(options.signal);
+
+    try {
+      await refreshRestNonce();
+    } catch {
+      throw new AuthExpiredError({ endpoint, status: 403 });
+    }
+
+    throwIfAborted(options.signal);
+
+    // Retry always uses the live refreshed nonce — never the stale option ([API-08]).
+    const retryResponse = await send(getNonce());
+
+    if (retryResponse.ok) {
+      return parseSuccessBody<T>(retryResponse, endpoint);
+    }
+
+    const retryText = await retryResponse.text();
+    const retryCode = parseErrorCode(retryText);
+    if (retryResponse.status === 403 && retryCode === 'rest_cookie_invalid_nonce') {
+      throw new AuthExpiredError({ endpoint, status: 403 });
+    }
+    if (retryResponse.status === 401 && retryCode === 'rest_not_logged_in') {
+      throw new AuthExpiredError({ endpoint, status: 401 });
+    }
+
+    throwHttpError(endpoint, retryResponse.status, retryText, retryResponse.headers.get('Retry-After'));
+  }
+
+  // All other statuses: byte-identical to pre-UXP-NET-2 behaviour.
+  throwHttpError(endpoint, response.status, errorText, retryAfterHeader);
 };
 
 /**

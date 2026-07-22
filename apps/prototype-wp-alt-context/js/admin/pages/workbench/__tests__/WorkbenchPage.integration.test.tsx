@@ -167,6 +167,7 @@ describe('WorkbenchPage (integration-lite)', () => {
     window.EventSource = MockEventSource as unknown as typeof EventSource;
     window.AltContextAdmin = {
       nonce: 'test-nonce',
+      ajaxUrl: '/wp-admin/admin-ajax.php',
       endpoints: {
         workbenchMedia: '/wp-json/acx/v1/media',
         recognitionAnalyze: '/wp-json/acx/v1/recognition/analyze',

@@ -1,14 +1,12 @@
 /**
- * Best-effort survivor selection for accepted merge suggestions.
+ * Survivor selection for accepted merge suggestions.
  *
- * Backend `_select_merge_target` ranks clusters by
- * `(user_confirmed, meaningful_label, identity_count, id)` — higher wins.
- * `PendingMergeSuggestion` does NOT carry `user_confirmed`, so this client
- * replica ranks only `(meaningfulLabel(label), identity_count ?? 0, id)`.
- *
- * That makes the result a **guess**. Callers (useLiveReviewTarget) must
- * re-validate the guessed survivor via a live existence query and fall
- * through to close if the guess 404s (self-heal).
+ * Prefer authoritative `source_cluster_id` (retired) / `target_cluster_id`
+ * (survivor) stamped by the accept-merge response after `_select_merge_target`.
+ * Fall back to a client rank replica only when those ids are absent (older
+ * backends / list shapes). The fallback cannot see `user_confirmed`, so it
+ * ranks only `(meaningfulLabel, identity_count, id)` — a **guess** that must
+ * self-heal via existence probes when wrong.
  */
 
 import type { PendingMergeSuggestion } from '../../../api/recognition/types';
@@ -57,9 +55,36 @@ const compareRank = (a: RankTuple, b: RankTuple): number => {
   return 0;
 };
 
+const isNonEmptyClusterId = (value: unknown): value is string =>
+  typeof value === 'string' && value.length > 0;
+
 /**
- * Pick survivor/retired from a merge-suggestion accept response.
- * Best-effort only — see file header.
+ * Authoritative post-accept ids when both are present, distinct, and belong to
+ * the suggestion's {cluster_a_id, cluster_b_id} pair (E215-BR-04). Mismatched
+ * or foreign ids fall through to client-rank fallback.
+ * Returns null when the response lacks trustworthy topology.
+ */
+export const authoritativeMergeSurvivor = (
+  suggestion: PendingMergeSuggestion,
+): MergeSurvivorResolution | null => {
+  const retiredId = suggestion.source_cluster_id;
+  const survivorId = suggestion.target_cluster_id;
+  if (!isNonEmptyClusterId(retiredId) || !isNonEmptyClusterId(survivorId)) {
+    return null;
+  }
+  if (retiredId === survivorId) {
+    return null;
+  }
+  const pair = new Set([suggestion.cluster_a_id, suggestion.cluster_b_id]);
+  if (!pair.has(retiredId) || !pair.has(survivorId)) {
+    return null;
+  }
+  return { survivorId, retiredId };
+};
+
+/**
+ * Best-effort rank replica for older backends that omit source/target ids.
+ * Prefer {@link resolveMergeSurvivorFromResponse} on accept paths.
  */
 export const resolveMergeSurvivor = (suggestion: PendingMergeSuggestion): MergeSurvivorResolution => {
   const aId = suggestion.cluster_a_id;
@@ -72,3 +97,10 @@ export const resolveMergeSurvivor = (suggestion: PendingMergeSuggestion): MergeS
   }
   return { survivorId: bId, retiredId: aId };
 };
+
+/**
+ * Accept-path survivor resolution: response ids first, client-rank fallback.
+ */
+export const resolveMergeSurvivorFromResponse = (
+  suggestion: PendingMergeSuggestion,
+): MergeSurvivorResolution => authoritativeMergeSurvivor(suggestion) ?? resolveMergeSurvivor(suggestion);

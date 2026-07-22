@@ -51,6 +51,10 @@ export interface PendingMergeSuggestionApiResponse {
   cluster_b_representative_media_url?: string | null;
   cluster_b_representative_thumb_url?: string | null;
   cluster_b_representative_bbox?: BoundingBox | null;
+  /** Authoritative post-accept retired id (optional on list/older backends). */
+  source_cluster_id?: string | null;
+  /** Authoritative post-accept survivor id (optional on list/older backends). */
+  target_cluster_id?: string | null;
 }
 
 const requireEnvelopeNumber = (value: unknown, fieldName: string, responseName: string): number => {
@@ -130,28 +134,100 @@ export const mapPendingMergeSuggestions = (
     throw new Error('Pending merge suggestions response must include a suggestions array.');
   }
 
-  const suggestions: PendingMergeSuggestion[] = rawSuggestions.map((suggestion) => ({
-    id: suggestion.id,
-    cluster_a_id: suggestion.cluster_a_id,
-    cluster_b_id: suggestion.cluster_b_id,
-    similarity: suggestion.similarity,
-    status: suggestion.status,
-    cluster_a_label: suggestion.cluster_a_label ?? null,
-    cluster_b_label: suggestion.cluster_b_label ?? null,
-    cluster_a_identity_count: suggestion.cluster_a_identity_count ?? null,
-    cluster_b_identity_count: suggestion.cluster_b_identity_count ?? null,
-    cluster_a_representative_media_id: suggestion.cluster_a_representative_media_id ?? null,
-    cluster_a_representative_media_url: suggestion.cluster_a_representative_media_url ?? null,
-    cluster_a_representative_thumb_url: suggestion.cluster_a_representative_thumb_url ?? null,
-    cluster_a_representative_bbox: suggestion.cluster_a_representative_bbox ?? null,
-    cluster_b_representative_media_id: suggestion.cluster_b_representative_media_id ?? null,
-    cluster_b_representative_media_url: suggestion.cluster_b_representative_media_url ?? null,
-    cluster_b_representative_thumb_url: suggestion.cluster_b_representative_thumb_url ?? null,
-    cluster_b_representative_bbox: suggestion.cluster_b_representative_bbox ?? null,
-  }));
+  const suggestions: PendingMergeSuggestion[] = rawSuggestions.map((suggestion) =>
+    mapPendingMergeSuggestion(suggestion),
+  );
 
   return {
     suggestions,
     ...metadata,
+  };
+};
+
+const optionalClusterId = (value: unknown): string | null => {
+  if (typeof value !== 'string' || value.length === 0) {
+    return null;
+  }
+  return value;
+};
+
+const requireStringField = (value: unknown, fieldName: string): string => {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`Merge suggestion response must include ${fieldName}.`);
+  }
+  return value;
+};
+
+/**
+ * Narrow a raw merge-suggestion payload (list item or accept/reject response).
+ * Validates required fields; authoritative source/target ids are optional.
+ * No non-null assertions — every field is type-narrowed explicitly.
+ */
+export const mapPendingMergeSuggestion = (raw: unknown): PendingMergeSuggestion => {
+  if (raw === null || typeof raw !== 'object') {
+    throw new Error('Merge suggestion response must be an object.');
+  }
+  const suggestion = raw as Record<string, unknown>;
+
+  const id = requireStringField(suggestion.id, 'a non-empty id');
+  const clusterAId = requireStringField(suggestion.cluster_a_id, 'cluster_a_id');
+  const clusterBId = requireStringField(suggestion.cluster_b_id, 'cluster_b_id');
+  const status = requireStringField(suggestion.status, 'status');
+
+  const similarity = suggestion.similarity;
+  if (typeof similarity !== 'number' || !Number.isFinite(similarity)) {
+    throw new Error('Merge suggestion response must include a numeric similarity.');
+  }
+
+  const bboxOrNull = (value: unknown): BoundingBox | null => {
+    if (value === null || value === undefined) {
+      return null;
+    }
+    if (typeof value !== 'object') {
+      return null;
+    }
+    return value as BoundingBox;
+  };
+
+  return {
+    id,
+    cluster_a_id: clusterAId,
+    cluster_b_id: clusterBId,
+    similarity,
+    status,
+    cluster_a_label: typeof suggestion.cluster_a_label === 'string' ? suggestion.cluster_a_label : null,
+    cluster_b_label: typeof suggestion.cluster_b_label === 'string' ? suggestion.cluster_b_label : null,
+    cluster_a_identity_count:
+      typeof suggestion.cluster_a_identity_count === 'number' ? suggestion.cluster_a_identity_count : null,
+    cluster_b_identity_count:
+      typeof suggestion.cluster_b_identity_count === 'number' ? suggestion.cluster_b_identity_count : null,
+    cluster_a_representative_media_id:
+      typeof suggestion.cluster_a_representative_media_id === 'number'
+        ? suggestion.cluster_a_representative_media_id
+        : null,
+    cluster_a_representative_media_url:
+      typeof suggestion.cluster_a_representative_media_url === 'string'
+        ? suggestion.cluster_a_representative_media_url
+        : null,
+    cluster_a_representative_thumb_url:
+      typeof suggestion.cluster_a_representative_thumb_url === 'string'
+        ? suggestion.cluster_a_representative_thumb_url
+        : null,
+    cluster_a_representative_bbox: bboxOrNull(suggestion.cluster_a_representative_bbox),
+    cluster_b_representative_media_id:
+      typeof suggestion.cluster_b_representative_media_id === 'number'
+        ? suggestion.cluster_b_representative_media_id
+        : null,
+    cluster_b_representative_media_url:
+      typeof suggestion.cluster_b_representative_media_url === 'string'
+        ? suggestion.cluster_b_representative_media_url
+        : null,
+    cluster_b_representative_thumb_url:
+      typeof suggestion.cluster_b_representative_thumb_url === 'string'
+        ? suggestion.cluster_b_representative_thumb_url
+        : null,
+    cluster_b_representative_bbox: bboxOrNull(suggestion.cluster_b_representative_bbox),
+    source_cluster_id: optionalClusterId(suggestion.source_cluster_id),
+    target_cluster_id: optionalClusterId(suggestion.target_cluster_id),
   };
 };

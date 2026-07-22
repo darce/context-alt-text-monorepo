@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import type { PendingMergeSuggestion } from '../../../../api/recognition/types';
-import { resolveMergeSurvivor } from '../resolveMergeSurvivor';
+import {
+  authoritativeMergeSurvivor,
+  resolveMergeSurvivor,
+  resolveMergeSurvivorFromResponse,
+} from '../resolveMergeSurvivor';
 
 const base = (overrides: Partial<PendingMergeSuggestion> = {}): PendingMergeSuggestion => ({
   id: 'merge-1',
@@ -95,6 +99,113 @@ describe('resolveMergeSurvivor', () => {
         cluster_b_identity_count: 1,
       }),
     );
+    expect(result).toEqual({ survivorId: 'cluster-b', retiredId: 'cluster-a' });
+  });
+});
+
+describe('resolveMergeSurvivorFromResponse (authoritative ids)', () => {
+  it('uses source/target response ids over client rank', () => {
+    // Client rank would pick larger A; authoritative ids flip to B as survivor.
+    const result = resolveMergeSurvivorFromResponse(
+      base({
+        cluster_a_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        cluster_b_id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+        cluster_a_label: null,
+        cluster_b_label: 'Named Person',
+        cluster_a_identity_count: 50,
+        cluster_b_identity_count: 2,
+        source_cluster_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        target_cluster_id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+      }),
+    );
+    expect(result).toEqual({
+      survivorId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+      retiredId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    });
+  });
+
+  it('user_confirmed-flip fixture: response ids CONTRADICT client rank (sole discriminator story)', () => {
+    // E215-BR-03: mirrors backend ranking where user_confirmed is the SOLE
+    // discriminator — labels equal-rank and counts favor the loser. Client rank
+    // cannot see user_confirmed and would pick larger A; response stamps B.
+    const largerUnconfirmed = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+    const smallerConfirmed = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+    const countFlip = base({
+      cluster_a_id: largerUnconfirmed,
+      cluster_b_id: smallerConfirmed,
+      cluster_a_label: 'Alice',
+      cluster_b_label: 'Bob',
+      cluster_a_identity_count: 50,
+      cluster_b_identity_count: 2,
+      // Authoritative: user_confirmed on B → B survives, A retired.
+      source_cluster_id: largerUnconfirmed,
+      target_cluster_id: smallerConfirmed,
+    });
+
+    // Without authoritative ids, client rank picks larger A (count favors loser).
+    expect(resolveMergeSurvivor(countFlip)).toEqual({
+      survivorId: largerUnconfirmed,
+      retiredId: smallerConfirmed,
+    });
+    // With response ids, accept path records the user_confirmed survivor — CONTRADICTS rank.
+    expect(resolveMergeSurvivorFromResponse(countFlip)).toEqual({
+      survivorId: smallerConfirmed,
+      retiredId: largerUnconfirmed,
+    });
+    expect(authoritativeMergeSurvivor(countFlip)).toEqual({
+      survivorId: smallerConfirmed,
+      retiredId: largerUnconfirmed,
+    });
+  });
+
+  it('falls back to client rank when response omits source/target (older backend)', () => {
+    const result = resolveMergeSurvivorFromResponse(
+      base({
+        cluster_a_label: null,
+        cluster_b_label: 'Alice',
+        cluster_a_identity_count: 10,
+        cluster_b_identity_count: 1,
+        source_cluster_id: null,
+        target_cluster_id: null,
+      }),
+    );
+    expect(result).toEqual({ survivorId: 'cluster-b', retiredId: 'cluster-a' });
+    expect(authoritativeMergeSurvivor(base({ source_cluster_id: null, target_cluster_id: null }))).toBeNull();
+  });
+
+  it('ignores identical source/target and falls back', () => {
+    const result = resolveMergeSurvivorFromResponse(
+      base({
+        cluster_a_label: null,
+        cluster_b_label: 'Alice',
+        source_cluster_id: 'same',
+        target_cluster_id: 'same',
+      }),
+    );
+    expect(result).toEqual({ survivorId: 'cluster-b', retiredId: 'cluster-a' });
+  });
+
+  it('E215-BR-04: mismatched source/target not in {a,b} fall back to client rank', () => {
+    const result = resolveMergeSurvivorFromResponse(
+      base({
+        cluster_a_id: 'cluster-a',
+        cluster_b_id: 'cluster-b',
+        cluster_a_label: null,
+        cluster_b_label: 'Alice',
+        cluster_a_identity_count: 10,
+        cluster_b_identity_count: 1,
+        // Foreign ids must not be trusted.
+        source_cluster_id: 'cluster-foreign-1',
+        target_cluster_id: 'cluster-foreign-2',
+      }),
+    );
+    expect(authoritativeMergeSurvivor(
+      base({
+        source_cluster_id: 'cluster-foreign-1',
+        target_cluster_id: 'cluster-foreign-2',
+      }),
+    )).toBeNull();
+    // Client rank: B has the meaningful label.
     expect(result).toEqual({ survivorId: 'cluster-b', retiredId: 'cluster-a' });
   });
 });

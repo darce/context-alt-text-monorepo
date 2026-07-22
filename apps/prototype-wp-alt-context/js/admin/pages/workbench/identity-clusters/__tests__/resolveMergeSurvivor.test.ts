@@ -124,28 +124,12 @@ describe('resolveMergeSurvivorFromResponse (authoritative ids)', () => {
     });
   });
 
-  it('user_confirmed-flip fixture: response ids beat client identity_count rank', () => {
-    // Mirrors backend test_select_merge_target_user_confirmed_flips_survivor_over_larger_count:
-    // smaller user_confirmed cluster is survivor even when the other side has
-    // far more members. Client rank cannot see user_confirmed and would pick the
-    // larger side — red against old client-rank-only accept path.
+  it('user_confirmed-flip fixture: response ids CONTRADICT client rank (sole discriminator story)', () => {
+    // E215-BR-03: mirrors backend ranking where user_confirmed is the SOLE
+    // discriminator — labels equal-rank and counts favor the loser. Client rank
+    // cannot see user_confirmed and would pick larger A; response stamps B.
     const largerUnconfirmed = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
     const smallerConfirmed = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
-    const response = base({
-      cluster_a_id: largerUnconfirmed,
-      cluster_b_id: smallerConfirmed,
-      cluster_a_label: null,
-      cluster_b_label: 'Named Person',
-      cluster_a_identity_count: 50,
-      cluster_b_identity_count: 2,
-      // Authoritative: user_confirmed on B → B survives, A retired.
-      source_cluster_id: largerUnconfirmed,
-      target_cluster_id: smallerConfirmed,
-    });
-
-    // Client rank alone: A has higher identity_count (50 > 2) and B has the only
-    // meaningful label — label wins for B. Force a pure count flip by giving both
-    // meaningful labels so count would pick A while response picks B.
     const countFlip = base({
       cluster_a_id: largerUnconfirmed,
       cluster_b_id: smallerConfirmed,
@@ -153,21 +137,22 @@ describe('resolveMergeSurvivorFromResponse (authoritative ids)', () => {
       cluster_b_label: 'Bob',
       cluster_a_identity_count: 50,
       cluster_b_identity_count: 2,
+      // Authoritative: user_confirmed on B → B survives, A retired.
       source_cluster_id: largerUnconfirmed,
       target_cluster_id: smallerConfirmed,
     });
 
-    // Without authoritative ids, client rank picks larger A.
+    // Without authoritative ids, client rank picks larger A (count favors loser).
     expect(resolveMergeSurvivor(countFlip)).toEqual({
       survivorId: largerUnconfirmed,
       retiredId: smallerConfirmed,
     });
-    // With response ids, accept path records the user_confirmed survivor.
+    // With response ids, accept path records the user_confirmed survivor — CONTRADICTS rank.
     expect(resolveMergeSurvivorFromResponse(countFlip)).toEqual({
       survivorId: smallerConfirmed,
       retiredId: largerUnconfirmed,
     });
-    expect(authoritativeMergeSurvivor(response)).toEqual({
+    expect(authoritativeMergeSurvivor(countFlip)).toEqual({
       survivorId: smallerConfirmed,
       retiredId: largerUnconfirmed,
     });
@@ -197,6 +182,30 @@ describe('resolveMergeSurvivorFromResponse (authoritative ids)', () => {
         target_cluster_id: 'same',
       }),
     );
+    expect(result).toEqual({ survivorId: 'cluster-b', retiredId: 'cluster-a' });
+  });
+
+  it('E215-BR-04: mismatched source/target not in {a,b} fall back to client rank', () => {
+    const result = resolveMergeSurvivorFromResponse(
+      base({
+        cluster_a_id: 'cluster-a',
+        cluster_b_id: 'cluster-b',
+        cluster_a_label: null,
+        cluster_b_label: 'Alice',
+        cluster_a_identity_count: 10,
+        cluster_b_identity_count: 1,
+        // Foreign ids must not be trusted.
+        source_cluster_id: 'cluster-foreign-1',
+        target_cluster_id: 'cluster-foreign-2',
+      }),
+    );
+    expect(authoritativeMergeSurvivor(
+      base({
+        source_cluster_id: 'cluster-foreign-1',
+        target_cluster_id: 'cluster-foreign-2',
+      }),
+    )).toBeNull();
+    // Client rank: B has the meaningful label.
     expect(result).toEqual({ survivorId: 'cluster-b', retiredId: 'cluster-a' });
   });
 });

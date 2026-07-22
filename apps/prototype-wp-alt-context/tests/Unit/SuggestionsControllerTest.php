@@ -462,6 +462,44 @@ class SuggestionsControllerTest extends TestCase
         $this->assertArrayNotHasKey('retired_id', $data);
     }
 
+    /**
+     * E215-BR-05: when upstream omits source/target keys, the proxy must not invent them.
+     */
+    public function testAcceptMergeSuggestionDoesNotInventSourceTargetWhenUpstreamOmitsThem(): void
+    {
+        $suggestionId = 'aaaaaaaa-bbbb-cccc-dddd-ffffffffffff';
+        $clusterA = '11111111-1111-1111-1111-111111111111';
+        $clusterB = '22222222-2222-2222-2222-222222222222';
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'id' => $suggestionId,
+                'cluster_a_id' => $clusterA,
+                'cluster_b_id' => $clusterB,
+                'similarity' => 0.88,
+                'status' => 'accepted',
+                // Intentionally no source_cluster_id / target_cluster_id.
+            ]),
+        ]);
+
+        $request = new WP_REST_Request(
+            'POST',
+            '/acx/v1/recognition/suggestions/merge/' . $suggestionId . '/accept'
+        );
+        $request->set_param('suggestion_id', $suggestionId);
+        $response = $this->controller->accept_merge_suggestion($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+        $this->assertIsArray($data);
+        $this->assertArrayNotHasKey('source_cluster_id', $data);
+        $this->assertArrayNotHasKey('target_cluster_id', $data);
+        $this->assertSame('accepted', $data['status'] ?? null);
+        $this->assertSame($clusterA, $data['cluster_a_id'] ?? null);
+        $this->assertSame($clusterB, $data['cluster_b_id'] ?? null);
+    }
+
     public function testRegisterRoutesIncludesNameSuggestionEndpoints(): void
     {
         $this->controller->register_routes();

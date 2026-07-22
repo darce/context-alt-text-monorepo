@@ -308,6 +308,138 @@ async def test_bulk_accept_merge_skips_expired_and_performs_merge(
 
 
 @pytest.mark.asyncio
+async def test_accept_merge_suggestion_response_carries_source_and_target_ids(
+    api_client,
+    tenant_id,
+    fake_cluster_service,
+    fake_cluster_repository,
+    monkeypatch,
+) -> None:
+    """E215-BR-02(a): accept RESPONSE must stamp source/target (endpoint-level pin).
+
+    Red if accept_merge_suggestion reverts to ``_to_merge_response(suggestion)``
+    without kwargs after a successful merge.
+    """
+    from recognition.domain.suggestion import SuggestionStatus
+
+    cluster_a_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    cluster_b_id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    suggestion_id = str(uuid.uuid4())
+
+    # B has meaningful label + lower count; rank picks B as survivor, A as source.
+    fake_cluster_repository.seed(cluster_a_id, tenant_id, label=None, identity_count=50)
+    fake_cluster_repository.seed(cluster_b_id, tenant_id, label="Named Person", identity_count=2)
+    fake_cluster_service.clusters.extend(
+        [
+            ClusterResponse(
+                id=cluster_a_id,
+                tenant_id=tenant_id,
+                label=None,
+                is_labeled=False,
+                is_auto_label=False,
+                identity_count=50,
+                representatives=[],
+            ),
+            ClusterResponse(
+                id=cluster_b_id,
+                tenant_id=tenant_id,
+                label="Named Person",
+                is_labeled=True,
+                is_auto_label=False,
+                identity_count=2,
+                representatives=[],
+            ),
+        ]
+    )
+
+    suggestion = SimpleNamespace(
+        id=suggestion_id,
+        cluster_a_id=cluster_a_id,
+        cluster_b_id=cluster_b_id,
+        similarity=0.91,
+        status=SuggestionStatus.PENDING,
+        confidence_score=0.91,
+        expires_at=None,
+        source_job_id=None,
+    )
+
+    async def fake_get_by_id(self, tenant_id_arg: str, sid: str):  # noqa: ANN001
+        assert tenant_id_arg == tenant_id
+        assert sid == suggestion_id
+        return suggestion
+
+    async def fake_delete_by_cluster(self, tenant_id_arg: str, cluster_id: str) -> int:  # noqa: ANN001
+        return 0
+
+    monkeypatch.setattr(SqlAlchemyMergeSuggestionRepository, "get_by_id", fake_get_by_id)
+    monkeypatch.setattr(SqlAlchemyMergeSuggestionRepository, "delete_by_cluster", fake_delete_by_cluster)
+
+    resp = api_client.post(
+        f"/recognition/suggestions/merge/{suggestion_id}/accept",
+        headers={"X-Tenant-ID": tenant_id},
+        json={"tenant_id": tenant_id},
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "accepted"
+    # Authoritative pair must be present — red if accept drops kwargs.
+    assert body.get("source_cluster_id") is not None
+    assert body.get("target_cluster_id") is not None
+    assert body["source_cluster_id"] != body["target_cluster_id"]
+    assert {body["source_cluster_id"], body["target_cluster_id"]} == {cluster_a_id, cluster_b_id}
+    # Label-bearing B is the survivor under default rank (user_confirmed=bool(label)).
+    assert body["target_cluster_id"] == cluster_b_id
+    assert body["source_cluster_id"] == cluster_a_id
+
+
+@pytest.mark.asyncio
+async def test_accept_merge_suggestion_accepted_replay_stamps_ids(
+    api_client,
+    tenant_id,
+    fake_cluster_service,
+    fake_cluster_repository,
+    monkeypatch,
+) -> None:
+    """E215-BR-02(b): non-PENDING ACCEPTED replay stamps authoritative ids via existence."""
+    from recognition.domain.suggestion import SuggestionStatus
+
+    cluster_a_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    cluster_b_id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    suggestion_id = str(uuid.uuid4())
+
+    # Only survivor (B) remains — A was retired by a prior merge.
+    fake_cluster_repository.seed(cluster_b_id, tenant_id, label="Bob", identity_count=52)
+    suggestion = SimpleNamespace(
+        id=suggestion_id,
+        cluster_a_id=cluster_a_id,
+        cluster_b_id=cluster_b_id,
+        similarity=0.91,
+        status=SuggestionStatus.ACCEPTED,
+        confidence_score=0.91,
+        expires_at=None,
+        source_job_id=None,
+    )
+
+    async def fake_get_by_id(self, tenant_id_arg: str, sid: str):  # noqa: ANN001
+        return suggestion
+
+    monkeypatch.setattr(SqlAlchemyMergeSuggestionRepository, "get_by_id", fake_get_by_id)
+
+    resp = api_client.post(
+        f"/recognition/suggestions/merge/{suggestion_id}/accept",
+        headers={"X-Tenant-ID": tenant_id},
+        json={"tenant_id": tenant_id},
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "accepted"
+    assert body["source_cluster_id"] == cluster_a_id
+    assert body["target_cluster_id"] == cluster_b_id
+
+
+@pytest.mark.asyncio
 async def test_suggestion_response_has_suggested_label_fields(
     api_client, tenant_id, fake_suggestion_service, fake_cluster_service
 ) -> None:

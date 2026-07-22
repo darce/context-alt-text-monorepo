@@ -12,6 +12,7 @@ import { DATA_SOURCE, type DataSource } from '../admin/api/recognition/types/dat
 import type { DetectedIdentity } from '../admin/api/recognition/types/identity';
 import { FaceOverlayLayer } from '../components/ui/FaceOverlayLayer';
 import { ATTACHMENT_EDIT_COPY } from './copy';
+import { UncuratedFaceList } from './UncuratedFaceList';
 
 export interface AttachmentFacesAppProps {
   attachmentId: number;
@@ -42,10 +43,9 @@ export const AttachmentFacesApp: React.FC<AttachmentFacesAppProps> = ({
   imageUrl,
   imageWidth,
   imageHeight,
-  workbenchUrl: _workbenchUrl,
+  workbenchUrl,
 }) => {
-  // workbenchUrl is consumed by slice-4 UncuratedFaceList deep links.
-  void _workbenchUrl;
+  const [highlightedFaceId, setHighlightedFaceId] = React.useState<string | null>(null);
 
   const { data, isPending, isError, isFetching } = useQuery({
     queryKey: queryKeys.media.identitiesByIds([attachmentId]),
@@ -53,6 +53,17 @@ export const AttachmentFacesApp: React.FC<AttachmentFacesAppProps> = ({
     enabled: attachmentId > 0,
     ...ATTACHMENT_FACES_QUERY_OPTIONS,
   });
+
+  const handleActivate = React.useCallback(
+    (_faceId: string) => {
+      if (!workbenchUrl) {
+        return;
+      }
+      // Curated chip activation follows the workbench deep link (plain admin URL).
+      window.location.assign(workbenchUrl);
+    },
+    [workbenchUrl],
+  );
 
   if (isPending || (isFetching && !data && !isError)) {
     return (
@@ -125,9 +136,22 @@ export const AttachmentFacesApp: React.FC<AttachmentFacesAppProps> = ({
               decoding="async"
             />
           ) : null}
-          <FaceOverlayLayer identities={identities} naturalSize={naturalSize} />
+          <FaceOverlayLayer
+            identities={identities}
+            naturalSize={naturalSize}
+            onActivate={handleActivate}
+            highlightedFaceId={highlightedFaceId}
+            onHighlightChange={setHighlightedFaceId}
+          />
         </div>
       </figure>
+      <UncuratedFaceList
+        identities={identities}
+        mediaUrl={imageUrl}
+        workbenchUrl={workbenchUrl}
+        highlightedFaceId={highlightedFaceId}
+        onHighlightChange={setHighlightedFaceId}
+      />
     </div>
   );
 };

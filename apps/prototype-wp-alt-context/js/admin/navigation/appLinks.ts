@@ -47,18 +47,18 @@ export const APP_LINK_VALUES = {
 export type MediaExpandValue = (typeof APP_LINK_VALUES)['mediaExpanded'];
 export type PersonFilterValue = (typeof APP_LINK_VALUES)['personFilterUnassigned'];
 
-export type ToWorkbenchOptions = {
+export interface ToWorkbenchOptions {
   status?: WorkbenchMediaStatus;
   tab?: WorkbenchTab;
   /** When true or `'open'`, emits `advanced=open`. */
   advanced?: true | typeof APP_LINK_VALUES.advancedOpen;
   panel?: Exclude<WorkbenchOverlay, null>;
   media?: MediaExpandValue;
-};
+}
 
-export type ToRosterOptions = {
+export interface ToRosterOptions {
   personFilter?: PersonFilterValue;
-};
+}
 
 const ROUTE = {
   dashboard: '/dashboard',

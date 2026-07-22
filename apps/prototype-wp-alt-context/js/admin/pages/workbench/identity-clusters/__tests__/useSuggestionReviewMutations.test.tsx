@@ -21,6 +21,18 @@ import type {
 } from '../../../../api/recognition/types';
 import * as recognitionApi from '../../../../api/recognition';
 import * as rosterApi from '../../../../api/rosterApi';
+import type { RosterClusterCommitResponse } from '../../../../api/rosterApi';
+
+const rosterCommitFixture = (
+  overrides: Partial<RosterClusterCommitResponse> = {},
+): RosterClusterCommitResponse => ({
+  cluster_id: 'cluster-1',
+  person_id: 7,
+  person_uuid: 'person-uuid-7',
+  person_name: 'Alex',
+  updated_at: '2026-01-01T00:00:00Z',
+  ...overrides,
+});
 import { MergeSurvivorProvider, useMergeSurvivors } from '../MergeSurvivorContext';
 import {
   SUGGESTION_PROJECTION_INVALIDATION_EVENTS,
@@ -1033,7 +1045,7 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
   // --- Slice 3: person-commit (flush-then-immediate, no undo window) ---
 
   it('person-commit routes to commitClusterToRosterEntry (not updateClusterLabel)', async () => {
-    vi.mocked(rosterApi.commitClusterToRosterEntry).mockResolvedValue(undefined);
+    vi.mocked(rosterApi.commitClusterToRosterEntry).mockResolvedValue(rosterCommitFixture());
     const { result } = renderMutations();
 
     let outcome: string | undefined;
@@ -1071,7 +1083,7 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
     });
     vi.mocked(rosterApi.commitClusterToRosterEntry).mockImplementation(() => {
       order.push('person-commit');
-      return Promise.resolve();
+      return Promise.resolve(rosterCommitFixture());
     });
 
     const { result } = renderMutations();
@@ -1102,7 +1114,7 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
   it('person-commit failure surfaces role=alert state + retry re-fires exactly 1 POST', async () => {
     vi.mocked(rosterApi.commitClusterToRosterEntry)
       .mockRejectedValueOnce(new Error('network'))
-      .mockResolvedValueOnce(undefined);
+      .mockResolvedValueOnce(rosterCommitFixture());
 
     const { result } = renderMutations();
 
@@ -1139,6 +1151,7 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
     });
     vi.mocked(rosterApi.commitClusterToRosterEntry).mockImplementation(async () => {
       await gate;
+      return rosterCommitFixture();
     });
 
     const { result } = renderMutations();
@@ -1184,7 +1197,7 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
         message: 'ok',
       };
     });
-    vi.mocked(rosterApi.commitClusterToRosterEntry).mockResolvedValue(undefined);
+    vi.mocked(rosterApi.commitClusterToRosterEntry).mockResolvedValue(rosterCommitFixture());
 
     const { result } = renderMutations();
     act(() => {
@@ -1227,6 +1240,7 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
       .mockRejectedValueOnce(new Error('network'))
       .mockImplementationOnce(async () => {
         await retryGate;
+        return rosterCommitFixture();
       });
 
     const { result } = renderMutations();
@@ -1265,7 +1279,7 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
   });
 
   it('BR-28: person-commit success invalidates clusterLabelSetClear kept targets', async () => {
-    vi.mocked(rosterApi.commitClusterToRosterEntry).mockResolvedValue(undefined);
+    vi.mocked(rosterApi.commitClusterToRosterEntry).mockResolvedValue(rosterCommitFixture());
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
     const { result } = renderMutations();
 
@@ -1297,7 +1311,7 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
         { ...makeName('name-other'), id: 'name-other', cluster_id: 'cluster-other' },
       ]),
     });
-    vi.mocked(rosterApi.commitClusterToRosterEntry).mockResolvedValue(undefined);
+    vi.mocked(rosterApi.commitClusterToRosterEntry).mockResolvedValue(rosterCommitFixture());
 
     const { result } = renderMutations();
     await act(async () => {
@@ -1324,7 +1338,7 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
     };
     const fetchName = vi.fn().mockResolvedValue(staleServer);
     queryClient.setQueryData(namePendingKey, staleServer);
-    vi.mocked(rosterApi.commitClusterToRosterEntry).mockResolvedValue(undefined);
+    vi.mocked(rosterApi.commitClusterToRosterEntry).mockResolvedValue(rosterCommitFixture());
 
     // An ACTIVE observer makes invalidateQueries refetch — this is what reproduces the race.
     const { result } = renderHook(

@@ -1,8 +1,8 @@
 import { fetchApi, fetchRequiredApi, stripTrailingSlash } from '../utils/http';
 import { getEndpoint, getConfig } from './config';
-import type { RosterEntry } from './generated';
+import type { RosterClusterCommitResponse, RosterEntry } from './generated';
 
-export type { RosterEntry } from './generated';
+export type { RosterClusterCommitResponse, RosterEntry } from './generated';
 
 export const listRosterEntries = async (): Promise<RosterEntry[]> => {
   const endpoint = getEndpoint('rosterEntries');
@@ -47,7 +47,7 @@ export const commitClusterToRosterEntry = async ({
   clusterId,
   rosterEntryId,
   newEntryName,
-}: CommitClusterRequest): Promise<void> => {
+}: CommitClusterRequest): Promise<RosterClusterCommitResponse> => {
   let base: string;
   try {
     base = getEndpoint('rosterClusters');
@@ -56,7 +56,7 @@ export const commitClusterToRosterEntry = async ({
   }
 
   const url = `${stripTrailingSlash(base)}/${clusterId}/commit`;
-  await fetchApi(url, {
+  return fetchRequiredApi<RosterClusterCommitResponse>(url, {
     method: 'POST',
     body: {
       roster_entry_id: rosterEntryId ?? null,

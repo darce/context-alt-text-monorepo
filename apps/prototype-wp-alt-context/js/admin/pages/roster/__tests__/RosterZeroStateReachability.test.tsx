@@ -1,7 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
-import type { RosterEntry } from '../../../api/rosterApi';
+import type { RosterClusterCommitResponse, RosterEntry } from '../../../api/rosterApi';
 import type { BatchAnalyzeResponse, ClusterListResponse, ClusterSummary } from '../../../api/recognition';
 import { useRecognitionCluster, useRecognitionClusters } from '../../../hooks/useRecognitionHooks';
 import { useCreatePerson, useDeletePerson, useRosterEntries, useUpdatePerson } from '../../../hooks/useRosterHooks';
@@ -94,7 +94,11 @@ const clusterActionState = {
     mutate: vi.fn(),
     isPending: false,
   }),
-  commitMutation: createMockMutation<void, Error, { clusterId: string; rosterEntryId?: number; newEntryName?: string }>(
+  commitMutation: createMockMutation<
+    RosterClusterCommitResponse,
+    Error,
+    { clusterId: string; rosterEntryId?: number; newEntryName?: string }
+  >(
     {
       mutate: vi.fn(),
       isPending: false,
@@ -111,6 +115,8 @@ const clusterActionState = {
     isPending: false,
   }),
   bulkMergeProgress: null,
+  bulkMergeFailure: null,
+  clearBulkMergeFailure: vi.fn(),
   rescanGate: {
     disabled: false,
     'aria-disabled': undefined as true | undefined,
@@ -188,6 +194,10 @@ describe('Roster zero-state reachability (rg-003)', () => {
     expect(zeroState).toHaveTextContent(/No people yet/i);
     expect(zeroState.querySelector('.acx-roster-section__empty-icon')).toBeTruthy();
     expect(screen.getByRole('link', { name: /run a scan/i })).toBeInTheDocument();
+    // rg-003: Needs-assignment rail stays reachable at zero state (disabled-with-reason).
+    expect(screen.getByTestId('needs-assignment-section')).toBeInTheDocument();
+    expect(screen.getByTestId('needs-assignment-zero')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Merge$/i })).toBeDisabled();
   });
 
   it('pairs the active filter badge with an icon second channel', () => {

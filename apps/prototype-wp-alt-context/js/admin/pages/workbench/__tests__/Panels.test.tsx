@@ -198,9 +198,9 @@ describe('ConfirmPanel', () => {
     expect(onCluster).toHaveBeenCalledOnce();
   });
 
-  it('disables view-clusters button when jobId is null', () => {
+  it('disables open-roster button when jobId is null', () => {
     render(<ConfirmPanel {...baseProps} jobId={null} />);
-    expect(screen.getByRole('button', { name: 'Open clusters in roster' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Open roster' })).toBeDisabled();
   });
 
   it('does not render progress section when total is 0', () => {

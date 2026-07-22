@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useSearchParams } from 'react-router-dom';
 
 import type { BatchAnalyzeResponse, ClusterListResponse, ClusterSummary } from '../../api/recognition';
+import type { RosterClusterCommitResponse } from '../../api/rosterApi';
 import { useRecognitionCluster, useRecognitionClusters } from '../../hooks/useRecognitionHooks';
 import { useCreatePerson, useDeletePerson, useRosterEntries, useUpdatePerson } from '../../hooks/useRosterHooks';
 import { useClusterSelection } from '../../hooks/useClusterSelection';
@@ -50,7 +51,7 @@ vi.mock('../roster/hooks/useClusterActions', () => ({
 
 const makeCluster = (overrides: Partial<ClusterSummary> = {}): ClusterSummary => ({
   id: 'cluster-1',
-  label: 'Cluster One',
+  label: '',
   identity_count: 2,
   member_ids: ['identity-1', 'identity-2'],
   representative_identity: {
@@ -92,7 +93,7 @@ const ClusterRouteReset = (): React.JSX.Element => {
   );
 };
 
-describe('RosterPage route container', () => {
+describe('RosterPage route container (E21-9 single surface)', () => {
   const mockedUseRecognitionClusters = vi.mocked(useRecognitionClusters);
   const mockedUseRecognitionCluster = vi.mocked(useRecognitionCluster);
   const mockedUseRosterEntries = vi.mocked(useRosterEntries);
@@ -127,7 +128,7 @@ describe('RosterPage route container', () => {
       isPending: false,
     }),
     commitMutation: createMockMutation<
-      void,
+      RosterClusterCommitResponse,
       Error,
       { clusterId: string; rosterEntryId?: number; newEntryName?: string }
     >({
@@ -145,6 +146,8 @@ describe('RosterPage route container', () => {
       isPending: false,
     }),
     bulkMergeProgress: null,
+    bulkMergeFailure: null,
+    clearBulkMergeFailure: vi.fn(),
     rescanGate: {
       disabled: false,
       'aria-disabled': undefined as true | undefined,
@@ -220,18 +223,20 @@ describe('RosterPage route container', () => {
     mockedUseClusterActions.mockReturnValue(clusterActionState);
   });
 
-  it('[PAG-M3] bootstraps active tab from the query string', () => {
+  it('renders the single person-first surface (no tablist)', () => {
     render(
       <MemoryRouter initialEntries={['/?tab=clusters']}>
         <RosterPage />
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('tab', { name: 'Face groups' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: 'People' })).toHaveAttribute('aria-selected', 'false');
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: /Face groups/i })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('heading', { name: 'People' }).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByTestId('needs-assignment-section')).toBeInTheDocument();
   });
 
-  it('[PAG-M3] preserves entries tab bootstrap with personFilter=unassigned', () => {
+  it('preserves personFilter=unassigned on the single surface', () => {
     mockedUseRosterEntries.mockReturnValue(
       createMockQuery({
         data: [
@@ -261,22 +266,18 @@ describe('RosterPage route container', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('tab', { name: 'People' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: 'Face groups' })).toHaveAttribute('aria-selected', 'false');
     expect(screen.getByText('Filtered: Unassigned')).toBeInTheDocument();
     expect(screen.getByText('Showing unassigned people only.')).toBeInTheDocument();
     expect(screen.getByText('Unassigned Person')).toBeInTheDocument();
   });
 
-  it('[PAG-M3] keeps person and face routes on the legacy entries surface until projection data lands', () => {
+  it('keeps person and face routes on the person surface with gate notice', () => {
     render(
       <MemoryRouter initialEntries={['/?person=person-123&face=identity-9&tab=clusters']}>
         <RosterPage />
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('tab', { name: 'People' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: 'Face groups' })).toHaveAttribute('aria-selected', 'false');
     expect(
       screen.getByText(
         'This route is recognized, but the person workspace stays on the legacy Entries view until enriched roster projection data lands.',
@@ -284,15 +285,13 @@ describe('RosterPage route container', () => {
     ).toBeInTheDocument();
   });
 
-  it('[PAG-M3] keeps face-only routes on the legacy entries surface and shows the gate notice', () => {
+  it('keeps face-only routes with the gate notice', () => {
     render(
       <MemoryRouter initialEntries={['/?face=identity-9&tab=clusters']}>
         <RosterPage />
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('tab', { name: 'People' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: 'Face groups' })).toHaveAttribute('aria-selected', 'false');
     expect(
       screen.getByText(
         'This route is recognized, but the person workspace stays on the legacy Entries view until enriched roster projection data lands.',
@@ -300,15 +299,13 @@ describe('RosterPage route container', () => {
     ).toBeInTheDocument();
   });
 
-  it('[PAG-M3] keeps queue routes reachable without implying the person workspace exists', () => {
+  it('keeps queue routes reachable without implying the person workspace exists', () => {
     render(
       <MemoryRouter initialEntries={['/?queue=needs-review&tab=clusters']}>
         <RosterPage />
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('tab', { name: 'People' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: 'Face groups' })).toHaveAttribute('aria-selected', 'false');
     expect(
       screen.getByText(
         'This route is recognized, but the person workspace stays on the legacy Entries view until enriched roster projection data lands.',
@@ -316,19 +313,17 @@ describe('RosterPage route container', () => {
     ).toBeInTheDocument();
   });
 
-  it('[PAG-M3] prioritizes cluster evidence routes over legacy tab params', async () => {
+  it('opens the cluster drawer from cluster= deep link on the single surface', async () => {
     render(
       <MemoryRouter initialEntries={['/?tab=entries&cluster=cluster-1']}>
         <RosterPage />
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('tab', { name: 'Face groups' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: 'People' })).toHaveAttribute('aria-selected', 'false');
     expect(await screen.findByRole('button', { name: /^Close$/i })).toBeInTheDocument();
   });
 
-  it('[PAG-M3] clears cluster drawer state when the cluster route is removed', async () => {
+  it('clears cluster drawer state when the cluster route is removed', async () => {
     render(
       <MemoryRouter initialEntries={['/?tab=clusters&cluster=cluster-1']}>
         <ClusterRouteReset />
@@ -343,15 +338,14 @@ describe('RosterPage route container', () => {
     expect(screen.queryByRole('button', { name: /^Close$/i })).not.toBeInTheDocument();
   });
 
-  it('[PAG-M3] opens and closes the cluster drawer from the grid', async () => {
+  it('opens and closes the cluster drawer from the needs-assignment rail', async () => {
     render(
       <MemoryRouter>
         <RosterPage />
       </MemoryRouter>,
     );
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Face groups' }));
-    await userEvent.click(screen.getByRole('button', { name: /Cluster One/i }));
+    await userEvent.click(screen.getByRole('button', { name: /Cluster cluster-/i }));
 
     expect(screen.getByRole('button', { name: /^Close$/i })).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: /Commit to roster entry/i })).toBeInTheDocument();
@@ -363,7 +357,7 @@ describe('RosterPage route container', () => {
     expect(dragDropState.resetDragState).toHaveBeenCalledTimes(1);
   });
 
-  it('[PAG-M3-S3] navigates from the cluster drawer into the selected person workspace', async () => {
+  it('navigates from the cluster drawer into the selected person workspace', async () => {
     mockedUseRosterEntries.mockReturnValue(
       createMockQuery({
         data: [
@@ -396,10 +390,9 @@ describe('RosterPage route container', () => {
     expect(await screen.findByRole('button', { name: /^Close$/i })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
-    await userEvent.click(screen.getByText('Alex Carter'));
+    await userEvent.click(screen.getByRole('option', { name: 'Alex Carter' }));
     await userEvent.click(screen.getByRole('button', { name: /Open person workspace/i }));
 
-    expect(screen.getByRole('tab', { name: 'People' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('region', { name: /Person workspace: Alex Carter/i })).toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: /Commit to roster entry/i })).not.toBeInTheDocument();
   });
@@ -429,12 +422,27 @@ describe('RosterPage route container', () => {
     ).toBeInTheDocument();
   });
 
-  it('applies bulk merge action through confirm dialog', async () => {
+  it('applies bulk merge action through confirm dialog on the needs-assignment rail', async () => {
     mockedUseClusterSelection.mockReturnValue({
       ...selectionState,
       selectedIds: new Set(['cluster-1', 'cluster-2', 'cluster-3']),
       count: 3,
     });
+
+    mockedUseRecognitionClusters.mockReturnValue(
+      createMockQuery({
+        data: makeClusterListResponse({
+          clusters: [
+            makeCluster(),
+            makeCluster({ id: 'cluster-2', member_ids: ['identity-3'] }),
+            makeCluster({ id: 'cluster-3', member_ids: ['identity-4'] }),
+          ],
+        }),
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      }),
+    );
 
     render(
       <MemoryRouter>
@@ -442,7 +450,6 @@ describe('RosterPage route container', () => {
       </MemoryRouter>,
     );
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Face groups' }));
     await userEvent.click(screen.getByRole('button', { name: 'Merge' }));
     await userEvent.click(screen.getAllByRole('button', { name: /^Merge$/i }).at(-1)!);
     expect(clusterActionState.bulkMergeMutation.mutateAsync).toHaveBeenCalledWith({
@@ -450,12 +457,27 @@ describe('RosterPage route container', () => {
     });
   });
 
-  it('applies bulk dismiss action through confirm dialog', async () => {
+  it('applies bulk dismiss action through confirm dialog on the needs-assignment rail', async () => {
     mockedUseClusterSelection.mockReturnValue({
       ...selectionState,
       selectedIds: new Set(['cluster-1', 'cluster-2', 'cluster-3']),
       count: 3,
     });
+
+    mockedUseRecognitionClusters.mockReturnValue(
+      createMockQuery({
+        data: makeClusterListResponse({
+          clusters: [
+            makeCluster(),
+            makeCluster({ id: 'cluster-2', member_ids: ['identity-3'] }),
+            makeCluster({ id: 'cluster-3', member_ids: ['identity-4'] }),
+          ],
+        }),
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      }),
+    );
 
     render(
       <MemoryRouter>
@@ -463,7 +485,6 @@ describe('RosterPage route container', () => {
       </MemoryRouter>,
     );
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Face groups' }));
     await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
     await userEvent.click(screen.getAllByRole('button', { name: /^Dismiss$/i }).at(-1)!);
 
@@ -472,20 +493,19 @@ describe('RosterPage route container', () => {
     });
   });
 
-  it('allows selecting all visible clusters from the clusters header', async () => {
+  it('allows selecting all unlabeled clusters from the needs-assignment header', async () => {
     render(
       <MemoryRouter>
         <RosterPage />
       </MemoryRouter>,
     );
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Face groups' }));
-    await userEvent.click(screen.getByRole('checkbox', { name: 'Select all clusters' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Select all unlabeled clusters' }));
 
     expect(selectionState.selectAll).toHaveBeenCalledWith(['cluster-1']);
   });
 
-  it('retains only currently visible clusters while the clusters tab is active', () => {
+  it('retains only currently visible clusters on the single surface', () => {
     render(
       <MemoryRouter initialEntries={['/?tab=clusters']}>
         <RosterPage />

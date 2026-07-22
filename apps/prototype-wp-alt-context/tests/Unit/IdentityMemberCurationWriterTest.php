@@ -29,4 +29,34 @@ class IdentityMemberCurationWriterTest extends TestCase
         $this->assertStringContainsString('SET m.is_curated = 0', $sql);
         $this->assertStringContainsString("'tenant-reset-writer'", $sql);
     }
+
+    public function testReassignToClusterRefreshesAssignedAt(): void
+    {
+        global $wpdb;
+        $wpdb->defaultQueryResult = 1;
+
+        $result = $this->writer->reassign_to_cluster('identity-reassign', 'cluster-target');
+
+        $this->assertSame(1, $result);
+        $this->assertCount(1, $wpdb->queries);
+        $sql = $wpdb->queries[0];
+        $this->assertStringContainsString('assigned_at =', $sql);
+        $this->assertStringContainsString("cluster_uuid = 'cluster-target'", $sql);
+        $this->assertStringContainsString("identity_uuid = 'identity-reassign'", $sql);
+    }
+
+    public function testReassignClusterMembersRefreshesAssignedAt(): void
+    {
+        global $wpdb;
+        $wpdb->defaultQueryResult = 1;
+
+        $result = $this->writer->reassign_cluster_members('cluster-source', 'cluster-target');
+
+        $this->assertSame(1, $result);
+        $this->assertCount(1, $wpdb->queries);
+        $sql = $wpdb->queries[0];
+        $this->assertStringContainsString('assigned_at =', $sql);
+        $this->assertStringContainsString("SET cluster_uuid = 'cluster-target'", $sql);
+        $this->assertStringContainsString("WHERE cluster_uuid = 'cluster-source'", $sql);
+    }
 }

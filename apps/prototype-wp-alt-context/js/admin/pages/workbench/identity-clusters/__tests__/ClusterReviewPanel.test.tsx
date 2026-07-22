@@ -741,4 +741,111 @@ describe('ClusterReviewPanel', () => {
     });
     expect(screen.getByRole('status')).toHaveTextContent(LIVE_TARGET_CLOSE_ANNOUNCE);
   });
+
+  /**
+   * E215-BR-01: record-after-404 must rebind in the LIFECYCLE consumer.
+   * The lifecycle latches exactly-once and nulls openTarget on retire; a survivor
+   * recorded after that close must still rebind (S5-02 alone is unreachable here).
+   */
+  it('E215-BR-01: lifecycle record-after-404 rebinds after retire-close latch', async () => {
+    const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
+    fetchClusterMembersMock.mockImplementation((clusterId) => {
+      if (clusterId === 'cluster-late-retired') {
+        return Promise.reject(membersNotFound(clusterId));
+      }
+      return Promise.resolve(
+        makeClusterMembersResponse([
+          {
+            identity_id: 'surv-late',
+            media_id: 9,
+            similarity: 0.9,
+            confidence: 0.9,
+            bbox: { x: 0, y: 0, width: 10, height: 10 },
+            thumb_url: 'http://example.test/late-survivor.jpg',
+          },
+        ]),
+      );
+    });
+
+    const LateRecordHarness = () => {
+      const { clusterPanel, dispatchClusterPanel } = useClusterPanel();
+      const { recordMergeSurvivor } = useMergeSurvivors();
+      const { message, seq, announce } = useAriaAnnounce();
+      const opened = React.useRef(false);
+
+      const { reviewClusterId } = useOpenReviewTargetLifecycle({
+        requestedClusterId: clusterPanel.mode === 'review' ? clusterPanel.clusterId : null,
+        onAnnounce: announce,
+        onRetireClose: () => dispatchClusterPanel({ type: 'close' }),
+        onRebindSync: (survivorId) => dispatchClusterPanel({ type: 'open_review', clusterId: survivorId }),
+      });
+
+      React.useEffect(() => {
+        if (!opened.current) {
+          opened.current = true;
+          dispatchClusterPanel({ type: 'open_review', clusterId: 'cluster-late-retired' });
+        }
+      }, [dispatchClusterPanel]);
+
+      return (
+        <>
+          <p key={seq} role="status" aria-live="polite">
+            {message}
+          </p>
+          <button
+            type="button"
+            onClick={() => recordMergeSurvivor('cluster-late-retired', 'cluster-late-survivor')}
+          >
+            record survivor
+          </button>
+          <span data-testid="lifecycle-review-id">{reviewClusterId ?? 'none'}</span>
+          {reviewClusterId === null ? (
+            <div data-testid="review-closed">closed</div>
+          ) : (
+            <ClusterReviewPanel
+              key={reviewClusterId}
+              clusterId={reviewClusterId}
+              onClose={() => dispatchClusterPanel({ type: 'close' })}
+            />
+          )}
+        </>
+      );
+    };
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const user = userEvent.setup();
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PanelProviders>
+          <LateRecordHarness />
+        </PanelProviders>
+      </QueryClientProvider>,
+    );
+
+    // First: 404 with empty survivor map → retire close.
+    await waitFor(() => {
+      expect(screen.getByTestId('review-closed')).toBeInTheDocument();
+    });
+    expect(screen.getByRole('status')).toHaveTextContent(LIVE_TARGET_CLOSE_ANNOUNCE);
+    expect(screen.getByTestId('lifecycle-review-id')).toHaveTextContent('none');
+
+    // Then: survivor recorded after the latch — lifecycle must rebind.
+    await user.click(screen.getByRole('button', { name: 'record survivor' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('lifecycle-review-id')).toHaveTextContent('cluster-late-survivor');
+    });
+    await waitFor(() => {
+      expect(screen.getByText(LIVE_TARGET_REBIND_ANNOUNCE)).toHaveAttribute('role', 'status');
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('img', { name: 'Cluster member' })).toHaveAttribute(
+        'src',
+        'http://example.test/late-survivor.jpg',
+      );
+    });
+  });
 });

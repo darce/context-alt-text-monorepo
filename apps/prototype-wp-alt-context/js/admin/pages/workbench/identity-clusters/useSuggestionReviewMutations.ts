@@ -27,7 +27,7 @@ import {
 import { commitClusterToRosterEntry } from '../../../api/rosterApi';
 import { useOptionalMergeSurvivors } from './MergeSurvivorContext';
 import { PERSON_COMMIT_FAILURE_COPY } from './personCommitCopy';
-import { resolveMergeSurvivor } from './resolveMergeSurvivor';
+import { resolveMergeSurvivorFromResponse } from './resolveMergeSurvivor';
 import { invalidateSuggestionProjection } from './suggestionProjection';
 import type { SuggestionReviewPage } from './useSuggestionReviewQueries';
 
@@ -151,7 +151,9 @@ export const useSuggestionReviewMutations = ({
     if (!api) {
       return;
     }
-    const { survivorId, retiredId } = resolveMergeSurvivor(suggestion);
+    // Prefer authoritative source/target ids from accept-merge response;
+    // fall back to client rank only when older backends omit them.
+    const { survivorId, retiredId } = resolveMergeSurvivorFromResponse(suggestion);
     api.recordMergeSurvivor(retiredId, survivorId);
   }, []);
 

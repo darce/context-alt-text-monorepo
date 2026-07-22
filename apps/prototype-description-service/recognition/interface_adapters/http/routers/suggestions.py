@@ -405,11 +405,22 @@ async def accept_merge_suggestion(
     suggestion = await repo.get_by_id(request.tenant_id, suggestion_id)
     if suggestion is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Merge suggestion not found")
-    if suggestion.status != SuggestionStatus.PENDING:
-        return _to_merge_response(suggestion)
 
     cluster_service = await cluster_service_builder(request.tenant_id)
     cluster_repo = cluster_service.assignment_writer.cluster_repository
+
+    # E215-BR-02: non-PENDING ACCEPTED replay still stamps authoritative ids
+    # (resolve survivor via cluster existence, or re-rank if both still present).
+    if suggestion.status != SuggestionStatus.PENDING:
+        if suggestion.status == SuggestionStatus.ACCEPTED:
+            source_id, target_id = await _resolve_accepted_merge_ids(suggestion, cluster_repo)
+            return _to_merge_response(
+                suggestion,
+                source_cluster_id=source_id,
+                target_cluster_id=target_id,
+            )
+        return _to_merge_response(suggestion)
+
     cluster_a = await cluster_repo.get_by_id(suggestion.cluster_a_id)
     cluster_b = await cluster_repo.get_by_id(suggestion.cluster_b_id)
     if not cluster_a or not cluster_b:
@@ -434,7 +445,13 @@ async def accept_merge_suggestion(
     # (see clusters.py PATCH handler comment for full race condition explanation).
     await session.commit()
 
-    return _to_merge_response(suggestion)
+    # Authoritative survivor/retired ids from _select_merge_target (source=retired,
+    # target=survivor). Clients must not re-rank cluster_a/b presentation fields.
+    return _to_merge_response(
+        suggestion,
+        source_cluster_id=source_cluster_id,
+        target_cluster_id=target_cluster_id,
+    )
 
 
 @router.post("/suggestions/merge/{suggestion_id}/reject", response_model=MergeSuggestionResponse)
@@ -693,8 +710,45 @@ def _select_merge_target(cluster_a: IdentityCluster, cluster_b: IdentityCluster)
     return source.id, target.id, target.label
 
 
-def _to_merge_response(suggestion: MergeSuggestion | MergeSuggestionDetails) -> MergeSuggestionResponse:
-    """Convert merge suggestion to API response model."""
+async def _resolve_accepted_merge_ids(
+    suggestion: MergeSuggestion | MergeSuggestionDetails,
+    cluster_repo: object,
+) -> tuple[str | None, str | None]:
+    """Stamp source/target on ACCEPTED replay (E215-BR-02).
+
+    Prefer existence: the missing side is retired (source), the remaining side is
+    survivor (target). When both still exist, re-run ``_select_merge_target``.
+    """
+    get_by_id = getattr(cluster_repo, "get_by_id", None)
+    if get_by_id is None:
+        return None, None
+    cluster_a = await get_by_id(suggestion.cluster_a_id)
+    cluster_b = await get_by_id(suggestion.cluster_b_id)
+    if cluster_a and not cluster_b:
+        return suggestion.cluster_b_id, suggestion.cluster_a_id
+    if cluster_b and not cluster_a:
+        return suggestion.cluster_a_id, suggestion.cluster_b_id
+    if cluster_a and cluster_b:
+        try:
+            source_id, target_id, _ = _select_merge_target(cluster_a, cluster_b)
+        except HTTPException:
+            return None, None
+        return source_id, target_id
+    return None, None
+
+
+def _to_merge_response(
+    suggestion: MergeSuggestion | MergeSuggestionDetails,
+    *,
+    source_cluster_id: str | None = None,
+    target_cluster_id: str | None = None,
+) -> MergeSuggestionResponse:
+    """Convert merge suggestion to API response model.
+
+    Pass ``source_cluster_id`` / ``target_cluster_id`` after accept so the
+    response carries the authoritative survivor/retired pair from
+    ``_select_merge_target`` (source=retired, target=survivor).
+    """
     status_value = suggestion.status if isinstance(suggestion.status, str) else suggestion.status.value
     cluster_a_bbox = getattr(suggestion, "cluster_a_representative_bbox", None)
     cluster_b_bbox = getattr(suggestion, "cluster_b_representative_bbox", None)
@@ -732,4 +786,6 @@ def _to_merge_response(suggestion: MergeSuggestion | MergeSuggestionDetails) -> 
         confidence_score=getattr(suggestion, "confidence_score", None),
         expires_at=getattr(suggestion, "expires_at", None),
         source_job_id=getattr(suggestion, "source_job_id", None),
+        source_cluster_id=source_cluster_id,
+        target_cluster_id=target_cluster_id,
     )

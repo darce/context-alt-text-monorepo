@@ -6,6 +6,7 @@ namespace AltContext\Api;
 
 require_once __DIR__ . '/interface-cluster-mutation-host.php';
 require_once __DIR__ . '/../support/trait-runs-transactional.php';
+require_once __DIR__ . '/services/class-person-resolution-service.php';
 require_once __DIR__ . '/services/class-cluster-label-service.php';
 require_once __DIR__ . '/services/class-cluster-lifecycle-service.php';
 require_once __DIR__ . '/services/class-cluster-merge-service.php';

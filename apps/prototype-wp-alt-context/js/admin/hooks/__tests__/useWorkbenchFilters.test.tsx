@@ -1,7 +1,13 @@
 import type { ChangeEvent } from 'react';
 import { act, renderHook } from '@testing-library/react';
 import type { ReactNode } from 'react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import {
+  MemoryRouter,
+  Route,
+  Routes,
+  UNSAFE_createMemoryHistory as createMemoryHistory,
+  unstable_HistoryRouter as HistoryRouter,
+} from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 
 import { useWorkbenchFilters } from '../useWorkbenchFilters';
@@ -22,6 +28,17 @@ const wrapperForUrl =
         <Route path="/" element={<>{children}</>} />
       </Routes>
     </MemoryRouter>
+  );
+
+/** Observable memory history — index is the discriminating replace-vs-push signal. */
+const wrapperWithHistory =
+  (history: ReturnType<typeof createMemoryHistory>) =>
+  ({ children }: { children: ReactNode }) => (
+    <HistoryRouter history={history}>
+      <Routes>
+        <Route path="/" element={<>{children}</>} />
+      </Routes>
+    </HistoryRouter>
   );
 
 describe('useWorkbenchFilters', () => {
@@ -164,22 +181,34 @@ describe('useWorkbenchFilters', () => {
     expect(result.current.searchQuery).toBe('face');
   });
 
-  it('setMediaExpanded uses replace-writes (history length unchanged after N toggles)', () => {
-    // Browser history length is the discriminating signal that replace (not push) was used.
-    window.history.replaceState({}, '', '/');
-    const startLen = window.history.length;
+  it('setMediaExpanded uses replace-writes (history index unchanged after N toggles)', () => {
+    // MemoryRouter + window.history is vacuous (RR does not mutate the real history
+    // stack). Pin replace semantics on an observable createMemoryHistory index.
+    const history = createMemoryHistory({ initialEntries: ['/'] });
+    // Seed one push so a mistaken {replace:false} would advance index past this baseline.
+    history.push('/?s=face');
+    const startIndex = history.index;
+    expect(startIndex).toBe(1);
 
     const { result } = renderHook(() => useWorkbenchFilters(), {
-      wrapper: wrapperForUrl('/'),
+      wrapper: wrapperWithHistory(history),
     });
 
+    // Separate acts so each setSearchParams functional update reads the latest location.
     act(() => {
       result.current.setMediaExpanded(true);
+    });
+    act(() => {
       result.current.setMediaExpanded(false);
+    });
+    act(() => {
       result.current.setMediaExpanded(true);
     });
 
-    expect(result.current.mediaExpanded).toBe(true);
-    expect(window.history.length).toBe(startLen);
+    // Discriminating signal: history entry (not renderHook's possibly-stale result).
+    expect(history.location.search).toContain('media=expanded');
+    expect(history.location.search).toContain('s=face');
+    // replace keeps index; push would yield startIndex + 3.
+    expect(history.index).toBe(startIndex);
   });
 });

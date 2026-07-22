@@ -395,8 +395,8 @@ class OrtSFaceEmbedder:
         out = self._session.run(None, {self._input_name: blob})[0]
         return np.asarray(out, dtype=np.float32).reshape(-1)
 
-    def embed(self, crops: Sequence[np.ndarray]) -> np.ndarray:
-        """Embed a batch of 112×112×3 BGR crops → L2-normalized (N, dim)."""
+    def embed(self, crops: Sequence[np.ndarray]):
+        """Embed a batch of 112×112×3 BGR crops → EmbedBatchResult (vectors + pre-norm norms)."""
         return embed_batch(
             crops,
             feature_fn=self._feature,

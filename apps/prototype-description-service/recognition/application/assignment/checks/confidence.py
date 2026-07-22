@@ -145,11 +145,15 @@ class ConfidenceCheck(AssignmentCheck):
 
         # 2. Compute Identity Quality Adjustment for the candidate
         # Canonical score remains pose-neutral (confidence × bbox only).
+        # OACT threads MediaIdentity.occlusion_severity into threshold_adjustment
+        # only (FIR-6 S1); coefficient defaults to 0.0 (dark no-op).
         quality_info = compute_identity_quality(
             confidence=identity.confidence,
             bbox_width=identity.bbox_width,
             bbox_height=identity.bbox_height,
             maturity=maturity_level,
+            settings=self.settings.quality,
+            occlusion_severity=getattr(identity, "occlusion_severity", None),
         )
         quality_adj = apply_pose_safety_to_quality_adj(
             quality_info.threshold_adjustment,

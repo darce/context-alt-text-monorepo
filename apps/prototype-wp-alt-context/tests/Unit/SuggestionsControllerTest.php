@@ -420,6 +420,48 @@ class SuggestionsControllerTest extends TestCase
         $this->assertSame(5, $data['offset'] ?? null);
     }
 
+    /**
+     * Accept-merge proxy must pass through recognition's authoritative
+     * source_cluster_id / target_cluster_id unchanged (no invented fields).
+     */
+    public function testAcceptMergeSuggestionPassesThroughAuthoritativeMergeIds(): void
+    {
+        $suggestionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+        $sourceId = '11111111-1111-1111-1111-111111111111';
+        $targetId = '22222222-2222-2222-2222-222222222222';
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'id' => $suggestionId,
+                'cluster_a_id' => $sourceId,
+                'cluster_b_id' => $targetId,
+                'similarity' => 0.91,
+                'status' => 'accepted',
+                'source_cluster_id' => $sourceId,
+                'target_cluster_id' => $targetId,
+            ]),
+        ]);
+
+        $request = new WP_REST_Request(
+            'POST',
+            '/acx/v1/recognition/suggestions/merge/' . $suggestionId . '/accept'
+        );
+        $request->set_param('suggestion_id', $suggestionId);
+        $response = $this->controller->accept_merge_suggestion($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+        $this->assertIsArray($data);
+        $this->assertSame($sourceId, $data['source_cluster_id'] ?? null);
+        $this->assertSame($targetId, $data['target_cluster_id'] ?? null);
+        $this->assertSame('accepted', $data['status'] ?? null);
+        // Proxy must not invent extra envelope fields beyond upstream body.
+        $this->assertArrayNotHasKey('data_source', $data);
+        $this->assertArrayNotHasKey('survivor_id', $data);
+        $this->assertArrayNotHasKey('retired_id', $data);
+    }
+
     public function testRegisterRoutesIncludesNameSuggestionEndpoints(): void
     {
         $this->controller->register_routes();

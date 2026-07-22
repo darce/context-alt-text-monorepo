@@ -434,7 +434,13 @@ async def accept_merge_suggestion(
     # (see clusters.py PATCH handler comment for full race condition explanation).
     await session.commit()
 
-    return _to_merge_response(suggestion)
+    # Authoritative survivor/retired ids from _select_merge_target (source=retired,
+    # target=survivor). Clients must not re-rank cluster_a/b presentation fields.
+    return _to_merge_response(
+        suggestion,
+        source_cluster_id=source_cluster_id,
+        target_cluster_id=target_cluster_id,
+    )
 
 
 @router.post("/suggestions/merge/{suggestion_id}/reject", response_model=MergeSuggestionResponse)
@@ -693,8 +699,18 @@ def _select_merge_target(cluster_a: IdentityCluster, cluster_b: IdentityCluster)
     return source.id, target.id, target.label
 
 
-def _to_merge_response(suggestion: MergeSuggestion | MergeSuggestionDetails) -> MergeSuggestionResponse:
-    """Convert merge suggestion to API response model."""
+def _to_merge_response(
+    suggestion: MergeSuggestion | MergeSuggestionDetails,
+    *,
+    source_cluster_id: str | None = None,
+    target_cluster_id: str | None = None,
+) -> MergeSuggestionResponse:
+    """Convert merge suggestion to API response model.
+
+    Pass ``source_cluster_id`` / ``target_cluster_id`` after accept so the
+    response carries the authoritative survivor/retired pair from
+    ``_select_merge_target`` (source=retired, target=survivor).
+    """
     status_value = suggestion.status if isinstance(suggestion.status, str) else suggestion.status.value
     cluster_a_bbox = getattr(suggestion, "cluster_a_representative_bbox", None)
     cluster_b_bbox = getattr(suggestion, "cluster_b_representative_bbox", None)
@@ -732,4 +748,6 @@ def _to_merge_response(suggestion: MergeSuggestion | MergeSuggestionDetails) -> 
         confidence_score=getattr(suggestion, "confidence_score", None),
         expires_at=getattr(suggestion, "expires_at", None),
         source_job_id=getattr(suggestion, "source_job_id", None),
+        source_cluster_id=source_cluster_id,
+        target_cluster_id=target_cluster_id,
     )

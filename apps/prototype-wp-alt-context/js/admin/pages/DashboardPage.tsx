@@ -20,6 +20,11 @@ import { DashboardRecentActivitySection } from './dashboard/DashboardRecentActiv
 import { DashboardSyncHealthSection } from './dashboard/DashboardSyncHealthSection';
 import { OrientationCard } from './dashboard/OrientationCard';
 import { buildDashboardPriorityModel, type DashboardSectionId } from './dashboard/buildDashboardPriorityModel';
+import {
+  RETENTION_CARD_ERROR_BODY,
+  RETENTION_CARD_HEADING,
+  RETENTION_CARD_LINK_HREF,
+} from './dashboard/retentionCardCopy';
 
 const normalizeCount = (value: number | null | undefined): number => {
   if (typeof value !== 'number' || Number.isNaN(value) || value <= 0) {
@@ -51,7 +56,8 @@ export const DashboardPage = (): React.JSX.Element => {
   const effectiveSyncHealth = resolveEffectiveSyncHealth(syncStatus?.sync_health ?? 'stale', syncHealthEnvelope);
   const syncHealthWarningsActive = syncHealthEnvelope ? hasSyncHealthWarnings(syncHealthEnvelope) : false;
   const resetMirror = useResetMirror();
-  const { data: retentionStatus } = useRetentionStatus();
+  const { data: retentionStatus, isError: isRetentionError, isLoading: isRetentionLoading } =
+    useRetentionStatus();
   const {
     data: identityStats,
     isLoading: isIdentityLoading,
@@ -71,7 +77,11 @@ export const DashboardPage = (): React.JSX.Element => {
   const topologyConflicts = normalizeCount(syncStatus?.topology_commands?.conflict);
   const lastConflictDate = formatDiagnosticDate(syncStatus?.last_curation_conflict_at);
   const lastFailureDate = formatDiagnosticDate(syncStatus?.last_curation_failed_at);
+  // State matrix (UXP-4 S3 / A11Y-24): loading or available:false → no panel;
+  // isError → remediation + #/retention; available + policy → summary.
   const retentionPolicy = retentionStatus?.available ? retentionStatus.policy : null;
+  const showRetentionPanel =
+    !isRetentionLoading && (isRetentionError || Boolean(retentionPolicy));
   const retentionModeLabel =
     retentionPolicy?.retention_mode === 'dispose_after_ack'
       ? __('Dispose after ack', 'alt-context')
@@ -223,11 +233,19 @@ export const DashboardPage = (): React.JSX.Element => {
         jobDetails={jobDetails}
       />
     ),
-    retentionPosture: (
+    retentionPosture: showRetentionPanel ? (
       <section className="acx-dashboard__panel">
-        <h2>{__('Retention posture', 'alt-context')}</h2>
-        {!retentionPolicy ? (
-          <p>{__('Retention status is unavailable right now.', 'alt-context')}</p>
+        <h2>{__(RETENTION_CARD_HEADING, 'alt-context')}</h2>
+        {isRetentionError || !retentionPolicy ? (
+          <>
+            <p>{__(RETENTION_CARD_ERROR_BODY, 'alt-context')}</p>
+            <div className="acx-dashboard__actions">
+              <a href={RETENTION_CARD_LINK_HREF} className="acx-dashboard__action-card">
+                <h3>{__('Open Retention Controls', 'alt-context')}</h3>
+                <p>{__('Review policy, run exports, and inspect recent audit events.', 'alt-context')}</p>
+              </a>
+            </div>
+          </>
         ) : (
           <>
             <div className="acx-dashboard__stats-grid">
@@ -255,7 +273,7 @@ export const DashboardPage = (): React.JSX.Element => {
               </div>
             </div>
             <div className="acx-dashboard__actions">
-              <a href="#/retention" className="acx-dashboard__action-card">
+              <a href={RETENTION_CARD_LINK_HREF} className="acx-dashboard__action-card">
                 <h3>{__('Open Retention Controls', 'alt-context')}</h3>
                 <p>{__('Review policy, run exports, and inspect recent audit events.', 'alt-context')}</p>
               </a>
@@ -263,6 +281,9 @@ export const DashboardPage = (): React.JSX.Element => {
           </>
         )}
       </section>
+    ) : (
+      // loading / available:false — absent from initial render (no focus/live-region work)
+      <></>
     ),
   };
 

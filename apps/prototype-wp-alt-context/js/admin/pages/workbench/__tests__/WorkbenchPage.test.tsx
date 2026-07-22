@@ -40,6 +40,7 @@ import {
   useMultiScanStatus,
   useCombinedScanStatus,
 } from '../../../hooks/useRecognitionHooks';
+import { CLUSTERING_DISCLOSURE_SUMMARY } from '../confirmTabCopy';
 
 // Mock ResizeObserver and PointerCapture for Radix UI
 window.ResizeObserver = class ResizeObserver {
@@ -827,7 +828,8 @@ describe('WorkbenchPage', () => {
       'true',
     );
     expect(screen.getByRole('region', { name: 'Advanced: jobs & recovery' })).toBeInTheDocument();
-    expect(screen.getByText('What is Clustering?')).toBeInTheDocument();
+    // UXP-4 Slice 4: disclosure summary is "What does clustering do?" (not the old help-card title).
+    expect(screen.getByText(CLUSTERING_DISCLOSURE_SUMMARY)).toBeInTheDocument();
 
     await waitFor(() => {
       const search = screen.getByTestId('location-search').textContent ?? '';
@@ -850,7 +852,8 @@ describe('WorkbenchPage', () => {
     expect(trigger).toHaveAttribute('aria-expanded', 'true');
     const panel = screen.getByRole('region', { name: 'Advanced: jobs & recovery' });
     expect(panel).toBeInTheDocument();
-    expect(screen.getByText('What is Clustering?')).toBeInTheDocument();
+    // UXP-4 Slice 4: disclosure summary is "What does clustering do?" (not the old help-card title).
+    expect(screen.getByText(CLUSTERING_DISCLOSURE_SUMMARY)).toBeInTheDocument();
 
     await waitFor(() => {
       expect(panel.contains(document.activeElement)).toBe(true);

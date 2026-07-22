@@ -163,7 +163,13 @@ describe('useClusterActions commit invalidation (clusterLabelSetClear event)', (
   it('roster commit invalidates the suggestion projection alongside clusters + roster', async () => {
     // TEST-06 predicted first failure (pre-fix): invalidateQueries never called with
     // { queryKey: ['suggestions','projection'] } — commit only touched clusters.all + roster.entries.
-    vi.mocked(rosterApi.commitClusterToRosterEntry).mockResolvedValue({} as never);
+    vi.mocked(rosterApi.commitClusterToRosterEntry).mockResolvedValue({
+      cluster_id: 'c-1',
+      person_id: 7,
+      person_uuid: 'person-uuid-7',
+      person_name: 'Entry',
+      updated_at: '2026-01-01T00:00:00Z',
+    });
 
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } });
     const invalidateSpy = vi.spyOn(client, 'invalidateQueries');

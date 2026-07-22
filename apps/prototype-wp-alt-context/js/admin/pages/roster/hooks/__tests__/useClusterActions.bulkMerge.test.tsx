@@ -84,6 +84,7 @@ describe('useClusterActions bulk merge announce + failure (E21-9 Slice 4)', () =
 
     await act(async () => {
       hold.get('c-2')?.resolve(mergeOk);
+      await Promise.resolve();
     });
 
     await waitFor(() => {
@@ -93,6 +94,7 @@ describe('useClusterActions bulk merge announce + failure (E21-9 Slice 4)', () =
 
     await act(async () => {
       hold.get('c-3')?.resolve(mergeOk);
+      await Promise.resolve();
     });
 
     await waitFor(() => {
@@ -105,11 +107,11 @@ describe('useClusterActions bulk merge announce + failure (E21-9 Slice 4)', () =
     const onBulkMergeSettled = vi.fn();
     const onBulkMergeFailure = vi.fn();
 
-    vi.mocked(recognitionApi.mergeCluster).mockImplementation(async (sourceId) => {
+    vi.mocked(recognitionApi.mergeCluster).mockImplementation((sourceId) => {
       if (sourceId === 'c-2') {
-        throw new Error('merge boom');
+        return Promise.reject(new Error('merge boom'));
       }
-      return { ...mergeOk, source_id: sourceId };
+      return Promise.resolve({ ...mergeOk, source_id: sourceId });
     });
 
     const { result } = renderHook(
@@ -136,7 +138,7 @@ describe('useClusterActions bulk merge announce + failure (E21-9 Slice 4)', () =
 
   it('sequential-order discrimination: next merge starts only after prior settles (fails under parallel fan-out)', async () => {
     const events: string[] = [];
-    const resolvers: Array<() => void> = [];
+    const resolvers: (() => void)[] = [];
 
     vi.mocked(recognitionApi.mergeCluster).mockImplementation(
       (sourceId) =>
@@ -162,6 +164,7 @@ describe('useClusterActions bulk merge announce + failure (E21-9 Slice 4)', () =
     // Resolve out of "desired" visual order: only s1 is in flight; s2 must not start yet.
     await act(async () => {
       resolvers[0]?.();
+      await Promise.resolve();
     });
 
     await waitFor(() => {
@@ -170,6 +173,7 @@ describe('useClusterActions bulk merge announce + failure (E21-9 Slice 4)', () =
 
     await act(async () => {
       resolvers[1]?.();
+      await Promise.resolve();
     });
 
     await waitFor(() => {

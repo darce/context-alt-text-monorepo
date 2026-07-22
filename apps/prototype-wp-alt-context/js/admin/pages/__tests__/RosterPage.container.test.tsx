@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useSearchParams } from 'react-router-dom';
 
 import type { BatchAnalyzeResponse, ClusterListResponse, ClusterSummary } from '../../api/recognition';
+import type { RosterClusterCommitResponse } from '../../api/rosterApi';
 import { useRecognitionCluster, useRecognitionClusters } from '../../hooks/useRecognitionHooks';
 import { useCreatePerson, useDeletePerson, useRosterEntries, useUpdatePerson } from '../../hooks/useRosterHooks';
 import { useClusterSelection } from '../../hooks/useClusterSelection';
@@ -127,7 +128,7 @@ describe('RosterPage route container (E21-9 single surface)', () => {
       isPending: false,
     }),
     commitMutation: createMockMutation<
-      void,
+      RosterClusterCommitResponse,
       Error,
       { clusterId: string; rosterEntryId?: number; newEntryName?: string }
     >({

@@ -3,7 +3,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '../../../api/queryKeys';
 import type { BatchAnalyzeResponse } from '../../../api/recognition';
-import { commitClusterToRosterEntry } from '../../../api/rosterApi';
+import { commitClusterToRosterEntry, type RosterClusterCommitResponse } from '../../../api/rosterApi';
 import { dismissCluster, mergeCluster, reassignClusterIdentity, scanFacesBatched } from '../../../api/recognition';
 import { invalidateSuggestionProjection } from '../../workbench/identity-clusters/suggestionProjection';
 import { useToast } from '../../../context/ToastContext';
@@ -108,26 +108,28 @@ export const useClusterActions = ({
     onSettled: onRescanSettled,
   });
 
-  const commitMutation = useMutation<void, Error, { clusterId: string; rosterEntryId?: number; newEntryName?: string }>(
-    {
-      mutationFn: (variables) =>
-        commitClusterToRosterEntry({
-          clusterId: variables.clusterId,
-          rosterEntryId: variables.rosterEntryId,
-          newEntryName: variables.newEntryName,
-        }),
-      onSuccess: () => {
-        // clusterLabelSetClear event (SUGGESTION_PROJECTION_INVALIDATION_EVENTS):
-        // committing labels a cluster, changing its suggestion eligibility everywhere.
-        void invalidateSuggestionProjection(queryClient);
-        void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
-        void queryClient.invalidateQueries({ queryKey: queryKeys.roster.entries() });
-        success(__('Cluster committed to roster entry.', 'alt-context'));
-      },
-      onError: (err) => showToastError(err.message),
-      onSettled: onCommitSettled,
+  const commitMutation = useMutation<
+    RosterClusterCommitResponse,
+    Error,
+    { clusterId: string; rosterEntryId?: number; newEntryName?: string }
+  >({
+    mutationFn: (variables) =>
+      commitClusterToRosterEntry({
+        clusterId: variables.clusterId,
+        rosterEntryId: variables.rosterEntryId,
+        newEntryName: variables.newEntryName,
+      }),
+    onSuccess: () => {
+      // clusterLabelSetClear event (SUGGESTION_PROJECTION_INVALIDATION_EVENTS):
+      // committing labels a cluster, changing its suggestion eligibility everywhere.
+      void invalidateSuggestionProjection(queryClient);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.roster.entries() });
+      success(__('Cluster committed to roster entry.', 'alt-context'));
     },
-  );
+    onError: (err) => showToastError(err.message),
+    onSettled: onCommitSettled,
+  });
 
   const bulkMergeMutation = useMutation<void, Error, { clusterIds: string[] }>({
     mutationFn: async ({ clusterIds }) => {

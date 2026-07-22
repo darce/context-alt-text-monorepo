@@ -1,12 +1,16 @@
 import { expect, test, type Page } from '@playwright/test';
 
 import { requireBaseUrl } from '../fixtures/axe';
-import { getAcxAdminRouteUrl } from '../fixtures/acx-routes';
+import { getAcxAdminRouteUrl, getAcxAdminRouteUrlWithParams } from '../fixtures/acx-routes';
 
 const ROSTER_SHELL_SELECTOR = '.acx-roster';
 
-const openRoster = async (baseURL: string, page: Page) => {
-  await page.goto(getAcxAdminRouteUrl(baseURL, 'alt-context-roster'));
+const openRoster = async (baseURL: string, page: Page, params: Record<string, string> = {}) => {
+  const url =
+    Object.keys(params).length > 0
+      ? getAcxAdminRouteUrlWithParams(baseURL, 'alt-context-roster', params)
+      : getAcxAdminRouteUrl(baseURL, 'alt-context-roster');
+  await page.goto(url);
   await expect(page).toHaveURL(/page=alt-context-roster/);
   await expect(page.locator(ROSTER_SHELL_SELECTOR)).toBeVisible();
   await expect(page.getByRole('heading', { name: /Roster Management/i })).toBeVisible();
@@ -52,28 +56,42 @@ test('roster empty state is announced via live region', async ({ page, baseURL }
 });
 
 /**
- * E21-9 Slice 3: full member-fix keyboard loop when a cluster drawer is open.
- * Skips cleanly when the local environment has no openable cluster (no LocalWP fixtures).
+ * E21-9: full member-fix keyboard loop when a cluster drawer is open.
+ * Opens via Needs assignment row (or cluster=<id> deep link). Clusters tab retired.
+ * Skips cleanly when the local environment has no openable unlabeled cluster.
  */
 test('keyboard member-fix loop: Move to… → pick target → role=status (≥24px control)', async ({
   page,
   baseURL,
 }) => {
-  await openRoster(requireBaseUrl(baseURL), page);
+  const base = requireBaseUrl(baseURL);
+  await openRoster(base, page);
 
-  const clustersTab = page.getByRole('tab', { name: /Clusters/i });
-  if ((await clustersTab.count()) === 0) {
-    test.skip(true, 'Clusters tab not present in this build');
+  // Primary path: Needs assignment section row opens the in-place cluster drawer.
+  const needsSection = page.getByTestId('needs-assignment-section');
+  await expect(needsSection).toBeVisible();
+  const needsOpen = page
+    .getByTestId('needs-assignment-list')
+    .locator('button.acx-needs-assignment__open')
+    .first();
+
+  if ((await needsOpen.count()) > 0) {
+    // Prefer reading cluster id from the workbench deep-link for a reloadable cluster= URL.
+    const workbenchHref =
+      (await needsOpen
+        .locator('xpath=..')
+        .locator('a.acx-needs-assignment__workbench-link')
+        .getAttribute('href')) ?? '';
+    const clusterMatch = /(?:\?|&)cluster=([^&]+)/.exec(workbenchHref);
+    if (clusterMatch?.[1]) {
+      await openRoster(base, page, { cluster: decodeURIComponent(clusterMatch[1]) });
+    } else {
+      await needsOpen.click();
+    }
+  } else {
+    test.skip(true, 'No unlabeled clusters available for member-fix keyboard walk');
     return;
   }
-  await clustersTab.click();
-
-  const firstClusterCard = page.locator('.acx-cluster-card').first();
-  if ((await firstClusterCard.count()) === 0) {
-    test.skip(true, 'No clusters available for member-fix keyboard walk');
-    return;
-  }
-  await firstClusterCard.click();
 
   const drawer = page.locator('.acx-cluster-drawer');
   await expect(drawer).toBeVisible();

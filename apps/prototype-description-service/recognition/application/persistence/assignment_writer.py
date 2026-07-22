@@ -441,21 +441,33 @@ class AssignmentWriter:
         Existing cluster members and earlier higher-similarity decisions in this
         batch occupy a media_id; later/lower-similarity faces for that media_id
         are rejected so the orchestrator can route them to new-cluster/unknown.
+
+        An identity already member of the target cluster does not occupy media
+        against itself (chunk re-process / ON CONFLICT skip path stays idempotent).
         """
         existing = await self._clusters.get_member_identities(cluster_id)
-        occupied_media = {str(identity.media_id) for identity in existing}
+        occupants_by_media: dict[str, set[str]] = {}
+        for identity in existing:
+            media_id = str(identity.media_id)
+            occupants_by_media.setdefault(media_id, set()).add(str(identity.id))
         ordered = sorted(
             decisions,
-            key=lambda decision: decision.candidate.discovery_similarity,
+            key=lambda decision: (
+                decision.candidate.discovery_similarity,
+                decision.candidate.identity.confidence,
+                decision.candidate.identity.id,
+            ),
             reverse=True,
         )
         kept: list[AssignmentDecision] = []
         rejected: set[str] = set()
         batch_media: set[str] = set()
         for decision in ordered:
+            identity_id = str(decision.candidate.identity.id)
             media_id = str(decision.candidate.identity.media_id)
-            if media_id in occupied_media or media_id in batch_media:
-                rejected.add(decision.candidate.identity.id)
+            foreign_occupants = occupants_by_media.get(media_id, set()) - {identity_id}
+            if foreign_occupants or media_id in batch_media:
+                rejected.add(identity_id)
                 continue
             kept.append(decision)
             batch_media.add(media_id)

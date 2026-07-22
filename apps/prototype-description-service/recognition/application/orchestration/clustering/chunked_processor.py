@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import Iterator, Sequence
 
 from recognition.domain.identity import MediaIdentity
@@ -51,9 +51,11 @@ class ChunkedIdentityProcessor:
     ) -> None:
         self._photo_atomic = photo_atomic
         if photo_atomic:
-            self._remaining = _order_photo_atomic(identities)
+            ordered = _order_photo_atomic(identities)
         else:
-            self._remaining = sorted(identities, key=lambda identity: identity.confidence, reverse=True)
+            ordered = sorted(identities, key=lambda identity: identity.confidence, reverse=True)
+        # deque: O(1) left-pops in the photo-atomic hot path (avoids list.pop(0)).
+        self._remaining: deque[MediaIdentity] = deque(ordered)
         self._processed = 0
         self._total = len(self._remaining)
         # Latency EMA state: None until the first chunk result is recorded.
@@ -101,8 +103,8 @@ class ChunkedIdentityProcessor:
             if self._photo_atomic:
                 chunk = self._take_photo_atomic_chunk(chunk_size)
             else:
-                chunk = self._remaining[:chunk_size]
-                self._remaining = self._remaining[chunk_size:]
+                chunk_size = min(chunk_size, len(self._remaining))
+                chunk = [self._remaining.popleft() for _ in range(chunk_size)]
             self._processed += len(chunk)
             yield chunk, processed_before
 
@@ -118,10 +120,10 @@ class ChunkedIdentityProcessor:
             media_id = str(self._remaining[0].media_id)
             group: list[MediaIdentity] = []
             while self._remaining and str(self._remaining[0].media_id) == media_id:
-                group.append(self._remaining.pop(0))
+                group.append(self._remaining.popleft())
             if chunk and len(chunk) + len(group) > chunk_size:
                 # Put the group back and stop; never split it.
-                self._remaining = group + self._remaining
+                self._remaining.extendleft(reversed(group))
                 break
             chunk.extend(group)
             if len(chunk) >= chunk_size:
@@ -133,7 +135,11 @@ class ChunkedIdentityProcessor:
 
 
 def _order_photo_atomic(identities: Sequence[MediaIdentity]) -> list[MediaIdentity]:
-    """Group by media_id, order groups by max confidence, preserve face order within group."""
+    """Group by media_id; order groups by max confidence; faces by confidence desc.
+
+    Within each media group faces are re-sorted by confidence descending (not
+    input order). Groups themselves are ordered by max confidence, then media_id.
+    """
     groups: dict[str, list[MediaIdentity]] = defaultdict(list)
     group_max_confidence: dict[str, float] = {}
     media_order: list[str] = []

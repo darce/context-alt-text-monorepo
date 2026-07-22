@@ -628,6 +628,36 @@ def resolve_effective_clustering_settings(
     return apply_resolved_clustering_settings(settings.clustering, knobs)
 
 
+def resolve_effective_limits_settings(
+    *,
+    recognition: RecognitionSettings | None = None,
+) -> ClusteringLimitsSettings:
+    """Profile-resolved ClusteringLimitsSettings for limits-threshold readers (S2)."""
+    settings = recognition if recognition is not None else RecognitionSettings()
+    knobs = resolve_face_pipeline_knobs(
+        face_pipeline=settings.face_pipeline,
+        clustering=settings.clustering,
+        clustering_limits=settings.clustering_limits,
+        identity_detection=settings.identity_detection,
+    )
+    return apply_resolved_limits_settings(settings.clustering_limits, knobs)
+
+
+def resolve_effective_detection_settings(
+    *,
+    recognition: RecognitionSettings | None = None,
+) -> IdentityDetectionSettings:
+    """Profile-resolved IdentityDetectionSettings for detection-threshold readers (S2)."""
+    settings = recognition if recognition is not None else RecognitionSettings()
+    knobs = resolve_face_pipeline_knobs(
+        face_pipeline=settings.face_pipeline,
+        clustering=settings.clustering,
+        clustering_limits=settings.clustering_limits,
+        identity_detection=settings.identity_detection,
+    )
+    return apply_resolved_detection_settings(settings.identity_detection, knobs)
+
+
 class IdentityDetectionSettings(BaseModel):
     """Settings for identity detection and embedding generation."""
 

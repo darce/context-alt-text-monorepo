@@ -307,7 +307,17 @@ class InsightFaceFaceDetector(FaceDetectorProtocol):
                     )
 
                 faces: list[FaceDetection] = await self._breaker.call(detect_current_image)
+                from recognition.config.settings import resolve_effective_detection_settings
+
+                detection_settings = resolve_effective_detection_settings()
+                min_confidence = float(detection_settings.default_threshold)
+                max_faces = int(detection_settings.max_identities_per_image)
+                accepted_for_image = 0
                 for face in faces:
+                    if float(face.confidence) < min_confidence:
+                        continue
+                    if accepted_for_image >= max_faces:
+                        break
                     # Canonical quality: confidence + bbox size only (FIR2-BR-03)
                     detection_quality = _compute_detection_quality(
                         confidence=face.confidence,
@@ -322,6 +332,7 @@ class InsightFaceFaceDetector(FaceDetectorProtocol):
                             landmark_quality=detection_quality,
                         )
                     )
+                    accepted_for_image += 1
             except AdapterTimeoutError as exc:
                 logger.error("Face detection timed out for %s after %.2fs", media_id[:20], self._timeout)
                 raise DetectionTimeoutError(media_id=media_id, timeout_s=self._timeout) from exc

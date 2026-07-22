@@ -29,7 +29,7 @@ from recognition.application.assignment.checks import (
 from recognition.application.settings import ClusteringSettings
 from recognition.application.similarity import RepresentativeCache, SimilaritySearch
 from recognition.application.suggestions.eligibility import is_eligible_cluster
-from recognition.config import get_settings as get_recognition_settings
+from recognition.config.settings import resolve_effective_clustering_settings
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import (
     ClusterRepository,
@@ -72,7 +72,7 @@ class SuggestionRefreshService:
         self._tenant_id = tenant_id
         self._cluster_repository = cluster_repository
         self._session = session
-        self._settings = settings or get_recognition_settings().clustering
+        self._settings = settings or resolve_effective_clustering_settings()
         self._search = SimilaritySearch(self._settings)
         self._gate = gate
         self._block_repository = block_repository

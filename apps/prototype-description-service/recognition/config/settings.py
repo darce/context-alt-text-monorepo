@@ -582,6 +582,52 @@ def resolve_face_pipeline_knobs(
     )
 
 
+def apply_resolved_clustering_settings(
+    clustering: ClusteringSettings,
+    knobs: ResolvedFacePipelineKnobs,
+) -> ClusteringSettings:
+    """Return ClusteringSettings with profile-resolved threshold fields (S2 rebinding)."""
+    return clustering.model_copy(
+        update={
+            "similarity_threshold": knobs.similarity_threshold,
+            "complete_link_threshold": knobs.complete_link_threshold,
+            "suggestion_floor": knobs.suggestion_floor,
+            "suggestion_ceiling": knobs.suggestion_ceiling,
+        }
+    )
+
+
+def apply_resolved_limits_settings(
+    limits: ClusteringLimitsSettings,
+    knobs: ResolvedFacePipelineKnobs,
+) -> ClusteringLimitsSettings:
+    """Return ClusteringLimitsSettings with profile-resolved similarity threshold."""
+    return limits.model_copy(update={"similarity_threshold": knobs.limits_similarity_threshold})
+
+
+def apply_resolved_detection_settings(
+    detection: IdentityDetectionSettings,
+    knobs: ResolvedFacePipelineKnobs,
+) -> IdentityDetectionSettings:
+    """Return IdentityDetectionSettings with profile-resolved default threshold."""
+    return detection.model_copy(update={"default_threshold": knobs.detection_default_threshold})
+
+
+def resolve_effective_clustering_settings(
+    *,
+    recognition: RecognitionSettings | None = None,
+) -> ClusteringSettings:
+    """Profile-resolved ClusteringSettings for gate/discovery construction (S2)."""
+    settings = recognition if recognition is not None else RecognitionSettings()
+    knobs = resolve_face_pipeline_knobs(
+        face_pipeline=settings.face_pipeline,
+        clustering=settings.clustering,
+        clustering_limits=settings.clustering_limits,
+        identity_detection=settings.identity_detection,
+    )
+    return apply_resolved_clustering_settings(settings.clustering, knobs)
+
+
 class IdentityDetectionSettings(BaseModel):
     """Settings for identity detection and embedding generation."""
 

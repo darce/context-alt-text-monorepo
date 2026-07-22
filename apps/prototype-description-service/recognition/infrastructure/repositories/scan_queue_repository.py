@@ -7,11 +7,12 @@ import uuid
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import Select, exists, func, select, text, update
+from sqlalchemy import Select, exists, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityScanJob, IdentityScanJobItem
 from recognition.application.scan.queue_repository import ScanQueueItem, ScanQueueRepository
+from recognition.application.scan.retry_backoff import compute_retry_backoff
 from recognition.domain.job import TERMINAL_JOB_STATUSES, JobStatus, ScanItemStatus
 from recognition.shared.db.dialect import is_postgres, timestamp_as_epoch
 from recognition.shared.db.helpers import execute_dml, get_rowcount
@@ -282,12 +283,17 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
         limit: int,
         now: datetime,
     ) -> list[ScanQueueItem]:
+        # pending.started_at doubles as not-before when set by release_item_for_retry.
         stmt: Select[tuple[IdentityScanJobItem]] = (
             select(IdentityScanJobItem)
             .where(
                 IdentityScanJobItem.tenant_id == tenant_id,
                 IdentityScanJobItem.job_id == job_id,
                 IdentityScanJobItem.status == JobStatus.PENDING.value,
+                or_(
+                    IdentityScanJobItem.started_at.is_(None),
+                    IdentityScanJobItem.started_at <= now,
+                ),
             )
             .order_by(IdentityScanJobItem.created_at.asc())
             .limit(limit)
@@ -310,9 +316,16 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
         return [_to_item(row) for row in rows]
 
     async def _claim_pending_items_any_generic(self, *, limit: int, now: datetime) -> list[ScanQueueItem]:
+        # pending.started_at doubles as not-before when set by release_item_for_retry.
         stmt: Select[tuple[IdentityScanJobItem]] = (
             select(IdentityScanJobItem)
-            .where(IdentityScanJobItem.status == JobStatus.PENDING.value)
+            .where(
+                IdentityScanJobItem.status == JobStatus.PENDING.value,
+                or_(
+                    IdentityScanJobItem.started_at.is_(None),
+                    IdentityScanJobItem.started_at <= now,
+                ),
+            )
             .order_by(IdentityScanJobItem.created_at.asc())
             .limit(limit)
         )
@@ -342,6 +355,7 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
         now: datetime,
     ) -> list[ScanQueueItem]:
         # CTE claim pattern: select ids FOR UPDATE SKIP LOCKED then update returning.
+        # pending.started_at doubles as not-before when set by release_item_for_retry.
         claim_sql = text(
             """
             WITH claimed AS (
@@ -350,6 +364,7 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
               WHERE tenant_id = :tenant_id
                 AND job_id = :job_id
                 AND status = 'pending'
+                AND (started_at IS NULL OR started_at <= :now)
               ORDER BY created_at ASC
               FOR UPDATE SKIP LOCKED
               LIMIT :limit
@@ -389,12 +404,14 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
         ]
 
     async def _claim_pending_items_any_postgres(self, *, limit: int, now: datetime) -> list[ScanQueueItem]:
+        # pending.started_at doubles as not-before when set by release_item_for_retry.
         claim_sql = text(
             """
             WITH claimed AS (
               SELECT id
               FROM identity_scan_job_items
               WHERE status = 'pending'
+                AND (started_at IS NULL OR started_at <= :now)
               ORDER BY created_at ASC
               FOR UPDATE SKIP LOCKED
               LIMIT :limit
@@ -446,11 +463,25 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
             .values(status=JobStatus.FAILED, completed_at=completed_at, last_error=error_message)
         )
 
-    async def release_item_for_retry(self, *, item_id: uuid.UUID, error_message: str) -> None:
+    async def release_item_for_retry(
+        self,
+        *,
+        item_id: uuid.UUID,
+        error_message: str,
+        attempts: int,
+        now: datetime | None = None,
+    ) -> None:
+        """Return item to pending; ``started_at`` holds not-before (retry backoff)."""
+        claim_now = now if now is not None else datetime.now(tz=UTC)
+        available_at = claim_now + compute_retry_backoff(attempts)
         await self._session.execute(
             update(IdentityScanJobItem)
             .where(IdentityScanJobItem.id == item_id)
-            .values(status=JobStatus.PENDING, started_at=None, last_error=error_message)
+            .values(
+                status=JobStatus.PENDING,
+                started_at=available_at,
+                last_error=error_message,
+            )
         )
 
     async def cancel_pending_items(self, *, job_id: uuid.UUID, cancelled_at: datetime) -> int:

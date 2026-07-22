@@ -188,8 +188,15 @@ class ScanQueueRepository(Protocol):
         *,
         item_id: uuid.UUID,
         error_message: str,
+        attempts: int,
+        now: datetime | None = None,
     ) -> None:
-        """Return an item to pending state for a retry attempt."""
+        """Return an item to pending with attempt-based not-before backoff.
+
+        ``attempts`` is the post-claim attempt count. Implementations must delay
+        re-claim until ``now + compute_retry_backoff(attempts)`` (typically by
+        storing that instant in ``started_at`` while status is pending).
+        """
 
     async def cancel_pending_items(self, *, job_id: uuid.UUID, cancelled_at: datetime) -> int:
         """Cancel all pending items for a job and return how many were canceled."""

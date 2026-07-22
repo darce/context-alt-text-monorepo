@@ -222,7 +222,12 @@ class ScanItemHandler:
         if isinstance(exc, PersistIntegrityError) or item.attempts >= self._max_attempts:
             await repo.mark_item_failed(item_id=item.id, completed_at=now, error_message=error_message)
             return
-        await repo.release_item_for_retry(item_id=item.id, error_message=error_message)
+        await repo.release_item_for_retry(
+            item_id=item.id,
+            error_message=error_message,
+            attempts=item.attempts,
+            now=now,
+        )
 
     def _build_scan_service(self, session: AsyncSession) -> ScanService:
         """Create a ScanService bound to the provided session."""

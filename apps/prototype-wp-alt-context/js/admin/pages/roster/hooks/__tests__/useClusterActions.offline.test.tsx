@@ -144,7 +144,7 @@ describe('useClusterActions bulk merge invalidation (clusterMerge event)', () =>
     result.current.bulkMergeMutation.mutate({ clusterIds: ['c-1', 'c-2'] });
 
     await waitFor(() => {
-      expect(recognitionApi.mergeCluster).toHaveBeenCalledWith('c-2', 'c-1');
+      expect(recognitionApi.mergeCluster).toHaveBeenCalledWith('c-2', 'c-1', undefined, expect.any(AbortSignal));
     });
 
     await waitFor(() => {

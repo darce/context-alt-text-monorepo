@@ -112,6 +112,8 @@ const clusterActionState = {
     isPending: false,
   }),
   bulkMergeProgress: null,
+  bulkMergeFailure: null,
+  clearBulkMergeFailure: vi.fn(),
   rescanGate: {
     disabled: false,
     'aria-disabled': undefined as true | undefined,
@@ -230,14 +232,11 @@ describe('RosterPage projection-aware workspace shell', () => {
       </MemoryRouter>,
     );
 
-    const user = userEvent.setup();
-
-    await user.click(screen.getByRole('tab', { name: 'Face groups' }));
-    await user.click(screen.getByRole('tab', { name: 'People' }));
-
+    // E21-9 Slice 5a: single person-first surface — no tab switch; default workspace stays mounted.
     expect(screen.getByRole('region', { name: /Person workspace: Alice/i })).toBeInTheDocument();
     expect(screen.getByTestId('roster-entries-section')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Add Person/ })).toBeInTheDocument();
+    expect(screen.getByTestId('needs-assignment-section')).toBeInTheDocument();
   });
 
   it('[PAG-M3-S3] chooses a deterministic default workspace entry and shows baseline projection metadata', () => {
@@ -358,7 +357,7 @@ describe('RosterPage projection-aware workspace shell', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Open singleton proposals queue' }));
 
     expect(screen.getByLabelText('route-state')).toHaveTextContent(
-      'tab=entries&person=person-uuid-1&queue=singleton-proposals',
+      'person=person-uuid-1&queue=singleton-proposals',
     );
     expect(screen.getByRole('region', { name: 'Person workspace: Alice' })).toBeInTheDocument();
   });

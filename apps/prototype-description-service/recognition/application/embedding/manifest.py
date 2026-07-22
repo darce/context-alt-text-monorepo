@@ -15,13 +15,40 @@ from recognition.config import get_settings
 
 @dataclass(frozen=True, slots=True)
 class EmbeddingModelManifest:
-    """Model provenance for a detection/embedding seam emission."""
+    """Model provenance for a detection/embedding seam emission.
+
+    Validated at construction (FIR23-03): empty / non-positive fields fail closed
+    so adapters cannot stamp a silent garbage ``model_id``.
+    """
 
     framework: str
     name: str
     dimensions: int
     normalization: str
     metric: str
+
+    def __post_init__(self) -> None:
+        framework = str(self.framework).strip() if self.framework is not None else ""
+        name = str(self.name).strip() if self.name is not None else ""
+        normalization = str(self.normalization).strip() if self.normalization is not None else ""
+        metric = str(self.metric).strip() if self.metric is not None else ""
+        if not framework:
+            raise ValueError("EmbeddingModelManifest.framework must be a non-empty string")
+        if not name:
+            raise ValueError("EmbeddingModelManifest.name must be a non-empty string")
+        if not isinstance(self.dimensions, int) or isinstance(self.dimensions, bool) or self.dimensions <= 0:
+            raise ValueError(
+                f"EmbeddingModelManifest.dimensions must be a positive int, got {self.dimensions!r}"
+            )
+        if not normalization:
+            raise ValueError("EmbeddingModelManifest.normalization must be a non-empty string")
+        if not metric:
+            raise ValueError("EmbeddingModelManifest.metric must be a non-empty string")
+        # Normalize whitespace so model_id is stable for equal logical inputs.
+        object.__setattr__(self, "framework", framework)
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "normalization", normalization)
+        object.__setattr__(self, "metric", metric)
 
     @property
     def model_id(self) -> str:

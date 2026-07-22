@@ -65,6 +65,7 @@ def _compute_identity_quality(identity: MediaIdentity, settings: ClusteringSetti
         bbox_width=identity.bbox_width,
         bbox_height=identity.bbox_height,
         settings=settings.quality,
+        occlusion_severity=identity.occlusion_severity,
     )
     return info.score
 

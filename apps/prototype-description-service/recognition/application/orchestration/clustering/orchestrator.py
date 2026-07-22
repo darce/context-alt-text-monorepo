@@ -350,6 +350,9 @@ class IncrementalClusteringRunner:
                 pose_yaw=row.pose_yaw,
                 pose_roll=row.pose_roll,
                 image_phash=row.image_phash,
+                sharpness=row.sharpness,
+                embedding_norm=row.embedding_norm,
+                occlusion_severity=row.occlusion_severity,
             )
             for row in rows
         ]

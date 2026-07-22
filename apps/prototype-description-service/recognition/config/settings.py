@@ -15,7 +15,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from recognition.application.settings import ClusteringSettings
+from recognition.application.settings import ClusteringSettings, QualitySettings
 from recognition.application.settings.scan import ScanSettings
 from recognition.infrastructure.face_pipeline._common import (
     DEFAULT_NMS_THRESHOLD,
@@ -257,7 +257,8 @@ def _resolve_face_detection_default_threshold() -> float:
 
 
 def _resolve_face_oact_coefficient() -> float:
-    return _env_or_default_finite("RECOGNITION_FACE_OACT_COEFFICIENT", 0.0)
+    # Non-negative only: negative would *reward* occlusion (FIR6S1-M-02).
+    return _env_or_default_nonneg("RECOGNITION_FACE_OACT_COEFFICIENT", 0.0)
 
 
 def _resolve_face_factor_floor_sharpness() -> float:
@@ -370,7 +371,8 @@ class FacePipelineSettings(BaseModel):
     oact_coefficient: float = Field(
         default_factory=_resolve_face_oact_coefficient,
         description=(
-            "OACT occlusion-adaptive coefficient (0.0 = dark no-op until S4). "
+            "OACT occlusion-adaptive coefficient (0.0 = dark no-op until S4; "
+            "must be >= 0 — negative would reward occlusion). "
             "Env: RECOGNITION_FACE_OACT_COEFFICIENT."
         ),
     )
@@ -475,7 +477,8 @@ class FacePipelineSettings(BaseModel):
     @field_validator("oact_coefficient", mode="before")
     @classmethod
     def _validate_oact_coefficient(cls, value: object) -> float:
-        return _parse_finite_float(value, field_name="oact_coefficient")
+        # Finite + non-negative: sign is semantic (negative rewards occlusion).
+        return _parse_non_negative_finite(value, field_name="oact_coefficient")
 
     @field_validator(
         "factor_floor_sharpness",
@@ -513,9 +516,11 @@ class FacePipelineSettings(BaseModel):
 class ResolvedFacePipelineKnobs:
     """Effective face-pipeline knobs after profile resolution.
 
-    Under ``insightface`` the threshold fields read the shared buffalo-era anchors.
-    Under ``face_pipeline`` they read the FacePipelineSettings overrides. OACT,
-    factor floors, and ``joint_assignment_enabled`` always come from FacePipelineSettings
+    Under ``insightface`` the threshold fields read the shared buffalo-era anchors
+    and ``oact_coefficient`` is forced to 0.0 (profile gate — residual face_pipeline
+    factor rows must not activate OACT under insightface).
+    Under ``face_pipeline`` they read the FacePipelineSettings overrides including OACT.
+    Factor floors and ``joint_assignment_enabled`` always come from FacePipelineSettings
     (consumers under insightface must still treat joint assignment as un-wired until S2).
     """
 
@@ -543,7 +548,8 @@ def resolve_face_pipeline_knobs(
     """Resolve effective thresholds for the active face-pipeline profile (rg-008).
 
     Single ownership for S1/S2 consumers: mutate FacePipelineSettings overrides and
-    re-resolve; insightface anchors are never silently replaced.
+    re-resolve; insightface anchors are never silently replaced. OACT is profile-gated:
+    only ``face_pipeline`` can surface a non-zero coefficient.
     """
     profile = face_pipeline.profile
     if profile == "face_pipeline":
@@ -570,7 +576,8 @@ def resolve_face_pipeline_knobs(
             suggestion_ceiling=float(clustering.suggestion_ceiling),
             limits_similarity_threshold=float(clustering_limits.similarity_threshold),
             detection_default_threshold=float(identity_detection.default_threshold),
-            oact_coefficient=float(face_pipeline.oact_coefficient),
+            # Profile gate: never activate OACT under insightface (FIR6S1-M-02).
+            oact_coefficient=0.0,
             factor_floor_sharpness=float(face_pipeline.factor_floor_sharpness),
             factor_floor_embedding_norm=float(face_pipeline.factor_floor_embedding_norm),
             factor_ceiling_occlusion=float(face_pipeline.factor_ceiling_occlusion),
@@ -580,6 +587,117 @@ def resolve_face_pipeline_knobs(
     raise ValueError(
         f"Invalid face_pipeline profile={profile!r}; allowed values: {sorted(_FACE_PIPELINE_PROFILES)}"
     )
+
+
+def apply_resolved_clustering_settings(
+    clustering: ClusteringSettings,
+    knobs: ResolvedFacePipelineKnobs,
+) -> ClusteringSettings:
+    """Return ClusteringSettings with profile-resolved threshold fields (S2 rebinding)."""
+    return clustering.model_copy(
+        update={
+            "similarity_threshold": knobs.similarity_threshold,
+            "complete_link_threshold": knobs.complete_link_threshold,
+            "suggestion_floor": knobs.suggestion_floor,
+            "suggestion_ceiling": knobs.suggestion_ceiling,
+        }
+    )
+
+
+def apply_resolved_limits_settings(
+    limits: ClusteringLimitsSettings,
+    knobs: ResolvedFacePipelineKnobs,
+) -> ClusteringLimitsSettings:
+    """Return ClusteringLimitsSettings with profile-resolved similarity threshold."""
+    return limits.model_copy(update={"similarity_threshold": knobs.limits_similarity_threshold})
+
+
+def apply_resolved_detection_settings(
+    detection: IdentityDetectionSettings,
+    knobs: ResolvedFacePipelineKnobs,
+) -> IdentityDetectionSettings:
+    """Return IdentityDetectionSettings with profile-resolved default threshold."""
+    return detection.model_copy(update={"default_threshold": knobs.detection_default_threshold})
+
+
+def resolve_effective_clustering_settings(
+    *,
+    recognition: RecognitionSettings | None = None,
+) -> ClusteringSettings:
+    """Profile-resolved ClusteringSettings for gate/discovery construction (S2)."""
+    settings = recognition if recognition is not None else RecognitionSettings()
+    knobs = resolve_face_pipeline_knobs(
+        face_pipeline=settings.face_pipeline,
+        clustering=settings.clustering,
+        clustering_limits=settings.clustering_limits,
+        identity_detection=settings.identity_detection,
+    )
+    return apply_resolved_clustering_settings(settings.clustering, knobs)
+
+
+def resolve_effective_limits_settings(
+    *,
+    recognition: RecognitionSettings | None = None,
+) -> ClusteringLimitsSettings:
+    """Profile-resolved ClusteringLimitsSettings for limits-threshold readers (S2)."""
+    settings = recognition if recognition is not None else RecognitionSettings()
+    knobs = resolve_face_pipeline_knobs(
+        face_pipeline=settings.face_pipeline,
+        clustering=settings.clustering,
+        clustering_limits=settings.clustering_limits,
+        identity_detection=settings.identity_detection,
+    )
+    return apply_resolved_limits_settings(settings.clustering_limits, knobs)
+
+
+def resolve_effective_detection_settings(
+    *,
+    recognition: RecognitionSettings | None = None,
+) -> IdentityDetectionSettings:
+    """Profile-resolved IdentityDetectionSettings for detection-threshold readers (S2)."""
+    settings = recognition if recognition is not None else RecognitionSettings()
+    knobs = resolve_face_pipeline_knobs(
+        face_pipeline=settings.face_pipeline,
+        clustering=settings.clustering,
+        clustering_limits=settings.clustering_limits,
+        identity_detection=settings.identity_detection,
+    )
+    return apply_resolved_detection_settings(settings.identity_detection, knobs)
+
+def bridge_oact_into_quality_settings(
+    quality: QualitySettings,
+    knobs: ResolvedFacePipelineKnobs,
+) -> QualitySettings:
+    """Bridge profile-resolved OACT coefficient into QualitySettings (FIR-6 S1).
+
+    Only ``oact_coefficient`` is written — base quality band knobs stay on
+    ``ClusteringSettings.quality`` (S1 scopes the gate rebind to OACT only;
+    threshold rebinding is S2). Under insightface ``knobs.oact_coefficient`` is
+    already 0.0 so residual FacePipelineSettings.oact values cannot leak.
+    """
+    coeff = float(knobs.oact_coefficient)
+    if coeff < 0.0:
+        raise ValueError(
+            f"Invalid oact_coefficient={coeff!r}; must be >= 0 (negative rewards occlusion)"
+        )
+    if float(quality.oact_coefficient) == coeff:
+        return quality
+    return quality.model_copy(update={"oact_coefficient": coeff})
+
+
+def apply_oact_bridge_to_clustering(
+    clustering: ClusteringSettings,
+    knobs: ResolvedFacePipelineKnobs,
+) -> ClusteringSettings:
+    """Return clustering settings with OACT coefficient bridged for gate consumers.
+
+    S1 wiring path for ``ConfidenceCheck`` / ``AssignmentGate``: call after
+    :func:`resolve_face_pipeline_knobs` so runtime OACT is profile-gated.
+    """
+    quality = bridge_oact_into_quality_settings(clustering.quality, knobs)
+    if quality is clustering.quality:
+        return clustering
+    return clustering.model_copy(update={"quality": quality})
 
 
 class IdentityDetectionSettings(BaseModel):

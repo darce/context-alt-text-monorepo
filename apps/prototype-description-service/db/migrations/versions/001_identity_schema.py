@@ -338,6 +338,10 @@ def ensure_tables(op) -> None:
         sa.Column("pose_pitch", sa.Float(), nullable=True),
         sa.Column("pose_yaw", sa.Float(), nullable=True),
         sa.Column("pose_roll", sa.Float(), nullable=True),
+        # FIR-6 S1 quality factors (face_pipeline scan only; NULL under insightface)
+        sa.Column("sharpness", sa.Float(), nullable=True),
+        sa.Column("embedding_norm", sa.Float(), nullable=True),
+        sa.Column("occlusion_severity", sa.Float(), nullable=True),
         sa.Column("quality_score", sa.Float(), nullable=True),
         sa.Column("image_phash", sa.String(length=64), nullable=True),
         sa.Column("last_exported_snapshot_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=True),

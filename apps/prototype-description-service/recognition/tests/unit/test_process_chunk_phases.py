@@ -43,12 +43,14 @@ def _accepted_decision(identity_id: str, cluster_id: str) -> AssignmentDecision:
 
 
 class _RecordingAssignmentWriter:
-    def __init__(self, result: tuple[int, int, int]) -> None:
+    def __init__(self, result: tuple[int, int, int, set[str]]) -> None:
         self._result = result
-        self.calls: list[tuple[object, bool]] = []
+        self.calls: list[tuple[object, bool, bool]] = []
 
-    async def persist_assignments_chunk(self, decisions: object, *, batch_mode: bool) -> tuple[int, int, int]:
-        self.calls.append((decisions, batch_mode))
+    async def persist_assignments_chunk(
+        self, decisions: object, *, batch_mode: bool, joint_uniqueness_enabled: bool = False
+    ) -> tuple[int, int, int, set[str]]:
+        self.calls.append((decisions, batch_mode, joint_uniqueness_enabled))
         return self._result
 
 
@@ -63,17 +65,20 @@ class _RecordingSuggestionService:
 @pytest.mark.asyncio
 async def test_persist_accepted_assignments_bulk_persists_and_resolves(monkeypatch: pytest.MonkeyPatch) -> None:
     runner = _bare_runner()
-    writer = _RecordingAssignmentWriter((2, 1, 5))  # persisted, skipped, reps_added
+    writer = _RecordingAssignmentWriter((2, 1, 5, set()))  # persisted, skipped, reps_added, guard_rejected
     suggestions = _RecordingSuggestionService()
     monkeypatch.setattr(runner, "_assignment_writer", writer, raising=False)
     monkeypatch.setattr(runner, "_suggestion_service", suggestions, raising=False)
 
     decisions = [_accepted_decision("a1", "c1"), _accepted_decision("a2", "c2")]
-    reps_added = await runner._persist_accepted_assignments(decisions, job_id="job-1", verbose=False)
+    reps_added, guard_rejected = await runner._persist_accepted_assignments(
+        decisions, job_id="job-1", verbose=False
+    )
 
     assert reps_added == 5
+    assert guard_rejected == set()
     # One bulk call carrying the whole decision list in batch mode.
-    assert writer.calls == [(decisions, True)]
+    assert writer.calls == [(decisions, True, False)]
     # Suggestions resolved once per accepted decision, with the candidate's ids.
     assert suggestions.resolved == [
         ("a1", "c1", "auto_assignment"),
@@ -84,14 +89,17 @@ async def test_persist_accepted_assignments_bulk_persists_and_resolves(monkeypat
 @pytest.mark.asyncio
 async def test_persist_accepted_assignments_noop_when_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     runner = _bare_runner()
-    writer = _RecordingAssignmentWriter((0, 0, 0))
+    writer = _RecordingAssignmentWriter((0, 0, 0, set()))
     suggestions = _RecordingSuggestionService()
     monkeypatch.setattr(runner, "_assignment_writer", writer, raising=False)
     monkeypatch.setattr(runner, "_suggestion_service", suggestions, raising=False)
 
-    reps_added = await runner._persist_accepted_assignments([], job_id="job-1", verbose=True)
+    reps_added, guard_rejected = await runner._persist_accepted_assignments(
+        [], job_id="job-1", verbose=True
+    )
 
     assert reps_added == 0
+    assert guard_rejected == set()
     assert writer.calls == []
     assert suggestions.resolved == []
 

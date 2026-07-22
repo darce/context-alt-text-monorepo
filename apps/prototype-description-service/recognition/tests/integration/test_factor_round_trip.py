@@ -19,6 +19,21 @@ from recognition.infrastructure.repositories.cluster_repository import SqlAlchem
 class FactorDetector(FaceDetectorProtocol):
     """face_pipeline-style detector that emits non-None quality factors."""
 
+    def __init__(
+        self,
+        *,
+        sharpness: float = 42.5,
+        embedding_norm: float = 3.25,
+        occlusion_severity: float = 0.15,
+        pose_yaw: float = 5.0,
+        pose_roll: float = -2.0,
+    ) -> None:
+        self.sharpness = sharpness
+        self.embedding_norm = embedding_norm
+        self.occlusion_severity = occlusion_severity
+        self.pose_yaw = pose_yaw
+        self.pose_roll = pose_roll
+
     async def detect(self, sources: Iterable[bytes | str]) -> list[FaceDetection]:
         emb = np.zeros(512, dtype=np.float32)
         emb[0] = 1.0
@@ -29,13 +44,13 @@ class FactorDetector(FaceDetectorProtocol):
                 confidence=0.95,
                 embedding=emb,
                 pose_pitch=None,
-                pose_yaw=5.0,
-                pose_roll=-2.0,
+                pose_yaw=self.pose_yaw,
+                pose_roll=self.pose_roll,
                 landmark_quality=0.9,
                 model_id="sface@face_pipeline",
-                sharpness=42.5,
-                embedding_norm=3.25,
-                occlusion_severity=0.15,
+                sharpness=self.sharpness,
+                embedding_norm=self.embedding_norm,
+                occlusion_severity=self.occlusion_severity,
             )
         ]
 
@@ -127,3 +142,63 @@ async def test_insightface_path_factors_null(db_session, tenant) -> None:
     assert domain.sharpness is None
     assert domain.embedding_norm is None
     assert domain.occlusion_severity is None
+
+
+@pytest.mark.asyncio
+async def test_factor_update_branch_round_trip(db_session, tenant) -> None:
+    """IoU-matched rescan must rewrite factor columns (FIR6S1-M-08 / TEST-15)."""
+    first = FactorDetector(
+        sharpness=42.5,
+        embedding_norm=3.25,
+        occlusion_severity=0.15,
+        pose_yaw=5.0,
+        pose_roll=-2.0,
+    )
+    scan_service = ScanService(
+        session=db_session,
+        detector=first,
+        generator=StubEmbeddingGenerator(embedding_dim=512),
+    )
+    await scan_service.process_media_item(
+        tenant_id=str(tenant.id),
+        media_id=4444,
+        media_url="http://example.test/update-factors.jpg",
+    )
+
+    # Same bbox so reconcile takes the update/match branch, not insert/orphan.
+    updated = FactorDetector(
+        sharpness=77.0,
+        embedding_norm=4.5,
+        occlusion_severity=0.4,
+        pose_yaw=12.0,
+        pose_roll=3.0,
+    )
+    scan_service = ScanService(
+        session=db_session,
+        detector=updated,
+        generator=StubEmbeddingGenerator(embedding_dim=512),
+    )
+    await scan_service.process_media_item(
+        tenant_id=str(tenant.id),
+        media_id=4444,
+        media_url="http://example.test/update-factors.jpg",
+    )
+
+    row = (
+        await db_session.execute(
+            select(MediaIdentityModel).where(
+                MediaIdentityModel.tenant_id == tenant.id,
+                MediaIdentityModel.media_id == 4444,
+            )
+        )
+    ).scalar_one()
+    assert row.sharpness == pytest.approx(77.0)
+    assert row.embedding_norm == pytest.approx(4.5)
+    assert row.occlusion_severity == pytest.approx(0.4)
+    assert row.pose_yaw == pytest.approx(12.0)
+    assert row.pose_roll == pytest.approx(3.0)
+
+    domain = SqlAlchemyClusterRepository(db_session)._to_domain_identity(row)
+    assert domain.sharpness == pytest.approx(77.0)
+    assert domain.embedding_norm == pytest.approx(4.5)
+    assert domain.occlusion_severity == pytest.approx(0.4)

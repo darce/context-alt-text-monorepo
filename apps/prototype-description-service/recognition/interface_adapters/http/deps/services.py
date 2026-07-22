@@ -108,8 +108,25 @@ class AuditRepositoryProtocol(Protocol):
 
 @lru_cache
 def get_settings() -> ClusteringSettings:
-    """Provide clustering settings from the recognition config."""
-    return get_recognition_settings().clustering
+    """Provide clustering settings with S1 OACT bridge applied.
+
+    Threshold rebinding through resolve_face_pipeline_knobs is S2; S1 only
+    bridges the profile-gated oact_coefficient into ClusteringSettings.quality
+    so ConfidenceCheck / AssignmentGate can activate OACT under face_pipeline.
+    """
+    from recognition.config.settings import (
+        apply_oact_bridge_to_clustering,
+        resolve_face_pipeline_knobs,
+    )
+
+    recog = get_recognition_settings()
+    knobs = resolve_face_pipeline_knobs(
+        face_pipeline=recog.face_pipeline,
+        clustering=recog.clustering,
+        clustering_limits=recog.clustering_limits,
+        identity_detection=recog.identity_detection,
+    )
+    return apply_oact_bridge_to_clustering(recog.clustering, knobs)
 
 
 async def get_suggestion_service(

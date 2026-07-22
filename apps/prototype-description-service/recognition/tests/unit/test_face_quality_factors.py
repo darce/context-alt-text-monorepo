@@ -112,9 +112,11 @@ class TestEmbedNormCapture:
         # Captured pre-norm magnitudes must not collapse to the unit post-norm.
         assert float(a.norms[0]) != pytest.approx(1.0, abs=0.05)
         assert float(b.norms[0]) != pytest.approx(1.0, abs=0.05)
-        # Mutation: reconstructing "norms" from unit vectors fails discrimination.
-        fake_norms = np.array([post_norm_a, post_norm_b], dtype=np.float32)
-        assert float(fake_norms[0]) == pytest.approx(float(fake_norms[1]), abs=1e-5)
+        # Mutation guard: post-norm "norms" lose the pre-norm discrimination that
+        # EmbedBatchResult.norms must preserve (EMB-03 / FIR6S1-M-07).
+        assert float(a.norms[0]) != pytest.approx(post_norm_a, abs=0.05)
+        assert float(b.norms[0]) != pytest.approx(post_norm_b, abs=0.05)
+        assert abs(float(a.norms[0]) - float(b.norms[0])) > abs(post_norm_a - post_norm_b)
 
 
 class TestOactDarkScaffold:
@@ -220,6 +222,53 @@ class TestNoopFloors:
             embedding_norm=None,
             occlusion_severity=None,
         )
+
+    def test_floor_rejects_below_sharpness(self) -> None:
+        assert not passes_factor_floors(
+            sharpness=5.0,
+            embedding_norm=10.0,
+            occlusion_severity=0.1,
+            floor_sharpness=10.0,
+            floor_embedding_norm=0.0,
+            ceiling_occlusion=1.0,
+        )
+
+    def test_floor_rejects_below_embedding_norm(self) -> None:
+        assert not passes_factor_floors(
+            sharpness=50.0,
+            embedding_norm=1.0,
+            occlusion_severity=0.1,
+            floor_sharpness=0.0,
+            floor_embedding_norm=3.0,
+            ceiling_occlusion=1.0,
+        )
+
+    def test_ceiling_rejects_high_occlusion(self) -> None:
+        assert not passes_factor_floors(
+            sharpness=50.0,
+            embedding_norm=10.0,
+            occlusion_severity=0.9,
+            floor_sharpness=0.0,
+            floor_embedding_norm=0.0,
+            ceiling_occlusion=0.5,
+        )
+
+    def test_active_floors_accept_passing_observation(self) -> None:
+        assert passes_factor_floors(
+            sharpness=50.0,
+            embedding_norm=10.0,
+            occlusion_severity=0.2,
+            floor_sharpness=10.0,
+            floor_embedding_norm=3.0,
+            ceiling_occlusion=0.5,
+        )
+
+
+class TestOactDefaultPin:
+    def test_quality_settings_oact_default_is_zero(self) -> None:
+        """Dark-by-default pin: flipping the default to non-zero must fail this test."""
+        assert QualitySettings().oact_coefficient == 0.0
+        assert QualitySettings.model_fields["oact_coefficient"].default == 0.0
 
 
 class TestInsightfaceFactorsNone:

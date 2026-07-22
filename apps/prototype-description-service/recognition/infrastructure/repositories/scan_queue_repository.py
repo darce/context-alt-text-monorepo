@@ -283,7 +283,11 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
         limit: int,
         now: datetime,
     ) -> list[ScanQueueItem]:
-        # pending.started_at doubles as not-before when set by release_item_for_retry.
+        # Invariant: while status='pending', started_at is either NULL (claimable
+        # immediately) or a not-before timestamp set by release_item_for_retry.
+        # Only reclaim_stale_items (processing-only) and cancel/finalize paths
+        # may clear or ignore it; never treat pending.started_at as wall-clock
+        # processing-start.
         stmt: Select[tuple[IdentityScanJobItem]] = (
             select(IdentityScanJobItem)
             .where(
@@ -316,7 +320,7 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
         return [_to_item(row) for row in rows]
 
     async def _claim_pending_items_any_generic(self, *, limit: int, now: datetime) -> list[ScanQueueItem]:
-        # pending.started_at doubles as not-before when set by release_item_for_retry.
+        # Invariant: pending.started_at is NULL or a not-before (see generic claim).
         stmt: Select[tuple[IdentityScanJobItem]] = (
             select(IdentityScanJobItem)
             .where(
@@ -355,7 +359,9 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
         now: datetime,
     ) -> list[ScanQueueItem]:
         # CTE claim pattern: select ids FOR UPDATE SKIP LOCKED then update returning.
-        # pending.started_at doubles as not-before when set by release_item_for_retry.
+        # Invariant: pending.started_at is NULL or a not-before (see generic claim).
+        # This predicate must stay mirrored with the generic path — production
+        # workers use claim_pending_items_any → this CTE on Postgres.
         claim_sql = text(
             """
             WITH claimed AS (
@@ -404,7 +410,8 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
         ]
 
     async def _claim_pending_items_any_postgres(self, *, limit: int, now: datetime) -> list[ScanQueueItem]:
-        # pending.started_at doubles as not-before when set by release_item_for_retry.
+        # Invariant: pending.started_at is NULL or a not-before (see generic claim).
+        # Hot path for production workers — not-before predicate is load-bearing.
         claim_sql = text(
             """
             WITH claimed AS (
@@ -470,19 +477,32 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
         error_message: str,
         attempts: int,
         now: datetime | None = None,
-    ) -> None:
-        """Return item to pending; ``started_at`` holds not-before (retry backoff)."""
+    ) -> bool:
+        """Return a processing item to pending with attempt-based not-before backoff.
+
+        Only transitions ``status='processing'`` rows (status guard). A late
+        release after stale-reclaim / re-claim must not demote another worker's
+        in-flight or terminal row. Returns True iff a row was updated.
+
+        While pending, ``started_at`` stores the not-before instant
+        (``now + compute_retry_backoff(attempts)``), not processing-start.
+        """
         claim_now = now if now is not None else datetime.now(tz=UTC)
         available_at = claim_now + compute_retry_backoff(attempts)
-        await self._session.execute(
+        result = await execute_dml(
+            self._session,
             update(IdentityScanJobItem)
-            .where(IdentityScanJobItem.id == item_id)
+            .where(
+                IdentityScanJobItem.id == item_id,
+                IdentityScanJobItem.status == ScanItemStatus.PROCESSING.value,
+            )
             .values(
                 status=JobStatus.PENDING,
                 started_at=available_at,
                 last_error=error_message,
-            )
+            ),
         )
+        return get_rowcount(result) > 0
 
     async def cancel_pending_items(self, *, job_id: uuid.UUID, cancelled_at: datetime) -> int:
         result = await execute_dml(

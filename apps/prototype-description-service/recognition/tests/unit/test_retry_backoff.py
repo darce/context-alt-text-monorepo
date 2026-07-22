@@ -30,6 +30,13 @@ def test_compute_retry_backoff_caps_at_max() -> None:
     assert compute_retry_backoff(6) == timedelta(seconds=DEFAULT_RETRY_BACKOFF_MAX_SECONDS)
 
 
+def test_compute_retry_backoff_pathological_attempts_do_not_overflow() -> None:
+    """R2-03: cap must apply before pow so attempts ~1100 never OverflowError."""
+    for attempts in (20, 64, 1026, 1100, 10_000, 1_000_000):
+        delay = compute_retry_backoff(attempts)
+        assert delay == timedelta(seconds=DEFAULT_RETRY_BACKOFF_MAX_SECONDS)
+
+
 def test_compute_retry_backoff_treats_non_positive_as_one() -> None:
     assert compute_retry_backoff(0) == compute_retry_backoff(1)
     assert compute_retry_backoff(-3) == compute_retry_backoff(1)

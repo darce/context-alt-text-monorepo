@@ -897,3 +897,48 @@ async def test_run_forever_claims_when_runtime_ready(
     assert len(claim_calls) == 1
 
     await worker.__aexit__(None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_unavailable_detector_demotes_sticky_ready_flag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """R2-06: mid-life Unavailable detector must demote ready and block claims."""
+    from recognition.application.embedding.detector import UnavailableFaceDetector
+    from recognition.application.embedding.generator import UnavailableEmbeddingGenerator
+
+    monkeypatch.setattr(
+        scan_worker_module,
+        "get_recognition_settings",
+        lambda: SimpleNamespace(
+            runtime_mode="prod",
+            blob_root=tmp_path / "blobs",
+            face_pipeline=SimpleNamespace(profile="insightface"),
+        ),
+    )
+    worker = scan_worker_module.ScanWorker(
+        scan_worker_module.ScanWorkerConfig(postgres_dsn="sqlite+aiosqlite:///:memory:")
+    )
+    # Simulate prior success then mid-life Unavailable swap.
+    worker._embedding_runtime_ready = True
+    worker._detector = UnavailableFaceDetector("mid-life outage")
+    worker._generator = UnavailableEmbeddingGenerator("mid-life outage")
+
+    assert worker._can_claim_scan_items() is False
+    assert worker._embedding_runtime_ready is False
+
+    rebuilds = 0
+
+    async def _rebuild(*, settings, http_client=None, adapter_provider=None, metrics=None, **_kwargs):
+        nonlocal rebuilds
+        rebuilds += 1
+        return UnavailableFaceDetector("still down"), UnavailableEmbeddingGenerator("still down")
+
+    monkeypatch.setattr(scan_worker_module, "build_embedding_runtime", _rebuild)
+    worker._embedding_retry_after = None
+    await worker._ensure_embedding_runtime()
+    assert rebuilds == 1
+    assert worker._embedding_runtime_ready is False
+    assert worker._can_claim_scan_items() is False
+
+    await worker.__aexit__(None, None, None)

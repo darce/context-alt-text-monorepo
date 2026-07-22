@@ -362,8 +362,16 @@ class ScanWorker:
         Test mode always claims (stubs). Production requires a ready embedding
         runtime so Unavailable* does not burn attempt budgets on tight loops.
         Clustering is independent and still runs when this returns False.
+
+        An Unavailable detector always demotes the sticky ready flag so a
+        mid-life outage cannot keep the claim gate open (R2-06).
         """
-        return self._runtime_mode == "test" or self._embedding_runtime_ready
+        if self._runtime_mode == "test":
+            return True
+        if isinstance(self._detector, UnavailableFaceDetector):
+            self._embedding_runtime_ready = False
+            return False
+        return self._embedding_runtime_ready
 
     async def _probe_and_publish_embedding_runtime_capability(self) -> None:
         """Retry runtime initialization even while intake is rejecting new jobs."""
@@ -371,8 +379,19 @@ class ScanWorker:
         await self._heartbeat_embedding_runtime_capability()
 
     async def _ensure_embedding_runtime(self) -> None:
-        """Initialize scan inference dependencies once per worker process."""
-        if self._embedding_runtime_ready or self._runtime_mode == "test":
+        """Initialize scan inference dependencies once per worker process.
+
+        Ready is sticky-true only while the live detector is usable. An
+        UnavailableFaceDetector demotes the flag so the next probe re-enters
+        the factory after the retry window (mid-life outage recovery).
+        """
+        if self._runtime_mode == "test":
+            return
+        # Demote sticky-true when the live detector is Unavailable so claim
+        # guard and capability heartbeat stay consistent (R2-06).
+        if isinstance(self._detector, UnavailableFaceDetector):
+            self._embedding_runtime_ready = False
+        if self._embedding_runtime_ready:
             return
         now = datetime.now(tz=UTC)
         if self._embedding_retry_after is not None and now < self._embedding_retry_after:

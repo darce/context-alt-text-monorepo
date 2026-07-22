@@ -194,12 +194,13 @@ async def test_release_item_for_retry_applies_attempt_based_not_before(db_sessio
     item = claimed[0]
     assert item.attempts == 1
 
-    await repo.release_item_for_retry(
+    released = await repo.release_item_for_retry(
         item_id=item.id,
         error_message="transient",
         attempts=item.attempts,
         now=now,
     )
+    assert released is True
     await db_session.flush()
 
     row = (
@@ -245,10 +246,10 @@ async def test_release_item_for_retry_longer_backoff_for_higher_attempts(db_sess
     assert len(claimed) == 2
     low, high = claimed[0], claimed[1]
 
-    await repo.release_item_for_retry(
+    assert await repo.release_item_for_retry(
         item_id=low.id, error_message="e1", attempts=1, now=now
     )
-    await repo.release_item_for_retry(
+    assert await repo.release_item_for_retry(
         item_id=high.id, error_message="e2", attempts=3, now=now
     )
     await db_session.flush()
@@ -267,6 +268,125 @@ async def test_release_item_for_retry_longer_backoff_for_higher_attempts(db_sess
     mid = now + compute_retry_backoff(1) + timedelta(milliseconds=1)
     mid_claimed = await repo.claim_pending_items(tenant_id=tenant.id, job_id=job_id, limit=2, now=mid)
     assert [c.id for c in mid_claimed] == [low.id]
+
+
+@pytest.mark.asyncio
+async def test_release_item_for_retry_status_guard_skips_non_processing(
+    db_session, tenant
+) -> None:
+    """R2-05: late release must not demote pending/terminal rows after reclaim."""
+    from recognition.application.scan.retry_backoff import compute_retry_backoff
+
+    repo = SqlAlchemyScanQueueRepository(db_session)
+    now = datetime.now(tz=UTC)
+    job_id = await repo.create_job(tenant_id=tenant.id, media_ids=[1])
+    await repo.enqueue_items(
+        job_id=job_id,
+        tenant_id=tenant.id,
+        items=[(1, "http://example.test/1.jpg")],
+    )
+    claimed = await repo.claim_pending_items(tenant_id=tenant.id, job_id=job_id, limit=1, now=now)
+    assert len(claimed) == 1
+    item = claimed[0]
+
+    # First release while processing succeeds.
+    assert await repo.release_item_for_retry(
+        item_id=item.id, error_message="first", attempts=1, now=now
+    )
+    await db_session.flush()
+    row = (
+        await db_session.execute(select(IdentityScanJobItem).where(IdentityScanJobItem.id == item.id))
+    ).scalar_one()
+    assert row.status == "pending"
+    first_started = _as_utc(row.started_at)
+
+    # Late release after row is already pending must be a no-op (status guard).
+    later = now + timedelta(seconds=30)
+    assert (
+        await repo.release_item_for_retry(
+            item_id=item.id, error_message="stale-late", attempts=2, now=later
+        )
+        is False
+    )
+    await db_session.flush()
+    row = (
+        await db_session.execute(select(IdentityScanJobItem).where(IdentityScanJobItem.id == item.id))
+    ).scalar_one()
+    assert row.status == "pending"
+    assert row.last_error == "first"
+    assert _as_utc(row.started_at) == first_started
+    assert first_started == now + compute_retry_backoff(1)
+
+    # Terminal row also protected.
+    await repo.mark_item_failed(
+        item_id=item.id, completed_at=later, error_message="terminal"
+    )
+    # Force processing so mark_item_failed is not needed for the guard case:
+    # mark_item_failed already set failed; release must still return False.
+    assert (
+        await repo.release_item_for_retry(
+            item_id=item.id, error_message="after-fail", attempts=3, now=later
+        )
+        is False
+    )
+    await db_session.flush()
+    row = (
+        await db_session.execute(select(IdentityScanJobItem).where(IdentityScanJobItem.id == item.id))
+    ).scalar_one()
+    assert row.status == "failed"
+    assert row.last_error == "terminal"
+
+
+@pytest.mark.asyncio
+async def test_postgres_claim_sql_includes_started_at_not_before_predicate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R2-02: hand-mirrored Postgres CTE must keep the not-before predicate.
+
+    Production uses claim_pending_items_any → raw SQL CTE. Deleting the
+    ``started_at`` guard must fail this test even when SQLite generic path
+    remains green.
+    """
+    from sqlalchemy.sql.elements import TextClause
+
+    captured_sql: list[str] = []
+
+    class _EmptyResult:
+        def mappings(self):
+            return self
+
+        def all(self):
+            return []
+
+    class _FakeSession:
+        async def execute(self, stmt, params=None):  # noqa: ANN001
+            if isinstance(stmt, TextClause):
+                captured_sql.append(str(stmt))
+            elif hasattr(stmt, "text"):
+                captured_sql.append(str(stmt.text))
+            else:
+                captured_sql.append(str(stmt))
+            return _EmptyResult()
+
+    monkeypatch.setattr(
+        "recognition.infrastructure.repositories.scan_queue_repository.is_postgres",
+        lambda _session: True,
+    )
+    repo = SqlAlchemyScanQueueRepository(_FakeSession())  # type: ignore[arg-type]
+    now = datetime.now(tz=UTC)
+    tenant_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+
+    assert await repo.claim_pending_items(tenant_id=tenant_id, job_id=job_id, limit=1, now=now) == []
+    assert await repo.claim_pending_items_any(limit=1, now=now) == []
+
+    assert len(captured_sql) == 2, f"expected both CTE claim paths; got {captured_sql!r}"
+    for sql in captured_sql:
+        normalized = " ".join(sql.lower().split())
+        assert "started_at is null or started_at <= :now" in normalized, (
+            f"Postgres CTE missing not-before predicate: {sql}"
+        )
+        assert "status = 'pending'" in normalized
 
 
 @pytest.mark.asyncio

@@ -190,12 +190,16 @@ class ScanQueueRepository(Protocol):
         error_message: str,
         attempts: int,
         now: datetime | None = None,
-    ) -> None:
-        """Return an item to pending with attempt-based not-before backoff.
+    ) -> bool:
+        """Return a processing item to pending with attempt-based not-before backoff.
 
         ``attempts`` is the post-claim attempt count. Implementations must delay
         re-claim until ``now + compute_retry_backoff(attempts)`` (typically by
         storing that instant in ``started_at`` while status is pending).
+
+        Only rows still in ``processing`` may be released; a late release after
+        reclaim/re-claim must not demote another worker's row. Return True iff
+        a row was updated.
         """
 
     async def cancel_pending_items(self, *, job_id: uuid.UUID, cancelled_at: datetime) -> int:

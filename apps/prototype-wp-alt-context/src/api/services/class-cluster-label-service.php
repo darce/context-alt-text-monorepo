@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace AltContext\Api\Services;
 
+require_once __DIR__ . '/class-person-resolution-service.php';
+
 use AltContext\Api\ClusterMutationHostInterface;
 use AltContext\Support\RunsTransactional;
 use AltContext\Sovereign\Repositories\ClustersRepository;
@@ -14,13 +16,21 @@ use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
 
+use function current_time;
 use function is_array;
 use function is_object;
 use function is_wp_error;
+use function max;
 use function method_exists;
 use function sanitize_text_field;
 use function sprintf;
 
+/**
+ * Label curation with person-projection write-through.
+ *
+ * PersonResolutionService is transaction-agnostic: this service owns the
+ * run_transactional boundary and must not nest another START TRANSACTION.
+ */
 class ClusterLabelService {
 	use RunsTransactional;
 
@@ -72,36 +82,108 @@ class ClusterLabelService {
 			}
 		}
 
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) || ! method_exists( $wpdb, 'update' ) ) {
 			return new WP_Error( 'acx_db_error', 'Database access is unavailable.', array( 'status' => 500 ) );
 		}
 
 		$affected_rows = 0;
 		$result        = $this->run_transactional(
 			function () use ( $cluster_id, $label, $cluster, $tenant_id, &$affected_rows ): WP_REST_Response|WP_Error {
+				global $wpdb;
+
 				$affected_rows = $this->clusters_repository->update_label( $cluster_id, $label );
-				if ( $affected_rows > 0 && ! $this->host->enqueue_curation_operation(
+				if ( $affected_rows <= 0 ) {
+					return new WP_REST_Response(
+						array(
+							'cluster_id' => $cluster_id,
+							'label'      => $label,
+							'synced'     => false,
+							'status'     => 'acknowledged',
+						),
+						200
+					);
+				}
+
+				// Caller owns the transaction: resolver must not open nested START TRANSACTION.
+				$resolver = new PersonResolutionService();
+				$resolved = $resolver->resolve_or_create(
+					$label,
+					function ( string $person_uuid, string $name, array $tags ) use ( $cluster ): bool {
+						// person_created local_revision is always 1 for a newly created person.
+						return $this->host->enqueue_curation_operation(
+							'person_created',
+							$person_uuid,
+							array(
+								'local_revision'    => 0,
+								'snapshot_version'  => max( 0, (int) ( $cluster['snapshot_version'] ?? 0 ) ),
+							),
+							array(
+								'person_uuid' => $person_uuid,
+								'name'        => $name,
+								'tags'        => $tags,
+							),
+							'person'
+						);
+					}
+				);
+				if ( is_wp_error( $resolved ) ) {
+					return $resolved;
+				}
+
+				$table_clusters = $wpdb->prefix . 'acx_clusters';
+				$now            = current_time( 'mysql' );
+				$bound          = $wpdb->update(
+					$table_clusters,
+					array(
+						'person_id'         => $resolved['person_id'],
+						'curation_state'    => 'confirmed',
+						'is_user_confirmed' => 1,
+						'updated_at'        => $now,
+					),
+					array( 'cluster_uuid' => $cluster_id ),
+					array( '%d', '%s', '%d', '%s' ),
+					array( '%s' )
+				);
+				if ( false === $bound ) {
+					return new WP_Error( 'acx_db_error', 'Could not bind person to cluster.', array( 'status' => 500 ) );
+				}
+
+				if ( ! $this->host->enqueue_curation_operation(
 					'cluster_label_updated',
 					$cluster_id,
 					$cluster,
 					array(
 						'cluster_uuid' => $cluster_id,
-						'label' => $label,
+						'label'        => $label,
 					)
 				) ) {
 					return new WP_Error( 'acx_db_error', 'Could not queue label replay operation.', array( 'status' => 500 ) );
 				}
 
-				if ( $affected_rows > 0 ) {
-					$this->sync_state_repository->touch_local_curation_marker( $tenant_id );
+				if ( ! $this->host->enqueue_curation_operation(
+					'cluster_person_bound',
+					$cluster_id,
+					$cluster,
+					array(
+						'cluster_uuid' => $cluster_id,
+						'person_uuid'  => $resolved['person_uuid'],
+						'person_name'  => $resolved['name'],
+					)
+				) ) {
+					return new WP_Error( 'acx_db_error', 'Could not queue person-bind replay operation.', array( 'status' => 500 ) );
 				}
+
+				$this->sync_state_repository->touch_local_curation_marker( $tenant_id );
 
 				return new WP_REST_Response(
 					array(
-						'cluster_id' => $cluster_id,
-						'label' => $label,
-						'synced' => false,
-						'status' => $affected_rows > 0 ? 'pending' : 'acknowledged',
+						'cluster_id'  => $cluster_id,
+						'label'       => $label,
+						'person_id'   => $resolved['person_id'],
+						'person_uuid' => $resolved['person_uuid'],
+						'person_name' => $resolved['name'],
+						'synced'      => false,
+						'status'      => 'pending',
 					),
 					200
 				);

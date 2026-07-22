@@ -117,6 +117,10 @@ def test_resolve_insightface_uses_shared_anchors_not_face_overrides() -> None:
         face_limits_similarity_threshold=0.97,
         face_detection_default_threshold=0.96,
         oact_coefficient=0.25,
+        # Residual/env-set floors must not activate under insightface (FIR6S3B-M-02).
+        factor_floor_sharpness=12.0,
+        factor_floor_embedding_norm=3.0,
+        factor_ceiling_occlusion=0.8,
         joint_assignment_enabled=False,
     )
 
@@ -137,6 +141,10 @@ def test_resolve_insightface_uses_shared_anchors_not_face_overrides() -> None:
     # OACT is profile-gated: residual FacePipelineSettings.oact must not activate
     # under insightface (FIR6S1-M-02).
     assert knobs.oact_coefficient == 0.0
+    # Enrollment floors profile-gated like OACT (FIR6S3B-M-02 / EMB-07).
+    assert knobs.factor_floor_sharpness == 0.0
+    assert knobs.factor_floor_embedding_norm == 0.0
+    assert knobs.factor_ceiling_occlusion == 1.0
     assert knobs.joint_assignment_enabled is False
 
 
@@ -296,6 +304,39 @@ def test_bridge_oact_profile_gates_and_updates_quality() -> None:
     knobs_off = _resolve(face_off)
     assert knobs_off.oact_coefficient == 0.0
     assert bridge_oact_into_quality_settings(quality, knobs_off) is quality
+
+
+def test_bridge_floors_profile_gated_under_insightface() -> None:
+    """S6 rollback: insightface + env floors must bridge as no-op (FIR6S3B-M-02)."""
+    quality = QualitySettings(
+        factor_floor_sharpness=0.0,
+        factor_floor_embedding_norm=0.0,
+        factor_ceiling_occlusion=1.0,
+    )
+    face = FacePipelineSettings(
+        profile="insightface",
+        factor_floor_sharpness=12.0,
+        factor_floor_embedding_norm=3.0,
+        factor_ceiling_occlusion=0.8,
+    )
+    knobs = _resolve(face)
+    assert knobs.factor_floor_sharpness == 0.0
+    assert knobs.factor_floor_embedding_norm == 0.0
+    assert knobs.factor_ceiling_occlusion == 1.0
+    # Bridging no-op knobs onto already-no-op quality is identity.
+    assert bridge_oact_into_quality_settings(quality, knobs) is quality
+
+    face_on = FacePipelineSettings(
+        profile="face_pipeline",
+        factor_floor_sharpness=12.0,
+        factor_floor_embedding_norm=3.0,
+        factor_ceiling_occlusion=0.8,
+    )
+    knobs_on = _resolve(face_on)
+    bridged = bridge_oact_into_quality_settings(quality, knobs_on)
+    assert bridged.factor_floor_sharpness == 12.0
+    assert bridged.factor_floor_embedding_norm == 3.0
+    assert bridged.factor_ceiling_occlusion == 0.8
 
 
 def test_apply_oact_bridge_to_clustering_updates_quality_only() -> None:

@@ -15,7 +15,13 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from recognition.application.settings import ClusteringSettings, QualitySettings
+from recognition.application.settings import (
+    ENROLLMENT_NOOP_CEILING_OCCLUSION,
+    ENROLLMENT_NOOP_FLOOR_EMBEDDING_NORM,
+    ENROLLMENT_NOOP_FLOOR_SHARPNESS,
+    ClusteringSettings,
+    QualitySettings,
+)
 from recognition.application.settings.scan import ScanSettings
 from recognition.infrastructure.face_pipeline._common import (
     DEFAULT_NMS_THRESHOLD,
@@ -35,9 +41,9 @@ _LEGACY_SUGGESTION_CEILING = 0.55
 _LEGACY_LIMITS_SIMILARITY_THRESHOLD = 0.6
 _LEGACY_DETECTION_DEFAULT_THRESHOLD = 0.45
 
-# No-op factor floors: floors accept everything; ceiling accepts full [0, 1] range.
-_NOOP_FACTOR_FLOOR = 0.0
-_NOOP_OCCLUSION_CEILING = 1.0
+# No-op factor floors (aliases of the canonical enrollment triple — FIR6S3B-M-02).
+_NOOP_FACTOR_FLOOR = ENROLLMENT_NOOP_FLOOR_SHARPNESS
+_NOOP_OCCLUSION_CEILING = ENROLLMENT_NOOP_CEILING_OCCLUSION
 
 
 def _resolve_insightface_cache_root() -> Path:
@@ -516,11 +522,13 @@ class FacePipelineSettings(BaseModel):
 class ResolvedFacePipelineKnobs:
     """Effective face-pipeline knobs after profile resolution.
 
-    Under ``insightface`` the threshold fields read the shared buffalo-era anchors
-    and ``oact_coefficient`` is forced to 0.0 (profile gate — residual face_pipeline
-    factor rows must not activate OACT under insightface).
-    Under ``face_pipeline`` they read the FacePipelineSettings overrides including OACT.
-    Factor floors and ``joint_assignment_enabled`` always come from FacePipelineSettings
+    Under ``insightface`` the threshold fields read the shared buffalo-era anchors;
+    ``oact_coefficient`` is forced to 0.0 and factor floors are forced to the
+    canonical no-op triple (profile gate — residual face_pipeline-scored rows /
+    env-set floors must not activate OACT or enrollment gating under insightface;
+    FIR6S3B-M-02 / EMB-07). Under ``face_pipeline`` they read the
+    FacePipelineSettings overrides including OACT and floors.
+    ``joint_assignment_enabled`` always comes from FacePipelineSettings
     (consumers under insightface must still treat joint assignment as un-wired until S2).
     """
 
@@ -576,11 +584,13 @@ def resolve_face_pipeline_knobs(
             suggestion_ceiling=float(clustering.suggestion_ceiling),
             limits_similarity_threshold=float(clustering_limits.similarity_threshold),
             detection_default_threshold=float(identity_detection.default_threshold),
-            # Profile gate: never activate OACT under insightface (FIR6S1-M-02).
+            # Profile gate: never activate OACT or enrollment floors under insightface
+            # (FIR6S1-M-02, FIR6S3B-M-02). Env-set floors on FacePipelineSettings are
+            # ignored here so S6 profile rollback stays dark even with residual factors.
             oact_coefficient=0.0,
-            factor_floor_sharpness=float(face_pipeline.factor_floor_sharpness),
-            factor_floor_embedding_norm=float(face_pipeline.factor_floor_embedding_norm),
-            factor_ceiling_occlusion=float(face_pipeline.factor_ceiling_occlusion),
+            factor_floor_sharpness=float(ENROLLMENT_NOOP_FLOOR_SHARPNESS),
+            factor_floor_embedding_norm=float(ENROLLMENT_NOOP_FLOOR_EMBEDDING_NORM),
+            factor_ceiling_occlusion=float(ENROLLMENT_NOOP_CEILING_OCCLUSION),
             joint_assignment_enabled=bool(face_pipeline.joint_assignment_enabled),
         )
     # Defensive: pydantic already restricts profile; keep fail-closed for callers.
@@ -671,7 +681,8 @@ def bridge_oact_into_quality_settings(
     """Bridge profile-resolved OACT + enrollment floors into QualitySettings.
 
     S1: ``oact_coefficient`` (profile-gated; insightface forces 0.0).
-    S3b: factor floors always copy from FacePipelineSettings (no-op defaults until S4).
+    S3b: factor floors copy from resolved knobs (insightface forces the canonical
+    no-op triple; face_pipeline copies FacePipelineSettings including S4 values).
     Base quality band knobs stay on ``ClusteringSettings.quality``; threshold
     rebinding is S2.
     """

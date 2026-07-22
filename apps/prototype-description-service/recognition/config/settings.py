@@ -180,6 +180,102 @@ def _parse_bool(value: object, *, field_name: str) -> bool:
     raise ValueError(f"Invalid face_pipeline {field_name}={value!r}; must be a boolean")
 
 
+def _env_or_default_unit(env_key: str, default: float) -> float:
+    """Read a unit-interval float env var; unset → default; empty/malformed → fail closed."""
+    raw = os.environ.get(env_key)
+    if raw is None:
+        return default
+    stripped = raw.strip()
+    if not stripped:
+        raise ValueError(f"Invalid {env_key}: empty value; must be a finite number in [0.0, 1.0]")
+    return _parse_unit_interval(stripped, field_name=env_key)
+
+
+def _env_or_default_finite(env_key: str, default: float) -> float:
+    """Read a finite float env var; unset → default; empty/malformed → fail closed."""
+    raw = os.environ.get(env_key)
+    if raw is None:
+        return default
+    stripped = raw.strip()
+    if not stripped:
+        raise ValueError(f"Invalid {env_key}: empty value; must be a finite number")
+    return _parse_finite_float(stripped, field_name=env_key)
+
+
+def _env_or_default_nonneg(env_key: str, default: float) -> float:
+    """Read a non-negative finite float env var; unset → default; empty/malformed → fail closed."""
+    raw = os.environ.get(env_key)
+    if raw is None:
+        return default
+    stripped = raw.strip()
+    if not stripped:
+        raise ValueError(f"Invalid {env_key}: empty value; must be a finite number >= 0")
+    return _parse_non_negative_finite(stripped, field_name=env_key)
+
+
+def _env_or_default_bool(env_key: str, default: bool) -> bool:
+    """Read a strict true/false env var; unset → default; empty/other → fail closed."""
+    raw = os.environ.get(env_key)
+    if raw is None:
+        return default
+    stripped = raw.strip()
+    if not stripped:
+        raise ValueError(f"Invalid {env_key}: empty value; must be 'true' or 'false'")
+    if stripped == "true":
+        return True
+    if stripped == "false":
+        return False
+    raise ValueError(f"Invalid {env_key}={raw!r}; must be 'true' or 'false'")
+
+
+def _resolve_face_similarity_threshold() -> float:
+    return _env_or_default_unit("RECOGNITION_FACE_SIMILARITY_THRESHOLD", _LEGACY_SIMILARITY_THRESHOLD)
+
+
+def _resolve_face_complete_link_threshold() -> float:
+    return _env_or_default_unit("RECOGNITION_FACE_COMPLETE_LINK_THRESHOLD", _LEGACY_COMPLETE_LINK_THRESHOLD)
+
+
+def _resolve_face_suggestion_floor() -> float:
+    return _env_or_default_unit("RECOGNITION_FACE_SUGGESTION_FLOOR", _LEGACY_SUGGESTION_FLOOR)
+
+
+def _resolve_face_suggestion_ceiling() -> float:
+    return _env_or_default_unit("RECOGNITION_FACE_SUGGESTION_CEILING", _LEGACY_SUGGESTION_CEILING)
+
+
+def _resolve_face_limits_similarity_threshold() -> float:
+    return _env_or_default_unit(
+        "RECOGNITION_FACE_LIMITS_SIMILARITY_THRESHOLD", _LEGACY_LIMITS_SIMILARITY_THRESHOLD
+    )
+
+
+def _resolve_face_detection_default_threshold() -> float:
+    return _env_or_default_unit(
+        "RECOGNITION_FACE_DETECTION_DEFAULT_THRESHOLD", _LEGACY_DETECTION_DEFAULT_THRESHOLD
+    )
+
+
+def _resolve_face_oact_coefficient() -> float:
+    return _env_or_default_finite("RECOGNITION_FACE_OACT_COEFFICIENT", 0.0)
+
+
+def _resolve_face_factor_floor_sharpness() -> float:
+    return _env_or_default_nonneg("RECOGNITION_FACE_FACTOR_FLOOR_SHARPNESS", _NOOP_FACTOR_FLOOR)
+
+
+def _resolve_face_factor_floor_embedding_norm() -> float:
+    return _env_or_default_nonneg("RECOGNITION_FACE_FACTOR_FLOOR_EMBEDDING_NORM", _NOOP_FACTOR_FLOOR)
+
+
+def _resolve_face_factor_ceiling_occlusion() -> float:
+    return _env_or_default_unit("RECOGNITION_FACE_FACTOR_CEILING_OCCLUSION", _NOOP_OCCLUSION_CEILING)
+
+
+def _resolve_face_joint_assignment_enabled() -> bool:
+    return _env_or_default_bool("RECOGNITION_FACE_JOINT_ASSIGNMENT_ENABLED", True)
+
+
 class FacePipelineSettings(BaseModel):
     """Dark-launch settings for the FIR-3 YuNet+SFace runtime (FIR-4 S2 / FIR-6 knobs).
 
@@ -228,49 +324,83 @@ class FacePipelineSettings(BaseModel):
     )
 
     # --- FIR-6 face_pipeline-scoped calibration surface (wave-0 precondition) ---
+    # Defaults read RECOGNITION_FACE_* env (rg-008 fail-closed), same pattern as profile.
     face_similarity_threshold: float = Field(
-        default=_LEGACY_SIMILARITY_THRESHOLD,
-        description="face_pipeline override for ClusteringSettings.similarity_threshold.",
+        default_factory=_resolve_face_similarity_threshold,
+        description=(
+            "face_pipeline override for ClusteringSettings.similarity_threshold. "
+            "Env: RECOGNITION_FACE_SIMILARITY_THRESHOLD."
+        ),
     )
     face_complete_link_threshold: float = Field(
-        default=_LEGACY_COMPLETE_LINK_THRESHOLD,
-        description="face_pipeline override for ClusteringSettings.complete_link_threshold.",
+        default_factory=_resolve_face_complete_link_threshold,
+        description=(
+            "face_pipeline override for ClusteringSettings.complete_link_threshold. "
+            "Env: RECOGNITION_FACE_COMPLETE_LINK_THRESHOLD."
+        ),
     )
     face_suggestion_floor: float = Field(
-        default=_LEGACY_SUGGESTION_FLOOR,
-        description="face_pipeline override for ClusteringSettings.suggestion_floor.",
+        default_factory=_resolve_face_suggestion_floor,
+        description=(
+            "face_pipeline override for ClusteringSettings.suggestion_floor. "
+            "Env: RECOGNITION_FACE_SUGGESTION_FLOOR."
+        ),
     )
     face_suggestion_ceiling: float = Field(
-        default=_LEGACY_SUGGESTION_CEILING,
-        description="face_pipeline override for ClusteringSettings.suggestion_ceiling.",
+        default_factory=_resolve_face_suggestion_ceiling,
+        description=(
+            "face_pipeline override for ClusteringSettings.suggestion_ceiling. "
+            "Env: RECOGNITION_FACE_SUGGESTION_CEILING."
+        ),
     )
     face_limits_similarity_threshold: float = Field(
-        default=_LEGACY_LIMITS_SIMILARITY_THRESHOLD,
-        description="face_pipeline override for ClusteringLimitsSettings.similarity_threshold.",
+        default_factory=_resolve_face_limits_similarity_threshold,
+        description=(
+            "face_pipeline override for ClusteringLimitsSettings.similarity_threshold. "
+            "Env: RECOGNITION_FACE_LIMITS_SIMILARITY_THRESHOLD."
+        ),
     )
     face_detection_default_threshold: float = Field(
-        default=_LEGACY_DETECTION_DEFAULT_THRESHOLD,
-        description="face_pipeline override for IdentityDetectionSettings.default_threshold.",
+        default_factory=_resolve_face_detection_default_threshold,
+        description=(
+            "face_pipeline override for IdentityDetectionSettings.default_threshold. "
+            "Env: RECOGNITION_FACE_DETECTION_DEFAULT_THRESHOLD."
+        ),
     )
     oact_coefficient: float = Field(
-        default=0.0,
-        description="OACT occlusion-adaptive coefficient (0.0 = dark no-op until S4).",
+        default_factory=_resolve_face_oact_coefficient,
+        description=(
+            "OACT occlusion-adaptive coefficient (0.0 = dark no-op until S4). "
+            "Env: RECOGNITION_FACE_OACT_COEFFICIENT."
+        ),
     )
     factor_floor_sharpness: float = Field(
-        default=_NOOP_FACTOR_FLOOR,
-        description="Enrollment sharpness floor (0.0 accepts everything until S4).",
+        default_factory=_resolve_face_factor_floor_sharpness,
+        description=(
+            "Enrollment sharpness floor (0.0 accepts everything until S4). "
+            "Env: RECOGNITION_FACE_FACTOR_FLOOR_SHARPNESS."
+        ),
     )
     factor_floor_embedding_norm: float = Field(
-        default=_NOOP_FACTOR_FLOOR,
-        description="Enrollment embedding-norm floor (0.0 accepts everything until S4).",
+        default_factory=_resolve_face_factor_floor_embedding_norm,
+        description=(
+            "Enrollment embedding-norm floor (0.0 accepts everything until S4). "
+            "Env: RECOGNITION_FACE_FACTOR_FLOOR_EMBEDDING_NORM."
+        ),
     )
     factor_ceiling_occlusion: float = Field(
-        default=_NOOP_OCCLUSION_CEILING,
-        description="Enrollment occlusion ceiling (1.0 accepts full range until S4).",
+        default_factory=_resolve_face_factor_ceiling_occlusion,
+        description=(
+            "Enrollment occlusion ceiling (1.0 accepts full range until S4). "
+            "Env: RECOGNITION_FACE_FACTOR_CEILING_OCCLUSION."
+        ),
     )
     joint_assignment_enabled: bool = Field(
-        default=True,
-        description="Within-photo one-to-one assignment under face_pipeline (S2 wiring).",
+        default_factory=_resolve_face_joint_assignment_enabled,
+        description=(
+            "Within-photo one-to-one assignment under face_pipeline (S2 wiring). "
+            "Env: RECOGNITION_FACE_JOINT_ASSIGNMENT_ENABLED (true|false)."
+        ),
     )
 
     @field_validator("profile", mode="before")

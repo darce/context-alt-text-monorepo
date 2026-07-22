@@ -1,8 +1,13 @@
 """FIR-6 wave-0: insightface characterization golden (shared by all lanes).
 
 Drives a multi-face chunk through discovery → gate → partition → persist under
-the insightface profile. Decision / membership output must stay field-identical
-after S1–S3 shared-module changes ([TEST-15]).
+the insightface profile. Decision / membership / representative output must stay
+field-identical after S1–S3 shared-module changes ([TEST-15]).
+
+Discrimination (M-01): similarities straddle discovery/threshold edges; fixture
+includes accept + suggest + no-candidate; threshold metadata + curriculum_t are
+pinned so arithmetic drifts go red. Order-independent compare (M-04). Full float
+similarity equality (M-08). Representative admission recorded (M-02).
 
 No real InsightFace model load; embeddings are synthetic unit vectors.
 """
@@ -46,6 +51,75 @@ def _load_fixture() -> dict[str, Any]:
     return json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
 
 
+def _float(value: float) -> float:
+    """Canonicalize float32→python float without decimal truncation (M-08)."""
+    return float(value)
+
+
+def _threshold_meta(metadata: dict[str, Any] | None) -> dict[str, Any]:
+    md = metadata or {}
+    return {
+        "base_threshold": md.get("base_threshold"),
+        "final_threshold": md.get("final_threshold"),
+        "suggestion_floor": md.get("suggestion_floor"),
+        "suggestion_ceiling": md.get("suggestion_ceiling"),
+        "maturity_adj": md.get("maturity_adj"),
+        "quality_adj": md.get("quality_adj"),
+        "curriculum_t": md.get("curriculum_t"),
+        "curriculum_adj": md.get("curriculum_adj"),
+    }
+
+
+def _canonicalize_expected(payload: dict[str, Any]) -> dict[str, Any]:
+    """Order-independent projection for field-identical compare (M-04 / TEST-15)."""
+    candidates = sorted(
+        payload["candidates"],
+        key=lambda row: (row["identity_id"], row["cluster_id"], row["discovery_method"]),
+    )
+    decisions = sorted(
+        payload["decisions"],
+        key=lambda row: (row["identity_id"], row["cluster_id"], row["outcome"]),
+    )
+    gate = dict(payload["gate_counts"])
+    gate["accepted_ids"] = sorted(gate["accepted_ids"])
+    gate["suggested_ids"] = sorted(gate["suggested_ids"])
+    gate["rejected_ids"] = sorted(gate["rejected_ids"])
+
+    partition = {
+        "still_unclustered_ids": sorted(payload["partition"]["still_unclustered_ids"]),
+        "no_candidates_ids": sorted(payload["partition"]["no_candidates_ids"]),
+    }
+
+    bulk = []
+    for entry in payload["persist"]["bulk_memberships"]:
+        members = sorted(
+            ([pair[0], pair[1]] for pair in entry["members"]),
+            key=lambda pair: pair[0],
+        )
+        bulk.append({"cluster_id": entry["cluster_id"], "members": members})
+    bulk.sort(key=lambda entry: entry["cluster_id"])
+
+    reps = sorted(
+        payload["persist"]["representatives_added"],
+        key=lambda row: (row["cluster_id"], row["identity_id"]),
+    )
+
+    return {
+        "threshold_context": payload["threshold_context"],
+        "candidates": candidates,
+        "decisions": decisions,
+        "gate_counts": gate,
+        "partition": partition,
+        "persist": {
+            "persisted": payload["persist"]["persisted"],
+            "skipped": payload["persist"]["skipped"],
+            "reps_added": payload["persist"]["reps_added"],
+            "bulk_memberships": bulk,
+            "representatives_added": reps,
+        },
+    }
+
+
 class _NoopSuggestionService:
     async def create(self, *args: object, **kwargs: object) -> None:
         return None
@@ -87,8 +161,9 @@ class _RecordingMemberRepo(MemberRepository):
     async def bulk_add_members_if_not_exists(
         self, cluster_id: str, members: list[Any]
     ) -> tuple[list[IdentityMember], int]:
+        # Full float precision — do not round before recording (M-08).
         self.bulk_calls.append(
-            (cluster_id, [(m.identity_id, round(float(m.similarity), 6)) for m in members])
+            (cluster_id, [(m.identity_id, _float(m.similarity)) for m in members])
         )
         created = [
             IdentityMember(
@@ -167,14 +242,28 @@ def _build_repo(fixture: dict[str, Any]) -> NullClusterRepository:
     )
 
 
-@pytest.mark.asyncio
-async def test_insightface_characterization_golden_field_identical() -> None:
-    """Pin discovery→gate→partition→persist outputs under insightface defaults."""
-    fixture = _load_fixture()
-    assert fixture["profile"] == "insightface"
-    assert FacePipelineSettings().profile == "insightface"
+def _settings_from_fixture(fixture: dict[str, Any]) -> ClusteringSettings:
+    ctx = fixture["threshold_context"]
+    return ClusteringSettings(
+        similarity_threshold=float(ctx["similarity_threshold"]),
+        suggestion_floor=float(ctx["suggestion_floor"]),
+        suggestion_ceiling=float(ctx["suggestion_ceiling"]),
+        curriculum_coefficient=float(ctx["curriculum_coefficient"]),
+    )
 
-    settings = ClusteringSettings()
+
+async def _run_characterization(
+    fixture: dict[str, Any],
+    *,
+    settings: ClusteringSettings | None = None,
+) -> dict[str, Any]:
+    """Execute discovery→gate→partition→persist and project comparable fields.
+
+    Uses evaluate_chunk_candidates + persist_assignments_chunk (the bulk path S2
+    rebinds). Full orchestrator/chunker integration is S2-owned; a return-arity
+    change on persist_assignments_chunk still breaks the 3-tuple unpack here (M-03).
+    """
+    settings = settings or _settings_from_fixture(fixture)
     chunk = _build_chunk(fixture)
     reps = {
         cluster["id"]: [_norm(cluster["representative"])] for cluster in fixture["clusters"]
@@ -185,6 +274,10 @@ async def test_insightface_characterization_golden_field_identical() -> None:
     candidates = await discovery.discover(chunk, reps, labeled_cluster_ids=labeled)
 
     repo = _build_repo(fixture)
+    curriculum_t = float(fixture["threshold_context"]["curriculum_t"])
+    for cluster in fixture["clusters"]:
+        await repo.set_curriculum_t(cluster["id"], curriculum_t)
+
     gate = AssignmentGate(settings=settings, cluster_repository=repo)
     members = _RecordingMemberRepo()
     writer = AssignmentWriter(settings, repo, members)
@@ -201,7 +294,10 @@ async def test_insightface_characterization_golden_field_identical() -> None:
         job_label="insightface-char-golden",
         verbose=False,
     )
-    persisted, skipped, _reps_added = await writer.persist_assignments_chunk(
+    # Capture ALL decision outcomes (accept/suggest/reject) with threshold meta.
+    all_decisions = [await gate.evaluate(candidate) for candidate in candidates]
+
+    persisted, skipped, reps_added = await writer.persist_assignments_chunk(
         list(gate_result.accepted_decisions),
         batch_mode=True,
     )
@@ -213,13 +309,30 @@ async def test_insightface_characterization_golden_field_identical() -> None:
         new_cluster_proposals=[],
     )
 
-    actual = {
+    representatives_added: list[dict[str, str]] = []
+    for cluster in fixture["clusters"]:
+        for rep in await repo.get_all_representatives(cluster["id"]):
+            representatives_added.append(
+                {
+                    "cluster_id": cluster["id"],
+                    "identity_id": rep.identity_id,
+                }
+            )
+
+    return {
+        "threshold_context": {
+            "similarity_threshold": float(settings.similarity_threshold),
+            "suggestion_floor": float(settings.suggestion_floor),
+            "suggestion_ceiling": float(settings.suggestion_ceiling),
+            "curriculum_coefficient": float(settings.curriculum_coefficient),
+            "curriculum_t": curriculum_t,
+        },
         "candidates": [
             {
                 "identity_id": c.identity.id,
                 "cluster_id": c.cluster_id,
                 "discovery_method": c.discovery_method.value,
-                "discovery_similarity": round(float(c.discovery_similarity), 6),
+                "discovery_similarity": _float(c.discovery_similarity),
             }
             for c in candidates
         ],
@@ -231,9 +344,10 @@ async def test_insightface_characterization_golden_field_identical() -> None:
                 "checks_passed": list(d.checks_passed),
                 "checks_failed": list(d.checks_failed),
                 "rejection_reason": d.rejection_reason,
-                "discovery_similarity": round(float(d.candidate.discovery_similarity), 6),
+                "discovery_similarity": _float(d.candidate.discovery_similarity),
+                "threshold_meta": _threshold_meta(d.metadata),
             }
-            for d in gate_result.accepted_decisions
+            for d in all_decisions
         ],
         "gate_counts": {
             "accept_count": gate_result.accept_count,
@@ -250,6 +364,7 @@ async def test_insightface_characterization_golden_field_identical() -> None:
         "persist": {
             "persisted": persisted,
             "skipped": skipped,
+            "reps_added": reps_added,
             "bulk_memberships": [
                 {
                     "cluster_id": cluster_id,
@@ -257,20 +372,75 @@ async def test_insightface_characterization_golden_field_identical() -> None:
                 }
                 for cluster_id, member_pairs in members.bulk_calls
             ],
+            "representatives_added": representatives_added,
         },
     }
 
-    assert actual == fixture["expected"]
+
+@pytest.mark.asyncio
+async def test_insightface_characterization_golden_field_identical() -> None:
+    """Pin discovery→gate→partition→persist outputs under insightface defaults."""
+    fixture = _load_fixture()
+    assert fixture["profile"] == "insightface"
+    assert FacePipelineSettings().profile == "insightface"
+
+    actual = await _run_characterization(fixture)
+    assert _canonicalize_expected(actual) == _canonicalize_expected(fixture["expected"])
+
+
+@pytest.mark.asyncio
+async def test_characterization_discriminates_similarity_threshold_drift() -> None:
+    """+0.30 discovery threshold must drop the near-threshold face (M-01)."""
+    fixture = _load_fixture()
+    settings = _settings_from_fixture(fixture)
+    drifted = settings.model_copy(
+        update={"similarity_threshold": settings.similarity_threshold + 0.30}
+    )
+    actual = await _run_characterization(fixture, settings=drifted)
+    assert _canonicalize_expected(actual) != _canonicalize_expected(fixture["expected"])
+    # Near-threshold bob match must leave the candidate set.
+    assert "identity-face-b" not in {
+        row["identity_id"] for row in actual["candidates"]
+    }
+
+
+@pytest.mark.asyncio
+async def test_characterization_discriminates_curriculum_coefficient_drift() -> None:
+    """10x curriculum coefficient must move threshold_meta (M-01)."""
+    fixture = _load_fixture()
+    settings = _settings_from_fixture(fixture)
+    drifted = settings.model_copy(
+        update={"curriculum_coefficient": settings.curriculum_coefficient * 10.0}
+    )
+    actual = await _run_characterization(fixture, settings=drifted)
+    assert _canonicalize_expected(actual) != _canonicalize_expected(fixture["expected"])
+    # At least one accept/suggest decision carries a different curriculum_adj.
+    expected_adj = {
+        (row["identity_id"], row["threshold_meta"]["curriculum_adj"])
+        for row in fixture["expected"]["decisions"]
+    }
+    actual_adj = {
+        (row["identity_id"], row["threshold_meta"]["curriculum_adj"])
+        for row in actual["decisions"]
+    }
+    assert actual_adj != expected_adj
 
 
 def test_insightface_characterization_fixture_is_committed() -> None:
-    """Guard: the golden fixture must exist and name three multi-face identities."""
+    """Guard: golden fixture exists; multi-face single media_id; outcome diversity."""
     assert FIXTURE_PATH.is_file()
     fixture = _load_fixture()
     assert len(fixture["chunk"]) >= 3
-    media_ids = {fixture["media_id"]}
-    assert media_ids == {row.get("media_id", fixture["media_id"]) for row in fixture["chunk"]} or True
-    # All three faces share one media_id in the loaded identities.
+    # All faces share one media_id (photo-atomic multi-face chunk).
+    media_ids = {row.get("media_id", fixture["media_id"]) for row in fixture["chunk"]}
+    assert media_ids == {fixture["media_id"]}
     chunk = _build_chunk(fixture)
     assert len({i.media_id for i in chunk}) == 1
-    assert len(chunk) == 3
+    assert len(chunk) >= 3
+
+    outcomes = {row["outcome"] for row in fixture["expected"]["decisions"]}
+    assert "accept" in outcomes
+    assert "suggest" in outcomes
+    assert fixture["expected"]["gate_counts"]["suggest_count"] >= 1
+    assert fixture["expected"]["persist"]["reps_added"] >= 1
+    assert len(fixture["expected"]["partition"]["no_candidates_ids"]) >= 1

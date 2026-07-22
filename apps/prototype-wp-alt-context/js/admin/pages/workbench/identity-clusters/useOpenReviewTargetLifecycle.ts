@@ -91,7 +91,12 @@ export const useOpenReviewTargetLifecycle = ({
 
   // Render-phase retirement reconcile: announce + advance the open target
   // (rebind → survivor, retire → null) as owner-state updates, once per target.
-  if (openTarget !== null && status !== 'live' && handledRef.current !== openTarget) {
+  // auth_expired is not retirement — leave the open target mounted ([INT-11]).
+  if (
+    openTarget !== null &&
+    (status === 'rebound' || status === 'retired') &&
+    handledRef.current !== openTarget
+  ) {
     handledRef.current = openTarget;
     onAnnounce(
       __(status === 'rebound' ? LIVE_TARGET_REBIND_ANNOUNCE : LIVE_TARGET_CLOSE_ANNOUNCE, 'alt-context'),

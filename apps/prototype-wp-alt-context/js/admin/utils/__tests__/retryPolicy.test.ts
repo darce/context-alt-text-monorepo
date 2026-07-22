@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { HTTPError, ResponseParseError } from '../http';
+import { AuthExpiredError, HTTPError, ResponseParseError } from '../http';
 import { getRetryDelay, RETRY_MAX_ATTEMPTS, shouldRetryRequest } from '../retryPolicy';
 
 const httpError = (status: number, retryAfterSeconds?: number): HTTPError =>
@@ -35,6 +35,18 @@ describe('shouldRetryRequest', () => {
     expect(shouldRetryRequest(0, httpError(403))).toBe(false);
     expect(shouldRetryRequest(0, httpError(404))).toBe(false);
     expect(shouldRetryRequest(0, httpError(409))).toBe(false);
+  });
+
+  it('never retries AuthExpiredError (UXP-NET-2 regression pin) [TEST-15]', () => {
+    const authExpired = new AuthExpiredError({
+      endpoint: 'http://example.test/e',
+      status: 403,
+    });
+    expect(shouldRetryRequest(0, authExpired)).toBe(false);
+    expect(shouldRetryRequest(1, authExpired)).toBe(false);
+    // Cooldown paths stay retryable (byte-unchanged classification).
+    expect(shouldRetryRequest(0, httpError(429, 5))).toBe(true);
+    expect(shouldRetryRequest(0, httpError(503, 10))).toBe(true);
   });
 
   it('retries a genuine network transport failure (fetch rejects with a TypeError)', () => {

@@ -1,0 +1,47 @@
+/**
+ * Workbench error surface for query/mutation failures (UXP-NET-2).
+ * Auth expiry is actionable and distinct from generic errors ([FORM-05]).
+ */
+
+import * as React from 'react';
+import { __ } from '@wordpress/i18n';
+
+import {
+  formatUserFacingError,
+  isAuthExpiredError,
+  SPA_SESSION_EXPIRED_COPY,
+} from '../../utils/userFacingError';
+
+export interface UserFacingErrorNoticeProps {
+  error: unknown;
+  /** Generic fallback when error is not AuthExpiredError and has no message. */
+  fallback: string;
+  className?: string;
+}
+
+export const UserFacingErrorNotice: React.FC<UserFacingErrorNoticeProps> = ({
+  error,
+  fallback,
+  className,
+}) => {
+  const authExpired = isAuthExpiredError(error);
+  const message = formatUserFacingError(error, fallback);
+
+  return (
+    <div
+      className={className}
+      role="alert"
+      data-testid="acx-user-facing-error"
+      data-error-kind={authExpired ? 'auth-expired' : 'generic'}
+    >
+      <span>{message}</span>
+      {authExpired ? (
+        <button type="button" onClick={() => window.location.reload()}>
+          {__(SPA_SESSION_EXPIRED_COPY.reloadPage, 'alt-context')}
+        </button>
+      ) : null}
+    </div>
+  );
+};
+
+UserFacingErrorNotice.displayName = 'UserFacingErrorNotice';

@@ -31,6 +31,7 @@ import {
   unwrapClusterOptionId,
   type NamingOption,
 } from './buildNamingOptions';
+import { formatUserFacingError, isAuthExpiredError } from '../../../utils/userFacingError';
 import { getProjectionNotReadyMessage, isProjectionNotReadyError } from './clusterMutationUtils';
 import { MergeUndoBanner } from './MergeUndoBanner';
 import { invalidateSuggestionProjection, isHumanLabeledTarget } from './suggestionProjection';
@@ -52,6 +53,9 @@ interface DuplicateGuardState {
  * Parse API error response to extract user-friendly message.
  */
 const getErrorMessage = (error: unknown): string => {
+  if (isAuthExpiredError(error)) {
+    return formatUserFacingError(error, __('An unexpected error occurred. Please try again.', 'alt-context'));
+  }
   if (error instanceof Error) {
     if (
       error.name === 'AbortError' ||

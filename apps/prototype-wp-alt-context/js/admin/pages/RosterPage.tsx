@@ -156,6 +156,24 @@ export const RosterPage = (): React.JSX.Element => {
     actions.reassignMutation.mutate({ faceId: payload.faceId, targetClusterId });
   };
 
+  const reassignTargets = React.useMemo(
+    () =>
+      clusters
+        .filter((candidate) => candidate.id !== selectedClusterId)
+        .map((candidate) => ({
+          id: candidate.id,
+          label: candidate.label,
+        })),
+    [clusters, selectedClusterId],
+  );
+
+  const handleReassignFace = React.useCallback(
+    (faceId: string, targetClusterId: string): void => {
+      actions.reassignMutation.mutate({ faceId, targetClusterId });
+    },
+    [actions.reassignMutation],
+  );
+
   const handleRescanCluster = (cluster: ClusterSummary, identities: ClusterIdentity[]): void => {
     const sourceIdentities = identities.length > 0 ? identities : cluster.sample_identities;
     const mediaIds = Array.from(new Set(sourceIdentities.map((identity) => identity.media_id)));
@@ -313,6 +331,10 @@ export const RosterPage = (): React.JSX.Element => {
         dropTarget={dragDrop.dropTarget}
         isDragging={dragDrop.isDragging}
         onDiscardDrop={() => handleDropFace(null)}
+        reassignTargets={reassignTargets}
+        onReassignFace={handleReassignFace}
+        isReassigning={actions.reassignMutation.isPending}
+        reassignErrorMessage={actions.reassignMutation.error?.message ?? null}
       />
     </section>
   );

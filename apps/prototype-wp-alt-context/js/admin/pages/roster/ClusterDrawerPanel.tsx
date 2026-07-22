@@ -10,6 +10,11 @@ import { Combobox } from '../../../components/ui/combobox';
 import { Check, X } from 'lucide-react';
 import { useFocusTrap } from './hooks/useFocusTrap';
 
+export interface ClusterReassignTarget {
+  id: string;
+  label: string;
+}
+
 interface Props {
   cluster: ClusterSummary | null;
   identities: ClusterIdentity[];
@@ -34,7 +39,22 @@ interface Props {
   dropTarget: string | null;
   isDragging: boolean;
   onDiscardDrop: () => void;
+
+  /** Other clusters available as reassignment targets (current cluster already excluded). */
+  reassignTargets?: ClusterReassignTarget[];
+  /** Single atomic reassign call (rg-002); same mutation as drag path. */
+  onReassignFace?: (faceId: string, targetClusterId: string) => void;
+  isReassigning?: boolean;
+  reassignErrorMessage?: string | null;
 }
+
+const EMPTY_TARGETS: ClusterReassignTarget[] = [];
+const NO_TARGETS_REASON = __('No other clusters available to move this identity into.', 'alt-context');
+
+const clusterTargetLabel = (target: ClusterReassignTarget): string =>
+  target.label.trim().length > 0
+    ? target.label
+    : sprintf(__('Cluster %s', 'alt-context'), target.id.slice(0, 8));
 
 export const ClusterDrawerPanel = ({
   cluster,
@@ -59,11 +79,20 @@ export const ClusterDrawerPanel = ({
   dropTarget,
   isDragging,
   onDiscardDrop,
+
+  reassignTargets = EMPTY_TARGETS,
+  onReassignFace,
+  isReassigning = false,
+  reassignErrorMessage = null,
 }: Props): React.JSX.Element | null => {
   const [selectedEntryId, setSelectedEntryId] = React.useState('');
   const [newEntryName, setNewEntryName] = React.useState('');
+  const [pickerFaceId, setPickerFaceId] = React.useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = React.useState('');
   const closeButtonRef = React.useRef<HTMLButtonElement>(null);
   const drawerRef = React.useRef<HTMLElement>(null);
+  const pickerFirstOptionRef = React.useRef<HTMLButtonElement>(null);
+  const pendingReassignRef = React.useRef<{ faceId: string; targetLabel: string } | null>(null);
 
   const createFaceDragStart = React.useCallback(
     (faceId: string) => (event: React.DragEvent<HTMLElement>) => {
@@ -103,7 +132,36 @@ export const ClusterDrawerPanel = ({
   React.useEffect(() => {
     setSelectedEntryId('');
     setNewEntryName('');
+    setPickerFaceId(null);
+    setStatusMessage('');
+    pendingReassignRef.current = null;
   }, [cluster?.id]);
+
+  React.useEffect(() => {
+    if (pickerFaceId === null) {
+      return;
+    }
+    if (reassignTargets.length === 0) {
+      setPickerFaceId(null);
+      return;
+    }
+    pickerFirstOptionRef.current?.focus();
+  }, [pickerFaceId, reassignTargets.length]);
+
+  React.useEffect(() => {
+    const pending = pendingReassignRef.current;
+    if (!pending || isReassigning) {
+      return;
+    }
+    if (reassignErrorMessage) {
+      setStatusMessage(reassignErrorMessage);
+    } else {
+      setStatusMessage(
+        sprintf(__('Moved identity to %s.', 'alt-context'), pending.targetLabel),
+      );
+    }
+    pendingReassignRef.current = null;
+  }, [isReassigning, reassignErrorMessage]);
 
   const handleCreate = (name: string) => {
     const trimmed = name.trim();
@@ -129,6 +187,37 @@ export const ClusterDrawerPanel = ({
     activeKey: cluster?.id ?? null,
   });
 
+  const handlePickerKeyDown = React.useCallback((event: React.KeyboardEvent<HTMLElement>) => {
+    if (event.key === 'Escape') {
+      event.stopPropagation();
+      setPickerFaceId(null);
+    }
+  }, []);
+
+  const handleOpenPicker = React.useCallback(
+    (faceId: string) => {
+      if (reassignTargets.length === 0 || !onReassignFace) {
+        return;
+      }
+      setPickerFaceId((current) => (current === faceId ? null : faceId));
+    },
+    [onReassignFace, reassignTargets.length],
+  );
+
+  const handleSelectTarget = React.useCallback(
+    (faceId: string, target: ClusterReassignTarget) => {
+      if (!onReassignFace) {
+        return;
+      }
+      const targetLabel = clusterTargetLabel(target);
+      pendingReassignRef.current = { faceId, targetLabel };
+      setStatusMessage(sprintf(__('Moving identity to %s…', 'alt-context'), targetLabel));
+      setPickerFaceId(null);
+      onReassignFace(faceId, target.id);
+    },
+    [onReassignFace],
+  );
+
   const selectedEntry = React.useMemo(
     () => rosterEntries.find((entry) => entry.id.toString() === selectedEntryId) ?? null,
     [rosterEntries, selectedEntryId],
@@ -143,6 +232,8 @@ export const ClusterDrawerPanel = ({
   const selectedPersonUuid = selectedEntry?.person_uuid ?? null;
   const identitiesToDisplay = identities ?? [];
   const hasIdentities = identitiesToDisplay.length > 0;
+  const hasReassignTargets = reassignTargets.length > 0;
+  const canReassign = Boolean(onReassignFace) && hasReassignTargets && !isReassigning;
 
   const handleCommit = () => {
     if (!canCommit) {
@@ -205,30 +296,96 @@ export const ClusterDrawerPanel = ({
           ) : !hasIdentities ? (
             <p>{__('No identities found for this cluster.', 'alt-context')}</p>
           ) : (
-            identitiesToDisplay.map((identity) => (
-              <figure
-                key={identity.identity_id}
-                className="acx-cluster-drawer__face"
-                draggable
-                aria-label={sprintf(__('Move identity from media %d', 'alt-context'), identity.media_id)}
-                onDragStart={createFaceDragStart(identity.identity_id)}
-                onDragEnd={onFaceDragEnd}
-              >
-                <a href={mediaEditUrl(identity.media_id)} target="_blank" rel="noopener noreferrer">
-                  <IdentityThumbnail identity={identity} mediaMeta={mediaMap[identity.media_id]} size={128} />
-                </a>
-                <figcaption>
-                  {sprintf(
-                    __('Similarity: %s', 'alt-context'),
-                    identity.similarity === null ? __('Unknown', 'alt-context') : identity.similarity.toFixed(2),
-                  )}
-                  <br />
-                  {sprintf(__('Media %d', 'alt-context'), identity.media_id)}
-                </figcaption>
-              </figure>
-            ))
+            identitiesToDisplay.map((identity) => {
+              const pickerOpen = pickerFaceId === identity.identity_id;
+              const moveButtonLabel = sprintf(
+                __('Move to… identity from media %d', 'alt-context'),
+                identity.media_id,
+              );
+              return (
+                <figure
+                  key={identity.identity_id}
+                  className="acx-cluster-drawer__face"
+                  draggable
+                  aria-label={sprintf(__('Move identity from media %d', 'alt-context'), identity.media_id)}
+                  onDragStart={createFaceDragStart(identity.identity_id)}
+                  onDragEnd={onFaceDragEnd}
+                >
+                  <a href={mediaEditUrl(identity.media_id)} target="_blank" rel="noopener noreferrer">
+                    <IdentityThumbnail identity={identity} mediaMeta={mediaMap[identity.media_id]} size={128} />
+                  </a>
+                  <figcaption>
+                    {sprintf(
+                      __('Similarity: %s', 'alt-context'),
+                      identity.similarity === null ? __('Unknown', 'alt-context') : identity.similarity.toFixed(2),
+                    )}
+                    <br />
+                    {sprintf(__('Media %d', 'alt-context'), identity.media_id)}
+                  </figcaption>
+                  <div className="acx-cluster-drawer__face-actions">
+                    <button
+                      type="button"
+                      className="acx-cluster-drawer__move-btn"
+                      aria-label={moveButtonLabel}
+                      aria-haspopup="listbox"
+                      aria-expanded={pickerOpen}
+                      aria-controls={
+                        pickerOpen ? `acx-cluster-move-targets-${identity.identity_id}` : undefined
+                      }
+                      disabled={!canReassign}
+                      aria-disabled={!canReassign ? true : undefined}
+                      title={!hasReassignTargets ? NO_TARGETS_REASON : undefined}
+                      onClick={() => handleOpenPicker(identity.identity_id)}
+                    >
+                      {__('Move to…', 'alt-context')}
+                    </button>
+                    {pickerOpen ? (
+                      <div
+                        id={`acx-cluster-move-targets-${identity.identity_id}`}
+                        className="acx-cluster-drawer__move-picker"
+                        role="listbox"
+                        aria-label={__('Choose a target cluster', 'alt-context')}
+                        onKeyDown={handlePickerKeyDown}
+                      >
+                        {reassignTargets.map((target, index) => {
+                          const label = clusterTargetLabel(target);
+                          return (
+                            <button
+                              key={target.id}
+                              type="button"
+                              role="option"
+                              className="acx-cluster-drawer__move-option"
+                              ref={index === 0 ? pickerFirstOptionRef : undefined}
+                              onClick={() => handleSelectTarget(identity.identity_id, target)}
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
+                        <button
+                          type="button"
+                          className="acx-cluster-drawer__move-cancel"
+                          onClick={() => setPickerFaceId(null)}
+                        >
+                          {__('Cancel', 'alt-context')}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                </figure>
+              );
+            })
           )}
         </div>
+
+        <p
+          className="acx-cluster-drawer__reassign-status"
+          role="status"
+          aria-live="polite"
+          data-testid="cluster-drawer-reassign-status"
+        >
+          {statusMessage}
+        </p>
 
         {detailError && <p className="acx-cluster-drawer__status acx-cluster-drawer__status--error">{detailError}</p>}
 

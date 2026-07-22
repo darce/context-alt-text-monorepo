@@ -50,3 +50,63 @@ test('roster empty state is announced via live region', async ({ page, baseURL }
   await expect(zeroState).toContainText(/run a scan/i);
   await expect(page.getByRole('button', { name: /Add Person/i }).first()).toBeVisible();
 });
+
+/**
+ * E21-9 Slice 3: full member-fix keyboard loop when a cluster drawer is open.
+ * Skips cleanly when the local environment has no openable cluster (no LocalWP fixtures).
+ */
+test('keyboard member-fix loop: Move to… → pick target → role=status (≥24px control)', async ({
+  page,
+  baseURL,
+}) => {
+  await openRoster(requireBaseUrl(baseURL), page);
+
+  const clustersTab = page.getByRole('tab', { name: /Clusters/i });
+  if ((await clustersTab.count()) === 0) {
+    test.skip(true, 'Clusters tab not present in this build');
+    return;
+  }
+  await clustersTab.click();
+
+  const firstClusterCard = page.locator('.acx-cluster-card').first();
+  if ((await firstClusterCard.count()) === 0) {
+    test.skip(true, 'No clusters available for member-fix keyboard walk');
+    return;
+  }
+  await firstClusterCard.click();
+
+  const drawer = page.locator('.acx-cluster-drawer');
+  await expect(drawer).toBeVisible();
+
+  const moveButton = drawer.getByRole('button', { name: /Move to/i }).first();
+  if ((await moveButton.count()) === 0) {
+    test.skip(true, 'No face Move to… control in drawer (empty identities)');
+    return;
+  }
+
+  await expect(moveButton).toBeVisible();
+  const box = await moveButton.boundingBox();
+  expect(box, 'Move to… must expose a layout box').not.toBeNull();
+  expect(box!.width, 'Move to… min width ≥24 CSS px (A11Y-14)').toBeGreaterThanOrEqual(24);
+  expect(box!.height, 'Move to… min height ≥24 CSS px (A11Y-14)').toBeGreaterThanOrEqual(24);
+
+  if (await moveButton.isDisabled()) {
+    await expect(moveButton).toHaveAttribute('title', /No other clusters available/i);
+    test.skip(true, 'Only one cluster present — empty-target disabled-with-reason path covered by unit tests');
+    return;
+  }
+
+  await moveButton.focus();
+  await expect(moveButton).toBeFocused();
+  await page.keyboard.press('Enter');
+
+  const picker = drawer.getByRole('listbox', { name: /Choose a target cluster/i });
+  await expect(picker).toBeVisible();
+  const firstOption = picker.getByRole('option').first();
+  await expect(firstOption).toBeFocused();
+  await page.keyboard.press('Enter');
+
+  const status = drawer.getByTestId('cluster-drawer-reassign-status');
+  await expect(status).toHaveAttribute('role', 'status');
+  await expect(status).toContainText(/Moving identity|Moved identity/i);
+});

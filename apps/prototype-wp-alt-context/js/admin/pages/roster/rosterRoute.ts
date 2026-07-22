@@ -3,8 +3,9 @@ import type { RosterEntry } from '../../api/rosterApi';
 import { APP_LINK_PARAMS, toWorkbench } from '../../navigation/appLinks';
 
 /**
- * E21-9 Slice 5a: Clusters tab retired. People is the only roster surface.
- * Legacy `tab=clusters` / bare `cluster=` still parse usefully (drawer opens in place).
+ * E21-9 Slice 5a + E21-10 Slice 4 (lands-second): Clusters tab retired; getLegacyTab gone.
+ * People is the only roster surface. `tab=*` is ignored (no rewrite). `cluster=` opens the
+ * person-first drawer in place — not a Clusters-tab selector (that grammar is retired).
  */
 export const ROSTER_SURFACE = {
   id: 'people' as const,

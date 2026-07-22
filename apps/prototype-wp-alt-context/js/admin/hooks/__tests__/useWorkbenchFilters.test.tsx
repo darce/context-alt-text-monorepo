@@ -124,4 +124,62 @@ describe('useWorkbenchFilters', () => {
     expect(result.current.searchQuery).toBe('face');
     expect(result.current.currentPage).toBe(2);
   });
+
+  // E21-10 Slice 3 — media=expanded codec via useWorkbenchFilters
+  it('defaults mediaExpanded to false when media param is absent', () => {
+    const { result } = renderHook(() => useWorkbenchFilters(), { wrapper });
+    expect(result.current.mediaExpanded).toBe(false);
+  });
+
+  it('hydrates mediaExpanded=true from media=expanded', () => {
+    const { result } = renderHook(() => useWorkbenchFilters(), {
+      wrapper: wrapperForUrl('/?media=expanded'),
+    });
+    expect(result.current.mediaExpanded).toBe(true);
+  });
+
+  it('falls back to mediaExpanded=false for unknown media values', () => {
+    const { result } = renderHook(() => useWorkbenchFilters(), {
+      wrapper: wrapperForUrl('/?media=garbage'),
+    });
+    expect(result.current.mediaExpanded).toBe(false);
+  });
+
+  it('setMediaExpanded writes and clears the media param without dropping siblings', () => {
+    const { result } = renderHook(() => useWorkbenchFilters(), {
+      wrapper: wrapperForUrl('/?s=face&p=2'),
+    });
+
+    act(() => {
+      result.current.setMediaExpanded(true);
+    });
+    expect(result.current.mediaExpanded).toBe(true);
+    expect(result.current.searchQuery).toBe('face');
+    expect(result.current.currentPage).toBe(2);
+
+    act(() => {
+      result.current.setMediaExpanded(false);
+    });
+    expect(result.current.mediaExpanded).toBe(false);
+    expect(result.current.searchQuery).toBe('face');
+  });
+
+  it('setMediaExpanded uses replace-writes (history length unchanged after N toggles)', () => {
+    // Browser history length is the discriminating signal that replace (not push) was used.
+    window.history.replaceState({}, '', '/');
+    const startLen = window.history.length;
+
+    const { result } = renderHook(() => useWorkbenchFilters(), {
+      wrapper: wrapperForUrl('/'),
+    });
+
+    act(() => {
+      result.current.setMediaExpanded(true);
+      result.current.setMediaExpanded(false);
+      result.current.setMediaExpanded(true);
+    });
+
+    expect(result.current.mediaExpanded).toBe(true);
+    expect(window.history.length).toBe(startLen);
+  });
 });

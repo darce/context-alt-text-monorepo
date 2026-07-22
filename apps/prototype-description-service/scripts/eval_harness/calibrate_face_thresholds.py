@@ -10,10 +10,11 @@ recognition settings.
 
 FIR-5 decision contract notes:
 - ``s_max`` is float|null; null encodes -inf / no gallery match.
+- ``name_star`` is null iff ``s_max`` is null (no gallery match couples both).
 - ``excluded_single_face_recall`` rows are excluded from FIR-5 recall and from
   calibration trials (EVAL-08 parity).
-- Decision rows do **not** carry ``publishable``; publishability is a
-  post-score redaction / manifest-provenance concern, not a calibration input.
+- Decision rows carry ``publishable`` (bool) from the FIR-5 serializer; the
+  flag is required for schema parity and ignored for threshold math.
 
 Usage (from apps/prototype-description-service)::
 
@@ -70,6 +71,7 @@ REQUIRED_DECISION_KEYS = frozenset(
         "enrolled",
         "tau_k",
         "excluded_single_face_recall",
+        "publishable",
     }
 )
 # Pre-registered threshold-selection rule id (fit folds only; never re-tuned on read).
@@ -101,6 +103,7 @@ class Decision:
     enrolled: bool
     tau_k: float
     excluded_single_face_recall: bool
+    publishable: bool
 
 
 @dataclass(frozen=True)
@@ -225,8 +228,18 @@ def validate_face_bakeoff_report(doc: object) -> list[str]:
                 errors.append(f"decisions[{i}].enrolled must be a bool")
             if not isinstance(row["excluded_single_face_recall"], bool):
                 errors.append(f"decisions[{i}].excluded_single_face_recall must be a bool")
+            if not isinstance(row["publishable"], bool):
+                errors.append(f"decisions[{i}].publishable must be a bool")
             if not _is_number(row["tau_k"]):
                 errors.append(f"decisions[{i}].tau_k must be a finite number")
+            # name_star/s_max coupling: null s_max ⇔ no gallery match ⇒ name_star null.
+            name_star_val = row.get("name_star")
+            name_star_present = isinstance(name_star_val, str) and name_star_val != ""
+            if row["s_max"] is None and name_star_present:
+                errors.append(
+                    f"decisions[{i}]: s_max null (no match) requires name_star null "
+                    "(and name_star set requires finite s_max)"
+                )
 
     counts = doc.get("counts")
     if not isinstance(counts, dict):
@@ -317,6 +330,7 @@ def parse_decisions(doc: Mapping[str, Any]) -> list[Decision]:
                 enrolled=bool(row["enrolled"]),
                 tau_k=float(row["tau_k"]),
                 excluded_single_face_recall=bool(row["excluded_single_face_recall"]),
+                publishable=bool(row["publishable"]),
             )
         )
     # Deterministic order independent of input file ordering.
@@ -524,9 +538,12 @@ def select_read_trials(
     - Impostor with roster probe: both probe and gallery identities in the held
       fold; cross-fold impostors excluded.
     - Stranger probes: allowed as read-only rejection probes (never in fit).
-      Each stranger trial is counted **once**, only when ``trial.fold == held_fold``
-      (fold field from the decision row). Gallery, if present, must not touch a
-      fit-fold identity and must lie in the read fold when named.
+      Counted **exactly once**:
+        * named gallery (``name_star``): under the held fold of that gallery
+          identity (not the row's fold) so fold-mismatched strangers are not
+          dropped when FIR-5 leaves row fold uncoupled from gallery fold;
+        * null gallery: under ``trial.fold == held_fold``.
+      Gallery must never touch a fit-fold identity.
     - No read trial may reference a fit-fold identity as probe or gallery.
     """
     selected: list[ScoreTrial] = []
@@ -541,12 +558,20 @@ def select_read_trials(
 
         # Impostor / stranger
         if t.probe_identity is None:
-            # Single-count strangers: only the held fold matching the row's fold.
-            if t.fold != held_fold:
-                continue
-            if t.gallery_identity is not None and t.gallery_identity not in read_identities:
-                continue
             if t.gallery_identity is not None and t.gallery_identity in fit_identities:
+                continue
+            if t.gallery_identity is not None and t.gallery_identity in read_identities:
+                # Single-count under gallery fold (handles row/fold mismatch).
+                selected.append(t)
+                continue
+            if t.gallery_identity is not None:
+                # Named gallery not on the roster: fall back to row fold once.
+                if t.fold != held_fold:
+                    continue
+                selected.append(t)
+                continue
+            # No gallery match: single-count by decision row fold.
+            if t.fold != held_fold:
                 continue
             selected.append(t)
             continue
@@ -606,9 +631,12 @@ def select_threshold(
 ) -> float | None:
     """Pre-registered rule: minimum tau with fit FMR ≤ target.
 
-    Returns ``None`` (abstain) when there are zero fit impostors — never
-    fail-open to tau=0.0 / accept-everything ([CAL-01]). When no candidate
-    meets the target, fail-closed to max(1.0, peak observed score).
+    Returns ``None`` (abstain) when there are zero fit impostors **or** every
+    impostor score is non-finite (-inf / no-match only) — never fail-open to
+    tau=0.0 / accept-everything ([CAL-01]). All--inf impostors yield
+    ``fmr_at(..., 0.0) == 0`` which would otherwise accept candidate 0.0.
+    When no candidate meets the target, fail-closed to max(1.0, peak observed
+    finite score). Empty genuines are allowed (threshold from impostors only).
 
     Candidate thresholds are the sorted unique finite scores from fit trials
     (plus 0.0 and 1.0 bounds). Deterministic; no RNG.
@@ -618,6 +646,11 @@ def select_threshold(
 
     if not impostor_scores:
         # Cannot estimate FMR — abstain rather than propose accept-everything.
+        return None
+
+    # Finite impostor evidence required. All -inf (JSON null s_max) is not
+    # usable FMR evidence at any finite tau (would fail-open to 0.0).
+    if not any(math.isfinite(float(s)) for s in impostor_scores):
         return None
 
     finite = [float(s) for s in list(genuine_scores) + list(impostor_scores) if math.isfinite(float(s))]
@@ -684,15 +717,18 @@ def _oof_metrics_for_stratum(
 
         g_read = [t.score for t in read_trials if t.is_genuine]
         i_read = [t.score for t in read_trials if not t.is_genuine]
-        oof_genuine.extend(g_read)
-        oof_impostor.extend(i_read)
 
         fold_fmr: float | None = None
         fold_fnmr: float | None = None
         if tau is None:
             n_abstained_folds += 1
+            # Do NOT pool abstained-fold read scores into tax denominators —
+            # fnmr_oof/fmr_oof already exclude them ([CAL-05] consistency).
         else:
             fit_taus.append(tau)
+            # Only non-abstained folds contribute to OOF pools / tax dens.
+            oof_genuine.extend(g_read)
+            oof_impostor.extend(i_read)
             fold_fmr = fmr_at(i_read, tau)
             fold_fnmr = fnmr_at(g_read, tau)
             for s in g_read:
@@ -709,6 +745,7 @@ def _oof_metrics_for_stratum(
                 "held_fold": held,
                 "tau_fit": tau,
                 "abstained": tau is None,
+                "insufficient_impostor_evidence": tau is None,
                 "fnmr_oof_fold": fold_fnmr,
                 "fmr_oof_fold": fold_fmr,
                 "n_fit_genuine": len(g_fit),
@@ -748,13 +785,17 @@ def _oof_metrics_for_stratum(
 
 
 def _public_stratum_row(raw: Mapping[str, Any]) -> dict[str, Any]:
+    tau_proposed = raw["tau_proposed"]
+    insufficient = tau_proposed is None
     return {
-        "tau_proposed": raw["tau_proposed"],
+        "tau_proposed": tau_proposed,
         "fnmr_oof": raw["fnmr_oof"],
         "fmr_oof": raw["fmr_oof"],
         "n_genuine_oof": raw["n_genuine_oof"],
         "n_impostor_oof": raw["n_impostor_oof"],
         "n_abstained_folds": raw["n_abstained_folds"],
+        # Explicit flag so operators/CI can grep without inferring from null tau.
+        "insufficient_impostor_evidence": insufficient,
         "fold_rows": raw["fold_rows"],
     }
 
@@ -886,9 +927,12 @@ def calibrate(
         "strangers_in_fit": False,
         "cross_fold_impostors_excluded": True,
         "strangers_single_count_by_fold": True,
+        "strangers_count_under_gallery_fold": True,
         "oof_read_per_fold_tau": True,
         "zero_fit_impostor_policy": "abstain",
+        "all_nonfinite_impostor_policy": "abstain",
         "excluded_single_face_recall_skipped": True,
+        "rank1_miss_genuine_at_neg_inf": True,
         "n_roster_identities": len(identity_folds),
         "n_stranger_decisions": n_stranger_decisions,
         "n_excluded_single_face_recall": n_excluded,
@@ -901,13 +945,19 @@ def calibrate(
             "back to every fold would re-introduce a weak train/test contact. "
             "Read-fold impostor pairs require both identities in the held fold "
             "(cross-fold pairs excluded). Anonymous strangers (true_name=null) "
-            "are read-only probes, counted once via decision.fold, and never "
-            "inform fitting. Folds with zero fit impostors abstain "
-            "(tau_fit=null; never fail-open to 0.0). Rows with "
+            "are read-only probes, counted exactly once (named gallery under "
+            "that gallery identity's fold; null gallery under decision.fold), "
+            "and never inform fitting. Folds with zero fit impostors or only "
+            "non-finite (-inf) impostor scores abstain (tau_fit=null / "
+            "insufficient_impostor_evidence=true; never fail-open to 0.0). "
+            "Enrolled rank-1-miss genuines remain in the FNMR denominator at "
+            "score -inf (mate never accepted at any finite tau); a non-mate "
+            "name_star also emits an impostor trial at s_max. Rows with "
             "excluded_single_face_recall=true are skipped (FIR-5 recall parity). "
             f"Selection rule {SELECTION_RULE_ID!r} is pre-registered on fit folds only. "
-            "Decision rows do not carry publishable; that flag is a post-score "
-            "redaction / manifest-provenance concern."
+            "Decision rows carry publishable (bool) for FIR-5 schema parity; "
+            "threshold math ignores it. FNMR-tax / OACT-tax denominators use "
+            "only non-abstained fold read scores (same set as fnmr_oof/fmr_oof)."
         ),
     }
 

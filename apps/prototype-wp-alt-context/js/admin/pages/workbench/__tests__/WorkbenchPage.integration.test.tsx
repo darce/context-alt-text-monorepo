@@ -361,7 +361,7 @@ describe('WorkbenchPage (integration-lite)', () => {
           last_reconciled_at: null,
         },
       } satisfies SyncStatusResponse,
-      expectedText: 'Queued',
+      expectedText: 'Waiting to sync',
       linkName: null,
       linkHref: null,
     },

@@ -49,6 +49,11 @@ const BANNED_STRINGS = [
   'Source version',
   'projected instances',
   'Curriculum',
+  // UXP-4 slice 2: ops dialect retired from operator-facing surfaces
+  'Delta sync',
+  'Machine sync',
+  'Machine state',
+  'Sync backlog',
 ] as const;
 
 const UUID_REGEX = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;

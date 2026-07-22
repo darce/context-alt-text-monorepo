@@ -317,6 +317,142 @@ class RosterEntryProjectionRepositoryTest extends TestCase
 		$this->assertStringContainsString("'cluster-b'", $selectQueries[2]);
 	}
 
+	/**
+	 * Survivor policy (E21-9): rows that normalize equal collapse to lowest-id primary;
+	 * clusters and queue_memberships are unions of member rows (rg-015).
+	 * Targets residual uniqueness gap after collation pin — not states UNIQUE forbids.
+	 */
+	public function testListEntriesGroupsByNormalizedNameWithLowestIdSurvivorAndUnionedAggregates(): void
+	{
+		global $wpdb;
+
+		$wpdb->tableRows['wp_acx_persons'] = [
+			[
+				'id' => 10,
+				'person_uuid' => 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+				'name' => 'José',
+				'normalized_name' => 'josé',
+				'tags' => '["primary"]',
+				'queue_memberships_json' => '["hard-examples"]',
+				'cluster_count' => 0,
+				'updated_at' => '2026-05-07 14:00:00',
+			],
+			[
+				// Higher id, same normalized_name residual (dirty-dev defense-in-depth).
+				'id' => 20,
+				'person_uuid' => 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+				'name' => 'José',
+				'normalized_name' => 'josé',
+				'tags' => '["secondary"]',
+				'queue_memberships_json' => '["singleton-proposals"]',
+				'cluster_count' => 0,
+				'updated_at' => '2026-05-07 15:00:00',
+			],
+			[
+				'id' => 30,
+				'person_uuid' => 'cccccccc-cccc-cccc-cccc-cccccccccccc',
+				'name' => 'Jose',
+				'normalized_name' => 'jose',
+				'tags' => '[]',
+				'updated_at' => '2026-05-07 16:00:00',
+			],
+		];
+		$wpdb->tableRows['wp_acx_clusters'] = [
+			[
+				'cluster_uuid' => 'cluster-primary',
+				'person_id' => 10,
+				'identity_count' => 1,
+				'representative_id' => 'identity-p',
+				'updated_at' => '2026-05-07 14:10:00',
+			],
+			[
+				'cluster_uuid' => 'cluster-secondary',
+				'person_id' => 20,
+				'identity_count' => 1,
+				'representative_id' => 'identity-s',
+				'updated_at' => '2026-05-07 15:10:00',
+			],
+			[
+				'cluster_uuid' => 'cluster-ascii',
+				'person_id' => 30,
+				'identity_count' => 1,
+				'representative_id' => 'identity-a',
+				'updated_at' => '2026-05-07 16:10:00',
+			],
+		];
+		$wpdb->tableRows['wp_acx_identity_members'] = [
+			[
+				'identity_uuid' => 'identity-p',
+				'cluster_uuid' => 'cluster-primary',
+				'attachment_id' => 1,
+				'bbox_json' => '[0,0,1,1]',
+				'thumb_path' => 'http://example.test/p.jpg',
+				'similarity' => '0.9',
+				'updated_at' => '2026-05-07 14:11:00',
+			],
+			[
+				'identity_uuid' => 'identity-s',
+				'cluster_uuid' => 'cluster-secondary',
+				'attachment_id' => 2,
+				'bbox_json' => '[0,0,1,1]',
+				'thumb_path' => 'http://example.test/s.jpg',
+				'similarity' => '0.8',
+				'updated_at' => '2026-05-07 15:11:00',
+			],
+			[
+				'identity_uuid' => 'identity-a',
+				'cluster_uuid' => 'cluster-ascii',
+				'attachment_id' => 3,
+				'bbox_json' => '[0,0,1,1]',
+				'thumb_path' => 'http://example.test/a.jpg',
+				'similarity' => '0.7',
+				'updated_at' => '2026-05-07 16:11:00',
+			],
+		];
+
+		$repository = new RosterEntryProjectionRepository(
+			new RosterEntryProjectionSyncStateSpy(
+				snapshotVersion: 1,
+				lastUpdated: '2026-05-07 18:00:00',
+				lastSyncResult: 'ok'
+			)
+		);
+
+		$data = $repository->list_entries(self::currentTenantId());
+
+		$this->assertCount(2, $data, 'José group + Jose group; accent-distinct under policy');
+
+		$joseGroup = null;
+		$asciiGroup = null;
+		foreach ($data as $entry) {
+			if ('José' === $entry['name'] && 10 === $entry['id']) {
+				$joseGroup = $entry;
+			}
+			if ('Jose' === $entry['name'] && 30 === $entry['id']) {
+				$asciiGroup = $entry;
+			}
+		}
+		$this->assertNotNull($joseGroup, 'lowest-id survivor for josé group');
+		$this->assertNotNull($asciiGroup, 'Jose remains a separate entry');
+
+		$this->assertSame(10, $joseGroup['id']);
+		$this->assertSame('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', $joseGroup['person_uuid']);
+		$this->assertSame(2, $joseGroup['cluster_count']);
+		$clusterIds = array_map(
+			static fn(array $c): string => (string) $c['cluster_id'],
+			$joseGroup['clusters']
+		);
+		sort($clusterIds);
+		$this->assertSame(['cluster-primary', 'cluster-secondary'], $clusterIds);
+
+		$queues = $joseGroup['queue_memberships'];
+		sort($queues);
+		$this->assertSame(['hard-examples', 'singleton-proposals'], $queues);
+
+		$this->assertSame(1, $asciiGroup['cluster_count']);
+		$this->assertSame('cluster-ascii', $asciiGroup['clusters'][0]['cluster_id']);
+	}
+
 	private function seedRosterRows(): void
 	{
 		global $wpdb;

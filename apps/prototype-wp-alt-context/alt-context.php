@@ -137,6 +137,7 @@ require_once ACX_PLUGIN_DIR . 'src/support/trait-batch-limits.php';
 require_once ACX_PLUGIN_DIR . 'src/media/class-xmp-persistence-factory.php';
 require_once ACX_PLUGIN_DIR . 'src/api/class-xmp-embed-controller.php';
 require_once ACX_PLUGIN_DIR . 'src/admin/class-admin.php';
+require_once ACX_PLUGIN_DIR . 'src/admin/class-attachment-fields.php';
 require_once ACX_PLUGIN_DIR . 'src/admin/class-abstract-spa-page.php';
 require_once ACX_PLUGIN_DIR . 'src/admin/class-dashboard-page.php';
 require_once ACX_PLUGIN_DIR . 'src/admin/class-workbench-page.php';

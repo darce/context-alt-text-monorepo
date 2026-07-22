@@ -1,7 +1,6 @@
 import React from 'react';
 import { __ } from '@wordpress/i18n';
 import { useSearchParams } from 'react-router-dom';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import type { ClusterIdentity, ClusterSummary } from '../api/recognition';
 import { useRecognitionCluster, useRecognitionClusters } from '../hooks/useRecognitionHooks';
 import { useRosterEntries } from '../hooks/useRosterHooks';
@@ -12,11 +11,10 @@ import { useClusterActions } from './roster/hooks/useClusterActions';
 import { ClusterDrawerPanel } from './roster/ClusterDrawerPanel';
 import { RosterEntriesSection } from './roster/RosterEntriesSection';
 import { PersonWorkspacePanel } from './roster/PersonWorkspacePanel';
-import { RosterClustersTab } from './roster/RosterClustersTab';
+import { NeedsAssignmentSection } from './roster/NeedsAssignmentSection';
 import {
-  ROSTER_TABS,
+  ROSTER_SURFACE,
   ROSTER_ROUTE_PARAM_KEYS,
-  type RosterTab,
   parseRosterRoute,
   getRouteParam,
   getEntryPersonUuid,
@@ -37,26 +35,20 @@ export const RosterPage = (): React.JSX.Element => {
   const selection = useClusterSelection();
   const clearSelection = selection.clear;
   const retainVisibleSelection = selection.retainVisible;
+  const selectAllSelection = selection.selectAll;
 
   const clustersQuery = useRecognitionClusters({ limit: 20 });
   const clusterList = clustersQuery.data;
   const clusters = React.useMemo(() => clusterList?.clusters ?? [], [clusterList]);
   const clusterIds = React.useMemo(() => clusters.map((cluster) => cluster.id), [clusters]);
   const parsedRoute = React.useMemo(() => parseRosterRoute(searchParams), [searchParams]);
-  const activeTab = parsedRoute.activeTab;
-
-  // Clear selection when switching tabs to avoid stale state
-  React.useEffect(() => {
-    clearSelection();
-  }, [activeTab, clearSelection]);
 
   React.useEffect(() => {
-    if (activeTab !== ROSTER_TABS.clusters.id || clustersQuery.data === undefined) {
+    if (clustersQuery.data === undefined) {
       return;
     }
-
     retainVisibleSelection(clusterIds);
-  }, [activeTab, clusterIds, clustersQuery.data, retainVisibleSelection]);
+  }, [clusterIds, clustersQuery.data, retainVisibleSelection]);
 
   React.useEffect(() => {
     setSelectedClusterId(parsedRoute.selectedClusterId);
@@ -90,11 +82,10 @@ export const RosterPage = (): React.JSX.Element => {
   const hasEntriesFilter = searchParams.get('personFilter') !== null;
   const defaultWorkspaceRoute = React.useMemo(
     () =>
-      activeTab === ROSTER_TABS.entries.id &&
       parsedRoute.selectedClusterId === null &&
       !parsedRoute.requiresProjectionGateNotice &&
       !hasEntriesFilter,
-    [activeTab, hasEntriesFilter, parsedRoute.requiresProjectionGateNotice, parsedRoute.selectedClusterId],
+    [hasEntriesFilter, parsedRoute.requiresProjectionGateNotice, parsedRoute.selectedClusterId],
   );
   const defaultWorkspaceEntry = React.useMemo(() => {
     if (!defaultWorkspaceRoute) {
@@ -140,8 +131,9 @@ export const RosterPage = (): React.JSX.Element => {
   const actions = useClusterActions({
     onReassignSettled: dragDrop.resetDragState,
     onCommitSettled: dragDrop.resetDragState,
-    onBulkMergeSettled: selection.clear,
-    onBulkDismissSettled: selection.clear,
+    onBulkMergeSettled: clearSelection,
+    onBulkMergeFailure: selectAllSelection,
+    onBulkDismissSettled: clearSelection,
   });
 
   const handleDropFace = (targetClusterId: string | null): void => {
@@ -155,6 +147,24 @@ export const RosterPage = (): React.JSX.Element => {
     }
     actions.reassignMutation.mutate({ faceId: payload.faceId, targetClusterId });
   };
+
+  const reassignTargets = React.useMemo(
+    () =>
+      clusters
+        .filter((candidate) => candidate.id !== selectedClusterId)
+        .map((candidate) => ({
+          id: candidate.id,
+          label: candidate.label,
+        })),
+    [clusters, selectedClusterId],
+  );
+
+  const handleReassignFace = React.useCallback(
+    (faceId: string, targetClusterId: string): void => {
+      actions.reassignMutation.mutate({ faceId, targetClusterId });
+    },
+    [actions.reassignMutation],
+  );
 
   const handleRescanCluster = (cluster: ClusterSummary, identities: ClusterIdentity[]): void => {
     const sourceIdentities = identities.length > 0 ? identities : cluster.sample_identities;
@@ -195,7 +205,7 @@ export const RosterPage = (): React.JSX.Element => {
       setSearchParams(
         (previous) => {
           const next = new URLSearchParams(previous);
-          next.set('tab', ROSTER_TABS.entries.id);
+          next.delete('tab');
           for (const key of ROSTER_ROUTE_PARAM_KEYS) {
             next.delete(key);
           }
@@ -211,30 +221,17 @@ export const RosterPage = (): React.JSX.Element => {
     [actions, dragDrop, setSearchParams],
   );
 
-  const handleTabChange = React.useCallback(
-    (value: RosterTab) => {
-      setSearchParams(
-        (previous) => {
-          const next = new URLSearchParams(previous);
-          if (value === ROSTER_TABS.entries.id) {
-            next.delete('tab');
-          } else {
-            next.set('tab', value);
-          }
-          for (const key of ROSTER_ROUTE_PARAM_KEYS) {
-            next.delete(key);
-          }
-          return next;
-        },
-        { replace: true },
-      );
-    },
-    [setSearchParams],
-  );
-
   const handleSelectCluster = (cluster: ClusterSummary): void => {
     setSelectedClusterId(cluster.id);
-    handleTabChange(ROSTER_TABS.clusters.id);
+    setSearchParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        next.delete('tab');
+        next.set('cluster', cluster.id);
+        return next;
+      },
+      { replace: true },
+    );
   };
 
   return (
@@ -246,46 +243,31 @@ export const RosterPage = (): React.JSX.Element => {
         </h1>
         <p className="acx-roster__subtitle">
           {__(
-            'People are known identities you curate. Clusters are detected face groups you review and assign.',
+            'People are known identities you curate. Unassigned face groups stay reachable below for bulk merge or workbench review.',
             'alt-context',
           )}
         </p>
       </header>
 
-      <Tabs value={activeTab} onValueChange={(value) => handleTabChange(value as RosterTab)}>
-        <TabsList className="acx-roster__tabs" aria-label={__('Roster sections', 'alt-context')}>
-          {Object.values(ROSTER_TABS).map((tab) => (
-            <TabsTrigger key={tab.id} value={tab.id}>
-              {tab.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
+      <div className="acx-roster__panel">
+        <h2>{ROSTER_SURFACE.label}</h2>
+        {resolvedWorkspaceEntry !== null && (
+          <PersonWorkspacePanel entry={resolvedWorkspaceEntry} onOpenQueue={handleOpenPersonWorkspace} />
+        )}
+        <RosterEntriesSection query={entriesQuery} routeNotice={routeGateNotice} />
 
-        <TabsContent value={ROSTER_TABS.entries.id} className="acx-roster__panel">
-          <h2>{ROSTER_TABS.entries.label}</h2>
-          {resolvedWorkspaceEntry !== null && (
-            <PersonWorkspacePanel entry={resolvedWorkspaceEntry} onOpenQueue={handleOpenPersonWorkspace} />
-          )}
-          <RosterEntriesSection query={entriesQuery} routeNotice={routeGateNotice} />
-        </TabsContent>
-
-        <TabsContent value={ROSTER_TABS.clusters.id} className="acx-roster__panel">
-          <RosterClustersTab
-            clusterList={clusterList}
-            clusters={clusters}
-            clusterIds={clusterIds}
-            selection={selection}
-            actions={actions}
-            mediaMap={mediaMap}
-            dragDrop={dragDrop}
-            isLoading={clustersQuery.isLoading}
-            isError={clustersQuery.isError}
-            onRetry={() => void clustersQuery.refetch()}
-            onSelectCluster={handleSelectCluster}
-            onDropFace={handleDropFace}
-          />
-        </TabsContent>
-      </Tabs>
+        <NeedsAssignmentSection
+          clusters={clusters}
+          selection={selection}
+          actions={actions}
+          isLoading={clustersQuery.isLoading}
+          isError={clustersQuery.isError}
+          onRetry={() => void clustersQuery.refetch()}
+          onOpenCluster={handleSelectCluster}
+          truncated={clusterList?.truncated}
+          listTotal={clusterList?.total}
+        />
+      </div>
 
       <ClusterDrawerPanel
         cluster={selectedCluster}
@@ -313,6 +295,10 @@ export const RosterPage = (): React.JSX.Element => {
         dropTarget={dragDrop.dropTarget}
         isDragging={dragDrop.isDragging}
         onDiscardDrop={() => handleDropFace(null)}
+        reassignTargets={reassignTargets}
+        onReassignFace={handleReassignFace}
+        isReassigning={actions.reassignMutation.isPending}
+        reassignErrorMessage={actions.reassignMutation.error?.message ?? null}
       />
     </section>
   );

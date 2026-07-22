@@ -293,6 +293,18 @@ describe('IdentityClusterList', () => {
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
+  it('S3-T6 a11y: unavailable affordance is a polite live region with named Retry control', async () => {
+    const onRetry = vi.fn();
+    await renderWithClient(
+      <IdentityClusterList identities={[]} dataSource={DATA_SOURCE.UNAVAILABLE} onRetry={onRetry} />,
+    );
+
+    const status = screen.getByRole('status');
+    expect(status).toHaveAttribute('aria-live', 'polite');
+    expect(status).toHaveTextContent(/Identity data unavailable/i);
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  });
+
   it('BR-05: renders a distinct "reachable but erroring" warning for endpoint_error, not a confident empty', async () => {
     const onRetry = vi.fn();
     const { user } = await renderWithClient(

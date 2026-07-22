@@ -158,10 +158,11 @@ async def test_persist_integrity_error_is_terminal_no_retry(
         async def mark_item_completed(self, **_kwargs):  # noqa: ANN001
             raise AssertionError("integrity failure must not complete the item")
 
-        async def release_item_for_retry(self, *, item_id, error_message):  # noqa: ANN001
+        async def release_item_for_retry(self, *, item_id, error_message, attempts=0, now=None):  # noqa: ANN001
             ops.append("release_item_for_retry")
             released["item_id"] = item_id
             released["error_message"] = error_message
+            released["attempts"] = attempts
 
         async def mark_item_failed(self, *, item_id, completed_at, error_message):  # noqa: ANN001
             ops.append("mark_item_failed")
@@ -272,9 +273,10 @@ async def test_generic_exception_still_releases_for_retry_under_max_attempts(
         async def mark_item_completed(self, **_kwargs):  # noqa: ANN001
             raise AssertionError("transient failure must not complete")
 
-        async def release_item_for_retry(self, *, item_id, error_message):  # noqa: ANN001
+        async def release_item_for_retry(self, *, item_id, error_message, attempts=0, now=None):  # noqa: ANN001
             released["item_id"] = item_id
             released["error_message"] = error_message
+            released["attempts"] = attempts
 
         async def mark_item_failed(self, **kwargs):  # noqa: ANN001
             failed.update(kwargs)
@@ -359,10 +361,11 @@ async def test_failure_path_restores_rls_bypass_after_rollback(
         async def mark_item_completed(self, **_kwargs):  # noqa: ANN001
             raise AssertionError("failure path must not complete")
 
-        async def release_item_for_retry(self, *, item_id, error_message):  # noqa: ANN001
+        async def release_item_for_retry(self, *, item_id, error_message, attempts=0, now=None):  # noqa: ANN001
             ops.append("release_item_for_retry")
             released["item_id"] = item_id
             released["error_message"] = error_message
+            released["attempts"] = attempts
 
         async def mark_item_failed(self, *, item_id, completed_at, error_message):  # noqa: ANN001
             ops.append("mark_item_failed")

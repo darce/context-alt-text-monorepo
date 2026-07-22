@@ -169,6 +169,106 @@ async def test_refresh_job_progress_does_not_overwrite_terminal_stalled_job(db_s
     assert job.error_message == "stalled"
 
 
+def _as_utc(dt: datetime) -> datetime:
+    """Normalize SQLite naive timestamps for comparison with aware datetimes."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt
+
+
+@pytest.mark.asyncio
+async def test_release_item_for_retry_applies_attempt_based_not_before(db_session, tenant) -> None:
+    """Released items must not be re-claimable until compute_retry_backoff elapses."""
+    from recognition.application.scan.retry_backoff import compute_retry_backoff
+
+    repo = SqlAlchemyScanQueueRepository(db_session)
+    now = datetime.now(tz=UTC)
+    job_id = await repo.create_job(tenant_id=tenant.id, media_ids=[1])
+    await repo.enqueue_items(
+        job_id=job_id,
+        tenant_id=tenant.id,
+        items=[(1, "http://example.test/1.jpg")],
+    )
+    claimed = await repo.claim_pending_items(tenant_id=tenant.id, job_id=job_id, limit=1, now=now)
+    assert len(claimed) == 1
+    item = claimed[0]
+    assert item.attempts == 1
+
+    await repo.release_item_for_retry(
+        item_id=item.id,
+        error_message="transient",
+        attempts=item.attempts,
+        now=now,
+    )
+    await db_session.flush()
+
+    row = (
+        await db_session.execute(select(IdentityScanJobItem).where(IdentityScanJobItem.id == item.id))
+    ).scalar_one()
+    assert row.status == "pending"
+    assert row.last_error == "transient"
+    expected_available = now + compute_retry_backoff(item.attempts)
+    assert row.started_at is not None
+    assert abs((_as_utc(row.started_at) - expected_available).total_seconds()) < 0.001
+
+    # Still inside backoff window — must not claim.
+    during_backoff = await repo.claim_pending_items(
+        tenant_id=tenant.id, job_id=job_id, limit=1, now=now + timedelta(seconds=0.5)
+    )
+    assert during_backoff == []
+
+    # After not-before — claimable again.
+    after = now + compute_retry_backoff(item.attempts) + timedelta(milliseconds=1)
+    reclaimed = await repo.claim_pending_items(tenant_id=tenant.id, job_id=job_id, limit=1, now=after)
+    assert len(reclaimed) == 1
+    assert reclaimed[0].id == item.id
+    assert reclaimed[0].attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_release_item_for_retry_longer_backoff_for_higher_attempts(db_session, tenant) -> None:
+    """Higher attempt counts must yield a strictly later not-before than attempt=1."""
+    from recognition.application.scan.retry_backoff import compute_retry_backoff
+
+    repo = SqlAlchemyScanQueueRepository(db_session)
+    now = datetime.now(tz=UTC)
+    job_id = await repo.create_job(tenant_id=tenant.id, media_ids=[1, 2])
+    await repo.enqueue_items(
+        job_id=job_id,
+        tenant_id=tenant.id,
+        items=[
+            (1, "http://example.test/1.jpg"),
+            (2, "http://example.test/2.jpg"),
+        ],
+    )
+    claimed = await repo.claim_pending_items(tenant_id=tenant.id, job_id=job_id, limit=2, now=now)
+    assert len(claimed) == 2
+    low, high = claimed[0], claimed[1]
+
+    await repo.release_item_for_retry(
+        item_id=low.id, error_message="e1", attempts=1, now=now
+    )
+    await repo.release_item_for_retry(
+        item_id=high.id, error_message="e2", attempts=3, now=now
+    )
+    await db_session.flush()
+
+    low_row = (
+        await db_session.execute(select(IdentityScanJobItem).where(IdentityScanJobItem.id == low.id))
+    ).scalar_one()
+    high_row = (
+        await db_session.execute(select(IdentityScanJobItem).where(IdentityScanJobItem.id == high.id))
+    ).scalar_one()
+    assert _as_utc(low_row.started_at) == now + compute_retry_backoff(1)
+    assert _as_utc(high_row.started_at) == now + compute_retry_backoff(3)
+    assert _as_utc(high_row.started_at) > _as_utc(low_row.started_at)
+
+    # Mid window: only the lower-attempt item is claimable.
+    mid = now + compute_retry_backoff(1) + timedelta(milliseconds=1)
+    mid_claimed = await repo.claim_pending_items(tenant_id=tenant.id, job_id=job_id, limit=2, now=mid)
+    assert [c.id for c in mid_claimed] == [low.id]
+
+
 @pytest.mark.asyncio
 async def test_reclaim_stale_items_resets_processing_to_pending(db_session, tenant) -> None:
     repo = SqlAlchemyScanQueueRepository(db_session)

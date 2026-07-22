@@ -656,9 +656,10 @@ async def test_worker_handler_commit_failure_no_event_no_counter_bump(
         async def mark_item_completed(self, **_kwargs):  # noqa: ANN001
             return None
 
-        async def release_item_for_retry(self, *, item_id, error_message):  # noqa: ANN001
+        async def release_item_for_retry(self, *, item_id, error_message, attempts=0, now=None):  # noqa: ANN001
             released["item_id"] = item_id
             released["error_message"] = error_message
+            released["attempts"] = attempts
 
         async def mark_item_failed(self, **_kwargs):  # noqa: ANN001
             raise AssertionError("should retry, not permanent fail")

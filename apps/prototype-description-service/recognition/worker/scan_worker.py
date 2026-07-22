@@ -327,6 +327,11 @@ class ScanWorker:
                 if await self._process_pending_clustering_jobs(session=session, now=now):
                     await session.commit()
                     should_sleep = True
+                elif not self._can_claim_scan_items():
+                    # Runtime not ready: keep clustering (above) but do not claim
+                    # scan items — claiming would burn attempts under Unavailable*.
+                    await session.commit()
+                    should_sleep = True
                 else:
                     claimed = await repo.claim_pending_items_any(limit=self._config.claim_batch_size, now=now)
                     if not claimed:
@@ -350,6 +355,15 @@ class ScanWorker:
     ) -> None:
         await self._ensure_embedding_runtime()
         await self._scan_handler.process_items(claimed=claimed)
+
+    def _can_claim_scan_items(self) -> bool:
+        """Whether this worker may claim pending scan items this cycle.
+
+        Test mode always claims (stubs). Production requires a ready embedding
+        runtime so Unavailable* does not burn attempt budgets on tight loops.
+        Clustering is independent and still runs when this returns False.
+        """
+        return self._runtime_mode == "test" or self._embedding_runtime_ready
 
     async def _probe_and_publish_embedding_runtime_capability(self) -> None:
         """Retry runtime initialization even while intake is rejecting new jobs."""

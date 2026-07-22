@@ -299,9 +299,15 @@ class TestFir2Br02LandmarksSeam:
         aligned = MagicMock()
         aligned.crop = crop
         runtime.aligner.align.return_value = aligned  # type: ignore[attr-defined]
+        from recognition.infrastructure.face_pipeline._common import EmbedBatchResult
+
         emb = np.ones(SFACE_EMBEDDING_DIM, dtype=np.float32)
-        emb /= float(np.linalg.norm(emb))
-        runtime.embedder.embed.return_value = [emb]  # type: ignore[attr-defined]
+        raw_norm = float(np.linalg.norm(emb))
+        emb /= raw_norm
+        runtime.embedder.embed.return_value = EmbedBatchResult(  # type: ignore[attr-defined]
+            vectors=np.asarray([emb], dtype=np.float32),
+            norms=np.asarray([raw_norm], dtype=np.float32),
+        )
 
         import io
 

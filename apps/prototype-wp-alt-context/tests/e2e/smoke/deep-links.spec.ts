@@ -8,6 +8,7 @@
 import { expect, test, type Page } from '@playwright/test';
 
 import {
+  toDashboard,
   toDescriptionHistoryRun,
   toWorkbench,
 } from '../../../js/admin/navigation/appLinks';
@@ -15,6 +16,10 @@ import { getAcxAdminHashUrl, getAcxAdminRouteUrlWithParams } from '../fixtures/a
 import { requireBaseUrl } from '../fixtures/axe';
 
 const WORKBENCH_SHELL = '.acx-workbench';
+/** Apply-view section chrome (DescribeRunApplyView) — discriminating vs list. */
+const RUN_APPLY_SECTION = 'section.acx-run-apply';
+/** List chrome present only on the full history list surface. */
+const HISTORY_LIST = '.acx-history__list';
 
 const openHash = async (page: Page, baseURL: string, slug: Parameters<typeof getAcxAdminHashUrl>[1], hashHref: string) => {
   const url = getAcxAdminHashUrl(baseURL, slug, hashHref);
@@ -41,9 +46,13 @@ test('description-history run= deep-link via contract builder lands apply surfac
   // Synthetic run id — surface must still switch into the apply view chrome.
   await openHash(page, base, 'alt-context-description-history', toDescriptionHistoryRun('e21-10-deep-link'));
   await expect(page).toHaveURL(/page=alt-context-description-history/);
-  // Apply view either shows run chrome or an explicit empty/error for unknown run — not the list.
-  await expect(page.locator('body')).toBeVisible();
   await expect(page).toHaveURL(/#\/description-history\?run=/);
+  // Discriminating apply-view chrome (not the history list).
+  await expect(page.getByRole('heading', { name: /Apply generated descriptions/i })).toBeVisible();
+  await expect(page.locator(RUN_APPLY_SECTION)).toBeVisible();
+  await expect(page.getByRole('link', { name: /Back to full history/i })).toBeVisible();
+  // List chrome must be absent on the run-scoped apply surface.
+  await expect(page.locator(HISTORY_LIST)).toHaveCount(0);
 });
 
 test('media=expanded deep-link renders workbench scan with expanded media param in hash', async ({
@@ -61,6 +70,7 @@ test('legacy tab=confirm does not open advanced or rewrite tab (shim retired)', 
   baseURL,
 }) => {
   const base = requireBaseUrl(baseURL);
+  // Plan §Slice 4 / Verification: plain-scan landing — no rewrite to advanced=open.
   // Raw confirm shape — must NOT be produced by any builder; this is the degrade probe.
   await openHash(page, base, 'alt-context-workbench', '#/workbench?tab=confirm');
   await expect(page.locator(WORKBENCH_SHELL)).toBeVisible();
@@ -89,13 +99,24 @@ test('expand toggle then navigate-back restores media=expanded (back/forward)', 
   baseURL,
 }) => {
   const base = requireBaseUrl(baseURL);
-  await openHash(page, base, 'alt-context-workbench', toWorkbench({ media: 'expanded' }));
-  await expect(page).toHaveURL(/media=expanded/);
+  // Land without media param; expand via UI so the current history entry carries the param.
+  await openHash(page, base, 'alt-context-workbench', toWorkbench());
+  await expect(page.locator(WORKBENCH_SHELL)).toBeVisible();
 
-  // In-page push navigation away, then browser Back should restore expand state.
-  await openHash(page, base, 'alt-context-dashboard', '#/dashboard');
+  const expandBtn = page.getByRole('button', { name: 'Show media table' });
+  // Findings-present demos collapse the table; zero-findings leaves it expanded.
+  // Only the collapsed chrome exposes the UI toggle — require it for this probe.
+  await expect(expandBtn).toBeVisible({ timeout: 30_000 });
+  await expandBtn.click();
+  await expect(page).toHaveURL(/media=expanded/);
+  // Expanded surface: collapsed summary CTA is gone.
+  await expect(page.getByRole('button', { name: 'Show media table' })).toHaveCount(0);
+
+  // Leave via contract builder (no raw hash), then Back restores expand URL + surface.
+  await openHash(page, base, 'alt-context-dashboard', toDashboard());
   await expect(page).toHaveURL(/page=alt-context-dashboard/);
   await page.goBack();
   await expect(page).toHaveURL(/media=expanded/);
   await expect(page.locator(WORKBENCH_SHELL)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Show media table' })).toHaveCount(0);
 });

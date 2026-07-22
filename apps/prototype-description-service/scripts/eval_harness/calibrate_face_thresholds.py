@@ -609,6 +609,36 @@ def assert_pair_level_disjointness(
             )
 
 
+def assert_fit_side_impostor_disjointness(
+    fit_trials: Sequence[ScoreTrial],
+    fit_identities: frozenset[str],
+) -> None:
+    """Property: fit trials never touch held-fold / stranger identities (FIR6RC-06).
+
+    Genuine fit: probe in fit set. Impostor fit: both probe and gallery in fit.
+    Strangers never inform fitting.
+    """
+    if any(name is None for name in fit_identities):
+        raise CalibrationError("strangers must never appear in the fit identity set")
+    for t in fit_trials:
+        if t.probe_identity is None:
+            raise CalibrationError("stranger probe must never appear in fit trials")
+        if t.probe_identity not in fit_identities:
+            raise CalibrationError(
+                f"fit-pair probe {t.probe_identity!r} is outside the fit identity set"
+            )
+        if t.is_genuine:
+            continue
+        if t.gallery_identity is None:
+            raise CalibrationError(
+                f"fit impostor probe {t.probe_identity!r} missing gallery identity"
+            )
+        if t.gallery_identity not in fit_identities:
+            raise CalibrationError(
+                f"fit-pair gallery {t.gallery_identity!r} is outside the fit identity set"
+            )
+
+
 def fmr_at(scores: Sequence[float], tau: float) -> float | None:
     if not scores:
         return None
@@ -710,6 +740,7 @@ def _oof_metrics_for_stratum(
         fit_trials = select_fit_trials(scoped, fit_ids)
         read_trials = select_read_trials(scoped, read_ids, fit_ids, held_fold=held)
         assert_pair_level_disjointness(read_trials, fit_ids)
+        assert_fit_side_impostor_disjointness(fit_trials, fit_ids)
 
         g_fit = [t.score for t in fit_trials if t.is_genuine]
         i_fit = [t.score for t in fit_trials if not t.is_genuine]
@@ -926,6 +957,7 @@ def calibrate(
         "fmr_target": fmr_target,
         "strangers_in_fit": False,
         "cross_fold_impostors_excluded": True,
+        "fit_side_impostors_require_both_in_fit": True,
         "strangers_single_count_by_fold": True,
         "strangers_count_under_gallery_fold": True,
         "oof_read_per_fold_tau": True,
@@ -933,6 +965,8 @@ def calibrate(
         "all_nonfinite_impostor_policy": "abstain",
         "excluded_single_face_recall_skipped": True,
         "rank1_miss_genuine_at_neg_inf": True,
+        "selection_rule_pre_registered": True,
+        "deterministic": True,
         "n_roster_identities": len(identity_folds),
         "n_stranger_decisions": n_stranger_decisions,
         "n_excluded_single_face_recall": n_excluded,
@@ -944,17 +978,23 @@ def calibrate(
             "proposal only — residual CAL-07 note: applying that single median "
             "back to every fold would re-introduce a weak train/test contact. "
             "Read-fold impostor pairs require both identities in the held fold "
-            "(cross-fold pairs excluded). Anonymous strangers (true_name=null) "
-            "are read-only probes, counted exactly once (named gallery under "
-            "that gallery identity's fold; null gallery under decision.fold), "
-            "and never inform fitting. Folds with zero fit impostors or only "
-            "non-finite (-inf) impostor scores abstain (tau_fit=null / "
-            "insufficient_impostor_evidence=true; never fail-open to 0.0). "
-            "Enrolled rank-1-miss genuines remain in the FNMR denominator at "
-            "score -inf (mate never accepted at any finite tau); a non-mate "
-            "name_star also emits an impostor trial at s_max. Rows with "
-            "excluded_single_face_recall=true are skipped (FIR-5 recall parity). "
-            f"Selection rule {SELECTION_RULE_ID!r} is pre-registered on fit folds only. "
+            "(cross-fold pairs excluded). Fit-side impostor pairs require both "
+            "probe and gallery identities in the fit set (FIR6RC-06). Anonymous "
+            "strangers (true_name=null) are read-only probes, counted exactly "
+            "once (named gallery under that gallery identity's fold; null "
+            "gallery under decision.fold), and never inform fitting. Folds with "
+            "zero fit impostors or only non-finite (-inf) impostor scores "
+            "abstain (tau_fit=null / insufficient_impostor_evidence=true; never "
+            "fail-open to 0.0). Enrolled rank-1-miss genuines remain in the FNMR "
+            "denominator at score -inf (mate never accepted at any finite tau); "
+            "a non-mate name_star also emits an impostor trial at s_max. Rows "
+            "with excluded_single_face_recall=true are skipped (FIR-5 recall "
+            "parity). "
+            f"Selection rule {SELECTION_RULE_ID!r} is pre-registered on fit folds "
+            "only before any held fold is read (FIR6RC-07). "
+            "The calibration artifact is deterministic: bit-identical re-runs "
+            "with the same report+manifest+fmr_target (no wall-clock or unpinned "
+            "RNG; PYTHONHASHSEED-independent serialization). "
             "Decision rows carry publishable (bool) for FIR-5 schema parity; "
             "threshold math ignores it. FNMR-tax / OACT-tax denominators use "
             "only non-abstained fold read scores (same set as fnmr_oof/fmr_oof)."

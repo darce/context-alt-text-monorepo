@@ -307,36 +307,59 @@ def test_bridge_oact_profile_gates_and_updates_quality() -> None:
 
 
 def test_bridge_floors_profile_gated_under_insightface() -> None:
-    """S6 rollback: insightface + env floors must bridge as no-op (FIR6S3B-M-02)."""
+    """S6 rollback: insightface + env floors must bridge as no-op (FIR6S3B-M-02).
+
+    FIR6RC-05: explicit floor-field assertions under both profiles + identity
+    fallback when bridged values match the base quality object.
+    """
     quality = QualitySettings(
         factor_floor_sharpness=0.0,
         factor_floor_embedding_norm=0.0,
         factor_ceiling_occlusion=1.0,
+        oact_coefficient=0.0,
     )
     face = FacePipelineSettings(
         profile="insightface",
         factor_floor_sharpness=12.0,
         factor_floor_embedding_norm=3.0,
         factor_ceiling_occlusion=0.8,
+        oact_coefficient=0.3,
     )
     knobs = _resolve(face)
+    # Profile gate: floors + OACT forced to no-op under insightface.
     assert knobs.factor_floor_sharpness == 0.0
     assert knobs.factor_floor_embedding_norm == 0.0
     assert knobs.factor_ceiling_occlusion == 1.0
-    # Bridging no-op knobs onto already-no-op quality is identity.
-    assert bridge_oact_into_quality_settings(quality, knobs) is quality
+    assert knobs.oact_coefficient == 0.0
+    # Bridging no-op knobs onto already-no-op quality is object identity (fallback).
+    bridged_off = bridge_oact_into_quality_settings(quality, knobs)
+    assert bridged_off is quality
+    assert bridged_off.factor_floor_sharpness == 0.0
+    assert bridged_off.factor_floor_embedding_norm == 0.0
+    assert bridged_off.factor_ceiling_occlusion == 1.0
+    assert bridged_off.oact_coefficient == 0.0
 
     face_on = FacePipelineSettings(
         profile="face_pipeline",
         factor_floor_sharpness=12.0,
         factor_floor_embedding_norm=3.0,
         factor_ceiling_occlusion=0.8,
+        oact_coefficient=0.25,
     )
     knobs_on = _resolve(face_on)
+    assert knobs_on.factor_floor_sharpness == 12.0
+    assert knobs_on.factor_floor_embedding_norm == 3.0
+    assert knobs_on.factor_ceiling_occlusion == 0.8
+    assert knobs_on.oact_coefficient == 0.25
     bridged = bridge_oact_into_quality_settings(quality, knobs_on)
+    # Must allocate a new QualitySettings with all three floor fields + OACT.
+    assert bridged is not quality
     assert bridged.factor_floor_sharpness == 12.0
     assert bridged.factor_floor_embedding_norm == 3.0
     assert bridged.factor_ceiling_occlusion == 0.8
+    assert bridged.oact_coefficient == pytest.approx(0.25)
+    # Re-bridge of already-matching quality is identity fallback.
+    assert bridge_oact_into_quality_settings(bridged, knobs_on) is bridged
 
 
 def test_apply_oact_bridge_to_clustering_updates_quality_only() -> None:

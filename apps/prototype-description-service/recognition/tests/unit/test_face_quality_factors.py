@@ -270,6 +270,17 @@ class TestOactDefaultPin:
         assert QualitySettings().oact_coefficient == 0.0
         assert QualitySettings.model_fields["oact_coefficient"].default == 0.0
 
+    def test_quality_settings_oact_coefficient_rejects_negative(self) -> None:
+        """FIR6RC-01: QualitySettings.oact_coefficient is ge=0 (negative rewards occlusion)."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            QualitySettings(oact_coefficient=-0.1)
+        with pytest.raises(ValidationError):
+            QualitySettings(oact_coefficient=-1e-9)
+        assert QualitySettings(oact_coefficient=0.0).oact_coefficient == 0.0
+        assert QualitySettings(oact_coefficient=0.5).oact_coefficient == 0.5
+
 
 class TestInsightfaceFactorsNone:
     def test_face_detection_defaults_none(self) -> None:

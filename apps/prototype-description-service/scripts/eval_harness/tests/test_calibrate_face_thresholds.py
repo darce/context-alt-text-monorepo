@@ -21,6 +21,7 @@ from scripts.eval_harness.calibrate_face_thresholds import (
     S_MAX_NO_MATCH,
     CalibrationError,
     ScoreTrial,
+    assert_fit_side_impostor_disjointness,
     assert_pair_level_disjointness,
     build_trials,
     calibrate,
@@ -97,12 +98,15 @@ def test_golden_numeric_pins_on_committed_fixture(
     assert artifact["protocol"]["kind"] == "pair_level_subject_disjoint_kfold"
     assert artifact["protocol"]["strangers_in_fit"] is False
     assert artifact["protocol"]["cross_fold_impostors_excluded"] is True
+    assert artifact["protocol"]["fit_side_impostors_require_both_in_fit"] is True
     assert artifact["protocol"]["oof_read_per_fold_tau"] is True
     assert artifact["protocol"]["zero_fit_impostor_policy"] == "abstain"
     assert artifact["protocol"]["all_nonfinite_impostor_policy"] == "abstain"
     assert artifact["protocol"]["strangers_single_count_by_fold"] is True
     assert artifact["protocol"]["strangers_count_under_gallery_fold"] is True
     assert artifact["protocol"]["rank1_miss_genuine_at_neg_inf"] is True
+    assert artifact["protocol"]["selection_rule_pre_registered"] is True
+    assert artifact["protocol"]["deterministic"] is True
     assert artifact["protocol"]["k"] == 3
     assert artifact["protocol"]["n_excluded_single_face_recall"] == GOLDEN_N_EXCLUDED
     assert artifact["protocol"]["n_stranger_decisions"] == GOLDEN_N_STRANGERS
@@ -111,6 +115,10 @@ def test_golden_numeric_pins_on_committed_fixture(
     assert "rank-1-miss" in disclosure.lower() or "rank1" in disclosure.lower()
     assert "-inf" in disclosure or "neg_inf" in disclosure.lower() or "−inf" in disclosure
     assert "insufficient_impostor_evidence" in disclosure
+    # FIR6RC-07: pre-registration + determinism lines in the protocol disclosure.
+    assert "pre-registered" in disclosure.lower()
+    assert "deterministic" in disclosure.lower()
+    assert "fit-side" in disclosure.lower() or "fit set" in disclosure.lower()
 
     g = artifact["global"]
     assert g["tau_proposed"] == pytest.approx(GOLDEN_GLOBAL_TAU)
@@ -437,6 +445,8 @@ def test_pair_level_disjointness_property(report_doc: dict, manifest_doc: dict) 
         for t in fit_trials:
             if not t.is_genuine:
                 assert t.gallery_identity in fit_ids
+        # FIR6RC-06: fit-side assertion must pass on the filtered set.
+        assert_fit_side_impostor_disjointness(fit_trials, fit_ids)
 
         read_trials = select_read_trials(trials, read_ids, fit_ids, held_fold=held)
         assert_pair_level_disjointness(read_trials, fit_ids)
@@ -446,6 +456,55 @@ def test_pair_level_disjointness_property(report_doc: dict, manifest_doc: dict) 
                 assert t.probe_identity in read_ids
             if t.gallery_identity is not None:
                 assert t.gallery_identity not in fit_ids
+
+
+def test_fit_side_impostor_disjointness_rejects_cross_fit_gallery(
+    report_doc: dict, manifest_doc: dict
+) -> None:
+    """FIR6RC-06: select_fit_trials drops cross-fit impostors; assert would fire if leaked."""
+    decisions = parse_decisions(report_doc)
+    identity_folds = identity_fold_assignment(decisions)
+    # Alice fold 0, Carol fold 1 — cross-fit impostor must not enter fit for held=0.
+    cross = ScoreTrial(
+        score=0.91,
+        probe_identity="Alice",
+        gallery_identity="Carol",
+        fold=0,
+        media_id=9911,
+        strata=("people",),
+        is_genuine=False,
+    )
+    stranger = ScoreTrial(
+        score=0.2,
+        probe_identity=None,
+        gallery_identity="Alice",
+        fold=0,
+        media_id=9912,
+        strata=("unknown",),
+        is_genuine=False,
+    )
+    fit_ids = fit_identities_for_held_fold(identity_folds, held_fold=0)
+    # When held=0, Alice is in READ not FIT; use held=2 so Alice+Bob in fit if k=3.
+    # Use held fold that leaves Alice in fit.
+    held_with_alice_in_fit = None
+    for held in range(len(report_doc["tau"]["tau_k"])):
+        ids = fit_identities_for_held_fold(identity_folds, held)
+        if "Alice" in ids and "Carol" not in ids:
+            held_with_alice_in_fit = held
+            fit_ids = ids
+            break
+    assert held_with_alice_in_fit is not None, "fixture must place Alice in some fit fold without Carol"
+
+    filtered = select_fit_trials([cross, stranger], fit_ids)
+    assert all(t.media_id != 9911 for t in filtered), "cross-fit impostor must be dropped"
+    assert all(t.media_id != 9912 for t in filtered), "stranger must never inform fit"
+    assert_fit_side_impostor_disjointness(filtered, fit_ids)
+
+    # Positive control: leaking the cross-fit pair into fit_trials must raise.
+    with pytest.raises(CalibrationError, match="fit-pair gallery"):
+        assert_fit_side_impostor_disjointness([cross], fit_ids)
+    with pytest.raises(CalibrationError, match="stranger"):
+        assert_fit_side_impostor_disjointness([stranger], fit_ids)
 
 
 def test_strangers_never_in_fit_scores(report_doc: dict, manifest_doc: dict) -> None:

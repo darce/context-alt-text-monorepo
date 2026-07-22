@@ -112,12 +112,20 @@ def _resolve_one_photo(
 
     cost = np.full((n_faces, n_clusters), _UNASSIGNED_COST, dtype=np.float64)
     for (fi, ci), decision in edge.items():
-        # Secondary tie-break inside cost so equal similarities still prefer
-        # higher confidence / lower identity id via a tiny stable offset.
+        # LAP minimizes cost. Primary: higher similarity (more negative).
+        # Secondary: higher confidence. Tertiary: lexicographically smaller id
+        # wins — sign is +lex_key so smaller key ⇒ lower cost (FIR6RC-04).
         sim = float(decision.candidate.discovery_similarity)
+        if not np.isfinite(sim):
+            # Non-finite edges stay at the unassigned sentinel (predrop / LC-11).
+            continue
         conf = float(decision.candidate.identity.confidence)
-        # Offset bounded well below any real similarity delta of interest.
-        cost[fi, ci] = -sim - (conf * 1.0e-9) - (_stable_id_offset(decision.candidate.identity.id) * 1.0e-12)
+        # Offsets bounded well below any real similarity delta of interest.
+        cost[fi, ci] = (
+            -sim
+            - (conf * 1.0e-9)
+            + (_lex_id_key(decision.candidate.identity.id) * 1.0e-12)
+        )
 
     # Drop faces whose every edge is missing (would be all-below-threshold under top-k).
     active_faces = [fi for fi in range(n_faces) if bool(np.any(cost[fi] < (_UNASSIGNED_COST * 0.5)))]
@@ -156,13 +164,19 @@ def _edge_prefers(candidate: AssignmentDecision, incumbent: AssignmentDecision) 
     return candidate.candidate.identity.id < incumbent.candidate.identity.id
 
 
-def _stable_id_offset(identity_id: str) -> float:
-    """Map identity id to a deterministic [0, 1) offset for LAP cost tie-breaks."""
-    # Prefer lexicographically smaller ids (lower offset → slightly better cost).
+def _lex_id_key(identity_id: str) -> float:
+    """Monotone lex key in [0, 1) for LAP cost tertiary tie-break (FIR6RC-04).
+
+    Smaller identity ids yield smaller keys. Combined with a **positive** sign
+    in the cost formula (``+ key * 1e-12``), lexicographically smaller ids win
+    equal-sim / equal-conf conflicts under cost minimization.
+    """
     if not identity_id:
         return 1.0
-    # Hash-free: use first code points so equal-sim conflicts are order-stable.
-    total = 0
+    # Base-256 encoding of the first bytes, scaled into [0, 1).
+    total = 0.0
+    scale = 1.0
     for ch in identity_id[:16]:
-        total = (total * 131 + ord(ch)) % 1_000_003
-    return total / 1_000_003.0
+        scale /= 256.0
+        total += (ord(ch) % 256) * scale
+    return total

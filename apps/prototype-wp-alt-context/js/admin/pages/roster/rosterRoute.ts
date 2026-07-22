@@ -1,5 +1,6 @@
 import { __ } from '@wordpress/i18n';
 import type { RosterEntry } from '../../api/rosterApi';
+import { APP_LINK_PARAMS, toWorkbench } from '../../navigation/appLinks';
 
 /**
  * E21-9 Slice 5a: Clusters tab retired. People is the only roster surface.
@@ -174,11 +175,14 @@ export const isUnlabeledCluster = (cluster: { label?: string | null }): boolean 
 
 /** Workbench review-queue deep link for card-at-a-time triage (assignment band). */
 export const workbenchReviewQueueUrl = (options?: { clusterId?: string }): string => {
-  const params = new URLSearchParams();
-  params.set('tab', 'scan');
-  params.set('rq', 'assignment.all.0');
+  // rq stays E21-5-owned; contract supplies route base + param *names* only.
+  const base = toWorkbench({ tab: 'scan' });
+  const queryStart = base.indexOf('?');
+  const params = new URLSearchParams(queryStart === -1 ? '' : base.slice(queryStart + 1));
+  params.set(APP_LINK_PARAMS.rq, 'assignment.all.0');
   if (options?.clusterId) {
-    params.set('cluster', options.clusterId);
+    params.set(APP_LINK_PARAMS.cluster, options.clusterId);
   }
-  return `#/workbench?${params.toString()}`;
+  const path = queryStart === -1 ? base : base.slice(0, queryStart);
+  return `${path}?${params.toString()}`;
 };

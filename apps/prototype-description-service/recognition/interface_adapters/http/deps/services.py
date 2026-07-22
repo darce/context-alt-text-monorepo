@@ -108,8 +108,14 @@ class AuditRepositoryProtocol(Protocol):
 
 @lru_cache
 def get_settings() -> ClusteringSettings:
-    """Provide clustering settings from the recognition config."""
-    return get_recognition_settings().clustering
+    """Provide profile-resolved clustering settings from the recognition config.
+
+    S2 rebinding: under face_pipeline the FacePipelineSettings threshold overrides
+    apply; under insightface the shared buffalo-era anchors are returned unchanged.
+    """
+    from recognition.config.settings import resolve_effective_clustering_settings
+
+    return resolve_effective_clustering_settings(recognition=get_recognition_settings())
 
 
 async def get_suggestion_service(
@@ -263,6 +269,7 @@ async def build_cluster_service(
     settings: ClusteringSettings | None = None,
 ) -> ClusterService:
     """Construct a ClusterService wired with SQLAlchemy repositories."""
+    # Profile-resolved thresholds for gate + discovery (S2 rebinding surface).
     settings = settings or get_settings()
 
     # Require an existing tenant record before clustering work proceeds.
@@ -279,6 +286,7 @@ async def build_cluster_service(
     assignment_writer = AssignmentWriter(settings, cluster_repo, member_repo, session=session)
     constraint_repo = SqlAlchemyConstraintRepository(session)
 
+    # Gate construction sites (services.py:153,282) consume resolved thresholds.
     gate = AssignmentGate(
         settings=settings,
         cluster_repository=cluster_repo,

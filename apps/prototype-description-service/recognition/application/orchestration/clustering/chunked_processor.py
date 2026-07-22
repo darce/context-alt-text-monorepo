@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Iterator, Sequence
 
 from recognition.domain.identity import MediaIdentity
@@ -36,10 +37,23 @@ class ChunkedIdentityProcessor:
     It uses an exponential moving average of observed latency to scale the
     next chunk size toward ``_TARGET_CHUNK_MS`` (default 500 ms), while
     staying within ``[_MIN_CHUNK, _MAX_CHUNK]``.
+
+    When ``photo_atomic`` is True (face_pipeline joint assignment), identities
+    that share a ``media_id`` are never split across chunks. The insightface
+    path keeps ``photo_atomic=False`` for bit-identical slicing.
     """
 
-    def __init__(self, identities: Sequence[MediaIdentity]) -> None:
-        self._remaining = sorted(identities, key=lambda identity: identity.confidence, reverse=True)
+    def __init__(
+        self,
+        identities: Sequence[MediaIdentity],
+        *,
+        photo_atomic: bool = False,
+    ) -> None:
+        self._photo_atomic = photo_atomic
+        if photo_atomic:
+            self._remaining = _order_photo_atomic(identities)
+        else:
+            self._remaining = sorted(identities, key=lambda identity: identity.confidence, reverse=True)
         self._processed = 0
         self._total = len(self._remaining)
         # Latency EMA state: None until the first chunk result is recorded.
@@ -84,10 +98,60 @@ class ChunkedIdentityProcessor:
                 chunk_size = self._adaptive_size
             else:
                 chunk_size = get_chunk_size(processed_before)
-            chunk = self._remaining[:chunk_size]
-            self._remaining = self._remaining[chunk_size:]
+            if self._photo_atomic:
+                chunk = self._take_photo_atomic_chunk(chunk_size)
+            else:
+                chunk = self._remaining[:chunk_size]
+                self._remaining = self._remaining[chunk_size:]
             self._processed += len(chunk)
             yield chunk, processed_before
 
+    def _take_photo_atomic_chunk(self, chunk_size: int) -> list[MediaIdentity]:
+        """Take up to ``chunk_size`` identities without splitting a media_id group.
+
+        A single photo that alone exceeds ``chunk_size`` is still emitted whole.
+        """
+        if not self._remaining:
+            return []
+        chunk: list[MediaIdentity] = []
+        while self._remaining:
+            media_id = str(self._remaining[0].media_id)
+            group: list[MediaIdentity] = []
+            while self._remaining and str(self._remaining[0].media_id) == media_id:
+                group.append(self._remaining.pop(0))
+            if chunk and len(chunk) + len(group) > chunk_size:
+                # Put the group back and stop; never split it.
+                self._remaining = group + self._remaining
+                break
+            chunk.extend(group)
+            if len(chunk) >= chunk_size:
+                break
+        return chunk
+
     def __iter__(self) -> Iterator[tuple[list[MediaIdentity], int]]:
         return self.iter_chunks()
+
+
+def _order_photo_atomic(identities: Sequence[MediaIdentity]) -> list[MediaIdentity]:
+    """Group by media_id, order groups by max confidence, preserve face order within group."""
+    groups: dict[str, list[MediaIdentity]] = defaultdict(list)
+    group_max_confidence: dict[str, float] = {}
+    media_order: list[str] = []
+    for identity in identities:
+        media_id = str(identity.media_id)
+        if media_id not in group_max_confidence:
+            media_order.append(media_id)
+            group_max_confidence[media_id] = identity.confidence
+        else:
+            group_max_confidence[media_id] = max(group_max_confidence[media_id], identity.confidence)
+        groups[media_id].append(identity)
+
+    ordered_media = sorted(
+        media_order,
+        key=lambda mid: (-group_max_confidence[mid], mid),
+    )
+    ordered: list[MediaIdentity] = []
+    for media_id in ordered_media:
+        # Within a photo keep higher-confidence faces first.
+        ordered.extend(sorted(groups[media_id], key=lambda identity: identity.confidence, reverse=True))
+    return ordered

@@ -297,7 +297,7 @@ async def _run_characterization(
     # Capture ALL decision outcomes (accept/suggest/reject) with threshold meta.
     all_decisions = [await gate.evaluate(candidate) for candidate in candidates]
 
-    persisted, skipped, reps_added = await writer.persist_assignments_chunk(
+    persisted, skipped, reps_added, _guard_rejected = await writer.persist_assignments_chunk(
         list(gate_result.accepted_decisions),
         batch_mode=True,
     )

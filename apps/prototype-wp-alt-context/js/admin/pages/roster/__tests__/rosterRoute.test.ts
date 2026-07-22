@@ -58,7 +58,7 @@ describe('ROSTER_SURFACE (E21-9 Slice 5a — clusters tab retired)', () => {
   });
 });
 
-describe('parseRosterRoute route compat (E21-9 Slice 5a)', () => {
+describe('parseRosterRoute route compat (E21-9 Slice 5a + E21-10 lands-second)', () => {
   it('lands legacy tab=clusters on the single surface without selecting a cluster', () => {
     const parsed = parseRosterRoute(new URLSearchParams('tab=clusters'));
     expect(parsed.selectedClusterId).toBeNull();
@@ -83,6 +83,13 @@ describe('parseRosterRoute route compat (E21-9 Slice 5a)', () => {
 
     const queue = parseRosterRoute(new URLSearchParams('queue=needs-review&tab=clusters'));
     expect(queue.requiresProjectionGateNotice).toBe(true);
+  });
+
+  // E21-10 Slice 4 lands-second: getLegacyTab retired (E21-9); no tab rewrite, no Clusters tab.
+  it('does not export getLegacyTab (legacy roster tab parser retired)', async () => {
+    const mod = await import('../rosterRoute');
+    expect('getLegacyTab' in mod).toBe(false);
+    expect('ROSTER_TABS' in mod).toBe(false);
   });
 });
 

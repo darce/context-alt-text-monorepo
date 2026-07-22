@@ -1,6 +1,6 @@
 export interface AdminUrlsConfig {
   mediaEditBase?: string;
-  rosterClusters?: string;
+  roster?: string;
 }
 
 export interface ApiConfig {
@@ -40,7 +40,7 @@ export const normalizeConfig = (raw: ApiConfig): NormalizedConfig => {
   const devMode = raw.devMode === true || raw.devMode === 'true' || raw.devMode === '1' || raw.devMode === 1;
   const adminUrls = {
     mediaEditBase: normalizeOptionalString(raw.adminUrls?.mediaEditBase),
-    rosterClusters: normalizeOptionalString(raw.adminUrls?.rosterClusters),
+    roster: normalizeOptionalString(raw.adminUrls?.roster),
   };
 
   return {

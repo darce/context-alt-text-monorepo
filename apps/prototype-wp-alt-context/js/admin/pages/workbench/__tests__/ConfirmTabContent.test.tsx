@@ -66,7 +66,7 @@ describe('ConfirmTabContent', () => {
 
     // Recovery tools remain reachable with the disclosure closed (tools-first).
     expect(screen.getByRole('button', { name: 'Cluster the latest job results' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Open clusters in roster' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Open roster' })).toBeTruthy();
   });
 
   it('reveals disclosure body without embeddings only after the summary is toggled', async () => {

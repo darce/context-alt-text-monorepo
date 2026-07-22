@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext;
 
 use AltContext\Admin\Admin;
+use AltContext\Admin\AttachmentFields;
 use AltContext\Api\Api;
 use AltContext\Admin\Menu;
 use AltContext\Media\AttachmentXmpMetricsPersistor;
@@ -34,6 +35,7 @@ class AltContext {
 
 	public function init(): void {
 		$this->admin->init();
+		( new AttachmentFields() )->init();
 		$this->menu->init();
 		$this->api->init();
 		if ( $this->attachmentXmpMetricsPersistor instanceof AttachmentXmpMetricsPersistor ) {

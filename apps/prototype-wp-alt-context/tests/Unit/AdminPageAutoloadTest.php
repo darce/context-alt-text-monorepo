@@ -42,6 +42,7 @@ class AdminPageAutoloadTest extends TestCase
         'AltContext\\Admin\\RetentionPage',
         'AltContext\\Admin\\Menu',
         'AltContext\\Admin\\Admin',
+        'AltContext\\Admin\\AttachmentFields',
         'AltContext\\Api\\XmpEmbedController',
         'AltContext\\Media\\XmpPersistenceFactory',
     ];
@@ -58,6 +59,7 @@ class AdminPageAutoloadTest extends TestCase
         'src/media/class-xmp-persistence-factory.php',
         'src/api/class-xmp-embed-controller.php',
         'src/admin/class-admin.php',
+        'src/admin/class-attachment-fields.php',
         'src/admin/class-abstract-spa-page.php',
         'src/admin/class-dashboard-page.php',
         'src/admin/class-workbench-page.php',

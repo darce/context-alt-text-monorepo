@@ -667,7 +667,7 @@ describe('DashboardPage', () => {
     expect(screen.getByText('Pending changes')).toBeInTheDocument();
     expect(screen.getByText('Conflicts')).toBeInTheDocument();
     expect(screen.getByText('Failed operations')).toBeInTheDocument();
-    expect(screen.getByText('Sync backlog: pending 4, failed 1, conflicts 2')).toBeInTheDocument();
+    expect(screen.getByText('4 waiting, 1 failed, 2 need review')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Open Conflict Inbox/ })).toHaveAttribute(
       'href',
       '#/workbench?tab=scan&panel=conflicts',
@@ -733,7 +733,7 @@ describe('DashboardPage', () => {
 
     render(<DashboardPage />);
 
-    expect(screen.getByText('Machine sync is healthy and local changes are caught up.')).toBeInTheDocument();
+    expect(screen.getByText('Everything is saved and up to date.')).toBeInTheDocument();
     expect(screen.getByText('Pending changes')).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Open Conflict Inbox/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Open Failed Sync Queue/ })).not.toBeInTheDocument();
@@ -828,7 +828,9 @@ describe('DashboardPage', () => {
 
     render(<DashboardPage />);
 
-    expect(screen.getByText('Local changes are waiting to sync.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Your changes are saved here and will sync when the service is available.'),
+    ).toBeInTheDocument();
     expect(screen.getByText('Pending changes')).toBeInTheDocument();
     expect(screen.getByText('5')).toBeInTheDocument();
   });
@@ -862,7 +864,7 @@ describe('DashboardPage', () => {
 
     render(<DashboardPage />);
 
-    expect(screen.getByText('Machine state is stale and should be refreshed.')).toBeInTheDocument();
+    expect(screen.getByText('This view may be out of date — sync now to refresh it.')).toBeInTheDocument();
   });
 
   it('renders a stale-mirror banner when the backend snapshot is empty but local clusters remain', () => {

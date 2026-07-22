@@ -5,7 +5,7 @@ import {
   CLUSTERING_DISCLOSURE_BODY,
   CLUSTERING_DISCLOSURE_SUMMARY,
 } from './confirmTabCopy';
-import { ConfirmPanel, RecentJobsPanel, rosterClustersUrl } from './Panels';
+import { ConfirmPanel, RecentJobsPanel, rosterUrl } from './Panels';
 import { useJobPipeline } from './JobPipelineContext';
 
 export const ConfirmTabContent = (): React.JSX.Element => {
@@ -26,7 +26,7 @@ export const ConfirmTabContent = (): React.JSX.Element => {
         isClustering={scanRun.isScanning}
         progress={status.clusterProgress}
         clusterMessage={status.clusterMessage}
-        onViewClusters={() => window.location.assign(rosterClustersUrl())}
+        onViewClusters={() => window.location.assign(rosterUrl())}
         etaSeconds={scanRun.etaSeconds}
         isSynced={scanRun.isSynced}
         remoteActionDisabled={remoteGate.disabled}

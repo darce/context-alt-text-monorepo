@@ -6,7 +6,7 @@ import { CONFIRM_NO_JOB_ZERO_STATE, CONFIRM_PANEL_INTRO } from './confirmTabCopy
 import type { ScanRunViewModel } from './JobPipelineContext';
 import { JOB_PHASE_PRESENTATION } from './phasePresentation';
 import { formatSyncJobPhase } from './syncPresentation';
-export { mediaEditUrl, rosterClustersUrl } from '../../utils/adminUrls';
+export { mediaEditUrl, rosterUrl } from '../../utils/adminUrls';
 
 export const isClusteringActive = (phase?: string | null): boolean => phase === 'clustering' || phase === 'retrying';
 
@@ -220,7 +220,7 @@ export const ConfirmPanel = ({
       {isClustering ? __('Clustering faces…', 'alt-context') : __('Cluster the latest job results', 'alt-context')}
     </button>
     <button type="button" className="acx-link-button" onClick={onViewClusters} disabled={!jobId}>
-      {__('Open clusters in roster', 'alt-context')}
+      {__('Open roster', 'alt-context')}
     </button>
     {progress && progress.total > 0 && (
       <>

@@ -371,7 +371,7 @@ class Admin {
 					'max_media_per_batch' => $this->get_tier_batch_limit_for( $tier ),
 					'adminUrls' => array(
 					'mediaEditBase' => admin_url( 'post.php' ),
-					'rosterClusters' => admin_url( 'admin.php?page=alt-context-roster&tab=clusters' ),
+					'roster' => admin_url( 'admin.php?page=alt-context-roster' ),
 				),
 				'endpoints' => array(
 					'workbenchMedia'                 => rest_url( 'acx/v1/workbench/media' ),

@@ -8,13 +8,16 @@ use AltContext\Api\RecognitionEndpointResolver;
 use AltContext\Api\TenantIdentity;
 use AltContext\Support\BatchLimits;
 
+use function absint;
 use function add_action;
 use function do_action;
 use function admin_url;
+use function current_user_can;
 use function esc_html;
 use function esc_html__;
 use function esc_url_raw;
 use function file_get_contents;
+use function get_post_type;
 use function in_array;
 use function is_array;
 use function is_readable;
@@ -27,6 +30,7 @@ use function rest_url;
 use function wp_enqueue_script;
 use function wp_enqueue_style;
 use function wp_create_nonce;
+use function wp_get_attachment_image_src;
 use function wp_get_environment_type;
 use function wp_localize_script;
 use function wp_remote_head;
@@ -36,14 +40,16 @@ use function wp_unslash;
 use function is_wp_error;
 
 /**
- * Coordinates admin-only concerns such as enqueueing the SPA bundle.
+ * Coordinates admin-only concerns such as enqueueing the SPA and attachment-edit bundles.
  */
 class Admin {
 	use BatchLimits;
 
 	private const DASHBOARD_HOOK = 'toplevel_page_alt-context-dashboard';
-	private const SCRIPT_HANDLE = 'alt-context-admin';
-	private const ENTRY_POINT = 'js/admin/main.tsx';
+	private const SPA_SCRIPT_HANDLE = 'alt-context-admin';
+	private const SPA_ENTRY_POINT = 'js/admin/main.tsx';
+	private const ATTACHMENT_EDIT_SCRIPT_HANDLE = 'alt-context-attachment-edit';
+	private const ATTACHMENT_EDIT_ENTRY_POINT = 'js/attachment-edit/main.tsx';
 	private const CANONICAL_PLUGIN_FILE = 'alt-context/alt-context.php';
 
 	/**
@@ -78,23 +84,43 @@ class Admin {
 	}
 
 	public function enqueue_scripts( string $hookSuffix ): void {
+		if ( $this->should_enqueue_attachment_edit_assets( $hookSuffix ) ) {
+			$this->enqueue_entry(
+				self::ATTACHMENT_EDIT_ENTRY_POINT,
+				self::ATTACHMENT_EDIT_SCRIPT_HANDLE,
+				array( $this, 'localize_attachment_edit_config' )
+			);
+			return;
+		}
+
 		if ( ! $this->should_enqueue_assets( $hookSuffix ) ) {
 			return;
 		}
 
+		$this->enqueue_entry(
+			self::SPA_ENTRY_POINT,
+			self::SPA_SCRIPT_HANDLE,
+			array( $this, 'localize_spa_config' )
+		);
+	}
+
+	/**
+	 * @param callable(string):void $localize
+	 */
+	private function enqueue_entry( string $entryPoint, string $scriptHandle, callable $localize ): void {
 		$handle = null;
 
 		if ( $this->should_use_dev_server() ) {
-			$handle = $this->enqueue_dev_assets();
+			$handle = $this->enqueue_dev_assets( $entryPoint, $scriptHandle );
 		} else {
-			$handle = $this->enqueue_build_assets();
+			$handle = $this->enqueue_build_assets( $entryPoint, $scriptHandle );
 		}
 
 		if ( ! is_string( $handle ) || '' === $handle ) {
 			return;
 		}
 
-		$this->localize_spa_config( $handle );
+		$localize( $handle );
 	}
 
 	private function should_enqueue_assets( string $hookSuffix ): bool {
@@ -103,6 +129,26 @@ class Admin {
 		}
 
 		return $this->is_supported_page_request();
+	}
+
+	/**
+	 * post.php attachment edit screen — capability parity with media-identities.
+	 */
+	private function should_enqueue_attachment_edit_assets( string $hookSuffix ): bool {
+		if ( 'post.php' !== $hookSuffix ) {
+			return false;
+		}
+
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return false;
+		}
+
+		$post_id = isset( $_GET['post'] ) ? absint( wp_unslash( (string) $_GET['post'] ) ) : 0;
+		if ( $post_id <= 0 ) {
+			return false;
+		}
+
+		return get_post_type( $post_id ) === 'attachment';
 	}
 
 	private function is_supported_page_request(): bool {
@@ -158,10 +204,10 @@ class Admin {
 		return $this->devServerReachableCache;
 	}
 
-	private function enqueue_dev_assets(): string {
+	private function enqueue_dev_assets( string $entryPoint, string $scriptHandle ): string {
 		$base = trailingslashit( $this->devServer );
-		$devHandle = self::SCRIPT_HANDLE . '-dev';
-		$entryHandle = self::SCRIPT_HANDLE . '-entry';
+		$devHandle = $scriptHandle . '-dev';
+		$entryHandle = $scriptHandle . '-entry';
 
 		wp_enqueue_script( $devHandle, esc_url_raw( $base . '@vite/client' ), array(), null, true );
 		wp_script_add_data( $devHandle, 'type', 'module' );
@@ -169,7 +215,7 @@ class Admin {
 		$deps = array( 'wp-element', 'wp-i18n', 'wp-hooks', $devHandle );
 		wp_enqueue_script(
 			$entryHandle,
-			esc_url_raw( $base . self::ENTRY_POINT ),
+			esc_url_raw( $base . $entryPoint ),
 			$deps,
 			null,
 			true
@@ -179,40 +225,42 @@ class Admin {
 		return $entryHandle;
 	}
 
-	private function enqueue_build_assets(): ?string {
-		$entry = $this->get_manifest_entry();
+	private function enqueue_build_assets( string $entryPoint, string $scriptHandle ): ?string {
+		$entry = $this->get_manifest_entry( $entryPoint );
 
 		if ( ! $entry || empty( $entry['file'] ) ) {
-			$this->report_asset_bootstrap_failure( 'Missing or invalid build manifest entry for admin SPA bundle.' );
+			$this->report_asset_bootstrap_failure(
+				'Missing or invalid build manifest entry for ' . $entryPoint . '.'
+			);
 			return null;
 		}
 
 		wp_enqueue_script(
-			self::SCRIPT_HANDLE,
+			$scriptHandle,
 			$this->build_asset_url( (string) $entry['file'] ),
 			array( 'wp-element', 'wp-i18n', 'wp-hooks' ),
 			ACX_VERSION,
 			true
 		);
-		wp_script_add_data( self::SCRIPT_HANDLE, 'type', 'module' );
+		wp_script_add_data( $scriptHandle, 'type', 'module' );
 
 		if ( empty( $entry['css'] ) || ! is_array( $entry['css'] ) ) {
-			return self::SCRIPT_HANDLE;
+			return $scriptHandle;
 		}
 
 		foreach ( $entry['css'] as $index => $cssFile ) {
 			wp_enqueue_style(
-				self::SCRIPT_HANDLE . '-' . $index,
+				$scriptHandle . '-' . $index,
 				$this->build_asset_url( (string) $cssFile ),
 				array(),
 				ACX_VERSION
 			);
 		}
 
-		return self::SCRIPT_HANDLE;
+		return $scriptHandle;
 	}
 
-	private function get_manifest_entry(): ?array {
+	private function get_manifest_entry( string $entryPoint ): ?array {
 		if ( ! is_readable( $this->manifestPath ) ) {
 			return null;
 		}
@@ -228,7 +276,7 @@ class Admin {
 			return null;
 		}
 
-		$entry = $manifest[ self::ENTRY_POINT ] ?? null;
+		$entry = $manifest[ $entryPoint ] ?? null;
 
 		return is_array( $entry ) ? $entry : null;
 	}
@@ -367,6 +415,34 @@ class Admin {
 					'dashboardStats'                 => rest_url( 'acx/v1/dashboard/stats' ),
 					'settings'                       => rest_url( 'acx/v1/settings' ),
 					'settingsTest'                   => rest_url( 'acx/v1/settings/test' ),
+				),
+			)
+		);
+	}
+
+	/**
+	 * Minimal config for the attachment-edit entry (not the SPA AltContextAdmin global).
+	 */
+	private function localize_attachment_edit_config( string $handle ): void {
+		$attachment_id = isset( $_GET['post'] ) ? absint( wp_unslash( (string) $_GET['post'] ) ) : 0;
+		$image         = $attachment_id > 0 ? wp_get_attachment_image_src( $attachment_id, 'full' ) : false;
+
+		$image_url    = ( is_array( $image ) && isset( $image[0] ) ) ? (string) $image[0] : '';
+		$image_width  = ( is_array( $image ) && isset( $image[1] ) ) ? (int) $image[1] : 0;
+		$image_height = ( is_array( $image ) && isset( $image[2] ) ) ? (int) $image[2] : 0;
+
+		wp_localize_script(
+			$handle,
+			'AltContextAttachmentEdit',
+			array(
+				'nonce'         => wp_create_nonce( 'wp_rest' ),
+				'attachmentId'  => $attachment_id,
+				'imageUrl'      => $image_url,
+				'imageWidth'    => $image_width,
+				'imageHeight'   => $image_height,
+				'workbenchUrl'  => admin_url( 'admin.php?page=alt-context-workbench' ),
+				'endpoints'     => array(
+					'recognitionMediaIdentities' => rest_url( 'acx/v1/recognition/media-identities' ),
 				),
 			)
 		);

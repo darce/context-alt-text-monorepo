@@ -11,9 +11,13 @@
  *
  * Self-heal: after (B) rebind, the remounted panel re-runs this hook on the
  * guessed survivor; a second 404 with no further survivor falls to (A).
+ *
+ * S5-02: survivor lookup is lazy on each render (not memoized against only
+ * retired/openClusterId). record-after-404 must rebind once the map is
+ * populated, including upgrading a prior close for the same open id.
  */
 
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { __ } from '@wordpress/i18n';
 
@@ -51,11 +55,12 @@ export const useLiveReviewTarget = (
   const optsRef = useRef(opts);
   optsRef.current = opts;
 
-  // Exactly-once retirement handling per open-target id.
-  const handledForRef = useRef<string | null>(null);
+  // Exactly-once / upgrade-aware retirement handling per open-target id.
+  // E215-BR-06: single ref — action alone is enough (reset on openClusterId change).
+  const handledActionRef = useRef<'rebind' | 'close' | null>(null);
 
   useEffect(() => {
-    handledForRef.current = null;
+    handledActionRef.current = null;
   }, [openClusterId]);
 
   const existenceQuery = useQuery({
@@ -87,33 +92,30 @@ export const useLiveReviewTarget = (
 
   const retired = openClusterId != null && existenceQuery.isError && isClusterNotFound(existenceQuery.error);
 
-  const survivorId = useMemo(() => {
-    if (!retired || openClusterId == null) {
-      return null;
-    }
+  // S5-02: resolve survivor lazily at read time — do not memoize against
+  // [retired, openClusterId] alone. recordMergeSurvivor mutates a ref-backed
+  // map without changing those deps; a memoized null after 404 stayed stale
+  // forever (close instead of rebind) once the map was populated on a later
+  // render. optsRef always holds the latest resolveSurvivor.
+  let survivorId: string | null = null;
+  if (retired && openClusterId != null) {
     const survivor = optsRef.current.resolveSurvivor?.(openClusterId) ?? null;
     if (survivor && survivor !== openClusterId) {
-      return survivor;
+      survivorId = survivor;
     }
-    return null;
-    // BR-67: `retired` already recomputes on a fresh error (including
-    // re-error-after-refetch), so `errorUpdatedAt` is redundant here.
-  }, [retired, openClusterId]);
+  }
 
   const status: LiveReviewTargetStatus = !retired ? 'live' : survivorId ? 'rebound' : 'retired';
 
   const resolvedClusterId: string | null =
     status === 'live' ? openClusterId : status === 'rebound' ? survivorId : null;
 
-  // Side effects: announce + rebind/close exactly once per open target.
+  // Side effects: announce + rebind/close. Prefer rebind; allow late upgrade
+  // when survivor lands after a prior close for the same open id.
   useEffect(() => {
     if (!retired || openClusterId == null) {
       return;
     }
-    if (handledForRef.current === openClusterId) {
-      return;
-    }
-    handledForRef.current = openClusterId;
 
     const { onAnnounce: announce, onRebind: rebind, onClose: close } = optsRef.current;
     // BR-64: only claim a rebind when this consumer can actually rebind. A queue
@@ -121,10 +123,19 @@ export const useLiveReviewTarget = (
     // effectively gone for it — announcing the rebind copy there is a false AT
     // claim. Fall to the honest close copy unless a real rebind sink is wired.
     if (survivorId && rebind) {
+      if (handledActionRef.current === 'rebind') {
+        return;
+      }
+      handledActionRef.current = 'rebind';
       announce?.(__(LIVE_TARGET_REBIND_ANNOUNCE, 'alt-context'));
       rebind(survivorId);
       return;
     }
+
+    if (handledActionRef.current !== null) {
+      return;
+    }
+    handledActionRef.current = 'close';
     announce?.(__(LIVE_TARGET_CLOSE_ANNOUNCE, 'alt-context'));
     close?.();
   }, [retired, openClusterId, survivorId]);

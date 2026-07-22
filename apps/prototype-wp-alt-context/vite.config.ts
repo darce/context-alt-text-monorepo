@@ -14,6 +14,7 @@ export default defineConfig(({ mode }) => ({
     rollupOptions: {
       input: {
         admin: path.resolve(__dirname, 'js/admin/main.tsx'),
+        'attachment-edit': path.resolve(__dirname, 'js/attachment-edit/main.tsx'),
       },
     },
   },

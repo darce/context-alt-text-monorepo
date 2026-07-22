@@ -361,12 +361,17 @@ class ClustersControllerTest extends TestCase
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
-                [
-                    'id' => 'cluster-proxy-top',
-                    'label' => null,
-                    'identity_count' => 4,
-                    'representatives' => [],
+                'clusters' => [
+                    [
+                        'id' => 'cluster-proxy-top',
+                        'label' => null,
+                        'identity_count' => 4,
+                        'representatives' => [],
+                    ],
                 ],
+                'limit' => 10,
+                'total' => 1,
+                'truncated' => false,
             ]),
         ]);
 
@@ -440,6 +445,38 @@ class ClustersControllerTest extends TestCase
         $this->assertInstanceOf(\WP_Error::class, $response);
         $this->assertSame('invalid_top_unlabeled_envelope', $response->get_error_code());
         $this->assertSame(502, $response->get_error_data()['status']);
+    }
+
+    public function testTopUnlabeledClustersRejectsLegacyBareArrayProxyPayload(): void
+    {
+        $syncRepo = new class() extends NullSyncStateRepository {
+            public function get_snapshot_version(string $tenant_id): int {
+                return 0;
+            }
+            public function get_last_updated(string $tenant_id): ?string {
+                return null;
+            }
+        };
+        $controller = new ClustersController(null, null, $syncRepo, null, new ClusterResponseMapper(), new MemberResponseMapper());
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                [
+                    'id' => 'cluster-proxy-top',
+                    'label' => null,
+                    'identity_count' => 4,
+                    'representatives' => [],
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled');
+        $response = $controller->list_top_unlabeled_clusters($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('invalid_top_unlabeled_envelope', $response->get_error_code());
+        $this->assertSame(502, $response->get_error_data()['status'] ?? null);
     }
 
     public function testTopUnlabeledClustersSchedulesBootstrapWhenProxyAndProjectionAreUnavailable(): void
@@ -613,11 +650,16 @@ class ClustersControllerTest extends TestCase
 
         $controller = new ClustersController($clustersRepo, $membersRepo, $syncRepo, null, new ClusterResponseMapper(), new MemberResponseMapper());
 
-        // Queue a mock HTTP response for the proxy request
+        // Queue a mock HTTP response for the proxy request (canonical envelope).
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
-                ['id' => 'cluster-proxy', 'label' => 'Proxied', 'identity_count' => 5],
+                'clusters' => [
+                    ['id' => 'cluster-proxy', 'label' => 'Proxied', 'identity_count' => 5],
+                ],
+                'limit' => 50,
+                'total' => 1,
+                'truncated' => false,
             ]),
         ]);
 
@@ -646,7 +688,12 @@ class ClustersControllerTest extends TestCase
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
-                ['id' => 'cluster-proxy', 'label' => 'Proxied', 'identity_count' => 5],
+                'clusters' => [
+                    ['id' => 'cluster-proxy', 'label' => 'Proxied', 'identity_count' => 5],
+                ],
+                'limit' => 500,
+                'total' => 1,
+                'truncated' => false,
             ]),
         ]);
 
@@ -662,6 +709,9 @@ class ClustersControllerTest extends TestCase
         $this->assertSame(500, $data['limit']);
         $this->assertSame(1, $data['total']);
         $this->assertFalse($data['truncated']);
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString('limit=500', $calls[0]['url']);
     }
 
     public function testListClustersClampsProxyLimitToConfiguredMinimum(): void
@@ -678,7 +728,12 @@ class ClustersControllerTest extends TestCase
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
-                ['id' => 'cluster-proxy', 'label' => 'Proxied', 'identity_count' => 5],
+                'clusters' => [
+                    ['id' => 'cluster-proxy', 'label' => 'Proxied', 'identity_count' => 5],
+                ],
+                'limit' => 1,
+                'total' => 1,
+                'truncated' => false,
             ]),
         ]);
 
@@ -694,9 +749,48 @@ class ClustersControllerTest extends TestCase
         $this->assertSame(1, $data['limit']);
         $this->assertSame(1, $data['total']);
         $this->assertFalse($data['truncated']);
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString('limit=1', $calls[0]['url']);
     }
 
     public function testListClustersUsesDefaultLimitWhenProxyLimitIsOmitted(): void
+    {
+        $controller = new ClustersController(
+            new NullClustersRepository(),
+            new NullIdentityMembersRepository(),
+            new NullSyncStateRepository(),
+            null,
+            new ClusterResponseMapper(),
+            new MemberResponseMapper()
+        );
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'clusters' => [
+                    ['id' => 'cluster-proxy', 'label' => 'Proxied', 'identity_count' => 5],
+                ],
+                'limit' => 50,
+                'total' => 1,
+                'truncated' => false,
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters');
+        $response = $controller->list_clusters($request);
+
+        $this->assertInstanceOf(
+            \WP_REST_Response::class,
+            $response
+        );
+        $data = $response->get_data();
+        $this->assertSame(50, $data['limit']);
+        $this->assertSame(1, $data['total']);
+        $this->assertFalse($data['truncated']);
+    }
+
+    public function testListClustersRejectsLegacyBareArrayProxyPayload(): void
     {
         $controller = new ClustersController(
             new NullClustersRepository(),
@@ -717,14 +811,9 @@ class ClustersControllerTest extends TestCase
         $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters');
         $response = $controller->list_clusters($request);
 
-        $this->assertInstanceOf(
-            \WP_REST_Response::class,
-            $response
-        );
-        $data = $response->get_data();
-        $this->assertSame(50, $data['limit']);
-        $this->assertSame(1, $data['total']);
-        $this->assertFalse($data['truncated']);
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('invalid_cluster_list_envelope', $response->get_error_code());
+        $this->assertSame(502, $response->get_error_data()['status'] ?? null);
     }
 
     public function testListClustersRejectsPartialProxyEnvelope(): void
@@ -819,7 +908,12 @@ class ClustersControllerTest extends TestCase
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
-                ['id' => 'cluster-proxy', 'label' => 'Proxied'],
+                'clusters' => [
+                    ['id' => 'cluster-proxy', 'label' => 'Proxied'],
+                ],
+                'limit' => 50,
+                'total' => 1,
+                'truncated' => false,
             ]),
         ]);
 

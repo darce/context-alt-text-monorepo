@@ -104,39 +104,17 @@ class ClusterReadService {
 			$response = $this->dependencies->projection_sync_service->maybe_bootstrap_after_proxy_read( $tenant_id, $response );
 
 			if ( $response instanceof WP_REST_Response && $response->get_status() >= 200 && $response->get_status() < 300 ) {
-				$data = $response->get_data();
-				if ( is_array( $data ) ) {
-					if ( isset( $data['clusters'] ) && is_array( $data['clusters'] ) ) {
-						if ( ! isset( $data['limit'], $data['total'], $data['truncated'] ) || ! is_numeric( $data['limit'] ) || ! is_numeric( $data['total'] ) || ! is_bool( $data['truncated'] ) ) {
-							return new WP_Error(
-								'invalid_top_unlabeled_envelope',
-								'Top-unlabeled clusters response must include limit, total, and truncated when clusters is present.',
-								array( 'status' => 502 )
-							);
-						}
+				$normalized = $this->dependencies->response_envelope_service->normalize_top_unlabeled_response( $response );
+				if ( $normalized instanceof WP_Error ) {
+					return $normalized;
+				}
 
-						return new WP_REST_Response(
-							array(
-								'clusters' => $data['clusters'],
-								'limit' => max( 1, (int) $data['limit'] ),
-								'total' => max( 0, (int) $data['total'] ),
-								'truncated' => $data['truncated'],
-								'data_source' => $this->dependencies->config->data_source_backend_proxy,
-							),
-							200
-						);
+				if ( $normalized instanceof WP_REST_Response ) {
+					$data = $normalized->get_data();
+					if ( is_array( $data ) ) {
+						$data['data_source'] = $this->dependencies->config->data_source_backend_proxy;
+						return new WP_REST_Response( $data, 200 );
 					}
-
-					return new WP_REST_Response(
-						array(
-							'clusters' => $data,
-							'limit' => $limit,
-							'total' => count( $data ),
-							'truncated' => false,
-							'data_source' => $this->dependencies->config->data_source_backend_proxy,
-						),
-						200
-					);
 				}
 			}
 

@@ -201,6 +201,32 @@ describe('AttachmentFacesApp five designed states', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('AuthExpiredError renders session-expired copy, not faceDataUnavailable [TEST-15]', async () => {
+    const { AuthExpiredError } = await import('../../admin/utils/http');
+    fetchMock.mockRejectedValue(
+      new AuthExpiredError({ endpoint: '/media-identities', status: 403 }),
+    );
+    renderApp(<AttachmentFacesApp {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(ATTACHMENT_EDIT_COPY.sessionExpired);
+    });
+    expect(screen.queryByText(ATTACHMENT_EDIT_COPY.faceDataUnavailable)).not.toBeInTheDocument();
+    expect(screen.getByTestId('acx-attachment-faces-app')).toHaveAttribute('data-state', 'session-expired');
+    expect(screen.getByRole('button', { name: ATTACHMENT_EDIT_COPY.reloadPage })).toBeInTheDocument();
+  });
+
+  it('generic query error still shows faceDataUnavailable, not session-expired [TEST-15]', async () => {
+    fetchMock.mockRejectedValue(new Error('network down'));
+    renderApp(<AttachmentFacesApp {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(ATTACHMENT_EDIT_COPY.faceDataUnavailable);
+    });
+    expect(screen.queryByText(ATTACHMENT_EDIT_COPY.sessionExpired)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: ATTACHMENT_EDIT_COPY.reloadPage })).not.toBeInTheDocument();
+  });
+
   it('issues exactly one fetch per mount; focus + timers do not refetch', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     fetchMock.mockResolvedValue(curatedUncuratedFixture());

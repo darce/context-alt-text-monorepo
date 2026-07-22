@@ -17,6 +17,8 @@ import { useRemoteActionGate } from '../../hooks/useRemoteActionGate';
 import { useSyncOffline } from '../../hooks/useSyncOffline';
 import { DESCRIBE_RUN_STATUS, type DescribeRunStatus } from '../../api/describeApi';
 import { isCooldownSignal } from '../../utils/retryPolicy';
+import { formatUserFacingError, isAuthExpiredError } from '../../utils/userFacingError';
+import { UserFacingErrorNotice } from '../../components/ui/UserFacingErrorNotice';
 import { useWorkbenchMediaContext } from './WorkbenchMediaContext';
 import { SYNC_VOCABULARY } from './syncPresentation';
 import { ACCENT_PRIMARY_ATTR, FOOTER_ACCENT_OWNER, selectMediaFooterCtaState } from './mediaFooterCtaState';
@@ -87,14 +89,16 @@ export const MediaSelection = ({
   const onToggleRow = (item: WorkbenchMediaItem, checked: boolean) => toggleRow(item, checked);
   const detailStatusMessage = detailQuery.isLoading
     ? __('Loading media details…', 'alt-context')
-    : detailQuery.isError
-      ? __('Unable to load media details.', 'alt-context')
+    : detailQuery.isError && !isAuthExpiredError(detailQuery.error)
+      ? formatUserFacingError(detailQuery.error, __('Unable to load media details.', 'alt-context'))
       : null;
   const identityStatusMessage = identityQuery.isLoading
     ? __('Loading identity data…', 'alt-context')
-    : identityQuery.isError
-      ? __('Unable to load identity data.', 'alt-context')
+    : identityQuery.isError && !isAuthExpiredError(identityQuery.error)
+      ? formatUserFacingError(identityQuery.error, __('Unable to load identity data.', 'alt-context'))
       : null;
+  const detailAuthExpired = detailQuery.isError && isAuthExpiredError(detailQuery.error);
+  const identityAuthExpired = identityQuery.isError && isAuthExpiredError(identityQuery.error);
 
   // §7 media-footer CTA hierarchy: a per-state selector resolves the SINGLE
   // accent primary across the footer, reconciled against the review card.
@@ -188,6 +192,13 @@ export const MediaSelection = ({
           <MediaAnalyzeCta accentPrimary={footerCta.accentOwner === FOOTER_ACCENT_OWNER.ANALYZE} />
         </div>
       </div>
+      {detailAuthExpired ? (
+        <UserFacingErrorNotice
+          className="acx-identity-status"
+          error={detailQuery.error}
+          fallback={__('Unable to load media details.', 'alt-context')}
+        />
+      ) : null}
       {detailStatusMessage && (
         <div className="acx-identity-status">
           <span>{detailStatusMessage}</span>
@@ -198,6 +209,13 @@ export const MediaSelection = ({
           )}
         </div>
       )}
+      {identityAuthExpired ? (
+        <UserFacingErrorNotice
+          className="acx-identity-status"
+          error={identityQuery.error}
+          fallback={__('Unable to load identity data.', 'alt-context')}
+        />
+      ) : null}
       {identityStatusMessage && (
         <div className="acx-identity-status">
           <span>{identityStatusMessage}</span>

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { fetchClusterMembers } from '../../../../api/recognition';
 import type { ClusterMembersResponse } from '../../../../api/recognition';
-import { HTTPError } from '../../../../utils/http';
+import { AuthExpiredError, HTTPError } from '../../../../utils/http';
 import {
   LIVE_TARGET_CLOSE_ANNOUNCE,
   LIVE_TARGET_REBIND_ANNOUNCE,
@@ -236,6 +236,37 @@ describe('useLiveReviewTarget', () => {
       expect(result.current.status).toBe('live');
     });
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('AuthExpiredError is never retried and never absorbed into live [TEST-15]', async () => {
+    const authExpired = new AuthExpiredError({
+      endpoint: '/members',
+      status: 403,
+    });
+    vi.mocked(fetchClusterMembers).mockRejectedValue(authExpired);
+    const onClose = vi.fn();
+
+    // Retry enabled so a bad predicate would re-fire the probe.
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: true } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+
+    const { result } = renderHook(() => useLiveReviewTarget('cluster-auth', { onClose }), {
+      wrapper,
+    });
+
+    await waitFor(() => {
+      expect(result.current.status).toBe('auth_expired');
+    });
+    expect(result.current.status).not.toBe('live');
+    expect(result.current.error).toBe(authExpired);
+    expect(result.current.resolvedClusterId).toBe('cluster-auth');
+    expect(onClose).not.toHaveBeenCalled();
+    // Inline retry predicate returns false for AuthExpiredError → single probe.
+    expect(fetchClusterMembers).toHaveBeenCalledTimes(1);
   });
 
   it('fires retirement handlers only once per open target', async () => {

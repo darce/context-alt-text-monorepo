@@ -12,6 +12,8 @@ import pytest
 
 from scripts.eval_harness.report import (
     DIRECTIONAL_LABEL,
+    FACE_BAKEOFF_CANON_VERSION,
+    GATE_PROPOSAL_RELEASE_SURFACE,
     HEADLINE_ID_RECALL_ELIGIBLE_FLOOR,
     Audience,
     ReportError,
@@ -610,6 +612,20 @@ def test_score_face_run_record_full_corpus_and_floor_gated_rollup():
     assert any("impostor" in d for d in disclosures)
     assert any("subject-disjoint" in d or "CAL-07" in d for d in disclosures)
     assert any("solid seeded rectangles" in d for d in disclosures)
+    assert any("YuNet" in d and "landmark cache" in d for d in disclosures)
+    assert any("outcome-independent" in d for d in disclosures)
+    # FIR5V11-06: canon pin + release-surface label + sampling frames
+    assert scored["provenance"]["canon_version"] == FACE_BAKEOFF_CANON_VERSION
+    assert scored["provenance"]["protocol_id"]
+    assert "headline_identification" in scored["provenance"]["sampling_frames"]
+    assert gp["release_surface"] == GATE_PROPOSAL_RELEASE_SURFACE
+    assert gp["canon_version"] == FACE_BAKEOFF_CANON_VERSION
+    # AUDIT: every published rate carries sampling_frame + denominators
+    assert hl["sampling_frame"]
+    assert "precision_denominator" in hl and "recall_denominator" in hl
+    assert "error_target" in hl
+    assert unk["sampling_frame"] and "error_target" in unk
+    assert "rate_numerator" in unk and "rate_denominator" in unk
     # Nested lists sorted (wrong_names already sorted; decisions sorted)
     decisions = scored["decisions"]
     keys = [(d["true_name"] or "\uffff", d["media_id"], d["box_index"]) for d in decisions]
@@ -677,6 +693,10 @@ def test_publishability_private_stranger_scored_then_redacted():
     # Aggregate rates preserved
     assert redacted["slices"]["unknown_rejection"]["n"] == unk["n"]
     assert redacted["slices"]["unknown_rejection"]["rate"] == unk["rate"]
+    # AUDIT-09/12: denominators retained after stripping decision rows
+    preserved = redacted["redaction"]["preserved_aggregate_denominators"]
+    assert preserved["unknown_rejection"]["rate_denominator"] == unk["n"]
+    assert preserved["headline_identification"]["recall_denominator"] is not None
     # Private detail absent
     blob = json.dumps(redacted)
     assert "localwp/uploads/stranger-party.jpg" not in blob

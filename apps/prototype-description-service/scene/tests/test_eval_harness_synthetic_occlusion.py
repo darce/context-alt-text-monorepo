@@ -329,8 +329,8 @@ def test_re_detect_miss_is_accuracy_zero_kept_in_n():
     assert rollup.accuracy == 0.0
 
 
-def test_re_detect_miss_checked_before_distinct_image_censoring():
-    """EVAL-16: twin_embedding=None counts against recovery even without gallery support."""
+def test_re_detect_miss_does_not_bypass_structural_gallery_gates():
+    """EXP-22: eligibility is outcome-independent — miss does not enter the frame when gallery is deficient."""
     faces = [
         _matched(5, 0, [1, 0, 0], "Alice"),
         _matched(5, 1, [1, 0.05, 0], "Alice"),
@@ -339,7 +339,7 @@ def test_re_detect_miss_checked_before_distinct_image_censoring():
     ]
     by_id = {"Alice": [faces[0], faces[1]], "Bob": [faces[2], faces[3]]}
     assert not has_distinct_image_gallery_support("Alice", 5, by_id)
-    pair = score_occlusion_pair(
+    pair_miss = score_occlusion_pair(
         twin_embedding=None,
         true_name="Alice",
         source_media_id=5,
@@ -348,10 +348,44 @@ def test_re_detect_miss_checked_before_distinct_image_censoring():
         by_identity=by_id,
         tau=0.5,
     )
-    assert pair.eligible is True
-    assert pair.re_detect_miss is True
-    assert pair.correct is False
-    assert pair.ineligible_reason is None
+    pair_hit = score_occlusion_pair(
+        twin_embedding=_unit([1, 0, 0]),
+        true_name="Alice",
+        source_media_id=5,
+        box_index=0,
+        kind="masked",
+        by_identity=by_id,
+        tau=0.5,
+    )
+    # Same structural frame for miss and hit — no outcome-dependent membership.
+    assert pair_miss.eligible is False
+    assert pair_hit.eligible is False
+    assert pair_miss.ineligible_reason == "distinct_image_min_gallery"
+    assert pair_hit.ineligible_reason == "distinct_image_min_gallery"
+    assert pair_miss.re_detect_miss is True
+    assert pair_hit.re_detect_miss is False
+
+
+def test_single_identity_gallery_excludes_miss_and_hit_alike():
+    """EXP-22: deficient single-identity gallery never contributes a recovery failure."""
+    faces = [
+        _matched(1, 0, [1, 0, 0], "Alice"),
+        _matched(2, 0, [1, 0.05, 0], "Alice"),
+    ]
+    by_id = {"Alice": faces}
+    for emb in (None, _unit([1, 0, 0])):
+        pair = score_occlusion_pair(
+            twin_embedding=emb,
+            true_name="Alice",
+            source_media_id=1,
+            box_index=0,
+            kind="masked",
+            by_identity=by_id,
+            tau=0.0,
+        )
+        assert pair.eligible is False
+        assert pair.ineligible_reason == "single_identity_gallery"
+        assert pair.correct is None
 
 
 def test_occlusion_open_set_threshold_rejects_low_similarity():

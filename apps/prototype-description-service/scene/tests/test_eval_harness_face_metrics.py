@@ -196,8 +196,8 @@ def test_face_id_forced_wrong_name_drops_precision_and_recall():
         predicted_name="Bob",  # forced wrong-name
         enrolled=True,
     )
-    baseline = face_identification_pr(good)
-    broken = face_identification_pr(good + [wrong])
+    baseline = face_identification_pr(good, missed_gt=0, unmatched_detections=0)
+    broken = face_identification_pr(good + [wrong], missed_gt=0, unmatched_detections=0)
     assert baseline.precision == 1.0
     assert baseline.recall == 1.0
     assert broken.precision < baseline.precision
@@ -212,7 +212,7 @@ def test_face_id_forced_recall_miss_reject_enrolled():
         _dec(media_id=1, true_name="Alice", decision="accept", predicted_name="Alice"),
         _dec(media_id=2, true_name="Alice", decision="reject", predicted_name=None, enrolled=True),
     ]
-    result = face_identification_pr(decisions)
+    result = face_identification_pr(decisions, missed_gt=0, unmatched_detections=0)
     assert result.true_positives == 1
     assert result.false_negatives == 1
     assert result.recall == pytest.approx(0.5)
@@ -231,7 +231,7 @@ def test_face_id_single_face_confusion_is_fp_only():
             excluded=True,
         ),
     ]
-    result = face_identification_pr(decisions)
+    result = face_identification_pr(decisions, missed_gt=0, unmatched_detections=0)
     assert result.false_positives == 1
     assert result.false_negatives == 0
     assert result.precision == 0.0
@@ -239,7 +239,7 @@ def test_face_id_single_face_confusion_is_fp_only():
 
 
 def test_face_id_zero_over_zero_is_zero():
-    result = face_identification_pr([])
+    result = face_identification_pr([], missed_gt=0, unmatched_detections=0)
     assert result.precision == 0.0
     assert result.recall == 0.0
 
@@ -401,6 +401,9 @@ def test_face_id_detection_recall_coupling_flag_computed():
         unmatched_detections=0,
     )
     assert clean.detection_recall_coupling_flag is False
+    assert clean.precision_denominator == 1
+    assert clean.recall_denominator == 1
+    assert clean.sampling_frame  # named frame always present
 
     coupled = face_identification_pr(
         [_dec(true_name="Alice", decision="accept", predicted_name="Alice")],
@@ -408,6 +411,7 @@ def test_face_id_detection_recall_coupling_flag_computed():
         unmatched_detections=0,
     )
     assert coupled.detection_recall_coupling_flag is True
+    assert coupled.missed_gt == 2
 
     coupled_fp = face_identification_pr(
         [_dec(true_name="Alice", decision="accept", predicted_name="Alice")],
@@ -415,6 +419,14 @@ def test_face_id_detection_recall_coupling_flag_computed():
         unmatched_detections=1,
     )
     assert coupled_fp.detection_recall_coupling_flag is True
+
+
+def test_face_id_coupling_kwargs_required_no_fail_open_default():
+    """FIR5V11-05 / REF-27: missed_gt and unmatched_detections are required kwargs."""
+    with pytest.raises(TypeError):
+        face_identification_pr(  # type: ignore[call-arg]
+            [_dec(true_name="Alice", decision="accept", predicted_name="Alice")]
+        )
 
 
 def test_face_identification_pr_reject_dict_without_media_id_keys():
@@ -427,7 +439,9 @@ def test_face_identification_pr_reject_dict_without_media_id_keys():
     from scripts.eval_harness.face_metrics import face_identification_pr
 
     pr = face_identification_pr(
-        [{"true_name": "Alice", "decision": "reject", "enrolled": True}]
+        [{"true_name": "Alice", "decision": "reject", "enrolled": True}],
+        missed_gt=0,
+        unmatched_detections=0,
     )
     assert pr.false_negatives == 1  # reject of an enrolled identity → FN
     assert pr.true_positives == 0 and pr.false_positives == 0

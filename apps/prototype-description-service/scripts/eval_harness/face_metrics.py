@@ -36,7 +36,31 @@ import numpy as np
 
 # Clustering pair floors + degenerate guard (§F).
 CLUSTER_PAIR_FLOOR = 20
+# Unknown-rejection n floor: Wilson 95% half-width ≤ ~15% at p̂=0.5
+# (n=43 → ±14.3%; scope sizing table). AUDIT-04 / FIR5V11-02.
 UNKNOWN_REJECTION_N_FLOOR = 43
+UNKNOWN_REJECTION_ERROR_TARGET = (
+    "Wilson_95_halfwidth_le_15pct_at_p0.5 (n=43 → ±14.3%)"
+)
+
+# Named sampling frames for published rates (AUDIT-01/02).
+SAMPLING_FRAME_FACE_ID = (
+    "named_matched_probes_pooled_kfold_decisions: precision over accept/"
+    "confusion; recall over enrolled (≥2 matched faces) only; detection "
+    "misses excluded from FN (EVAL-16)"
+)
+SAMPLING_FRAME_UNKNOWN_REJECTION = (
+    "stranger_probes_full_corpus_including_unpublishable: correct_reject="
+    "decision=reject; false_accept=decision=accept"
+)
+SAMPLING_FRAME_DEMOGRAPHIC_COHORT = (
+    "named_matched_probes_in_cohort: roster_cohorts primary, single-subject "
+    "celebs01 media fallback; strangers excluded; always DIRECTIONAL"
+)
+SAMPLING_FRAME_CLUSTERING = (
+    "named_matched_faces_pairwise: P_same/P_diff pair floors; M==0 "
+    "all-singletons guard; single-linkage diagnostic (GRPH-18)"
+)
 
 
 @dataclass(frozen=True)
@@ -182,8 +206,8 @@ class FaceLevelIdPr:
 
     Report id-recall *alongside* detection-recall: weak detection inflates
     id-recall on the easy detected subset (coupling caveat, §F / EVAL-16).
-    ``detection_recall_coupling_flag`` is **computed** from missed GT /
-    unmatched detections — not a hard-coded constant.
+    ``detection_recall_coupling_flag`` is **computed** from required missed GT /
+    unmatched detection counts — never a fail-open default (REF-27).
     """
 
     true_positives: int
@@ -192,7 +216,15 @@ class FaceLevelIdPr:
     n_named_probes: int
     n_recall_eligible: int  # enrolled faces (not excluded_single_face_recall)
     wrong_names: tuple[tuple[int, int, str, str], ...]  # media_id, box_index, true, pred
-    detection_recall_coupling_flag: bool = False
+    detection_recall_coupling_flag: bool
+    sampling_frame: str = SAMPLING_FRAME_FACE_ID
+    # Explicit rate denominators for AUDIT-02 (n/N honesty).
+    precision_numerator: int = 0  # TP
+    precision_denominator: int = 0  # TP+FP
+    recall_numerator: int = 0  # TP
+    recall_denominator: int = 0  # TP+FN
+    missed_gt: int = 0
+    unmatched_detections: int = 0
 
     @property
     def precision(self) -> float:
@@ -206,8 +238,9 @@ class FaceLevelIdPr:
 def face_identification_pr(
     decisions: Sequence[Any],
     *,
-    missed_gt: int = 0,
-    unmatched_detections: int = 0,
+    missed_gt: int,
+    unmatched_detections: int,
+    sampling_frame: str = SAMPLING_FRAME_FACE_ID,
 ) -> FaceLevelIdPr:
     """Face-level ID P/R over pooled per-fold decisions for *named* probes (§F).
 
@@ -217,8 +250,11 @@ def face_identification_pr(
     - single-face confusion → FP only (excluded_single_face_recall)
     Precision/Recall use 0/0 → 0.
 
-    ``detection_recall_coupling_flag`` is True when any missed GT or unmatched
-    detection means id-P/R denominators exclude detection failures (EVAL-16).
+    ``missed_gt`` and ``unmatched_detections`` are **required** (no fail-open
+    default of 0 — REF-27 / FIR5V11-05). Pass counts scoped to the same
+    sampling frame as ``decisions`` (e.g. celebs01-only for headline).
+    ``detection_recall_coupling_flag`` is True when either count is > 0
+    (id-P/R denominators exclude detection failures — EVAL-16).
     Stranger false-accepts live only in the separate unknown-rejection metric.
     """
     tp = fp = fn = 0
@@ -258,7 +294,9 @@ def face_identification_pr(
             if enrolled:
                 fn += 1
 
-    coupling = int(missed_gt) > 0 or int(unmatched_detections) > 0
+    mg = int(missed_gt)
+    ud = int(unmatched_detections)
+    coupling = mg > 0 or ud > 0
     return FaceLevelIdPr(
         true_positives=tp,
         false_positives=fp,
@@ -267,6 +305,13 @@ def face_identification_pr(
         n_recall_eligible=n_recall_eligible,
         wrong_names=tuple(sorted(wrong)),
         detection_recall_coupling_flag=coupling,
+        sampling_frame=sampling_frame,
+        precision_numerator=tp,
+        precision_denominator=tp + fp,
+        recall_numerator=tp,
+        recall_denominator=tp + fn,
+        missed_gt=mg,
+        unmatched_detections=ud,
     )
 
 
@@ -369,8 +414,16 @@ def demographic_rollup(
         )
         buckets.setdefault(cohort, []).append(d)
 
+    # Cohort P/R reuses the same counting; detection coupling is not
+    # re-attributed per cohort (detection is image-level). Explicit 0,0 keeps
+    # the required kwargs honest without inventing per-cohort miss counts.
     by_cohort = {
-        cohort: face_identification_pr(group)
+        cohort: face_identification_pr(
+            group,
+            missed_gt=0,
+            unmatched_detections=0,
+            sampling_frame=SAMPLING_FRAME_DEMOGRAPHIC_COHORT,
+        )
         for cohort, group in sorted(buckets.items())
     }
     return DemographicRollup(by_cohort=by_cohort)
@@ -387,6 +440,11 @@ class UnknownRejectionResult:
     false_accepts: int
     n: int
     n_floor: int = UNKNOWN_REJECTION_N_FLOOR
+    sampling_frame: str = SAMPLING_FRAME_UNKNOWN_REJECTION
+    error_target: str = UNKNOWN_REJECTION_ERROR_TARGET
+    # rate = correct_rejects / n; denominators retained for redaction honesty.
+    rate_numerator: int = 0
+    rate_denominator: int = 0
 
     @property
     def rate(self) -> float:
@@ -419,6 +477,10 @@ def face_unknown_rejection(decisions: Sequence[Any]) -> UnknownRejectionResult:
         correct_rejects=correct,
         false_accepts=false_accept,
         n=n,
+        sampling_frame=SAMPLING_FRAME_UNKNOWN_REJECTION,
+        error_target=UNKNOWN_REJECTION_ERROR_TARGET,
+        rate_numerator=correct,
+        rate_denominator=n,
     )
 
 

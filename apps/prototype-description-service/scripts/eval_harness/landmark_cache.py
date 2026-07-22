@@ -27,8 +27,18 @@ from recognition.infrastructure.face_pipeline.provenance import MODEL_MANIFEST
 from .face_assignment import associate_detections
 
 # Pinned detector identity for the offline cache pass (PROV-01).
+# EXP-08 / FIR5V11-04: this is the *candidate* YuNet family. Occlusion twin
+# eligibility for BOTH legs is conditioned on this cache — faces only YuNet
+# detects enter the twin universe; the comparison population is correlated
+# with the candidate detection distribution (surfaced in protocol disclosures).
 LANDMARK_CACHE_MODEL_ID = "yunet"
 LANDMARK_CACHE_WEIGHTS_SHA256 = MODEL_MANIFEST["yunet"].sha256
+LANDMARK_CACHE_LEG_ASYMMETRY_DISCLOSURE = (
+    "occlusion twin eligibility for BOTH legs is conditioned on the frozen "
+    "YuNet (candidate-family) landmark cache — faces only the incumbent "
+    "detects are structurally excluded; the comparison population is "
+    "correlated with the candidate detection distribution (EXP-08)"
+)
 
 
 class FaceDetector(Protocol):

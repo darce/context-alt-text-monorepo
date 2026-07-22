@@ -314,6 +314,42 @@ def test_pooled_decisions_cover_all_matched_named_n():
     assert len(keys) == len(faces)
 
 
+def test_kfold_clamped_to_subject_count_avoids_empty_fit():
+    """REF-27 / FIR5V11-03: K >> n_subjects is clamped so fit sets stay non-empty."""
+    faces = [
+        _matched(1, 0, [1, 0, 0], "Alice"),
+        _matched(2, 0, [1, 0.05, 0], "Alice"),
+        _matched(3, 0, [0, 1, 0], None),
+        _matched(4, 0, [0, 1, 0.05], None),
+    ]
+    # Requested K=5 with 3 subjects (Alice + 2 strangers) clamps to 3.
+    result = assign_open_set_kfold(faces, k_folds=5, tau_grid=(0.2, 0.5, 0.9))
+    used_folds = {d.fold for d in result.decisions}
+    assert len(result.tau_k) == 3
+    assert used_folds <= set(range(len(result.tau_k)))
+    assert len(result.decisions) == len(faces)
+    assert all(d.tau_k == result.tau_k[d.fold] for d in result.decisions)
+    # Joint ranking spreads Alice vs strangers across folds (not all fold 0).
+    assert len(used_folds) >= 2
+
+
+def test_empty_fit_fold_fails_fast_when_unavoidable_collision():
+    """REF-27: if every probe collides into one fold under effective_k>1, raise."""
+    faces = [
+        _matched(1, 0, [1, 0, 0], "Alice"),
+        _matched(2, 0, [1, 0.05, 0], "Bob"),
+    ]
+    import scripts.eval_harness.face_assignment as fa
+
+    original = fa.global_fold_ranks
+    try:
+        fa.global_fold_ranks = lambda matched, k_folds=5: [0] * len(matched)  # type: ignore[assignment]
+        with pytest.raises(ValueError, match="empty fit fold"):
+            assign_open_set_kfold(faces, k_folds=2, tau_grid=(0.2, 0.5, 0.9))
+    finally:
+        fa.global_fold_ranks = original  # type: ignore[assignment]
+
+
 def test_metrics_consume_pooled_not_single_tau_op_rescore():
     """Metrics read each face's POOLED per-fold decision, never a re-score at τ_op (EVAL-07)."""
     from scripts.eval_harness.face_assignment import FaceDecision
@@ -347,7 +383,7 @@ def test_metrics_consume_pooled_not_single_tau_op_rescore():
         enrolled=True, excluded_single_face_recall=False,
     )
     assert rejected_above_tau_op.s_max > tau_op  # a τ_op re-score WOULD accept
-    pr = face_identification_pr([rejected_above_tau_op])
+    pr = face_identification_pr([rejected_above_tau_op], missed_gt=0, unmatched_detections=0)
     assert pr.true_positives == 0 and pr.false_negatives == 1
 
 

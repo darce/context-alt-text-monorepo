@@ -538,7 +538,6 @@ describe('useWorkbenchFindings', () => {
       expect(result.current.isLoading).toBe(false);
     });
 
-    const first = result.current;
     rerender();
     const second = result.current;
 

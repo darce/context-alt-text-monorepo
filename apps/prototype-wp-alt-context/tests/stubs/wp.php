@@ -1832,6 +1832,14 @@ if (!isset($GLOBALS['wpdb'])) {
         public array $mockResults = [];
         /** @var array<string,mixed>|null */
         public ?array $mockRow = null;
+        /**
+         * Optional ordered get_row results (null = empty). When set, overrides mockRow/tableRows
+         * for each successive get_row call (e.g. race: first miss → re-find hit).
+         *
+         * @var list<array<string,mixed>|null>|null
+         */
+        public ?array $mockRowSequence = null;
+        private int $mockRowSequenceIndex = 0;
         /** @var mixed */
         public $mockVar = null;
         public int $insert_id = 0;
@@ -1959,10 +1967,17 @@ if (!isset($GLOBALS['wpdb'])) {
             $normalizedSql = trim((string) $query);
             $this->queries[] = $normalizedSql;
 
-            $row = $this->mockRow;
-            if ($row === null) {
-                $results = $this->resolveStoredSelectResults($normalizedSql);
-                $row = $results[0] ?? null;
+            if ($this->mockRowSequence !== null) {
+                $row = array_key_exists($this->mockRowSequenceIndex, $this->mockRowSequence)
+                    ? $this->mockRowSequence[$this->mockRowSequenceIndex]
+                    : null;
+                $this->mockRowSequenceIndex++;
+            } else {
+                $row = $this->mockRow;
+                if ($row === null) {
+                    $results = $this->resolveStoredSelectResults($normalizedSql);
+                    $row = $results[0] ?? null;
+                }
             }
 
             if ($row === null) {
@@ -2313,6 +2328,8 @@ if (!isset($GLOBALS['wpdb'])) {
             $this->defaultQueryResult = true;
             $this->mockResults = [];
             $this->mockRow = null;
+            $this->mockRowSequence = null;
+            $this->mockRowSequenceIndex = 0;
             $this->mockVar = null;
             $this->insert_id = 0;
             $this->rows_affected = 0;

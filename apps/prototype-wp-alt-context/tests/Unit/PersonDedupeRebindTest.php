@@ -124,55 +124,49 @@ class PersonDedupeRebindTest extends TestCase
 	}
 
 	/**
-	 * Insert unique-index race: insert fails but a concurrent row is present for re-lookup.
-	 * Stub cannot interleave mid-insert; we exercise the post-failure re-find by failing insert
-	 * while the matching row already exists under a first-miss path (empty first lookup via
-	 * mockRow null + empty tableRows is the create path). Here: seed concurrent winner, force
-	 * insert fail, and call resolve after clearing mock so find hits the winner after we
-	 * simulate the branch by invoking find-after-fail directly through a failed create on an
-	 * empty table first (500), then rebind when the row exists.
+	 * Insert unique-index race in one resolve_or_create call:
+	 * first find null → insert false → re-find returns concurrent winner → rebind.
 	 */
 	public function testInsertFailureWithExistingNormalizedMatchRebinds(): void
 	{
 		global $wpdb;
 
 		$existingUuid = '11111111-2222-3333-4444-555555555555';
-		$normalized = PersonResolutionService::normalize_name('Race Winner');
-
-		// Concurrent winner already visible for re-lookup after a failed insert attempt.
-		// First find would also hit; to force the insert-fail branch we make insert fail and
-		// ensure the only way to succeed is re-find: temporarily empty, fail insert → 500,
-		// then with row present resolve rebinds (covers both branches of the fail path).
 		$wpdb->defaultInsertResult = false;
 		$wpdb->tableRows['wp_acx_persons'] = [];
-		$service = new PersonResolutionService();
-		$fail = $service->resolve_or_create('Race Winner', static fn(): bool => true);
-		$this->assertInstanceOf(\WP_Error::class, $fail);
-		$this->assertSame('acx_db_error', $fail->get_error_code());
-
-		$wpdb->queries = [];
-		$wpdb->defaultInsertResult = false;
-		$wpdb->tableRows['wp_acx_persons'] = [
+		// Sequence: first find miss, post-insert re-find hit (concurrent winner).
+		$wpdb->mockRowSequence = [
+			null,
 			[
 				'id' => 7,
 				'person_uuid' => $existingUuid,
 				'name' => 'Race Winner',
-				'normalized_name' => $normalized,
 			],
 		];
-		// Row exists: resolve rebinds without insert (post-race steady state).
-		$rebound = $service->resolve_or_create('race winner', static fn(): bool => true);
+
+		$service = new PersonResolutionService();
+		$rebound = $service->resolve_or_create('Race Winner', static fn(): bool => true);
+
 		$this->assertIsArray($rebound);
 		$this->assertSame('rebound', $rebound['outcome']);
 		$this->assertSame(7, $rebound['person_id']);
 		$this->assertSame($existingUuid, $rebound['person_uuid']);
-		$this->assertCount(
-			0,
+		$this->assertSame('Race Winner', $rebound['name']);
+
+		$inserts = array_values(
 			array_filter(
 				$wpdb->queries,
-				static fn(string $q): bool => str_contains($q, 'INSERT INTO')
+				static fn(string $q): bool => str_contains($q, 'INSERT INTO wp_acx_persons')
 			)
 		);
+		$this->assertCount(1, $inserts, 'race path must attempt one insert before re-find');
+		$lookups = array_values(
+			array_filter(
+				$wpdb->queries,
+				static fn(string $q): bool => str_contains($q, 'WHERE normalized_name =')
+			)
+		);
+		$this->assertCount(2, $lookups, 'first find + post-insert re-find');
 	}
 
 	public function testResolveOrCreateIsTransactionAgnostic(): void

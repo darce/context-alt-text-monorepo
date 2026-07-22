@@ -1,7 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
-import type { RosterEntry } from '../../../api/rosterApi';
+import type { RosterClusterCommitResponse, RosterEntry } from '../../../api/rosterApi';
 import type { BatchAnalyzeResponse, ClusterListResponse, ClusterSummary } from '../../../api/recognition';
 import { useRecognitionCluster, useRecognitionClusters } from '../../../hooks/useRecognitionHooks';
 import { useCreatePerson, useDeletePerson, useRosterEntries, useUpdatePerson } from '../../../hooks/useRosterHooks';
@@ -94,7 +94,11 @@ const clusterActionState = {
     mutate: vi.fn(),
     isPending: false,
   }),
-  commitMutation: createMockMutation<void, Error, { clusterId: string; rosterEntryId?: number; newEntryName?: string }>(
+  commitMutation: createMockMutation<
+    RosterClusterCommitResponse,
+    Error,
+    { clusterId: string; rosterEntryId?: number; newEntryName?: string }
+  >(
     {
       mutate: vi.fn(),
       isPending: false,

@@ -148,7 +148,7 @@ describe('ClusterDrawerPanel keyboard member-fix (E21-9 Slice 3)', () => {
     expect(moveButton).toHaveClass('acx-cluster-drawer__move-btn');
     expect(moveButton.closest('.acx-cluster-drawer__face-actions')).not.toBeNull();
 
-    const actions = moveButton.closest('.acx-cluster-drawer__face-actions') as HTMLElement;
+    const actions = moveButton.closest('.acx-cluster-drawer__face-actions')!;
     const actionsStyle = window.getComputedStyle(actions);
     const buttonStyle = window.getComputedStyle(moveButton);
     // jsdom may not load SCSS; assert no inline hover-gate and presence of the always-visible class surface.

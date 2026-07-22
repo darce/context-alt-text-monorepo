@@ -5,7 +5,7 @@
  * Cap ~50 entries, TTL ~60s, evict oldest on overflow or expiry.
  */
 
-import React, { createContext, useCallback, useContext, useMemo, useRef } from 'react';
+import React, { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
 
 const DEFAULT_CAP = 50;
 const DEFAULT_TTL_MS = 60_000;
@@ -40,6 +40,9 @@ export const MergeSurvivorProvider: React.FC<MergeSurvivorProviderProps> = ({
 }) => {
   // Insertion-ordered Map: oldest at iteration start; re-set moves to end.
   const mapRef = useRef<Map<string, MergeSurvivorEntry>>(new Map());
+  // E215-BR-01: bump on record so lifecycle consumers re-render and re-check
+  // resolveSurvivor after a late record-after-404 (map alone is ref-backed).
+  const [revision, setRevision] = useState(0);
 
   const pruneExpired = useCallback(() => {
     const t = now();
@@ -70,6 +73,7 @@ export const MergeSurvivorProvider: React.FC<MergeSurvivorProviderProps> = ({
         }
         mapRef.current.delete(oldest);
       }
+      setRevision((n) => n + 1);
     },
     [cap, now, pruneExpired],
   );
@@ -95,7 +99,9 @@ export const MergeSurvivorProvider: React.FC<MergeSurvivorProviderProps> = ({
 
   const value = useMemo<MergeSurvivorApi>(
     () => ({ recordMergeSurvivor, resolveSurvivor }),
-    [recordMergeSurvivor, resolveSurvivor],
+    // revision forces a new context value so consumers re-render after record.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- revision is the notify signal
+    [recordMergeSurvivor, resolveSurvivor, revision],
   );
 
   return <MergeSurvivorContext.Provider value={value}>{children}</MergeSurvivorContext.Provider>;

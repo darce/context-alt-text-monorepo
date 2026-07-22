@@ -56,11 +56,10 @@ export const useLiveReviewTarget = (
   optsRef.current = opts;
 
   // Exactly-once / upgrade-aware retirement handling per open-target id.
-  const handledForRef = useRef<string | null>(null);
+  // E215-BR-06: single ref — action alone is enough (reset on openClusterId change).
   const handledActionRef = useRef<'rebind' | 'close' | null>(null);
 
   useEffect(() => {
-    handledForRef.current = null;
     handledActionRef.current = null;
   }, [openClusterId]);
 
@@ -128,7 +127,6 @@ export const useLiveReviewTarget = (
         return;
       }
       handledActionRef.current = 'rebind';
-      handledForRef.current = openClusterId;
       announce?.(__(LIVE_TARGET_REBIND_ANNOUNCE, 'alt-context'));
       rebind(survivorId);
       return;
@@ -138,7 +136,6 @@ export const useLiveReviewTarget = (
       return;
     }
     handledActionRef.current = 'close';
-    handledForRef.current = openClusterId;
     announce?.(__(LIVE_TARGET_CLOSE_ANNOUNCE, 'alt-context'));
     close?.();
   }, [retired, openClusterId, survivorId]);

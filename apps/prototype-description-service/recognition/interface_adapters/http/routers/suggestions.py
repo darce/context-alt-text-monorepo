@@ -405,11 +405,22 @@ async def accept_merge_suggestion(
     suggestion = await repo.get_by_id(request.tenant_id, suggestion_id)
     if suggestion is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Merge suggestion not found")
-    if suggestion.status != SuggestionStatus.PENDING:
-        return _to_merge_response(suggestion)
 
     cluster_service = await cluster_service_builder(request.tenant_id)
     cluster_repo = cluster_service.assignment_writer.cluster_repository
+
+    # E215-BR-02: non-PENDING ACCEPTED replay still stamps authoritative ids
+    # (resolve survivor via cluster existence, or re-rank if both still present).
+    if suggestion.status != SuggestionStatus.PENDING:
+        if suggestion.status == SuggestionStatus.ACCEPTED:
+            source_id, target_id = await _resolve_accepted_merge_ids(suggestion, cluster_repo)
+            return _to_merge_response(
+                suggestion,
+                source_cluster_id=source_id,
+                target_cluster_id=target_id,
+            )
+        return _to_merge_response(suggestion)
+
     cluster_a = await cluster_repo.get_by_id(suggestion.cluster_a_id)
     cluster_b = await cluster_repo.get_by_id(suggestion.cluster_b_id)
     if not cluster_a or not cluster_b:
@@ -697,6 +708,33 @@ def _select_merge_target(cluster_a: IdentityCluster, cluster_b: IdentityCluster)
     if not target.id or not source.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cluster identifiers missing")
     return source.id, target.id, target.label
+
+
+async def _resolve_accepted_merge_ids(
+    suggestion: MergeSuggestion | MergeSuggestionDetails,
+    cluster_repo: object,
+) -> tuple[str | None, str | None]:
+    """Stamp source/target on ACCEPTED replay (E215-BR-02).
+
+    Prefer existence: the missing side is retired (source), the remaining side is
+    survivor (target). When both still exist, re-run ``_select_merge_target``.
+    """
+    get_by_id = getattr(cluster_repo, "get_by_id", None)
+    if get_by_id is None:
+        return None, None
+    cluster_a = await get_by_id(suggestion.cluster_a_id)
+    cluster_b = await get_by_id(suggestion.cluster_b_id)
+    if cluster_a and not cluster_b:
+        return suggestion.cluster_b_id, suggestion.cluster_a_id
+    if cluster_b and not cluster_a:
+        return suggestion.cluster_a_id, suggestion.cluster_b_id
+    if cluster_a and cluster_b:
+        try:
+            source_id, target_id, _ = _select_merge_target(cluster_a, cluster_b)
+        except HTTPException:
+            return None, None
+        return source_id, target_id
+    return None, None
 
 
 def _to_merge_response(

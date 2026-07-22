@@ -59,8 +59,10 @@ const isNonEmptyClusterId = (value: unknown): value is string =>
   typeof value === 'string' && value.length > 0;
 
 /**
- * Authoritative post-accept ids when both are present and distinct.
- * Returns null when the response lacks topology (pending list / older backend).
+ * Authoritative post-accept ids when both are present, distinct, and belong to
+ * the suggestion's {cluster_a_id, cluster_b_id} pair (E215-BR-04). Mismatched
+ * or foreign ids fall through to client-rank fallback.
+ * Returns null when the response lacks trustworthy topology.
  */
 export const authoritativeMergeSurvivor = (
   suggestion: PendingMergeSuggestion,
@@ -71,6 +73,10 @@ export const authoritativeMergeSurvivor = (
     return null;
   }
   if (retiredId === survivorId) {
+    return null;
+  }
+  const pair = new Set([suggestion.cluster_a_id, suggestion.cluster_b_id]);
+  if (!pair.has(retiredId) || !pair.has(survivorId)) {
     return null;
   }
   return { survivorId, retiredId };

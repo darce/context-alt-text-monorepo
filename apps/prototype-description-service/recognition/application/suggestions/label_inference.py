@@ -13,7 +13,7 @@ from sqlalchemy.orm import joinedload
 
 from db.models import IdentityCluster, MediaIdentity
 from recognition.application.settings import ClusteringSettings
-from recognition.config import get_settings as get_recognition_settings
+from recognition.config.settings import resolve_effective_clustering_settings
 from recognition.domain.repositories import ClusterRepository
 from recognition.domain.suggestion import SuggestedLabel, SuggestedLabelSource
 
@@ -41,7 +41,7 @@ async def infer_suggested_label(
     Returns:
         SuggestedLabel or None if no reliable inference found.
     """
-    inference_settings = settings or get_recognition_settings().clustering
+    inference_settings = settings or resolve_effective_clustering_settings()
     threshold = inference_settings.suggestion_floor
 
     try:

@@ -124,3 +124,29 @@ describe('refreshRestNonce (UXP-NET-2 slice 1)', () => {
     ).toThrow(/ajaxUrl/);
   });
 });
+
+describe('setNonce wpApiSettings mirror (UXP-NET-2 slice 4)', () => {
+  beforeEach(() => {
+    resetConfigCache();
+    seedConfig();
+  });
+
+  afterEach(() => {
+    delete window.wpApiSettings;
+    resetConfigCache();
+  });
+
+  it('mirrors refreshed nonce into window.wpApiSettings when present [TEST-15]', () => {
+    window.wpApiSettings = { root: 'https://example.test/wp-json/', nonce: 'stale-wp-api-nonce' };
+    setNonce('deadbeef01');
+    expect(window.wpApiSettings.nonce).toBe('deadbeef01');
+    expect(getNonce()).toBe('deadbeef01');
+  });
+
+  it('does not create wpApiSettings when absent', () => {
+    delete window.wpApiSettings;
+    setNonce('deadbeef02');
+    expect(window.wpApiSettings).toBeUndefined();
+    expect(getNonce()).toBe('deadbeef02');
+  });
+});

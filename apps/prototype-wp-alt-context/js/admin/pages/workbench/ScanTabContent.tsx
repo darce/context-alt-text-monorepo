@@ -45,7 +45,7 @@ export const ScanTabContent = (): React.JSX.Element => {
   const { scanRun, status, history, cancelScan, retryScanStream } = useJobPipeline();
   const { clusterPanel, dispatchClusterPanel } = useClusterPanel();
   const { hasIdentities } = useWorkbenchMediaContext().mediaQueue;
-  const { queueState, setQueueState } = useWorkbenchFilters();
+  const { queueState, setQueueState, mediaExpanded, setMediaExpanded } = useWorkbenchFilters();
 
   const findingsDetailRef = React.useRef<HTMLDivElement>(null);
   const reviewQueueRef = React.useRef<ReviewQueueHandle>(null);
@@ -77,7 +77,6 @@ export const ScanTabContent = (): React.JSX.Element => {
     // panel reducer and the mounted review target agree.
     onRebindSync: (survivorId) => dispatchClusterPanel({ type: 'open_review', clusterId: survivorId }),
   });
-  const [userExpandedMedia, setUserExpandedMedia] = React.useState(false);
   const previousHasFindings = React.useRef(findings.hasFindings);
   // §7 / BR-75/BR-82: the queue reports whether IT owns the viewport's single accent
   // primary (its card marker or bulk-commit marker). This — not findings totals —
@@ -101,15 +100,16 @@ export const ScanTabContent = (): React.JSX.Element => {
     setQueueBand(queueState.band);
   }, [queueState.index, queueState.kind, queueState.band]);
 
+  // Findings-arrival auto-collapse: clear media=expanded so the URL stays honest (NAV-11).
   React.useEffect(() => {
     if (findings.hasFindings && !previousHasFindings.current) {
-      setUserExpandedMedia(false);
+      setMediaExpanded(false);
     }
     previousHasFindings.current = findings.hasFindings;
-  }, [findings.hasFindings]);
+  }, [findings.hasFindings, setMediaExpanded]);
 
   const isMediaCollapsed =
-    findings.hasFindings && !userExpandedMedia && !findings.isLoading && !findings.isError && !findings.isUnavailable;
+    findings.hasFindings && !mediaExpanded && !findings.isLoading && !findings.isError && !findings.isUnavailable;
 
   // §7 media-footer CTA hierarchy (BR-83): the footer steps its CTAs down to secondary
   // exactly when the QUEUE owns the viewport's single accent primary (`cardPrimaryPresent`
@@ -231,7 +231,7 @@ export const ScanTabContent = (): React.JSX.Element => {
       </ErrorBoundary>
       <MediaSelection
         collapsed={isMediaCollapsed}
-        onExpand={() => setUserExpandedMedia(true)}
+        onExpand={() => setMediaExpanded(true)}
         reviewActive={reviewSurfaceActive}
       />
     </>

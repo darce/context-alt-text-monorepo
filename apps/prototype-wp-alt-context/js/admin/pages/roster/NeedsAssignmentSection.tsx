@@ -214,7 +214,7 @@ export const NeedsAssignmentSection = ({
                 </button>
                 <a
                   className="acx-needs-assignment__workbench-link"
-                  href={workbenchReviewQueueUrl({ clusterId: cluster.id })}
+                  href={workbenchReviewQueueUrl()}
                 >
                   {__('Review in workbench', 'alt-context')}
                 </a>

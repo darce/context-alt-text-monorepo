@@ -27,6 +27,7 @@ import {
   RETENTION_CARD_HEADING,
   RETENTION_CARD_LINK_HREF,
 } from './dashboard/retentionCardCopy';
+import { toWorkbench } from '../navigation/appLinks';
 
 const normalizeCount = (value: number | null | undefined): number => {
   if (typeof value !== 'number' || Number.isNaN(value) || value <= 0) {
@@ -221,7 +222,7 @@ export const DashboardPage = (): React.JSX.Element => {
           aria-label={__('Alt text coverage', 'alt-context')}
         />
         <div className="acx-dashboard__actions">
-          <a href="#/workbench?status=missing" className="acx-button acx-button--primary">
+          <a href={toWorkbench({ status: 'missing' })} className="acx-button acx-button--primary">
             {__('Fix missing descriptions', 'alt-context')}
           </a>
         </div>

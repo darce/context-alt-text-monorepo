@@ -98,10 +98,10 @@ describe('DashboardRecentActivitySection', () => {
     expect(list.textContent).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
     expect(screen.getByText(/Scan finished · 10 images ·/)).toBeInTheDocument();
     expect(screen.getByText('Durable batch run')).toBeInTheDocument();
-    // href may still carry jobId for navigation; visible label must not.
+    // Dead jobId param dropped (E21-10); link opens advanced workbench only.
     expect(screen.getByRole('link', { name: 'View Results' })).toHaveAttribute(
       'href',
-      `#/workbench?advanced=open&jobId=${jobId}`,
+      '#/workbench?advanced=open',
     );
   });
 });

@@ -243,7 +243,7 @@ describe('DashboardPage', () => {
     expect(screen.queryByText('job-1')).not.toBeInTheDocument();
     expect(screen.queryByText('run-1')).not.toBeInTheDocument();
     const link = screen.getByRole('link', { name: 'View Results' });
-    expect(link).toHaveAttribute('href', '#/workbench?advanced=open&jobId=job-1');
+    expect(link).toHaveAttribute('href', '#/workbench?advanced=open');
   });
 
   it('labels browser-local fallback activity explicitly', () => {
@@ -324,7 +324,7 @@ describe('DashboardPage', () => {
 
     expect(screen.getByText('Status unavailable. Refresh to retry.')).toBeInTheDocument();
     const link = screen.getByRole('link', { name: 'View Results' });
-    expect(link).toHaveAttribute('href', '#/workbench?advanced=open&jobId=job-unavailable');
+    expect(link).toHaveAttribute('href', '#/workbench?advanced=open');
   });
 
   it('shows unassigned-person guidance when there are unassigned persons', () => {
@@ -346,7 +346,7 @@ describe('DashboardPage', () => {
     expect(screen.getByText('3 persons have no assigned clusters.')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Review 3 unassigned persons' })).toHaveAttribute(
       'href',
-      '#/roster?tab=entries&personFilter=unassigned',
+      '#/roster?personFilter=unassigned',
     );
     expect(screen.getByText('3', { selector: '.acx-dashboard__guidance-count' })).toBeInTheDocument();
   });

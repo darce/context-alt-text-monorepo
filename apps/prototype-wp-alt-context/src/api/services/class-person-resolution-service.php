@@ -80,7 +80,10 @@ class PersonResolutionService {
 		);
 
 		if ( false === $inserted ) {
-			// Unique-index race or residual collision: rebind instead of 500.
+			// Unique-index race: a concurrent writer committed first. Under InnoDB
+			// REPEATABLE READ the pre-insert SELECT can miss that peer (snapshot
+			// residual). A fresh statement after the failed INSERT sees the winner
+			// and rebinds — accepted residual; no gap-lock retry loop.
 			$race_match = $this->find_by_normalized_name( $table_persons, $normalized );
 			if ( null !== $race_match ) {
 				return $race_match;

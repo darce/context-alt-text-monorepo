@@ -155,4 +155,68 @@ describe('NeedsAssignmentSection rail mount discrimination (E21-9 Slice 5b)', ()
     await userEvent.click(screen.getByRole('button', { name: /Cluster cluster-/i }));
     expect(onOpenCluster).toHaveBeenCalledWith(cluster);
   });
+
+  it('scopes rail bulk merge to unlabeled ids — labeled selections elsewhere are not swept in', async () => {
+    const mutateAsync = vi.fn().mockResolvedValue(undefined);
+    // baseActions is typed `as never`; rebuild rather than spreading never.
+    const actions = {
+      bulkMergeMutation: createMockMutation<void, Error, { clusterIds: string[] }>({
+        mutate: vi.fn(),
+        mutateAsync,
+        isPending: false,
+      }),
+      bulkDismissMutation: createMockMutation<void, Error, { clusterIds: string[] }>({
+        mutate: vi.fn(),
+        mutateAsync: vi.fn().mockResolvedValue(undefined),
+        isPending: false,
+      }),
+      bulkMergeProgress: null,
+      bulkMergeFailure: null,
+      clearBulkMergeFailure: vi.fn(),
+    } as never;
+
+    // Mixed selection: two unlabeled + one labeled id selected elsewhere on the page.
+    const selection = {
+      ...baseSelection,
+      selectedIds: new Set(['cluster-u1', 'cluster-u2', 'cluster-labeled']),
+      count: 3,
+      isSelected: vi.fn(
+        (id: string) => id === 'cluster-u1' || id === 'cluster-u2' || id === 'cluster-labeled',
+      ),
+    };
+
+    render(
+      <NeedsAssignmentSection
+        clusters={[
+          makeCluster({ id: 'cluster-u1', label: '' }),
+          makeCluster({ id: 'cluster-u2', label: '' }),
+          makeCluster({ id: 'cluster-labeled', label: 'Ada' }),
+        ]}
+        selection={selection}
+        actions={actions}
+        isLoading={false}
+        isError={false}
+        onRetry={vi.fn()}
+        onOpenCluster={vi.fn()}
+      />,
+    );
+
+    // Rail BulkActionBar count is intersection size (2), not page-wide selection (3).
+    expect(screen.getByText('2 selected')).toBeInTheDocument();
+    expect(screen.queryByText('3 selected')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /^Merge$/i }));
+    // Confirm dialog describes rail-scoped count.
+    expect(await screen.findByText(/merge 2 clusters/i)).toBeInTheDocument();
+
+    // Confirm the merge — must pass only unlabeled ids.
+    const dialog = screen.getByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: /^Merge$/i }));
+
+    expect(mutateAsync).toHaveBeenCalledTimes(1);
+    const payload = mutateAsync.mock.calls[0][0] as { clusterIds: string[] };
+    expect(payload.clusterIds).toEqual(expect.arrayContaining(['cluster-u1', 'cluster-u2']));
+    expect(payload.clusterIds).toHaveLength(2);
+    expect(payload.clusterIds).not.toContain('cluster-labeled');
+  });
 });

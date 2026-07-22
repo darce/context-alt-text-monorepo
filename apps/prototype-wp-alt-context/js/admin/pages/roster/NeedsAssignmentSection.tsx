@@ -39,6 +39,27 @@ export const NeedsAssignmentSection = ({
   const hasUnlabeled = unlabeled.length > 0;
   const controlsDisabled = !hasUnlabeled || isLoading || isError;
 
+  // Rail bulk ops must never act on labeled ids selected elsewhere on the page.
+  // Scope count + merge/dismiss inputs to selection ∩ unlabeledIds.
+  const railSelectedIds = React.useMemo(() => {
+    const unlabeledSet = new Set(unlabeledIds);
+    const scoped = new Set<string>();
+    selection.selectedIds.forEach((id) => {
+      if (unlabeledSet.has(id)) {
+        scoped.add(id);
+      }
+    });
+    return scoped;
+  }, [selection.selectedIds, unlabeledIds]);
+
+  const railSelection = React.useMemo(
+    () => ({
+      selectedIds: railSelectedIds,
+      count: railSelectedIds.size,
+    }),
+    [railSelectedIds],
+  );
+
   const {
     confirmAction,
     setConfirmAction,
@@ -48,7 +69,7 @@ export const NeedsAssignmentSection = ({
     handleConfirmOpenChange,
     confirmDialogCopy,
   } = useRosterBulkConfirmation({
-    selection,
+    selection: railSelection,
     bulkMergeMutation: actions.bulkMergeMutation,
     bulkDismissMutation: actions.bulkDismissMutation,
   });
@@ -63,10 +84,7 @@ export const NeedsAssignmentSection = ({
     void actions.bulkMergeMutation.mutateAsync({ clusterIds: remaining });
   }, [actions, selection]);
 
-  const selectedVisibleCount = React.useMemo(
-    () => unlabeledIds.reduce((count, id) => (selection.isSelected(id) ? count + 1 : count), 0),
-    [unlabeledIds, selection],
-  );
+  const selectedVisibleCount = railSelection.count;
 
   const selectAllState = selection.isAllSelected(unlabeledIds)
     ? true
@@ -84,6 +102,16 @@ export const NeedsAssignmentSection = ({
     }
     selection.selectAll(unlabeledIds);
   }, [hasUnlabeled, unlabeledIds, selection]);
+
+  const handleClearRailSelection = React.useCallback(() => {
+    // Drop only rail-owned ids so foreign (labeled) selections outside the rail stay intact.
+    const remaining = Array.from(selection.selectedIds).filter((id) => !railSelectedIds.has(id));
+    if (remaining.length === 0) {
+      selection.clear();
+      return;
+    }
+    selection.selectAll(remaining);
+  }, [railSelectedIds, selection]);
 
   return (
     <section
@@ -112,19 +140,19 @@ export const NeedsAssignmentSection = ({
                 )}
           </span>
         </div>
-        {selection.count > 0 || controlsDisabled ? (
+        {railSelection.count > 0 || controlsDisabled ? (
           <BulkActionBar
-            count={selection.count}
+            count={railSelection.count}
             onMerge={handleBulkMerge}
             onDismiss={handleBulkDismiss}
-            onClear={selection.clear}
+            onClear={handleClearRailSelection}
             isMerging={actions.bulkMergeMutation.isPending}
             isDismissing={actions.bulkDismissMutation.isPending}
             mergeProgress={actions.bulkMergeProgress}
             mergeFailure={actions.bulkMergeFailure}
             onRetryMerge={handleRetryMerge}
             onDismissFailure={actions.clearBulkMergeFailure}
-            controlsDisabled={controlsDisabled && selection.count === 0}
+            controlsDisabled={controlsDisabled && railSelection.count === 0}
             controlsDisabledReason={ZERO_STATE_REASON}
           />
         ) : null}

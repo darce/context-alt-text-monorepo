@@ -104,6 +104,11 @@ class SuggestionRefreshService:
             pose_yaw=float(model.pose_yaw) if model.pose_yaw is not None else None,
             pose_roll=float(model.pose_roll) if model.pose_roll is not None else None,
             image_phash=str(model.image_phash) if model.image_phash is not None else None,
+            sharpness=float(model.sharpness) if model.sharpness is not None else None,
+            embedding_norm=float(model.embedding_norm) if model.embedding_norm is not None else None,
+            occlusion_severity=(
+                float(model.occlusion_severity) if model.occlusion_severity is not None else None
+            ),
             moved_by_merge_id=str(model.moved_by_merge_id) if getattr(model, "moved_by_merge_id", None) else None,
         )
 

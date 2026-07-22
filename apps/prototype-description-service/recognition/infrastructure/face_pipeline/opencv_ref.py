@@ -26,6 +26,7 @@ from recognition.infrastructure.face_pipeline._common import (
     DEFAULT_TOP_K,
     SFACE_CROP_SIZE,
     SFACE_EMBEDDING_DIM,
+    EmbedBatchResult,
     FacePipelineInputError,
     RawDetection,
     ZeroNormEmbeddingError,
@@ -146,7 +147,7 @@ class OpenCVSFaceEmbedder:
         """Raw model feature for one crop (hookable in tests)."""
         return self._recognizer.feature(crop)
 
-    def embed(self, crops: Sequence[np.ndarray]):
+    def embed(self, crops: Sequence[np.ndarray]) -> EmbedBatchResult:
         """Embed a batch of 112×112×3 BGR crops → EmbedBatchResult (vectors + pre-norm norms).
 
         Non-(112, 112, 3) crops raise ``FacePipelineInputError`` (no silent resize).

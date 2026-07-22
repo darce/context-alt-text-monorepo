@@ -472,9 +472,9 @@ class ScanService:
             old_row.pose_pitch = det.pose_pitch
             old_row.pose_yaw = det.pose_yaw
             old_row.pose_roll = det.pose_roll
-            old_row.sharpness = getattr(det, "sharpness", None)
-            old_row.embedding_norm = getattr(det, "embedding_norm", None)
-            old_row.occlusion_severity = getattr(det, "occlusion_severity", None)
+            old_row.sharpness = det.sharpness
+            old_row.embedding_norm = det.embedding_norm
+            old_row.occlusion_severity = det.occlusion_severity
             if det.landmark_quality is not None:
                 old_row.quality_score = det.landmark_quality
             old_row.image_phash = det.image_phash
@@ -507,9 +507,9 @@ class ScanService:
                     pose_pitch=det.pose_pitch,
                     pose_yaw=det.pose_yaw,
                     pose_roll=det.pose_roll,
-                    sharpness=getattr(det, "sharpness", None),
-                    embedding_norm=getattr(det, "embedding_norm", None),
-                    occlusion_severity=getattr(det, "occlusion_severity", None),
+                    sharpness=det.sharpness,
+                    embedding_norm=det.embedding_norm,
+                    occlusion_severity=det.occlusion_severity,
                     quality_score=det.landmark_quality,
                     image_phash=det.image_phash,
                 )

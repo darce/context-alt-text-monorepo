@@ -4,6 +4,73 @@
 @use '../admin/styles/tokens/spacing';
 @use '../admin/styles/tokens/typography';
 
+/* AttachmentFacesApp shell (UXP-5 slice 3). */
+
+.acx-attachment-faces {
+  margin: var(--acx-space-12) 0;
+  max-width: 100%;
+
+  &__status {
+    display: flex;
+    align-items: center;
+    gap: var(--acx-space-8);
+    margin-bottom: var(--acx-space-8);
+    padding: var(--acx-space-8) var(--acx-space-12);
+    border: 1px solid var(--acx-color-border);
+    border-radius: var(--acx-radius-md);
+    background-color: var(--acx-color-surface-alt);
+    color: var(--acx-color-text);
+    font-size: var(--acx-text-sm);
+    line-height: var(--acx-leading-tight);
+
+    &--error {
+      border-color: var(--acx-color-danger-border);
+      background-color: var(--acx-color-danger-soft);
+      color: var(--acx-color-danger-strong);
+    }
+
+    &--pending {
+      border-color: var(--acx-color-warning-border);
+      background-color: var(--acx-color-warning-bg);
+      color: var(--acx-color-warning-pill-text);
+    }
+  }
+
+  &__status-icon {
+    flex-shrink: 0;
+  }
+
+  &__skeleton {
+    min-height: 12rem;
+    border-radius: var(--acx-radius-md);
+    background: linear-gradient(
+      90deg,
+      var(--acx-color-surface) 0%,
+      var(--acx-color-surface-alt) 50%,
+      var(--acx-color-surface) 100%
+    );
+    background-size: 200% 100%;
+  }
+
+  &__figure {
+    margin: 0;
+    max-width: 100%;
+  }
+
+  &__image-wrap {
+    position: relative;
+    display: inline-block;
+    max-width: 100%;
+    line-height: 0;
+  }
+
+  &__image {
+    display: block;
+    max-width: 100%;
+    height: auto;
+  }
+}
+
 /* FaceOverlayLayer — token-only chip/marker/outline styles (UXP-5 slice 2). */
 
 .acx-face-overlay {

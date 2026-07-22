@@ -19,7 +19,7 @@ import {
   syncPresentationToneClass,
   type SyncPresentation,
 } from './syncPresentation';
-import { buildWorkbenchOverlayHref } from './workbenchOverlayLinks';
+import { buildWorkbenchOverlayHref } from '../../navigation/appLinks';
 
 /** Badge second-channel state derived from tone/status (not binary ok/attention). */
 type SyncBadgeState = 'ok' | 'attention' | 'error' | 'syncing' | 'queued' | 'in-progress';

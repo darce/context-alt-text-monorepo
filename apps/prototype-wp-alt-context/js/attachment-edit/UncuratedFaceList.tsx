@@ -9,8 +9,10 @@ import type { BoundingBox } from '../admin/api/recognition/types/identity';
 import {
   faceOverlayDomId,
   isCuratedFace,
+  sanitizeDomIdToken,
   type FaceOverlayIdentity,
 } from '../components/ui/FaceOverlayLayer';
+import { isCompleteFiniteBbox } from '../components/ui/faceGeometry';
 import { FaceThumbnail } from '../components/ui/FaceThumbnail';
 import { ATTACHMENT_EDIT_COPY, unnamedFaceLabel } from './copy';
 
@@ -34,18 +36,18 @@ function compareBboxReadingOrder(a: FaceWithBbox, b: FaceWithBbox): number {
   return a.bbox.x - b.bbox.x;
 }
 
-/** Uncurated faces with bbox, sorted bbox.y then bbox.x (matches FaceOverlayLayer). */
+/** Uncurated faces with complete finite bboxes, sorted bbox.y then bbox.x (matches FaceOverlayLayer). */
 export function selectUncuratedFacesInReadingOrder(
   identities: FaceOverlayIdentity[],
 ): FaceWithBbox[] {
   return identities
-    .filter((id): id is FaceWithBbox => id.bbox != null && !isCuratedFace(id))
+    .filter((id): id is FaceWithBbox => isCompleteFiniteBbox(id.bbox) && !isCuratedFace(id))
     .slice()
     .sort(compareBboxReadingOrder);
 }
 
 export function uncuratedListRowDomId(faceId: string): string {
-  return `acx-uncurated-list-${faceId}`;
+  return `acx-uncurated-list-${sanitizeDomIdToken(faceId)}`;
 }
 
 export const UncuratedFaceList: React.FC<UncuratedFaceListProps> = ({

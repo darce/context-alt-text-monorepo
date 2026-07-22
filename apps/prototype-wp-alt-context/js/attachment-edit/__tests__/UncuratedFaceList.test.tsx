@@ -117,6 +117,36 @@ describe('UncuratedFaceList', () => {
     expect(document.getElementById(uncuratedListRowDomId('u-early'))).toBeTruthy();
   });
 
+  it('sanitizes hostile identity_id into selector-safe list/overlay aria ids [UXP5-BRV-02]', () => {
+    const hostile = `evil "id" {x}`;
+    render(
+      <UncuratedFaceList
+        identities={[
+          {
+            identity_id: hostile,
+            bbox: { x: 10, y: 10, width: 40, height: 40 },
+          },
+        ]}
+        mediaUrl={MEDIA_URL}
+        workbenchUrl={WORKBENCH_URL}
+        highlightedFaceId={hostile}
+      />,
+    );
+
+    const overlayId = faceOverlayDomId(hostile);
+    const rowId = uncuratedListRowDomId(hostile);
+    expect(overlayId).toMatch(/^acx-face-overlay-[A-Za-z0-9_-]+$/);
+    expect(rowId).toMatch(/^acx-uncurated-list-[A-Za-z0-9_-]+$/);
+    expect(document.getElementById(rowId)).toHaveClass(
+      'acx-uncurated-face-list__row--highlighted',
+    );
+    // data-testid still uses raw id; aria relationships use sanitized tokens.
+    const link = screen.getByTestId(`acx-name-person-link-${hostile}`);
+    expect(link).toHaveAttribute('aria-controls', overlayId);
+    expect(link).toHaveAttribute('aria-describedby', overlayId);
+    expect(document.querySelector(`#${CSS.escape(rowId)}`)).not.toBeNull();
+  });
+
   it('highlights a row when highlightedFaceId is set from outside (controlled API)', () => {
     render(
       <UncuratedFaceList

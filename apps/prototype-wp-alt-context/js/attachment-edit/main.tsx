@@ -47,12 +47,17 @@ export function mountAttachmentEdit(
     return false;
   }
 
+  // Zero / missing attachmentId: leave container hidden — never mount a permanent skeleton.
+  const attachmentId = toPositiveInt(payload.attachmentId);
+  if (attachmentId === 0) {
+    return false;
+  }
+
   registerConfig({
     nonce: payload.nonce,
     endpoints: payload.endpoints,
   });
 
-  const attachmentId = toPositiveInt(payload.attachmentId);
   const imageWidth = toPositiveInt(payload.imageWidth);
   const imageHeight = toPositiveInt(payload.imageHeight);
   const imageUrl = typeof payload.imageUrl === 'string' ? payload.imageUrl : '';

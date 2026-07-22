@@ -5,6 +5,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   FaceOverlayLayer,
   faceOverlayDomId,
+  sanitizeDomIdToken,
   type FaceOverlayIdentity,
 } from '../FaceOverlayLayer';
 
@@ -344,6 +345,145 @@ describe('FaceOverlayLayer', () => {
 
       await user.click(screen.getByRole('button', { name: 'Alex' }));
       expect(onActivate).toHaveBeenCalledWith('c1');
+    });
+  });
+
+  describe('naturalSize and bbox guards [UXP5-BRV-01]', () => {
+    function collectPositionStyles(root: HTMLElement): string[] {
+      return Array.from(root.querySelectorAll<HTMLElement>('[style]')).map(
+        (el) => el.getAttribute('style') ?? '',
+      );
+    }
+
+    it('skips face controls when naturalSize has zero dimensions (no NaN styles)', () => {
+      const { container } = render(
+        <FaceOverlayLayer
+          identities={[
+            {
+              identity_id: 'face-1',
+              bbox: { x: 10, y: 10, width: 40, height: 40 },
+              cluster_label: 'Sam',
+              is_auto_label: false,
+            },
+          ]}
+          naturalSize={{ width: 0, height: 0 }}
+        />,
+      );
+
+      const layer = screen.getByTestId('acx-face-overlay-layer');
+      expect(layer).toHaveAttribute('data-empty-natural-size', 'true');
+      expect(screen.queryByRole('button')).not.toBeInTheDocument();
+      for (const style of collectPositionStyles(container as HTMLElement)) {
+        expect(style).not.toMatch(/NaN/i);
+      }
+    });
+
+    it('skips face controls when naturalSize is non-finite (no NaN styles)', () => {
+      const { container } = render(
+        <FaceOverlayLayer
+          identities={[
+            {
+              identity_id: 'face-1',
+              bbox: { x: 10, y: 10, width: 40, height: 40 },
+              cluster_label: 'Sam',
+              is_auto_label: false,
+            },
+          ]}
+          naturalSize={{ width: Number.NaN, height: Number.POSITIVE_INFINITY }}
+        />,
+      );
+
+      expect(screen.getByTestId('acx-face-overlay-layer')).toHaveAttribute(
+        'data-empty-natural-size',
+        'true',
+      );
+      expect(screen.queryByRole('button')).not.toBeInTheDocument();
+      for (const style of collectPositionStyles(container as HTMLElement)) {
+        expect(style).not.toMatch(/NaN/i);
+      }
+    });
+
+    it('filters partial/non-finite bboxes before style computation (no NaN styles)', () => {
+      const partialBbox = { x: 10, y: 20 } as unknown as FaceOverlayIdentity['bbox'];
+      const nanBbox = {
+        x: 10,
+        y: Number.NaN,
+        width: 40,
+        height: 40,
+      };
+      const good: FaceOverlayIdentity = {
+        identity_id: 'good',
+        bbox: { x: 50, y: 50, width: 40, height: 40 },
+        cluster_label: 'Good',
+        is_auto_label: false,
+      };
+
+      const { container } = render(
+        <FaceOverlayLayer
+          identities={[
+            { identity_id: 'partial', bbox: partialBbox },
+            { identity_id: 'nan', bbox: nanBbox },
+            good,
+          ]}
+          naturalSize={naturalSize}
+        />,
+      );
+
+      expect(screen.getByRole('button', { name: 'Good' })).toBeInTheDocument();
+      expect(screen.queryAllByRole('button')).toHaveLength(1);
+      for (const style of collectPositionStyles(container as HTMLElement)) {
+        expect(style).not.toMatch(/NaN/i);
+        expect(style).not.toMatch(/Infinity/i);
+      }
+    });
+  });
+
+  describe('DOM id sanitization [UXP5-BRV-02]', () => {
+    it('sanitizes hostile identity_id into unique selector-safe DOM ids with intact highlight wiring', () => {
+      const hostileA = `face "evil" {x}`;
+      const hostileB = `face 'other' [y]`;
+      const onHighlightChange = vi.fn();
+
+      render(
+        <FaceOverlayLayer
+          identities={[
+            {
+              identity_id: hostileA,
+              bbox: { x: 10, y: 10, width: 40, height: 40 },
+            },
+            {
+              identity_id: hostileB,
+              bbox: { x: 100, y: 10, width: 40, height: 40 },
+            },
+          ]}
+          naturalSize={naturalSize}
+          highlightedFaceId={hostileA}
+          onHighlightChange={onHighlightChange}
+        />,
+      );
+
+      const idA = faceOverlayDomId(hostileA);
+      const idB = faceOverlayDomId(hostileB);
+      expect(idA).not.toBe(idB);
+      expect(idA).toMatch(/^acx-face-overlay-[A-Za-z0-9_-]+$/);
+      expect(idB).toMatch(/^acx-face-overlay-[A-Za-z0-9_-]+$/);
+      expect(sanitizeDomIdToken(hostileA)).toMatch(/^[A-Za-z0-9_-]+$/);
+      // Selector-safe: getElementById and CSS.escape both resolve.
+      expect(document.getElementById(idA)).not.toBeNull();
+      expect(document.getElementById(idB)).not.toBeNull();
+      expect(document.querySelector(`#${CSS.escape(idA)}`)).not.toBeNull();
+
+      const markerA = document.getElementById(idA);
+      expect(markerA).toHaveClass('acx-face-overlay__marker--highlighted');
+      expect(getUncuratedOutline(hostileA)).toHaveClass('acx-face-overlay__outline--revealed');
+
+      fireEvent.mouseEnter(document.getElementById(idB)!);
+      expect(onHighlightChange).toHaveBeenCalledWith(hostileB);
+    });
+
+    it('passes safe identity_id tokens through unchanged', () => {
+      expect(sanitizeDomIdToken('face-1_abc')).toBe('face-1_abc');
+      expect(faceOverlayDomId('face-1_abc')).toBe('acx-face-overlay-face-1_abc');
     });
   });
 });

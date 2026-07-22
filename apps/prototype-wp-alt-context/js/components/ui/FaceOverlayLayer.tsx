@@ -8,7 +8,12 @@ import { __, sprintf } from '@wordpress/i18n';
 import { User, UserRound } from 'lucide-react';
 
 import type { BoundingBox } from '../../admin/api/recognition/types/identity';
-import { overlayRectFor, type NaturalSize } from './faceGeometry';
+import {
+  isCompleteFiniteBbox,
+  isUsableNaturalSize,
+  overlayRectFor,
+  type NaturalSize,
+} from './faceGeometry';
 
 export interface FaceOverlayIdentity {
   identity_id: string;
@@ -41,8 +46,29 @@ function compareBboxReadingOrder(a: FaceOverlayIdentity, b: FaceOverlayIdentity)
   return ax - bx;
 }
 
+/** Allowlist for HTML id fragments: letters, digits, underscore, hyphen. */
+const DOM_ID_SAFE = /^[A-Za-z0-9_-]+$/;
+
+/**
+ * Map arbitrary identity_id into a selector-safe, unique DOM id fragment.
+ * Safe ids pass through; hostile chars hash to a stable `h…` token.
+ */
+export function sanitizeDomIdToken(raw: string): string {
+  if (typeof raw === 'string' && raw.length > 0 && DOM_ID_SAFE.test(raw)) {
+    return raw;
+  }
+  const source = typeof raw === 'string' ? raw : String(raw ?? '');
+  // FNV-1a 32-bit — deterministic, no crypto dependency, unique for distinct inputs.
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < source.length; i += 1) {
+    hash ^= source.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `h${(hash >>> 0).toString(36)}`;
+}
+
 export function faceOverlayDomId(faceId: string): string {
-  return `acx-face-overlay-${faceId}`;
+  return `acx-face-overlay-${sanitizeDomIdToken(faceId)}`;
 }
 
 function outlineStyle(bbox: BoundingBox, naturalSize: NaturalSize): React.CSSProperties {
@@ -77,7 +103,7 @@ export const FaceOverlayLayer: React.FC<FaceOverlayLayerProps> = ({
   const [interactionFaceId, setInteractionFaceId] = React.useState<string | null>(null);
 
   const withBbox = React.useMemo(
-    () => identities.filter((id): id is FaceWithBbox => id.bbox != null),
+    () => identities.filter((id): id is FaceWithBbox => isCompleteFiniteBbox(id.bbox)),
     [identities],
   );
 
@@ -122,6 +148,17 @@ export const FaceOverlayLayer: React.FC<FaceOverlayLayerProps> = ({
 
   const isHighlighted = (faceId: string): boolean =>
     highlightedFaceId === faceId || interactionFaceId === faceId;
+
+  // Zero / non-finite natural size: empty layer shell (no NaN styles).
+  if (!isUsableNaturalSize(naturalSize)) {
+    return (
+      <div
+        className="acx-face-overlay"
+        data-testid="acx-face-overlay-layer"
+        data-empty-natural-size="true"
+      />
+    );
+  }
 
   return (
     <div className="acx-face-overlay" data-testid="acx-face-overlay-layer">

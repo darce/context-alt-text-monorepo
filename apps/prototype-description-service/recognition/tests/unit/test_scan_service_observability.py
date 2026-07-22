@@ -656,10 +656,13 @@ async def test_worker_handler_commit_failure_no_event_no_counter_bump(
         async def mark_item_completed(self, **_kwargs):  # noqa: ANN001
             return None
 
-        async def release_item_for_retry(self, *, item_id, error_message, attempts=0, now=None):  # noqa: ANN001
+        async def release_item_for_retry(self, *, item_id, error_message, attempts, now=None):  # noqa: ANN001
+            # Strict fake (R2-01): attempts required — no default of 0.
             released["item_id"] = item_id
             released["error_message"] = error_message
             released["attempts"] = attempts
+            released["now"] = now
+            return True
 
         async def mark_item_failed(self, **_kwargs):  # noqa: ANN001
             raise AssertionError("should retry, not permanent fail")
@@ -725,6 +728,8 @@ async def test_worker_handler_commit_failure_no_event_no_counter_bump(
     assert counters.rows_new == 0
     assert released["item_id"] == item_id
     assert "commit boom" in str(released["error_message"])
+    # R2-01: handler→repository attempts plumbing must pass the claimed count.
+    assert released["attempts"] == item.attempts == 1
 
 
 @pytest.mark.asyncio

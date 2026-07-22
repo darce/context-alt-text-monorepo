@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "description": "FIR-6 wave-0 insightface characterization golden: multi-face chunk under insightface profile through discovery→gate→persist. Field-identical after S1–S3 shared-module changes.",
+  "profile": "insightface",
+  "tenant_id": "tenant-char-0001",
+  "media_id": "media-char-42",
+  "job_id": "job-char-1",
+  "clusters": [
+    {
+      "id": "cluster-alice-0001",
+      "label": "Alice",
+      "representative": [1.0, 0.0, 0.0, 0.0]
+    },
+    {
+      "id": "cluster-bob-0001",
+      "label": "Bob",
+      "representative": [0.0, 1.0, 0.0, 0.0]
+    }
+  ],
+  "chunk": [
+    {
+      "id": "identity-face-a",
+      "embedding": [0.98, 0.1, 0.0, 0.0],
+      "confidence": 0.95,
+      "bbox_width": 100,
+      "bbox_height": 100,
+      "bbox_x": 10,
+      "bbox_y": 20,
+      "pose_pitch": 0.0,
+      "pose_yaw": 0.0,
+      "pose_roll": 0.0
+    },
+    {
+      "id": "identity-face-b",
+      "embedding": [0.1, 0.98, 0.0, 0.0],
+      "confidence": 0.95,
+      "bbox_width": 100,
+      "bbox_height": 100,
+      "bbox_x": 40,
+      "bbox_y": 20,
+      "pose_pitch": 0.0,
+      "pose_yaw": 0.0,
+      "pose_roll": 0.0
+    },
+    {
+      "id": "identity-face-c",
+      "embedding": [0.0, 0.0, 1.0, 0.0],
+      "confidence": 0.95,
+      "bbox_width": 100,
+      "bbox_height": 100,
+      "bbox_x": 70,
+      "bbox_y": 20,
+      "pose_pitch": 0.0,
+      "pose_yaw": 0.0,
+      "pose_roll": 0.0
+    }
+  ],
+  "expected": {
+    "candidates": [
+      {
+        "identity_id": "identity-face-a",
+        "cluster_id": "cluster-alice-0001",
+        "discovery_method": "representative",
+        "discovery_similarity": 0.994834
+      },
+      {
+        "identity_id": "identity-face-b",
+        "cluster_id": "cluster-bob-0001",
+        "discovery_method": "representative",
+        "discovery_similarity": 0.994834
+      }
+    ],
+    "decisions": [
+      {
+        "identity_id": "identity-face-a",
+        "cluster_id": "cluster-alice-0001",
+        "outcome": "accept",
+        "checks_passed": ["confidence_check"],
+        "checks_failed": [],
+        "rejection_reason": null,
+        "discovery_similarity": 0.994834
+      },
+      {
+        "identity_id": "identity-face-b",
+        "cluster_id": "cluster-bob-0001",
+        "outcome": "accept",
+        "checks_passed": ["confidence_check"],
+        "checks_failed": [],
+        "rejection_reason": null,
+        "discovery_similarity": 0.994834
+      }
+    ],
+    "gate_counts": {
+      "accept_count": 2,
+      "suggest_count": 0,
+      "reject_count": 0,
+      "accepted_ids": ["identity-face-a", "identity-face-b"],
+      "suggested_ids": [],
+      "rejected_ids": []
+    },
+    "partition": {
+      "still_unclustered_ids": ["identity-face-c"],
+      "no_candidates_ids": ["identity-face-c"]
+    },
+    "persist": {
+      "persisted": 2,
+      "skipped": 0,
+      "bulk_memberships": [
+        {
+          "cluster_id": "cluster-alice-0001",
+          "members": [["identity-face-a", 0.994834]]
+        },
+        {
+          "cluster_id": "cluster-bob-0001",
+          "members": [["identity-face-b", 0.994834]]
+        }
+      ]
+    }
+  }
+}

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -24,6 +25,19 @@ from recognition.infrastructure.face_pipeline._common import (
 from recognition.infrastructure.face_pipeline.provenance import DEFAULT_MODELS_DIR
 
 _FACE_PIPELINE_PROFILES: frozenset[str] = frozenset({"insightface", "face_pipeline"})
+
+# Legacy insightface anchors (seeded onto FacePipelineSettings as dark placeholders;
+# S4 replaces face_pipeline values via a calibration apply-commit — never mutate these).
+_LEGACY_SIMILARITY_THRESHOLD = 0.55
+_LEGACY_COMPLETE_LINK_THRESHOLD = 0.45
+_LEGACY_SUGGESTION_FLOOR = 0.35
+_LEGACY_SUGGESTION_CEILING = 0.55
+_LEGACY_LIMITS_SIMILARITY_THRESHOLD = 0.6
+_LEGACY_DETECTION_DEFAULT_THRESHOLD = 0.45
+
+# No-op factor floors: floors accept everything; ceiling accepts full [0, 1] range.
+_NOOP_FACTOR_FLOOR = 0.0
+_NOOP_OCCLUSION_CEILING = 1.0
 
 
 def _resolve_insightface_cache_root() -> Path:
@@ -122,11 +136,60 @@ class InsightFaceSettings(BaseModel):
         return self.cache_dir / "models"
 
 
+def _parse_finite_float(value: object, *, field_name: str) -> float:
+    """Parse a finite float; reject bool, non-numeric, NaN, and Inf (rg-008)."""
+    if isinstance(value, bool):
+        raise ValueError(f"Invalid face_pipeline {field_name}={value!r}; must be a finite number")
+    if isinstance(value, str):
+        stripped = value.strip()
+        try:
+            value = float(stripped)
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid face_pipeline {field_name}={value!r}; must be a finite number"
+            ) from exc
+    if isinstance(value, int):
+        value = float(value)
+    if not isinstance(value, float):
+        raise ValueError(f"Invalid face_pipeline {field_name}={value!r}; must be a finite number")
+    if not math.isfinite(value):
+        raise ValueError(f"Invalid face_pipeline {field_name}={value!r}; must be a finite number")
+    return value
+
+
+def _parse_unit_interval(value: object, *, field_name: str) -> float:
+    """Parse a finite float in [0.0, 1.0] (rg-008 fail-closed)."""
+    parsed = _parse_finite_float(value, field_name=field_name)
+    if parsed < 0.0 or parsed > 1.0:
+        raise ValueError(f"Invalid face_pipeline {field_name}={value!r}; must be in [0.0, 1.0]")
+    return parsed
+
+
+def _parse_non_negative_finite(value: object, *, field_name: str) -> float:
+    """Parse a finite float >= 0 (rg-008 fail-closed)."""
+    parsed = _parse_finite_float(value, field_name=field_name)
+    if parsed < 0.0:
+        raise ValueError(f"Invalid face_pipeline {field_name}={value!r}; must be >= 0")
+    return parsed
+
+
+def _parse_bool(value: object, *, field_name: str) -> bool:
+    """Parse a strict bool; reject 0/1 and stringy truthiness (rg-008)."""
+    if isinstance(value, bool):
+        return value
+    raise ValueError(f"Invalid face_pipeline {field_name}={value!r}; must be a boolean")
+
+
 class FacePipelineSettings(BaseModel):
-    """Dark-launch settings for the FIR-3 YuNet+SFace runtime (FIR-4 S2).
+    """Dark-launch settings for the FIR-3 YuNet+SFace runtime (FIR-4 S2 / FIR-6 knobs).
 
     Production default profile remains ``insightface``. Flat env vars follow the
     existing ``RecognitionSettings`` convention (no nested pydantic-settings delimiter).
+
+    Face-pipeline-scoped threshold overrides (seeded with legacy buffalo-era values)
+    are resolved via :func:`resolve_face_pipeline_knobs`. Shared ClusteringSettings /
+    IdentityDetectionSettings / ClusteringLimitsSettings anchors stay untouched until
+    S6 switch-over.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -162,6 +225,52 @@ class FacePipelineSettings(BaseModel):
             "Process-wide face_pipeline executor + admission capacity. "
             "Env: RECOGNITION_FACE_PIPELINE_MAX_WORKERS (default 2)."
         ),
+    )
+
+    # --- FIR-6 face_pipeline-scoped calibration surface (wave-0 precondition) ---
+    face_similarity_threshold: float = Field(
+        default=_LEGACY_SIMILARITY_THRESHOLD,
+        description="face_pipeline override for ClusteringSettings.similarity_threshold.",
+    )
+    face_complete_link_threshold: float = Field(
+        default=_LEGACY_COMPLETE_LINK_THRESHOLD,
+        description="face_pipeline override for ClusteringSettings.complete_link_threshold.",
+    )
+    face_suggestion_floor: float = Field(
+        default=_LEGACY_SUGGESTION_FLOOR,
+        description="face_pipeline override for ClusteringSettings.suggestion_floor.",
+    )
+    face_suggestion_ceiling: float = Field(
+        default=_LEGACY_SUGGESTION_CEILING,
+        description="face_pipeline override for ClusteringSettings.suggestion_ceiling.",
+    )
+    face_limits_similarity_threshold: float = Field(
+        default=_LEGACY_LIMITS_SIMILARITY_THRESHOLD,
+        description="face_pipeline override for ClusteringLimitsSettings.similarity_threshold.",
+    )
+    face_detection_default_threshold: float = Field(
+        default=_LEGACY_DETECTION_DEFAULT_THRESHOLD,
+        description="face_pipeline override for IdentityDetectionSettings.default_threshold.",
+    )
+    oact_coefficient: float = Field(
+        default=0.0,
+        description="OACT occlusion-adaptive coefficient (0.0 = dark no-op until S4).",
+    )
+    factor_floor_sharpness: float = Field(
+        default=_NOOP_FACTOR_FLOOR,
+        description="Enrollment sharpness floor (0.0 accepts everything until S4).",
+    )
+    factor_floor_embedding_norm: float = Field(
+        default=_NOOP_FACTOR_FLOOR,
+        description="Enrollment embedding-norm floor (0.0 accepts everything until S4).",
+    )
+    factor_ceiling_occlusion: float = Field(
+        default=_NOOP_OCCLUSION_CEILING,
+        description="Enrollment occlusion ceiling (1.0 accepts full range until S4).",
+    )
+    joint_assignment_enabled: bool = Field(
+        default=True,
+        description="Within-photo one-to-one assignment under face_pipeline (S2 wiring).",
     )
 
     @field_validator("profile", mode="before")
@@ -218,10 +327,129 @@ class FacePipelineSettings(BaseModel):
             raise ValueError(f"Invalid face_pipeline timeout_s={value!r}; must be a finite positive number")
         return value
 
+    @field_validator(
+        "face_similarity_threshold",
+        "face_complete_link_threshold",
+        "face_suggestion_floor",
+        "face_suggestion_ceiling",
+        "face_limits_similarity_threshold",
+        "face_detection_default_threshold",
+        "factor_ceiling_occlusion",
+        mode="before",
+    )
+    @classmethod
+    def _validate_unit_interval_knobs(cls, value: object, info: object) -> float:
+        field_name = getattr(info, "field_name", "threshold")
+        return _parse_unit_interval(value, field_name=str(field_name))
+
+    @field_validator("oact_coefficient", mode="before")
+    @classmethod
+    def _validate_oact_coefficient(cls, value: object) -> float:
+        return _parse_finite_float(value, field_name="oact_coefficient")
+
+    @field_validator(
+        "factor_floor_sharpness",
+        "factor_floor_embedding_norm",
+        mode="before",
+    )
+    @classmethod
+    def _validate_factor_floors(cls, value: object, info: object) -> float:
+        field_name = getattr(info, "field_name", "factor_floor")
+        return _parse_non_negative_finite(value, field_name=str(field_name))
+
+    @field_validator("joint_assignment_enabled", mode="before")
+    @classmethod
+    def _validate_joint_assignment_enabled(cls, value: object) -> bool:
+        return _parse_bool(value, field_name="joint_assignment_enabled")
+
+    @model_validator(mode="after")
+    def _validate_suggestion_band(self) -> FacePipelineSettings:
+        """Fail closed when suggestion_floor > suggestion_ceiling (rg-008)."""
+        if self.face_suggestion_floor > self.face_suggestion_ceiling:
+            raise ValueError(
+                "Invalid face_pipeline suggestion band: "
+                f"face_suggestion_floor ({self.face_suggestion_floor}) > "
+                f"face_suggestion_ceiling ({self.face_suggestion_ceiling})"
+            )
+        return self
+
     @property
     def resolved_models_dir(self) -> Path:
         """Models directory used for verified load (None → package DEFAULT_MODELS_DIR)."""
         return self.models_dir if self.models_dir is not None else DEFAULT_MODELS_DIR
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedFacePipelineKnobs:
+    """Effective face-pipeline knobs after profile resolution.
+
+    Under ``insightface`` the threshold fields read the shared buffalo-era anchors.
+    Under ``face_pipeline`` they read the FacePipelineSettings overrides. OACT,
+    factor floors, and ``joint_assignment_enabled`` always come from FacePipelineSettings
+    (consumers under insightface must still treat joint assignment as un-wired until S2).
+    """
+
+    profile: Literal["insightface", "face_pipeline"]
+    similarity_threshold: float
+    complete_link_threshold: float
+    suggestion_floor: float
+    suggestion_ceiling: float
+    limits_similarity_threshold: float
+    detection_default_threshold: float
+    oact_coefficient: float
+    factor_floor_sharpness: float
+    factor_floor_embedding_norm: float
+    factor_ceiling_occlusion: float
+    joint_assignment_enabled: bool
+
+
+def resolve_face_pipeline_knobs(
+    *,
+    face_pipeline: FacePipelineSettings,
+    clustering: ClusteringSettings,
+    clustering_limits: ClusteringLimitsSettings,
+    identity_detection: IdentityDetectionSettings,
+) -> ResolvedFacePipelineKnobs:
+    """Resolve effective thresholds for the active face-pipeline profile (rg-008).
+
+    Single ownership for S1/S2 consumers: mutate FacePipelineSettings overrides and
+    re-resolve; insightface anchors are never silently replaced.
+    """
+    profile = face_pipeline.profile
+    if profile == "face_pipeline":
+        return ResolvedFacePipelineKnobs(
+            profile=profile,
+            similarity_threshold=float(face_pipeline.face_similarity_threshold),
+            complete_link_threshold=float(face_pipeline.face_complete_link_threshold),
+            suggestion_floor=float(face_pipeline.face_suggestion_floor),
+            suggestion_ceiling=float(face_pipeline.face_suggestion_ceiling),
+            limits_similarity_threshold=float(face_pipeline.face_limits_similarity_threshold),
+            detection_default_threshold=float(face_pipeline.face_detection_default_threshold),
+            oact_coefficient=float(face_pipeline.oact_coefficient),
+            factor_floor_sharpness=float(face_pipeline.factor_floor_sharpness),
+            factor_floor_embedding_norm=float(face_pipeline.factor_floor_embedding_norm),
+            factor_ceiling_occlusion=float(face_pipeline.factor_ceiling_occlusion),
+            joint_assignment_enabled=bool(face_pipeline.joint_assignment_enabled),
+        )
+    if profile == "insightface":
+        return ResolvedFacePipelineKnobs(
+            profile=profile,
+            similarity_threshold=float(clustering.similarity_threshold),
+            complete_link_threshold=float(clustering.complete_link_threshold),
+            suggestion_floor=float(clustering.suggestion_floor),
+            suggestion_ceiling=float(clustering.suggestion_ceiling),
+            limits_similarity_threshold=float(clustering_limits.similarity_threshold),
+            detection_default_threshold=float(identity_detection.default_threshold),
+            oact_coefficient=float(face_pipeline.oact_coefficient),
+            factor_floor_sharpness=float(face_pipeline.factor_floor_sharpness),
+            factor_floor_embedding_norm=float(face_pipeline.factor_floor_embedding_norm),
+            factor_ceiling_occlusion=float(face_pipeline.factor_ceiling_occlusion),
+            joint_assignment_enabled=bool(face_pipeline.joint_assignment_enabled),
+        )
+    # Defensive: pydantic already restricts profile; keep fail-closed for callers.
+    raise ValueError(
+        f"Invalid face_pipeline profile={profile!r}; allowed values: {sorted(_FACE_PIPELINE_PROFILES)}"
+    )
 
 
 class IdentityDetectionSettings(BaseModel):

@@ -145,11 +145,19 @@ class ConfidenceCheck(AssignmentCheck):
 
         # 2. Compute Identity Quality Adjustment for the candidate
         # Canonical score remains pose-neutral (confidence × bbox only).
+        # OACT threads MediaIdentity.occlusion_severity into threshold_adjustment
+        # only (FIR-6 S1). Runtime OACT coefficient is profile-bridged into
+        # ClusteringSettings.quality via apply_oact_bridge_to_clustering /
+        # bridge_oact_into_quality_settings (S1 gate rebind — OACT only; the
+        # five face_pipeline threshold knobs rebind in S2 via
+        # resolve_face_pipeline_knobs at consumer sites).
         quality_info = compute_identity_quality(
             confidence=identity.confidence,
             bbox_width=identity.bbox_width,
             bbox_height=identity.bbox_height,
             maturity=maturity_level,
+            settings=self.settings.quality,
+            occlusion_severity=identity.occlusion_severity,
         )
         quality_adj = apply_pose_safety_to_quality_adj(
             quality_info.threshold_adjustment,
@@ -159,6 +167,8 @@ class ConfidenceCheck(AssignmentCheck):
         )
 
         # 3. Compute Final Threshold + Suggestion Band
+        # similarity/suggestion thresholds stay on ClusteringSettings until S2
+        # rebinds consumers through resolve_face_pipeline_knobs.
         base = self.settings.similarity_threshold
         suggestion_floor = self.settings.suggestion_floor
         suggestion_ceiling = self.settings.suggestion_ceiling

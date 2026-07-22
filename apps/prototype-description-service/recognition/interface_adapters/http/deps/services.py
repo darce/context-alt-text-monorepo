@@ -108,7 +108,7 @@ class AuditRepositoryProtocol(Protocol):
 
 @lru_cache
 def get_settings() -> ClusteringSettings:
-"""Profile-resolved clustering settings: S2 threshold rebinding + S1 OACT bridge.
+    """Profile-resolved clustering settings: S2 threshold rebinding + S1 OACT bridge.
 
     Under face_pipeline the FacePipelineSettings threshold overrides apply and the
     profile-gated oact_coefficient is bridged into .quality; under insightface the

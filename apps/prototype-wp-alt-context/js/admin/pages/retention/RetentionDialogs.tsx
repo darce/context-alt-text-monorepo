@@ -10,7 +10,7 @@ import {
   DialogTitle,
 } from '../../../components/ui/dialog';
 import { RadioGroup, RadioGroupItem } from '../../../components/ui/radio-group';
-import { PURGE_SCOPE_OPTIONS } from './retentionDialogCopy';
+import { PURGE_DIALOG_DESCRIPTION, PURGE_SCOPE_OPTIONS } from './retentionDialogCopy';
 import type { RetentionAction } from './useRetentionPageState';
 
 const RETENTION_CONFIRM_PHRASE = 'PURGE';
@@ -139,12 +139,7 @@ export const PurgeDialog = ({
         <DialogOverlay />
         <DialogContent>
           <DialogTitle>{__('Purge tenant data', 'alt-context')}</DialogTitle>
-          <DialogDescription>
-            {__(
-              'Choose whether to purge only disposed state or all machine-derived tenant data. This cannot be undone.',
-              'alt-context',
-            )}
-          </DialogDescription>
+          <DialogDescription>{PURGE_DIALOG_DESCRIPTION}</DialogDescription>
           <RadioGroup
             className="acx-retention__dialog-fieldset"
             aria-label={__('Purge scope', 'alt-context')}

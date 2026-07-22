@@ -21,6 +21,8 @@ import { DashboardSyncHealthSection } from './dashboard/DashboardSyncHealthSecti
 import { OrientationCard } from './dashboard/OrientationCard';
 import { buildDashboardPriorityModel, type DashboardSectionId } from './dashboard/buildDashboardPriorityModel';
 import {
+  RETENTION_CARD_ACTION_BODY,
+  RETENTION_CARD_ACTION_HEADING,
   RETENTION_CARD_ERROR_BODY,
   RETENTION_CARD_HEADING,
   RETENTION_CARD_LINK_HREF,
@@ -241,8 +243,8 @@ export const DashboardPage = (): React.JSX.Element => {
             <p>{RETENTION_CARD_ERROR_BODY}</p>
             <div className="acx-dashboard__actions">
               <a href={RETENTION_CARD_LINK_HREF} className="acx-dashboard__action-card">
-                <h3>{__('Open Retention Controls', 'alt-context')}</h3>
-                <p>{__('Review policy, run exports, and inspect recent audit events.', 'alt-context')}</p>
+                <h3>{RETENTION_CARD_ACTION_HEADING}</h3>
+                <p>{RETENTION_CARD_ACTION_BODY}</p>
               </a>
             </div>
           </>
@@ -274,8 +276,8 @@ export const DashboardPage = (): React.JSX.Element => {
             </div>
             <div className="acx-dashboard__actions">
               <a href={RETENTION_CARD_LINK_HREF} className="acx-dashboard__action-card">
-                <h3>{__('Open Retention Controls', 'alt-context')}</h3>
-                <p>{__('Review policy, run exports, and inspect recent audit events.', 'alt-context')}</p>
+                <h3>{RETENTION_CARD_ACTION_HEADING}</h3>
+                <p>{RETENTION_CARD_ACTION_BODY}</p>
               </a>
             </div>
           </>

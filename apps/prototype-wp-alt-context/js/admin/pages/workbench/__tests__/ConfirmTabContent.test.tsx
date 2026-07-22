@@ -82,4 +82,12 @@ describe('ConfirmTabContent', () => {
     expect(details?.textContent?.toLowerCase()).not.toContain('embeddings');
     expect(container.textContent?.toLowerCase()).not.toContain('embeddings');
   });
+
+  it('keeps the disclosure summary keyboard-focusable (UXP4-BRV-03)', () => {
+    render(<ConfirmTabContent />);
+    const summary = screen.getByText(CLUSTERING_DISCLOSURE_SUMMARY);
+    expect(summary.tagName).toBe('SUMMARY');
+    summary.focus();
+    expect(document.activeElement).toBe(summary);
+  });
 });

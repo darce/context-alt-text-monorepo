@@ -4,6 +4,12 @@
  */
 import { __ } from '@wordpress/i18n';
 
+/** Purge dialog description — operator language (no "machine-derived" / "disposed state"). */
+export const PURGE_DIALOG_DESCRIPTION = __(
+  'Choose whether to delete only items already marked for disposal, or all recognition data for this site. This cannot be undone.',
+  'alt-context',
+);
+
 export const PURGE_SCOPE_DISPOSED_LABEL = __('Disposed only', 'alt-context');
 export const PURGE_SCOPE_DISPOSED_DESCRIPTION = __(
   'Delete rows already marked disposed after acknowledgement.',

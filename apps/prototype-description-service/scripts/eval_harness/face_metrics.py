@@ -181,7 +181,9 @@ class FaceLevelIdPr:
     """Face-level identification P/R (0/0 → 0). Coupled to detection recall.
 
     Report id-recall *alongside* detection-recall: weak detection inflates
-    id-recall on the easy detected subset (coupling caveat, §F).
+    id-recall on the easy detected subset (coupling caveat, §F / EVAL-16).
+    ``detection_recall_coupling_flag`` is **computed** from missed GT /
+    unmatched detections — not a hard-coded constant.
     """
 
     true_positives: int
@@ -190,7 +192,7 @@ class FaceLevelIdPr:
     n_named_probes: int
     n_recall_eligible: int  # enrolled faces (not excluded_single_face_recall)
     wrong_names: tuple[tuple[int, int, str, str], ...]  # media_id, box_index, true, pred
-    detection_recall_coupling_flag: bool = True  # always flag the coupling
+    detection_recall_coupling_flag: bool = False
 
     @property
     def precision(self) -> float:
@@ -201,7 +203,12 @@ class FaceLevelIdPr:
         return _ratio_zero(self.true_positives, self.true_positives + self.false_negatives)
 
 
-def face_identification_pr(decisions: Sequence[Any]) -> FaceLevelIdPr:
+def face_identification_pr(
+    decisions: Sequence[Any],
+    *,
+    missed_gt: int = 0,
+    unmatched_detections: int = 0,
+) -> FaceLevelIdPr:
     """Face-level ID P/R over pooled per-fold decisions for *named* probes (§F).
 
     - accept & name* == true → TP
@@ -209,6 +216,10 @@ def face_identification_pr(decisions: Sequence[Any]) -> FaceLevelIdPr:
     - reject of enrolled → FN
     - single-face confusion → FP only (excluded_single_face_recall)
     Precision/Recall use 0/0 → 0.
+
+    ``detection_recall_coupling_flag`` is True when any missed GT or unmatched
+    detection means id-P/R denominators exclude detection failures (EVAL-16).
+    Stranger false-accepts live only in the separate unknown-rejection metric.
     """
     tp = fp = fn = 0
     n_named = 0
@@ -247,6 +258,7 @@ def face_identification_pr(decisions: Sequence[Any]) -> FaceLevelIdPr:
             if enrolled:
                 fn += 1
 
+    coupling = int(missed_gt) > 0 or int(unmatched_detections) > 0
     return FaceLevelIdPr(
         true_positives=tp,
         false_positives=fp,
@@ -254,7 +266,7 @@ def face_identification_pr(decisions: Sequence[Any]) -> FaceLevelIdPr:
         n_named_probes=n_named,
         n_recall_eligible=n_recall_eligible,
         wrong_names=tuple(sorted(wrong)),
-        detection_recall_coupling_flag=True,
+        detection_recall_coupling_flag=coupling,
     )
 
 

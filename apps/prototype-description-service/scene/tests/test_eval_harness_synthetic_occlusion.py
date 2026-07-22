@@ -186,8 +186,15 @@ def test_occluded_faces_absent_from_headline_probe_list():
     occluded_keys = {(1, 0, "occluded")}
     headline = filter_headline_probes(unoccluded, occluded_probe_keys=occluded_keys)
     assert all((f.media_id, f.box_index, "occluded") not in occluded_keys for f in headline)
-    # Default path: callers simply do not add twin MatchedFaces.
-    assert len(filter_headline_probes(unoccluded)) == 3
+    # Explicit empty set: caller asserts no occluded probes (fail-closed contract).
+    assert len(filter_headline_probes(unoccluded, occluded_probe_keys=set())) == 3
+
+
+def test_filter_headline_probes_fail_closed_on_none_keys():
+    """EVAL-16: None occluded_probe_keys must not silently pass-through."""
+    unoccluded = [_matched(1, 0, [1, 0, 0], "Alice")]
+    with pytest.raises(ValueError, match="fail-closed"):
+        filter_headline_probes(unoccluded, occluded_probe_keys=None)
 
 
 def test_twin_source_image_excluded_from_occlusion_gallery():
@@ -239,8 +246,8 @@ def test_distinct_image_min_gallery_two_faces_same_media_ineligible():
     assert result.correct is None
 
 
-def test_lt_2_distinct_identity_gallery_marks_directional():
-    """Single-identity argmax ≡ true_name vacuously 1.0 → DIRECTIONAL."""
+def test_lt_2_distinct_identity_gallery_excluded_from_denominator():
+    """EVAL-18: single-identity galleries leave the recovery denominator."""
     # Alice has faces on media 1 and 2; no other identities → gallery size 1.
     faces = [
         _matched(1, 0, [1, 0, 0], "Alice"),
@@ -254,10 +261,12 @@ def test_lt_2_distinct_identity_gallery_marks_directional():
         box_index=0,
         kind="masked",
         by_identity=by_id,
+        tau=0.0,
     )
-    assert pair.eligible is True
+    assert pair.eligible is False
     assert pair.gallery_n_identities == 1
-    assert pair.correct is True  # vacuous top-1
+    assert pair.ineligible_reason == "single_identity_gallery"
+    assert pair.correct is None
 
     rollup = score_occlusion_accuracy(
         [
@@ -270,11 +279,13 @@ def test_lt_2_distinct_identity_gallery_marks_directional():
             }
         ],
         faces,
+        tau=0.0,
         walk_stability_asserted=True,
         walk_stability_delta=0.0,
     )
-    assert rollup.directional is True
-    assert any("gallery_lt_2" in r for r in rollup.directional_reasons)
+    assert rollup.n_eligible == 0
+    assert rollup.n_ineligible == 1
+    assert rollup.accuracy is None
 
 
 def test_re_detect_miss_is_accuracy_zero_kept_in_n():
@@ -291,6 +302,7 @@ def test_re_detect_miss_is_accuracy_zero_kept_in_n():
         box_index=0,
         kind="sunglasses",
         by_identity={"Alice": faces[:2], "Bob": faces[2:]},
+        tau=0.5,
     )
     assert pair.eligible is True
     assert pair.re_detect_miss is True
@@ -307,6 +319,7 @@ def test_re_detect_miss_is_accuracy_zero_kept_in_n():
             }
         ],
         faces,
+        tau=0.5,
         walk_stability_asserted=True,
         walk_stability_delta=0.0,
     )
@@ -314,6 +327,53 @@ def test_re_detect_miss_is_accuracy_zero_kept_in_n():
     assert rollup.n_correct == 0
     assert rollup.n_re_detect_miss == 1
     assert rollup.accuracy == 0.0
+
+
+def test_re_detect_miss_checked_before_distinct_image_censoring():
+    """EVAL-16: twin_embedding=None counts against recovery even without gallery support."""
+    faces = [
+        _matched(5, 0, [1, 0, 0], "Alice"),
+        _matched(5, 1, [1, 0.05, 0], "Alice"),
+        _matched(9, 0, [0, 1, 0], "Bob"),
+        _matched(8, 0, [0, 1, 0.05], "Bob"),
+    ]
+    by_id = {"Alice": [faces[0], faces[1]], "Bob": [faces[2], faces[3]]}
+    assert not has_distinct_image_gallery_support("Alice", 5, by_id)
+    pair = score_occlusion_pair(
+        twin_embedding=None,
+        true_name="Alice",
+        source_media_id=5,
+        box_index=0,
+        kind="masked",
+        by_identity=by_id,
+        tau=0.5,
+    )
+    assert pair.eligible is True
+    assert pair.re_detect_miss is True
+    assert pair.correct is False
+    assert pair.ineligible_reason is None
+
+
+def test_occlusion_open_set_threshold_rejects_low_similarity():
+    """EVAL-18: open-set tau — low s_max is reject (incorrect), not closed-set name* win."""
+    faces = [
+        _matched(1, 0, [1, 0, 0], "Alice"),
+        _matched(2, 0, [1, 0.05, 0], "Alice"),
+        _matched(3, 0, [0, 1, 0], "Bob"),
+        _matched(4, 0, [0, 1, 0.05], "Bob"),
+    ]
+    pair = score_occlusion_pair(
+        twin_embedding=_unit([0, 0, 1]),
+        true_name="Alice",
+        source_media_id=1,
+        box_index=0,
+        kind="masked",
+        by_identity={"Alice": faces[:2], "Bob": faces[2:]},
+        tau=0.9,
+    )
+    assert pair.eligible is True
+    assert pair.correct is False
+    assert pair.predicted_name is None  # rejected below tau
 
 
 def test_eligible_pair_floor_under_90_is_directional():

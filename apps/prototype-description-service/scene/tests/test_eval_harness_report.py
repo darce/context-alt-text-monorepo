@@ -597,12 +597,19 @@ def test_score_face_run_record_full_corpus_and_floor_gated_rollup():
         assert name in gp["excluded_directional"] or any(
             name in e for e in gp["excluded_directional"]
         )
-    # Coupling flag + p95 deferral + scope amendments present
+    # Coupling flag + p95 deferral + scope amendments + protocol disclosures present
     assert "identification_recall" in gp["identification_detection_coupling"]
     assert "detection_recall" in gp["identification_detection_coupling"]
+    assert "detection_recall_coupling_flag" in gp["identification_detection_coupling"]
     assert "FIR-6-owned" in gp["p95_scan_latency"]
     assert any("FIR-5a" in a for a in gp["scope_amendments_for_operator_ack"])
     assert any("Wilson" in a for a in gp["scope_amendments_for_operator_ack"])
+    disclosures = scored.get("protocol_disclosures") or gp.get("protocol_disclosures") or []
+    assert any("mean_prototype" in d for d in disclosures)
+    assert any("ambiguity" in d or "margin" in d for d in disclosures)
+    assert any("impostor" in d for d in disclosures)
+    assert any("subject-disjoint" in d or "CAL-07" in d for d in disclosures)
+    assert any("solid seeded rectangles" in d for d in disclosures)
     # Nested lists sorted (wrong_names already sorted; decisions sorted)
     decisions = scored["decisions"]
     keys = [(d["true_name"] or "\uffff", d["media_id"], d["box_index"]) for d in decisions]

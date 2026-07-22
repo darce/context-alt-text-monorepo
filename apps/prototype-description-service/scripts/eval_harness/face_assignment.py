@@ -10,6 +10,7 @@ docs/workbay/rules/graph-theory-heuristics.md — cite ids only):
 - EMB-02: mean prototype (bake-off choice; medoid is a common alternative)
 - EMB-06/CAL-02: recognition = probe–gallery cosine vs τ; reject is first-class
 - EVAL-07: face's τ_k never fit on its own held-out decision (pooled per-fold)
+- CAL-07: subject-disjoint folds; fit-phase galleries restricted to fit identities
 - GRPH-23/CAL-01: τ swept on a grid, not one global magic constant
 """
 
@@ -486,22 +487,33 @@ def global_fold_ranks(
     *,
     k_folds: int = K_FOLDS,
 ) -> list[int]:
-    """Assign fold = global_rank mod K after sorting by (identity, media_id, box_index).
+    """Subject-disjoint fold assignment (CAL-07).
 
-    Spreads each identity's faces *and* strangers across all K folds.
+    Named identity X's faces all share one fold (``identity_rank mod K`` over
+    sorted unique names). Round-robin-by-face is intentionally *not* used —
+    that would put the same identity into both fit and read folds for ``τ_k``.
+
+    Each stranger face is its own subject (keyed by media_id/box/det) so
+    impostors still spread across folds without binding named subjects.
     """
-    order = sorted(
-        range(len(matched)),
-        key=lambda i: (
-            matched[i].fold_identity_key,
-            matched[i].media_id,
-            matched[i].box_index,
-            matched[i].det_index,
-        ),
+    if k_folds < 1:
+        raise ValueError("k_folds must be ≥ 1")
+    named_ids = sorted({m.true_name for m in matched if m.true_name is not None})
+    id_to_fold = {name: i % k_folds for i, name in enumerate(named_ids)}
+    stranger_keys = sorted(
+        {
+            (m.media_id, m.box_index, m.det_index)
+            for m in matched
+            if m.true_name is None
+        }
     )
-    ranks = [0] * len(matched)
-    for rank, idx in enumerate(order):
-        ranks[idx] = rank % k_folds
+    stranger_to_fold = {key: i % k_folds for i, key in enumerate(stranger_keys)}
+    ranks: list[int] = []
+    for m in matched:
+        if m.true_name is not None:
+            ranks.append(id_to_fold[m.true_name])
+        else:
+            ranks.append(stranger_to_fold[(m.media_id, m.box_index, m.det_index)])
     return ranks
 
 
@@ -550,21 +562,27 @@ def assign_open_set_kfold(
 ) -> AssignmentResult:
     """§E k-fold binary open-set: fit τ_k on other folds; pool held-out decisions.
 
+    Fit-phase galleries/counts are restricted to **fit-fold identities** (CAL-07)
+    so held subjects cannot leak into threshold selection. Read-phase LOO still
+    uses the full matched corpus so every enrolled identity remains identifiable.
+
     Identification / unknown-rejection consume ``decisions`` — never re-score at τ_op.
     """
     by_identity = matched_named_by_identity(matched)
     identity_counts = {name: len(faces) for name, faces in by_identity.items()}
     folds = global_fold_ranks(matched, k_folds=k_folds)
 
-    # Per-fold τ_k from the other K−1 folds' probes.
+    # Per-fold τ_k from the other K−1 folds' probes — fit identities only.
     tau_ks: list[float] = []
     for k in range(k_folds):
         train = [m for m, f in zip(matched, folds, strict=True) if f != k]
+        train_by_id = matched_named_by_identity(train)
+        train_counts = {name: len(faces) for name, faces in train_by_id.items()}
         tau_ks.append(
             select_tau_open_set_f1(
                 probes=train,
-                by_identity=by_identity,
-                identity_counts=identity_counts,
+                by_identity=train_by_id,
+                identity_counts=train_counts,
                 tau_grid=tau_grid,
             )
         )

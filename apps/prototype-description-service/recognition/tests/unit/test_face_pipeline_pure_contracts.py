@@ -21,6 +21,7 @@ from recognition.infrastructure.face_pipeline._common import (
     SFACE_EMBEDDING_DIM,
     FacePipelineInputError,
     ZeroNormEmbeddingError,
+    EmbedBatchResult,
     embed_batch,
     resolve_sface_embedding_dim,
 )
@@ -152,8 +153,10 @@ def _unit_feature(crop: np.ndarray) -> np.ndarray:
 
 def test_embed_batch_empty_shape() -> None:
     out = embed_batch([], feature_fn=_unit_feature, embedding_dim=SFACE_EMBEDDING_DIM)
-    assert out.shape == (0, SFACE_EMBEDDING_DIM)
-    assert out.dtype == np.float32
+    assert isinstance(out, EmbedBatchResult)
+    assert out.vectors.shape == (0, SFACE_EMBEDDING_DIM)
+    assert out.vectors.dtype == np.float32
+    assert out.norms.shape == (0,)
 
 
 def test_embed_batch_112_gate() -> None:
@@ -207,11 +210,15 @@ def test_embed_batch_l2_output_and_injected_feature_fn() -> None:
         return _unit_feature(c)
 
     out = embed_batch([crop, crop], feature_fn=_feature, embedding_dim=SFACE_EMBEDDING_DIM)
-    assert out.shape == (2, SFACE_EMBEDDING_DIM)
+    assert isinstance(out, EmbedBatchResult)
+    assert out.vectors.shape == (2, SFACE_EMBEDDING_DIM)
+    assert out.norms.shape == (2,)
     assert len(seen) == 2
-    for row in out:
+    for i, row in enumerate(out.vectors):
         assert float(np.linalg.norm(row)) == pytest.approx(1.0, abs=1e-5)
-    np.testing.assert_allclose(out[0], out[1], atol=1e-6)
+        # Pre-norm magnitudes must not be reconstructed as ~1.0
+        assert float(out.norms[i]) != pytest.approx(1.0, abs=1e-3)
+    np.testing.assert_allclose(out.vectors[0], out.vectors[1], atol=1e-6)
 
 
 # ---------------------------------------------------------------------------

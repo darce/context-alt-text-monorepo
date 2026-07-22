@@ -14,11 +14,13 @@ import math
 import pytest
 from pydantic import ValidationError
 
-from recognition.application.settings import ClusteringSettings
+from recognition.application.settings import ClusteringSettings, QualitySettings
 from recognition.config.settings import (
     ClusteringLimitsSettings,
     FacePipelineSettings,
     IdentityDetectionSettings,
+    apply_oact_bridge_to_clustering,
+    bridge_oact_into_quality_settings,
     resolve_face_pipeline_knobs,
 )
 
@@ -132,8 +134,9 @@ def test_resolve_insightface_uses_shared_anchors_not_face_overrides() -> None:
     assert knobs.suggestion_ceiling == 0.51
     assert knobs.limits_similarity_threshold == 0.71
     assert knobs.detection_default_threshold == 0.41
-    # Non-threshold surface always from FacePipelineSettings.
-    assert knobs.oact_coefficient == 0.25
+    # OACT is profile-gated: residual FacePipelineSettings.oact must not activate
+    # under insightface (FIR6S1-M-02).
+    assert knobs.oact_coefficient == 0.0
     assert knobs.joint_assignment_enabled is False
 
 
@@ -199,6 +202,7 @@ def test_resolve_face_pipeline_uses_overrides_not_shared_anchors() -> None:
         ("oact_coefficient", math.nan),
         ("oact_coefficient", math.inf),
         ("oact_coefficient", "x"),
+        ("oact_coefficient", -0.1),
         ("factor_floor_sharpness", -1.0),
         ("factor_floor_embedding_norm", math.nan),
         ("joint_assignment_enabled", 1),
@@ -265,6 +269,7 @@ def test_knob_env_ingestion(
         ("RECOGNITION_FACE_SIMILARITY_THRESHOLD", "1.5"),
         ("RECOGNITION_FACE_OACT_COEFFICIENT", ""),
         ("RECOGNITION_FACE_OACT_COEFFICIENT", "nan"),
+        ("RECOGNITION_FACE_OACT_COEFFICIENT", "-0.05"),
         ("RECOGNITION_FACE_FACTOR_FLOOR_SHARPNESS", "-1"),
         ("RECOGNITION_FACE_FACTOR_FLOOR_SHARPNESS", ""),
         ("RECOGNITION_FACE_JOINT_ASSIGNMENT_ENABLED", ""),
@@ -277,3 +282,29 @@ def test_knob_env_fail_closed(monkeypatch: pytest.MonkeyPatch, env_key: str, raw
     monkeypatch.setenv(env_key, raw)
     with pytest.raises((ValidationError, ValueError)):
         FacePipelineSettings()
+
+
+def test_bridge_oact_profile_gates_and_updates_quality() -> None:
+    quality = QualitySettings(oact_coefficient=0.0)
+    face_on = FacePipelineSettings(profile="face_pipeline", oact_coefficient=0.3)
+    knobs_on = _resolve(face_on)
+    bridged = bridge_oact_into_quality_settings(quality, knobs_on)
+    assert bridged.oact_coefficient == pytest.approx(0.3)
+    assert bridged is not quality
+
+    face_off = FacePipelineSettings(profile="insightface", oact_coefficient=0.3)
+    knobs_off = _resolve(face_off)
+    assert knobs_off.oact_coefficient == 0.0
+    assert bridge_oact_into_quality_settings(quality, knobs_off) is quality
+
+
+def test_apply_oact_bridge_to_clustering_updates_quality_only() -> None:
+    clustering = ClusteringSettings(
+        similarity_threshold=0.61,
+        quality=QualitySettings(oact_coefficient=0.0, min_face_size=90.0),
+    )
+    knobs = _resolve(FacePipelineSettings(profile="face_pipeline", oact_coefficient=0.2))
+    updated = apply_oact_bridge_to_clustering(clustering, knobs)
+    assert updated.quality.oact_coefficient == pytest.approx(0.2)
+    assert updated.quality.min_face_size == 90.0
+    assert updated.similarity_threshold == 0.61  # threshold rebind is S2, not S1

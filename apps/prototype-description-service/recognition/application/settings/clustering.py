@@ -53,6 +53,13 @@ class QualitySettings(BaseModel):
         description="Threshold adjustment for poor quality faces (positive = strict).",
     )
 
+    # FIR-6 S1 OACT channel (bridged from FacePipelineSettings via profile helper).
+    # Default 0.0 ⇒ dark no-op until S4 calibration apply-commit.
+    oact_coefficient: float = Field(
+        default=0.0,
+        description="Occlusion-adaptive coefficient for threshold_adjustment (0.0 = no-op).",
+    )
+
     # Scoring weights
     detection_confidence_weight: float = Field(
         default=0.6,

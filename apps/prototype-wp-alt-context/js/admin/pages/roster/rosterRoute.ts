@@ -2,8 +2,8 @@ import { __ } from '@wordpress/i18n';
 import type { RosterEntry } from '../../api/rosterApi';
 
 export const ROSTER_TABS = {
-  entries: { id: 'entries' as const, label: __('Entries', 'alt-context') },
-  clusters: { id: 'clusters' as const, label: __('Clusters', 'alt-context') },
+  entries: { id: 'entries' as const, label: __('People', 'alt-context') },
+  clusters: { id: 'clusters' as const, label: __('Face groups', 'alt-context') },
 } as const;
 
 export type RosterTab = (typeof ROSTER_TABS)[keyof typeof ROSTER_TABS]['id'];

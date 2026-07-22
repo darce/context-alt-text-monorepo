@@ -247,7 +247,7 @@ describe('DeadLetterPanel', () => {
     expect(screen.getByText('Entity: cluster-42 (cluster)')).toBeInTheDocument();
   });
 
-  it('surfaces topology command status when backlog exists', () => {
+  it('surfaces topology command status via pending-work vocabulary (no Sync backlog)', () => {
     mockedUseSyncStatus.mockReturnValue(
       createMockQuery({
         data: {
@@ -269,7 +269,8 @@ describe('DeadLetterPanel', () => {
 
     renderPanel();
 
-    expect(screen.getByText('Sync backlog: 2 waiting, 1 applied, 1 failed, 3 conflicts.')).toBeInTheDocument();
+    expect(screen.getByText('2 waiting, 1 synced, 1 failed, 3 need review')).toBeInTheDocument();
+    expect(screen.queryByText(/Sync backlog/i)).not.toBeInTheDocument();
   });
 
   it('renders pagination state and advances to the next page', () => {

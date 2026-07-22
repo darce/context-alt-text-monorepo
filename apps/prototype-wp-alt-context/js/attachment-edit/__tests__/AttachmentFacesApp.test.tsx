@@ -276,6 +276,7 @@ describe('mountAttachmentEdit', () => {
   it('is a no-op when the container div is absent', () => {
     window.AltContextAttachmentEdit = {
       nonce: 'n',
+      ajaxUrl: '/wp-admin/admin-ajax.php',
       attachmentId: 1,
       imageUrl: '',
       imageWidth: 0,
@@ -292,6 +293,7 @@ describe('mountAttachmentEdit', () => {
       '<div id="acx-attachment-faces" data-attachment-id="0" hidden></div>';
     window.AltContextAttachmentEdit = {
       nonce: 'n',
+      ajaxUrl: '/wp-admin/admin-ajax.php',
       attachmentId: 0,
       imageUrl: 'https://example.test/img.jpg',
       imageWidth: 100,
@@ -318,6 +320,7 @@ describe('mountAttachmentEdit', () => {
       '<div id="acx-attachment-faces" data-attachment-id="7" hidden></div>';
     window.AltContextAttachmentEdit = {
       nonce: 'mount-nonce',
+      ajaxUrl: '/wp-admin/admin-ajax.php',
       attachmentId: 7,
       imageUrl: 'https://example.test/img.jpg',
       imageWidth: 100,

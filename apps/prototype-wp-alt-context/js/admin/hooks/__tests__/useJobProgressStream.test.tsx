@@ -49,6 +49,7 @@ describe('useJobProgressStream', () => {
     vi.useRealTimers();
     window.AltContextAdmin = {
       nonce: 'test-nonce',
+      ajaxUrl: '/wp-admin/admin-ajax.php',
       endpoints: {
         recognitionJobs: 'http://localhost/recognition/jobs',
       },

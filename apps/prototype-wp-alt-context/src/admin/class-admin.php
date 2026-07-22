@@ -363,6 +363,7 @@ class Admin {
 			'AltContextAdmin',
 				array(
 					'nonce'     => wp_create_nonce( 'wp_rest' ),
+					'ajaxUrl'   => admin_url( 'admin-ajax.php' ),
 					'devMode'   => $is_dev_mode,
 					'tier'      => $tier,
 					'tenant_id' => TenantIdentity::resolve()['value'],
@@ -436,6 +437,7 @@ class Admin {
 			'AltContextAttachmentEdit',
 			array(
 				'nonce'         => wp_create_nonce( 'wp_rest' ),
+				'ajaxUrl'       => admin_url( 'admin-ajax.php' ),
 				'attachmentId'  => $attachment_id,
 				'imageUrl'      => $image_url,
 				'imageWidth'    => $image_width,

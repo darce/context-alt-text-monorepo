@@ -163,8 +163,9 @@ describe('useWorkbenchFilters', () => {
   });
 
   it('setMediaExpanded writes and clears the media param without dropping siblings', () => {
+    // Full sibling set (page + search + status) must survive expand AND collapse.
     const { result } = renderHook(() => useWorkbenchFilters(), {
-      wrapper: wrapperForUrl('/?s=face&p=2'),
+      wrapper: wrapperForUrl('/?s=face&p=2&status=missing'),
     });
 
     act(() => {
@@ -173,12 +174,15 @@ describe('useWorkbenchFilters', () => {
     expect(result.current.mediaExpanded).toBe(true);
     expect(result.current.searchQuery).toBe('face');
     expect(result.current.currentPage).toBe(2);
+    expect(result.current.statusFilter).toBe('missing');
 
     act(() => {
       result.current.setMediaExpanded(false);
     });
     expect(result.current.mediaExpanded).toBe(false);
     expect(result.current.searchQuery).toBe('face');
+    expect(result.current.currentPage).toBe(2);
+    expect(result.current.statusFilter).toBe('missing');
   });
 
   it('setMediaExpanded uses replace-writes (history index unchanged after N toggles)', () => {

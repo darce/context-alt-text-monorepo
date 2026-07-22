@@ -90,6 +90,23 @@ describe('appLinks builders', () => {
     expect(parseRunParam(params.get(APP_LINK_PARAMS.run))).toBe('a b/c');
   });
 
+  it('toDescriptionHistoryRun routes empty/whitespace through serializeRunParam (build/parse symmetry)', () => {
+    // Empty/whitespace → omit run (list surface); parse of emitted href stays null.
+    for (const emptyId of ['', '   ', '\t']) {
+      const href = toDescriptionHistoryRun(emptyId);
+      expect(href).toBe('#/description-history');
+      const { params } = parseHref(href);
+      expect(params.get(APP_LINK_PARAMS.run)).toBeNull();
+      expect(parseRunParam(params.get(APP_LINK_PARAMS.run))).toBeNull();
+      expect(parseRunParam(serializeRunParam(emptyId))).toBeNull();
+    }
+    // Non-empty trims then round-trips via the same codec path the builder uses.
+    const trimmed = toDescriptionHistoryRun('  run-x  ');
+    const { params: trimmedParams } = parseHref(trimmed);
+    expect(trimmedParams.get(APP_LINK_PARAMS.run)).toBe('run-x');
+    expect(parseRunParam(trimmedParams.get(APP_LINK_PARAMS.run))).toBe('run-x');
+  });
+
   it('folded overlay helpers preserve pre-contract href shapes', () => {
     expect(buildWorkbenchOverlayHref('scan', 'conflicts')).toBe(
       '#/workbench?tab=scan&panel=conflicts',

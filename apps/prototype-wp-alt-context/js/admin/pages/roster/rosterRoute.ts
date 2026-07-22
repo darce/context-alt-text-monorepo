@@ -174,16 +174,15 @@ export const isUnlabeledCluster = (cluster: { label?: string | null }): boolean 
   return label == null || label.trim() === '';
 };
 
-/** Workbench review-queue deep link for card-at-a-time triage (assignment band). */
-export const workbenchReviewQueueUrl = (options?: { clusterId?: string }): string => {
+/**
+ * Workbench review-queue deep link for card-at-a-time triage (assignment band).
+ *
+ * `cluster=` emission dropped (jobId precedent): workbench has no cluster reader.
+ * Never re-parse builder output to append reader-less params.
+ */
+export const workbenchReviewQueueUrl = (): string => {
   // rq stays E21-5-owned; contract supplies route base + param *names* only.
   const base = toWorkbench({ tab: 'scan' });
-  const queryStart = base.indexOf('?');
-  const params = new URLSearchParams(queryStart === -1 ? '' : base.slice(queryStart + 1));
-  params.set(APP_LINK_PARAMS.rq, 'assignment.all.0');
-  if (options?.clusterId) {
-    params.set(APP_LINK_PARAMS.cluster, options.clusterId);
-  }
-  const path = queryStart === -1 ? base : base.slice(0, queryStart);
-  return `${path}?${params.toString()}`;
+  const separator = base.includes('?') ? '&' : '?';
+  return `${base}${separator}${APP_LINK_PARAMS.rq}=assignment.all.0`;
 };

@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from db.models import IdentityScanJobItem, Tenant
@@ -22,7 +22,7 @@ pytestmark = pytest.mark.pg
 
 def _async_url(pg_migrated_engine) -> str:
     return (
-        str(pg_migrated_engine.url)
+        pg_migrated_engine.url.render_as_string(hide_password=False)
         .replace("postgresql+psycopg://", "postgresql+asyncpg://", 1)
         .replace("postgresql://", "postgresql+asyncpg://", 1)
     )
@@ -43,6 +43,11 @@ async def test_postgres_claim_any_respects_started_at_not_before(pg_migrated_eng
             tenant = Tenant(site_url="http://fir4-e2e10-backoff-pg.test")
             session.add(tenant)
             await session.flush()
+            # Satisfy the forced-RLS tenant policies for the rest of the transaction.
+            await session.execute(
+                text("SELECT set_config('app.current_tenant', :tenant_id, true)"),
+                {"tenant_id": str(tenant.id)},
+            )
 
             repo = SqlAlchemyScanQueueRepository(session)
             now = datetime.now(tz=UTC)
@@ -64,6 +69,11 @@ async def test_postgres_claim_any_respects_started_at_not_before(pg_migrated_eng
                 now=now,
             )
             await session.commit()
+            # set_config(..., true) is transaction-local; re-arm RLS for the new transaction.
+            await session.execute(
+                text("SELECT set_config('app.current_tenant', :tenant_id, true)"),
+                {"tenant_id": str(tenant.id)},
+            )
 
             # Inside backoff: Postgres CTE must not re-claim.
             during = await repo.claim_pending_items_any(

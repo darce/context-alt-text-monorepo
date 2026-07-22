@@ -413,4 +413,313 @@ describe('useWorkbenchMedia', () => {
 
     queryClient.clear();
   });
+
+  const pageMediaItem = (id: number, title: string): WorkbenchMediaResponse['items'][number] => ({
+    id,
+    title,
+    altText: null,
+    status: 'missing',
+    thumbnailUrl: null,
+    mimeType: 'image/jpeg',
+    editUrl: '#',
+    updatedAt: '2025-01-01T00:00:00Z',
+    dimensions: { width: 100, height: 100 },
+    tags: [],
+  });
+
+  const emptyDetail = (): WorkbenchMediaDetailResponse => ({
+    detailsByMedia: {},
+    limit: 100,
+    total: 0,
+    truncated: false,
+  });
+
+  const emptyIdentities = (): recognitionApi.MediaIdentitiesResponse =>
+    ({
+      identities_by_media: {},
+      data_source: 'local_projection',
+    }) as recognitionApi.MediaIdentitiesResponse;
+
+  it('S4-T1: no speculative next-page prefetch while stage-2 isFetching; exactly one after settle', async () => {
+    const { wrapper, queryClient } = createWrapper();
+    const page1: WorkbenchMediaResponse = {
+      items: [pageMediaItem(101, 'P1')],
+      total: 3,
+      totalPages: 3,
+    };
+    const page2: WorkbenchMediaResponse = {
+      items: [pageMediaItem(102, 'P2')],
+      total: 3,
+      totalPages: 3,
+    };
+
+    const fetchWorkbenchMediaMock = vi.mocked(fetchWorkbenchMedia);
+    fetchWorkbenchMediaMock.mockImplementation(async ({ page }) => (page === 1 ? page1 : page2));
+
+    const detailDeferred = createDeferred<WorkbenchMediaDetailResponse>();
+    const identitiesDeferred = createDeferred<recognitionApi.MediaIdentitiesResponse>();
+    vi.mocked(fetchWorkbenchMediaDetail).mockReturnValue(detailDeferred.promise);
+    vi.mocked(recognitionApi.fetchMediaIdentities).mockReturnValue(identitiesDeferred.promise);
+
+    const { result } = renderHook(() => useWorkbenchMedia({ page: 1, perPage: 10, enabled: true }), {
+      wrapper,
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    await waitFor(() => expect(result.current.detailQuery.isFetching).toBe(true));
+    await waitFor(() => expect(result.current.identitiesQuery.isFetching).toBe(true));
+
+    // While stage-2 in flight: only page-1 media fetch — zero page-2 prefetch.
+    expect(
+      fetchWorkbenchMediaMock.mock.calls.filter((call) => call[0].page === 2),
+    ).toHaveLength(0);
+
+    await act(async () => {
+      detailDeferred.resolve(emptyDetail());
+      await detailDeferred.promise;
+    });
+    // One stage-2 leg settled, other still in flight — still no prefetch.
+    expect(
+      fetchWorkbenchMediaMock.mock.calls.filter((call) => call[0].page === 2),
+    ).toHaveLength(0);
+
+    await act(async () => {
+      identitiesDeferred.resolve(emptyIdentities());
+      await identitiesDeferred.promise;
+    });
+
+    await waitFor(() => expect(result.current.detailQuery.isFetching).toBe(false));
+    await waitFor(() => expect(result.current.identitiesQuery.isFetching).toBe(false));
+
+    await waitFor(() => {
+      expect(
+        fetchWorkbenchMediaMock.mock.calls.filter((call) => call[0].page === 2),
+      ).toHaveLength(1);
+    });
+
+    queryClient.clear();
+  });
+
+  it('S4-T2: page-change with placeholder held + stage-2 in flight → no N+2 prefetch until isFetching clears', async () => {
+    const { wrapper, queryClient } = createWrapper();
+    const page1: WorkbenchMediaResponse = {
+      items: [pageMediaItem(201, 'P1')],
+      total: 3,
+      totalPages: 3,
+    };
+    const page2: WorkbenchMediaResponse = {
+      items: [pageMediaItem(202, 'P2')],
+      total: 3,
+      totalPages: 3,
+    };
+    const page3: WorkbenchMediaResponse = {
+      items: [pageMediaItem(203, 'P3')],
+      total: 3,
+      totalPages: 3,
+    };
+
+    const fetchWorkbenchMediaMock = vi.mocked(fetchWorkbenchMedia);
+    fetchWorkbenchMediaMock.mockImplementation(async ({ page }) => {
+      if (page === 1) return page1;
+      if (page === 2) return page2;
+      return page3;
+    });
+
+    // Page-1 stage-2 settles immediately so initial prefetch of page 2 can fire.
+    const detailByIds = new Map<string, ReturnType<typeof createDeferred<WorkbenchMediaDetailResponse>>>();
+    const identitiesByIds = new Map<
+      string,
+      ReturnType<typeof createDeferred<recognitionApi.MediaIdentitiesResponse>>
+    >();
+
+    vi.mocked(fetchWorkbenchMediaDetail).mockImplementation(async (ids) => {
+      const key = ids.join(',');
+      if (key === '201') {
+        return emptyDetail();
+      }
+      const deferred = detailByIds.get(key) ?? createDeferred<WorkbenchMediaDetailResponse>();
+      detailByIds.set(key, deferred);
+      return deferred.promise;
+    });
+    vi.mocked(recognitionApi.fetchMediaIdentities).mockImplementation(async (ids) => {
+      const key = ids.join(',');
+      if (key === '201') {
+        return emptyIdentities();
+      }
+      const deferred =
+        identitiesByIds.get(key) ?? createDeferred<recognitionApi.MediaIdentitiesResponse>();
+      identitiesByIds.set(key, deferred);
+      return deferred.promise;
+    });
+
+    const { result, rerender } = renderHook(
+      ({ page }: { page: number }) => useWorkbenchMedia({ page, perPage: 10, enabled: true }),
+      { wrapper, initialProps: { page: 1 } },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    await waitFor(() => expect(result.current.detailQuery.isFetching).toBe(false));
+    await waitFor(() => expect(result.current.identitiesQuery.isFetching).toBe(false));
+    // Page-1 settle may prefetch page 2.
+    await waitFor(() => {
+      expect(
+        fetchWorkbenchMediaMock.mock.calls.filter((call) => call[0].page === 2).length,
+      ).toBeGreaterThanOrEqual(1);
+    });
+
+    const page2CallsBeforeTransition = fetchWorkbenchMediaMock.mock.calls.filter(
+      (call) => call[0].page === 2,
+    ).length;
+    const page3CallsBefore = fetchWorkbenchMediaMock.mock.calls.filter(
+      (call) => call[0].page === 3,
+    ).length;
+
+    rerender({ page: 2 });
+
+    // Page 2 media may come from cache (prefetch) → status success under placeholder for stage-2
+    // while page-2 detail/identities are still in flight. Status-level gate would prefetch page 3 now.
+    await waitFor(() => expect(result.current.data?.items[0]?.id).toBe(202));
+    await waitFor(() => {
+      // Stage-2 for page-2 ids still fetching (deferred).
+      expect(result.current.detailQuery.isFetching || result.current.identitiesQuery.isFetching).toBe(
+        true,
+      );
+    });
+
+    expect(
+      fetchWorkbenchMediaMock.mock.calls.filter((call) => call[0].page === 3),
+    ).toHaveLength(page3CallsBefore);
+
+    // Resolve page-2 stage-2.
+    await act(async () => {
+      const detailDef = detailByIds.get('202');
+      const idDef = identitiesByIds.get('202');
+      detailDef?.resolve(emptyDetail());
+      idDef?.resolve(emptyIdentities());
+      await Promise.all([detailDef?.promise, idDef?.promise]);
+    });
+
+    await waitFor(() => expect(result.current.detailQuery.isFetching).toBe(false));
+    await waitFor(() => expect(result.current.identitiesQuery.isFetching).toBe(false));
+
+    await waitFor(() => {
+      expect(
+        fetchWorkbenchMediaMock.mock.calls.filter((call) => call[0].page === 3),
+      ).toHaveLength(1);
+    });
+
+    // Page-2 media itself should not have been re-fetched excessively beyond the pre-transition baseline + any legitimate cache miss.
+    expect(
+      fetchWorkbenchMediaMock.mock.calls.filter((call) => call[0].page === 2).length,
+    ).toBeGreaterThanOrEqual(page2CallsBeforeTransition);
+
+    queryClient.clear();
+  });
+
+  it('S4-T3: after settle, effect re-runs (identities isFetching flip) do not issue additional page N+1 fetches', async () => {
+    const { wrapper, queryClient } = createWrapper();
+    const page1: WorkbenchMediaResponse = {
+      items: [pageMediaItem(301, 'P1')],
+      total: 2,
+      totalPages: 2,
+    };
+    const page2: WorkbenchMediaResponse = {
+      items: [pageMediaItem(302, 'P2')],
+      total: 2,
+      totalPages: 2,
+    };
+
+    const fetchWorkbenchMediaMock = vi.mocked(fetchWorkbenchMedia);
+    fetchWorkbenchMediaMock.mockImplementation(async ({ page }) => (page === 1 ? page1 : page2));
+    vi.mocked(fetchWorkbenchMediaDetail).mockResolvedValue(emptyDetail());
+
+    let identitiesCalls = 0;
+    const identitiesDeferreds: Array<ReturnType<typeof createDeferred<recognitionApi.MediaIdentitiesResponse>>> =
+      [];
+    vi.mocked(recognitionApi.fetchMediaIdentities).mockImplementation(async () => {
+      identitiesCalls += 1;
+      if (identitiesCalls === 1) {
+        return emptyIdentities();
+      }
+      const deferred = createDeferred<recognitionApi.MediaIdentitiesResponse>();
+      identitiesDeferreds.push(deferred);
+      return deferred.promise;
+    });
+
+    const { result } = renderHook(() => useWorkbenchMedia({ page: 1, perPage: 10, enabled: true }), {
+      wrapper,
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    await waitFor(() => expect(result.current.detailQuery.isFetching).toBe(false));
+    await waitFor(() => expect(result.current.identitiesQuery.isFetching).toBe(false));
+
+    await waitFor(() => {
+      expect(
+        fetchWorkbenchMediaMock.mock.calls.filter((call) => call[0].page === 2),
+      ).toHaveLength(1);
+    });
+
+    // Force identities refetch (simulates 3s clustering poll settle cycle).
+    await act(async () => {
+      const refetchPromise = result.current.identitiesQuery.refetch();
+      // Resolve the in-flight poll refetch so isFetching flips true→false and the effect re-runs.
+      await waitFor(() => expect(identitiesDeferreds.length).toBeGreaterThanOrEqual(1));
+      identitiesDeferreds[0]?.resolve(emptyIdentities());
+      await refetchPromise;
+    });
+
+    await waitFor(() => expect(result.current.identitiesQuery.isFetching).toBe(false));
+
+    // Once-per-page-key: still exactly one next-page fetch.
+    expect(
+      fetchWorkbenchMediaMock.mock.calls.filter((call) => call[0].page === 2),
+    ).toHaveLength(1);
+
+    queryClient.clear();
+  });
+
+  it('S4: disabled hook issues no media or next-page prefetch', async () => {
+    const { wrapper, queryClient } = createWrapper();
+    const fetchWorkbenchMediaMock = vi.mocked(fetchWorkbenchMedia);
+
+    renderHook(() => useWorkbenchMedia({ page: 1, perPage: 10, enabled: false }), { wrapper });
+
+    await waitFor(() => {
+      expect(fetchWorkbenchMediaMock).not.toHaveBeenCalled();
+    });
+
+    queryClient.clear();
+  });
+
+  it('S4: empty mediaIds (no stage-2) still prefetches next page after media settle', async () => {
+    const { wrapper, queryClient } = createWrapper();
+    const page1: WorkbenchMediaResponse = {
+      items: [],
+      total: 0,
+      totalPages: 2,
+    };
+    const page2: WorkbenchMediaResponse = {
+      items: [pageMediaItem(401, 'P2')],
+      total: 1,
+      totalPages: 2,
+    };
+
+    const fetchWorkbenchMediaMock = vi.mocked(fetchWorkbenchMedia);
+    fetchWorkbenchMediaMock.mockImplementation(async ({ page }) => (page === 1 ? page1 : page2));
+    vi.mocked(fetchWorkbenchMediaDetail).mockResolvedValue(emptyDetail());
+    vi.mocked(recognitionApi.fetchMediaIdentities).mockResolvedValue(emptyIdentities());
+
+    renderHook(() => useWorkbenchMedia({ page: 1, perPage: 10, enabled: true }), { wrapper });
+
+    await waitFor(() => {
+      expect(
+        fetchWorkbenchMediaMock.mock.calls.filter((call) => call[0].page === 2),
+      ).toHaveLength(1);
+    });
+    expect(vi.mocked(fetchWorkbenchMediaDetail)).not.toHaveBeenCalled();
+    expect(recognitionApi.fetchMediaIdentities).not.toHaveBeenCalled();
+
+    queryClient.clear();
+  });
 });

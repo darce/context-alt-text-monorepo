@@ -1,8 +1,11 @@
 import React from 'react';
-import { __ } from '@wordpress/i18n';
 import { useRemoteActionGate } from '../../hooks/useRemoteActionGate';
 import { useSyncOffline } from '../../hooks/useSyncOffline';
-import { ConfirmPanel, RecentJobsPanel, rosterClustersUrl } from './Panels';
+import {
+  CLUSTERING_DISCLOSURE_BODY,
+  CLUSTERING_DISCLOSURE_SUMMARY,
+} from './confirmTabCopy';
+import { ConfirmPanel, RecentJobsPanel, rosterUrl } from './Panels';
 import { useJobPipeline } from './JobPipelineContext';
 
 export const ConfirmTabContent = (): React.JSX.Element => {
@@ -12,15 +15,10 @@ export const ConfirmTabContent = (): React.JSX.Element => {
   const remoteGate = useRemoteActionGate(offline);
   return (
     <>
-      <div className="acx-workbench-help-card">
-        <h3>{__('What is Clustering?', 'alt-context')}</h3>
-        <p>
-          {__(
-            'Clustering groups similar face embeddings detected during the scan into cohesive identities. This allows you to label an entire group of faces (e.g., "John Doe") at once, rather than naming every individual photo.',
-            'alt-context',
-          )}
-        </p>
-      </div>
+      <details className="acx-workbench-help-card">
+        <summary>{CLUSTERING_DISCLOSURE_SUMMARY}</summary>
+        <p>{CLUSTERING_DISCLOSURE_BODY}</p>
+      </details>
       <ConfirmPanel
         jobId={history.jobId ?? null}
         status={scanRun.statusText}
@@ -28,7 +26,7 @@ export const ConfirmTabContent = (): React.JSX.Element => {
         isClustering={scanRun.isScanning}
         progress={status.clusterProgress}
         clusterMessage={status.clusterMessage}
-        onViewClusters={() => window.location.assign(rosterClustersUrl())}
+        onViewClusters={() => window.location.assign(rosterUrl())}
         etaSeconds={scanRun.etaSeconds}
         isSynced={scanRun.isSynced}
         remoteActionDisabled={remoteGate.disabled}

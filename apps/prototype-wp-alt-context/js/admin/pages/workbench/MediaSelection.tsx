@@ -20,6 +20,7 @@ import { isCooldownSignal } from '../../utils/retryPolicy';
 import { useWorkbenchMediaContext } from './WorkbenchMediaContext';
 import { SYNC_VOCABULARY } from './syncPresentation';
 import { ACCENT_PRIMARY_ATTR, FOOTER_ACCENT_OWNER, selectMediaFooterCtaState } from './mediaFooterCtaState';
+import { deriveIdentitiesPresentationSource } from './deriveIdentitiesPresentationSource';
 
 interface MediaSelectionProps {
   collapsed?: boolean;
@@ -139,7 +140,10 @@ export const MediaSelection = ({
               detailIsLoading={detailQuery.isPending || detailQuery.isFetching}
               onToggleRow={onToggleRow}
               selection={selection}
-              identitiesDataSource={identityQuery.data?.data_source}
+              identitiesDataSource={deriveIdentitiesPresentationSource(
+                identityQuery.isError,
+                identityQuery.data,
+              )}
               onRetryIdentities={() => void identityQuery.refetch()}
             />
           </tbody>

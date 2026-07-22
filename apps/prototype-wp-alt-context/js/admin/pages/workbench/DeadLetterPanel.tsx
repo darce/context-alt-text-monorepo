@@ -8,6 +8,7 @@ import { useDiscardOperation } from '../../hooks/useDiscardOperation';
 import { useOutboxOperations } from '../../hooks/useOutboxOperations';
 import { useRetryOperation } from '../../hooks/useRetryOperation';
 import { useSyncStatus } from '../../hooks/useSyncStatus';
+import { SYNC_VOCABULARY } from './syncVocabulary';
 
 const PAGE_SIZE = 20;
 const TIMELINE_PAGE_SIZE = 10;
@@ -304,7 +305,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
         <div className="acx-notice acx-notice--info">
           <p>
             {sprintf(
-              __('Sync backlog: %1$d waiting, %2$d applied, %3$d failed, %4$d conflicts.', 'alt-context'),
+              SYNC_VOCABULARY.pendingWorkSummary,
               topologyStatus.pending,
               topologyStatus.applied,
               topologyStatus.failed,

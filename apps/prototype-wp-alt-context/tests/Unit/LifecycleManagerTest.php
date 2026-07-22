@@ -171,7 +171,7 @@ class LifecycleManagerTest extends TestCase
                 'roster_entry_id' => 7,
             ],
         ]);
-        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE name = 'Ada Lovelace'"] = null;
+        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE normalized_name = 'ada lovelace'"] = null;
 
         $this->manager->activate();
 
@@ -205,7 +205,7 @@ class LifecycleManagerTest extends TestCase
 
         $this->setOption('acx_roster_entries', $legacyEntries);
         $this->setOption('acx_roster_assignments', $legacyAssignments);
-        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE name = 'Grace Hopper'"] = null;
+        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE normalized_name = 'grace hopper'"] = null;
         $wpdb->defaultUpdateResult = 0;
 
         $this->manager->activate();
@@ -236,7 +236,7 @@ class LifecycleManagerTest extends TestCase
             ],
         ]);
 
-        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE name = 'Katherine Johnson'"] = 13;
+        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE normalized_name = 'katherine johnson'"] = 13;
         $wpdb->queryResults["SELECT person_id FROM `wp_acx_clusters` WHERE cluster_uuid = 'cluster-321' LIMIT 1"] = 13;
         $wpdb->defaultUpdateResult = 0;
 
@@ -271,7 +271,7 @@ class LifecycleManagerTest extends TestCase
             ],
             'cluster-invalid' => 'skip-me',
         ]);
-        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE name = 'Dorothy Vaughan'"] = null;
+        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE normalized_name = 'dorothy vaughan'"] = null;
 
         $this->manager->activate();
 

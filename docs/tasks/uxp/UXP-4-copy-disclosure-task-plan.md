@@ -44,7 +44,7 @@ Four defects, each verified against the tree this session.
 - **Frontend only.** No PHP, no recognition-service, no endpoint changes. `sync_mode` and `topology_commands` keep arriving in the payload; UXP-4 changes only what renders.
 - **Collision policy (mandatory, file-granularity)**: E15-37-FE, E21-9, and E21-10 touch overlapping workbench/roster surfaces and merge separately. The policy is stated per file, not as a blanket ban. **Structural JSX changes are permitted only in files no concurrent task claims** (verified against their plans: E15-37-FE claims `useMediaIdentities`/`useWorkbenchMedia`/`IdentityClusterList`; E21-9 claims roster structure; E21-10 claims link surfaces): (1) `ConfirmTabContent.tsx` help-card → disclosure swap (slice 4); (2) `Panels.tsx` `ConfirmPanel` conditional `Status` row (slice 4); (3) the `syncModeDetails` block removal inside `SyncStatusIndicator.tsx` (slice 2); (4) the `DashboardPage` retention panel conditional unmount (slice 3). **Everything else is string-level and rebase-tolerant**: edits change `__()` literals, vocabulary keys, and copy constants only — no other JSX restructuring of `SyncStatusIndicator`, `DashboardPage` stat grids, roster tables, or media-table components. No tab/route id changes (`rosterRoute.ts` **ids** stay `entries`/`clusters`; only `label` strings may change) — E21-9 owns the Clusters-tab retirement.
 - **Copy component styling** uses existing `--acx-*` tokens only (sr-004); the slice-4 disclosure reuses the existing `.acx-workbench-help-card` surface and adds no raw literals. Status badges keep their icon/glyph pairing — copy edits must not strip the non-color channel ([A11Y-06]).
-- **Single vocabulary source** (sr-007 analog): after slice 1, no operator-facing sync/status string may be declared outside `SYNC_VOCABULARY` (or a page-local copy-constant module the banned-vocabulary test sweeps). No scattered literals.
+- **Single vocabulary source** (sr-007 analog, staged): after slice 1, `degradedModeBannerLogic.ts` declares no inline sync/status literals — every string it renders reads from `SYNC_VOCABULARY`. After slice 2 (which also sweeps the `DeadLetterPanel.tsx` inline "Sync backlog" literal), no operator-facing sync/status string remains declared outside `SYNC_VOCABULARY` or a swept copy-constant module (one the banned-vocabulary test sweeps). No scattered literals thereafter.
 - **E21-1 banned-strings discipline**: additions to `BANNED_STRINGS` must be exact operator-visible phrases ("Delta sync", "Machine sync", "Machine state", "Sync backlog", "Retention posture", "Managed Identities") — never bare common words ("Queued", "projection"-substring traps) that legitimate job-phase badges or code identifiers would trip. "Machine state" is banned alongside "Machine sync" because the stale summary's inline twin uses it; banning only "Machine sync" would let the old stale copy survive.
 - **i18n intact**: every rewritten string stays inside `__(…, 'alt-context')` / `sprintf` with unchanged placeholder arity.
 - Prefer symbol names over line numbers in change sites — line anchors drift.
@@ -75,7 +75,7 @@ Four defects, each verified against the tree this session.
 
 ## Target Outcome
 
-Every status string on Workbench/Dashboard/Roster names its consequence and next action; "Delta sync", "Machine sync", "Sync backlog", "Retention posture", and "Managed Identities" cannot re-enter any page surface without a red test; the banner provably renders vocabulary-module strings; the retention card either helps or is absent; the clustering explainer is on demand; the no-job zero state tells the truth.
+Every status string on Workbench/Dashboard/Roster names its consequence and next action; "Delta sync", "Machine sync", "Machine state", "Sync backlog", "Retention posture", and "Managed Identities" cannot re-enter any page surface without a red test; the banner provably renders vocabulary-module strings; the retention card either helps or is absent; the clustering explainer is on demand; the no-job zero state tells the truth.
 
 ## Context Loading
 
@@ -129,7 +129,7 @@ Five slices, each a bounded string-or-single-file unit with a test that goes red
 | drawer | `pages/workbench/ConfirmTabContent.tsx` | Explainer → closed-by-default disclosure; new body copy |
 | drawer | `pages/workbench/Panels.tsx` : `ConfirmPanel` | Honest no-job zero state |
 | roster | `pages/roster/RosterEntriesSection.tsx`, `pages/roster/rosterRoute.ts` | "Managed Identities" → "People"; tab `label` strings only, ids untouched |
-| gate | `__tests__/banned-vocabulary.test.tsx` : `BANNED_STRINGS` | Add "Delta sync", "Machine sync", "Sync backlog", "Retention posture", "Managed Identities" |
+| gate | `__tests__/banned-vocabulary.test.tsx` : `BANNED_STRINGS` | Add "Delta sync", "Machine sync", "Machine state", "Sync backlog", "Retention posture", "Managed Identities" |
 | tests | `pages/workbench/__tests__/{SyncStatusIndicator,DegradedModeBanner,degradedModeBannerLogic,syncPresentation,Panels}.test.*`, `pages/roster` + dashboard suites | Per slice, below |
 
 ## Related Files

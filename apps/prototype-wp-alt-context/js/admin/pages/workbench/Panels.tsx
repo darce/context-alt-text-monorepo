@@ -2,6 +2,7 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 
 import type { JobProgress } from '../../api/recognition/types/scan';
 import type { RecognitionHistorySource } from '../../hooks/recognitionJobHistoryUtils';
+import { CONFIRM_NO_JOB_ZERO_STATE } from './confirmTabCopy';
 import type { ScanRunViewModel } from './JobPipelineContext';
 import { JOB_PHASE_PRESENTATION } from './phasePresentation';
 import { formatSyncJobPhase } from './syncPresentation';
@@ -196,14 +197,18 @@ export const ConfirmPanel = ({
 }: ConfirmPanelProps) => (
   <div className="acx-apply-panel">
     <p>{__('Review the most recent recognition job and cluster the detected embeddings.', 'alt-context')}</p>
-    <ul className="acx-apply-panel__list">
-      <li>
-        <strong>{__('Latest job', 'alt-context')}</strong> — {jobId ?? __('No job yet', 'alt-context')}
-      </li>
-      <li>
-        {__('Status', 'alt-context')} — {status ?? __('Pending', 'alt-context')}
-      </li>
-    </ul>
+    {jobId == null ? (
+      <p className="acx-apply-panel__status">{__(CONFIRM_NO_JOB_ZERO_STATE, 'alt-context')}</p>
+    ) : (
+      <ul className="acx-apply-panel__list">
+        <li>
+          <strong>{__('Latest job', 'alt-context')}</strong> — {jobId}
+        </li>
+        <li>
+          {__('Status', 'alt-context')} — {status ?? __('Pending', 'alt-context')}
+        </li>
+      </ul>
+    )}
     <button
       type="button"
       className="acx-apply-panel__scan"

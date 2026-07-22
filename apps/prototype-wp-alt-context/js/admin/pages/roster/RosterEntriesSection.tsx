@@ -166,7 +166,7 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
     <div className="acx-roster-section" data-testid="roster-entries-section">
       <header className="acx-roster-section__header">
         <div className="acx-roster-section__title-group">
-          <h2>{__('Managed Identities', 'alt-context')}</h2>
+          <h2>{__('People', 'alt-context')}</h2>
           {activeFilterBadge && (
             <span className="acx-roster-section__filter-badge" data-testid="roster-filter-badge">
               <Filter size={12} aria-hidden="true" data-testid="roster-filter-badge-icon" />

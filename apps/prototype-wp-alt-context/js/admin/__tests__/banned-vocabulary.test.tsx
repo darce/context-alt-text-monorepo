@@ -56,6 +56,8 @@ const BANNED_STRINGS = [
   'Sync backlog',
   // UXP-4 slice 3: retention card jargon retired
   'Retention posture',
+  // UXP-4 slice 5: roster jargon retired
+  'Managed Identities',
 ] as const;
 
 const UUID_REGEX = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
@@ -486,6 +488,25 @@ describe('banned vocabulary across js/admin pages', () => {
     expect(surface).toContain(retentionCardCopy.RETENTION_CARD_HEADING);
     expect(surface).toContain(retentionCardCopy.RETENTION_CARD_ERROR_BODY);
     expect(surface).toContain(retentionCardCopy.RETENTION_CARD_LINK_HREF);
+    expect(surface).not.toMatch(UUID_REGEX);
+  });
+
+  /**
+   * UXP-4 slice 4: ConfirmTabContent is mocked in the WorkbenchPage sweep, so
+   * clustering disclosure + no-job zero-state constants are swept via import *.
+   */
+  it('confirm tab copy constants are free of banned jargon', async () => {
+    const confirmTabCopy = await import('../pages/workbench/confirmTabCopy');
+    const confirmStrings = Object.values(confirmTabCopy).filter((value) => typeof value === 'string') as string[];
+    const surface = confirmStrings.join(' ');
+
+    for (const banned of BANNED_STRINGS) {
+      expect(surface.toLowerCase()).not.toContain(banned.toLowerCase());
+    }
+    expect(surface).toContain(confirmTabCopy.CLUSTERING_DISCLOSURE_SUMMARY);
+    expect(surface).toContain(confirmTabCopy.CLUSTERING_DISCLOSURE_BODY);
+    expect(surface).toContain(confirmTabCopy.CONFIRM_NO_JOB_ZERO_STATE);
+    expect(surface.toLowerCase()).not.toContain('embeddings');
     expect(surface).not.toMatch(UUID_REGEX);
   });
 });

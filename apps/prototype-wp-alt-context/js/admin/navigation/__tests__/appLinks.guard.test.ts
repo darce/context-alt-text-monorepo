@@ -26,7 +26,20 @@ const HASH_LITERAL_RE = /(['"`])#\/[^'"`]*\1/g;
  * Contract-owned URL param keys (APP_LINK_PARAMS). Scanned as URL-seam access
  * patterns so domain strings like role="status" or source:'cluster' do not trip.
  */
-const CONTRACT_PARAM_KEYS = ['tab', 'panel', 'advanced', 'cluster', 'status', 'media', 'run', 'person'] as const;
+const CONTRACT_PARAM_KEYS = [
+  'tab',
+  'panel',
+  'advanced',
+  'cluster',
+  'status',
+  'media',
+  'run',
+  'person',
+  'personFilter',
+  'queue',
+  'face',
+  'rq',
+] as const;
 const PARAM_KEY_ALT = CONTRACT_PARAM_KEYS.join('|');
 /** `.get('tab')` / `.set('panel',` / `.delete('advanced')` / `useTabParam('tab',` */
 const PARAM_ACCESS_RE = new RegExp(

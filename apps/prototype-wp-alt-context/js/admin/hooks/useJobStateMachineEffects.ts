@@ -5,6 +5,7 @@ import { getConfig } from '../api/config';
 import { queryKeys } from '../api/queryKeys';
 import type { SyncTriggerResponse } from '../api/recognition';
 import type { BatchRunStatus, JobStatusResponse } from '../api/recognition/types/scan';
+import { SYNC_VOCABULARY } from '../pages/workbench/syncVocabulary';
 import { runAfterCooldown } from '../utils/recognitionCooldown';
 import { isScanSuccessStatus, type PipelinePhase } from './jobStateMachineUtils';
 import type { PersistedJob } from './useJobPersistence';
@@ -186,7 +187,11 @@ export const useJobStateMachineEffects = ({
 
         const syncResult = await syncProjectionRef.current();
         if (!syncResult.synced) {
-          throw new Error(syncResult.reason === 'sync_failed' ? 'Waiting for service…' : 'Syncing results failed.');
+          throw new Error(
+            syncResult.reason === 'sync_failed'
+              ? SYNC_VOCABULARY.resultsErrorHeadline
+              : SYNC_VOCABULARY.resultsSyncFailed,
+          );
         }
 
         if (lastProjectionAttemptRef.current !== projectionTarget.attemptKey) {
@@ -201,7 +206,9 @@ export const useJobStateMachineEffects = ({
         }
 
         setProjectionSyncState('error');
-        setProjectionError(error instanceof Error ? error.message : 'Syncing results failed.');
+        setProjectionError(
+          error instanceof Error ? error.message : SYNC_VOCABULARY.resultsSyncFailed,
+        );
       }
     };
 

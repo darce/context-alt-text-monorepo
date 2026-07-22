@@ -10,6 +10,11 @@ import { useResetMirror } from '../../hooks/useSyncTrigger';
 import { useSyncStatus } from '../../hooks/useSyncStatus';
 import { useSyncHealth } from '../../hooks/useSyncHealth';
 import { useRetentionStatus } from '../../hooks/useRetentionStatus';
+import {
+  RETENTION_CARD_ERROR_BODY,
+  RETENTION_CARD_HEADING,
+  RETENTION_CARD_LINK_HREF,
+} from '../dashboard/retentionCardCopy';
 import { createMockMutation, createMockQuery } from '../../test-utils/mockHooks';
 
 vi.mock('@wordpress/i18n', () => ({
@@ -368,7 +373,7 @@ describe('DashboardPage', () => {
     expect(mediaStat).toHaveTextContent('0');
   });
 
-  it('shows retention posture summary and links to the retention page', () => {
+  it('shows retention summary heading and links to the retention page', () => {
     mockedUseIdentityStats.mockReturnValue(
       createMockQuery<DashboardStats>({
         data: {
@@ -384,9 +389,12 @@ describe('DashboardPage', () => {
 
     render(<DashboardPage />);
 
-    expect(screen.getByText('Retention posture')).toBeInTheDocument();
+    expect(screen.getByText(RETENTION_CARD_HEADING)).toBeInTheDocument();
     expect(screen.getByText('Dispose after ack')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Open Retention Controls/ })).toHaveAttribute('href', '#/retention');
+    expect(screen.getByRole('link', { name: /Open Retention Controls/ })).toHaveAttribute(
+      'href',
+      RETENTION_CARD_LINK_HREF,
+    );
   });
 
   it('does not render the Batch Operations panel', () => {
@@ -508,7 +516,7 @@ describe('DashboardPage', () => {
     expect(screen.queryByRole('heading', { name: /AI Image Description/i })).not.toBeInTheDocument();
   });
 
-  it('shows retention unavailable copy when the retention proxy is degraded', () => {
+  it('does not render the retention panel when the endpoint is not configured', () => {
     mockedUseRetentionStatus.mockReturnValue(
       createMockQuery({
         data: {
@@ -533,9 +541,66 @@ describe('DashboardPage', () => {
 
     render(<DashboardPage />);
 
-    expect(screen.getByText('Retention posture')).toBeInTheDocument();
-    expect(screen.getByText('Retention status is unavailable right now.')).toBeInTheDocument();
+    expect(screen.queryByText(RETENTION_CARD_HEADING)).not.toBeInTheDocument();
+    expect(screen.queryByText(RETENTION_CARD_ERROR_BODY)).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Open Retention Controls/ })).not.toBeInTheDocument();
+  });
+
+  it('shows remediation copy and retention link when retention status fails to load', () => {
+    mockedUseRetentionStatus.mockReturnValue(
+      createMockQuery({
+        status: 'error',
+        isError: true,
+        error: new Error('retention fetch failed'),
+      }),
+    );
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 4,
+          assigned_clusters_count: 4,
+          pending_clusters_count: 0,
+          media_with_faces_count: 10,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(<DashboardPage />);
+
+    expect(screen.getByText(RETENTION_CARD_HEADING)).toBeInTheDocument();
+    expect(screen.getByText(RETENTION_CARD_ERROR_BODY)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Open Retention Controls/ })).toHaveAttribute(
+      'href',
+      RETENTION_CARD_LINK_HREF,
+    );
+  });
+
+  it('does not render the retention panel while retention status is loading', () => {
+    mockedUseRetentionStatus.mockReturnValue(
+      createMockQuery({
+        status: 'pending',
+        isLoading: true,
+      }),
+    );
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 4,
+          assigned_clusters_count: 4,
+          pending_clusters_count: 0,
+          media_with_faces_count: 10,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(<DashboardPage />);
+
+    expect(screen.queryByText(RETENTION_CARD_HEADING)).not.toBeInTheDocument();
+    expect(screen.queryByText(RETENTION_CARD_ERROR_BODY)).not.toBeInTheDocument();
   });
 
   it('shows the purge-on-demand retention label when configured', () => {
@@ -568,7 +633,7 @@ describe('DashboardPage', () => {
 
     render(<DashboardPage />);
 
-    expect(screen.getByText('Retention posture')).toBeInTheDocument();
+    expect(screen.getByText(RETENTION_CARD_HEADING)).toBeInTheDocument();
     expect(screen.getByText('Purge on demand')).toBeInTheDocument();
   });
 
@@ -602,7 +667,7 @@ describe('DashboardPage', () => {
 
     render(<DashboardPage />);
 
-    expect(screen.getByText('Retention posture')).toBeInTheDocument();
+    expect(screen.getByText(RETENTION_CARD_HEADING)).toBeInTheDocument();
     expect(screen.getByText('Retain all')).toBeInTheDocument();
   });
 
@@ -667,7 +732,7 @@ describe('DashboardPage', () => {
     expect(screen.getByText('Pending changes')).toBeInTheDocument();
     expect(screen.getByText('Conflicts')).toBeInTheDocument();
     expect(screen.getByText('Failed operations')).toBeInTheDocument();
-    expect(screen.getByText('Sync backlog: pending 4, failed 1, conflicts 2')).toBeInTheDocument();
+    expect(screen.getByText('4 waiting, 1 failed, 2 need review')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Open Conflict Inbox/ })).toHaveAttribute(
       'href',
       '#/workbench?tab=scan&panel=conflicts',
@@ -733,7 +798,7 @@ describe('DashboardPage', () => {
 
     render(<DashboardPage />);
 
-    expect(screen.getByText('Machine sync is healthy and local changes are caught up.')).toBeInTheDocument();
+    expect(screen.getByText('Everything is saved and up to date.')).toBeInTheDocument();
     expect(screen.getByText('Pending changes')).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Open Conflict Inbox/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Open Failed Sync Queue/ })).not.toBeInTheDocument();
@@ -828,7 +893,9 @@ describe('DashboardPage', () => {
 
     render(<DashboardPage />);
 
-    expect(screen.getByText('Local changes are waiting to sync.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Your changes are saved here and will sync when the service is available.'),
+    ).toBeInTheDocument();
     expect(screen.getByText('Pending changes')).toBeInTheDocument();
     expect(screen.getByText('5')).toBeInTheDocument();
   });
@@ -862,7 +929,7 @@ describe('DashboardPage', () => {
 
     render(<DashboardPage />);
 
-    expect(screen.getByText('Machine state is stale and should be refreshed.')).toBeInTheDocument();
+    expect(screen.getByText('This view may be out of date — sync now to refresh it.')).toBeInTheDocument();
   });
 
   it('renders a stale-mirror banner when the backend snapshot is empty but local clusters remain', () => {

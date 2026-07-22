@@ -1,10 +1,56 @@
 {
+  "schema": "acx-eval/v1",
+  "kind": "report",
   "report_kind": "face_bakeoff",
+  "provenance": {
+    "leg": "face_pipeline",
+    "score_manifest_sha256": "fixture0000000000000000000000000000000000000000000000000000000000",
+    "manifest_matches_fetch": true,
+    "model": {
+      "model_ids": ["sface-fixture"],
+      "embedding_dims": [128],
+      "leg": "face_pipeline"
+    },
+    "zero_box_corpus": false,
+    "total_gt_boxes": 26
+  },
+  "counts": {
+    "total": 16,
+    "scored": 16,
+    "failed": 0,
+    "matched_faces": 26,
+    "named_matched": 22,
+    "stranger_matched": 4
+  },
   "tau": {
     "tau_k": [0.40, 0.40, 0.40],
-    "tau_op": 0.40
+    "tau_op": 0.40,
+    "note": "PROVISIONAL — not product defaults (FIR-6 owns calibration)"
+  },
+  "detection": {
+    "precision": 0.95,
+    "recall": 0.90,
+    "tp": 26,
+    "fp": 1,
+    "fn": 3
   },
   "slices": {
+    "headline_identification": {
+      "precision": 0.85,
+      "recall": 0.75,
+      "status": "measured",
+      "directional": false
+    },
+    "unknown_rejection": {
+      "fmr": 0.0,
+      "status": "measured",
+      "directional": false
+    },
+    "clustering": {
+      "purity": 0.9,
+      "status": "measured",
+      "directional": false
+    },
     "people": {
       "precision": 0.9,
       "recall": 0.8,
@@ -27,16 +73,29 @@
       "n": 6
     }
   },
-  "counts": {
-    "n_decisions": 24,
-    "n_identities": 6,
-    "n_folds": 3,
-    "n_strangers": 3
+  "gate_proposal": {
+    "role": "proposal_only",
+    "operator_authority": "FIR-6 human operator records gate/deferral; FIR-5 cannot self-promote",
+    "proposed_slices": {
+      "headline_identification": {"precision": 0.85, "recall": 0.75}
+    },
+    "excluded_directional": [],
+    "identification_detection_coupling": {
+      "identification_recall": 0.75,
+      "detection_recall": 0.90,
+      "flag": "report id-recall ALONGSIDE detection-recall"
+    },
+    "p95_scan_latency": "FIR-6-owned; not measured here.",
+    "scope_amendments_for_operator_ack": [],
+    "perf_label": "detect+embed-only (COST-04/15); not full-scan p95"
   },
+  "failures": [],
   "decisions": [
     {
       "media_id": 101,
+      "path": "fixtures/alice-bob-a.jpg",
       "box_index": 0,
+      "det_index": 0,
       "true_name": "Alice",
       "predicted_name": "Alice",
       "decision": "accept",
@@ -44,11 +103,14 @@
       "fold": 0,
       "name_star": "Alice",
       "enrolled": true,
-      "tau_k": 0.4
+      "tau_k": 0.4,
+      "excluded_single_face_recall": false
     },
     {
       "media_id": 101,
+      "path": "fixtures/alice-bob-a.jpg",
       "box_index": 1,
+      "det_index": 1,
       "true_name": "Alice",
       "predicted_name": "Alice",
       "decision": "accept",
@@ -56,11 +118,14 @@
       "fold": 0,
       "name_star": "Alice",
       "enrolled": true,
-      "tau_k": 0.4
+      "tau_k": 0.4,
+      "excluded_single_face_recall": false
     },
     {
       "media_id": 102,
+      "path": "fixtures/alice-bob-b.jpg",
       "box_index": 0,
+      "det_index": 0,
       "true_name": "Bob",
       "predicted_name": "Bob",
       "decision": "accept",
@@ -68,11 +133,14 @@
       "fold": 0,
       "name_star": "Bob",
       "enrolled": true,
-      "tau_k": 0.4
+      "tau_k": 0.4,
+      "excluded_single_face_recall": false
     },
     {
       "media_id": 102,
+      "path": "fixtures/alice-bob-b.jpg",
       "box_index": 1,
+      "det_index": 1,
       "true_name": "Bob",
       "predicted_name": "Alice",
       "decision": "wrong_name",
@@ -80,11 +148,14 @@
       "fold": 0,
       "name_star": "Alice",
       "enrolled": true,
-      "tau_k": 0.4
+      "tau_k": 0.4,
+      "excluded_single_face_recall": false
     },
     {
       "media_id": 103,
+      "path": "fixtures/carol-dave-a.jpg",
       "box_index": 0,
+      "det_index": 0,
       "true_name": "Carol",
       "predicted_name": "Carol",
       "decision": "accept",
@@ -92,11 +163,14 @@
       "fold": 1,
       "name_star": "Carol",
       "enrolled": true,
-      "tau_k": 0.4
+      "tau_k": 0.4,
+      "excluded_single_face_recall": false
     },
     {
       "media_id": 103,
+      "path": "fixtures/carol-dave-a.jpg",
       "box_index": 1,
+      "det_index": 1,
       "true_name": "Carol",
       "predicted_name": "Carol",
       "decision": "accept",
@@ -104,11 +178,14 @@
       "fold": 1,
       "name_star": "Carol",
       "enrolled": true,
-      "tau_k": 0.4
+      "tau_k": 0.4,
+      "excluded_single_face_recall": false
     },
     {
       "media_id": 104,
+      "path": "fixtures/carol-dave-b.jpg",
       "box_index": 0,
+      "det_index": 0,
       "true_name": "Dave",
       "predicted_name": "Dave",
       "decision": "accept",
@@ -116,11 +193,14 @@
       "fold": 1,
       "name_star": "Dave",
       "enrolled": true,
-      "tau_k": 0.4
+      "tau_k": 0.4,
+      "excluded_single_face_recall": false
     },
     {
       "media_id": 104,
+      "path": "fixtures/carol-dave-b.jpg",
       "box_index": 1,
+      "det_index": 1,
       "true_name": "Dave",
       "predicted_name": "Carol",
       "decision": "wrong_name",
@@ -128,11 +208,14 @@
       "fold": 1,
       "name_star": "Carol",
       "enrolled": true,
-      "tau_k": 0.4
+      "tau_k": 0.4,
+      "excluded_single_face_recall": false
     },
     {
       "media_id": 105,
+      "path": "fixtures/eve-frank-a.jpg",
       "box_index": 0,
+      "det_index": 0,
       "true_name": "Eve",
       "predicted_name": "Eve",
       "decision": "accept",
@@ -140,11 +223,14 @@
       "fold": 2,
       "name_star": "Eve",
       "enrolled": true,
-      "tau_k": 0.4
+      "tau_k": 0.4,
+      "excluded_single_face_recall": false
     },
     {
       "media_id": 105,
+      "path": "fixtures/eve-frank-a.jpg",
       "box_index": 1,
+      "det_index": 1,
       "true_name": "Eve",
       "predicted_name": "Eve",
       "decision": "accept",
@@ -152,11 +238,14 @@
       "fold": 2,
       "name_star": "Eve",
       "enrolled": true,
-      "tau_k": 0.4
+      "tau_k": 0.4,
+      "excluded_single_face_recall": false
     },
     {
       "media_id": 106,
+      "path": "fixtures/eve-frank-b.jpg",
       "box_index": 0,
+      "det_index": 0,
       "true_name": "Frank",
       "predicted_name": "Frank",
       "decision": "accept",
@@ -164,11 +253,14 @@
       "fold": 2,
       "name_star": "Frank",
       "enrolled": true,
-      "tau_k": 0.4
+      "tau_k": 0.4,
+      "excluded_single_face_recall": false
     },
     {
       "media_id": 106,
+      "path": "fixtures/eve-frank-b.jpg",
       "box_index": 1,
+      "det_index": 1,
       "true_name": "Frank",
       "predicted_name": "Eve",
       "decision": "wrong_name",
@@ -176,11 +268,14 @@
       "fold": 2,
       "name_star": "Eve",
       "enrolled": true,
-      "tau_k": 0.4
+      "tau_k": 0.4,
+      "excluded_single_face_recall": false
     },
     {
       "media_id": 201,
+      "path": "fixtures/occ-alice-bob.jpg",
       "box_index": 0,
+      "det_index": 0,
       "true_name": "Alice",
       "predicted_name": "Alice",
       "decision": "accept",
@@ -188,11 +283,14 @@
       "fold": 0,
       "name_star": "Alice",
       "enrolled": true,
-      "tau_k": 0.4
+      "tau_k": 0.4,
+      "excluded_single_face_recall": false
     },
     {
       "media_id": 201,
+      "path": "fixtures/occ-alice-bob.jpg",
       "box_index": 1,
+      "det_index": 1,
       "true_name": "Bob",
       "predicted_name": "Bob",
       "decision": "accept",
@@ -200,11 +298,14 @@
       "fold": 0,
       "name_star": "Bob",
       "enrolled": true,
-      "tau_k": 0.4
+      "tau_k": 0.4,
+      "excluded_single_face_recall": false
     },
     {
       "media_id": 202,
+      "path": "fixtures/occ-carol-dave.jpg",
       "box_index": 0,
+      "det_index": 0,
       "true_name": "Carol",
       "predicted_name": "Carol",
       "decision": "accept",
@@ -212,11 +313,14 @@
       "fold": 1,
       "name_star": "Carol",
       "enrolled": true,
-      "tau_k": 0.4
+      "tau_k": 0.4,
+      "excluded_single_face_recall": false
     },
     {
       "media_id": 202,
+      "path": "fixtures/occ-carol-dave.jpg",
       "box_index": 1,
+      "det_index": 1,
       "true_name": "Dave",
       "predicted_name": "Dave",
       "decision": "accept",
@@ -224,11 +328,14 @@
       "fold": 1,
       "name_star": "Dave",
       "enrolled": true,
-      "tau_k": 0.4
+      "tau_k": 0.4,
+      "excluded_single_face_recall": false
     },
     {
       "media_id": 203,
+      "path": "fixtures/occ-eve-frank.jpg",
       "box_index": 0,
+      "det_index": 0,
       "true_name": "Eve",
       "predicted_name": "Eve",
       "decision": "accept",
@@ -236,11 +343,14 @@
       "fold": 2,
       "name_star": "Eve",
       "enrolled": true,
-      "tau_k": 0.4
+      "tau_k": 0.4,
+      "excluded_single_face_recall": false
     },
     {
       "media_id": 203,
+      "path": "fixtures/occ-eve-frank.jpg",
       "box_index": 1,
+      "det_index": 1,
       "true_name": "Frank",
       "predicted_name": "Frank",
       "decision": "accept",
@@ -248,11 +358,59 @@
       "fold": 2,
       "name_star": "Frank",
       "enrolled": true,
-      "tau_k": 0.4
+      "tau_k": 0.4,
+      "excluded_single_face_recall": false
+    },
+    {
+      "media_id": 204,
+      "path": "fixtures/occ-alice-miss.jpg",
+      "box_index": 0,
+      "det_index": 0,
+      "true_name": "Alice",
+      "predicted_name": "Bob",
+      "decision": "wrong_name",
+      "s_max": 0.38,
+      "fold": 0,
+      "name_star": "Bob",
+      "enrolled": true,
+      "tau_k": 0.4,
+      "excluded_single_face_recall": false
+    },
+    {
+      "media_id": 205,
+      "path": "fixtures/occ-carol-miss.jpg",
+      "box_index": 0,
+      "det_index": 0,
+      "true_name": "Carol",
+      "predicted_name": "Dave",
+      "decision": "wrong_name",
+      "s_max": 0.36,
+      "fold": 1,
+      "name_star": "Dave",
+      "enrolled": true,
+      "tau_k": 0.4,
+      "excluded_single_face_recall": false
+    },
+    {
+      "media_id": 206,
+      "path": "fixtures/occ-eve-miss.jpg",
+      "box_index": 0,
+      "det_index": 0,
+      "true_name": "Eve",
+      "predicted_name": "Frank",
+      "decision": "wrong_name",
+      "s_max": 0.34,
+      "fold": 2,
+      "name_star": "Frank",
+      "enrolled": true,
+      "tau_k": 0.4,
+      "excluded_single_face_recall": false
     },
     {
       "media_id": 301,
+      "path": "fixtures/sim-alice.jpg",
       "box_index": 0,
+      "det_index": 0,
       "true_name": "Alice",
       "predicted_name": "Bob",
       "decision": "wrong_name",
@@ -260,11 +418,14 @@
       "fold": 0,
       "name_star": "Bob",
       "enrolled": true,
-      "tau_k": 0.4
+      "tau_k": 0.4,
+      "excluded_single_face_recall": false
     },
     {
       "media_id": 302,
+      "path": "fixtures/sim-carol.jpg",
       "box_index": 0,
+      "det_index": 0,
       "true_name": "Carol",
       "predicted_name": "Dave",
       "decision": "wrong_name",
@@ -272,11 +433,14 @@
       "fold": 1,
       "name_star": "Dave",
       "enrolled": true,
-      "tau_k": 0.4
+      "tau_k": 0.4,
+      "excluded_single_face_recall": false
     },
     {
       "media_id": 303,
+      "path": "fixtures/sim-eve.jpg",
       "box_index": 0,
+      "det_index": 0,
       "true_name": "Eve",
       "predicted_name": "Frank",
       "decision": "wrong_name",
@@ -284,11 +448,14 @@
       "fold": 2,
       "name_star": "Frank",
       "enrolled": true,
-      "tau_k": 0.4
+      "tau_k": 0.4,
+      "excluded_single_face_recall": false
     },
     {
       "media_id": 401,
+      "path": "fixtures/stranger-a.jpg",
       "box_index": 0,
+      "det_index": 0,
       "true_name": null,
       "predicted_name": "Alice",
       "decision": "reject",
@@ -296,11 +463,14 @@
       "fold": 0,
       "name_star": "Alice",
       "enrolled": false,
-      "tau_k": 0.4
+      "tau_k": 0.4,
+      "excluded_single_face_recall": false
     },
     {
       "media_id": 402,
+      "path": "fixtures/stranger-b.jpg",
       "box_index": 0,
+      "det_index": 0,
       "true_name": null,
       "predicted_name": "Carol",
       "decision": "reject",
@@ -308,11 +478,14 @@
       "fold": 1,
       "name_star": "Carol",
       "enrolled": false,
-      "tau_k": 0.4
+      "tau_k": 0.4,
+      "excluded_single_face_recall": false
     },
     {
       "media_id": 403,
+      "path": "fixtures/stranger-c.jpg",
       "box_index": 0,
+      "det_index": 0,
       "true_name": null,
       "predicted_name": "Eve",
       "decision": "reject",
@@ -320,7 +493,38 @@
       "fold": 2,
       "name_star": "Eve",
       "enrolled": false,
-      "tau_k": 0.4
+      "tau_k": 0.4,
+      "excluded_single_face_recall": false
+    },
+    {
+      "media_id": 404,
+      "path": "fixtures/stranger-nomatch.jpg",
+      "box_index": 0,
+      "det_index": 0,
+      "true_name": null,
+      "predicted_name": null,
+      "decision": "reject",
+      "s_max": null,
+      "fold": 0,
+      "name_star": null,
+      "enrolled": false,
+      "tau_k": 0.4,
+      "excluded_single_face_recall": false
+    },
+    {
+      "media_id": 501,
+      "path": "fixtures/single-face-excl.jpg",
+      "box_index": 0,
+      "det_index": 0,
+      "true_name": "Alice",
+      "predicted_name": "Bob",
+      "decision": "wrong_name",
+      "s_max": 0.99,
+      "fold": 0,
+      "name_star": "Bob",
+      "enrolled": true,
+      "tau_k": 0.4,
+      "excluded_single_face_recall": true
     }
   ]
 }

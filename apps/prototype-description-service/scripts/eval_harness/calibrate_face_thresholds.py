@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
 """Calibrate face_pipeline thresholds from a pinned face_bakeoff report (FIR-6 S3a).
 
-Pure artifact→artifact CLI: consumes a face_bakeoff schema-v1 report plus a
-golden manifest (for per-media stratum tags), applies the pair-level
-subject-disjoint K-fold protocol ([CAL-07]), and emits a deterministic
-calibration artifact (per-stratum proposed thresholds + FNMR-tax table +
-protocol disclosure). Never writes recognition settings.
+Pure artifact→artifact CLI: consumes a face_bakeoff schema-v1 report (FIR-5
+serialization shape from report.py) plus a golden manifest (for per-media
+stratum tags), applies the pair-level subject-disjoint K-fold protocol
+([CAL-07]), and emits a deterministic calibration artifact (per-stratum
+proposed thresholds + FNMR-tax table + protocol disclosure). Never writes
+recognition settings.
+
+FIR-5 decision contract notes:
+- ``s_max`` is float|null; null encodes -inf / no gallery match.
+- ``excluded_single_face_recall`` rows are excluded from FIR-5 recall and from
+  calibration trials (EVAL-08 parity).
+- Decision rows do **not** carry ``publishable``; publishability is a
+  post-score redaction / manifest-provenance concern, not a calibration input.
 
 Usage (from apps/prototype-description-service)::
 
@@ -27,14 +35,32 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-# Pinned face_bakeoff report schema v1 (FIR-5 serialization contract; LC-06/GR-08).
+# Pinned face_bakeoff report schema v1 (FIR-5 report.py serialization; LC-06/GR-08).
 REPORT_KIND = "face_bakeoff"
-REQUIRED_REPORT_KEYS = frozenset({"report_kind", "tau", "slices", "decisions", "counts"})
+REPORT_SCHEMA = "acx-eval/v1"
+REPORT_DOC_KIND = "report"
+REQUIRED_REPORT_KEYS = frozenset(
+    {
+        "schema",
+        "kind",
+        "report_kind",
+        "provenance",
+        "counts",
+        "tau",
+        "detection",
+        "slices",
+        "gate_proposal",
+        "decisions",
+        "failures",
+    }
+)
 REQUIRED_TAU_KEYS = frozenset({"tau_k", "tau_op"})
 REQUIRED_DECISION_KEYS = frozenset(
     {
         "media_id",
+        "path",
         "box_index",
+        "det_index",
         "true_name",
         "predicted_name",
         "decision",
@@ -43,6 +69,7 @@ REQUIRED_DECISION_KEYS = frozenset(
         "name_star",
         "enrolled",
         "tau_k",
+        "excluded_single_face_recall",
     }
 )
 # Pre-registered threshold-selection rule id (fit folds only; never re-tuned on read).
@@ -51,6 +78,8 @@ DEFAULT_FMR_TARGET = 0.01
 GLOBAL_STRATUM = "_global"
 ARTIFACT_KIND = "face_threshold_calibration"
 ARTIFACT_SCHEMA_VERSION = 1
+# No-match sentinel for s_max:null (FIR-5 serializes -inf as JSON null).
+S_MAX_NO_MATCH = float("-inf")
 
 
 class CalibrationError(Exception):
@@ -60,15 +89,18 @@ class CalibrationError(Exception):
 @dataclass(frozen=True)
 class Decision:
     media_id: int
+    path: str
     box_index: int
+    det_index: int
     true_name: str | None
     predicted_name: str | None
     decision: str
-    s_max: float
+    s_max: float  # may be -inf when JSON null
     fold: int
     name_star: str | None
     enrolled: bool
     tau_k: float
+    excluded_single_face_recall: bool
 
 
 @dataclass(frozen=True)
@@ -77,7 +109,7 @@ class ScoreTrial:
 
     score: float
     probe_identity: str | None  # None => anonymous stranger
-    gallery_identity: str | None  # name_star
+    gallery_identity: str | None  # mate or name_star
     fold: int
     media_id: int
     strata: tuple[str, ...]
@@ -93,8 +125,19 @@ def _is_number(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
 
 
+def _is_s_max(value: object) -> bool:
+    """s_max is a finite number or null (-inf / no-match)."""
+    if value is None:
+        return True
+    return _is_number(value)
+
+
 def validate_face_bakeoff_report(doc: object) -> list[str]:
-    """Return schema-violation messages; empty list means ok."""
+    """Return schema-violation messages; empty list means ok.
+
+    Required keys match the FIR-5 face_bakeoff serialization in report.py
+    (top-level envelope + decision row keys). Truncated / hand-invented shapes fail.
+    """
     errors: list[str] = []
     if not isinstance(doc, dict):
         return ["report must be a JSON object"]
@@ -104,8 +147,21 @@ def validate_face_bakeoff_report(doc: object) -> list[str]:
         errors.append(f"report missing required keys: {missing}")
         return errors
 
+    if doc.get("schema") != REPORT_SCHEMA:
+        errors.append(f"schema must be {REPORT_SCHEMA!r}, got {doc.get('schema')!r}")
+    if doc.get("kind") != REPORT_DOC_KIND:
+        errors.append(f"kind must be {REPORT_DOC_KIND!r}, got {doc.get('kind')!r}")
     if doc.get("report_kind") != REPORT_KIND:
         errors.append(f"report_kind must be {REPORT_KIND!r}, got {doc.get('report_kind')!r}")
+
+    if not isinstance(doc.get("provenance"), dict):
+        errors.append("provenance must be an object")
+    if not isinstance(doc.get("detection"), dict):
+        errors.append("detection must be an object")
+    if not isinstance(doc.get("gate_proposal"), dict):
+        errors.append("gate_proposal must be an object")
+    if not isinstance(doc.get("failures"), list):
+        errors.append("failures must be a list")
 
     tau = doc.get("tau")
     if not isinstance(tau, dict):
@@ -147,20 +203,28 @@ def validate_face_bakeoff_report(doc: object) -> list[str]:
                 continue
             if not isinstance(row["media_id"], int) or isinstance(row["media_id"], bool):
                 errors.append(f"decisions[{i}].media_id must be an int")
+            if not isinstance(row["path"], str):
+                errors.append(f"decisions[{i}].path must be a string")
             if not isinstance(row["box_index"], int) or isinstance(row["box_index"], bool):
                 errors.append(f"decisions[{i}].box_index must be an int")
+            if not isinstance(row["det_index"], int) or isinstance(row["det_index"], bool):
+                errors.append(f"decisions[{i}].det_index must be an int")
             for name_key in ("true_name", "predicted_name", "name_star"):
                 val = row[name_key]
                 if val is not None and not isinstance(val, str):
                     errors.append(f"decisions[{i}].{name_key} must be str or null")
             if not isinstance(row["decision"], str):
                 errors.append(f"decisions[{i}].decision must be a string")
-            if not _is_number(row["s_max"]):
-                errors.append(f"decisions[{i}].s_max must be a finite number")
+            if not _is_s_max(row["s_max"]):
+                errors.append(
+                    f"decisions[{i}].s_max must be a finite number or null (-inf/no-match)"
+                )
             if not isinstance(row["fold"], int) or isinstance(row["fold"], bool) or row["fold"] < 0:
                 errors.append(f"decisions[{i}].fold must be a non-negative int")
             if not isinstance(row["enrolled"], bool):
                 errors.append(f"decisions[{i}].enrolled must be a bool")
+            if not isinstance(row["excluded_single_face_recall"], bool):
+                errors.append(f"decisions[{i}].excluded_single_face_recall must be a bool")
             if not _is_number(row["tau_k"]):
                 errors.append(f"decisions[{i}].tau_k must be a finite number")
 
@@ -236,22 +300,36 @@ def parse_decisions(doc: Mapping[str, Any]) -> list[Decision]:
         name_star = row["name_star"]
         if isinstance(name_star, str) and name_star == "":
             name_star = None
+        raw_s_max = row["s_max"]
+        s_max = S_MAX_NO_MATCH if raw_s_max is None else float(raw_s_max)
         out.append(
             Decision(
                 media_id=int(row["media_id"]),
+                path=str(row["path"]),
                 box_index=int(row["box_index"]),
+                det_index=int(row["det_index"]),
                 true_name=true_name,
                 predicted_name=predicted,
                 decision=str(row["decision"]),
-                s_max=float(row["s_max"]),
+                s_max=s_max,
                 fold=int(row["fold"]),
                 name_star=name_star,
                 enrolled=bool(row["enrolled"]),
                 tau_k=float(row["tau_k"]),
+                excluded_single_face_recall=bool(row["excluded_single_face_recall"]),
             )
         )
     # Deterministic order independent of input file ordering.
-    out.sort(key=lambda d: (d.media_id, d.box_index, d.fold, d.s_max, d.true_name or ""))
+    out.sort(
+        key=lambda d: (
+            d.media_id,
+            d.box_index,
+            d.det_index,
+            d.fold,
+            d.s_max if math.isfinite(d.s_max) else float("-1e300"),
+            d.true_name or "",
+        )
+    )
     return out
 
 
@@ -281,13 +359,16 @@ def media_stratum_index(manifest: Mapping[str, Any]) -> dict[int, tuple[str, ...
 def identity_fold_assignment(decisions: Sequence[Decision]) -> dict[str, int]:
     """Map roster identity → fold. Strangers (true_name=None) never appear.
 
-    Fold is the minimum fold index observed for that identity (deterministic
-    under multi-fold noise); conflicting folds raise.
+    Each roster identity must occupy exactly one fold (subject-disjoint).
+    Conflicting fold indices raise CalibrationError — they are not collapsed
+    via min/max.
     """
     folds: dict[str, set[int]] = defaultdict(set)
     for d in decisions:
         if d.true_name is None:
             continue  # strangers never inform fold assignment / fitting
+        if d.excluded_single_face_recall:
+            continue
         folds[d.true_name].add(d.fold)
     assigned: dict[str, int] = {}
     for name in sorted(folds):
@@ -301,51 +382,73 @@ def identity_fold_assignment(decisions: Sequence[Decision]) -> dict[str, int]:
     return assigned
 
 
-def _trial_from_decision(
+def _trials_from_decision(
     d: Decision,
     strata_by_media: Mapping[int, tuple[str, ...]],
-) -> ScoreTrial | None:
-    """Convert a decision row into a genuine or impostor score trial.
+) -> list[ScoreTrial]:
+    """Convert a decision row into zero or more score trials.
 
-    Genuine: enrolled roster face whose best match is itself (s_max is mate sim).
-    Impostor: stranger probe, or enrolled face whose name_star ≠ true_name.
-    Rows that cannot form a trial (e.g. enrolled genuine with null name_star and
-    zero score ambiguity) are skipped.
+    - Rows with ``excluded_single_face_recall=True`` produce no trials (FIR-5
+      excludes them from recall accounting; calibration mirrors that).
+    - Anonymous strangers → one impostor trial (score may be -inf).
+    - Enrolled named probes always emit a **genuine** trial so rank-1-miss /
+      reject rows remain in the FNMR denominator:
+        * mate at rank-1 (name_star == true_name) → score = s_max
+        * otherwise → score = -inf (mate never accepted at any finite tau)
+    - When name_star is a non-mate, also emit an impostor trial at s_max.
+    - Non-enrolled named rows produce no trials.
+    - Enrolled with null name_star and non-mate path uses genuine at -inf only.
     """
+    if d.excluded_single_face_recall:
+        return []
+
     strata = strata_by_media.get(d.media_id, ())
+    score = float(d.s_max)
+
     if d.true_name is None:
         # Anonymous stranger: impostor probe only; never a genuine trial.
-        return ScoreTrial(
-            score=float(d.s_max),
-            probe_identity=None,
-            gallery_identity=d.name_star,
-            fold=d.fold,
-            media_id=d.media_id,
-            strata=strata,
-            is_genuine=False,
-        )
+        return [
+            ScoreTrial(
+                score=score,
+                probe_identity=None,
+                gallery_identity=d.name_star,
+                fold=d.fold,
+                media_id=d.media_id,
+                strata=strata,
+                is_genuine=False,
+            )
+        ]
+
     if not d.enrolled:
-        return None
-    if d.name_star is not None and d.name_star == d.true_name:
-        return ScoreTrial(
-            score=float(d.s_max),
+        return []
+
+    trials: list[ScoreTrial] = []
+    mate_at_rank1 = d.name_star is not None and d.name_star == d.true_name
+    genuine_score = score if mate_at_rank1 else S_MAX_NO_MATCH
+    trials.append(
+        ScoreTrial(
+            score=genuine_score,
             probe_identity=d.true_name,
-            gallery_identity=d.name_star,
+            gallery_identity=d.true_name,
             fold=d.fold,
             media_id=d.media_id,
             strata=strata,
             is_genuine=True,
         )
-    # Non-mate best match → impostor-style score at s_max against name_star.
-    return ScoreTrial(
-        score=float(d.s_max),
-        probe_identity=d.true_name,
-        gallery_identity=d.name_star,
-        fold=d.fold,
-        media_id=d.media_id,
-        strata=strata,
-        is_genuine=False,
     )
+    if d.name_star is not None and d.name_star != d.true_name:
+        trials.append(
+            ScoreTrial(
+                score=score,
+                probe_identity=d.true_name,
+                gallery_identity=d.name_star,
+                fold=d.fold,
+                media_id=d.media_id,
+                strata=strata,
+                is_genuine=False,
+            )
+        )
+    return trials
 
 
 def build_trials(
@@ -354,14 +457,12 @@ def build_trials(
 ) -> list[ScoreTrial]:
     trials: list[ScoreTrial] = []
     for d in decisions:
-        trial = _trial_from_decision(d, strata_by_media)
-        if trial is not None:
-            trials.append(trial)
+        trials.extend(_trials_from_decision(d, strata_by_media))
     trials.sort(
         key=lambda t: (
             t.media_id,
             t.fold,
-            t.score,
+            t.score if math.isfinite(t.score) else float("-1e300"),
             t.probe_identity or "",
             t.gallery_identity or "",
             t.is_genuine,
@@ -414,15 +515,18 @@ def select_read_trials(
     trials: Sequence[ScoreTrial],
     read_identities: frozenset[str],
     fit_identities: frozenset[str],
+    *,
+    held_fold: int,
 ) -> list[ScoreTrial]:
     """Out-of-fold read trials under pair-level disjointness ([CAL-07]).
 
     - Genuine: probe identity in the held (read) fold.
     - Impostor with roster probe: both probe and gallery identities in the held
       fold; cross-fold impostors excluded.
-    - Stranger probes: allowed as read-only rejection probes (never in fit);
-      they must not touch a fit-fold gallery identity when counting pair FMR —
-      gallery identity must be in the read fold (or null → always rejected).
+    - Stranger probes: allowed as read-only rejection probes (never in fit).
+      Each stranger trial is counted **once**, only when ``trial.fold == held_fold``
+      (fold field from the decision row). Gallery, if present, must not touch a
+      fit-fold identity and must lie in the read fold when named.
     - No read trial may reference a fit-fold identity as probe or gallery.
     """
     selected: list[ScoreTrial] = []
@@ -430,7 +534,6 @@ def select_read_trials(
         if t.is_genuine:
             if t.probe_identity is None or t.probe_identity not in read_identities:
                 continue
-            # Gallery is the mate (same identity) — already in read set.
             if t.probe_identity in fit_identities:
                 continue
             selected.append(t)
@@ -438,8 +541,9 @@ def select_read_trials(
 
         # Impostor / stranger
         if t.probe_identity is None:
-            # Stranger: read-only; gallery (if any) must be in read fold so the
-            # pair does not touch a fit-fold identity.
+            # Single-count strangers: only the held fold matching the row's fold.
+            if t.fold != held_fold:
+                continue
             if t.gallery_identity is not None and t.gallery_identity not in read_identities:
                 continue
             if t.gallery_identity is not None and t.gallery_identity in fit_identities:
@@ -499,29 +603,35 @@ def select_threshold(
     impostor_scores: Sequence[float],
     *,
     fmr_target: float,
-) -> float:
-    """Pre-registered rule: minimum tau with fit FMR ≤ target (else max score).
+) -> float | None:
+    """Pre-registered rule: minimum tau with fit FMR ≤ target.
 
-    Candidate thresholds are the sorted unique scores from fit trials (plus 0.0
-    and 1.0 bounds). Deterministic; no RNG.
+    Returns ``None`` (abstain) when there are zero fit impostors — never
+    fail-open to tau=0.0 / accept-everything ([CAL-01]). When no candidate
+    meets the target, fail-closed to max(1.0, peak observed score).
+
+    Candidate thresholds are the sorted unique finite scores from fit trials
+    (plus 0.0 and 1.0 bounds). Deterministic; no RNG.
     """
     if fmr_target < 0.0 or fmr_target > 1.0:
         raise CalibrationError(f"fmr_target must be in [0,1], got {fmr_target}")
 
-    candidates = sorted({float(s) for s in list(genuine_scores) + list(impostor_scores)} | {0.0, 1.0})
+    if not impostor_scores:
+        # Cannot estimate FMR — abstain rather than propose accept-everything.
+        return None
+
+    finite = [float(s) for s in list(genuine_scores) + list(impostor_scores) if math.isfinite(float(s))]
+    candidates = sorted(set(finite) | {0.0, 1.0})
     # Prefer lower tau among those meeting FMR (higher acceptance). Walk ascending.
-    chosen: float | None = None
     for tau in candidates:
         fmr = fmr_at(impostor_scores, tau)
-        if fmr is None or fmr <= fmr_target:
-            chosen = tau
-            break
-    if chosen is None:
-        # No tau meets target — fail closed to "accept nothing" at max observed + 0
-        # or 1.0, whichever is higher.
-        peak = max(candidates) if candidates else 1.0
-        chosen = max(peak, 1.0)
-    return float(chosen)
+        # fmr is never None here (impostor_scores non-empty); require explicit pass.
+        if fmr is not None and fmr <= fmr_target:
+            return float(tau)
+
+    # No tau meets target — fail closed to "accept nothing".
+    peak = max(candidates) if candidates else 1.0
+    return float(max(peak, 1.0))
 
 
 def _filter_trials_for_stratum(
@@ -541,11 +651,23 @@ def _oof_metrics_for_stratum(
     stratum: str | None,
     fmr_target: float,
 ) -> dict[str, Any]:
-    """Fit-on-complement / read-on-held metrics; returns proposed tau + OOF rates."""
+    """Fit-on-complement / read-on-held metrics; per-fold OOF at each fit tau.
+
+    OOF rates pool per-fold accept/miss counts evaluated at **that fold's**
+    fit tau only (never at the median of taus that saw the read fold). Residual
+    CAL-07 disclosure notes that the final proposed tau is still the median of
+    fit taus and is not re-used to re-score every fold.
+    """
     fit_taus: list[float] = []
     oof_genuine: list[float] = []
     oof_impostor: list[float] = []
+    # Per-fold OOF outcome counts at that fold's tau.
+    n_gen_oof = 0
+    n_gen_miss = 0
+    n_imp_oof = 0
+    n_imp_accept = 0
     fold_rows: list[dict[str, Any]] = []
+    n_abstained_folds = 0
 
     scoped = _filter_trials_for_stratum(trials, stratum)
 
@@ -553,22 +675,42 @@ def _oof_metrics_for_stratum(
         fit_ids = fit_identities_for_held_fold(identity_folds, held)
         read_ids = read_identities_for_held_fold(identity_folds, held)
         fit_trials = select_fit_trials(scoped, fit_ids)
-        read_trials = select_read_trials(scoped, read_ids, fit_ids)
+        read_trials = select_read_trials(scoped, read_ids, fit_ids, held_fold=held)
         assert_pair_level_disjointness(read_trials, fit_ids)
 
         g_fit = [t.score for t in fit_trials if t.is_genuine]
         i_fit = [t.score for t in fit_trials if not t.is_genuine]
         tau = select_threshold(g_fit, i_fit, fmr_target=fmr_target)
-        fit_taus.append(tau)
 
         g_read = [t.score for t in read_trials if t.is_genuine]
         i_read = [t.score for t in read_trials if not t.is_genuine]
         oof_genuine.extend(g_read)
         oof_impostor.extend(i_read)
+
+        fold_fmr: float | None = None
+        fold_fnmr: float | None = None
+        if tau is None:
+            n_abstained_folds += 1
+        else:
+            fit_taus.append(tau)
+            fold_fmr = fmr_at(i_read, tau)
+            fold_fnmr = fnmr_at(g_read, tau)
+            for s in g_read:
+                n_gen_oof += 1
+                if s < tau:
+                    n_gen_miss += 1
+            for s in i_read:
+                n_imp_oof += 1
+                if s >= tau:
+                    n_imp_accept += 1
+
         fold_rows.append(
             {
                 "held_fold": held,
                 "tau_fit": tau,
+                "abstained": tau is None,
+                "fnmr_oof_fold": fold_fnmr,
+                "fmr_oof_fold": fold_fmr,
                 "n_fit_genuine": len(g_fit),
                 "n_fit_impostor": len(i_fit),
                 "n_read_genuine": len(g_read),
@@ -578,24 +720,28 @@ def _oof_metrics_for_stratum(
             }
         )
 
-    # Final proposed tau: median of per-held fit taus (deterministic for odd K;
-    # for even K use lower middle after sort — no RNG).
+    # Final proposed tau: median of non-abstained fit taus (deterministic for
+    # odd count; for even use lower middle after sort — no RNG). All-abstain → None.
     if fit_taus:
         ordered = sorted(fit_taus)
         mid = (len(ordered) - 1) // 2
-        tau_proposed = ordered[mid]
+        tau_proposed: float | None = ordered[mid]
     else:
-        tau_proposed = 1.0
+        tau_proposed = None
+
+    fnmr_oof = (n_gen_miss / n_gen_oof) if n_gen_oof else None
+    fmr_oof = (n_imp_accept / n_imp_oof) if n_imp_oof else None
 
     return {
         "tau_proposed": tau_proposed,
-        "fnmr_oof": fnmr_at(oof_genuine, tau_proposed),
-        "fmr_oof": fmr_at(oof_impostor, tau_proposed),
-        "n_genuine_oof": len(oof_genuine),
-        "n_impostor_oof": len(oof_impostor),
+        "fnmr_oof": fnmr_oof,
+        "fmr_oof": fmr_oof,
+        "n_genuine_oof": n_gen_oof,
+        "n_impostor_oof": n_imp_oof,
+        "n_abstained_folds": n_abstained_folds,
         "fold_rows": fold_rows,
         "fit_taus": fit_taus,
-        # Retain OOF scores for tax recomputation at alternate taus.
+        # Retain OOF scores for tax recomputation at alternate fixed taus.
         "_oof_genuine": oof_genuine,
         "_oof_impostor": oof_impostor,
     }
@@ -608,6 +754,7 @@ def _public_stratum_row(raw: Mapping[str, Any]) -> dict[str, Any]:
         "fmr_oof": raw["fmr_oof"],
         "n_genuine_oof": raw["n_genuine_oof"],
         "n_impostor_oof": raw["n_impostor_oof"],
+        "n_abstained_folds": raw["n_abstained_folds"],
         "fold_rows": raw["fold_rows"],
     }
 
@@ -663,13 +810,15 @@ def calibrate(
             trials, identity_folds, k, stratum=name, fmr_target=fmr_target
         )
 
-    global_tau = float(global_raw["tau_proposed"])
+    global_tau = global_raw["tau_proposed"]
     fnmr_tax_global_vs_stratum: dict[str, dict[str, Any]] = {}
     for name, raw in per_stratum_raw.items():
         g_scores: list[float] = list(raw["_oof_genuine"])
-        stratum_tau = float(raw["tau_proposed"])
-        stratum_fnmr = fnmr_at(g_scores, stratum_tau)
-        global_fnmr = fnmr_at(g_scores, global_tau)
+        stratum_tau = raw["tau_proposed"]
+        stratum_fnmr = fnmr_at(g_scores, stratum_tau) if stratum_tau is not None else None
+        global_fnmr = (
+            fnmr_at(g_scores, float(global_tau)) if global_tau is not None else None
+        )
         tax = None
         if stratum_fnmr is not None and global_fnmr is not None:
             tax = global_fnmr - stratum_fnmr
@@ -684,7 +833,8 @@ def calibrate(
     # Global OACT coefficient tax ([CAL-05]/[ARCH-08]): a single coefficient is a
     # compromise vs per-stratum. With no per-decision occlusion severity on the
     # v1 report, tax is reported as the FNMR impact of elevating tau by
-    # coefficient (uniform additive proxy). coefficient=0 ⇒ zero tax.
+    # coefficient (uniform additive proxy). coefficient=0 ⇒ zero tax when base
+    # tau is defined.
     oact_tax: dict[str, Any] = {
         "coefficient": float(oact_coefficient),
         "proxy": "uniform_additive_tau_elevation",
@@ -698,22 +848,36 @@ def calibrate(
     }
     for name, raw in per_stratum_raw.items():
         g_scores = list(raw["_oof_genuine"])
-        base_tau = float(raw["tau_proposed"])
-        elevated = base_tau + float(oact_coefficient)
-        base_fnmr = fnmr_at(g_scores, base_tau)
+        base_tau = raw["tau_proposed"]
+        if base_tau is None:
+            oact_tax["per_stratum_tax"][name] = {
+                "base_tau": None,
+                "elevated_tau": None,
+                "base_fnmr": None,
+                "elevated_fnmr": None,
+                "tax": None,
+            }
+            continue
+        elevated = float(base_tau) + float(oact_coefficient)
+        base_fnmr = fnmr_at(g_scores, float(base_tau))
         elev_fnmr = fnmr_at(g_scores, elevated)
         tax = None
         if base_fnmr is not None and elev_fnmr is not None:
             tax = elev_fnmr - base_fnmr
         oact_tax["per_stratum_tax"][name] = {
-            "base_tau": base_tau,
+            "base_tau": float(base_tau),
             "elevated_tau": elevated,
             "base_fnmr": base_fnmr,
             "elevated_fnmr": elev_fnmr,
             "tax": tax,
         }
 
-    n_stranger_decisions = sum(1 for d in decisions if d.true_name is None)
+    n_stranger_decisions = sum(
+        1
+        for d in decisions
+        if d.true_name is None and not d.excluded_single_face_recall
+    )
+    n_excluded = sum(1 for d in decisions if d.excluded_single_face_recall)
     protocol = {
         "kind": "pair_level_subject_disjoint_kfold",
         "k": k,
@@ -721,15 +885,29 @@ def calibrate(
         "fmr_target": fmr_target,
         "strangers_in_fit": False,
         "cross_fold_impostors_excluded": True,
+        "strangers_single_count_by_fold": True,
+        "oof_read_per_fold_tau": True,
+        "zero_fit_impostor_policy": "abstain",
+        "excluded_single_face_recall_skipped": True,
         "n_roster_identities": len(identity_folds),
         "n_stranger_decisions": n_stranger_decisions,
+        "n_excluded_single_face_recall": n_excluded,
         "disclosure": (
-            "Thresholds are fit and gate metrics are read out-of-fold only under "
-            "subject-disjoint K-fold over roster identities. Read-fold impostor "
-            "pairs require both identities in the held fold (cross-fold pairs "
-            "excluded). Anonymous strangers (true_name=null) are read-only probes "
-            "and never inform fitting. Selection rule "
-            f"{SELECTION_RULE_ID!r} is pre-registered on fit folds only."
+            "Thresholds are fit on the complement of each held fold; gate metrics "
+            "are read on that held fold only, evaluated at that fold's fit tau "
+            "(not at the median of taus that saw the read fold). Final "
+            "tau_proposed is the median of non-abstained fit taus and is a "
+            "proposal only — residual CAL-07 note: applying that single median "
+            "back to every fold would re-introduce a weak train/test contact. "
+            "Read-fold impostor pairs require both identities in the held fold "
+            "(cross-fold pairs excluded). Anonymous strangers (true_name=null) "
+            "are read-only probes, counted once via decision.fold, and never "
+            "inform fitting. Folds with zero fit impostors abstain "
+            "(tau_fit=null; never fail-open to 0.0). Rows with "
+            "excluded_single_face_recall=true are skipped (FIR-5 recall parity). "
+            f"Selection rule {SELECTION_RULE_ID!r} is pre-registered on fit folds only. "
+            "Decision rows do not carry publishable; that flag is a post-score "
+            "redaction / manifest-provenance concern."
         ),
     }
 
@@ -739,10 +917,13 @@ def calibrate(
         "protocol": protocol,
         "source": {
             "report_kind": report["report_kind"],
+            "report_schema": report["schema"],
+            "report_doc_kind": report["kind"],
             "report_tau_op": report["tau"]["tau_op"],
             "report_tau_k": list(report["tau"]["tau_k"]),
             "report_counts": report["counts"],
             "n_decisions": len(decisions),
+            "n_excluded_single_face_recall": n_excluded,
             "strata": stratum_names,
         },
         "global": _public_stratum_row(global_raw),

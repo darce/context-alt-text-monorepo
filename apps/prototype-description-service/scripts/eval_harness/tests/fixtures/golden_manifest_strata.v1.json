@@ -111,6 +111,42 @@
       "tags": ["occlusion", "people"]
     },
     {
+      "media_id": 204,
+      "path": "fixtures/occ-alice-miss.jpg",
+      "sha256": "a041a041a041a041a041a041a041a041a041a041a041a041a041a041a041a041",
+      "face_count": 1,
+      "present_identities": ["Alice"],
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {"recognition_enabled": true},
+      "domain": "occlusion",
+      "tags": ["occlusion", "people"]
+    },
+    {
+      "media_id": 205,
+      "path": "fixtures/occ-carol-miss.jpg",
+      "sha256": "a051a051a051a051a051a051a051a051a051a051a051a051a051a051a051a051",
+      "face_count": 1,
+      "present_identities": ["Carol"],
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {"recognition_enabled": true},
+      "domain": "occlusion",
+      "tags": ["occlusion", "people"]
+    },
+    {
+      "media_id": 206,
+      "path": "fixtures/occ-eve-miss.jpg",
+      "sha256": "a061a061a061a061a061a061a061a061a061a061a061a061a061a061a061a061",
+      "face_count": 1,
+      "present_identities": ["Eve"],
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {"recognition_enabled": true},
+      "domain": "occlusion",
+      "tags": ["occlusion", "people"]
+    },
+    {
       "media_id": 301,
       "path": "fixtures/sim-alice.jpg",
       "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
@@ -181,6 +217,30 @@
       "policy": {"recognition_enabled": true},
       "domain": "people",
       "tags": ["people", "unknown"]
+    },
+    {
+      "media_id": 404,
+      "path": "fixtures/stranger-nomatch.jpg",
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "face_count": 1,
+      "present_identities": [],
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {"recognition_enabled": true},
+      "domain": "people",
+      "tags": ["people", "unknown"]
+    },
+    {
+      "media_id": 501,
+      "path": "fixtures/single-face-excl.jpg",
+      "sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "face_count": 1,
+      "present_identities": ["Alice"],
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {"recognition_enabled": true},
+      "domain": "people",
+      "tags": ["people"]
     }
   ]
 }

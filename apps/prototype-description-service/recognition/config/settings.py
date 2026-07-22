@@ -668,31 +668,43 @@ def bridge_oact_into_quality_settings(
     quality: QualitySettings,
     knobs: ResolvedFacePipelineKnobs,
 ) -> QualitySettings:
-    """Bridge profile-resolved OACT coefficient into QualitySettings (FIR-6 S1).
+    """Bridge profile-resolved OACT + enrollment floors into QualitySettings.
 
-    Only ``oact_coefficient`` is written — base quality band knobs stay on
-    ``ClusteringSettings.quality`` (S1 scopes the gate rebind to OACT only;
-    threshold rebinding is S2). Under insightface ``knobs.oact_coefficient`` is
-    already 0.0 so residual FacePipelineSettings.oact values cannot leak.
+    S1: ``oact_coefficient`` (profile-gated; insightface forces 0.0).
+    S3b: factor floors always copy from FacePipelineSettings (no-op defaults until S4).
+    Base quality band knobs stay on ``ClusteringSettings.quality``; threshold
+    rebinding is S2.
     """
     coeff = float(knobs.oact_coefficient)
     if coeff < 0.0:
         raise ValueError(
             f"Invalid oact_coefficient={coeff!r}; must be >= 0 (negative rewards occlusion)"
         )
-    if float(quality.oact_coefficient) == coeff:
+    floor_s = float(knobs.factor_floor_sharpness)
+    floor_n = float(knobs.factor_floor_embedding_norm)
+    ceil_o = float(knobs.factor_ceiling_occlusion)
+    updates: dict[str, float] = {}
+    if float(quality.oact_coefficient) != coeff:
+        updates["oact_coefficient"] = coeff
+    if float(quality.factor_floor_sharpness) != floor_s:
+        updates["factor_floor_sharpness"] = floor_s
+    if float(quality.factor_floor_embedding_norm) != floor_n:
+        updates["factor_floor_embedding_norm"] = floor_n
+    if float(quality.factor_ceiling_occlusion) != ceil_o:
+        updates["factor_ceiling_occlusion"] = ceil_o
+    if not updates:
         return quality
-    return quality.model_copy(update={"oact_coefficient": coeff})
+    return quality.model_copy(update=updates)
 
 
 def apply_oact_bridge_to_clustering(
     clustering: ClusteringSettings,
     knobs: ResolvedFacePipelineKnobs,
 ) -> ClusteringSettings:
-    """Return clustering settings with OACT coefficient bridged for gate consumers.
+    """Return clustering settings with OACT + enrollment floors bridged.
 
-    S1 wiring path for ``ConfidenceCheck`` / ``AssignmentGate``: call after
-    :func:`resolve_face_pipeline_knobs` so runtime OACT is profile-gated.
+    Wiring path for ``ConfidenceCheck`` / ``AssignmentGate`` / S3b enrollment:
+    call after :func:`resolve_face_pipeline_knobs` so runtime knobs are profile-aware.
     """
     quality = bridge_oact_into_quality_settings(clustering.quality, knobs)
     if quality is clustering.quality:

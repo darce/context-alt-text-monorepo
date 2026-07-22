@@ -60,6 +60,21 @@ class QualitySettings(BaseModel):
         description="Occlusion-adaptive coefficient for threshold_adjustment (0.0 = no-op).",
     )
 
+    # FIR-6 S3b enrollment floors (bridged from FacePipelineSettings; no-op defaults).
+    # floors accept everything; ceiling accepts full [0, 1] until S4.
+    factor_floor_sharpness: float = Field(
+        default=0.0,
+        description="Enrollment sharpness floor (0.0 accepts everything until S4).",
+    )
+    factor_floor_embedding_norm: float = Field(
+        default=0.0,
+        description="Enrollment embedding-norm floor (0.0 accepts everything until S4).",
+    )
+    factor_ceiling_occlusion: float = Field(
+        default=1.0,
+        description="Enrollment occlusion ceiling (1.0 accepts full range until S4).",
+    )
+
     # Scoring weights
     detection_confidence_weight: float = Field(
         default=0.6,

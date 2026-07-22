@@ -77,10 +77,26 @@ describe('useMediaIdentities', () => {
     queryClient.clear();
   });
 
-  it('keeps query-level retry false (Slice 3 non-negotiable)', () => {
-    // Structural pin: the hook option must remain the deliberate UXP-2 exception.
-    // Inspect the module source contract via exported recovery floor (derived) + runtime options.
-    expect(RECOVERY_DELAY_FLOOR_MS).toBe(DEFAULT_COOLDOWN_SECONDS * 1000);
+  it('does not React Query-retry on failure (retry:false pin; fails if hook default is removed)', async () => {
+    // Wrapper deliberately enables client-level retries so a missing hook-level
+    // `retry: false` would produce multiple attempts before the recovery floor.
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: 3, retryDelay: 1 } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
+    fetchMediaIdentitiesMock.mockRejectedValue(new Error('timeout'));
+
+    const { result, unmount } = renderHook(() => useMediaIdentities([99], true), { wrapper });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    // Exactly one attempt before any recovery-floor deferred refetch.
+    expect(fetchMediaIdentitiesMock).toHaveBeenCalledTimes(1);
+
+    unmount();
+    queryClient.clear();
   });
 
   it('S3-T5: one-shot recovery latch — arms once per error episode, floor delay, no re-arm on second error', async () => {
@@ -209,6 +225,130 @@ describe('useMediaIdentities', () => {
     await waitFor(() => expect(fetchMediaIdentitiesMock.mock.calls.length).toBe(afterSecondError + 1));
 
     second.unmount();
+    queryClient.clear();
+  });
+
+  it('BR-03: cancel between floor-fire and cooldown-callback does not consume latch', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-16T12:00:00.000Z'));
+    // Cooldown longer than floor so runAfterCooldown defers past the outer timer.
+    openCooldown(DEFAULT_COOLDOWN_SECONDS + 30);
+
+    const { wrapper, queryClient } = createWrapper();
+    const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
+    fetchMediaIdentitiesMock.mockRejectedValue(new Error('timeout'));
+
+    const { result, rerender, unmount } = renderHook(
+      ({ enabled }: { enabled: boolean }) => useMediaIdentities([55], enabled),
+      { wrapper, initialProps: { enabled: true } },
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    const afterFirstError = fetchMediaIdentitiesMock.mock.calls.length;
+    expect(afterFirstError).toBe(1);
+
+    // Floor fires → schedules runAfterCooldown; latch must not stick if we cancel before it runs.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(RECOVERY_DELAY_FLOOR_MS);
+    });
+
+    // Effect cleanup via enabled flip (same mounted hook / same refs).
+    rerender({ enabled: false });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // Expire the deferred cooldown callback from the cancelled schedule — no refetch.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(fetchMediaIdentitiesMock.mock.calls.length).toBe(afterFirstError);
+
+    // Re-enable on same key: a later error episode must be able to arm recovery again.
+    _resetCooldownForTests();
+    fetchMediaIdentitiesMock.mockRejectedValue(new Error('timeout-again'));
+    rerender({ enabled: true });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    const afterReenable = fetchMediaIdentitiesMock.mock.calls.length;
+
+    fetchMediaIdentitiesMock.mockRejectedValueOnce(new Error('recovery-fail'));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(RECOVERY_DELAY_FLOOR_MS);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await waitFor(() =>
+      expect(fetchMediaIdentitiesMock.mock.calls.length).toBe(afterReenable + 1),
+    );
+
+    unmount();
+    queryClient.clear();
+  });
+
+  it('BR-04: single-instance latch reset — error → recovery → success → error arms again', async () => {
+    vi.useFakeTimers();
+    const { wrapper, queryClient } = createWrapper();
+    const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
+    fetchMediaIdentitiesMock.mockRejectedValue(new Error('timeout'));
+
+    const { result, unmount } = renderHook(() => useMediaIdentities([77], true), { wrapper });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    const afterFirstError = fetchMediaIdentitiesMock.mock.calls.length;
+    expect(afterFirstError).toBe(1);
+
+    // First recovery consumes the episode (still fails).
+    fetchMediaIdentitiesMock.mockRejectedValueOnce(new Error('recovery-fail'));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(RECOVERY_DELAY_FLOOR_MS);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await waitFor(() =>
+      expect(fetchMediaIdentitiesMock.mock.calls.length).toBe(afterFirstError + 1),
+    );
+
+    // Success on the same mounted hook resets the latch.
+    fetchMediaIdentitiesMock.mockResolvedValueOnce({
+      identities_by_media: {},
+      data_source: 'local_projection',
+    } as recognitionApi.MediaIdentitiesResponse);
+    await act(async () => {
+      await result.current.refetch();
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    // Subsequent error on the same instance must arm a second recovery.
+    fetchMediaIdentitiesMock.mockRejectedValue(new Error('timeout-2'));
+    await act(async () => {
+      await result.current.refetch();
+    });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    const afterSecondError = fetchMediaIdentitiesMock.mock.calls.length;
+
+    fetchMediaIdentitiesMock.mockRejectedValueOnce(new Error('recovery-fail-2'));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(RECOVERY_DELAY_FLOOR_MS);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await waitFor(() =>
+      expect(fetchMediaIdentitiesMock.mock.calls.length).toBe(afterSecondError + 1),
+    );
+
+    unmount();
     queryClient.clear();
   });
 });

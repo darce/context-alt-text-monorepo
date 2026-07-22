@@ -9,6 +9,8 @@ import {
   type WorkbenchMediaDetailResponse,
   type WorkbenchMediaResponse,
 } from '../../api/workbenchMediaApi';
+import { DATA_SOURCE } from '../../api/recognition/types';
+import { deriveIdentitiesPresentationSource } from '../../pages/workbench/deriveIdentitiesPresentationSource';
 import { useWorkbenchMedia } from '../useWorkbenchMedia';
 import * as recognitionApi from '../../api/recognition';
 
@@ -231,14 +233,17 @@ describe('useWorkbenchMedia', () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     await waitFor(() => expect(result.current.identitiesQuery.isLoading).toBe(false));
+    await waitFor(() => {
+      expect(result.current.identitiesQuery.isFetching).toBe(false);
+      expect(result.current.identitiesQuery.isPlaceholderData).toBe(false);
+    });
 
-    expect(result.current.identitiesQuery).toEqual(
-      expect.objectContaining({
-        isPlaceholderData: expect.any(Boolean),
-        isFetching: expect.any(Boolean),
-        isError: false,
-        data: expect.objectContaining({ identities_by_media: expect.any(Object) }),
-      }),
+    // Post-settle contract: concrete settled flags (not expect.any(Boolean)).
+    expect(result.current.identitiesQuery.isFetching).toBe(false);
+    expect(result.current.identitiesQuery.isPlaceholderData).toBe(false);
+    expect(result.current.identitiesQuery.isError).toBe(false);
+    expect(result.current.identitiesQuery.data).toEqual(
+      expect.objectContaining({ identities_by_media: expect.any(Object) }),
     );
 
     queryClient.clear();
@@ -392,14 +397,22 @@ describe('useWorkbenchMedia', () => {
 
     rerender({ page: 2 });
 
-    // While page-2 identities are pending, placeholder may hold page-1 data — never with isError.
+    // While page-2 identities are pending, must observe placeholder hold + fetch in flight.
     await waitFor(() => expect(result.current.data?.items[0]?.id).toBe(42));
     await waitFor(() => {
       const surface = result.current.identitiesQuery;
-      if (surface.isFetching && surface.isPlaceholderData) {
-        expect(surface.isError).toBe(false);
-      }
+      expect(surface.isPlaceholderData && surface.isFetching).toBe(true);
     });
+    // In that observed state: never coexists with isError; presentation keeps prior envelope.
+    expect(result.current.identitiesQuery.isError).toBe(false);
+    expect(result.current.identitiesQuery.isPlaceholderData).toBe(true);
+    expect(result.current.identitiesQuery.isFetching).toBe(true);
+    expect(
+      deriveIdentitiesPresentationSource(
+        result.current.identitiesQuery.isError,
+        result.current.identitiesQuery.data,
+      ),
+    ).toBe(DATA_SOURCE.LOCAL_PROJECTION);
 
     await act(async () => {
       page2Deferred.reject(new Error('page2 identities failed'));
@@ -410,6 +423,12 @@ describe('useWorkbenchMedia', () => {
     // Error path drops placeholder (RQ): no placeholder+error coexistence; cell 1 takes over.
     expect(result.current.identitiesQuery.isPlaceholderData).toBe(false);
     expect(result.current.identitiesQuery.data).toBeUndefined();
+    expect(
+      deriveIdentitiesPresentationSource(
+        result.current.identitiesQuery.isError,
+        result.current.identitiesQuery.data,
+      ),
+    ).toBe(DATA_SOURCE.UNAVAILABLE);
 
     queryClient.clear();
   });
@@ -567,9 +586,6 @@ describe('useWorkbenchMedia', () => {
       ).toBeGreaterThanOrEqual(1);
     });
 
-    const page2CallsBeforeTransition = fetchWorkbenchMediaMock.mock.calls.filter(
-      (call) => call[0].page === 2,
-    ).length;
     const page3CallsBefore = fetchWorkbenchMediaMock.mock.calls.filter(
       (call) => call[0].page === 3,
     ).length;
@@ -602,16 +618,12 @@ describe('useWorkbenchMedia', () => {
     await waitFor(() => expect(result.current.detailQuery.isFetching).toBe(false));
     await waitFor(() => expect(result.current.identitiesQuery.isFetching).toBe(false));
 
+    // Discriminating pin: exactly one page-3 prefetch after fetch-level settle (BR-07).
     await waitFor(() => {
       expect(
         fetchWorkbenchMediaMock.mock.calls.filter((call) => call[0].page === 3),
       ).toHaveLength(1);
     });
-
-    // Page-2 media itself should not have been re-fetched excessively beyond the pre-transition baseline + any legitimate cache miss.
-    expect(
-      fetchWorkbenchMediaMock.mock.calls.filter((call) => call[0].page === 2).length,
-    ).toBeGreaterThanOrEqual(page2CallsBeforeTransition);
 
     queryClient.clear();
   });

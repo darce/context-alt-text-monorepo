@@ -128,10 +128,15 @@ export const getNonce = (): string => getConfig().nonce;
 
 /**
  * Mutate the cached config nonce in place so all live readers see the refresh.
+ * window.wpApiSettings is mirrored because mediaApi prefers it as its nonce
+ * source (matching WP core's apiFetch middleware, which rotates it the same way).
  */
 export const setNonce = (nonce: string): void => {
   const config = getConfig();
   config.nonce = nonce;
+  if (window.wpApiSettings?.nonce) {
+    window.wpApiSettings.nonce = nonce;
+  }
 };
 
 /**

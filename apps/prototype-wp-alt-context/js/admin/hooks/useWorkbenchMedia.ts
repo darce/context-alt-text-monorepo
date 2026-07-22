@@ -129,6 +129,7 @@ export const useWorkbenchMedia = ({ page, perPage, search, status = 'all', enabl
       isLoading: detailQuery.isLoading,
       isFetching: detailQuery.isFetching,
       isError: detailQuery.isError,
+      error: detailQuery.error,
       refetch: detailQuery.refetch,
     }),
     [
@@ -137,6 +138,7 @@ export const useWorkbenchMedia = ({ page, perPage, search, status = 'all', enabl
       detailQuery.isLoading,
       detailQuery.isFetching,
       detailQuery.isError,
+      detailQuery.error,
       detailQuery.refetch,
     ],
   );
@@ -146,6 +148,7 @@ export const useWorkbenchMedia = ({ page, perPage, search, status = 'all', enabl
       data: identitiesQuery.data,
       isLoading: identitiesQuery.isLoading,
       isError: identitiesQuery.isError,
+      error: identitiesQuery.error,
       isPlaceholderData: identitiesQuery.isPlaceholderData,
       isFetching: identitiesQuery.isFetching,
       refetch: identitiesQuery.refetch,
@@ -154,6 +157,7 @@ export const useWorkbenchMedia = ({ page, perPage, search, status = 'all', enabl
       identitiesQuery.data,
       identitiesQuery.isLoading,
       identitiesQuery.isError,
+      identitiesQuery.error,
       identitiesQuery.isPlaceholderData,
       identitiesQuery.isFetching,
       identitiesQuery.refetch,

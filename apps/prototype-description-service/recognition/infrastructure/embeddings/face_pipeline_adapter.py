@@ -43,6 +43,7 @@ from recognition.application.integrations import (
     wait_for_adapter,
 )
 from recognition.config import get_settings
+from recognition.infrastructure.embeddings.face_quality_factors import compute_face_quality_factors
 from recognition.infrastructure.face_pipeline._common import (
     DEFAULT_NMS_THRESHOLD,
     DEFAULT_SCORE_THRESHOLD,
@@ -197,6 +198,29 @@ def reconfigure_face_pipeline_pool_from_settings() -> None:
 def reset_face_pipeline_pool_for_tests() -> None:
     """Test hook: rebind process pool from current settings (alias of reconfigure)."""
     reconfigure_face_pipeline_pool_from_settings()
+
+
+def _observe_quality_factors(
+    metrics: FacePipelineMetricsObserver | None,
+    *,
+    sharpness: float,
+    embedding_norm: float,
+    occlusion_severity: float,
+) -> None:
+    """Best-effort per-factor metrics (CAL-09); never break detection."""
+    if metrics is None:
+        return
+    observe = getattr(metrics, "observe_quality_factors", None)
+    if not callable(observe):
+        return
+    try:
+        observe(
+            sharpness=float(sharpness),
+            embedding_norm=float(embedding_norm),
+            occlusion_severity=float(occlusion_severity),
+        )
+    except Exception:
+        pass
 
 
 def _observe_submit_wait(metrics: FacePipelineMetricsObserver | None, wait_s: float) -> None:
@@ -638,8 +662,9 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
         for face, bbox in kept:
             try:
                 aligned = self._runtime.aligner.align(bgr, face.landmarks)
-                embeddings = self._runtime.embedder.embed([aligned.crop])
-                embedding = embeddings[0]
+                batch = self._runtime.embedder.embed([aligned.crop])
+                embedding = batch.vectors[0]
+                emb_norm = float(batch.norms[0])
             except (AlignmentError, ZeroNormEmbeddingError) as exc:
                 dropped += 1
                 logger.debug(
@@ -648,9 +673,32 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
                     type(exc).__name__,
                 )
                 continue
+            factors = compute_face_quality_factors(
+                crop_bgr=aligned.crop,
+                embedding_norm=emb_norm,
+                landmarks=face.landmarks,
+            )
             landmark_quality = _compute_detection_quality(
                 confidence=float(face.score),
                 bbox=bbox,
+                occlusion_severity=factors.occlusion_severity,
+            )
+            # CAL-09: per-factor breakdown at the FIR-4 emit site (never one scalar).
+            logger.debug(
+                "face_quality_factors media_id=%s sharpness=%.4f embedding_norm=%.4f "
+                "occlusion_severity=%.4f pose_yaw=%s pose_roll=%s",
+                media_id[:20],
+                factors.sharpness,
+                factors.embedding_norm,
+                factors.occlusion_severity,
+                factors.pose_yaw,
+                factors.pose_roll,
+            )
+            _observe_quality_factors(
+                self._metrics,
+                sharpness=factors.sharpness,
+                embedding_norm=factors.embedding_norm,
+                occlusion_severity=factors.occlusion_severity,
             )
             results.append(
                 FaceDetection(
@@ -659,12 +707,15 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
                     confidence=float(face.score),
                     embedding=np.asarray(embedding, dtype=np.float32),
                     pose_pitch=None,
-                    pose_yaw=None,
-                    pose_roll=None,
+                    pose_yaw=factors.pose_yaw,
+                    pose_roll=factors.pose_roll,
                     image_phash=image_phash,
                     landmark_quality=landmark_quality,
                     model_id=model_id,
                     landmarks=normalize_landmarks(face.landmarks),
+                    sharpness=factors.sharpness,
+                    embedding_norm=factors.embedding_norm,
+                    occlusion_severity=factors.occlusion_severity,
                 )
             )
 

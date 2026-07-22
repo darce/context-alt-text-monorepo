@@ -104,6 +104,21 @@ class ClusterLabelService {
 					);
 				}
 
+				// Preserve the pre-write-through dual-write contract: label curation
+				// still emits cluster_label_updated as the primary outbox event.
+				// Person-projection write-through below is additive (rg-002).
+				if ( ! $this->host->enqueue_curation_operation(
+					'cluster_label_updated',
+					$cluster_id,
+					$cluster,
+					array(
+						'cluster_uuid' => $cluster_id,
+						'label'        => $label,
+					)
+				) ) {
+					return new WP_Error( 'acx_db_error', 'Could not queue label replay operation.', array( 'status' => 500 ) );
+				}
+
 				// Caller owns the transaction: resolver must not open nested START TRANSACTION.
 				$resolver = new PersonResolutionService();
 				$resolved = $resolver->resolve_or_create(
@@ -146,18 +161,6 @@ class ClusterLabelService {
 				);
 				if ( false === $bound ) {
 					return new WP_Error( 'acx_db_error', 'Could not bind person to cluster.', array( 'status' => 500 ) );
-				}
-
-				if ( ! $this->host->enqueue_curation_operation(
-					'cluster_label_updated',
-					$cluster_id,
-					$cluster,
-					array(
-						'cluster_uuid' => $cluster_id,
-						'label'        => $label,
-					)
-				) ) {
-					return new WP_Error( 'acx_db_error', 'Could not queue label replay operation.', array( 'status' => 500 ) );
 				}
 
 				if ( ! $this->host->enqueue_curation_operation(

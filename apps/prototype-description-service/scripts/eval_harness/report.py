@@ -26,6 +26,10 @@ from .caption_metrics import CaptionScores, insertion_rate, score_caption
 from .face_assignment import TAU_GRID, score_face_assignment
 from .face_metrics import (
     CLUSTER_PAIR_FLOOR,
+    SAMPLING_FRAME_CLUSTERING,
+    SAMPLING_FRAME_FACE_ID,
+    SAMPLING_FRAME_UNKNOWN_REJECTION,
+    UNKNOWN_REJECTION_ERROR_TARGET,
     UNKNOWN_REJECTION_N_FLOOR,
     ImageDetection,
     ImageIdentities,
@@ -40,10 +44,19 @@ from .manifest import Provenance, ProvenanceSource
 from .schema import SCHEMA, DocKind
 from .synthetic_occlusion import (
     ELIGIBLE_PAIR_FLOOR,
+    SAMPLING_FRAME_OCCLUSION_RECOVERY,
     SYNTHETIC_OCCLUSION_PROTOCOL_DISCLOSURES,
     assert_walk_stability,
     score_occlusion_accuracy,
 )
+
+# Protocol / canon pin (REF-25..28 / FIR5V11-06). Code SHAs alone do not name
+# the evaluation protocol version the rates were computed under.
+FACE_BAKEOFF_CANON_VERSION = "0.11.0"
+FACE_BAKEOFF_PROTOCOL_ID = "fir-5-face-bakeoff-v0.11.0"
+
+# Release-surface label (RLSE-11): gate_proposal is never a release artifact.
+GATE_PROPOSAL_RELEASE_SURFACE = "proposal_only_not_release"
 
 # Bake-off protocol posture disclosed on every scored face artifact (FIR5RC-07).
 # Measured protocol changes (weighted prototypes, ambiguity margin, matched
@@ -60,8 +73,23 @@ FACE_BAKEOFF_PROTOCOL_DISCLOSURES: tuple[str, ...] = (
     "identification P/R runs only over §C-matched named decisions; missed "
     "detections and unmatched faces are excluded from FN (EVAL-16); stranger "
     "false-accepts live only in unknown-rejection (EVAL-18)",
+    # IDX-01/07/11 deferred design (disclosure now; measurement later).
+    "exact-vs-index separation of concerns and contender-set retrieval design "
+    "are S4/S5 measurement-time items (IDX-01/07/11) — not measured here",
     *SYNTHETIC_OCCLUSION_PROTOCOL_DISCLOSURES,
 )
+
+# Sampling-frame registry referenced from provenance (AUDIT-01 / REF-25..28).
+FACE_BAKEOFF_SAMPLING_FRAMES: dict[str, str] = {
+    "headline_identification": (
+        "celebs01_named_matched_probes (provenance.source==CELEB); "
+        + SAMPLING_FRAME_FACE_ID
+    ),
+    "full_corpus_identification": "full_corpus_" + SAMPLING_FRAME_FACE_ID,
+    "unknown_rejection": SAMPLING_FRAME_UNKNOWN_REJECTION,
+    "occlusion_recovery": SAMPLING_FRAME_OCCLUSION_RECOVERY,
+    "clustering": SAMPLING_FRAME_CLUSTERING,
+}
 
 
 class Audience(StrEnum):
@@ -467,7 +495,11 @@ def build_reports(
 # ``_filter_for_public_audience`` (that zeros the unknown-rejection gate).
 
 # Floor units (§Headline / floor policy). Under-floor → DIRECTIONAL only (SC4).
+# Error targets are Wilson 95% half-widths at p̂=0.5 (scope sizing table).
 HEADLINE_ID_RECALL_ELIGIBLE_FLOOR = 100
+HEADLINE_ID_ERROR_TARGET = (
+    "Wilson_95_halfwidth_le_10pct_at_p0.5 (n≈96–100 → ±9.8%)"
+)
 DIRECTIONAL_LABEL = "UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion"
 GATING_LABEL = "gating_candidate"  # only when floor met; FIR-6 operator decides
 WILSON_Z = 1.96
@@ -544,7 +576,35 @@ def _face_pr_dict(pr: Any) -> dict[str, Any]:
         "n_recall_eligible": pr.n_recall_eligible,
         "wrong_names": [list(w) for w in pr.wrong_names],
         "detection_recall_coupling_flag": pr.detection_recall_coupling_flag,
+        "sampling_frame": getattr(pr, "sampling_frame", SAMPLING_FRAME_FACE_ID),
+        "precision_numerator": getattr(pr, "precision_numerator", pr.true_positives),
+        "precision_denominator": getattr(
+            pr, "precision_denominator", pr.true_positives + pr.false_positives
+        ),
+        "recall_numerator": getattr(pr, "recall_numerator", pr.true_positives),
+        "recall_denominator": getattr(
+            pr, "recall_denominator", pr.true_positives + pr.false_negatives
+        ),
+        "missed_gt": getattr(pr, "missed_gt", 0),
+        "unmatched_detections": getattr(pr, "unmatched_detections", 0),
     }
+
+
+def _association_counts_for_media(
+    assignment: Any,
+    media_ids: set[int],
+) -> tuple[int, int]:
+    """Sum missed_gt / unmatched detections scoped to a media-id set."""
+    missed = 0
+    unmatched = 0
+    by_media = getattr(assignment, "association_by_media", None) or {}
+    for mid in media_ids:
+        assoc = by_media.get(mid)
+        if assoc is None:
+            continue
+        missed += len(assoc.unmatched_gt)
+        unmatched += len(assoc.unmatched_detections)
+    return missed, unmatched
 
 
 def _slice_status(*, meets_floor: bool, reasons: Sequence[str] | None = None) -> dict[str, Any]:
@@ -762,20 +822,27 @@ def score_face_run_record(
         assignment.decisions,
         missed_gt=assignment.missed_gt,
         unmatched_detections=assignment.false_detections,
+        sampling_frame=FACE_BAKEOFF_SAMPLING_FRAMES["full_corpus_identification"],
     )
     unknown = face_unknown_rejection(assignment.decisions)
 
     # Headline = celebs01 named probes only (provenance.source == CELEB).
+    # Coupling counts are headline-scoped (not full-corpus) so the honesty flag
+    # matches the published rate's sampling frame (FIR5V11-05 / REF-27).
     celebs01_ids = {mid for mid, e in entry_by_id.items() if _is_celebs01(e)}
     headline_decisions = [
         d
         for d in assignment.decisions
         if d.media_id in celebs01_ids and d.true_name is not None
     ]
+    headline_missed_gt, headline_unmatched = _association_counts_for_media(
+        assignment, celebs01_ids
+    )
     headline_id = face_identification_pr(
         headline_decisions,
-        missed_gt=assignment.missed_gt,
-        unmatched_detections=assignment.false_detections,
+        missed_gt=headline_missed_gt,
+        unmatched_detections=headline_unmatched,
+        sampling_frame=FACE_BAKEOFF_SAMPLING_FRAMES["headline_identification"],
     )
     headline_floor_met = (
         not zero_box_corpus and headline_id.n_recall_eligible >= HEADLINE_ID_RECALL_ELIGIBLE_FLOOR
@@ -929,6 +996,14 @@ def score_face_run_record(
                 "n_ineligible": synth_acc.n_ineligible,
                 "walk_stability_asserted": synth_acc.walk_stability_asserted,
                 "walk_stability_delta": synth_acc.walk_stability_delta,
+                "sampling_frame": getattr(
+                    synth_acc, "sampling_frame", SAMPLING_FRAME_OCCLUSION_RECOVERY
+                ),
+                "rate_numerator": getattr(synth_acc, "rate_numerator", synth_acc.n_correct),
+                "rate_denominator": getattr(
+                    synth_acc, "rate_denominator", synth_acc.n_eligible
+                ),
+                "n_floor": ELIGIBLE_PAIR_FLOOR,
                 **status,
             },
             "real": (
@@ -936,6 +1011,13 @@ def score_face_run_record(
                     "accuracy": real_acc.accuracy,
                     "n_eligible": real_acc.n_eligible,
                     "n_correct": real_acc.n_correct,
+                    "sampling_frame": getattr(
+                        real_acc, "sampling_frame", SAMPLING_FRAME_OCCLUSION_RECOVERY
+                    ),
+                    "rate_numerator": getattr(real_acc, "rate_numerator", real_acc.n_correct),
+                    "rate_denominator": getattr(
+                        real_acc, "rate_denominator", real_acc.n_eligible
+                    ),
                     "directional": True,  # real n floors small — never gating alone here
                     "status": DIRECTIONAL_LABEL,
                 }
@@ -951,6 +1033,7 @@ def score_face_run_record(
             **_face_pr_dict(headline_id),
             "n_floor": HEADLINE_ID_RECALL_ELIGIBLE_FLOOR,
             "floor_unit": "recall_eligible_celebs01",
+            "error_target": HEADLINE_ID_ERROR_TARGET,
             **headline_status,
         },
         "unknown_rejection": {
@@ -959,9 +1042,16 @@ def score_face_run_record(
             "false_accepts": unknown.false_accepts,
             "n": unknown.n,
             "n_floor": UNKNOWN_REJECTION_N_FLOOR,
+            "error_target": UNKNOWN_REJECTION_ERROR_TARGET,
+            "sampling_frame": unknown.sampling_frame,
+            "rate_numerator": unknown.rate_numerator,
+            "rate_denominator": unknown.rate_denominator,
             **unknown_status,
         },
-        "clustering": cluster_block,
+        "clustering": {
+            **cluster_block,
+            "sampling_frame": SAMPLING_FRAME_CLUSTERING,
+        },
         "occlusion": occlusion_out,
         "demographic": demo_block,
         "full_corpus_identification": _face_pr_dict(id_pr),
@@ -990,6 +1080,8 @@ def score_face_run_record(
 
     gate_proposal = {
         "role": "proposal_only",
+        # RLSE-11: explicit release-surface label — never a ship/release artifact.
+        "release_surface": GATE_PROPOSAL_RELEASE_SURFACE,
         "operator_authority": "FIR-6 human operator records gate/deferral; FIR-5 cannot self-promote",
         "proposed_slices": proposed,
         "excluded_directional": sorted(excluded),
@@ -997,6 +1089,9 @@ def score_face_run_record(
             "identification_recall": headline_id.recall,
             "detection_recall": detection["recall"],
             "detection_recall_coupling_flag": headline_id.detection_recall_coupling_flag,
+            "missed_gt": headline_id.missed_gt,
+            "unmatched_detections": headline_id.unmatched_detections,
+            "sampling_frame": headline_id.sampling_frame,
             "flag": (
                 "identification recall is computed only over faces this leg detected and "
                 "§C-matched (enrolled); weak detection can inflate id-recall on the easy "
@@ -1012,6 +1107,8 @@ def score_face_run_record(
         ],
         "perf_label": "detect+embed-only (COST-04/15); not full-scan p95",
         "protocol_disclosures": list(FACE_BAKEOFF_PROTOCOL_DISCLOSURES),
+        "canon_version": FACE_BAKEOFF_CANON_VERSION,
+        "protocol_id": FACE_BAKEOFF_PROTOCOL_ID,
     }
 
     decisions_json = [
@@ -1055,6 +1152,10 @@ def score_face_run_record(
         },
         "zero_box_corpus": zero_box_corpus,
         "total_gt_boxes": total_boxes,
+        # REF-25..28: pin protocol/canon version + sampling-frame refs alongside SHAs.
+        "canon_version": FACE_BAKEOFF_CANON_VERSION,
+        "protocol_id": FACE_BAKEOFF_PROTOCOL_ID,
+        "sampling_frames": dict(FACE_BAKEOFF_SAMPLING_FRAMES),
     }
 
     report: dict[str, Any] = {
@@ -1142,14 +1243,68 @@ def redact_face_report_for_public(report: dict[str, Any]) -> dict[str, Any]:
     #     ``counts``.
     redacted["failures"] = []
 
+    # AUDIT-09/12: redaction strips decision rows but must retain denominators
+    # for every published aggregate rate so n/N honesty survives public export.
+    preserved: dict[str, Any] = {}
+    hl = slices.get("headline_identification")
+    if isinstance(hl, dict):
+        preserved["headline_identification"] = {
+            "precision_numerator": hl.get("precision_numerator"),
+            "precision_denominator": hl.get("precision_denominator"),
+            "recall_numerator": hl.get("recall_numerator"),
+            "recall_denominator": hl.get("recall_denominator"),
+            "n_named_probes": hl.get("n_named_probes"),
+            "n_recall_eligible": hl.get("n_recall_eligible"),
+            "sampling_frame": hl.get("sampling_frame"),
+        }
+    unk = slices.get("unknown_rejection")
+    if isinstance(unk, dict):
+        preserved["unknown_rejection"] = {
+            "rate_numerator": unk.get("rate_numerator", unk.get("correct_rejects")),
+            "rate_denominator": unk.get("rate_denominator", unk.get("n")),
+            "n": unk.get("n"),
+            "sampling_frame": unk.get("sampling_frame"),
+        }
+    full = slices.get("full_corpus_identification")
+    if isinstance(full, dict):
+        preserved["full_corpus_identification"] = {
+            "precision_numerator": full.get("precision_numerator"),
+            "precision_denominator": full.get("precision_denominator"),
+            "recall_numerator": full.get("recall_numerator"),
+            "recall_denominator": full.get("recall_denominator"),
+            "n_named_probes": full.get("n_named_probes"),
+            "n_recall_eligible": full.get("n_recall_eligible"),
+            "sampling_frame": full.get("sampling_frame"),
+        }
+    occ = slices.get("occlusion")
+    if isinstance(occ, dict):
+        occ_pres: dict[str, Any] = {}
+        for tag, block in occ.items():
+            if not isinstance(block, dict):
+                continue
+            synth = block.get("synthetic") or {}
+            if isinstance(synth, dict):
+                occ_pres[str(tag)] = {
+                    "rate_numerator": synth.get("rate_numerator", synth.get("n_correct")),
+                    "rate_denominator": synth.get(
+                        "rate_denominator", synth.get("n_eligible")
+                    ),
+                    "n_eligible": synth.get("n_eligible"),
+                    "sampling_frame": synth.get("sampling_frame"),
+                }
+        if occ_pres:
+            preserved["occlusion"] = occ_pres
+
     redacted["redaction"] = {
         "audience": "public",
         "mode": "post_score_redact_face_report_for_public",
         "grounded_on": "manifest.Provenance.is_publishable (stamped per decision at score time)",
         "stripped_decision_rows": stripped,
+        "preserved_aggregate_denominators": preserved,
         "note": (
             "Aggregate rates (incl. unknown-rejection) preserved from full-corpus "
-            "score; every non-publishable per-face detail row + identity list "
+            "score with denominators retained under preserved_aggregate_denominators; "
+            "every non-publishable per-face detail row + identity list "
             "(clustering labels, wrong_names, failures) stripped. Fail-closed on "
             "missing provenance. Distinct from pre-score _filter_for_public_audience "
             "/ Audience.PUBLIC."
@@ -1157,6 +1312,11 @@ def redact_face_report_for_public(report: dict[str, Any]) -> dict[str, Any]:
     }
     # Do NOT drop unknown_rejection aggregates — they must stay.
     return _sort_nested_lists(redacted)
+
+
+def _fmt_rate_n_over_n(rate: Any, num: Any, den: Any) -> str:
+    """Format a published rate with explicit n/N (AUDIT-13)."""
+    return f"{_fmt(rate)} ({num}/{den})"
 
 
 def _markdown_face(scored: dict[str, Any]) -> str:
@@ -1173,6 +1333,8 @@ def _markdown_face(scored: dict[str, Any]) -> str:
         f"embedding_dims: `{model.get('embedding_dims')}` leg: `{model.get('leg')}`",
         f"- head_sha: `{prov.get('head_sha', 'unknown')}`",
         f"- score manifest_sha256: `{prov.get('score_manifest_sha256', 'unknown')}`",
+        f"- canon_version: `{prov.get('canon_version', FACE_BAKEOFF_CANON_VERSION)}` "
+        f"protocol_id: `{prov.get('protocol_id', FACE_BAKEOFF_PROTOCOL_ID)}`",
         f"- zero_box_corpus: {prov.get('zero_box_corpus')} total_gt_boxes: {prov.get('total_gt_boxes')}",
         f"- images: {scored.get('counts', {}).get('scored')}/{scored.get('counts', {}).get('total')} scored, "
         f"{scored.get('counts', {}).get('failed')} failed; matched_faces={scored.get('counts', {}).get('matched_faces')}",
@@ -1185,20 +1347,56 @@ def _markdown_face(scored: dict[str, Any]) -> str:
         "## Floor-gated slices",
         "",
     ]
-    for name in ("headline_identification", "unknown_rejection", "clustering"):
-        block = slices.get(name) or {}
-        lines.append(
-            f"- **{name}**: status=`{block.get('status', block.get('label', '?'))}` "
-            f"directional={block.get('directional')}"
-        )
+    hl = slices.get("headline_identification") or {}
+    lines.append(
+        f"- **headline_identification**: status=`{hl.get('status', hl.get('label', '?'))}` "
+        f"directional={hl.get('directional')} "
+        f"precision={_fmt_rate_n_over_n(hl.get('precision'), hl.get('precision_numerator'), hl.get('precision_denominator'))} "
+        f"recall={_fmt_rate_n_over_n(hl.get('recall'), hl.get('recall_numerator'), hl.get('recall_denominator'))} "
+        f"n_recall_eligible={hl.get('n_recall_eligible')}/{hl.get('n_floor')} "
+        f"frame=`{hl.get('sampling_frame', '')}`"
+    )
+    unk = slices.get("unknown_rejection") or {}
+    lines.append(
+        f"- **unknown_rejection**: status=`{unk.get('status', unk.get('label', '?'))}` "
+        f"directional={unk.get('directional')} "
+        f"rate={_fmt_rate_n_over_n(unk.get('rate'), unk.get('rate_numerator', unk.get('correct_rejects')), unk.get('rate_denominator', unk.get('n')))} "
+        f"n={unk.get('n')}/{unk.get('n_floor')} "
+        f"frame=`{unk.get('sampling_frame', '')}`"
+    )
+    cl = slices.get("clustering") or {}
+    lines.append(
+        f"- **clustering**: status=`{cl.get('status', cl.get('label', '?'))}` "
+        f"directional={cl.get('directional')} "
+        f"purity={_fmt(cl.get('purity'))} "
+        f"false_merge={_fmt(cl.get('false_merge'))} false_split={_fmt(cl.get('false_split'))} "
+        f"P_same={cl.get('p_same')} P_diff={cl.get('p_diff')} M={cl.get('m_co_clustered')} "
+        f"frame=`{cl.get('sampling_frame', '')}`"
+    )
+    occ = slices.get("occlusion") or {}
+    if occ:
+        lines += ["", "### Occlusion recovery", ""]
+        for tag in sorted(occ):
+            block = occ[tag] or {}
+            synth = block.get("synthetic") or {}
+            lines.append(
+                f"- **occlusion.{tag}**: status=`{synth.get('status', synth.get('label', '?'))}` "
+                f"directional={synth.get('directional')} "
+                f"accuracy={_fmt_rate_n_over_n(synth.get('accuracy'), synth.get('rate_numerator', synth.get('n_correct')), synth.get('rate_denominator', synth.get('n_eligible')))} "
+                f"n_eligible={synth.get('n_eligible')}/{synth.get('n_floor', ELIGIBLE_PAIR_FLOOR)}"
+            )
     lines += ["", "## Gate proposal (excludes DIRECTIONAL)", ""]
     lines.append(f"- role: {gp.get('role')}")
+    lines.append(f"- release_surface: `{gp.get('release_surface', GATE_PROPOSAL_RELEASE_SURFACE)}`")
+    lines.append(f"- canon_version: `{gp.get('canon_version', FACE_BAKEOFF_CANON_VERSION)}`")
     lines.append(f"- proposed_slices: {sorted((gp.get('proposed_slices') or {}).keys())}")
     lines.append(f"- excluded_directional: {gp.get('excluded_directional')}")
     couple = gp.get("identification_detection_coupling") or {}
     lines.append(
         f"- id-recall: {_fmt(couple.get('identification_recall'))} "
         f"alongside detection-recall: {_fmt(couple.get('detection_recall'))} "
+        f"(coupling_flag={couple.get('detection_recall_coupling_flag')}, "
+        f"missed_gt={couple.get('missed_gt')}, unmatched_det={couple.get('unmatched_detections')}) "
         f"— {couple.get('flag', '')}"
     )
     lines.append(f"- p95 scan latency: {gp.get('p95_scan_latency')}")
@@ -1213,6 +1411,8 @@ def _markdown_face(scored: dict[str, Any]) -> str:
             "",
             f"- audience=`{r.get('audience')}` mode=`{r.get('mode')}` "
             f"stripped_decision_rows={r.get('stripped_decision_rows')}",
+            f"- preserved_aggregate_denominators keys: "
+            f"{sorted((r.get('preserved_aggregate_denominators') or {}).keys())}",
         ]
     lines += ["", "## Failures", ""]
     if scored.get("failures"):

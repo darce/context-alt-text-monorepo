@@ -489,17 +489,17 @@ def global_fold_ranks(
 ) -> list[int]:
     """Subject-disjoint fold assignment (CAL-07).
 
-    Named identity X's faces all share one fold (``identity_rank mod K`` over
-    sorted unique names). Round-robin-by-face is intentionally *not* used —
+    Named identity X's faces all share one fold. Each stranger face is its own
+    subject (keyed by media_id/box/det). **Named and stranger subjects share one
+    joint rank space** (sorted: named names first, then stranger keys) so small
+    strata do not collide every subject into fold 0 via independent counters
+    (REF-27 / FIR5V11-03). Round-robin-by-face is intentionally *not* used —
     that would put the same identity into both fit and read folds for ``τ_k``.
-
-    Each stranger face is its own subject (keyed by media_id/box/det) so
-    impostors still spread across folds without binding named subjects.
     """
     if k_folds < 1:
         raise ValueError("k_folds must be ≥ 1")
+    # Joint subject list: named identities (sort key = name) then strangers.
     named_ids = sorted({m.true_name for m in matched if m.true_name is not None})
-    id_to_fold = {name: i % k_folds for i, name in enumerate(named_ids)}
     stranger_keys = sorted(
         {
             (m.media_id, m.box_index, m.det_index)
@@ -507,13 +507,19 @@ def global_fold_ranks(
             if m.true_name is None
         }
     )
-    stranger_to_fold = {key: i % k_folds for i, key in enumerate(stranger_keys)}
+    # Unified rank so Alice+stranger with K=2 land in distinct folds (not both 0).
+    subjects: list[tuple[str, str | tuple[int, int, int]]] = [
+        ("named", name) for name in named_ids
+    ] + [("stranger", key) for key in stranger_keys]
+    subject_to_fold = {subj: i % k_folds for i, subj in enumerate(subjects)}
     ranks: list[int] = []
     for m in matched:
         if m.true_name is not None:
-            ranks.append(id_to_fold[m.true_name])
+            ranks.append(subject_to_fold[("named", m.true_name)])
         else:
-            ranks.append(stranger_to_fold[(m.media_id, m.box_index, m.det_index)])
+            ranks.append(
+                subject_to_fold[("stranger", (m.media_id, m.box_index, m.det_index))]
+            )
     return ranks
 
 
@@ -554,6 +560,15 @@ def collect_matched_faces(
     return matched, associations, false_det, missed
 
 
+def _subject_count(matched: Sequence[MatchedFace]) -> int:
+    """Named identities + per-face stranger subjects (fold-key atoms)."""
+    named = {m.true_name for m in matched if m.true_name is not None}
+    strangers = {
+        (m.media_id, m.box_index, m.det_index) for m in matched if m.true_name is None
+    }
+    return len(named) + len(strangers)
+
+
 def assign_open_set_kfold(
     matched: Sequence[MatchedFace],
     *,
@@ -567,15 +582,44 @@ def assign_open_set_kfold(
     uses the full matched corpus so every enrolled identity remains identifiable.
 
     Identification / unknown-rejection consume ``decisions`` — never re-score at τ_op.
+
+    Empty-fit guard (REF-27 / FIR5V11-03): ``k_folds`` is clamped to the subject
+    count so subject-disjoint assignment can leave a non-empty fit set for every
+    fold that holds probes. Completely empty train with probes present still
+    raises (undefined τ); the prior silent mid-grid default is rejected.
     """
+    if k_folds < 1:
+        raise ValueError("k_folds must be ≥ 1")
     by_identity = matched_named_by_identity(matched)
     identity_counts = {name: len(faces) for name, faces in by_identity.items()}
-    folds = global_fold_ranks(matched, k_folds=k_folds)
+    n_subjects = _subject_count(matched)
+    # Clamp K so each subject can occupy a distinct fold when possible; prevents
+    # K >> named-identity-count empty-fit coincidence on small strata.
+    effective_k = max(1, min(int(k_folds), n_subjects)) if matched else 1
+    folds = global_fold_ranks(matched, k_folds=effective_k)
 
     # Per-fold τ_k from the other K−1 folds' probes — fit identities only.
     tau_ks: list[float] = []
-    for k in range(k_folds):
+    mid_grid = float(tau_grid[len(tau_grid) // 2])
+    for k in range(effective_k):
         train = [m for m, f in zip(matched, folds, strict=True) if f != k]
+        read_has_probes = any(f == k for f in folds)
+        if matched and not train and read_has_probes:
+            # With joint subject ranking + K clamp this only arises for a single
+            # subject (effective_k==1). Multi-subject empty fit is a hard error.
+            if effective_k > 1 or n_subjects > 1:
+                raise ValueError(
+                    f"empty fit fold for τ selection: all {len(matched)} probes "
+                    f"are in fold {k} (effective_k={effective_k}, "
+                    f"requested_k={k_folds}, n_subjects={n_subjects}); add "
+                    f"subject-disjoint identities so every τ_k has a non-empty fit set"
+                )
+            tau_ks.append(mid_grid)
+            continue
+        if not train:
+            # Empty read fold with empty train (no matched probes at all).
+            tau_ks.append(mid_grid)
+            continue
         train_by_id = matched_named_by_identity(train)
         train_counts = {name: len(faces) for name, faces in train_by_id.items()}
         tau_ks.append(

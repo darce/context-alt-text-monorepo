@@ -8,10 +8,11 @@ on the **identical** occluded pixels after generation.
 Occlusion metric = open-set paired accuracy: accept only when
 ``s_max >= tau`` and ``name* == true_name`` against a gallery = identity
 un-occluded faces excluding twin source media_id + other identities'
-un-occluded prototypes. Guards: re-detect-miss checked before gallery
-censoring (EVAL-16), distinct-image min-gallery, single-identity galleries
-**excluded from the denominator** (EVAL-18), ≥90 eligible-pair floor,
-walk-stability bound (else DIRECTIONAL).
+un-occluded prototypes. Guards: outcome-independent structural gallery
+eligibility first (distinct-image min-gallery + multi-identity; EXP-22),
+then re-detect-miss counts as fail *inside* the eligible frame, single-
+identity galleries **excluded from the denominator** (EVAL-18), ≥90
+eligible-pair floor, walk-stability bound (else DIRECTIONAL).
 
 Protocol disclosures (EVAL-17): synthetic occluders are solid seeded
 rectangles mapped onto MASKED/sunglasses/occlusion_other slice tags; the
@@ -72,8 +73,9 @@ ELIGIBLE_PAIR_FLOOR = 90
 # If not asserted or not met → DIRECTIONAL (flag alone is insufficient).
 WALK_STABILITY_DELTA_BOUND = 0.05
 
-# Artifact-facing protocol disclosures (EVAL-17 / EVAL-18). Measured changes
-# to generators remain FIR-6-owned; honesty about current posture is FIR-5.
+# Artifact-facing protocol disclosures (EVAL-17 / EVAL-18 / EXP-08 / EXP-22).
+# Measured changes to generators remain FIR-6-owned; honesty about current
+# posture is FIR-5.
 SYNTHETIC_OCCLUSION_PROTOCOL_DISCLOSURES: tuple[str, ...] = (
     "synthetic occluders are solid seeded rectangles mapped onto "
     "MASKED/sunglasses/occlusion_other slice tags — not photo-realistic masks",
@@ -82,6 +84,23 @@ SYNTHETIC_OCCLUSION_PROTOCOL_DISCLOSURES: tuple[str, ...] = (
     "occlusion recovery uses open-set threshold (s_max >= tau), not closed-set "
     "argmax; single-identity galleries are excluded from the denominator (EVAL-18)",
     "filter_headline_probes is fail-closed: occluded_probe_keys is required",
+    # EXP-08 / LOCV11-06: landmark cache is YuNet (candidate family); both legs
+    # share the same twin-generation population, so faces only the incumbent
+    # detects never enter the occlusion comparison set.
+    "occlusion twin eligibility for BOTH legs is conditioned on the frozen "
+    "YuNet (candidate-family) landmark cache — faces only the incumbent "
+    "detects are structurally excluded; the comparison population is "
+    "correlated with the candidate detection distribution (EXP-08)",
+    # EXP-22: structural gallery eligibility is outcome-independent.
+    "occlusion denominator membership is outcome-independent: distinct-image "
+    "min-gallery and multi-identity gallery gates run before re-detect miss "
+    "or recovery scoring (EXP-22)",
+)
+
+# Named sampling frame for published occlusion recovery rates (AUDIT-01/02).
+SAMPLING_FRAME_OCCLUSION_RECOVERY = (
+    "eligible_twin_pairs: distinct_image_min_gallery AND gallery_n_identities>=2; "
+    "re_detect_miss counts as incorrect only inside that frame"
 )
 
 # Determinism layer 2: pinned OpenCV warp (within one host profile).
@@ -431,6 +450,10 @@ class OcclusionAccuracy:
     walk_stability_asserted: bool = False
     walk_stability_delta: float | None = None
     tau: float | None = None
+    sampling_frame: str = SAMPLING_FRAME_OCCLUSION_RECOVERY
+    # Denominator for published accuracy (AUDIT-02): eligible pairs only.
+    rate_numerator: int = 0  # n_correct
+    rate_denominator: int = 0  # n_eligible
 
     @property
     def meets_pair_floor(self) -> bool:
@@ -449,14 +472,52 @@ def score_occlusion_pair(
 ) -> OcclusionPairResult:
     """Score one twin: open-set recovery (s_max ≥ tau ∧ name* == true).
 
-    Censoring order (EVAL-16): re-detect miss is checked **before** gallery
-    eligibility so upstream detection failures count against the recovery
-    denominator instead of leaving it. Single-identity galleries are
-    ineligible (EVAL-18 — rank metrics cannot express 'no one here').
+    Eligibility order is **outcome-independent** (EXP-22 / EVAL-18):
+
+    1. Distinct-image min-gallery (structural).
+    2. Multi-identity gallery (structural; single-identity leaves the
+       denominator — rank metrics cannot express 'no one here').
+    3. Only then: re-detect miss → incorrect *inside* the eligible frame, or
+       score the embedding.
+
+    Gallery gates therefore run whether the twin re-detects or not, so a
+    deficient gallery cannot contribute failures on miss and exclusions on
+    success for the same unit.
     """
-    # 1) Re-detect miss first — always counts against the recovery denominator.
+    # 1–2) Structural gallery eligibility (independent of twin outcome).
+    if not has_distinct_image_gallery_support(true_name, source_media_id, by_identity):
+        return OcclusionPairResult(
+            media_id=source_media_id,
+            box_index=box_index,
+            true_name=true_name,
+            kind=kind,
+            eligible=False,
+            correct=None,
+            re_detect_miss=twin_embedding is None,
+            predicted_name=None,
+            gallery_n_identities=0,
+            ineligible_reason="distinct_image_min_gallery",
+        )
+
+    gallery = build_occlusion_gallery(true_name, source_media_id, by_identity)
+    n_ids = gallery_identity_count(gallery)
+
+    if n_ids < 2:
+        return OcclusionPairResult(
+            media_id=source_media_id,
+            box_index=box_index,
+            true_name=true_name,
+            kind=kind,
+            eligible=False,
+            correct=None,
+            re_detect_miss=twin_embedding is None,
+            predicted_name=None,
+            gallery_n_identities=n_ids,
+            ineligible_reason="single_identity_gallery",
+        )
+
+    # 3) Outcome inside the eligible frame.
     if twin_embedding is None:
-        gallery = build_occlusion_gallery(true_name, source_media_id, by_identity)
         return OcclusionPairResult(
             media_id=source_media_id,
             box_index=box_index,
@@ -466,40 +527,7 @@ def score_occlusion_pair(
             correct=False,
             re_detect_miss=True,
             predicted_name=None,
-            gallery_n_identities=gallery_identity_count(gallery),
-        )
-
-    # 2) Distinct-image min-gallery support.
-    if not has_distinct_image_gallery_support(true_name, source_media_id, by_identity):
-        return OcclusionPairResult(
-            media_id=source_media_id,
-            box_index=box_index,
-            true_name=true_name,
-            kind=kind,
-            eligible=False,
-            correct=None,
-            re_detect_miss=False,
-            predicted_name=None,
-            gallery_n_identities=0,
-            ineligible_reason="distinct_image_min_gallery",
-        )
-
-    gallery = build_occlusion_gallery(true_name, source_media_id, by_identity)
-    n_ids = gallery_identity_count(gallery)
-
-    # 3) Single-identity galleries leave the denominator (closed-set vacuity).
-    if n_ids < 2:
-        return OcclusionPairResult(
-            media_id=source_media_id,
-            box_index=box_index,
-            true_name=true_name,
-            kind=kind,
-            eligible=False,
-            correct=None,
-            re_detect_miss=False,
-            predicted_name=None,
             gallery_n_identities=n_ids,
-            ineligible_reason="single_identity_gallery",
         )
 
     emb = np.asarray(twin_embedding, dtype=np.float64)
@@ -566,6 +594,9 @@ def _rollup_pairs(
         walk_stability_asserted=walk_stability_asserted,
         walk_stability_delta=walk_stability_delta,
         tau=tau,
+        sampling_frame=SAMPLING_FRAME_OCCLUSION_RECOVERY,
+        rate_numerator=n_correct,
+        rate_denominator=n_eligible,
     )
 
 
@@ -708,6 +739,7 @@ __all__ = [
     "ELIGIBLE_PAIR_FLOOR",
     "WALK_STABILITY_DELTA_BOUND",
     "SYNTHETIC_OCCLUSION_PROTOCOL_DISCLOSURES",
+    "SAMPLING_FRAME_OCCLUSION_RECOVERY",
     "OcclusionKind",
     "OcclusionTwinSpec",
     "OcclusionPairResult",

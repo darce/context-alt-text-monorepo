@@ -106,7 +106,7 @@ export const DashboardSyncHealthSection = ({
         {topologyPending > 0 || topologyFailed > 0 || topologyConflicts > 0 ? (
           <p>
             {sprintf(
-              SYNC_VOCABULARY.syncBacklogShort,
+              SYNC_VOCABULARY.pendingWorkSummaryShort,
               topologyPending,
               topologyFailed,
               topologyConflicts,

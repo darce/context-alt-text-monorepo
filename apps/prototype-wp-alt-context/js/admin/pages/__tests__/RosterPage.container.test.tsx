@@ -227,8 +227,8 @@ describe('RosterPage route container', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('tab', { name: 'Clusters' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: 'Entries' })).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByRole('tab', { name: 'Face groups' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'People' })).toHaveAttribute('aria-selected', 'false');
   });
 
   it('[PAG-M3] preserves entries tab bootstrap with personFilter=unassigned', () => {
@@ -261,8 +261,8 @@ describe('RosterPage route container', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('tab', { name: 'Entries' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: 'Clusters' })).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByRole('tab', { name: 'People' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Face groups' })).toHaveAttribute('aria-selected', 'false');
     expect(screen.getByText('Filtered: Unassigned')).toBeInTheDocument();
     expect(screen.getByText('Showing unassigned people only.')).toBeInTheDocument();
     expect(screen.getByText('Unassigned Person')).toBeInTheDocument();
@@ -275,8 +275,8 @@ describe('RosterPage route container', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('tab', { name: 'Entries' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: 'Clusters' })).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByRole('tab', { name: 'People' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Face groups' })).toHaveAttribute('aria-selected', 'false');
     expect(
       screen.getByText(
         'This route is recognized, but the person workspace stays on the legacy Entries view until enriched roster projection data lands.',
@@ -291,8 +291,8 @@ describe('RosterPage route container', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('tab', { name: 'Entries' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: 'Clusters' })).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByRole('tab', { name: 'People' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Face groups' })).toHaveAttribute('aria-selected', 'false');
     expect(
       screen.getByText(
         'This route is recognized, but the person workspace stays on the legacy Entries view until enriched roster projection data lands.',
@@ -307,8 +307,8 @@ describe('RosterPage route container', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('tab', { name: 'Entries' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: 'Clusters' })).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByRole('tab', { name: 'People' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Face groups' })).toHaveAttribute('aria-selected', 'false');
     expect(
       screen.getByText(
         'This route is recognized, but the person workspace stays on the legacy Entries view until enriched roster projection data lands.',
@@ -323,8 +323,8 @@ describe('RosterPage route container', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('tab', { name: 'Clusters' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: 'Entries' })).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByRole('tab', { name: 'Face groups' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'People' })).toHaveAttribute('aria-selected', 'false');
     expect(await screen.findByRole('button', { name: /^Close$/i })).toBeInTheDocument();
   });
 
@@ -350,7 +350,7 @@ describe('RosterPage route container', () => {
       </MemoryRouter>,
     );
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Clusters' }));
+    await userEvent.click(screen.getByRole('tab', { name: 'Face groups' }));
     await userEvent.click(screen.getByRole('button', { name: /Cluster One/i }));
 
     expect(screen.getByRole('button', { name: /^Close$/i })).toBeInTheDocument();
@@ -399,7 +399,7 @@ describe('RosterPage route container', () => {
     await userEvent.click(screen.getByText('Alex Carter'));
     await userEvent.click(screen.getByRole('button', { name: /Open person workspace/i }));
 
-    expect(screen.getByRole('tab', { name: 'Entries' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'People' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('region', { name: /Person workspace: Alex Carter/i })).toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: /Commit to roster entry/i })).not.toBeInTheDocument();
   });
@@ -442,7 +442,7 @@ describe('RosterPage route container', () => {
       </MemoryRouter>,
     );
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Clusters' }));
+    await userEvent.click(screen.getByRole('tab', { name: 'Face groups' }));
     await userEvent.click(screen.getByRole('button', { name: 'Merge' }));
     await userEvent.click(screen.getAllByRole('button', { name: /^Merge$/i }).at(-1)!);
     expect(clusterActionState.bulkMergeMutation.mutateAsync).toHaveBeenCalledWith({
@@ -463,7 +463,7 @@ describe('RosterPage route container', () => {
       </MemoryRouter>,
     );
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Clusters' }));
+    await userEvent.click(screen.getByRole('tab', { name: 'Face groups' }));
     await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
     await userEvent.click(screen.getAllByRole('button', { name: /^Dismiss$/i }).at(-1)!);
 
@@ -479,7 +479,7 @@ describe('RosterPage route container', () => {
       </MemoryRouter>,
     );
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Clusters' }));
+    await userEvent.click(screen.getByRole('tab', { name: 'Face groups' }));
     await userEvent.click(screen.getByRole('checkbox', { name: 'Select all clusters' }));
 
     expect(selectionState.selectAll).toHaveBeenCalledWith(['cluster-1']);

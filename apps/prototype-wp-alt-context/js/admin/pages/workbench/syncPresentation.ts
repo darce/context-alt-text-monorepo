@@ -453,9 +453,6 @@ export const formatRetentionModeLabel = (mode: string): string => {
   }
 };
 
-export const formatSyncModeLabel = (mode: 'delta' | 'full'): string =>
-  mode === 'delta' ? SYNC_VOCABULARY.syncModeDelta : SYNC_VOCABULARY.syncModeFull;
-
 /** Build presentation inputs from a SyncStatusResponse + UI flags. */
 export const syncPresentationInputFromStatus = (
   data: SyncStatusResponse | null | undefined,

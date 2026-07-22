@@ -260,4 +260,45 @@ describe('useLiveReviewTarget', () => {
       expect(onAnnounce).toHaveBeenCalledTimes(1);
     });
   });
+
+  it('S5-02: record-after-404 rebinds (not permanent stale null from old memo)', async () => {
+    // 404 first with empty survivor map → retired/close. Then record survivor and
+    // re-render: lazy resolve must upgrade to rebound. Old useMemo deps
+    // [retired, openClusterId] kept survivorId null forever after the first 404.
+    vi.mocked(fetchClusterMembers).mockRejectedValue(notFound('cluster-x'));
+    const survivors = new Map<string, string>();
+    const onAnnounce = vi.fn();
+    const onRebind = vi.fn();
+    const onClose = vi.fn();
+
+    const { result, rerender } = renderHook(
+      () =>
+        useLiveReviewTarget('cluster-x', {
+          resolveSurvivor: (id) => survivors.get(id) ?? null,
+          onAnnounce,
+          onRebind,
+          onClose,
+        }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => {
+      expect(result.current.status).toBe('retired');
+    });
+    expect(result.current.resolvedClusterId).toBeNull();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onRebind).not.toHaveBeenCalled();
+
+    // Mutation success records survivor after the 404 (map mutates; same open id).
+    survivors.set('cluster-x', 'cluster-survivor');
+    rerender();
+
+    await waitFor(() => {
+      expect(result.current.status).toBe('rebound');
+    });
+    expect(result.current.resolvedClusterId).toBe('cluster-survivor');
+    expect(onRebind).toHaveBeenCalledTimes(1);
+    expect(onRebind).toHaveBeenCalledWith('cluster-survivor');
+    expect(onAnnounce).toHaveBeenCalledWith(LIVE_TARGET_REBIND_ANNOUNCE);
+  });
 });

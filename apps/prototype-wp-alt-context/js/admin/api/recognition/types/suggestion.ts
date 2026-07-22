@@ -110,6 +110,13 @@ export interface PendingMergeSuggestion {
   cluster_b_representative_media_url?: string | null;
   cluster_b_representative_thumb_url?: string | null;
   cluster_b_representative_bbox?: BoundingBox | null;
+  /**
+   * Authoritative post-accept topology from `_select_merge_target`
+   * (source = retired, target = survivor). Present on accept responses only;
+   * absent/null on list/pending and older backends.
+   */
+  source_cluster_id?: string | null;
+  target_cluster_id?: string | null;
 }
 
 export interface PendingMergeSuggestionsResponse {

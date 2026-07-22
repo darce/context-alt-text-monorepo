@@ -719,13 +719,23 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
                 )
             )
 
+        from recognition.config.settings import resolve_effective_detection_settings
+
+        detection_settings = resolve_effective_detection_settings()
+        min_confidence = float(detection_settings.default_threshold)
+        max_faces = int(detection_settings.max_identities_per_image)
+        filtered = [face for face in results if float(face.confidence) >= min_confidence]
+        if len(filtered) > max_faces:
+            filtered = sorted(filtered, key=lambda face: face.confidence, reverse=True)[:max_faces]
+        dropped += len(results) - len(filtered)
+
         if dropped:
             logger.debug(
-                "Dropped %d face(s) for %s (bbox clamp / align / embed)",
+                "Dropped %d face(s) for %s (bbox clamp / align / embed / threshold)",
                 dropped,
                 media_id[:20],
             )
-        return results
+        return filtered
 
     async def _acquire_admission(self, timeout_s: float) -> None:
         """Acquire one submit slot within timeout_s; loop-agnostic for process gate."""

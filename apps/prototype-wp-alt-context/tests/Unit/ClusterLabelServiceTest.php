@@ -276,6 +276,117 @@ class ClusterLabelServiceTest extends TestCase
         $this->assertSame('missing_label', $response->get_error_code());
     }
 
+    /**
+     * BR-11: identical-label resubmit with no person binding still write-throughs.
+     * update_label returns 0 (no row change) but resolver/bind must still run.
+     */
+    public function testIdenticalLabelResubmitWithoutPersonBindingRunsWriteThrough(): void
+    {
+        global $wpdb;
+
+        $this->repository->nextUpdateLabelRows = 0;
+        $this->repository->localClusterRows['cluster-xyz'] = [
+            'cluster_uuid' => 'cluster-xyz',
+            'snapshot_version' => 17,
+            'local_revision' => 4,
+            'curation_state' => 'uncurated',
+            'label' => 'Ada Lovelace',
+            // person_id absent / null — binding missing despite label already set.
+            'person_id' => null,
+        ];
+        $wpdb->insert_id = 66;
+        $wpdb->tableRows['wp_acx_persons'] = [];
+
+        $request = new WP_REST_Request('PATCH', '/acx/v1/recognition/clusters/cluster-xyz');
+        $request->set_param('cluster_id', 'cluster-xyz');
+        $request->set_param('label', 'Ada Lovelace');
+
+        $response = $this->service->update_cluster_label($request);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertSame('pending', $data['status']);
+        $this->assertSame('Ada Lovelace', $data['label']);
+
+        $labelUpdated = array_values(
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_contains($query, "'cluster_label_updated'")
+            )
+        );
+        $this->assertCount(0, $labelUpdated, 'identical-label no-op must not re-enqueue cluster_label_updated');
+
+        $personCreated = array_values(
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_contains($query, "'person_created'")
+            )
+        );
+        $this->assertCount(1, $personCreated, 'missing person bind must still create/resolve person');
+
+        $personBound = array_values(
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_contains($query, "'cluster_person_bound'")
+            )
+        );
+        $this->assertCount(1, $personBound);
+
+        $bindUpdate = $this->findQueryContaining($wpdb->queries, 'person_id = 66');
+        $this->assertStringContainsString("cluster_uuid = 'cluster-xyz'", $bindUpdate);
+        $this->assertSame(self::currentTenantId(), $this->syncStateRepository->lastTouchedTenantId);
+    }
+
+    /**
+     * Identical-label resubmit when person binding already exists is a pure ack.
+     */
+    public function testIdenticalLabelResubmitWithPersonBindingAcknowledgesWithoutWriteThrough(): void
+    {
+        global $wpdb;
+
+        $this->repository->nextUpdateLabelRows = 0;
+        $this->repository->localClusterRows['cluster-xyz'] = [
+            'cluster_uuid' => 'cluster-xyz',
+            'snapshot_version' => 17,
+            'local_revision' => 4,
+            'curation_state' => 'confirmed',
+            'label' => 'Ada Lovelace',
+            'person_id' => 42,
+        ];
+
+        $request = new WP_REST_Request('PATCH', '/acx/v1/recognition/clusters/cluster-xyz');
+        $request->set_param('cluster_id', 'cluster-xyz');
+        $request->set_param('label', 'Ada Lovelace');
+
+        $response = $this->service->update_cluster_label($request);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $this->assertSame(
+            [
+                'cluster_id' => 'cluster-xyz',
+                'label' => 'Ada Lovelace',
+                'synced' => false,
+                'status' => 'acknowledged',
+            ],
+            $response->get_data()
+        );
+
+        $personCreated = array_values(
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_contains($query, "'person_created'")
+            )
+        );
+        $this->assertCount(0, $personCreated);
+        $personBound = array_values(
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_contains($query, "'cluster_person_bound'")
+            )
+        );
+        $this->assertCount(0, $personBound);
+    }
+
     public function testUpdateClusterLabelRollsBackWhenOutboxEnqueueFails(): void
     {
         global $wpdb;

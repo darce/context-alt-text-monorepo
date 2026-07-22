@@ -86,13 +86,21 @@ class ClusterLabelService {
 			return new WP_Error( 'acx_db_error', 'Database access is unavailable.', array( 'status' => 500 ) );
 		}
 
-		$affected_rows = 0;
-		$result        = $this->run_transactional(
-			function () use ( $cluster_id, $label, $cluster, $tenant_id, &$affected_rows ): WP_REST_Response|WP_Error {
+		$affected_rows        = 0;
+		$person_write_through = false;
+		$result               = $this->run_transactional(
+			function () use ( $cluster_id, $label, $cluster, $tenant_id, &$affected_rows, &$person_write_through ): WP_REST_Response|WP_Error {
 				global $wpdb;
 
-				$affected_rows = $this->clusters_repository->update_label( $cluster_id, $label );
-				if ( $affected_rows <= 0 ) {
+				$affected_rows      = $this->clusters_repository->update_label( $cluster_id, $label );
+				$label_changed      = $affected_rows > 0;
+				$existing_person_id = isset( $cluster['person_id'] ) ? (int) $cluster['person_id'] : 0;
+				$has_person_binding = $existing_person_id > 0;
+
+				// Identical-label resubmit: update_label is a no-op, but the cluster may
+				// still lack a person binding (label path wrote the text without write-through).
+				// Only short-circuit when both the label row and the person bind are already set.
+				if ( ! $label_changed && $has_person_binding ) {
 					return new WP_REST_Response(
 						array(
 							'cluster_id' => $cluster_id,
@@ -105,18 +113,20 @@ class ClusterLabelService {
 				}
 
 				// Preserve the pre-write-through dual-write contract: label curation
-				// still emits cluster_label_updated as the primary outbox event.
-				// Person-projection write-through below is additive (rg-002).
-				if ( ! $this->host->enqueue_curation_operation(
-					'cluster_label_updated',
-					$cluster_id,
-					$cluster,
-					array(
-						'cluster_uuid' => $cluster_id,
-						'label'        => $label,
-					)
-				) ) {
-					return new WP_Error( 'acx_db_error', 'Could not queue label replay operation.', array( 'status' => 500 ) );
+				// still emits cluster_label_updated as the primary outbox event when the
+				// label actually changed. Person-projection write-through below is additive (rg-002).
+				if ( $label_changed ) {
+					if ( ! $this->host->enqueue_curation_operation(
+						'cluster_label_updated',
+						$cluster_id,
+						$cluster,
+						array(
+							'cluster_uuid' => $cluster_id,
+							'label'        => $label,
+						)
+					) ) {
+						return new WP_Error( 'acx_db_error', 'Could not enqueue label replay operation.', array( 'status' => 500 ) );
+					}
 				}
 
 				// Caller owns the transaction: resolver must not open nested START TRANSACTION.
@@ -129,8 +139,8 @@ class ClusterLabelService {
 							'person_created',
 							$person_uuid,
 							array(
-								'local_revision'    => 0,
-								'snapshot_version'  => max( 0, (int) ( $cluster['snapshot_version'] ?? 0 ) ),
+								'local_revision'   => 0,
+								'snapshot_version' => max( 0, (int) ( $cluster['snapshot_version'] ?? 0 ) ),
 							),
 							array(
 								'person_uuid' => $person_uuid,
@@ -173,9 +183,10 @@ class ClusterLabelService {
 						'person_name'  => $resolved['name'],
 					)
 				) ) {
-					return new WP_Error( 'acx_db_error', 'Could not queue person-bind replay operation.', array( 'status' => 500 ) );
+					return new WP_Error( 'acx_db_error', 'Could not enqueue person-bind replay operation.', array( 'status' => 500 ) );
 				}
 
+				$person_write_through = true;
 				$this->sync_state_repository->touch_local_curation_marker( $tenant_id );
 
 				// Contract Impact (E21-9 plan §Contract and Boundary Impact):
@@ -200,7 +211,7 @@ class ClusterLabelService {
 			return $result;
 		}
 
-		if ( $affected_rows > 0 ) {
+		if ( $affected_rows > 0 || $person_write_through ) {
 			$this->host->trigger_xmp_refresh_for_cluster_ids( array( $cluster_id ), 'cluster-label-update' );
 		}
 

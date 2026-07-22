@@ -1,0 +1,7 @@
+// Token partials so --acx-* custom properties resolve on post.php (SPA bundle not loaded).
+@use '../admin/styles/tokens/colors';
+@use '../admin/styles/tokens/radius';
+@use '../admin/styles/tokens/spacing';
+@use '../admin/styles/tokens/typography';
+
+/* Slice 1 stub — chip/marker/list styles land in later slices. */

@@ -19,3 +19,12 @@ export const RETENTION_CARD_ERROR_BODY = __(
 
 /** Designed action for the error state — existing retention route. */
 export const RETENTION_CARD_LINK_HREF = '#/retention';
+
+/** Action-card heading shared by retention error and success panels. */
+export const RETENTION_CARD_ACTION_HEADING = __('Open Retention Controls', 'alt-context');
+
+/** Action-card body shared by retention error and success panels. */
+export const RETENTION_CARD_ACTION_BODY = __(
+  'Review policy, run exports, and inspect recent audit events.',
+  'alt-context',
+);

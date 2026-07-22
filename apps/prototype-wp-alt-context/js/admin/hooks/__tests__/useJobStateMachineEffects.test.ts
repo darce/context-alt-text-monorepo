@@ -255,4 +255,45 @@ describe('useJobStateMachineEffects', () => {
 
     expect(refetchQueries).not.toHaveBeenCalled();
   });
+
+  it('routes non-sync_failed projection failures through SYNC_VOCABULARY (UXP4-BRV-01)', async () => {
+    const options = buildBaseOptions();
+    options.syncTrigger = {
+      mutateAsync: vi.fn().mockResolvedValue({
+        synced: false,
+        reason: 'not_ready',
+        last_snapshot_version: null,
+        last_synced_at: null,
+        is_stale: true,
+      }),
+    } as never;
+
+    renderHook(() => useJobStateMachineEffects(options));
+
+    await waitFor(() => {
+      expect(options.setProjectionSyncState).toHaveBeenCalledWith('error');
+      expect(options.setProjectionError).toHaveBeenCalledWith(SYNC_VOCABULARY.resultsSyncFailed);
+    });
+
+    const errorArgs = options.setProjectionError.mock.calls.map((call) => call[0]);
+    expect(errorArgs).not.toContain('Syncing results failed.');
+    expect(errorArgs.every((msg) => msg !== 'Syncing results failed.')).toBe(true);
+  });
+
+  it('routes non-Error projection catch fallback through SYNC_VOCABULARY (UXP4-BRV-01)', async () => {
+    const options = buildBaseOptions();
+    options.syncTrigger = {
+      mutateAsync: vi.fn().mockRejectedValue('network-down'),
+    } as never;
+
+    renderHook(() => useJobStateMachineEffects(options));
+
+    await waitFor(() => {
+      expect(options.setProjectionSyncState).toHaveBeenCalledWith('error');
+      expect(options.setProjectionError).toHaveBeenCalledWith(SYNC_VOCABULARY.resultsSyncFailed);
+    });
+
+    const errorArgs = options.setProjectionError.mock.calls.map((call) => call[0]);
+    expect(errorArgs).not.toContain('Syncing results failed.');
+  });
 });

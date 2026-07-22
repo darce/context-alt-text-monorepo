@@ -524,8 +524,11 @@ describe('banned vocabulary across js/admin pages', () => {
     for (const banned of BANNED_STRINGS) {
       expect(surface.toLowerCase()).not.toContain(banned.toLowerCase());
     }
+    expect(surface).toContain(retentionDialogCopy.PURGE_DIALOG_DESCRIPTION);
     expect(surface).toContain(retentionDialogCopy.PURGE_SCOPE_ALL_DESCRIPTION);
     expect(surface.toLowerCase()).not.toContain('machine state');
+    expect(surface.toLowerCase()).not.toContain('machine-derived');
+    expect(surface.toLowerCase()).not.toContain('disposed state');
     expect(surface).not.toMatch(UUID_REGEX);
   });
 });

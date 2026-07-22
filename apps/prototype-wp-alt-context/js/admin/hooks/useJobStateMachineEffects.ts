@@ -190,7 +190,7 @@ export const useJobStateMachineEffects = ({
           throw new Error(
             syncResult.reason === 'sync_failed'
               ? SYNC_VOCABULARY.resultsErrorHeadline
-              : 'Syncing results failed.',
+              : SYNC_VOCABULARY.resultsSyncFailed,
           );
         }
 
@@ -206,7 +206,9 @@ export const useJobStateMachineEffects = ({
         }
 
         setProjectionSyncState('error');
-        setProjectionError(error instanceof Error ? error.message : 'Syncing results failed.');
+        setProjectionError(
+          error instanceof Error ? error.message : SYNC_VOCABULARY.resultsSyncFailed,
+        );
       }
     };
 

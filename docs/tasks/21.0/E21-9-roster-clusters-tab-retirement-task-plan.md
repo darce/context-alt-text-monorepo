@@ -158,6 +158,7 @@ Symbol/string-level only: `rosterClustersUrl()` → `rosterUrl()` (+ PHP localiz
 - [ ] One normalization helper (trim + case-fold, no diacritic folding); write-end lookup + read-end grouping both use it
 - [ ] Real-DB collation characterization pin recorded; rebind-on-match green (was 500); rollback leaves no partial row
 - [ ] Survivor policy pinned (lowest-id primary; unioned aggregates) with deterministic test; aggregated fields derived from member rows only (rg-015)
+- [ ] Contract surface does not lag the write path: if the commit/rebind path starts returning a bound person identity for both outcomes (create and rebind), the person-commit/roster response schema and any TS client types are regenerated/updated in this same slice, with a test asserting both outcomes carry the bound identity
 
 ### Slice 2: Write-through
 - [ ] `PersonResolutionService` extracted; transaction-agnostic (caller owns transaction; no-nesting assert); single writer for `acx_persons` inserts; `require_once` + `class_exists` verified (rg-016)

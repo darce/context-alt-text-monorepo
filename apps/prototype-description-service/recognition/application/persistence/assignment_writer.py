@@ -196,14 +196,19 @@ class AssignmentWriter:
         is_provisional: bool = False,
         is_user_selected: bool = False,
         existing_rep_count: int | None = None,
+        *,
+        enforce_enrollment_floors: bool = True,
     ) -> ClusterRepresentative | None:
         """Create and persist a representative, emitting events.
 
         FIR-6 S3b: identities failing active enrollment floors are excluded
         (no rep row, no quality_score write). Returns ``None`` when gated out.
+        Pass ``enforce_enrollment_floors=False`` only for the best-available
+        fallback when every member fails floors (FIR6S3B-M-01) so the cluster
+        still gets a rep+centroid for CentroidDiscovery.
         """
         floors = enrollment_floors_from_settings(self._settings)
-        if not passes_enrollment_floors(identity, floors):
+        if enforce_enrollment_floors and not passes_enrollment_floors(identity, floors):
             logger.info(
                 "[enrollment_gate] SKIP_CREATE cluster=%s identity=%s reason=%s "
                 "sharpness=%s embedding_norm=%s occlusion_severity=%s",
@@ -569,14 +574,34 @@ class AssignmentWriter:
 
         # 3. Get all member identities (excluding already preserved ones)
         floors = enrollment_floors_from_settings(self._settings)
-        identities = list(await self._clusters.get_member_identities(cluster_id))
+        all_members = list(await self._clusters.get_member_identities(cluster_id))
         identities = [
             i
-            for i in identities
+            for i in all_members
             if i.embedding is not None
             and i.id not in preserved_ids
             and passes_enrollment_floors(i, floors)
         ]
+        # Best-available fallback (FIR6S3B-M-01): when floors exclude every member
+        # and nothing was preserved (pose buckets are None under face_pipeline),
+        # still enroll from the full member pool so the cluster never ends with
+        # representative_identity_id=None while members exist.
+        best_available_fallback = False
+        if not identities and not preserved:
+            identities = [
+                i for i in all_members if i.embedding is not None and i.id not in preserved_ids
+            ]
+            if identities:
+                best_available_fallback = True
+                logger.info(
+                    "[enrollment_gate] BEST_AVAILABLE_FALLBACK recompute cluster=%s "
+                    "members=%d floors=(s>=%.3f,n>=%.3f,o<=%.3f)",
+                    cluster_id,
+                    len(identities),
+                    floors.floor_sharpness,
+                    floors.floor_embedding_norm,
+                    floors.ceiling_occlusion,
+                )
         # Sort by quality so FPS starts with the best one if no seeds
         identities.sort(key=lambda i: _compute_identity_quality(i, self._settings), reverse=True)
 
@@ -599,7 +624,12 @@ class AssignmentWriter:
             await self._create_and_add_representative(
                 cluster_id=cluster_id,
                 identity=identity,
-                reason="fps_recompute_diversity",
+                reason=(
+                    "fps_recompute_best_available"
+                    if best_available_fallback
+                    else "fps_recompute_diversity"
+                ),
+                enforce_enrollment_floors=not best_available_fallback,
             )
 
         # Update cluster primary representative
@@ -686,19 +716,40 @@ class AssignmentWriter:
 
         # Create initial representative(s) using diversity-aware sampling (FPS)
         # to preserve "bridge" faces that connect different pose angles.
-        # FIR-6 S3b: only enroll observations that clear active factor floors.
+        # FIR-6 S3b: prefer observations that clear active factor floors.
+        # Best-available fallback (FIR6S3B-M-01): when every member fails floors,
+        # still seed a rep+centroid so CentroidDiscovery can find the cluster.
         floors = enrollment_floors_from_settings(self._settings)
         eligible = [i for i in identities if passes_enrollment_floors(i, floors)]
+        best_available_fallback = False
         if eligible:
+            rep_pool = eligible
+        elif identities:
+            rep_pool = list(identities)
+            best_available_fallback = True
+            logger.info(
+                "[enrollment_gate] BEST_AVAILABLE_FALLBACK persist_new_cluster "
+                "cluster=%s members=%d floors=(s>=%.3f,n>=%.3f,o<=%.3f)",
+                cluster_id_str,
+                len(identities),
+                floors.floor_sharpness,
+                floors.floor_embedding_norm,
+                floors.ceiling_occlusion,
+            )
+        else:
+            rep_pool = []
+
+        if rep_pool:
             diverse_reps = _select_diverse_representatives(
-                eligible,
+                rep_pool,
                 self._settings.max_representatives_per_cluster,
             )
             for identity in diverse_reps:
                 await self._create_and_add_representative(
                     cluster_id=cluster_id_str,
                     identity=identity,
-                    reason="fps_seed",
+                    reason="fps_seed_best_available" if best_available_fallback else "fps_seed",
+                    enforce_enrollment_floors=not best_available_fallback,
                 )
 
             # Recompute and persist the centroid immediately.

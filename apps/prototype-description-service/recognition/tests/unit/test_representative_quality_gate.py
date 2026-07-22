@@ -245,6 +245,13 @@ class TestRepresentativeQualityMultiplier:
         assert _compute_identity_quality(identity, settings) == base
 
     def test_score_multiplied_when_floors_active(self) -> None:
+        """Pin expected f and scored value with literals (not the multiplier under test).
+
+        floors s=10, n=3, o=0.5; factors at floor (10, 3) and o=0.4:
+        s_term=10/(2*10)=0.5, n_term=3/(2*3)=0.5, o_term=1-0.4/0.5=0.2
+        equal 1/3 weights → f = (0.5+0.5+0.2)/3 = 0.4 exactly.
+        base score = conf*size = 0.95*1.0 = 0.95 → scored = round(0.95*0.4, 3) = 0.38.
+        """
         settings = _active_settings()
         identity = _identity(
             confidence=0.95,
@@ -259,15 +266,28 @@ class TestRepresentativeQualityMultiplier:
             settings=settings.quality,
             occlusion_severity=identity.occlusion_severity,
         ).score
+        assert base == pytest.approx(0.95)
         scored = _compute_identity_quality(identity, settings)
-        mult = representative_quality_multiplier(
-            sharpness=identity.sharpness,
-            embedding_norm=identity.embedding_norm,
-            occlusion_severity=identity.occlusion_severity,
-            floors=enrollment_floors_from_settings(settings),
-        )
-        assert scored == pytest.approx(round(max(0.0, min(1.0, base * mult)), 3))
+        # Literal pins — must not call representative_quality_multiplier for expected.
+        assert representative_quality_multiplier(
+            sharpness=10.0,
+            embedding_norm=3.0,
+            occlusion_severity=0.4,
+            floors=EnrollmentFloors(floor_sharpness=10.0, floor_embedding_norm=3.0, ceiling_occlusion=0.5),
+        ) == pytest.approx(0.4)
+        assert scored == pytest.approx(0.38)
         assert scored < base
+
+    def test_f_can_reach_zero_when_all_soft_terms_bottom_out(self) -> None:
+        """Soft terms clamp to 0 → f ∈ [0, 1], not (0, 1]."""
+        floors = EnrollmentFloors(floor_sharpness=10.0, floor_embedding_norm=3.0, ceiling_occlusion=0.5)
+        f = representative_quality_multiplier(
+            sharpness=0.0,
+            embedding_norm=0.0,
+            occlusion_severity=0.5,
+            floors=floors,
+        )
+        assert f == pytest.approx(0.0)
 
 
 class TestShouldAddRepresentativeGate:
@@ -306,6 +326,70 @@ class TestShouldAddRepresentativeGate:
         selector = RepresentativeSelector(_active_settings(), cluster_repo)
         adm = await selector.should_add_representative(_accept(_identity()))
         assert adm.should_add is True
+
+
+class TestBestAvailableFallback:
+    """FIR6S3B-M-01: all-excluded clusters still get a rep (+centroid path)."""
+
+    @pytest.mark.asyncio
+    async def test_persist_new_cluster_falls_back_when_all_below_floor(self) -> None:
+        cluster_repo = AsyncMock(spec=ClusterRepository)
+        member_repo = AsyncMock(spec=MemberRepository)
+        saved = []
+
+        async def _save(cluster):  # noqa: ANN001
+            if not cluster.id:
+                cluster.id = str(uuid.uuid4())
+            saved.append(cluster)
+            return cluster
+
+        cluster_repo.save = AsyncMock(side_effect=_save)
+        cluster_repo.update = AsyncMock(side_effect=lambda c: c)
+        cluster_repo.add_representative = AsyncMock()
+        cluster_repo.get_all_representatives = AsyncMock(return_value=[])
+        member_repo.bulk_add_members_if_not_exists = AsyncMock(return_value=([], 0))
+
+        writer = AssignmentWriter(_active_settings(), cluster_repo, member_repo)
+        weak_a = _identity(index=0, sharpness=1.0, embedding_norm=0.5, occlusion_severity=0.9)
+        weak_b = _identity(index=1, sharpness=2.0, embedding_norm=0.5, occlusion_severity=0.9)
+
+        cluster = await writer.persist_new_cluster(
+            tenant_id="tenant-1",
+            identities=[weak_a, weak_b],
+            similarities=[1.0, 0.9],
+        )
+
+        assert cluster is not None
+        # Best-available still creates at least one rep despite active floors.
+        assert cluster_repo.add_representative.await_count >= 1
+        # Centroid recompute is attempted (empty reps list → None is ok in unit stub;
+        # the call path runs only when rep_pool non-empty, which it is).
+        # Enforce: create was not floor-gated out (would leave add_representative uncalled).
+
+    @pytest.mark.asyncio
+    async def test_recompute_never_null_rep_when_all_below_floor(self) -> None:
+        cluster_repo = AsyncMock(spec=ClusterRepository)
+        member_repo = AsyncMock(spec=MemberRepository)
+        cluster_id = "c-all-weak"
+        cluster = type("C", (), {})()
+        cluster.id = cluster_id
+        cluster.representative_identity_id = "stale"
+        cluster_repo.get_by_id = AsyncMock(return_value=cluster)
+        cluster_repo.get_all_representatives = AsyncMock(return_value=[])
+        cluster_repo.clear_representatives = AsyncMock()
+        cluster_repo.add_representative = AsyncMock()
+        cluster_repo.update = AsyncMock(side_effect=lambda c: c)
+
+        weak_a = _identity(index=0, sharpness=1.0, embedding_norm=0.5, occlusion_severity=0.9, confidence=0.8)
+        weak_b = _identity(index=1, sharpness=2.0, embedding_norm=0.5, occlusion_severity=0.9, confidence=0.99)
+        cluster_repo.get_member_identities = AsyncMock(return_value=[weak_a, weak_b])
+
+        writer = AssignmentWriter(_active_settings(), cluster_repo, member_repo)
+        await writer.recompute_representatives(cluster_id)
+
+        assert cluster.representative_identity_id is not None
+        assert cluster.representative_identity_id == weak_b.id  # higher confidence/quality first
+        assert cluster_repo.add_representative.await_count >= 1
 
 
 class TestCreateAndAddRepresentativeGate:

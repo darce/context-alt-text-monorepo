@@ -22,7 +22,13 @@ import numpy as np
 
 from recognition.application.assignment.decision import AssignmentDecision
 from recognition.application.assignment.quality import compute_identity_quality as _compute_quality_info
-from recognition.application.settings.clustering import ClusteringSettings, QualitySettings
+from recognition.application.settings.clustering import (
+    ENROLLMENT_NOOP_CEILING_OCCLUSION,
+    ENROLLMENT_NOOP_FLOOR_EMBEDDING_NORM,
+    ENROLLMENT_NOOP_FLOOR_SHARPNESS,
+    ClusteringSettings,
+    QualitySettings,
+)
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import ClusterRepository
 from recognition.domain.representative import ClusterRepresentative
@@ -36,27 +42,22 @@ REPRESENTATIVE_MULTIPLIER_WEIGHT_SHARPNESS = 1.0 / 3.0
 REPRESENTATIVE_MULTIPLIER_WEIGHT_EMBEDDING_NORM = 1.0 / 3.0
 REPRESENTATIVE_MULTIPLIER_WEIGHT_OCCLUSION = 1.0 / 3.0
 
-# No-op enrollment floors (match FacePipelineSettings / QualitySettings defaults).
-_NOOP_FLOOR_SHARPNESS = 0.0
-_NOOP_FLOOR_EMBEDDING_NORM = 0.0
-_NOOP_CEILING_OCCLUSION = 1.0
-
 
 @dataclass(frozen=True, slots=True)
 class EnrollmentFloors:
     """Active enrollment floor/ceiling triple for quality-gated aggregation."""
 
-    floor_sharpness: float = _NOOP_FLOOR_SHARPNESS
-    floor_embedding_norm: float = _NOOP_FLOOR_EMBEDDING_NORM
-    ceiling_occlusion: float = _NOOP_CEILING_OCCLUSION
+    floor_sharpness: float = ENROLLMENT_NOOP_FLOOR_SHARPNESS
+    floor_embedding_norm: float = ENROLLMENT_NOOP_FLOOR_EMBEDDING_NORM
+    ceiling_occlusion: float = ENROLLMENT_NOOP_CEILING_OCCLUSION
 
     @property
     def is_noop(self) -> bool:
         """True when floors accept everything (dark default until S4)."""
         return (
-            self.floor_sharpness <= _NOOP_FLOOR_SHARPNESS
-            and self.floor_embedding_norm <= _NOOP_FLOOR_EMBEDDING_NORM
-            and self.ceiling_occlusion >= _NOOP_CEILING_OCCLUSION
+            self.floor_sharpness <= ENROLLMENT_NOOP_FLOOR_SHARPNESS
+            and self.floor_embedding_norm <= ENROLLMENT_NOOP_FLOOR_EMBEDDING_NORM
+            and self.ceiling_occlusion >= ENROLLMENT_NOOP_CEILING_OCCLUSION
         )
 
 
@@ -78,7 +79,15 @@ def passes_enrollment_floors(
 
     ``None`` factors never fail floors (insightface / missing signals). No-op
     floors accept everything. Active floors reject sharpness/norm below floor
-    or occlusion above ceiling.
+    or occlusion above ceiling when the corresponding factor is present.
+
+    Shared by ``should_add_representative`` and ``_create_and_add_representative``
+    (same predicate — no intentional path asymmetry on exclusion). Factorless
+    rows remain eligible for admission/create under active floors so insightface
+    and partial-signal observations are not silently dropped; below-floor
+    present factors are excluded from both paths. Distinct from the multiplier,
+    which returns ``f ≡ 1.0`` when any factor is ``None`` rather than treating
+    missing signals as failing floors.
     """
     if floors is None:
         resolved = EnrollmentFloors()
@@ -111,7 +120,9 @@ def representative_quality_multiplier(
     GR-09 / EMB-10: ``f ≡ 1.0`` when any factor is ``None`` or floors are no-op
     (bit-identical legacy score under insightface and pre-S4 dark defaults).
     When floors are active and all factors present, returns a weighted blend in
-    ``(0, 1]`` of soft per-source terms (weights declared above).
+    ``[0, 1]`` of soft per-source terms (weights declared above). Soft terms
+    clamp to 0.0, so ``f`` can reach 0.0 when every weighted source bottoms out
+    (e.g. sharpness/norm at 0 and occlusion at the ceiling).
     """
     if floors is None:
         resolved = EnrollmentFloors()

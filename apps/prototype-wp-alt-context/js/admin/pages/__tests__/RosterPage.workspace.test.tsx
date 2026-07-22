@@ -232,8 +232,8 @@ describe('RosterPage projection-aware workspace shell', () => {
 
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('tab', { name: 'Clusters' }));
-    await user.click(screen.getByRole('tab', { name: 'Entries' }));
+    await user.click(screen.getByRole('tab', { name: 'Face groups' }));
+    await user.click(screen.getByRole('tab', { name: 'People' }));
 
     expect(screen.getByRole('region', { name: /Person workspace: Alice/i })).toBeInTheDocument();
     expect(screen.getByTestId('roster-entries-section')).toBeInTheDocument();

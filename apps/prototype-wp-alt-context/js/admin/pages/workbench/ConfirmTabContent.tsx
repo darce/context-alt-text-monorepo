@@ -2,6 +2,10 @@ import React from 'react';
 import { __ } from '@wordpress/i18n';
 import { useRemoteActionGate } from '../../hooks/useRemoteActionGate';
 import { useSyncOffline } from '../../hooks/useSyncOffline';
+import {
+  CLUSTERING_DISCLOSURE_BODY,
+  CLUSTERING_DISCLOSURE_SUMMARY,
+} from './confirmTabCopy';
 import { ConfirmPanel, RecentJobsPanel, rosterClustersUrl } from './Panels';
 import { useJobPipeline } from './JobPipelineContext';
 
@@ -12,15 +16,10 @@ export const ConfirmTabContent = (): React.JSX.Element => {
   const remoteGate = useRemoteActionGate(offline);
   return (
     <>
-      <div className="acx-workbench-help-card">
-        <h3>{__('What is Clustering?', 'alt-context')}</h3>
-        <p>
-          {__(
-            'Clustering groups similar face embeddings detected during the scan into cohesive identities. This allows you to label an entire group of faces (e.g., "John Doe") at once, rather than naming every individual photo.',
-            'alt-context',
-          )}
-        </p>
-      </div>
+      <details className="acx-workbench-help-card">
+        <summary>{__(CLUSTERING_DISCLOSURE_SUMMARY, 'alt-context')}</summary>
+        <p>{__(CLUSTERING_DISCLOSURE_BODY, 'alt-context')}</p>
+      </details>
       <ConfirmPanel
         jobId={history.jobId ?? null}
         status={scanRun.statusText}

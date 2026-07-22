@@ -1,5 +1,11 @@
+import { describe, expect, it, vi } from 'vitest';
+
 import type { RosterEntry } from '../../../api/rosterApi';
-import { selectDeterministicDefaultWorkspaceEntry } from '../rosterRoute';
+import { ROSTER_TABS, selectDeterministicDefaultWorkspaceEntry } from '../rosterRoute';
+
+vi.mock('@wordpress/i18n', () => ({
+  __: (text: string) => text,
+}));
 
 const projectionEntry = (overrides: Partial<RosterEntry> = {}): RosterEntry => ({
   id: 1,
@@ -33,5 +39,14 @@ describe('selectDeterministicDefaultWorkspaceEntry', () => {
     ]);
 
     expect(selected?.id).toBe(2);
+  });
+});
+
+describe('ROSTER_TABS (UXP-4 slice 5)', () => {
+  it('keeps tab ids/routes stable while using people-first labels', () => {
+    expect(ROSTER_TABS.entries.id).toBe('entries');
+    expect(ROSTER_TABS.clusters.id).toBe('clusters');
+    expect(ROSTER_TABS.entries.label).toBe('People');
+    expect(ROSTER_TABS.clusters.label).toBe('Face groups');
   });
 });

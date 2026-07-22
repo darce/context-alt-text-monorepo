@@ -757,10 +757,13 @@ button.acx-accent-primary-action {
   padding: var(--acx-space-16) var(--acx-space-20);
   margin-bottom: var(--acx-space-24);
 
-  h3 {
+  h3,
+  summary {
     margin: 0 0 var(--acx-space-8);
     font-size: var(--acx-text-base);
+    font-weight: var(--acx-font-weight-medium);
     color: var(--acx-color-primary);
+    cursor: pointer;
   }
 
   p {

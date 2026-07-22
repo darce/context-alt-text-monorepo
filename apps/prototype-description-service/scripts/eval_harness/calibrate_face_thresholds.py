@@ -883,23 +883,37 @@ def calibrate(
         )
 
     global_tau = global_raw["tau_proposed"]
+    # Named sampling frames for tax denominators (FIR6V11-02 AUDIT).
+    # Both FNMR sides of the global-vs-stratum tax are evaluated on the
+    # *stratum* OOF genuine pool from non-abstained folds — never on the
+    # global genuine pool. Labels below make that explicit.
+    stratum_oof_genuine_frame = "stratum_oof_genuine_non_abstained_folds"
     fnmr_tax_global_vs_stratum: dict[str, dict[str, Any]] = {}
     for name, raw in per_stratum_raw.items():
         g_scores: list[float] = list(raw["_oof_genuine"])
         stratum_tau = raw["tau_proposed"]
         stratum_fnmr = fnmr_at(g_scores, stratum_tau) if stratum_tau is not None else None
-        global_fnmr = (
+        # Honest label: FNMR of *stratum* genuines at the global tau — not the
+        # global stratum's own FNMR (FIR6V11-02).
+        stratum_fnmr_at_global_tau = (
             fnmr_at(g_scores, float(global_tau)) if global_tau is not None else None
         )
         tax = None
-        if stratum_fnmr is not None and global_fnmr is not None:
-            tax = global_fnmr - stratum_fnmr
+        if stratum_fnmr is not None and stratum_fnmr_at_global_tau is not None:
+            tax = stratum_fnmr_at_global_tau - stratum_fnmr
         fnmr_tax_global_vs_stratum[name] = {
             "stratum_tau": stratum_tau,
             "global_tau": global_tau,
             "stratum_fnmr": stratum_fnmr,
-            "global_fnmr": global_fnmr,
+            "stratum_fnmr_at_global_tau": stratum_fnmr_at_global_tau,
+            # Deprecated alias kept for one cycle; same value as honest key.
+            "global_fnmr": stratum_fnmr_at_global_tau,
             "tax": tax,
+            "sampling_frame": {
+                "genuine_scores": stratum_oof_genuine_frame,
+                "denominator": "len(stratum_oof_genuine)",
+                "n_genuine": len(g_scores),
+            },
         }
 
     # Global OACT coefficient tax ([CAL-05]/[ARCH-08]): a single coefficient is a
@@ -916,6 +930,10 @@ def calibrate(
             "`coefficient` as a severity=1.0 proxy because face_bakeoff v1 "
             "decisions do not carry per-row occlusion_severity."
         ),
+        "sampling_frame": {
+            "genuine_scores": stratum_oof_genuine_frame,
+            "denominator": "len(stratum_oof_genuine)",
+        },
         "per_stratum_tax": {},
     }
     for name, raw in per_stratum_raw.items():
@@ -928,6 +946,10 @@ def calibrate(
                 "base_fnmr": None,
                 "elevated_fnmr": None,
                 "tax": None,
+                "sampling_frame": {
+                    "genuine_scores": stratum_oof_genuine_frame,
+                    "n_genuine": 0,
+                },
             }
             continue
         elevated = float(base_tau) + float(oact_coefficient)
@@ -942,6 +964,10 @@ def calibrate(
             "base_fnmr": base_fnmr,
             "elevated_fnmr": elev_fnmr,
             "tax": tax,
+            "sampling_frame": {
+                "genuine_scores": stratum_oof_genuine_frame,
+                "n_genuine": len(g_scores),
+            },
         }
 
     n_stranger_decisions = sum(
@@ -950,6 +976,15 @@ def calibrate(
         if d.true_name is None and not d.excluded_single_face_recall
     )
     n_excluded = sum(1 for d in decisions if d.excluded_single_face_recall)
+    # Silent drops: decision rows that emit zero trials (FIR6V11-02).
+    n_non_enrolled_named = sum(
+        1
+        for d in decisions
+        if d.true_name is not None
+        and not d.enrolled
+        and not d.excluded_single_face_recall
+    )
+    n_silent_drop_decisions = n_excluded + n_non_enrolled_named
     protocol = {
         "kind": "pair_level_subject_disjoint_kfold",
         "k": k,
@@ -970,6 +1005,29 @@ def calibrate(
         "n_roster_identities": len(identity_folds),
         "n_stranger_decisions": n_stranger_decisions,
         "n_excluded_single_face_recall": n_excluded,
+        "n_non_enrolled_named_silent_drop": n_non_enrolled_named,
+        "n_silent_drop_decisions": n_silent_drop_decisions,
+        "sampling_frames": {
+            "fit_genuine": "fit_fold_genuine_trials",
+            "fit_impostor": "fit_fold_impostor_both_identities_in_fit",
+            "oof_genuine": "held_fold_genuine_non_abstained",
+            "oof_impostor": "held_fold_impostor_both_identities_in_held",
+            "fnmr_tax_genuine": stratum_oof_genuine_frame,
+            "oact_tax_genuine": stratum_oof_genuine_frame,
+        },
+        "clustering_note": (
+            "Calibration is pair-level over face_bakeoff decision scores "
+            "(probe/gallery s_max trials). It does not re-run production "
+            "clustering, joint assignment, or centroid refresh; production "
+            "clustering behavior is out of scope for this artifact."
+        ),
+        "silent_drop_disclosure": (
+            "Decision rows may emit zero calibration trials without failing "
+            "the run: excluded_single_face_recall=true (FIR-5 recall parity) "
+            f"n={n_excluded}; non-enrolled named probes n={n_non_enrolled_named}. "
+            "These silent drops are counted above and never enter fit or OOF "
+            "denominators."
+        ),
         "disclosure": (
             "Thresholds are fit on the complement of each held fold; gate metrics "
             "are read on that held fold only, evaluated at that fold's fit tau "
@@ -989,7 +1047,8 @@ def calibrate(
             "denominator at score -inf (mate never accepted at any finite tau); "
             "a non-mate name_star also emits an impostor trial at s_max. Rows "
             "with excluded_single_face_recall=true are skipped (FIR-5 recall "
-            "parity). "
+            "parity). Non-enrolled named probes are also silent-dropped (zero "
+            "trials). "
             f"Selection rule {SELECTION_RULE_ID!r} is pre-registered on fit folds "
             "only before any held fold is read (FIR6RC-07). "
             "The calibration artifact is deterministic: bit-identical re-runs "
@@ -997,7 +1056,12 @@ def calibrate(
             "RNG; PYTHONHASHSEED-independent serialization). "
             "Decision rows carry publishable (bool) for FIR-5 schema parity; "
             "threshold math ignores it. FNMR-tax / OACT-tax denominators use "
-            "only non-abstained fold read scores (same set as fnmr_oof/fmr_oof)."
+            "only non-abstained fold stratum OOF genuine scores "
+            f"({stratum_oof_genuine_frame}); "
+            "stratum_fnmr_at_global_tau is the stratum genuine FNMR evaluated at "
+            "global_tau (not the global pool's own FNMR). "
+            "Calibration is pair-level over bakeoff scores, not a re-run of "
+            "production clustering."
         ),
     }
 

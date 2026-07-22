@@ -1729,14 +1729,46 @@ def ensure_matview(op) -> None:
     op.execute(
         f"""
         CREATE MATERIALIZED VIEW IF NOT EXISTS mv_identity_cluster_centroids AS
-        WITH normalized_embeddings AS (
+        WITH member_rows AS (
             SELECT
                 im.cluster_id,
                 mi.tenant_id,
-                l2_normalize(mi.embedding)::vector({EMBEDDING_DIMENSION}) AS unit_embedding,
+                mi.embedding,
+                mi.embedding_model,
                 mi.updated_at
             FROM identity_members im
             JOIN media_identities mi ON mi.id = im.identity_id
+            WHERE mi.embedding IS NOT NULL
+              AND mi.embedding_model IS NOT NULL
+        ),
+        -- FIR6V11-03: frame each cluster centroid to a single embedding_model
+        -- (majority, lex-stable tie-break). Dark no-op under single-model data;
+        -- load-bearing when mixed models coexist at S6.
+        model_counts AS (
+            SELECT
+                cluster_id,
+                embedding_model,
+                COUNT(*) AS n
+            FROM member_rows
+            GROUP BY cluster_id, embedding_model
+        ),
+        chosen_model AS (
+            SELECT DISTINCT ON (cluster_id)
+                cluster_id,
+                embedding_model
+            FROM model_counts
+            ORDER BY cluster_id, n DESC, embedding_model ASC
+        ),
+        normalized_embeddings AS (
+            SELECT
+                mr.cluster_id,
+                mr.tenant_id,
+                l2_normalize(mr.embedding)::vector({EMBEDDING_DIMENSION}) AS unit_embedding,
+                mr.updated_at
+            FROM member_rows mr
+            JOIN chosen_model cm
+              ON cm.cluster_id = mr.cluster_id
+             AND cm.embedding_model = mr.embedding_model
         ),
         cluster_embeddings AS (
             SELECT

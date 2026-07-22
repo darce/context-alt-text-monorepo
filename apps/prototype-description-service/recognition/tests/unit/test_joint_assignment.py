@@ -403,23 +403,35 @@ def test_equal_similarity_tie_is_deterministic() -> None:
 
 
 def test_equal_sim_equal_conf_prefers_lexicographically_smaller_id() -> None:
-    """FIR6RC-04: LAP tertiary tie-break sign prefers lex-smaller identity id."""
-    smaller = _identity(identity_id="face-a", media_id="photo-lex", confidence=0.80)
-    larger = _identity(identity_id="face-z", media_id="photo-lex", confidence=0.80)
-    for order in (
-        [
-            _accept(larger, cluster_id="cluster-x", similarity=0.85),
-            _accept(smaller, cluster_id="cluster-x", similarity=0.85),
-        ],
-        [
-            _accept(smaller, cluster_id="cluster-x", similarity=0.85),
-            _accept(larger, cluster_id="cluster-x", similarity=0.85),
-        ],
+    """FIR6V11-01 / FIR6RC-04: post-solve lex tie-break prefers smaller identity id.
+
+    Cost-matrix micro-offsets (1e-9 / 1e-12) are float-absorbed inside LAP and
+    were inert. Canonicalization runs after the pure ``-sim`` solve so equal-sim
+    equal-conf conflicts always promote the lex-smaller id regardless of input
+    order and regardless of how many other same-sim faces pad the matrix.
+    """
+    # Three-way same-sim same-conf: only the lex-smallest may keep the cluster.
+    # Padding with a third face forces the LAP path and exercises post-solve
+    # among multiple equal-cost contenders (not just a 2-way swap).
+    ids = ("face-m", "face-a", "face-z")
+    for order_ids in (
+        ids,
+        tuple(reversed(ids)),
+        ("face-z", "face-a", "face-m"),
+        ("face-a", "face-z", "face-m"),
     ):
-        result = resolve_photo_conflicts(group_accepted_by_media(order))
-        assert len(result.accepted) == 1
-        assert result.accepted[0].candidate.identity.id == "face-a"
-        assert result.loser_identity_ids == frozenset({"face-z"})
+        decisions = [
+            _accept(
+                _identity(identity_id=fid, media_id="photo-lex", confidence=0.80),
+                cluster_id="cluster-x",
+                similarity=0.85,
+            )
+            for fid in order_ids
+        ]
+        result = resolve_photo_conflicts(group_accepted_by_media(decisions))
+        assert len(result.accepted) == 1, order_ids
+        assert result.accepted[0].candidate.identity.id == "face-a", order_ids
+        assert result.loser_identity_ids == frozenset({"face-m", "face-z"}), order_ids
 
 
 def test_sentinel_post_filter_when_faces_exceed_clusters() -> None:

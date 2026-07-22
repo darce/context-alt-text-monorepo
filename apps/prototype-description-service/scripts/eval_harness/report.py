@@ -40,8 +40,27 @@ from .manifest import Provenance, ProvenanceSource
 from .schema import SCHEMA, DocKind
 from .synthetic_occlusion import (
     ELIGIBLE_PAIR_FLOOR,
+    SYNTHETIC_OCCLUSION_PROTOCOL_DISCLOSURES,
     assert_walk_stability,
     score_occlusion_accuracy,
+)
+
+# Bake-off protocol posture disclosed on every scored face artifact (FIR5RC-07).
+# Measured protocol changes (weighted prototypes, ambiguity margin, matched
+# non-mate impostors) are FIR-6 S4/S5-owned; FIR-5 owns honest disclosure.
+FACE_BAKEOFF_PROTOCOL_DISCLOSURES: tuple[str, ...] = (
+    "mean_prototype is an unweighted raw mean — one blurred face moves the "
+    "identity centroid (EMB-02); weighted/medoid prototypes are FIR-6-owned",
+    "open-set accept is raw cosine vs τ with no ambiguity/margin penalty "
+    "(EMB-09); product ternary accept|suggest|reject is FIR-6-owned",
+    "impostors are pooled zero-effort strangers rather than matched non-mates "
+    "(CAL-04 posture declared in FIR-6 plan)",
+    "pooled decisions mix heterogeneous per-fold τ_k (subject-disjoint folds; "
+    "fit galleries restricted to fit identities — CAL-07)",
+    "identification P/R runs only over §C-matched named decisions; missed "
+    "detections and unmatched faces are excluded from FN (EVAL-16); stranger "
+    "false-accepts live only in unknown-rejection (EVAL-18)",
+    *SYNTHETIC_OCCLUSION_PROTOCOL_DISCLOSURES,
 )
 
 
@@ -739,7 +758,11 @@ def score_face_run_record(
     detection = _detection_from_assignment(assignment)
 
     # Full-corpus identification + unknown-rejection (includes private strangers).
-    id_pr = face_identification_pr(assignment.decisions)
+    id_pr = face_identification_pr(
+        assignment.decisions,
+        missed_gt=assignment.missed_gt,
+        unmatched_detections=assignment.false_detections,
+    )
     unknown = face_unknown_rejection(assignment.decisions)
 
     # Headline = celebs01 named probes only (provenance.source == CELEB).
@@ -749,7 +772,11 @@ def score_face_run_record(
         for d in assignment.decisions
         if d.media_id in celebs01_ids and d.true_name is not None
     ]
-    headline_id = face_identification_pr(headline_decisions)
+    headline_id = face_identification_pr(
+        headline_decisions,
+        missed_gt=assignment.missed_gt,
+        unmatched_detections=assignment.false_detections,
+    )
     headline_floor_met = (
         not zero_box_corpus and headline_id.n_recall_eligible >= HEADLINE_ID_RECALL_ELIGIBLE_FLOOR
     )
@@ -854,6 +881,7 @@ def score_face_run_record(
             synth_acc = score_occlusion_accuracy(
                 synth_inputs,
                 assignment.matched,
+                tau=assignment.tau_op,
                 walk_stability_asserted=walk_asserted,
                 walk_stability_delta=walk_delta,
             )
@@ -861,6 +889,7 @@ def score_face_run_record(
             synth_acc = score_occlusion_accuracy(
                 [],
                 assignment.matched,
+                tau=assignment.tau_op,
                 walk_stability_asserted=False,
                 walk_stability_delta=None,
             )
@@ -869,6 +898,7 @@ def score_face_run_record(
             real_acc = score_occlusion_accuracy(
                 real_inputs,
                 assignment.matched,
+                tau=assignment.tau_op,
                 walk_stability_asserted=True,  # real tags have no walk twin
                 walk_stability_delta=0.0,
             )
@@ -966,6 +996,7 @@ def score_face_run_record(
         "identification_detection_coupling": {
             "identification_recall": headline_id.recall,
             "detection_recall": detection["recall"],
+            "detection_recall_coupling_flag": headline_id.detection_recall_coupling_flag,
             "flag": (
                 "identification recall is computed only over faces this leg detected and "
                 "§C-matched (enrolled); weak detection can inflate id-recall on the easy "
@@ -980,6 +1011,7 @@ def score_face_run_record(
             "clustering local floor P_same≥20 ∧ P_diff≥20 and M==0 all-singletons guard",
         ],
         "perf_label": "detect+embed-only (COST-04/15); not full-scan p95",
+        "protocol_disclosures": list(FACE_BAKEOFF_PROTOCOL_DISCLOSURES),
     }
 
     decisions_json = [
@@ -1043,6 +1075,7 @@ def score_face_run_record(
             "tau_op": assignment.tau_op,
             "note": "PROVISIONAL — not product defaults (FIR-6 owns calibration)",
         },
+        "protocol_disclosures": list(FACE_BAKEOFF_PROTOCOL_DISCLOSURES),
         "detection": detection,
         "slices": slices,
         "gate_proposal": gate_proposal,

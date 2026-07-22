@@ -1,15 +1,22 @@
-"""Seeded synthetic occlusion + threshold-free occlusion Δ (FIR-5 S4 / §D).
+"""Seeded synthetic occlusion + open-set occlusion recovery (FIR-5 S4 / §D).
 
 Generators (``masked`` / ``sunglasses`` / ``occlusion_other``) place fixed
 anatomy-anchor occluders via affine warp from the **frozen landmark cache**.
 No live leg detector during generation (firewall). Both legs re-detect+embed
 on the **identical** occluded pixels after generation.
 
-Occlusion metric = closed-set top-1 argmax paired accuracy (threshold-free):
-gallery = identity un-occluded faces excluding twin source media_id + other
-identities' un-occluded prototypes. Guards: distinct-image min-gallery,
-≥2-distinct-identity, re-detect-miss=0 kept-in-n, ≥90 eligible-pair floor,
+Occlusion metric = open-set paired accuracy: accept only when
+``s_max >= tau`` and ``name* == true_name`` against a gallery = identity
+un-occluded faces excluding twin source media_id + other identities'
+un-occluded prototypes. Guards: re-detect-miss checked before gallery
+censoring (EVAL-16), distinct-image min-gallery, single-identity galleries
+**excluded from the denominator** (EVAL-18), ≥90 eligible-pair floor,
 walk-stability bound (else DIRECTIONAL).
+
+Protocol disclosures (EVAL-17): synthetic occluders are solid seeded
+rectangles mapped onto MASKED/sunglasses/occlusion_other slice tags; the
+twin universe is cached clean detections only (hard clean-detection
+failures are structurally absent).
 
 Heuristics (docs/workbay/rules/engineering-heuristics.md +
 docs/workbay/rules/graph-theory-heuristics.md +
@@ -19,6 +26,7 @@ docs/workbay/rules/ml-systems-heuristics.md — ids only):
 - TEST-08 / DATA-09: seed + pinned cv2 → hash-identical occluder pixels
 - MLDATA-02: ≥90 eligible-pair floor
 - EMB-03: occluded = low quality (re-detect miss counts as fail)
+- EVAL-16 / EVAL-17 / EVAL-18: censoring order, disclosure honesty, open-set
 - TEST-06 / TEST-15: can-fail + guard-fires fixtures
 """
 
@@ -63,6 +71,18 @@ ELIGIBLE_PAIR_FLOOR = 90
 # Aggregate |Δ| bound across an independent re-run of ≥ floor pairs.
 # If not asserted or not met → DIRECTIONAL (flag alone is insufficient).
 WALK_STABILITY_DELTA_BOUND = 0.05
+
+# Artifact-facing protocol disclosures (EVAL-17 / EVAL-18). Measured changes
+# to generators remain FIR-6-owned; honesty about current posture is FIR-5.
+SYNTHETIC_OCCLUSION_PROTOCOL_DISCLOSURES: tuple[str, ...] = (
+    "synthetic occluders are solid seeded rectangles mapped onto "
+    "MASKED/sunglasses/occlusion_other slice tags — not photo-realistic masks",
+    "twin universe = cached clean detections only; hard clean-detection "
+    "failures are structurally absent (EVAL-17)",
+    "occlusion recovery uses open-set threshold (s_max >= tau), not closed-set "
+    "argmax; single-identity galleries are excluded from the denominator (EVAL-18)",
+    "filter_headline_probes is fail-closed: occluded_probe_keys is required",
+)
 
 # Determinism layer 2: pinned OpenCV warp (within one host profile).
 _WARP_FLAGS = cv2.INTER_LINEAR
@@ -357,7 +377,7 @@ def build_occlusion_gallery(
     source_media_id: int,
     by_identity: Mapping[str, Sequence[MatchedFace]],
 ) -> dict[str, np.ndarray]:
-    """Source-image-excluded LOO gallery for occlusion Δ (no τ / no reject).
+    """Source-image-excluded LOO gallery for occlusion recovery (open-set τ).
 
     - prototype_X = mean of X's un-occluded faces with media_id ≠ source
     - prototype_Y = mean of all of Y's un-occluded faces (Y ≠ X)
@@ -398,7 +418,7 @@ class OcclusionPairResult:
 
 @dataclass(frozen=True)
 class OcclusionAccuracy:
-    """Top-1 accuracy rollup for one occlusion stratum (a_s / a_r / a_clean)."""
+    """Open-set accuracy rollup for one occlusion stratum (a_s / a_r / a_clean)."""
 
     accuracy: float | None  # None when n_eligible == 0
     n_eligible: int
@@ -410,6 +430,7 @@ class OcclusionAccuracy:
     pair_results: tuple[OcclusionPairResult, ...] = ()
     walk_stability_asserted: bool = False
     walk_stability_delta: float | None = None
+    tau: float | None = None
 
     @property
     def meets_pair_floor(self) -> bool:
@@ -424,12 +445,31 @@ def score_occlusion_pair(
     box_index: int,
     kind: OcclusionKind,
     by_identity: Mapping[str, Sequence[MatchedFace]],
+    tau: float | None = None,
 ) -> OcclusionPairResult:
-    """Score one twin: re-detect miss → incorrect kept-in-n; else top-1 argmax.
+    """Score one twin: open-set recovery (s_max ≥ tau ∧ name* == true).
 
-    ``twin_embedding is None`` means the leg failed to re-detect+match the
-    occluded face (§D re-detect-miss = accuracy 0, kept in n).
+    Censoring order (EVAL-16): re-detect miss is checked **before** gallery
+    eligibility so upstream detection failures count against the recovery
+    denominator instead of leaving it. Single-identity galleries are
+    ineligible (EVAL-18 — rank metrics cannot express 'no one here').
     """
+    # 1) Re-detect miss first — always counts against the recovery denominator.
+    if twin_embedding is None:
+        gallery = build_occlusion_gallery(true_name, source_media_id, by_identity)
+        return OcclusionPairResult(
+            media_id=source_media_id,
+            box_index=box_index,
+            true_name=true_name,
+            kind=kind,
+            eligible=True,
+            correct=False,
+            re_detect_miss=True,
+            predicted_name=None,
+            gallery_n_identities=gallery_identity_count(gallery),
+        )
+
+    # 2) Distinct-image min-gallery support.
     if not has_distinct_image_gallery_support(true_name, source_media_id, by_identity):
         return OcclusionPairResult(
             media_id=source_media_id,
@@ -447,31 +487,37 @@ def score_occlusion_pair(
     gallery = build_occlusion_gallery(true_name, source_media_id, by_identity)
     n_ids = gallery_identity_count(gallery)
 
-    if twin_embedding is None:
+    # 3) Single-identity galleries leave the denominator (closed-set vacuity).
+    if n_ids < 2:
         return OcclusionPairResult(
             media_id=source_media_id,
             box_index=box_index,
             true_name=true_name,
             kind=kind,
-            eligible=True,
-            correct=False,
-            re_detect_miss=True,
+            eligible=False,
+            correct=None,
+            re_detect_miss=False,
             predicted_name=None,
             gallery_n_identities=n_ids,
+            ineligible_reason="single_identity_gallery",
         )
 
     emb = np.asarray(twin_embedding, dtype=np.float64)
-    _s_max, name_star = argmax_gallery(emb, gallery)
-    correct = name_star is not None and name_star == true_name
+    s_max, name_star = argmax_gallery(emb, gallery)
+    if tau is None:
+        accept = name_star is not None
+    else:
+        accept = name_star is not None and s_max >= float(tau)
+    correct = bool(accept and name_star == true_name)
     return OcclusionPairResult(
         media_id=source_media_id,
         box_index=box_index,
         true_name=true_name,
         kind=kind,
         eligible=True,
-        correct=bool(correct),
+        correct=correct,
         re_detect_miss=False,
-        predicted_name=name_star,
+        predicted_name=name_star if accept else None,
         gallery_n_identities=n_ids,
     )
 
@@ -482,6 +528,7 @@ def _rollup_pairs(
     walk_stability_asserted: bool = False,
     walk_stability_delta: float | None = None,
     walk_stability_bound: float = WALK_STABILITY_DELTA_BOUND,
+    tau: float | None = None,
 ) -> OcclusionAccuracy:
     eligible = [p for p in pairs if p.eligible]
     ineligible = [p for p in pairs if not p.eligible]
@@ -495,7 +542,7 @@ def _rollup_pairs(
         reasons.append(
             f"eligible_pairs={n_eligible}<floor={ELIGIBLE_PAIR_FLOOR}"
         )
-    # ≥2-distinct-identity: any eligible pair with <2 gallery identities → DIRECTIONAL
+    # Safety net: single-identity pairs should already be ineligible (EVAL-18).
     if any(p.eligible and p.gallery_n_identities < 2 for p in pairs):
         reasons.append("gallery_lt_2_distinct_identities")
     if not walk_stability_asserted or walk_stability_delta is None:
@@ -518,6 +565,7 @@ def _rollup_pairs(
         pair_results=tuple(pairs),
         walk_stability_asserted=walk_stability_asserted,
         walk_stability_delta=walk_stability_delta,
+        tau=tau,
     )
 
 
@@ -525,15 +573,18 @@ def score_occlusion_accuracy(
     pair_inputs: Sequence[Mapping[str, Any]],
     unoccluded_matched: Sequence[MatchedFace],
     *,
+    tau: float | None = None,
     walk_stability_asserted: bool = False,
     walk_stability_delta: float | None = None,
     walk_stability_bound: float = WALK_STABILITY_DELTA_BOUND,
 ) -> OcclusionAccuracy:
-    """Compute a_s / a_r / a_clean-style top-1 accuracy over twin/real/clean pairs.
+    """Compute a_s / a_r / a_clean-style open-set accuracy over twin/real/clean pairs.
 
     Each input mapping keys:
       - media_id, box_index, true_name, kind
       - embedding: sequence[float] | None  (None = re-detect miss)
+
+    ``tau`` is the open-set reject floor (typically assignment ``tau_op``).
     """
     by_identity = matched_named_by_identity(unoccluded_matched)
     results: list[OcclusionPairResult] = []
@@ -546,6 +597,7 @@ def score_occlusion_accuracy(
                 box_index=int(item["box_index"]),
                 kind=item["kind"],  # type: ignore[arg-type]
                 by_identity=by_identity,
+                tau=tau,
             )
         )
     return _rollup_pairs(
@@ -553,6 +605,7 @@ def score_occlusion_accuracy(
         walk_stability_asserted=walk_stability_asserted,
         walk_stability_delta=walk_stability_delta,
         walk_stability_bound=walk_stability_bound,
+        tau=tau,
     )
 
 
@@ -592,15 +645,21 @@ def filter_headline_probes(
     *,
     occluded_probe_keys: set[tuple[int, int, str]] | None = None,
 ) -> tuple[MatchedFace, ...]:
-    """Headline identification set: un-occluded matched faces only.
+    """Headline identification set: un-occluded matched faces only (fail-closed).
 
-    Twins never enter the headline set. ``occluded_probe_keys`` may mark
-    synthetic twin identities as ``(media_id, box_index, "occluded")``; any
-    face flagged as occluded is stripped. Default: pass-through of un-occluded
-    ``MatchedFace`` inputs (callers simply do not add twin MatchedFaces).
+    Twins never enter the headline set. ``occluded_probe_keys`` marks synthetic
+    twin identities as ``(media_id, box_index, "occluded")``; any face flagged
+    as occluded is stripped.
+
+    Fail-closed (EVAL-16): ``occluded_probe_keys`` is **required**. Pass an
+    explicit empty set only when the caller has determined there are no
+    occluded probes. ``None`` raises rather than silently pass-through.
     """
-    if not occluded_probe_keys:
-        return tuple(matched)
+    if occluded_probe_keys is None:
+        raise ValueError(
+            "occluded_probe_keys is required (fail-closed); pass an explicit "
+            "empty set when no occluded probes exist"
+        )
     out: list[MatchedFace] = []
     for face in matched:
         key = (face.media_id, face.box_index, "occluded")
@@ -648,6 +707,7 @@ __all__ = [
     "KIND_TO_SLICE_TAG",
     "ELIGIBLE_PAIR_FLOOR",
     "WALK_STABILITY_DELTA_BOUND",
+    "SYNTHETIC_OCCLUSION_PROTOCOL_DISCLOSURES",
     "OcclusionKind",
     "OcclusionTwinSpec",
     "OcclusionPairResult",

@@ -393,11 +393,28 @@ def test_clustering_sweep_headline_uses_tau_op():
     assert headline.n_faces == 10
 
 
-def test_face_id_detection_recall_coupling_flag_always_set():
-    result = face_identification_pr(
-        [_dec(true_name="Alice", decision="accept", predicted_name="Alice")]
+def test_face_id_detection_recall_coupling_flag_computed():
+    """EVAL-16: coupling flag is computed from missed_gt / unmatched detections."""
+    clean = face_identification_pr(
+        [_dec(true_name="Alice", decision="accept", predicted_name="Alice")],
+        missed_gt=0,
+        unmatched_detections=0,
     )
-    assert result.detection_recall_coupling_flag is True
+    assert clean.detection_recall_coupling_flag is False
+
+    coupled = face_identification_pr(
+        [_dec(true_name="Alice", decision="accept", predicted_name="Alice")],
+        missed_gt=2,
+        unmatched_detections=0,
+    )
+    assert coupled.detection_recall_coupling_flag is True
+
+    coupled_fp = face_identification_pr(
+        [_dec(true_name="Alice", decision="accept", predicted_name="Alice")],
+        missed_gt=0,
+        unmatched_detections=1,
+    )
+    assert coupled_fp.detection_recall_coupling_flag is True
 
 
 def test_face_identification_pr_reject_dict_without_media_id_keys():

@@ -249,24 +249,54 @@ def test_mean_prototype_empty_raises():
 # ---------------------------------------------------------------------------
 
 
-def test_global_fold_key_spreads_identities_and_strangers():
-    """Each identity's faces and strangers appear across folds (no empty named fold)."""
+def test_global_fold_key_is_subject_disjoint():
+    """CAL-07: each named identity's faces share one fold (no identity split across folds)."""
     faces: list[MatchedFace] = []
-    # 5 faces each for Alice, Bob + 5 strangers → with K=5 each fold gets one of each.
+    # 5 faces each for Alice, Bob + 5 strangers.
     for i in range(5):
         faces.append(_matched(100 + i, 0, [1, 0, float(i) * 0.01], "Alice", path=f"a{i}.jpg"))
         faces.append(_matched(200 + i, 0, [0, 1, float(i) * 0.01], "Bob", path=f"b{i}.jpg"))
         faces.append(_matched(300 + i, 0, [0, 0, 1], None, path=f"s{i}.jpg"))
 
     folds = global_fold_ranks(faces, k_folds=5)
-    assert set(folds) == {0, 1, 2, 3, 4}
+    # Named identities are each confined to a single fold.
+    alice_folds = {fold for f, fold in zip(faces, folds, strict=True) if f.true_name == "Alice"}
+    bob_folds = {fold for f, fold in zip(faces, folds, strict=True) if f.true_name == "Bob"}
+    assert len(alice_folds) == 1
+    assert len(bob_folds) == 1
+    assert alice_folds != bob_folds  # distinct subjects land in distinct folds when K≥2
+    # Strangers still spread (each stranger face is its own subject).
+    stranger_folds = {fold for f, fold in zip(faces, folds, strict=True) if f.true_name is None}
+    assert stranger_folds == {0, 1, 2, 3, 4}
 
-    for k in range(5):
-        in_fold = [f for f, fold in zip(faces, folds, strict=True) if fold == k]
-        names = {f.true_name for f in in_fold}
-        assert "Alice" in names
-        assert "Bob" in names
-        assert None in names  # stranger present in every fold
+
+def test_fit_phase_galleries_exclude_held_out_identities():
+    """CAL-07: τ_k selection must not build galleries containing read-fold identities."""
+    # Alice → fold 0, Bob → fold 1 under subject-disjoint ranking (sorted names).
+    faces = [
+        _matched(1, 0, [1, 0, 0], "Alice"),
+        _matched(2, 0, [1, 0.05, 0], "Alice"),
+        _matched(3, 0, [0, 1, 0], "Bob"),
+        _matched(4, 0, [0, 1.05, 0], "Bob"),
+    ]
+    folds = global_fold_ranks(faces, k_folds=2)
+    alice_fold = next(f for m, f in zip(faces, folds, strict=True) if m.true_name == "Alice")
+    bob_fold = next(f for m, f in zip(faces, folds, strict=True) if m.true_name == "Bob")
+    assert alice_fold != bob_fold
+
+    # Fit for Alice's fold: train = Bob only → gallery names must not include Alice.
+    from scripts.eval_harness.face_assignment import (
+        matched_named_by_identity,
+        build_loo_gallery,
+    )
+
+    train = [m for m, f in zip(faces, folds, strict=True) if f != alice_fold]
+    train_by_id = matched_named_by_identity(train)
+    assert "Alice" not in train_by_id
+    assert "Bob" in train_by_id
+    for probe in train:
+        gallery = build_loo_gallery(probe, train_by_id)
+        assert "Alice" not in gallery
 
 
 def test_pooled_decisions_cover_all_matched_named_n():

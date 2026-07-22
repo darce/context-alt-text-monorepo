@@ -132,6 +132,7 @@ describe('buildWorkbenchFindings', () => {
     expect(model.hasFindings).toBe(true);
   });
 
+  // REV-A-01: counts must use server total, not the capped page length (TOP_UNLABELED_LIMIT=20).
   it('reports the server-side unlabeled total when it exceeds the fetched page', () => {
     const model = buildWorkbenchFindings(
       makeQueues({
@@ -255,6 +256,22 @@ describe('buildWorkbenchFindings', () => {
 
     expect(model.isUnavailable).toBe(true);
     expect(model.nextAction).toEqual({ kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.UNAVAILABLE });
+  });
+
+  // REV-A-03: name (and merge) outages must not hide the panel — only assignment + top-unlabeled
+  // are canonical availability signals (partial summary is preferred over empty unavailable UI).
+  it('does not mark unavailable when only the name data source is unavailable', () => {
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        topUnlabeledClusters: [makeCluster({ id: 'still-visible' })],
+        topUnlabeledTotal: 1,
+      }),
+      makeState({ nameDataSource: DATA_SOURCE.UNAVAILABLE }),
+    );
+
+    expect(model.isUnavailable).toBe(false);
+    expect(model.hasFindings).toBe(true);
+    expect(model.nextAction).toEqual({ kind: NEXT_ACTION_KIND.CLUSTER, clusterId: 'still-visible' });
   });
 
   it('marks findings read-only under backend-proxy projection while keeping the next action visible', () => {
@@ -387,10 +404,60 @@ describe('useWorkbenchFindings', () => {
     expect(result.current.isReadOnly).toBe(false);
   });
 
+  // REV-A-01 (hook path): total-backed count must flow from useSuggestionReviewQueries
+  // through useWorkbenchFindings — page length alone under-reports the backlog.
+  it('uses topUnlabeledQuery total for unlabeledClusters when total exceeds the fetched page', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 25,
+      offset: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 25,
+      offset: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    // Fetched page is capped (1 item here); server total is higher.
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [makeCluster({ id: 'page-head', identity_count: 8 })],
+      limit: 20,
+      total: 42,
+      truncated: true,
+      singleton_count: 0,
+      has_clusters: true,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient = client;
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+
+    const { result } = renderHook(() => useWorkbenchFindings(), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    // Would fail against old code that used topUnlabeledClusters.length (page size).
+    expect(result.current.counts.unlabeledClusters).toBe(42);
+    expect(result.current.counts.total).toBe(42);
+    expect(result.current.nextAction).toEqual({ kind: NEXT_ACTION_KIND.CLUSTER, clusterId: 'page-head' });
+  });
+
+  // REV-A-03 (isError): Locks the !hasAnyData guard — BOTH primary queries
+  // (assignment + merge) fail, so without the guard isError would flip true, but
+  // top-unlabeled data still renders as a partial summary.
   it('degrades gracefully on partial query failure instead of surfacing an error', async () => {
-    // Locks the !hasAnyData isError guard: BOTH primary queries (assignment + merge)
-    // fail, so without the guard isError would flip true — but top-unlabeled data
-    // renders, so the panel shows partial findings with no error affordance.
     vi.mocked(fetchPendingSuggestions).mockRejectedValue(new Error('assignment endpoint down'));
     vi.mocked(fetchPendingMergeSuggestions).mockRejectedValue(new Error('merge endpoint down'));
     vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
@@ -425,5 +492,72 @@ describe('useWorkbenchFindings', () => {
     expect(result.current.hasFindings).toBe(true);
     expect(result.current.counts.unlabeledClusters).toBe(1);
     expect(result.current.nextAction).toEqual({ kind: NEXT_ACTION_KIND.CLUSTER, clusterId: 'top-1' });
+  });
+
+  // REV-A-02: useWorkbenchFindings must not wrap buildWorkbenchFindings in useMemo over
+  // freshly-allocated query fallback arrays (that memo was a no-op). Rebuild is cheap;
+  // the hook still returns a coherent view model every render.
+  it('rebuilds a coherent view model each render without relying on unstable memo deps', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [makeSuggestion({ id: 'memo-sugg', suggested_cluster_id: 'memo-cluster' })],
+      limit: 25,
+      offset: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 25,
+      offset: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [makeCluster({ id: 'memo-cluster-top' })],
+      limit: 20,
+      total: 3,
+      truncated: true,
+      singleton_count: 0,
+      has_clusters: true,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient = client;
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+
+    const { result, rerender } = renderHook(() => useWorkbenchFindings(), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    const first = result.current;
+    rerender();
+    const second = result.current;
+
+    // REV-A-02 (no-op useMemo) is enforced by review, not by this test: a no-op
+    // memo is behaviorally invisible, and pinning object identity would
+    // spuriously fail if a correctly-stable memo were ever added. This test
+    // only pins rerender consistency of the view model.
+    expect(second.counts).toEqual({
+      assignments: 1,
+      merges: 0,
+      names: 0,
+      unlabeledClusters: 3,
+      total: 4,
+    });
+    expect(second.nextAction).toEqual({
+      kind: NEXT_ACTION_KIND.ASSIGNMENT,
+      suggestionId: 'memo-sugg',
+      clusterId: 'memo-cluster',
+      label: 'Default Label',
+    });
   });
 });

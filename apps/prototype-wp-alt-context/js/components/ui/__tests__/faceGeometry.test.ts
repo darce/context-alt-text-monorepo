@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 
-import { cropTransformFor, overlayRectFor } from '../faceGeometry';
+import {
+  cropTransformFor,
+  isCompleteFiniteBbox,
+  isUsableNaturalSize,
+  overlayRectFor,
+} from '../faceGeometry';
 import type { BoundingBox } from '../../../admin/api/recognition/types/identity';
 
 describe('cropTransformFor', () => {
@@ -74,6 +79,39 @@ describe('overlayRectFor', () => {
     });
   });
 
+  it('returns zeros when natural size is non-finite', () => {
+    const bbox: BoundingBox = { x: 10, y: 10, width: 20, height: 20 };
+    expect(overlayRectFor(bbox, { width: Number.NaN, height: 500 })).toEqual({
+      left: 0,
+      top: 0,
+      width: 0,
+      height: 0,
+    });
+    expect(overlayRectFor(bbox, { width: 1000, height: Number.POSITIVE_INFINITY })).toEqual({
+      left: 0,
+      top: 0,
+      width: 0,
+      height: 0,
+    });
+  });
+
+  it('returns zeros when bbox fields are incomplete or non-finite', () => {
+    const partial = { x: 10, y: 10 } as unknown as BoundingBox;
+    const nanBbox: BoundingBox = { x: 10, y: Number.NaN, width: 20, height: 20 };
+    expect(overlayRectFor(partial, natural)).toEqual({
+      left: 0,
+      top: 0,
+      width: 0,
+      height: 0,
+    });
+    expect(overlayRectFor(nanBbox, natural)).toEqual({
+      left: 0,
+      top: 0,
+      width: 0,
+      height: 0,
+    });
+  });
+
   it('treats negative bbox dimensions as zero extent', () => {
     const bbox: BoundingBox = { x: 100, y: 50, width: -40, height: -20 };
     expect(overlayRectFor(bbox, natural)).toEqual({
@@ -82,5 +120,20 @@ describe('overlayRectFor', () => {
       width: 0,
       height: 0,
     });
+  });
+});
+
+describe('isUsableNaturalSize / isCompleteFiniteBbox', () => {
+  it('rejects zero and non-finite natural sizes', () => {
+    expect(isUsableNaturalSize({ width: 100, height: 50 })).toBe(true);
+    expect(isUsableNaturalSize({ width: 0, height: 50 })).toBe(false);
+    expect(isUsableNaturalSize({ width: Number.NaN, height: 50 })).toBe(false);
+  });
+
+  it('rejects partial and non-finite bboxes', () => {
+    expect(isCompleteFiniteBbox({ x: 1, y: 2, width: 3, height: 4 })).toBe(true);
+    expect(isCompleteFiniteBbox(null)).toBe(false);
+    expect(isCompleteFiniteBbox({ x: 1, y: 2 } as unknown as BoundingBox)).toBe(false);
+    expect(isCompleteFiniteBbox({ x: 1, y: 2, width: Number.NaN, height: 4 })).toBe(false);
   });
 });

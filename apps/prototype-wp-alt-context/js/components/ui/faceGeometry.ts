@@ -31,6 +31,32 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
+/** True when both natural dimensions are finite and strictly positive. */
+export function isUsableNaturalSize(size: NaturalSize): boolean {
+  return (
+    Number.isFinite(size.width) &&
+    Number.isFinite(size.height) &&
+    size.width > 0 &&
+    size.height > 0
+  );
+}
+
+/**
+ * True when bbox has all four edges as finite numbers (runtime API may omit fields).
+ * Does not require positive width/height — zero-extent boxes are still positionable.
+ */
+export function isCompleteFiniteBbox(bbox: BoundingBox | null | undefined): bbox is BoundingBox {
+  if (bbox == null || typeof bbox !== 'object') {
+    return false;
+  }
+  return (
+    Number.isFinite(bbox.x) &&
+    Number.isFinite(bbox.y) &&
+    Number.isFinite(bbox.width) &&
+    Number.isFinite(bbox.height)
+  );
+}
+
 /**
  * Scale/offset transform that crops `bbox` into a fixed square of `displaySize`.
  * Matches the pre-extraction FaceThumbnail math.
@@ -50,7 +76,8 @@ export function cropTransformFor(bbox: BoundingBox, displaySize: number): CropTr
  * Degenerate / out-of-bounds boxes are clamped into [0, 100] ranges.
  */
 export function overlayRectFor(bbox: BoundingBox, naturalSize: NaturalSize): OverlayRect {
-  if (naturalSize.width <= 0 || naturalSize.height <= 0) {
+  // Non-finite or non-positive natural dims → zero rect (callers should also skip render).
+  if (!isUsableNaturalSize(naturalSize) || !isCompleteFiniteBbox(bbox)) {
     return { left: 0, top: 0, width: 0, height: 0 };
   }
 

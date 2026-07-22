@@ -235,7 +235,10 @@ describe('AttachmentFacesApp five designed states', () => {
     expect(screen.getByTestId('acx-attachment-faces-app')).toHaveAttribute('data-state', 'faces');
   });
 
-  it('chip uses token-backed background once styles load', async () => {
+  // jsdom does not load/compile SCSS or resolve CSS custom properties at runtime, so this
+  // cannot assert computed "rendered style". It is a structural SCSS graph assertion only:
+  // attachment-edit.scss @use's shared tokens and paints curated chips with token vars.
+  it('asserts structural scss token graph for curated chip background [UXP5-BR-02]', async () => {
     fetchMock.mockResolvedValue(curatedUncuratedFixture());
     renderApp(<AttachmentFacesApp {...defaultProps} />);
 
@@ -246,7 +249,6 @@ describe('AttachmentFacesApp five designed states', () => {
     const chip = screen.getByRole('button', { name: 'Sam Rivera' });
     expect(chip.className).toContain('acx-face-overlay__chip--curated');
 
-    // Token graph proof: attachment-edit.scss @use's shared tokens and paints chips with them.
     const { readFileSync } = await import('node:fs');
     const { join } = await import('node:path');
     const scssPath = join(__dirname, '..', 'attachment-edit.scss');
@@ -282,6 +284,27 @@ describe('mountAttachmentEdit', () => {
       endpoints: { recognitionMediaIdentities: 'https://example.test/mi' },
     };
     expect(mountAttachmentEdit()).toBe(false);
+    expect(window.AltContextAdmin).toBeUndefined();
+  });
+
+  it('is a no-op mount when attachmentId is zero (container stays hidden) [UXP5-BR-01]', () => {
+    document.body.innerHTML =
+      '<div id="acx-attachment-faces" data-attachment-id="0" hidden></div>';
+    window.AltContextAttachmentEdit = {
+      nonce: 'n',
+      attachmentId: 0,
+      imageUrl: 'https://example.test/img.jpg',
+      imageWidth: 100,
+      imageHeight: 80,
+      workbenchUrl: '',
+      endpoints: { recognitionMediaIdentities: 'https://example.test/mi' },
+    };
+
+    expect(mountAttachmentEdit()).toBe(false);
+    const container = document.getElementById('acx-attachment-faces');
+    expect(container?.hasAttribute('hidden')).toBe(true);
+    expect(container?.querySelector('[data-testid="acx-attachment-faces-app"]')).toBeNull();
+    expect(container?.querySelector('.acx-attachment-faces__skeleton')).toBeNull();
     expect(window.AltContextAdmin).toBeUndefined();
   });
 

@@ -369,11 +369,7 @@ def test_graph_selection_uses_resolved_similarity_threshold(monkeypatch: pytest.
 
 @pytest.mark.asyncio
 async def test_joint_knob_off_parity_via_solver_identity() -> None:
-    """When joint is conceptually off, accepted set is unchanged (solver not applied).
-
-    The orchestrator gates on profile+knob; this pins the pure-function contract:
-    no conflict ⇒ bit-identical accepted set (knob-off equivalent for non-conflict).
-    """
+    """Non-conflict path: pure solver leaves both faces accepted (identity fallback)."""
     a = _identity(identity_id="a", media_id="m1")
     b = _identity(identity_id="b", media_id="m2")
     decisions = [
@@ -406,6 +402,26 @@ def test_equal_similarity_tie_is_deterministic() -> None:
         assert result.loser_identity_ids == frozenset({"face-z"})
 
 
+def test_equal_sim_equal_conf_prefers_lexicographically_smaller_id() -> None:
+    """FIR6RC-04: LAP tertiary tie-break sign prefers lex-smaller identity id."""
+    smaller = _identity(identity_id="face-a", media_id="photo-lex", confidence=0.80)
+    larger = _identity(identity_id="face-z", media_id="photo-lex", confidence=0.80)
+    for order in (
+        [
+            _accept(larger, cluster_id="cluster-x", similarity=0.85),
+            _accept(smaller, cluster_id="cluster-x", similarity=0.85),
+        ],
+        [
+            _accept(smaller, cluster_id="cluster-x", similarity=0.85),
+            _accept(larger, cluster_id="cluster-x", similarity=0.85),
+        ],
+    ):
+        result = resolve_photo_conflicts(group_accepted_by_media(order))
+        assert len(result.accepted) == 1
+        assert result.accepted[0].candidate.identity.id == "face-a"
+        assert result.loser_identity_ids == frozenset({"face-z"})
+
+
 def test_sentinel_post_filter_when_faces_exceed_clusters() -> None:
     """Rectangular matrix with one real cluster: LAP may assign a sentinel; drop it."""
     # Three faces compete for one cluster; only one real edge column exists.
@@ -425,26 +441,29 @@ def test_sentinel_post_filter_when_faces_exceed_clusters() -> None:
 
 
 def test_active_faces_predrop_routes_unconnected_to_unknown() -> None:
-    """Faces with no usable edges (all-sentinel row) are losers, not crash (LC-11)."""
-    # Two faces, two clusters, but only face-a has an edge. face-b is present only
-    # via a decision we then force through a partial matrix by using the same face
-    # twice for one cluster and a distinct face with a second cluster — the
-    # unconnected case is exercised by injecting a face id that has edges only
-    # after edge-collapse cannot attach: multi-decision same face/cluster keeps one edge.
-    # Use two faces where face-b's only "decision" targets a cluster that face-a already
-    # uniquely owns is not enough. Instead: face with decisions to clusters that
-    # get overwritten... active_faces drops rows that are all UNASSIGNED.
-    # Construct via conflict path: three faces / one cluster is already covered;
-    # here face with no decisions cannot appear. Exercise the empty active_faces
-    # path by calling resolve with decisions that share a face id but zero clusters
-    # after filter — use n_clusters path via empty cluster_id is invalid.
-    # Practical edge: two faces fighting two clusters, second face only connected
-    # to sentinel after unique assignment of first to both? Not possible.
-    # Cover the all-active-faces-empty branch by resolving an empty media group
-    # already done; cover submatrix with a face that has only missing edges by
-    # building decisions where face-b maps to a cluster that is never indexed —
-    # impossible through public API. Instead assert multi-cluster same-photo
-    # assignment uses submatrix + keeps both when distinct clusters (path coverage).
+    """FIR6RC-05: faces with only non-finite edges are pre-dropped as losers (LC-11).
+
+    NaN similarity yields a non-comparable cost cell that fails the active-edge
+    threshold (top-k all-below-threshold proxy). A real cluster conflict forces
+    the LAP path so the unique-face/unique-cluster fast path cannot skip it.
+    """
+    hi = _identity(identity_id="hi", media_id="p", confidence=0.95)
+    lo = _identity(identity_id="lo", media_id="p", confidence=0.85)
+    orphan = _identity(identity_id="orphan", media_id="p", confidence=0.90)
+    decisions = [
+        _accept(hi, cluster_id="c1", similarity=0.91),
+        _accept(lo, cluster_id="c1", similarity=0.80),  # conflict → LAP path
+        _accept(orphan, cluster_id="c2", similarity=float("nan")),
+    ]
+    result = resolve_photo_conflicts(group_accepted_by_media(decisions))
+    accepted_ids = {d.candidate.identity.id for d in result.accepted}
+    assert accepted_ids == {"hi"}
+    assert result.loser_identity_ids == frozenset({"lo", "orphan"})
+    assert result.accepted[0].candidate.cluster_id == "c1"
+
+
+def test_multi_edge_same_photo_keeps_distinct_clusters() -> None:
+    """Distinct-cluster multi-edge path: both faces kept with best edges."""
     a = _identity(identity_id="a", media_id="p", confidence=0.9)
     b = _identity(identity_id="b", media_id="p", confidence=0.8)
     decisions = [
@@ -457,7 +476,6 @@ def test_active_faces_predrop_routes_unconnected_to_unknown() -> None:
     assert "a" in accepted_ids
     assert "b" in accepted_ids
     assert result.loser_identity_ids == frozenset()
-    # face-a keeps its better edge (c1), face-b keeps c2.
     by_face = {d.candidate.identity.id: d.candidate.cluster_id for d in result.accepted}
     assert by_face["a"] == "c1"
     assert by_face["b"] == "c2"
@@ -508,11 +526,12 @@ async def test_guard_exempts_own_identity_on_retry() -> None:
     assert "new-dup" in rejected
 
 
-def test_production_limits_and_detection_readers_rebind() -> None:
+def test_production_limits_and_detection_readers_rebind(monkeypatch: pytest.MonkeyPatch) -> None:
     """Production resolve_effective_* helpers rebind limits + detection under face_pipeline."""
     # Function-local imports for ALL settings classes: the knob env-ingestion
     # tests importlib.reload() recognition.config.settings, so module-level
     # class objects go stale mid-suite and pydantic isinstance checks fail.
+    from recognition.application.orchestration.split import hierarchical as hierarchical_mod
     from recognition.config.settings import (
         ClusteringLimitsSettings,
         ClusteringSettings,
@@ -536,8 +555,13 @@ def test_production_limits_and_detection_readers_rebind() -> None:
     det = resolve_effective_detection_settings(recognition=base)
     assert lim.similarity_threshold == 0.80
     assert det.default_threshold == 0.33
-    # Hierarchical split distance formula uses resolved limits similarity.
-    assert min(0.30, 1.0 - lim.similarity_threshold) == pytest.approx(0.20)
+    # Real production getter (FIR6RC-03) — not a re-derived tautological formula.
+    monkeypatch.setattr(
+        hierarchical_mod,
+        "resolve_effective_limits_settings",
+        lambda: lim,
+    )
+    assert hierarchical_mod._split_distance_threshold() == pytest.approx(0.20)
 
     insight = RecognitionSettings(
         face_pipeline=FacePipelineSettings(
@@ -548,15 +572,29 @@ def test_production_limits_and_detection_readers_rebind() -> None:
         clustering_limits=ClusteringLimitsSettings(similarity_threshold=0.6),
         identity_detection=IdentityDetectionSettings(default_threshold=0.45),
     )
-    assert resolve_effective_limits_settings(recognition=insight).similarity_threshold == 0.6
-    assert resolve_effective_detection_settings(recognition=insight).default_threshold == 0.45
+    lim_off = resolve_effective_limits_settings(recognition=insight)
+    det_off = resolve_effective_detection_settings(recognition=insight)
+    assert lim_off.similarity_threshold == 0.6
+    assert det_off.default_threshold == 0.45
+    monkeypatch.setattr(
+        hierarchical_mod,
+        "resolve_effective_limits_settings",
+        lambda: lim_off,
+    )
+    # insightface keeps shared 0.6 → distance min(0.30, 0.4) = 0.30.
+    assert hierarchical_mod._split_distance_threshold() == pytest.approx(0.30)
 
 
 @pytest.mark.asyncio
 async def test_orchestrator_joint_wiring_discriminates_on_knob(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """_process_single_chunk: joint ON drops same-photo loser; OFF keeps both (M-01)."""
+    """_process_single_chunk: joint ON drops same-photo loser; OFF keeps both (M-01).
+
+    FIR6RC-02: also pins uniqueness-guard plumbing (joint_uniqueness_enabled
+    forwarded) and rejected-id rebind into the new-cluster partition.
+    FIR6RC-05: joint OFF keeps a *real conflict* pair (both faces persist).
+    """
     from types import SimpleNamespace
 
     from recognition.application.orchestration.clustering import orchestrator as orch_mod
@@ -566,10 +604,13 @@ async def test_orchestrator_joint_wiring_discriminates_on_knob(
 
     winner = _identity(identity_id="face-hi", media_id="photo-a", confidence=0.95)
     loser = _identity(identity_id="face-lo", media_id="photo-a", confidence=0.80)
-    chunk = [winner, loser]
+    # Third face: no conflict, used to exercise guard rejection rebind (FIR6RC-02).
+    guard_victim = _identity(identity_id="face-guard", media_id="photo-b", confidence=0.88)
+    chunk = [winner, loser, guard_victim]
     conflict_decisions = [
         _accept(winner, cluster_id="cluster-x", similarity=0.92),
         _accept(loser, cluster_id="cluster-x", similarity=0.81),
+        _accept(guard_victim, cluster_id="cluster-y", similarity=0.90),
     ]
 
     class _GateResult:
@@ -589,11 +630,16 @@ async def test_orchestrator_joint_wiring_discriminates_on_knob(
         return _GateResult(conflict_decisions)
 
     persisted_batches: list[list[str]] = []
+    guard_flags: list[bool] = []
 
     class _Writer:
         async def persist_assignments_chunk(self, decisions, *, batch_mode=True, joint_uniqueness_enabled=False):
             persisted_batches.append([d.candidate.identity.id for d in decisions])
-            return len(decisions), 0, 0, set()
+            guard_flags.append(bool(joint_uniqueness_enabled))
+            # When guard is active, reject face-guard so rebind is exercised.
+            rejected = {"face-guard"} if joint_uniqueness_enabled else set()
+            kept = len(decisions) - len(rejected)
+            return kept, 0, 0, rejected
 
     class _Suggestions:
         async def resolve_for_identity_exclusive(self, **kwargs):
@@ -624,10 +670,11 @@ async def test_orchestrator_joint_wiring_discriminates_on_knob(
     monkeypatch.setattr(orch_mod, "run_discovery_pipeline", _fake_discovery)
     monkeypatch.setattr(orch_mod, "evaluate_chunk_candidates", _fake_evaluate)
 
-    # --- joint ON: loser must not persist; must reach new-cluster partition ---
+    # --- joint ON: conflict loser + guard reject rebind to new-cluster partition ---
     monkeypatch.setattr(orch_mod, "_joint_assignment_active", lambda: True)
     persisted_batches.clear()
     created_from.clear()
+    guard_flags.clear()
     await runner._process_single_chunk(
         chunk=chunk,
         processed_before=0,
@@ -640,17 +687,24 @@ async def test_orchestrator_joint_wiring_discriminates_on_knob(
         job_label="test",
         clustering_job=job,  # type: ignore[arg-type]
         processor=processor,
-        total_identities=2,
+        total_identities=3,
         run_ctx=None,
         verbose=False,
     )
-    assert persisted_batches == [["face-hi"]]
-    assert any("face-lo" in ids for ids in created_from)
+    # Joint solver drops face-lo before persist; face-hi + face-guard reach writer.
+    assert persisted_batches == [["face-hi", "face-guard"]]
+    assert guard_flags == [True]  # uniqueness guard plumbing
+    # Both joint loser and guard-rejected id must rebind into create partition.
+    flat_created = {i for batch in created_from for i in batch}
+    assert "face-lo" in flat_created
+    assert "face-guard" in flat_created
+    assert "face-hi" not in flat_created
 
-    # --- joint OFF: both faces persist (pre-S2 path); loser not partitioned as still_unclustered ---
+    # --- joint OFF on a real conflict: both conflict faces persist; guard off ---
     monkeypatch.setattr(orch_mod, "_joint_assignment_active", lambda: False)
     persisted_batches.clear()
     created_from.clear()
+    guard_flags.clear()
     await runner._process_single_chunk(
         chunk=chunk,
         processed_before=0,
@@ -663,12 +717,14 @@ async def test_orchestrator_joint_wiring_discriminates_on_knob(
         job_label="test",
         clustering_job=job,  # type: ignore[arg-type]
         processor=processor,
-        total_identities=2,
+        total_identities=3,
         run_ctx=None,
         verbose=False,
     )
-    assert set(persisted_batches[0]) == {"face-hi", "face-lo"}
+    assert set(persisted_batches[0]) == {"face-hi", "face-lo", "face-guard"}
+    assert guard_flags == [False]
     assert all("face-lo" not in ids for ids in created_from)
+    assert all("face-guard" not in ids for ids in created_from)
 
 
 def test_per_knob_rebinding_via_production_resolvers() -> None:

@@ -5,12 +5,14 @@
  */
 import { __ } from '@wordpress/i18n';
 
+import { toRetention } from '../../navigation/appLinks';
+
 /** Card heading — replaces jargon "Retention posture". */
 export const RETENTION_CARD_HEADING = __('Your data & retention', 'alt-context');
 
 /**
  * Endpoint configured but fetch failed (`useRetentionStatus().isError`).
- * Points operator to Settings; `#/retention` link is retained at the call site.
+ * Points operator to Settings; retention route link is retained at the call site.
  */
 export const RETENTION_CARD_ERROR_BODY = __(
   'Retention status could not load. Check the connection on the Settings page.',
@@ -18,7 +20,7 @@ export const RETENTION_CARD_ERROR_BODY = __(
 );
 
 /** Designed action for the error state — existing retention route. */
-export const RETENTION_CARD_LINK_HREF = '#/retention';
+export const RETENTION_CARD_LINK_HREF = toRetention();
 
 /** Action-card heading shared by retention error and success panels. */
 export const RETENTION_CARD_ACTION_HEADING = __('Open Retention Controls', 'alt-context');

@@ -443,8 +443,8 @@ describe('banned vocabulary across js/admin pages', () => {
     const bulkCopy = await import('../pages/workbench/identity-clusters/useBulkReviewCommit');
 
     const personCommitStrings = Object.values(personCommitCopy).filter(
-      (value) => typeof value === 'string',
-    ) as string[];
+      (value): value is string => typeof value === 'string',
+    );
     const surface = [
       NEXT_ACTION_CHIP_LABEL[NEXT_ACTION_KIND.ASSIGNMENT],
       NEXT_ACTION_CHIP_LABEL[NEXT_ACTION_KIND.MERGE],

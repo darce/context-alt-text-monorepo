@@ -1,9 +1,11 @@
 import { __ } from '@wordpress/i18n';
 import type { RosterEntry } from '../../api/rosterApi';
+import { APP_LINK_PARAMS, toWorkbench } from '../../navigation/appLinks';
 
 /**
- * E21-9 Slice 5a: Clusters tab retired. People is the only roster surface.
- * Legacy `tab=clusters` / bare `cluster=` still parse usefully (drawer opens in place).
+ * E21-9 Slice 5a + E21-10 Slice 4 (lands-second): Clusters tab retired; getLegacyTab gone.
+ * People is the only roster surface. `tab=*` is ignored (no rewrite). `cluster=` opens the
+ * person-first drawer in place — not a Clusters-tab selector (that grammar is retired).
  */
 export const ROSTER_SURFACE = {
   id: 'people' as const,
@@ -172,13 +174,15 @@ export const isUnlabeledCluster = (cluster: { label?: string | null }): boolean 
   return label == null || label.trim() === '';
 };
 
-/** Workbench review-queue deep link for card-at-a-time triage (assignment band). */
-export const workbenchReviewQueueUrl = (options?: { clusterId?: string }): string => {
-  const params = new URLSearchParams();
-  params.set('tab', 'scan');
-  params.set('rq', 'assignment.all.0');
-  if (options?.clusterId) {
-    params.set('cluster', options.clusterId);
-  }
-  return `#/workbench?${params.toString()}`;
+/**
+ * Workbench review-queue deep link for card-at-a-time triage (assignment band).
+ *
+ * `cluster=` emission dropped (jobId precedent): workbench has no cluster reader.
+ * Never re-parse builder output to append reader-less params.
+ */
+export const workbenchReviewQueueUrl = (): string => {
+  // rq stays E21-5-owned; contract supplies route base + param *names* only.
+  const base = toWorkbench({ tab: 'scan' });
+  const separator = base.includes('?') ? '&' : '?';
+  return `${base}${separator}${APP_LINK_PARAMS.rq}=assignment.all.0`;
 };

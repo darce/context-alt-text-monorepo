@@ -5,6 +5,7 @@ import type { RosterEntry } from '../../api/rosterApi';
 import { RosterEntriesTable } from './RosterEntriesTable';
 import { useCreatePerson } from '../../hooks/useRosterHooks';
 import { Filter, UserPlus, Plus, Users, X } from 'lucide-react';
+import { toWorkbench } from '../../navigation/appLinks';
 
 type QueueFilterId = RosterEntry['queue_memberships'][number];
 
@@ -19,7 +20,7 @@ interface QueueReviewRoute {
   label: string;
 }
 
-const WORKBENCH_SCAN_ROUTE = '#/workbench?tab=scan';
+const WORKBENCH_SCAN_ROUTE = toWorkbench({ tab: 'scan' });
 
 const isQueueFilterId = (value: string | null): value is QueueFilterId =>
   value === 'singleton-proposals' || value === 'hard-examples' || value === 'needs-confirmation-after-merge';

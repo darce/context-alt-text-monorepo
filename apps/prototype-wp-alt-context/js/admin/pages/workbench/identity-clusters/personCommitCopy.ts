@@ -3,6 +3,8 @@
  * Human-facing strings; banned-vocabulary tests assert these stay jargon-free.
  */
 
+import { toRoster } from '../../../navigation/appLinks';
+
 /** HAI-05 model-output disclosure — plain copy, never dresses a guess as fact. */
 export const MODEL_OUTPUT_DISCLOSURE =
   'Suggested by face matching based on similarity — confirm before treating it as fact.';
@@ -10,10 +12,10 @@ export const MODEL_OUTPUT_DISCLOSURE =
 /** Tertiary label-only path (routes open_label → ClusterLabelingPanel). */
 export const JUST_LABEL_COPY = "Just label — don't add to roster";
 
-/** Success confirm affordance — generic #/roster (no ?person= deep-link; E21-10 owns that). */
+/** Success confirm affordance — generic roster root (person deep-link via toRosterPerson). */
 export const VIEW_IN_ROSTER_COPY = 'View in roster →';
 
-export const VIEW_IN_ROSTER_HREF = '#/roster';
+export const VIEW_IN_ROSTER_HREF = toRoster();
 
 export const PERSON_COMMIT_CONFIRM_COPY = 'Add to roster';
 

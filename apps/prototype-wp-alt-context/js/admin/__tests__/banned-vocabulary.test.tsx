@@ -505,8 +505,27 @@ describe('banned vocabulary across js/admin pages', () => {
     }
     expect(surface).toContain(confirmTabCopy.CLUSTERING_DISCLOSURE_SUMMARY);
     expect(surface).toContain(confirmTabCopy.CLUSTERING_DISCLOSURE_BODY);
+    expect(surface).toContain(confirmTabCopy.CONFIRM_PANEL_INTRO);
     expect(surface).toContain(confirmTabCopy.CONFIRM_NO_JOB_ZERO_STATE);
     expect(surface.toLowerCase()).not.toContain('embeddings');
+    expect(surface).not.toMatch(UUID_REGEX);
+  });
+
+  /**
+   * UXP-4 BR-02: PurgeDialog options are not mounted by the RetentionPage
+   * empty fixture (dialog closed), so scope-option constants are swept via
+   * import * (retentionCardCopy pattern).
+   */
+  it('retention purge-dialog copy constants are free of banned jargon', async () => {
+    const retentionDialogCopy = await import('../pages/retention/retentionDialogCopy');
+    const purgeStrings = Object.values(retentionDialogCopy).filter((value) => typeof value === 'string') as string[];
+    const surface = purgeStrings.join(' ');
+
+    for (const banned of BANNED_STRINGS) {
+      expect(surface.toLowerCase()).not.toContain(banned.toLowerCase());
+    }
+    expect(surface).toContain(retentionDialogCopy.PURGE_SCOPE_ALL_DESCRIPTION);
+    expect(surface.toLowerCase()).not.toContain('machine state');
     expect(surface).not.toMatch(UUID_REGEX);
   });
 });

@@ -1,5 +1,4 @@
 import React from 'react';
-import { __ } from '@wordpress/i18n';
 import { useRemoteActionGate } from '../../hooks/useRemoteActionGate';
 import { useSyncOffline } from '../../hooks/useSyncOffline';
 import {
@@ -17,8 +16,8 @@ export const ConfirmTabContent = (): React.JSX.Element => {
   return (
     <>
       <details className="acx-workbench-help-card">
-        <summary>{__(CLUSTERING_DISCLOSURE_SUMMARY, 'alt-context')}</summary>
-        <p>{__(CLUSTERING_DISCLOSURE_BODY, 'alt-context')}</p>
+        <summary>{CLUSTERING_DISCLOSURE_SUMMARY}</summary>
+        <p>{CLUSTERING_DISCLOSURE_BODY}</p>
       </details>
       <ConfirmPanel
         jobId={history.jobId ?? null}

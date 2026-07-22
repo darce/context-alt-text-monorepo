@@ -235,10 +235,10 @@ export const DashboardPage = (): React.JSX.Element => {
     ),
     retentionPosture: showRetentionPanel ? (
       <section className="acx-dashboard__panel">
-        <h2>{__(RETENTION_CARD_HEADING, 'alt-context')}</h2>
+        <h2>{RETENTION_CARD_HEADING}</h2>
         {isRetentionError || !retentionPolicy ? (
           <>
-            <p>{__(RETENTION_CARD_ERROR_BODY, 'alt-context')}</p>
+            <p>{RETENTION_CARD_ERROR_BODY}</p>
             <div className="acx-dashboard__actions">
               <a href={RETENTION_CARD_LINK_HREF} className="acx-dashboard__action-card">
                 <h3>{__('Open Retention Controls', 'alt-context')}</h3>

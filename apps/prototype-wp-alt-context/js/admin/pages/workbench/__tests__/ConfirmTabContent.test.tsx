@@ -77,8 +77,9 @@ describe('ConfirmTabContent', () => {
     await userEvent.click(screen.getByText(CLUSTERING_DISCLOSURE_SUMMARY));
     expect(details?.open).toBe(true);
     expect(screen.getByText(CLUSTERING_DISCLOSURE_BODY)).toBeTruthy();
-    // Spec: disclosure body drops "embeddings" (ConfirmPanel intro is out of slice-4 body scope).
+    // Spec: confirm tab surface (disclosure + ConfirmPanel intro) drops "embeddings".
     expect(CLUSTERING_DISCLOSURE_BODY.toLowerCase()).not.toContain('embeddings');
     expect(details?.textContent?.toLowerCase()).not.toContain('embeddings');
+    expect(container.textContent?.toLowerCase()).not.toContain('embeddings');
   });
 });

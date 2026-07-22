@@ -4,6 +4,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { UseMutationResult, UseQueryResult } from '@tanstack/react-query';
 import type { RetentionStatusResponse, SyncStatusResponse, SyncTriggerResponse } from '../../../api/recognition';
 import { createMockQuery } from '../../../test-utils/mockHooks';
+import { SYNC_VOCABULARY } from '../syncVocabulary';
 
 const buildSyncStatus = (overrides: Partial<SyncStatusResponse> = {}): SyncStatusResponse => ({
   last_snapshot_version: 0,
@@ -612,12 +613,13 @@ describe('SyncStatusIndicator', () => {
       <SyncStatusIndicator
         pipelinePhase="projecting"
         projectionState="error"
-        projectionError="Waiting for service…"
+        projectionError={SYNC_VOCABULARY.resultsErrorHeadline}
         onRetryProjection={retryProjection}
       />,
     );
 
-    expect(screen.getByText('Waiting for service…')).toBeInTheDocument();
+    expect(screen.getByText(SYNC_VOCABULARY.resultsErrorHeadline)).toBeInTheDocument();
+    expect(screen.queryByText('Waiting for service…')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry sync' }));
     expect(retryProjection).toHaveBeenCalledTimes(1);
   });
@@ -635,12 +637,13 @@ describe('SyncStatusIndicator', () => {
       <SyncStatusIndicator
         pipelinePhase="idle"
         projectionState="error"
-        projectionError="Waiting for service…"
+        projectionError={SYNC_VOCABULARY.resultsErrorHeadline}
         onRetryProjection={retryProjection}
       />,
     );
 
-    expect(screen.getByText('Waiting for service…')).toBeInTheDocument();
+    expect(screen.getByText(SYNC_VOCABULARY.resultsErrorHeadline)).toBeInTheDocument();
+    expect(screen.queryByText('Waiting for service…')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry sync' }));
     expect(retryProjection).toHaveBeenCalledTimes(1);
   });

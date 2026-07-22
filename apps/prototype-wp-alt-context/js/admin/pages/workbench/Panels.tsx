@@ -2,7 +2,7 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 
 import type { JobProgress } from '../../api/recognition/types/scan';
 import type { RecognitionHistorySource } from '../../hooks/recognitionJobHistoryUtils';
-import { CONFIRM_NO_JOB_ZERO_STATE } from './confirmTabCopy';
+import { CONFIRM_NO_JOB_ZERO_STATE, CONFIRM_PANEL_INTRO } from './confirmTabCopy';
 import type { ScanRunViewModel } from './JobPipelineContext';
 import { JOB_PHASE_PRESENTATION } from './phasePresentation';
 import { formatSyncJobPhase } from './syncPresentation';
@@ -196,9 +196,9 @@ export const ConfirmPanel = ({
   remoteActionAriaDisabled,
 }: ConfirmPanelProps) => (
   <div className="acx-apply-panel">
-    <p>{__('Review the most recent recognition job and cluster the detected embeddings.', 'alt-context')}</p>
+    <p>{CONFIRM_PANEL_INTRO}</p>
     {jobId == null ? (
-      <p className="acx-apply-panel__status">{__(CONFIRM_NO_JOB_ZERO_STATE, 'alt-context')}</p>
+      <p className="acx-apply-panel__status">{CONFIRM_NO_JOB_ZERO_STATE}</p>
     ) : (
       <ul className="acx-apply-panel__list">
         <li>

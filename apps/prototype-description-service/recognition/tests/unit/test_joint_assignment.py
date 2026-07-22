@@ -510,7 +510,14 @@ async def test_guard_exempts_own_identity_on_retry() -> None:
 
 def test_production_limits_and_detection_readers_rebind() -> None:
     """Production resolve_effective_* helpers rebind limits + detection under face_pipeline."""
+    # Function-local imports for ALL settings classes: the knob env-ingestion
+    # tests importlib.reload() recognition.config.settings, so module-level
+    # class objects go stale mid-suite and pydantic isinstance checks fail.
     from recognition.config.settings import (
+        ClusteringLimitsSettings,
+        ClusteringSettings,
+        FacePipelineSettings,
+        IdentityDetectionSettings,
         RecognitionSettings,
         resolve_effective_detection_settings,
         resolve_effective_limits_settings,
@@ -666,7 +673,14 @@ async def test_orchestrator_joint_wiring_discriminates_on_knob(
 
 def test_per_knob_rebinding_via_production_resolvers() -> None:
     """limits + detection discrimination goes through production resolve_effective_* readers."""
+    # Function-local imports for ALL settings classes: the knob env-ingestion
+    # tests importlib.reload() recognition.config.settings, so module-level
+    # class objects go stale mid-suite and pydantic isinstance checks fail.
     from recognition.config.settings import (
+        ClusteringLimitsSettings,
+        ClusteringSettings,
+        FacePipelineSettings,
+        IdentityDetectionSettings,
         RecognitionSettings,
         resolve_effective_detection_settings,
         resolve_effective_limits_settings,

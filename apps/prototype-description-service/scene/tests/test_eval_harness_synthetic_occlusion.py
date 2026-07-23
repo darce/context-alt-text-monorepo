@@ -281,6 +281,7 @@ def test_lt_2_distinct_identity_gallery_excluded_from_denominator():
         ],
         faces,
         tau=0.0,
+        tau_by_identity={"Alice": 0.0},
         walk_stability_asserted=True,
         walk_stability_delta=0.0,
     )
@@ -321,6 +322,7 @@ def test_re_detect_miss_is_accuracy_zero_kept_in_n():
         ],
         faces,
         tau=0.5,
+        tau_by_identity={"Alice": 0.5, "Bob": 0.5},
         walk_stability_asserted=True,
         walk_stability_delta=0.0,
     )
@@ -434,6 +436,7 @@ def test_eligible_pair_floor_under_90_is_directional():
         inputs,
         faces,
         tau=0.0,
+        tau_by_identity={"Alice": 0.0, "Bob": 0.0},
         walk_stability_asserted=True,
         walk_stability_delta=0.0,
     )
@@ -463,6 +466,7 @@ def test_walk_stability_not_asserted_is_directional():
         ],
         faces,
         tau=0.0,
+        tau_by_identity={"Alice": 0.0, "Bob": 0.0},
         walk_stability_asserted=False,
     )
     assert rollup.directional is True
@@ -525,6 +529,7 @@ def test_occlusion_can_fail_misassign_drives_a_s_down():
         ],
         faces,
         tau=0.0,
+        tau_by_identity={"Alice": 0.0, "Bob": 0.0},
         walk_stability_asserted=True,
         walk_stability_delta=0.0,
     )
@@ -540,6 +545,7 @@ def test_occlusion_can_fail_misassign_drives_a_s_down():
         ],
         faces,
         tau=0.0,
+        tau_by_identity={"Alice": 0.0, "Bob": 0.0},
         walk_stability_asserted=True,
         walk_stability_delta=0.0,
     )
@@ -583,7 +589,8 @@ def test_occlusion_gate_goes_red_when_floors_met():
         {"media_id": 2 * i + 1, "box_index": 0, "true_name": f"P{i}", "kind": "masked", "embedding": onehot(i)}
         for i in range(n)
     ]
-    clean = score_occlusion_accuracy(correct, faces, tau=0.0, walk_stability_asserted=True, walk_stability_delta=0.0)
+    taus = {f"P{i}": 0.0 for i in range(n)}
+    clean = score_occlusion_accuracy(correct, faces, tau=0.0, tau_by_identity=taus, walk_stability_asserted=True, walk_stability_delta=0.0)
     assert clean.n_eligible == n
     assert clean.directional is False  # floors met + walk-stability → a GATING number
     assert clean.accuracy == pytest.approx(1.0)
@@ -591,7 +598,7 @@ def test_occlusion_gate_goes_red_when_floors_met():
     # Flip one twin to a wrong identity → argmax mis-assigns → the GATING number drops.
     bad = list(correct)
     bad[0] = {**bad[0], "embedding": onehot(1)}  # P0 twin now looks like P1
-    red = score_occlusion_accuracy(bad, faces, tau=0.0, walk_stability_asserted=True, walk_stability_delta=0.0)
+    red = score_occlusion_accuracy(bad, faces, tau=0.0, tau_by_identity=taus, walk_stability_asserted=True, walk_stability_delta=0.0)
     assert red.directional is False  # still a gating number (floors still met)
     assert red.accuracy == pytest.approx((n - 1) / n)
     assert red.accuracy < clean.accuracy  # the GATE went RED
@@ -631,6 +638,38 @@ def test_tau_none_raises_pair_and_rollup():
         )
 
 
+def test_bare_tau_only_call_raises_without_tau_by_identity():
+    """FIR5CR-01: pooled-tau scoring of named identities must be an explicit
+    opt-in — a bare tau-only call (and a map missing a named identity without
+    the opt-in) raises instead of silently scoring twins at the pooled tau."""
+    faces = [
+        _matched(1, 0, [1, 0, 0], "Alice"),
+        _matched(2, 0, [1, 0.05, 0], "Alice"),
+        _matched(3, 0, [0, 1, 0], "Bob"),
+        _matched(4, 0, [0, 1, 0.05], "Bob"),
+    ]
+    inputs = [
+        {
+            "media_id": 1,
+            "box_index": 0,
+            "true_name": "Alice",
+            "kind": "masked",
+            "embedding": _unit([1, 0, 0]),
+        }
+    ]
+    with pytest.raises(ValueError, match="tau_by_identity is required"):
+        score_occlusion_accuracy(inputs, faces, tau=0.5)
+    # Partial map without opt-in for the missing identity also raises.
+    with pytest.raises(ValueError, match="'Bob'"):
+        score_occlusion_accuracy(
+            inputs, faces, tau=0.5, tau_by_identity={"Alice": 0.5}
+        )
+    # No named identities in the corpus → nothing to cover → no raise.
+    strangers = [_matched(1, 0, [1, 0, 0], None), _matched(2, 0, [0, 1, 0], None)]
+    rollup = score_occlusion_accuracy([], strangers, tau=0.5)
+    assert rollup.n_eligible == 0
+
+
 def test_twin_scored_at_own_identity_heldout_tau_not_tau_op():
     """FIR5RR-01 discriminator: occlusion accuracy must change when a probe's
     own-fold tau_k differs from tau_op — red under a tau_op regression.
@@ -659,29 +698,32 @@ def test_twin_scored_at_own_identity_heldout_tau_not_tau_op():
         inputs,
         faces,
         tau=0.3,  # tau_op-style fallback — must NOT be used for Alice
-        tau_by_identity={"Alice": 0.7},
+        tau_by_identity={"Alice": 0.7, "Bob": 0.3},
         walk_stability_asserted=True,
         walk_stability_delta=0.0,
     )
     assert at_own_tau.n_eligible == 1
     assert at_own_tau.n_correct == 0  # rejected at Alice's own held-out tau 0.7
     # Regression probe: scoring at the pooled fallback instead would flip it.
+    # FIR5CR-01: the pooled path now needs the explicit per-identity opt-in.
     at_tau_op = score_occlusion_accuracy(
         inputs,
         faces,
         tau=0.3,
         tau_by_identity=None,
+        allow_tau_fallback_for={"Alice", "Bob"},
         walk_stability_asserted=True,
         walk_stability_delta=0.0,
     )
     assert at_tau_op.n_correct == 1
     assert at_own_tau.n_correct != at_tau_op.n_correct
-    # Fallback stays entity-disjoint-by-absence: identities NOT in the map use tau.
+    # Explicitly opted-in identities NOT in the map use the pooled tau.
     fallback_only = score_occlusion_accuracy(
         inputs,
         faces,
         tau=0.7,
-        tau_by_identity={"Bob": 0.2},  # Alice absent → fallback 0.7 applies
+        tau_by_identity={"Bob": 0.2},  # Alice opted-in → fallback 0.7 applies
+        allow_tau_fallback_for={"Alice"},
         walk_stability_asserted=True,
         walk_stability_delta=0.0,
     )
@@ -709,6 +751,7 @@ def test_ineligible_miss_never_counts_as_re_detect_miss():
         ],
         faces,
         tau=0.5,
+        tau_by_identity={"Alice": 0.5, "Bob": 0.5},
         walk_stability_asserted=True,
         walk_stability_delta=0.0,
     )
@@ -751,6 +794,7 @@ def test_a_s_a_r_a_clean_are_distinct_quantities():
         ],
         faces,
         tau=0.0,
+        tau_by_identity={"Alice": 0.0, "Bob": 0.0},
         walk_stability_asserted=True,
         walk_stability_delta=0.0,
     )
@@ -767,6 +811,7 @@ def test_a_s_a_r_a_clean_are_distinct_quantities():
         ],
         faces,
         tau=0.0,
+        tau_by_identity={"Alice": 0.0, "Bob": 0.0},
         walk_stability_asserted=True,
         walk_stability_delta=0.0,
     )
@@ -783,6 +828,7 @@ def test_a_s_a_r_a_clean_are_distinct_quantities():
         ],
         faces,
         tau=0.0,
+        tau_by_identity={"Alice": 0.0, "Bob": 0.0},
         walk_stability_asserted=True,
         walk_stability_delta=0.0,
     )

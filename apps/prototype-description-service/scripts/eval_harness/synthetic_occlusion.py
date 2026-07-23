@@ -83,9 +83,12 @@ SYNTHETIC_OCCLUSION_PROTOCOL_DISCLOSURES: tuple[str, ...] = (
     "failures are structurally absent (EVAL-17)",
     "occlusion recovery uses open-set threshold (s_max >= tau), not closed-set "
     "argmax; each twin is scored at its source identity's held-out fold tau_k "
-    "(entity-disjoint — CAL-07/EVAL-07), with tau_op as fallback only for "
-    "identities absent from the pooled decisions; single-identity galleries "
-    "are excluded from the denominator (EVAL-18)",
+    "(entity-disjoint — CAL-07/EVAL-07); pooled tau_op is a last-resort "
+    "fallback gated behind an explicit per-identity opt-in "
+    "(allow_tau_fallback_for) for identities with no held-out probe decision "
+    "— not guaranteed entity-disjoint if the identity still entered fit "
+    "galleries; single-identity galleries are excluded from the denominator "
+    "(EVAL-18)",
     "filter_headline_probes is fail-closed: occluded_probe_keys is required",
     # FIR5RR-09: only mated (named roster) twins exist in FIR-5.
     "occluded non-mated (stranger) behaviour is unmeasured — every occlusion "
@@ -620,6 +623,7 @@ def score_occlusion_accuracy(
     *,
     tau: float,
     tau_by_identity: Mapping[str, float] | None = None,
+    allow_tau_fallback_for: set[str] | frozenset[str] | None = None,
     walk_stability_asserted: bool = False,
     walk_stability_delta: float | None = None,
     walk_stability_bound: float = WALK_STABILITY_DELTA_BOUND,
@@ -634,10 +638,17 @@ def score_occlusion_accuracy(
     ``tau_by_identity[true_name]`` — its source identity's held-out fold
     ``tau_k`` (subject-disjoint folds pin every face of an identity to one
     fold, so this is entity-disjoint for the twin's own identity). ``tau`` is
-    REQUIRED (FIR5RR-02: ``None`` was a silent closed-set argmax) and is used
-    only for identities absent from ``tau_by_identity`` — such identities
-    contributed no probe to any fold fit, so a pooled ``tau_op`` fallback is
-    entity-disjoint for them by absence.
+    REQUIRED (FIR5RR-02: ``None`` was a silent closed-set argmax).
+
+    ``tau_by_identity`` coverage is REQUIRED (FIR5CR-01): when
+    ``unoccluded_matched`` contains named identities, every one of them must
+    have a ``tau_k`` in the map. Scoring a twin at pooled ``tau`` is a
+    documented last-resort path gated behind ``allow_tau_fallback_for`` — an
+    explicit per-identity opt-in reserved for identities provably absent from
+    the pooled fold decisions (they contributed no held-out probe). The
+    fallback is NOT guaranteed entity-disjoint if the identity still entered
+    fit galleries; a bare tau-only call raises rather than silently scoring
+    twins at the pooled operating point.
     """
     if tau is None:
         raise ValueError(
@@ -645,7 +656,17 @@ def score_occlusion_accuracy(
             "closed-set argmax; pass tau_op as the fallback threshold"
         )
     by_identity = matched_named_by_identity(unoccluded_matched)
-    taus = tau_by_identity or {}
+    taus = dict(tau_by_identity) if tau_by_identity is not None else {}
+    allowed_fallback = set(allow_tau_fallback_for or ())
+    uncovered = sorted(set(by_identity) - set(taus) - allowed_fallback)
+    if uncovered:
+        raise ValueError(
+            "tau_by_identity is required (FIR5CR-01): named identities "
+            f"{uncovered} have no held-out fold tau_k; scoring them at the "
+            "pooled tau silently drops entity-disjointness. Pass their tau_k, "
+            "or opt in via allow_tau_fallback_for ONLY for identities provably "
+            "absent from the pooled fold decisions"
+        )
     results: list[OcclusionPairResult] = []
     for item in pair_inputs:
         true_name = str(item["true_name"])

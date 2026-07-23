@@ -31,7 +31,11 @@ from .caption_metrics import (
     score_caption,
     wrong_name_image_rate,
 )
-from .face_assignment import TAU_GRID, score_face_assignment
+from .face_assignment import (
+    FOLD_MEDIA_CORESIDENCY_DISCLOSURE,
+    TAU_GRID,
+    score_face_assignment,
+)
 from .face_metrics import (
     CLUSTER_PAIR_FLOOR,
     SAMPLING_FRAME_CLUSTERING,
@@ -99,6 +103,8 @@ FACE_BAKEOFF_PROTOCOL_DISCLOSURES: tuple[str, ...] = (
     "read-phase LOO galleries span the full matched corpus — τ_k is selected "
     "against a lower-cardinality gallery than the one held-out probes are "
     "read against, so read-time argmax competition is harder than fit-time",
+    # FIR5CR-06: fold protocol — single-sourced from face_assignment.
+    FOLD_MEDIA_CORESIDENCY_DISCLOSURE,
     *SYNTHETIC_OCCLUSION_PROTOCOL_DISCLOSURES,
 )
 
@@ -985,6 +991,30 @@ def _face_pr_dict(pr: Any) -> dict[str, Any]:
     }
 
 
+def _tau_by_identity_from_decisions(decisions: Sequence[Any]) -> dict[str, float]:
+    """Identity → held-out fold tau_k map from pooled decisions (FIR5CR-02).
+
+    Subject-disjoint folds (CAL-07) pin every face of an identity to exactly
+    one fold, so all of an identity's decisions must carry the SAME tau_k.
+    Disagreement means the fold split regressed (an identity straddles folds)
+    — raise instead of silently keeping the last-seen value.
+    """
+    out: dict[str, float] = {}
+    for d in decisions:
+        if d.true_name is None:
+            continue
+        tau_k = float(d.tau_k)
+        prev = out.get(d.true_name)
+        if prev is not None and prev != tau_k:
+            raise ReportError(
+                f"fold-split regression (FIR5CR-02): identity {d.true_name!r} "
+                f"has disagreeing held-out tau_k values ({prev} vs {tau_k}) — "
+                "subject-disjoint folds must pin an identity to one fold"
+            )
+        out[d.true_name] = tau_k
+    return out
+
+
 def _gt_box_name(box: Any) -> str | None:
     if isinstance(box, Mapping):
         name = box.get("name")
@@ -1012,6 +1042,10 @@ def _association_counts_for_media(
       never reached assignment) contribute their manifest NAMED labeled-face
       counts as misses, with an explicit provenance note — never a silent
       ``continue``.
+    - An out-of-range ``unmatched_gt`` index (``gi >= len(boxes)``: GT box /
+      manifest drift) is counted conservatively as a miss with an explicit
+      provenance note — never a silent skip (FIR5CR-05; same fail-visible
+      posture as the absent-media branch above).
     """
     missed = 0
     unmatched = 0
@@ -1031,7 +1065,17 @@ def _association_counts_for_media(
                 )
             continue
         for gi in assoc.unmatched_gt:
-            if gi < len(boxes) and _gt_box_name(boxes[gi]) is not None:
+            if gi >= len(boxes):
+                # FIR5CR-05: index/manifest drift — the box cannot be
+                # inspected, so count it conservatively as a miss and leave a
+                # provenance note (never a silent skip).
+                missed += 1
+                notes.append(
+                    f"media_id {mid}: unmatched_gt index {gi} out of range "
+                    f"for {len(boxes)} manifest GT box(es); counted "
+                    "conservatively as missed_gt (association/manifest drift)"
+                )
+            elif _gt_box_name(boxes[gi]) is not None:
                 missed += 1
         if mid in probe_media_ids:
             unmatched += len(assoc.unmatched_detections)
@@ -1416,14 +1460,16 @@ def score_face_run_record(
     # FIR5RR-01 (CAL-07/EVAL-07): each twin is scored at its source identity's
     # held-out fold tau_k — never at tau_op, whose median includes the twin's
     # own identity's fold. Subject-disjoint folds pin every face of an identity
-    # to one fold, so the identity→tau_k map is well-defined; tau_op remains
-    # the fallback ONLY for identities absent from the pooled decisions
-    # (entity-disjoint by absence — they contributed nothing to any fold fit).
-    tau_by_identity: dict[str, float] = {
-        d.true_name: float(d.tau_k)
-        for d in assignment.decisions
-        if d.true_name is not None
-    }
+    # to one fold, so the identity→tau_k map is well-defined. FIR5CR-01: the
+    # pooled-tau fallback is an explicit opt-in restricted to matched named
+    # identities provably absent from the pooled decisions (they contributed
+    # no held-out probe to any fold fit; the fallback is still not guaranteed
+    # entity-disjoint if the identity entered fit galleries).
+    tau_by_identity = _tau_by_identity_from_decisions(assignment.decisions)
+    tau_fallback_identities = frozenset(
+        {f.true_name for f in assignment.matched if f.true_name is not None}
+        - set(tau_by_identity)
+    )
     occlusion_out: dict[str, Any] = {}
     occlusion_pairs_by_tag = occlusion_pairs_by_tag or {}
     real_occlusion_pairs_by_tag = real_occlusion_pairs_by_tag or {}
@@ -1451,6 +1497,7 @@ def score_face_run_record(
                 assignment.matched,
                 tau=assignment.tau_op,
                 tau_by_identity=tau_by_identity,
+                allow_tau_fallback_for=tau_fallback_identities,
                 walk_stability_asserted=walk_asserted,
                 walk_stability_delta=walk_delta,
             )
@@ -1460,6 +1507,7 @@ def score_face_run_record(
                 assignment.matched,
                 tau=assignment.tau_op,
                 tau_by_identity=tau_by_identity,
+                allow_tau_fallback_for=tau_fallback_identities,
                 walk_stability_asserted=False,
                 walk_stability_delta=None,
             )
@@ -1470,6 +1518,7 @@ def score_face_run_record(
                 assignment.matched,
                 tau=assignment.tau_op,
                 tau_by_identity=tau_by_identity,
+                allow_tau_fallback_for=tau_fallback_identities,
                 walk_stability_asserted=True,  # real tags have no walk twin
                 walk_stability_delta=0.0,
             )

@@ -624,6 +624,30 @@ def test_face_id_pr_none_counts_and_coupling_override_rules():
         )
 
 
+def test_face_id_pr_partial_miss_attribution_raises_all_or_nothing():
+    """FIR5CR-03: exactly one None miss count raises; defaults are None."""
+    from scripts.eval_harness.face_metrics import FaceLevelIdPr
+
+    decisions = [
+        _dec(media_id=1, true_name="Alice", decision="accept", predicted_name="Alice"),
+    ]
+    with pytest.raises(ValueError, match="all-or-nothing"):
+        face_identification_pr(decisions, missed_gt=None, unmatched_detections=0)
+    with pytest.raises(ValueError, match="all-or-nothing"):
+        face_identification_pr(decisions, missed_gt=3, unmatched_detections=None)
+    # Dataclass defaults are None (not-attributed), never fail-open zeros.
+    bare = FaceLevelIdPr(
+        true_positives=0,
+        false_positives=0,
+        false_negatives=0,
+        n_named_probes=0,
+        n_recall_eligible=0,
+        wrong_names=(),
+        detection_recall_coupling_flag=None,
+    )
+    assert bare.missed_gt is None and bare.unmatched_detections is None
+
+
 def test_unknown_rejection_error_target_discloses_trial_dependence():
     """FIR5RR-13: n=43 floor kept; dependence disclosed on the error target."""
     from scripts.eval_harness.face_metrics import (

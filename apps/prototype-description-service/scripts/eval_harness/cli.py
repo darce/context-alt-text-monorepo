@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -30,13 +31,25 @@ import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from scene.config.profiles import PROFILE_SPECS, DescriptionProfile
 from scene.domain.description import DescriptionAdapterKind
 from shared.secrets import get_secret_provider
 
+from .face_bakeoff import (
+    CANDIDATE_MODEL_ID,
+    build_candidate_leg,
+    build_occlusion_twin_pairs,
+    build_pinned_cache_detector,
+    walk_face_run_record,
+)
+from .face_bakeoff import (
+    BoundedStallError as FaceBoundedStallError,
+)
+from .face_run_record import FaceRunRecordError, validate_face_run_record
 from .manifest import GoldenManifest, ManifestError, _resolve_image, load_manifest
+from .perf_leg import PerfLegError
 from .remote_client import RemoteClientError, RemoteSceneClient
 from .report import (
     ReportError,
@@ -46,14 +59,6 @@ from .report import (
     score_face_run_record,
     score_run_record,
 )
-from .face_bakeoff import (
-    BoundedStallError as FaceBoundedStallError,
-    build_candidate_leg,
-    build_occlusion_twin_pairs,
-    walk_face_run_record,
-)
-from .face_run_record import FaceRunRecordError, validate_face_run_record
-from .perf_leg import PerfLegError
 from .schema import SCHEMA, DocKind
 from .seed_roster import seed, seed_scenes
 
@@ -539,11 +544,77 @@ def _cmd_seed_scenes(args: argparse.Namespace) -> None:
 
 
 
+class _FaceLegBundle(NamedTuple):
+    """One bake-off leg wired for the walker + twin pass (leg-parameterized provenance)."""
+
+    detector: Any
+    aligner: Any
+    embedder: Any
+    model_id: str
+    leg_mode: str | None
+    # Non-candidate legs pin the twin landmark cache to the candidate-family
+    # YuNet (EXP-08); None → the leg detector doubles as the cache detector.
+    cache_detector: Any | None
+
+
+_EVAL_BENCH_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _build_buffalo_leg() -> _FaceLegBundle:
+    """Preflight + construct the fused buffalo_l baseline leg (FIR-1 head-to-head).
+
+    PROV-01: buffalo run-records hold 512D embeddings of private images — they
+    stay in git-ignored ``out/``; only score reports are promoted to
+    ``benchmarks/results/``.
+    """
+    if os.environ.get("ACX_EVAL_BENCH", "").strip().lower() not in _EVAL_BENCH_TRUTHY:
+        sys.exit(
+            "face-bakeoff --leg buffalo requires ACX_EVAL_BENCH=1 (SC-1: the buffalo_l "
+            "incumbent is an eval-only reference leg). Set ACX_EVAL_BENCH=1 and install "
+            "the [bench] extra first: uv sync --extra bench"
+        )
+    if importlib.util.find_spec("insightface") is None:
+        sys.exit(
+            "face-bakeoff --leg buffalo: insightface is not installed. Install the "
+            "[bench] extra (uv sync --extra bench) and keep ACX_EVAL_BENCH=1. Model "
+            "weights resolve via INSIGHTFACE_CACHE_DIR / INSIGHTFACE_HOME (root dir "
+            "containing models/buffalo_l/), else ~/.insightface"
+        )
+    from .buffalo_bench import BUFFALO_LEG_MODE, BUFFALO_MODEL_ID, build_baseline_leg
+
+    detector, aligner, embedder = build_baseline_leg()
+    return _FaceLegBundle(
+        detector=detector,
+        aligner=aligner,
+        embedder=embedder,
+        model_id=BUFFALO_MODEL_ID,
+        leg_mode=BUFFALO_LEG_MODE,
+        cache_detector=build_pinned_cache_detector(),
+    )
+
+
+def _build_face_leg(leg: str) -> _FaceLegBundle:
+    if leg == "buffalo":
+        return _build_buffalo_leg()
+    detector, aligner, embedder = build_candidate_leg()
+    return _FaceLegBundle(
+        detector=detector,
+        aligner=aligner,
+        embedder=embedder,
+        model_id=CANDIDATE_MODEL_ID,
+        leg_mode=None,
+        cache_detector=None,
+    )
+
+
 def _cmd_face_bakeoff(args: argparse.Namespace) -> None:
-    """Offline candidate-leg walk → face_run_record JSON in out/ (no tenant writes)."""
+    """Offline leg walk → face_run_record JSON in out/ (no tenant writes)."""
+    # Leg preflight first: --leg buffalo failures (env flag / [bench] extra) must
+    # surface before unrelated GOLDEN_IMAGES_DIR / manifest errors.
+    leg = _build_face_leg(args.leg)
     images_dir = _images_dir()
     manifest = load_manifest(args.manifest)
-    detector, aligner, embedder = build_candidate_leg()
+    detector, aligner, embedder = leg.detector, leg.aligner, leg.embedder
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     try:
         record = walk_face_run_record(
@@ -552,6 +623,7 @@ def _cmd_face_bakeoff(args: argparse.Namespace) -> None:
             detector=detector,
             embedder=embedder,
             aligner=aligner,
+            model_id=leg.model_id,
             head_sha=_head_sha(),
             limit=args.limit,
             stall_limit=args.stall_limit,
@@ -559,6 +631,8 @@ def _cmd_face_bakeoff(args: argparse.Namespace) -> None:
             # rg-015: dim comes from the leg's embedder (the producer), so an
             # injected leg with a different space cannot mislabel the record.
             embedding_dim=getattr(embedder, "embedding_dim", None),
+            leg=args.leg,
+            leg_mode=leg.leg_mode,
         )
     except FaceBoundedStallError as exc:
         record = exc.partial_record
@@ -578,6 +652,9 @@ def _cmd_face_bakeoff(args: argparse.Namespace) -> None:
         embedder=embedder,
         aligner=aligner,
         limit=args.limit,
+        # EXP-08: non-candidate legs keep the twin universe pinned to the
+        # candidate-family YuNet cache (None → leg detector, candidate case).
+        cache_detector=leg.cache_detector,
     )
     record["provenance"]["occlusion_twin_pass"] = twin_prov
     if twin_pairs:
@@ -644,9 +721,9 @@ def _check_face_determinism_cross_process(
         "occlusion_pairs_by_tag=sp,real_occlusion_pairs_by_tag=rp,public=pub); "
         "sys.stdout.write(j); sys.stdout.write('---MD---'); sys.stdout.write(m)"
     )
-    for seed in ("0", "1", "42"):
+    for hash_seed in ("0", "1", "42"):
         env = dict(os.environ)
-        env["PYTHONHASHSEED"] = seed
+        env["PYTHONHASHSEED"] = hash_seed
         proc = subprocess.run(
             [sys.executable, "-c", script, str(record_path), manifest_path, "1" if public else "0"],
             capture_output=True,
@@ -656,15 +733,15 @@ def _check_face_determinism_cross_process(
         )
         if proc.returncode != 0:
             sys.exit(
-                f"determinism check FAILED: subprocess seed={seed} rc={proc.returncode}: {proc.stderr}"
+                f"determinism check FAILED: subprocess seed={hash_seed} rc={proc.returncode}: {proc.stderr}"
             )
         out = proc.stdout
         if "---MD---" not in out:
-            sys.exit(f"determinism check FAILED: malformed subprocess output seed={seed}")
+            sys.exit(f"determinism check FAILED: malformed subprocess output seed={hash_seed}")
         sub_json, sub_md = out.split("---MD---", 1)
         if sub_json != base_json or sub_md != base_md:
             sys.exit(
-                f"determinism check FAILED: cross-process re-score differs under PYTHONHASHSEED={seed}"
+                f"determinism check FAILED: cross-process re-score differs under PYTHONHASHSEED={hash_seed}"
             )
     print("determinism check passed: cross-process re-score is bit-identical under varied PYTHONHASHSEED")
 
@@ -785,9 +862,13 @@ def main(argv: list[str] | None = None) -> None:
     face_bo.add_argument("--keep", type=_keep_arg, default=DEFAULT_KEEP)
     face_bo.add_argument(
         "--leg",
-        choices=("candidate",),
+        choices=("candidate", "buffalo"),
         default="candidate",
-        help="face leg (candidate=YuNet+SFace; buffalo is ACX_EVAL_BENCH-only and not default)",
+        help=(
+            "face leg (candidate=YuNet+SFace; buffalo=InsightFace buffalo_l fused baseline — "
+            "requires ACX_EVAL_BENCH=1 + the [bench] extra; PROV-01: buffalo run-records hold "
+            "512D embeddings of private images and stay in git-ignored out/)"
+        ),
     )
     face_bo.set_defaults(func=_cmd_face_bakeoff)
 

@@ -595,6 +595,7 @@ def test_face_bakeoff_wires_synthetic_occlusion_twins_end_to_end(tmp_path, monke
     """
     import cv2
     import numpy as np
+
     from recognition.infrastructure.face_pipeline._common import RawDetection
     from recognition.infrastructure.face_pipeline.aligner import FivePointAligner
     from scripts.eval_harness import cli as cli_mod
@@ -684,3 +685,161 @@ def test_face_bakeoff_wires_synthetic_occlusion_twins_end_to_end(tmp_path, monke
         # Pre-fix state was n_eligible=0 (no production caller): red if wiring drops.
         assert synth["n_eligible"] == 4, tag
         assert synth["n_eligible"] == synth["rate_denominator"]
+
+
+# --- FIR-1 head-to-head: face-bakeoff --leg dispatch (candidate vs buffalo) ---
+
+
+def test_cli_face_bakeoff_leg_rejects_unknown_value():
+    with pytest.raises(SystemExit) as exc:
+        main(["face-bakeoff", "--leg", "bogus"])
+    assert exc.value.code == 2  # argparse choices error
+
+
+def test_cli_face_bakeoff_buffalo_requires_eval_bench(monkeypatch):
+    """--leg buffalo preflights ACX_EVAL_BENCH=1 with an actionable error."""
+    monkeypatch.delenv("ACX_EVAL_BENCH", raising=False)
+    with pytest.raises(SystemExit) as exc:
+        main(["face-bakeoff", "--leg", "buffalo"])
+    msg = str(exc.value)
+    assert "ACX_EVAL_BENCH" in msg
+    assert "uv sync --extra bench" in msg
+
+
+def test_cli_face_bakeoff_buffalo_requires_insightface(monkeypatch):
+    """Env flag alone is not enough: missing insightface names the [bench] remedy."""
+    import importlib.util
+
+    if importlib.util.find_spec("insightface") is not None:
+        pytest.skip("insightface installed (bench env); missing-dep preflight not reachable")
+    monkeypatch.setenv("ACX_EVAL_BENCH", "1")
+    with pytest.raises(SystemExit) as exc:
+        main(["face-bakeoff", "--leg", "buffalo"])
+    assert "uv sync --extra bench" in str(exc.value)
+
+
+def _leg_dispatch_manifest(tmp_path):
+    """One-entry manifest (no named face_boxes → twin pass is a no-op) + images dir."""
+    import cv2
+    import numpy as np
+
+    images = tmp_path / "images" / "celebs01"
+    images.mkdir(parents=True)
+    img = np.random.default_rng(11).integers(0, 256, size=(64, 64, 3)).astype(np.uint8)
+    assert cv2.imwrite(str(images / "a.jpg"), img)
+    man_path = tmp_path / "man.json"
+    man_path.write_text(
+        json.dumps(
+            {
+                "manifest_version": 2,
+                "roster": ["Alice Q"],
+                "entries": [
+                    {
+                        "path": "celebs01/a.jpg",
+                        "sha256": "a" * 64,
+                        "media_id": 1,
+                        "face_count": 1,
+                        "base_caption": "",
+                        "present_identities": ["Alice Q"],
+                        "must_right": [],
+                        "easy_wrong": [],
+                        "policy": {"recognition_enabled": True},
+                        "context_pack": {"caption": "x"},
+                        "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
+                    }
+                ],
+            }
+        )
+    )
+    return man_path
+
+
+class _FusedFakeLeg:
+    """Fused-shape fake: detector+embedder in one object (buffalo dispatch test)."""
+
+    embedding_dim = 8
+    leg_mode = "fused"
+
+    def detect(self, imgs):
+        import numpy as np
+
+        from recognition.infrastructure.face_pipeline._common import RawDetection
+
+        self._n = len(imgs)
+        det = RawDetection(
+            bbox=np.asarray([10.0, 10.0, 30.0, 30.0], dtype=np.float32),
+            landmarks=np.asarray(
+                [[15.0, 18.0], [35.0, 18.0], [25.0, 26.0], [17.0, 34.0], [33.0, 34.0]],
+                dtype=np.float32,
+            ),
+            score=0.9,
+        )
+        return [[det] for _ in imgs]
+
+    def embed(self, crops):
+        import numpy as np
+
+        v = np.ones(self.embedding_dim, dtype=np.float32)
+        return np.stack([v / np.linalg.norm(v) for _ in crops], axis=0)
+
+
+class _NoopAligner:
+    def align(self, image, landmarks):
+        from types import SimpleNamespace
+
+        import numpy as np
+
+        return SimpleNamespace(crop=np.zeros((112, 112, 3), dtype=np.uint8))
+
+
+def test_cli_face_bakeoff_dispatches_buffalo_leg(tmp_path, monkeypatch):
+    """--leg buffalo routes through _build_buffalo_leg (never build_candidate_leg)
+    and stamps buffalo provenance (leg/model_id/embedding_dim/leg_mode)."""
+    from scripts.eval_harness import cli as cli_mod
+
+    man_path = _leg_dispatch_manifest(tmp_path)
+    leg = _FusedFakeLeg()
+    bundle = cli_mod._FaceLegBundle(
+        detector=leg,
+        aligner=_NoopAligner(),
+        embedder=leg,
+        model_id="buffalo_l",
+        leg_mode="fused",
+        cache_detector=None,
+    )
+    monkeypatch.setattr(cli_mod, "_build_buffalo_leg", lambda: bundle)
+    monkeypatch.setattr(
+        cli_mod, "build_candidate_leg", lambda: pytest.fail("candidate leg built for --leg buffalo")
+    )
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(tmp_path / "images"))
+
+    cli_mod.main(["face-bakeoff", "--manifest", str(man_path), "--leg", "buffalo"])
+    record_path = next(p for p in (tmp_path / "out").glob("face-run-*.json") if "aborted" not in p.name)
+    prov = json.loads(record_path.read_text())["provenance"]
+    assert prov["leg"] == "buffalo"
+    assert prov["model_id"] == "buffalo_l"
+    assert prov["embedding_dim"] == 8  # from the leg embedder (rg-015), not a 512 literal
+    assert prov["leg_mode"] == "fused"
+
+
+def test_cli_face_bakeoff_candidate_leg_never_touches_buffalo(tmp_path, monkeypatch):
+    """Default/explicit candidate dispatch keeps buffalo cold and stamps candidate provenance."""
+    from recognition.infrastructure.face_pipeline.aligner import FivePointAligner
+    from scripts.eval_harness import cli as cli_mod
+
+    man_path = _leg_dispatch_manifest(tmp_path)
+    leg = _FusedFakeLeg()  # shape-compatible mock; leg identity comes from dispatch args
+    monkeypatch.setattr(cli_mod, "build_candidate_leg", lambda: (leg, FivePointAligner(), leg))
+    monkeypatch.setattr(
+        cli_mod, "_build_buffalo_leg", lambda: pytest.fail("buffalo leg built for --leg candidate")
+    )
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(tmp_path / "images"))
+
+    cli_mod.main(["face-bakeoff", "--manifest", str(man_path), "--leg", "candidate"])
+    record_path = next(p for p in (tmp_path / "out").glob("face-run-*.json") if "aborted" not in p.name)
+    prov = json.loads(record_path.read_text())["provenance"]
+    assert prov["leg"] == "candidate"
+    assert prov["model_id"] == "ort-yunet-sface"
+    assert "leg_mode" not in prov

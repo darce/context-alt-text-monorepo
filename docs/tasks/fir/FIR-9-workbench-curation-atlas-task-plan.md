@@ -6,16 +6,26 @@
 > - **Author**: Grok 4.5 (xAI)
 > - **Project**: `apps/prototype-description-service` + `apps/prototype-wp-alt-context`
 > - **Task ID**: `FIR-9`
-> - **Plan version**: `v2`
+> - **Plan version**: `v3`
 > - **Target Branch**: `feature/fir-9`
 > - **Epic**: [E22 Commercial Face Identity Replacement](../../epics/v0.5.0/commercial-face-identity-replacement-epic.md) (`Epic Short ID`: FIR)
 > - **Depends on**: live cluster + member embeddings with `embedding_model` provenance (FIR-2/FIR-4 path); Workbench mutation surfaces (`useClusterMutations`, `ClusterReviewPanel`) already shipping
 > - **Review Coverage Target**: 2 _(intent only; live coverage via handoff DB — never paste findings here)_
-> - **Changelog**: **v2** — disposition schema + single write route; non-vacuous EMB-01 guard; deterministic build-time queue; thumb-join lifecycle; envelope/path pins (FIR9R1-01..08).
+> - **Changelog**: **v3** — Workbench placement rationale (NAV-05/VIZ-15/NAV-06) + S3 Roster-coordination lens (assignment color + Needs-assignment deep-link). **v2** — disposition schema + single write route; non-vacuous EMB-01 guard; deterministic build-time queue; thumb-join lifecycle; envelope/path pins (FIR9R1-01..08).
 
 ## Objective
 
 Ship a **DIAGNOSTIC-only** curation-acceleration tool in two halves: (1) an admin Workbench **2-D UMAP face atlas** (zoomable thumbnail scatter colored by `cluster_id`) for spotting bad merges/splits/outliers at a glance; (2) **HIGH-D uncertainty-ranked curation queues** (pgvector cosines) that order what a human reviews first. Projection coords and plots **never** gate or mutate identity state — all mutations continue through existing Workbench mutation APIs. Runs on the A1.Flex **CPU** box (no GPU; batch UMAP only).
+
+## Placement rationale (heuristic-validated)
+
+Operator proposal: host the atlas on the Roster page. **Canon validation keeps it in Workbench** — handoff decision `fir9_atlas_placement_workbench_validated_20260723` (#3240). Grounds:
+
+- **NAV-05 (MECE single-home).** E21-9 retired Roster’s Clusters tab to enforce the E21-10 contract: **Workbench decides [clusters], Roster curates [people]**. A cluster-inspection atlas on Roster re-opens that dual-home (two surfaces for the same cluster-topology inspection job).
+- **VIZ-15 (Munzner Ch12.3; distilled `visualization-analysis-design-munzner.md`).** The atlas is the **OVERVIEW** view and must share encoding + linked highlighting with the **DETAIL** surface where selection acts: the workbench/identity-clusters review queue (`rq=` flows, merge/label mutations via `ClusterReviewPanel` / `useClusterMutations`).
+- **NAV-06.** The frequent task the atlas serves is **cluster triage** (bad merges/splits/outliers → act in the review queue), not person-record curation.
+
+Concession without moving homes: S3 **Roster-coordination lens** (person-assignment color + Needs-assignment deep-links) — see Slice 3.
 
 ## Intake
 
@@ -441,11 +451,15 @@ Changes:
 - Click-through to `ClusterReviewPanel` / cluster selection already used by scan tab.
 - Deep-links via `appLinks.ts` + `useWorkbenchFilters.ts` + `reviewQueueDriver.ts`.
 - Zero-state with CLI instructions (no build button).
-- Component tests (zero-state, tokens, no cluster-mutation spy calls, disposition POST expected, stale badge).
+- **Roster-coordination lens** (placement concession — atlas stays on Workbench; serves Roster intent without dual-home):
+  - **Person-assignment color lens** toggle on the scatter: color points by assignment status — **named/committed-to-person** vs **unlabeled/auto-labeled**. Derive from cluster label / person-binding fields already available on the cluster read path that points GET joins (or must join for this lens). **Verified wire fields**: member/identity projection uses `cluster_label` + `is_auto_label` (`ClusterMemberResponse`, `recognition/interface_adapters/http/schemas/responses.py:53–54`); domain `IdentityCluster.is_auto_label` (`recognition/domain/cluster.py:34–36` = `not user_confirmed`); cluster list/top-unlabeled expose `label` + `is_auto_label` on `ClusterResponse` (`responses.py:132–134`). Atlas points payload for the lens must surface **`cluster_label` + `is_auto_label`** (member-shaped names). Classification: named/committed when `cluster_label` is set **and** `is_auto_label is False`; unlabeled/auto when `cluster_label` is null/empty **or** `is_auto_label is True`. Status colors pair **color + icon** (sr-004) — never color alone.
+  - **Click-through for unassigned islands**: selecting an unlabeled/auto-labeled point offers **“Open in Roster → Needs assignment”** via `toRoster(...)` from `js/admin/navigation/appLinks.ts` (E21-10 single-owner link contract). Reuse `personFilter=unassigned` (`APP_LINK_VALUES.personFilterUnassigned`) when that lands the intended Roster surface; if Needs-assignment rail focus needs a dedicated param, **add it to `APP_LINK_PARAMS`** (and a typed builder option) — never a parallel URL codec. **v1 = single-point click only** — do **not** add lasso multi-select (not in v2 scope).
+  - **VIZ-15 compliance**: the assignment lens shares the cluster-color encoding family with the review-queue chips; **linked highlighting** = selecting a point highlights its cluster in the queue when both are visible, or deep-links into the queue (`rq=` / existing workbench builders) when the queue is not on-screen.
+- Component tests (zero-state, tokens, no cluster-mutation spy calls, disposition POST expected, stale badge, **lens toggle**, **Needs-assignment deep-link builder via `appLinks`**).
 
 Proof:
 
-- `npm test` targeted green; manual smoke: empty → CLI → points render → click opens panel.
+- `npm test` targeted green; manual smoke: empty → CLI → points render → click opens panel; lens toggle recolors by assignment; unlabeled point → Roster Needs-assignment href from `toRoster`.
 
 ### Slice 4: Operator runbook (docs-only)
 
@@ -528,7 +542,10 @@ Merge order: `backend-atlas` then `frontend-atlas`, then S4 docs on the feature 
 - [ ] Deep-links reuse `appLinks.ts` (`APP_LINK_PARAMS`/`APP_LINK_VALUES`) + `useWorkbenchFilters.ts` + `reviewQueueDriver.ts`.
 - [ ] Zero-state: primary “build first run via CLI” affordance (copy + command); **no** UI job trigger.
 - [ ] Stale badge: color + icon (sr-004).
-- [ ] Component tests: zero-state, fixture points render, mutation spy **not** called for cluster mutations, disposition POST expected, status uses color+icon.
+- [ ] **Roster-coordination lens**: toggle color-by-assignment using points JOIN fields `cluster_label` + `is_auto_label` (verified on cluster/member read path); named/committed vs unlabeled/auto; color + icon (sr-004).
+- [ ] Unlabeled/auto point click offers “Open in Roster → Needs assignment” via `toRoster(...)` only; any new param lands in `APP_LINK_PARAMS` (no parallel codec); **no lasso** in v1.
+- [ ] VIZ-15: lens shares cluster-color encoding with review-queue chips; linked highlight or `rq=` deep-link when queue not visible.
+- [ ] Component tests: zero-state, fixture points render, mutation spy **not** called for cluster mutations, disposition POST expected, status uses color+icon; **lens toggle** recolors by assignment; **deep-link builder test** asserts `toRoster` / `APP_LINK_PARAMS` shape for Needs-assignment.
 - [ ] `npm test` (targeted) + `make check-remote` as required by repo FE gate.
 
 ### Checklist for Slice 4: Runbook

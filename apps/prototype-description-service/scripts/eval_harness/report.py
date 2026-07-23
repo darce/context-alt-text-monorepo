@@ -1299,6 +1299,17 @@ def score_face_run_record(
     }
 
     # Occlusion slices (synthetic + real divergence).
+    # FIR5RR-01 (CAL-07/EVAL-07): each twin is scored at its source identity's
+    # held-out fold tau_k — never at tau_op, whose median includes the twin's
+    # own identity's fold. Subject-disjoint folds pin every face of an identity
+    # to one fold, so the identity→tau_k map is well-defined; tau_op remains
+    # the fallback ONLY for identities absent from the pooled decisions
+    # (entity-disjoint by absence — they contributed nothing to any fold fit).
+    tau_by_identity: dict[str, float] = {
+        d.true_name: float(d.tau_k)
+        for d in assignment.decisions
+        if d.true_name is not None
+    }
     occlusion_out: dict[str, Any] = {}
     occlusion_pairs_by_tag = occlusion_pairs_by_tag or {}
     real_occlusion_pairs_by_tag = real_occlusion_pairs_by_tag or {}
@@ -1325,6 +1336,7 @@ def score_face_run_record(
                 synth_inputs,
                 assignment.matched,
                 tau=assignment.tau_op,
+                tau_by_identity=tau_by_identity,
                 walk_stability_asserted=walk_asserted,
                 walk_stability_delta=walk_delta,
             )
@@ -1333,6 +1345,7 @@ def score_face_run_record(
                 [],
                 assignment.matched,
                 tau=assignment.tau_op,
+                tau_by_identity=tau_by_identity,
                 walk_stability_asserted=False,
                 walk_stability_delta=None,
             )
@@ -1342,6 +1355,7 @@ def score_face_run_record(
                 real_inputs,
                 assignment.matched,
                 tau=assignment.tau_op,
+                tau_by_identity=tau_by_identity,
                 walk_stability_asserted=True,  # real tags have no walk twin
                 walk_stability_delta=0.0,
             )

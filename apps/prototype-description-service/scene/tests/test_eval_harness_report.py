@@ -870,6 +870,103 @@ def test_below_floor_never_in_gate_proposal():
         assert DIRECTIONAL_LABEL not in str(block.get("status", ""))
 
 
+def _two_identity_split_tau_fixture() -> tuple[dict, dict, list[float]]:
+    """Corpus whose per-fold τ_k provably differ from τ_op (FIR5RR-01 report frame).
+
+    Alice: near-identical pair (axes 0/1) → her fold's fit (Bob-only) selects
+    τ=0.40. Bob: spread pair with cos(b1,b2)=0.62 (axes 2/3) → his fold's fit
+    (Alice-only) selects τ=0.55. τ_op = median(0.40, 0.55) = 0.475.
+    Returns (face_run, manifest, bob_gallery_proto) for twin construction.
+    """
+    dim = 8
+    s = float(np.sqrt(1.0 - 0.81))
+    a1 = _unit([1.0, 0.0] + [0.0] * (dim - 2))
+    a2 = _unit([0.98, 0.1] + [0.0] * (dim - 2))
+    b1 = _unit([0.0, 0.0, 0.9, s] + [0.0] * (dim - 4))
+    b2 = _unit([0.0, 0.0, 0.9, -s] + [0.0] * (dim - 4))
+    items = []
+    entries = []
+    for mid, emb, name in ((1, a1, "Alice Q"), (2, a2, "Alice Q"), (3, b1, "Bob Z"), (4, b2, "Bob Z")):
+        items.append(
+            {
+                "media_id": mid,
+                "path": f"celebs01/{name.split()[0].lower()}-{mid}.jpg",
+                "model_id": "ort-yunet-sface",
+                "embedding_dim": dim,
+                "image_size": [100, 100],
+                "faces": [_face_det([20.0, 20.0, 40.0, 40.0], emb)],
+            }
+        )
+        entries.append(
+            {
+                "path": f"celebs01/{name.split()[0].lower()}-{mid}.jpg",
+                "media_id": mid,
+                "face_count": 1,
+                "present_identities": [name],
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "face_boxes": [_gt_box(0.4, 0.4, 0.4, 0.4, name)],
+                "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
+            }
+        )
+    face_run = {
+        "schema": "acx-eval/v1",
+        "kind": DocKind.FACE_RUN_RECORD.value,
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "head_sha": "0" * 40,
+            "started_at": "2026-07-18T00:00:00Z",
+            "leg": "candidate",
+            "model_id": "ort-yunet-sface",
+            "embedding_dim": dim,
+        },
+        "items": items,
+    }
+    manifest = {"roster": ["Alice Q", "Bob Z"], "roster_cohorts": {}, "entries": entries}
+    return face_run, manifest, b2
+
+
+def test_occlusion_twin_scored_at_source_identity_heldout_tau_in_report():
+    """FIR5RR-01/02 report-level discriminator: a Bob twin with s_max=0.5 sits
+    BELOW Bob's own held-out fold τ_k (0.55) but ABOVE τ_op (0.475) and above
+    Alice's τ_k (0.40). The scored report must count it INCORRECT. Goes red if
+    the scorer regresses to τ_op — or drops τ propagation entirely (closed-set
+    argmax would accept it as correct)."""
+    face_run, manifest, b2 = _two_identity_split_tau_fixture()
+    b2u = np.asarray(b2, dtype=np.float64)
+    e5 = np.zeros(len(b2)); e5[5] = 1.0
+    twin = (0.5 * b2u + float(np.sqrt(0.75)) * e5).tolist()
+    scored = score_face_run_record(
+        face_run,
+        manifest,
+        occlusion_pairs_by_tag={
+            "masked": [
+                {
+                    "media_id": 3,
+                    "box_index": 0,
+                    "true_name": "Bob Z",
+                    "kind": "masked",
+                    "embedding": twin,
+                }
+            ]
+        },
+    )
+    # Fixture preconditions: fold taus split around tau_op.
+    assert sorted(scored["tau"]["tau_k"]) == pytest.approx([0.40, 0.55])
+    assert scored["tau"]["tau_op"] == pytest.approx(0.475)
+    bob_tau = next(
+        d["tau_k"] for d in scored["decisions"] if d["true_name"] == "Bob Z"
+    )
+    assert bob_tau == pytest.approx(0.55)  # Bob's held-out fold τ_k ≠ τ_op
+    synth = scored["slices"]["occlusion"]["masked"]["synthetic"]
+    assert synth["n_eligible"] == 1
+    # s_max=0.5 < Bob's own τ_k=0.55 → reject → INCORRECT. A τ_op (0.475)
+    # regression — or a dropped-τ closed-set argmax — would score it correct.
+    assert synth["n_correct"] == 0
+    assert synth["accuracy"] == 0.0
+
+
 def test_publishability_private_stranger_scored_then_redacted():
     """LOCALWP stranger is SCORED into unknown-rejection yet ABSENT from redacted report."""
     face_run, manifest = _face_fixture_corpus()

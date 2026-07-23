@@ -271,32 +271,56 @@ def test_global_fold_key_is_subject_disjoint():
 
 
 def test_fit_phase_galleries_exclude_held_out_identities():
-    """CAL-07: τ_k selection must not build galleries containing read-fold identities."""
-    # Alice → fold 0, Bob → fold 1 under subject-disjoint ranking (sorted names).
+    """CAL-07 (FIR5RR-03): a held-out confusable identity provably SHIFTS the
+    selected τ — asserted through ``assign_open_set_kfold`` itself, not a
+    hand-reconstruction of the fit loop.
+
+    Fixture: Alice = two identical faces ([1,0,0]); Bob = a spread pair with
+    cos(b1,b2)=0.62 whose faces sit at cos=0.9 to Alice's prototype.
+
+    - CORRECT fit for Alice's fold (fit = Bob only): Bob probes match their LOO
+      prototype at 0.62 → F1=1 on the τ∈{0.20..0.60} plateau → τ_k = 0.40.
+    - LEAKED fit (full-corpus galleries incl. held-out Alice): Bob probes
+      argmax to Alice at 0.9 → FP at every grid τ → F1=0 everywhere → the
+      full-grid plateau selects 0.55.
+
+    Asserting the CONCRETE τ_k=0.40 therefore goes red if the fit phase ever
+    sees full-corpus galleries (discriminability proven in-test below by
+    computing the leaked selection and asserting it differs).
+    """
+    s = float(np.sqrt(1.0 - 0.81))  # b = [0.9, ±s] → cos(b1,b2) = 0.81 − 0.19 = 0.62
     faces = [
         _matched(1, 0, [1, 0, 0], "Alice"),
-        _matched(2, 0, [1, 0.05, 0], "Alice"),
-        _matched(3, 0, [0, 1, 0], "Bob"),
-        _matched(4, 0, [0, 1.05, 0], "Bob"),
+        _matched(2, 0, [1, 0, 0], "Alice"),
+        _matched(3, 0, [0.9, s, 0], "Bob"),
+        _matched(4, 0, [0.9, -s, 0], "Bob"),
     ]
     folds = global_fold_ranks(faces, k_folds=2)
     alice_fold = next(f for m, f in zip(faces, folds, strict=True) if m.true_name == "Alice")
     bob_fold = next(f for m, f in zip(faces, folds, strict=True) if m.true_name == "Bob")
     assert alice_fold != bob_fold
 
-    # Fit for Alice's fold: train = Bob only → gallery names must not include Alice.
-    from scripts.eval_harness.face_assignment import (
-        matched_named_by_identity,
-        build_loo_gallery,
+    result = assign_open_set_kfold(faces, k_folds=2, tau_grid=TAU_GRID)
+    # Concrete held-out selection: Alice's fold τ fit on Bob-only galleries.
+    assert result.tau_k[alice_fold] == pytest.approx(0.40)
+    # Alice's pooled decisions carry that same held-out τ_k.
+    assert all(
+        d.tau_k == pytest.approx(0.40) for d in result.decisions if d.true_name == "Alice"
     )
 
-    train = [m for m, f in zip(faces, folds, strict=True) if f != alice_fold]
-    train_by_id = matched_named_by_identity(train)
-    assert "Alice" not in train_by_id
-    assert "Bob" in train_by_id
-    for probe in train:
-        gallery = build_loo_gallery(probe, train_by_id)
-        assert "Alice" not in gallery
+    # Discriminability proof (TEST-15): a fit that leaks full-corpus galleries
+    # (held-out Alice enrolled) selects a DIFFERENT τ for the same probes.
+    by_id_full = matched_named_by_identity(faces)
+    counts_full = {n: len(fs) for n, fs in by_id_full.items()}
+    bob_probes = [m for m in faces if m.true_name == "Bob"]
+    leaked_tau = select_tau_open_set_f1(
+        probes=bob_probes,
+        by_identity=by_id_full,
+        identity_counts=counts_full,
+        tau_grid=TAU_GRID,
+    )
+    assert leaked_tau == pytest.approx(0.55)
+    assert leaked_tau != result.tau_k[alice_fold]
 
 
 def test_pooled_decisions_cover_all_matched_named_n():

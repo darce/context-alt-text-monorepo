@@ -72,17 +72,20 @@ async def test_process_scan_job_inline_marks_job_failed_on_generator_breaker_ope
             raise AdapterBreakerOpenError("insightface.analyze")
 
     import recognition.application.scan.service as scan_service_module
-    import recognition.config as recognition_config
-    import recognition.infrastructure.embeddings.runtime_factory as runtime_factory
 
-    monkeypatch.setattr(recognition_config, "get_settings", _prod_settings)
+    # String-form targets resolve via importlib.import_module → live sys.modules
+    # (not package attributes that can drift after del/reimport isolation tests).
+    monkeypatch.setattr("recognition.config.get_settings", _prod_settings)
     monkeypatch.setattr(scan_tasks, "set_tenant_context", AsyncMock())
     monkeypatch.setattr(scan_service_module, "ScanService", FakeScanService)
 
     async def _fake_build(*, settings, http_client=None, adapter_provider=None):
         return FakeDetector(), FakeGenerator()
 
-    monkeypatch.setattr(runtime_factory, "build_embedding_runtime", _fake_build)
+    monkeypatch.setattr(
+        "recognition.infrastructure.embeddings.runtime_factory.build_embedding_runtime",
+        _fake_build,
+    )
 
     async def fake_adapter_provider():
         return object()
@@ -136,17 +139,18 @@ async def test_process_scan_job_inline_marks_job_failed_on_detector_breaker_open
             raise AssertionError("generator should not run when detector breaker is open")
 
     import recognition.application.scan.service as scan_service_module
-    import recognition.config as recognition_config
-    import recognition.infrastructure.embeddings.runtime_factory as runtime_factory
 
-    monkeypatch.setattr(recognition_config, "get_settings", _prod_settings)
+    monkeypatch.setattr("recognition.config.get_settings", _prod_settings)
     monkeypatch.setattr(scan_tasks, "set_tenant_context", AsyncMock())
     monkeypatch.setattr(scan_service_module, "ScanService", FakeScanService)
 
     async def _fake_build(*, settings, http_client=None, adapter_provider=None):
         return FakeDetector(), FakeGenerator()
 
-    monkeypatch.setattr(runtime_factory, "build_embedding_runtime", _fake_build)
+    monkeypatch.setattr(
+        "recognition.infrastructure.embeddings.runtime_factory.build_embedding_runtime",
+        _fake_build,
+    )
 
     async def fake_adapter_provider():
         return object()
@@ -193,9 +197,8 @@ async def test_process_scan_job_inline_marks_job_failed_when_adapter_init_fails(
             return SimpleNamespace(id=kwargs["job_id"])
 
     import recognition.application.scan.service as scan_service_module
-    import recognition.config as recognition_config
 
-    monkeypatch.setattr(recognition_config, "get_settings", _prod_settings)
+    monkeypatch.setattr("recognition.config.get_settings", _prod_settings)
     monkeypatch.setattr(scan_tasks, "set_tenant_context", AsyncMock())
     monkeypatch.setattr(scan_service_module, "ScanService", FakeScanService)
 
@@ -274,17 +277,18 @@ async def test_process_scan_job_inline_marks_job_failed_on_typed_adapter_failure
             raise AssertionError("generator should only run for generator-stage failures")
 
     import recognition.application.scan.service as scan_service_module
-    import recognition.config as recognition_config
-    import recognition.infrastructure.embeddings.runtime_factory as runtime_factory
 
-    monkeypatch.setattr(recognition_config, "get_settings", _prod_settings)
+    monkeypatch.setattr("recognition.config.get_settings", _prod_settings)
     monkeypatch.setattr(scan_tasks, "set_tenant_context", AsyncMock())
     monkeypatch.setattr(scan_service_module, "ScanService", FakeScanService)
 
     async def _fake_build(*, settings, http_client=None, adapter_provider=None):
         return FakeDetector(), FakeGenerator()
 
-    monkeypatch.setattr(runtime_factory, "build_embedding_runtime", _fake_build)
+    monkeypatch.setattr(
+        "recognition.infrastructure.embeddings.runtime_factory.build_embedding_runtime",
+        _fake_build,
+    )
 
     async def fake_adapter_provider():
         return object()
@@ -357,17 +361,18 @@ async def test_process_scan_job_inline_marks_job_failed_on_persist_integrity(
             raise AssertionError("face_pipeline embeds in detect; generator unused")
 
     import recognition.application.scan.service as scan_service_module
-    import recognition.config as recognition_config
-    import recognition.infrastructure.embeddings.runtime_factory as runtime_factory
 
-    monkeypatch.setattr(recognition_config, "get_settings", _prod_settings)
+    monkeypatch.setattr("recognition.config.get_settings", _prod_settings)
     monkeypatch.setattr(scan_tasks, "set_tenant_context", AsyncMock())
     monkeypatch.setattr(scan_service_module, "ScanService", FakeScanService)
 
     async def _fake_build(*, settings, http_client=None, adapter_provider=None):
         return FakeDetector(), FakeGenerator()
 
-    monkeypatch.setattr(runtime_factory, "build_embedding_runtime", _fake_build)
+    monkeypatch.setattr(
+        "recognition.infrastructure.embeddings.runtime_factory.build_embedding_runtime",
+        _fake_build,
+    )
 
     with pytest.raises(PersistIntegrityError, match="embedding length"):
         await scan_tasks.process_scan_job_inline(
@@ -480,17 +485,18 @@ async def test_process_scan_job_inline_rolls_back_partial_identity_before_mark_f
             raise AssertionError("generator unused when detect returns empty")
 
     import recognition.application.scan.service as scan_service_module
-    import recognition.config as recognition_config
-    import recognition.infrastructure.embeddings.runtime_factory as runtime_factory
 
-    monkeypatch.setattr(recognition_config, "get_settings", _prod_settings)
+    monkeypatch.setattr("recognition.config.get_settings", _prod_settings)
     monkeypatch.setattr(scan_tasks, "set_tenant_context", AsyncMock())
     monkeypatch.setattr(scan_service_module, "ScanService", TrackingScanService)
 
     async def _fake_build(*, settings, http_client=None, adapter_provider=None):
         return FakeDetector(), FakeGenerator()
 
-    monkeypatch.setattr(runtime_factory, "build_embedding_runtime", _fake_build)
+    monkeypatch.setattr(
+        "recognition.infrastructure.embeddings.runtime_factory.build_embedding_runtime",
+        _fake_build,
+    )
 
     with pytest.raises(PersistIntegrityError, match="embedding length"):
         await scan_tasks.process_scan_job_inline(

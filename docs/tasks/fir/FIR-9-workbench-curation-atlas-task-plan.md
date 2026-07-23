@@ -96,7 +96,7 @@ Operators curate merges/splits via Workbench review queues without a global geom
 | Boundary | Owner | Current Contract | Expected Change | Compatibility? | Verification |
 | --- | --- | --- | --- | --- | --- |
 | Admin HTTP `/admin` | backend | `admin_router` + `require_admin` (`admin.py`, `admin_auth.py`) | Admin GETs for runs/points/queue **+ one admin POST** (`…/dispositions`) for queue bookkeeping only | Additive | API tests (auth 401, happy path); spy that disposition never calls cluster mutations |
-| Recognition HTTP `/recognition` | backend | tenant `require_auth` cluster routes | New tenant-scoped atlas **read** GETs (Workbench path); optional tenant disposition POST with same bookkeeping-only semantics | Additive; same artifact as admin | `assert_tenant_match` tests |
+| Recognition HTTP `/recognition` | backend | tenant `require_auth` cluster routes | New tenant-scoped atlas **read** GETs (Workbench path); tenant disposition POST (required for the Workbench queue surface) with same bookkeeping-only semantics | Additive; same artifact as admin | `assert_tenant_match` tests |
 | WP Workbench SPA | frontend | `TAB_IDS.scan` only | New `atlas` tab + API client + Canvas2D scatter | Additive URL `?tab=atlas` | component tests; mutation spy: no cluster-mutation calls; disposition POST expected |
 | DB schema | backend | `001_identity_schema.py` | `identity_atlas_runs` + `identity_atlas_points` + `identity_atlas_queue_dispositions` + RLS + purge | Additive greenfield | schema verify + cascade unit tests |
 | Optional Python extra | backend | `pyproject.toml` extras | `[atlas]` | Opt-in install | aarch64 smoke |
@@ -150,9 +150,9 @@ Workbench talks to recognition via **tenant API key** (WP proxy) — it never ho
 | `margin` | `cos(x, c_nearest) − cos(x, c_second)` | Primary rank key |
 | `uncertainty_rank` | ascending `margin` (smallest margin = highest priority) | Ordering input |
 | `intra_cluster_percentile` | percentile of the point’s cosine-to-own-centroid within the **per-cluster** cosine-to-centroid distribution | Secondary score in `uncertainty` JSON |
-| `near_threshold` | `\|cos − similarity_threshold\| < ε` (`ClusteringSettings.similarity_threshold` and related band fields in `recognition/application/settings/clustering.py:191–278`) | **DIAGNOSTIC display flag only — EXCLUDED from ranking** |
+| `near_threshold` | `\|cos − similarity_threshold\| < ε` (`ClusteringSettings.similarity_threshold` and related band fields in `recognition/application/settings/clustering.py (symbols: `ClusteringSettings.similarity_threshold` / `suggestion_floor` / `suggestion_ceiling`)`) | **DIAGNOSTIC display flag only — EXCLUDED from ranking** |
 
-Centroids source: MV read + mean-of-reps fallback (above). Threshold fields: `ClusteringSettings` in `recognition/application/settings/clustering.py:191–278` (`similarity_threshold`, `suggestion_floor`, `suggestion_ceiling`, …).
+Centroids source: MV read + mean-of-reps fallback (above). Threshold fields: `ClusteringSettings` in `recognition/application/settings/clustering.py (symbols: `ClusteringSettings.similarity_threshold` / `suggestion_floor` / `suggestion_ceiling`)` (`similarity_threshold`, `suggestion_floor`, `suggestion_ceiling`, …).
 
 **Deterministic build-time queue** (pinned):
 

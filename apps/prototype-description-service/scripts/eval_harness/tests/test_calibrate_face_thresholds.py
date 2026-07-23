@@ -130,6 +130,29 @@ def test_golden_numeric_pins_on_committed_fixture(
         == "stratum_oof_genuine_non_abstained_folds"
     )
     assert "n_silent_drop_decisions" in artifact["protocol"]
+    # FIR6V11-02 / AUDIT-07: every named frame defines population, sampling
+    # unit, and observation unit, with undercoverage counted adjacent to the
+    # denominators it is dropped from.
+    frame_defs = artifact["protocol"]["sampling_frame_definitions"]
+    named_frames = set(artifact["protocol"]["sampling_frames"].values())
+    assert named_frames <= set(frame_defs)
+    for frame_name, frame_def in frame_defs.items():
+        assert frame_def["target_population"], frame_name
+        assert frame_def["sampling_unit"], frame_name
+        assert frame_def["observation_unit"], frame_name
+        assert "undercoverage" in frame_def, frame_name
+    assert (
+        frame_defs["held_fold_genuine_non_abstained"]["undercoverage"][
+            "excluded_single_face_recall_rows"
+        ]
+        == GOLDEN_N_EXCLUDED
+    )
+    # FIR6V11-02 / AUDIT-11: face-level trial counts vs identity-level fold
+    # clustering must be disclosed; raw n is not effective independent n.
+    clustering = artifact["protocol"]["trial_clustering_note"]
+    assert "face-level" in clustering
+    assert "identity level" in clustering or "identity-level" in clustering
+    assert "deff" in clustering
 
     g = artifact["global"]
     assert g["tau_proposed"] == pytest.approx(GOLDEN_GLOBAL_TAU)
@@ -170,6 +193,12 @@ def test_golden_numeric_pins_on_committed_fixture(
             "stratum_oof_genuine_non_abstained_folds"
         )
         assert "n_genuine" in row["sampling_frame"]
+        # AUDIT-07: impostor pool size published alongside for frame
+        # completeness (FNMR denominators remain genuine-only).
+        assert "n_impostor" in row["sampling_frame"]
+        assert row["sampling_frame"]["n_impostor"] == (
+            artifact["per_stratum"][name]["n_impostor_oof"]
+        )
     # Non-tautological OACT pin: coefficient 0 keeps elevated_tau == base_tau and tax 0
     # when a base tau exists; abstained strata stay null (not silently zero).
     for name, row in tax["global_oact_coefficient"]["per_stratum_tax"].items():
@@ -182,6 +211,8 @@ def test_golden_numeric_pins_on_committed_fixture(
         assert row["sampling_frame"]["genuine_scores"] == (
             "stratum_oof_genuine_non_abstained_folds"
         )
+        assert "n_genuine" in row["sampling_frame"], name
+        assert "n_impostor" in row["sampling_frame"], name
     # Positive control: non-zero coefficient raises FNMR tax on a stratum with
     # genuines straddling the elevated threshold — strict numeric pin.
     tax_pos = calibrate(

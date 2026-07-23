@@ -39,8 +39,15 @@ CLUSTER_PAIR_FLOOR = 20
 # Unknown-rejection n floor: Wilson 95% half-width ≤ ~15% at p̂=0.5
 # (n=43 → ±14.3%; scope sizing table). AUDIT-04 / FIR5V11-02.
 UNKNOWN_REJECTION_N_FLOOR = 43
+# FIR5RR-13: the Wilson target treats the n=43 stranger probes as independent
+# Bernoulli trials. They are not — stranger probes cluster within images and
+# within (unnamed) individuals, so the effective sample size is smaller than
+# nominal and the stated half-width is optimistic. n_floor=43 is kept; the
+# dependence is disclosed rather than silently assumed away.
 UNKNOWN_REJECTION_ERROR_TARGET = (
-    "Wilson_95_halfwidth_le_15pct_at_p0.5 (n=43 → ±14.3%)"
+    "Wilson_95_halfwidth_le_15pct_at_p0.5 (n=43 → ±14.3%); assumes independent "
+    "trials — stranger probes cluster within images/individuals, so effective "
+    "n may be lower and the half-width optimistic (trial dependence disclosed)"
 )
 
 # Named sampling frames for published rates (AUDIT-01/02).
@@ -55,7 +62,12 @@ SAMPLING_FRAME_UNKNOWN_REJECTION = (
 )
 SAMPLING_FRAME_DEMOGRAPHIC_COHORT = (
     "named_matched_probes_in_cohort: roster_cohorts primary, single-subject "
-    "celebs01 media fallback; strangers excluded; always DIRECTIONAL"
+    "celebs01 media fallback; strangers excluded; always DIRECTIONAL; "
+    # FIR5RR-05: detection is image-level and is NOT re-attributed per cohort.
+    "detection misses are excluded (missed_gt/unmatched_detections not "
+    "attributed per cohort — emitted as null, never fabricated zeros); "
+    "detection_recall_coupling_flag is inherited from full-corpus totals "
+    "(null = unknown)"
 )
 SAMPLING_FRAME_CLUSTERING = (
     "named_matched_faces_pairwise: P_same/P_diff pair floors; M==0 "
@@ -216,15 +228,19 @@ class FaceLevelIdPr:
     n_named_probes: int
     n_recall_eligible: int  # enrolled faces (not excluded_single_face_recall)
     wrong_names: tuple[tuple[int, int, str, str], ...]  # media_id, box_index, true, pred
-    detection_recall_coupling_flag: bool
+    # None = unknown/not attributable in this frame (FIR5RR-05) — never a
+    # fabricated False. Serializes as null.
+    detection_recall_coupling_flag: bool | None
     sampling_frame: str = SAMPLING_FRAME_FACE_ID
     # Explicit rate denominators for AUDIT-02 (n/N honesty).
     precision_numerator: int = 0  # TP
     precision_denominator: int = 0  # TP+FP
     recall_numerator: int = 0  # TP
     recall_denominator: int = 0  # TP+FN
-    missed_gt: int = 0
-    unmatched_detections: int = 0
+    # None = miss counts are not attributed in this sampling frame (per-cohort
+    # demographic rollup) — never a fabricated 0 (FIR5RR-05).
+    missed_gt: int | None = 0
+    unmatched_detections: int | None = 0
 
     @property
     def precision(self) -> float:
@@ -238,8 +254,9 @@ class FaceLevelIdPr:
 def face_identification_pr(
     decisions: Sequence[Any],
     *,
-    missed_gt: int,
-    unmatched_detections: int,
+    missed_gt: int | None,
+    unmatched_detections: int | None,
+    detection_coupling: bool | None = None,
     sampling_frame: str = SAMPLING_FRAME_FACE_ID,
 ) -> FaceLevelIdPr:
     """Face-level ID P/R over pooled per-fold decisions for *named* probes (§F).
@@ -256,6 +273,13 @@ def face_identification_pr(
     ``detection_recall_coupling_flag`` is True when either count is > 0
     (id-P/R denominators exclude detection failures — EVAL-16).
     Stranger false-accepts live only in the separate unknown-rejection metric.
+
+    FIR5RR-05: a frame that CANNOT attribute detection misses (the per-cohort
+    demographic rollup — detection is image-level) passes ``missed_gt=None``
+    and ``unmatched_detections=None`` with ``detection_coupling`` inherited
+    from the parent totals (or ``None`` = unknown). Fabricating ``0`` counts
+    (and a ``False`` coupling flag) in such a frame is forbidden.
+    ``detection_coupling`` may only accompany all-None counts.
     """
     tp = fp = fn = 0
     n_named = 0
@@ -294,9 +318,20 @@ def face_identification_pr(
             if enrolled:
                 fn += 1
 
-    mg = int(missed_gt)
-    ud = int(unmatched_detections)
-    coupling = mg > 0 or ud > 0
+    mg = None if missed_gt is None else int(missed_gt)
+    ud = None if unmatched_detections is None else int(unmatched_detections)
+    if mg is None and ud is None:
+        # Not-attributed frame: coupling is inherited (or unknown), never
+        # derived from fabricated zeros (FIR5RR-05).
+        coupling = detection_coupling
+    else:
+        if detection_coupling is not None:
+            raise ValueError(
+                "detection_coupling override is only valid when missed_gt and "
+                "unmatched_detections are both None (not-attributed frame); "
+                "with real counts the flag is computed, not asserted"
+            )
+        coupling = (mg or 0) > 0 or (ud or 0) > 0
     return FaceLevelIdPr(
         true_positives=tp,
         false_positives=fp,
@@ -379,6 +414,7 @@ def demographic_rollup(
     roster_cohorts: Mapping[str, str],
     *,
     single_subject_cohort_by_media: Mapping[int, str] | None = None,
+    parent_detection_coupling: bool | None = None,
 ) -> DemographicRollup:
     """Per-cohort face-level identification P/R (Fair-SA; always DIRECTIONAL).
 
@@ -415,13 +451,16 @@ def demographic_rollup(
         buckets.setdefault(cohort, []).append(d)
 
     # Cohort P/R reuses the same counting; detection coupling is not
-    # re-attributed per cohort (detection is image-level). Explicit 0,0 keeps
-    # the required kwargs honest without inventing per-cohort miss counts.
+    # re-attributed per cohort (detection is image-level). FIR5RR-05: the miss
+    # fields are emitted as None ("not attributed"), never fabricated zeros,
+    # and the coupling flag is inherited from the parent full-corpus totals
+    # (None = unknown when the caller has no parent frame).
     by_cohort = {
         cohort: face_identification_pr(
             group,
-            missed_gt=0,
-            unmatched_detections=0,
+            missed_gt=None,
+            unmatched_detections=None,
+            detection_coupling=parent_detection_coupling,
             sampling_frame=SAMPLING_FRAME_DEMOGRAPHIC_COHORT,
         )
         for cohort, group in sorted(buckets.items())

@@ -89,6 +89,11 @@ FACE_BAKEOFF_PROTOCOL_DISCLOSURES: tuple[str, ...] = (
     # IDX-01/07/11 deferred design (disclosure now; measurement later).
     "exact-vs-index separation of concerns and contender-set retrieval design "
     "are S4/S5 measurement-time items (IDX-01/07/11) — not measured here",
+    # FIR5RR-13: unknown-rejection error target assumes independent trials.
+    "unknown-rejection trials are not independent — stranger probes cluster "
+    "within images and within individuals, so the Wilson error target's "
+    "nominal n overstates the effective sample size (n_floor=43 kept; "
+    "dependence disclosed on the slice's error_target)",
     # FIR5RR-15: fit-vs-read gallery cardinality asymmetry.
     "fit-phase galleries are restricted to fit-fold identities (CAL-07) while "
     "read-phase LOO galleries span the full matched corpus — τ_k is selected "
@@ -1392,6 +1397,9 @@ def score_face_run_record(
         assignment.decisions,
         roster_cohorts,
         single_subject_cohort_by_media=single_subject,
+        # FIR5RR-05: per-cohort miss fields stay None (not attributed); the
+        # coupling flag is inherited from the full-corpus identification frame.
+        parent_detection_coupling=id_pr.detection_recall_coupling_flag,
     )
     demo_block = {
         "section_header": demo.section_header,

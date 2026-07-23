@@ -579,6 +579,68 @@ def test_demographic_rollup_empty_roster_cohorts_has_directional_header():
     assert named_no_cohort.directional is True
 
 
+def test_demographic_rollup_never_fabricates_zero_miss_fields():
+    """FIR5RR-05: per-cohort miss fields are None (not attributed), never 0;
+    coupling is inherited from the parent totals or None (unknown)."""
+    decisions = [
+        _dec(media_id=1, true_name="Alice", decision="accept", predicted_name="Alice"),
+        _dec(media_id=2, true_name="Bob", decision="accept", predicted_name="Bob"),
+    ]
+    cohorts = {"Alice": "cohort-a", "Bob": "cohort-b"}
+    inherited = demographic_rollup(
+        decisions, cohorts, parent_detection_coupling=True
+    )
+    for pr in inherited.by_cohort.values():
+        assert pr.missed_gt is None  # not 0 — the cohort frame cannot know
+        assert pr.unmatched_detections is None
+        assert pr.detection_recall_coupling_flag is True  # inherited, not False
+        assert "not attributed per cohort" in pr.sampling_frame
+    # No parent frame supplied → coupling is unknown (None), never False.
+    unknown = demographic_rollup(decisions, cohorts)
+    for pr in unknown.by_cohort.values():
+        assert pr.detection_recall_coupling_flag is None
+
+
+def test_face_id_pr_none_counts_and_coupling_override_rules():
+    """FIR5RR-05: None counts carry the override; real counts forbid it."""
+    decisions = [
+        _dec(media_id=1, true_name="Alice", decision="accept", predicted_name="Alice"),
+    ]
+    pr = face_identification_pr(
+        decisions,
+        missed_gt=None,
+        unmatched_detections=None,
+        detection_coupling=True,
+    )
+    assert pr.missed_gt is None and pr.unmatched_detections is None
+    assert pr.detection_recall_coupling_flag is True
+    # With attributed counts the flag is COMPUTED — asserting it is rejected.
+    with pytest.raises(ValueError, match="only valid when"):
+        face_identification_pr(
+            decisions,
+            missed_gt=1,
+            unmatched_detections=0,
+            detection_coupling=False,
+        )
+
+
+def test_unknown_rejection_error_target_discloses_trial_dependence():
+    """FIR5RR-13: n=43 floor kept; dependence disclosed on the error target."""
+    from scripts.eval_harness.face_metrics import (
+        UNKNOWN_REJECTION_ERROR_TARGET,
+        UNKNOWN_REJECTION_N_FLOOR,
+    )
+
+    assert UNKNOWN_REJECTION_N_FLOOR == 43
+    assert "n=43" in UNKNOWN_REJECTION_ERROR_TARGET
+    assert "independent" in UNKNOWN_REJECTION_ERROR_TARGET
+    assert "effective" in UNKNOWN_REJECTION_ERROR_TARGET
+    result = face_unknown_rejection(
+        [_dec(media_id=1, true_name=None, decision="reject")]
+    )
+    assert "independent" in result.error_target
+
+
 def test_demographic_rollup_strangers_excluded_and_unlabeled_legible():
     """Strangers excluded; named identity with no cohort → unlabeled bucket."""
     decisions = [

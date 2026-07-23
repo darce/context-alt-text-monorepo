@@ -913,6 +913,9 @@ def calibrate(
                 "genuine_scores": stratum_oof_genuine_frame,
                 "denominator": "len(stratum_oof_genuine)",
                 "n_genuine": len(g_scores),
+                # FNMR denominators are genuine-only; impostor pool size is
+                # reported for frame completeness (FIR6V11-02 / AUDIT-07).
+                "n_impostor": int(raw["n_impostor_oof"]),
             },
         }
 
@@ -949,6 +952,7 @@ def calibrate(
                 "sampling_frame": {
                     "genuine_scores": stratum_oof_genuine_frame,
                     "n_genuine": 0,
+                    "n_impostor": int(raw["n_impostor_oof"]),
                 },
             }
             continue
@@ -967,6 +971,7 @@ def calibrate(
             "sampling_frame": {
                 "genuine_scores": stratum_oof_genuine_frame,
                 "n_genuine": len(g_scores),
+                "n_impostor": int(raw["n_impostor_oof"]),
             },
         }
 
@@ -1015,6 +1020,93 @@ def calibrate(
             "fnmr_tax_genuine": stratum_oof_genuine_frame,
             "oact_tax_genuine": stratum_oof_genuine_frame,
         },
+        # AUDIT-07 (FIR6V11-02): every named frame defines target population,
+        # sampling unit, and observation unit; undercoverage (units with
+        # selection probability zero) is inventoried with counts adjacent to
+        # the denominators they are dropped from.
+        "sampling_frame_definitions": {
+            "fit_fold_genuine_trials": {
+                "target_population": (
+                    "enrolled named probe faces in the Golden-150 bakeoff "
+                    "report joined to the manifest"
+                ),
+                "sampling_unit": "identity (K-fold assignment is identity-level)",
+                "observation_unit": "face-level genuine trial (probe s_max vs mate)",
+                "undercoverage": {
+                    "excluded_single_face_recall_rows": n_excluded,
+                    "non_enrolled_named_rows": n_non_enrolled_named,
+                },
+            },
+            "fit_fold_impostor_both_identities_in_fit": {
+                "target_population": (
+                    "probe/gallery non-mate pairs with both identities in the "
+                    "fit set (strangers never inform fitting)"
+                ),
+                "sampling_unit": "identity pair (both fold-assigned identity-level)",
+                "observation_unit": "face-level impostor trial (probe s_max vs non-mate)",
+                "undercoverage": {
+                    "cross_fold_pairs_excluded": True,
+                    "excluded_single_face_recall_rows": n_excluded,
+                    "non_enrolled_named_rows": n_non_enrolled_named,
+                },
+            },
+            "held_fold_genuine_non_abstained": {
+                "target_population": (
+                    "enrolled named probe faces read out-of-fold on "
+                    "non-abstained folds"
+                ),
+                "sampling_unit": "identity (held-fold membership is identity-level)",
+                "observation_unit": "face-level genuine trial",
+                "undercoverage": {
+                    "abstained_fold_trials_dropped": True,
+                    "excluded_single_face_recall_rows": n_excluded,
+                    "non_enrolled_named_rows": n_non_enrolled_named,
+                },
+            },
+            "held_fold_impostor_both_identities_in_held": {
+                "target_population": (
+                    "probe/gallery non-mate pairs (incl. strangers as read-only "
+                    "probes) with both identities in the held fold"
+                ),
+                "sampling_unit": "identity pair (held-fold membership is identity-level)",
+                "observation_unit": "face-level impostor trial",
+                "undercoverage": {
+                    "cross_fold_pairs_excluded": True,
+                    "excluded_single_face_recall_rows": n_excluded,
+                    "non_enrolled_named_rows": n_non_enrolled_named,
+                },
+            },
+            stratum_oof_genuine_frame: {
+                "target_population": (
+                    "stratum-scoped OOF genuine pool from non-abstained folds "
+                    "(NOT the global population; used by fnmr_tax and oact_tax)"
+                ),
+                "sampling_unit": "identity (fold clustering is identity-level)",
+                "observation_unit": "face-level genuine trial",
+                "undercoverage": {
+                    "abstained_fold_trials_dropped": True,
+                    "excluded_single_face_recall_rows": n_excluded,
+                    "non_enrolled_named_rows": n_non_enrolled_named,
+                },
+            },
+        },
+        # AUDIT-11 (FIR6V11-02): trial denominators are face-level but folds
+        # cluster at identity level, so trials within one identity are
+        # correlated — raw n_* counts are not effective independent sample
+        # sizes. No deff/ICC is estimated and no design-based intervals are
+        # published in this artifact; any downstream CI must account for the
+        # identity-level cluster design (deff ~= 1 + (M-1)*ICC, n_eff = n/deff).
+        "trial_clustering_note": (
+            "All n_genuine/n_impostor denominators count face-level trials, "
+            "while K-fold assignment (the sampling design) clusters at the "
+            "identity level. Trials sharing an identity are not independent; "
+            "raw trial counts overstate effective sample size. This artifact "
+            "publishes point rates only — no design-based confidence "
+            "intervals. Downstream interval estimates must apply an "
+            "identity-level cluster design effect (deff ≈ 1 + (M-1)·ICC; "
+            "n_eff = n/deff) rather than treating trial counts as "
+            "independent n (AUDIT-11)."
+        ),
         "clustering_note": (
             "Calibration is pair-level over face_bakeoff decision scores "
             "(probe/gallery s_max trials). It does not re-run production "

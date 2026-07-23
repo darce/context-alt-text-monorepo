@@ -127,3 +127,80 @@ Per-image failures are recorded and the run continues; `--stall-limit`
 
 `--llm-judge` is a stub flag only (fails fast). Tiers 3–4 of §6c are out of
 this MVP.
+
+## Face bake-off (FIR-5)
+
+Offline face identity bake-off: candidate YuNet+SFace (and optional buffalo
+reference under a hard env guard) detect→align→embed, then a pure score phase
+that proposes (never decides) FIR-6 gate numbers.
+
+### Env guards
+
+| Variable | Purpose |
+| --- | --- |
+| `ACX_EVAL_BENCH=1` | Required to import `buffalo_bench` (insightface). Unset/0 → import raises. |
+| `GOLDEN_IMAGES_DIR` | Local image bytes for the offline walker. |
+
+**No-tenant rule:** never seed buffalo or write face embeddings into tenant
+`4ddf8f36` (or any tenant). Face walk writes JSON only under
+`scripts/eval_harness/out/` (git-ignored).
+
+**Buffalo non-promotion (PROV-01):** buffalo 512D run-records stay in `out/`.
+Never promote them to `docs/tasks/**` or commit them. Only candidate (128D)
+records and publishability-filtered aggregate reports may be promoted.
+
+### Commands
+
+```bash
+cd apps/prototype-description-service
+
+# offline walk (candidate leg) → face run-record
+uv run python -m scripts.eval_harness.cli face-bakeoff --limit 10
+
+# pure score (full unfiltered corpus; unknown-rejection keeps private strangers)
+uv run python -m scripts.eval_harness.cli score-face \
+  --run-record scripts/eval_harness/out/face-run-<stamp>.json \
+  --check-determinism
+
+# published artifact: score full corpus, THEN post-score redact
+uv run python -m scripts.eval_harness.cli score-face \
+  --run-record scripts/eval_harness/out/face-run-<stamp>.json --public
+```
+
+`--check-determinism` on `score-face` re-runs §C–§F in a **fresh process** under
+varied `PYTHONHASHSEED` and asserts bit-identical JSON/MD (sorted nested lists).
+
+### Floor + demotion policy
+
+Every gating slice below its n-floor is **DIRECTIONAL ONLY** and barred from the
+gate-proposal section (including headline identification). FIR-5 cannot
+self-promote an under-floor slice. **Demotion authority is the human operator at
+the FIR-6 gate** — FIR-5 only marks `UNDER-FLOOR / DIRECTIONAL — awaiting
+operator demotion` and excludes those slices from the proposal.
+
+Floors (recall-eligible celebs01 n≥100; unknown-rejection n≥43; occlusion
+eligible pairs ≥90; clustering `P_same≥20 ∧ P_diff≥20` and `M≠0`).
+
+### Perf leg
+
+`perf_leg.py` measures **detect+embed-only** throughput (images/sec,
+embeddings/sec, sec/image) + cost/1k from
+`perf_budgets/face_bakeoff_budget.json` (A1.Flex ~$0.152/hr; A10 ~$2/GPU-hr
+placeholders). **Not** full-scan p95 (FIR-6-owned). A10 eval numbers defer to
+`FIR-5a` when no co-scheduled window (not FIR-7).
+
+### VLM-6 low-light curation mapping (S1 carryover)
+
+Operator/curation mapping: VLM-6 **"low-light"** → tag `blur` and/or `low_res`.
+This is a **curation-time tag choice**, not a loader transform of
+`Domain.LOW_LIGHT` (Domain stays a content stratum for strata shortlists).
+
+### Two-stage publishability
+
+1. **Score** the full unfiltered corpus (keeps LOCALWP/OPERATOR strangers for
+   the unknown-rejection gate).
+2. **Redact** via `redact_face_report_for_public(report)` for published
+   artifacts — strips private crops/metadata, preserves aggregate rates.
+   Distinct from the caption path's pre-score `_filter_for_public_audience` /
+   `Audience.PUBLIC`.
+

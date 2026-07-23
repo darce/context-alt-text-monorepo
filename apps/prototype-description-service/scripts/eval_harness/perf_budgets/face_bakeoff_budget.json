@@ -1,0 +1,19 @@
+{
+  "schema": "acx-face-bakeoff-budget/v1",
+  "label": "detect+embed-only",
+  "note": "Device $/hr placeholders for FIR-5 cost/1k. p95 full-scan latency is FIR-6-owned. A10 eval numbers deferred to FIR-5a when no co-scheduled window.",
+  "devices": {
+    "a1_flex": {
+      "display_name": "OCI A1.Flex (ARM CPU)",
+      "usd_per_hour": 0.152,
+      "notes": "Default local/CI host profile. Placeholder ~$0.152/hr.",
+      "role": "default_eval"
+    },
+    "a10": {
+      "display_name": "OCI A10 GPU",
+      "usd_per_hour": 2.0,
+      "notes": "Placeholder ~$2/GPU-hr. Eval A10 owned by FIR-5a when not co-scheduled with VLM-6; NOT FIR-7 prod path.",
+      "role": "optional_co_scheduled_or_fir5a"
+    }
+  }
+}

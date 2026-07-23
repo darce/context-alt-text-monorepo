@@ -603,6 +603,18 @@ dev-stop:
 eval-captions:
 	@cd apps/prototype-description-service && uv run python -m scripts.eval_harness.cli run $(EVAL_ARGS)
 
+# FIR-5 face bake-off: offline candidate walk (+ optional score). No tenant writes.
+# Usage: make bakeoff-face
+#        make bakeoff-face EVAL_ARGS="--limit 10"
+#        make bakeoff-face-score FACE_RUN=scripts/eval_harness/out/face-run-....json
+.PHONY: bakeoff-face bakeoff-face-score
+bakeoff-face:
+	@cd apps/prototype-description-service && uv run python -m scripts.eval_harness.cli face-bakeoff $(EVAL_ARGS)
+
+bakeoff-face-score:
+	@if [ -z "$(FACE_RUN)" ]; then echo "error: FACE_RUN is required" >&2; exit 2; fi
+	@cd apps/prototype-description-service && uv run python -m scripts.eval_harness.cli score-face --run-record "$(FACE_RUN)" $(EVAL_ARGS)
+
 # DS-3 per-prospect demo provisioning (backend registry + minter wrap only).
 # Usage: make provision-demo LABEL="Acme Gallery" SEED=default
 #        make expire-demo SLUG=<slug>

@@ -26,6 +26,7 @@ from recognition.infrastructure.face_pipeline._common import (
 from scripts.eval_harness.face_bakeoff import (
     DEFAULT_STALL_LIMIT,
     BoundedStallError,
+    build_occlusion_twin_pairs,
     walk_face_run_record,
 )
 from scripts.eval_harness.face_run_record import (
@@ -439,6 +440,220 @@ def test_embedder_only_determinism_layer3() -> None:
     # Cosine of L2 vectors = dot product.
     cos = float(np.dot(a[0], b[0]))
     assert cos >= EMB_DET_TAU, f"cosine {cos} < EMB_DET_TAU {EMB_DET_TAU}"
+
+
+# ---------------------------------------------------------------------------
+# Buffalo fused baseline leg (FIR-1 head-to-head) — stubbed app, no insightface
+# ---------------------------------------------------------------------------
+
+
+def _import_buffalo(monkeypatch: pytest.MonkeyPatch) -> Any:
+    monkeypatch.setenv("ACX_EVAL_BENCH", "1")
+    sys.modules.pop("scripts.eval_harness.buffalo_bench", None)
+    return importlib.import_module("scripts.eval_harness.buffalo_bench")
+
+
+def _fake_face(*, dim: int = 8, seed: int = 3) -> Any:
+    from types import SimpleNamespace
+
+    rng = np.random.default_rng(seed)
+    return SimpleNamespace(
+        bbox=np.asarray([10.0, 20.0, 50.0, 80.0]),  # xyxy
+        kps=np.asarray([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0], [7.0, 8.0], [9.0, 10.0]]),
+        det_score=0.87,
+        embedding=rng.normal(size=dim),
+    )
+
+
+class _FakeApp:
+    """Pixel-blind FaceAnalysis stand-in: fixed faces per get() call."""
+
+    def __init__(self, faces: list[Any]) -> None:
+        self._faces = faces
+        self.calls = 0
+
+    def get(self, image: np.ndarray) -> list[Any]:
+        self.calls += 1
+        return list(self._faces)
+
+
+def test_buffalo_adapter_maps_bbox_landmarks_score(monkeypatch: pytest.MonkeyPatch) -> None:
+    bb = _import_buffalo(monkeypatch)
+    face = _fake_face()
+    leg = bb.BuffaloFusedLeg(app=_FakeApp([face]), embedding_dim=8)
+    batches = leg.detect([np.zeros((32, 32, 3), dtype=np.uint8)])
+    assert len(batches) == 1 and len(batches[0]) == 1
+    det = batches[0][0]
+    assert isinstance(det, RawDetection)
+    # xyxy [10,20,50,80] → xywh [10,20,40,60]
+    assert det.bbox.tolist() == [10.0, 20.0, 40.0, 60.0]
+    assert det.landmarks.shape == (5, 2)
+    assert det.landmarks.tolist() == face.kps.tolist()  # kps passthrough, index order kept
+    assert det.score == pytest.approx(0.87)
+    embs = leg.embed([np.zeros((112, 112, 3), dtype=np.uint8)])
+    assert embs.shape == (1, 8)
+    assert embs.dtype == np.float32
+    assert float(np.linalg.norm(embs[0])) == pytest.approx(1.0, abs=1e-5)  # L2'd
+    expected = np.asarray(face.embedding) / np.linalg.norm(face.embedding)
+    assert float(np.dot(embs[0], expected)) == pytest.approx(1.0, abs=1e-5)
+
+
+def test_buffalo_fused_cache_discipline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """embed() is fail-closed: only valid straight after detect(), counts must match."""
+    bb = _import_buffalo(monkeypatch)
+    leg = bb.BuffaloFusedLeg(app=_FakeApp([_fake_face()]), embedding_dim=8)
+    crop = np.zeros((112, 112, 3), dtype=np.uint8)
+    with pytest.raises(bb.FusedLegProtocolError, match="before detect"):
+        leg.embed([crop])
+    leg.detect([np.zeros((32, 32, 3), dtype=np.uint8)])
+    with pytest.raises(bb.FusedLegProtocolError, match="crops"):
+        leg.embed([crop, crop])  # count mismatch (1 detection cached)
+    leg.detect([np.zeros((32, 32, 3), dtype=np.uint8)])
+    assert leg.embed([crop]).shape == (1, 8)
+    with pytest.raises(bb.FusedLegProtocolError, match="before detect"):
+        leg.embed([crop])  # cache consumed — no silent reuse
+
+
+def test_buffalo_adapter_rejects_wrong_embedding_dim(monkeypatch: pytest.MonkeyPatch) -> None:
+    bb = _import_buffalo(monkeypatch)
+    leg = bb.BuffaloFusedLeg(app=_FakeApp([_fake_face(dim=7)]), embedding_dim=8)
+    with pytest.raises(ValueError, match="dim"):
+        leg.detect([np.zeros((32, 32, 3), dtype=np.uint8)])
+
+
+def test_build_baseline_leg_shape(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mirror of build_candidate_leg: (detector, aligner, embedder); fused = same object."""
+    bb = _import_buffalo(monkeypatch)
+    app = _FakeApp([_fake_face()])
+    detector, aligner, embedder = bb.build_baseline_leg(app=app, embedding_dim=8)
+    assert detector is embedder  # one fused adapter serves both protocol slots
+    assert detector.leg_mode == "fused"
+    assert detector.model_id == bb.BUFFALO_MODEL_ID == "buffalo_l"
+    assert embedder.embedding_dim == 8
+    # Default dim is the buffalo space (512), from the producer (rg-015).
+    assert bb.BuffaloFusedLeg(app=app).embedding_dim == bb.BUFFALO_EMBEDDING_DIM == 512
+    aligned = aligner.align(np.zeros((32, 32, 3), dtype=np.uint8), np.zeros((5, 2)))
+    assert aligned.crop.shape == (112, 112, 3)  # placeholder crop keeps walker loop shape
+
+
+def test_walker_stamps_buffalo_leg_provenance(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Leg-parameterized provenance: leg/model_id/dim/leg_mode from the buffalo leg."""
+    bb = _import_buffalo(monkeypatch)
+    detector, aligner, embedder = bb.build_baseline_leg(app=_FakeApp([_fake_face()]), embedding_dim=8)
+    manifest = _tiny_manifest(2, tmp_path)
+    record = walk_face_run_record(
+        manifest,
+        tmp_path,
+        detector=detector,
+        embedder=embedder,
+        aligner=aligner,  # type: ignore[arg-type]
+        model_id=bb.BUFFALO_MODEL_ID,
+        head_sha="deadbeef",
+        embedding_dim=embedder.embedding_dim,
+        leg="buffalo",
+        leg_mode=bb.BUFFALO_LEG_MODE,
+    )
+    prov = record["provenance"]
+    assert prov["leg"] == "buffalo"
+    assert prov["model_id"] == "buffalo_l"
+    assert prov["embedding_dim"] == 8
+    assert prov["leg_mode"] == "fused"
+    assert all(item["model_id"] == "buffalo_l" for item in record["items"])
+    assert all(len(f["embedding"]) == 8 for item in record["items"] for f in item["faces"])
+
+
+def test_walker_provenance_defaults_stay_candidate(tmp_path: Path) -> None:
+    """No leg args → leg='candidate' and NO leg_mode key (candidate is separable)."""
+    manifest = _tiny_manifest(1, tmp_path)
+    record = walk_face_run_record(
+        manifest,
+        tmp_path,
+        detector=_MockDetector(),
+        embedder=_MockEmbedder(),
+        head_sha="deadbeef",
+        embedding_dim=8,
+    )
+    assert record["provenance"]["leg"] == "candidate"
+    assert "leg_mode" not in record["provenance"]
+
+
+def test_twin_pass_with_fused_leg_and_pinned_cache_detector(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """build_occlusion_twin_pairs runs the fused buffalo adapters end-to-end while
+    the landmark cache comes from a SEPARATE (candidate-family) cache_detector
+    (EXP-08: same twin universe for both legs)."""
+    import cv2
+
+    bb = _import_buffalo(monkeypatch)
+
+    img_dir = tmp_path / "celebs01"
+    img_dir.mkdir()
+    img = np.random.default_rng(5).integers(0, 256, size=(100, 100, 3)).astype(np.uint8)
+    assert cv2.imwrite(str(img_dir / "alice.jpg"), img)
+    manifest = GoldenManifest.model_validate(
+        {
+            "manifest_version": 2,
+            "roster": ["Alice Q"],
+            "entries": [
+                {
+                    "path": "celebs01/alice.jpg",
+                    "sha256": "a" * 64,
+                    "media_id": 1,
+                    "face_count": 1,
+                    "present_identities": ["Alice Q"],
+                    "must_right": [],
+                    "easy_wrong": [],
+                    "policy": {"recognition_enabled": True},
+                    "context_pack": {"caption": "x"},
+                    "face_boxes": [
+                        {"x": 0.4, "y": 0.4, "w": 0.4, "h": 0.4, "name": "Alice Q", "source": "iptc"}
+                    ],
+                    "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
+                }
+            ],
+        }
+    )
+
+    class _CacheDet:
+        """Candidate-family stand-in: one detection exactly on the GT box."""
+
+        calls = 0
+
+        def detect(self, images: list[np.ndarray]) -> list[list[RawDetection]]:
+            _CacheDet.calls += len(images)
+            # GT boxes are normalized-CENTRE: (0.4,0.4,0.4,0.4)×100 → corner [20,20,40,40].
+            det = RawDetection(
+                bbox=np.asarray([20.0, 20.0, 40.0, 40.0], dtype=np.float32),
+                landmarks=np.asarray(
+                    [[30.0, 35.0], [50.0, 35.0], [40.0, 42.0], [32.0, 52.0], [48.0, 52.0]],
+                    dtype=np.float32,
+                ),
+                score=0.9,
+            )
+            return [[det] for _ in images]
+
+    fused_face = _fake_face(dim=8)
+    fused_face.bbox = np.asarray([20.0, 20.0, 60.0, 60.0])  # xyxy → GT-exact xywh [20,20,40,40]
+    detector, aligner, embedder = bb.build_baseline_leg(app=_FakeApp([fused_face]), embedding_dim=8)
+
+    pairs_by_tag, prov = build_occlusion_twin_pairs(
+        manifest,
+        tmp_path,
+        detector=detector,
+        embedder=embedder,
+        aligner=aligner,  # type: ignore[arg-type]
+        cache_detector=_CacheDet(),
+    )
+    assert prov["errors"] == []
+    assert prov["n_pairs"] == 3  # 1 named cached face × 3 occlusion kinds
+    assert set(pairs_by_tag) == {"masked", "sunglasses", "occlusion_other"}
+    assert _CacheDet.calls == 1  # cache built from the pinned detector, not the leg
+    for pairs in pairs_by_tag.values():
+        assert pairs[0]["true_name"] == "Alice Q"
+        assert pairs[0]["embedding"] is not None and len(pairs[0]["embedding"]) == 8
 
 
 def test_raw_detection_attribute_contract() -> None:

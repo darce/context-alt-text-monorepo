@@ -140,11 +140,18 @@ def walk_face_run_record(
     stall_limit: int = DEFAULT_STALL_LIMIT,
     started_at: str = "1970-01-01T00:00:00Z",
     embedding_dim: int | None = None,
+    leg: str = "candidate",
+    leg_mode: str | None = None,
 ) -> dict[str, Any]:
     """Walk manifest entries; isolate per-item failures; bound stalls (rg-007).
 
     Returns a ``DocKind.FACE_RUN_RECORD`` document. Raises ``BoundedStallError``
     (with ``partial_record``) after ``stall_limit`` consecutive failures.
+
+    ``leg``/``model_id``/``embedding_dim`` are caller-supplied provenance (never
+    hardcoded to the candidate — the buffalo baseline walks this same loop);
+    ``leg_mode`` is stamped only when set (e.g. ``"fused"`` when the leg's
+    detect/embed are one pipeline call and must not be read as separable stages).
     """
     if stall_limit < 1:
         raise ValueError(f"stall_limit must be >= 1, got {stall_limit}")
@@ -163,10 +170,12 @@ def walk_face_run_record(
             "manifest_sha256": _manifest_sha(manifest),
             "head_sha": head_sha,
             "started_at": started_at,
-            "leg": "candidate",
+            "leg": leg,
             "model_id": model_id,
             "embedding_dim": dim,
         }
+        if leg_mode is not None:
+            provenance["leg_mode"] = leg_mode
         return build_face_run_record(items, provenance=provenance, aborted=aborted)
 
     for entry in entries:
@@ -227,6 +236,7 @@ def build_occlusion_twin_pairs(
     aligner: FivePointAligner | None = None,
     seed: int = 0,
     limit: int | None = None,
+    cache_detector: FaceDetector | None = None,
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
     """Synthetic occlusion twin pass (FIR5GL-01 / §D): specs → render → re-detect+embed.
 
@@ -245,8 +255,15 @@ def build_occlusion_twin_pairs(
     ``provenance["errors"]`` (rg-007 spirit): one broken image drops its own
     twins, visible in the report as reduced eligibility, and never halts the
     pass.
+
+    ``cache_detector`` (default: the leg ``detector``) builds the frozen
+    landmark cache. Non-candidate legs (buffalo) MUST pass the pinned
+    candidate-family YuNet here (``build_pinned_cache_detector``) so the twin
+    universe is the SAME for both legs (EXP-08 disclosure) and the
+    ``pinned_yunet`` cache provenance stays truthful.
     """
     images_root = Path(images_dir)
+    cache_det = cache_detector if cache_detector is not None else detector
     aligner = aligner if aligner is not None else FivePointAligner()
     entries = manifest.entries[:limit] if limit is not None else manifest.entries
     pairs_by_tag: dict[str, list[dict[str, Any]]] = {}
@@ -265,7 +282,7 @@ def build_occlusion_twin_pairs(
             cache = build_landmark_cache(
                 images_by_media={entry.media_id: image_bgr},
                 gt_by_media={entry.media_id: list(entry.face_boxes)},
-                detector=detector,
+                detector=cache_det,
             )
             n_cached += len(cache.entries)
             specs = generate_twin_specs(cache, seed=seed)
@@ -325,6 +342,16 @@ def build_candidate_leg(
     return detector, aligner, embedder
 
 
+def build_pinned_cache_detector(*, models_dir: Path | None = None) -> OrtYuNetDetector:
+    """Pinned candidate-family YuNet for the frozen twin landmark cache.
+
+    Non-candidate legs pass this to ``build_occlusion_twin_pairs`` so occlusion
+    twin eligibility stays conditioned on the SAME candidate-family cache for
+    every leg (EXP-08 / ``LANDMARK_CACHE_LEG_ASYMMETRY_DISCLOSURE``).
+    """
+    return OrtYuNetDetector(models_dir=models_dir)
+
+
 __all__ = [
     "BoundedStallError",
     "CANDIDATE_MODEL_ID",
@@ -333,6 +360,7 @@ __all__ = [
     "FaceEmbedder",
     "build_candidate_leg",
     "build_occlusion_twin_pairs",
+    "build_pinned_cache_detector",
     "decode_image_bytes_bgr",
     "process_image_bgr",
     "walk_face_run_record",

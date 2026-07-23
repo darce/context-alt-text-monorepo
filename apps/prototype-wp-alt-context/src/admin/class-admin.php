@@ -37,7 +37,9 @@ use function wp_remote_head;
 use function wp_remote_retrieve_response_code;
 use function wp_script_add_data;
 use function wp_unslash;
+use function wp_scripts;
 use function is_wp_error;
+use function add_filter;
 
 /**
  * Coordinates admin-only concerns such as enqueueing the SPA and attachment-edit bundles.
@@ -101,7 +103,12 @@ class Admin {
 			return $tag;
 		}
 
-		return (string) preg_replace( '/<script\s/', '<script type="module" ', $tag, 1 );
+		// Anchor on the src-bearing <script>, not merely the first one: WordPress
+		// prepends any `before` inline script / translations into $tag, and putting
+		// type=module on that classic wrapper would re-introduce the SyntaxError this
+		// fixes. No module handle uses a `before` inline today; the lookahead keeps it
+		// safe if one is ever added ([RES-01] defensive robustness).
+		return (string) preg_replace( '/<script\b(?=[^>]*\ssrc=)/', '<script type="module"', $tag, 1 );
 	}
 
 	public function enqueue_scripts( string $hookSuffix ): void {

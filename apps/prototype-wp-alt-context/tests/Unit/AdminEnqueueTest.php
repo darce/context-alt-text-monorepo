@@ -191,4 +191,39 @@ class AdminEnqueueTest extends TestCase
         $this->assertSame('assets/attachment-edit-test.js', $attachment['file'] ?? null);
         $this->assertNull($missing);
     }
+
+    public function testModuleHandleScriptTagRendersTypeModule(): void
+    {
+        $admin = new Admin($this->spaOnlyManifestPath());
+        wp_script_add_data('alt-context-admin', 'type', 'module');
+
+        $tag = '<script id="alt-context-admin-js" src="http://example.test/admin.js?ver=0.0.5"></script>';
+        $filtered = $admin->filter_module_script_tag($tag, 'alt-context-admin', 'http://example.test/admin.js');
+
+        // Without this, a code-split ESM entry loads as a classic script and the SPA never mounts.
+        $this->assertStringContainsString('type="module"', $filtered);
+        $this->assertStringContainsString('id="alt-context-admin-js"', $filtered);
+    }
+
+    public function testNonModuleHandleScriptTagIsUnchanged(): void
+    {
+        $admin = new Admin($this->spaOnlyManifestPath());
+
+        // No 'type' => 'module' data registered for this handle: discrimination guard.
+        $tag = '<script id="jquery-core-js" src="http://example.test/jquery.js"></script>';
+        $filtered = $admin->filter_module_script_tag($tag, 'jquery-core', 'http://example.test/jquery.js');
+
+        $this->assertSame($tag, $filtered);
+    }
+
+    public function testModuleTypeIsNotDoubled(): void
+    {
+        $admin = new Admin($this->spaOnlyManifestPath());
+        wp_script_add_data('alt-context-admin', 'type', 'module');
+
+        $tag = '<script type="module" id="alt-context-admin-js" src="http://example.test/admin.js"></script>';
+        $filtered = $admin->filter_module_script_tag($tag, 'alt-context-admin', 'http://example.test/admin.js');
+
+        $this->assertSame(1, substr_count($filtered, 'type="module"'));
+    }
 }

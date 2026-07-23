@@ -1780,6 +1780,21 @@ if (!function_exists('wp_script_add_data')) {
     }
 }
 
+if (!function_exists('wp_scripts')) {
+    function wp_scripts()
+    {
+        return new class {
+            /**
+             * @return mixed
+             */
+            public function get_data($handle, $key)
+            {
+                return $GLOBALS['__ac_scripts'][$handle]['data'][$key] ?? false;
+            }
+        };
+    }
+}
+
 if (!function_exists('wp_enqueue_style')) {
     function wp_enqueue_style($handle, $src = '', $deps = [], $ver = false, $media = 'all'): void
     {

@@ -284,7 +284,7 @@ Predicted `cluster_label` values are **cluster-scoped** (stack-local cluster ids
 | Rule | When | How | Report frame |
 | --- | --- | --- | --- |
 | **Primary — string match (pinned primary)** | Cluster has an operator-assigned label (`is_auto_label == false` **or** non-empty human `cluster_label` that is not a pure auto id) | Map predicted label → GT name if normalized strings equal a roster / `present_identities` name; else unmapped (omit from `predicted` for primary frame; count under unmapped-cluster DIAGNOSTIC stats) | `label_map_primary` — **default** for CONFIRMATORY identification cells |
-| **Optimistic — Hungarian (disclosed)** | Unlabeled / auto-labeled clusters (`is_auto_label == true` or empty label) **or** residual after primary | Optimal one-to-one assignment (Hungarian) maximizing **overlap counts** between cluster member boxes and GT `face_boxes` (IoU ≥ plan constant `BOX_IOU_MATCH=0.5`, or centre-in-box fallback when GT boxes lack size parity). Assigned GT names fill `predicted` for this frame only. | `label_map_optimistic` — always **DIRECTIONAL**; never CONFIRMATORY |
+| **Optimistic — Hungarian (disclosed)** | Unlabeled / auto-labeled clusters (`is_auto_label == true` or empty label) **or** residual after primary | Optimal one-to-one assignment (Hungarian) maximizing **overlap counts** between cluster member boxes and GT `face_boxes` (IoU ≥ plan constant `BOX_IOU_MATCH=0.5`, or centre-in-box fallback when GT boxes lack size parity). Assigned GT names fill `predicted` for this frame only. Entries with **no `face_boxes`** are ineligible for the optimistic rule — their unlabeled clusters stay unmapped (DIAGNOSTIC) and the report states the count of box-less entries so an empty optimistic frame is legible, not silent. | `label_map_optimistic` — always **DIRECTIONAL**; never CONFIRMATORY |
 
 **Disclosure (mandatory in report)**: primary and optimistic frames print side-by-side for identification; optimistic cells carry tier `DIRECTIONAL` and a one-line note that assignment is overlap-optimal, not operator-confirmed. Unmapped residual clusters after both rules are DIAGNOSTIC counts only.
 
@@ -298,7 +298,7 @@ legs/<stack_id>/items.jsonl  # one JSON object per line, append-only
   "manifest_media_id": 12,          # GoldenEntry.media_id
   "manifest_path": "…",             # GoldenEntry.path
   "content_sha256": "…",            # GoldenEntry.sha256 when verified
-  "stack_media_id": "…",            # id returned by analyze / media export on this stack
+  "stack_media_id": "…",            # CLIENT-SUPPLIED media id used in the image_<media_id> multipart part name (analyze returns only a job id; media_identities export rows echo this id)
   "phase": "ingest|analyze|…",
   "outcome": "ok|failed",
   "error_code": null,
@@ -345,13 +345,13 @@ def identification_pr(items: Sequence[ImageIdentities]) -> PrResult: ...
 
 1. Join accepted-set media via [media identity join](#d-media-identity-join); load GT from the pinned manifest; load predicted rows from `legs/<stack_id>/exports/`.
 2. Apply [label-space mapping](#c-label-space-mapping) → primary and (separately) optimistic predicted name lists.
-3. **FIR-5-native sampling frame** (`sampling_frame=SAMPLING_FRAME_FACE_ID`): call `detection_pr` / `identification_pr` on rows derived only from exported detections (excludes pure detector misses from identification accounting by construction of the input rows). Report under key `frame_fir5_native`.
+3. **FIR-5-native sampling frame** (`sampling_frame=SAMPLING_FRAME_CROSSBENCH_NATIVE`): call `detection_pr` / `identification_pr` on rows derived only from exported detections (excludes pure detector misses from identification accounting by construction of the input rows). Report under key `frame_fir5_native`.
 4. **End-to-end sampling frame** (`sampling_frame=SAMPLING_FRAME_E2E`): **before** calling the pure functions, inject labeled-but-undetected faces as FN rows (`ImageDetection` undershoot and/or `ImageIdentities` with empty `predicted` + labeled name present). Report under key `frame_e2e`. Detector miss → identification miss is accounted here ([EVAL-16]).
 5. Head-to-head report prints sampling frames **and** label-mapping frames as a grid per leg; never silently replace one with another.
 
 **Unit test (required)**: synthetic corpus where one labeled face is absent from export → `frame_e2e` identification FN increments and detection FN increments; `frame_fir5_native` identification denominator does not charge that miss the same way (pins detector-miss→ID-miss accounting).
 
-Constants live in `score_report.py` (or `export_map.py`): `SAMPLING_FRAME_FACE_ID`, `SAMPLING_FRAME_E2E`, `LABEL_MAP_PRIMARY`, `LABEL_MAP_OPTIMISTIC` — plan-level names; not FIR-5 library enums.
+Constants live in `score_report.py` (or `export_map.py`): `SAMPLING_FRAME_CROSSBENCH_NATIVE`, `SAMPLING_FRAME_E2E`, `LABEL_MAP_PRIMARY`, `LABEL_MAP_OPTIMISTIC` — plan-level names; not FIR-5 library enums. Do NOT import `face_metrics.SAMPLING_FRAME_FACE_ID` on the cross-stack path — that existing FIR-5 constant names the pooled k-fold face-level frame, which is out of scope here.
 
 ---
 
@@ -365,7 +365,7 @@ Separately: FIR-5 / eval harness surfaces carry **per-metric DIRECTIONAL disclos
 
 | Tier | Meaning |
 | --- | --- |
-| **CONFIRMATORY** | Full-corpus fixed-denominator metric over the pinned **accepted set**, both legs' clustering complete (`cluster_job.json` success), **primary** label-mapping only, accepted-set size ≥ configured floor (`accepted_set_floor`, default = min(manifest entry count, operator pin; tests use explicit small floor)). Eligible for gate-style claims. |
+| **CONFIRMATORY** | Full-corpus fixed-denominator metric over the pinned **accepted set**, both legs' clustering complete (`cluster_job.json` success), **primary** label-mapping only, accepted-set size ≥ configured floor (`accepted_set_floor`, **default = manifest entry count** — zero tolerated attrition unless the operator lowers it; tests use an explicit small floor). Eligible for gate-style claims. |
 | **DIRECTIONAL** | Any cell whose denominator lost items below the pre-stated floor (ingest/analyze failures shrank the accepted set), **or** any cell using the **optimistic** label-mapping frame, **or** underpowered slice cells the report still shows for trend. Not gate-eligible. |
 | **DIAGNOSTIC** | Context cells: per-stack raw face/cluster counts, unmapped-cluster stats, attrition-by-phase tables, join failures, license banner echo. Never used as a quality gate. |
 
@@ -641,7 +641,7 @@ Locked by [CF-7](#cf-7-score-credential-flow-pinned): `run` persists exports; `s
 wall_clock_timeout_sec: 3600
 job_poll_timeout_sec: 600
 item_max_attempts: 2
-accepted_set_floor: 1          # production pin: operator sets floor (e.g. 100 for Golden-150 claims)
+accepted_set_floor: 150        # default = manifest entry count (zero tolerated attrition); operator may lower explicitly
 allow_private_source: false
 # optional: fail closed if --manifest bytes disagree
 # manifest_sha256: "<64 hex>"
@@ -730,9 +730,9 @@ stacks:
 4. **Run** — `… run --config … --manifest … --images-dir … --out …` (ingest → analyze → cluster → export persist).
 5. **Status** — `… status --run-dir …` (optional; per-leg progress + phase).
 6. **Score** — `… score --run-dir …` (offline; fails if cluster phase missing; writes `score/accepted_set.json` + report).
-6. **Teardown** — **only** FIR23-STACK's documented stack-scoped DB reset for `acx-dev-fir` (and optional dev bench-tenant cleanup). Placeholder: `See FIR23-STACK runbook §reset` until that doc's command is stable — **do not invent** `DROP DATABASE` one-liners here that disagree with FIR23-STACK.
-7. **Failure routing** — stack health / dim wrong in compose → FIR23-STACK; CLI logic / scoring → FIR-8; embedding-export needs → optional upstream task (not FIR-8).
-8. **Verification checklist** — both preflights green; report path exists; both frames present; license_notice present; stacks reset.
+7. **Teardown** — **only** FIR23-STACK's documented stack-scoped DB reset for `acx-dev-fir` (and optional dev bench-tenant cleanup). Placeholder: `See FIR23-STACK runbook §reset` until that doc's command is stable — **do not invent** `DROP DATABASE` one-liners here that disagree with FIR23-STACK.
+8. **Failure routing** — stack health / dim wrong in compose → FIR23-STACK; CLI logic / scoring → FIR-8; embedding-export needs → optional upstream task (not FIR-8).
+9. **Verification checklist** — both preflights green; report path exists; both frames present; license_notice present; stacks reset.
 
 **Proof**
 

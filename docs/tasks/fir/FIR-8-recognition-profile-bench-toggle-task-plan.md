@@ -199,7 +199,7 @@ CLI config **validates against this table at load** ([rg-008]) and **refuses unk
 - `GET {base_url}/ready` (readiness probe; no auth required for the probe itself).
 - Locate `checks` entry where `name == "database"`.
 - Require that check's `status` is OK (service uses `HealthStatus.OK.value`; fail closed on any non-OK, including UNHEALTHY/DEGRADED and missing check) → otherwise **`profile_or_dim_drift`**.
-- Parse `detail` with an **anchored** regex: `pgvector_dimension=(\d+)` (must match the live detail form produced by `check_database` / `validate_identity_vector_dimensions`: e.g. `reachable; pgvector_dimension=512`). If the token is absent → **`profile_or_dim_drift`**.
+- Parse `detail` with a token-search regex `pgvector_dimension=(\d+)` (re.search over the detail string — the live form is `reachable; pgvector_dimension={dim}`, so a full-string anchor would never match) (must match the live detail form produced by `check_database` / `validate_identity_vector_dimensions`: e.g. `reachable; pgvector_dimension=512`). If the token is absent → **`profile_or_dim_drift`**.
 - Compare captured int to `expected_pgvector_dim` from stack-pair config; mismatch → **`profile_or_dim_drift`**.
 
 ### Profile compare
@@ -352,6 +352,8 @@ Implementation note: the CLI does **not** open a raw production DB URL for arbit
 | tests (new) | `apps/prototype-description-service/scripts/bench/tests/test_cluster_gate.py` | Export aborts when clustering was not run / failed |
 | tests (new) | `apps/prototype-description-service/scripts/bench/tests/test_e2e_frame.py` | Detector-miss → ID-miss accounting (dual frames) |
 | tests (new) | `apps/prototype-description-service/scripts/bench/tests/test_e2e_mocked.py` | One mocked end-to-end (both legs → report dir) |
+| tests (new) | `apps/prototype-description-service/scripts/bench/tests/test_export_map_rg015.py` | Export normalization invents no envelope metadata (rg-015) |
+| docs (new) | `apps/prototype-description-service/scripts/bench/README.md` | Package README (S3) |
 | docs (new) | `docs/runbooks/fir-8-cross-stack-bench.md` | Operator runbook + teardown + license |
 | docs (edit) | this plan | v6.1 plan hardening (this commit) |
 

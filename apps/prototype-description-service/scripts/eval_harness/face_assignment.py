@@ -45,6 +45,15 @@ DecisionKind = Literal["accept", "reject"]
 # raises instead of returning).
 TauFitStatus = Literal["fitted", "mid_grid_unfitted", "error"]
 
+# FIR5CR-06: fold protocol disclosure — single-sourced here, wired into the
+# report's protocol_disclosures surface alongside the other disclosures.
+FOLD_MEDIA_CORESIDENCY_DISCLOSURE = (
+    "k-fold splits are subject-disjoint but not media-disjoint — a stranger "
+    "face co-resident on a held-out identity's image can enter that "
+    "identity's fit fold, so fit and read phases share image context "
+    "(contextual dependency)"
+)
+
 
 # ---------------------------------------------------------------------------
 # §A0 / §C — coordinate conversion + IoU association
@@ -901,6 +910,7 @@ __all__ = [
     "TAU_GRID",
     "STRANGER_SORT_KEY",
     "TauFitStatus",
+    "FOLD_MEDIA_CORESIDENCY_DISCLOSURE",
     "AssociationPair",
     "AssociationResult",
     "MatchedFace",

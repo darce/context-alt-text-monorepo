@@ -1133,8 +1133,58 @@ def test_demographic_cohorts_inherit_coupling_and_new_disclosures_present():
 
     assert LANDMARK_CACHE_LEG_ASYMMETRY_DISCLOSURE in SYNTHETIC_OCCLUSION_PROTOCOL_DISCLOSURES
     assert LANDMARK_CACHE_LEG_ASYMMETRY_DISCLOSURE in disclosures
+    # FIR5CR-06: fold protocol disclosure single-sourced from face_assignment.
+    from scripts.eval_harness.face_assignment import (
+        FOLD_MEDIA_CORESIDENCY_DISCLOSURE,
+    )
+
+    assert FOLD_MEDIA_CORESIDENCY_DISCLOSURE in disclosures
+    assert any("not media-disjoint" in d for d in disclosures)
     # RR-13: unknown-rejection slice error_target carries the dependence note.
     assert "independent" in scored["slices"]["unknown_rejection"]["error_target"]
+
+
+def test_tau_by_identity_disagreeing_fold_taus_raise():
+    """FIR5CR-02: one identity with two different held-out tau_k values means the
+    subject-disjoint fold split regressed — the map builder must raise."""
+    from types import SimpleNamespace
+
+    from scripts.eval_harness.report import _tau_by_identity_from_decisions
+
+    good = [
+        SimpleNamespace(true_name="Alice", tau_k=0.6),
+        SimpleNamespace(true_name="Alice", tau_k=0.6),
+        SimpleNamespace(true_name="Bob", tau_k=0.4),
+        SimpleNamespace(true_name=None, tau_k=0.9),  # strangers ignored
+    ]
+    assert _tau_by_identity_from_decisions(good) == {"Alice": 0.6, "Bob": 0.4}
+    bad = [
+        SimpleNamespace(true_name="Alice", tau_k=0.6),
+        SimpleNamespace(true_name="Alice", tau_k=0.7),
+    ]
+    with pytest.raises(ReportError, match="fold-split regression"):
+        _tau_by_identity_from_decisions(bad)
+
+
+def test_association_counts_out_of_range_gt_index_noted_and_counted():
+    """FIR5CR-05: gi >= len(boxes) is counted conservatively as a miss with a
+    provenance note — never a silent skip."""
+    from types import SimpleNamespace
+
+    from scripts.eval_harness.report import _association_counts_for_media
+
+    assoc = SimpleNamespace(unmatched_gt=[0, 5], unmatched_detections=[])
+    assignment = SimpleNamespace(association_by_media={1: assoc})
+    gt_by_media = {1: [{"name": "Alice"}]}  # index 5 is out of range
+    missed, unmatched, notes = _association_counts_for_media(
+        assignment,
+        {1},
+        gt_by_media=gt_by_media,
+        probe_media_ids={1},
+    )
+    assert missed == 2  # named box 0 + conservative out-of-range index 5
+    assert unmatched == 0
+    assert any("out of range" in n and "index 5" in n for n in notes)
 
 
 def test_occlusion_marked_run_record_item_rejected():

@@ -238,9 +238,11 @@ class FaceLevelIdPr:
     recall_numerator: int = 0  # TP
     recall_denominator: int = 0  # TP+FN
     # None = miss counts are not attributed in this sampling frame (per-cohort
-    # demographic rollup) — never a fabricated 0 (FIR5RR-05).
-    missed_gt: int | None = 0
-    unmatched_detections: int | None = 0
+    # demographic rollup) — never a fabricated 0 (FIR5RR-05). Defaults are None
+    # (not-attributed), never fail-open zeros (FIR5CR-03); attribution is
+    # all-or-nothing — both None or both ints.
+    missed_gt: int | None = None
+    unmatched_detections: int | None = None
 
     @property
     def precision(self) -> float:
@@ -279,7 +281,10 @@ def face_identification_pr(
     and ``unmatched_detections=None`` with ``detection_coupling`` inherited
     from the parent totals (or ``None`` = unknown). Fabricating ``0`` counts
     (and a ``False`` coupling flag) in such a frame is forbidden.
-    ``detection_coupling`` may only accompany all-None counts.
+    ``detection_coupling`` may only accompany all-None counts. Attribution is
+    all-or-nothing (FIR5CR-03): exactly one of ``missed_gt`` /
+    ``unmatched_detections`` being ``None`` raises — a frame either attributes
+    both counts or neither.
     """
     tp = fp = fn = 0
     n_named = 0
@@ -320,6 +325,13 @@ def face_identification_pr(
 
     mg = None if missed_gt is None else int(missed_gt)
     ud = None if unmatched_detections is None else int(unmatched_detections)
+    if (mg is None) != (ud is None):
+        raise ValueError(
+            "missed_gt and unmatched_detections must be attributed together "
+            "(all-or-nothing — FIR5CR-03): got "
+            f"missed_gt={mg!r}, unmatched_detections={ud!r}; a frame either "
+            "attributes both detection-miss counts or neither"
+        )
     if mg is None and ud is None:
         # Not-attributed frame: coupling is inherited (or unknown), never
         # derived from fabricated zeros (FIR5RR-05).

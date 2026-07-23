@@ -79,6 +79,32 @@ def test_reset_remote_dev_dry_run_succeeds_and_summarizes_plan() -> None:
     assert "https://dev.api.altcontext.com/ready" in out
 
 
+def test_reset_remote_dev_fir_dry_run_succeeds_and_summarizes_plan() -> None:
+    """FIR23-STACK: make reset-remote ENV=dev-fir routes through deploy script maps."""
+    result = _run_make(
+        ["reset-remote", "ENV=dev-fir"],
+        env_overrides={
+            "CONFIRM_REMOTE_RESET": "RESET",
+            "ACX_RESET_DRY_RUN": "1",
+            "ACX_RESET_SITE_URL": "http://localhost:10010",
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+    assert "DRY-RUN" in out or "dry-run" in out
+    assert "acx-dev-fir" in out
+    assert "https://fir.api.altcontext.com/ready" in out
+
+
+def test_deploy_dev_fir_and_rollback_targets_exist() -> None:
+    """FIR23-STACK: mk/deploy.mk exposes deploy-dev-fir + deploy-rollback-dev-fir."""
+    deploy_mk = (REPO_ROOT / "mk" / "deploy.mk").read_text(encoding="utf-8")
+    assert "deploy-dev-fir:" in deploy_mk
+    assert "deploy-rollback-dev-fir:" in deploy_mk
+    assert 'deploy dev-fir' in deploy_mk or '"$(DEPLOY_SCRIPT)" deploy dev-fir' in deploy_mk
+    assert "promote staging dev-fir" in deploy_mk
+
+
 def test_reset_remote_dev_dry_run_without_site_url_fails_closed() -> None:
     """E15-12-BR-06: reset must fail when ACX_RESET_SITE_URL is missing."""
     result = _run_make(

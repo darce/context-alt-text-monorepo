@@ -75,7 +75,7 @@ case "$ENV" in
     API_CONTAINER="acx-dev-fir-api-1"
     PG_USER="acx_dev_fir"
     PG_DB="alt_context_dev_fir"
-    HEALTH_URL="https://fir.api.altcontext.com/health"
+    HEALTH_URL="https://fir.dev.api.altcontext.com/health"
     ;;
   staging)
     PG_CONTAINER="acx-staging-postgres-1"

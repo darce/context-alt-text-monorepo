@@ -121,7 +121,7 @@ env_to_remote_dir() {
 env_to_health_url() {
   case "$1" in
     dev)     echo "https://dev.api.altcontext.com/health" ;;
-    dev-fir) echo "https://fir.api.altcontext.com/health" ;;
+    dev-fir) echo "https://fir.dev.api.altcontext.com/health" ;;
     staging) echo "https://staging.api.altcontext.com/health" ;;
     prod)    echo "https://api.altcontext.com/health" ;;
     *) fail "Unknown env: $1" ;;
@@ -130,7 +130,7 @@ env_to_health_url() {
 env_to_ready_url() {
   case "$1" in
     dev)     echo "https://dev.api.altcontext.com/ready" ;;
-    dev-fir) echo "https://fir.api.altcontext.com/ready" ;;
+    dev-fir) echo "https://fir.dev.api.altcontext.com/ready" ;;
     staging) echo "https://staging.api.altcontext.com/ready" ;;
     prod)    echo "https://api.altcontext.com/ready" ;;
     *) fail "Unknown env: $1" ;;

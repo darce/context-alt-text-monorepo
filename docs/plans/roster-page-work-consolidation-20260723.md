@@ -5,7 +5,7 @@
 
 ## IA contract recap
 
-E21-10 fixed the cross-surface model in one sentence: **Workbench decides, Roster curates people, Dashboard orients, History audits & applies**. E21-9 made Roster **person-first single-surface** — `ROSTER_SURFACE` in `js/admin/pages/roster/rosterRoute.ts`, Clusters tab retired — so cluster triage lives only on Workbench’s review queue (`rq=` flows, person-commit on the card). That MECE split (NAV-05) is why a cluster-inspection atlas must not re-home on Roster: putting an overview scatter of `cluster_id` topology next to person curation re-opens the dual-home E21-9 closed.
+E21-10 fixed the cross-surface model in one sentence: **Workbench decides, Roster curates [people], Dashboard orients, History audits & applies** (bracketed interpolation from E21-9's "Roster curates people"; E21-10's own sentence omits the word). E21-9 made Roster **person-first single-surface** — `ROSTER_SURFACE` in `js/admin/pages/roster/rosterRoute.ts`, Clusters tab retired — so cluster triage lives only on Workbench’s review queue (`rq=` flows, person-commit on the card). That MECE split (NAV-05) is why a cluster-inspection atlas must not re-home on Roster: putting an overview scatter of `cluster_id` topology next to person curation re-opens the dual-home E21-9 closed.
 
 Operational consequence for FIR-9 and later roster work: Roster owns person records, Needs-assignment rails, and scrub/workspace flows; Workbench owns merges, labels, and ordered review. Cross-surface jumps go through `js/admin/navigation/appLinks.ts` only (`toRoster`, `toWorkbench`, `APP_LINK_PARAMS`) — never a second hash grammar.
 

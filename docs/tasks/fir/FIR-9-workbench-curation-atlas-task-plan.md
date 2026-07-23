@@ -22,7 +22,7 @@ Ship a **DIAGNOSTIC-only** curation-acceleration tool in two halves: (1) an admi
 Operator proposal: host the atlas on the Roster page. **Canon validation keeps it in Workbench** — handoff decision `fir9_atlas_placement_workbench_validated_20260723` (#3240). Grounds:
 
 - **NAV-05 (MECE single-home).** E21-9 retired Roster’s Clusters tab to enforce the E21-10 contract: **Workbench decides [clusters], Roster curates [people]**. A cluster-inspection atlas on Roster re-opens that dual-home (two surfaces for the same cluster-topology inspection job).
-- **VIZ-15 (Munzner Ch12.3; distilled `visualization-analysis-design-munzner.md`).** The atlas is the **OVERVIEW** view and must share encoding + linked highlighting with the **DETAIL** surface where selection acts: the workbench/identity-clusters review queue (`rq=` flows, merge/label mutations via `ClusterReviewPanel` / `useClusterMutations`).
+- **VIZ-15 (Munzner Ch12.3; distilled `visualization-analysis-design-munzner.md`).** The atlas is the **OVERVIEW** view and must share encoding + linked highlighting with the **DETAIL** surface where selection acts. There are two selection destinations, both read-only from the atlas's side: the **primary** detail surface is the workbench/identity-clusters review queue (`rq=` flows, merge/label mutations via `ClusterReviewPanel` / `useClusterMutations`); the **secondary** destination is the Roster Needs-assignment rail for unlabeled/auto-labeled points (S3 lens deep-link) — a navigation hand-off, not a second cluster-curation home (NAV-05 holds: cluster mutations remain exclusively in the queue).
 - **NAV-06.** The frequent task the atlas serves is **cluster triage** (bad merges/splits/outliers → act in the review queue), not person-record curation.
 
 Concession without moving homes: S3 **Roster-coordination lens** (person-assignment color + Needs-assignment deep-links) — see Slice 3.
@@ -279,7 +279,7 @@ Tenant query: admin list/points/queue take `tenant_id` as **required query param
 
 # GET /admin/atlas/runs/{run_id}/points
 {
-  items: [ { identity_id, media_id, cluster_id, x, y, uncertainty, queue_rank, thumb_url } ],
+  items: [ { identity_id, media_id, cluster_id, x, y, uncertainty, queue_rank, thumb_url, cluster_label, is_auto_label } ],  # cluster_label/is_auto_label feed the S3 assignment lens (fields verified in ClusterMemberResponse, responses.py:52-53)
   limit,                   # from request
   offset,                  # from request
   total                    # SQL COUNT(*) — never len(items)
@@ -571,6 +571,7 @@ Merge order: `backend-atlas` then `frontend-atlas`, then S4 docs on the feature 
 - [ ] Cluster hull overlays (still non-gating).
 
 ## Success Criteria
+- Roster-coordination lens (v3): assignment-status color toggle renders from `cluster_label`/`is_auto_label` in the points payload; unlabeled-point click offers the Roster Needs-assignment deep-link built by `toRoster()` (`APP_LINK_VALUES.personFilterUnassigned`); lens performs no mutations.
 
 - [ ] Operator builds an atlas run on A1 CPU for one `(tenant, embedding_model)` with pinned params; mixed-model input fails closed (EMB-01); `--allow-partial` documented.
 - [ ] Admin and tenant GETs return coords + cluster ids + thumbs + queue **without** embeddings; pagination envelope honest (`total` from SQL COUNT).

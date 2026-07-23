@@ -134,6 +134,9 @@ class VisualFactsResponse(BaseModel):
     naming_provenance: NamingProvenance | None = None
     # E20-FUSION additive optional Stage-2 attachment provenance.
     attachment_provenance: AttachmentProvenance | None = None
+    # ALTQ-1 additive optional long-form surface (dual-length prompting).
+    # None when the adapter produces only the short draft; never required.
+    alt_text_long: str | None = None
 
 
 class DescribeJobResult(BaseModel):

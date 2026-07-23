@@ -5,6 +5,7 @@ import { Avatar } from '../../../../components/ui/avatar';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 import type { BoundingBox } from '../../../api/recognition/types/identity';
 import type { ReviewSuggestion, SuggestionReviewItem } from './suggestionReviewItems';
+import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
 
 export type { ReviewSuggestion, SuggestionReviewItem };
 
@@ -188,7 +189,7 @@ export const SuggestionCard = ({
           onClick={onAccept}
           disabled={isPending}
           title={isPending && disabledReason ? disabledReason : undefined}
-          {...(accentPrimary ? { 'data-acx-accent-primary': true } : {})}
+          {...(accentPrimary ? { [ACCENT_PRIMARY_ATTR]: true } : {})}
         >
           {__('Yes', 'alt-context')}
         </button>

@@ -46,12 +46,13 @@ def _sample() -> dict:
 
 # Additive optional fields: never in `required`, always in `properties` —
 # the 17 core-contract fields stay locked.
-# E19-4a preview trio + E20-FUSION attachment provenance.
+# E19-4a preview trio + E20-FUSION attachment provenance + ALTQ-1 long surface.
 PREVIEW_FIELDS = {
     "generic_draft",
     "named_draft",
     "naming_provenance",
     "attachment_provenance",
+    "alt_text_long",
 }
 
 
@@ -64,6 +65,23 @@ def test_schema_required_matches_model_fields():
 
 def test_sample_validates_against_schema():
     jsonschema.validate(_sample(), _schema())
+
+
+def test_sample_with_alt_text_long_validates():
+    # ALTQ-1: the optional long surface is accepted as string, null, or absent.
+    with_long = _sample()
+    with_long["alt_text_long"] = "A tabby cat lounging on a woven mat in warm afternoon light."
+    jsonschema.validate(with_long, _schema())
+
+    with_null = _sample()
+    with_null["alt_text_long"] = None
+    jsonschema.validate(with_null, _schema())
+
+
+def test_alt_text_long_never_required():
+    # Absent field = old behavior: alt_text_long must never join the core set.
+    assert "alt_text_long" not in _schema()["required"]
+    assert "alt_text_long" in _schema()["properties"]
 
 
 def test_sample_with_preview_fields_validates():

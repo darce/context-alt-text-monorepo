@@ -2,7 +2,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useSearchParams } from 'react-router-dom';
 
-import type { RosterEntry } from '../../api/rosterApi';
+import type { RosterClusterCommitResponse, RosterEntry } from '../../api/rosterApi';
 import type { BatchAnalyzeResponse, ClusterListResponse, ClusterSummary } from '../../api/recognition';
 import { useRecognitionCluster, useRecognitionClusters } from '../../hooks/useRecognitionHooks';
 import { useCreatePerson, useDeletePerson, useRosterEntries, useUpdatePerson } from '../../hooks/useRosterHooks';
@@ -95,7 +95,11 @@ const clusterActionState = {
     mutate: vi.fn(),
     isPending: false,
   }),
-  commitMutation: createMockMutation<void, Error, { clusterId: string; rosterEntryId?: number; newEntryName?: string }>(
+  commitMutation: createMockMutation<
+    RosterClusterCommitResponse,
+    Error,
+    { clusterId: string; rosterEntryId?: number; newEntryName?: string }
+  >(
     {
       mutate: vi.fn(),
       isPending: false,
@@ -112,6 +116,8 @@ const clusterActionState = {
     isPending: false,
   }),
   bulkMergeProgress: null,
+  bulkMergeFailure: null,
+  clearBulkMergeFailure: vi.fn(),
   rescanGate: {
     disabled: false,
     'aria-disabled': undefined as true | undefined,
@@ -214,7 +220,7 @@ describe('RosterPage projection-aware workspace shell', () => {
     expect(screen.getByRole('button', { name: /Add Person/ })).toBeInTheDocument();
   });
 
-  it('[PAG-M3-S2] keeps the default workspace visible after switching to clusters and back to entries', async () => {
+  it('[PAG-M3-S2] keeps the default workspace visible after switching to clusters and back to entries', () => {
     mockedUseRosterEntries.mockReturnValue(
       createMockQuery({
         data: [projectionEntry({ projection_status: 'current', person_uuid: 'person-uuid-1', name: 'Alice' })],
@@ -230,14 +236,11 @@ describe('RosterPage projection-aware workspace shell', () => {
       </MemoryRouter>,
     );
 
-    const user = userEvent.setup();
-
-    await user.click(screen.getByRole('tab', { name: 'Clusters' }));
-    await user.click(screen.getByRole('tab', { name: 'Entries' }));
-
+    // E21-9 Slice 5a: single person-first surface — no tab switch; default workspace stays mounted.
     expect(screen.getByRole('region', { name: /Person workspace: Alice/i })).toBeInTheDocument();
     expect(screen.getByTestId('roster-entries-section')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Add Person/ })).toBeInTheDocument();
+    expect(screen.getByTestId('needs-assignment-section')).toBeInTheDocument();
   });
 
   it('[PAG-M3-S3] chooses a deterministic default workspace entry and shows baseline projection metadata', () => {
@@ -358,7 +361,7 @@ describe('RosterPage projection-aware workspace shell', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Open singleton proposals queue' }));
 
     expect(screen.getByLabelText('route-state')).toHaveTextContent(
-      'tab=entries&person=person-uuid-1&queue=singleton-proposals',
+      'person=person-uuid-1&queue=singleton-proposals',
     );
     expect(screen.getByRole('region', { name: 'Person workspace: Alice' })).toBeInTheDocument();
   });

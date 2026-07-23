@@ -19,7 +19,8 @@ import { DESCRIBE_RUN_STATUS, type DescribeRunStatus } from '../../api/describeA
 import { isCooldownSignal } from '../../utils/retryPolicy';
 import { useWorkbenchMediaContext } from './WorkbenchMediaContext';
 import { SYNC_VOCABULARY } from './syncPresentation';
-import { selectMediaFooterCtaState } from './mediaFooterCtaState';
+import { ACCENT_PRIMARY_ATTR, FOOTER_ACCENT_OWNER, selectMediaFooterCtaState } from './mediaFooterCtaState';
+import { deriveIdentitiesPresentationSource } from './deriveIdentitiesPresentationSource';
 
 interface MediaSelectionProps {
   collapsed?: boolean;
@@ -139,7 +140,10 @@ export const MediaSelection = ({
               detailIsLoading={detailQuery.isPending || detailQuery.isFetching}
               onToggleRow={onToggleRow}
               selection={selection}
-              identitiesDataSource={identityQuery.data?.data_source}
+              identitiesDataSource={deriveIdentitiesPresentationSource(
+                identityQuery.isError,
+                identityQuery.data,
+              )}
               onRetryIdentities={() => void identityQuery.refetch()}
             />
           </tbody>
@@ -165,7 +169,7 @@ export const MediaSelection = ({
             errorMessage={bulkDescribe.submit.error?.message ?? bulkDescribe.cancel.error?.message ?? null}
             remoteActionTitle={remoteGate.title}
             remoteActionAriaDisabled={remoteGate['aria-disabled']}
-            accentPrimary={footerCta.accentOwner === 'describe'}
+            accentPrimary={footerCta.accentOwner === FOOTER_ACCENT_OWNER.DESCRIBE}
             onSubmit={() => {
               if (offline) {
                 return;
@@ -181,7 +185,7 @@ export const MediaSelection = ({
             onDismiss={() => setDismissedRunId(activeDescribeRunId)}
             onRetryPolling={() => describeProgress.retry()}
           />
-          <MediaAnalyzeCta accentPrimary={footerCta.accentOwner === 'analyze'} />
+          <MediaAnalyzeCta accentPrimary={footerCta.accentOwner === FOOTER_ACCENT_OWNER.ANALYZE} />
         </div>
       </div>
       {detailStatusMessage && (
@@ -353,7 +357,7 @@ export const BulkDescribeCta = ({
             }
             onSubmit();
           }}
-          {...(accentPrimary ? { 'data-acx-accent-primary': true } : {})}
+          {...(accentPrimary ? { [ACCENT_PRIMARY_ATTR]: true } : {})}
         >
           {isSubmitting ? SYNC_VOCABULARY.describeStarting : __('Describe selected', 'alt-context')}
         </button>

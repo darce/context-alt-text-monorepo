@@ -44,7 +44,7 @@ export const RetentionPage = (): React.JSX.Element => {
             {__('Retention & Audit Controls', 'alt-context')}
           </h1>
           <p className="acx-dashboard__subtitle">
-            {__('Review retention posture, export machine-derived data, and audit lifecycle actions.', 'alt-context')}
+            {__('Review your data and retention, export machine-derived data, and audit lifecycle actions.', 'alt-context')}
           </p>
         </header>
         <section className="acx-dashboard__panel acx-retention__panel">
@@ -70,7 +70,7 @@ export const RetentionPage = (): React.JSX.Element => {
           {__('Retention & Audit Controls', 'alt-context')}
         </h1>
         <p className="acx-dashboard__subtitle">
-          {__('Review retention posture, export machine-derived data, and audit lifecycle actions.', 'alt-context')}
+          {__('Review your data and retention, export machine-derived data, and audit lifecycle actions.', 'alt-context')}
         </p>
       </header>
 

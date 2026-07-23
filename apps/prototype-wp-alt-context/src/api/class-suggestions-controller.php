@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+require_once __DIR__ . '/class-recognition-data-source.php';
+
 use stdClass;
 use WP_Error;
 use WP_REST_Request;
@@ -18,9 +20,9 @@ use function sanitize_text_field;
 use function sprintf;
 
 class SuggestionsController extends AbstractRecognitionProxyController {
-	private const DATA_SOURCE_BACKEND_PROXY = 'backend_proxy';
-	private const DATA_SOURCE_ENDPOINT_ERROR = 'endpoint_error';
-	private const DATA_SOURCE_UNAVAILABLE = 'unavailable';
+	private const DATA_SOURCE_BACKEND_PROXY = RecognitionDataSource::BACKEND_PROXY;
+	private const DATA_SOURCE_ENDPOINT_ERROR = RecognitionDataSource::ENDPOINT_ERROR;
+	private const DATA_SOURCE_UNAVAILABLE = RecognitionDataSource::UNAVAILABLE;
 	private const REQUEST_CLASS_POST_SCAN_READ = 'post_scan_read';
 
 	public function register_routes(): void {
@@ -231,10 +233,23 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 		if ( $this->is_backend_overloaded( $response ) ) {
 			return parent::backend_overloaded_response( $response );
 		}
-		if ( $this->is_proxy_unavailable( $response ) ) {
+		// BR-08: the offline path must carry data_source so the UI can tell
+		// "backend unreachable/erroring" from "genuinely no matches". matches is a
+		// list for a single identity, so its empty shape stays [].
+		if ( $this->is_proxy_transport_unreachable( $response ) ) {
 			return new WP_REST_Response(
 				array(
 					'matches' => array(),
+					'data_source' => self::DATA_SOURCE_UNAVAILABLE,
+				),
+				200
+			);
+		}
+		if ( $this->is_proxy_endpoint_error( $response ) ) {
+			return new WP_REST_Response(
+				array(
+					'matches' => array(),
+					'data_source' => self::DATA_SOURCE_ENDPOINT_ERROR,
 				),
 				200
 			);
@@ -267,11 +282,23 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 		if ( $this->is_backend_overloaded( $response ) ) {
 			return parent::backend_overloaded_response( $response );
 		}
-		if ( $this->is_proxy_unavailable( $response ) ) {
+		// BR-08: keyed-by-id envelope — empty mapping serializes as {} not [] — and
+		// the offline path must carry data_source so the UI distinguishes
+		// unreachable/erroring from a genuine empty result.
+		if ( $this->is_proxy_transport_unreachable( $response ) ) {
 			return new WP_REST_Response(
 				array(
-					// Keyed-by-id envelope: empty mapping must serialize as {} not [].
 					'matches' => new stdClass(),
+					'data_source' => self::DATA_SOURCE_UNAVAILABLE,
+				),
+				200
+			);
+		}
+		if ( $this->is_proxy_endpoint_error( $response ) ) {
+			return new WP_REST_Response(
+				array(
+					'matches' => new stdClass(),
+					'data_source' => self::DATA_SOURCE_ENDPOINT_ERROR,
 				),
 				200
 			);
@@ -487,11 +514,25 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 		if ( $this->is_backend_overloaded( $response ) ) {
 			return parent::backend_overloaded_response( $response );
 		}
-		if ( $this->is_proxy_unavailable( $response ) ) {
+		// BR-08: carry data_source on the offline path so a no-op bulk-accept
+		// caused by an unreachable/erroring backend is distinguishable from a
+		// genuine "nothing to accept" result.
+		if ( $this->is_proxy_transport_unreachable( $response ) ) {
 			return new WP_REST_Response(
 				array(
 					'accepted_count' => 0,
 					'skipped_count'  => 0,
+					'data_source'    => self::DATA_SOURCE_UNAVAILABLE,
+				),
+				200
+			);
+		}
+		if ( $this->is_proxy_endpoint_error( $response ) ) {
+			return new WP_REST_Response(
+				array(
+					'accepted_count' => 0,
+					'skipped_count'  => 0,
+					'data_source'    => self::DATA_SOURCE_ENDPOINT_ERROR,
 				),
 				200
 			);

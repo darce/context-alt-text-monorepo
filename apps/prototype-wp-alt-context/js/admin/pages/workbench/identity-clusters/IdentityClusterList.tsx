@@ -69,6 +69,32 @@ export const IdentityClusterList = ({
       );
     }
 
+    // BR-05: a reachable-but-erroring backend (endpoint_error) is a distinct
+    // honest state from offline (unavailable) — say so instead of falling through
+    // to a confident "none detected".
+    if (dataSource === DATA_SOURCE.ENDPOINT_ERROR) {
+      return (
+        <EmptyStateWarning
+          title={__('Identity data unavailable', 'alt-context')}
+          message={__('Recognition is reachable but returned an error. Please retry.', 'alt-context')}
+          onRetry={onRetry}
+        />
+      );
+    }
+
+    // BR-09: an empty local projection for this item is ambiguous between
+    // "analyzed, none found" and "not yet analyzed". The offline projection
+    // cannot assert a final scan result, so present it as pending sync rather
+    // than a confident "none detected". Only a backend_proxy (or unknown) empty
+    // result — where recognition was actually reached — is a confident "none".
+    if (dataSource === DATA_SOURCE.LOCAL_PROJECTION) {
+      return (
+        <p className="acx-identity-clusters__empty">
+          {__('No identities synced for this item yet.', 'alt-context')}
+        </p>
+      );
+    }
+
     return <p className="acx-identity-clusters__empty">{__('No identities detected yet.', 'alt-context')}</p>;
   }
 

@@ -3,6 +3,7 @@ import { __, sprintf } from '@wordpress/i18n';
 
 import { useDescribeRunApply } from '../hooks/useDescribeRunApply';
 import type { DescribeRunItem } from '../api/describeApi';
+import { toDescriptionHistory } from '../navigation/appLinks';
 
 interface DescribeRunApplyViewProps {
   runId: string;
@@ -51,7 +52,7 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
     <header className="acx-history__hero">
       <p className="acx-dashboard__eyebrow">{__('Bulk describe', 'alt-context')}</p>
       <h1 className="acx-dashboard__title">{__('Apply generated descriptions', 'alt-context')}</h1>
-      <a className="acx-run-apply__back" href="#/description-history">
+      <a className="acx-run-apply__back" href={toDescriptionHistory()}>
         {__('Back to full history', 'alt-context')}
       </a>
     </header>

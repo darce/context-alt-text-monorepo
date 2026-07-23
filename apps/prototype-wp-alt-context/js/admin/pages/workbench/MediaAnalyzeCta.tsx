@@ -5,6 +5,7 @@ import { useSyncOffline } from '../../hooks/useSyncOffline';
 import { isClusteringActive } from './Panels';
 import { useJobPipeline } from './JobPipelineContext';
 import { useWorkbenchMediaContext } from './WorkbenchMediaContext';
+import { ACCENT_PRIMARY_ATTR } from './mediaFooterCtaState';
 
 /** aria-describedby target for the §7 offline reason. */
 const ANALYZE_OFFLINE_REASON_ID = 'acx-analyze-offline-reason';
@@ -68,7 +69,7 @@ export const MediaAnalyzeCta = ({ accentPrimary = true }: MediaAnalyzeCtaProps =
         aria-disabled={remoteGate['aria-disabled']}
         aria-describedby={offline ? ANALYZE_OFFLINE_REASON_ID : undefined}
         title={remoteGate.title}
-        {...(accentPrimary ? { 'data-acx-accent-primary': true } : {})}
+        {...(accentPrimary ? { [ACCENT_PRIMARY_ATTR]: true } : {})}
       >
         {scanRun.isScanning
           ? isClusteringActive(scanRun.progress?.phase)

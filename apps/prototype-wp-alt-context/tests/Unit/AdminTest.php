@@ -116,8 +116,13 @@ class AdminTest extends TestCase
         $this->assertIsArray($localized);
         $this->assertSame('/wp-admin/post.php', $localized['adminUrls']['mediaEditBase'] ?? null);
         $this->assertSame(
-            '/wp-admin/admin.php?page=alt-context-roster&tab=clusters',
-            $localized['adminUrls']['rosterClusters'] ?? null
+            '/wp-admin/admin.php?page=alt-context-roster',
+            $localized['adminUrls']['roster'] ?? null
+        );
+        $this->assertArrayNotHasKey('rosterClusters', $localized['adminUrls'] ?? []);
+        $this->assertStringNotContainsString(
+            'tab=clusters',
+            (string) ($localized['adminUrls']['roster'] ?? '')
         );
     }
 

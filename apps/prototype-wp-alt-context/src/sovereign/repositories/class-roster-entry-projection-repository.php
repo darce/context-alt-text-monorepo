@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace AltContext\Sovereign\Repositories;
 
 require_once dirname( __DIR__, 2 ) . '/api/class-blob-url-rewriter.php';
+require_once dirname( __DIR__, 2 ) . '/api/services/class-person-resolution-service.php';
 require_once __DIR__ . '/interface-sync-state-repository.php';
 require_once __DIR__ . '/class-sync-state-repository.php';
 
 use AltContext\Api\BlobUrlRewriter;
+use AltContext\Api\Services\PersonResolutionService;
 
 class RosterEntryProjectionRepository {
 	private SyncStateRepositoryInterface $sync_state_repository;
@@ -40,64 +42,161 @@ class RosterEntryProjectionRepository {
 			return array();
 		}
 
+		// Survivor policy: lowest stable id is primary; aggregates are unions of member rows.
+		$grouped_rows            = $this->group_rows_by_normalized_name( $results );
 		$projection_refreshed_at = $this->sync_state_repository->get_last_updated( $tenant_id );
 		$projection_status       = $this->resolve_projection_status( $tenant_id, $projection_refreshed_at );
 		$source_version          = $this->sync_state_repository->get_snapshot_version( $tenant_id );
-		$person_ids              = $this->collect_person_ids( $results );
+		$person_ids              = $this->collect_person_ids_from_groups( $grouped_rows );
 		$cluster_rows_by_person  = $this->list_projected_cluster_rows_by_person( $person_ids );
 		$instance_rows_by_cluster = $this->list_projected_instance_rows_by_cluster( $this->collect_cluster_uuids( $cluster_rows_by_person ) );
 
 		return \array_map(
-			function ( array $row ) use ( $projection_refreshed_at, $projection_status, $source_version, $cluster_rows_by_person, $instance_rows_by_cluster ): array {
-				$tags = array();
-				if ( isset( $row['tags'] ) && \is_string( $row['tags'] ) ) {
-					$decoded = \json_decode( $row['tags'], true );
+			function ( array $group ) use ( $projection_refreshed_at, $projection_status, $source_version, $cluster_rows_by_person, $instance_rows_by_cluster ): array {
+				$primary = $group['primary'];
+				$tags    = array();
+				if ( isset( $primary['tags'] ) && \is_string( $primary['tags'] ) ) {
+					$decoded = \json_decode( $primary['tags'], true );
 					$tags    = \is_array( $decoded ) ? $decoded : array();
 				}
 
-				$person_id = isset( $row['id'] ) ? (int) $row['id'] : 0;
-				$clusters  = $this->map_projected_clusters_for_person(
-					$cluster_rows_by_person[ $person_id ] ?? array(),
+				$member_ids = $group['member_ids'];
+				$cluster_rows = array();
+				foreach ( $member_ids as $member_id ) {
+					foreach ( $cluster_rows_by_person[ $member_id ] ?? array() as $cluster_row ) {
+						$cluster_rows[] = $cluster_row;
+					}
+				}
+				$clusters = $this->map_projected_clusters_for_person(
+					$cluster_rows,
 					$instance_rows_by_cluster
 				);
 				$cluster_count = \count( $clusters );
-				if ( 0 === $cluster_count && isset( $row['cluster_count'] ) ) {
-					$cluster_count = (int) $row['cluster_count'];
+				if ( 0 === $cluster_count ) {
+					// Union of stored cluster_count values only when no projected clusters exist (rg-015).
+					$cluster_count = 0;
+					foreach ( $group['members'] as $member ) {
+						if ( isset( $member['cluster_count'] ) ) {
+							$cluster_count += (int) $member['cluster_count'];
+						}
+					}
 				}
 
 				return array(
-					'id'                     => isset( $row['id'] ) ? (int) $row['id'] : 0,
-					'person_uuid'            => \trim( (string) ( $row['person_uuid'] ?? '' ) ),
-					'name'                   => (string) ( $row['name'] ?? '' ),
-					'tags'                   => $tags,
-					'cluster_count'          => $cluster_count,
-					'clusters'               => $clusters,
-					'queue_memberships'      => $this->decode_string_list( $row['queue_memberships_json'] ?? $row['queue_memberships'] ?? array() ),
-					'updated_at'             => (string) ( $row['updated_at'] ?? '' ),
-					'source_version'         => $source_version,
-					'projection_status'      => $projection_status,
+					'id'                      => isset( $primary['id'] ) ? (int) $primary['id'] : 0,
+					'person_uuid'             => \trim( (string) ( $primary['person_uuid'] ?? '' ) ),
+					'name'                    => (string) ( $primary['name'] ?? '' ),
+					'tags'                    => $tags,
+					'cluster_count'           => $cluster_count,
+					'clusters'                => $clusters,
+					'queue_memberships'       => $this->union_queue_memberships( $group['members'] ),
+					'updated_at'              => (string) ( $primary['updated_at'] ?? '' ),
+					'source_version'          => $source_version,
+					'projection_status'       => $projection_status,
 					'projection_refreshed_at' => $projection_refreshed_at,
 				);
 			},
-			$results
+			$grouped_rows
 		);
 	}
 
 	/**
+	 * Group person rows by normalized_name. Lowest id is the primary survivor.
+	 *
 	 * @param array<int,array<string,mixed>> $results
-	 * @return array<int,int>
+	 * @return array<int,array{primary:array<string,mixed>,members:array<int,array<string,mixed>>,member_ids:array<int,int>}>
 	 */
-	private function collect_person_ids( array $results ): array {
-		$person_ids = array();
+	private function group_rows_by_normalized_name( array $results ): array {
+		$groups = array();
 
 		foreach ( $results as $row ) {
-			$person_id = isset( $row['id'] ) ? (int) $row['id'] : 0;
-			if ( $person_id > 0 ) {
-				$person_ids[] = $person_id;
+			$key = $this->row_normalized_name( $row );
+			if ( '' === $key ) {
+				// Un-normalizable rows stay distinct so they cannot collapse incorrectly.
+				$key = '__id:' . (string) ( isset( $row['id'] ) ? (int) $row['id'] : 0 );
+			}
+			if ( ! isset( $groups[ $key ] ) ) {
+				$groups[ $key ] = array();
+			}
+			$groups[ $key ][] = $row;
+		}
+
+		$aggregated = array();
+		foreach ( $groups as $members ) {
+			\usort(
+				$members,
+				static function ( array $left, array $right ): int {
+					return ( (int) ( $left['id'] ?? 0 ) ) <=> ( (int) ( $right['id'] ?? 0 ) );
+				}
+			);
+			$member_ids = array();
+			foreach ( $members as $member ) {
+				$member_id = isset( $member['id'] ) ? (int) $member['id'] : 0;
+				if ( $member_id > 0 ) {
+					$member_ids[] = $member_id;
+				}
+			}
+			$aggregated[] = array(
+				'primary'    => $members[0],
+				'members'    => $members,
+				'member_ids' => $member_ids,
+			);
+		}
+
+		// Stable list order by primary display name (matches pre-group ORDER BY name ASC).
+		\usort(
+			$aggregated,
+			static function ( array $left, array $right ): int {
+				return \strcmp( (string) ( $left['primary']['name'] ?? '' ), (string) ( $right['primary']['name'] ?? '' ) );
+			}
+		);
+
+		return $aggregated;
+	}
+
+	/**
+	 * @param array<string,mixed> $row
+	 */
+	private function row_normalized_name( array $row ): string {
+		if ( isset( $row['normalized_name'] ) && \is_string( $row['normalized_name'] ) && '' !== \trim( $row['normalized_name'] ) ) {
+			return \trim( $row['normalized_name'] );
+		}
+
+		return PersonResolutionService::normalize_name( (string) ( $row['name'] ?? '' ) );
+	}
+
+	/**
+	 * @param array<int,array{member_ids:array<int,int>}> $grouped_rows
+	 * @return array<int,int>
+	 */
+	private function collect_person_ids_from_groups( array $grouped_rows ): array {
+		$person_ids = array();
+
+		foreach ( $grouped_rows as $group ) {
+			foreach ( $group['member_ids'] as $member_id ) {
+				if ( $member_id > 0 ) {
+					$person_ids[] = $member_id;
+				}
 			}
 		}
 
 		return \array_values( \array_unique( $person_ids ) );
+	}
+
+	/**
+	 * @param array<int,array<string,mixed>> $members
+	 * @return array<int,string>
+	 */
+	private function union_queue_memberships( array $members ): array {
+		$union = array();
+
+		foreach ( $members as $member ) {
+			foreach ( $this->decode_string_list( $member['queue_memberships_json'] ?? $member['queue_memberships'] ?? array() ) as $queue ) {
+				$union[ $queue ] = true;
+			}
+		}
+
+		return \array_keys( $union );
 	}
 
 	/**

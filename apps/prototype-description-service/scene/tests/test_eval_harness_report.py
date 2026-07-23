@@ -17,6 +17,7 @@ from scripts.eval_harness.report import (
     HEADLINE_ID_RECALL_ELIGIBLE_FLOOR,
     Audience,
     ReportError,
+    _latency_summary,
     build_face_reports,
     build_reports,
     redact_face_report_for_public,
@@ -259,6 +260,195 @@ def test_all_items_failed_aggregate_paths():  # S3-08
     assert scored["caption"]["mean_gated_score"] is None
     assert scored["faces"]["detection"]["precision"] is None
     assert "null" in md  # _fmt(None) rendered
+
+
+# --- ALTQ-1: quality axes, dual surface, eval modes ---
+
+
+def test_per_image_carries_quality_axes_and_quality_section():
+    scored = score_run_record(_run_record(), _manifest_entries())
+    row = next(r for r in scored["per_image"] if r["media_id"] == 1)
+    for key in (
+        "wrong_name_hits",
+        "hallucinated_names",
+        "meta_framing_hits",
+        "context_duplication_ratio",
+        "sentence_count",
+        "name_front_loaded",
+    ):
+        assert key in row
+    quality = scored["quality"]
+    assert quality["sentence_band"] == [1, 4]
+    assert quality["meta_framing_images"] == 0
+    assert scored["caption"]["name_precision"] == pytest.approx(1.0)
+    assert scored["caption"]["wrong_name_images"] == 0
+
+
+def test_wrong_name_from_easy_wrong_zeroes_caption_gate():
+    record, entries = _run_record(), _manifest_entries()
+    entries[0]["easy_wrong"] = ["Mallory Trap"]
+    record["items"][0]["describe"]["alt_text_draft"] = "Alice Example and Mallory Trap relax by a pool."
+    scored = score_run_record(record, entries)
+    row = next(r for r in scored["per_image"] if r["media_id"] == 1)
+    assert row["wrong_name_hits"] == ["Mallory Trap"]
+    assert row["gated_score"] == 0.0
+    assert scored["caption"]["wrong_name_images"] == 1
+
+
+def test_roster_hallucination_detected_across_corpus():
+    record, entries = _run_record(), _manifest_entries()
+    # Bob Builder is another entry's identity — naming him on Alice's image is a
+    # closed-roster hallucination.
+    record["items"][0]["describe"]["alt_text_draft"] = "Alice Example and Bob Builder relax by a pool."
+    scored = score_run_record(record, entries)
+    row = next(r for r in scored["per_image"] if r["media_id"] == 1)
+    assert row["hallucinated_names"] == ["Bob Builder"]
+    assert row["gated_score"] == 0.0
+
+
+def test_alt_text_long_scored_as_second_surface():
+    record, entries = _run_record(), _manifest_entries()
+    record["items"][0]["describe"]["alt_text_long"] = (
+        "Alice Example relaxes on a lounge chair beside a turquoise pool. Palm shadows cross the "
+        "deck. Her sunhat rests on the table beside a paperback."
+    )
+    scored = score_run_record(record, entries)
+    long_c = scored["caption_long"]
+    assert long_c["images_with_long"] == 1
+    assert long_c["insertion_rate"] == pytest.approx(1.0)
+    assert long_c["quality"]["sentence_band"] == [2, 8]
+    row = next(r for r in scored["per_image"] if r["media_id"] == 1)
+    assert row["long"]["sentence_count"] == 3
+    assert row["long"]["gated_score"] == 1.0
+
+
+def test_no_caption_long_section_without_long_surface():
+    scored = score_run_record(_run_record(), _manifest_entries())
+    assert "caption_long" not in scored
+
+
+def test_context_distractor_mode_counts_takes_and_resistance():
+    record, entries = _run_record(), _manifest_entries()
+    record["provenance"]["eval_mode"] = "context_distractor"
+    entries[0]["easy_wrong"] = ["Mallory Trap"]
+    record["items"][0]["describe"]["injected_distractor"] = "Mallory Trap"
+    record["items"][0]["describe"]["alt_text_draft"] = "Alice Example and Mallory Trap relax by a pool."
+    entries[1]["easy_wrong"] = ["Ned Nemo"]
+    record["items"][1]["describe"]["injected_distractor"] = "Ned Nemo"
+    scored = score_run_record(record, entries)
+    assert scored["eval_mode"] == "context_distractor"
+    d = scored["distractor"]
+    assert d["injected_images"] == 2
+    assert d["taken_images"] == 1
+    assert d["resistance_rate"] == pytest.approx(0.5)
+    taken_row = next(r for r in scored["per_image"] if r["media_id"] == 1)
+    assert taken_row["distractor_taken"] is True
+    assert taken_row["gated_score"] == 0.0  # a taken distractor is a wrong name
+
+
+def test_name_ablation_mode_gates_on_leaks_not_must_right():
+    record, entries = _run_record(), _manifest_entries()
+    record["provenance"]["eval_mode"] = "name_ablation"
+    record["items"][0]["describe"]["ablated_names"] = ["Alice Example"]
+    record["items"][1]["describe"]["ablated_names"] = []
+    # Caption still names Alice although her name was stripped from context: leak.
+    scored = score_run_record(record, entries)
+    leak_row = next(r for r in scored["per_image"] if r["media_id"] == 1)
+    assert leak_row["gated_score"] == 0.0
+    assert leak_row["must_right_failures"] == []  # must-right suspended in ablation
+    clean_row = next(r for r in scored["per_image"] if r["media_id"] == 2)
+    assert clean_row["gated_score"] == 1.0  # "A man on a beach" leaks nothing
+    a = scored["ablation"]
+    assert a["eligible_images"] == 2
+    assert a["leak_images"] == 1
+    assert a["leak_free_rate"] == pytest.approx(0.5)
+
+
+def test_unknown_eval_mode_rejected():
+    record = _run_record()
+    record["provenance"]["eval_mode"] = "bogus"
+    with pytest.raises(ReportError):
+        score_run_record(record, _manifest_entries())
+
+
+def test_mode_banner_and_sections_rendered_in_markdown():
+    record, entries = _run_record(), _manifest_entries()
+    record["provenance"]["eval_mode"] = "name_ablation"
+    _json_doc, md = build_reports(record, entries)
+    assert "name_ablation" in md
+    assert "Name-ablation leak check" in md
+    assert "Quality axes" in md
+
+
+def test_reports_remain_deterministic_with_new_sections():
+    record, entries = _run_record(), _manifest_entries()
+    record["items"][0]["describe"]["alt_text_long"] = "Alice Example by a pool. Sunlight everywhere."
+    json_a, md_a = build_reports(record, entries)
+    json_b, md_b = build_reports(record, entries)
+    assert json_a == json_b
+    assert md_a == md_b
+
+
+# --- ALTQ-1 review-fix regressions (round r07140ddf) ---
+
+
+def test_ablation_item_without_stamp_becomes_failure_not_leak():  # A-03/B-03
+    record, entries = _run_record(), _manifest_entries()
+    record["provenance"]["eval_mode"] = "name_ablation"
+    record["items"][0]["describe"]["ablated_names"] = ["Alice Example"]
+    # item 2 carries NO ablated_names stamp -> was never transformed at fetch
+    scored = score_run_record(record, entries)
+    failed = [f for f in scored["failures"] if f["media_id"] == 2]
+    assert failed and "ablated_names stamp" in failed[0]["error"]
+    assert scored["ablation"]["eligible_images"] == 1  # only the stamped item
+
+
+def test_distractor_taken_via_stamp_survives_manifest_drift():  # A-02/B-04
+    record, entries = _run_record(), _manifest_entries()
+    record["provenance"]["eval_mode"] = "context_distractor"
+    # Fetch-time manifest had "Mallory Trap" in easy_wrong; score-time manifest
+    # drifted and no longer lists her. The stamp alone must still gate.
+    entries[0]["easy_wrong"] = []
+    record["items"][0]["describe"]["injected_distractor"] = "Mallory Trap"
+    record["items"][0]["describe"]["alt_text_draft"] = "Alice Example and Mallory Trap relax by a pool."
+    scored = score_run_record(record, entries)
+    assert scored["distractor"]["taken_images"] == 1
+    row = next(r for r in scored["per_image"] if r["media_id"] == 1)
+    assert row["gated_score"] == 0.0
+
+
+def test_distractor_taken_on_long_surface_counts():  # B-08
+    record, entries = _run_record(), _manifest_entries()
+    record["provenance"]["eval_mode"] = "context_distractor"
+    entries[0]["easy_wrong"] = ["Mallory Trap"]
+    record["items"][0]["describe"]["injected_distractor"] = "Mallory Trap"
+    record["items"][0]["describe"]["alt_text_long"] = "Alice Example relaxes by a pool. Mallory Trap reads nearby."
+    scored = score_run_record(record, entries)
+    assert scored["distractor"]["taken_images"] == 1
+
+
+def test_manifest_roster_widens_hallucination_gate():  # A-01/B-07
+    record, entries = _run_record(), _manifest_entries()
+    record["items"][0]["describe"]["alt_text_draft"] = "Alice Example and Zed Zenith relax by a pool."
+    unwidened = score_run_record(record, entries)
+    row = next(r for r in unwidened["per_image"] if r["media_id"] == 1)
+    assert row["hallucinated_names"] == []  # Zed unknown to entry rubrics
+    widened = score_run_record(record, entries, manifest_roster=["Zed Zenith"])
+    row = next(r for r in widened["per_image"] if r["media_id"] == 1)
+    assert row["hallucinated_names"] == ["Zed Zenith"]
+    assert row["gated_score"] == 0.0
+
+
+def test_ablation_gate_zeroes_leak_on_recognition_disabled_row():  # A-04
+    record, entries = _run_record(), _manifest_entries()
+    record["provenance"]["eval_mode"] = "name_ablation"
+    entries[0]["policy"] = {"recognition_enabled": False}
+    record["items"][0]["describe"]["ablated_names"] = ["Alice Example"]
+    record["items"][1]["describe"]["ablated_names"] = []
+    scored = score_run_record(record, entries)
+    row = next(r for r in scored["per_image"] if r["media_id"] == 1)
+    assert row["gated_score"] == 0.0  # leaked name gates even though ineligible
+    assert scored["ablation"]["leak_images"] == 1
 
 
 # --- VLM-6 S1: audience-aware public vs local report split --------------------
@@ -892,3 +1082,80 @@ def test_buffalo_non_promotion_no_512d_under_docs_tasks():
 def test_score_face_rejects_caption_run_record():
     with pytest.raises(ReportError, match="face_run_record"):
         score_face_run_record(_run_record(), _manifest_entries())
+
+
+# --- ALTQ-1 Slice 3: latency summary (additive) --------------------------------
+
+
+def test_latency_summary_absent_without_timing_data_keeps_report_shape():
+    """ADDITIVE ONLY: a record with no timing data produces no latency section
+    (and hence a byte-identical report to the pre-latency scorer)."""
+    record, entries = _run_record(), _manifest_entries()
+    scored = score_run_record(record, entries)
+    assert "latency" not in scored
+    json_doc, md = build_reports(record, entries)
+    assert "latency" not in json.loads(json_doc)
+    assert "latency" not in md
+
+
+def test_latency_summary_single_call_items_percentiles():
+    items = [
+        {"media_id": i, "describe": {"alt_text_draft": "x"}, "error": None, "latency_s": lat}
+        for i, lat in enumerate([4.0, 1.0, 3.0, 2.0])
+    ]
+    assert _latency_summary(items) == {
+        "images_timed": 4,
+        "wall_clock_s": {"p50": 2.0, "p95": 4.0},  # nearest-rank on sorted values
+        "model_calls": {"per_image_mean": 1.0, "total": 4},
+    }
+
+
+def test_latency_summary_sums_passes_and_counts_model_calls():
+    def _two_pass_item(media_id: int, l1: float, l2: float) -> dict:
+        return {
+            "media_id": media_id,
+            "describe": {
+                "alt_text_draft": "x",
+                "passes": [
+                    {"pass": "describe_facts", "raw": "{}", "latency_s": l1},
+                    {"pass": "ground_weave", "raw": "x", "latency_s": l2},
+                ],
+            },
+            "error": None,
+            "latency_s": l1 + l2 + 99.0,  # per-pass timing must win over the item field when present
+        }
+
+    summary = _latency_summary([_two_pass_item(1, 1.0, 2.0), _two_pass_item(2, 3.0, 4.0)])
+    assert summary == {
+        "images_timed": 2,
+        "wall_clock_s": {"p50": 3.0, "p95": 7.0},
+        "model_calls": {"per_image_mean": 2.0, "total": 4},
+    }
+
+
+def test_latency_summary_skips_error_and_untimed_items():
+    items = [
+        {"media_id": 1, "describe": None, "error": "boom", "latency_s": 5.0},
+        {"media_id": 2, "describe": {"alt_text_draft": "x"}, "error": None},  # no latency field at all
+        {"media_id": 3, "describe": {"alt_text_draft": "x"}, "error": None, "latency_s": None},
+        {"media_id": 4, "describe": {"alt_text_draft": "x"}, "error": None, "latency_s": 2.5},
+    ]
+    summary = _latency_summary(items)
+    assert summary["images_timed"] == 1
+    assert summary["wall_clock_s"] == {"p50": 2.5, "p95": 2.5}
+    assert _latency_summary(items[:3]) is None  # nothing timed at all => no section
+
+
+def test_latency_section_and_markdown_line_render_when_timed():
+    record, entries = _run_record(), _manifest_entries()
+    record["items"][0]["latency_s"] = 3.2
+    record["items"][1]["latency_s"] = 1.1
+    json_doc, md = build_reports(record, entries)
+    scored = json.loads(json_doc)
+    assert scored["latency"] == {
+        "images_timed": 2,
+        "wall_clock_s": {"p50": 1.1, "p95": 3.2},
+        "model_calls": {"per_image_mean": 1.0, "total": 2},
+    }
+    assert "- latency: per-image wall-clock p50 1.1s p95 3.2s (2 timed)" in md
+    assert build_reports(record, entries) == build_reports(record, entries)  # determinism holds

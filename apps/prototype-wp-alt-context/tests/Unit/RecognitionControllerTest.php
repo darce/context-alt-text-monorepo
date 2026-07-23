@@ -326,11 +326,16 @@ class RecognitionControllerTest extends TestCase
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $this->assertSame(200, $response->get_status());
 
-        $calls = $this->getHttpCalls();
-        $this->assertCount(1, $calls);
+        // E15-37 Slice 1: a successful proxy read now also runs the inline
+        // bootstrap pull (snapshot HTTP), so target the media-identities call.
+        $identityCalls = array_values(array_filter(
+            $this->getHttpCalls(),
+            static fn (array $call): bool => str_contains((string) $call['url'], '/recognition/media/identities')
+        ));
+        $this->assertCount(1, $identityCalls);
 
         $query = [];
-        $queryString = parse_url($calls[0]['url'], PHP_URL_QUERY);
+        $queryString = parse_url($identityCalls[0]['url'], PHP_URL_QUERY);
         parse_str(is_string($queryString) ? $queryString : '', $query);
 
         $this->assertSame('true', $query['include_debug'] ?? null);

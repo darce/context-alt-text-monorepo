@@ -410,6 +410,55 @@ class SettingsControllerTest extends TestCase
         $this->assertSame('invalid_description_budget', $response->get_error_code());
     }
 
+    public function testGetSettingsReturnsAltStyleDefault(): void
+    {
+        $this->setUserCapability('manage_options', true);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/settings');
+        $response = $this->controller->get_settings($request);
+
+        $this->assertSame('alt_only', $response->get_data()['alt_style']);
+    }
+
+    public function testGetSettingsNormalizesInvalidStoredAltStyle(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_alt_style', 'corrupt-value');
+
+        $request = new WP_REST_Request('GET', '/acx/v1/settings');
+        $response = $this->controller->get_settings($request);
+
+        $this->assertSame('alt_only', $response->get_data()['alt_style']);
+    }
+
+    public function testSaveSettingsWritesAltStyle(): void
+    {
+        $this->setUserCapability('manage_options', true);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params(['alt_style' => 'alt_plus_description']);
+
+        $response = $this->controller->save_settings($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertContains('alt_style', $response->get_data()['saved']);
+        $this->assertSame('alt_plus_description', get_option('acx_alt_style'));
+    }
+
+    public function testSaveSettingsRejectsInvalidAltStyle(): void
+    {
+        $this->setUserCapability('manage_options', true);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params(['alt_style' => 'everything_everywhere']);
+
+        $response = $this->controller->save_settings($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('invalid_alt_style', $response->get_error_code());
+        $this->assertFalse(get_option('acx_alt_style'));
+    }
+
     // --- POST /settings/test (probe dispatch) ---
 
     public function testProbeDispatchHitsAuthenticatedPoolEndpoint(): void

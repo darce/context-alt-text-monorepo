@@ -10,6 +10,7 @@ import importlib
 import inspect
 import io
 import json
+import os
 import subprocess
 import sys
 import tokenize
@@ -36,6 +37,7 @@ from scripts.eval_harness.face_run_record import (
     build_face_run_record,
     validate_face_run_item,
 )
+from scripts.eval_harness.landmark_cache import LandmarkCacheProvenance
 from scripts.eval_harness.manifest import GoldenManifest
 from scripts.eval_harness.schema import SCHEMA, DocKind
 
@@ -514,6 +516,139 @@ def test_buffalo_fused_cache_discipline(monkeypatch: pytest.MonkeyPatch) -> None
         leg.embed([crop])  # cache consumed — no silent reuse
 
 
+def _assert_fused_box_embedding_pairing(
+    embs: np.ndarray,
+    faces: list[Any],
+    *,
+    dim: int = 8,
+) -> None:
+    """Discriminating guard: embs[i] matches faces[i] (distinct known embeddings)."""
+    assert embs.shape == (len(faces), dim)
+    expected = []
+    for face in faces:
+        vec = np.asarray(face.embedding, dtype=np.float64).reshape(-1)
+        expected.append(vec / np.linalg.norm(vec))
+    # Distinct known embeddings — otherwise pairing is unfalsifiable (TEST-15).
+    assert float(np.dot(expected[0], expected[1])) < 0.99
+    for i, exp in enumerate(expected):
+        assert float(np.dot(embs[i], exp)) == pytest.approx(1.0, abs=1e-5)
+        for j, other in enumerate(expected):
+            if i != j:
+                assert float(np.dot(embs[i], other)) < 0.99
+
+
+def test_buffalo_fused_cache_pairing_n2(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BUFREV-01: N=2 distinct embeddings keep box_i↔embedding_i order (TEST-15)."""
+    bb = _import_buffalo(monkeypatch)
+    f0 = _fake_face(dim=8, seed=11)
+    f0.bbox = np.asarray([10.0, 20.0, 50.0, 80.0])  # xyxy
+    f1 = _fake_face(dim=8, seed=77)
+    f1.bbox = np.asarray([100.0, 30.0, 140.0, 90.0])
+    faces = [f0, f1]
+    leg = bb.BuffaloFusedLeg(app=_FakeApp(faces), embedding_dim=8)
+    img = np.zeros((32, 32, 3), dtype=np.uint8)
+    crop = np.zeros((112, 112, 3), dtype=np.uint8)
+
+    batches = leg.detect([img])
+    assert len(batches[0]) == 2
+    embs = leg.embed([crop, crop])
+    _assert_fused_box_embedding_pairing(embs, faces)
+
+    # Red-proof (TEST-15): transposed cache pairing makes the same assertion red.
+    leg.detect([img])
+    pending = leg._pending
+    assert pending is not None and len(pending) == 2
+    # Swap embeddings only (bbox keys stay) — simulates reverse-cache regression.
+    leg._pending = [
+        type(pending[0])(bbox_key=pending[0].bbox_key, embedding=pending[1].embedding),
+        type(pending[1])(bbox_key=pending[1].bbox_key, embedding=pending[0].embedding),
+    ]
+    swapped = leg.embed([crop, crop])
+    with pytest.raises(AssertionError):
+        _assert_fused_box_embedding_pairing(swapped, faces)
+
+
+def test_buffalo_fused_cache_reorder_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BUFREV-02: same-count bbox reorder fails closed when boxes= is supplied (TEST-16)."""
+    bb = _import_buffalo(monkeypatch)
+    f0 = _fake_face(dim=8, seed=3)
+    f0.bbox = np.asarray([10.0, 20.0, 50.0, 80.0])
+    f1 = _fake_face(dim=8, seed=9)
+    f1.bbox = np.asarray([100.0, 30.0, 140.0, 90.0])
+    leg = bb.BuffaloFusedLeg(app=_FakeApp([f0, f1]), embedding_dim=8)
+    img = np.zeros((32, 32, 3), dtype=np.uint8)
+    crop = np.zeros((112, 112, 3), dtype=np.uint8)
+
+    batches = leg.detect([img])
+    b0 = np.asarray(batches[0][0].bbox, dtype=np.float32)
+    b1 = np.asarray(batches[0][1].bbox, dtype=np.float32)
+    # Correct order OK (injection via public boxes= kwarg — no private poke).
+    embs = leg.embed([crop, crop], boxes=[b0, b1])
+    assert embs.shape == (2, 8)
+
+    leg.detect([img])
+    with pytest.raises(bb.FusedLegProtocolError, match="bbox mismatch"):
+        leg.embed([crop, crop], boxes=[b1, b0])  # same count, reversed identity
+
+
+def test_buffalo_build_face_analysis_pins_ort_threads(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BUFREV-03: _build_face_analysis pins ORT threads + env (TEST-08)."""
+    bb = _import_buffalo(monkeypatch)
+    captured: dict[str, Any] = {}
+
+    class _FakeFaceAnalysis:
+        def __init__(self, **kwargs: Any) -> None:
+            captured["fa_kwargs"] = kwargs
+
+        def prepare(self, **kwargs: Any) -> None:
+            captured["prepare"] = kwargs
+
+    class _FakeSessOptions:
+        def __init__(self) -> None:
+            self.intra_op_num_threads = 0
+            self.inter_op_num_threads = 0
+            self.execution_mode = None
+
+    class _FakeOrt:
+        class ExecutionMode:
+            ORT_SEQUENTIAL = "ORT_SEQUENTIAL"
+
+        SessionOptions = _FakeSessOptions
+
+    import types
+
+    fake_app_mod = types.ModuleType("insightface.app")
+    fake_app_mod.FaceAnalysis = _FakeFaceAnalysis  # type: ignore[attr-defined]
+    fake_mz_mod = types.ModuleType("insightface.model_zoo.model_zoo")
+
+    class _ModelRouter:
+        def get_model(self, **kwargs: Any) -> Any:  # noqa: ANN001
+            captured.setdefault("router_calls", []).append(kwargs)
+            return None
+
+    fake_mz_mod.ModelRouter = _ModelRouter  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "insightface", types.ModuleType("insightface"))
+    monkeypatch.setitem(sys.modules, "insightface.app", fake_app_mod)
+    monkeypatch.setitem(sys.modules, "insightface.model_zoo", types.ModuleType("insightface.model_zoo"))
+    monkeypatch.setitem(sys.modules, "insightface.model_zoo.model_zoo", fake_mz_mod)
+    monkeypatch.setitem(sys.modules, "onnxruntime", _FakeOrt)
+
+    for var in bb._ORT_THREAD_ENV_PINS:
+        monkeypatch.delenv(var, raising=False)
+
+    # Fake FaceAnalysis skips model loading; still exercises pin + kwargs path.
+    app = bb._build_face_analysis()
+    assert isinstance(app, _FakeFaceAnalysis)
+    assert captured["fa_kwargs"]["name"] == bb.BUFFALO_MODEL_ID
+    assert captured["fa_kwargs"]["providers"] == ["CPUExecutionProvider"]
+    assert captured["prepare"]["ctx_id"] == -1
+    for var in bb._ORT_THREAD_ENV_PINS:
+        assert os.environ[var] == "1"
+    opts = bb._ort_session_options()
+    assert opts.intra_op_num_threads == 1
+    assert opts.inter_op_num_threads == 1
+
+
 def test_buffalo_adapter_rejects_wrong_embedding_dim(monkeypatch: pytest.MonkeyPatch) -> None:
     bb = _import_buffalo(monkeypatch)
     leg = bb.BuffaloFusedLeg(app=_FakeApp([_fake_face(dim=7)]), embedding_dim=8)
@@ -621,6 +756,7 @@ def test_twin_pass_with_fused_leg_and_pinned_cache_detector(
         """Candidate-family stand-in: one detection exactly on the GT box."""
 
         calls = 0
+        landmark_cache_provenance = LandmarkCacheProvenance.pinned_yunet()
 
         def detect(self, images: list[np.ndarray]) -> list[list[RawDetection]]:
             _CacheDet.calls += len(images)
@@ -651,9 +787,78 @@ def test_twin_pass_with_fused_leg_and_pinned_cache_detector(
     assert prov["n_pairs"] == 3  # 1 named cached face × 3 occlusion kinds
     assert set(pairs_by_tag) == {"masked", "sunglasses", "occlusion_other"}
     assert _CacheDet.calls == 1  # cache built from the pinned detector, not the leg
+    assert prov["landmark_cache"] == LandmarkCacheProvenance.pinned_yunet().to_dict()
     for pairs in pairs_by_tag.values():
         assert pairs[0]["true_name"] == "Alice Q"
         assert pairs[0]["embedding"] is not None and len(pairs[0]["embedding"]) == 8
+
+
+def test_twin_pass_landmark_cache_provenance_from_detector(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """BUFREV-04: twin-pass landmark_cache provenance reflects injected detector (rg-015)."""
+    import cv2
+
+    bb = _import_buffalo(monkeypatch)
+    img_dir = tmp_path / "celebs01"
+    img_dir.mkdir()
+    img = np.random.default_rng(6).integers(0, 256, size=(100, 100, 3)).astype(np.uint8)
+    assert cv2.imwrite(str(img_dir / "bob.jpg"), img)
+    manifest = GoldenManifest.model_validate(
+        {
+            "manifest_version": 2,
+            "roster": ["Bob R"],
+            "entries": [
+                {
+                    "path": "celebs01/bob.jpg",
+                    "sha256": "b" * 64,
+                    "media_id": 2,
+                    "face_count": 1,
+                    "present_identities": ["Bob R"],
+                    "must_right": [],
+                    "easy_wrong": [],
+                    "policy": {"recognition_enabled": True},
+                    "context_pack": {"caption": "x"},
+                    "face_boxes": [
+                        {"x": 0.4, "y": 0.4, "w": 0.4, "h": 0.4, "name": "Bob R", "source": "iptc"}
+                    ],
+                    "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
+                }
+            ],
+        }
+    )
+
+    distinct = LandmarkCacheProvenance(model_id="fake-cache-det", weights_sha256="c" * 64)
+
+    class _LabeledCacheDet:
+        landmark_cache_provenance = distinct
+
+        def detect(self, images: list[np.ndarray]) -> list[list[RawDetection]]:
+            det = RawDetection(
+                bbox=np.asarray([20.0, 20.0, 40.0, 40.0], dtype=np.float32),
+                landmarks=np.asarray(
+                    [[30.0, 35.0], [50.0, 35.0], [40.0, 42.0], [32.0, 52.0], [48.0, 52.0]],
+                    dtype=np.float32,
+                ),
+                score=0.9,
+            )
+            return [[det] for _ in images]
+
+    fused_face = _fake_face(dim=8)
+    fused_face.bbox = np.asarray([20.0, 20.0, 60.0, 60.0])
+    detector, aligner, embedder = bb.build_baseline_leg(app=_FakeApp([fused_face]), embedding_dim=8)
+
+    _pairs, prov = build_occlusion_twin_pairs(
+        manifest,
+        tmp_path,
+        detector=detector,
+        embedder=embedder,
+        aligner=aligner,  # type: ignore[arg-type]
+        cache_detector=_LabeledCacheDet(),
+    )
+    assert prov["errors"] == []
+    assert prov["landmark_cache"] == distinct.to_dict()
+    assert prov["landmark_cache"] != LandmarkCacheProvenance.pinned_yunet().to_dict()
 
 
 def test_raw_detection_attribute_contract() -> None:

@@ -12,6 +12,7 @@ from scripts.eval_harness.cli import (
     main,
     prune_out_dir,
 )
+from scripts.eval_harness.landmark_cache import LandmarkCacheProvenance
 from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest
 from scripts.eval_harness.report import build_reports
 
@@ -630,6 +631,9 @@ def test_face_bakeoff_wires_synthetic_occlusion_twins_end_to_end(tmp_path, monke
     class _Det:
         """Pixel-blind fake: always one detection at the GT box (IoU 1.0)."""
 
+        # rg-015: twin-pass provenance reads this from the injected cache detector.
+        landmark_cache_provenance = LandmarkCacheProvenance.pinned_yunet()
+
         def detect(self, imgs):
             return [
                 [
@@ -759,6 +763,8 @@ class _FusedFakeLeg:
 
     embedding_dim = 8
     leg_mode = "fused"
+    # When tests pass cache_detector=None the leg doubles as cache detector (rg-015).
+    landmark_cache_provenance = LandmarkCacheProvenance.pinned_yunet()
 
     def detect(self, imgs):
         import numpy as np
@@ -776,7 +782,7 @@ class _FusedFakeLeg:
         )
         return [[det] for _ in imgs]
 
-    def embed(self, crops):
+    def embed(self, crops, boxes=None):  # boxes: fused-leg optional reorder guard
         import numpy as np
 
         v = np.ones(self.embedding_dim, dtype=np.float32)

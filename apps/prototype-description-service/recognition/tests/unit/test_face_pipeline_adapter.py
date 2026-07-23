@@ -79,6 +79,14 @@ def _clear_settings_caches() -> None:
     get_database_settings.cache_clear()
 
 
+def _rereload_settings_modules() -> None:
+    """One more reload after the test so sibling files see a consistent final state."""
+    import recognition.config.settings as settings_module
+
+    importlib.reload(settings_module)
+    _clear_settings_caches()
+
+
 def _align_dims_to_sface(monkeypatch: pytest.MonkeyPatch) -> None:
     """Three-way guard needs manifest==pgvector==identity_detection (all 128)."""
     monkeypatch.setenv("RECOGNITION_EMBEDDING_DIMENSION", str(SFACE_EMBEDDING_DIM))
@@ -105,7 +113,7 @@ def _mock_runtime(monkeypatch: pytest.MonkeyPatch) -> fpa.FacePipelineRuntime:
 def _restore_settings_caches_after_test() -> None:
     """Avoid leaking RECOGNITION_EMBEDDING_DIMENSION / PGVECTOR_DIM into sibling modules."""
     yield
-    _clear_settings_caches()
+    _rereload_settings_modules()
     fpa.reset_shared_face_pipeline_runtime_for_tests()
 
 

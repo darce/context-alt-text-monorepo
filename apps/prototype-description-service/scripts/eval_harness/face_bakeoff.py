@@ -33,12 +33,15 @@ from recognition.infrastructure.face_pipeline.ort_adapters import (
     OrtYuNetDetector,
 )
 
+from .face_assignment import associate_detections
 from .face_run_record import (
     build_face_detection,
     build_face_run_item,
     build_face_run_record,
 )
+from .landmark_cache import LandmarkCacheProvenance, build_landmark_cache
 from .manifest import GoldenManifest, _resolve_image
+from .synthetic_occlusion import KIND_TO_SLICE_TAG, generate_twin_specs, render_twin
 
 # Mirror cli.DEFAULT_STALL_LIMIT / BoundedStallError without importing cli
 # (cli pulls remote_client / seed_roster — forbidden by the S2 negative-import gate).
@@ -215,6 +218,102 @@ def walk_face_run_record(
     return _record()
 
 
+def build_occlusion_twin_pairs(
+    manifest: GoldenManifest,
+    images_dir: str | Path,
+    *,
+    detector: FaceDetector,
+    embedder: FaceEmbedder,
+    aligner: FivePointAligner | None = None,
+    seed: int = 0,
+    limit: int | None = None,
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
+    """Synthetic occlusion twin pass (FIR5GL-01 / §D): specs → render → re-detect+embed.
+
+    Per entry with named GT boxes: build the frozen landmark cache over the
+    UN-occluded original (pinned-YuNet family, PROV-01 — placement never reads
+    the leg live), generate twin specs (every cache-detected named roster face ×
+    kinds), render each twin, run the SAME leg detect→align→embed on the
+    occluded pixels, and §C-associate re-detections back to the entry's GT
+    boxes. The twin's re-detected embedding is the §C pair whose ``gt_index``
+    equals the spec's source box; no such pair → ``embedding=None`` (re-detect
+    miss, scored as a failure inside the eligible frame, EMB-03).
+
+    Returns ``(pairs_by_tag, twin_pass_provenance)``. Pairs are DOCUMENT-level
+    inputs for ``occlusion_pairs_by_tag`` — never run-record items (EVAL-16
+    headline firewall). Per-entry failures are isolated into
+    ``provenance["errors"]`` (rg-007 spirit): one broken image drops its own
+    twins, visible in the report as reduced eligibility, and never halts the
+    pass.
+    """
+    images_root = Path(images_dir)
+    aligner = aligner if aligner is not None else FivePointAligner()
+    entries = manifest.entries[:limit] if limit is not None else manifest.entries
+    pairs_by_tag: dict[str, list[dict[str, Any]]] = {}
+    errors: list[str] = []
+    n_specs = 0
+    n_cached = 0
+    for entry in entries:
+        if not any(box.name for box in entry.face_boxes):
+            continue  # no named GT faces → no twin universe on this entry
+        try:
+            image_path = _resolve_image(images_root, entry.path)
+            if image_path is None:
+                raise FileNotFoundError(f"image file missing after NFC/NFD resolve: {entry.path}")
+            image_bgr = decode_image_bytes_bgr(image_path.read_bytes())
+            width, height = int(image_bgr.shape[1]), int(image_bgr.shape[0])
+            cache = build_landmark_cache(
+                images_by_media={entry.media_id: image_bgr},
+                gt_by_media={entry.media_id: list(entry.face_boxes)},
+                detector=detector,
+            )
+            n_cached += len(cache.entries)
+            specs = generate_twin_specs(cache, seed=seed)
+            n_specs += len(specs)
+            for spec in specs:
+                twin_bgr = render_twin(image_bgr, spec)
+                faces = process_image_bgr(
+                    twin_bgr,
+                    detector=detector,
+                    embedder=embedder,
+                    aligner=aligner,
+                )
+                assoc = associate_detections(
+                    [f["bbox_px"] for f in faces],
+                    list(entry.face_boxes),
+                    [width, height],
+                )
+                embedding: list[float] | None = None
+                for pair in assoc.pairs:
+                    if pair.gt_index == spec.box_index:
+                        embedding = [float(v) for v in faces[pair.det_index]["embedding"]]
+                        break
+                tag = KIND_TO_SLICE_TAG[spec.kind].value
+                pairs_by_tag.setdefault(tag, []).append(
+                    {
+                        "media_id": spec.media_id,
+                        "box_index": spec.box_index,
+                        "true_name": spec.true_name,
+                        "kind": spec.kind,
+                        "embedding": embedding,
+                    }
+                )
+        except Exception as exc:  # noqa: BLE001 — per-entry isolation (rg-007)
+            errors.append(f"{entry.path}: {type(exc).__name__}: {exc}")
+    provenance: dict[str, Any] = {
+        "seed": int(seed),
+        "n_twin_specs": n_specs,
+        "n_cached_landmarks": n_cached,
+        "n_pairs": sum(len(v) for v in pairs_by_tag.values()),
+        "n_re_detect_miss": sum(
+            1 for pairs in pairs_by_tag.values() for p in pairs if p["embedding"] is None
+        ),
+        "landmark_cache": LandmarkCacheProvenance.pinned_yunet().to_dict(),
+        "errors": errors,
+    }
+    return pairs_by_tag, provenance
+
+
 def build_candidate_leg(
     *,
     models_dir: Path | None = None,
@@ -233,6 +332,7 @@ __all__ = [
     "FaceDetector",
     "FaceEmbedder",
     "build_candidate_leg",
+    "build_occlusion_twin_pairs",
     "decode_image_bytes_bgr",
     "process_image_bgr",
     "walk_face_run_record",

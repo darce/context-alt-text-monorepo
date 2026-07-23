@@ -583,3 +583,104 @@ def test_cli_score_face_parse_run_record_required(tmp_path, monkeypatch, capsys)
     with pytest.raises(SystemExit) as exc:
         main(["score-face", "--manifest", "scene/tests/seed/golden.json"])
     assert exc.value.code == 2
+
+
+def test_face_bakeoff_wires_synthetic_occlusion_twins_end_to_end(tmp_path, monkeypatch):
+    """FIR5GL-01 discriminator [TEST-15]: a manifest with twin-eligible entries
+    yields occlusion n_eligible > 0 in the score-face report, end-to-end through
+    the CLI (face-bakeoff twin pass → run-record → score-face pass-through).
+    Goes red if the bakeoff stops emitting ``occlusion_twin_pairs_by_tag`` OR
+    score-face stops passing the pairs into build_face_reports — either drop
+    reverts occlusion to the pre-fix n_eligible=0 state.
+    """
+    import cv2
+    import numpy as np
+    from recognition.infrastructure.face_pipeline._common import RawDetection
+    from recognition.infrastructure.face_pipeline.aligner import FivePointAligner
+    from scripts.eval_harness import cli as cli_mod
+
+    dim = 8
+    rng = np.random.default_rng(7)
+    images = tmp_path / "images" / "celebs01"
+    images.mkdir(parents=True)
+    files = [("alice-1.jpg", "Alice Q"), ("alice-2.jpg", "Alice Q"), ("bob-1.jpg", "Bob Z"), ("bob-2.jpg", "Bob Z")]
+    entries = []
+    for mid, (fname, name) in enumerate(files, start=1):
+        img = rng.integers(0, 256, size=(100, 100, 3)).astype(np.uint8)
+        assert cv2.imwrite(str(images / fname), img)
+        entries.append(
+            {
+                "path": f"celebs01/{fname}",
+                "sha256": "0" * 64,
+                "media_id": mid,
+                "face_count": 1,
+                "base_caption": "",
+                "present_identities": [name],
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "face_boxes": [{"x": 0.4, "y": 0.4, "w": 0.4, "h": 0.4, "name": name, "source": "iptc"}],
+                "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
+            }
+        )
+    man_path = tmp_path / "man.json"
+    man_path.write_text(json.dumps({"manifest_version": 2, "roster": ["Alice Q", "Bob Z"], "entries": entries}))
+
+    class _Det:
+        """Pixel-blind fake: always one detection at the GT box (IoU 1.0)."""
+
+        def detect(self, imgs):
+            return [
+                [
+                    RawDetection(
+                        bbox=np.asarray([20.0, 20.0, 40.0, 40.0], dtype=np.float32),
+                        landmarks=np.asarray(
+                            [[30.0, 35.0], [50.0, 35.0], [40.0, 45.0], [32.0, 55.0], [48.0, 55.0]],
+                            dtype=np.float32,
+                        ),
+                        score=0.9,
+                    )
+                ]
+                for _ in imgs
+            ]
+
+    class _Emb:
+        embedding_dim = dim
+
+        def embed(self, crops):
+            out = []
+            for crop in crops:
+                seed = int.from_bytes(
+                    np.ascontiguousarray(crop, dtype=np.uint8).tobytes()[:8].ljust(8, b"\0"), "little"
+                )
+                v = np.random.default_rng(seed).normal(size=dim)
+                out.append(v / np.linalg.norm(v))
+            return np.stack(out, axis=0)
+
+    monkeypatch.setattr(cli_mod, "build_candidate_leg", lambda: (_Det(), FivePointAligner(), _Emb()))
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(tmp_path / "images"))
+
+    cli_mod.main(["face-bakeoff", "--manifest", str(man_path)])
+    record_path = next(p for p in (tmp_path / "out").glob("face-run-*.json") if "aborted" not in p.name)
+    record = json.loads(record_path.read_text())
+
+    # Bakeoff emitted document-level twin pairs: 4 named cached faces × 3 kinds.
+    twins = record["occlusion_twin_pairs_by_tag"]
+    assert set(twins) == {"masked", "sunglasses", "occlusion_other"}
+    assert all(len(twins[tag]) == 4 for tag in twins)
+    assert record["provenance"]["occlusion_twin_pass"]["n_pairs"] == 12
+    assert record["provenance"]["occlusion_twin_pass"]["errors"] == []
+    # Headline firewall intact: twins never entered items (EVAL-16).
+    assert all(
+        not ({"occluded", "occlusion", "occlusion_kind", "twin", "twin_of"} & set(item))
+        for item in record["items"]
+    )
+
+    cli_mod.main(["score-face", "--manifest", str(man_path), "--run-record", str(record_path)])
+    report = json.loads((tmp_path / "out" / f"{record_path.stem}-face-report.json").read_text())
+    for tag in ("masked", "sunglasses", "occlusion_other"):
+        synth = report["slices"]["occlusion"][tag]["synthetic"]
+        # Pre-fix state was n_eligible=0 (no production caller): red if wiring drops.
+        assert synth["n_eligible"] == 4, tag
+        assert synth["n_eligible"] == synth["rate_denominator"]

@@ -229,6 +229,32 @@ async def check_database(session: AsyncSession | None) -> CheckResult:
     return validate_identity_vector_dimensions(rows, configured_dim=configured_dim)
 
 
+def check_active_embedding_model() -> CheckResult:
+    """Fail-closed readiness: active embedding space must resolve (FIR23-01).
+
+    Read paths filter by embedding_model; without a resolved active model_id the
+    service must not advertise ready. Single-model deployments are a no-op once
+    the id is known.
+    """
+    try:
+        from recognition.application.embedding.manifest import active_embedding_model_id
+
+        model_id = active_embedding_model_id()
+    except Exception as exc:
+        return CheckResult(
+            "embedding_model",
+            HealthStatus.UNHEALTHY,
+            f"active embedding_model unresolved: {exc}",
+        )
+    if not model_id:
+        return CheckResult(
+            "embedding_model",
+            HealthStatus.UNHEALTHY,
+            "active embedding_model unresolved: empty model_id",
+        )
+    return CheckResult("embedding_model", HealthStatus.OK, f"active={model_id}")
+
+
 def check_breaker(breaker: SessionDependencyCircuitBreaker) -> CheckResult:
     """An OPEN breaker means DB checkout is blocked — /ready fails (BR-02).
 

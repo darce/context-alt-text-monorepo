@@ -26,6 +26,7 @@ from recognition.application.embedding.generator import (
 )
 from recognition.application.embedding.manifest import (
     EmbeddingModelManifest,
+    active_embedding_model_id,
     incumbent_embedding_model_manifest,
 )
 
@@ -34,6 +35,7 @@ __all__ = [
     "FaceDetection",
     "EmbeddingResult",
     "EmbeddingModelManifest",
+    "active_embedding_model_id",
     "incumbent_embedding_model_manifest",
     # Detection
     "DetectionTimeoutError",

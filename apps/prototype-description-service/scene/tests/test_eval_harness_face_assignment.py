@@ -355,6 +355,30 @@ def test_kfold_clamped_to_subject_count_avoids_empty_fit():
     assert all(d.tau_k == result.tau_k[d.fold] for d in result.decisions)
     # Joint ranking spreads Alice vs strangers across folds (not all fold 0).
     assert len(used_folds) >= 2
+    # FIR5RR-04: the clamp is recorded — requested vs effective K disclosed.
+    assert result.requested_k == 5
+    assert result.effective_k == 3
+    # All folds fit normally here → τ provenance is "fitted" (FIR5RR-07).
+    assert result.tau_fit_status == "fitted"
+
+
+def test_single_subject_mid_grid_fallback_flagged_unfitted():
+    """FIR5RR-07: single-subject corpus falls back to mid-grid τ and says so."""
+    faces = [
+        _matched(1, 0, [1, 0, 0], "Alice"),
+        _matched(2, 0, [1, 0.05, 0], "Alice"),
+    ]
+    result = assign_open_set_kfold(faces, k_folds=5, tau_grid=(0.2, 0.5, 0.9))
+    assert result.effective_k == 1
+    assert result.tau_k == (0.5,)  # mid-grid
+    assert result.tau_fit_status == "mid_grid_unfitted"
+    # Multi-subject corpora with fit sets stay "fitted" (discrimination).
+    multi = assign_open_set_kfold(
+        faces + [_matched(3, 0, [0, 1, 0], "Bob"), _matched(4, 0, [0, 1, 0.05], "Bob")],
+        k_folds=2,
+        tau_grid=(0.2, 0.5, 0.9),
+    )
+    assert multi.tau_fit_status == "fitted"
 
 
 def test_empty_fit_fold_fails_fast_when_unavoidable_collision():

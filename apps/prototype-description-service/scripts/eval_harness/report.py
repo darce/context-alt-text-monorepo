@@ -60,6 +60,11 @@ from .synthetic_occlusion import (
 
 # Protocol / canon pin (REF-25..28 / FIR5V11-06). Code SHAs alone do not name
 # the evaluation protocol version the rates were computed under.
+# FIR5RR-10: the pin is INTENTIONAL AND FROZEN for the FIR-5 protocol — it is
+# bumped only when the protocol itself is re-authored (a new canon revision
+# that changes measured semantics), never as a routine chore alongside code
+# changes. A drifting pin would silently relabel rates computed under the
+# old protocol.
 FACE_BAKEOFF_CANON_VERSION = "0.11.0"
 FACE_BAKEOFF_PROTOCOL_ID = "fir-5-face-bakeoff-v0.11.0"
 
@@ -84,6 +89,11 @@ FACE_BAKEOFF_PROTOCOL_DISCLOSURES: tuple[str, ...] = (
     # IDX-01/07/11 deferred design (disclosure now; measurement later).
     "exact-vs-index separation of concerns and contender-set retrieval design "
     "are S4/S5 measurement-time items (IDX-01/07/11) — not measured here",
+    # FIR5RR-15: fit-vs-read gallery cardinality asymmetry.
+    "fit-phase galleries are restricted to fit-fold identities (CAL-07) while "
+    "read-phase LOO galleries span the full matched corpus — τ_k is selected "
+    "against a lower-cardinality gallery than the one held-out probes are "
+    "read against, so read-time argmax competition is harder than fit-time",
     *SYNTHETIC_OCCLUSION_PROTOCOL_DISCLOSURES,
 )
 
@@ -92,6 +102,11 @@ FACE_BAKEOFF_SAMPLING_FRAMES: dict[str, str] = {
     "headline_identification": (
         "celebs01_named_matched_probes (provenance.source==CELEB); "
         + SAMPLING_FRAME_FACE_ID
+        # FIR5RR-12: error/missing run-record items never reach assignment —
+        # their media contribute nothing to these numerators/denominators and
+        # are surfaced in `failures` (and, when celebs01, in the headline
+        # association provenance notes).
+        + "; error-item media excluded from scoring (listed in failures)"
     ),
     "full_corpus_identification": "full_corpus_" + SAMPLING_FRAME_FACE_ID,
     "unknown_rejection": SAMPLING_FRAME_UNKNOWN_REJECTION,
@@ -942,6 +957,9 @@ def synthetic_real_divergence(
 
 
 def _face_pr_dict(pr: Any) -> dict[str, Any]:
+    # FIR5RR-12: FaceLevelIdPr is the only accepted shape — direct field access
+    # (a getattr default here would silently fabricate audit fields on a
+    # foreign object instead of failing loud).
     return {
         "precision": pr.precision,
         "recall": pr.recall,
@@ -952,35 +970,67 @@ def _face_pr_dict(pr: Any) -> dict[str, Any]:
         "n_recall_eligible": pr.n_recall_eligible,
         "wrong_names": [list(w) for w in pr.wrong_names],
         "detection_recall_coupling_flag": pr.detection_recall_coupling_flag,
-        "sampling_frame": getattr(pr, "sampling_frame", SAMPLING_FRAME_FACE_ID),
-        "precision_numerator": getattr(pr, "precision_numerator", pr.true_positives),
-        "precision_denominator": getattr(
-            pr, "precision_denominator", pr.true_positives + pr.false_positives
-        ),
-        "recall_numerator": getattr(pr, "recall_numerator", pr.true_positives),
-        "recall_denominator": getattr(
-            pr, "recall_denominator", pr.true_positives + pr.false_negatives
-        ),
-        "missed_gt": getattr(pr, "missed_gt", 0),
-        "unmatched_detections": getattr(pr, "unmatched_detections", 0),
+        "sampling_frame": pr.sampling_frame,
+        "precision_numerator": pr.precision_numerator,
+        "precision_denominator": pr.precision_denominator,
+        "recall_numerator": pr.recall_numerator,
+        "recall_denominator": pr.recall_denominator,
+        "missed_gt": pr.missed_gt,
+        "unmatched_detections": pr.unmatched_detections,
     }
+
+
+def _gt_box_name(box: Any) -> str | None:
+    if isinstance(box, Mapping):
+        name = box.get("name")
+    else:
+        name = getattr(box, "name", None)
+    return None if name is None else str(name)
 
 
 def _association_counts_for_media(
     assignment: Any,
     media_ids: set[int],
-) -> tuple[int, int]:
-    """Sum missed_gt / unmatched detections scoped to a media-id set."""
+    *,
+    gt_by_media: Mapping[int, Sequence[Any]],
+    probe_media_ids: set[int],
+) -> tuple[int, int, list[str]]:
+    """Headline-scoped miss / unmatched-detection counts (FIR5RR-06).
+
+    - ``missed_gt`` counts only unmatched GT boxes with a non-None name: the
+      headline frame is NAMED probes, so an unmatched stranger box must not
+      inflate the miss count.
+    - ``unmatched_detections`` counts only on media that contributed at least
+      one headline probe (``probe_media_ids``) — detections on images whose
+      probes never entered the frame are not this frame's false detections.
+    - Media absent from ``association_by_media`` (e.g. an error item that
+      never reached assignment) contribute their manifest NAMED labeled-face
+      counts as misses, with an explicit provenance note — never a silent
+      ``continue``.
+    """
     missed = 0
     unmatched = 0
-    by_media = getattr(assignment, "association_by_media", None) or {}
-    for mid in media_ids:
+    notes: list[str] = []
+    by_media = assignment.association_by_media or {}
+    for mid in sorted(media_ids):
+        boxes = list(gt_by_media.get(mid, ()))
         assoc = by_media.get(mid)
         if assoc is None:
+            named = sum(1 for b in boxes if _gt_box_name(b) is not None)
+            if named:
+                missed += named
+                notes.append(
+                    f"media_id {mid} absent from association (error/missing "
+                    f"run-record item): counted {named} manifest named "
+                    f"face(s) as missed_gt"
+                )
             continue
-        missed += len(assoc.unmatched_gt)
-        unmatched += len(assoc.unmatched_detections)
-    return missed, unmatched
+        for gi in assoc.unmatched_gt:
+            if gi < len(boxes) and _gt_box_name(boxes[gi]) is not None:
+                missed += 1
+        if mid in probe_media_ids:
+            unmatched += len(assoc.unmatched_detections)
+    return missed, unmatched, notes
 
 
 def _slice_status(*, meets_floor: bool, reasons: Sequence[str] | None = None) -> dict[str, Any]:
@@ -1086,6 +1136,31 @@ def _sort_nested_lists(obj: Any) -> Any:
     return obj
 
 
+# FIR5RR-08: the build-face-report path scores UN-OCCLUDED probes only —
+# occlusion twins travel exclusively via occlusion_pairs_by_tag. A run-record
+# item carrying any of these markers would smuggle a twin into the headline
+# frame (the contract filter_headline_probes fail-closes on), so scoring
+# rejects the record outright.
+_OCCLUSION_ITEM_MARKER_KEYS: tuple[str, ...] = (
+    "occluded",
+    "occlusion",
+    "occlusion_kind",
+    "twin",
+    "twin_of",
+)
+
+
+def _assert_no_occlusion_marked_items(items: Sequence[Mapping[str, Any]]) -> None:
+    for item in items:
+        marked = [k for k in _OCCLUSION_ITEM_MARKER_KEYS if k in item]
+        if marked:
+            raise ReportError(
+                f"run-record item media_id={item.get('media_id')} carries occlusion "
+                f"marker(s) {marked}: occlusion twins must never enter the headline "
+                "run record (EVAL-16); pass them via occlusion_pairs_by_tag instead"
+            )
+
+
 def _validate_face_record_kind(face_run_record: dict[str, Any]) -> None:
     kind = face_run_record.get("kind")
     if kind is not None and kind != DocKind.FACE_RUN_RECORD.value:
@@ -1164,6 +1239,7 @@ def score_face_run_record(
     zero_box_corpus = total_boxes == 0
 
     items = list(face_run_record.get("items") or [])
+    _assert_no_occlusion_marked_items(items)  # FIR5RR-08 / EVAL-16
     # Keep error items out of assignment but count them as failures.
     scoreable: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
@@ -1211,8 +1287,13 @@ def score_face_run_record(
         for d in assignment.decisions
         if d.media_id in celebs01_ids and d.true_name is not None
     ]
-    headline_missed_gt, headline_unmatched = _association_counts_for_media(
-        assignment, celebs01_ids
+    headline_missed_gt, headline_unmatched, headline_assoc_notes = (
+        _association_counts_for_media(
+            assignment,
+            celebs01_ids,
+            gt_by_media=gt_by_media,
+            probe_media_ids={d.media_id for d in headline_decisions},
+        )
     )
     headline_id = face_identification_pr(
         headline_decisions,
@@ -1220,26 +1301,42 @@ def score_face_run_record(
         unmatched_detections=headline_unmatched,
         sampling_frame=FACE_BAKEOFF_SAMPLING_FRAMES["headline_identification"],
     )
+
+    # FIR5RR-07: mid-grid-unfitted τ can never back a gating number — every
+    # τ-dependent slice is forced DIRECTIONAL with an explicit reason.
+    tau_unfitted = assignment.tau_fit_status != "fitted"
+    tau_unfitted_reason = f"tau_fit_status={assignment.tau_fit_status}"
+
+    headline_reasons: list[str] = []
+    if zero_box_corpus:
+        headline_reasons.append("zero_box_corpus")
+    elif headline_id.n_recall_eligible < HEADLINE_ID_RECALL_ELIGIBLE_FLOOR:
+        headline_reasons.append(
+            f"n_recall_eligible={headline_id.n_recall_eligible}<{HEADLINE_ID_RECALL_ELIGIBLE_FLOOR}"
+        )
+    if tau_unfitted:
+        headline_reasons.append(tau_unfitted_reason)
     headline_floor_met = (
-        not zero_box_corpus and headline_id.n_recall_eligible >= HEADLINE_ID_RECALL_ELIGIBLE_FLOOR
+        not zero_box_corpus
+        and not tau_unfitted
+        and headline_id.n_recall_eligible >= HEADLINE_ID_RECALL_ELIGIBLE_FLOOR
     )
     headline_status = _slice_status(
         meets_floor=headline_floor_met,
-        reasons=(
-            ["zero_box_corpus"]
-            if zero_box_corpus
-            else [f"n_recall_eligible={headline_id.n_recall_eligible}<{HEADLINE_ID_RECALL_ELIGIBLE_FLOOR}"]
-        ),
+        reasons=headline_reasons,
     )
 
-    unknown_floor_met = not zero_box_corpus and unknown.meets_floor
+    unknown_reasons: list[str] = []
+    if zero_box_corpus:
+        unknown_reasons.append("zero_box_corpus")
+    elif not unknown.meets_floor:
+        unknown_reasons.append(f"n={unknown.n}<{UNKNOWN_REJECTION_N_FLOOR}")
+    if tau_unfitted:
+        unknown_reasons.append(tau_unfitted_reason)
+    unknown_floor_met = not zero_box_corpus and not tau_unfitted and unknown.meets_floor
     unknown_status = _slice_status(
         meets_floor=unknown_floor_met,
-        reasons=(
-            ["zero_box_corpus"]
-            if zero_box_corpus
-            else [f"n={unknown.n}<{UNKNOWN_REJECTION_N_FLOOR}"]
-        ),
+        reasons=unknown_reasons,
     )
 
     # Clustering on named matched faces only (strangers excluded).
@@ -1279,6 +1376,15 @@ def score_face_run_record(
                 reasons=["zero_box_corpus"] if zero_box_corpus else ["empty", "p_same<20", "p_diff<20", "m==0"],
             ),
         }
+    if tau_unfitted:
+        # FIR5RR-07: clustering's headline d_cut derives from τ_op — unfitted τ
+        # demotes it regardless of pair floors.
+        cluster_block.update(
+            _slice_status(
+                meets_floor=False,
+                reasons=[*cluster_block.get("reasons", []), tau_unfitted_reason],
+            )
+        )
 
     # Demographic Fair-SA (always DIRECTIONAL — no floor).
     single_subject = _build_single_subject_cohort_by_media(entries)
@@ -1368,7 +1474,12 @@ def score_face_run_record(
             n_real=real_acc.n_eligible if real_acc is not None else 0,
         )
         # Auto-demote synthetic when divergence fires.
-        synth_directional = bool(synth_acc.directional) or zero_box_corpus or divergence["auto_demote"]
+        synth_directional = (
+            bool(synth_acc.directional)
+            or zero_box_corpus
+            or divergence["auto_demote"]
+            or tau_unfitted
+        )
         synth_reasons = list(synth_acc.directional_reasons)
         if zero_box_corpus:
             synth_reasons.append("zero_box_corpus")
@@ -1376,6 +1487,8 @@ def score_face_run_record(
             synth_reasons.append(
                 f"synthetic_real_divergence d={divergence['d']}>threshold={divergence['threshold']}"
             )
+        if tau_unfitted:
+            synth_reasons.append(tau_unfitted_reason)
         status = _slice_status(meets_floor=not synth_directional, reasons=synth_reasons)
         occlusion_out[tag] = {
             "synthetic": {
@@ -1386,13 +1499,10 @@ def score_face_run_record(
                 "n_ineligible": synth_acc.n_ineligible,
                 "walk_stability_asserted": synth_acc.walk_stability_asserted,
                 "walk_stability_delta": synth_acc.walk_stability_delta,
-                "sampling_frame": getattr(
-                    synth_acc, "sampling_frame", SAMPLING_FRAME_OCCLUSION_RECOVERY
-                ),
-                "rate_numerator": getattr(synth_acc, "rate_numerator", synth_acc.n_correct),
-                "rate_denominator": getattr(
-                    synth_acc, "rate_denominator", synth_acc.n_eligible
-                ),
+                # FIR5RR-12: direct dataclass field access — no getattr defaults.
+                "sampling_frame": synth_acc.sampling_frame,
+                "rate_numerator": synth_acc.rate_numerator,
+                "rate_denominator": synth_acc.rate_denominator,
                 "n_floor": ELIGIBLE_PAIR_FLOOR,
                 **status,
             },
@@ -1401,13 +1511,10 @@ def score_face_run_record(
                     "accuracy": real_acc.accuracy,
                     "n_eligible": real_acc.n_eligible,
                     "n_correct": real_acc.n_correct,
-                    "sampling_frame": getattr(
-                        real_acc, "sampling_frame", SAMPLING_FRAME_OCCLUSION_RECOVERY
-                    ),
-                    "rate_numerator": getattr(real_acc, "rate_numerator", real_acc.n_correct),
-                    "rate_denominator": getattr(
-                        real_acc, "rate_denominator", real_acc.n_eligible
-                    ),
+                    # FIR5RR-12: direct dataclass field access — no getattr defaults.
+                    "sampling_frame": real_acc.sampling_frame,
+                    "rate_numerator": real_acc.rate_numerator,
+                    "rate_denominator": real_acc.rate_denominator,
                     "directional": True,  # real n floors small — never gating alone here
                     "status": DIRECTIONAL_LABEL,
                 }
@@ -1424,6 +1531,9 @@ def score_face_run_record(
             "n_floor": HEADLINE_ID_RECALL_ELIGIBLE_FLOOR,
             "floor_unit": "recall_eligible_celebs01",
             "error_target": HEADLINE_ID_ERROR_TARGET,
+            # FIR5RR-06: celebs01 media that never reached association are
+            # disclosed here (their manifest named faces were counted as misses).
+            "association_provenance_notes": list(headline_assoc_notes),
             **headline_status,
         },
         "unknown_rejection": {
@@ -1542,6 +1652,14 @@ def score_face_run_record(
         },
         "zero_box_corpus": zero_box_corpus,
         "total_gt_boxes": total_boxes,
+        # AUDIT-01/02 (FIR5RR-04/07): K-fold + tau-fit provenance mirrored here
+        # so redacted/public artifacts keep the protocol facts.
+        "k_folds": {
+            "requested": assignment.requested_k,
+            "effective": assignment.effective_k,
+            "clamped": assignment.requested_k != assignment.effective_k,
+        },
+        "tau_fit_status": assignment.tau_fit_status,
         # REF-25..28: pin protocol/canon version + sampling-frame refs alongside SHAs.
         "canon_version": FACE_BAKEOFF_CANON_VERSION,
         "protocol_id": FACE_BAKEOFF_PROTOCOL_ID,
@@ -1564,6 +1682,22 @@ def score_face_run_record(
         "tau": {
             "tau_k": list(assignment.tau_k),
             "tau_op": assignment.tau_op,
+            # AUDIT-01/02 (FIR5RR-04): requested vs effective K, with an
+            # explicit disclosure whenever the subject-count clamp fired.
+            "requested_k": assignment.requested_k,
+            "effective_k": assignment.effective_k,
+            "k_clamp_disclosure": (
+                None
+                if assignment.requested_k == assignment.effective_k
+                else (
+                    f"requested_k={assignment.requested_k} clamped to "
+                    f"effective_k={assignment.effective_k} by the subject count — "
+                    f"tau_k/folds reflect effective_k, not the requested protocol K"
+                )
+            ),
+            # FIR5RR-07: how tau_k were obtained; non-"fitted" forces every
+            # tau-dependent slice DIRECTIONAL.
+            "tau_fit_status": assignment.tau_fit_status,
             "note": "PROVISIONAL — not product defaults (FIR-6 owns calibration)",
         },
         "protocol_disclosures": list(FACE_BAKEOFF_PROTOCOL_DISCLOSURES),

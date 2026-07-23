@@ -4,7 +4,7 @@
 >
 > - **Date**: 2026-07-23
 > - **Author**: Grok (docs-only plan authoring)
-> - **Plan version**: v3 (resolves round-2 adversarial panel FIR8R2-01…07; preserves v1 structural invariants fixed in v2)
+> - **Plan version**: v4 (resolves round-3 findings FIR8R3-01…05 — SQL/bootstrap defects; preserves v3 structure + v1 structural invariants)
 > - **Projects**: `apps/prototype-description-service` (primary); WP plugin **out of MVP control path**
 > - **Task ID**: `FIR-8` (operator-assigned bench surface; escalation ladder renumbered to **FIR-9** — see [ID collision](#id-collision-fir8pa-04))
 > - **Target Branch**: `feature/fir-8`
@@ -33,7 +33,7 @@ Deliverables: boot-coupled license/deployment gate, dedicated-bench isolation (o
 
 | Order | Path | Why |
 | --- | --- | --- |
-| 1 | This plan (v3) end-to-end | Locked isolation track, async vehicle, contracts, slices |
+| 1 | This plan (v4) end-to-end | Locked isolation track, async vehicle, contracts, slices |
 | 2 | `recognition/infrastructure/embeddings/runtime_factory.py` | Sole construction seam — reuse only |
 | 3 | `recognition/config/settings.py` + `security.py` (`validate_admin_config`) | Boot validation patterns; extend for bench gate + denylist |
 | 4 | `api/main.py` admin mount block | Bench router mounts **inside** env-gated `/admin` only |
@@ -65,7 +65,7 @@ Golden-150 answers controlled corpus quality ([DIAG-08]). Operators still need: 
 
 v1 proposed dual-profile APIs and a same-process Option B. That is **structurally impossible**: `PGVECTOR_DIM` is one process-wide dim root; one deployment cannot host 512D insightface and 128D face_pipeline against one store. A `dim_mismatch` preflight cannot be cleared via API without a second deployment (or destructive wipe + dim flip — rejected).
 
-v2 locked the dedicated-bench track and boot-coupled gates, but introduced **contradictory run-path machinery** (202 `queued` **and** sync ingest on the API thread), a **partial** mutation re-check, a **prod admin token** on the bench host, unproven data-plane separation, soft truncation, and residual pins left open. **v3 resolves those defects** while keeping the v1 structural invariants v2 already fixed.
+v2 locked the dedicated-bench track and boot-coupled gates, but introduced **contradictory run-path machinery** (202 `queued` **and** sync ingest on the API thread), a **partial** mutation re-check, a **prod admin token** on the bench host, unproven data-plane separation, soft truncation, and residual pins left open. **v3 resolves those defects** while keeping the v1 structural invariants v2 already fixed. **v4 keeps v3 structure** and fixes remaining **SQL/bootstrap-level** defects only (single-live constant-expression index, fail-closed marker rail, split preflight blocker sets, re-entrant supervisor + honest timeout, one-clause residual pins).
 
 ## Motivation / Context
 
@@ -170,7 +170,7 @@ The operator surface exists so the operator can **observe this class of gap (and
 
 ### I9. Fully async run path (FIR8R2-01) — non-negotiable
 
-- **API thread work on POST is only:** auth → full preflight → sample validation → single-flight insert of `recognition_bench_runs` → 202.
+- **API thread work on POST is only:** auth → `RUN_CREATE_SET` preflight → sample validation → single-flight insert of `recognition_bench_runs` → 202.
 - **No media GET, no blob put, no scan-job create, no scoring** on the API request thread.
 - A **named supervisor loop** in the **bench deployment’s `scan_worker` process** owns the rest, ticking on the worker’s existing poll cadence.
 
@@ -292,11 +292,11 @@ else → raise BenchLicenseGateError / InsecureProductionConfigError
        stable code: bench_license_gate_failed | bench_data_plane_collision
 ```
 
-**Defense in depth (FIR8R2-02):** every bench mutation dependency re-evaluates the **full** preflight blocker set via the **same shared function** as GET status — not a subset. See [Full preflight mutation gate](#full-preflight-mutation-gate-fir8r2-02--normative).
+**Defense in depth (FIR8R2-02 / FIR8R3-03):** every bench mutation dependency re-evaluates the **correct named preflight set** via the **same shared function** as GET status — never a hand-rolled subset. Enrollment + baseline-upload use `BOOT_AUTH_SET`; run create uses `RUN_CREATE_SET`. See [Full preflight mutation gate](#full-preflight-mutation-gate-fir8r2-02--normative).
 
 ---
 
-## Data-plane isolation proof (FIR8R2-04) — normative
+## Data-plane isolation proof (FIR8R2-04 / FIR8R3-02) — normative
 
 Bench deployment must prove it is not accidentally pointed at production storage.
 
@@ -304,17 +304,20 @@ Bench deployment must prove it is not accidentally pointed at production storage
 
 | Env | Meaning |
 | --- | --- |
-| `RECOGNITION_PROD_ENDPOINT_DENYLIST` | **Required** when bench flag is on. Comma-separated exact endpoint strings (normalized) that the bench process must **not** use. Deploy config sets this to production `DATABASE_URL` values and production blob-store endpoints / roots. Empty/unset with bench flag on → boot fail `bench_data_plane_collision` / `prod_denylist_unconfigured`. |
+| `RECOGNITION_PROD_ENDPOINT_DENYLIST` | **Required** when bench flag is on. Comma-separated exact endpoint strings (normalized) that the bench process must **not** use. Deploy config sets this to **every** production external endpoint the recognition process can be configured to touch: production `DATABASE_URL` values, production blob-store endpoints / roots, **and** any production cache/queue DSNs (Redis, broker URLs, etc.) that appear in recognition settings. Empty/unset with bench flag on → boot fail `bench_data_plane_collision` / `prod_denylist_unconfigured`. |
 
-**Boot check (API + worker):**
+**Boot check (API + worker) — every configured external endpoint:**
 
-1. Resolve this process’s effective `DATABASE_URL` (or equivalent DSN setting) and blob-store endpoint/root (`blob_root` absolute path or configured object-store endpoint).
-2. Normalize (strip credentials for comparison if needed; compare host+dbname / absolute path).
-3. If **either** equals **any** denylist entry → **refuse start** with `bench_data_plane_collision`.
+1. Resolve this process’s **complete** set of configured external endpoints: effective `DATABASE_URL` (or equivalent DSN), blob-store endpoint/root (`blob_root` absolute path or configured object-store endpoint), **and** any configured cache/queue/broker DSN present in settings (skip only endpoints that are unset/disabled).
+2. Normalize each (strip credentials for comparison if needed; compare host+dbname / absolute path / normalized DSN).
+3. If **any** process endpoint equals **any** denylist entry → **refuse start** with `bench_data_plane_collision`.
+4. Denylist must be non-empty when bench flag is on (else `prod_denylist_unconfigured`).
 
 When bench flag is off, denylist is optional (no collision check required for ordinary production boots).
 
-### First-boot deployment_class marker
+**Attestation residual:** denylist membership and `RECOGNITION_DEPLOYMENT_CLASS=internal_bench` are **operator self-attestation** (env-configured), not infrastructure-enforced topology proofs — same residual class as `RECOGNITION_ADMIN_TAILNET_BOUND`. See [Residual risks](#residual-risks-fir8r2-07--fir8r3-02--pinned-now).
+
+### First-boot deployment_class marker (fail-CLOSED — FIR8R3-02)
 
 Table `recognition_deployment_markers` (in `001_identity_schema.py`):
 
@@ -324,32 +327,48 @@ Table `recognition_deployment_markers` (in `001_identity_schema.py`):
 | `deployment_class` | text | e.g. `internal_bench` or `production` |
 | `set_at` | timestamptz | first write |
 
-**Rules:**
+**Rules (bench-enabled boot):**
 
-- On bench-enabled boot: if no row → insert `deployment_class=internal_bench`. If row exists with `deployment_class=production` → **refuse start** `bench_data_plane_collision` / `production_marker_present`. If row is `internal_bench` → OK.
-- Production deployments **must not** set `internal_bench` markers; they may leave the table empty or set `production` if they opt in later. Bench refuse-on-production-marker is the hard safety rail for “this DB was ever production.”
+| Marker row | Production-shaped data present? | Action |
+| --- | --- | --- |
+| exists, `deployment_class=production` | (any) | **Refuse start** `bench_data_plane_collision` / `production_marker_present` |
+| exists, `deployment_class=internal_bench` | (any) | OK |
+| **absent** | **Yes** — any of `tenants` count > 0 **or** `media_identities` count > 0 | **Refuse start** `bench_data_plane_collision` / `unmarked_db_has_production_shaped_data` — **do not stamp** |
+| **absent** | **No** — empty of production-shaped rows (both counts = 0) | Insert singleton `deployment_class=internal_bench` (only safe first stamp) |
+
+**Fail-closed invariant:** bench boot may stamp `internal_bench` **only** into a DB that is empty of production-shaped data **and** has no marker. Unmarked DBs that already hold tenant/identity rows are treated as hostile/ambiguous — refuse, never auto-promote.
+
+- Production deployments **must not** set `internal_bench` markers; they may leave the table empty or set `production` if they opt in later. Bench refuse-on-production-marker **and** refuse-on-unmarked-with-data are the hard safety rails.
 
 ### Acceptance tests (S1)
 
 1. Bench flag on + `DATABASE_URL` ∈ denylist → process **fails boot** with `bench_data_plane_collision`.
 2. Bench flag on + blob root/endpoint ∈ denylist → same.
-3. Bench flag on + marker row `deployment_class=production` → fails boot.
-4. Bench flag on + empty denylist → fails boot `prod_denylist_unconfigured`.
-5. Bench flag on + clean denylist + no production marker → boots; marker is `internal_bench`.
+3. Bench flag on + cache/queue DSN ∈ denylist → same.
+4. Bench flag on + marker row `deployment_class=production` → fails boot.
+5. Bench flag on + empty denylist → fails boot `prod_denylist_unconfigured`.
+6. Bench flag on + **no marker** + `tenants` count > 0 (or `media_identities` count > 0) → fails boot `unmarked_db_has_production_shaped_data` (does **not** stamp).
+7. Bench flag on + clean denylist + no marker + empty production-shaped tables → boots; marker stamped `internal_bench`.
+8. Bench flag on + existing `internal_bench` marker → boots (data may exist from prior bench runs).
 
 ---
 
-## Full preflight mutation gate (FIR8R2-02) — normative
+## Full preflight mutation gate (FIR8R2-02 / FIR8R3-03) — normative
 
-**One shared pure function** evaluates the full blocker set for both availability (GET status) and mutations (POST/PUT/cancel-create paths).
+**One shared pure function** evaluates a **named blocker set** selected by the caller (not a single undifferentiated “full” bag that deadlocks bootstrap).
 
 ```text
 # recognition/application/bench/preflight.py
-evaluate_bench_preflight(ctx: BenchPreflightContext) -> list[str]
-# identical codes for GET /admin/bench/status and POST /admin/bench/runs
+evaluate_bench_preflight(ctx: BenchPreflightContext, *, blocker_set: BenchBlockerSet) -> list[str]
+# BenchBlockerSet = BOOT_AUTH_SET | RUN_CREATE_SET
+# GET /admin/bench/status reports both: boot_auth_blockers + run_create_blockers (or union + partition)
 ```
 
-### Full blocker set (activation **and** mutation)
+### Named blocker sets (FIR8R3-03) — split to break bootstrap deadlock
+
+Enrollment (`POST /admin/bench/source-catalog`) and baseline upload (`POST /admin/bench/baselines`) must succeed while the catalog is still empty and before dim/profile readiness is required for a run. Run create remains strict.
+
+#### `BOOT_AUTH_SET` — enrollment + baseline-upload + boot-class gates
 
 | Code | When |
 | --- | --- |
@@ -359,31 +378,56 @@ evaluate_bench_preflight(ctx: BenchPreflightContext) -> list[str]
 | `admin_not_enabled` | Admin mount off |
 | `source_tenant_unconfigured` | `RECOGNITION_BENCH_SOURCE_TENANT_ID` missing/invalid |
 | `bench_tenant_unconfigured` | `RECOGNITION_BENCH_TENANT_ID` missing |
-| `media_allowlist_unconfigured` | Allowlist empty |
-| `source_catalog_empty` | No enrolled catalog rows for source tenant (POST only may also use `media_ids_unknown`) |
+| `media_allowlist_unconfigured` | Allowlist empty (catalog write needs it; baseline upload may share the check or skip if not URL-bound — if allowlist unused for baseline body, still require configured for host consistency) |
+| `data_plane_unverified` | Denylist/marker state not verified for this process (should not happen post-boot) |
+
+**Applied to:** `POST /admin/bench/source-catalog`, `POST /admin/bench/baselines` (after auth). **Not** blocked by `source_catalog_empty`, `baseline_missing`, dim/profile, or concurrent-run codes.
+
+#### `RUN_CREATE_SET` — run creation only
+
+`RUN_CREATE_SET` = **`BOOT_AUTH_SET` ∪**:
+
+| Code | When |
+| --- | --- |
+| `source_catalog_empty` | No enrolled catalog rows for source tenant |
+| `baseline_missing` | No usable baseline artifact for the run (none uploaded / none covering the request) |
 | `insightface_runtime_unavailable` | `build_embedding_runtime` / readiness cannot load insightface on this host |
 | `pgvector_dim_not_512` | Bench host `PGVECTOR_DIM != 512` |
 | `profile_not_insightface` | Env profile ≠ `insightface` on bench host |
-| `bench_run_in_progress` | Concurrent run (POST only; unique index also enforces) |
-| `data_plane_unverified` | Denylist/marker state not verified for this process (should not happen post-boot) |
+| `bench_run_in_progress` | Concurrent live run (POST only; single-live unique index also enforces → **409**) |
+
+**Applied to:** `POST /admin/bench/runs` (after auth, before insert). Cancel may use `BOOT_AUTH_SET` (or `RUN_CREATE_SET` minus `bench_run_in_progress` / catalog / baseline as appropriate for cancel-only).
 
 **Removed from S1 matrix (v1):** `foreign_embedding_model_rows`, `confirm_wipe`, dual-profile construct checks, process-override effective profile flips.
 
 ### Mutation-time re-check
 
-- POST `/admin/bench/runs` (and other bench mutations) **must call `evaluate_bench_preflight` in full** after auth and **before** insert. Any non-empty list (except treating `bench_run_in_progress` as 409) → **403** with the blocker codes (or 400 for request-shape errors).
-- Do **not** implement a “lite” subset re-check. Boot gate is necessary but **not sufficient** against post-boot drift of env-derived settings objects rebuilt in tests, mis-injected deps, or process state that diverges from availability snapshot.
+- POST `/admin/bench/runs` **must call `evaluate_bench_preflight(..., blocker_set=RUN_CREATE_SET)`** after auth and **before** insert. Any non-empty list (except treating `bench_run_in_progress` as **409**) → **403** with the blocker codes (or 400 for request-shape errors).
+- POST catalog / baselines **must call `evaluate_bench_preflight(..., blocker_set=BOOT_AUTH_SET)`** — never `RUN_CREATE_SET` (would deadlock empty-catalog enrollment).
+- Do **not** implement a hand-rolled “lite” subset outside these named sets. Boot gate is necessary but **not sufficient** against post-boot drift.
 
-### Discriminating test [TEST-15]
+### Discriminating tests [TEST-15]
 
 **`test_mutation_catches_post_boot_profile_drift`:**
 
-1. Boot (or construct app) with full-clear preflight (profile `insightface`, dim 512, …).
+1. Boot (or construct app) with full-clear `RUN_CREATE_SET` (profile `insightface`, dim 512, catalog + baseline present, …).
 2. Mutate the live settings/preflight context so `env_profile` becomes `face_pipeline` (simulate drift **after** boot validation was satisfied).
 3. POST `/admin/bench/runs` with valid media_ids → **403** and blockers include `profile_not_insightface`.
 4. Red-proof: if mutation path skips calling `evaluate_bench_preflight` and only checks `bench_enabled`, this test fails.
 
-Analogous cases may cover dim drift and source-tenant unset; profile drift is the required discriminating case.
+**`test_enrollment_succeeds_while_source_catalog_empty` (FIR8R3-03):**
+
+1. Bench host with `BOOT_AUTH_SET` clear and **zero** catalog rows (`source_catalog_empty` would fire under `RUN_CREATE_SET`).
+2. POST `/admin/bench/source-catalog` with a valid allowlisted row → **2xx**; catalog non-empty afterward.
+3. Red-proof: if enrollment mistakenly uses `RUN_CREATE_SET`, `source_catalog_empty` blocks the first enroll forever.
+
+**`test_single_live_index_rejects_queued_while_running` (FIR8R3-01):**
+
+1. Insert a `recognition_bench_runs` row with `status=running`.
+2. Insert (or POST) a second row with `status=queued` → **unique violation** / API **409** `bench_run_in_progress`.
+3. Red-proof: a partial unique index on `(status)` alone allows one `queued` **and** one `running` concurrently — this test must fail that broken index.
+
+Analogous cases may cover dim drift and source-tenant unset; profile drift + single-live + enrollment-vs-empty-catalog are the required discriminating cases.
 
 ---
 
@@ -401,9 +445,11 @@ Analogous cases may cover dim drift and source-tenant unset; profile drift is th
 
 ### Source media catalog enrollment
 
-- Operator uploads catalog via `POST /admin/bench/source-catalog` (admin auth): list of `{ "media_id": int, "media_url": "https://..." }` for the enrolled source tenant.
+- Operator uploads catalog via `POST /admin/bench/source-catalog` (`require_admin_header` only — FIR8R3-05a): list of `{ "media_id": int, "media_url": "https://..." }` for the enrolled source tenant.
+- Preflight: **`BOOT_AUTH_SET` only** (FIR8R3-03) — must succeed when catalog is empty.
 - Server validates each URL: scheme `https`, host ∈ allowlist, no redirects outside allowlist (max 2 redirects, re-check host) **at catalog write** and again at ingest.
-- Rows stored server-side (table `recognition_bench_source_media` or equivalent in `001_identity_schema.py`).
+- **DNS pin (FIR8R3-05d):** at catalog write, resolve the object host and **persist the pinned IP** (with the host) on the catalog row. At ingest, re-resolve and **refuse fetch** unless the live IP matches the pinned IP (closes DNS-rebinding window between enroll and pull). Redirect targets must also re-verify allowlist host **and** re-pin/re-check IP before follow.
+- Rows stored server-side (table `recognition_bench_source_media` or equivalent in `001_identity_schema.py`) including `pinned_host_ip` (or equivalent).
 - Run create resolves `media_ids` → URLs **only** from this catalog for `source_tenant_id`. Unknown id → 400 `media_ids_unknown`.
 
 ### Named byte-transfer mechanism (async — supervisor only)
@@ -411,7 +457,7 @@ Analogous cases may cover dim drift and source-tenant unset; profile drift is th
 **Bench-side HTTPS GET of media bytes** (“pull into bench”), executed by the **supervisor**, never the API thread:
 
 1. Supervisor loads accepted `media_ids` for the run; resolves URLs from source catalog.
-2. For each item: GET bytes with bounded size (`RECOGNITION_BENCH_MAX_BYTES_PER_MEDIA`, default **15 MiB**) and wall timeout per object (`RECOGNITION_BENCH_PER_OBJECT_FETCH_TIMEOUT_SEC`, default **30**).
+2. For each item: re-verify **pinned IP** (FIR8R3-05d); GET bytes with bounded size (`RECOGNITION_BENCH_MAX_BYTES_PER_MEDIA`, default **15 MiB**) and wall timeout per object (`RECOGNITION_BENCH_PER_OBJECT_FETCH_TIMEOUT_SEC`, default **30**). Mismatched IP → item fail (not silent redirect to new A-record).
 3. Bytes stored under the **bench tenant** via:
 
    **Module + function (FIR8R2-07):** `recognition.application.storage.FilesystemObjectStore.put(job_id=..., media_id=..., data=...)`  
@@ -442,17 +488,47 @@ Semantics: after the ingest phase attempts all accepted items, if `failed_ingest
 
 **Test:** 10 media_ids, mock 3 fetch failures → run `failed` / `ingest_hard_fail`; 10 media_ids, 2 failures → continue to scan with 8 items; 5 media_ids, all fail → `ingest_hard_fail` via zero-success rule.
 
-### Baseline delivery — option (b) locked (FIR8R2-03 / FIR8R2-05)
+### Baseline delivery — option (b) locked (FIR8R2-03 / FIR8R2-05 / FIR8R3-05b)
 
 - **No** `RECOGNITION_BENCH_SOURCE_BASE_URL` / `RECOGNITION_BENCH_SOURCE_ADMIN_TOKEN` on the bench host.
 - Operator uploads baseline via:
 
-  `POST /admin/bench/baselines` (or `.../baseline-artifacts`)
+  `POST /admin/bench/baselines` (or `.../baseline-artifacts`) — `require_admin_header` only; preflight **`BOOT_AUTH_SET`**.
 
-  Body: label-free stats JSON for a set of media (must include per-item join material: `media_id` and/or `content_sha256` when known from production export tooling; if only media_id, scorer joins on id and stamps sha256 from bench ingest into the sealed comparison when prod side lacks sha).
+#### Normative baseline upload JSON schema (FIR8R3-05b)
+
+```json
+{
+  "schema_version": 1,
+  "source_tenant_id": "uuid",
+  "effective_profile": "face_pipeline|insightface|unknown",
+  "embedding_model_id": "string|null",
+  "pgvector_dimension": 128,
+  "code_sha": "40-char hex|null",
+  "items": [
+    {
+      "media_id": 101,
+      "content_sha256": "64-char hex",
+      "detection_count": 4,
+      "embed_success": true
+    }
+  ]
+}
+```
+
+| Rule | Contract |
+| --- | --- |
+| Required root fields | `schema_version` (int, =1 for MVP), `items` (non-empty array) |
+| Per-item required | `media_id` (int), `content_sha256` (64-char lowercase hex of production export bytes or documented export hash) |
+| Per-item optional label-free | `detection_count`, `embed_success`, other label-free scalars already in metrics contract |
+| Max body size | **5 MiB** raw request body — over → **413** / **422** `baseline_too_large` |
+| Unknown fields | **Reject** entire body → **422** `baseline_unknown_field` (no silent drop) |
+| sha256 format | Non-hex / wrong length → **422** `baseline_sha_invalid` |
+| sha mismatch | If upload includes a separately transported byte payload or dual hash fields and they disagree → **422** `baseline_sha_mismatch` (reject; never store mismatched join keys) |
+| Provenance optional | `effective_profile`, `embedding_model_id`, `pgvector_dimension`, `code_sha`, `source_tenant_id` — when present must type-check; `source_tenant_id` if present must equal enrolled env tenant or → **400** `source_tenant_mismatch` |
 
 - Stored on bench; referenced by `baseline_artifact_id` on run create **or** auto-matched by media_id set.
-- If no baseline artifact covers the run’s media → sealed `prod_baseline.status = "unavailable"` (honest nulls), run may still complete bench leg.
+- **Run create** (`RUN_CREATE_SET`): `baseline_missing` blocks POST when no usable baseline covers the requested media set (forces comparison readiness). Sealed metrics still use honest nulls for any **partial** per-field gaps inside a present artifact (`prod_baseline.status = "ok"` with null frames as needed).
 - **Slice ownership:** **S3** owns catalog + baseline upload endpoints + retention of artifacts; **S4** owns scorer join/seal that consumes them.
 
 ### Retention / deletion (delete-by-default)
@@ -463,8 +539,18 @@ Semantics: after the ingest phase attempts all accepted items, if `failed_ingest
 | Derived `media_identities` / embeddings on bench tenant for that run’s media | **Delete with media** (same cleanup transaction/job) |
 | `recognition_bench_runs` row + metrics JSON | **Retain** for operator history; TTL purge after **30 days** (configurable `RECOGNITION_BENCH_RUN_RETENTION_DAYS`, default 30) |
 | Source catalog + baseline artifacts | Retain until operator delete or same 30d TTL (configurable) |
-| `AdminAuditEvent` bench rows | **Retain 90 days** (`RECOGNITION_BENCH_AUDIT_RETENTION_DAYS`, default **90**) then purge (FIR8R2-06) |
-| Safety net | Startup **purge sweeper runs regardless of bench flag** (FIR8R2-06): deletes media for terminal runs with `artifacts_purged_at IS NULL`; fails non-terminal runs older than wall-clock timeout; purges expired audit rows |
+| `AdminAuditEvent` bench rows | **Retain 90 days** (`RECOGNITION_BENCH_AUDIT_RETENTION_DAYS`, default **90**) then purge (FIR8R2-06 / FIR8R3-05c) |
+| Safety net | Startup **purge sweeper runs regardless of bench flag** (FIR8R2-06): deletes media for terminal runs with `artifacts_purged_at IS NULL`; fails non-terminal runs older than wall-clock timeout; purges expired audit rows **only** for bench audit enum values (below) |
+
+**Audit-row purge filter (FIR8R3-05c) — ONLY these `AdminAuditEvent` values:**
+
+- `BENCH_RUN_CREATE` (`bench.run.create`)
+- `BENCH_RUN_CANCEL` (`bench.run.cancel`)
+- `BENCH_MEDIA_INGEST` (`bench.media.ingest`)
+- `BENCH_CATALOG_UPSERT` (`bench.catalog.upsert`)
+- `BENCH_BASELINE_UPLOAD` (`bench.baseline.upload`)
+
+Sweeper **must not** delete `tenant.create` / `api_key.*` or any non-bench audit rows.
 
 Optional override `retain_artifacts=true` on POST is **rejected in MVP** (400 `retain_not_supported`) — delete-by-default only.
 
@@ -478,11 +564,11 @@ Optional override `retain_artifacts=true` on POST is **rejected in MVP** (400 `r
 | **UI / default N** | **`DEFAULT_BENCH_SAMPLE_N = 10`** | Half of max; default pre-fill only when operator uses “suggest last N” helper — never auto-starts. |
 | **Empty selection** | **Empty means NOTHING** | Zero media_ids → **400** `empty_selection`. Never interpret empty as “all media”. |
 | **Truncation rule (FIR8R2-05)** | **Reject over-cap only** | **One rule:** if `len(media_ids) > MAX_BENCH_SAMPLE` → 400 `sample_limit_exceeded`. **No** `min(len, sample_limit, MAX)` silent truncation. Optional `sample_limit` if present must be ≥ `len(media_ids)` and ≤ 20 or → 400 `sample_limit_inconsistent`; it does **not** slice the list. |
-| **Single concurrent run** | Global on bench deployment | **Only** mechanism: partial unique index (below). POST conflict → **409** `bench_run_in_progress`. |
-| **Wall-clock timeout** | **`RECOGNITION_BENCH_RUN_TIMEOUT_SEC = 1200`** | See arithmetic below. Exceed → mark `failed` with `error=run_timeout`; cancel outstanding scan items. |
+| **Single concurrent run** | Global on bench deployment | **Only** mechanism: constant-expression unique partial index (below). POST conflict → **409** `bench_run_in_progress`. At most **one** live row total (`queued` **or** `running`), never one of each. |
+| **Wall-clock timeout** | **`RECOGNITION_BENCH_RUN_TIMEOUT_SEC = 1650`** | See arithmetic below (includes model cold-start). Exceed → mark `failed` with `error=run_timeout`; cancel outstanding scan items. Enforced **every supervisor tick** (FIR8R3-04). |
 | **CPU placement** | Bench deployment only | Production scan_worker never receives insightface bench jobs. |
 
-### Timeout arithmetic (FIR8R2-01) — normative
+### Timeout arithmetic (FIR8R2-01 / FIR8R3-04) — normative
 
 Named caps:
 
@@ -493,22 +579,31 @@ Named caps:
 | Per-image scan budget | `PER_IMAGE_SCAN_BUDGET_SEC` | **17** s (buffalo load+infer class; planning constant, not a separate env unless ops later wants it) |
 | Clustering budget | `CLUSTER_BUDGET_SEC` | 120 s |
 | Seal + purge margin | `SEAL_MARGIN_SEC` | 60 s |
+| Model cold-start | `COLD_START_BUDGET_SEC` | **90** s (buffalo `FaceAnalysis` prepare on 4-core ARM; once per process/run claim) |
+| Blob put + sha256 budget | `BLOB_IO_BUDGET_SEC` | **100** s (planning constant for put+hash across max sample after fetch) |
+| One worker poll interval | `WORKER_POLL_INTERVAL_SEC` | **1** s (`scan_worker` default `poll_interval_seconds`) |
 
 ```text
-RECOGNITION_BENCH_RUN_TIMEOUT_SEC
-  > MAX_BENCH_SAMPLE × (PER_OBJECT_FETCH_TIMEOUT_SEC + PER_IMAGE_SCAN_BUDGET_SEC)
+formula_floor =
+  MAX_BENCH_SAMPLE × (PER_OBJECT_FETCH_TIMEOUT_SEC + PER_IMAGE_SCAN_BUDGET_SEC)
     + CLUSTER_BUDGET_SEC
     + SEAL_MARGIN_SEC
+    + COLD_START_BUDGET_SEC
+    + BLOB_IO_BUDGET_SEC
+    + WORKER_POLL_INTERVAL_SEC
 
-  = 20 × (30 + 17) + 120 + 60
-  = 20 × 47 + 180
-  = 940 + 180
-  = 1120 s
+  = 20 × (30 + 17) + 120 + 60 + 90 + 100 + 1
+  = 20 × 47 + 371
+  = 940 + 371
+  = 1311 s
 
-→ set RECOGNITION_BENCH_RUN_TIMEOUT_SEC = 1200  # 1120 + 80 s operator headroom
+≥25% slack over floor:
+  1311 × 1.25 = 1638.75 s
+
+→ set RECOGNITION_BENCH_RUN_TIMEOUT_SEC = 1650  # ~25.9% slack over 1311
 ```
 
-**Invariant:** changing `MAX_BENCH_SAMPLE` or fetch timeout **requires** recomputing this inequality in the same change; unit test locks `TIMEOUT_SEC > formula` so a regression that lowers timeout without adjusting caps fails.
+**Invariant:** changing `MAX_BENCH_SAMPLE`, fetch timeout, cold-start, blob-IO, or poll interval **requires** recomputing this inequality in the same change; unit test locks `TIMEOUT_SEC >= ceil(formula_floor * 1.25)` (or `TIMEOUT_SEC > formula_floor` with documented ≥25% slack) so a regression that lowers timeout without adjusting caps fails.
 
 ---
 
@@ -571,7 +666,7 @@ Both sides’ effective profile, embedding_model_id, dim, and code SHA are stamp
 
 ---
 
-## Run lifecycle (FIR8PR-05 / FIR8R2-01 / FIR8R2-06)
+## Run lifecycle (FIR8PR-05 / FIR8R2-01 / FIR8R2-06 / FIR8R3-04)
 
 ### State machine
 
@@ -584,7 +679,7 @@ queued → running → completed
 | State | Meaning |
 | --- | --- |
 | `queued` | Row inserted by POST; **no** ingest yet; waiting for supervisor claim |
-| `running` | Supervisor claimed; ingest and/or scan/cluster/score in progress |
+| `running` | Supervisor claimed; ingest and/or scan/cluster/score in progress; **phase + item cursor** persisted |
 | `completed` | Metrics sealed; artifact purge scheduled/done |
 | `failed` | Terminal error (`run_timeout`, `ingest_hard_fail`, worker error, stale reclaim) |
 | `cancelled` | Operator cancel **or** cancel-on-disable |
@@ -597,59 +692,89 @@ queued → running → completed
 
 #### POST path (API thread only)
 
-1. Auth (`require_admin`).
-2. `evaluate_bench_preflight` — full set; non-empty → 403/409 as mapped.
+1. Auth (`require_admin_header` only — FIR8R3-05a; Basic rejected for JSON mutations).
+2. `evaluate_bench_preflight(..., blocker_set=RUN_CREATE_SET)`; non-empty → 403/409 as mapped.
 3. Validate body: `media_ids` non-empty, ≤ 20, all known in source catalog; reject any `media_url` field; reject over-cap (no truncation).
-4. Insert `recognition_bench_runs` with `status=queued` (partial unique index enforces single-flight).
+4. Insert `recognition_bench_runs` with `status=queued`, `phase=queued_pending_claim`, `item_cursor=0` (single-live unique index enforces at most one live row).
 5. Audit `BENCH_RUN_CREATE`.
 6. Return **202** `{ run_id, status: "queued", media_count, ... }` immediately.
 
-#### Supervisor phases (worker process only)
+#### Re-entrant supervisor (FIR8R3-04) — phase + item cursor
 
-On each poll cadence tick, for at most one claimed run:
+**Persisted columns on `recognition_bench_runs`:**
 
-1. **Claim:** transition `queued → running` (conditional update); set `started_at`.
-2. **Ingest:** resolve URLs from catalog; HTTPS GET; `FilesystemObjectStore.put`; stamp sha256; audit ingest; apply **ingest hard-fail threshold**.
-3. **Enqueue scan:** create `IdentityScanJob` + items (`media_id`, `media_url`/blob URI, bench `tenant_id`); existing worker item claim path detects/embeds via `build_embedding_runtime` (env profile insightface).
-4. **Cluster:** when scan terminal, enqueue clustering as today’s scan path does.
-5. **Score + seal:** when scan+cluster terminal (or no faces path defined), run scorer; join baseline by **content_sha256** / media_id; stamp provenance; set `completed` or `failed`.
-6. **Purge:** delete-by-default blobs + embeddings; set `artifacts_purged_at`.
+| Column | Type | Role |
+| --- | --- | --- |
+| `phase` | text / enum | Current supervisor phase (see below) |
+| `item_cursor` | int | Next media index (0-based) within the current phase’s item loop; 0 when phase has no per-item loop |
+| `started_at` | timestamptz | Set once on first successful claim |
+
+**Phase enum (ordered):**
+
+```text
+queued_pending_claim → ingest → enqueue_scan → await_scan → cluster → score_seal → purge → terminal
+```
+
+(Terminal is represented by `status ∈ {completed,failed,cancelled}` — phase may remain last non-terminal or `done`.)
+
+**Each tick (steady-state reclaimer discipline — release-it / DDIA distilled):**
+
+1. **Timeout first (every tick):** if any live run (`queued` or `running`) has wall age > `RECOGNITION_BENCH_RUN_TIMEOUT_SEC` (from `created_at` or `started_at` per documented clock — use `coalesce(started_at, created_at)` once claimed, else `created_at`) → set `failed` / `error_code=run_timeout`, cancel outstanding scan items, schedule purge. **Do not** wait for startup-only reclaim.
+2. **Claim once:** if no `running` run, attempt conditional `queued → running` with `phase=ingest`, `item_cursor=0`, `started_at=now()`. Single-live index guarantees at most one claimer wins; concurrent second insert of another live row fails at POST.
+3. **Resume idempotently:** load the single `running` run (if any); **switch on persisted `phase`** — never restart from ingest if already mid-scan. Advance `item_cursor` after each successfully persisted per-item step so a crash mid-phase resumes at the next item, not from zero.
+4. **Phase work (one tick may advance one or more steps, but must persist phase/cursor before returning):**
+   - **ingest:** from `item_cursor`, resolve URL + **re-verify pinned IP**; HTTPS GET; `FilesystemObjectStore.put`; stamp sha256; audit; apply **ingest hard-fail** when phase completes.
+   - **enqueue_scan:** create `IdentityScanJob` + items (`media_id`, `media_url`/blob URI, bench `tenant_id`); set `scan_job_id`; `phase=await_scan`.
+   - **await_scan:** poll existing worker item path; when scan terminal → `phase=cluster` (or skip to score if no-faces path).
+   - **cluster:** enqueue/await clustering as today’s scan path; then `phase=score_seal`.
+   - **score_seal:** scorer; join baseline by **content_sha256** / media_id; stamp provenance; set `completed` or `failed`.
+   - **purge:** delete-by-default blobs + embeddings; set `artifacts_purged_at`.
+5. **Crash mid-phase:** process death leaves `status=running` + last persisted `phase`/`item_cursor`. Next tick: timeout check → either `run_timeout` or resume at that phase (idempotent side effects: skip already-ingested items via cursor / existing item rows).
 
 **Not in scope:** dual full-pipeline 202 without a job table. **Not in scope:** new distributed queue product. **Not in scope:** sync ingest on POST.
 
-Tests must cover: POST returns 202 with `queued` and **zero** scan job rows yet; supervisor tick creates jobs; worker processes under bench tenant; second POST concurrent → 409; timeout → failed; ingest hard-fail → failed without successful seal of fake metrics.
+Tests must cover: POST returns 202 with `queued` and **zero** scan job rows yet; supervisor tick creates jobs; worker processes under bench tenant; second POST concurrent → 409; **queued insert while running exists → unique violation / 409** (FIR8R3-01); timeout enforced on a mid-phase running row without restart; crash mid-ingest resumes at `item_cursor`; ingest hard-fail → failed without successful seal of fake metrics.
 
-### Concurrency — ONE mechanism (FIR8R2-06)
+### Concurrency — ONE mechanism (FIR8R2-06 / FIR8R3-01)
+
+**Wrong (v3):** `UNIQUE (status) WHERE status IN ('queued','running')` — permits **one queued AND one running** concurrently (different `status` values).
+
+**Required (constant-expression unique partial index → at most ONE live row total):**
 
 ```sql
-CREATE UNIQUE INDEX uq_recognition_bench_runs_single_active
-  ON recognition_bench_runs (status)
+CREATE UNIQUE INDEX uq_bench_single_live
+  ON recognition_bench_runs ((1))
   WHERE status IN ('queued', 'running');
 ```
 
+- Expression `(1)` is constant for every live row → uniqueness admits **at most one** row matching the predicate, regardless of whether it is `queued` or `running`.
 - No second flock/file lock as a required mechanism.
-- Transactional insert catches unique violation → 409 `bench_run_in_progress`.
+- Transactional insert catches unique violation → **409** `bench_run_in_progress`.
 - Application pre-check may exist for friendlier errors but is **not** the source of truth.
+- Discriminating test: [TEST-15] `test_single_live_index_rejects_queued_while_running`.
 
 ### Crash recovery
 
-- API/worker startup: runs in `running` or `queued` older than `RECOGNITION_BENCH_RUN_TIMEOUT_SEC` → `failed` / `error=stale_reclaim` (mirror describe-run reclaim pattern in `api/main.py` lifespan / worker boot).
-- Orphan scan jobs for bench tenant: existing worker stale reclaim paths apply; bench supervisor reconciles parent run status.
+- **Every supervisor tick** (not only startup): timeout reclaim as above (FIR8R3-04).
+- API/worker **startup** additionally: same timeout fail for live runs older than `RECOGNITION_BENCH_RUN_TIMEOUT_SEC` → `failed` / `error_code=stale_reclaim` (or `run_timeout` — pick one stable code and use it consistently; prefer `run_timeout` for age breaches, `stale_reclaim` only if a separate reclaim path needs distinction).
+- Orphan scan jobs for bench tenant: existing worker stale reclaim paths apply; bench supervisor reconciles parent run status from persisted phase.
 
 ### Cancel-on-disable
 
-- Soft path: `POST /admin/bench/runs/{id}/cancel` (admin auth + full preflight except `bench_run_in_progress`) sets `cancelled`, attempts to mark pending scan items failed/cancelled, purge artifacts.
+- Soft path: `POST /admin/bench/runs/{id}/cancel` (`require_admin_header` + `BOOT_AUTH_SET` preflight; not blocked by `bench_run_in_progress`) sets `cancelled`, attempts to mark pending scan items failed/cancelled, purge artifacts.
 - If process restarts with `RECOGNITION_BENCH_PROFILE_ENABLED=0`, boot succeeds without bench routes; **purge sweeper still runs** so leftover artifacts do not linger.
 - Config reload not supported: document **restart required** to flip gate env; no hot reload.
 
 ---
 
-## Lifecycle pins (FIR8R2-06) — normative
+## Lifecycle pins (FIR8R2-06 / FIR8R3-01 / FIR8R3-04 / FIR8R3-05) — normative
 
 | Pin | Single definition |
 | --- | --- |
-| Concurrency | Partial unique index on `recognition_bench_runs(status) WHERE status IN ('queued','running')` only |
-| Purge sweeper | Runs at API **and** worker startup **regardless of** `RECOGNITION_BENCH_PROFILE_ENABLED` |
+| Concurrency | `CREATE UNIQUE INDEX uq_bench_single_live ON recognition_bench_runs ((1)) WHERE status IN ('queued','running')` only — **not** `UNIQUE (status)` |
+| Supervisor resume | Persisted `phase` + `item_cursor`; claim once; timeout every tick |
+| Purge sweeper | Runs at API **and** worker startup **regardless of** `RECOGNITION_BENCH_PROFILE_ENABLED`; audit purge filters **only** bench `AdminAuditEvent` values listed under retention |
+| JSON bench mutations auth | `require_admin_header` **only** (Basic rejected) — same rule as existing admin JSON mutations |
 | `admin_auth_ok_context` | See [Terminology](#terminology) — single definition; not redefined per route |
 | Audit retention | **90 days** default (`RECOGNITION_BENCH_AUDIT_RETENTION_DAYS=90`) |
 
@@ -661,9 +786,13 @@ CREATE UNIQUE INDEX uq_recognition_bench_runs_single_active
 
 Mount **only** under the existing env-gated **`/admin`** router tree (FIR8PR-07): e.g. routes registered on `admin_router` or `include_router(bench_router, prefix=...)` **inside** the `if security_settings.admin_enabled` block in `api/main.py`. **Never** on the tenant API-key `/recognition` router.
 
-Auth: `Depends(require_admin)` / `require_admin_header` for JSON; HTML forms use existing same-origin + Basic patterns.
+Auth (FIR8R3-05a) — match existing admin router rule **verbatim**:
 
-Audit enum additions (`AdminAuditEvent`, sr-007):
+- Router-level: `Depends(require_admin)` (header **or** Basic) for the `/admin` tree.
+- **JSON bench mutations** (`POST` catalog / baselines / runs / cancel): **additionally** `dependencies=[Depends(require_admin_header)]` — **Basic rejected** for programmatic JSON (browser credential replay cannot authorize cross-site JSON mutation). Same pattern as existing admin JSON mutations in `admin.py`.
+- HTML console forms: Basic + `require_same_origin` (not `require_admin_header`).
+
+Audit enum additions (`AdminAuditEvent`, sr-007) — also the **only** values audit purge may delete (FIR8R3-05c):
 
 - `BENCH_RUN_CREATE = "bench.run.create"`
 - `BENCH_RUN_CANCEL = "bench.run.cancel"`
@@ -690,23 +819,26 @@ Audit enum additions (`AdminAuditEvent`, sr-007):
   "bench_tenant_id": "uuid",
   "max_sample_size": 20,
   "default_sample_size": 10,
-  "run_timeout_sec": 1200,
+  "run_timeout_sec": 1650,
   "active_run_id": null,
   "license_notice": "non-commercial weights — internal benchmarking only",
+  "boot_auth_blockers": [],
+  "run_create_blockers": [],
   "activation_blockers": []
 }
 ```
 
-- `bench_available` ≔ `activation_blockers == []` after `evaluate_bench_preflight` **and** `admin_auth_ok_context` (server computes).
+- `boot_auth_blockers` / `run_create_blockers` ≔ results of `evaluate_bench_preflight` for each named set (FIR8R3-03).
+- `activation_blockers` ≔ union of both lists (compat for UI “any blocker”); `bench_available` for **starting a run** ≔ `run_create_blockers == []` **and** `admin_auth_ok_context`. Catalog/baseline UI may enable when only `boot_auth_blockers == []`.
 - `isolation_mode` is the **constant** `"dedicated_bench_deployment"` (not a client choice).
 
 #### `POST /admin/bench/source-catalog`
 
-Enroll/replace catalog rows for env source tenant. Validates allowlist. Audit `BENCH_CATALOG_UPSERT`.
+Enroll/replace catalog rows for env source tenant. Auth: `require_admin_header`. Preflight: **`BOOT_AUTH_SET`**. Validates allowlist; **pins object host IP** (FIR8R3-05d). Audit `BENCH_CATALOG_UPSERT`.
 
 #### `POST /admin/bench/baselines`
 
-Upload label-free baseline artifact JSON. Audit `BENCH_BASELINE_UPLOAD`. Returns `baseline_artifact_id`.
+Upload label-free baseline artifact JSON per [normative schema](#normative-baseline-upload-json-schema-fir8r3-05b). Auth: `require_admin_header`. Preflight: **`BOOT_AUTH_SET`**. Audit `BENCH_BASELINE_UPLOAD`. Returns `baseline_artifact_id`.
 
 #### `POST /admin/bench/runs`
 
@@ -813,6 +945,8 @@ Upload label-free baseline artifact JSON. Audit `BENCH_BASELINE_UPLOAD`. Returns
 | --- | --- | --- |
 | `id` | UUID PK | run_id |
 | `status` | str | state machine |
+| `phase` | text | supervisor phase (FIR8R3-04); resume cursor for re-entrant tick |
+| `item_cursor` | int | next media index within phase; default 0 |
 | `source_tenant_id` | UUID | enrolled source |
 | `bench_tenant_id` | UUID | local bench tenant |
 | `media_ids` | int[] / JSON | accepted ids |
@@ -824,14 +958,22 @@ Upload label-free baseline artifact JSON. Audit `BENCH_BASELINE_UPLOAD`. Returns
 | `created_at` / `started_at` / `completed_at` | timestamptz | |
 | `artifacts_purged_at` | timestamptz nullable | |
 
-**Index:** partial unique on `status` WHERE `status IN ('queued','running')`.
+**Index (FIR8R3-01):** 
+
+```sql
+CREATE UNIQUE INDEX uq_bench_single_live
+  ON recognition_bench_runs ((1))
+  WHERE status IN ('queued', 'running');
+```
 
 #### Supporting tables (same greenfield file)
 
-- `recognition_bench_source_media` — catalog (`source_tenant_id`, `media_id`, `media_url`, timestamps)
+- `recognition_bench_source_media` — catalog (`source_tenant_id`, `media_id`, `media_url`, **`pinned_host_ip`**, timestamps)
 - `recognition_bench_baseline_artifacts` — uploaded JSON + metadata
 - `recognition_deployment_markers` — singleton deployment_class marker
 - Optional `recognition_bench_run_items` — per-item sha256, ingest status (or JSON on run row; prefer child table for queryability)
+
+**Slice ownership of `001_identity_schema.py` (FIR8R3-05e):** schema lands **where its tests live** — S1 owns marker table + fail-closed stamp tests; S2 owns `recognition_bench_runs` (+ `phase`/`item_cursor` + `uq_bench_single_live`) + concurrency/supervisor tests; S3 owns catalog/baseline tables (+ `pinned_host_ip`) + intake tests. All still edit the single greenfield file `db/migrations/versions/001_identity_schema.py` (no add-on migrations).
 
 ### Observability
 
@@ -851,32 +993,39 @@ Extend `admin_console.py` (or sibling) with a **Bench** section:
 
 ---
 
-## Small pins (FIR8PR-07 + ops R-8/R-10 + FIR8R2-*)
+## Small pins (FIR8PR-07 + ops R-8/R-10 + FIR8R2-* + FIR8R3-05)
 
 | Pin | Decision |
 | --- | --- |
 | Bench router mount | **Inside** env-gated `/admin` only (`api/main.py` admin branch). |
+| JSON bench mutations auth (FIR8R3-05a) | **`require_admin_header` only** (Basic rejected) — match existing admin JSON mutation rule in `admin.py` verbatim |
 | face_metrics | **Duplicate** in `recognition/application/bench/score.py` (+ optional `face_metrics.py`); parity unit test vs fixture. **Not** runtime import of `scripts/`. |
 | Blob API | `FilesystemObjectStore.put` in `recognition/application/storage/filesystem.py` |
 | Scan item fields | `media_id`, `media_url` (blob URI), `tenant_id`, `job_id`, `status` |
-| Baseline | Operator upload on bench (option b); **no** prod admin token on bench |
-| Run path | Fully async; supervisor in bench `scan_worker` |
+| Baseline (FIR8R3-05b) | Operator upload on bench (option b); normative schema (fields, per-item sha256, max **5 MiB**, unknown-field reject, sha mismatch → 422); **no** prod admin token on bench |
+| Catalog DNS pin (FIR8R3-05d) | Catalog write resolves + **pins** object host IP; ingest re-verifies pinned IP before fetch |
+| Run path | Fully async; **re-entrant** supervisor in bench `scan_worker` (`phase` + `item_cursor`) |
 | Truncation | Reject >20 only; no silent `min` |
 | Join key | `content_sha256` stamped at ingest |
-| Concurrency | Partial unique index only |
-| Purge | Boot sweeper **always** (flag on or off) |
+| Concurrency (FIR8R3-01) | `uq_bench_single_live` on `((1)) WHERE status IN ('queued','running')` only |
+| Purge | Boot sweeper **always** (flag on or off); audit purge **only** bench `AdminAuditEvent` values (FIR8R3-05c) |
 | Audit retention | 90 days |
 | I1 default | Transitional: dark env default still **insightface** until FIR-6; bench gate still required for operator bench surface / `internal_bench` class |
 | Default sample N | **10**; hard max **20** |
 | Empty selection | **Nothing** — 400 `empty_selection`; never “all” |
+| Wall timeout default | **1650** s (≥25% slack over cold-start-inclusive floor **1311** s) |
 | WP | **Nothing in MVP** |
 
 ---
 
-## Residual risks (FIR8R2-07) — pinned now
+## Residual risks (FIR8R2-07 / FIR8R3-02) — pinned now
 
-1. **`RECOGNITION_ADMIN_TAILNET_BOUND=1` is operator attestation, not a network-enforced control plane check inside this service.** Residual risk: a mis-set flag claims tailnet binding without infrastructure proof. **Operator-acked** residual for FIR-8; network policy remains deploy/ops responsibility.
-2. **Buffalo / insightface loading on non-bench deployments** remains a **FIR-6-owned residual** (transitional dark default + commercial switch-over). This task’s gates keep the **operator bench surface** off production; they do not complete the product default flip.
+| Residual | Class | Operator-ack |
+| --- | --- | --- |
+| **`RECOGNITION_ADMIN_TAILNET_BOUND=1`** | Operator attestation, not a network-enforced control-plane check inside this service. Mis-set flag claims tailnet binding without infrastructure proof; network policy remains deploy/ops responsibility. | **Operator-acked** residual for FIR-8. |
+| **`RECOGNITION_DEPLOYMENT_CLASS=internal_bench`** | Env self-attestation of deployment role, not an infrastructure topology proof. A mislabeled host can claim bench class without platform-level isolation guarantees; process gates still enforce the string + data-plane checks when the flag is on. | **Operator-acked** residual for FIR-8 (same treatment as `TAILNET_BOUND`). |
+| **`RECOGNITION_PROD_ENDPOINT_DENYLIST`** | Operator-supplied denylist of production endpoints; collision checks are exact-string/normalized comparisons against configured endpoints, not continuous topology discovery. Incomplete denylist entries are an ops config risk. | **Operator-acked** residual for FIR-8 (same treatment as `TAILNET_BOUND`). |
+| **Buffalo / insightface on non-bench deployments** | **FIR-6-owned residual** (transitional dark default + commercial switch-over). This task’s gates keep the **operator bench surface** off production; they do not complete the product default flip. | Tracked under FIR-6; not re-opened here. |
 
 ---
 
@@ -897,13 +1046,15 @@ Do not leave “follow-on renumber” language.
 
 | Slice | Content | Acceptance gate | Primary tests |
 | --- | --- | --- | --- |
-| **S1** Boot gate + isolation lock + data-plane proof + ID renumber | Flag default false; `validate_bench_license_gate`; denylist + marker; `evaluate_bench_preflight` full set; MCP decisions; scope+epic FIR-9 | Boot refuses incomplete license **or** data-plane collision; flag-off boots **with purge still registered**; docs renumber | Unit: boot matrix; denylist/marker; preflight table; [TEST-15] profile drift at mutation |
-| **S2** Async run vehicle + bounds + schema | `recognition_bench_runs` + partial unique index; POST = validate+insert+202 only; `bench_run_supervisor_tick` in worker; timeout formula; hard-fail threshold; crash reclaim | POST leaves 0 scan jobs; tick enqueues; concurrent 409; timeout/hard-fail codes | Unit + API + worker tests |
-| **S3** Catalog + baseline upload + intake + retention | Source catalog; baseline upload; async ingest via `FilesystemObjectStore.put`; allowlist; audit 90d; delete-by-default; purge-always | Catalog rejects bad host; ingest stamps sha256; purge clears media; flag-off purge still runs | Unit + API + supervisor |
+| **S1** Boot gate + isolation lock + data-plane proof + ID renumber | Flag default false; `validate_bench_license_gate`; denylist (all external endpoints); **fail-closed** marker; `BOOT_AUTH_SET` / `RUN_CREATE_SET`; marker schema in `001_identity_schema.py`; MCP decisions; scope+epic FIR-9 | Boot refuses incomplete license, denylist collision, production marker, **or unmarked DB with production-shaped data**; flag-off boots **with purge still registered**; docs renumber | Unit: boot matrix; denylist/marker fail-closed; split preflight; [TEST-15] profile drift + enrollment-while-empty |
+| **S2** Async run vehicle + bounds + run schema | `recognition_bench_runs` + `phase`/`item_cursor` + **`uq_bench_single_live ((1))`**; POST = validate+insert+202 only; re-entrant `bench_run_supervisor_tick`; timeout formula with cold-start; hard-fail; every-tick timeout | POST leaves 0 scan jobs; tick resumes phase; concurrent 409 including queued-while-running; timeout/hard-fail codes | Unit + API + worker tests |
+| **S3** Catalog + baseline upload + intake + retention | Source catalog + **pinned IP**; baseline upload schema; async ingest + IP re-verify; allowlist; audit 90d **bench enums only**; delete-by-default; purge-always | Catalog rejects bad host; pin mismatch fails ingest; baseline unknown-field/sha/size reject; purge clears media; flag-off purge still runs; non-bench audit rows untouched | Unit + API + supervisor |
 | **S4** REST metrics + status + scorer | GET status/runs; scorer label-free + null purity; join by sha256; dual-side provenance stamps; face_metrics parity fixture | Contract tests; parity test; no scripts import in app path | API + unit score |
 | **S5** `/admin` HTML bench panel | Console section; banner; blockers; catalog/baseline upload; media **ids** form; empty≠all; default N=10 | HTML non-commercial notice; no media_url fields | API/console tests |
 
 S1 → S2 → S3 → S4 sequential; S5 after status/run JSON frozen (fixtures from S4).
+
+**Schema ownership (FIR8R3-05e):** `db/migrations/versions/001_identity_schema.py` is edited by S1 (markers), S2 (bench runs + single-live index + phase/cursor), S3 (catalog/baseline tables). Tests for each table live in the owning slice.
 
 ---
 
@@ -913,34 +1064,39 @@ S1 → S2 → S3 → S4 sequential; S5 after status/run JSON frozen (fixtures fr
 
 **Files**
 
-- `recognition/config/security.py` or `settings.py`: `_bool_env("RECOGNITION_BENCH_PROFILE_ENABLED", False)`; `deployment_class`; denylist parse; `validate_bench_license_gate`; data-plane checks.
-- `recognition/application/bench/preflight.py`: **`evaluate_bench_preflight`** — sole blocker function.
-- `api/main.py` + worker entry: validate at startup; **always** register purge sweeper.
+- `recognition/config/security.py` or `settings.py`: `_bool_env("RECOGNITION_BENCH_PROFILE_ENABLED", False)`; `deployment_class`; denylist parse (**all** external endpoints); `validate_bench_license_gate`; data-plane checks; fail-closed marker stamp.
+- `recognition/application/bench/preflight.py`: **`evaluate_bench_preflight(ctx, blocker_set=...)`** — sole blocker function; `BOOT_AUTH_SET` / `RUN_CREATE_SET`.
+- `db/migrations/versions/001_identity_schema.py`: **`recognition_deployment_markers`** (and any marker-only helpers) — schema lands with S1 marker tests (FIR8R3-05e).
+- `api/main.py` + worker entry: validate at startup; **always** register purge sweeper (audit filter = bench enums only).
 - Scope + epic markdown renumber (FIR-9).
 
 **Preflight signature**
 
 ```text
-evaluate_bench_preflight(ctx: BenchPreflightContext) -> list[str]
+evaluate_bench_preflight(ctx: BenchPreflightContext, *, blocker_set: BenchBlockerSet) -> list[str]
+# BenchBlockerSet = BOOT_AUTH_SET | RUN_CREATE_SET
 # ctx carries: bench_enabled, deployment_class, admin_enabled, tailnet_bound,
 #   source_tenant_configured, bench_tenant_configured, media_allowlist_configured,
-#   source_catalog_nonempty, pgvector_dimension, env_profile,
+#   source_catalog_nonempty, baseline_present, pgvector_dimension, env_profile,
 #   insightface_runtime_ok, active_run_present, data_plane_ok
 ```
 
 **Tests (red first, [TEST-06])**
 
-1. Flag off → blockers include `bench_flag_off`; boot OK without deployment_class.
+1. Flag off → `BOOT_AUTH_SET` blockers include `bench_flag_off`; boot OK without deployment_class.
 2. Flag on + missing tailnet → **boot raises** `bench_license_gate_failed`.
 3. Flag on + `deployment_class=production` → boot raises.
-4. Flag on + dim≠512 → blockers include `pgvector_dim_not_512`.
-5. Flag on + profile `face_pipeline` → `profile_not_insightface`.
-6. All clear → `[]`.
-7. Denylist collision / production marker / empty denylist → boot `bench_data_plane_collision` / `prod_denylist_unconfigured`.
-8. **[TEST-15]** post-boot profile drift → POST mutation 403 `profile_not_insightface`.
-9. Scope/epic: escalation references are `FIR-9` not `FIR-8`.
+4. Flag on + dim≠512 → `RUN_CREATE_SET` includes `pgvector_dim_not_512`; **not** required to block catalog enroll.
+5. Flag on + profile `face_pipeline` → `profile_not_insightface` under `RUN_CREATE_SET`.
+6. All clear → `[]` for the selected set.
+7. Denylist collision (DB / blob / cache-queue) / production marker / empty denylist → boot `bench_data_plane_collision` / `prod_denylist_unconfigured`.
+8. Unmarked DB with `tenants` or `media_identities` count > 0 → boot refuse; **no** `internal_bench` stamp.
+9. Unmarked empty DB → stamp `internal_bench` and boot.
+10. **[TEST-15]** post-boot profile drift → POST runs 403 `profile_not_insightface`.
+11. **[TEST-15]** enrollment succeeds while `source_catalog_empty` would fire under `RUN_CREATE_SET`.
+12. Scope/epic: escalation references are `FIR-9` not `FIR-8`.
 
-**Mutation red-proof**: force POST to skip `evaluate_bench_preflight` → test 8 fails.
+**Mutation red-proof**: force POST runs to skip `evaluate_bench_preflight` → test 10 fails; force enroll to use `RUN_CREATE_SET` → test 11 fails.
 
 ### S2 — Async run vehicle
 
@@ -948,40 +1104,45 @@ evaluate_bench_preflight(ctx: BenchPreflightContext) -> list[str]
 
 - No second worker binary; start bench `scan_worker` against bench DSN as today.
 - POST never calls ingest/scan/score.
-- Supervisor name: `bench_run_supervisor_tick`.
-- Single active run: partial unique index.
-- Timeout env default 1200; unit test locks arithmetic vs caps.
+- Supervisor name: `bench_run_supervisor_tick` — **re-entrant** via `phase` + `item_cursor`.
+- Single live run: `uq_bench_single_live` on `((1))`.
+- Timeout env default **1650**; unit test locks arithmetic vs cold-start-inclusive floor + ≥25% slack.
+- Timeout enforced **every tick**.
 - Ingest hard-fail: ≥3 failures or 0 successes.
+- Schema in `001_identity_schema.py`: `recognition_bench_runs` + index (tests live in S2).
 
 **Tests**
 
 1. POST → 202 `queued`; **no** `IdentityScanJob` row yet.
-2. After supervisor tick with mocked GETs → scan job + items exist; statuses progress.
+2. After supervisor tick with mocked GETs → scan job + items exist; statuses progress; `phase` advances.
 3. Second POST while queued/running → 409 `bench_run_in_progress` (unique index path).
-4. 21 media_ids → 400 `sample_limit_exceeded` (not silent truncate).
-5. Body with `media_url` → 400 `media_url_not_accepted`.
-6. 0 ids → 400 `empty_selection`.
-7. Simulated timeout → `failed` / `run_timeout`.
-8. 3 ingest failures of 10 → `failed` / `ingest_hard_fail`.
-9. Timeout constant test: `1200 > 20*(30+17)+120+60`.
+4. **[TEST-15]** insert `queued` while `running` exists → unique violation / 409 (broken `(status)` index must fail this).
+5. 21 media_ids → 400 `sample_limit_exceeded` (not silent truncate).
+6. Body with `media_url` → 400 `media_url_not_accepted`.
+7. 0 ids → 400 `empty_selection`.
+8. Simulated timeout mid-phase (without process restart) → `failed` / `run_timeout`.
+9. Crash mid-ingest: next tick resumes at `item_cursor` (or times out).
+10. 3 ingest failures of 10 → `failed` / `ingest_hard_fail`.
+11. Timeout constant test: `1650 >= ceil(1311 * 1.25)` and `1650 > 20*(30+17)+120+60+90+100+1`.
 
 ### S3 — Catalog + baseline + intake + retention
 
 **Tests**
 
 1. Catalog URL host not on allowlist → rejected.
-2. Successful ingest → audit `bench.media.ingest` + sha256 present; uses `FilesystemObjectStore.put`.
-3. On complete → media + embeddings gone; `artifacts_purged_at` set; metrics retained.
-4. Body `source_tenant_id` ≠ env → 400.
-5. Baseline upload stores artifact; run can reference it.
-6. Process start with flag **off** still purges terminal run with null `artifacts_purged_at`.
-7. Audit rows older than 90d purged by sweeper (unit with frozen clock).
+2. Catalog write stores **pinned_host_ip**; ingest with rebind to different IP → item fail / no fetch.
+3. Successful ingest → audit `bench.media.ingest` + sha256 present; uses `FilesystemObjectStore.put`.
+4. On complete → media + embeddings gone; `artifacts_purged_at` set; metrics retained.
+5. Body `source_tenant_id` ≠ env → 400.
+6. Baseline upload stores artifact; unknown field / sha mismatch / >5 MiB → 422 reject.
+7. Process start with flag **off** still purges terminal run with null `artifacts_purged_at`.
+8. Audit rows older than 90d **with bench enum values** purged by sweeper; `tenant.create` rows **not** purged (unit with frozen clock).
 
 ### S4 — REST + scorer
 
 **Rules**
 
-- Router under admin mount only.
+- Router under admin mount only; JSON mutations `require_admin_header`.
 - Scorer in `recognition/application/bench/score.py`; **in-tree** metrics helpers; **no** `scripts` import at runtime.
 - Join key `content_sha256`; stamp both legs’ profile/model/dim/code_sha.
 - Never call adapters to self-report quality ([OBS-09]).
@@ -989,12 +1150,13 @@ evaluate_bench_preflight(ctx: BenchPreflightContext) -> list[str]
 **Tests**
 
 1. Unauthenticated → 401/403.
-2. Flag off → 403 `bench_flag_off`.
-3. Completed unlabeled run → `cluster_purity` is JSON `null`.
-4. `license_notice` contains `non-commercial`.
-5. `isolation_mode` constant `dedicated_bench_deployment`.
-6. Sealed metrics include both legs’ provenance stamps + item sha256 keys.
-7. **face_metrics parity**: fixture vectors match expected golden outputs.
+2. JSON mutation with Basic only (no admin header) → 401 (FIR8R3-05a).
+3. Flag off → 403 `bench_flag_off`.
+4. Completed unlabeled run → `cluster_purity` is JSON `null`.
+5. `license_notice` contains `non-commercial`.
+6. `isolation_mode` constant `dedicated_bench_deployment`.
+7. Sealed metrics include both legs’ provenance stamps + item sha256 keys.
+8. **face_metrics parity**: fixture vectors match expected golden outputs.
 
 ### S5 — HTML console
 
@@ -1028,9 +1190,9 @@ evaluate_bench_preflight(ctx: BenchPreflightContext) -> list[str]
 ## Verification Strategy
 
 - Per-slice scoped TDD; observe new tests fail first ([TEST-06]).
-- Discriminating gate tests ([TEST-15]): boot license matrix × data-plane collision × full preflight at mutation (profile drift) × bounds reject (not truncate) × async POST creates no jobs.
+- Discriminating gate tests ([TEST-15]): boot license matrix × fail-closed marker × denylist all endpoints × split preflight (enroll while empty) × profile drift at run mutation × single-live index (queued-while-running) × bounds reject (not truncate) × async POST creates no jobs.
 - Determinism ([TEST-08]): scorer pure over fixtures; null purity locked; face_metrics parity fixture.
-- Timeout arithmetic unit lock.
+- Timeout arithmetic unit lock (cold-start + blob IO + poll; ≥25% slack → 1650).
 - `make check-remote` for description-service surfaces touched.
 - Manual smoke (close decision): bench compose/stack with flag+class+admin+tailnet+denylist; catalog+baseline upload; 10 media_ids; 202 then poll to complete; insightface detection counts visible; purge verified; production worker CPU idle; license banner present; no prod token env on bench.
 - Adversarial review per slice; findings **only** in handoff MCP (not pasted into this plan).
@@ -1049,43 +1211,48 @@ evaluate_bench_preflight(ctx: BenchPreflightContext) -> list[str]
 
 - [ ] `RECOGNITION_BENCH_PROFILE_ENABLED` default false
 - [ ] Boot-coupled gate: admin + tailnet_bound + `deployment_class=internal_bench` or refuse start
-- [ ] Denylist + deployment marker boot checks + tests
-- [ ] Pure `evaluate_bench_preflight` full set for GET **and** POST
-- [ ] [TEST-15] post-boot profile drift caught at mutation
-- [ ] Purge sweeper registered even when flag off
+- [ ] Denylist covers **every** configured external endpoint (DB, blob, cache/queue) + tests
+- [ ] Fail-closed marker: refuse unmarked DB with production-shaped rows; stamp only empty DBs
+- [ ] `evaluate_bench_preflight` with **`BOOT_AUTH_SET` / `RUN_CREATE_SET`** (not one deadlocking bag)
+- [ ] [TEST-15] post-boot profile drift caught at run mutation; enrollment succeeds while catalog empty
+- [ ] Purge sweeper registered even when flag off; audit purge filters bench enums only
+- [ ] `001_identity_schema.py` marker table lands with S1 tests
 - [ ] **Scope + epic**: escalation ladder → **FIR-9**; this bench task remains **FIR-8** (same baseline)
 - [ ] Slice decision recorded
 
 ### S2 — Async run vehicle + bounds
 
-- [ ] `recognition_bench_runs` + partial unique index in `001_identity_schema.py`
-- [ ] POST = validate + insert + 202 only (no ingest)
-- [ ] `bench_run_supervisor_tick` owns ingest→scan→score→seal
-- [ ] Max 20 reject / default 10 / empty=nothing / timeout 1200 with arithmetic test
+- [ ] `recognition_bench_runs` + `phase`/`item_cursor` + `uq_bench_single_live ON ((1))` in `001_identity_schema.py`
+- [ ] POST = validate + insert + 202 only (no ingest); `require_admin_header`
+- [ ] Re-entrant `bench_run_supervisor_tick` resumes phase; timeout every tick
+- [ ] Max 20 reject / default 10 / empty=nothing / timeout **1650** with cold-start arithmetic test
 - [ ] Ingest hard-fail: ≥3 failures or 0 successes
-- [ ] State machine + crash reclaim + cancel path
+- [ ] [TEST-15] queued-while-running unique violation / 409
+- [ ] State machine + crash resume + cancel path
 - [ ] Slice decision recorded
 
 ### S3 — Catalog + baseline + intake + retention
 
 - [ ] Enrolled source tenant server-derived
-- [ ] Catalog + baseline upload endpoints (option b)
+- [ ] Catalog + baseline upload endpoints (option b); `BOOT_AUTH_SET`; `require_admin_header`
+- [ ] Catalog pins host IP; ingest re-verifies pin
+- [ ] Baseline normative schema (5 MiB, sha256, unknown-field reject)
 - [ ] Async HTTPS pull + host allowlist + size/time bounds
 - [ ] `FilesystemObjectStore.put`; sha256 join key stamped
 - [ ] Client `media_url` rejected
-- [ ] Ingest audit rows; audit retention 90d
+- [ ] Ingest audit rows; audit retention 90d; purge **only** bench `AdminAuditEvent` values
 - [ ] Delete-by-default media + embeddings; run row retention 30d
 - [ ] Flag-off purge still runs
 - [ ] Slice decision recorded
 
 ### S4 — REST + metrics
 
-- [ ] Routes only under `/admin`
+- [ ] Routes only under `/admin`; JSON mutations header-only
 - [ ] Label-free metrics; null label-dependent frames
 - [ ] Independent scorer; in-tree face_metrics + parity fixture
 - [ ] Join by content_sha256; both legs’ profile/model/dim/code_sha stamped
 - [ ] `license_notice` + `source=live_tenant_bench`
-- [ ] Baseline missing → `unavailable` honesty
+- [ ] `baseline_missing` blocks run create; partial field nulls still honest when artifact present
 - [ ] Slice decision recorded
 
 ### S5 — Operator HTML UI
@@ -1106,10 +1273,10 @@ evaluate_bench_preflight(ctx: BenchPreflightContext) -> list[str]
 
 ## Success Criteria
 
-1. Incomplete bench license env **or** data-plane collision **cannot boot** a bench-enabled process; flag-off production boots and cannot schedule insightface bench runs; purge still runs.
+1. Incomplete bench license env, denylist collision, production marker, **or unmarked DB with production-shaped data** **cannot boot** a bench-enabled process; flag-off production boots and cannot schedule insightface bench runs; purge still runs.
 2. Operator obtains comparable **label-free** live-tenant numbers: uploaded production baseline vs bench insightface leg, **without** mixing embedding spaces in production and **without** prod admin credentials on the bench host.
-3. POST is fully async (202 + supervisor); timeout arithmetic holds; ingest hard-fail is defined and tested.
-4. Mutation path uses the **same full preflight** as activation; post-boot drift is rejected ([TEST-15]).
+3. POST is fully async (202 + re-entrant supervisor); cold-start-inclusive timeout arithmetic holds with ≥25% slack; ingest hard-fail is defined and tested; timeout enforced every tick.
+4. Enrollment/baseline use **`BOOT_AUTH_SET`**; run create uses **`RUN_CREATE_SET`**; post-boot drift is rejected; single-live index admits at most one live row ([TEST-15]).
 5. License notice is visible and API-carried; insightface remains non-public and non-WP.
 6. Runtime construction still funnels through `build_embedding_runtime` and `_FACE_PIPELINE_PROFILES`; no scan_worker fork.
 7. Live-tenant bench output is explicitly not Golden-150 ([DIAG-08]); null purity on unlabeled media ([EVAL-01], [rg-015]); join key sha256; dual provenance stamps.
@@ -1156,7 +1323,17 @@ evaluate_bench_preflight(ctx: BenchPreflightContext) -> list[str]
 | **FIR8R2-04** data plane not proven distinct | high | [Data-plane isolation proof](#data-plane-isolation-proof-fir8r2-04--normative); S1 acceptance tests |
 | **FIR8R2-05** comparison integrity | medium | [Label-free metrics + join key + stamps](#label-free-metrics-contract-fir8pr-04--fir8r2-05); [Truncation rule](#bounded-work-fir8pa-03--ops-r-2--normative); baseline upload in **S3** |
 | **FIR8R2-06** lifecycle pins | medium | [Lifecycle pins](#lifecycle-pins-fir8r2-06--normative); concurrency index; purge-always; audit 90d; single `admin_auth_ok_context` |
-| **FIR8R2-07** residuals unpinned | medium | [face_metrics](#face_metrics-placement-fir8r2-07); blob `FilesystemObjectStore.put` + scan item fields in media intake; [Residual risks](#residual-risks-fir8r2-07--pinned-now) |
+| **FIR8R2-07** residuals unpinned | medium | [face_metrics](#face_metrics-placement-fir8r2-07); blob `FilesystemObjectStore.put` + scan item fields in media intake; [Residual risks](#residual-risks-fir8r2-07--fir8r3-02--pinned-now) |
+
+### Round-3 resolution index (v4)
+
+| Finding | Severity | Resolution anchor in this plan |
+| --- | --- | --- |
+| **FIR8R3-01** unique index wrong (`UNIQUE (status)` permits queued+running) | high | [Concurrency — ONE mechanism](#concurrency--one-mechanism-fir8r2-06--fir8r3-01); `uq_bench_single_live ON ((1))`; 409 contract; [TEST-15] `test_single_live_index_rejects_queued_while_running` |
+| **FIR8R3-02** marker rail fail-open + narrow denylist | high | [Data-plane isolation](#data-plane-isolation-proof-fir8r2-04--fir8r3-02--normative) fail-CLOSED stamp rules; denylist covers every external endpoint; [Residual risks](#residual-risks-fir8r2-07--fir8r3-02--pinned-now) operator-ack for deployment_class + denylist |
+| **FIR8R3-03** single blocker bag deadlocks bootstrap | high | [Named blocker sets](#named-blocker-sets-fir8r3-03--split-to-break-bootstrap-deadlock) `BOOT_AUTH_SET` / `RUN_CREATE_SET`; enrollment-while-empty [TEST-15] |
+| **FIR8R3-04** non-re-entrant supervisor + timeout only at startup | medium | [Re-entrant supervisor](#re-entrant-supervisor-fir8r3-04--phase--item-cursor); `phase` + `item_cursor`; timeout every tick; [Timeout arithmetic](#timeout-arithmetic-fir8r2-01--fir8r3-04--normative) cold-start floor 1311 → default **1650** |
+| **FIR8R3-05** one-clause residual pins | medium | [Small pins](#small-pins-fir8pr-07--ops-r-8r-10--fir8r2---fir8r3-05): (a) `require_admin_header` only; (b) baseline schema; (c) bench-only audit purge enums; (d) catalog IP pin; (e) S1 Files + schema ownership of `001_identity_schema.py` |
 
 ### Invariants preserved from v1 (must survive all plan revs)
 

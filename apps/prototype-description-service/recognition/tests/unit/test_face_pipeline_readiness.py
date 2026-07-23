@@ -129,15 +129,23 @@ def _align_dims_to_sface(monkeypatch: pytest.MonkeyPatch) -> None:
     get_database_settings.cache_clear()
 
 
+def _live_face_pipeline_adapter():
+    """Resolve face_pipeline_adapter from live sys.modules (not package attrs)."""
+    import importlib
+
+    return importlib.import_module(
+        "recognition.infrastructure.embeddings.face_pipeline_adapter"
+    )
+
+
 def _stub_shared_runtime_loader(
     monkeypatch: pytest.MonkeyPatch, models_dir: Path | None = None
 ) -> None:
     """Avoid real ORT session construction for synthetic-byte readiness tests."""
-    from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
-
+    fpa = _live_face_pipeline_adapter()
     fpa.reset_shared_face_pipeline_runtime_for_tests()
 
-    def loader(*, models_dir: Path, **kwargs: object) -> fpa.FacePipelineRuntime:
+    def loader(*, models_dir: Path, **kwargs: object) -> object:
         return fpa.FacePipelineRuntime(
             detector=MagicMock(),
             aligner=MagicMock(),
@@ -149,17 +157,22 @@ def _stub_shared_runtime_loader(
             top_k=5000,
         )
 
-    monkeypatch.setattr(fpa, "_load_face_pipeline_runtime", loader)
+    # String form → importlib.import_module → live sys.modules entry production uses.
+    monkeypatch.setattr(
+        "recognition.infrastructure.embeddings.face_pipeline_adapter._load_face_pipeline_runtime",
+        loader,
+    )
 
 
 @pytest.fixture(autouse=True)
 def _clear_verify_cache() -> None:
-    from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
+    fpa = _live_face_pipeline_adapter()
 
     health_mod.reset_face_pipeline_verify_cache_for_tests()
     fpa.reset_shared_face_pipeline_runtime_for_tests()
     yield
     health_mod.reset_face_pipeline_verify_cache_for_tests()
+    fpa = _live_face_pipeline_adapter()
     fpa.reset_shared_face_pipeline_runtime_for_tests()
     from db.settings import get_database_settings
     from recognition.config import get_settings
@@ -553,16 +566,19 @@ def test_check_face_pipeline_models_ort_construction_failure_unhealthy(
     construction. Valid verified files with InferenceSession construction failure
     must return UNHEALTHY with a runtime-unavailable reason (not OK).
     """
-    from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
+    fpa = _live_face_pipeline_adapter()
 
     _align_dims_to_sface(monkeypatch)
     _install_synthetic_pair(tmp_path, monkeypatch)
     fpa.reset_shared_face_pipeline_runtime_for_tests()
 
-    def boom_loader(*, models_dir: Path, **kwargs: object) -> fpa.FacePipelineRuntime:
+    def boom_loader(*, models_dir: Path, **kwargs: object) -> object:
         raise RuntimeError("InferenceSession construction failed: synthetic ORT boom")
 
-    monkeypatch.setattr(fpa, "_load_face_pipeline_runtime", boom_loader)
+    monkeypatch.setattr(
+        "recognition.infrastructure.embeddings.face_pipeline_adapter._load_face_pipeline_runtime",
+        boom_loader,
+    )
 
     result = health_mod.check_face_pipeline_models(tmp_path)
     assert result.status.value == "unhealthy"
@@ -579,7 +595,7 @@ def test_check_face_pipeline_models_healthy_implies_usable_shared_runtime(
     Readiness and serve path must not diverge — a successful check must go
     through (or populate) get_shared_face_pipeline_runtime so serve can reuse it.
     """
-    from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
+    fpa = _live_face_pipeline_adapter()
 
     _align_dims_to_sface(monkeypatch)
     _install_synthetic_pair(tmp_path, monkeypatch)
@@ -597,12 +613,15 @@ def test_check_face_pipeline_models_healthy_implies_usable_shared_runtime(
         top_k=5000,
     )
 
-    def loader(*, models_dir: Path, **kwargs: object) -> fpa.FacePipelineRuntime:
+    def loader(*, models_dir: Path, **kwargs: object) -> object:
         nonlocal load_calls
         load_calls += 1
         return mock_runtime
 
-    monkeypatch.setattr(fpa, "_load_face_pipeline_runtime", loader)
+    monkeypatch.setattr(
+        "recognition.infrastructure.embeddings.face_pipeline_adapter._load_face_pipeline_runtime",
+        loader,
+    )
 
     result = health_mod.check_face_pipeline_models(tmp_path)
     assert result.status.value == "ok"
@@ -619,7 +638,7 @@ def test_ready_ort_construction_failure_returns_503(
     """GROKHARM-04: /ready must 503 when model verify passes but ORT runtime fails."""
     from fastapi.testclient import TestClient
 
-    from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
+    fpa = _live_face_pipeline_adapter()
 
     _align_dims_to_sface(monkeypatch)
     _install_synthetic_pair(tmp_path, monkeypatch)
@@ -628,10 +647,13 @@ def test_ready_ort_construction_failure_returns_503(
     monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_PROFILE", "face_pipeline")
     monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_MODELS_DIR", str(tmp_path))
 
-    def boom_loader(*, models_dir: Path, **kwargs: object) -> fpa.FacePipelineRuntime:
+    def boom_loader(*, models_dir: Path, **kwargs: object) -> object:
         raise RuntimeError("InferenceSession construction failed: synthetic ORT boom")
 
-    monkeypatch.setattr(fpa, "_load_face_pipeline_runtime", boom_loader)
+    monkeypatch.setattr(
+        "recognition.infrastructure.embeddings.face_pipeline_adapter._load_face_pipeline_runtime",
+        boom_loader,
+    )
 
     app = _standalone_ready_app(monkeypatch)
     client = TestClient(app)

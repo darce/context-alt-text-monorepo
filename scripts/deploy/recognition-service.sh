@@ -94,29 +94,34 @@ fail() { printf '%sxx%s %s\n'  "${RED}"    "${RESET}" "$*" >&2; exit 1; }
 #---------------------------------------------------------------- env mapping
 env_to_tag() {
   case "$1" in
-    dev)     echo "dev" ;;
-    staging) echo "staging" ;;
-    prod)    echo "latest" ;;
-    *)       fail "Unknown env: $1 (expected dev|staging|prod)" ;;
+    dev|dev-fir) echo "dev" ;;
+    staging)     echo "staging" ;;
+    prod)        echo "latest" ;;
+    *)           fail "Unknown env: $1 (expected dev|dev-fir|staging|prod)" ;;
   esac
 }
 env_to_unit() {
   case "$1" in
-    dev) echo "acx-dev" ;; staging) echo "acx-staging" ;; prod) echo "acx-prod" ;;
+    dev)     echo "acx-dev" ;;
+    dev-fir) echo "acx-dev-fir" ;;
+    staging) echo "acx-staging" ;;
+    prod)    echo "acx-prod" ;;
     *) fail "Unknown env: $1" ;;
   esac
 }
 env_to_remote_dir() {
   case "$1" in
-    dev) echo "/opt/acx-backend/dev" ;;
+    dev)     echo "/opt/acx-backend/dev" ;;
+    dev-fir) echo "/opt/acx-backend/dev-fir" ;;
     staging) echo "/opt/acx-backend/staging" ;;
-    prod) echo "/opt/acx-backend/prod" ;;
+    prod)    echo "/opt/acx-backend/prod" ;;
     *) fail "Unknown env: $1" ;;
   esac
 }
 env_to_health_url() {
   case "$1" in
     dev)     echo "https://dev.api.altcontext.com/health" ;;
+    dev-fir) echo "https://fir.api.altcontext.com/health" ;;
     staging) echo "https://staging.api.altcontext.com/health" ;;
     prod)    echo "https://api.altcontext.com/health" ;;
     *) fail "Unknown env: $1" ;;
@@ -125,6 +130,7 @@ env_to_health_url() {
 env_to_ready_url() {
   case "$1" in
     dev)     echo "https://dev.api.altcontext.com/ready" ;;
+    dev-fir) echo "https://fir.api.altcontext.com/ready" ;;
     staging) echo "https://staging.api.altcontext.com/ready" ;;
     prod)    echo "https://api.altcontext.com/ready" ;;
     *) fail "Unknown env: $1" ;;
@@ -301,9 +307,9 @@ promote_gate() {
 
 env_to_compose_files() {
   case "$1" in
-    prod)        echo "-f docker-compose.env.yml -f docker-compose.admin.yml" ;;
-    dev|staging) echo "-f docker-compose.env.yml" ;;
-    *)           fail "Unknown env: $1" ;;
+    prod)                 echo "-f docker-compose.env.yml -f docker-compose.admin.yml" ;;
+    dev|dev-fir|staging)  echo "-f docker-compose.env.yml" ;;
+    *)                    fail "Unknown env: $1" ;;
   esac
 }
 
@@ -603,7 +609,7 @@ do_verify() {
 #---------------------------------------------------------------- status
 do_status() {
   local env url body sha
-  for env in dev staging prod; do
+  for env in dev dev-fir staging prod; do
     url="$(env_to_health_url "$env")"
     if body="$(curl -fsS --max-time 5 "$url" 2>/dev/null)"; then
       sha="$(printf '%s' "$body" | python3 -c 'import json,sys;d=json.load(sys.stdin);print((d.get("commit_sha") or d.get("git_commit_sha") or "?")[:8])' 2>/dev/null || echo '?')"

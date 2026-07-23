@@ -19,8 +19,9 @@ DB_RESET_REMOTE_SCRIPT := $(ROOT_MAKEFILE_DIR)/scripts/deploy/db-reset-remote.sh
 DEMO_WALKTHROUGH_APP  := $(ROOT_MAKEFILE_DIR)/apps/prototype-wp-alt-context
 
 .PHONY: deploy-help deploy-build deploy-build-remote \
-        deploy-dev deploy-staging deploy-prod deploy-demo \
+        deploy-dev deploy-dev-fir deploy-staging deploy-prod deploy-demo \
         deploy-promote-staging deploy-promote-prod deploy-rollback-dev \
+        deploy-rollback-dev-fir \
         deploy-verify deploy-verify-dev deploy-verify-staging deploy-verify-prod \
         deploy-status \
         deploy-compose-dev deploy-compose-staging deploy-compose-prod \
@@ -102,6 +103,10 @@ deploy-dev:
 	@REMOTE_BUILD=$(RB_DEFAULT) \
 		"$(DEPLOY_SCRIPT)" deploy dev
 
+deploy-dev-fir:
+	@REMOTE_BUILD=$(RB_DEFAULT) \
+		"$(DEPLOY_SCRIPT)" deploy dev-fir
+
 deploy-staging:
 	@REMOTE_BUILD=$(RB_DEFAULT) \
 		"$(DEPLOY_SCRIPT)" deploy staging
@@ -125,6 +130,11 @@ deploy-promote-prod:
 deploy-rollback-dev:
 	@REMOTE_BUILD=$(RB_DEFAULT) \
 		"$(DEPLOY_SCRIPT)" promote staging dev
+
+# Rollback dev-fir to staging image (same retag path as deploy-rollback-dev).
+deploy-rollback-dev-fir:
+	@REMOTE_BUILD=$(RB_DEFAULT) \
+		"$(DEPLOY_SCRIPT)" promote staging dev-fir
 
 # Verify a deployed environment matches local HEAD.
 deploy-verify:

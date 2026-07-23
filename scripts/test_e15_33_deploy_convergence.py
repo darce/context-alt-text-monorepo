@@ -56,10 +56,88 @@ def _run(args: list[str], tmp_path: Path, extra_env: dict[str, str] | None = Non
 # ---- structural contract ------------------------------------------------
 
 
+def _source_env_map(fn: str, env_arg: str) -> str:
+    """Invoke an env_to_* helper from recognition-service.sh and return stdout."""
+    proc = subprocess.run(
+        ["/bin/bash", "-c", f'source "{SCRIPT}"; {fn} {env_arg}'],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    return proc.stdout.strip()
+
+
 def test_defines_converge_functions() -> None:
     assert "converge_runtime()" in SCRIPT_TEXT
     assert "converge_check()" in SCRIPT_TEXT
     assert "render_unit()" in SCRIPT_TEXT
+
+
+def test_dev_fir_env_mappings() -> None:
+    """FIR23-STACK Slice 1: acx-dev-fir isolated FIR/SFace stack identity."""
+    assert _source_env_map("env_to_tag", "dev-fir") == "dev"
+    assert _source_env_map("env_to_unit", "dev-fir") == "acx-dev-fir"
+    assert _source_env_map("env_to_remote_dir", "dev-fir") == "/opt/acx-backend/dev-fir"
+    assert (
+        _source_env_map("env_to_health_url", "dev-fir")
+        == "https://fir.api.altcontext.com/health"
+    )
+    assert (
+        _source_env_map("env_to_ready_url", "dev-fir")
+        == "https://fir.api.altcontext.com/ready"
+    )
+    assert (
+        _source_env_map("env_to_compose_files", "dev-fir")
+        == "-f docker-compose.env.yml"
+    )
+
+
+def test_dev_fir_remote_dir_basename_matches_env() -> None:
+    # systemd template hardcodes WorkingDirectory=/opt/acx-backend/{{ENV}};
+    # remote dir basename MUST equal the ENV token (not a short alias like "fir").
+    remote = _source_env_map("env_to_remote_dir", "dev-fir")
+    assert remote.endswith("/dev-fir"), remote
+    assert remote == f"/opt/acx-backend/dev-fir"
+
+
+def test_dev_fir_status_loop_includes_env() -> None:
+    # do_status hardcodes the env list; unknown envs stay fail-closed elsewhere.
+    status_body = SCRIPT_TEXT.split("do_status()", 1)[1].split("\n}\n", 1)[0]
+    assert "for env in dev dev-fir staging prod" in status_body
+
+
+def test_legacy_env_mappings_unchanged() -> None:
+    assert _source_env_map("env_to_tag", "dev") == "dev"
+    assert _source_env_map("env_to_tag", "staging") == "staging"
+    assert _source_env_map("env_to_tag", "prod") == "latest"
+    assert _source_env_map("env_to_unit", "dev") == "acx-dev"
+    assert _source_env_map("env_to_unit", "prod") == "acx-prod"
+    assert (
+        _source_env_map("env_to_compose_files", "prod")
+        == "-f docker-compose.env.yml -f docker-compose.admin.yml"
+    )
+
+
+def test_unknown_env_still_fails_closed() -> None:
+    for fn in (
+        "env_to_tag",
+        "env_to_unit",
+        "env_to_remote_dir",
+        "env_to_health_url",
+        "env_to_ready_url",
+        "env_to_compose_files",
+    ):
+        proc = subprocess.run(
+            ["/bin/bash", "-c", f'source "{SCRIPT}"; {fn} bogus'],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        assert proc.returncode != 0, f"{fn} must fail closed for unknown env"
+        assert "Unknown env" in (proc.stdout + proc.stderr)
 
 
 def test_convergence_gated_by_env_flag_default_on() -> None:
@@ -156,6 +234,13 @@ def test_converge_runtime_ships_only_env_compose_for_dev(tmp_path: Path) -> None
     log = _run_converge_runtime("dev", tmp_path)
     assert "sudo cp '/tmp/docker-compose.env.yml'" in log
     assert "docker-compose.admin.yml" not in log, "dev must not ship the admin overlay"
+
+
+def test_converge_runtime_ships_only_env_compose_for_dev_fir(tmp_path: Path) -> None:
+    log = _run_converge_runtime("dev-fir", tmp_path)
+    assert "sudo cp '/tmp/docker-compose.env.yml'" in log
+    assert "docker-compose.admin.yml" not in log, "dev-fir must not ship the admin overlay"
+    assert "/opt/acx-backend/dev-fir" in log
 
 
 def test_check_passes_clean_when_deployed_matches_repo(tmp_path: Path) -> None:

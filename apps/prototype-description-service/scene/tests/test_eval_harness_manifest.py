@@ -7,7 +7,6 @@ import unicodedata
 import warnings
 
 import pytest
-
 from pydantic import ValidationError
 
 from scripts.eval_harness.manifest import (

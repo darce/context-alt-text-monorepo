@@ -12,6 +12,11 @@ License isolation (hard rule):
 - PROV-01: buffalo run-records are non-commercial derived artifacts — stay in
   git-ignored ``out/``, never promote to ``docs/tasks/**``.
 
+Determinism (TEST-08): bit-reproducible buffalo embeddings require the ORT
+thread pin applied in ``_build_face_analysis`` (intra/inter_op = 1, plus
+OpenMP/BLAS env pins). ``--check-determinism`` only re-scores saved records;
+it does not re-run buffalo inference — the pin is the real-inference guard.
+
 Heuristics: PROV-05 (limit prediction surface / license isolation), EMB-01
 (512D leg space only — never crossed with 128D), PROV-01 (raw-512D non-promotion).
 """
@@ -97,17 +102,67 @@ def _resolve_insightface_root() -> str | None:
     return None
 
 
-def _build_face_analysis() -> Any:
-    """Construct + prepare a CPU FaceAnalysis(buffalo_l) honoring the env root."""
-    _load_insightface()
-    from insightface.app import FaceAnalysis  # type: ignore[import-untyped]
+# Env thread pins applied at buffalo leg-build (TEST-08). insightface's
+# model_zoo.get_model only forwards providers/provider_options into
+# InferenceSession, so SessionOptions cannot be set via FaceAnalysis kwargs
+# on the installed surface; OpenMP/BLAS pools still need an explicit pin.
+_ORT_THREAD_ENV_PINS: tuple[str, ...] = (
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+)
 
+
+def _pin_ort_thread_env() -> None:
+    """Force single-thread OpenMP/BLAS pools before ORT sessions are created."""
+    for var in _ORT_THREAD_ENV_PINS:
+        os.environ[var] = "1"
+
+
+def _ort_session_options() -> Any:
+    """CPU SessionOptions with intra/inter_op threads pinned to 1 (TEST-08)."""
+    import onnxruntime as ort  # local: keep module import free of ORT at gate time
+
+    opts = ort.SessionOptions()
+    opts.intra_op_num_threads = 1
+    opts.inter_op_num_threads = 1
+    opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    return opts
+
+
+def _build_face_analysis() -> Any:
+    """Construct + prepare a CPU FaceAnalysis(buffalo_l) honoring the env root.
+
+    Pins ORT to 1 intra/inter thread for bit-reproducible embeddings (TEST-08).
+    SessionOptions are injected via a temporary ModelRouter.get_model wrap
+    because FaceAnalysis kwargs do not forward ``sess_options`` on the
+    installed insightface surface; env pins cover OpenMP-backed builds.
+    """
+    _load_insightface()
+    _pin_ort_thread_env()
+    from insightface.app import FaceAnalysis  # type: ignore[import-untyped]
+    from insightface.model_zoo.model_zoo import ModelRouter  # type: ignore[import-untyped]
+
+    sess_options = _ort_session_options()
     kwargs: dict[str, Any] = {"name": BUFFALO_MODEL_ID, "providers": ["CPUExecutionProvider"]}
     root = _resolve_insightface_root()
     if root is not None:
         kwargs["root"] = root
-    app = FaceAnalysis(**kwargs)
-    app.prepare(ctx_id=-1, det_size=(640, 640))
+
+    original_get_model = ModelRouter.get_model
+
+    def _get_model_pinned(self: Any, **router_kwargs: Any) -> Any:
+        pinned = dict(router_kwargs)
+        pinned.setdefault("sess_options", sess_options)
+        return original_get_model(self, **pinned)
+
+    ModelRouter.get_model = _get_model_pinned  # type: ignore[method-assign]
+    try:
+        app = FaceAnalysis(**kwargs)
+        app.prepare(ctx_id=-1, det_size=(640, 640))
+    finally:
+        ModelRouter.get_model = original_get_model  # type: ignore[method-assign]
     return app
 
 
@@ -215,6 +270,20 @@ class FusedPlaceholderAligner:
         return _PlaceholderAlignment(crop=self._CROP)
 
 
+def _bbox_key(bbox: np.ndarray | Sequence[float]) -> tuple[float, float, float, float]:
+    """Stable per-detection identity for the fused pending queue (reorder guard)."""
+    b = np.asarray(bbox, dtype=np.float64).reshape(4)
+    return (float(b[0]), float(b[1]), float(b[2]), float(b[3]))
+
+
+@dataclass(frozen=True)
+class _PendingSlot:
+    """One detect-time cache entry: bbox identity + embedding (order-safe)."""
+
+    bbox_key: tuple[float, float, float, float]
+    embedding: np.ndarray
+
+
 class BuffaloFusedLeg:
     """FaceDetector + FaceEmbedder protocol adapter over InsightFace buffalo_l.
 
@@ -223,9 +292,11 @@ class BuffaloFusedLeg:
     embedding walker-supplied SFace-canonical crops would change buffalo's
     operating mode and misattribute alignment error to the incumbent. So
     ``detect()`` runs ``FaceAnalysis.get()`` ONCE per image (detect + align +
-    embed inside insightface) and caches the embeddings in detection order;
-    ``embed()`` serves that cache and ignores crop PIXELS (crop COUNT is still
-    cross-checked, and out-of-sequence calls fail closed). Provenance stamps
+    embed inside insightface) and caches the embeddings keyed by detect-time
+    bbox identity; ``embed()`` serves that cache and ignores crop PIXELS
+    (crop COUNT is cross-checked; when ``boxes=`` is supplied — as
+    ``process_image_bgr`` does for this leg — each served slot must match the
+    requested bbox, so a same-count REORDER fails closed). Provenance stamps
     ``leg_mode="fused"`` so detect/embed are never read as separable stages.
 
     PROV-01: run-records produced through this leg hold 512D embeddings of
@@ -235,34 +306,52 @@ class BuffaloFusedLeg:
 
     leg_mode = BUFFALO_LEG_MODE
     model_id = BUFFALO_MODEL_ID
+    # process_image_bgr duck-types this to pass detection bboxes into embed().
+    fused_pending_box_guard = True
 
     def __init__(self, *, app: Any | None = None, embedding_dim: int = BUFFALO_EMBEDDING_DIM) -> None:
         self._app = app if app is not None else _build_face_analysis()
         self.embedding_dim = int(embedding_dim)
-        self._pending: list[np.ndarray] | None = None
+        self._pending: list[_PendingSlot] | None = None
 
     def detect(self, images: Sequence[np.ndarray]) -> list[list[RawDetection]]:
         """Fused pass: detections returned now, embeddings cached for embed()."""
         batches: list[list[RawDetection]] = []
-        pending: list[np.ndarray] = []
+        pending: list[_PendingSlot] = []
         for image in images:
             faces = self._app.get(image)
             dets: list[RawDetection] = []
             for face in faces:
+                bbox = np.asarray(_face_bbox_xywh(face), dtype=np.float32)
                 dets.append(
                     RawDetection(
-                        bbox=np.asarray(_face_bbox_xywh(face), dtype=np.float32),
+                        bbox=bbox,
                         landmarks=_face_landmarks5(face).astype(np.float32),
                         score=_face_det_score(face),
                     )
                 )
-                pending.append(_face_embedding_vector(face, embedding_dim=self.embedding_dim))
+                pending.append(
+                    _PendingSlot(
+                        bbox_key=_bbox_key(bbox),
+                        embedding=_face_embedding_vector(face, embedding_dim=self.embedding_dim),
+                    )
+                )
             batches.append(dets)
         self._pending = pending
         return batches
 
-    def embed(self, crops: Sequence[np.ndarray]) -> np.ndarray:
-        """Serve the embeddings cached by the immediately-preceding detect()."""
+    def embed(
+        self,
+        crops: Sequence[np.ndarray],
+        *,
+        boxes: Sequence[np.ndarray] | None = None,
+    ) -> np.ndarray:
+        """Serve the embeddings cached by the immediately-preceding detect().
+
+        ``boxes`` (detect-time xywh, same order as ``crops``) enables the
+        reorder-safe identity guard. When omitted, only count + protocol
+        sequencing are checked (unit tests that call embed directly).
+        """
         if self._pending is None:
             raise FusedLegProtocolError(
                 "embed() before detect(): the fused buffalo leg serves embeddings cached by "
@@ -274,9 +363,23 @@ class BuffaloFusedLeg:
                 f"fused embed() got {len(crops)} crops but detect() cached {len(pending)} "
                 "detections; detect() and embed() must come from the same image pass"
             )
+        if boxes is not None:
+            if len(boxes) != len(pending):
+                raise FusedLegProtocolError(
+                    f"fused embed() got {len(boxes)} boxes but detect() cached {len(pending)} "
+                    "detections; boxes must match the detect() pass"
+                )
+            for i, (slot, box) in enumerate(zip(pending, boxes, strict=True)):
+                req = _bbox_key(box)
+                if req != slot.bbox_key:
+                    raise FusedLegProtocolError(
+                        f"fused embed() bbox mismatch at index {i}: detect() cached "
+                        f"{slot.bbox_key} but request has {req} "
+                        "(same-count reorder fail-closed; leg_mode='fused')"
+                    )
         if not pending:
             return np.zeros((0, self.embedding_dim), dtype=np.float32)
-        return np.stack(pending, axis=0).astype(np.float32, copy=False)
+        return np.stack([slot.embedding for slot in pending], axis=0).astype(np.float32, copy=False)
 
 
 def build_baseline_leg(

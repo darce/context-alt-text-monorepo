@@ -120,7 +120,12 @@ def process_image_bgr(
     for det in detections:
         aligned = aligner.align(image_bgr, det.landmarks)
         crops.append(aligned.crop)
-    embeddings = embedder.embed(crops)
+    # Fused buffalo leg: pass detect-time bboxes so same-count reorder fails closed.
+    if getattr(embedder, "fused_pending_box_guard", False):
+        boxes = [np.asarray(det.bbox, dtype=np.float32) for det in detections]
+        embeddings = embedder.embed(crops, boxes=boxes)  # type: ignore[call-arg]
+    else:
+        embeddings = embedder.embed(crops)
     faces: list[dict[str, Any]] = []
     for i, det in enumerate(detections):
         faces.append(_detection_to_face(det, embeddings[i]))
@@ -259,8 +264,9 @@ def build_occlusion_twin_pairs(
     ``cache_detector`` (default: the leg ``detector``) builds the frozen
     landmark cache. Non-candidate legs (buffalo) MUST pass the pinned
     candidate-family YuNet here (``build_pinned_cache_detector``) so the twin
-    universe is the SAME for both legs (EXP-08 disclosure) and the
-    ``pinned_yunet`` cache provenance stays truthful.
+    universe is the SAME for both legs (EXP-08 disclosure). Twin-pass
+    ``landmark_cache`` provenance is derived from the injected cache detector
+    (rg-015) — never hardcoded to pinned-YuNet when another detector is used.
     """
     images_root = Path(images_dir)
     cache_det = cache_detector if cache_detector is not None else detector
@@ -325,10 +331,36 @@ def build_occlusion_twin_pairs(
         "n_re_detect_miss": sum(
             1 for pairs in pairs_by_tag.values() for p in pairs if p["embedding"] is None
         ),
-        "landmark_cache": LandmarkCacheProvenance.pinned_yunet().to_dict(),
+        "landmark_cache": _cache_provenance_from_detector(cache_det).to_dict(),
         "errors": errors,
     }
     return pairs_by_tag, provenance
+
+
+def _cache_provenance_from_detector(cache_det: Any) -> LandmarkCacheProvenance:
+    """Derive landmark-cache provenance from the injected detector (rg-015).
+
+    Preference order:
+    1. ``landmark_cache_provenance`` attribute (``LandmarkCacheProvenance`` or dict)
+    2. ``model_id`` + ``weights_sha256`` attributes on the detector
+    3. ``OrtYuNetDetector`` → pinned candidate-family YuNet
+    """
+    prov = getattr(cache_det, "landmark_cache_provenance", None)
+    if isinstance(prov, LandmarkCacheProvenance):
+        return prov
+    if isinstance(prov, dict):
+        return LandmarkCacheProvenance.from_dict(prov)
+    model_id = getattr(cache_det, "model_id", None)
+    weights = getattr(cache_det, "weights_sha256", None)
+    if model_id is not None and weights is not None:
+        return LandmarkCacheProvenance(model_id=str(model_id), weights_sha256=str(weights))
+    if isinstance(cache_det, OrtYuNetDetector):
+        return LandmarkCacheProvenance.pinned_yunet()
+    raise TypeError(
+        "cache_detector must expose landmark_cache_provenance, "
+        "(model_id + weights_sha256), or be OrtYuNetDetector for pinned-YuNet "
+        f"default; got {type(cache_det).__name__}"
+    )
 
 
 def build_candidate_leg(
@@ -348,8 +380,12 @@ def build_pinned_cache_detector(*, models_dir: Path | None = None) -> OrtYuNetDe
     Non-candidate legs pass this to ``build_occlusion_twin_pairs`` so occlusion
     twin eligibility stays conditioned on the SAME candidate-family cache for
     every leg (EXP-08 / ``LANDMARK_CACHE_LEG_ASYMMETRY_DISCLOSURE``).
+    Stamps ``landmark_cache_provenance`` so twin-pass provenance stays truthful
+    (rg-015) even when other detectors are injected in tests.
     """
-    return OrtYuNetDetector(models_dir=models_dir)
+    det = OrtYuNetDetector(models_dir=models_dir)
+    det.landmark_cache_provenance = LandmarkCacheProvenance.pinned_yunet()  # type: ignore[attr-defined]
+    return det
 
 
 __all__ = [

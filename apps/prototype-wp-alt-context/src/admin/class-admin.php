@@ -81,6 +81,27 @@ class Admin {
 	public function init(): void {
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_scripts' ) );
 		add_action( 'admin_notices', array( $this, 'render_recognition_config_notice' ) );
+		// wp_script_add_data($handle,'type','module') does not itself render type="module";
+		// without this the code-split Vite entry (top-level `import`) loads as a classic
+		// script and the SPA never mounts ("Cannot use import statement outside a module").
+		add_filter( 'script_loader_tag', array( $this, 'filter_module_script_tag' ), 10, 3 );
+	}
+
+	/**
+	 * Render type="module" for any handle registered with wp_script_add_data($handle,'type','module').
+	 */
+	public function filter_module_script_tag( string $tag, string $handle, string $src ): string {
+		$scripts = wp_scripts();
+
+		if ( null === $scripts || 'module' !== $scripts->get_data( $handle, 'type' ) ) {
+			return $tag;
+		}
+
+		if ( false !== strpos( $tag, 'type="module"' ) || false !== strpos( $tag, "type='module'" ) ) {
+			return $tag;
+		}
+
+		return (string) preg_replace( '/<script\s/', '<script type="module" ', $tag, 1 );
 	}
 
 	public function enqueue_scripts( string $hookSuffix ): void {

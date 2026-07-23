@@ -240,6 +240,7 @@ def test_distinct_image_min_gallery_two_faces_same_media_ineligible():
         box_index=0,
         kind="masked",
         by_identity=by_id,
+        tau=0.0,
     )
     assert result.eligible is False
     assert result.ineligible_reason == "distinct_image_min_gallery"
@@ -432,6 +433,7 @@ def test_eligible_pair_floor_under_90_is_directional():
     rollup = score_occlusion_accuracy(
         inputs,
         faces,
+        tau=0.0,
         walk_stability_asserted=True,
         walk_stability_delta=0.0,
     )
@@ -460,6 +462,7 @@ def test_walk_stability_not_asserted_is_directional():
             }
         ],
         faces,
+        tau=0.0,
         walk_stability_asserted=False,
     )
     assert rollup.directional is True
@@ -521,6 +524,7 @@ def test_occlusion_can_fail_misassign_drives_a_s_down():
             }
         ],
         faces,
+        tau=0.0,
         walk_stability_asserted=True,
         walk_stability_delta=0.0,
     )
@@ -535,6 +539,7 @@ def test_occlusion_can_fail_misassign_drives_a_s_down():
             }
         ],
         faces,
+        tau=0.0,
         walk_stability_asserted=True,
         walk_stability_delta=0.0,
     )
@@ -578,7 +583,7 @@ def test_occlusion_gate_goes_red_when_floors_met():
         {"media_id": 2 * i + 1, "box_index": 0, "true_name": f"P{i}", "kind": "masked", "embedding": onehot(i)}
         for i in range(n)
     ]
-    clean = score_occlusion_accuracy(correct, faces, walk_stability_asserted=True, walk_stability_delta=0.0)
+    clean = score_occlusion_accuracy(correct, faces, tau=0.0, walk_stability_asserted=True, walk_stability_delta=0.0)
     assert clean.n_eligible == n
     assert clean.directional is False  # floors met + walk-stability → a GATING number
     assert clean.accuracy == pytest.approx(1.0)
@@ -586,10 +591,131 @@ def test_occlusion_gate_goes_red_when_floors_met():
     # Flip one twin to a wrong identity → argmax mis-assigns → the GATING number drops.
     bad = list(correct)
     bad[0] = {**bad[0], "embedding": onehot(1)}  # P0 twin now looks like P1
-    red = score_occlusion_accuracy(bad, faces, walk_stability_asserted=True, walk_stability_delta=0.0)
+    red = score_occlusion_accuracy(bad, faces, tau=0.0, walk_stability_asserted=True, walk_stability_delta=0.0)
     assert red.directional is False  # still a gating number (floors still met)
     assert red.accuracy == pytest.approx((n - 1) / n)
     assert red.accuracy < clean.accuracy  # the GATE went RED
+
+
+def test_tau_none_raises_pair_and_rollup():
+    """FIR5RR-02: tau=None (run-578 closed-set argmax mode) must raise, not degrade."""
+    faces = [
+        _matched(1, 0, [1, 0, 0], "Alice"),
+        _matched(2, 0, [1, 0.05, 0], "Alice"),
+        _matched(3, 0, [0, 1, 0], "Bob"),
+        _matched(4, 0, [0, 1, 0.05], "Bob"),
+    ]
+    with pytest.raises(ValueError, match="tau is required"):
+        score_occlusion_pair(
+            twin_embedding=_unit([1, 0, 0]),
+            true_name="Alice",
+            source_media_id=1,
+            box_index=0,
+            kind="masked",
+            by_identity={"Alice": faces[:2], "Bob": faces[2:]},
+            tau=None,  # type: ignore[arg-type]
+        )
+    with pytest.raises(ValueError, match="tau is required"):
+        score_occlusion_accuracy(
+            [
+                {
+                    "media_id": 1,
+                    "box_index": 0,
+                    "true_name": "Alice",
+                    "kind": "masked",
+                    "embedding": _unit([1, 0, 0]),
+                }
+            ],
+            faces,
+            tau=None,  # type: ignore[arg-type]
+        )
+
+
+def test_twin_scored_at_own_identity_heldout_tau_not_tau_op():
+    """FIR5RR-01 discriminator: occlusion accuracy must change when a probe's
+    own-fold tau_k differs from tau_op — red under a tau_op regression.
+
+    Twin s_max = 0.5. Own-identity held-out tau_k = 0.7 (reject → incorrect);
+    a tau_op-regressed scorer using the fallback tau=0.3 would accept (correct).
+    """
+    faces = [
+        _matched(1, 0, [1, 0, 0], "Alice"),
+        _matched(2, 0, [1, 0, 0], "Alice"),
+        _matched(3, 0, [0, 1, 0], "Bob"),
+        _matched(4, 0, [0, 1, 0], "Bob"),
+    ]
+    # cos(twin, Alice proto) = 0.5 exactly; cos vs Bob proto = 0.
+    twin = _unit([0.5, 0.0, float(np.sqrt(0.75))])
+    inputs = [
+        {
+            "media_id": 1,
+            "box_index": 0,
+            "true_name": "Alice",
+            "kind": "masked",
+            "embedding": twin,
+        }
+    ]
+    at_own_tau = score_occlusion_accuracy(
+        inputs,
+        faces,
+        tau=0.3,  # tau_op-style fallback — must NOT be used for Alice
+        tau_by_identity={"Alice": 0.7},
+        walk_stability_asserted=True,
+        walk_stability_delta=0.0,
+    )
+    assert at_own_tau.n_eligible == 1
+    assert at_own_tau.n_correct == 0  # rejected at Alice's own held-out tau 0.7
+    # Regression probe: scoring at the pooled fallback instead would flip it.
+    at_tau_op = score_occlusion_accuracy(
+        inputs,
+        faces,
+        tau=0.3,
+        tau_by_identity=None,
+        walk_stability_asserted=True,
+        walk_stability_delta=0.0,
+    )
+    assert at_tau_op.n_correct == 1
+    assert at_own_tau.n_correct != at_tau_op.n_correct
+    # Fallback stays entity-disjoint-by-absence: identities NOT in the map use tau.
+    fallback_only = score_occlusion_accuracy(
+        inputs,
+        faces,
+        tau=0.7,
+        tau_by_identity={"Bob": 0.2},  # Alice absent → fallback 0.7 applies
+        walk_stability_asserted=True,
+        walk_stability_delta=0.0,
+    )
+    assert fallback_only.n_correct == 0
+
+
+def test_ineligible_miss_never_counts_as_re_detect_miss():
+    """FIR5RR-14: re_detect_miss contributes only inside the eligible frame."""
+    # Alice's only support is on the source media → distinct-image gate fails.
+    faces = [
+        _matched(5, 0, [1, 0, 0], "Alice"),
+        _matched(5, 1, [1, 0.05, 0], "Alice"),
+        _matched(9, 0, [0, 1, 0], "Bob"),
+        _matched(8, 0, [0, 1, 0.05], "Bob"),
+    ]
+    rollup = score_occlusion_accuracy(
+        [
+            {
+                "media_id": 5,
+                "box_index": 0,
+                "true_name": "Alice",
+                "kind": "masked",
+                "embedding": None,  # a miss — but on an INELIGIBLE row
+            }
+        ],
+        faces,
+        tau=0.5,
+        walk_stability_asserted=True,
+        walk_stability_delta=0.0,
+    )
+    assert rollup.n_ineligible == 1
+    assert rollup.n_eligible == 0
+    assert rollup.n_re_detect_miss == 0  # ineligible miss excluded from the count
+    assert rollup.pair_results[0].re_detect_miss is True  # informational only
 
 
 def test_render_twin_uses_cached_landmarks_only():
@@ -624,6 +750,7 @@ def test_a_s_a_r_a_clean_are_distinct_quantities():
             }
         ],
         faces,
+        tau=0.0,
         walk_stability_asserted=True,
         walk_stability_delta=0.0,
     )
@@ -639,6 +766,7 @@ def test_a_s_a_r_a_clean_are_distinct_quantities():
             }
         ],
         faces,
+        tau=0.0,
         walk_stability_asserted=True,
         walk_stability_delta=0.0,
     )
@@ -654,6 +782,7 @@ def test_a_s_a_r_a_clean_are_distinct_quantities():
             }
         ],
         faces,
+        tau=0.0,
         walk_stability_asserted=True,
         walk_stability_delta=0.0,
     )

@@ -48,7 +48,7 @@ from .face_assignment import (
     matched_named_by_identity,
     mean_prototype,
 )
-from .landmark_cache import LandmarkCache
+from .landmark_cache import LANDMARK_CACHE_LEG_ASYMMETRY_DISCLOSURE, LandmarkCache
 from .manifest import SliceTag
 
 OcclusionKind = Literal["masked", "sunglasses", "occlusion_other"]
@@ -82,15 +82,20 @@ SYNTHETIC_OCCLUSION_PROTOCOL_DISCLOSURES: tuple[str, ...] = (
     "twin universe = cached clean detections only; hard clean-detection "
     "failures are structurally absent (EVAL-17)",
     "occlusion recovery uses open-set threshold (s_max >= tau), not closed-set "
-    "argmax; single-identity galleries are excluded from the denominator (EVAL-18)",
+    "argmax; each twin is scored at its source identity's held-out fold tau_k "
+    "(entity-disjoint — CAL-07/EVAL-07), with tau_op as fallback only for "
+    "identities absent from the pooled decisions; single-identity galleries "
+    "are excluded from the denominator (EVAL-18)",
     "filter_headline_probes is fail-closed: occluded_probe_keys is required",
+    # FIR5RR-09: only mated (named roster) twins exist in FIR-5.
+    "occluded non-mated (stranger) behaviour is unmeasured — every occlusion "
+    "twin is a mated named-roster probe; occluded-stranger false-accept "
+    "measurement (stranger twins) is deferred to FIR-6",
     # EXP-08 / LOCV11-06: landmark cache is YuNet (candidate family); both legs
     # share the same twin-generation population, so faces only the incumbent
-    # detects never enter the occlusion comparison set.
-    "occlusion twin eligibility for BOTH legs is conditioned on the frozen "
-    "YuNet (candidate-family) landmark cache — faces only the incumbent "
-    "detects are structurally excluded; the comparison population is "
-    "correlated with the candidate detection distribution (EXP-08)",
+    # detects never enter the occlusion comparison set. Single-sourced from
+    # landmark_cache (FIR5RR-11) — do not duplicate the string here.
+    LANDMARK_CACHE_LEG_ASYMMETRY_DISCLOSURE,
     # EXP-22: structural gallery eligibility is outcome-independent.
     "occlusion denominator membership is outcome-independent: distinct-image "
     "min-gallery and multi-identity gallery gates run before re-detect miss "
@@ -373,7 +378,7 @@ def render_twin(
 
 
 # ---------------------------------------------------------------------------
-# §D occlusion scoring (threshold-free closed-set top-1 argmax)
+# §D occlusion scoring (open-set threshold at the identity's held-out fold τ_k)
 # ---------------------------------------------------------------------------
 
 
@@ -468,9 +473,13 @@ def score_occlusion_pair(
     box_index: int,
     kind: OcclusionKind,
     by_identity: Mapping[str, Sequence[MatchedFace]],
-    tau: float | None = None,
+    tau: float,
 ) -> OcclusionPairResult:
     """Score one twin: open-set recovery (s_max ≥ tau ∧ name* == true).
+
+    ``tau`` is REQUIRED (FIR5RR-02): ``tau=None`` was a silent closed-set
+    argmax (the run-578 hard-fail mode) and is rejected loudly. Pass the
+    twin's source identity's held-out fold ``tau_k`` (entity-disjoint).
 
     Eligibility order is **outcome-independent** (EXP-22 / EVAL-18):
 
@@ -484,6 +493,11 @@ def score_occlusion_pair(
     deficient gallery cannot contribute failures on miss and exclusions on
     success for the same unit.
     """
+    if tau is None:  # defensive: keyword misuse must not regress to closed-set
+        raise ValueError(
+            "tau is required (FIR5RR-02): tau=None silently degraded to "
+            "closed-set argmax; pass the identity's held-out fold tau_k"
+        )
     # 1–2) Structural gallery eligibility (independent of twin outcome).
     if not has_distinct_image_gallery_support(true_name, source_media_id, by_identity):
         return OcclusionPairResult(
@@ -532,10 +546,7 @@ def score_occlusion_pair(
 
     emb = np.asarray(twin_embedding, dtype=np.float64)
     s_max, name_star = argmax_gallery(emb, gallery)
-    if tau is None:
-        accept = name_star is not None
-    else:
-        accept = name_star is not None and s_max >= float(tau)
+    accept = name_star is not None and s_max >= float(tau)
     correct = bool(accept and name_star == true_name)
     return OcclusionPairResult(
         media_id=source_media_id,
@@ -562,6 +573,9 @@ def _rollup_pairs(
     ineligible = [p for p in pairs if not p.eligible]
     n_eligible = len(eligible)
     n_correct = sum(1 for p in eligible if p.correct)
+    # FIR5RR-14: re-detect misses count ONLY inside the eligible frame — an
+    # ineligible row's miss must never reach n_re_detect_miss (its outcome
+    # fields are informational; it left the denominator structurally).
     n_miss = sum(1 for p in eligible if p.re_detect_miss)
     accuracy = None if n_eligible == 0 else n_correct / n_eligible
 
@@ -604,7 +618,8 @@ def score_occlusion_accuracy(
     pair_inputs: Sequence[Mapping[str, Any]],
     unoccluded_matched: Sequence[MatchedFace],
     *,
-    tau: float | None = None,
+    tau: float,
+    tau_by_identity: Mapping[str, float] | None = None,
     walk_stability_asserted: bool = False,
     walk_stability_delta: float | None = None,
     walk_stability_bound: float = WALK_STABILITY_DELTA_BOUND,
@@ -615,20 +630,34 @@ def score_occlusion_accuracy(
       - media_id, box_index, true_name, kind
       - embedding: sequence[float] | None  (None = re-detect miss)
 
-    ``tau`` is the open-set reject floor (typically assignment ``tau_op``).
+    Threshold selection (FIR5RR-01 / CAL-07 / EVAL-07): each twin is scored at
+    ``tau_by_identity[true_name]`` — its source identity's held-out fold
+    ``tau_k`` (subject-disjoint folds pin every face of an identity to one
+    fold, so this is entity-disjoint for the twin's own identity). ``tau`` is
+    REQUIRED (FIR5RR-02: ``None`` was a silent closed-set argmax) and is used
+    only for identities absent from ``tau_by_identity`` — such identities
+    contributed no probe to any fold fit, so a pooled ``tau_op`` fallback is
+    entity-disjoint for them by absence.
     """
+    if tau is None:
+        raise ValueError(
+            "tau is required (FIR5RR-02): tau=None silently degraded to "
+            "closed-set argmax; pass tau_op as the fallback threshold"
+        )
     by_identity = matched_named_by_identity(unoccluded_matched)
+    taus = tau_by_identity or {}
     results: list[OcclusionPairResult] = []
     for item in pair_inputs:
+        true_name = str(item["true_name"])
         results.append(
             score_occlusion_pair(
                 twin_embedding=item.get("embedding"),
-                true_name=str(item["true_name"]),
+                true_name=true_name,
                 source_media_id=int(item["media_id"]),
                 box_index=int(item["box_index"]),
                 kind=item["kind"],  # type: ignore[arg-type]
                 by_identity=by_identity,
-                tau=tau,
+                tau=float(taus.get(true_name, tau)),
             )
         )
     return _rollup_pairs(

@@ -965,6 +965,155 @@ def test_occlusion_twin_scored_at_source_identity_heldout_tau_in_report():
     # regression — or a dropped-τ closed-set argmax — would score it correct.
     assert synth["n_correct"] == 0
     assert synth["accuracy"] == 0.0
+    # FIR5RR-04: subject-count clamp disclosed (requested K=5 → effective 2).
+    assert scored["tau"]["requested_k"] == 5
+    assert scored["tau"]["effective_k"] == 2
+    assert "clamped" in str(scored["tau"]["k_clamp_disclosure"])
+    assert scored["provenance"]["k_folds"] == {
+        "requested": 5,
+        "effective": 2,
+        "clamped": True,
+    }
+    # FIR5RR-07: fully fitted here.
+    assert scored["tau"]["tau_fit_status"] == "fitted"
+    assert scored["provenance"]["tau_fit_status"] == "fitted"
+
+
+def test_headline_association_counts_scoped_and_fail_closed():
+    """FIR5RR-06: headline missed_gt counts NAMED unmatched GT only; unmatched
+    detections count only on probe-contributing media; celebs01 media absent
+    from association contribute manifest named-face counts with a provenance
+    note — never a silent continue."""
+    face_run, manifest = _face_fixture_corpus()
+    dim = 8
+    # (a) celebs01 media 6: GT stranger box, no detection → unmatched GT with
+    #     name=None must NOT count toward the NAMED headline miss frame.
+    face_run["items"].append(
+        {
+            "media_id": 6,
+            "path": "celebs01/stranger-unmatched.jpg",
+            "model_id": "ort-yunet-sface",
+            "embedding_dim": dim,
+            "image_size": [100, 100],
+            "faces": [],
+        }
+    )
+    manifest["entries"].append(
+        {
+            "path": "celebs01/stranger-unmatched.jpg",
+            "media_id": 6,
+            "face_count": 1,
+            "present_identities": [],
+            "must_right": [],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+            "face_boxes": [_gt_box(0.4, 0.4, 0.4, 0.4, None)],
+            "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
+        }
+    )
+    # (b) celebs01 media 7: a detection with NO GT (unmatched detection) on an
+    #     image contributing no headline probe → excluded from the frame count.
+    face_run["items"].append(
+        {
+            "media_id": 7,
+            "path": "celebs01/false-det.jpg",
+            "model_id": "ort-yunet-sface",
+            "embedding_dim": dim,
+            "image_size": [100, 100],
+            "faces": [_face_det([20.0, 20.0, 40.0, 40.0], _unit([0.3, 0.3, 0.9] + [0.0] * (dim - 3)))],
+        }
+    )
+    manifest["entries"].append(
+        {
+            "path": "celebs01/false-det.jpg",
+            "media_id": 7,
+            "face_count": 0,
+            "present_identities": [],
+            "must_right": [],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+            "face_boxes": [],
+            "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
+        }
+    )
+    # (c) celebs01 media 8: TWO manifest named faces, but the run-record item
+    #     ERRORED → absent from association → both named faces count as misses
+    #     with an explicit provenance note.
+    face_run["items"].append(
+        {
+            "media_id": 8,
+            "path": "celebs01/errored.jpg",
+            "model_id": "ort-yunet-sface",
+            "embedding_dim": dim,
+            "image_size": [100, 100],
+            "faces": [],
+            "error": "remote timeout",
+        }
+    )
+    manifest["entries"].append(
+        {
+            "path": "celebs01/errored.jpg",
+            "media_id": 8,
+            "face_count": 2,
+            "present_identities": ["Alice Example", "Cara Example"],
+            "must_right": [],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+            "face_boxes": [
+                _gt_box(0.25, 0.4, 0.3, 0.3, "Alice Example"),
+                _gt_box(0.7, 0.4, 0.3, 0.3, "Cara Example"),
+            ],
+            "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
+        }
+    )
+    scored = score_face_run_record(face_run, manifest)
+    hl = scored["slices"]["headline_identification"]
+    # NAMED-miss frame: 2 from the errored media only; the stranger unmatched
+    # GT (media 6) is excluded. Old behaviour: 1 (stranger) + silent skip of 8.
+    assert hl["missed_gt"] == 2
+    # Unmatched detection on media 7 (no headline probe there) excluded.
+    assert hl["unmatched_detections"] == 0
+    notes = hl["association_provenance_notes"]
+    assert len(notes) == 1
+    assert "media_id 8" in notes[0] and "2 manifest named face" in notes[0]
+    # The error item is still a failure row (excluded-from-frame is documented
+    # in the headline sampling frame string).
+    assert any(f["media_id"] == 8 for f in scored["failures"])
+    assert "error-item media excluded" in hl["sampling_frame"]
+
+
+def test_tau_unfitted_forces_all_tau_slices_directional():
+    """FIR5RR-07: single-subject corpus → mid-grid τ → every τ-dependent slice
+    is DIRECTIONAL with an explicit tau_fit_status reason."""
+    face_run, manifest = _face_fixture_corpus()
+    # Keep only the two Alice items → single subject (no stranger).
+    face_run["items"] = [i for i in face_run["items"] if i["media_id"] in (1, 2)]
+    manifest["entries"] = [e for e in manifest["entries"] if e["media_id"] in (1, 2)]
+    scored = score_face_run_record(face_run, manifest)
+    assert scored["tau"]["tau_fit_status"] == "mid_grid_unfitted"
+    assert scored["provenance"]["tau_fit_status"] == "mid_grid_unfitted"
+    reason = "tau_fit_status=mid_grid_unfitted"
+    for name in ("headline_identification", "unknown_rejection", "clustering"):
+        block = scored["slices"][name]
+        assert block["directional"] is True, name
+        assert any(reason in r for r in block["reasons"]), name
+    for tag, block in scored["slices"]["occlusion"].items():
+        synth = block["synthetic"]
+        assert synth["directional"] is True, tag
+        assert any(reason in r for r in synth["reasons"]), tag
+    assert scored["gate_proposal"]["proposed_slices"] == {}
+
+
+def test_occlusion_marked_run_record_item_rejected():
+    """FIR5RR-08: an occlusion-marked run-record item must fail closed."""
+    face_run, manifest = _face_fixture_corpus()
+    face_run["items"][0]["occluded"] = True
+    with pytest.raises(ReportError, match="occlusion marker"):
+        score_face_run_record(face_run, manifest)
+    face_run2, manifest2 = _face_fixture_corpus()
+    face_run2["items"][1]["twin_of"] = {"media_id": 9, "box_index": 0}
+    with pytest.raises(ReportError, match="occlusion marker"):
+        score_face_run_record(face_run2, manifest2)
 
 
 def test_publishability_private_stranger_scored_then_redacted():

@@ -37,6 +37,14 @@ STRANGER_SORT_KEY = "\uffff__stranger__"
 
 DecisionKind = Literal["accept", "reject"]
 
+# AUDIT-01/02 (FIR5RR-07): how the per-fold τ_k were obtained. "fitted" = every
+# fold τ selected by open-set F1 on a non-empty fit set; "mid_grid_unfitted" =
+# at least one fold fell back to the mid-grid default (single-subject corpus or
+# no matched probes) — downstream consumers must treat all τ-dependent slices
+# as DIRECTIONAL/non-gating. "error" is reserved (multi-subject empty fit
+# raises instead of returning).
+TauFitStatus = Literal["fitted", "mid_grid_unfitted", "error"]
+
 
 # ---------------------------------------------------------------------------
 # §A0 / §C — coordinate conversion + IoU association
@@ -474,12 +482,20 @@ class AssignmentResult:
 
     matched: tuple[MatchedFace, ...]
     decisions: tuple[FaceDecision, ...]  # pooled held-out; one per matched probe
-    tau_k: tuple[float, ...]  # length K_FOLDS
+    tau_k: tuple[float, ...]  # length effective_k
     tau_op: float  # median(τ_k); context + clustering cut only
     association_by_media: dict[int, AssociationResult] = field(default_factory=dict)
     false_detections: int = 0
     missed_gt: int = 0
     excluded_single_face_recall: tuple[MatchedFace, ...] = ()
+    # AUDIT-01/02 (FIR5RR-04): the caller-requested K and the K actually used
+    # after the subject-count clamp. When they differ, provenance surfaces must
+    # disclose the clamp — a published "K-fold" rate silently run at a smaller
+    # K misstates the protocol.
+    requested_k: int = K_FOLDS
+    effective_k: int = K_FOLDS
+    # FIR5RR-07: provenance of the τ_k values (see TauFitStatus).
+    tau_fit_status: TauFitStatus = "fitted"
 
 
 def global_fold_ranks(
@@ -585,8 +601,12 @@ def assign_open_set_kfold(
 
     Empty-fit guard (REF-27 / FIR5V11-03): ``k_folds`` is clamped to the subject
     count so subject-disjoint assignment can leave a non-empty fit set for every
-    fold that holds probes. Completely empty train with probes present still
-    raises (undefined τ); the prior silent mid-grid default is rejected.
+    fold that holds probes. A multi-subject empty fit is rejected (raises —
+    undefined τ). A SINGLE-subject corpus cannot have a subject-disjoint fit
+    set at all: it falls back to the mid-grid τ and is flagged via
+    ``tau_fit_status="mid_grid_unfitted"`` so downstream report slices are
+    forced DIRECTIONAL/non-gating (FIR5RR-07) — the fallback is disclosed,
+    never silent.
     """
     if k_folds < 1:
         raise ValueError("k_folds must be ≥ 1")
@@ -601,6 +621,7 @@ def assign_open_set_kfold(
     # Per-fold τ_k from the other K−1 folds' probes — fit identities only.
     tau_ks: list[float] = []
     mid_grid = float(tau_grid[len(tau_grid) // 2])
+    used_mid_grid = False
     for k in range(effective_k):
         train = [m for m, f in zip(matched, folds, strict=True) if f != k]
         read_has_probes = any(f == k for f in folds)
@@ -615,10 +636,12 @@ def assign_open_set_kfold(
                     f"subject-disjoint identities so every τ_k has a non-empty fit set"
                 )
             tau_ks.append(mid_grid)
+            used_mid_grid = True
             continue
         if not train:
             # Empty read fold with empty train (no matched probes at all).
             tau_ks.append(mid_grid)
+            used_mid_grid = True
             continue
         train_by_id = matched_named_by_identity(train)
         train_counts = {name: len(faces) for name, faces in train_by_id.items()}
@@ -681,6 +704,9 @@ def assign_open_set_kfold(
         tau_k=tuple(tau_ks),
         tau_op=tau_op,
         excluded_single_face_recall=tuple(excluded),
+        requested_k=int(k_folds),
+        effective_k=int(effective_k),
+        tau_fit_status="mid_grid_unfitted" if used_mid_grid else "fitted",
     )
 
 
@@ -703,6 +729,9 @@ def score_face_assignment(
         false_detections=false_det,
         missed_gt=missed,
         excluded_single_face_recall=result.excluded_single_face_recall,
+        requested_k=result.requested_k,
+        effective_k=result.effective_k,
+        tau_fit_status=result.tau_fit_status,
     )
 
 
@@ -871,6 +900,7 @@ __all__ = [
     "K_FOLDS",
     "TAU_GRID",
     "STRANGER_SORT_KEY",
+    "TauFitStatus",
     "AssociationPair",
     "AssociationResult",
     "MatchedFace",

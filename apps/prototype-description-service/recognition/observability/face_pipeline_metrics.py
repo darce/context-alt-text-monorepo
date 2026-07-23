@@ -28,6 +28,15 @@ FACE_PIPELINE_SUBMIT_WAIT_BUCKETS: tuple[float, ...] = (
 )
 
 
+# Low-cardinality drop reasons for FIR23-05 quality-drop metering.
+FACE_DROP_REASON_BBOX = "bbox_degenerate"
+FACE_DROP_REASON_ALIGN_EMBED = "align_or_embed"
+FACE_DROP_REASONS: tuple[str, ...] = (
+    FACE_DROP_REASON_BBOX,
+    FACE_DROP_REASON_ALIGN_EMBED,
+)
+
+
 class FacePipelineMetricsObserver(Protocol):
     """Infrastructure-neutral observer seam for face_pipeline admission metrics.
 
@@ -51,6 +60,10 @@ class FacePipelineMetricsObserver(Protocol):
         occlusion_severity: float,
     ) -> None:
         """Record per-factor quality breakdown (CAL-09). Optional for older injectors."""
+        ...
+
+    def record_faces_dropped(self, reason: str, count: int = 1) -> None:
+        """Increment quality-drop counter split by low-cardinality reason (FIR23-05)."""
         ...
 
 
@@ -101,6 +114,13 @@ class FacePipelineMetrics:
             buckets=_OCCLUSION_BUCKETS,
             registry=self.registry,
         )
+        # FIR23-05: split quality-drop counter (bbox clamp vs align/embed fail).
+        self.face_pipeline_faces_dropped_total = Counter(
+            "face_pipeline_faces_dropped_total",
+            "Faces dropped during face_pipeline detect path (quality / hard fail)",
+            ["reason"],
+            registry=self.registry,
+        )
 
     def observe_submit_wait(self, wait_s: float) -> None:
         """Record admission wait duration (success or timeout path)."""
@@ -122,8 +142,19 @@ class FacePipelineMetrics:
         self.face_pipeline_factor_embedding_norm.observe(float(embedding_norm))
         self.face_pipeline_factor_occlusion_severity.observe(float(occlusion_severity))
 
+    def record_faces_dropped(self, reason: str, count: int = 1) -> None:
+        """Increment quality-drop counter for a low-cardinality reason (FIR23-05)."""
+        label = reason if reason in FACE_DROP_REASONS else "other"
+        n = int(count)
+        if n <= 0:
+            return
+        self.face_pipeline_faces_dropped_total.labels(reason=label).inc(n)
+
 
 __all__ = [
+    "FACE_DROP_REASON_ALIGN_EMBED",
+    "FACE_DROP_REASON_BBOX",
+    "FACE_DROP_REASONS",
     "FACE_PIPELINE_SUBMIT_WAIT_BUCKETS",
     "FacePipelineMetrics",
     "FacePipelineMetricsObserver",

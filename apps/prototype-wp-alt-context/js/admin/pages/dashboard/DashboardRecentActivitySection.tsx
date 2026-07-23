@@ -3,6 +3,7 @@ import { __, sprintf } from '@wordpress/i18n';
 
 import type { JobStatusResponse } from '../../api/recognition/types/scan';
 import type { RecognitionActivityItem, RecognitionHistorySource } from '../../hooks/recognitionJobHistoryUtils';
+import { toWorkbench } from '../../navigation/appLinks';
 
 interface DashboardRecentActivitySectionProps {
   historySource: RecognitionHistorySource;
@@ -174,7 +175,7 @@ export const DashboardRecentActivitySection = ({
               </span>
               {durationLabel ? <span className="acx-dashboard__activity-duration">{durationLabel}</span> : null}
               {item.jobId ? (
-                <a href={`#/workbench?advanced=open&jobId=${item.jobId}`} className="acx-link-button">
+                <a href={toWorkbench({ advanced: true })} className="acx-link-button">
                   {__('View Results', 'alt-context')}
                 </a>
               ) : null}

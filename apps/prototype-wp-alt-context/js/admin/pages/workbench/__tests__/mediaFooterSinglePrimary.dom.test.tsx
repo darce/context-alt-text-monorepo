@@ -13,7 +13,22 @@ import {
 } from '../../../api/recognition';
 import { DATA_SOURCE } from '../../../api/recognition/types';
 import { resetConfigCache } from '../../../api/config';
-import { commitClusterToRosterEntry, listRosterEntries } from '../../../api/rosterApi';
+import {
+  commitClusterToRosterEntry,
+  listRosterEntries,
+  type RosterClusterCommitResponse,
+} from '../../../api/rosterApi';
+
+const rosterCommitFixture = (
+  overrides: Partial<RosterClusterCommitResponse> = {},
+): RosterClusterCommitResponse => ({
+  cluster_id: 'cluster-1',
+  person_id: 7,
+  person_uuid: 'person-uuid-7',
+  person_name: 'Alex',
+  updated_at: '2026-01-01T00:00:00Z',
+  ...overrides,
+});
 import { HTTPError } from '../../../utils/http';
 import type { DescribeRunProgress } from '../../../hooks/useDescribeRunProgress';
 import { MergeSurvivorProvider } from '../identity-clusters/MergeSurvivorContext';
@@ -70,7 +85,13 @@ vi.mock('../../../api/recognition', async () => {
 });
 
 vi.mock('../../../api/rosterApi', () => ({
-  commitClusterToRosterEntry: vi.fn().mockResolvedValue(undefined),
+  commitClusterToRosterEntry: vi.fn().mockResolvedValue({
+    cluster_id: 'cluster-1',
+    person_id: 7,
+    person_uuid: 'person-uuid-7',
+    person_name: 'Alex',
+    updated_at: '2026-01-01T00:00:00Z',
+  }),
   listRosterEntries: vi.fn().mockResolvedValue([]),
 }));
 
@@ -246,7 +267,7 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
     });
     vi.mocked(fetchClusterMembers).mockResolvedValue({ members: [], limit: 1, total: 0, truncated: false });
     vi.mocked(listRosterEntries).mockResolvedValue([]);
-    vi.mocked(commitClusterToRosterEntry).mockResolvedValue(undefined);
+    vi.mocked(commitClusterToRosterEntry).mockResolvedValue(rosterCommitFixture());
     resetConfigCache();
   });
 
@@ -465,7 +486,7 @@ describe('§7 single-accent-primary DOM invariant — discrimination guard (BR-7
     });
     vi.mocked(fetchClusterMembers).mockResolvedValue({ members: [], limit: 1, total: 0, truncated: false });
     vi.mocked(listRosterEntries).mockResolvedValue([]);
-    vi.mocked(commitClusterToRosterEntry).mockResolvedValue(undefined);
+    vi.mocked(commitClusterToRosterEntry).mockResolvedValue(rosterCommitFixture());
     resetConfigCache();
   });
 

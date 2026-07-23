@@ -243,6 +243,24 @@ def _observe_admission_timeout(metrics: FacePipelineMetricsObserver | None) -> N
         logger.debug("face_pipeline admission timeout metric inc failed", exc_info=True)
 
 
+def _observe_faces_dropped(
+    metrics: FacePipelineMetricsObserver | None,
+    *,
+    reason: str,
+    count: int,
+) -> None:
+    """Meter quality drops split by reason (FIR23-05); never raise to detect path."""
+    if metrics is None or count <= 0:
+        return
+    record = getattr(metrics, "record_faces_dropped", None)
+    if record is None:
+        return
+    try:
+        record(reason, int(count))
+    except Exception:  # pragma: no cover - metrics must never break detect path
+        logger.debug("face_pipeline faces_dropped metric inc failed", exc_info=True)
+
+
 class FacePipelineRuntimeUnavailableError(RuntimeError):
     """Cached whole-profile activation failure (atomic YuNet+SFace load)."""
 
@@ -634,7 +652,8 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
 
         h, w = bgr.shape[:2]
         kept: list[tuple[RawDetection, tuple[int, int, int, int]]] = []
-        dropped = 0
+        dropped_bbox = 0
+        dropped_align_embed = 0
         for face in raw_faces:
             x1, y1, x2, y2 = xywh_to_corner_bbox(face.bbox)
             # Clamp corners into image bounds for safety (still corner format).
@@ -643,15 +662,20 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
             x2 = max(0, min(x2, w))
             y2 = max(0, min(y2, h))
             if x2 <= x1 or y2 <= y1:
-                dropped += 1
+                dropped_bbox += 1
                 continue
             kept.append((face, (x1, y1, x2, y2)))
 
-        if dropped:
+        if dropped_bbox:
             logger.debug(
                 "Dropped %d degenerate bbox detection(s) for %s before align/embed",
-                dropped,
+                dropped_bbox,
                 media_id[:20],
+            )
+            _observe_faces_dropped(
+                self._metrics,
+                reason="bbox_degenerate",
+                count=dropped_bbox,
             )
         if not kept:
             return []
@@ -666,7 +690,7 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
                 embedding = batch.vectors[0]
                 emb_norm = float(batch.norms[0])
             except (AlignmentError, ZeroNormEmbeddingError) as exc:
-                dropped += 1
+                dropped_align_embed += 1
                 logger.debug(
                     "Dropped face for %s during align/embed: %s",
                     media_id[:20],
@@ -719,6 +743,14 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
                 )
             )
 
+        if dropped_align_embed:
+            _observe_faces_dropped(
+                self._metrics,
+                reason="align_or_embed",
+                count=dropped_align_embed,
+            )
+
+        # FIR-6 S1: effective-detection-settings confidence floor + max-faces cap.
         from recognition.config.settings import resolve_effective_detection_settings
 
         detection_settings = resolve_effective_detection_settings()
@@ -727,13 +759,17 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
         filtered = [face for face in results if float(face.confidence) >= min_confidence]
         if len(filtered) > max_faces:
             filtered = sorted(filtered, key=lambda face: face.confidence, reverse=True)[:max_faces]
-        dropped += len(results) - len(filtered)
+        dropped_threshold_cap = len(results) - len(filtered)
 
-        if dropped:
+        dropped_total = dropped_bbox + dropped_align_embed + dropped_threshold_cap
+        if dropped_total:
             logger.debug(
-                "Dropped %d face(s) for %s (bbox clamp / align / embed / threshold)",
-                dropped,
+                "Dropped %d face(s) for %s (bbox=%d align_embed=%d threshold_cap=%d)",
+                dropped_total,
                 media_id[:20],
+                dropped_bbox,
+                dropped_align_embed,
+                dropped_threshold_cap,
             )
         return filtered
 

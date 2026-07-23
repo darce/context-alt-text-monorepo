@@ -664,6 +664,68 @@ if (!function_exists('get_post_mime_type')) {
     }
 }
 
+if (!function_exists('get_post_type')) {
+    /**
+     * @param int|object|\WP_Post|null $post
+     * @return string|false
+     */
+    function get_post_type($post = null)
+    {
+        if (is_object($post) && isset($post->post_type)) {
+            return (string) $post->post_type;
+        }
+
+        $postId = 0;
+        if (is_numeric($post)) {
+            $postId = (int) $post;
+        } elseif ($post === null && isset($GLOBALS['post']) && is_object($GLOBALS['post'])) {
+            return isset($GLOBALS['post']->post_type)
+                ? (string) $GLOBALS['post']->post_type
+                : false;
+        }
+
+        if ($postId <= 0) {
+            return false;
+        }
+
+        $resolved = get_post($postId);
+        if (!is_object($resolved) || !isset($resolved->post_type)) {
+            return false;
+        }
+
+        return (string) $resolved->post_type;
+    }
+}
+
+if (!function_exists('wp_get_attachment_image_src')) {
+    /**
+     * @param int          $attachment_id
+     * @param string|int[] $size
+     * @param bool         $icon
+     * @return array{0:string,1:int,2:int}|false
+     */
+    function wp_get_attachment_image_src($attachment_id, $size = 'thumbnail', $icon = false)
+    {
+        $id = (int) $attachment_id;
+        $sizeKey = is_string($size) ? $size : 'custom';
+
+        if (isset($GLOBALS['__ac_attachment_image_src'][$id][$sizeKey])) {
+            return $GLOBALS['__ac_attachment_image_src'][$id][$sizeKey];
+        }
+
+        $url = wp_get_attachment_url($id);
+        if (!$url) {
+            return false;
+        }
+
+        $meta = wp_get_attachment_metadata($id);
+        $width = is_array($meta) ? (int) ($meta['width'] ?? 0) : 0;
+        $height = is_array($meta) ? (int) ($meta['height'] ?? 0) : 0;
+
+        return [$url, $width, $height];
+    }
+}
+
 if (!function_exists('wp_update_post')) {
     function wp_update_post($postarr, $wp_error = false, $fire_after_hooks = true)
     {
@@ -1770,6 +1832,14 @@ if (!isset($GLOBALS['wpdb'])) {
         public array $mockResults = [];
         /** @var array<string,mixed>|null */
         public ?array $mockRow = null;
+        /**
+         * Optional ordered get_row results (null = empty). When set, overrides mockRow/tableRows
+         * for each successive get_row call (e.g. race: first miss → re-find hit).
+         *
+         * @var list<array<string,mixed>|null>|null
+         */
+        public ?array $mockRowSequence = null;
+        private int $mockRowSequenceIndex = 0;
         /** @var mixed */
         public $mockVar = null;
         public int $insert_id = 0;
@@ -1897,10 +1967,17 @@ if (!isset($GLOBALS['wpdb'])) {
             $normalizedSql = trim((string) $query);
             $this->queries[] = $normalizedSql;
 
-            $row = $this->mockRow;
-            if ($row === null) {
-                $results = $this->resolveStoredSelectResults($normalizedSql);
-                $row = $results[0] ?? null;
+            if ($this->mockRowSequence !== null) {
+                $row = array_key_exists($this->mockRowSequenceIndex, $this->mockRowSequence)
+                    ? $this->mockRowSequence[$this->mockRowSequenceIndex]
+                    : null;
+                $this->mockRowSequenceIndex++;
+            } else {
+                $row = $this->mockRow;
+                if ($row === null) {
+                    $results = $this->resolveStoredSelectResults($normalizedSql);
+                    $row = $results[0] ?? null;
+                }
             }
 
             if ($row === null) {
@@ -2251,6 +2328,8 @@ if (!isset($GLOBALS['wpdb'])) {
             $this->defaultQueryResult = true;
             $this->mockResults = [];
             $this->mockRow = null;
+            $this->mockRowSequence = null;
+            $this->mockRowSequenceIndex = 0;
             $this->mockVar = null;
             $this->insert_id = 0;
             $this->rows_affected = 0;

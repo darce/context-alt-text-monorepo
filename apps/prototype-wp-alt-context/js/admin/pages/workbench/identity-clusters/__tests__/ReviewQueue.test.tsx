@@ -19,7 +19,11 @@ import {
 import { DATA_SOURCE } from '../../../../api/recognition/types';
 import { resetConfigCache } from '../../../../api/config';
 import { queryKeys } from '../../../../api/queryKeys';
-import { commitClusterToRosterEntry, listRosterEntries } from '../../../../api/rosterApi';
+import {
+  commitClusterToRosterEntry,
+  listRosterEntries,
+  type RosterClusterCommitResponse,
+} from '../../../../api/rosterApi';
 import type {
   ReviewQueueBandParam,
   ReviewQueueKindParam,
@@ -38,6 +42,17 @@ import * as useAriaAnnounceMod from '../useAriaAnnounce';
 import { HOLD_STATUS_COPY, UNDO_HOLD_MS } from '../useSuggestionReviewMutations';
 import { LIVE_TARGET_CLOSE_ANNOUNCE } from '../useLiveReviewTarget';
 import { HTTPError } from '../../../../utils/http';
+
+const rosterCommitFixture = (
+  overrides: Partial<RosterClusterCommitResponse> = {},
+): RosterClusterCommitResponse => ({
+  cluster_id: 'cluster-1',
+  person_id: 7,
+  person_uuid: 'person-uuid-7',
+  person_name: 'Alex',
+  updated_at: '2026-01-01T00:00:00Z',
+  ...overrides,
+});
 
 /**
  * Click an accept/reject control under fake setTimeout so the Slice-2 hold can
@@ -116,7 +131,13 @@ vi.mock('../../../../api/recognition', async () => {
 });
 
 vi.mock('../../../../api/rosterApi', () => ({
-  commitClusterToRosterEntry: vi.fn().mockResolvedValue(undefined),
+  commitClusterToRosterEntry: vi.fn().mockResolvedValue({
+    cluster_id: 'cluster-1',
+    person_id: 7,
+    person_uuid: 'person-uuid-7',
+    person_name: 'Alex',
+    updated_at: '2026-01-01T00:00:00Z',
+  }),
   listRosterEntries: vi.fn().mockResolvedValue([
     {
       id: 7,
@@ -246,7 +267,7 @@ describe('ReviewQueue', () => {
         projection_refreshed_at: null,
       },
     ]);
-    vi.mocked(commitClusterToRosterEntry).mockResolvedValue(undefined);
+    vi.mocked(commitClusterToRosterEntry).mockResolvedValue(rosterCommitFixture());
     resetConfigCache();
   });
 
@@ -1549,7 +1570,7 @@ describe('ReviewQueue', () => {
       limit: 10,
       offset: 0,
     });
-    vi.mocked(commitClusterToRosterEntry).mockResolvedValue(undefined);
+    vi.mocked(commitClusterToRosterEntry).mockResolvedValue(rosterCommitFixture());
 
     const user = userEvent.setup();
     renderQueue();
@@ -1658,7 +1679,7 @@ describe('ReviewQueue', () => {
     });
     vi.mocked(commitClusterToRosterEntry).mockImplementation(() => {
       order.push('person-commit');
-      return Promise.resolve();
+      return Promise.resolve(rosterCommitFixture());
     });
 
     const user = userEvent.setup();
@@ -1792,13 +1813,13 @@ describe('ReviewQueue', () => {
     });
 
     let rejectPerson!: (reason?: unknown) => void;
-    const personGate = new Promise<void>((_resolve, reject) => {
+    const personGate = new Promise<RosterClusterCommitResponse>((_resolve, reject) => {
       rejectPerson = reject;
     });
     // First call hangs until we reject (after accept advanced).
     vi.mocked(commitClusterToRosterEntry)
       .mockImplementationOnce(() => personGate)
-      .mockResolvedValueOnce(undefined);
+      .mockResolvedValueOnce(rosterCommitFixture());
     // Prevent invalidate refetch from restoring the accepted row while person-commit is open.
     vi.mocked(acceptSuggestion).mockImplementation((id: string) => {
       vi.mocked(fetchPendingSuggestions).mockResolvedValue({

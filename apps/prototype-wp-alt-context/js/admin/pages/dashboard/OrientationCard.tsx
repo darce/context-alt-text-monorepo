@@ -2,6 +2,8 @@ import React from 'react';
 import { __ } from '@wordpress/i18n';
 import { Scan, Users, CheckCircle, ArrowRight } from 'lucide-react';
 
+import { toWorkbench } from '../../navigation/appLinks';
+
 interface OrientationCardProps {
   peopleCount: number;
 }
@@ -73,7 +75,7 @@ export const OrientationCard = ({ peopleCount }: OrientationCardProps): React.JS
       </div>
 
       <div className="acx-orientation-card__footer">
-        <a href="#/workbench?tab=scan" className="acx-button acx-button--primary">
+        <a href={toWorkbench({ tab: 'scan' })} className="acx-button acx-button--primary">
           {__('Start your first scan', 'alt-context')}
         </a>
       </div>

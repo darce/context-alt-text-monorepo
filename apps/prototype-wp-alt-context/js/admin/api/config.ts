@@ -1,6 +1,6 @@
 export interface AdminUrlsConfig {
   mediaEditBase?: string;
-  rosterClusters?: string;
+  roster?: string;
 }
 
 export interface ApiConfig {
@@ -40,7 +40,7 @@ export const normalizeConfig = (raw: ApiConfig): NormalizedConfig => {
   const devMode = raw.devMode === true || raw.devMode === 'true' || raw.devMode === '1' || raw.devMode === 1;
   const adminUrls = {
     mediaEditBase: normalizeOptionalString(raw.adminUrls?.mediaEditBase),
-    rosterClusters: normalizeOptionalString(raw.adminUrls?.rosterClusters),
+    roster: normalizeOptionalString(raw.adminUrls?.roster),
   };
 
   return {
@@ -62,6 +62,15 @@ export const normalizeConfig = (raw: ApiConfig): NormalizedConfig => {
 };
 
 let cachedConfig: NormalizedConfig | null = null;
+
+/**
+ * Inject config for non-SPA surfaces (post.php attachment-edit).
+ * SPA path is unchanged: getConfig falls back to window.AltContextAdmin.
+ */
+export const registerConfig = (raw: ApiConfig): NormalizedConfig => {
+  cachedConfig = normalizeConfig(raw);
+  return cachedConfig;
+};
 
 export const getConfig = (): NormalizedConfig => {
   if (cachedConfig) {
@@ -107,9 +116,21 @@ export const getEndpoint = (primary: string, ...fallbacks: string[]): string => 
   throw new Error(`Endpoint ${primary} is not configured.`);
 };
 
+/** Minimal localized payload for the attachment-edit entry (not AltContextAdmin). */
+export interface AttachmentEditLocalizedConfig {
+  nonce: string;
+  attachmentId: number | string;
+  imageUrl: string;
+  imageWidth: number | string;
+  imageHeight: number | string;
+  workbenchUrl: string;
+  endpoints: Record<string, string>;
+}
+
 declare global {
   interface Window {
     AltContextAdmin?: ApiConfig;
+    AltContextAttachmentEdit?: AttachmentEditLocalizedConfig;
     wpApiSettings?: {
       root: string;
       nonce: string;

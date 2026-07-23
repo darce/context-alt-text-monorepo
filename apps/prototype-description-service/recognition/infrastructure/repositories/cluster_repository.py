@@ -42,6 +42,77 @@ if TYPE_CHECKING:
     from recognition.application.settings.clustering import MaturitySettings
 
 
+def _choose_embedding_model(models: Sequence[str | None]) -> str | None:
+    """Majority embedding_model with lex-stable tie-break (FIR23-01)."""
+    counts: dict[str, int] = {}
+    for model in models:
+        if not model:
+            continue
+        key = str(model)
+        counts[key] = counts.get(key, 0) + 1
+    if not counts:
+        return None
+    # Sort by (-count, model_id) so highest count wins; ties → lex min.
+    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
+
+
+def _filter_embedding_pairs_to_single_model(
+    rows: Sequence[tuple[np.ndarray, str | None]],
+) -> list[tuple[np.ndarray, str | None]]:
+    """Keep embeddings from one model space; single-model input is a no-op."""
+    if not rows:
+        return []
+    chosen = _choose_embedding_model([model for _, model in rows])
+    if chosen is None:
+        return list(rows)
+    distinct = {str(model) for _, model in rows if model}
+    if len(distinct) <= 1:
+        return list(rows)
+    return [(emb, model) for emb, model in rows if model == chosen]
+
+
+def _filter_identity_models_to_single_embedding_model(
+    models: Sequence[MediaIdentity],
+) -> list[MediaIdentity]:
+    """Keep MediaIdentity rows from one embedding_model; single-model is a no-op."""
+    if not models:
+        return []
+    chosen = _choose_embedding_model([getattr(m, "embedding_model", None) for m in models])
+    if chosen is None:
+        return list(models)
+    distinct = {str(m.embedding_model) for m in models if getattr(m, "embedding_model", None)}
+    if len(distinct) <= 1:
+        return list(models)
+    return [m for m in models if getattr(m, "embedding_model", None) == chosen]
+
+
+def _filter_rows_to_single_embedding_model(
+    models: Sequence[MediaIdentity],
+) -> list[MediaIdentity]:
+    """For unclustered sets: single-model no-op; mixed → active model only.
+
+    Prefer the active runtime model when mixed models coexist so clustering
+    never compares across embedding spaces. If none match active, keep the
+    majority model rather than mixing (still fail-closed relative to mixing).
+    """
+    if not models:
+        return []
+    distinct = {str(m.embedding_model) for m in models if getattr(m, "embedding_model", None)}
+    if len(distinct) <= 1:
+        return list(models)
+    try:
+        from recognition.application.embedding.manifest import active_embedding_model_id
+
+        active = active_embedding_model_id()
+    except Exception:
+        active = None
+    if active is not None:
+        matched = [m for m in models if getattr(m, "embedding_model", None) == active]
+        if matched:
+            return matched
+    return _filter_identity_models_to_single_embedding_model(models)
+
+
 def _snapshot_version_to_datetime(snapshot_version: int) -> datetime:
     """Decode a microsecond Unix timestamp without float precision loss."""
     normalized_version = max(snapshot_version, 0)
@@ -431,9 +502,10 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         """
         if is_sqlite(self._session):
             await self._session.execute(text("DELETE FROM mv_identity_cluster_centroids"))
-            # FIR6V11-03: frame membership to the majority embedding_model per
+            # FIR23-01: frame membership to the majority embedding_model per
             # cluster (lex-stable tie-break). SQLite shadow table keeps centroid
             # NULL (no vector avg); the model predicate still gates identity_count.
+            # Single-model tenants are a no-op.
             await self._session.execute(
                 text(
                     """
@@ -535,7 +607,12 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             return False
 
     async def get_unclustered(self, tenant_id: str):
-        """Return media identities not yet assigned to any cluster."""
+        """Return media identities not yet assigned to any cluster.
+
+        FIR23-01: when multiple embedding_model values are present, keep only
+        the active runtime model (mixed spaces must not enter clustering). A
+        single-model tenant is a no-op (all rows pass).
+        """
         tenant_uuid = _coerce_uuid(tenant_id)
         stmt = (
             select(MediaIdentity)
@@ -543,7 +620,8 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             .where(~exists(select(IdentityMemberModel.id).where(IdentityMemberModel.identity_id == MediaIdentity.id)))
         )
         result = await self._session.execute(stmt)
-        identities = result.scalars().all()
+        identities = list(result.scalars().all())
+        identities = _filter_rows_to_single_embedding_model(identities)
         return [self._to_domain_identity(model) for model in identities]
 
     async def get_representative_count(self, cluster_id: str) -> int:
@@ -810,44 +888,69 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         await self._session.flush()
 
     async def get_member_embeddings(self, cluster_id: str) -> list[np.ndarray]:
-        """Return embeddings for members of the cluster."""
+        """Return embeddings for members of the cluster.
+
+        FIR23-01: restrict to one embedding_model space (majority, lex tie-break).
+        Single-model clusters are a no-op.
+        """
         stmt = (
-            select(MediaIdentity.embedding)
+            select(MediaIdentity.embedding, MediaIdentity.embedding_model)
             .join(IdentityMemberModel, IdentityMemberModel.identity_id == MediaIdentity.id)
             .where(IdentityMemberModel.cluster_id == _coerce_uuid(cluster_id))
+            .where(MediaIdentity.embedding.isnot(None))
+            .where(MediaIdentity.embedding_model.isnot(None))
         )
         result = await self._session.execute(stmt)
-        return [np.asarray(row[0], dtype=np.float32) for row in result.all()]
+        rows = [(np.asarray(emb, dtype=np.float32), model) for emb, model in result.all()]
+        return [emb for emb, _ in _filter_embedding_pairs_to_single_model(rows)]
 
     async def get_representative_embeddings(self, cluster_id: str) -> list[np.ndarray]:
-        """Return embeddings for stored representatives of a cluster."""
-        stmt = select(IdentityClusterRepresentative.embedding).where(
-            IdentityClusterRepresentative.cluster_id == _coerce_uuid(cluster_id)
+        """Return embeddings for stored representatives of a cluster.
+
+        FIR23-01: join source identity so reps from a foreign embedding_model are
+        excluded when mixed provenance exists. Single-model is a no-op.
+        """
+        stmt = (
+            select(IdentityClusterRepresentative.embedding, MediaIdentity.embedding_model)
+            .join(MediaIdentity, MediaIdentity.id == IdentityClusterRepresentative.identity_id)
+            .where(IdentityClusterRepresentative.cluster_id == _coerce_uuid(cluster_id))
+            .where(MediaIdentity.embedding_model.isnot(None))
         )
         result = await self._session.execute(stmt)
-        return [np.asarray(row[0], dtype=np.float32) for row in result.all()]
+        rows = [(np.asarray(emb, dtype=np.float32), model) for emb, model in result.all()]
+        return [emb for emb, _ in _filter_embedding_pairs_to_single_model(rows)]
 
     async def get_member_fallback_embeddings(self, cluster_id: str, limit: int = 4) -> list[np.ndarray]:
         """Return top member embeddings as fallback representatives ordered by similarity then recency."""
         stmt = (
-            select(MediaIdentity.embedding)
+            select(MediaIdentity.embedding, MediaIdentity.embedding_model)
             .join(IdentityMemberModel, IdentityMemberModel.identity_id == MediaIdentity.id)
             .where(IdentityMemberModel.cluster_id == _coerce_uuid(cluster_id))
+            .where(MediaIdentity.embedding.isnot(None))
+            .where(MediaIdentity.embedding_model.isnot(None))
             .order_by(IdentityMemberModel.similarity.desc(), IdentityMemberModel.assigned_at.asc())
-            .limit(max(limit, 0))
         )
         result = await self._session.execute(stmt)
-        return [np.asarray(row[0], dtype=np.float32) for row in result.all()]
+        rows = [(np.asarray(emb, dtype=np.float32), model) for emb, model in result.all()]
+        filtered = _filter_embedding_pairs_to_single_model(rows)
+        if limit is not None:
+            filtered = filtered[: max(limit, 0)]
+        return [emb for emb, _ in filtered]
 
     async def get_member_identities(self, cluster_id: str) -> list[DomainIdentity]:
-        """Return identity records for all members of a cluster."""
+        """Return identity records for all members of a cluster.
+
+        FIR23-01: when mixed embedding_model values exist in the cluster, keep
+        only the majority model (lex tie-break). Single-model is a no-op.
+        """
         stmt: Select[tuple[MediaIdentity]] = (
             select(MediaIdentity)
             .join(IdentityMemberModel, IdentityMemberModel.identity_id == MediaIdentity.id)
             .where(IdentityMemberModel.cluster_id == _coerce_uuid(cluster_id))
         )
         result = await self._session.execute(stmt)
-        return [self._to_domain_identity(model, cluster_id=cluster_id) for model in result.scalars().all()]
+        models = _filter_identity_models_to_single_embedding_model(list(result.scalars().all()))
+        return [self._to_domain_identity(model, cluster_id=cluster_id) for model in models]
 
     async def get_member_identities_for_clusters(self, cluster_ids: Sequence[str]) -> dict[str, list[DomainIdentity]]:
         """Return identity records for members across multiple clusters, grouped by cluster."""
@@ -863,13 +966,18 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             .where(MediaIdentity.embedding.isnot(None))
         )
         result = await self._session.execute(stmt)
-        grouped: dict[str, list[DomainIdentity]] = defaultdict(list)
+        raw_grouped: dict[str, list[MediaIdentity]] = defaultdict(list)
         for model, cluster_id in result.all():
             if not cluster_id:
                 continue
-            cluster_key = str(cluster_id)
-            grouped[cluster_key].append(self._to_domain_identity(model, cluster_id=cluster_key))
-        return dict(grouped)
+            raw_grouped[str(cluster_id)].append(model)
+        grouped: dict[str, list[DomainIdentity]] = {}
+        for cluster_key, models in raw_grouped.items():
+            kept = _filter_identity_models_to_single_embedding_model(models)
+            grouped[cluster_key] = [
+                self._to_domain_identity(model, cluster_id=cluster_key) for model in kept
+            ]
+        return grouped
 
     async def get_confirmed_labeled(self, tenant_id: str) -> list[IdentityCluster]:
         """Return confirmed clusters with human labels."""
@@ -991,7 +1099,10 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         *,
         limit: int | None = None,
     ) -> list[DomainIdentity]:
-        """Fetch identities that belong to singleton clusters for a tenant."""
+        """Fetch identities that belong to singleton clusters for a tenant.
+
+        FIR23-01: mixed embedding_model rows are reduced to one model space.
+        """
         stmt: Select[tuple[MediaIdentity, uuid.UUID]] = (
             select(MediaIdentity, IdentityMemberModel.cluster_id)
             .join(IdentityMemberModel, IdentityMemberModel.identity_id == MediaIdentity.id)
@@ -1002,17 +1113,22 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             .where(MediaIdentity.embedding.isnot(None))
             .order_by(ClusterModel.created_at.desc())
         )
-        if limit:
-            stmt = stmt.limit(limit)
         result = await self._session.execute(stmt)
+        raw: list[tuple[MediaIdentity, uuid.UUID | None]] = list(result.all())
+        models = _filter_rows_to_single_embedding_model([m for m, _ in raw])
+        kept_ids = {id(m) for m in models}
         identities: list[DomainIdentity] = []
-        for model, cluster_id in result.all():
+        for model, cluster_id in raw:
+            if id(model) not in kept_ids:
+                continue
             identities.append(
                 self._to_domain_identity(
                     model,
                     cluster_id=str(cluster_id) if cluster_id else None,
                 )
             )
+            if limit is not None and len(identities) >= limit:
+                break
         return identities
 
     async def assign_identity_to_cluster(self, identity: DomainIdentity, cluster_id: str) -> None:

@@ -1741,9 +1741,9 @@ def ensure_matview(op) -> None:
             WHERE mi.embedding IS NOT NULL
               AND mi.embedding_model IS NOT NULL
         ),
-        -- FIR6V11-03: frame each cluster centroid to a single embedding_model
-        -- (majority, lex-stable tie-break). Dark no-op under single-model data;
-        -- load-bearing when mixed models coexist at S6.
+        -- FIR23-01: frame each cluster centroid to a single embedding_model
+        -- (majority, lex-stable tie-break). Single-model data is a no-op;
+        -- load-bearing when mixed models coexist.
         model_counts AS (
             SELECT
                 cluster_id,

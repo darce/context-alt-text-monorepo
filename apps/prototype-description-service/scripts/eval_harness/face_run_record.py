@@ -75,6 +75,25 @@ class FaceRunItem(BaseModel):
         return self
 
 
+class OcclusionPairInput(BaseModel):
+    """One synthetic-occlusion twin pair input (FIR5GL-01 / §D).
+
+    Travels at the DOCUMENT level (``occlusion_twin_pairs_by_tag``), never
+    inside ``items`` — the headline firewall (``_assert_no_occlusion_marked_items``
+    / EVAL-16) rejects occlusion-marked items outright. ``embedding=None``
+    records a re-detect miss on the occluded pixels (scored as a failure
+    inside the eligible frame, EMB-03).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    media_id: int
+    box_index: int
+    true_name: str
+    kind: str
+    embedding: list[float] | None = None
+
+
 class FaceRunRecordDocument(BaseModel):
     """Envelope for a face walk artifact."""
 
@@ -85,6 +104,10 @@ class FaceRunRecordDocument(BaseModel):
     provenance: dict[str, Any] = Field(default_factory=dict)
     items: list[FaceRunItem] = Field(default_factory=list)
     aborted: bool | None = None
+    # FIR5GL-01: synthetic occlusion twin pair inputs, keyed by slice tag
+    # (masked/sunglasses/occlusion_other). Document-level so twins can never
+    # smuggle into the headline items frame.
+    occlusion_twin_pairs_by_tag: dict[str, list[OcclusionPairInput]] | None = None
 
     @field_validator("schema_id")
     @classmethod
@@ -195,6 +218,7 @@ __all__ = [
     "FaceRunItem",
     "FaceRunRecordDocument",
     "FaceRunRecordError",
+    "OcclusionPairInput",
     "build_face_detection",
     "build_face_run_item",
     "build_face_run_record",

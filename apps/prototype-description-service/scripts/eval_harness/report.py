@@ -34,6 +34,7 @@ from .caption_metrics import (
 from .face_assignment import (
     FOLD_MEDIA_CORESIDENCY_DISCLOSURE,
     TAU_GRID,
+    associate_detections,
     score_face_assignment,
 )
 from .face_metrics import (
@@ -52,7 +53,7 @@ from .face_metrics import (
     face_unknown_rejection,
     identification_pr,
 )
-from .manifest import Provenance, ProvenanceSource
+from .manifest import Provenance, ProvenanceSource, SliceTag
 from .schema import SCHEMA, DocKind
 from .synthetic_occlusion import (
     ELIGIBLE_PAIR_FLOOR,
@@ -1259,6 +1260,94 @@ def _clustering_dict(metrics: Any) -> dict[str, Any]:
         "labels": list(metrics.labels),
         **status,
     }
+
+
+# Occlusion slice-tag vocabulary (SC3 subset) for real-occlusion pair extraction.
+_OCCLUSION_TAG_VALUES: tuple[str, ...] = (
+    SliceTag.MASKED.value,
+    SliceTag.SUNGLASSES.value,
+    SliceTag.OCCLUSION_OTHER.value,
+)
+
+
+def build_real_occlusion_pairs(
+    face_run_record: dict[str, Any],
+    manifest: Any,
+) -> dict[str, list[dict[str, Any]]]:
+    """Real-occlusion pair inputs from occlusion-TAGGED manifest entries (FIR5GL-01).
+
+    For every scoreable run-record item whose manifest entry carries an
+    occlusion SliceTag (masked/sunglasses/occlusion_other), each NAMED GT box
+    becomes one pair input per occlusion tag on the entry: §C-associate the
+    item's detections to the entry's GT boxes, take the matched detection's
+    embedding, or ``embedding=None`` when the named box went undetected on the
+    real occluded photo (a detect miss inside the eligible frame, EMB-03).
+    Tags are image-level strata, so an entry tagged with two occlusion tags
+    contributes its faces to both strata — consistent with per-tag slicing.
+    """
+    entries, _roster_cohorts, _roster = _entries_as_dicts(manifest)
+    entry_by_id = _entry_index(entries)
+    out: dict[str, list[dict[str, Any]]] = {}
+    for item in face_run_record.get("items") or []:
+        if item.get("error"):
+            continue
+        entry = entry_by_id.get(int(item["media_id"]))
+        if entry is None:
+            continue
+        occ_tags = [
+            t for t in (str(tag) for tag in (entry.get("tags") or [])) if t in _OCCLUSION_TAG_VALUES
+        ]
+        if not occ_tags:
+            continue
+        boxes = list(entry.get("face_boxes") or [])
+        named = [
+            (i, box)
+            for i, box in enumerate(boxes)
+            if (box.get("name") if isinstance(box, Mapping) else getattr(box, "name", None))
+        ]
+        if not named:
+            continue
+        faces = list(item.get("faces") or [])
+        assoc = associate_detections(
+            [f["bbox_px"] for f in faces],
+            boxes,
+            list(item.get("image_size") or [1, 1]),
+        )
+        emb_by_gt = {
+            p.gt_index: [float(v) for v in faces[p.det_index]["embedding"]] for p in assoc.pairs
+        }
+        for gt_index, box in named:
+            name = box.get("name") if isinstance(box, Mapping) else getattr(box, "name", None)
+            for tag in occ_tags:
+                out.setdefault(tag, []).append(
+                    {
+                        "media_id": int(item["media_id"]),
+                        "box_index": gt_index,
+                        "true_name": str(name),
+                        "kind": tag,
+                        "embedding": emb_by_gt.get(gt_index),
+                    }
+                )
+    return out
+
+
+def occlusion_inputs_from_record(
+    face_run_record: dict[str, Any],
+    manifest: Any,
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, list[dict[str, Any]]]]:
+    """Extract (synthetic, real) occlusion pair inputs for build_face_reports.
+
+    Synthetic twins ride the run record's document-level
+    ``occlusion_twin_pairs_by_tag`` (written by the face-bakeoff twin pass —
+    never items, EVAL-16); real pairs derive from occlusion-tagged manifest
+    entries. One shared entry point so score-face and the cross-process
+    determinism re-score can never diverge on occlusion inputs.
+    """
+    synth = {
+        str(tag): [dict(p) for p in pairs]
+        for tag, pairs in (face_run_record.get("occlusion_twin_pairs_by_tag") or {}).items()
+    }
+    return synth, build_real_occlusion_pairs(face_run_record, manifest)
 
 
 def score_face_run_record(

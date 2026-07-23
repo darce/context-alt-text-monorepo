@@ -42,12 +42,14 @@ from .report import (
     ReportError,
     build_face_reports,
     build_reports,
+    occlusion_inputs_from_record,
     score_face_run_record,
     score_run_record,
 )
 from .face_bakeoff import (
     BoundedStallError as FaceBoundedStallError,
     build_candidate_leg,
+    build_occlusion_twin_pairs,
     walk_face_run_record,
 )
 from .face_run_record import FaceRunRecordError, validate_face_run_record
@@ -554,6 +556,9 @@ def _cmd_face_bakeoff(args: argparse.Namespace) -> None:
             limit=args.limit,
             stall_limit=args.stall_limit,
             started_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            # rg-015: dim comes from the leg's embedder (the producer), so an
+            # injected leg with a different space cannot mislabel the record.
+            embedding_dim=getattr(embedder, "embedding_dim", None),
         )
     except FaceBoundedStallError as exc:
         record = exc.partial_record
@@ -563,6 +568,21 @@ def _cmd_face_bakeoff(args: argparse.Namespace) -> None:
         prune_out_dir(str(OUT_DIR), keep=args.keep)
         print(path)
         sys.exit(f"FaceBoundedStallError: {exc}")
+    # FIR5GL-01: synthetic occlusion twin pass — generate/render twins from the
+    # frozen landmark cache, re-detect+embed the occluded pixels with the SAME
+    # leg, and stamp document-level pair inputs (never items — EVAL-16 firewall).
+    twin_pairs, twin_prov = build_occlusion_twin_pairs(
+        manifest,
+        images_dir,
+        detector=detector,
+        embedder=embedder,
+        aligner=aligner,
+        limit=args.limit,
+    )
+    record["provenance"]["occlusion_twin_pass"] = twin_prov
+    if twin_pairs:
+        record["occlusion_twin_pairs_by_tag"] = twin_pairs
+    record = validate_face_run_record(record)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     path = OUT_DIR / f"face-run-{stamp}.json"
     path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
@@ -571,7 +591,9 @@ def _cmd_face_bakeoff(args: argparse.Namespace) -> None:
     print(
         f"face-bakeoff items={len(record['items'])} "
         f"leg={record['provenance'].get('leg')} "
-        f"model_id={record['provenance'].get('model_id')}"
+        f"model_id={record['provenance'].get('model_id')} "
+        f"occlusion_twin_pairs={twin_prov['n_pairs']} "
+        f"twin_errors={len(twin_prov['errors'])}"
     )
 
 
@@ -582,10 +604,14 @@ def _face_score_once(
     score_manifest_sha256: str,
     public: bool,
 ) -> tuple[str, str]:
+    # FIR5GL-01: twins ride the record; real pairs derive from tagged entries.
+    synth_pairs, real_pairs = occlusion_inputs_from_record(record, manifest)
     return build_face_reports(
         record,
         manifest,
         score_manifest_sha256=score_manifest_sha256,
+        occlusion_pairs_by_tag=synth_pairs,
+        real_occlusion_pairs_by_tag=real_pairs,
         public=public,
     )
 
@@ -609,11 +635,13 @@ def _check_face_determinism_cross_process(
         "import json,sys; "
         "from scripts.eval_harness.manifest import load_manifest; "
         "from scripts.eval_harness.cli import _manifest_sha; "
-        "from scripts.eval_harness.report import build_face_reports; "
+        "from scripts.eval_harness.report import build_face_reports, occlusion_inputs_from_record; "
         "rec=json.loads(open(sys.argv[1]).read()); "
         "man=load_manifest(sys.argv[2]); "
         "pub=sys.argv[3]=='1'; "
-        "j,m=build_face_reports(rec,man,score_manifest_sha256=_manifest_sha(man),public=pub); "
+        "sp,rp=occlusion_inputs_from_record(rec,man); "
+        "j,m=build_face_reports(rec,man,score_manifest_sha256=_manifest_sha(man),"
+        "occlusion_pairs_by_tag=sp,real_occlusion_pairs_by_tag=rp,public=pub); "
         "sys.stdout.write(j); sys.stdout.write('---MD---'); sys.stdout.write(m)"
     )
     for seed in ("0", "1", "42"):
@@ -659,11 +687,24 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
     json_path, md_path = Path(f"{base}-face-report.json"), Path(f"{base}-face-report.md")
     json_path.write_text(json_doc)
     md_path.write_text(md_doc)
-    scored = score_face_run_record(record, manifest, score_manifest_sha256=manifest_sha)
+    synth_pairs, real_pairs = occlusion_inputs_from_record(record, manifest)
+    scored = score_face_run_record(
+        record,
+        manifest,
+        score_manifest_sha256=manifest_sha,
+        occlusion_pairs_by_tag=synth_pairs,
+        real_occlusion_pairs_by_tag=real_pairs,
+    )
+    occlusion_eligible = sum(
+        int((block.get("synthetic") or {}).get("n_eligible") or 0)
+        for block in (scored["slices"].get("occlusion") or {}).values()
+        if isinstance(block, dict)
+    )
     print(md_path)
     print(
         f"scored={scored['counts']['scored']}/{scored['counts']['total']} "
         f"matched_faces={scored['counts']['matched_faces']} "
+        f"occlusion_n_eligible={occlusion_eligible} "
         f"directional_excluded={len(scored['gate_proposal']['excluded_directional'])}"
     )
     failed = int(scored["counts"]["failed"])

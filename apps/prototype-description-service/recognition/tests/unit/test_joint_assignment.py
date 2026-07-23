@@ -434,6 +434,45 @@ def test_equal_sim_equal_conf_prefers_lexicographically_smaller_id() -> None:
         assert result.loser_identity_ids == frozenset({"face-m", "face-z"}), order_ids
 
 
+def test_tie_break_survives_adversarial_solver_row_choice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FIR6V11-01 discrimination guard ([TEST-15]/[TEST-06]/[REF-27]).
+
+    Equal-sim ties produce multiple equal-cost LAP optima; scipy is free to
+    return any of them. The face row sort happens to coincide with the desired
+    (conf, id) preference, so with scipy's real internals the e2e tie tests
+    stay green even when the post-solve canonicalization is deleted — the
+    determinism rides solver internals by coincidence. This test removes the
+    coincidence: the solver is wrapped to return an *equal-cost* optimum that
+    picks the anti-preferred contender (largest row index at minimal cost).
+    It goes red iff ``_canonicalize_lap_ties`` stops re-picking the winner.
+    """
+    import recognition.application.assignment.joint as joint_mod
+
+    def adversarial_lap(cost: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        assert cost.shape[1] == 1, "guard scenario is single-cluster by design"
+        min_cost = float(cost[:, 0].min())
+        rows = np.flatnonzero(cost[:, 0] == min_cost)
+        # Same total cost as any optimum, but the dis-preferred row wins.
+        return np.array([int(rows.max())]), np.array([0])
+
+    monkeypatch.setattr(joint_mod, "linear_sum_assignment", adversarial_lap)
+
+    decisions = [
+        _accept(
+            _identity(identity_id=fid, media_id="photo-adv", confidence=0.80),
+            cluster_id="cluster-x",
+            similarity=0.85,
+        )
+        for fid in ("face-m", "face-a", "face-z")
+    ]
+    result = resolve_photo_conflicts(group_accepted_by_media(decisions))
+    assert len(result.accepted) == 1
+    assert result.accepted[0].candidate.identity.id == "face-a"
+    assert result.loser_identity_ids == frozenset({"face-m", "face-z"})
+
+
 def test_sentinel_post_filter_when_faces_exceed_clusters() -> None:
     """Rectangular matrix with one real cluster: LAP may assign a sentinel; drop it."""
     # Three faces compete for one cluster; only one real edge column exists.

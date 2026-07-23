@@ -4,7 +4,7 @@
 >
 > - **Date**: 2026-07-23
 > - **Author**: Grok (docs-only plan authoring)
-> - **Plan version**: v6.1 — supersedes in-service bench supervisor (v5); re-scopes to cross-stack orchestration aligned with FIR23-STACK + QA v2; **changelog (v6→v6.1)**: real preflight contracts, explicit cluster phase, feasible public-export scoring scope, dual scoring frames, crossbench tier enum, ingest→analyze→cluster→export flow, pinned FIR23-STACK consumption table, single package root
+> - **Plan version**: v6.2 — supersedes in-service bench supervisor (v5); re-scopes to cross-stack orchestration aligned with FIR23-STACK + QA v2; **changelog (v6→v6.1)**: real preflight contracts, explicit cluster phase, feasible public-export scoring scope, dual scoring frames, crossbench tier enum, ingest→analyze→cluster→export flow, pinned FIR23-STACK consumption table, single package root; **changelog (v6.1→v6.2)**: ground-truth wiring + label mapping, S1 executable granularity (run-dir/resume/credentials/status/PROV-01), concrete CrossbenchTier assignment rules, EVAL-19 accepted-set operationalization, proof-suite + dual-frame FIR-5 signature pins
 > - **Projects**: `apps/prototype-description-service/scripts/bench/` (primary, new — single package root); consumes `apps/prototype-description-service/scripts/eval_harness/` (FIR-5, merged); **no** recognition-service code changes
 > - **Task ID**: `FIR-8`
 > - **Target Branch**: `feature/fir-8`
@@ -44,8 +44,8 @@ Operators need a head-to-head score of insightface (512-D) vs face_pipeline (128
 - **License**: insightface / buffalo_l stack is **INTERNAL BENCH ONLY** (NC weights). Outputs never become training data; never user-facing/commercial ([RLSE-05], QA digests §buffalo-as-judge).
 - **Boundary honesty** ([rg-015]): when normalizing the two stacks' API payloads, every envelope field (`limit`, `offset`, `total`, status/projection metadata) comes from the request, the upstream payload, or a **named** documented constant — never `count(payload)` invention.
 - **Cascade honesty** ([EVAL-16]): a face a stack's detector missed counts as an identification error end-to-end in the head-to-head report — enforced by the adapter dual-frame construction (see [End-to-end scoring frames](#end-to-end-scoring-frames)).
-- **Fixed denominators** ([EVAL-19]): both legs share the same accepted media set / labeled face denominators; do not shrink denominators per leg after partial detection failure.
-- **Per-run provenance** ([PROV-01]): every report stamps stack identity (base URL / compose project name), model ids, `PGVECTOR_DIM`, corpus hash, CLI + harness code SHAs.
+- **Fixed denominators** ([EVAL-19]): the scoring denominator is the **accepted set** — manifest items successfully ingested+analyzed on **both** legs — computed once, written to `score/accepted_set.json`, asserted identical across legs before any metric; attrition of one-sided failures is reported, not silently dropped (see [EVAL-19 operationalized](#eval-19-operationalized-accepted-set)).
+- **Per-run provenance** ([PROV-01]): every report stamps stack identity (base URL / compose project name), model ids, `PGVECTOR_DIM`, corpus hash, CLI + harness code SHAs; per-leg `preflight.json` is the primary provenance artifact written in S1 and consumed by the report.
 - **Canon**: heuristics v0.12.3; distilled refs `~/Development/heuristics-canon-research/distilled/ml-systems/janus-benchmark-c.md` (pooling-unit / cascade eval), `handbook-face-recognition.md`.
 
 ## Workflow Principles
@@ -64,9 +64,10 @@ Operators need a head-to-head score of insightface (512-D) vs face_pipeline (128
 | **Dev stack** | Existing recognition deployment: `RECOGNITION_FACE_PIPELINE_PROFILE=insightface`, `PGVECTOR_DIM=512`, public API base (operator-configured; typically `https://dev.api.altcontext.com`). **Internal bench only** for commercial product posture. |
 | **`acx-dev-fir` stack** | FIR23-STACK profile-pinned isolated stack: compose project + network + DB `alt_context_dev_fir` @ `PGVECTOR_DIM=128`, profile `face_pipeline`, ingress `fir.api.altcontext.com`. FIR candidate leg. |
 | **Stack pair** | Named config binding both base URLs, API keys / tenant ids, expected `(profile, dim)` pairs, and optional LAN override flag for private media hosts. Validated at load against the [FIR23-STACK consumption table](#fir23-stack-consumption-table-pinned) ([rg-008]); unknown `stack_id` values are refused. |
-| **Corpus** | Fixed media set for a run (paths or resolvable HTTPS URLs). Accepted set = media that pass CLI validation before ingest. |
+| **Corpus / manifest** | Golden-schema corpus loaded via `scripts.eval_harness.manifest.load_manifest` (CLI `--manifest`). Media bytes from manifest-relative local paths (under `--images-dir` / corpus root) or pinned remote URLs. |
 | **Leg** | Full **ingest → analyze → cluster → export** path against **one** stack. A head-to-head run has two legs: `insightface@512` and `face_pipeline@128`. |
-| **Superset baseline / accepted set** | Any uploaded or declared baseline / label artifact's `media_id` (or sha256) set **must be a SUPERSET** of the run's accepted set. Partial intersection = **blocker** (do not silently score a subset). |
+| **Accepted set** | Manifest items that **succeeded ingest+analyze on both legs**. Fixed scoring denominator ([EVAL-19]); written to `score/accepted_set.json`. Distinct from pre-ingest validation. |
+| **Superset baseline** | Any uploaded or declared baseline / label artifact's `media_id` (or sha256) set **must be a SUPERSET** of the run's accepted set. Partial intersection = **blocker** (do not silently score a subset). |
 | **Crossbench report** | Tier-labeled head-to-head artifact under `benchmarks/results/crossbench-<stamp>/`. Tier labels are a **new** crossbench report enum in `score_report.py` (`CONFIRMATORY` / `DIRECTIONAL` / `DIAGNOSTIC`) sourced from QA-digest/canon convention — **not** a FIR-5 enum (see [Tier vocabulary](#tier-vocabulary)). |
 | **Named bench stacks** | Exactly the two stack identities listed in the stack-pair config (dev + `acx-dev-fir`). Production-shaped-data guard allows nonzero identity tables **only** on these two named stacks. |
 | **Package root** | Single root: `apps/prototype-description-service/scripts/bench/`. Tests import via `scripts.bench.*` with `apps/prototype-description-service` on `PYTHONPATH` (same convention as `scripts.eval_harness`). |
@@ -88,8 +89,8 @@ Operators need a head-to-head score of insightface (512-D) vs face_pipeline (128
 
 1. Operator configures a stack-pair file pointing at dev + `acx-dev-fir` endpoints (validated against the pinned consumption table).
 2. CLI preflight proves both stacks are healthy and match pinned `(profile, dim)` via the real health contracts; fails closed on drift / auth / missing fields with distinct stable error codes.
-3. CLI **ingests** media (CLI-side fetch + pin), **analyzes** on both stacks (`analyze` + `wait_job`), runs **cluster** (`clustering_job(..., mode="sync")`), **exports** clusters/assignments; persists per-item + cluster outcomes; resumes safely.
-4. CLI maps exports into FIR-5 `ImageDetection` / `ImageIdentities`, scores detection P/R + identification P/R under both frames (FIR-5-native + end-to-end), emits a tier-labeled head-to-head report under `benchmarks/results/crossbench-*/` with provenance + cascade-honest denominators.
+3. CLI loads golden-schema **manifest** GT, **ingests** media (local-then-remote + CF-1 pin), **analyzes** on both stacks (`analyze` + `wait_job`), runs **cluster** (`clustering_job(..., mode="sync")`), **exports** clusters/assignments into the run-dir; persists per-item + cluster outcomes; resumes safely.
+4. CLI maps GT + exports into FIR-5 `ImageDetection` / `ImageIdentities` (with label-space mapping), scores detection P/R + identification P/R under dual sampling and label-map frames offline (`score` needs no credentials), emits a tier-labeled head-to-head report under `benchmarks/results/crossbench-*/` with `accepted_set.json`, attrition, `preflight.json` provenance, and cascade-honest denominators.
 5. Runbook documents license posture, preflight, run, score, and **stack-scoped teardown** via FIR23-STACK's documented reset path (not a new FIR-8 reset invention).
 6. Zero recognition-service source edits land in this task's commits.
 
@@ -97,9 +98,10 @@ Operators need a head-to-head score of insightface (512-D) vs face_pipeline (128
 
 | Order | Path | Why |
 | --- | --- | --- |
-| 1 | This plan (v6.1) end-to-end | Locked scope, dependency boundary, carried invariants, slices |
+| 1 | This plan (v6.2) end-to-end | Locked scope, dependency boundary, carried invariants, slices |
 | 2 | `apps/prototype-description-service/scripts/eval_harness/remote_client.py` | Existing HTTP client (`analyze`, `wait_job`, `media_identities`, `clustering_job`, `clusters`, …) — **no health methods** |
-| 3 | `apps/prototype-description-service/scripts/eval_harness/face_metrics.py` | Pure `ImageDetection` / `ImageIdentities` + `detection_pr` / `identification_pr` — scoring legs |
+| 3 | `apps/prototype-description-service/scripts/eval_harness/face_metrics.py` | Pure `ImageDetection` / `ImageIdentities` + `detection_pr` / `identification_pr` — scoring legs (unmodified consumers) |
+| 3b | `apps/prototype-description-service/scripts/eval_harness/manifest.py` | `load_manifest` → `GoldenManifest` / `GoldenEntry` / `FaceBox` — GT source + schema |
 | 4 | `apps/prototype-description-service/api/main.py` `register_health_probes` + `recognition/application/health.py` | Real preflight field sources from `/ready` and `/health/detailed` |
 | 5 | `apps/prototype-description-service/recognition/interface_adapters/http/deps/stores.py` `MediaIdentityService.list_by_media_ids` | Public export keys (bbox/cluster metadata only) |
 | 6 | `apps/prototype-description-service/db/migrations/versions/001_identity_schema.py` | Production-shaped-data table set (`tenants`, `media_identities`, `identity_clusters`, `identity_members`) |
@@ -131,33 +133,35 @@ python -m pytest scripts/bench/tests/ -q
 ```text
 apps/prototype-description-service/scripts/bench/
   __init__.py
-  cross_stack_bench.py          # CLI entry (argparse subcommands)
+  cross_stack_bench.py          # CLI entry (preflight/run/status/score)
   stack_pair.py                 # load + validate stack-pair config against FIR23-STACK table
-  preflight.py                  # own authenticated GETs; dim + profile fail-closed
-  corpus.py                     # accept set, media source pin, per-item outcomes
-  driver.py                     # ingest → analyze → cluster both stacks; resume
-  export_map.py                 # pull clusters/assignments; map to ImageDetection/ImageIdentities
-  score_report.py               # dual-frame scoring; crossbench tier enum; write report dir
+  preflight.py                  # own authenticated GETs; write preflight.json (PROV-01)
+  corpus.py                     # load_manifest wrap, media resolve order, pin, items.jsonl
+  driver.py                     # ingest → analyze → cluster → export both stacks; resume
+  export_map.py                 # persist exports; GT+label map → ImageDetection/ImageIdentities
+  score_report.py               # dual frames; CrossbenchTier rules; accepted_set; report
   production_shaped_guard.py    # refuse non-named stacks with nonzero core tables
   tests/                        # unit + one mocked E2E
 docs/runbooks/
   fir-8-cross-stack-bench.md    # operator runbook (S3)
-benchmarks/results/crossbench-*/  # gitignored run outputs
+benchmarks/manifests/golden150-*.json  # operator/VLM-6 corpus (not invented in FIR-8)
+benchmarks/results/crossbench-*/       # gitignored run outputs (run-dir layout)
 ```
 
 **Operator flow**
 
 1. Confirm FIR23-STACK has `acx-dev-fir` healthy next to dev.
-2. `python -m scripts.bench.cross_stack_bench preflight --config stack-pair.yaml` → both sides green or abort.
-3. `… run --config … --corpus … --out benchmarks/results/crossbench-<stamp>/` → ingest+analyze+cluster both legs with resume file.
-4. `… score --run-dir …` → dual-frame FIR-5 pure metrics + head-to-head HTML/JSON (export aborts if cluster phase missing/failed).
-5. Teardown: FIR23-STACK stack-scoped DB reset for the FIR stack (and optional dev-bench tenant wipe per runbook) — **not** a new recognition purge phase.
+2. `python -m scripts.bench.cross_stack_bench preflight --config stack-pair.yaml` → both sides green or abort (writes per-leg `preflight.json` under `--out` when run-dir known, or dry-check without run-dir).
+3. `… run --config … --manifest <golden-schema.json> --images-dir <corpus-root> --out benchmarks/results/crossbench-<stamp>/` → ingest+analyze+cluster+export both legs; resume via append-only `items.jsonl`.
+4. `… status --run-dir …` → per-leg progress + phase (optional operator check).
+5. `… score --run-dir …` → reads run-dir only (no credentials); dual-frame FIR-5 pure metrics + head-to-head HTML/JSON (aborts if cluster phase missing/failed).
+6. Teardown: FIR23-STACK stack-scoped DB reset for the FIR stack (and optional dev-bench tenant wipe per runbook) — **not** a new recognition purge phase.
 
 ---
 
 ## Superseded: v5 in-service vehicle
 
-v5 specified an **in-service** async single-live-run bench supervisor inside the recognition worker: state machine over `recognition_bench_runs`, `uq_bench_single_live`, purge-before-terminal, deployment marker rail, boot-coupled license gate, non-blocking tick contract, and `/admin` bench routes. That vehicle is **superseded** by **per-model isolated stacks** (FIR23-STACK): exclusivity, no mixed-space reads, and teardown via stack-scoped DB reset are structural properties of the deploy topology, not application supervisor features. Re-implementing them inside the worker would duplicate FIR23-STACK ownership and re-open dual-space foot-guns. **Do not delete git history** — v5 plan text is recoverable at commit **`bc97ff4b`**. Decision **#2951** records the supersession. The rest of this document is the v6 / v6.1 scope only.
+v5 specified an **in-service** async single-live-run bench supervisor inside the recognition worker: state machine over `recognition_bench_runs`, `uq_bench_single_live`, purge-before-terminal, deployment marker rail, boot-coupled license gate, non-blocking tick contract, and `/admin` bench routes. That vehicle is **superseded** by **per-model isolated stacks** (FIR23-STACK): exclusivity, no mixed-space reads, and teardown via stack-scoped DB reset are structural properties of the deploy topology, not application supervisor features. Re-implementing them inside the worker would duplicate FIR23-STACK ownership and re-open dual-space foot-guns. **Do not delete git history** — v5 plan text is recoverable at commit **`bc97ff4b`**. Decision **#2951** records the supersession. The rest of this document is the v6 / v6.2 scope (v6.1 structure + v6.2 grounding).
 
 ---
 
@@ -224,42 +228,174 @@ Public exports (media identities + cluster members) carry **bbox / cluster metad
 
 **In scope for cross-stack scoring (Slice 2)**
 
-- Map exports → `face_metrics.ImageDetection` (count-based detection P/R via `detection_pr`).
-- Map exports → `face_metrics.ImageIdentities` (named identification P/R via `identification_pr`, using cluster labels / labeled assignments available on the public surface).
-- Dual frames: FIR-5-native + end-to-end inclusive ([End-to-end scoring frames](#end-to-end-scoring-frames)).
+- Map exports + GT → `face_metrics.ImageDetection` (count-based detection P/R via `detection_pr`).
+- Map exports + GT + label-space mapping → `face_metrics.ImageIdentities` (named identification P/R via `identification_pr`).
+- Dual sampling frames: FIR-5-native + end-to-end inclusive ([End-to-end scoring frames](#end-to-end-scoring-frames)).
+- Dual label-mapping frames: primary string-match + disclosed optimistic Hungarian ([Ground truth & label mapping](#ground-truth--label-mapping)).
 
 **Explicitly OUT OF SCOPE for the cross-stack path**
 
 - FIR-5 **score-face / run-record** surfaces that assume full describe/analyze run records with embedding-bearing fields.
 - **Clustering purity sweeps** and any metric that requires raw embedding vectors or landmarks.
 - Inventing an admin/diagnostic export of embeddings from FIR-8.
+- Treating raw predicted `cluster_label` strings as GT identity names without the label-space mapping step.
 
 **OPTIONAL upstream ask** (separate service task, **not FIR-8**): an authenticated embedding-export diagnostic route (or opt-in debug field) for offline purity / embedding-space audits. Document the ask in the runbook residual section; do not block FIR-8 on it.
 
 ---
 
+## Ground truth & label mapping
+
+Scoring is invalid if predicted cluster labels are compared to GT as if they shared a name space. This section pins **where GT comes from**, **how metric inputs are built**, and **how cluster labels map into GT identity space**.
+
+### (a) GT source + loader
+
+| Pin | Value |
+| --- | --- |
+| **Schema** | Golden manifest v2 (`manifest_version == 2`) — same schema as FIR-5 eval |
+| **Loader** | `scripts.eval_harness.manifest.load_manifest(path: str, images_dir: str \| None = None) -> GoldenManifest` |
+| **Types** | `GoldenManifest` (`roster`, `entries`); `GoldenEntry` (`path`, `sha256`, `media_id`, `face_count`, `present_identities`, `face_boxes`, `policy`, …); `FaceBox` (`x`, `y`, `w`, `h`, `name: str \| None`, `source`) |
+| **Errors** | `ManifestError` on structural/hash/label failures (fail-closed, [rg-008]) |
+| **File pattern** | CLI `--manifest` accepts any path loadable by `load_manifest`. **Convention** for the Golden-150 face bench corpus: `benchmarks/manifests/golden150-*.json` (e.g. `golden150-draft-YYYYMMDD.json`). Smoke / unit fixtures may use `apps/prototype-description-service/scene/tests/seed/golden.json`. |
+| **In-tree status (plan-author check)** | `benchmarks/manifests/golden150-draft-20260723.json` is **not** present in this checkout; operators (or VLM-6 curation) supply the curated Golden-150 path. Do not invent a vendored 150-entry file in FIR-8. |
+| **Content hash pin** | At `run` start, write `manifest.sha` = sha256 of the manifest file bytes. Optional stack-pair / run config key `manifest_sha256` fails closed if it mismatches the loaded file. Score path re-reads the hash for provenance. |
+| **Image bytes root** | `--images-dir` (or config `images_dir`) is the local corpus root; when set, `load_manifest(..., images_dir=...)` verifies per-entry `sha256` against files under that root (same as harness). |
+
+CLI: `run --manifest <path> --images-dir <root> …` (both required for production head-to-head; tests may inject a synthetic `GoldenManifest` without disk images).
+
+### (b) Constructing metric inputs
+
+Frame construction happens **entirely in `scripts/bench`** (`export_map.py` / `score_report.py`). FIR-5 `detection_pr` / `identification_pr` are pure consumers of the rows the adapter builds — **unmodified**.
+
+| Side | Source | Fields used for FIR-5 rows |
+| --- | --- | --- |
+| **GT (labeled)** | Manifest entry | `ImageDetection.labeled_faces` ← `entry.face_count` (or `len(entry.face_boxes)` when boxes are complete and preferred); `ImageIdentities.labeled` ← `entry.present_identities` (roster names); `recognition_enabled` ← `entry.policy.recognition_enabled`; `stranger_faces` ← max(0, `face_count - len(present_identities)`) or count of `face_boxes` with `name is None` when boxes present |
+| **Predicted** | Per-leg public exports under `legs/<stack_id>/exports/` | `ImageDetection.pred_faces` ← count of exported face rows for that media; `ImageIdentities.predicted` ← **mapped** identity names (never raw unmapped cluster ids as if they were GT names) |
+| **Image key** | Join key | Stable string: manifest `path` or `str(entry.media_id)` — same `image` field on both `ImageDetection` and `ImageIdentities` for a media unit |
+
+Detection P/R does not require identity name mapping (counts only). Identification P/R **requires** [label-space mapping](#c-label-space-mapping) before filling `predicted`.
+
+### (c) Label-space mapping
+
+Predicted `cluster_label` values are **cluster-scoped** (stack-local cluster ids / operator labels), not automatically GT roster names. Never pass raw `cluster_label` into `ImageIdentities.predicted` without mapping.
+
+**Normalization** (shared by both rules): Unicode NFC, strip, collapse internal whitespace, casefold.
+
+| Rule | When | How | Report frame |
+| --- | --- | --- | --- |
+| **Primary — string match (pinned primary)** | Cluster has an operator-assigned label (`is_auto_label == false` **or** non-empty human `cluster_label` that is not a pure auto id) | Map predicted label → GT name if normalized strings equal a roster / `present_identities` name; else unmapped (omit from `predicted` for primary frame; count under unmapped-cluster DIAGNOSTIC stats) | `label_map_primary` — **default** for CONFIRMATORY identification cells |
+| **Optimistic — Hungarian (disclosed)** | Unlabeled / auto-labeled clusters (`is_auto_label == true` or empty label) **or** residual after primary | Optimal one-to-one assignment (Hungarian) maximizing **overlap counts** between cluster member boxes and GT `face_boxes` (IoU ≥ plan constant `BOX_IOU_MATCH=0.5`, or centre-in-box fallback when GT boxes lack size parity). Assigned GT names fill `predicted` for this frame only. | `label_map_optimistic` — always **DIRECTIONAL**; never CONFIRMATORY |
+
+**Disclosure (mandatory in report)**: primary and optimistic frames print side-by-side for identification; optimistic cells carry tier `DIRECTIONAL` and a one-line note that assignment is overlap-optimal, not operator-confirmed. Unmapped residual clusters after both rules are DIAGNOSTIC counts only.
+
+### (d) Media identity join
+
+Manifest `media_id` (synthetic golden id) ≠ stack `media_id` (per-tenant DB id after analyze). Join is **only** via the per-item outcome record:
+
+```text
+legs/<stack_id>/items.jsonl  # one JSON object per line, append-only
+{
+  "manifest_media_id": 12,          # GoldenEntry.media_id
+  "manifest_path": "…",             # GoldenEntry.path
+  "content_sha256": "…",            # GoldenEntry.sha256 when verified
+  "stack_media_id": "…",            # id returned by analyze / media export on this stack
+  "phase": "ingest|analyze|…",
+  "outcome": "ok|failed",
+  "error_code": null,
+  "attempt": 1
+}
+```
+
+Score path: for each accepted-set item, resolve `stack_media_id` per leg from that leg's `items.jsonl`, then select export rows with matching stack media id. Missing join → item excluded from accepted set + counted in attrition (phase=`join`).
+
+---
+
 ## End-to-end scoring frames
 
-FIR-5 pure functions score **only the rows they are given** — they do not themselves inject detector-miss cascade. The adapter owns cascade honesty.
+FIR-5 pure functions score **only the rows they are given** — they do not themselves inject detector-miss cascade or label mapping. The adapter in `scripts/bench` owns cascade honesty and label-space mapping; **FIR-5 is unmodified**.
+
+### Dual-frame adapter contract (FIR-5 signatures pinned)
+
+Verified in `apps/prototype-description-service/scripts/eval_harness/face_metrics.py`:
+
+```python
+@dataclass(frozen=True)
+class ImageDetection:
+    image: str
+    pred_faces: int
+    labeled_faces: int
+
+@dataclass(frozen=True)
+class ImageIdentities:
+    image: str
+    predicted: Sequence[str]       # mapped GT-space names only
+    labeled: Sequence[str]         # from manifest present_identities
+    recognition_enabled: bool = True
+    stranger_faces: int = 0
+
+def detection_pr(items: Sequence[ImageDetection]) -> PrResult: ...
+def identification_pr(items: Sequence[ImageIdentities]) -> PrResult: ...
+```
+
+- **Construction site**: `export_map.to_face_metric_inputs(...)` / `score_report.build_dual_frames(...)` only.
+- **Call sites**: `detection_pr(seq_of_ImageDetection)`, `identification_pr(seq_of_ImageIdentities)` — no other FIR-5 face scorer on the cross-stack path.
+- **Do not modify** `face_metrics.py` in this task.
 
 **Adapter construction (normative)**
 
-1. Build the **detected set** from public export rows (per media: face counts, predicted identity labels from cluster labels).
-2. **FIR-5-native frame** (`sampling_frame=SAMPLING_FRAME_FACE_ID`): call `detection_pr` / `identification_pr` on rows derived only from exported detections (FIR-5-native sampling — excludes pure detector misses from the identification accounting by construction of the input rows). Report under key `frame_fir5_native`.
-3. **End-to-end frame** (`sampling_frame=SAMPLING_FRAME_E2E`): **before** calling the pure functions, inject labeled-but-undetected faces as FN rows (`ImageDetection` undershoot and/or `ImageIdentities` with empty predicted + labeled name present). Report under key `frame_e2e`. Detector miss → identification miss is accounted here ([EVAL-16]).
-4. Head-to-head report prints **both frames side-by-side** per leg; never silently replace one with the other.
+1. Join accepted-set media via [media identity join](#d-media-identity-join); load GT from the pinned manifest; load predicted rows from `legs/<stack_id>/exports/`.
+2. Apply [label-space mapping](#c-label-space-mapping) → primary and (separately) optimistic predicted name lists.
+3. **FIR-5-native sampling frame** (`sampling_frame=SAMPLING_FRAME_FACE_ID`): call `detection_pr` / `identification_pr` on rows derived only from exported detections (excludes pure detector misses from identification accounting by construction of the input rows). Report under key `frame_fir5_native`.
+4. **End-to-end sampling frame** (`sampling_frame=SAMPLING_FRAME_E2E`): **before** calling the pure functions, inject labeled-but-undetected faces as FN rows (`ImageDetection` undershoot and/or `ImageIdentities` with empty `predicted` + labeled name present). Report under key `frame_e2e`. Detector miss → identification miss is accounted here ([EVAL-16]).
+5. Head-to-head report prints sampling frames **and** label-mapping frames as a grid per leg; never silently replace one with another.
 
 **Unit test (required)**: synthetic corpus where one labeled face is absent from export → `frame_e2e` identification FN increments and detection FN increments; `frame_fir5_native` identification denominator does not charge that miss the same way (pins detector-miss→ID-miss accounting).
 
-Constants live in `score_report.py` (or `export_map.py`): `SAMPLING_FRAME_FACE_ID`, `SAMPLING_FRAME_E2E` — plan-level names for the two frames; not FIR-5 library enums.
+Constants live in `score_report.py` (or `export_map.py`): `SAMPLING_FRAME_FACE_ID`, `SAMPLING_FRAME_E2E`, `LABEL_MAP_PRIMARY`, `LABEL_MAP_OPTIMISTIC` — plan-level names; not FIR-5 library enums.
 
 ---
 
 ## Tier vocabulary
 
-The three-tier report label set **`CONFIRMATORY` / `DIRECTIONAL` / `DIAGNOSTIC`** is a **new crossbench report enum** defined in `score_report.py`, sourced from QA-digest / canon convention for head-to-head bench claims. It is **not** a FIR-5 enum and must not be attributed to FIR-5 modules.
+The three-tier report label set **`CONFIRMATORY` / `DIRECTIONAL` / `DIAGNOSTIC`** is a **new crossbench report enum** defined in `score_report.py` as `CrossbenchTier`, sourced from QA-digest / canon convention for head-to-head bench claims. It is **not** a FIR-5 enum and must not be attributed to FIR-5 modules.
 
 Separately: FIR-5 / eval harness surfaces carry **per-metric DIRECTIONAL disclosure qualifiers** in the QA/canon sense (e.g. underpowered slices report directional-only and cannot enter a gate decision — see commercial-face-identity scope language) plus harness **`provider_disclosure`** stamps on describe responses. Those are **not** the three-tier crossbench enum. Crossbench reports may *reference* FIR-5 directional disclosure text when a leg is underpowered, but the tier stamp itself is owned by `score_report.py`.
+
+### CrossbenchTier semantics (normative)
+
+| Tier | Meaning |
+| --- | --- |
+| **CONFIRMATORY** | Full-corpus fixed-denominator metric over the pinned **accepted set**, both legs' clustering complete (`cluster_job.json` success), **primary** label-mapping only, accepted-set size ≥ configured floor (`accepted_set_floor`, default = min(manifest entry count, operator pin; tests use explicit small floor)). Eligible for gate-style claims. |
+| **DIRECTIONAL** | Any cell whose denominator lost items below the pre-stated floor (ingest/analyze failures shrank the accepted set), **or** any cell using the **optimistic** label-mapping frame, **or** underpowered slice cells the report still shows for trend. Not gate-eligible. |
+| **DIAGNOSTIC** | Context cells: per-stack raw face/cluster counts, unmapped-cluster stats, attrition-by-phase tables, join failures, license banner echo. Never used as a quality gate. |
+
+### Cell → tier assignment (normative)
+
+| Report cell | Tier rule |
+| --- | --- |
+| Detection P/R (`frame_e2e` or `frame_fir5_native`) on accepted set, both clusters OK, size ≥ floor | **CONFIRMATORY** |
+| Identification P/R with `label_map_primary`, same conditions | **CONFIRMATORY** |
+| Identification P/R with `label_map_optimistic` | **DIRECTIONAL** (always) |
+| Any P/R cell when `\|accepted_set\| < accepted_set_floor` | **DIRECTIONAL** |
+| Any P/R cell when either leg cluster phase missing/failed | **not scored** (score aborts; no silent tier downgrade that invents a metric) |
+| Per-stack raw detection counts, export row counts | **DIAGNOSTIC** |
+| Unmapped-cluster counts / residual after mapping | **DIAGNOSTIC** |
+| Attrition table (per-leg failure counts by phase) | **DIAGNOSTIC** |
+| Provenance / license banner fields | **DIAGNOSTIC** (metadata, not a quality claim) |
+
+---
+
+## EVAL-19 operationalized (accepted set)
+
+[EVAL-19] is not only “share a denominator” — the denominator is a concrete artifact:
+
+1. **Definition**: `accepted_set` = set of manifest items (`manifest_media_id` / path / sha256) for which **both** legs recorded terminal-success for **ingest and analyze** phases in `legs/<stack_id>/items.jsonl`.
+2. **Compute once** at the start of `score` (after both legs finished run): intersection of per-leg success sets.
+3. **Persist**: write `score/accepted_set.json` (`manifest_media_ids`, `paths`, `content_sha256s`, `size`, `floor`, `computed_at`).
+4. **Assert before metrics**: both legs' success sets, when intersected, match the file; re-derive and fail closed if a leg's items.jsonl was mutated after the file was written.
+5. **Attrition (reported, not silent)**: items in the manifest but missing from the accepted set appear in `score/attrition.json` (and the report DIAGNOSTIC table): per-leg failure counts by phase (`ingest`, `analyze`, `cluster`, `export`, `join`) plus one-sided success counts (succeeded on A only / B only).
+6. **Detection failure after accept**: a media that analyzed on both legs stays in the accepted set even if detection count is zero — that is a scored miss, not attrition. Attrition is **pre-accept** failure only.
+7. **Floor**: if `size < accepted_set_floor`, all P/R cells downgrade to **DIRECTIONAL** (see tier table); report still emits metrics with the disclosure.
 
 ---
 
@@ -270,10 +406,12 @@ Adapt v5 review-hardened invariants; **do not re-litigate**. Enforcement lives i
 ### CF-1. Baseline / corpus ingest contract
 
 - Uploaded or declared baseline / label artifact `media_id` (or content-sha) set **must be a SUPERSET** of the run's accepted set. **Partial intersection = blocker** (exit non-zero; do not score a silent subset).
-- **Per-item ingest outcomes** persist under the run directory (`items.jsonl` or equivalent): `media_id`, outcome (`ok`/`failed`), optional `error_code`, `content_sha256` when ok — so resume never loses hard-fail tallies.
-- **There is no stack-side enroll API.** Media bytes are obtained by the **CLI's own outbound fetches** (local paths or HTTPS URLs), then submitted via `RemoteSceneClient.analyze` multipart. The pinned-resolved-address set + public-unicast enforcement therefore constrain the **CLI's own outbound media fetches**, not a recognition-service enroll route.
-- **Pinned resolved-address SET** for each media source host: at ingest, resolve full address set and persist; at fetch, connect only to pinned addresses (anti DNS-rebinding).
-- **Public-unicast enforcement**: reject link-local, RFC1918, loopback unless explicit **`allow_private_source: true`** LAN override in stack-pair config (operator-acked residual).
+- **Per-item outcomes** append to `legs/<stack_id>/items.jsonl` (see [Ground truth & label mapping](#d-media-identity-join)): `manifest_media_id`, `stack_media_id`, phase, outcome (`ok`/`failed`), optional `error_code`, `content_sha256` when ok — resume never loses hard-fail tallies.
+- **There is no stack-side enroll API.** Media bytes resolution order (normative):
+  1. **Local path first**: resolve `GoldenEntry.path` under `--images-dir` / corpus root (NFC/NFD tolerant, same idea as `manifest._resolve_image`); read bytes; verify sha256 against entry when present.
+  2. **Remote URL second**: if local file is missing and the entry (or corpus overlay) provides an HTTPS URL (`provenance.url` or operator URL map), fetch via CLI outbound HTTP.
+  3. Else mark item `failed` with `error_code=media_unresolvable`.
+- **CF-1 pinning applies to the remote case**: pinned resolved-address SET per media host at first resolve; subsequent fetches connect only to pinned addresses (anti DNS-rebinding). **Public-unicast enforcement**: reject link-local, RFC1918, loopback unless explicit **`allow_private_source: true`** LAN override in stack-pair config. Local filesystem reads skip network pin rules.
 
 ### CF-2. Production-shaped-data guard
 
@@ -296,6 +434,7 @@ Implementation note: the CLI does **not** open a raw production DB URL for arbit
 - Outputs **never** become training data.
 - Runbook **forbids** exposing the insightface stack to any commercial or user-facing path (no public product ingress, no customer tenant keys on that stack for product traffic).
 - Reports always carry `license_notice` with that sense.
+- **Intermediate artifacts** (`run.json`, per-leg export JSON, `score/frames.json`) and the HTML report stamp the same internal-bench-only banner (one-sentence field `license_banner` + human-readable report header).
 
 ### CF-4. Bounded runs
 
@@ -306,15 +445,20 @@ Implementation note: the CLI does **not** open a raw production DB URL for arbit
 ### CF-5. Scoring discipline (QA + canon)
 
 - [EVAL-16] cascade honesty via end-to-end frame injection in the adapter.
-- [EVAL-19] fixed denominators across stacks.
-- [PROV-01] per-run provenance: stack identity, model ids, corpus hash, code SHAs.
-- Tier labels: crossbench enum in `score_report.py` (`CONFIRMATORY` / `DIRECTIONAL` / `DIAGNOSTIC`) — see [Tier vocabulary](#tier-vocabulary). Do not invent additional tier names beyond that enum.
+- [EVAL-19] fixed denominators = accepted set artifact — see [EVAL-19 operationalized](#eval-19-operationalized-accepted-set).
+- [PROV-01] per-leg `preflight.json` is the provenance artifact (profile, dim, stack identity, timestamps, response excerpts); report aggregates both legs + `manifest.sha` + CLI/harness SHAs.
+- Tier labels: `CrossbenchTier` assignment rules — see [Tier vocabulary](#tier-vocabulary). Do not invent additional tier names beyond that enum.
+- Label mapping: primary string-match is default; optimistic Hungarian is disclosed DIRECTIONAL only — see [Ground truth & label mapping](#ground-truth--label-mapping).
 
 ### CF-6. Cluster-before-export
 
 - Per leg, after analyze jobs complete: `client.clustering_job(tenant_id, mode="sync")`.
-- Persist outcome under run dir (e.g. `legs/<stack_id>/cluster_job.json` with status payload).
+- Persist outcome under run dir (`legs/<stack_id>/cluster_job.json` with status payload).
 - `export_map.export_leg` / score path **aborts** if cluster outcome is missing or non-success (mocked test required).
+
+### CF-7. Score credential flow (pinned)
+
+**Pick one path — locked**: `run` persists **all** public exports needed for scoring under `legs/<stack_id>/exports/` during the leg. `score` reads the run directory only and requires **no** API credentials / network. Re-export is not part of `score` (operator re-runs `run` if exports are incomplete).
 
 ---
 
@@ -340,22 +484,24 @@ Implementation note: the CLI does **not** open a raw production DB URL for arbit
 | --- | --- | --- |
 | tooling (new) | `apps/prototype-description-service/scripts/bench/cross_stack_bench.py` | CLI entry: `preflight`, `run`, `score`, `status` subcommands |
 | tooling (new) | `apps/prototype-description-service/scripts/bench/stack_pair.py` | Load/validate YAML/JSON against FIR23-STACK consumption table ([rg-008]) |
-| tooling (new) | `apps/prototype-description-service/scripts/bench/preflight.py` | Own GETs to `/ready` + `/health/detailed`; real field contracts; stable error codes |
-| tooling (new) | `apps/prototype-description-service/scripts/bench/corpus.py` | Accept set, pin sets (CLI outbound fetches), superset check, per-item outcomes |
-| tooling (new) | `apps/prototype-description-service/scripts/bench/driver.py` | Ingest → analyze → cluster driver with resume |
-| tooling (new) | `apps/prototype-description-service/scripts/bench/export_map.py` | Export clusters/assignments; map to `ImageDetection` / `ImageIdentities`; gate on cluster success |
-| tooling (new) | `apps/prototype-description-service/scripts/bench/score_report.py` | Dual-frame scoring; crossbench tier enum; write `benchmarks/results/crossbench-*/` |
+| tooling (new) | `apps/prototype-description-service/scripts/bench/preflight.py` | Own GETs to `/ready` + `/health/detailed`; real field contracts; stable error codes; write `preflight.json` |
+| tooling (new) | `apps/prototype-description-service/scripts/bench/corpus.py` | Manifest load via `load_manifest`, media resolution order, pin sets, superset check, `ItemOutcomeStore` |
+| tooling (new) | `apps/prototype-description-service/scripts/bench/driver.py` | Ingest → analyze → cluster → **export** driver with resume; run-dir layout |
+| tooling (new) | `apps/prototype-description-service/scripts/bench/export_map.py` | Persist exports in `run`; map GT+exports → `ImageDetection` / `ImageIdentities`; label mapping; gate on cluster success |
+| tooling (new) | `apps/prototype-description-service/scripts/bench/score_report.py` | Dual sampling + label-map frames; `CrossbenchTier` rules; `accepted_set.json` / attrition; write report |
 | tooling (new) | `apps/prototype-description-service/scripts/bench/production_shaped_guard.py` | Named-stack allowlist + optional count attestation |
 | tests (new) | `apps/prototype-description-service/scripts/bench/tests/test_preflight.py` | Fail-closed dim/profile/auth/missing-field with real payload shapes |
 | tests (new) | `apps/prototype-description-service/scripts/bench/tests/test_corpus_superset.py` | Superset / partial-intersection blocker |
 | tests (new) | `apps/prototype-description-service/scripts/bench/tests/test_resume.py` | Resume idempotency |
+| tests (new) | `apps/prototype-description-service/scripts/bench/tests/test_stack_pair_consumption.py` | Base URL / stack_id not in pinned table → load fails |
+| tests (new) | `apps/prototype-description-service/scripts/bench/tests/test_media_pin_public_unicast.py` | RFC1918 remote without LAN override → ingest refuses (mocked resolver) |
 | tests (new) | `apps/prototype-description-service/scripts/bench/tests/test_cluster_gate.py` | Export aborts when clustering was not run / failed |
 | tests (new) | `apps/prototype-description-service/scripts/bench/tests/test_e2e_frame.py` | Detector-miss → ID-miss accounting (dual frames) |
 | tests (new) | `apps/prototype-description-service/scripts/bench/tests/test_e2e_mocked.py` | One mocked end-to-end (both legs → report dir) |
 | tests (new) | `apps/prototype-description-service/scripts/bench/tests/test_export_map_rg015.py` | Export normalization invents no envelope metadata (rg-015) |
 | docs (new) | `apps/prototype-description-service/scripts/bench/README.md` | Package README (S3) |
 | docs (new) | `docs/runbooks/fir-8-cross-stack-bench.md` | Operator runbook + teardown + license |
-| docs (edit) | this plan | v6.1 plan hardening (this commit) |
+| docs (edit) | this plan | v6.2 plan grounding (this commit) |
 
 **Explicitly untouched:** `apps/prototype-description-service/recognition/**`, `db/migrations/**`, WP plugin, FIR23-STACK compose/deploy files.
 
@@ -364,7 +510,8 @@ Implementation note: the CLI does **not** open a raw production DB URL for arbit
 | File | Note |
 | --- | --- |
 | `apps/prototype-description-service/scripts/eval_harness/remote_client.py` | Prefer reuse / thin wrap for analyze/cluster/export HTTP; **no health methods** |
-| `apps/prototype-description-service/scripts/eval_harness/face_metrics.py` | Face P/R pure functions (`ImageDetection`, `ImageIdentities`) |
+| `apps/prototype-description-service/scripts/eval_harness/face_metrics.py` | Face P/R pure functions (`ImageDetection`, `ImageIdentities`, `detection_pr`, `identification_pr`) — **unmodified** consumers |
+| `apps/prototype-description-service/scripts/eval_harness/manifest.py` | `load_manifest` / `GoldenManifest` / `GoldenEntry` / `FaceBox` — GT schema |
 | `apps/prototype-description-service/api/main.py` `register_health_probes` | `/ready` + `/health/detailed` payload shapes |
 | `apps/prototype-description-service/recognition/application/health.py` | Database detail string with `pgvector_dimension=` |
 | `apps/prototype-description-service/recognition/interface_adapters/http/deps/stores.py` | Public media identity export keys |
@@ -384,10 +531,12 @@ Must cover:
 
 1. **Preflight fail-closed (real shapes)** — mock `/health/detailed` body with `model_cache.profile` and `/ready` body with `checks[{name:database,status,detail}]`; insightface leg with `detail` lacking `pgvector_dimension=` or dim≠512 → `profile_or_dim_drift`; missing auth → `preflight_auth_failed`; 404 → `preflight_endpoint_missing`. Same for fir leg (expect 128 / face_pipeline).
 2. **Superset blocker** — accepted `{1,2,3}`, baseline `{1,2}` → blocker; accepted `{1,2}`, baseline `{1,2,3}` → pass.
-3. **Resume idempotency** — after partial `items.jsonl`, re-run does not re-POST successful media; failed items retry once within budget.
-4. **Cluster gate** — export/score aborts when `cluster_job.json` missing or non-success.
-5. **Dual-frame cascade** — detector-miss synthetic pins e2e FN accounting vs FIR-5-native frame.
-6. **One mocked E2E** — fake dual clients return fixed cluster payloads → report dir contains provenance + both legs + both frames + tier label; no network.
+3. **Resume idempotency** — after partial `items.jsonl`, re-run does not re-POST terminal-success media; failed items re-attempt up to bounded retry.
+4. **Consumption-table cross-check** (`test_stack_pair_consumption.py`) — stack_pair config with a `base_url` / `stack_id` not in the pinned table → `load_stack_pair` fails.
+5. **Pin / public-unicast** (`test_media_pin_public_unicast.py`) — remote media URL resolving to RFC1918 without `allow_private_source` → ingest refuses (deterministic mocked resolver).
+6. **Cluster gate** — export/score aborts when `cluster_job.json` missing or non-success.
+7. **Dual-frame cascade** — detector-miss synthetic pins e2e FN accounting vs FIR-5-native frame; frames call only `detection_pr` / `identification_pr` with pinned input types.
+8. **One mocked E2E** — fake dual clients return fixed cluster payloads → report dir contains provenance (`preflight.json`), `accepted_set.json`, both legs + both sampling frames + label-map frames + tier label + license banner; no network; `score` uses no credentials.
 
 ### Runtime-parity / operator checks (S3 runbook)
 
@@ -407,24 +556,83 @@ Must cover:
 
 ## Slice Delivery
 
-### Slice 1: Bench CLI skeleton — config, preflight, corpus driver (+ cluster phase)
+### Slice 1: Bench CLI skeleton — config, preflight, corpus driver (+ cluster phase + export persist)
 
-**Goal**: Runnable CLI that validates a stack pair against the consumption table, fails closed on dim/profile drift using real health contracts, and drives corpus **ingest → analyze → cluster** on both stacks with durable per-item + cluster outcomes and resume.
+**Goal**: Runnable CLI that validates a stack pair against the consumption table, fails closed on dim/profile drift using real health contracts, loads golden-schema GT via `load_manifest`, and drives corpus **ingest → analyze → cluster → export** on both stacks with durable per-item + cluster outcomes, resume, and run-dir layout. Score credentials are not required later because exports land during `run` ([CF-7](#cf-7-score-credential-flow-pinned)).
 
 **Files / functions (normative names)**
 
 | Module | Symbols | Responsibility |
 | --- | --- | --- |
-| `scripts/bench/stack_pair.py` | `load_stack_pair(path) -> StackPairConfig`, `StackEndpoint` dataclass, `FIR23_STACK_ALLOWLIST` | Parse config; require keys: `stack_id`, `base_url`, `api_key` env ref, `tenant_id` env ref, `expected_profile`, `expected_pgvector_dim`; validate `stack_id` ∈ consumption table; reject unknown keys / unknown stacks (fail-closed, [rg-008]) |
-| `scripts/bench/preflight.py` | `preflight_stack(endpoint) -> PreflightResult`, `preflight_pair(pair) -> None`, `PreflightError` | Own GETs: `/ready` + authenticated `/health/detailed`; parse profile + dim per [Real preflight contract](#real-preflight-contract); raise with stable codes |
-| `scripts/bench/corpus.py` | `build_accepted_set(...)`, `assert_baseline_superset(accepted, baseline)`, `pin_media_hosts(...)`, `ItemOutcomeStore` | Superset blocker; CLI outbound pin + public-unicast; JSONL outcome store |
-| `scripts/bench/driver.py` | `run_leg(endpoint, items, outcome_store, *, budgets)`, `run_pair(...)`, `run_cluster_phase(...)` | For each stack: CLI ingest (fetch bytes) → `RemoteSceneClient.analyze` + `wait_job` → `clustering_job(tenant_id, mode="sync")`; persist cluster outcome; respect budgets |
+| `scripts/bench/stack_pair.py` | `load_stack_pair(path) -> StackPairConfig`, `StackEndpoint` dataclass, `FIR23_STACK_ALLOWLIST` | Parse config; require keys: `stack_id`, `base_url`, `api_key` env ref, `tenant_id` env ref, `expected_profile`, `expected_pgvector_dim`; validate `stack_id` ∈ consumption table and base_url host against allowlist identity; reject unknown keys / unknown stacks (fail-closed, [rg-008]) |
+| `scripts/bench/preflight.py` | `preflight_stack(endpoint) -> PreflightResult`, `preflight_pair(pair) -> None`, `PreflightError`, `write_preflight_json(path, result)` | Own GETs: `/ready` + authenticated `/health/detailed`; parse profile + dim per [Real preflight contract](#real-preflight-contract); raise with stable codes; persist **PROV-01** artifact |
+| `scripts/bench/corpus.py` | `load_bench_manifest(path, images_dir) -> GoldenManifest` (wraps `load_manifest`), `resolve_media_bytes(entry, images_dir, …)`, `assert_baseline_superset(accepted, baseline)`, `pin_media_hosts(...)`, `ItemOutcomeStore` | GT load; local-then-remote media resolution; pin + public-unicast on remote; append-only JSONL outcomes |
+| `scripts/bench/driver.py` | `run_leg(...)`, `run_pair(...)`, `run_cluster_phase(...)`, `export_and_persist_leg(...)`, `init_run_dir(...)` | Per stack: resolve bytes → `analyze` + `wait_job` → `clustering_job(..., mode="sync")` → persist exports under `exports/`; resume; budgets |
 | `scripts/bench/production_shaped_guard.py` | `assert_named_bench_stack(endpoint, allowlist)` | Allow only configured stack_ids before writes |
-| `scripts/bench/cross_stack_bench.py` | `main()`, subcommands `preflight` / `run` / `status` | argparse CLI (`python -m scripts.bench.cross_stack_bench`) |
+| `scripts/bench/cross_stack_bench.py` | `main()`, subcommands `preflight` / `run` / `status` / (`score` wired in S2) | argparse CLI (`python -m scripts.bench.cross_stack_bench`) |
 | `scripts/bench/tests/test_preflight.py` | real payload shape cases | red first |
 | `scripts/bench/tests/test_corpus_superset.py` | partial intersection | red first |
 | `scripts/bench/tests/test_resume.py` | partial JSONL resume | red first |
+| `scripts/bench/tests/test_stack_pair_consumption.py` | unknown base_url / stack_id | red first |
+| `scripts/bench/tests/test_media_pin_public_unicast.py` | RFC1918 without override | red first; mocked resolver |
 | `scripts/bench/tests/test_cluster_gate.py` | missing cluster outcome | may land with S1 driver stub or S2 export; required before score path merges |
+
+#### S1 executable contracts (normative)
+
+**(a) Ingest wiring — media bytes**
+
+Resolution order (per manifest entry):
+
+1. Local file under `--images-dir` / `images_dir` + `entry.path` (sha256 verify when possible).
+2. Else remote HTTPS URL from entry provenance / operator URL map — **CF-1 pin + public-unicast apply**.
+3. Else `outcome=failed`, `error_code=media_unresolvable`.
+
+Bytes are then POSTed via `RemoteSceneClient.analyze` multipart (no stack enroll API).
+
+**(b) Run-dir layout**
+
+```text
+benchmarks/results/crossbench-<stamp>/          # --out
+  run.json                    # stamp, CLI SHA, budgets, phase, license_banner
+  stack_pair.json             # redacted copy of validated config (no secrets)
+  manifest.sha                # sha256 of --manifest file bytes
+  legs/<stack_id>/
+    preflight.json            # PROV-01: profile, dim, stack identity, timestamps, response excerpts
+    items.jsonl               # append-only per-item outcomes (see ground-truth §d)
+    cluster_job.json          # clustering_job result payload
+    exports/                  # all public exports needed for score (no creds later)
+      media_identities.json
+      clusters.json
+      cluster_members.json
+  score/                      # written by `score` (S2); absent until then
+    accepted_set.json
+    attrition.json
+    frames.json
+    report.html
+```
+
+**(c) Resume**
+
+- `items.jsonl` is **append-only**. Latest record per `(manifest_media_id, phase)` wins when reading.
+- On resume: skip items whose latest outcome is **terminal-success** for the phases already completed; **re-attempt** failures up to `item_max_attempts` (default **2**, config) while wall-clock budget remains.
+- Cluster phase re-runs only if `cluster_job.json` missing or non-success and analyze successes exist.
+- Export re-runs only if cluster success and export files incomplete.
+
+**(d) Score / export credential flow**
+
+Locked by [CF-7](#cf-7-score-credential-flow-pinned): `run` persists exports; `score` is offline on the run-dir.
+
+**(e) `status` subcommand (kept in S1)**
+
+- Reads `run.json` + each leg's `items.jsonl` (+ presence of `cluster_job.json` / `exports/`).
+- Prints per-leg: counts by phase outcome, current phase estimate (`ingest|analyze|cluster|export|done|failed`), wall-clock elapsed if stamped.
+- Exit 0 when parseable; non-zero if run-dir missing/corrupt. No network.
+
+**(f) PROV-01 via `preflight.json`**
+
+- Written per leg in S1 at preflight (and refreshed if preflight re-run into the same run-dir).
+- Required fields: `stack_id`, `base_url`, `expected_profile`, `expected_pgvector_dim`, `resolved_profile`, `resolved_pgvector_dim`, `checked_at`, `ready_excerpt`, `health_detailed_excerpt` (redact secrets).
+- Report (S2) **consumes** these files; does not re-call health endpoints.
 
 **Stack-pair config shape (normative)**
 
@@ -432,7 +640,11 @@ Must cover:
 # example only — not a committed secret file
 wall_clock_timeout_sec: 3600
 job_poll_timeout_sec: 600
+item_max_attempts: 2
+accepted_set_floor: 1          # production pin: operator sets floor (e.g. 100 for Golden-150 claims)
 allow_private_source: false
+# optional: fail closed if --manifest bytes disagree
+# manifest_sha256: "<64 hex>"
 stacks:
   - stack_id: acx-dev-insightface
     role: insightface_judge
@@ -452,12 +664,14 @@ stacks:
 
 **Proof**
 
-- `python -m pytest scripts/bench/tests/test_preflight.py scripts/bench/tests/test_corpus_superset.py scripts/bench/tests/test_resume.py -q` green (from package root parent).
+- `python -m pytest scripts/bench/tests/test_preflight.py scripts/bench/tests/test_corpus_superset.py scripts/bench/tests/test_resume.py scripts/bench/tests/test_stack_pair_consumption.py scripts/bench/tests/test_media_pin_public_unicast.py -q` green (from package root parent).
 - Red-proofs:
   1. Mock `/ready` with database check `detail: "reachable; pgvector_dimension=128"` on the insightface endpoint (expected 512) → preflight raises `profile_or_dim_drift`; strip the assertion → test fails.
   2. Mock `/health/detailed` without `model_cache.profile` → `profile_or_dim_drift`; mock 401 → `preflight_auth_failed`.
   3. Baseline partial set → test fails if superset check deleted.
-  4. Resume re-POSTs completed ids if outcome store ignored.
+  4. Resume re-POSTs terminal-success ids if outcome store ignored.
+  5. Stack-pair with foreign `stack_id` or base_url outside allowlist identity → load fails; delete the check → test fails.
+  6. Mock DNS/resolver returning `10.0.0.5` for a remote media URL with `allow_private_source=false` → ingest refuses; strip enforcement → test fails.
 
 **Dependencies**: FIR23-STACK not required for unit tests (mocked). Live `run` requires both stacks up.
 
@@ -465,15 +679,15 @@ stacks:
 
 ### Slice 2: Export + score via FIR-5 pure metrics
 
-**Goal**: After successful cluster phase, pull clusters/assignments from both stacks, map into `ImageDetection` / `ImageIdentities`, score detection P/R + identification P/R under both frames, emit tier-labeled head-to-head report under `benchmarks/results/crossbench-*/`.
+**Goal**: Consume exports already persisted by `run` (offline), map GT + exports into `ImageDetection` / `ImageIdentities` with label-space mapping, score detection P/R + identification P/R under sampling frames × label-map frames, emit tier-labeled head-to-head report under `benchmarks/results/crossbench-*/` with accepted-set + attrition artifacts.
 
 **Files / functions**
 
 | Module | Symbols | Responsibility |
 | --- | --- | --- |
-| `scripts/bench/export_map.py` | `export_leg(client, run_dir, stack_id) -> LegExport`, `to_face_metric_inputs(export, corpus) -> …`, `require_cluster_success(run_dir, stack_id)` | Use `clusters` / `cluster_members` / `media_identities`; gate on cluster outcome; preserve upstream pagination fields; no invented `total`; no embedding/landmark requirement |
-| `scripts/bench/score_report.py` | `CrossbenchTier` enum (`CONFIRMATORY`/`DIRECTIONAL`/`DIAGNOSTIC`), `SAMPLING_FRAME_FACE_ID`, `SAMPLING_FRAME_E2E`, `score_head_to_head(run_dir) -> Path`, `write_provenance(...)`, `build_dual_frames(...)` | Call FIR-5 pure functions only; write JSON + HTML under `benchmarks/results/crossbench-<stamp>/` |
-| `scripts/bench/cross_stack_bench.py` | subcommand `score` | Wire score path |
+| `scripts/bench/export_map.py` | `export_leg(client, run_dir, stack_id) -> LegExport` (called from **run**), `load_leg_exports(run_dir, stack_id)`, `map_cluster_labels_primary(...)`, `map_cluster_labels_optimistic(...)`, `to_face_metric_inputs(export, manifest, join, label_map) -> tuple[list[ImageDetection], list[ImageIdentities]]`, `require_cluster_success(run_dir, stack_id)` | Gate on cluster outcome; preserve upstream pagination fields; no invented `total`; no embedding/landmark requirement; **all** `ImageDetection`/`ImageIdentities` construction here or in `score_report` — never inside FIR-5 |
+| `scripts/bench/score_report.py` | `CrossbenchTier` enum, `SAMPLING_FRAME_*`, `LABEL_MAP_*`, `compute_accepted_set(run_dir) -> AcceptedSet`, `write_accepted_set(...)`, `write_attrition(...)`, `score_head_to_head(run_dir) -> Path`, `build_dual_frames(...)`, `assign_tier(cell, ctx) -> CrossbenchTier` | Call **only** `detection_pr` / `identification_pr` with pinned signatures; tier rules; offline on run-dir |
+| `scripts/bench/cross_stack_bench.py` | subcommand `score` | Wire offline score path (**no credentials**) |
 | `scripts/bench/tests/test_export_map_rg015.py` | fixture without `total` must not gain fabricated total | [rg-015] |
 | `scripts/bench/tests/test_cluster_gate.py` | export aborts when clustering was not run | required |
 | `scripts/bench/tests/test_e2e_frame.py` | detector-miss dual-frame pin | required |
@@ -481,17 +695,17 @@ stacks:
 
 **Report must include**
 
-- Both legs' **detection P/R** and **identification P/R** under **both frames** (`frame_fir5_native`, `frame_e2e`) side-by-side (null where labels absent — honest nulls, not `0.0` purity invention).
+- Both legs' **detection P/R** and **identification P/R** under **both sampling frames** (`frame_fir5_native`, `frame_e2e`) and **both label-map frames** (`label_map_primary`, `label_map_optimistic`) (null where labels absent — honest nulls, not `0.0` purity invention).
 - Cascade-honest e2e treatment ([EVAL-16]): detector miss → identification miss on that face in `frame_e2e`.
-- Shared denominators ([EVAL-19]).
-- Provenance block ([PROV-01]): `stack_id`, `base_url`, `expected_profile`, `expected_pgvector_dim`, resolved profile from preflight, corpus sha256, CLI git SHA, harness identity.
-- `license_notice` for the insightface leg.
-- Crossbench tier label from `score_report.CrossbenchTier` (not attributed to FIR-5).
+- Fixed denominators via `score/accepted_set.json` + attrition table ([EVAL-19 operationalized](#eval-19-operationalized-accepted-set)).
+- Provenance block ([PROV-01]) from per-leg `preflight.json` + `manifest.sha` + CLI/harness SHAs.
+- `license_notice` / `license_banner` for the insightface leg on intermediate JSON and HTML.
+- Per-cell `CrossbenchTier` from the assignment table (not attributed to FIR-5).
 
 **Proof**
 
 - Mocked E2E green; export mapper rg-015 test green; cluster gate test green; dual-frame test green.
-- Red-proof: strip provenance writer → test asserting provenance keys fails; set `total=len(rows)` in mapper → rg-015 test fails; skip cluster phase → export gate test fails; remove FN injection → e2e frame test fails.
+- Red-proof: strip provenance consumer → test asserting preflight keys fails; set `total=len(rows)` in mapper → rg-015 test fails; skip cluster phase → export gate test fails; remove FN injection → e2e frame test fails; pass raw unmapped `cluster_label` as `predicted` without mapping → identification unit test fails; mutate accepted set differently per leg → score assert fails.
 
 **Dependencies**: S1 complete. FIR-5 pure metrics on main (already).
 
@@ -513,8 +727,9 @@ stacks:
 1. **Purpose + license posture** — insightface stack INTERNAL BENCH ONLY; never commercial/user-facing; outputs not for training.
 2. **Prerequisites** — FIR23-STACK `acx-dev-fir` up; dev stack up; `ACX_BENCH_*` API keys + tenant ids for both scratch/bench tenants; corpus path; package root / PYTHONPATH note.
 3. **Preflight** — exact `python -m scripts.bench.cross_stack_bench preflight --config …` (from `apps/prototype-description-service`).
-4. **Run** — `… run --config … --corpus … --out …` (ingest → analyze → cluster).
-5. **Score** — `… score --run-dir …` (fails if cluster phase missing).
+4. **Run** — `… run --config … --manifest … --images-dir … --out …` (ingest → analyze → cluster → export persist).
+5. **Status** — `… status --run-dir …` (optional; per-leg progress + phase).
+6. **Score** — `… score --run-dir …` (offline; fails if cluster phase missing; writes `score/accepted_set.json` + report).
 6. **Teardown** — **only** FIR23-STACK's documented stack-scoped DB reset for `acx-dev-fir` (and optional dev bench-tenant cleanup). Placeholder: `See FIR23-STACK runbook §reset` until that doc's command is stable — **do not invent** `DROP DATABASE` one-liners here that disagree with FIR23-STACK.
 7. **Failure routing** — stack health / dim wrong in compose → FIR23-STACK; CLI logic / scoring → FIR-8; embedding-export needs → optional upstream task (not FIR-8).
 8. **Verification checklist** — both preflights green; report path exists; both frames present; license_notice present; stacks reset.
@@ -548,24 +763,27 @@ Single-lane work. No multi-agent lane split required.
 ### Checklist for Slice 1: Bench CLI skeleton
 
 - [ ] Package under `apps/prototype-description-service/scripts/bench/` + `cross_stack_bench.py` subcommands `preflight` / `run` / `status`
-- [ ] `StackPairConfig` validates against FIR23-STACK consumption table (dev: insightface/512; fir: face_pipeline/128; refuse unknown stacks)
-- [ ] Preflight uses real `/ready` + authenticated `/health/detailed` contracts; stable codes `preflight_auth_failed` / `preflight_endpoint_missing` / `profile_or_dim_drift`
-- [ ] Flow: ingest (CLI outbound fetch + pin) → analyze → cluster (`clustering_job(..., mode="sync")`); cluster outcome persisted
-- [ ] Corpus accept set + baseline superset blocker + host pin set + public-unicast default (CLI fetches only)
-- [ ] Per-item outcome store + resume
+- [ ] `StackPairConfig` validates against FIR23-STACK consumption table (dev: insightface/512; fir: face_pipeline/128; refuse unknown stacks / foreign base URLs)
+- [ ] Preflight uses real `/ready` + authenticated `/health/detailed` contracts; stable codes; writes per-leg `preflight.json` (PROV-01)
+- [ ] Manifest via `load_manifest` (`--manifest` + `--images-dir`); `manifest.sha` written
+- [ ] Flow: media resolve (local then remote+CF-1 pin) → analyze → cluster → **export persist**; run-dir tree as specified
+- [ ] Baseline superset blocker + public-unicast default on remote fetches
+- [ ] Append-only `items.jsonl` resume (skip terminal-success; bounded retry on failures)
+- [ ] `status` reads run.json + items.jsonl (no network)
 - [ ] Wall-clock + job-poll budgets enforced in CLI
 - [ ] Named-stack allowlist guard before writes
-- [ ] Unit tests: preflight (real shapes), superset, resume — each observed red first
+- [ ] Unit tests: preflight, superset, resume, consumption-table, public-unicast — each observed red first
 - [ ] Handoff decision for S1 with verification commands
 
 ### Checklist for Slice 2: Export + score
 
-- [ ] Export both legs via existing cluster/media APIs; gate on cluster success
+- [ ] Score offline on run-dir only (exports already persisted; no credentials)
+- [ ] GT + export join via items.jsonl; primary + optimistic label-space mapping
 - [ ] Mapper preserves upstream envelope fields ([rg-015]); no embedding/landmark requirement
-- [ ] FIR-5 pure `detection_pr` / `identification_pr` only (no parallel scorer; score-face run records + purity sweeps OOS)
-- [ ] Dual frames side-by-side (`SAMPLING_FRAME_FACE_ID` + `SAMPLING_FRAME_E2E`)
-- [ ] Crossbench tier enum in `score_report.py` (not attributed to FIR-5)
-- [ ] Report under `benchmarks/results/crossbench-*/` with provenance, cascade honesty, fixed denominators, license_notice, tier label
+- [ ] FIR-5 pure `detection_pr` / `identification_pr` only on constructed `ImageDetection` / `ImageIdentities` (FIR-5 unmodified)
+- [ ] Dual sampling frames + dual label-map frames side-by-side
+- [ ] `score/accepted_set.json` + attrition table ([EVAL-19]); `CrossbenchTier` cell rules
+- [ ] Report under `benchmarks/results/crossbench-*/` with preflight provenance, cascade honesty, license banner, tier labels
 - [ ] Mocked E2E + rg-015 + cluster gate + dual-frame unit tests green
 - [ ] Handoff decision for S2
 
@@ -598,10 +816,10 @@ Single-lane work. No multi-agent lane split required.
 - [ ] Operator can preflight + run + score a corpus against **both** stacks with **zero** recognition-service code changes in the FIR-8 diff.
 - [ ] Preflight fails closed on dimension or profile drift / auth failure / missing endpoints with the three stable codes.
 - [ ] Cluster phase runs per leg; export gated on success.
-- [ ] Scoring uses public bbox/cluster metadata only → detection P/R + identification P/R; dual frames present.
+- [ ] Scoring uses public bbox/cluster metadata + manifest GT + label mapping → detection P/R + identification P/R; dual sampling and label-map frames present.
 - [ ] Superset / partial-intersection blocker enforced.
-- [ ] Resume does not reprocess successful items.
-- [ ] Head-to-head report exists under `benchmarks/results/crossbench-*/` with EVAL-16 / EVAL-19 / PROV-01 discipline and insightface license notice.
+- [ ] Resume does not reprocess terminal-success items; bounded retry on failures.
+- [ ] Head-to-head report exists under `benchmarks/results/crossbench-*/` with EVAL-16 / EVAL-19 (`accepted_set.json`) / PROV-01 (`preflight.json`) discipline and insightface license banner.
 - [ ] Runbook forbids commercial exposure of the insightface stack and points teardown at FIR23-STACK.
 - [ ] v5 in-service vehicle explicitly superseded (decision #2951; history at `bc97ff4b`).
 - [ ] Single package root `apps/prototype-description-service/scripts/bench/` documented and used by tests.
@@ -625,8 +843,8 @@ Single-lane work. No multi-agent lane split required.
 | --- | --- |
 | EMB-01 / IDX-02 | One vector space per (modality, model); isolated stacks |
 | EVAL-16 | Cascade honesty in head-to-head (e2e frame) |
-| EVAL-19 | Fixed denominators across legs |
-| PROV-01 | Per-run provenance block |
+| EVAL-19 | Fixed denominators = accepted set (`score/accepted_set.json`) + attrition |
+| PROV-01 | Per-leg `preflight.json` provenance artifact |
 | RLSE-05 / SERVE-03 | Insightface internal-bench only |
 | rg-008 | Stack-pair config validated at load against consumption table |
 | rg-015 | No invented envelope metadata |

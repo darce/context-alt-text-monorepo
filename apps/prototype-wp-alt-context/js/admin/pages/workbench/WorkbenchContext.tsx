@@ -5,7 +5,7 @@ import { JobPipelineProvider } from './JobPipelineContext';
 import { ClusterPanelProvider } from './ClusterPanelContext';
 import { MergeSurvivorProvider } from './identity-clusters/MergeSurvivorContext';
 
-export { TAB_IDS, LEGACY_CONFIRM_TAB, ADVANCED_PARAM, ADVANCED_OPEN_VALUE } from './WorkbenchNavContext';
+export { TAB_IDS, ADVANCED_PARAM, ADVANCED_OPEN_VALUE } from './WorkbenchNavContext';
 export type { WorkbenchTab, WorkbenchOverlay } from './WorkbenchNavContext';
 
 /** Composition only. Nav must wrap JobPipeline: the pipeline's history selection opens the advanced drawer via nav. */

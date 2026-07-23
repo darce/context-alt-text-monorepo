@@ -1,17 +1,23 @@
 import { __ } from '@wordpress/i18n';
 import type { RosterEntry } from '../../api/rosterApi';
+import { APP_LINK_PARAMS, toWorkbench } from '../../navigation/appLinks';
 
-export const ROSTER_TABS = {
-  entries: { id: 'entries' as const, label: __('Entries', 'alt-context') },
-  clusters: { id: 'clusters' as const, label: __('Clusters', 'alt-context') },
+/**
+ * E21-9 Slice 5a + E21-10 Slice 4 (lands-second): Clusters tab retired; getLegacyTab gone.
+ * People is the only roster surface. `tab=*` is ignored (no rewrite). `cluster=` opens the
+ * person-first drawer in place — not a Clusters-tab selector (that grammar is retired).
+ */
+export const ROSTER_SURFACE = {
+  id: 'people' as const,
+  label: __('People', 'alt-context'),
 } as const;
 
-export type RosterTab = (typeof ROSTER_TABS)[keyof typeof ROSTER_TABS]['id'];
+/** @deprecated Use ROSTER_SURFACE — kept as a named export only for migration grep tests. */
+export type RosterTab = never;
 
 export const ROSTER_ROUTE_PARAM_KEYS = ['person', 'queue', 'face', 'cluster'] as const;
 
 export interface ParsedRosterRoute {
-  activeTab: RosterTab;
   selectedClusterId: string | null;
   requiresProjectionGateNotice: boolean;
 }
@@ -88,11 +94,12 @@ export const selectDeterministicDefaultWorkspaceEntry = (entries: readonly Roste
   );
 };
 
-const getLegacyTab = (searchParams: URLSearchParams): RosterTab => {
-  const rawTab = getRouteParam(searchParams, 'tab');
-  return rawTab === ROSTER_TABS.clusters.id ? ROSTER_TABS.clusters.id : ROSTER_TABS.entries.id;
-};
-
+/**
+ * Parse roster search params on the single person-first surface.
+ * - `tab` is ignored (legacy `tab=clusters` bookmarks land on the page).
+ * - `cluster=<id>` opens the drawer in place.
+ * - person/queue/face keep projection-gate notice behavior.
+ */
 export const parseRosterRoute = (searchParams: URLSearchParams): ParsedRosterRoute => {
   if (
     getRouteParam(searchParams, 'person') ||
@@ -100,7 +107,6 @@ export const parseRosterRoute = (searchParams: URLSearchParams): ParsedRosterRou
     getRouteParam(searchParams, 'face')
   ) {
     return {
-      activeTab: ROSTER_TABS.entries.id,
       selectedClusterId: null,
       requiresProjectionGateNotice: true,
     };
@@ -109,14 +115,12 @@ export const parseRosterRoute = (searchParams: URLSearchParams): ParsedRosterRou
   const clusterId = getRouteParam(searchParams, 'cluster');
   if (clusterId) {
     return {
-      activeTab: ROSTER_TABS.clusters.id,
       selectedClusterId: clusterId,
       requiresProjectionGateNotice: false,
     };
   }
 
   return {
-    activeTab: getLegacyTab(searchParams),
     selectedClusterId: null,
     requiresProjectionGateNotice: false,
   };
@@ -163,3 +167,22 @@ export const PERSON_ROUTE_UNMATCHED_NOTICE = __(
   'No roster entry matches this person route yet. The workspace will appear once a matching projection row is available.',
   'alt-context',
 );
+
+/** Empty/absent label — same predicate family as queryKeys.clusters.topUnlabeled. */
+export const isUnlabeledCluster = (cluster: { label?: string | null }): boolean => {
+  const label = cluster.label;
+  return label == null || label.trim() === '';
+};
+
+/**
+ * Workbench review-queue deep link for card-at-a-time triage (assignment band).
+ *
+ * `cluster=` emission dropped (jobId precedent): workbench has no cluster reader.
+ * Never re-parse builder output to append reader-less params.
+ */
+export const workbenchReviewQueueUrl = (): string => {
+  // rq stays E21-5-owned; contract supplies route base + param *names* only.
+  const base = toWorkbench({ tab: 'scan' });
+  const separator = base.includes('?') ? '&' : '?';
+  return `${base}${separator}${APP_LINK_PARAMS.rq}=assignment.all.0`;
+};

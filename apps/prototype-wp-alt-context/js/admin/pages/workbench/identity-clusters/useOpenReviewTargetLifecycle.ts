@@ -65,6 +65,8 @@ export const useOpenReviewTargetLifecycle = ({
   const [openTarget, setOpenTarget] = useState<string | null>(requestedClusterId);
   const requestedRef = useRef<string | null>(requestedClusterId);
   const handledRef = useRef<string | null>(null);
+  /** E215-BR-01: closed cluster id after retire-with-no-survivor, for late rebind. */
+  const pendingRetireIdRef = useRef<string | null>(null);
   const retireCloseRef = useRef(false);
   const rebindSyncRef = useRef<string | null>(null);
 
@@ -75,6 +77,12 @@ export const useOpenReviewTargetLifecycle = ({
     requestedRef.current = requestedClusterId;
     setOpenTarget(requestedClusterId);
     handledRef.current = null;
+    // Abandon pending late-rebind only on a user-driven non-null open. Canonical
+    // onRetireClose sets requested → null and must NOT clear pendingRetireId
+    // (E215-BR-01: record-after-404 rebind still needs the closed id).
+    if (requestedClusterId !== null) {
+      pendingRetireIdRef.current = null;
+    }
   }
 
   const { status, resolvedClusterId } = useLiveReviewTarget(openTarget, {
@@ -90,12 +98,33 @@ export const useOpenReviewTargetLifecycle = ({
     );
     setOpenTarget(resolvedClusterId);
     if (resolvedClusterId === null) {
+      // Remember the closed id so a survivor recorded after this latch (record-
+      // after-404) can still rebind on a later render. The S5-02 upgrade in
+      // useLiveReviewTarget alone is unreachable here: openTarget is nulled and
+      // handled once, and ReviewQueue leaves onRebind/onClose undefined.
+      pendingRetireIdRef.current = openTarget;
       retireCloseRef.current = true;
     } else {
+      pendingRetireIdRef.current = null;
       // BR-66: defer the reducer→survivor sync to the post-commit effect. On the
       // next render requestedClusterId becomes the survivor (= openTarget), so
       // the requestedRef sync above is a no-op — no clobber, no requestedRef loop.
       rebindSyncRef.current = resolvedClusterId;
+    }
+  }
+
+  // E215-BR-01: late rebind — survivor recorded after the retire-close latch.
+  // re-check resolveSurvivor on subsequent renders (context revision or any
+  // owner re-render after accept). Prefer rebind over staying closed.
+  if (openTarget === null && pendingRetireIdRef.current !== null) {
+    const retiredId = pendingRetireIdRef.current;
+    const survivor = resolveSurvivor(retiredId);
+    if (survivor && survivor !== retiredId) {
+      pendingRetireIdRef.current = null;
+      handledRef.current = survivor;
+      onAnnounce(__(LIVE_TARGET_REBIND_ANNOUNCE, 'alt-context'));
+      setOpenTarget(survivor);
+      rebindSyncRef.current = survivor;
     }
   }
 

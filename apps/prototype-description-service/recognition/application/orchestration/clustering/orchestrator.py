@@ -275,13 +275,47 @@ class IncrementalClusteringRunner:
             logger.warning("[clustering] Failed to cleanup orphaned representatives: %s", exc)
 
     async def _fetch_unclustered_identities(self, tenant_uuid: uuid.UUID) -> list[MediaIdentityModel]:
+        """Load unclustered identities for this tenant.
+
+        FIR23-01: when multiple embedding_model values coexist, keep only the
+        active runtime model (never mix spaces). A single-model tenant is a
+        no-op — every row is returned unchanged.
+        """
         stmt: Select[tuple[MediaIdentityModel]] = (
             select(MediaIdentityModel)
             .where(MediaIdentityModel.tenant_id == tenant_uuid)
             .where(~exists(select(MemberModel.id).where(MemberModel.identity_id == MediaIdentityModel.id)))
         )
         result = await self._session.execute(stmt)
-        return list(result.scalars().all())
+        rows = list(result.scalars().all())
+        models = {str(row.embedding_model) for row in rows if getattr(row, "embedding_model", None)}
+        if len(models) <= 1:
+            return rows
+        try:
+            from recognition.application.embedding.manifest import active_embedding_model_id
+
+            active = active_embedding_model_id()
+        except Exception:
+            logger.warning(
+                "[clustering] mixed embedding_model present but active model unresolved; "
+                "fail-closed empty batch (FIR23-01)"
+            )
+            return []
+        filtered = [row for row in rows if getattr(row, "embedding_model", None) == active]
+        if not filtered:
+            logger.warning(
+                "[clustering] mixed embedding_model=%s none match active=%s; fail-closed empty batch",
+                sorted(models),
+                active,
+            )
+        elif len(filtered) < len(rows):
+            logger.info(
+                "[clustering] embedding_model filter active=%s kept=%d skipped=%d",
+                active,
+                len(filtered),
+                len(rows) - len(filtered),
+            )
+        return filtered
 
     async def _complete_empty_job(
         self,

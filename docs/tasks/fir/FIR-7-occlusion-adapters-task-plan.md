@@ -2,7 +2,7 @@
 
 > **Metadata**
 >
-> - **Date**: 2026-07-23 (v2 — resolves adversarial panel FIR7PR-01..14)
+> - **Date**: 2026-07-23 (v3 — resolves /planning-review fail-gating findings FIR7PLR-01/-04/-G01/-G02/-G03/-G04/-G05, on top of v2's FIR7PR-01..14)
 > - **Author**: Claude Fable 5
 > - **Owning Epic**: `docs/epics/v0.3.1/self-hosting-epic.md` (E22 face pipeline lineage; FIR series)
 > - **Epic Short ID**: FIR
@@ -20,6 +20,20 @@
 
 Close the face pipeline's occlusion-robustness gap — measured on Golden-150 as masked synthetic recovery `a_s` 0.321 / sunglasses 0.226 and 54/84 masked re-detect misses — **with zero clean-face regression, using the cheapest sufficient lever (FM-05)**. This is a *conditional* deliverable: success is the gap closed to target via config levers alone (Slice 0), or one trained adapter, or two, whichever is the least-stateful intervention that clears a **hard, fail-closed re-gate recorded before any training**. Any produced weights are **owned, commercially-clean** (Apache-2.0 base + synthetic/self data + our own code). A Slice-0 config-only close is a valid PASS; producing two adapters is a fallback, not a target.
 
+## Prerequisite — feature/fir-5 eval harness must be merged into feature/fir-7 (BLOCKING, FIR7PLR-01)
+
+> **Hard blocking prerequisite. No FIR-7 slice may start until this is satisfied.** FIR-7 is a *descendant of the FIR-5 harness state*: every surface this plan reuses to measure occlusion lives on the **unmerged** `feature/fir-5` branch (occlusion twin/scoring harness, commits `9b33bca2` / `a5f2bde5`) and is **absent from `feature/fir-7` @HEAD**. Verified on-branch (2026-07-23): the following exist on `feature/fir-5` and do **not** exist on `feature/fir-7` HEAD —
+>
+> - `scripts/eval_harness/synthetic_occlusion.py` (twin renderer / occlusion generators)
+> - `scripts/eval_harness/face_bakeoff.py` → `build_occlusion_twin_pairs` (pair-generation seam, `face_bakeoff.py:230`)
+> - `scripts/eval_harness/face_assignment.py` (τ / entity-disjoint threshold, CAL-07; `open_set_counts_at_tau`)
+> - `scripts/eval_harness/report.py::score_occlusion_accuracy` (the `a_s` / synthetic-vs-real auto-demote scorer; the symbol is absent from `feature/fir-7` HEAD's `report.py`)
+> - `scripts/eval_harness/face_run_record.py`, `landmark_cache.py`, `buffalo_bench.py`, `perf_leg.py`
+> - the **`score-face`** CLI subcommand (`cli.py`, `sub.add_parser("score-face", ...)` → `_cmd_score_face`; args `--manifest` / `--run-record`) — this is the real subcommand name; there is no `score_face`/`score-faces` variant
+> - the Golden-150 baseline runs the gate compares against (runtime-generated `benchmarks/results/golden150-*` trees; not tracked, produced by the harness above)
+>
+> **Gate:** before Slice 0, `feature/fir-5` MUST be merged (or rebased) into `feature/fir-7` so all the surfaces above are on-branch, and the merge SHA is recorded in the handoff. A one-line on-branch assertion is part of the Slice-0 preflight: `git show HEAD:apps/prototype-description-service/scripts/eval_harness/synthetic_occlusion.py >/dev/null && grep -q 'def build_occlusion_twin_pairs' apps/prototype-description-service/scripts/eval_harness/face_bakeoff.py && grep -q 'add_parser("score-face"' apps/prototype-description-service/scripts/eval_harness/cli.py` must pass. If FIR-5 is still unmerged at Slice-0 dispatch, **stop** — this is a blocking upstream dependency, not a FIR-7 build step. It appears as a named dependency in Context Loading and as the first node in the Lane Merge Order below.
+
 ## Intake (new-feature scope pass)
 
 - **Key Q&A decisions**: `decision #2939` (FIR-7 scope intake).
@@ -30,7 +44,7 @@ Close the face pipeline's occlusion-robustness gap — measured on Golden-150 as
 
 ## Problem Statement
 
-The shipped candidate pipeline (YuNet detect + SFace embed, Apache-2.0, 128-D) is occlusion-weak. Golden-150 (v6.1, run `face-run-20260723-074749`) measured, at leg=candidate:
+The shipped candidate pipeline (YuNet detect + SFace embed, Apache-2.0, 128-D) is occlusion-weak. Golden-150 (v6.1, source run `face-run-20260723-074749`, **frozen into the single canonical baseline path `benchmarks/results/golden150-fir7-baseline-v6.1/`** — see the Slice-1 freeze step) measured, at leg=candidate:
 
 - **Detection recall 0.504** on clean human-verified boxes (186/375 faces missed) — the detector is the dominant failure *even before occlusion*, and 0.504 is the real ceiling on end-to-end identification (FIR7PR-08). An occluded face YuNet never finds never reaches SFace, so recognizer-only work is capped.
 - Synthetic occlusion recovery `a_s`: masked 0.321 (54/84 re-detect miss), sunglasses 0.226 (49/84), occlusion_other 0.643 (5/84). Real-occlusion legs sit at floor-limited n.
@@ -44,15 +58,29 @@ The commercial ceiling reference (InsightFace/buffalo) is non-commercial weights
 
 ## Constraints
 
-- **[C-EVAL-DISJOINT] Train/eval renderer disjunction (eval integrity, FIR7PR-01).** Training twins and eval twins MUST draw from **disjoint occluder asset pools and disjoint render-parameter distributions**: separate mask/sunglasses atlases, disjoint placement/scale/rotation/blend/lighting ranges, and separately content-hashed occluder packs (`occluder-pack-train-*` vs `occluder-pack-eval-*`). The generator refuses to emit an eval twin from a train-pack asset (and vice versa); a manifest test asserts pack-hash disjunction. Synthetic `a_s` is a **DIAGNOSTIC-tier** signal only. The **claim-bearing** occlusion legs are the real-occlusion legs plus an **alternate-renderer stress leg** (a second, independently-authored occluder pack the training never saw). Wired into Slice 1 (pack authoring + disjunction test) and the gate (below).
+- **[C-EVAL-DISJOINT] Train/eval renderer disjunction (eval integrity, FIR7PR-01).** Training twins and eval twins MUST draw from **disjoint occluder asset pools and disjoint render-parameter distributions**: separate mask/sunglasses atlases, disjoint placement/scale/rotation/blend/lighting ranges, and separately content-hashed occluder packs (`occluder-pack-train-*` vs `occluder-pack-eval-*`). The generator refuses to emit an eval twin from a train-pack asset (and vice versa); a manifest test asserts pack-hash disjunction. Synthetic `a_s` is a **DIAGNOSTIC-tier** signal only. The **claim-bearing** occlusion legs are the real-occlusion legs plus an **alternate-renderer stress leg** (see [C-INDEP-SIGNAL]). Wired into Slice 1 (pack authoring + disjunction test) and the gate (below).
+
+  **Residual Leakage Risk (FIR7PLR-G01) — disjoint ASSETS ≠ disjoint render DISTRIBUTION.** Disjoint occluder packs and param ranges do **not** make train and eval twins independent samples, because both are produced by the **same** code path: the same `synthetic_occlusion.py` compositing/blending math, the same frozen-landmark-cache placement geometry, the same clean-base image domain (Golden-150), and the same lighting/warp code. An adapter can overfit to *those* shared artifacts (blend seams, warp interpolation signatures, the clean-base distribution) and score high synthetic `a_s` on eval twins it has effectively already seen the renderer of. Therefore **synthetic `a_s` cannot certify occlusion robustness even with fully disjoint asset packs** — it is a renderer-recovery diagnostic, nothing more.
+- **[C-INDEP-SIGNAL] At least one genuinely independent occlusion signal before any robustness claim (FIR7PR-01 / FIR7PLR-G01).** The claim-bearing gate leg MUST include **at least one occlusion signal that does not share FIR-7's compositing code path**: either (a) an **independently-authored occluder render path** (a second compositor — different placement/blend implementation, ideally different author, not a re-parameterization of `synthetic_occlusion.py`), OR (b) a **small consented real-occlusion holdout** (real masked/sunglasses faces from the consented corpus). The alternate-renderer stress leg satisfies (a) only if it is a distinct code path, not merely a distinct pack fed to the same compositor. **Model-card hard cap:** an artifact whose only occlusion evidence is synthetic twins from FIR-7's own compositor is stamped exactly `synthetic-twin-recovery under renderer R only — NO robustness claim`; it may ship as a candidate but no card field, demo, or report may attach robustness language to it. A robustness claim requires a CONFIRMATORY cell from an independent signal (real-occlusion or independent-code-path renderer) with reported N and CI.
 - **[C-GATE] Hard, fail-closed re-gate recorded before training (FIR7PR-06).** Before any Slice-2/3 training runs, a machine-checkable gate specification is committed. It has two tiers:
-  - **MUST-pass (fail-closed, every artifact):** clean-face non-inferiority on all floors (per-floor table below), provenance/license audit passing, train/eval leakage checks passing, and — for the recognizer — a frozen-base assertion.
-  - **MUST-for-any-robustness-claim:** a **real-occlusion** improvement with reported N and CI, OR an explicit `synthetic-only — NO robustness claim` stamp on the artifact's model card. Synthetic-only artifacts may ship as candidates but carry no robustness language.
+  - **MUST-pass (fail-closed, every artifact):** clean-face paired non-inferiority on all floors (per-floor table below), provenance/license audit passing, train/eval leakage checks passing, PEFT/partial-freeze (trainable-fraction ≤ cap), and — for the recognizer — a frozen-base assertion. For the **detector** specifically, MUST-pass also includes **gated FP-rate and IoU thresholds** (not merely "reported"): clean-face detection **false-positive rate must not rise beyond δ_FP** above the frozen baseline FP rate, and mean box **IoU on re-detected clean faces must not fall beyond δ_IoU** below baseline, both under the paired [C-NONINF] rule. `δ_FP` / `δ_IoU` are set from the frozen baseline's per-metric MDE and committed to the gate spec — a detector that recovers occluded misses by loosening into extra false boxes or looser localization **fails the gate**.
+  - **MUST-for-any-robustness-claim:** a CONFIRMATORY improvement on an **independent occlusion signal** ([C-INDEP-SIGNAL] — real-occlusion, or an independent-code-path renderer at n≥floor) with reported N and paired CI. Absent that, the artifact's model card is stamped exactly `synthetic-twin-recovery under renderer R only — NO robustness claim`; such artifacts may ship as candidates but carry no robustness language (own-compositor synthetic `a_s` alone never licenses a claim).
   A failure of any MUST-pass condition fails the slice regardless of occlusion gain. No `enforce=False` equivalent — the gate is fail-closed.
-- **[C-NONINF] Non-inferiority, not "within noise" (FIR7PR-03, CACE / EVAL-08, AUDIT-11).** Every clean-face floor is gated by a **pre-registered TOST-style non-inferiority test**: baseline value, N, an explicit delta margin, and the rule "the 95% Wilson-score CI lower bound of the adapted metric MUST be ≥ baseline − delta". Trained artifacts run **≥2 seeds**; the reported band is the seed envelope. The phrase "within noise" is **banned** from the plan and reports unless it resolves to this formula. Because Golden-150 draws multiple faces per image (cluster sampling), CIs use the cluster design effect (`n_eff = n/deff`, AUDIT-11), not raw frame count as independent n. See the per-floor non-inferiority table under Verification Strategy.
-- **[C-SEALED] Sealed one-shot eval + train-split-only selection (FIR7PR-02, EVAL-07/-08/-10).** The Golden-150 gate eval is **pre-registered and sealed**: run **once per candidate artifact**, never used for checkpoint or hyperparameter selection. All checkpointing, early-stopping, and hyperparameter selection read a **train-split synthetic validation** stream only (identity-disjoint from the eval). A stated multiplicity policy governs the S0/S2/S3/S4 "peeks": each peek is a distinct pre-declared candidate, counted, and the final sealed number is reported exactly once per artifact (no re-seal after a fail).
+- **[C-NONINF] PAIRED non-inferiority on the same re-embedded faces (FIR7PR-03 / FIR7PLR-G02, CACE / EVAL-08, AUDIT-11).** The v2 two-sample one-sample-Wilson / TOST framing is **withdrawn as statistically infeasible**: at baseline p0≈0.504 with n=375 the Wilson half-width is ≈0.051, so the lower bound *at true equality* is ≈0.453 — already below the 0.484 (baseline−0.02) bar. That test cannot certify "no regression"; it can only be passed by a ≈+0.03 *improvement*, which is not what non-inferiority means. It is **replaced by a within-subject PAIRED test**, which is valid here precisely because every re-gate re-embeds the **identical** corpus ([C-REEMBED]): each of the N faces has a base outcome *and* an adapted outcome, so base and adapted are paired, not independent samples. The phrase "within noise" remains **banned** unless it resolves to the rule below.
+
+  **Binary floors** (detection hit; correct-ID; correct-reject) — for each floor classify every paired face into the 2×2 table `{both-correct, both-wrong, b = base-correct/adapted-wrong (regression), c = base-wrong/adapted-correct (recovery)}`. Concordant pairs (both-correct, both-wrong) carry no information about the delta, so the delta's uncertainty is driven only by the **discordant** count `b+c` — this is why pairing is dramatically more powerful than comparing two independent 0.5±0.05 proportions. The non-inferiority rule is the **conjunction** of two conditions, both must hold:
+    1. **McNemar one-sided regression bound.** Test H0: `P(regress) − P(recover) ≥ δ` vs H1: `< δ`, using an **exact / mid-p McNemar** test on the discordant pairs (cluster-robust — see below). PASS requires rejecting H0 at `α_floor`, i.e. the paired regression count `b` does **not** significantly exceed `c` beyond the margin `δ`.
+    2. **Paired-difference CI.** The **Newcombe paired (score) CI** for `Δ = p_adapted − p_base = (c − b)/n` must have **lower bound ≥ −δ** (equivalently: the CI upper bound on `(base − adapted)` ≤ `δ`).
+  **Cluster design effect (AUDIT-11).** Golden-150 draws multiple faces per image, so discordant pairs cluster within images/identities. Both the McNemar test and the paired CI use the cluster-robust form (clustered-McNemar or a **cluster-bootstrap resampling images/identities**, recomputing `(b,c)` on each resample), reporting effective discordant `n_eff = (b+c)/deff` — never treating discordant faces as independent.
+  **Non-binary floors** (clustering purity, BCubed F, unknown-rejection FNIR@fixed-FPIR) have no per-face 2×2 table; gate them with a **bootstrap-over-identities paired CI**: resample identities with replacement, recompute *both* base and adapted metrics on the **same** resampled identity set each iteration, form the paired delta `Δ_b = metric_adapted − metric_base`, and require the 95% percentile **lower bound of Δ ≥ −δ**.
+  **Setting δ per floor (achievability + MDE).** For each floor, `δ_floor := max(0.02, MDE_paired(n_eff, p_disc))` rounded up to 0.005, where the paired minimum-detectable-effect at power 0.8 is `MDE_paired ≈ (z_{α} + z_{β})·√(p_disc)/√(n_eff)` with `p_disc = (b+c)/n` the discordant proportion from the frozen baseline (§ FIR7PLR-04 freeze). Worked example: at `n_eff≈300`, `p_disc≈0.10`, one-sided `α=0.05` (`z=1.645`), power 0.8 (`z=0.84`): `MDE ≈ 2.485·√0.10/√300 ≈ 2.485·0.316/17.3 ≈ 0.045` → `δ≈0.045`. Because the paired SE `≈√(p_disc)/√n_eff` is far below the two-sample SE `≈√(2p(1−p)/n)`, a **δ in the 0.02–0.045 band is now achievable** (the test can distinguish it), which the withdrawn two-sample test could not. Trained artifacts run **≥2 seeds**; the reported band is the seed envelope and the gate must hold on the worst seed. Concrete per-floor baselines and their frozen `p_disc`/`δ` come from the frozen v6.1 run (§ FIR7PLR-04). See the per-floor paired-non-inferiority table under Verification Strategy.
+- **[C-SEALED] Sealed one-shot eval + train-split-only selection + PROGRAM-LEVEL budget (FIR7PR-02 / FIR7PLR-G03, EVAL-07/-08/-10).** The Golden-150 gate eval is **pre-registered and sealed**: run **once per candidate artifact**, never used for checkpoint or hyperparameter selection. All checkpointing, early-stopping, and hyperparameter selection read a **train-split synthetic validation** stream only (identity-disjoint from the eval). Beyond per-artifact sealing, a **program-level evaluation budget** governs the whole task to control family-wise error across S0/S2/S3/S4 (v2's "count the peeks" alone lets reused sealed evals inflate family-wise error):
+  - **Pre-registered budget.** The gate spec (`benchmarks/gates/fir-7-regate.json`) fixes, before Slice 0: the **candidate cap K** (total number of distinct committed candidate artifacts that may ever touch the sealed Golden-150), and a **total sealed-evaluation count** = K (one seal per committed candidate, no more). Set **K = 3** for this task (Slice-0 config candidate, `yunet-occ`, `sface-occ-adapter` / joint) unless the operator raises it in the committed spec before any seal.
+  - **Alpha budget (spending).** A family-wise `α_total = 0.05` is **split across the K sealed evaluations** (Bonferroni / alpha-spending: `α_per-candidate = α_total/K`, and within a candidate the per-floor `α_floor` is further split across its gated floors). The per-floor `α_floor` feeding the McNemar test above is read from this budget, not chosen ad hoc.
+  - **Burn-after-use.** Every sealed evaluation — **including a FAIL** — consumes one unit of the K budget and its α share. A failed seal does **not** refund budget; you cannot mint unlimited candidates and keep re-sealing until one passes.
+  - **Exhaustion rule.** When the K/α budget is spent, **stop**: report the best-sealed artifact with its consumed-alpha caveat (and, if none passed, report `no-pass within budget`). Raising K after the fact is a spec change requiring operator sign-off recorded before the next seal.
 - **Proprietary-clean provenance (legal gate).** Adapted weights must remain commercially usable: Apache-2.0 base (YuNet/SFace from OpenCV Zoo) + synthetic/self-generated training data + our own training code. Any research-only dataset in the training path voids this and is prohibited. The license allow/denylist is **code constants with fixtures** (FIR7PR-07d), and a passing license audit is a MUST-pass gate condition.
-- **PEFT, not full retrain (FM-07).** Prefer frozen-base + small adapter / partial fine-tune over full-weight training. The recognizer adapter MUST freeze the SFace backbone; the detector prefers PEFT / partial-freeze over a full backbone update (FIR7PR-05).
+- **PEFT is a GATED MUST, not a preference (FM-07, FIR7PLR-G04c).** Both trained artifacts MUST use parameter-efficient / partial-freeze training: the recognizer adapter MUST freeze the SFace backbone (frozen-base assertion is MUST-pass), and the detector MUST use PEFT / partial-freeze rather than a full backbone update (FIR7PR-05) — a full-weight retrain of either backbone **fails the gate** regardless of metrics. The trainable-parameter fraction is recorded in the model card and asserted ≤ a committed cap.
 - **CACE — Changing Anything Changes Everything (EVAL-08).** Any weight change ripples through detection → clustering → assignment → thresholds. Every adaptation is gated by a full Golden-150 re-gate under [C-NONINF]; a clean-face regression fails the slice regardless of occlusion gain.
 - **[C-REEMBED] Full-corpus re-embed, no mixed space (FIR7PR-11, EMB-01, IDX-02).** Every re-gate **re-embeds the full corpus (gallery + probe)** through the adapted model; clustering, unknown-rejection, and full-corpus-ID floors are computed entirely in-space. A mixed-space assertion in the re-gate rejects any comparison whose two sides carry different `embedding_model`. No adapted-vs-base comparison without a re-embed.
 - **PROV-01 / FIR23 lineage.** Each produced model gets a new `embedding_model` (and detector-model) identifier; the recognition read-path already filters on per-row `embedding_model` (merged FIR23-01). Each artifact carries a versioned model card (PROV-02).
@@ -62,7 +90,7 @@ The commercial ceiling reference (InsightFace/buffalo) is non-commercial weights
 
 ## Workflow Principles
 
-- **Measure against a frozen baseline, on the claim-bearing leg.** Every slice reports the Golden-150 delta vs the frozen v6.1 candidate baseline. Robustness deltas are read from the real-occlusion + alternate-renderer legs (claim-bearing); synthetic `a_s` is reported as DIAGNOSTIC context, never as the success number.
+- **Measure against a frozen baseline, on the claim-bearing leg.** Every slice reports the Golden-150 delta vs the frozen v6.1 candidate baseline. Robustness deltas are read from an independent occlusion signal ([C-INDEP-SIGNAL]): the real-occlusion leg, and the independent-code-path/alt-renderer leg **which is claim-bearing (CONFIRMATORY) only at n ≥ its reported floor, else DIRECTIONAL** (single resolution of the v2 tier ambiguity — it is not both). Synthetic `a_s` from FIR-7's own compositor is DIAGNOSTIC context, never the success number.
 - **Selection and gating are different data.** Selection reads train-split synthetic validation; gating reads the sealed held-out eval once. Never cross the streams (EVAL-07/-10).
 - **The eval harness is the source of truth.** Reuse `scripts/eval_harness` (twin renderer, `score-face`, floors, tier logic). The training-data generator is the SAME twin machinery — but with **disjoint train/eval occluder packs and identity split** ([C-EVAL-DISJOINT]).
 - **Frozen base for the recognizer is a guard, not a proof.** SFace weights are never updated. This is a *forgetting guard*, but "LQ↑ without HQ↓" is a **measurement obligation** (AdaFace FAIR-NN), not "true by construction" — the adapter sits after the backbone and can still move clean embeddings, so clean preservation is tested per-epoch and at the gate (FIR7PR-04).
@@ -75,7 +103,7 @@ The commercial ceiling reference (InsightFace/buffalo) is non-commercial weights
 - **Adapter**: a small trainable module (embedding-space residual bottleneck or low-rank conv delta) added to a frozen backbone; trained on the narrow occlusion target while the base is unchanged.
 - **Mask-invariant adapter**: recognizer adapter trained so `embed_adapted(occluded)` matches the base clean template of the *same* identity while a margin term keeps *different* identities separated (see Slice 3 loss).
 - **Twin**: a synthetic occluded render of a clean base face (mask / sunglasses / other) from a frozen landmark cache; the (clean, occluded) pair is the training and eval unit. **Train twins and eval twins use disjoint occluder packs** ([C-EVAL-DISJOINT]).
-- **Occluder pack**: a content-hashed set of occluder assets + a render-parameter distribution. `occluder-pack-train-*` and `occluder-pack-eval-*` are disjoint; the **alternate-renderer** pack is a third, independently-authored pack used only in the claim-bearing stress leg.
+- **Occluder pack**: a content-hashed set of occluder assets + a render-parameter distribution. `occluder-pack-train-*` and `occluder-pack-eval-*` are disjoint. The **independent-code-path / alternate-renderer** signal ([C-INDEP-SIGNAL]) is a distinct *compositor code path* (not merely a third pack fed to `synthetic_occlusion.py`); its leg is **claim-bearing (CONFIRMATORY) only at n ≥ floor, else DIRECTIONAL**.
 - **Re-detect miss**: an occluded twin the detector fails to re-detect after occlusion is applied; the dominant candidate failure mode.
 - **`a_s` (fixed-denominator)**: synthetic occlusion recovery accuracy over the **intersection of faces re-detected by all compared legs**, at the entity-disjoint transferred τ (CAL-07). Reported with a separate **detection-coverage** number. **DIAGNOSTIC tier** (FIR7PR-01/-14).
 - **Cascade identification metric**: end-to-end accuracy where a face any stage failed to detect/associate counts as an identification error (EVAL-16). The claim-bearing operational number.
@@ -84,8 +112,8 @@ The commercial ceiling reference (InsightFace/buffalo) is non-commercial weights
 
 ## Current State Analysis
 
-- **Works**: YuNet+SFace candidate leg runs end-to-end on Golden-150; twin pipeline generates pairs; `score-face` emits per-tag occlusion `a_s`, re-detect miss, floors, tier logic; per-row `embedding_model` provenance + fail-closed read-path (FIR23-01) already on main.
-- **Broken/weak**: detection recall 0.504 (the real ceiling); masked/sunglasses recovery low with detection as the bottleneck; no training/adaptation harness exists (the harness is eval-only); no cloud training runbook; the twin generator currently has **no train/eval occluder-pack disjunction** — this must be built (Slice 1) before any synthetic number is trustworthy.
+- **Works (but NOT yet on `feature/fir-7`)**: the YuNet+SFace candidate leg, the twin pipeline (`build_occlusion_twin_pairs`), the `score-face` subcommand (per-tag `a_s`, re-detect miss, floors, tier logic via `score_occlusion_accuracy`), and the Golden-150 baseline runs all exist on **`feature/fir-5`** (commits `9b33bca2` / `a5f2bde5`) and are **absent from `feature/fir-7` @HEAD**. They arrive on-branch only via the **FIR-5 merge prerequisite** above — do not assume they are present until that merge lands. Per-row `embedding_model` provenance + fail-closed read-path (FIR23-01) is the one occlusion-adjacent surface already on main and on-branch.
+- **Broken/weak**: detection recall 0.504 (the real ceiling); masked/sunglasses recovery low with detection as the bottleneck; no training/adaptation harness exists (the FIR-5 harness is eval-only); no cloud training runbook; the twin generator has **no train/eval occluder-pack disjunction** — this must be built (Slice 1) before any synthetic number is trustworthy; and even with disjoint packs the **compositing/placement code path is shared** between train and eval twins (see Residual Leakage Risk below), so synthetic `a_s` cannot certify robustness.
 - **Misleading if untouched**: occlusion caption mining is "text-suggested" (operator overturned 13 in the sweep) — training-data occlusion labels come from the *rendered* twins (ground-truth by construction), NOT caption mining. A synthetic `a_s` read without the DIAGNOSTIC label would overstate real-world robustness (FIR7PR-01/-14).
 - **Adjacent**: FIR-6 owns calibration/switch-over (S4-S6, operator-gated). FIR-7 produces candidate weights + sealed evidence that feed FIR-6's decision; it does not itself flip production.
 
@@ -107,7 +135,8 @@ Any produced artifact is Apache-clean, content-hashed, carries a schema-valid mo
 - Heuristics (v0.12.2 canon + distilled): `~/Development/heuristics-canon/lexicons/ml-systems.md` rows **FM-05/FM-07** (adaptation ladder / PEFT), **EVAL-07** (validation-only selection), **EVAL-08** (CACE slices), **EVAL-10** (sealed test before iteration 0), **EVAL-15** (benchmark contamination), **EVAL-16** (upstream failure counts end-to-end / cascade), **EVAL-17** (evaluate at the production pooling unit), **EVAL-18** (non-mated probes + score threshold), **EVAL-19** (endogenous denominator), **EMB-01** (one space per comparison), **EMB-02/03/04/07/09** (robust template, feature-norm proxy, quality-gated mining, fuse retained, uncertainty-penalized), **CAL-01** (per-stratum threshold), **CAL-07** (entity-disjoint threshold selection), **MLDATA-09** (filter deletes the regime under test), **MLDATA-10** (match training degradation to target stats), **MLDATA-11** (margin objective needs a label-noise path), **MLDATA-19** (measure identity linkage before a synthetic privacy claim), **MLDATA-20** (synthetic-train accuracy does not certify deployment), **AUDIT-11** (cluster design effect / n_eff), **PROV-01/02** (lineage / model card), **DRIFT-01/02/03** (non-stationary, version upstream, refit thresholds with the model), **RLSE-08/10** (rollback written before ship / model is a separately revertible artifact). Distilled: `~/Development/heuristics-canon-research/distilled/ml-systems/{adaface,handbook-face-recognition,hidden-technical-debt-ml,janus-benchmark-c}.md` — AdaFace **FAIR-NN** ("LQ↑ without HQ↓" is a measurement obligation), Handbook §1.3.3 (real-holdout regression), Janus (cascade + pooling-unit eval).
 - Harness: `apps/prototype-description-service/scripts/eval_harness/{synthetic_occlusion,face_bakeoff,face_assignment,report,manifest,cli}.py`.
 - Runtime seam: `apps/prototype-description-service/recognition/infrastructure/embeddings/face_pipeline_adapter.py`, `.../recognition/application/embedding/manifest.py`, FIR23 read-path (`label_inference.py`, `cluster_repository.py`, `health.py`).
-- Corpus + evidence: `benchmarks/manifests/golden150-draft-20260723.json` (+ sidecar), `benchmarks/results/golden150-fir-{v2,final}-20260723/`.
+- Corpus + evidence: `benchmarks/manifests/golden150-draft-20260723.json` (+ sidecar); the **single canonical frozen baseline `benchmarks/results/golden150-fir7-baseline-v6.1/`** (produced by the Slice-1 freeze step from source run `face-run-20260723-074749`). All deltas, the per-floor paired table, and the descope thresholds read from this one path — the divergent v2 citations (`golden150-fir-v2` / `golden150-fir-final`) are superseded.
+- **FIR-5 harness merge prerequisite** (BLOCKING, see Prerequisite section): the occlusion twin/scoring surfaces on `feature/fir-5` (`9b33bca2` / `a5f2bde5`) must be on-branch before Slice 0.
 - Handoff: FIR-7 (decision #2939), FIR-5 findings (BUFREV-*, FIR5GL-01 twin-wiring @9b33bca2), FIR-6 state.
 
 ## Contract and Boundary Impact
@@ -136,7 +165,7 @@ Cheapest-first, gated by a pre-registered fail-closed re-gate. Five slices, but 
 | --- | --- | --- |
 | eval tooling | `scripts/eval_harness/cli.py` | `--leg adapted` / model-id selection for detector+embedder; `--leg alt-renderer` stress leg; sealed-run guard (one-shot per artifact) |
 | eval tooling | `scripts/eval_harness/config_levers.py` (new) | Slice 0 lever sweeps, **stage-separated** (detection vs recognition), fixed sweep table, greedy stacking, `TRAINING_DECISION` emitter |
-| eval tooling | `scripts/eval_harness/regate.py` (new) | full-corpus re-embed ([C-REEMBED]); per-floor non-inferiority (TOST + Wilson CI + deff); fixed-denominator `a_s`; cascade metric; mixed-space assertion; tier-label report lint |
+| eval tooling | `scripts/eval_harness/regate.py` (new) | full-corpus re-embed ([C-REEMBED]); **paired per-floor non-inferiority** (cluster-robust McNemar + Newcombe paired-diff CI for binary floors; bootstrap-over-identities paired CI for non-binary floors; deff/n_eff per AUDIT-11); fixed-denominator `a_s`; cascade metric; mixed-space assertion; program-budget/α-spend accounting; tier-label report lint |
 | training (new) | `scripts/train/occlusion/data_pipeline.py` (new) | (clean, occluded) pair generation with **disjoint train/eval occluder packs**; synthetic-identity ingest; dataset-provenance manifest; leakage matrix + linkage audit |
 | training (new) | `scripts/train/occlusion/occluder_packs.py` (new) | authored train/eval/alt-renderer packs; content-hashing; pack-disjunction test |
 | training (new) | `scripts/train/occlusion/train_yunet_occ.py` (new) | YuNet detector fine-tune, multi-task `L_occluded + λ·L_clean` + hard-neg mining, seeded, checkpoint on train-split val, model card |
@@ -144,8 +173,9 @@ Cheapest-first, gated by a pre-registered fail-closed re-gate. Five slices, but 
 | training (new) | `scripts/train/occlusion/license_policy.py` (new) | allow/denylist code constants + SPDX ids + verification metadata + fixtures |
 | training (new) | `scripts/train/occlusion/model_card.py` (new) | model-card schema + writer; `benchmarks/models/<id>/model-card.json` + `weights.onnx` |
 | training (new) | `scripts/train/occlusion/README.md` (new) | numbered cloud GPU runbook (rent → dry-run → train → export → download → teardown) |
-| runtime | `recognition/application/embedding/manifest.py` | register `yunet-occ-*` / `sface-occ-adapter-*`; pinned previous-good base ids for rollback (RLSE-10) |
-| runtime | `recognition/infrastructure/embeddings/face_pipeline_adapter.py` | load adapted ONNX by id; adapter compose; rollback path; load-failure fails readiness |
+| runtime | `recognition/application/embedding/manifest.py` | **no registry API exists** — add a new `EmbeddingModelManifest(...)` constant for each produced id (analogous to `incumbent_embedding_model_manifest()` / the `sface_embedding_model_manifest()` constructor) and extend the `active_embedding_model_id()` profile switch to resolve it; pin previous-good base ids as constants for rollback (RLSE-10) |
+| runtime | `recognition/infrastructure/embeddings/face_pipeline_adapter.py` | extend `sface_embedding_model_manifest()` + the atomic `OrtYuNetDetector`/`OrtSFaceEmbedder` loader (`ort_adapters.py`) to load the adapted ONNX **by id**; adapter compose; rollback path; load-failure fails readiness |
+| runtime | `recognition/config.py` (settings) | new settings keys selecting the active detector/embedder id (drives `active_embedding_model_id()` and the loader), e.g. `face_pipeline.detector_model_id` / `face_pipeline.embedder_model_id` |
 | docs | `docs/tasks/fir/FIR-7-occlusion-adapters-task-plan.md` | this plan |
 | provenance | `benchmarks/manifests/occlusion-training-data-provenance.json` (new) | license audit of every training source |
 | gate spec | `benchmarks/gates/fir-7-regate.json` (new) | pre-registered gate spec ([C-GATE]/[C-NONINF]/[C-SEALED]) committed before training |
@@ -157,7 +187,7 @@ Cheapest-first, gated by a pre-registered fail-closed re-gate. Five slices, but 
 | `scripts/eval_harness/synthetic_occlusion.py` | twin renderer — reused as training-data generator; enforce train/eval occluder-pack + identity split here |
 | `scripts/eval_harness/face_bakeoff.py` | `build_occlusion_twin_pairs` (FIR5GL-01 @9b33bca2) — the pair-generation seam |
 | `recognition/application/suggestions/label_inference.py` | FIR23 embedding_model read-path — mixed-space guard consumed by [C-REEMBED] |
-| `benchmarks/results/golden150-fir-v2-20260723/` | frozen baseline for all deltas |
+| `benchmarks/results/golden150-fir7-baseline-v6.1/` | the **single canonical frozen v6.1 baseline** for all deltas + per-floor `p_disc`/δ (Slice-1 freeze from source run `face-run-20260723-074749`); supersedes the v2 `golden150-fir-v2`/`-final` paths |
 
 ## Verification Strategy
 
@@ -177,22 +207,22 @@ Cheapest-first, gated by a pre-registered fail-closed re-gate. Five slices, but 
 - **Manual verification**:
   - Operator reviews the sealed per-floor non-inferiority table + tier-labeled gate cells per artifact.
 
-### Per-floor non-inferiority table (pre-registered, [C-NONINF])
+### Per-floor PAIRED non-inferiority table (pre-registered, [C-NONINF] v3)
 
-> Baselines from `golden150-fir-v2-20260723`. `n_eff = n/deff` (AUDIT-11). PASS = adapted metric's 95% Wilson CI lower bound ≥ baseline − delta, on ≥2 seeds for trained artifacts. Tier per cell.
+> All baselines + frozen discordant proportions `p_disc` come from the single canonical frozen v6.1 run (§ FIR7PLR-04 freeze), written into `benchmarks/gates/fir-7-regate.json` **before** the gate is committed — the `(base value)` / `(p_disc)` cells are filled from that freeze at Slice-1 gate-commit time (they are not free-form). Test method per row: **BINARY** floors use paired McNemar (one-sided, exact/mid-p, cluster-robust) on discordant pairs `{b=base-correct/adapted-wrong, c=base-wrong/adapted-correct}` **AND** a Newcombe paired CI on `Δ=(c−b)/n`; **NON-BINARY** floors use a bootstrap-over-identities paired CI on `Δ=metric_adapted−metric_base`. PASS = the paired rule below holds on the **worst of ≥2 seeds**. `α_floor` is drawn from the program α-budget ([C-SEALED]); `δ_floor = max(0.02, MDE_paired(n_eff,p_disc))` rounded up to 0.005. Tier per cell.
 
-| Floor metric | Baseline | Delta margin | Rule | Tier |
-| --- | --- | --- | --- | --- |
-| Clean detection recall | 0.504 | 0.02 | Wilson LB ≥ 0.484 | CONFIRMATORY |
-| Clean-face full-corpus ID precision | (v2 value) | 0.02 | Wilson LB ≥ base − 0.02 | CONFIRMATORY |
-| Clean-face full-corpus ID recall | (v2 value) | 0.02 | Wilson LB ≥ base − 0.02 | CONFIRMATORY |
-| Unknown-rejection (non-mated FNIR@fixed-FPIR, EVAL-18) | (v2 value) | 0.03 | Wilson LB within delta | CONFIRMATORY |
-| Clustering purity | (v2 value) | 0.02 | Wilson LB within delta | CONFIRMATORY |
-| Clustering pairs (BCubed F) | (v2 value) | 0.02 | Wilson LB within delta | CONFIRMATORY |
-| Cascade identification accuracy (EVAL-16) | (v2 value) | reported | improvement direction, N+CI | CONFIRMATORY |
-| Real-occlusion masked recovery | (v2 value) | reported | improvement, N+CI; DIRECTIONAL if n<threshold | CONFIRMATORY / DIRECTIONAL |
-| Alternate-renderer stress `a_s` | (v2 value) | reported | improvement, N+CI | DIRECTIONAL |
-| Synthetic masked `a_s` (fixed-denominator) | 0.321 | context only | reported, no claim | DIAGNOSTIC |
+| Floor metric | Type | Base value | δ (from MDE) | Paired PASS rule | Tier |
+| --- | --- | --- | --- | --- | --- |
+| Clean detection recall | binary | 0.504 (frozen) | `max(0.02, MDE(p_disc))` | McNemar rejects `b−c≥δ·n` at α_floor **AND** Newcombe LB(Δ) ≥ −δ | CONFIRMATORY |
+| Clean-face full-corpus ID precision | binary | (base value) | `max(0.02, MDE(p_disc))` | McNemar reject **AND** Newcombe LB(Δ) ≥ −δ | CONFIRMATORY |
+| Clean-face full-corpus ID recall | binary | (base value) | `max(0.02, MDE(p_disc))` | McNemar reject **AND** Newcombe LB(Δ) ≥ −δ | CONFIRMATORY |
+| Unknown-rejection (non-mated FNIR@fixed-FPIR, EVAL-18) | non-binary | (base value) | `max(0.03, MDE)` | bootstrap-over-identities LB(Δ) ≥ −δ (FNIR must not rise beyond δ at fixed FPIR) | CONFIRMATORY |
+| Clustering purity | non-binary | (base value) | `max(0.02, MDE)` | bootstrap-over-identities LB(Δ) ≥ −δ | CONFIRMATORY |
+| Clustering pairs (BCubed F) | non-binary | (base value) | `max(0.02, MDE)` | bootstrap-over-identities LB(Δ) ≥ −δ | CONFIRMATORY |
+| Cascade identification accuracy (EVAL-16) | binary | (base value) | reported | paired improvement: Newcombe LB(Δ) > 0, N+CI | CONFIRMATORY |
+| Real-occlusion masked recovery | binary | (base value) | reported | paired improvement, N+CI; DIRECTIONAL if n<threshold | CONFIRMATORY / DIRECTIONAL |
+| Independent-code-path / alt-renderer stress recovery ([C-INDEP-SIGNAL]) | binary | (base value) | reported | paired improvement, N+CI; **claim-bearing iff n≥floor, else DIRECTIONAL** | CONFIRMATORY / DIRECTIONAL |
+| Synthetic masked `a_s` (fixed-denominator, own compositor) | binary | 0.321 (frozen) | context only | reported, **no claim** ([C-INDEP-SIGNAL] cap) | DIAGNOSTIC |
 
 ## Slice Delivery
 
@@ -205,7 +235,8 @@ Changes:
 - `config_levers.py` with a **stage-separated lever ledger**:
   - **Detection levers** (measured against masked re-detect miss / detection recall): YuNet `det_threshold` sweep, input-resolution / tiling, alignment crop-margin (0/20/40% context).
   - **Recognition levers** (measured **only on the already-detected subset**, with an explicit note they cannot recover re-detect misses): template pooling (quality-weighted aggregate, EMB-02/EMB-07), pre-normalization feature-norm quality weighting (EMB-03), uncertainty-penalized similarity (EMB-09).
-- A **fixed sweep table** (param → discrete values) committed before running; a **greedy stacking rule** (add the best lever, re-measure, keep if it clears its floor); and an explicit **descope threshold** (e.g. "if stacked levers bring masked re-detect miss ≤ target AND cascade metric improves under [C-NONINF], emit `no-training`").
+- A **fixed sweep table** (param → discrete values) committed before running; a **greedy stacking rule** (add the best lever, re-measure, keep if it clears its floor); and a **numerically pre-registered descope threshold** committed to the gate spec before any run. Concretely, emit `no-training` **iff all** of: (i) masked re-detect miss `≤ 20` of 84 (from the frozen baseline's 54; i.e. ≥63% of the current miss recovered), **AND** (ii) synthetic masked `a_s ≥ 0.60` (DIAGNOSTIC — necessary-not-sufficient screen, from 0.321), **AND** (iii) cascade identification accuracy improves with paired Newcombe LB(Δ) > 0 ([C-NONINF]), **AND** (iv) **zero** clean-floor regression under the paired per-floor table. Emit `go-training` (with which stage: detection and/or recognition) otherwise. The `N=20` / `X=0.60` values are placeholders **only** until the FIR-5 baseline is re-frozen on-branch (§ FIR7PLR-04 freeze), at which point they are locked into `benchmarks/gates/fir-7-regate.json` and this text is updated to the frozen numbers before Slice 0 runs. **These thresholds are read against the sealed baseline; lever search itself uses the train-split synthetic proxy only ([C-SEALED], see below).**
+- **Lever SEARCH runs on a TRAIN-split synthetic proxy only (FIR7PLR-G03).** The greedy sweep/stacking that *chooses* levers reads a train-split synthetic validation stream (identity-disjoint from Golden-150) — it must never greedy-optimize directly on the sealed Golden-150, or Slice 0 becomes gate-as-training-target (stacking levers onto the eval it is scored on). Only the **single stacked config that Slice 0 commits as its candidate** touches the sealed Golden-150, and that consumes exactly **one** unit of the program budget K ([C-SEALED]). A failed Slice-0 seal burns budget like any other.
 - Emit `TRAINING_DECISION` artifact (`benchmarks/results/golden150-levers-*/training_decision.json`) that the downstream lanes read as their go/no-go gate.
 
 Proof:
@@ -218,10 +249,12 @@ Proof:
 
 Changes:
 
-- `occluder_packs.py`: author `occluder-pack-train-*`, `occluder-pack-eval-*`, and the independent `occluder-pack-alt-renderer-*`; separate mask/sunglasses atlases; disjoint placement/scale/rotation/blend/lighting ranges; content-hash each; **pack-disjunction test**.
+- `occluder_packs.py`: author `occluder-pack-train-*` and `occluder-pack-eval-*`; separate mask/sunglasses atlases; disjoint placement/scale/rotation/blend/lighting ranges; content-hash each; **pack-disjunction test**.
+- **Independent occlusion signal ([C-INDEP-SIGNAL], FIR7PLR-G01)** — provision at least one of: (a) an **independently-authored compositor code path** (distinct placement/blend implementation, not a re-parameterization of `synthetic_occlusion.py`) exposed as `--leg alt-renderer`; OR (b) a **small consented real-occlusion holdout** curated from the corpus. A third pack fed to the *same* compositor does **not** satisfy this. This signal, not synthetic `a_s`, carries any robustness claim.
 - `data_pipeline.py`: generate training pairs over **train-split identities + train-pack occluders only**; ingest license-checked synthetic-identity faces (Vec2Face/DCFace — license verified via `license_policy.py` before ingest); emit `occlusion-training-data-provenance.json`.
 - **Leakage matrix** (written): identities / images / templates / caches / preproc / global-stats — all norm/quality/lever selections fit on the train split only. Checks: (a) no eval-split identity appears in training; (b) **cross-set identity-linkage** between synthetic identities and Golden-150 under base SFace (MLDATA-19) — require weak linkage; (c) **NN-audit** of synthetic ids vs Golden-150 under base SFace; (d) a **real-holdout regression** check (MLDATA-20 / Handbook §1.3.3) — synthetic-train accuracy alone does not certify.
-- Commit `benchmarks/gates/fir-7-regate.json` — the pre-registered [C-GATE]/[C-NONINF]/[C-SEALED] spec (floors, deltas, seeds, sealed-once policy, multiplicity policy) — **before** any Slice-2/3 training.
+- **Freeze the canonical baseline (FIR7PLR-04).** With the FIR-5 harness now on-branch (prerequisite), re-run the Golden-150 v6.1 candidate leg once and freeze it into the single canonical path **`benchmarks/results/golden150-fir7-baseline-v6.1/`** (source run `face-run-20260723-074749`). Extract, per gated floor, the **base value AND the discordant proportion `p_disc`** (for binary floors) needed to compute each `δ_floor = max(0.02, MDE_paired(n_eff, p_disc))`. This freeze happens **before** the gate spec is committed, so the gate spec carries concrete baselines + deltas, not placeholders. All later deltas and the descope thresholds read only this path.
+- Commit `benchmarks/gates/fir-7-regate.json` — the pre-registered [C-GATE]/[C-NONINF] (paired McNemar + paired-diff CI, per-floor base/p_disc/δ from the freeze)/[C-SEALED] (candidate cap **K=3**, α_total=0.05 split, burn-after-use) spec — **before** any Slice-2/3 training.
 
 Proof:
 
@@ -236,11 +269,11 @@ Changes:
 - `train_yunet_occ.py`: **multi-task loss `L_det = L_occluded + λ·L_clean`** with **hard-negative mining**; **PEFT / partial-freeze preferred** over a full backbone update (FM-07); a **clean-only validation stream + early stop** (guards catastrophic forgetting, FIR7PR-05); seeded (≥2 seeds), export ONNX, emit schema-valid model card.
 - **Training Spec (locked defaults)**: optimizer/LR/schedule/epochs-or-steps/batch/weight-decay/seed(s)/early-stop metric+patience/grad-clip/input resolution; frozen/trainable layer set; `λ` clean weight; abort on divergence/NaN.
 - Numbered **cloud GPU runbook** step-through (instance-by-peak-VRAM table, pinned env via Dockerfile + `requirements-train.lock`, data transport path+size+checksum, hard cost/time cap + kill criteria, "hello GPU" dry-run, teardown checklist with verification commands).
-- Register `yunet-occ-*` id.
+- Register `yunet-occ-*` id **by the concrete mechanism** (no registry API): construct a new `EmbeddingModelManifest`/detector-manifest constant in `manifest.py`, wire it into `active_embedding_model_id()`, add the selecting settings key in `config.py`, and teach the `face_pipeline_adapter.py` loader to load the artifact by that id.
 
 Proof:
 
-- **Sealed** Golden-150 re-gate: clean detection recall non-inferior (Wilson LB ≥ 0.484, [C-NONINF]); report **FP rate + IoU + bootstrap-CI noise bands**, not only re-detect-miss; masked re-detect miss improvement on the claim-bearing legs. Model card + content hash committed to `benchmarks/models/yunet-occ-*/`.
+- **Sealed** Golden-150 re-gate: clean detection recall paired-non-inferior ([C-NONINF]); **FP-rate and IoU are GATED MUST** (FP rate not up beyond δ_FP, IoU not down beyond δ_IoU, paired rule) — reported with bootstrap-CI bands and enforced, not advisory; masked re-detect miss improvement on the independent-signal legs ([C-INDEP-SIGNAL]). Trainable-fraction ≤ cap asserted (PEFT MUST). Model card + content hash committed to `benchmarks/models/yunet-occ-*/`.
 
 ### Slice 3: SFace frozen-base mask-invariant adapter → `sface-occ-adapter` — CONDITIONAL, SEQUENCED after Slice 2
 
@@ -251,14 +284,14 @@ Changes:
 - **Sequencing (FIR7PR-09)**: freeze `yunet-occ` → regenerate crops through the updated detect/align path → train the adapter on **those** crops (+ box-jitter / crop-margin augmentation). Not a parallel lane with Slice 2 for the coupled path.
 - `train_sface_adapter.py`: freeze SFace; **locked adapter architecture** — embedding-space residual MLP `128→r→128`, zero-init residual (identity at start), param budget << backbone; insertion point after the base embedding. **Non-degenerate, clean-preserving loss** (FIR7PR-04):
   - (a) **clean-path anchor**: `||adapted(clean) − base(clean)|| ≈ 0` (identity on clean input);
-  - (b) **contrastive / angular-margin term in COSINE space on L2-normalized embeddings**, with base clean templates as class centers (**mandatory, not optional**) — occluded embeddings pulled to their own clean center, pushed from other identities' centers.
-  - Loss weights `α` (anchor) / `β` (margin) in the Training Spec.
-- **Per-epoch collapse/drift diagnostics**: mean cosine to a frozen clean gallery ≥ 0.99; occluded inter-class separation floor; abort on collapse. "LQ↑ without HQ↓" is verified by measurement (AdaFace FAIR-NN), not asserted.
-- Export composed ONNX + adapter module; schema-valid model card. Register `sface-occ-adapter-*` id (distinct `embedding_model`).
+  - (b) **contrastive / angular-margin term in COSINE space on L2-normalized embeddings**, with base clean templates as class centers (**mandatory, not optional**) — occluded embeddings pulled to their own clean center, pushed from other identities' centers. **Label-noise robustness note (MLDATA-11):** using base clean templates as class centers is a label-noise-sensitive path — a mislabeled or low-quality clean template poisons its center and the margin objective spends capacity dragging occluded crops toward a corrupted anchor. The training spec MUST carry an explicit noise treatment: audit the highest-loss and highest-confidence anchor disagreements, and either quality-gate the clean templates used as centers (drop or down-weight low-feature-norm / high-loss anchors, EMB-03) or use a robust multi-template center per identity. This is a required item, not advisory.
+  - **Locked loss hyperparameters (concrete, selected on train-split only).** `α` (clean-anchor) `= 1.0`; `β` (cosine-margin) `= 0.5`; angular margin `m = 0.30`; adapter rank `r = 32`; separation-floor `s_floor` = the held-out genuine−impostor margin measured on the frozen base (Slice-1 freeze), no lower. **Selection procedure:** any of `{α, β, m, r}` swept only on the **train-split synthetic validation** stream (identity-disjoint from the sealed eval), picking the config that maximizes train-split occluded recovery **subject to** the train-split clean-anchor drift staying within tolerance; the sealed Golden-150 is **never** read for this selection ([C-SEALED]). The picked values are frozen into the model card before the sealed re-gate.
+- **Non-vacuous clean-preservation guard — gate DOWNSTREAM floors, not mean cosine (FIR7PLR-G05).** Mean cosine to a clean gallery is a **vacuous** guard: the identity map (adapter = passthrough) scores 1.0 while learning nothing, and anisotropic margin drift can break clustering / unknown-rejection while mean cosine stays ≈1.0. Therefore the clean-preservation gate is the **actual downstream floors under the adapter**, computed **in-space on re-embedded clean faces** ([C-REEMBED]): clustering purity / BCubed F, unknown-rejection FNIR@fixed-FPIR, and full-corpus clean ID precision/recall — each gated by the paired [C-NONINF] rule. Additionally, an **inter-identity separation / anisotropy check on HELD-OUT identities** (never trained): the **occluded-impostor cosine distribution must not shift up** (its paired upper CI bound ≤ base + δ_sep) and the **genuine−impostor margin must not shrink below `s_floor`**. Per-epoch, the same downstream-floor + anisotropy probes run on a train-split held-out fold as an early-abort trip; the **claim gate is the sealed re-gate's downstream floors**. Mean-cosine-to-gallery may be *logged* as context but is **not** a pass condition. "LQ↑ without HQ↓" is verified by these downstream measurements (AdaFace FAIR-NN), not asserted.
+- Export composed ONNX + adapter module; schema-valid model card. Register `sface-occ-adapter-*` id (distinct `embedding_model`) by the same concrete mechanism as Slice 2 — new `EmbeddingModelManifest` constant + `active_embedding_model_id()` wire + `config.py` settings key + `face_pipeline_adapter.py` loader-by-id; there is no registry call.
 
 Proof:
 
-- **Frozen-base assertion test** (base weights byte-identical). **Sealed** Golden-150 re-gate with **full-corpus re-embed** ([C-REEMBED]): clean-face floors (unknown-rejection, clustering, full-corpus ID) non-inferior under [C-NONINF]; real-occlusion + alternate-renderer recovery improvement (claim-bearing); synthetic `a_s` reported DIAGNOSTIC. Model card + hash committed.
+- **Frozen-base assertion test** (base weights byte-identical). **Sealed** Golden-150 re-gate with **full-corpus re-embed** ([C-REEMBED]): clean-face DOWNSTREAM floors (unknown-rejection, clustering, full-corpus ID) paired-non-inferior under [C-NONINF] + held-out anisotropy check (FIR7PLR-G05); occlusion recovery on the independent signal ([C-INDEP-SIGNAL], claim-bearing only at n≥floor); synthetic `a_s` reported DIAGNOSTIC. Model card + hash committed.
 
 ### Slice 4: Runtime integration + rollback + full sealed re-gate — CONDITIONAL
 
@@ -290,7 +323,7 @@ Proof:
 
 ### Merge Order
 
-`fir7-levers` (may descope everything downstream) → `fir7-data` → `fir7-yunet` → `fir7-sface` → `fir7-integrate`. The yunet→sface edge is a hard sequencing dependency (coupled detect→embed path), not a parallelizable fork.
+**`[prereq] merge feature/fir-5 harness into feature/fir-7`** (BLOCKING — the occlusion twin/scoring surfaces `9b33bca2`/`a5f2bde5` must be on-branch; record the merge SHA) → `fir7-levers` (may descope everything downstream) → `fir7-data` → `fir7-yunet` → `fir7-sface` → `fir7-integrate`. No lane may start before the FIR-5 merge node. The yunet→sface edge is a hard sequencing dependency (coupled detect→embed path), not a parallelizable fork.
 
 ### Manifest
 
@@ -314,31 +347,33 @@ make lane-manifest-init TASK=FIR-7 LANE_IDS='fir7-levers fir7-data fir7-yunet fi
 
 ### Checklist for Slice 0: Cheap-lever baseline (stage-separated)
 
+- [ ] FIR-5 harness on-branch (prerequisite merge landed; Slice-0 preflight on-branch assertion passes).
 - [ ] Lever sweeps implemented as reproducible harness options, separated into detection vs recognition ledgers.
-- [ ] Fixed sweep table + greedy stacking rule committed before running.
+- [ ] Fixed sweep table + greedy stacking rule committed before running; **lever SEARCH runs on the train-split synthetic proxy only** (sealed Golden-150 touched once, for the committed candidate — burns one K unit).
 - [ ] Recognition levers measured only on the already-detected subset with the explicit "cannot recover re-detect misses" note.
-- [ ] `TRAINING_DECISION` go/no-go artifact emitted against the pre-registered descope threshold.
+- [ ] Numerically pre-registered descope threshold (N re-detect-miss / X `a_s` / paired cascade LB>0 / zero clean regression) committed; `TRAINING_DECISION` go/no-go artifact emitted against it.
 
 ### Checklist for Slice 1: Training-data pipeline + disjoint packs + gate spec
 
-- [ ] Train/eval/alt-renderer occluder packs authored, content-hashed, pack-disjunction test green.
+- [ ] Train/eval occluder packs authored, content-hashed, pack-disjunction test green; **independent occlusion signal** ([C-INDEP-SIGNAL]) provisioned — an independently-authored compositor code path OR a consented real-occlusion holdout (not merely a third pack fed to the same compositor).
 - [ ] (clean, occluded) pairs generated over train-split identities + train-pack occluders only.
 - [ ] Dataset-provenance manifest with passing license audit (schema test rejects research-only; fixtures assert allow + deny).
 - [ ] Leakage matrix all-pass: identity split, cross-set linkage (MLDATA-19) weak, NN-audit clean, real-holdout regression within [C-NONINF] (MLDATA-20).
-- [ ] Hard gate spec + sealed-eval + multiplicity policy committed to `benchmarks/gates/fir-7-regate.json` before any training.
+- [ ] **Canonical baseline frozen** to `benchmarks/results/golden150-fir7-baseline-v6.1/` (base values + per-floor `p_disc`) BEFORE the gate spec.
+- [ ] Hard gate spec committed to `benchmarks/gates/fir-7-regate.json` before any training: paired McNemar/paired-diff floors with concrete base/p_disc/δ, sealed-once policy, program budget (K=3, α_total=0.05 split, burn-after-use).
 
 ### Checklist for Slice 2: YuNet detector fine-tune (conditional)
 
-- [ ] Multi-task `L_occluded + λ·L_clean` + hard-neg mining; PEFT/partial-freeze; clean-only val stream + early stop.
+- [ ] Multi-task `L_occluded + λ·L_clean` + hard-neg mining; PEFT/partial-freeze (GATED MUST, trainable-fraction ≤ cap); clean-only val stream + early stop.
 - [ ] Locked Training Spec + numbered cloud GPU runbook (dry-run, cost/time cap, teardown) executable as written.
 - [ ] Model card schema-valid + content hash; seeds ≥2.
-- [ ] Sealed re-gate: clean detection recall non-inferior; FP rate + IoU + bootstrap-CI bands reported; masked re-detect-miss improvement on claim-bearing legs.
+- [ ] Sealed re-gate: clean detection recall paired-non-inferior; FP-rate + IoU GATED MUST (not just reported) with bootstrap-CI bands; masked re-detect-miss improvement on independent-signal legs.
 
 ### Checklist for Slice 3: SFace mask-invariant adapter (conditional, sequenced)
 
 - [ ] Trained on crops from frozen `yunet-occ` (+ box-jitter/crop-margin aug).
-- [ ] Locked adapter architecture (128→r→128 zero-init residual) + non-degenerate loss (clean anchor + mandatory cosine-margin term).
-- [ ] Per-epoch collapse/drift diagnostics (clean cosine ≥ 0.99, inter-class separation floor); frozen-base assertion test green.
+- [ ] Locked adapter architecture (128→r=32→128 zero-init residual) + locked loss hyperparams (α=1.0, β=0.5, m=0.30) selected on train-split only + non-degenerate loss (clean anchor + mandatory cosine-margin term) + MLDATA-11 label-noise treatment on template centers.
+- [ ] Clean-preservation gates the DOWNSTREAM floors (clustering purity/BCubed, unknown-rejection, full-corpus clean ID) under paired [C-NONINF] + held-out anisotropy check (occluded-impostor cosine not shifted up, genuine−impostor margin ≥ s_floor) — NOT mean cosine; frozen-base assertion test green.
 - [ ] Sealed re-gate with full-corpus re-embed: clean floors non-inferior; occlusion recovery on claim-bearing legs; synthetic `a_s` DIAGNOSTIC-labeled.
 
 ### Checklist for Slice 4: Integration + rollback + sealed re-gate (conditional)
@@ -362,7 +397,7 @@ make lane-manifest-init TASK=FIR-7 LANE_IDS='fir7-levers fir7-data fir7-yunet fi
 ## Success Criteria
 
 - [ ] The occlusion gap closed to target with **zero clean-face floor regression** under the pre-registered per-floor non-inferiority table ([C-NONINF]), proven on the **sealed one-shot Golden-150 re-gate** ([C-SEALED]) — achieved by the **cheapest sufficient lever** (a Slice-0 config-only close is a valid PASS).
-- [ ] Every clean-face MUST-pass condition ([C-GATE]) holds fail-closed; any robustness claim is backed by a real-occlusion (or alternate-renderer) improvement with N+CI, else stamped `synthetic-only — no robustness claim`.
+- [ ] Every clean-face MUST-pass condition ([C-GATE]) holds fail-closed; any robustness claim is backed by an independent-signal ([C-INDEP-SIGNAL]) improvement with N+paired CI, else stamped `synthetic-twin-recovery under renderer R only — NO robustness claim`.
 - [ ] Any produced artifact (`yunet-occ` / `sface-occ-adapter`) is Apache-clean with a passing license audit, a schema-valid model card, a content hash, and — for the recognizer — a passing frozen-base assertion.
 - [ ] Any produced artifact is integrated behind the model-swap seam with a verified unit-tested rollback to base (no code release); distinct `embedding_model` ids stamped and mixed-space compares rejected; every re-gate re-embeds the full corpus in-space.
 - [ ] All gate cells carry an evidence-tier label (CONFIRMATORY/DIRECTIONAL/DIAGNOSTIC); the report lint tags real-occlusion n<threshold as DIRECTIONAL-only; candidate weights + sealed evidence handed to FIR-6 for the switch-over gate; no production flip in this task.

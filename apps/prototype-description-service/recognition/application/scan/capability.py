@@ -27,18 +27,36 @@ class ScanWorkerCounters:
     ``rows_matched`` / ``rows_new`` are re-scan MediaIdentity recycling counts,
     not assignment/unknown (FIR-6 / clustering). Always present, including zero
     ([OBS-08] silence distinguishable from health).
+
+    FIR23-02: ``faces_skipped`` counts inbound detections that did not produce a
+    durable write (missing embedding / failed guards). ``mixed_model_media``
+    counts media where existing rows and new detections used different
+    ``embedding_model`` values so mixed-model re-scans are operator-visible.
     """
 
     media_processed: int = 0
     faces_detected: int = 0
     rows_matched: int = 0
     rows_new: int = 0
+    faces_skipped: int = 0
+    mixed_model_media: int = 0
 
-    def record(self, *, detected: int, matched: int, new: int) -> None:
+    def record(
+        self,
+        *,
+        detected: int,
+        matched: int,
+        new: int,
+        skipped: int = 0,
+        mixed_model: bool = False,
+    ) -> None:
         self.media_processed += 1
         self.faces_detected += int(detected)
         self.rows_matched += int(matched)
         self.rows_new += int(new)
+        self.faces_skipped += int(skipped)
+        if mixed_model:
+            self.mixed_model_media += 1
 
     def format_suffix(self) -> str:
         """Stable key=value suffix always including zeros."""
@@ -46,7 +64,9 @@ class ScanWorkerCounters:
             f"media_processed={self.media_processed}; "
             f"faces_detected={self.faces_detected}; "
             f"rows_matched={self.rows_matched}; "
-            f"rows_new={self.rows_new}"
+            f"rows_new={self.rows_new}; "
+            f"faces_skipped={self.faces_skipped}; "
+            f"mixed_model_media={self.mixed_model_media}"
         )
 
 

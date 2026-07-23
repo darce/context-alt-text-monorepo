@@ -134,6 +134,52 @@ class HierarchicalClustering:
         if len(identities) == 1:
             return {0: identities}
 
+        # FIR23-05 / FIR23-01: never mix embedding spaces in a split. Single-model
+        # input is a no-op; mixed → majority model (lex tie-break); null embeddings
+        # are quality-dropped and counted in the log.
+        usable: list[MediaIdentity] = []
+        dropped_null_embedding = 0
+        for identity in identities:
+            emb = getattr(identity, "embedding", None)
+            if emb is None:
+                dropped_null_embedding += 1
+                continue
+            usable.append(identity)
+        if dropped_null_embedding:
+            logger.info(
+                "%sHierarchical split: dropped %d identities with null embedding (quality drop)",
+                log_prefix,
+                dropped_null_embedding,
+            )
+        models = [
+            str(getattr(identity, "embedding_model", None) or "")
+            for identity in usable
+            if getattr(identity, "embedding_model", None)
+        ]
+        distinct_models = {m for m in models if m}
+        if len(distinct_models) > 1:
+            counts: dict[str, int] = {}
+            for model in models:
+                counts[model] = counts.get(model, 0) + 1
+            chosen = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
+            before = len(usable)
+            usable = [
+                identity
+                for identity in usable
+                if str(getattr(identity, "embedding_model", None) or "") == chosen
+            ]
+            logger.info(
+                "%sHierarchical split: mixed embedding_model; kept model=%s dropped=%d",
+                log_prefix,
+                chosen,
+                before - len(usable),
+            )
+        if not usable:
+            return {}
+        if len(usable) == 1:
+            return {0: usable}
+        identities = usable
+
         # Extract embeddings
         embeddings = np.array([id.embedding for id in identities])
 

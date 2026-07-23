@@ -131,60 +131,60 @@ over full restart).
 
 ### Slice 1 — refresh plumbing (PHP + config seam)
 
-- [ ] `ajaxUrl` localized in both payloads; TS types + `normalizeConfig`/
+- [x] `ajaxUrl` localized in both payloads; TS types + `normalizeConfig`/
       `registerConfig` validation + `main.tsx` threading (sr-005).
-- [ ] `config.ts`: `getNonce()`/`setNonce()` (in-place mutation of the cached
+- [x] `config.ts`: `getNonce()`/`setNonce()` (in-place mutation of the cached
       config) + `refreshRestNonce()` per Design §2 (GET, raw-string contract,
       charset validation, single-flight, finally-cleared slot).
-- [ ] Vitest: N concurrent refresh callers → exactly 1 network call; request
+- [x] Vitest: N concurrent refresh callers → exactly 1 network call; request
       shape asserted (GET, `?action=rest-nonce`, same-origin credentials);
       raw-string success → `setNonce` visible via `getNonce()`; logged-out
       `'0'`/400 fixture → typed failure; empty/HTML body → typed failure;
       **reject-then-retry → second network call** (no poisoned slot).
-- [ ] PHP test: both localize payloads carry `ajaxUrl` + `nonce` keys.
+- [x] PHP test: both localize payloads carry `ajaxUrl` + `nonce` keys.
 
 ### Slice 2 — 403/401 seam in `http.ts`
 
-- [ ] Per-attempt nonce resolution (`options.restNonce ?? getNonce()` first
+- [x] Per-attempt nonce resolution (`options.restNonce ?? getNonce()` first
       attempt, `getNonce()` on retry); nonce-403 detection with try/catch
       body parse; abort short-circuit before refresh and before retry;
       single retry; `AuthExpiredError` on second 403 / refresh failure /
       401 `rest_not_logged_in`.
-- [ ] Vitest discrimination proofs ([TEST-15]/[TEST-06], each red-provable):
+- [x] Vitest discrimination proofs ([TEST-15]/[TEST-06], each red-provable):
       nonce-403 → refresh → retry succeeds (exactly 2 REST requests + 1 ajax
       GET, retry carries the NEW header value); non-nonce 403 → no refresh,
       no retry, ordinary `HTTPError`; non-JSON 403 body → ordinary
       `HTTPError`, no refresh; 401 `rest_not_logged_in` → `AuthExpiredError`,
       no refresh call; second 403 → `AuthExpiredError`; aborted signal
       mid-refresh → abort surfaced, no retry; concurrent 403s → one refresh.
-- [ ] UXP-NET-1 regression pins: 429 and 503+Retry-After cases assert fetch
+- [x] UXP-NET-1 regression pins: 429 and 503+Retry-After cases assert fetch
       called exactly once, zero ajaxUrl calls, and thrown `HTTPError`
       `status`/`retryAfterSeconds`/`message` equal to the existing
       `http.test.ts` expectations.
 
 ### Slice 3 — surface recovery states + copy
 
-- [ ] `retryPolicy.ts` + `clusterAutoRetry.ts`: `instanceof AuthExpiredError
+- [x] `retryPolicy.ts` + `clusterAutoRetry.ts`: `instanceof AuthExpiredError
       → false` regression pins + terminal-fallthrough tests (no new logic).
-- [ ] `useLiveReviewTarget.ts`: inline retry predicate excludes
+- [x] `useLiveReviewTarget.ts`: inline retry predicate excludes
       `AuthExpiredError`; auth-expiry surfaces through the SPA error path,
       never absorbed into `'live'` (test pins both).
-- [ ] `useJobProgressStream.ts`: (re)connect URL reads `getNonce()` at
+- [x] `useJobProgressStream.ts`: (re)connect URL reads `getNonce()` at
       connect time (test: nonce refreshed between connects → new param).
-- [ ] Attachment-edit: `AuthExpiredError` → session-expired copy + reload
+- [x] Attachment-edit: `AuthExpiredError` → session-expired copy + reload
       action (distinct from `faceDataUnavailable`), copy in `copy.ts`.
-- [ ] SPA: error mapping renders auth-expired distinctly; component/module
+- [x] SPA: error mapping renders auth-expired distinctly; component/module
       named in the slice-complete decision.
-- [ ] Vitest/RTL: each surface renders auth-expired vs generic error as a
+- [x] Vitest/RTL: each surface renders auth-expired vs generic error as a
       discriminating assertion pair.
 
 ### Slice 4 — sweep + gate
 
-- [ ] Nonce-read verification sweep: `grep -rn "\.nonce"` inventory recorded;
+- [x] Nonce-read verification sweep: `grep -rn "\.nonce"` inventory recorded;
       confirm every request path reads the live value (in-place `setNonce`
       makes existing `getConfig().nonce` sites correct — verify none copy the
       nonce into module-level/closure state at import time; fix any that do).
-- [ ] `make check-remote` green (typecheck compared against 5-error main
+- [x] `make check-remote` green (typecheck compared against 5-error main
       baseline, not raw exit); scoped vitest green locally.
 - [ ] Manual LocalWP walkthrough: shorten `nonce_life` to ~30s via filter,
       confirm SPA + post.php recover on next action without reload; logged-out
@@ -210,8 +210,8 @@ over full restart).
 
 ## Consolidated Checklist
 
-- [ ] S1: ajaxUrl threaded + validated on both surfaces; GET raw-string refresh with single-flight + finally-clear; PHP + vitest green.
-- [ ] S2: per-attempt nonce resolution; nonce-403 refresh + single retry; 401 classification; abort + non-JSON-body handling; discrimination tests red-provable; 429/5xx pins green.
-- [ ] S3: regression pins (retryPolicy, clusterAutoRetry); useLiveReviewTarget auth-expiry surfaced; SSE reconnect fresh-nonce; both surfaces render distinct recovery state; copy single-sourced.
+- [x] S1: ajaxUrl threaded + validated on both surfaces; GET raw-string refresh with single-flight + finally-clear; PHP + vitest green.
+- [x] S2: per-attempt nonce resolution; nonce-403 refresh + single retry; 401 classification; abort + non-JSON-body handling; discrimination tests red-provable; 429/5xx pins green.
+- [x] S3: regression pins (retryPolicy, clusterAutoRetry); useLiveReviewTarget auth-expiry surfaced; SSE reconnect fresh-nonce; both surfaces render distinct recovery state; copy single-sourced.
 - [ ] S4: nonce-capture verification sweep; `make check-remote` green; manual LocalWP walkthrough recorded as test_result.
 - [ ] Findings recorded/closed in MCP; close_check(enforce=True) passes.

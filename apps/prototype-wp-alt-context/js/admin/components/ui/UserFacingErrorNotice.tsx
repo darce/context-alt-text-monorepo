@@ -25,7 +25,11 @@ export const UserFacingErrorNotice: React.FC<UserFacingErrorNoticeProps> = ({
   className,
 }) => {
   const authExpired = isAuthExpiredError(error);
-  const message = formatUserFacingError(error, fallback);
+  // Callers pass already-translated fallbacks; the session-expired constant is
+  // translated here so the literal is extractable for the text domain.
+  const message = authExpired
+    ? __('Your session expired — reload the page and sign in again.', 'alt-context')
+    : formatUserFacingError(error, fallback);
 
   return (
     <div

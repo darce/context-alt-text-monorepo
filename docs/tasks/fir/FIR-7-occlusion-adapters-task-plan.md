@@ -2,7 +2,7 @@
 
 > **Metadata**
 >
-> - **Date**: 2026-07-23 (v5 — resolves panel findings: Slice-0a freeze/gate-spec/license-policy preflight before any sealed touch; proxy-vs-seal split; GT-anchored pairing under detector swaps; K=3 unit set enumerated; SAM pack disjunction + compositing-code-only independence; PEFT REQUIRED wording; identity-split normalized; junior acceptance stubs; descope denominators pinned; K-exhaustion → retrain campaign)
+> - **Date**: 2026-07-23 (v5.1 — resolves review round FIR7R4-01..11; v5 resolved panel findings: Slice-0a freeze/gate-spec/license-policy preflight before any sealed touch; proxy-vs-seal split; GT-anchored pairing under detector swaps; K=3 unit set enumerated; SAM pack disjunction + compositing-code-only independence; PEFT REQUIRED wording; identity-split normalized; junior acceptance stubs; descope denominators pinned; K-exhaustion → retrain campaign)
 > - **Author**: Claude Fable 5
 > - **Owning Epic**: `docs/epics/v0.3.1/self-hosting-epic.md` (E22 face pipeline lineage; FIR series)
 > - **Epic Short ID**: FIR
@@ -271,7 +271,7 @@ Cheapest-first, gated by a pre-registered fail-closed re-gate. **Slice 0a, Slice
 Changes:
 
 - **Freeze the canonical baseline (FIR7PLR-04).** With the FIR-5 harness on-branch (main-merge prerequisite satisfied), re-run the Golden-150 v6.1 candidate leg once and freeze it into the single canonical path **`benchmarks/results/golden150-fir7-baseline-v6.1/`** (source run `face-run-20260723-074749`). Extract, per gated floor, the **base value AND the discordant proportion `p_disc`** (for binary floors) needed to compute each `δ_floor = max(0.02, MDE_paired(n_eff, p_disc))`, plus `δ_FP` / `δ_IoU` MDEs for the detector gates. All later deltas and the descope thresholds read only this path.
-- Commit **`benchmarks/gates/fir-7-regate.json`** — the pre-registered [C-GATE]/[C-NONINF] (GT-anchored paired McNemar + paired-diff CI; FP-rate per-image; IoU on base∩adapted with \|∩\| reported; per-floor base/p_disc/δ from the freeze)/[C-SEALED] (candidate cap **K=3** unit set: Slice-0 stacked config candidate, `yunet-occ`, `sface-occ-adapter-or-joint`; α_total=0.05 split; burn-after-use; exhaustion → escalate to retrain campaign) spec.
+- Commit **`benchmarks/gates/fir-7-regate.json`** — the pre-registered [C-GATE]/[C-NONINF] (GT-anchored paired McNemar + paired-diff CI; FP-rate per-image; IoU on base∩adapted with \|∩\| reported; per-floor base/p_disc/δ from the freeze)/[C-SEALED] (candidate cap **K=3** unit set: Slice-0 stacked config candidate, `yunet-occ`, `sface-occ-adapter-or-joint`; α_total=0.05 split; burn-after-use; exhaustion → escalate to retrain campaign) spec — **including the numerically-locked Slice-0 descope go/no-go thresholds** (re-detect-miss N, `a_s` DIAGNOSTIC-screen X, paired cascade LB>0, zero clean-floor regression), locked from the freeze so Slice 0 reads them, never invents them.
 - Land **`scripts/train/occlusion/license_policy.py`** allow/denylist code constants + SPDX ids + verification metadata + fixtures (buffalo weights **and** output-derived tags; research-only FAILS; Apache self-generated PASSES). Detector A/B ingest in Slice 0 verifies candidates against these constants.
 
 **Rule:** Slice 0's sealed touch is **illegal** until `benchmarks/gates/fir-7-regate.json` exists on-branch.

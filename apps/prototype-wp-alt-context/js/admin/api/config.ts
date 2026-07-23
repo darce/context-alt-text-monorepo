@@ -59,9 +59,15 @@ export class NonceRefreshFailedError extends Error {
 const normalizeOptionalString = (value: unknown): string | undefined =>
   typeof value === 'string' && value.trim() !== '' ? value : undefined;
 
-const requireNonEmptyString = (value: unknown, field: string): string => {
+/**
+ * Boundary validation that fails SOFT: a payload missing this field (deploy
+ * skew — cached HTML with an older localized payload) degrades the one
+ * capability that needs it instead of hard-failing every getConfig() caller.
+ */
+const softNonEmptyString = (value: unknown, field: string): string => {
   if (typeof value !== 'string' || value.trim() === '') {
-    throw new Error(`AltContextAdmin configuration field "${field}" must be a non-empty string.`);
+    console.warn(`AltContextAdmin configuration field "${field}" is missing or empty; dependent features degrade.`);
+    return '';
   }
   return value;
 };
@@ -76,8 +82,8 @@ export const normalizeConfig = (raw: ApiConfig): NormalizedConfig => {
   };
 
   return {
-    nonce: requireNonEmptyString(raw.nonce, 'nonce'),
-    ajaxUrl: requireNonEmptyString(raw.ajaxUrl, 'ajaxUrl'),
+    nonce: softNonEmptyString(raw.nonce, 'nonce'),
+    ajaxUrl: softNonEmptyString(raw.ajaxUrl, 'ajaxUrl'),
     endpoints: raw.endpoints,
     tenant_id: raw.tenant_id,
     tier: raw.tier,
@@ -134,7 +140,7 @@ export const getNonce = (): string => getConfig().nonce;
 export const setNonce = (nonce: string): void => {
   const config = getConfig();
   config.nonce = nonce;
-  if (window.wpApiSettings?.nonce) {
+  if (window.wpApiSettings) {
     window.wpApiSettings.nonce = nonce;
   }
 };
@@ -151,6 +157,11 @@ export const refreshRestNonce = (): Promise<string> => {
 
   refreshInFlight = (async (): Promise<string> => {
     const { ajaxUrl } = getConfig();
+    if (ajaxUrl === '') {
+      throw new NonceRefreshFailedError({
+        message: 'REST nonce refresh unavailable: ajaxUrl missing from localized config (deploy skew).',
+      });
+    }
     const url = `${ajaxUrl}${ajaxUrl.includes('?') ? '&' : '?'}action=rest-nonce`;
     const response = await fetch(url, {
       method: 'GET',

@@ -107,21 +107,22 @@ describe('refreshRestNonce (UXP-NET-2 slice 1)', () => {
     expect(getNonce()).toBe('mutated1234');
   });
 
-  it('normalizeConfig rejects missing/empty ajaxUrl (sr-005)', () => {
+  it('missing ajaxUrl fails SOFT: config stays usable, only refresh degrades (UXPNET2-BR-02) [TEST-15]', async () => {
     resetConfigCache();
-    expect(() =>
-      registerConfig({
-        nonce: 'abc',
-        ajaxUrl: '',
-        endpoints: {},
-      }),
-    ).toThrow(/ajaxUrl/);
-    expect(() =>
-      registerConfig({
-        nonce: 'abc',
-        endpoints: {},
-      } as { nonce: string; endpoints: Record<string, string> } as Parameters<typeof registerConfig>[0]),
-    ).toThrow(/ajaxUrl/);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const config = registerConfig({
+      nonce: 'abc',
+      ajaxUrl: '',
+      endpoints: {},
+    });
+    expect(config.nonce).toBe('abc');
+    expect(config.ajaxUrl).toBe('');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('ajaxUrl'));
+    expect(getNonce()).toBe('abc');
+
+    const fetchMock = vi.spyOn(globalThis, 'fetch');
+    await expect(refreshRestNonce()).rejects.toBeInstanceOf(NonceRefreshFailedError);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
@@ -141,6 +142,12 @@ describe('setNonce wpApiSettings mirror (UXP-NET-2 slice 4)', () => {
     setNonce('deadbeef01');
     expect(window.wpApiSettings.nonce).toBe('deadbeef01');
     expect(getNonce()).toBe('deadbeef01');
+  });
+
+  it('mirrors into a present wpApiSettings even when its nonce is empty (UXPNET2-BR-06) [TEST-15]', () => {
+    window.wpApiSettings = { root: 'https://example.test/wp-json/', nonce: '' };
+    setNonce('deadbeef03');
+    expect(window.wpApiSettings.nonce).toBe('deadbeef03');
   });
 
   it('does not create wpApiSettings when absent', () => {

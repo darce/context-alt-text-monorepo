@@ -248,6 +248,9 @@ export const fetchApi = async <T>(endpoint: string, options: HTTPOptions = {}): 
     try {
       await refreshRestNonce();
     } catch {
+      // An abort that landed while the refresh was failing is an abort, not
+      // session expiry — never surface recovery UI for an unmounted caller.
+      throwIfAborted(options.signal);
       throw new AuthExpiredError({ endpoint, status: 403 });
     }
 

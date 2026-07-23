@@ -395,3 +395,60 @@ describe('fetchApi auth expiry seam (UXP-NET-2 slice 2)', () => {
     expect(fetchMock.mock.calls.filter(([url]) => isAjaxCall(url))).toHaveLength(0);
   });
 });
+
+describe('fetchApi review-fix discrimination pins (UXPNET2-BR-04/05)', () => {
+  beforeEach(() => {
+    resetConfigCache();
+    seedConfig();
+  });
+
+  afterEach(() => {
+    resetConfigCache();
+  });
+
+  it('first attempt uses options.restNonce over a fresher cached nonce (BR-05) [TEST-15]', async () => {
+    resetConfigCache();
+    seedConfig(FRESH_NONCE); // cached getNonce() is FRESH…
+    const restHeaders: Array<Record<string, string>> = [];
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      if (isAjaxCall(url)) {
+        return new Response(FRESH_NONCE, { status: 200 });
+      }
+      restHeaders.push((init?.headers ?? {}) as Record<string, string>);
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+
+    // …but the caller explicitly passes STALE — the first wire header must be STALE.
+    await fetchApi<{ ok: boolean }>(REST_URL, { restNonce: STALE_NONCE });
+    expect(restHeaders[0]['X-WP-Nonce']).toBe(STALE_NONCE);
+    expect(fetchMock.mock.calls.filter(([url]) => isAjaxCall(url))).toHaveLength(0);
+  });
+
+  it('omitted restNonce resolves the live cached nonce at send time (BR-05) [TEST-15]', async () => {
+    resetConfigCache();
+    seedConfig(FRESH_NONCE);
+    const restHeaders: Array<Record<string, string>> = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      restHeaders.push((init?.headers ?? {}) as Record<string, string>);
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+
+    await fetchApi<{ ok: boolean }>(REST_URL);
+    expect(restHeaders[0]['X-WP-Nonce']).toBe(FRESH_NONCE);
+  });
+
+  it('abort landing during a FAILING refresh surfaces AbortError, never session expiry (BR-04) [TEST-15]', async () => {
+    const controller = new AbortController();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      if (isAjaxCall(url)) {
+        controller.abort();
+        return new Response('0', { status: 400 }); // refresh fails while abort lands
+      }
+      return new Response(nonce403Body, { status: 403 });
+    });
+
+    await expect(
+      fetchApi<{ ok: boolean }>(REST_URL, { restNonce: STALE_NONCE, signal: controller.signal }),
+    ).rejects.toSatisfy((err: unknown) => err instanceof DOMException && err.name === 'AbortError');
+  });
+});

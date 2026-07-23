@@ -24,8 +24,10 @@ describe('formatUserFacingError / getClusterMutationErrorMessage', () => {
     expect(getClusterMutationErrorMessage(error, 'Sam')).toBe(SPA_SESSION_EXPIRED_COPY.sessionExpired);
   });
 
-  it('keeps non-auth errors on their existing paths [TEST-15]', () => {
-    expect(formatUserFacingError(new Error('network down'), 'generic')).toBe('network down');
+  it('never leaks raw error internals to the DOM — non-auth errors get the safe fallback [TEST-15]', () => {
+    const leaky = new Error('Request to /wp-json/acx/v1/secret failed (500): stack trace body');
+    expect(formatUserFacingError(leaky, 'generic')).toBe('generic');
+    expect(formatUserFacingError(new Error('network down'), 'generic')).toBe('generic');
     expect(formatUserFacingError({}, 'fallback text')).toBe('fallback text');
     expect(getClusterMutationErrorMessage(new Error('Failed to fetch'), 'Sam')).toBe(
       'Network error. Please check your connection and try again.',

@@ -21,10 +21,17 @@ describe('UserFacingErrorNotice (SPA auth-expired surface)', () => {
   });
 
   it('generic error → fallback/message, not session-expired [TEST-15]', () => {
-    render(<UserFacingErrorNotice error={new Error('boom')} fallback="Unable to load media details." />);
+    render(
+      <UserFacingErrorNotice
+        error={new Error('Request to /wp-json/acx/v1/secret failed (500): raw body')}
+        fallback="Unable to load media details."
+      />,
+    );
 
     expect(screen.getByTestId('acx-user-facing-error')).toHaveAttribute('data-error-kind', 'generic');
-    expect(screen.getByRole('alert')).toHaveTextContent('boom');
+    // Raw error internals (endpoint, body) must never reach the DOM (UXPNET2-BR-01).
+    expect(screen.getByRole('alert')).toHaveTextContent('Unable to load media details.');
+    expect(screen.getByRole('alert')).not.toHaveTextContent('/wp-json/acx/v1/secret');
     expect(screen.queryByText(SPA_SESSION_EXPIRED_COPY.sessionExpired)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: SPA_SESSION_EXPIRED_COPY.reloadPage })).not.toBeInTheDocument();
   });

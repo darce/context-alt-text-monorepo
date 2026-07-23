@@ -935,7 +935,8 @@ def test_occlusion_twin_scored_at_source_identity_heldout_tau_in_report():
     argmax would accept it as correct)."""
     face_run, manifest, b2 = _two_identity_split_tau_fixture()
     b2u = np.asarray(b2, dtype=np.float64)
-    e5 = np.zeros(len(b2)); e5[5] = 1.0
+    e5 = np.zeros(len(b2))
+    e5[5] = 1.0
     twin = (0.5 * b2u + float(np.sqrt(0.75)) * e5).tolist()
     scored = score_face_run_record(
         face_run,
@@ -1102,6 +1103,38 @@ def test_tau_unfitted_forces_all_tau_slices_directional():
         assert synth["directional"] is True, tag
         assert any(reason in r for r in synth["reasons"]), tag
     assert scored["gate_proposal"]["proposed_slices"] == {}
+
+
+def test_demographic_cohorts_inherit_coupling_and_new_disclosures_present():
+    """FIR5RR-05/09/13/15: per-cohort miss fields are null (not fabricated 0),
+    coupling inherited from full-corpus totals; new protocol disclosures ride
+    every scored face artifact."""
+    face_run, manifest = _face_fixture_corpus()
+    scored = score_face_run_record(face_run, manifest)
+    parent_coupling = scored["slices"]["full_corpus_identification"][
+        "detection_recall_coupling_flag"
+    ]
+    for cohort, block in scored["slices"]["demographic"]["by_cohort"].items():
+        assert block["missed_gt"] is None, cohort
+        assert block["unmatched_detections"] is None, cohort
+        assert block["detection_recall_coupling_flag"] == parent_coupling, cohort
+        assert "not attributed per cohort" in block["sampling_frame"]
+    disclosures = scored["protocol_disclosures"]
+    assert any("stranger" in d and "FIR-6" in d and "unmeasured" in d for d in disclosures)  # RR-09
+    assert any("not independent" in d and "unknown-rejection" in d for d in disclosures)  # RR-13
+    assert any("cardinality" in d for d in disclosures)  # RR-15
+    # RR-11: leg-asymmetry disclosure single-sourced from landmark_cache.
+    from scripts.eval_harness.landmark_cache import (
+        LANDMARK_CACHE_LEG_ASYMMETRY_DISCLOSURE,
+    )
+    from scripts.eval_harness.synthetic_occlusion import (
+        SYNTHETIC_OCCLUSION_PROTOCOL_DISCLOSURES,
+    )
+
+    assert LANDMARK_CACHE_LEG_ASYMMETRY_DISCLOSURE in SYNTHETIC_OCCLUSION_PROTOCOL_DISCLOSURES
+    assert LANDMARK_CACHE_LEG_ASYMMETRY_DISCLOSURE in disclosures
+    # RR-13: unknown-rejection slice error_target carries the dependence note.
+    assert "independent" in scored["slices"]["unknown_rejection"]["error_target"]
 
 
 def test_occlusion_marked_run_record_item_rejected():

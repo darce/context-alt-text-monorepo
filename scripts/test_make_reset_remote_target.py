@@ -93,7 +93,7 @@ def test_reset_remote_dev_fir_dry_run_succeeds_and_summarizes_plan() -> None:
     out = result.stdout
     assert "DRY-RUN" in out or "dry-run" in out
     assert "acx-dev-fir" in out
-    assert "https://fir.api.altcontext.com/ready" in out
+    assert "https://fir.dev.api.altcontext.com/ready" in out
 
 
 def test_deploy_dev_fir_and_rollback_targets_exist() -> None:

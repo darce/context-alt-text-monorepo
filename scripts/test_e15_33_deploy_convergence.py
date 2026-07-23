@@ -82,11 +82,11 @@ def test_dev_fir_env_mappings() -> None:
     assert _source_env_map("env_to_remote_dir", "dev-fir") == "/opt/acx-backend/dev-fir"
     assert (
         _source_env_map("env_to_health_url", "dev-fir")
-        == "https://fir.api.altcontext.com/health"
+        == "https://fir.dev.api.altcontext.com/health"
     )
     assert (
         _source_env_map("env_to_ready_url", "dev-fir")
-        == "https://fir.api.altcontext.com/ready"
+        == "https://fir.dev.api.altcontext.com/ready"
     )
     assert (
         _source_env_map("env_to_compose_files", "dev-fir")

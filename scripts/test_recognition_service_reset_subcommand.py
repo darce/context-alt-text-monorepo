@@ -95,7 +95,7 @@ def test_reset_dev_fir_dry_run_with_confirmation_succeeds_and_summarizes_plan() 
     assert "DRY-RUN" in out or "dry-run" in out
     assert "acx-dev-fir" in out
     assert "/opt/acx-backend/dev-fir" in out
-    assert "https://fir.api.altcontext.com/ready" in out
+    assert "https://fir.dev.api.altcontext.com/ready" in out
 
 
 def test_reset_prod_dry_run_with_both_confirmations_succeeds() -> None:

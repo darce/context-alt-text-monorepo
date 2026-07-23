@@ -8,7 +8,9 @@ require_once __DIR__ . '/../../support/class-telemetry.php';
 require_once __DIR__ . '/../../sovereign/repositories/class-description-usage-repository.php';
 require_once __DIR__ . '/class-description-budget-service.php';
 require_once __DIR__ . '/../../sovereign/repositories/class-identity-members-repository.php';
+require_once __DIR__ . '/../class-alt-style.php';
 
+use AltContext\Api\AltStyle;
 use AltContext\Api\DescribeHostInterface;
 use AltContext\Sovereign\Repositories\IdentityMembersRepository;
 use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
@@ -47,6 +49,7 @@ use function trim;
 use function update_post_meta;
 use function wp_get_object_terms;
 use function wp_json_encode;
+use function wp_update_post;
 
 use const PATHINFO_EXTENSION;
 
@@ -292,12 +295,61 @@ class DescribeMediaService {
 		update_post_meta( $media_id, self::ALT_TEXT_META_KEY, $draft );
 		update_post_meta( $media_id, self::PROVENANCE_META_KEY, $provenance );
 
-		$data['alt_text_write'] = array(
+		$write_result = array(
 			'status'               => '' !== trim( $existing_alt ) ? 'forced_overwrite' : 'written',
 			'existing_alt_present' => '' !== trim( $existing_alt ),
 		);
+
+		$description_write = $this->maybe_write_long_description( $data, $media_id, $force );
+		if ( null !== $description_write ) {
+			$write_result['description_write'] = $description_write;
+		}
+
+		$data['alt_text_write'] = $write_result;
 		$response->set_data( $data );
 		return $response;
+	}
+
+	/**
+	 * ALTQ-1: when the operator opted into `alt_plus_description` and the
+	 * backend produced the optional `alt_text_long`, mirror it to the
+	 * attachment description (`post_content`). Returns the write status, or
+	 * null when `acx_alt_style` resolves to `alt_only` (default) so the
+	 * `alt_text_write` payload stays byte-identical to pre-ALTQ-1 behavior.
+	 * Invalid stored option values degrade to `alt_only` via
+	 * {@see AltStyle::normalize()}. Runs only on the alt-write path — a
+	 * skipped alt write (human-authored alt present, no force) never touches
+	 * the description either.
+	 *
+	 * @param array<string,mixed> $data
+	 */
+	private function maybe_write_long_description( array $data, int $media_id, bool $force ): ?string {
+		if ( AltStyle::ALT_PLUS_DESCRIPTION !== AltStyle::current() ) {
+			return null;
+		}
+
+		$long = is_string( $data['alt_text_long'] ?? null ) ? trim( $data['alt_text_long'] ) : '';
+		if ( '' === $long ) {
+			return 'skipped_no_long_text';
+		}
+
+		$attachment           = get_post( $media_id );
+		$existing_description = is_object( $attachment ) && is_string( $attachment->post_content ?? null )
+			? trim( $attachment->post_content )
+			: '';
+
+		if ( '' !== $existing_description && ! $force ) {
+			return 'skipped_existing_description';
+		}
+
+		wp_update_post(
+			array(
+				'ID'           => $media_id,
+				'post_content' => $long,
+			)
+		);
+
+		return '' !== $existing_description ? 'forced_overwrite' : 'written';
 	}
 
 	/**

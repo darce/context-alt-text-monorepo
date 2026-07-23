@@ -70,8 +70,16 @@ import {
   type SuggestionCommitKind,
 } from './useSuggestionReviewMutations';
 import { useSuggestionReviewQueries } from './useSuggestionReviewQueries';
+import { useAriaAnnounce } from './useAriaAnnounce';
 import { useLiveReviewTarget } from './useLiveReviewTarget';
 import { useWorkbenchFindings } from './useWorkbenchFindings';
+import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
+
+/**
+ * Filtered-empty copy — visual + AT share one string.
+ * [COG-03] not a true drain when filters hide work; [A11Y-06] second channel.
+ */
+const REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE = 'No items match the current filters.';
 
 /** Cluster id for person-commit chrome / orphaned status surface (item.clusterId authoritative). */
 const itemClusterId = (item: ReviewQueueItem): string | null => {
@@ -251,7 +259,9 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     const { resolveSurvivor } = useMergeSurvivors();
     const cardRegionRef = React.useRef<HTMLDivElement>(null);
     const [lightbox, setLightbox] = React.useState<FaceOriginalTarget | null>(null);
-    const [liveMessage, setLiveMessage] = React.useState('');
+    // [REF-19] single AT-announce module; [A11Y-06] status second channel — BR-68/HARM-02
+    // seq-keyed sink so repeat-identical strings still re-fire (plain useState Object.is bail-out).
+    const { message: liveMessage, seq: liveSeq, announce: setLiveMessage } = useAriaAnnounce();
     const [selectionOpen, setSelectionOpen] = React.useState(false);
     /** User confirmed bulk while truncation-gated (UI-06 total-N confirm). */
     const [truncationConfirmed, setTruncationConfirmed] = React.useState(false);
@@ -372,7 +382,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           ),
         );
       }
-    }, [findings.queue, pruneMissingIds]);
+    }, [findings.queue, pruneMissingIds, setLiveMessage]);
 
     // BR-63: when the selection extends beyond the active KIND ∩ band view,
     // render/announce the split count; otherwise keep the simple count.
@@ -400,7 +410,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         return;
       }
       setLiveMessage(selectionCountMessage);
-    }, [selectionCountMessage]);
+    }, [selectionCountMessage, setLiveMessage]);
 
     // Reset truncation confirm when selection or gate changes.
     React.useEffect(() => {
@@ -408,6 +418,9 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     }, [selectedIds, truncation.isTruncationGated]);
 
     const length = filteredQueue.length;
+    // [COG-03] design to the goal filter — false "all caught up" when filters hide work.
+    const filtersActive = filter !== REVIEW_QUEUE_FILTER.ALL || activeBand !== REVIEW_QUEUE_BAND.ALL;
+    const filteredEmptyWithWork = length === 0 && filtersActive && findings.queue.length > 0;
     const safeIndex = clampQueueIndex(index, length);
     // BR-06: gate clamp on all four source queries settled — partial
     // assignment+merge resolve must not wipe a restored rq= index.
@@ -540,7 +553,13 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
 
       if (!currentKey && previousItemKeyRef.current !== null) {
         previousItemKeyRef.current = null;
-        setLiveMessage(__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context'));
+        // [COG-03]/[A11Y-06] AT parity with visual: filtered-empty ≠ true drain.
+        setLiveMessage(
+          __(
+            filteredEmptyWithWork ? REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE : REVIEW_QUEUE_DRAIN_MESSAGE,
+            'alt-context',
+          ),
+        );
         if (pendingFocusAfterRemovalRef.current) {
           pendingFocusAfterRemovalRef.current = false;
           requestAnimationFrame(() => {
@@ -548,7 +567,15 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           });
         }
       }
-    }, [currentKey, emptyStateAnchorRef, focusPrimaryInCard, length, safeIndex]);
+    }, [
+      currentKey,
+      emptyStateAnchorRef,
+      filteredEmptyWithWork,
+      focusPrimaryInCard,
+      length,
+      safeIndex,
+      setLiveMessage,
+    ]);
 
     const markAdvanceFocus = React.useCallback((): void => {
       pendingFocusAfterRemovalRef.current = true;
@@ -607,7 +634,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         }
         void data.flushHeld().then(afterSingleFlush);
       },
-      [bulk, clearAdvanceFocus, data],
+      [bulk, clearAdvanceFocus, data, setLiveMessage],
     );
 
     // BR-52: fetch error fails closed — confirm cannot clear an error gate.
@@ -981,7 +1008,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                 truncation.isLoading
               }
               title={truncationBlocksCommit ? (truncationReason ?? undefined) : undefined}
-              {...(bulkCommitOwnsAccent ? { 'data-acx-accent-primary': true } : {})}
+              {...(bulkCommitOwnsAccent ? { [ACCENT_PRIMARY_ATTR]: true } : {})}
               onClick={() => {
                 void bulk.initiateBulk();
               }}
@@ -1039,7 +1066,13 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           </div>
         ) : null}
 
-        <div className="acx-review-queue__live" role="status" aria-live="polite">
+        <div
+          key={liveSeq}
+          className="acx-review-queue__live"
+          role="status"
+          aria-live="polite"
+          data-announce-seq={liveSeq}
+        >
           {liveMessage}
         </div>
 
@@ -1099,10 +1132,29 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               onRetry={() => void data.refetchAssignment().then(() => data.refetchMerge())}
             />
           ) : length === 0 || !currentItem ? (
-            <p className="acx-review-queue__empty">{__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context')}</p>
+            filteredEmptyWithWork ? (
+              // [COG-03] filters hide work; [NAV-07] escape hatch; [INT-06] clear label; [rg-003]
+              <div className="acx-review-queue__empty">
+                <p>{__(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context')}</p>
+                <button
+                  type="button"
+                  className="button"
+                  onClick={() => {
+                    onKindChange(filterToKindParam(REVIEW_QUEUE_FILTER.ALL));
+                    onBandChange(bandToBandParam(REVIEW_QUEUE_BAND.ALL));
+                  }}
+                >
+                  {__('Clear filters', 'alt-context')}
+                </button>
+              </div>
+            ) : (
+              <p className="acx-review-queue__empty">
+                {__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context')}
+              </p>
+            )
           ) : suppressRetiredHead ? (
             <p className="acx-review-queue__retired" data-testid="acx-review-queue-retired-head">
-              {liveMessage || __('This review target is no longer available.', 'alt-context')}
+              {liveMessage ?? __('This review target is no longer available.', 'alt-context')}
             </p>
           ) : (
             <CurrentCard
@@ -1141,6 +1193,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               onOpenOriginal={(target) => setLightbox(target)}
               markAdvanceFocus={markAdvanceFocus}
               clearAdvanceFocus={clearAdvanceFocus}
+              announce={setLiveMessage}
               scheduleAccept={data.scheduleAccept}
               scheduleReject={data.scheduleReject}
               scheduleAcceptMerge={data.scheduleAcceptMerge}
@@ -1216,6 +1269,8 @@ interface CurrentCardProps {
   onOpenOriginal: (target: FaceOriginalTarget) => void;
   markAdvanceFocus: () => void;
   clearAdvanceFocus: () => void;
+  /** C-05: live-region announce for a refused action (single failed-slot occupied). */
+  announce: (message: string) => void;
   scheduleAccept: (suggestionId: string) => Promise<ScheduleCommitResult>;
   scheduleReject: (suggestionId: string) => Promise<ScheduleCommitResult>;
   scheduleAcceptMerge: (suggestionId: string) => Promise<ScheduleCommitResult>;
@@ -1347,6 +1402,7 @@ const CurrentCard = ({
   onOpenOriginal,
   markAdvanceFocus,
   clearAdvanceFocus,
+  announce,
   scheduleAccept,
   scheduleReject,
   scheduleAcceptMerge,
@@ -1369,6 +1425,12 @@ const CurrentCard = ({
     void schedule().then((result) => {
       if (result.outcome !== 'committed') {
         clearAdvanceFocus();
+      }
+      // C-05: the single failed-item slot refused this action because another item's
+      // save is still failed. Announce it instead of a silent no-op (the click would
+      // otherwise look dead and invite a retry/double-click).
+      if (result.outcome === 'not_attempted_prior_failed') {
+        announce(__('Retry the item that failed to save before reviewing another.', 'alt-context'));
       }
     });
   };
@@ -1437,6 +1499,9 @@ const CurrentCard = ({
           void schedulePersonCommit(request).then((result) => {
             if (result.outcome === 'committed') {
               markAdvanceFocus();
+            } else if (result.outcome === 'not_attempted_prior_failed') {
+              // C-05: refused because an accept/reject failure is unresolved.
+              announce(__('Retry the item that failed to save before assigning a person.', 'alt-context'));
             }
           });
         }}

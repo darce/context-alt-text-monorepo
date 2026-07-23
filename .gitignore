@@ -165,6 +165,7 @@ local/*-worktrees.txt
 /docs/workbay/rules
 /scripts/workbay
 /.grok/plugins/workbay-system
+/.workbay-cache
 # <<< WORKBAY_BOOTSTRAP OVERLAY IGNORE <<<
 
 # codemap MCP index artifact (local, regenerated)

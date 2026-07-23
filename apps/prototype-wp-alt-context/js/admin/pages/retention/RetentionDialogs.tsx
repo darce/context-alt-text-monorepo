@@ -10,25 +10,10 @@ import {
   DialogTitle,
 } from '../../../components/ui/dialog';
 import { RadioGroup, RadioGroupItem } from '../../../components/ui/radio-group';
+import { PURGE_DIALOG_DESCRIPTION, PURGE_SCOPE_OPTIONS } from './retentionDialogCopy';
 import type { RetentionAction } from './useRetentionPageState';
 
 const RETENTION_CONFIRM_PHRASE = 'PURGE';
-
-const PURGE_SCOPE_OPTIONS: { value: 'disposed' | 'all'; label: string; description: string }[] = [
-  {
-    value: 'disposed',
-    label: __('Disposed only', 'alt-context'),
-    description: __('Delete rows already marked disposed after acknowledgement.', 'alt-context'),
-  },
-  {
-    value: 'all',
-    label: __('All machine data', 'alt-context'),
-    description: __(
-      'Delete all tenant embeddings, clusters, representatives, and related machine state.',
-      'alt-context',
-    ),
-  },
-];
 
 /* ------------------------------------------------------------------ */
 /*  Export Dialog                                                       */
@@ -154,12 +139,7 @@ export const PurgeDialog = ({
         <DialogOverlay />
         <DialogContent>
           <DialogTitle>{__('Purge tenant data', 'alt-context')}</DialogTitle>
-          <DialogDescription>
-            {__(
-              'Choose whether to purge only disposed state or all machine-derived tenant data. This cannot be undone.',
-              'alt-context',
-            )}
-          </DialogDescription>
+          <DialogDescription>{PURGE_DIALOG_DESCRIPTION}</DialogDescription>
           <RadioGroup
             className="acx-retention__dialog-fieldset"
             aria-label={__('Purge scope', 'alt-context')}

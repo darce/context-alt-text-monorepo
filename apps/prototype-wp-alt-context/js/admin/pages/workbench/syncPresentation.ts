@@ -14,7 +14,7 @@ import type { ProjectionSyncState } from '../../hooks/useJobStateMachineEffects'
 import { resolveEffectiveSyncHealth } from './degradedModeBannerLogic';
 import { JOB_PHASE_PRESENTATION, type JobPhase } from './phasePresentation';
 import { SYNC_VOCABULARY } from './syncVocabulary';
-import { buildWorkbenchOverlayHref } from './workbenchOverlayLinks';
+import { buildWorkbenchOverlayHref } from '../../navigation/appLinks';
 import type { WorkbenchTab } from './WorkbenchContext';
 
 /** Canonical status codes for the status strip (sr-007). */
@@ -452,9 +452,6 @@ export const formatRetentionModeLabel = (mode: string): string => {
       return SYNC_VOCABULARY.retentionRetain;
   }
 };
-
-export const formatSyncModeLabel = (mode: 'delta' | 'full'): string =>
-  mode === 'delta' ? SYNC_VOCABULARY.syncModeDelta : SYNC_VOCABULARY.syncModeFull;
 
 /** Build presentation inputs from a SyncStatusResponse + UI flags. */
 export const syncPresentationInputFromStatus = (

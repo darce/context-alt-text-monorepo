@@ -3,6 +3,7 @@ import { __ } from '@wordpress/i18n';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 import type { PendingMergeSuggestion } from '../../../api/recognition';
 import type { FaceOriginalTarget } from './SuggestionCards';
+import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
 
 export interface MergeSuggestionCardProps {
   suggestion: PendingMergeSuggestion;
@@ -141,7 +142,7 @@ export const MergeSuggestionCard = ({
           onClick={onAccept}
           disabled={isPending}
           title={isPending && disabledReason ? disabledReason : undefined}
-          {...(accentPrimary ? { 'data-acx-accent-primary': true } : {})}
+          {...(accentPrimary ? { [ACCENT_PRIMARY_ATTR]: true } : {})}
         >
           {__('Yes', 'alt-context')}
         </button>

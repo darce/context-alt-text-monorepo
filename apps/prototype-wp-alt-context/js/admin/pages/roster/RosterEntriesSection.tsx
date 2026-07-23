@@ -5,6 +5,7 @@ import type { RosterEntry } from '../../api/rosterApi';
 import { RosterEntriesTable } from './RosterEntriesTable';
 import { useCreatePerson } from '../../hooks/useRosterHooks';
 import { Filter, UserPlus, Plus, Users, X } from 'lucide-react';
+import { toWorkbench } from '../../navigation/appLinks';
 
 type QueueFilterId = RosterEntry['queue_memberships'][number];
 
@@ -19,7 +20,7 @@ interface QueueReviewRoute {
   label: string;
 }
 
-const WORKBENCH_SCAN_ROUTE = '#/workbench?tab=scan';
+const WORKBENCH_SCAN_ROUTE = toWorkbench({ tab: 'scan' });
 
 const isQueueFilterId = (value: string | null): value is QueueFilterId =>
   value === 'singleton-proposals' || value === 'hard-examples' || value === 'needs-confirmation-after-merge';
@@ -166,7 +167,7 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
     <div className="acx-roster-section" data-testid="roster-entries-section">
       <header className="acx-roster-section__header">
         <div className="acx-roster-section__title-group">
-          <h2>{__('Managed Identities', 'alt-context')}</h2>
+          <h2>{__('People', 'alt-context')}</h2>
           {activeFilterBadge && (
             <span className="acx-roster-section__filter-badge" data-testid="roster-filter-badge">
               <Filter size={12} aria-hidden="true" data-testid="roster-filter-badge-icon" />

@@ -309,6 +309,190 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertSame('forced_overwrite', $result->get_data()['alt_text_write']['status'] ?? null);
     }
 
+    /**
+     * @return array<string,mixed>
+     */
+    private function validBackendBodyWithLong(int $media_id, string $long = 'A tabby cat lounging on a woven mat in warm afternoon light.'): array
+    {
+        $body = $this->validBackendBody($media_id);
+        $body['alt_text_long'] = $long;
+        return $body;
+    }
+
+    private function plantWritableAttachment(int $id): void
+    {
+        $this->plantAttachment($id, "\xff\xd8\xff\xe0bytes", 'jpg');
+        // plantAttachment seeds a non-empty description; description-write
+        // tests start from the common empty-description state.
+        $GLOBALS['__ac_posts'][$id]->post_content = '';
+    }
+
+    private function writeRequest(int $media_id, bool $force = false): WP_REST_Request
+    {
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', $media_id);
+        $req->set_param('write_alt', true);
+        if ($force) {
+            $req->set_param('force', true);
+        }
+        return $req;
+    }
+
+    public function testAltPlusDescriptionWritesLongToAttachmentDescription(): void
+    {
+        $this->plantWritableAttachment(42);
+        $this->setOption('acx_alt_style', 'alt_plus_description');
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBodyWithLong(42)),
+        ));
+
+        $result = $this->controller->describe_media($this->writeRequest(42));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame('A photo.', get_post_meta(42, '_wp_attachment_image_alt', true));
+        $this->assertSame(
+            'A tabby cat lounging on a woven mat in warm afternoon light.',
+            $GLOBALS['__ac_posts'][42]->post_content
+        );
+        $write = $result->get_data()['alt_text_write'];
+        $this->assertSame('written', $write['status']);
+        $this->assertSame('written', $write['description_write'] ?? null);
+    }
+
+    public function testAltStyleDefaultNeverWritesDescriptionEvenWhenLongPresent(): void
+    {
+        // Option unset -> alt_only default = current behavior byte-identical.
+        $this->plantWritableAttachment(42);
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBodyWithLong(42)),
+        ));
+
+        $result = $this->controller->describe_media($this->writeRequest(42));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame('A photo.', get_post_meta(42, '_wp_attachment_image_alt', true));
+        $this->assertSame('', $GLOBALS['__ac_posts'][42]->post_content);
+        $write = $result->get_data()['alt_text_write'];
+        $this->assertSame('written', $write['status']);
+        $this->assertArrayNotHasKey('description_write', $write);
+    }
+
+    public function testInvalidAltStyleValueDegradesToAltOnly(): void
+    {
+        $this->plantWritableAttachment(42);
+        $this->setOption('acx_alt_style', 'bogus_style');
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBodyWithLong(42)),
+        ));
+
+        $result = $this->controller->describe_media($this->writeRequest(42));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame('', $GLOBALS['__ac_posts'][42]->post_content);
+        $this->assertArrayNotHasKey('description_write', $result->get_data()['alt_text_write']);
+    }
+
+    public function testAltPlusDescriptionWithoutLongTextSkipsDescriptionWrite(): void
+    {
+        $this->plantWritableAttachment(42);
+        $this->setOption('acx_alt_style', 'alt_plus_description');
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+
+        $result = $this->controller->describe_media($this->writeRequest(42));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame('A photo.', get_post_meta(42, '_wp_attachment_image_alt', true));
+        $this->assertSame('', $GLOBALS['__ac_posts'][42]->post_content);
+        $write = $result->get_data()['alt_text_write'];
+        $this->assertSame('written', $write['status']);
+        $this->assertSame('skipped_no_long_text', $write['description_write'] ?? null);
+    }
+
+    public function testAltPlusDescriptionSkipsExistingDescriptionWithoutForce(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg'); // description pre-filled
+        $this->setOption('acx_alt_style', 'alt_plus_description');
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBodyWithLong(42)),
+        ));
+
+        $result = $this->controller->describe_media($this->writeRequest(42));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame('A long description.', $GLOBALS['__ac_posts'][42]->post_content);
+        $write = $result->get_data()['alt_text_write'];
+        $this->assertSame('written', $write['status']);
+        $this->assertSame('skipped_existing_description', $write['description_write'] ?? null);
+    }
+
+    public function testAltPlusDescriptionForceOverwritesExistingDescription(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg'); // description pre-filled
+        $this->setOption('acx_alt_style', 'alt_plus_description');
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBodyWithLong(42)),
+        ));
+
+        $result = $this->controller->describe_media($this->writeRequest(42, true));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame(
+            'A tabby cat lounging on a woven mat in warm afternoon light.',
+            $GLOBALS['__ac_posts'][42]->post_content
+        );
+        $this->assertSame('forced_overwrite', $result->get_data()['alt_text_write']['description_write'] ?? null);
+    }
+
+    public function testSkippedExistingAltAlsoSkipsDescriptionWrite(): void
+    {
+        $this->plantWritableAttachment(42);
+        $this->setPostMeta(42, '_wp_attachment_image_alt', 'Human-authored alt');
+        $this->setOption('acx_alt_style', 'alt_plus_description');
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBodyWithLong(42)),
+        ));
+
+        $result = $this->controller->describe_media($this->writeRequest(42));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame('', $GLOBALS['__ac_posts'][42]->post_content);
+        $write = $result->get_data()['alt_text_write'];
+        $this->assertSame('skipped_existing_alt', $write['status']);
+        $this->assertArrayNotHasKey('description_write', $write);
+    }
+
+    public function testPreviewNeverWritesDescriptionEvenWithLongAndStyle(): void
+    {
+        $this->plantWritableAttachment(42);
+        $this->setOption('acx_alt_style', 'alt_plus_description');
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBodyWithLong(42)),
+        ));
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame('', $GLOBALS['__ac_posts'][42]->post_content);
+        $this->assertArrayNotHasKey('alt_text_write', $result->get_data());
+        // Optional upstream field passes through untouched (rg-015).
+        $this->assertSame(
+            'A tabby cat lounging on a woven mat in warm afternoon light.',
+            $result->get_data()['alt_text_long']
+        );
+    }
+
     public function testRegistersAndServesMissingAltDryRunWithoutBackendCall(): void
     {
         $GLOBALS['__ac_posts'][42] = (object) array('ID' => 42, 'post_title' => 'Missing');

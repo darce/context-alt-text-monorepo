@@ -471,10 +471,13 @@ def _cmd_score(args: argparse.Namespace) -> None:
     # against the run record's fetch-time sha instead of copying it blind (S3-04).
     manifest_sha = _manifest_sha(manifest)
     ignore_list = _load_ignore_list(record_path.parent)
-    json_doc, md_doc = build_reports(record, entries, ignore_list=ignore_list, score_manifest_sha256=manifest_sha)
+    roster = sorted(set(getattr(manifest, "roster", []) or []))
+    json_doc, md_doc = build_reports(
+        record, entries, ignore_list=ignore_list, score_manifest_sha256=manifest_sha, manifest_roster=roster
+    )
     if args.check_determinism:
         json_again, md_again = build_reports(
-            record, entries, ignore_list=ignore_list, score_manifest_sha256=manifest_sha
+            record, entries, ignore_list=ignore_list, score_manifest_sha256=manifest_sha, manifest_roster=roster
         )
         if json_doc != json_again or md_doc != md_again:
             sys.exit("determinism check FAILED: re-score produced different output")
@@ -483,7 +486,9 @@ def _cmd_score(args: argparse.Namespace) -> None:
     json_path, md_path = Path(f"{base}-report.json"), Path(f"{base}-report.md")
     json_path.write_text(json_doc)
     md_path.write_text(md_doc)
-    scored = score_run_record(record, entries, ignore_list=ignore_list, score_manifest_sha256=manifest_sha)
+    scored = score_run_record(
+        record, entries, ignore_list=ignore_list, score_manifest_sha256=manifest_sha, manifest_roster=roster
+    )
     print(md_path)
     print(
         f"scored={scored['counts']['scored']}/{scored['counts']['total']} "

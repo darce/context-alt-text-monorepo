@@ -4,9 +4,13 @@ declare(strict_types=1);
 
 namespace AltContext\Tests\Unit;
 
+use AltContext\Api\Api;
 use AltContext\Api\MediaIdentitiesController;
+use AltContext\Api\RecognitionDataSource;
 use AltContext\Sovereign\Mappers\MemberResponseMapper;
+use AltContext\Sovereign\Sync\SyncPullResult;
 use AltContext\Tests\Stubs\NullIdentityMembersRepository;
+use AltContext\Tests\Stubs\SpySyncPullJob;
 use AltContext\Tests\Stubs\NullSyncStateRepository;
 use AltContext\Tests\TestCase;
 use WP_REST_Request;
@@ -86,8 +90,259 @@ class MediaIdentitiesControllerTest extends TestCase
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $this->assertSame(200, $response->get_status());
         $data = $response->get_data();
-        $this->assertSame([], $data['identities_by_media'] ?? null);
+        // BR-01: empty identities_by_media must serialize as a JSON object ({}), not [] (the workbench guard rejects arrays).
+        $this->assertEquals(new \stdClass(), $data['identities_by_media'] ?? null);
+        // BR-05: a transport-unreachable backend (WP_Error) is 'unavailable', distinct from a reachable 5xx 'endpoint_error'.
         $this->assertSame('unavailable', $data['data_source'] ?? null);
+        // A dead backend returns the degraded state immediately and schedules no async heal.
+        $this->assertSame([], $this->scheduledBootstrapEvents());
+    }
+
+    public function testMediaIdentitiesReturnsEndpointErrorWhenBackendReturns5xx(): void
+    {
+        $membersRepo = new class() extends NullIdentityMembersRepository {
+            public function list_for_media_ids(string $tenant_id, array $media_ids): array {
+                return [];
+            }
+        };
+        $syncRepo = new NullSyncStateRepository();
+
+        $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper());
+        // A reachable backend that answers 500 (not a transport failure, not the 503 overload signal).
+        $this->queueHttpResponse([
+            'response' => ['code' => 500, 'message' => 'Internal Server Error'],
+            'body' => '{"error":"boom"}',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/media-identities');
+        $request->set_param('media_ids', [22]);
+
+        $response = $controller->get_media_identities($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+        // BR-05: reachable-but-erroring (5xx) is honestly labeled endpoint_error, not unavailable.
+        $this->assertSame(RecognitionDataSource::ENDPOINT_ERROR, $data['data_source'] ?? null);
+        // BR-01: object-shaped empty payload so the workbench renders the degraded state.
+        $this->assertEquals(new \stdClass(), $data['identities_by_media'] ?? null);
+    }
+
+    public function testMediaIdentitiesServesLocalProjectionWithoutSyncState(): void
+    {
+        // The E15-35 incident state: projection rows survive, sync-state row wiped.
+        $membersRepo = $this->membersRepoWithRows();
+        $syncRepo = new NullSyncStateRepository();
+
+        $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper());
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/media-identities');
+        $request->set_param('media_ids', [22]);
+
+        $response = $controller->get_media_identities($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertSame(RecognitionDataSource::LOCAL_PROJECTION, $data['data_source'] ?? null);
+        $this->assertArrayHasKey('22', $data['identities_by_media']);
+        $this->assertSame([], $this->getHttpCalls(), 'Sovereign read must issue zero HTTP requests.');
+    }
+
+    public function testMediaIdentitiesLocalReadWithMissingSyncStateSchedulesDedupedHealEvent(): void
+    {
+        $membersRepo = $this->membersRepoWithRows();
+        $syncRepo = new NullSyncStateRepository();
+
+        $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper());
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/media-identities');
+        $request->set_param('media_ids', [22]);
+
+        $controller->get_media_identities($request);
+        $controller->get_media_identities($request);
+
+        $events = $this->scheduledBootstrapEvents();
+        $this->assertCount(1, $events, 'Exactly one deduped heal event expected.');
+        $this->assertSame([self::currentTenantId()], array_values($events)[0]['args']);
+        $this->assertSame([], $this->getHttpCalls(), 'Async heal must not issue synchronous HTTP.');
+    }
+
+    public function testMediaIdentitiesLocalReadWithFreshSyncStateSchedulesNothing(): void
+    {
+        $membersRepo = $this->membersRepoWithRows();
+        $syncRepo = new class() extends NullSyncStateRepository {
+            public function get_snapshot_version(string $tenant_id): int {
+                return 3;
+            }
+            public function get_last_updated(string $tenant_id): ?string {
+                return gmdate('Y-m-d H:i:s');
+            }
+        };
+
+        $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper());
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/media-identities');
+        $request->set_param('media_ids', [22]);
+
+        $response = $controller->get_media_identities($request);
+
+        $data = $response->get_data();
+        $this->assertSame(RecognitionDataSource::LOCAL_PROJECTION, $data['data_source'] ?? null);
+        $this->assertSame([], $this->scheduledBootstrapEvents());
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    public function testMediaIdentitiesColdStartProxySuccessSchedulesAsyncBootstrap(): void
+    {
+        // BR-02: a successful proxy read converges the projection via the deduped
+        // async cron event only. It must NOT block the response on an inline pull.
+        $membersRepo = new NullIdentityMembersRepository();
+        $syncRepo = new NullSyncStateRepository();
+
+        $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper());
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '[{"identity_id":"identity-1","media_id":22}]',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/media-identities');
+        $request->set_param('media_ids', [22]);
+
+        $response = $controller->get_media_identities($request);
+
+        $data = $response->get_data();
+        $this->assertSame(RecognitionDataSource::BACKEND_PROXY, $data['data_source'] ?? null);
+        // The proxy leg (post_scan_read) is the only synchronous HTTP call; convergence is off-path.
+        $this->assertCount(1, $this->getHttpCalls(), 'Successful proxy read must not issue an inline convergence pull.');
+        $events = $this->scheduledBootstrapEvents();
+        $this->assertCount(1, $events, 'A successful proxy read schedules the deduped async bootstrap heal.');
+        $this->assertSame([self::currentTenantId()], array_values($events)[0]['args']);
+    }
+
+    public function testMediaIdentitiesColdStartProxyReadDedupsAsyncBootstrapAcrossReads(): void
+    {
+        $membersRepo = new NullIdentityMembersRepository();
+        $syncRepo = new NullSyncStateRepository();
+
+        $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper());
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '[{"identity_id":"identity-1","media_id":22}]',
+        ]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '[{"identity_id":"identity-1","media_id":22}]',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/media-identities');
+        $request->set_param('media_ids', [22]);
+
+        $controller->get_media_identities($request);
+        $events = $this->scheduledBootstrapEvents();
+        $this->assertCount(1, $events, 'A successful proxy read schedules the async bootstrap heal.');
+        $this->assertSame([self::currentTenantId()], array_values($events)[0]['args']);
+
+        $controller->get_media_identities($request);
+        $this->assertCount(1, $this->scheduledBootstrapEvents(), 'Queued event must dedup the second read.');
+    }
+
+    public function testMediaIdentitiesConvergesViaAsyncHealSoFollowUpReadServesLocalProjection(): void
+    {
+        // BR-02: the proxy read schedules an async heal (never an inline pull). Once
+        // the cron handler completes the pull (projection rows land), follow-up reads
+        // are sovereign. Here the completed heal is simulated by flipping hasRows.
+        $membersRepo = new class() extends NullIdentityMembersRepository {
+            public bool $hasRows = false;
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return $this->hasRows;
+            }
+            public function list_for_media_ids(string $tenant_id, array $media_ids): array
+            {
+                if (!$this->hasRows) {
+                    return [];
+                }
+                return [
+                    [
+                        'identity_uuid' => 'identity-1',
+                        'attachment_id' => 22,
+                        'bbox_json' => '{"pixels":{"x":1,"y":1,"width":2,"height":2}}',
+                    ],
+                ];
+            }
+        };
+        $syncRepo = new NullSyncStateRepository();
+
+        $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper());
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '[{"identity_id":"identity-1","media_id":22}]',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/media-identities');
+        $request->set_param('media_ids', [22]);
+
+        $first = $controller->get_media_identities($request);
+        $this->assertSame(RecognitionDataSource::BACKEND_PROXY, $first->get_data()['data_source'] ?? null);
+        // The proxy read schedules the async heal but does not pull inline.
+        $this->assertCount(1, $this->scheduledBootstrapEvents(), 'Proxy read must schedule the async heal.');
+        $httpCallsAfterProxyRead = count($this->getHttpCalls());
+
+        // Simulate the cron handler completing the convergence pull.
+        $membersRepo->hasRows = true;
+
+        $second = $controller->get_media_identities($request);
+        $data = $second->get_data();
+        $this->assertSame(RecognitionDataSource::LOCAL_PROJECTION, $data['data_source'] ?? null);
+        $this->assertArrayHasKey('22', $data['identities_by_media']);
+        $this->assertCount($httpCallsAfterProxyRead, $this->getHttpCalls(), 'Follow-up read must be sovereign (zero additional HTTP).');
+    }
+
+    public function testBootstrapSyncHandlerBoundInCronContextAtPluginLoad(): void
+    {
+        $pullJob = new SpySyncPullJob();
+        $api = new Api(null, null, null, $pullJob);
+        $api->init();
+
+        // Cron context: rest_api_init is deliberately never fired.
+        do_action(RecognitionDataSource::BOOTSTRAP_SYNC_HOOK, 'tenant-cron');
+
+        $this->assertSame(['tenant-cron'], $pullJob->bypassCalls, 'Handler must perform the sync pull without rest_api_init.');
+    }
+
+    private function membersRepoWithRows(): NullIdentityMembersRepository
+    {
+        return new class() extends NullIdentityMembersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+            public function list_for_media_ids(string $tenant_id, array $media_ids): array
+            {
+                return [
+                    [
+                        'identity_uuid' => 'identity-1',
+                        'attachment_id' => 22,
+                        'bbox_json' => '{"pixels":{"x":1,"y":1,"width":2,"height":2}}',
+                    ],
+                ];
+            }
+        };
+    }
+
+    /**
+     * @return array<string,array{timestamp:int,args:array<int,string>}>
+     */
+    private function scheduledBootstrapEvents(): array
+    {
+        $events = [];
+        foreach (($GLOBALS['__ac_scheduled'] ?? []) as $key => $event) {
+            if (str_starts_with((string) $key, RecognitionDataSource::BOOTSTRAP_SYNC_HOOK . '::')) {
+                $events[$key] = $event;
+            }
+        }
+
+        return $events;
     }
 
     public function testMediaIdentitiesPropagatesBackendOverloadedAs503(): void

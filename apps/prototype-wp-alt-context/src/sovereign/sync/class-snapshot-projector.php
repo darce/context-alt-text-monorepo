@@ -524,12 +524,20 @@ class SnapshotProjector implements SnapshotProjectorInterface {
 	 * @return array<string,mixed>
 	 */
 	private function hydrate_existing_member_snapshot_row( array $member ): array {
+		// rg-005 / DATA-09: pass assigned_at through delta re-merge so ORDER BY parity
+		// with recognition (assigned_at ASC) is not lost when re-hydrating existing rows.
+		$assigned_at = trim( (string) ( $member['assigned_at'] ?? '' ) );
+		if ( '' === $assigned_at ) {
+			$assigned_at = trim( (string) ( $member['created_at'] ?? '' ) );
+		}
+
 		$row = array(
 			'identity_uuid' => trim( (string) ( $member['identity_uuid'] ?? '' ) ),
 			'cluster_uuid'  => trim( (string) ( $member['cluster_uuid'] ?? '' ) ),
 			'attachment_id' => (int) ( $member['attachment_id'] ?? 0 ),
 			'thumb_path'    => trim( (string) ( $member['thumb_path'] ?? '' ) ),
 			'similarity'    => $member['similarity'] ?? null,
+			'assigned_at'   => $assigned_at,
 		);
 
 		$bbox_json = $member['bbox_json'] ?? null;

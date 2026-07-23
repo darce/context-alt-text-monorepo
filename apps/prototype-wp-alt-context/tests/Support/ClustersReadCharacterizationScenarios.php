@@ -158,10 +158,16 @@ final class ClustersReadCharacterizationScenarios
     {
         self::resetHarness();
         $controller = self::proxyFallbackController();
+        // Canonical envelope required — bare-array fabrication is forbidden [rg-015].
         self::queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
-                ['id' => 'cluster-proxy', 'label' => 'Proxied', 'identity_count' => 5],
+                'clusters' => [
+                    ['id' => 'cluster-proxy', 'label' => 'Proxied', 'identity_count' => 5],
+                ],
+                'limit' => 50,
+                'total' => 1,
+                'truncated' => false,
             ]),
         ]);
 
@@ -231,7 +237,12 @@ final class ClustersReadCharacterizationScenarios
         self::queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
-                ['id' => 'cluster-proxy', 'label' => 'Proxied'],
+                'clusters' => [
+                    ['id' => 'cluster-proxy', 'label' => 'Proxied'],
+                ],
+                'limit' => 50,
+                'total' => 1,
+                'truncated' => false,
             ]),
         ]);
 
@@ -276,7 +287,12 @@ final class ClustersReadCharacterizationScenarios
         self::queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
-                ['id' => 'cluster-proxy', 'label' => 'Proxied'],
+                'clusters' => [
+                    ['id' => 'cluster-proxy', 'label' => 'Proxied'],
+                ],
+                'limit' => 50,
+                'total' => 1,
+                'truncated' => false,
             ]),
         ]);
 
@@ -356,15 +372,21 @@ final class ClustersReadCharacterizationScenarios
 
         $controller = new ClustersController(null, null, $syncRepo, null, new ClusterResponseMapper(), new MemberResponseMapper());
 
+        // Canonical envelope required — bare-array fabrication is forbidden [rg-015].
         self::queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
-                [
-                    'id' => 'cluster-proxy-top',
-                    'label' => null,
-                    'identity_count' => 4,
-                    'representatives' => [],
+                'clusters' => [
+                    [
+                        'id' => 'cluster-proxy-top',
+                        'label' => null,
+                        'identity_count' => 4,
+                        'representatives' => [],
+                    ],
                 ],
+                'limit' => 10,
+                'total' => 1,
+                'truncated' => false,
             ]),
         ]);
         self::queueHttpResponse([

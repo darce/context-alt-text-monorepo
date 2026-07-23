@@ -81,7 +81,6 @@ class ScanItemHandler:
                 await enable_rls_bypass(session)
                 repo = SqlAlchemyScanQueueRepository(session)
                 scan_service = self._build_scan_service(session)
-                now = datetime.now(tz=UTC)
                 logger.info(
                     "[worker] START scan_item request_id=%s job_id=%s item_id=%s media_id=%s",
                     request_id,
@@ -100,21 +99,31 @@ class ScanItemHandler:
                         media_url=item.media_url,
                         job_id=item.job_id,
                     )
+                    # Capture completion time after work so completed_at reflects
+                    # end-of-processing (not claim/start).
+                    completed_at = datetime.now(tz=UTC)
                     identities_detected = _identities_detected_count(reconcile)
                     await repo.mark_item_completed(
                         item_id=item.id,
-                        completed_at=now,
+                        completed_at=completed_at,
                         identities_detected=identities_detected,
                     )
                     await session.commit()
                     if self._counters is not None:
-                        self._counters.record(
-                            detected=reconcile.detected
-                            if isinstance(reconcile, ReconcileResult)
-                            else identities_detected,
-                            matched=reconcile.matched if isinstance(reconcile, ReconcileResult) else 0,
-                            new=reconcile.new if isinstance(reconcile, ReconcileResult) else 0,
-                        )
+                        if isinstance(reconcile, ReconcileResult):
+                            self._counters.record(
+                                detected=reconcile.detected,
+                                matched=reconcile.matched,
+                                new=reconcile.new,
+                                skipped=reconcile.skipped,
+                                mixed_model=reconcile.mixed_model,
+                            )
+                        else:
+                            self._counters.record(
+                                detected=identities_detected,
+                                matched=0,
+                                new=0,
+                            )
                     scan_service.emit_pending_scan_media_reconciled()
                     logger.info(
                         "[worker] COMPLETE scan_item request_id=%s job_id=%s item_id=%s identities=%s",
@@ -132,10 +141,14 @@ class ScanItemHandler:
                     # before status writes so FORCE RLS still updates the row
                     # (FIR-FINAL2-LOCAL-01).
                     await enable_rls_bypass(session)
+                    # Anchor retry backoff / failed completed_at at failure time,
+                    # not processing-start, so slow failures (e.g. embedding
+                    # timeout) still get a full not-before delay (R2-04 / RES-06).
+                    failure_now = datetime.now(tz=UTC)
                     await self._handle_item_failure(
                         repo=repo,
                         item=item,
-                        now=now,
+                        now=failure_now,
                         error_message=error_message,
                         exc=exc,
                     )
@@ -222,7 +235,12 @@ class ScanItemHandler:
         if isinstance(exc, PersistIntegrityError) or item.attempts >= self._max_attempts:
             await repo.mark_item_failed(item_id=item.id, completed_at=now, error_message=error_message)
             return
-        await repo.release_item_for_retry(item_id=item.id, error_message=error_message)
+        await repo.release_item_for_retry(
+            item_id=item.id,
+            error_message=error_message,
+            attempts=item.attempts,
+            now=now,
+        )
 
     def _build_scan_service(self, session: AsyncSession) -> ScanService:
         """Create a ScanService bound to the provided session."""

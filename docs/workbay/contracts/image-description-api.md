@@ -100,6 +100,16 @@ per-`roster_id` `identity_name_suppressions` list, a **roster requirement**
 (an identity without a `roster_id` is never nameable — it would otherwise be
 unsuppressable), and a minimum face-detection confidence (0.8).
 
+#### ALTQ-1 additive optional dual-length field
+
+- `alt_text_long` (`string|null`) — long-form description surface produced by
+  dual-length prompting, suited to the attachment **description** field (the
+  short `alt_text_draft` remains the alt-attribute surface). `null` when the
+  adapter produces only the short draft — the pre-ALTQ-1 behavior. **Never** in
+  the schema `required` set; old clients and short-only adapters are
+  unaffected. Cached rows persist the long surface, so cache hits return the
+  same dual-length payload as the original generation.
+
 ### Errors
 
 | Status | When |
@@ -169,6 +179,7 @@ returns an explicit `502 invalid_description_envelope` — never a fabricated
 - **Permission**: `can_manage_recognition` (`manage_options`).
 - **Preview default**: when `write_alt` is absent or false, `_wp_attachment_image_alt` and `_acx_description_provenance` are untouched and the backend `VisualFactsResponse` is returned without `alt_text_write`.
 - **Write policy**: when `write_alt=true`, missing alt text is written from `alt_text_draft` and generated provenance is stored in `_acx_description_provenance`. Non-empty existing alt text returns `alt_text_write.status="skipped_existing_alt"` unless `force=true`, which returns `forced_overwrite`.
+- **Dual-length write policy (ALTQ-1)**: gated by the operator option `acx_alt_style` (`alt_only` default | `alt_plus_description`; read/saved via `GET`/`POST /acx/v1/settings` field `alt_style`; invalid stored values degrade to `alt_only`). When the style is `alt_plus_description`, the alt write actually happens (not `skipped_existing_alt`), and the backend payload carries a non-empty optional `alt_text_long`, the long surface is written to the attachment description (`post_content`) and `alt_text_write.description_write` reports the result: `written`, `forced_overwrite` (existing description replaced under `force=true`), `skipped_existing_description` (non-empty description without `force`), or `skipped_no_long_text` (style opted in but the adapter produced no long surface). With `alt_only` (default) the `description_write` key is absent and the payload is byte-identical to pre-ALTQ-1 behavior.
 - **Provenance meta**: `_acx_description_provenance` records `adapter`, `model_id`, `model_version`, `prompt_or_task_version`, `image_hash`, `context_hash`, `generated_at`, and `backend_result_id` when supplied by the backend payload.
 - **Idempotence**: repeated writes for the same generated tuple preserve matching existing provenance instead of refreshing `generated_at`.
 

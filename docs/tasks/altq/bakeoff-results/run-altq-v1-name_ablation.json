@@ -1,0 +1,676 @@
+{
+  "items": [
+    {
+      "describe": {
+        "ablated_names": [
+          "Maria Correonero"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A person crouches on wet rocks inside the Brei\u00f0amerkurj\u00f6kull ice cave, wearing a white climbing helmet with a headlamp, a fur-hooded black parka, and ice cleats. They hold a camera and look toward the viewer, surrounded by blue-tinted glacial ice.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 8.8,
+      "media_id": 1,
+      "path": "mock_images/Brei\u00f0amerkurjo\u0308kull.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Bea Burke"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A woman with long blonde hair takes a mirror selfie in a bathroom, wearing a rhinestone \"Happy Birthday\" tiara and a teal crop top. She sticks her tongue out at the camera while holding a glittery phone case, with a shower and towel visible in the background.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 2.656,
+      "media_id": 2,
+      "path": "mock_images/bea-nye.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Caitlin Weaver"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A person with their eyes closed and a smile stands on a rocky shore, wearing a black hooded rain jacket and a white running vest. Their hair blows across their face in the wind, with a pale lagoon and snow-dusted hills visible behind them under a cloudy sky.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 2.393,
+      "media_id": 3,
+      "path": "mock_images/ccqw-antartica.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Caitlin Weaver"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A person with long brown hair leans on a wooden bar counter, resting their arms on the surface. They are wearing a cream-colored t-shirt with a dark graphic on the front. Behind them, a back bar holds various bottles and taps, with a small wooden barrel visible. The scene is dimly lit, suggesting a bar or pub setting.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 8.118,
+      "media_id": 4,
+      "path": "mock_images/ccqw-bar.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Caitlin Weaver",
+          "Erika Hansen Miller"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "The image shows two people, a woman with long hair and a man, smiling in a warmly lit bar. They are reflected in a mirror behind them, which also shows other patrons in the background. The photo is taken at an angle, with a bright light source visible in the lower left.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 8.199,
+      "media_id": 5,
+      "path": "mock_images/ccqw-erika.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Caitlin Weaver"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A person peeks through a bouquet of flowers, their face partially hidden by pink roses, white alstroemeria, and blue delphiniums, with one hand reaching toward the camera.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 2.455,
+      "media_id": 6,
+      "path": "mock_images/ccqw-flowers.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Caitlin Weaver"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A person with long brown hair stands under a clear blue sky, their hair blowing across their face. They wear a mustard-yellow scarf, a denim jacket, and a pink sweater.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 2.25,
+      "media_id": 7,
+      "path": "mock_images/ccqw-hair.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Caitlin Weaver"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A woman in a red knit halter top holds a black rangefinder camera to her cheek, her left hand gripping the camera and her right hand resting on her hip. She wears a black leather camera strap around her neck, a gold watch on her left wrist, and small gold hoop earrings. Her brown hair is pulled back into a bun, and she looks directly at the camera with a focused expression.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 5.324,
+      "media_id": 8,
+      "path": "mock_images/ccqw-occlusion-2.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Caitlin Weaver"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A woman with her hair pulled back holds a black rangefinder camera up to her right eye with both hands, looking through the viewfinder. She wears a blue top with a red knitted detail and a thin gold necklace. The background shows a white wall and a blurred bookshelf to the left.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 4.691,
+      "media_id": 9,
+      "path": "mock_images/ccqw-occlusion.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Caitlin Weaver"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A person with loose hair gazes downward, their face and shoulder illuminated by intense purple-violet light, wearing a blue jacket.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 1.994,
+      "media_id": 10,
+      "path": "mock_images/ccqw-purple.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Caitlin Weaver"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A runner in a teal beanie, sunglasses, and a green long-sleeve top leaps mid-stride during a winter road race, her magenta layer tied at her waist and race bib 169 visible. She runs past spectators behind a barricade on a sunny day with bare trees and buildings in the background.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 4.352,
+      "media_id": 11,
+      "path": "mock_images/ccqw-running-2.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Caitlin Weaver"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A woman wearing a pink cap, mirrored sunglasses, and a white race vest with the name \"Caitlin\" runs on a coastal road, alongside a man in a white long-sleeve shirt and a black cap. Both are wearing race bibs, with Caitlin's number 960 and the man's number 967 visible, as they jog along the paved path near the ocean.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 1.66,
+      "media_id": 12,
+      "path": "mock_images/ccqw-running.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Caitlin Weaver"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A person with long brown hair, wearing a grey cap and rose-tinted sunglasses, smiles while standing under a canopy of pink magnolia blossoms on a sunny day. The bright blue sky and sun flare are visible behind the tree branches.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 2.402,
+      "media_id": 13,
+      "path": "mock_images/ccqw-sunglasses-flowers.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Caitlin Weaver"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A person with long, windblown hair smiles while wearing dark sunglasses and a cream hoodie on a rooftop, with a clear blue sky, a small tree, and distant city buildings in the background.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 2.456,
+      "media_id": 14,
+      "path": "mock_images/ccqw-sunglasses.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Caitlin Weaver"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A person walks on a city sidewalk in a grainy, black-and-white photo, carrying a shoulder bag and wearing a long-sleeved shirt and flared pants. They are mid-stride, with a beverage truck visible in the background. The image has a dark, underexposed quality.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 4.175,
+      "media_id": 15,
+      "path": "mock_images/ccqw-underexposed.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Caitlin Weaver"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A person's face appears out of focus behind netting, glowing under pink stage lighting with bokeh lights in the background.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 0.624,
+      "media_id": 16,
+      "path": "mock_images/ccqw.blurry.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Cristina Quintana"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "Three people pose together at a party, each in costume. The person on the left wears a pink and green outfit with a glittery headband and fake tears. In the center, someone wears a fluffy white sheep hat with pink ears and a pink crop top. The person on the right wears a black and white checkered dress. All three hold plastic cups.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 1.401,
+      "media_id": 17,
+      "path": "mock_images/cristina-1.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Ellyn Heald"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A woman with her hair pinned up stands in a kitchen, wearing flakes of gold leaf across her face, shoulders, and chest. She has bold red lipstick and gold drop earrings, with a gold necklace around her neck.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 3.942,
+      "media_id": 18,
+      "path": "mock_images/example-ellynheald-goldleaf.jpeg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Kirstie Mccarrel"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "Two women pose together at a birthday party, smiling beneath a festive arch of purple, green, and gold balloons. The woman on the left wears a silver tiara and a \"Birthday Princess\" sash over a sparkly grey dress, while the woman on the right, wearing glasses and a black dress, has a decorative headband. A round mirror and Mardi Gras-style beads are visible in the background.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 2.537,
+      "media_id": 19,
+      "path": "mock_images/k.mcc-1.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Kirstie Mccarrel"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A woman with long blonde hair, wearing a cream sweater, kneels on a hardwood floor and hugs a fluffy blue merle Australian Shepherd. The dog, with white and black markings, sits in front of a marble fireplace with a black and gold insert. The woman smiles at the camera while holding the dog, which has its tongue out.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 8.454,
+      "media_id": 20,
+      "path": "mock_images/kirstie-1.jpeg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Kirstie Mccarrel"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "Two women sit together on the bow of a motorboat, smiling at the camera on a hazy summer day. The woman on the right wears a pink bucket hat and a white and black striped top, with tattoos visible on her arm. The woman on the left wears a red tank top and denim shorts, with sunglasses perched on her head. A man in a black cap is visible in the boat's cockpit behind them, with water and a distant shoreline in the background.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 2.721,
+      "media_id": 21,
+      "path": "mock_images/kirstie-boat.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Daniel Arce",
+          "Kirstie Mccarrel"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A woman and a man lie side by side on a blue and purple checkered beach towel, taking an overhead selfie. The woman, on the left, wears a tan New York Yankees cap, sunglasses, and a black bikini top, with tattoos visible on her arm. The man, on the right, wears dark sunglasses and has a salt-and-pepper beard. A brown textured towel rests behind them.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 8.254,
+      "media_id": 23,
+      "path": "mock_images/kirstie-daniel-sunglasses.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Kirstie Mccarrel"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A person with blonde hair floats on their back in a black swimsuit in a tiled indoor pool. The water is a pale green color, and the pool's edge has \"SHALLOW WATER\" lettering. A metal handrail is visible in the lower left corner.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 8.324,
+      "media_id": 24,
+      "path": "mock_images/kirstie-pool.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Liam Maloney"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A bald man with round, black-rimmed glasses lies back against a patterned pillow, looking up in a high-contrast black-and-white overhead portrait.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 7.7,
+      "media_id": 25,
+      "path": "mock_images/liam-maloney-2.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Liam Maloney"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A man wearing a faded baseball cap and wire-rimmed glasses takes a selfie in a kitchen. He's wearing a black t-shirt with a yellow and white graphic of a skull and a baseball with a \"P\" on it. Behind him, a white shelving unit holds kitchen items, and a stainless steel refrigerator stands against a brick wall.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 8.341,
+      "media_id": 26,
+      "path": "mock_images/liam-maloney-home.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A framed expressionist portrait painting of a dark-haired man in muted greys hangs on a white wall in an ornate gold frame. The artwork depicts a man with a contemplative expression, wearing a collared shirt with pockets, rendered in a stylized, sketch-like manner. The painting is enclosed in a thick, gilded frame with a textured, beaded border.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 1.953,
+      "media_id": 27,
+      "path": "mock_images/liam-maloney-painting.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Maria Correonero"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "Someone in a white slip dress and red lipstick takes a selfie with three friends at a formal dinner. They are seated at a set table in an ornate, gilded dining room, all dressed in evening wear. From left to right, one woman wears a red sequined dress, another a silver sequined dress, and the third a gold sequined dress. The background features blue velvet curtains and gold trim.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 1.66,
+      "media_id": 28,
+      "path": "mock_images/maria-cocktail.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Maria Correonero"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A woman in a sparkly top bites into a slice of cake with red and white stripes, while a phone on a selfie stick captures the moment; in the background, a couple embraces in a party room.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 1.82,
+      "media_id": 29,
+      "path": "mock_images/maria-party.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Maria Correonero"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A woman in a red and navy bikini sits on a rose-gold glitter mermaid-tail float in a blue pool, smiling and making a peace sign with her hand.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 2.111,
+      "media_id": 30,
+      "path": "mock_images/maria-pool.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Maria Correonero"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A person with dark lipstick and dark hair pulled back holds a small, colorful geometric puzzle toy over their right eye, stretching a cord across their face. They are bathed in blue and teal light, with a soft-focus background. The person is wearing a dark top with a dotted collar.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 1.709,
+      "media_id": 31,
+      "path": "mock_images/mcm-eye-blocked.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Maria Correonero"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A person wearing a white Black Diamond helmet with a headlamp, a fur-hooded parka, and crampon-fitted boots crouches on wet rocks inside a glacial ice cave, with a DSLR camera resting at their knee.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 9.109,
+      "media_id": 32,
+      "path": "mock_images/mcm-icecave.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Maria Correonero"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A woman with long brown hair, wearing a dark parka with a fur-trimmed hood, crouches at the entrance of a wrecked airplane fuselage. The aircraft's metal structure is torn and damaged, set against a flat, grey, black-sand landscape under an overcast sky.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 9.14,
+      "media_id": 33,
+      "path": "mock_images/mcm-planecrash.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A black dog wearing a collar with \"Machiavelli\" stitched on it sits on a leash in a narrow alleyway lined with brick townhouses and white garage doors. The dog looks down the lane toward a vibrant orange sunset glowing behind distant trees and buildings. The sky is painted with soft hues of pink and orange, casting a warm light over the quiet residential scene.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 4.462,
+      "media_id": 34,
+      "path": "mock_images/nina-machiavelli.jpeg"
+    },
+    {
+      "describe": {
+        "ablated_names": [],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A woman with long dark hair, wearing a pale blue dress and white knee-high boots, crouches on a bathroom counter to kiss her reflection in an ornate mirror. The vintage bathroom features green and gold patterned wallpaper, a gold-framed shower door with green and gold glass, and a white vanity with a sink. Several perfume bottles are arranged on the counter.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 1.886,
+      "media_id": 35,
+      "path": "mock_images/rrw-mirror.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Ryann Wiseman"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "A woman with long blonde hair stands in a pink-lit room, holding a salt-rimmed margarita. She wears a black backless top and a sheer patterned skirt, leaning against a marble-topped table. Behind her, a framed Pink Panther poster and a lit candle sit on the wall, while a vintage mirror reflects her image.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 4.248,
+      "media_id": 36,
+      "path": "mock_images/ryann-bar.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Ryann Wiseman"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "Six women in matching pink satin pajamas celebrate at a party, dancing and smiling in front of a shimmering pink foil curtain. One woman holds up a drink while another raises a red object, with a silver number \"2\" balloon visible in the background. A lit lamp with a white shade sits in the foreground, adding to the festive atmosphere.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 1.639,
+      "media_id": 37,
+      "path": "mock_images/ryann-group-party.jpg"
+    },
+    {
+      "describe": {
+        "ablated_names": [
+          "Ryann Wiseman"
+        ],
+        "adapter": "bakeoff",
+        "alt_text_draft": "Two women pose together on a couch, dressed in elaborate costumes. The woman on the left wears a white lace bralette, a pearl necklace, and long white lace gloves, while the woman on the right wears a black corset, a white feather boa, and a black glove. They sit beneath a red wall clock and several framed photos.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "prompt_variant": "v1"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 4.288,
+      "media_id": 38,
+      "path": "mock_images/ryann-party.jpg"
+    }
+  ],
+  "kind": "run_record",
+  "provenance": {
+    "base_url": "http://localhost:8000",
+    "eval_mode": "name_ablation",
+    "head_sha": "4be31eae6967cebddc04c6a0234d583600450662",
+    "manifest_sha256": "747e603176269cedbdfc376d5f8cff794179c378f9fd219247907db59cb0aa4f",
+    "prompt_variant": "v1",
+    "started_at": "2026-07-16T21:03:18Z"
+  },
+  "schema": "acx-eval/v1"
+}

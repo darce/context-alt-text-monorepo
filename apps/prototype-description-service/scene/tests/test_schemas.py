@@ -15,6 +15,9 @@ PREVIEW_FIELDS = {
     "named_draft",
     "naming_provenance",
     "attachment_provenance",
+    # ALTQ-1: optional long-form surface (dual-length prompting); null when
+    # the adapter produces only the short draft.
+    "alt_text_long",
 }
 EXPECTED_FIELDS = {
     "tenant_id",
@@ -72,6 +75,8 @@ def test_response_round_trip_typed_provenance():
     assert set(r.model_dump().keys()) == EXPECTED_FIELDS | PREVIEW_FIELDS
     # Preview fields default to None when the merge layer is not run.
     assert r.generic_draft is None and r.named_draft is None and r.naming_provenance is None
+    # ALTQ-1: absent long surface defaults to None — old payloads stay valid.
+    assert r.alt_text_long is None
 
 
 def test_response_forbids_extra_provenance_field():

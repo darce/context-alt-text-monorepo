@@ -19,7 +19,11 @@ import {
 import { DATA_SOURCE } from '../../../../api/recognition/types';
 import { resetConfigCache } from '../../../../api/config';
 import { queryKeys } from '../../../../api/queryKeys';
-import { commitClusterToRosterEntry, listRosterEntries } from '../../../../api/rosterApi';
+import {
+  commitClusterToRosterEntry,
+  listRosterEntries,
+  type RosterClusterCommitResponse,
+} from '../../../../api/rosterApi';
 import type {
   ReviewQueueBandParam,
   ReviewQueueKindParam,
@@ -34,9 +38,21 @@ import {
 import { MergeSurvivorProvider } from '../MergeSurvivorContext';
 import { CommitHoldRegion, ReviewQueue, type ReviewQueueHandle } from '../ReviewQueue';
 import { REVIEW_QUEUE_DRAIN_MESSAGE } from '../reviewQueueDriver';
+import * as useAriaAnnounceMod from '../useAriaAnnounce';
 import { HOLD_STATUS_COPY, UNDO_HOLD_MS } from '../useSuggestionReviewMutations';
 import { LIVE_TARGET_CLOSE_ANNOUNCE } from '../useLiveReviewTarget';
 import { HTTPError } from '../../../../utils/http';
+
+const rosterCommitFixture = (
+  overrides: Partial<RosterClusterCommitResponse> = {},
+): RosterClusterCommitResponse => ({
+  cluster_id: 'cluster-1',
+  person_id: 7,
+  person_uuid: 'person-uuid-7',
+  person_name: 'Alex',
+  updated_at: '2026-01-01T00:00:00Z',
+  ...overrides,
+});
 
 /**
  * Click an accept/reject control under fake setTimeout so the Slice-2 hold can
@@ -115,7 +131,13 @@ vi.mock('../../../../api/recognition', async () => {
 });
 
 vi.mock('../../../../api/rosterApi', () => ({
-  commitClusterToRosterEntry: vi.fn().mockResolvedValue(undefined),
+  commitClusterToRosterEntry: vi.fn().mockResolvedValue({
+    cluster_id: 'cluster-1',
+    person_id: 7,
+    person_uuid: 'person-uuid-7',
+    person_name: 'Alex',
+    updated_at: '2026-01-01T00:00:00Z',
+  }),
   listRosterEntries: vi.fn().mockResolvedValue([
     {
       id: 7,
@@ -245,7 +267,7 @@ describe('ReviewQueue', () => {
         projection_refreshed_at: null,
       },
     ]);
-    vi.mocked(commitClusterToRosterEntry).mockResolvedValue(undefined);
+    vi.mocked(commitClusterToRosterEntry).mockResolvedValue(rosterCommitFixture());
     resetConfigCache();
   });
 
@@ -1228,6 +1250,155 @@ describe('ReviewQueue', () => {
     });
   });
 
+  it('re-announces identical live copy via seq-keyed region (HARM-02 / BR-68)', async () => {
+    // Capture announce so we can fire the SAME string twice consecutively —
+    // plain useState would Object.is-bail; useAriaAnnounce must bump seq.
+    const original = useAriaAnnounceMod.useAriaAnnounce;
+    let latestAnnounce: ((message: string) => void) | null = null;
+    const spy = vi.spyOn(useAriaAnnounceMod, 'useAriaAnnounce').mockImplementation(() => {
+      const result = original();
+      latestAnnounce = result.announce;
+      return result;
+    });
+
+    try {
+      vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+        suggestions: [
+          {
+            id: 'sugg-1',
+            identity_id: 'identity-1',
+            suggested_cluster_id: 'cluster-1',
+            representative_similarity: 0.9,
+            avg_member_similarity: 0.85,
+            cluster_label: 'Alex',
+            cluster_identity_count: 1,
+          },
+        ],
+        limit: 10,
+        offset: 0,
+      });
+
+      renderQueue();
+      await screen.findByRole('button', { name: 'Yes' });
+      await waitFor(() => {
+        expect(latestAnnounce).not.toBeNull();
+      });
+
+      const repeatCopy = LIVE_TARGET_CLOSE_ANNOUNCE;
+      act(() => {
+        latestAnnounce?.(repeatCopy);
+      });
+      const live1 = document.querySelector('.acx-review-queue__live');
+      expect(live1).toHaveTextContent(repeatCopy);
+      const seq1 = live1?.getAttribute('data-announce-seq');
+      expect(seq1).toBeTruthy();
+
+      act(() => {
+        latestAnnounce?.(repeatCopy);
+      });
+      await waitFor(() => {
+        const live2 = document.querySelector('.acx-review-queue__live');
+        expect(live2).toHaveTextContent(repeatCopy);
+        expect(live2?.getAttribute('data-announce-seq')).not.toBe(seq1);
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('shows filtered-empty escape hatch when filters hide pending work (S1-01 / COG-03)', async () => {
+    // Assignments only in the unfiltered queue; merge KIND filter → empty view.
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'assign-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 2,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+
+    const onKindChange = vi.fn();
+    const onBandChange = vi.fn();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+
+    const FilteredEmptyHarness = (): React.JSX.Element => {
+      const [index, setIndex] = React.useState(0);
+      const [kind, setKind] = React.useState<ReviewQueueKindParam>('merge');
+      const [band, setBand] = React.useState<ReviewQueueBandParam>('all');
+      const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
+      return (
+        <ReviewQueue
+          index={index}
+          onIndexChange={setIndex}
+          kind={kind}
+          onKindChange={(next) => {
+            onKindChange(next);
+            setKind(next);
+          }}
+          band={band}
+          onBandChange={(next) => {
+            onBandChange(next);
+            setBand(next);
+          }}
+          selectedIds={selectedIds}
+          onSelectedIdsChange={setSelectedIds}
+        />
+      );
+    };
+
+    const user = userEvent.setup();
+    render(withQueueProviders(queryClient, <FilteredEmptyHarness />));
+
+    await waitFor(() => {
+      expect(screen.getByText('No items match the current filters.')).toBeInTheDocument();
+    });
+    expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).not.toBeInTheDocument();
+    const clearBtn = screen.getByRole('button', { name: 'Clear filters' });
+    expect(clearBtn).toBeInTheDocument();
+
+    await user.click(clearBtn);
+    expect(onKindChange).toHaveBeenCalledWith('all');
+    expect(onBandChange).toHaveBeenCalledWith('all');
+    await waitFor(() => {
+      expect(screen.getByTestId('acx-review-card')).toBeInTheDocument();
+    });
+  });
+
+  it('shows true drain copy when unfiltered queue is empty', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+
+    renderQueue();
+
+    await waitFor(() => {
+      expect(screen.getByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeInTheDocument();
+    });
+    expect(screen.queryByText('No items match the current filters.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Clear filters' })).not.toBeInTheDocument();
+  });
+
   // --- Slice 3: person-commit on the card ---
 
   it('shows person-commit + HAI-05 disclosure on ASSIGNMENT when clusterId present', async () => {
@@ -1399,7 +1570,7 @@ describe('ReviewQueue', () => {
       limit: 10,
       offset: 0,
     });
-    vi.mocked(commitClusterToRosterEntry).mockResolvedValue(undefined);
+    vi.mocked(commitClusterToRosterEntry).mockResolvedValue(rosterCommitFixture());
 
     const user = userEvent.setup();
     renderQueue();
@@ -1508,7 +1679,7 @@ describe('ReviewQueue', () => {
     });
     vi.mocked(commitClusterToRosterEntry).mockImplementation(() => {
       order.push('person-commit');
-      return Promise.resolve();
+      return Promise.resolve(rosterCommitFixture());
     });
 
     const user = userEvent.setup();
@@ -1642,13 +1813,13 @@ describe('ReviewQueue', () => {
     });
 
     let rejectPerson!: (reason?: unknown) => void;
-    const personGate = new Promise<void>((_resolve, reject) => {
+    const personGate = new Promise<RosterClusterCommitResponse>((_resolve, reject) => {
       rejectPerson = reject;
     });
     // First call hangs until we reject (after accept advanced).
     vi.mocked(commitClusterToRosterEntry)
       .mockImplementationOnce(() => personGate)
-      .mockResolvedValueOnce(undefined);
+      .mockResolvedValueOnce(rosterCommitFixture());
     // Prevent invalidate refetch from restoring the accepted row while person-commit is open.
     vi.mocked(acceptSuggestion).mockImplementation((id: string) => {
       vi.mocked(fetchPendingSuggestions).mockResolvedValue({
@@ -1954,18 +2125,21 @@ describe('ReviewQueue', () => {
       const { container } = renderQueue();
 
       await screen.findByRole('button', { name: 'Yes' });
+      // HARM-02: the live region is now seq-keyed (useAriaAnnounce), so it REMOUNTS
+      // on each announce — re-query the current node inside waitFor rather than
+      // holding a stale reference to the mount-time node.
       const liveRegion = container.querySelector('.acx-review-queue__live');
       expect(liveRegion).not.toBeNull();
       expect(liveRegion).toHaveAttribute('aria-live', 'polite');
 
       await user.click(screen.getByTestId('acx-review-select'));
       await waitFor(() => {
-        expect(liveRegion).toHaveTextContent('1 selected');
+        expect(container.querySelector('.acx-review-queue__live')).toHaveTextContent('1 selected');
       });
 
       await user.click(screen.getByTestId('acx-review-select'));
       await waitFor(() => {
-        expect(liveRegion).toHaveTextContent('0 selected');
+        expect(container.querySelector('.acx-review-queue__live')).toHaveTextContent('0 selected');
       });
     });
 

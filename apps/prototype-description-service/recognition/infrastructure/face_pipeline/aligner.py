@@ -175,26 +175,16 @@ class FivePointAligner:
         Returns:
             AlignmentResult with 112×112 BGR crop and 2×3 affine matrix.
         """
-        if image is None:
-            raise AlignmentError("image is None")
-        img = np.asarray(image)
-        if img.ndim != 3 or img.shape[2] != 3:
-            raise AlignmentError(f"expected H×W×3 BGR image, got shape {getattr(img, 'shape', None)}")
-        if img.dtype != np.uint8:
-            if np.issubdtype(img.dtype, np.floating):
-                # Reject [0,1]-float trap (would clip to near-black and poison crops).
-                finite = img[np.isfinite(img)]
-                peak = float(np.max(finite)) if finite.size else 0.0
-                if peak <= 1.5:
-                    raise AlignmentError(
-                        f"floating image max={peak} looks like a [0,1]-float trap "
-                        "(threshold max>1.5); convert to uint8 BGR in [0,255] before align"
-                    )
-                img = np.clip(img, 0, 255).astype(np.uint8)
-            else:
-                img = img.astype(np.uint8)
-        if not img.flags["C_CONTIGUOUS"]:
-            img = np.ascontiguousarray(img)
+        # FIR23-04: single coercion path shared with detect/embed (REF-19).
+        from recognition.infrastructure.face_pipeline._common import (
+            FacePipelineInputError,
+            ensure_bgr_u8,
+        )
+
+        try:
+            img = ensure_bgr_u8(image, label="align_image")
+        except FacePipelineInputError as exc:
+            raise AlignmentError(str(exc)) from exc
 
         affine = similarity_transform_matrix(landmarks)
         crop = cv2.warpAffine(

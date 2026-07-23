@@ -15,12 +15,11 @@ import {
   SYNC_VOCABULARY,
   buildSyncPresentation,
   formatRetentionModeLabel,
-  formatSyncModeLabel,
   syncPresentationIconGlyph,
   syncPresentationToneClass,
   type SyncPresentation,
 } from './syncPresentation';
-import { buildWorkbenchOverlayHref } from './workbenchOverlayLinks';
+import { buildWorkbenchOverlayHref, toRetention } from '../../navigation/appLinks';
 
 /** Badge second-channel state derived from tone/status (not binary ok/attention). */
 type SyncBadgeState = 'ok' | 'attention' | 'error' | 'syncing' | 'queued' | 'in-progress';
@@ -223,22 +222,15 @@ export const SyncStatusIndicator = ({
   const conflictHref = buildWorkbenchOverlayHref(activeSection, 'conflicts');
   const failuresHref = buildWorkbenchOverlayHref(activeSection, 'dead-letter');
   const retentionMode = retentionStatus.data?.available ? retentionStatus.data.policy?.retention_mode : null;
-  const syncMode = data?.sync_mode ? formatSyncModeLabel(data.sync_mode) : null;
 
   const retentionDetails =
     retentionMode && retentionMode !== 'retain_all' ? (
       <div className="acx-sync-status__meta">
-        <a href="#/retention" className="acx-sync-status__link">
+        <a href={toRetention()} className="acx-sync-status__link">
           {formatRetentionModeLabel(retentionMode)}
         </a>
       </div>
     ) : null;
-
-  const syncModeDetails = syncMode ? (
-    <div className="acx-sync-status__meta">
-      <span className="acx-sync-status__badge">{syncMode}</span>
-    </div>
-  ) : null;
 
   const changeDetails =
     pendingChanges > 0 || failedOps > 0 || conflictCount > 0 || acknowledgedAt || conflictAt || failedAt ? (
@@ -277,7 +269,7 @@ export const SyncStatusIndicator = ({
       <div className="acx-sync-status__meta">
         <span className="acx-sync-status__label">
           {sprintf(
-            SYNC_VOCABULARY.syncBacklog,
+            SYNC_VOCABULARY.pendingWorkSummary,
             backlogPending,
             backlogApplied,
             backlogFailed,
@@ -289,7 +281,6 @@ export const SyncStatusIndicator = ({
 
   const meta = (
     <>
-      {syncModeDetails}
       {retentionDetails}
       {changeDetails}
       {backlogDetails}

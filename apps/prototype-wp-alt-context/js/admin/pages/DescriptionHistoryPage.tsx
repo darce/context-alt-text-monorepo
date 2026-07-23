@@ -9,6 +9,7 @@ import {
   type DescriptionHistoryItem,
   type DescriptionHistoryResponse,
 } from '../api/describeApi';
+import { APP_LINK_PARAMS, parseRunParam } from '../navigation/appLinks';
 import { DescribeRunApplyView } from './DescribeRunApplyView';
 
 const HISTORY_QUERY_KEY = ['description-history'] as const;
@@ -51,11 +52,11 @@ const itemMatchesSearch = (item: DescriptionHistoryItem, query: string): boolean
 
 export const DescriptionHistoryPage = (): React.JSX.Element => {
   const [searchParams] = useSearchParams();
-  const runId = searchParams.get('run');
+  const runId = parseRunParam(searchParams.get(APP_LINK_PARAMS.run));
 
   // A `?run=<id>` deep-link (from the workbench after a bulk run) switches the
   // page into the run-scoped apply surface; otherwise show the full history.
-  if (runId !== null && runId.trim() !== '') {
+  if (runId !== null) {
     // `key={runId}` remounts on a run switch so overwrite selection starts empty
     // for each run and cannot carry a stale checked overwrite across deep links.
     return <DescribeRunApplyView key={runId} runId={runId} />;

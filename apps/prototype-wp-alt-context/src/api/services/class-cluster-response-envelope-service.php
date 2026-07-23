@@ -103,15 +103,56 @@ class ClusterResponseEnvelopeService {
 			);
 		}
 
-		$clusters = $data;
-		return new WP_REST_Response(
-			array(
-				'clusters' => $clusters,
-				'limit' => $requested_limit,
-				'total' => count( $clusters ),
-				'truncated' => false,
-			),
-			$response->get_status()
+		// Legacy bare-array list payloads carry no total/limit metadata; the
+		// recognition service always emits the canonical envelope, so fabricating
+		// one here would invent contract metadata [rg-015]. Fail loudly instead.
+		return new WP_Error(
+			'invalid_cluster_list_envelope',
+			'Cluster list response must be a canonical envelope with clusters, limit, total, and truncated.',
+			array( 'status' => 502 )
+		);
+	}
+
+	/**
+	 * Normalize top-unlabeled proxy payloads with the same fail-loud contract
+	 * as members/list (no fabricated total/truncated from bare arrays) [rg-015].
+	 */
+	public function normalize_top_unlabeled_response( WP_REST_Response|WP_Error $response ): WP_REST_Response|WP_Error {
+		if ( ! ( $response instanceof WP_REST_Response ) ) {
+			return $response;
+		}
+
+		$data = $response->get_data();
+		if ( ! is_array( $data ) ) {
+			return $response;
+		}
+
+		if ( isset( $data['clusters'] ) && is_array( $data['clusters'] ) ) {
+			if ( ! isset( $data['limit'], $data['total'], $data['truncated'] ) || ! is_numeric( $data['limit'] ) || ! is_numeric( $data['total'] ) || ! is_bool( $data['truncated'] ) ) {
+				return new WP_Error(
+					'invalid_top_unlabeled_envelope',
+					'Top-unlabeled clusters response must include limit, total, and truncated when clusters is present.',
+					array( 'status' => 502 )
+				);
+			}
+
+			return new WP_REST_Response(
+				array(
+					'clusters' => $data['clusters'],
+					'limit' => max( 1, (int) $data['limit'] ),
+					'total' => max( 0, (int) $data['total'] ),
+					'truncated' => $data['truncated'],
+				),
+				$response->get_status()
+			);
+		}
+
+		// Legacy bare-array top-unlabeled payloads carry no total/limit metadata;
+		// fabricating one here would invent contract metadata [rg-015].
+		return new WP_Error(
+			'invalid_top_unlabeled_envelope',
+			'Top-unlabeled clusters response must be a canonical envelope with clusters, limit, total, and truncated.',
+			array( 'status' => 502 )
 		);
 	}
 

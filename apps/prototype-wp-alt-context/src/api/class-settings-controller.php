@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+require_once __DIR__ . '/class-alt-style.php';
 require_once __DIR__ . '/class-probe-outcome.php';
 require_once __DIR__ . '/class-recognition-endpoint-resolver.php';
 require_once __DIR__ . '/class-tenant-identity.php';
@@ -113,6 +114,7 @@ class SettingsController {
 				'tenant_id'                 => $tenant_resolution['value'],
 				'tenant_id_source'          => $tenant_resolution['source'],
 				'tenant_paired'             => TenantIdentity::is_paired(),
+				'alt_style'                 => AltStyle::current(),
 				'description_budget'        => $this->get_description_budget_payload(),
 			),
 			200
@@ -145,6 +147,20 @@ class SettingsController {
 			$key = trim( $body['api_key'] );
 			update_option( 'acx_recognition_api_key', $key );
 			$saved[] = 'api_key';
+		}
+
+		if ( isset( $body['alt_style'] ) ) {
+			// ALTQ-1: gate for writing the optional backend alt_text_long to the
+			// attachment description on describe writes.
+			if ( ! AltStyle::is_valid( $body['alt_style'] ) ) {
+				return new WP_Error(
+					'invalid_alt_style',
+					'alt_style must be one of: alt_only, alt_plus_description.',
+					array( 'status' => 400 )
+				);
+			}
+			update_option( AltStyle::OPTION_NAME, $body['alt_style'] );
+			$saved[] = 'alt_style';
 		}
 
 		if ( isset( $body['description_budget'] ) && is_array( $body['description_budget'] ) ) {

@@ -39,10 +39,11 @@ class IdentityMemberCurationWriter {
 
 		$now_utc = gmdate( 'Y-m-d H:i:s' );
 		$sql = $this->prepare_query(
-			'UPDATE %i SET cluster_uuid = %s, is_curated = 1, updated_at = %s WHERE identity_uuid = %s',
+			'UPDATE %i SET cluster_uuid = %s, is_curated = 1, assigned_at = %s, updated_at = %s WHERE identity_uuid = %s',
 			array(
 				$this->members_table_name,
 				$normalized_target_cluster_uuid,
+				$now_utc,
 				$now_utc,
 				$normalized_identity_uuid,
 			)
@@ -72,10 +73,11 @@ class IdentityMemberCurationWriter {
 
 		$now_utc = gmdate( 'Y-m-d H:i:s' );
 		$sql = $this->prepare_query(
-			'UPDATE %i SET cluster_uuid = %s, is_curated = 1, updated_at = %s WHERE cluster_uuid = %s',
+			'UPDATE %i SET cluster_uuid = %s, is_curated = 1, assigned_at = %s, updated_at = %s WHERE cluster_uuid = %s',
 			array(
 				$this->members_table_name,
 				$normalized_target_cluster_uuid,
+				$now_utc,
 				$now_utc,
 				$normalized_source_cluster_uuid,
 			)

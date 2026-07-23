@@ -197,7 +197,12 @@ class BulkAcceptResponse(BaseModel):
 
 
 class MergeSuggestionResponse(BaseModel):
-    """Merge suggestion details."""
+    """Merge suggestion details.
+
+    After accept, ``source_cluster_id`` (retired) and ``target_cluster_id``
+    (survivor) are the authoritative ordering from ``_select_merge_target`` —
+    not a client-side guess from cluster_a/b presentation fields.
+    """
 
     id: str
     cluster_a_id: str
@@ -217,10 +222,20 @@ class MergeSuggestionResponse(BaseModel):
     confidence_score: float | None = None
     expires_at: datetime | None = None
     source_job_id: str | None = None
+    # Authoritative post-accept merge topology (source=retired, target=survivor).
+    source_cluster_id: str | None = None
+    target_cluster_id: str | None = None
 
     @field_validator("id", "cluster_a_id", "cluster_b_id")
     @classmethod
     def validate_ids(cls, v: str) -> str:
+        return _validate_uuid(v)
+
+    @field_validator("source_cluster_id", "target_cluster_id")
+    @classmethod
+    def validate_optional_merge_cluster_ids(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
         return _validate_uuid(v)
 
 

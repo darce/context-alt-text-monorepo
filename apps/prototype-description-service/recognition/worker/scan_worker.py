@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 import httpx
+from prometheus_client import start_http_server
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -21,23 +23,25 @@ from db.settings import get_database_settings
 from db.tenant_context import enable_rls_bypass, set_tenant_context
 from recognition.application.embedding.detector import (
     FaceDetectorProtocol,
-    InsightFaceFaceDetector,
     StubFaceDetector,
     UnavailableFaceDetector,
 )
 from recognition.application.embedding.generator import (
     EmbeddingGeneratorProtocol,
-    InsightFaceEmbeddingGenerator,
     StubEmbeddingGenerator,
-    UnavailableEmbeddingGenerator,
 )
-from recognition.application.scan.capability import publish_embedding_runtime_capability
+from recognition.application.scan.capability import (
+    ScanWorkerCounters,
+    format_capability_reason,
+    publish_embedding_runtime_capability,
+)
 from recognition.application.scan.queue_repository import ScanQueueItem
 from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.config import get_settings as get_recognition_settings
 from recognition.domain.job import CLUSTERING_JOB_TYPES, JobStatus
-from recognition.infrastructure.embeddings import get_shared_insightface_adapter
+from recognition.infrastructure.embeddings.runtime_factory import build_embedding_runtime
 from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
+from recognition.observability.face_pipeline_metrics import FacePipelineMetrics
 from recognition.worker.handlers.clustering import ClusteringJobHandler, CurationJobHandler, SplitJobHandler
 from recognition.worker.handlers.scan import ScanItemHandler
 from recognition.worker.handlers.utils import ensure_job_context
@@ -48,6 +52,116 @@ logger = logging.getLogger(__name__)
 # ANALYZE). Sourced from the canonical CLUSTERING_JOB_TYPES frozenset; sorted to
 # bind deterministically in the SQL `IN` filter (sr-007 single source of truth).
 _CLUSTERING_JOB_TYPE_VALUES: tuple[str, ...] = tuple(sorted(t.value for t in CLUSTERING_JOB_TYPES))
+
+_DEFAULT_WORKER_METRICS_PORT = 9108
+_DEFAULT_WORKER_METRICS_ADDR = "127.0.0.1"
+
+# Process exporter state: registry identity (not a bare bool) so a restart that
+# accidentally constructs a second FacePipelineMetrics fails loud instead of
+# silently serving a dead registry (COORD-FINAL-01).
+_process_metrics_exporter_registry: object | None = None
+
+
+def _resolve_worker_metrics_port() -> int:
+    """Parse RECOGNITION_SCAN_WORKER_METRICS_PORT (default 9108); range 1..65535."""
+    raw = os.getenv("RECOGNITION_SCAN_WORKER_METRICS_PORT", str(_DEFAULT_WORKER_METRICS_PORT))
+    try:
+        port = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Invalid RECOGNITION_SCAN_WORKER_METRICS_PORT={raw!r}; must be an integer 1..65535"
+        ) from exc
+    if port < 1 or port > 65535:
+        raise ValueError(
+            f"Invalid RECOGNITION_SCAN_WORKER_METRICS_PORT={port}; must be in range 1..65535"
+        )
+    return port
+
+
+def _validate_worker_metrics_addr(raw: str) -> str:
+    """Reject empty / whitespace / control-character bind addresses (fail closed)."""
+    if not isinstance(raw, str):
+        raise ValueError(
+            f"Invalid RECOGNITION_SCAN_WORKER_METRICS_ADDR={raw!r}; must be a non-empty string"
+        )
+    addr = raw.strip()
+    if not addr:
+        raise ValueError(
+            f"Invalid RECOGNITION_SCAN_WORKER_METRICS_ADDR={raw!r}; must be non-empty "
+            "(default 127.0.0.1; empty would bind all interfaces in prometheus_client)"
+        )
+    if any(ord(ch) < 32 for ch in addr):
+        raise ValueError(
+            f"Invalid RECOGNITION_SCAN_WORKER_METRICS_ADDR={raw!r}; "
+            "must not contain control characters"
+        )
+    return addr
+
+
+def _resolve_worker_metrics_addr() -> str:
+    """Parse RECOGNITION_SCAN_WORKER_METRICS_ADDR (default 127.0.0.1)."""
+    raw = os.getenv("RECOGNITION_SCAN_WORKER_METRICS_ADDR", _DEFAULT_WORKER_METRICS_ADDR)
+    return _validate_worker_metrics_addr(raw)
+
+
+def _resolve_worker_metrics_export_enabled() -> bool:
+    """Explicit export switch; default on. Set 0/false/no/off to disable."""
+    raw = os.getenv("RECOGNITION_SCAN_WORKER_METRICS_EXPORT_ENABLED", "1").strip().lower()
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    raise ValueError(
+        f"Invalid RECOGNITION_SCAN_WORKER_METRICS_EXPORT_ENABLED={raw!r}; "
+        "use 1/true/yes/on or 0/false/no/off"
+    )
+
+
+def start_process_metrics_exporter(
+    *,
+    metrics: FacePipelineMetrics,
+    config: ScanWorkerConfig,
+) -> None:
+    """Start the process-local Prometheus HTTP exporter (composition root).
+
+    Called once from ``_main`` before the outer restart loop. Idempotent when
+    the same registry is already bound; fails loud if a *different* registry is
+    supplied after a prior start (prevents silent dead-registry scrapes).
+    Explicit ``metrics_export_enabled=False`` skips without binding.
+    """
+    global _process_metrics_exporter_registry
+    if not config.metrics_export_enabled:
+        logger.info(
+            "[worker] metrics export disabled (RECOGNITION_SCAN_WORKER_METRICS_EXPORT_ENABLED)"
+        )
+        return
+    registry = metrics.registry
+    if _process_metrics_exporter_registry is registry:
+        return
+    if _process_metrics_exporter_registry is not None:
+        raise RuntimeError(
+            "metrics exporter already started with a different registry; "
+            "hoist one FacePipelineMetrics before the outer restart loop "
+            "(COORD-FINAL-01)"
+        )
+    # Fail-loud: start_http_server exceptions propagate to process composition.
+    start_http_server(
+        int(config.metrics_port),
+        str(config.metrics_addr),
+        registry=registry,
+    )
+    _process_metrics_exporter_registry = registry
+    logger.info(
+        "[worker] Prometheus metrics exporter listening on %s:%s",
+        config.metrics_addr,
+        config.metrics_port,
+    )
+
+
+def reset_process_metrics_exporter_for_tests() -> None:
+    """Test hook: clear process exporter bind state (never used in production)."""
+    global _process_metrics_exporter_registry
+    _process_metrics_exporter_registry = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,12 +175,30 @@ class ScanWorkerConfig:
     stale_after_seconds: int = 600
     max_attempts: int = 3
     mv_refresh_interval_seconds: int = 60
+    # FINALB-06: process-local Prometheus exporter (validated 1..65535).
+    metrics_port: int = field(default_factory=_resolve_worker_metrics_port)
+    # COORD-FINAL-01: bind address (default loopback; operators may override).
+    metrics_addr: str = field(default_factory=_resolve_worker_metrics_addr)
+    # Explicit disable only — never silently omit export (OBS-08).
+    metrics_export_enabled: bool = field(default_factory=_resolve_worker_metrics_export_enabled)
+
+    def __post_init__(self) -> None:
+        port = int(self.metrics_port)
+        if port < 1 or port > 65535:
+            raise ValueError(f"metrics_port={port} out of range; must be 1..65535")
+        object.__setattr__(self, "metrics_port", port)
+        object.__setattr__(self, "metrics_addr", _validate_worker_metrics_addr(str(self.metrics_addr)))
 
 
 class ScanWorker:
     """Background worker that claims and processes scan queue items."""
 
-    def __init__(self, config: ScanWorkerConfig) -> None:
+    def __init__(
+        self,
+        config: ScanWorkerConfig,
+        *,
+        metrics: FacePipelineMetrics | None = None,
+    ) -> None:
         self._config = config
         connect_args: dict[str, object] = {}
         if config.postgres_dsn.startswith("postgresql"):
@@ -85,6 +217,10 @@ class ScanWorker:
         self._generator: EmbeddingGeneratorProtocol = StubEmbeddingGenerator()
         self._embedding_runtime_ready = False
         self._embedding_retry_after: datetime | None = None
+        # Process-local face_pipeline metrics (not the API registry). Injected
+        # from composition root so outer restart reuses one registry.
+        self._face_pipeline_metrics = metrics if metrics is not None else FacePipelineMetrics()
+        self._metrics_exporter_started = False
 
         settings = get_recognition_settings()
         self._runtime_mode = settings.runtime_mode
@@ -113,6 +249,8 @@ class ScanWorker:
             return FilesystemObjectStore(root=worker_blob_root, tenant_id=tenant_id)
 
         self._object_store_factory = _worker_object_store_factory
+        # Cumulative reconcile counters published on every heartbeat ([OBS-05]/[OBS-08]).
+        self._scan_counters = ScanWorkerCounters()
 
         self._scan_handler = ScanItemHandler(
             session_factory=self._session_factory,
@@ -121,6 +259,7 @@ class ScanWorker:
             max_attempts=self._config.max_attempts,
             max_concurrency=self._config.max_concurrency,
             object_store_factory=self._object_store_factory,
+            counters=self._scan_counters,
         )
         self._job_handlers = {
             "split": SplitJobHandler(),
@@ -128,8 +267,24 @@ class ScanWorker:
             "clustering": ClusteringJobHandler(session_factory=self._session_factory),
         }
 
+    def start_metrics_exporter(self) -> None:
+        """Start process-local Prometheus HTTP exporter (test / direct-use seam).
+
+        Production composition uses :func:`start_process_metrics_exporter` once
+        from ``_main``. This method delegates there with instance-level
+        idempotence so unit tests can exercise export without entering the
+        worker lifecycle (which must never bind a port).
+        """
+        if self._metrics_exporter_started:
+            return
+        start_process_metrics_exporter(
+            metrics=self._face_pipeline_metrics,
+            config=self._config,
+        )
+        self._metrics_exporter_started = True
+
     async def __aenter__(self) -> ScanWorker:
-        """Prepare worker resources."""
+        """Prepare worker resources (does not start the metrics exporter)."""
         await self._ensure_embedding_runtime()
         await self._heartbeat_embedding_runtime_capability()
         return self
@@ -172,6 +327,11 @@ class ScanWorker:
                 if await self._process_pending_clustering_jobs(session=session, now=now):
                     await session.commit()
                     should_sleep = True
+                elif not self._can_claim_scan_items():
+                    # Runtime not ready: keep clustering (above) but do not claim
+                    # scan items — claiming would burn attempts under Unavailable*.
+                    await session.commit()
+                    should_sleep = True
                 else:
                     claimed = await repo.claim_pending_items_any(limit=self._config.claim_batch_size, now=now)
                     if not claimed:
@@ -196,36 +356,73 @@ class ScanWorker:
         await self._ensure_embedding_runtime()
         await self._scan_handler.process_items(claimed=claimed)
 
+    def _can_claim_scan_items(self) -> bool:
+        """Whether this worker may claim pending scan items this cycle.
+
+        Test mode always claims (stubs). Production requires a ready embedding
+        runtime so Unavailable* does not burn attempt budgets on tight loops.
+        Clustering is independent and still runs when this returns False.
+
+        An Unavailable detector always demotes the sticky ready flag so a
+        mid-life outage cannot keep the claim gate open (R2-06).
+        """
+        if self._runtime_mode == "test":
+            return True
+        if isinstance(self._detector, UnavailableFaceDetector):
+            self._embedding_runtime_ready = False
+            return False
+        return self._embedding_runtime_ready
+
     async def _probe_and_publish_embedding_runtime_capability(self) -> None:
         """Retry runtime initialization even while intake is rejecting new jobs."""
         await self._ensure_embedding_runtime()
         await self._heartbeat_embedding_runtime_capability()
 
     async def _ensure_embedding_runtime(self) -> None:
-        """Initialize scan inference dependencies once per worker process."""
-        if self._embedding_runtime_ready or self._runtime_mode == "test":
+        """Initialize scan inference dependencies once per worker process.
+
+        Ready is sticky-true only while the live detector is usable. An
+        UnavailableFaceDetector demotes the flag so the next probe re-enters
+        the factory after the retry window (mid-life outage recovery).
+        """
+        if self._runtime_mode == "test":
+            return
+        # Demote sticky-true when the live detector is Unavailable so claim
+        # guard and capability heartbeat stay consistent (R2-06).
+        if isinstance(self._detector, UnavailableFaceDetector):
+            self._embedding_runtime_ready = False
+        if self._embedding_runtime_ready:
             return
         now = datetime.now(tz=UTC)
         if self._embedding_retry_after is not None and now < self._embedding_retry_after:
             return
-        try:
-            adapter = await get_shared_insightface_adapter()
+        settings = get_recognition_settings()
+        # Pre-S3 semantics (S3CR-02): do not allocate httpx.AsyncClient until the
+        # factory returns a usable detector; on Unavailable close/clear any client
+        # so none exists while the runtime is not ready. Retry after 30s.
+        self._detector, self._generator = await build_embedding_runtime(
+            settings=settings,
+            http_client=self._http_client,
+            metrics=self._face_pipeline_metrics,
+        )
+        if isinstance(self._detector, UnavailableFaceDetector):
+            self._embedding_runtime_ready = False
+            self._embedding_retry_after = now + timedelta(seconds=30)
+            if self._http_client is not None:
+                await self._http_client.aclose()
+                self._http_client = None
+        else:
             if self._http_client is None:
                 self._http_client = httpx.AsyncClient(timeout=30.0)
-            self._detector = InsightFaceFaceDetector(adapter, client=self._http_client)
-            self._generator = InsightFaceEmbeddingGenerator(adapter)
+                # Attach shared client after success (factory ran with None).
+                if hasattr(self._detector, "_client"):
+                    self._detector._client = self._http_client
             self._embedding_retry_after = None
             self._embedding_runtime_ready = True
-        except Exception as exc:
-            logger.exception("Failed to initialize InsightFace adapter; scan items will fail closed until it recovers.")
-            reason = str(exc) or exc.__class__.__name__
-            self._detector = UnavailableFaceDetector(reason)
-            self._generator = UnavailableEmbeddingGenerator(reason)
-            self._embedding_retry_after = now + timedelta(seconds=30)
 
         # BR-11: preserve the ObjectStore factory wired in __init__ so the
         # production scan_handler keeps multipart-blob support after the
-        # InsightFace adapter loads (or after the stub fallback fires).
+        # adapter loads (or after the fail-closed fallback fires).
         self._scan_handler = ScanItemHandler(
             session_factory=self._session_factory,
             detector=self._detector,
@@ -233,24 +430,41 @@ class ScanWorker:
             max_attempts=self._config.max_attempts,
             max_concurrency=self._config.max_concurrency,
             object_store_factory=self._object_store_factory,
+            counters=self._scan_counters,
         )
         await self._heartbeat_embedding_runtime_capability()
 
     async def _publish_embedding_runtime_capability(self, session: AsyncSession) -> None:
-        """Write the worker-published embedding-runtime heartbeat for API intake."""
+        """Write the worker-published embedding-runtime heartbeat for API intake.
+
+        Contract expansion (S3CR-07 / S4): ``reason`` carries ``profile=<name>`` plus
+        always-present cumulative counters (zeros until first media) so silence is
+        distinguishable from health ([OBS-05], [OBS-08]). Pre-S3 used ``reason=None``
+        on the ready path; consumers must accept the profile + counter suffix.
+        """
         from recognition.shared.db.dialect import is_postgres
 
         if not is_postgres(session):
             return
+        profile = get_recognition_settings().face_pipeline.profile
         if self._runtime_mode == "test" or self._embedding_runtime_ready:
             available = True
-            reason = None
+            reason = format_capability_reason(profile=profile, counters=self._scan_counters)
         elif isinstance(self._detector, UnavailableFaceDetector):
             available = False
-            reason = self._detector.reason
+            base = self._detector.reason or "embedding runtime unavailable"
+            reason = format_capability_reason(
+                profile=profile,
+                available_detail=base,
+                counters=self._scan_counters,
+            )
         else:
             available = False
-            reason = "embedding runtime not initialized"
+            reason = format_capability_reason(
+                profile=profile,
+                available_detail="embedding runtime not initialized",
+                counters=self._scan_counters,
+            )
         await publish_embedding_runtime_capability(session, available=available, reason=reason)
 
     async def _heartbeat_embedding_runtime_capability(self) -> None:
@@ -533,10 +747,17 @@ async def _main() -> None:
         logger.error("Database unavailable after max retries. Exiting.")
         sys.exit(1)
 
+    # COORD-FINAL-01: one config + one metrics registry for the whole process.
+    # Exporter starts once here (fail-loud); replacement ScanWorkers share the
+    # same metrics object so post-restart scrapes stay live.
+    worker_config = ScanWorkerConfig(postgres_dsn=postgres_dsn)
+    process_metrics = FacePipelineMetrics()
+    start_process_metrics_exporter(metrics=process_metrics, config=worker_config)
+
     backoff = 2.0
     while True:
         try:
-            async with ScanWorker(ScanWorkerConfig(postgres_dsn=postgres_dsn)) as worker:
+            async with ScanWorker(worker_config, metrics=process_metrics) as worker:
                 await worker.run_forever()
             backoff = 2.0
         except asyncio.CancelledError:

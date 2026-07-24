@@ -267,6 +267,24 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 		return $response->get_status() >= 500;
 	}
 
+	/**
+	 * Transport-unreachable: the backend could not be reached at all (DNS,
+	 * connection, timeout). Honest provenance is UNAVAILABLE. Distinct from a
+	 * reachable-but-erroring backend, which is_proxy_endpoint_error() classifies.
+	 */
+	protected function is_proxy_transport_unreachable( WP_REST_Response|WP_Error $response ): bool {
+		return is_wp_error( $response );
+	}
+
+	/**
+	 * Reachable-but-erroring: the backend answered with a 5xx (excluding the 503
+	 * overload signal handled by is_backend_overloaded). Honest provenance is
+	 * ENDPOINT_ERROR, not UNAVAILABLE — the endpoint is up but failing.
+	 */
+	protected function is_proxy_endpoint_error( WP_REST_Response|WP_Error $response ): bool {
+		return ! is_wp_error( $response ) && $response->get_status() >= 500;
+	}
+
 	protected function is_backend_overloaded( WP_REST_Response|WP_Error $response ): bool {
 		return ! is_wp_error( $response ) && 503 === $response->get_status();
 	}

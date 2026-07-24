@@ -111,8 +111,19 @@ def _build_ready_app(
 
     async def _session_yielder():
         if db_ok:
+            from db.settings import get_database_settings
+
+            dim = int(get_database_settings().pgvector_dimension)
+            rows = [
+                ("media_identities", "embedding", dim),
+                ("identity_cluster_representatives", "embedding", dim),
+                ("mv_identity_cluster_centroids", "centroid", dim),
+            ]
+            result = MagicMock()
+            result.all = MagicMock(return_value=rows)
+            result.fetchall = MagicMock(return_value=rows)
             session = MagicMock()
-            session.execute = AsyncMock(return_value=None)
+            session.execute = AsyncMock(return_value=result)
             yield session
         else:
             yield None
@@ -140,7 +151,8 @@ def test_ready_healthy_when_all_deps_up(tmp_path) -> None:
     body = resp.json()
     assert body["status"] == HealthStatus.OK.value
     names = {check["name"] for check in body["checks"]}
-    assert names == {"database", "breaker", "model_cache"}
+    # FIR23-01: embedding_model readiness is fail-closed with the other deps.
+    assert names == {"database", "breaker", "model_cache", "embedding_model"}
     for check in body["checks"]:
         assert check["status"] == HealthStatus.OK.value, check
 

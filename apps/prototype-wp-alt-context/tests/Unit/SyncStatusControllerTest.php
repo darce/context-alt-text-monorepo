@@ -7,6 +7,7 @@ namespace AltContext\Tests\Unit;
 use AltContext\Api\SyncStatusController;
 use AltContext\Sovereign\Sync\SyncPullJobInterface;
 use AltContext\Sovereign\Sync\SyncPullResult;
+use AltContext\Tests\Stubs\InMemoryOutboxDrain;
 use AltContext\Tests\Stubs\NullSyncStateRepository;
 use AltContext\Tests\TestCase;
 use WP_REST_Request;
@@ -664,5 +665,62 @@ class SyncStatusControllerTest extends TestCase
         $this->assertSame('stale', $data['sync_health']);
         $this->assertSame(0, $data['last_snapshot_version']);
         $this->assertSame('full', $data['sync_mode']);
+    }
+
+    public function testRegisterRoutesIncludesGuardedBulkRetryRoute(): void
+    {
+        // E15-35 Slice 2: bulk dead-letter recovery is a POST route guarded by the same
+        // capability callback as the controller's other sync actions (REST nonce handled
+        // by core cookie auth).
+        $controller = new SyncStatusController(new NullSyncStateRepository(), null, null, new InMemoryOutboxDrain());
+        $controller->register_routes();
+
+        $definitions = array_values(array_filter(
+            $GLOBALS['__ac_rest_routes'],
+            static fn (array $definition): bool => '/recognition/sync/retry-failed' === $definition['route']
+        ));
+        $this->assertCount(1, $definitions);
+        $this->assertSame('acx/v1', $definitions[0]['namespace']);
+        $this->assertSame('POST', $definitions[0]['args']['methods']);
+        $this->assertSame('can_manage_recognition', $definitions[0]['args']['permission_callback'][1]);
+    }
+
+    public function testBulkRetryFailedOperationsRequeuesAllAndReportsCounts(): void
+    {
+        $tenantId = self::currentTenantId();
+        $outboxDrain = new InMemoryOutboxDrain([
+            ['id' => 1, 'tenant_id' => $tenantId, 'status' => 'failed', 'attempts' => 5],
+            ['id' => 2, 'tenant_id' => $tenantId, 'status' => 'failed', 'attempts' => 5],
+            ['id' => 3, 'tenant_id' => $tenantId, 'status' => 'pending', 'attempts' => 0],
+        ]);
+
+        $controller = new SyncStatusController(new NullSyncStateRepository(), null, null, $outboxDrain);
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/retry-failed');
+        $response = $controller->bulk_retry_failed_operations($request);
+
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+        $this->assertSame(2, $data['requeued']);
+        $this->assertSame(0, $data['failed_remaining']);
+        $this->assertSame(1, $outboxDrain->bulkRetryCalls);
+        $this->assertSame('pending', $outboxDrain->find_operation_by_id(1, $tenantId)['status']);
+        $this->assertSame('pending', $outboxDrain->find_operation_by_id(2, $tenantId)['status']);
+    }
+
+    public function testBulkRetryFailedOperationsReturns500WhenRequeueFails(): void
+    {
+        $outboxDrain = new class() extends InMemoryOutboxDrain {
+            public function retry_failed_operations_bulk(string $tenant_id): int|false
+            {
+                return false;
+            }
+        };
+
+        $controller = new SyncStatusController(new NullSyncStateRepository(), null, null, $outboxDrain);
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/retry-failed');
+        $response = $controller->bulk_retry_failed_operations($request);
+
+        $this->assertSame(500, $response->get_status());
+        $this->assertSame('acx_bulk_retry_failed', $response->get_data()['code']);
     }
 }

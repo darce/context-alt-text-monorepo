@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { JobProgress } from '../../../api/recognition/types/scan';
+import { CONFIRM_NO_JOB_ZERO_STATE } from '../confirmTabCopy';
 import type { ScanRunViewModel } from '../JobPipelineContext';
 import { ConfirmPanel, ScanActionPanel } from '../Panels';
 
@@ -66,6 +67,22 @@ describe('ScanActionPanel', () => {
       <ScanActionPanel scanRun={{ ...baseScanRun, errorMessage: 'Something went wrong' }} onCancelScan={vi.fn()} />,
     );
     expect(screen.getByText('Something went wrong')).toBeTruthy();
+  });
+
+  it('renders Retry clustering when onRetryClustering is provided after auto-retry ceiling', async () => {
+    const onRetryClustering = vi.fn();
+    render(
+      <ScanActionPanel
+        scanRun={{
+          ...baseScanRun,
+          errorMessage: 'Clustering failed after rate-limit retries. Use Retry clustering to try again.',
+          onRetryClustering,
+        }}
+        onCancelScan={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Retry clustering' }));
+    expect(onRetryClustering).toHaveBeenCalledOnce();
   });
 
   it('renders cancel button and calls handler', async () => {
@@ -145,12 +162,23 @@ describe('ConfirmPanel', () => {
     const items = screen.getAllByRole('listitem');
     expect(items[0].textContent).toContain('job-123');
     expect(items[1].textContent).toContain('completed');
+    expect(items[1].textContent).toContain('Status');
   });
 
-  it('shows "No job yet" when jobId is null', () => {
-    render(<ConfirmPanel {...baseProps} jobId={null} />);
+  it('shows honest zero state and no Pending when jobId is null', () => {
+    render(<ConfirmPanel {...baseProps} jobId={null} status={undefined} />);
+    expect(screen.getByText(CONFIRM_NO_JOB_ZERO_STATE)).toBeTruthy();
+    expect(screen.queryByText(/Pending/)).toBeNull();
+    expect(screen.queryByText(/Status/)).toBeNull();
+    expect(screen.queryByRole('listitem')).toBeNull();
+  });
+
+  it('renders Status row only when a job exists', () => {
+    render(<ConfirmPanel {...baseProps} jobId="job-abc" status="running" />);
     const items = screen.getAllByRole('listitem');
-    expect(items[0].textContent).toContain('No job yet');
+    expect(items).toHaveLength(2);
+    expect(items[1].textContent).toContain('Status');
+    expect(items[1].textContent).toContain('running');
   });
 
   it('enables cluster button when not clustering', () => {
@@ -170,9 +198,9 @@ describe('ConfirmPanel', () => {
     expect(onCluster).toHaveBeenCalledOnce();
   });
 
-  it('disables view-clusters button when jobId is null', () => {
+  it('disables open-roster button when jobId is null', () => {
     render(<ConfirmPanel {...baseProps} jobId={null} />);
-    expect(screen.getByRole('button', { name: 'Open clusters in roster' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Open roster' })).toBeDisabled();
   });
 
   it('does not render progress section when total is 0', () => {

@@ -81,6 +81,7 @@ const defaultSettings: SettingsResponse = {
   tenant_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
   tenant_id_source: 'option',
   tenant_paired: false,
+  alt_style: 'alt_only',
   description_budget: {
     max_attempts: -1,
     usage: {

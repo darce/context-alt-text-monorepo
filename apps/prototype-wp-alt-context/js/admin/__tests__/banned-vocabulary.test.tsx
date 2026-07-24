@@ -49,6 +49,15 @@ const BANNED_STRINGS = [
   'Source version',
   'projected instances',
   'Curriculum',
+  // UXP-4 slice 2: ops dialect retired from operator-facing surfaces
+  'Delta sync',
+  'Machine sync',
+  'Machine state',
+  'Sync backlog',
+  // UXP-4 slice 3: retention card jargon retired
+  'Retention posture',
+  // UXP-4 slice 5: roster jargon retired
+  'Managed Identities',
 ] as const;
 
 const UUID_REGEX = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
@@ -273,6 +282,7 @@ vi.mock('../pages/workbench/JobPipelineContext', () => {
     scan: vi.fn(),
     cancelScan: vi.fn(),
     cluster: vi.fn(),
+    retryClustering: vi.fn(),
     retryProjectionSync: vi.fn(),
     retryScanStream: vi.fn(),
     handleSelectJobFromHistory: vi.fn(),
@@ -414,5 +424,111 @@ describe('banned vocabulary across js/admin pages', () => {
     );
     const text = collectVisibleText(container);
     expect(text.toLowerCase()).toContain('topology');
+  });
+
+  /**
+   * Slice 3: WorkbenchPage mocks ScanTabContent, so chip + HAI-05 + person-commit
+   * copy are swept here as constants that render on the review-queue surface.
+   */
+  it('review-queue chip + person-commit + HAI-05 copy are free of banned jargon', async () => {
+    const {
+      NEXT_ACTION_CHIP_LABEL,
+      NEXT_ACTION_KIND,
+      REVIEW_QUEUE_BAND,
+      REVIEW_QUEUE_BAND_CHIP_LABEL,
+    } = await import('../pages/workbench/identity-clusters/reviewQueueDriver');
+    // BR-33: sweep every exported person-commit copy constant (import *).
+    const personCommitCopy = await import('../pages/workbench/identity-clusters/personCommitCopy');
+    // Slice 5: bulk commit / hold / PR-38 labels.
+    const bulkCopy = await import('../pages/workbench/identity-clusters/useBulkReviewCommit');
+
+    const personCommitStrings = Object.values(personCommitCopy).filter(
+      (value): value is string => typeof value === 'string',
+    );
+    const surface = [
+      NEXT_ACTION_CHIP_LABEL[NEXT_ACTION_KIND.ASSIGNMENT],
+      NEXT_ACTION_CHIP_LABEL[NEXT_ACTION_KIND.MERGE],
+      // Slice 6 ④ band chip labels.
+      REVIEW_QUEUE_BAND_CHIP_LABEL[REVIEW_QUEUE_BAND.STRONG],
+      REVIEW_QUEUE_BAND_CHIP_LABEL[REVIEW_QUEUE_BAND.WEAKER],
+      ...personCommitStrings,
+      bulkCopy.bulkCommitLabel(4, 'Maria'),
+      bulkCopy.bulkCommitLabel(3, null),
+      bulkCopy.bulkHoldStatusCopy(5),
+    ].join(' ');
+
+    for (const banned of BANNED_STRINGS) {
+      expect(surface.toLowerCase()).not.toContain(banned.toLowerCase());
+    }
+    expect(surface).toContain(personCommitCopy.MODEL_OUTPUT_DISCLOSURE);
+    expect(surface).toContain(personCommitCopy.PERSON_COMMIT_SUCCESS_COPY);
+    expect(surface).toContain(personCommitCopy.PERSON_COMMIT_COMBOBOX_ARIA);
+    expect(surface).toContain(personCommitCopy.PERSON_COMMIT_PLACEHOLDER);
+    expect(surface).toContain(personCommitCopy.PERSON_COMMIT_COMMITTING_COPY);
+    expect(surface).toContain('Accept 4 for Maria');
+    expect(surface).toContain('Accept 3 selected');
+    expect(surface).toContain('Saving 5… — Undo');
+    expect(surface).not.toMatch(UUID_REGEX);
+  });
+
+  /**
+   * UXP-4 slice 3: retention card copy is conditional on DashboardPage, so
+   * constants are swept via import * (personCommitCopy pattern).
+   */
+  it('retention card copy constants are free of banned jargon', async () => {
+    const retentionCardCopy = await import('../pages/dashboard/retentionCardCopy');
+    const retentionStrings = Object.values(retentionCardCopy).filter(
+      (value) => typeof value === 'string',
+    ) as string[];
+    const surface = retentionStrings.join(' ');
+
+    for (const banned of BANNED_STRINGS) {
+      expect(surface.toLowerCase()).not.toContain(banned.toLowerCase());
+    }
+    expect(surface).toContain(retentionCardCopy.RETENTION_CARD_HEADING);
+    expect(surface).toContain(retentionCardCopy.RETENTION_CARD_ERROR_BODY);
+    expect(surface).toContain(retentionCardCopy.RETENTION_CARD_LINK_HREF);
+    expect(surface).not.toMatch(UUID_REGEX);
+  });
+
+  /**
+   * UXP-4 slice 4: ConfirmTabContent is mocked in the WorkbenchPage sweep, so
+   * clustering disclosure + no-job zero-state constants are swept via import *.
+   */
+  it('confirm tab copy constants are free of banned jargon', async () => {
+    const confirmTabCopy = await import('../pages/workbench/confirmTabCopy');
+    const confirmStrings = Object.values(confirmTabCopy).filter((value) => typeof value === 'string') as string[];
+    const surface = confirmStrings.join(' ');
+
+    for (const banned of BANNED_STRINGS) {
+      expect(surface.toLowerCase()).not.toContain(banned.toLowerCase());
+    }
+    expect(surface).toContain(confirmTabCopy.CLUSTERING_DISCLOSURE_SUMMARY);
+    expect(surface).toContain(confirmTabCopy.CLUSTERING_DISCLOSURE_BODY);
+    expect(surface).toContain(confirmTabCopy.CONFIRM_PANEL_INTRO);
+    expect(surface).toContain(confirmTabCopy.CONFIRM_NO_JOB_ZERO_STATE);
+    expect(surface.toLowerCase()).not.toContain('embeddings');
+    expect(surface).not.toMatch(UUID_REGEX);
+  });
+
+  /**
+   * UXP-4 BR-02: PurgeDialog options are not mounted by the RetentionPage
+   * empty fixture (dialog closed), so scope-option constants are swept via
+   * import * (retentionCardCopy pattern).
+   */
+  it('retention purge-dialog copy constants are free of banned jargon', async () => {
+    const retentionDialogCopy = await import('../pages/retention/retentionDialogCopy');
+    const purgeStrings = Object.values(retentionDialogCopy).filter((value) => typeof value === 'string') as string[];
+    const surface = purgeStrings.join(' ');
+
+    for (const banned of BANNED_STRINGS) {
+      expect(surface.toLowerCase()).not.toContain(banned.toLowerCase());
+    }
+    expect(surface).toContain(retentionDialogCopy.PURGE_DIALOG_DESCRIPTION);
+    expect(surface).toContain(retentionDialogCopy.PURGE_SCOPE_ALL_DESCRIPTION);
+    expect(surface.toLowerCase()).not.toContain('machine state');
+    expect(surface.toLowerCase()).not.toContain('machine-derived');
+    expect(surface.toLowerCase()).not.toContain('disposed state');
+    expect(surface).not.toMatch(UUID_REGEX);
   });
 });

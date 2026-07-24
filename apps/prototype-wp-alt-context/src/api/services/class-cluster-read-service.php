@@ -104,39 +104,17 @@ class ClusterReadService {
 			$response = $this->dependencies->projection_sync_service->maybe_bootstrap_after_proxy_read( $tenant_id, $response );
 
 			if ( $response instanceof WP_REST_Response && $response->get_status() >= 200 && $response->get_status() < 300 ) {
-				$data = $response->get_data();
-				if ( is_array( $data ) ) {
-					if ( isset( $data['clusters'] ) && is_array( $data['clusters'] ) ) {
-						if ( ! isset( $data['limit'], $data['total'], $data['truncated'] ) || ! is_numeric( $data['limit'] ) || ! is_numeric( $data['total'] ) || ! is_bool( $data['truncated'] ) ) {
-							return new WP_Error(
-								'invalid_top_unlabeled_envelope',
-								'Top-unlabeled clusters response must include limit, total, and truncated when clusters is present.',
-								array( 'status' => 502 )
-							);
-						}
+				$normalized = $this->dependencies->response_envelope_service->normalize_top_unlabeled_response( $response );
+				if ( $normalized instanceof WP_Error ) {
+					return $normalized;
+				}
 
-						return new WP_REST_Response(
-							array(
-								'clusters' => $data['clusters'],
-								'limit' => max( 1, (int) $data['limit'] ),
-								'total' => max( 0, (int) $data['total'] ),
-								'truncated' => $data['truncated'],
-								'data_source' => $this->dependencies->config->data_source_backend_proxy,
-							),
-							200
-						);
+				if ( $normalized instanceof WP_REST_Response ) {
+					$data = $normalized->get_data();
+					if ( is_array( $data ) ) {
+						$data['data_source'] = $this->dependencies->config->data_source_backend_proxy;
+						return new WP_REST_Response( $data, 200 );
 					}
-
-					return new WP_REST_Response(
-						array(
-							'clusters' => $data,
-							'limit' => $limit,
-							'total' => count( $data ),
-							'truncated' => false,
-							'data_source' => $this->dependencies->config->data_source_backend_proxy,
-						),
-						200
-					);
 				}
 			}
 
@@ -261,6 +239,16 @@ class ClusterReadService {
 			return new WP_Error( 'missing_cluster_id', 'Cluster ID is required.', array( 'status' => 400 ) );
 		}
 
+		$limit = $this->resolve_cluster_members_limit( $request );
+		if ( $limit instanceof WP_Error ) {
+			return $limit;
+		}
+
+		$offset = $this->resolve_cluster_members_offset( $request );
+		if ( $offset instanceof WP_Error ) {
+			return $offset;
+		}
+
 		if ( $this->dependencies->projection_sync_service->should_use_local_projection( $tenant_id ) ) {
 			$cluster_row = $this->dependencies->clusters_repository->find_by_uuid( $cluster_id );
 			if ( ! is_array( $cluster_row ) ) {
@@ -271,28 +259,67 @@ class ClusterReadService {
 				);
 			}
 
-			$member_rows = $this->dependencies->members_repository->list_for_cluster( $cluster_id, self::GET_CLUSTER_MEMBERS_MAX_LIMIT, 0, $tenant_id );
-			if ( empty( $member_rows ) && $this->dependencies->projection_sync_service->cluster_row_should_have_members( $cluster_row ) && $this->dependencies->projection_sync_service->repair_targeted_projection( $tenant_id, array( $cluster_id ) ) ) {
-				$member_rows = $this->dependencies->members_repository->list_for_cluster( $cluster_id, self::GET_CLUSTER_MEMBERS_MAX_LIMIT, 0, $tenant_id );
+			$member_rows = $this->dependencies->members_repository->list_for_cluster( $cluster_id, $limit, $offset, $tenant_id );
+			if ( empty( $member_rows ) && 0 === $offset && $this->dependencies->projection_sync_service->cluster_row_should_have_members( $cluster_row ) && $this->dependencies->projection_sync_service->repair_targeted_projection( $tenant_id, array( $cluster_id ) ) ) {
+				$member_rows = $this->dependencies->members_repository->list_for_cluster( $cluster_id, $limit, $offset, $tenant_id );
 			}
 
 			$members = $this->dependencies->member_mapper->map_cluster_members( $member_rows );
 			if ( isset( $member_rows[0]['total_count'] ) && is_numeric( $member_rows[0]['total_count'] ) ) {
 				$total = max( 0, (int) $member_rows[0]['total_count'] );
 			} else {
-				$total = $this->dependencies->members_repository->count_for_cluster( $cluster_id );
+				$total = $this->dependencies->members_repository->count_for_cluster( $cluster_id, $tenant_id );
 			}
-			return new WP_REST_Response( $this->dependencies->response_envelope_service->build_cluster_members_envelope( $members, self::GET_CLUSTER_MEMBERS_MAX_LIMIT, $total ), 200 );
+			return new WP_REST_Response( $this->dependencies->response_envelope_service->build_cluster_members_envelope( $members, $limit, $total, $offset ), 200 );
 		}
 
 		$response = $this->host->proxy_recognition_request(
 			'GET',
 			sprintf( '/recognition/clusters/%s/members', $cluster_id ),
 			array(),
-			array( 'tenant_id' => $tenant_id )
+			array(
+				'tenant_id' => $tenant_id,
+				'limit'     => $limit,
+				'offset'    => $offset,
+			)
 		);
 		$response = $this->dependencies->projection_sync_service->maybe_bootstrap_after_proxy_read( $tenant_id, $response );
-		return $this->dependencies->response_envelope_service->normalize_cluster_members_response( $response, self::GET_CLUSTER_MEMBERS_MAX_LIMIT );
+		return $this->dependencies->response_envelope_service->normalize_cluster_members_response( $response );
+	}
+
+	/**
+	 * Resolve members page size: default max; reject-not-clamp on out-of-range
+	 * values (400), matching recognition's validate_paging policy so both legs
+	 * of the boundary behave identically.
+	 */
+	private function resolve_cluster_members_limit( WP_REST_Request $request ): int|WP_Error {
+		$raw = $request->get_param( 'limit' );
+		if ( null === $raw || '' === $raw ) {
+			return self::GET_CLUSTER_MEMBERS_MAX_LIMIT;
+		}
+
+		if ( ! is_numeric( $raw ) || (int) $raw < 1 || (int) $raw > self::GET_CLUSTER_MEMBERS_MAX_LIMIT ) {
+			return new WP_Error( 'invalid_limit', 'limit out of range', array( 'status' => 400 ) );
+		}
+
+		return absint( $raw );
+	}
+
+	/**
+	 * Resolve members page offset: default 0; reject-not-clamp on negative
+	 * values (400), matching recognition's validate_paging policy.
+	 */
+	private function resolve_cluster_members_offset( WP_REST_Request $request ): int|WP_Error {
+		$raw = $request->get_param( 'offset' );
+		if ( null === $raw || '' === $raw ) {
+			return 0;
+		}
+
+		if ( ! is_numeric( $raw ) || (int) $raw < 0 ) {
+			return new WP_Error( 'invalid_offset', 'offset must be non-negative', array( 'status' => 400 ) );
+		}
+
+		return absint( $raw );
 	}
 
 	/**

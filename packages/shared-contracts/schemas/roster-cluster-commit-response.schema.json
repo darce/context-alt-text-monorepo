@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://context-alt-text.dev/schemas/roster-cluster-commit-response.schema.json",
+  "title": "Roster Cluster Commit Response",
+  "description": "Response from POST /acx/v1/roster/clusters/{cluster_id}/commit. Bound person identity is present for both create and rebind outcomes.",
+  "type": "object",
+  "required": [
+    "cluster_id",
+    "person_id",
+    "person_uuid",
+    "person_name",
+    "updated_at"
+  ],
+  "properties": {
+    "cluster_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Cluster UUID that was committed."
+    },
+    "person_id": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "Bound local person id, or null when unbound."
+    },
+    "person_uuid": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "description": "Bound person UUID for both create and rebind outcomes, or null when unbound."
+    },
+    "person_name": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "description": "Display name of the bound person, or null when unbound."
+    },
+    "updated_at": {
+      "type": "string",
+      "description": "Server timestamp for the cluster update."
+    }
+  }
+}

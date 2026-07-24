@@ -36,6 +36,58 @@ class ClusterResponseEnvelopeServiceTest extends TestCase
         $this->assertSame(502, $result->get_error_data()['status']);
     }
 
+    /**
+     * Legacy bare-array list payloads must not fabricate total/limit [rg-015].
+     */
+    public function testNormalizeClusterListResponseRejectsLegacyBareArray(): void
+    {
+        $response = new WP_REST_Response([
+            ['id' => 'c1'],
+            ['id' => 'c2'],
+        ], 200);
+
+        $result = $this->service->normalize_cluster_list_response($response, 50);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('invalid_cluster_list_envelope', $result->get_error_code());
+        $this->assertSame(502, $result->get_error_data()['status']);
+    }
+
+    /**
+     * Legacy bare-array top-unlabeled payloads must not fabricate total/limit [rg-015].
+     */
+    public function testNormalizeTopUnlabeledResponseRejectsLegacyBareArray(): void
+    {
+        $response = new WP_REST_Response([
+            ['id' => 'c1', 'label' => null, 'identity_count' => 4],
+        ], 200);
+
+        $result = $this->service->normalize_top_unlabeled_response($response);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('invalid_top_unlabeled_envelope', $result->get_error_code());
+        $this->assertSame(502, $result->get_error_data()['status']);
+    }
+
+    public function testNormalizeTopUnlabeledResponseAcceptsCanonicalEnvelope(): void
+    {
+        $response = new WP_REST_Response([
+            'clusters' => [['id' => 'c1']],
+            'limit' => 10,
+            'total' => 1,
+            'truncated' => false,
+        ], 200);
+
+        $result = $this->service->normalize_top_unlabeled_response($response);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $data = $result->get_data();
+        $this->assertSame([['id' => 'c1']], $data['clusters']);
+        $this->assertSame(10, $data['limit']);
+        $this->assertSame(1, $data['total']);
+        $this->assertFalse($data['truncated']);
+    }
+
     public function testBuildClusterLabelsEnvelopeTruncatesWhenTotalExceedsCount(): void
     {
         $envelope = $this->service->build_cluster_labels_envelope(['Alice'], 1, 2);
@@ -68,7 +120,7 @@ class ClusterResponseEnvelopeServiceTest extends TestCase
             'truncated' => false,
         ], 200);
 
-        $result = $this->service->normalize_cluster_members_response($response, 10);
+        $result = $this->service->normalize_cluster_members_response($response);
 
         $this->assertInstanceOf(WP_REST_Response::class, $result);
         $this->assertSame(200, $result->get_status());
@@ -77,6 +129,46 @@ class ClusterResponseEnvelopeServiceTest extends TestCase
         $this->assertSame(10, $data['limit']);
         $this->assertSame(1, $data['total']);
         $this->assertFalse($data['truncated']);
+    }
+
+    /**
+     * Legacy bare-array payloads carry no envelope metadata; fabricating
+     * total/limit from count() would invent contract metadata [rg-015].
+     */
+    public function testNormalizeClusterMembersResponseRejectsLegacyBareArray(): void
+    {
+        $response = new WP_REST_Response([
+            ['id' => 'm1'],
+            ['id' => 'm2'],
+        ], 200);
+
+        $result = $this->service->normalize_cluster_members_response($response);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('invalid_cluster_members_envelope', $result->get_error_code());
+        $this->assertSame(502, $result->get_error_data()['status']);
+    }
+
+    public function testBuildClusterMembersEnvelopeUsesOffsetForTruncated(): void
+    {
+        $envelope = $this->service->build_cluster_members_envelope(
+            [['id' => 'm3']],
+            2,
+            5,
+            4
+        );
+
+        $this->assertSame(2, $envelope['limit']);
+        $this->assertSame(5, $envelope['total']);
+        $this->assertFalse($envelope['truncated']);
+
+        $midPage = $this->service->build_cluster_members_envelope(
+            [['id' => 'm2'], ['id' => 'm3']],
+            2,
+            5,
+            2
+        );
+        $this->assertTrue($midPage['truncated']);
     }
 
     public function testNormalizeClusterLabelsResponseAcceptsCanonicalEnvelope(): void

@@ -4,11 +4,14 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+require_once __DIR__ . '/class-recognition-data-source.php';
+
 use AltContext\Sovereign\Mappers\MemberResponseMapper;
 use AltContext\Sovereign\Repositories\IdentityMembersRepository;
 use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
+use stdClass;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -19,11 +22,15 @@ use function count;
 use function is_array;
 use function range;
 use function rest_sanitize_boolean;
+use function time;
+use function wp_next_scheduled;
+use function wp_schedule_single_event;
 
 class MediaIdentitiesController extends AbstractRecognitionProxyController {
-	private const DATA_SOURCE_LOCAL_PROJECTION = 'local_projection';
-	private const DATA_SOURCE_BACKEND_PROXY = 'backend_proxy';
-	private const DATA_SOURCE_UNAVAILABLE = 'unavailable';
+	private const DATA_SOURCE_LOCAL_PROJECTION = RecognitionDataSource::LOCAL_PROJECTION;
+	private const DATA_SOURCE_BACKEND_PROXY = RecognitionDataSource::BACKEND_PROXY;
+	private const DATA_SOURCE_ENDPOINT_ERROR = RecognitionDataSource::ENDPOINT_ERROR;
+	private const DATA_SOURCE_UNAVAILABLE = RecognitionDataSource::UNAVAILABLE;
 	private const REQUEST_CLASS_POST_SCAN_READ = 'post_scan_read';
 	private IdentityMembersRepositoryInterface $members_repository;
 	private SyncStateRepositoryInterface $sync_state_repository;
@@ -86,9 +93,11 @@ class MediaIdentitiesController extends AbstractRecognitionProxyController {
 		if ( $this->should_use_local_projection( $tenant_id ) ) {
 			$rows = $this->members_repository->list_for_media_ids( $tenant_id, $ids );
 			$payload = array(
-				'identities_by_media' => $this->member_mapper->map_media_identities( $rows ),
+				'identities_by_media' => $this->as_identities_map( $this->member_mapper->map_media_identities( $rows ) ),
 				'data_source' => self::DATA_SOURCE_LOCAL_PROJECTION,
 			);
+			// Async heal only: the sovereign read must return immediately even offline.
+			$this->maybe_schedule_stale_projection_heal( $tenant_id );
 			return new WP_REST_Response( $payload, 200 );
 		}
 
@@ -106,18 +115,15 @@ class MediaIdentitiesController extends AbstractRecognitionProxyController {
 		if ( $this->is_backend_overloaded( $response ) ) {
 			return parent::backend_overloaded_response( $response );
 		}
-		if ( $this->is_proxy_unavailable( $response ) ) {
-			return new WP_REST_Response(
-				array(
-					'identities_by_media' => array(),
-					'data_source' => self::DATA_SOURCE_UNAVAILABLE,
-				),
-				200
-			);
+		if ( $this->is_proxy_transport_unreachable( $response ) ) {
+			return $this->degraded_media_identities_response( self::DATA_SOURCE_UNAVAILABLE );
+		}
+		if ( $this->is_proxy_endpoint_error( $response ) ) {
+			return $this->degraded_media_identities_response( self::DATA_SOURCE_ENDPOINT_ERROR );
 		}
 
 		if ( $response instanceof WP_REST_Response && 200 === $response->get_status() ) {
-			return $this->normalize_backend_media_identities_response( $response );
+			return $this->maybe_bootstrap_after_proxy_read( $tenant_id, $this->normalize_backend_media_identities_response( $response ) );
 		}
 
 		return $response;
@@ -145,7 +151,7 @@ class MediaIdentitiesController extends AbstractRecognitionProxyController {
 
 			return new WP_REST_Response(
 				array(
-					'identities_by_media' => $data['identities_by_media'],
+					'identities_by_media' => $this->as_identities_map( $data['identities_by_media'] ),
 					'data_source'        => self::DATA_SOURCE_BACKEND_PROXY,
 				),
 				200
@@ -188,16 +194,83 @@ class MediaIdentitiesController extends AbstractRecognitionProxyController {
 
 		return new WP_REST_Response(
 			array(
-				'identities_by_media' => $grouped,
+				'identities_by_media' => $this->as_identities_map( $grouped ),
 				'data_source'        => self::DATA_SOURCE_BACKEND_PROXY,
 			),
 			200
 		);
 	}
 
+	/**
+	 * Rows-first source selection ([DATA-14]): the projection rows are the
+	 * ground truth, so a derived sync-state freshness marker must not veto
+	 * the source of record. Staleness is healed asynchronously instead.
+	 */
 	private function should_use_local_projection( string $tenant_id ): bool {
-		return $this->should_use_local_projection_gate( $this->sync_state_repository, $tenant_id )
-			&& $this->members_repository->has_projection_rows_for_tenant( $tenant_id );
+		return $this->members_repository->has_projection_rows_for_tenant( $tenant_id );
+	}
+
+	/**
+	 * BR-02: after a successful proxy read, converge the projection via the
+	 * deduped async cron event only — never an inline pull. The successful
+	 * proxy response must return immediately; blocking it on a background_sync
+	 * pull (30s x3) exceeds the workbench client abort budget and withholds
+	 * data the response already carries. This mirrors the sovereign local-read
+	 * path ("return immediately even offline") and the ClusterProjectionSyncService
+	 * newly-qualifying branch. The cron handler (Api::handle_bootstrap_sync)
+	 * performs the actual convergence pull off the request path.
+	 */
+	private function maybe_bootstrap_after_proxy_read( string $tenant_id, WP_REST_Response|WP_Error $response ): WP_REST_Response|WP_Error {
+		if ( ! ( $response instanceof WP_REST_Response ) ) {
+			return $response;
+		}
+
+		if ( $response->get_status() < 200 || $response->get_status() >= 300 ) {
+			return $response;
+		}
+
+		$this->schedule_bootstrap_sync_event( $tenant_id );
+
+		return $response;
+	}
+
+	private function maybe_schedule_stale_projection_heal( string $tenant_id ): void {
+		$updated_at = $this->sync_state_repository->get_last_updated( $tenant_id );
+		if ( ! $this->is_projection_stale( $updated_at ) ) {
+			return;
+		}
+
+		$this->schedule_bootstrap_sync_event( $tenant_id );
+	}
+
+	private function schedule_bootstrap_sync_event( string $tenant_id ): void {
+		$args = array( $tenant_id );
+		if ( false === wp_next_scheduled( RecognitionDataSource::BOOTSTRAP_SYNC_HOOK, $args ) ) {
+			wp_schedule_single_event( time(), RecognitionDataSource::BOOTSTRAP_SYNC_HOOK, $args );
+		}
+	}
+
+	/**
+	 * BR-01: an empty identities_by_media must serialize as a JSON object ({}),
+	 * not a JSON array ([]). The workbench guard (fetchMediaIdentities) rejects
+	 * arrays, so an empty [] would throw client-side and collapse the honest
+	 * degraded state (data_source) into an error the UI cannot render.
+	 *
+	 * @param array<array-key,mixed> $identities_by_media
+	 * @return array<array-key,mixed>|stdClass
+	 */
+	private function as_identities_map( array $identities_by_media ): array|stdClass {
+		return array() === $identities_by_media ? new stdClass() : $identities_by_media;
+	}
+
+	private function degraded_media_identities_response( string $data_source ): WP_REST_Response {
+		return new WP_REST_Response(
+			array(
+				'identities_by_media' => new stdClass(),
+				'data_source' => $data_source,
+			),
+			200
+		);
 	}
 
 	private function is_list_payload( array $data ): bool {

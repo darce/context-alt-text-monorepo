@@ -22,6 +22,7 @@ class ClusterMutationsRepositorySpy extends NullClustersRepository
     public string $createdLocalClusterId = '';
     public int $nextDismissRows = 1;
     public int $nextUndismissRows = 1;
+    public int $nextUpdateLabelRows = 1;
     public int $nextCreateLocalClusterRows = 1;
     /** @var array<int,array{0:string,1:int}> */
     public array $identityCountUpdates = [];
@@ -99,7 +100,7 @@ class ClusterMutationsRepositorySpy extends NullClustersRepository
     {
         $this->updatedLabelClusterId = $cluster_uuid;
         $this->updatedLabel = $label;
-        return 1;
+        return $this->nextUpdateLabelRows;
     }
 
     public function create_local_cluster(string $tenant_id, string $cluster_uuid, string $label, int $identity_count = 1): int
@@ -269,7 +270,7 @@ class ClusterMutationsMembersSpy extends NullIdentityMembersRepository
         return $this->clusterCounts[$source_cluster_uuid] ?? 0;
     }
 
-    public function count_for_cluster(string $cluster_uuid): int
+    public function count_for_cluster(string $cluster_uuid, ?string $tenant_id = null): int
     {
         return $this->clusterCounts[$cluster_uuid] ?? 0;
     }

@@ -19,6 +19,9 @@ dependencies = [
     "pgvector>=0.4.0,<0.5.0",
     "alembic>=1.17.0,<2.0.0",
     "numpy>=2.0.0,<3.0.0",
+    # Direct dep for Hungarian matcher (§C association, §F similar_people).
+    # Previously only transitive via hdbscan (rg-001).
+    "scipy>=1.11.0,<2.0.0",
     "pillow>=12.0.0,<13.0.0",
     "opencv-python>=4.12.0,<4.15.0",
     "pydantic-settings>=2.12.0,<3.0.0",
@@ -26,10 +29,11 @@ dependencies = [
     "httpx>=0.28.0,<0.35.0",
     "networkx>=3.6,<4.0",
     "uuid7>=0.1.0,<1.0.0",
-    # Clustering
+    # Clustering (hierarchical / constrained HAC + joint assignment solver)
     "hdbscan>=0.8.33,<1.0.0",
+    "scipy>=1.11.0,<2.0.0",
     # ONNX runtime for inference (required by insightface)
-    "onnxruntime>=1.16.0",
+    "onnxruntime>=1.22.0",
     "imagehash>=4.3.0",
     "sse-starlette>=2.0.0,<3.0.0",
     "python-json-logger>=3.2.0,<4.0.0",
@@ -64,20 +68,21 @@ dev = [
     "types-Pillow",
     "types-networkx",
 ]
-# Face detection - requires platform-specific install on macOS, see README
-face = [
+# InsightFace for FIR-5 bake-off legs and the FIR-4 dark-default prod image
+# (Dockerfile installs .[bench] so the incumbent path stays available until FIR-6).
+# Not required for the face_pipeline profile (YuNet+SFace / core deps only).
+bench = [
     "insightface>=0.7.3,<1.0.0",
 ]
 gpu = [
-    "insightface>=0.7.3,<1.0.0",
-    "onnxruntime-gpu>=1.16.0 ; platform_system == \"Linux\"",
+    "onnxruntime-gpu>=1.22.0 ; platform_system == \"Linux\"",
 ]
 dashboard = [
     "rich>=13.0.0,<15.0.0",
     "textual>=3.0.0,<4.0.0",
 ]
 # Local-CPU VLM (Florence-2) for image description (E19-1 D3). Isolated from the
-# recognition-only default install: never pulled by `dev`/`face`/`gpu`, so the
+# recognition-only default install: never pulled by `dev`/`bench`/`gpu`, so the
 # default build and the live OCIR image stay torch-free.
 vlm = [
     # Florence-2's trust_remote_code modeling pre-dates the transformers attention

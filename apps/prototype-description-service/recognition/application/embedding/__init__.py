@@ -24,11 +24,19 @@ from recognition.application.embedding.generator import (
     InsightFaceEmbeddingGenerator,
     StubEmbeddingGenerator,
 )
+from recognition.application.embedding.manifest import (
+    EmbeddingModelManifest,
+    active_embedding_model_id,
+    incumbent_embedding_model_manifest,
+)
 
 __all__ = [
     # Data classes
     "FaceDetection",
     "EmbeddingResult",
+    "EmbeddingModelManifest",
+    "active_embedding_model_id",
+    "incumbent_embedding_model_manifest",
     # Detection
     "DetectionTimeoutError",
     "FaceDetectorProtocol",

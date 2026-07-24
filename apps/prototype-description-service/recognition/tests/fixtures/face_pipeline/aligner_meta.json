@@ -1,0 +1,24 @@
+{
+  "affine_shape": [
+    2,
+    3
+  ],
+  "crop_sha256": "c508c8f60d8a558180f8b2138531967b42ed877b622fa5e5d1d73cffffd06726",
+  "crop_shape": [
+    112,
+    112,
+    3
+  ],
+  "kind": "aligner_golden",
+  "landmark_order": [
+    "right_eye",
+    "left_eye",
+    "nose_tip",
+    "right_mouth_corner",
+    "left_mouth_corner"
+  ],
+  "oracle": "cv2.FaceRecognizerSF.alignCrop",
+  "oracle_model": "face_recognition_sface_2021dec.onnx",
+  "output_size": 112,
+  "seed": 20260715
+}

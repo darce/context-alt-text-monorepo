@@ -40,6 +40,7 @@ import {
   useMultiScanStatus,
   useCombinedScanStatus,
 } from '../../../hooks/useRecognitionHooks';
+import { CLUSTERING_DISCLOSURE_SUMMARY } from '../confirmTabCopy';
 
 // Mock ResizeObserver and PointerCapture for Radix UI
 window.ResizeObserver = class ResizeObserver {
@@ -153,7 +154,9 @@ const makeFindingsViewModel = (overrides: Partial<WorkbenchFindingsViewModel> = 
   isError: false,
   isUnavailable: false,
   isReadOnly: false,
+  queueSettled: true,
   nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.EMPTY },
+  queue: [],
   ...overrides,
 });
 
@@ -195,6 +198,25 @@ describe('WorkbenchPage', () => {
   const mockUseWorkbenchFindings = vi.mocked(useWorkbenchFindings);
   let setCurrentPage: Dispatch<SetStateAction<number>>;
   let setPerPage: Mock<(nextPerPage: number) => void>;
+  let setMediaExpanded: Mock<(expanded: boolean) => void>;
+
+  const filtersMock = (overrides: Record<string, unknown> = {}) => ({
+    searchQuery: '',
+    normalizedSearch: '',
+    currentPage: 1,
+    perPage: 10,
+    statusFilter: 'all' as const,
+    setCurrentPage,
+    setPerPage,
+    handleSearchChange: vi.fn(),
+    handleStatusChange: vi.fn(),
+    queueState: { kind: 'all' as const, band: 'all' as const, index: 0 },
+    getQueueState: () => ({ kind: 'all' as const, band: 'all' as const, index: 0 }),
+    setQueueState: vi.fn(),
+    mediaExpanded: false,
+    setMediaExpanded,
+    ...overrides,
+  });
 
   const createBatchRunStatusQuery = (data?: BatchRunStatus) =>
     createMockQuery<BatchRunStatus>({
@@ -257,6 +279,7 @@ describe('WorkbenchPage', () => {
     clearHistory.mockClear();
     setCurrentPage = vi.fn() as Dispatch<SetStateAction<number>>;
     setPerPage = vi.fn<(nextPerPage: number) => void>();
+    setMediaExpanded = vi.fn<(expanded: boolean) => void>();
 
     const mediaQuery = createMockQuery<WorkbenchMediaResponse>({
       data: { items: [baseMediaItem], total: 1, totalPages: 1 },
@@ -333,17 +356,7 @@ describe('WorkbenchPage', () => {
       clearHistory,
     });
 
-    mockUseWorkbenchFilters.mockReturnValue({
-      searchQuery: '',
-      normalizedSearch: '',
-      currentPage: 1,
-      perPage: 10,
-      statusFilter: 'all',
-      setCurrentPage,
-      setPerPage,
-      handleSearchChange: vi.fn(),
-      handleStatusChange: vi.fn(),
-    });
+    mockUseWorkbenchFilters.mockReturnValue(filtersMock());
 
     mockUseScanStatus.mockReturnValue(
       createMockQuery<JobStatusResponse>({
@@ -524,17 +537,7 @@ describe('WorkbenchPage', () => {
   });
 
   it('hydrates media page size from the workbench URL filters', () => {
-    mockUseWorkbenchFilters.mockReturnValue({
-      searchQuery: '',
-      normalizedSearch: '',
-      currentPage: 1,
-      perPage: 50,
-      statusFilter: 'all',
-      setCurrentPage,
-      setPerPage,
-      handleSearchChange: vi.fn(),
-      handleStatusChange: vi.fn(),
-    });
+    mockUseWorkbenchFilters.mockReturnValue(filtersMock({ perPage: 50 }));
 
     renderWorkbench();
 
@@ -584,9 +587,25 @@ describe('WorkbenchPage', () => {
       }),
     );
 
-    renderWorkbench();
+    // URL-backed expand: setMediaExpanded must flip mediaExpanded and re-render.
+    let mediaExpanded = false;
+    const view = renderWorkbench();
+    const boundSetMediaExpanded = vi.fn((expanded: boolean) => {
+      mediaExpanded = expanded;
+      mockUseWorkbenchFilters.mockReturnValue(
+        filtersMock({ mediaExpanded, setMediaExpanded: boundSetMediaExpanded }),
+      );
+      view.rerender(<WorkbenchPage />);
+    });
+    setMediaExpanded = boundSetMediaExpanded;
+    mockUseWorkbenchFilters.mockReturnValue(
+      filtersMock({ mediaExpanded: false, setMediaExpanded: boundSetMediaExpanded }),
+    );
+    view.rerender(<WorkbenchPage />);
+
     await userEvent.click(screen.getByRole('button', { name: 'Show media table' }));
 
+    expect(boundSetMediaExpanded).toHaveBeenCalledWith(true);
     expect(screen.getByRole('table')).toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: 'Media pagination' })).toBeInTheDocument();
     expect(screen.getByText('Ready to analyze 1 media item.')).toBeInTheDocument();
@@ -613,17 +632,7 @@ describe('WorkbenchPage', () => {
 
   it('clamps current page when total pages shrink', async () => {
     setupScanMutation('success');
-    mockUseWorkbenchFilters.mockReturnValue({
-      searchQuery: '',
-      normalizedSearch: '',
-      currentPage: 2,
-      perPage: 10,
-      statusFilter: 'all',
-      setCurrentPage,
-      setPerPage,
-      handleSearchChange: vi.fn(),
-      handleStatusChange: vi.fn(),
-    });
+    mockUseWorkbenchFilters.mockReturnValue(filtersMock({ currentPage: 2 }));
 
     mockUseWorkbenchMedia.mockReturnValue({
       ...createMockQuery<WorkbenchMediaResponse>({
@@ -651,17 +660,7 @@ describe('WorkbenchPage', () => {
 
   it('updates media page size through URL-backed filters', async () => {
     setupScanMutation('success');
-    mockUseWorkbenchFilters.mockReturnValue({
-      searchQuery: '',
-      normalizedSearch: '',
-      currentPage: 2,
-      perPage: 10,
-      statusFilter: 'all',
-      setCurrentPage,
-      setPerPage,
-      handleSearchChange: vi.fn(),
-      handleStatusChange: vi.fn(),
-    });
+    mockUseWorkbenchFilters.mockReturnValue(filtersMock({ currentPage: 2 }));
 
     renderWorkbench();
 
@@ -705,7 +704,7 @@ describe('WorkbenchPage', () => {
   });
 
   it('renders the conflict inbox overlay from the panel query param', () => {
-    renderWorkbench(undefined, ['/workbench?tab=confirm&panel=conflicts']);
+    renderWorkbench(undefined, ['/workbench?tab=scan&panel=conflicts']);
 
     expect(screen.getByRole('heading', { name: 'Conflict Inbox' })).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Conflict inbox' })).toBeInTheDocument();
@@ -791,7 +790,9 @@ describe('WorkbenchPage', () => {
     );
   });
 
-  it('shims legacy ?tab=confirm to scan + advanced drawer open', async () => {
+  // E21-10 Slice 4: tab=confirm shim deleted. Discriminating degrade proof —
+  // lands on default scan WITHOUT advanced=open and WITHOUT rewriting tab.
+  it('does not shim legacy ?tab=confirm (no advanced open, no tab rewrite)', async () => {
     const LocationProbe = (): JSX.Element => {
       const location = useLocation();
       return <output data-testid="location-search">{location.search}</output>;
@@ -807,21 +808,30 @@ describe('WorkbenchPage', () => {
       </QueryClientProvider>,
     );
 
+    // useTabParam falls back to scan for unknown tab values (UI lands on scan).
+    expect(screen.getByRole('heading', { name: 'Scan Media Queue' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Conflict Inbox' })).toBeInTheDocument();
+    // Discriminating: shim is GONE — advanced stays closed, tab is not rewritten.
     expect(screen.getByRole('button', { name: 'Advanced: jobs & recovery' })).toHaveAttribute(
       'aria-expanded',
-      'true',
+      'false',
     );
-    expect(screen.getByRole('region', { name: 'Advanced: jobs & recovery' })).toBeInTheDocument();
-    expect(screen.getByText('What is Clustering?')).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Advanced: jobs & recovery' })).not.toBeInTheDocument();
 
     await waitFor(() => {
       const search = screen.getByTestId('location-search').textContent ?? '';
-      expect(search).toContain('tab=scan');
-      expect(search).toContain('advanced=open');
-      expect(search).not.toContain('tab=confirm');
+      expect(search).toContain('tab=confirm');
+      expect(search).not.toContain('advanced=open');
+      expect(search).not.toContain('tab=scan');
       expect(search).toContain('panel=conflicts');
     });
+  });
+
+  it('LEGACY_CONFIRM_TAB is fully retired from the workbench nav module', async () => {
+    const nav = await import('../WorkbenchNavContext');
+    expect('LEGACY_CONFIRM_TAB' in nav).toBe(false);
+    const ctx = await import('../WorkbenchContext');
+    expect('LEGACY_CONFIRM_TAB' in ctx).toBe(false);
   });
 
   it('opens the advanced drawer, moves focus inside, and restores focus on Escape', async () => {
@@ -836,7 +846,8 @@ describe('WorkbenchPage', () => {
     expect(trigger).toHaveAttribute('aria-expanded', 'true');
     const panel = screen.getByRole('region', { name: 'Advanced: jobs & recovery' });
     expect(panel).toBeInTheDocument();
-    expect(screen.getByText('What is Clustering?')).toBeInTheDocument();
+    // UXP-4 Slice 4: disclosure summary is "What does clustering do?" (not the old help-card title).
+    expect(screen.getByText(CLUSTERING_DISCLOSURE_SUMMARY)).toBeInTheDocument();
 
     await waitFor(() => {
       expect(panel.contains(document.activeElement)).toBe(true);

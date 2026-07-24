@@ -18,7 +18,12 @@ use function array_unique;
 use function array_values;
 use function current_time;
 use function gmdate;
+use function intdiv;
 use function is_array;
+use function is_finite;
+use function is_float;
+use function is_int;
+use function is_numeric;
 use function is_object;
 use function is_string;
 use function max;
@@ -33,6 +38,9 @@ class OutboxMaintenanceService {
 	private const DEFAULT_ACKNOWLEDGED_RETENTION_DAYS = 14;
 	private const DEFAULT_RESOLVED_CONFLICT_RETENTION_DAYS = 14;
 	private const MAX_PURGE_BATCH_ITERATIONS = 20;
+	// E15-35 Slice 2 bulk-requeue tunables (filterable, fail-safe floored at 1).
+	private const DEFAULT_BULK_RETRY_MAX_ROWS = 1000;
+	private const DEFAULT_BULK_RETRY_PACING_STRIDE_SECONDS = 60;
 
 	private OutboxQueryRepository $query_repository;
 	private SyncStateRepository $sync_state_repository;
@@ -240,8 +248,12 @@ class OutboxMaintenanceService {
 				'last_error_code' => null,
 				'last_error_message' => null,
 				'last_attempted_at' => null,
+				// E15-35: a requeued op starts a fresh retry window — stale first_failed_at
+				// would instantly re-terminate it on the next retryable failure.
+				'first_failed_at' => null,
+				'next_attempt_at' => null,
 			),
-			array( '%s', '%d', '%s', '%s', '%s' )
+			array( '%s', '%d', '%s', '%s', '%s', '%s', '%s' )
 		);
 		if ( ! $updated ) {
 			return false;
@@ -251,6 +263,111 @@ class OutboxMaintenanceService {
 		OutboxDrain::maybe_schedule_drain();
 
 		return true;
+	}
+
+	/**
+	 * Requeue every failed push for a tenant in one guarded action (E15-35 Slice 2).
+	 *
+	 * Each row is reset failed -> pending with attempts 0, cleared error fields, and a
+	 * fresh retry window (first_failed_at NULL — see retry_failed_operation). The UPDATE
+	 * is CAS-guarded per row (WHERE status = 'failed'), so a row that transitioned since
+	 * the id read matches 0 rows and bulk requeue never double-applies.
+	 *
+	 * Paced requeue (PA-05): rather than making every row due immediately, the first
+	 * drain-batch-sized chunk gets next_attempt_at NULL and each later chunk is deferred
+	 * by one further pacing stride, so a single drain cycle dispatches strictly fewer
+	 * than N rows against a possibly still-fragile backend. Slice-1 backoff then paces
+	 * subsequent retries.
+	 *
+	 * @return int|false Number of rows requeued, or false when the tenant id is invalid
+	 *                   or the database adapter is unavailable.
+	 */
+	public function retry_failed_operations_bulk( string $tenant_id ): int|false {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if (
+			'' === $normalized_tenant_id
+			|| ! isset( $wpdb )
+			|| ! is_object( $wpdb )
+			|| ! method_exists( $wpdb, 'update' )
+		) {
+			return false;
+		}
+
+		$max_rows = $this->resolve_positive_int_tunable( 'acx_outbox_bulk_retry_max_rows', self::DEFAULT_BULK_RETRY_MAX_ROWS );
+		$chunk_size = max( 1, (int) apply_filters( 'acx_outbox_drain_batch_size', OutboxDrain::DEFAULT_BATCH_SIZE ) );
+		$stride_seconds = $this->resolve_positive_int_tunable( 'acx_outbox_bulk_retry_pacing_stride_seconds', self::DEFAULT_BULK_RETRY_PACING_STRIDE_SECONDS );
+
+		$outbox_ids = $this->query_repository->find_failed_operation_ids( $normalized_tenant_id, $max_rows );
+		if ( array() === $outbox_ids ) {
+			return 0;
+		}
+
+		$now_timestamp = (int) current_time( 'timestamp' );
+		$requeued = 0;
+		foreach ( array_values( $outbox_ids ) as $index => $outbox_id ) {
+			$chunk_index = intdiv( $index, $chunk_size );
+			$next_attempt_at = 0 === $chunk_index
+				? null
+				: gmdate( 'Y-m-d H:i:s', $now_timestamp + ( $chunk_index * $stride_seconds ) );
+
+			$updated = $wpdb->update(
+				$this->table_name,
+				array(
+					'status' => OutboxStatus::PENDING,
+					'attempts' => 0,
+					'last_error_code' => null,
+					'last_error_message' => null,
+					'last_attempted_at' => null,
+					'first_failed_at' => null,
+					'next_attempt_at' => $next_attempt_at,
+				),
+				array(
+					'id' => $outbox_id,
+					'tenant_id' => $normalized_tenant_id,
+					'status' => OutboxStatus::FAILED,
+				),
+				array( '%s', '%d', '%s', '%s', '%s', '%s', '%s' ),
+				array( '%d', '%s', '%s' )
+			);
+
+			if ( is_numeric( $updated ) && (int) $updated > 0 ) {
+				++$requeued;
+			}
+		}
+
+		if ( $requeued > 0 ) {
+			$this->sync_state_repository->refresh_curation_metrics( $normalized_tenant_id );
+			OutboxDrain::maybe_schedule_drain();
+		}
+
+		return $requeued;
+	}
+
+	/**
+	 * Fail-safe tunable read (rg-008), mirroring OutboxDrain::resolve_positive_int_tunable:
+	 * a filter returning a non-finite, non-numeric, or non-positive value falls back to
+	 * the default — a bad filter can never shrink the bulk sweep or collapse the pacing
+	 * stride. Duplicated locally because the drain's validator is private to that class.
+	 */
+	private function resolve_positive_int_tunable( string $filter_name, int $default ): int {
+		$value = apply_filters( $filter_name, $default );
+
+		if ( is_int( $value ) ) {
+			return $value > 0 ? $value : $default;
+		}
+
+		if ( is_float( $value ) ) {
+			return is_finite( $value ) && $value > 0.0 ? max( 1, (int) $value ) : $default;
+		}
+
+		if ( is_string( $value ) && is_numeric( $value ) ) {
+			$numeric = (float) $value;
+			return is_finite( $numeric ) && $numeric > 0.0 ? max( 1, (int) $numeric ) : $default;
+		}
+
+		return $default;
 	}
 
 	public function discard_operation( int $outbox_id, string $tenant_id ): bool {
@@ -288,8 +405,11 @@ class OutboxMaintenanceService {
 			'expected_base_version' => max( 0, $backend_version ),
 			'last_error_code' => null,
 			'last_error_message' => null,
+			// E15-35: re-enqueue starts a fresh retry window (see retry_failed_operation).
+			'first_failed_at' => null,
+			'next_attempt_at' => null,
 		);
-		$format = array( '%s', '%d', '%d', '%s', '%s' );
+		$format = array( '%s', '%d', '%d', '%s', '%s', '%s', '%s' );
 
 		$normalized_merged_value = is_string( $merged_value ) ? trim( $merged_value ) : '';
 		if ( '' !== $normalized_merged_value ) {

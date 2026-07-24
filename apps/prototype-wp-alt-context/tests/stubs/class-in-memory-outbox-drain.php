@@ -14,6 +14,7 @@ class InMemoryOutboxDrain extends OutboxDrain
 	public bool $retryScheduled = false;
 	public int $findByIdCalls = 0;
 	public int $findByIdsCalls = 0;
+	public int $bulkRetryCalls = 0;
 
 	/**
 	 * @param array<int,array<string,mixed>> $operations
@@ -98,6 +99,33 @@ class InMemoryOutboxDrain extends OutboxDrain
 		$this->retryScheduled = true;
 
 		return true;
+	}
+
+	public function retry_failed_operations_bulk( string $tenant_id ): int|false {
+		++$this->bulkRetryCalls;
+
+		$requeued = 0;
+		foreach ( $this->operations as $outbox_id => $operation ) {
+			if (
+				(string) ( $operation['tenant_id'] ?? '' ) !== $tenant_id
+				|| 'failed' !== (string) ( $operation['status'] ?? '' )
+			) {
+				continue;
+			}
+
+			$this->operations[ $outbox_id ]['status'] = 'pending';
+			$this->operations[ $outbox_id ]['attempts'] = 0;
+			$this->operations[ $outbox_id ]['last_error_code'] = null;
+			$this->operations[ $outbox_id ]['last_error_message'] = null;
+			$this->operations[ $outbox_id ]['last_attempted_at'] = null;
+			++$requeued;
+		}
+
+		if ( $requeued > 0 ) {
+			$this->retryScheduled = true;
+		}
+
+		return $requeued;
 	}
 
 	public function discard_operation( int $outbox_id, string $tenant_id ): bool {

@@ -60,6 +60,7 @@ class DummyClusterRepository(ClusterRepository):
         cluster_id: str,
         *,
         limit: int | None = None,
+        offset: int = 0,
     ) -> list[tuple[MediaIdentity, float]]:
         raise NotImplementedError
 
@@ -232,6 +233,7 @@ async def test_get_member_identities_for_clusters_groups_by_cluster(db_session, 
             bbox_height=120,
             confidence=0.9,
             embedding=[0.1] * 512,
+            embedding_model="buffalo_l@insightface",
             pose_pitch=25.0,
             pose_yaw=-30.0,
             pose_roll=-20.0,
@@ -285,10 +287,22 @@ async def test_get_member_identities_with_similarity_can_count_and_limit(
 
     assert await repo.get_member_identity_count(cluster.id) == 3
 
-    limited = await repo.get_member_identities_with_similarity(cluster.id, limit=2)
+    all_members = await repo.get_member_identities_with_similarity(cluster.id)
+    assert len(all_members) == 3
+    ordered_ids = [str(identity.id) for identity, _similarity in all_members]
 
+    limited = await repo.get_member_identities_with_similarity(cluster.id, limit=2)
     assert len(limited) == 2
+    assert [str(identity.id) for identity, _similarity in limited] == ordered_ids[:2]
     assert {round(similarity, 2) for _identity, similarity in limited}.issubset({0.9, 0.91, 0.92})
+
+    paged = await repo.get_member_identities_with_similarity(cluster.id, limit=1, offset=1)
+    assert len(paged) == 1
+    assert str(paged[0][0].id) == ordered_ids[1]
+
+    tail = await repo.get_member_identities_with_similarity(cluster.id, limit=2, offset=2)
+    assert len(tail) == 1
+    assert str(tail[0][0].id) == ordered_ids[2]
 
 
 @pytest.mark.asyncio
@@ -354,6 +368,7 @@ async def test_get_snapshot_stamps_generation_id_and_excludes_disposed_rows(db_s
                 bbox_height=10,
                 confidence=0.9,
                 embedding=[0.1] * 512,
+                embedding_model="buffalo_l@insightface",
             ),
             MediaIdentityModel(
                 id=disposed_identity_uuid,
@@ -366,6 +381,7 @@ async def test_get_snapshot_stamps_generation_id_and_excludes_disposed_rows(db_s
                 bbox_height=10,
                 confidence=0.9,
                 embedding=[0.2] * 512,
+                embedding_model="buffalo_l@insightface",
                 disposed_at=datetime.now(tz=UTC),
             ),
         ]

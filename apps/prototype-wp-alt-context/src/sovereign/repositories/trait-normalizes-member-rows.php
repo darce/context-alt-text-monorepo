@@ -9,6 +9,7 @@ use function array_filter;
 use function array_map;
 use function array_unique;
 use function array_values;
+use function date_create_immutable;
 use function is_array;
 use function is_numeric;
 use function is_string;
@@ -34,6 +35,44 @@ trait NormalizesMemberRows {
 		}
 
 		return (string) (float) $value;
+	}
+
+	/**
+	 * Normalize recognition assigned_at (ISO-8601 or MySQL datetime) to UTC MySQL form,
+	 * PRESERVING sub-second precision (rg-005 / DATA-09 ordering fidelity). Recognition
+	 * stores assigned_at as TIMESTAMP(tz) at microsecond resolution and exports it via
+	 * isoformat(); truncating to whole seconds would collapse members assigned within the
+	 * same second onto the random identity_uuid tie-break and flip PHP order vs recognition.
+	 * Falls back to created_at, then $fallback_utc, so ORDER BY assigned_at never sees NULL.
+	 *
+	 * @param array<string,mixed> $member
+	 */
+	public function normalize_assigned_at( array $member, string $fallback_utc ): string {
+		foreach ( array( $member['assigned_at'] ?? null, $member['created_at'] ?? null ) as $candidate ) {
+			if ( ! is_string( $candidate ) ) {
+				continue;
+			}
+
+			$trimmed = trim( $candidate );
+			if ( '' === $trimmed ) {
+				continue;
+			}
+
+			// Already MySQL-shaped, with or without a fractional part (projection re-hydrate path).
+			if ( 1 === preg_match( '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d{1,6})?$/', $trimmed ) ) {
+				return $trimmed;
+			}
+
+			// Recognition export uses isoformat() (e.g. 2024-01-15T12:30:00.123456+00:00).
+			// Parse via DateTimeImmutable (NOT strtotime, which floors to whole seconds) and
+			// keep microseconds; normalize any offset to UTC.
+			$parsed = date_create_immutable( $trimmed );
+			if ( false !== $parsed ) {
+				return $parsed->setTimezone( new \DateTimeZone( 'UTC' ) )->format( 'Y-m-d H:i:s.u' );
+			}
+		}
+
+		return $fallback_utc;
 	}
 
 	/**

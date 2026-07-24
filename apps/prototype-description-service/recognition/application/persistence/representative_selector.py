@@ -22,13 +22,138 @@ import numpy as np
 
 from recognition.application.assignment.decision import AssignmentDecision
 from recognition.application.assignment.quality import compute_identity_quality as _compute_quality_info
-from recognition.application.settings.clustering import ClusteringSettings
+from recognition.application.settings.clustering import (
+    ENROLLMENT_NOOP_CEILING_OCCLUSION,
+    ENROLLMENT_NOOP_FLOOR_EMBEDDING_NORM,
+    ENROLLMENT_NOOP_FLOOR_SHARPNESS,
+    ClusteringSettings,
+    QualitySettings,
+)
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import ClusterRepository
 from recognition.domain.representative import ClusterRepresentative
 from recognition.shared.similarity import compute_face_similarity, extract_face_embedding
 
 logger = logging.getLogger(__name__)
+
+# Per-source weights for representative scoring multiplier f(·) (EMB-10 / FIR-6 S3b).
+# Declared in code; equal weights until S4 measures rebalance deltas.
+REPRESENTATIVE_MULTIPLIER_WEIGHT_SHARPNESS = 1.0 / 3.0
+REPRESENTATIVE_MULTIPLIER_WEIGHT_EMBEDDING_NORM = 1.0 / 3.0
+REPRESENTATIVE_MULTIPLIER_WEIGHT_OCCLUSION = 1.0 / 3.0
+
+
+@dataclass(frozen=True, slots=True)
+class EnrollmentFloors:
+    """Active enrollment floor/ceiling triple for quality-gated aggregation."""
+
+    floor_sharpness: float = ENROLLMENT_NOOP_FLOOR_SHARPNESS
+    floor_embedding_norm: float = ENROLLMENT_NOOP_FLOOR_EMBEDDING_NORM
+    ceiling_occlusion: float = ENROLLMENT_NOOP_CEILING_OCCLUSION
+
+    @property
+    def is_noop(self) -> bool:
+        """True when floors accept everything (dark default until S4)."""
+        return (
+            self.floor_sharpness <= ENROLLMENT_NOOP_FLOOR_SHARPNESS
+            and self.floor_embedding_norm <= ENROLLMENT_NOOP_FLOOR_EMBEDDING_NORM
+            and self.ceiling_occlusion >= ENROLLMENT_NOOP_CEILING_OCCLUSION
+        )
+
+
+def enrollment_floors_from_settings(settings: ClusteringSettings | QualitySettings) -> EnrollmentFloors:
+    """Resolve enrollment floors from ClusteringSettings.quality or QualitySettings."""
+    quality = settings.quality if isinstance(settings, ClusteringSettings) else settings
+    return EnrollmentFloors(
+        floor_sharpness=float(quality.factor_floor_sharpness),
+        floor_embedding_norm=float(quality.factor_floor_embedding_norm),
+        ceiling_occlusion=float(quality.factor_ceiling_occlusion),
+    )
+
+
+def passes_enrollment_floors(
+    identity: MediaIdentity,
+    floors: EnrollmentFloors | ClusteringSettings | QualitySettings | None = None,
+) -> bool:
+    """Return True when identity factors clear active enrollment floors (EMB-03).
+
+    ``None`` factors never fail floors (insightface / missing signals). No-op
+    floors accept everything. Active floors reject sharpness/norm below floor
+    or occlusion above ceiling when the corresponding factor is present.
+
+    Shared by ``should_add_representative`` and ``_create_and_add_representative``
+    (same predicate — no intentional path asymmetry on exclusion). Factorless
+    rows remain eligible for admission/create under active floors so insightface
+    and partial-signal observations are not silently dropped; below-floor
+    present factors are excluded from both paths. Distinct from the multiplier,
+    which returns ``f ≡ 1.0`` when any factor is ``None`` rather than treating
+    missing signals as failing floors.
+    """
+    if floors is None:
+        resolved = EnrollmentFloors()
+    elif isinstance(floors, EnrollmentFloors):
+        resolved = floors
+    else:
+        resolved = enrollment_floors_from_settings(floors)
+
+    sharpness = identity.sharpness
+    embedding_norm = identity.embedding_norm
+    occlusion_severity = identity.occlusion_severity
+    if sharpness is not None and sharpness < resolved.floor_sharpness:
+        return False
+    if embedding_norm is not None and embedding_norm < resolved.floor_embedding_norm:
+        return False
+    if occlusion_severity is not None and occlusion_severity > resolved.ceiling_occlusion:
+        return False
+    return True
+
+
+def representative_quality_multiplier(
+    *,
+    sharpness: float | None,
+    embedding_norm: float | None,
+    occlusion_severity: float | None,
+    floors: EnrollmentFloors | ClusteringSettings | QualitySettings | None = None,
+) -> float:
+    """Representative scoring multiplier f(sharpness, embedding_norm, occlusion).
+
+    GR-09 / EMB-10: ``f ≡ 1.0`` when any factor is ``None`` or floors are no-op
+    (bit-identical legacy score under insightface and pre-S4 dark defaults).
+    When floors are active and all factors present, returns a weighted blend in
+    ``[0, 1]`` of soft per-source terms (weights declared above). Soft terms
+    clamp to 0.0, so ``f`` can reach 0.0 when every weighted source bottoms out
+    (e.g. sharpness/norm at 0 and occlusion at the ceiling).
+    """
+    if floors is None:
+        resolved = EnrollmentFloors()
+    elif isinstance(floors, EnrollmentFloors):
+        resolved = floors
+    else:
+        resolved = enrollment_floors_from_settings(floors)
+
+    if sharpness is None or embedding_norm is None or occlusion_severity is None:
+        return 1.0
+    if resolved.is_noop:
+        return 1.0
+
+    # Soft terms in (0, 1]: scale sharpness/norm vs 2× floor so above-floor
+    # observations still differentiate; occlusion maps severity 0→1, ceiling→0.
+    s_ref = max(resolved.floor_sharpness * 2.0, 1e-6)
+    n_ref = max(resolved.floor_embedding_norm * 2.0, 1e-6)
+    s_term = min(1.0, max(0.0, float(sharpness) / s_ref))
+    n_term = min(1.0, max(0.0, float(embedding_norm) / n_ref))
+    if resolved.ceiling_occlusion <= 0.0:
+        o_term = 0.0 if float(occlusion_severity) > 0.0 else 1.0
+    else:
+        o_term = max(0.0, min(1.0, 1.0 - float(occlusion_severity) / resolved.ceiling_occlusion))
+
+    w_s = REPRESENTATIVE_MULTIPLIER_WEIGHT_SHARPNESS
+    w_n = REPRESENTATIVE_MULTIPLIER_WEIGHT_EMBEDDING_NORM
+    w_o = REPRESENTATIVE_MULTIPLIER_WEIGHT_OCCLUSION
+    total_w = w_s + w_n + w_o
+    if total_w <= 0.0:
+        return 1.0
+    return float((w_s * s_term + w_n * n_term + w_o * o_term) / total_w)
 
 
 def _normalize_embedding(embedding: np.ndarray) -> np.ndarray:
@@ -50,26 +175,32 @@ def _normalize_embedding(embedding: np.ndarray) -> np.ndarray:
 def _compute_identity_quality(identity: MediaIdentity, settings: ClusteringSettings) -> float:
     """Compute quality score for a media identity.
 
-    Delegates to the canonical compute_identity_quality in quality.py which
-    considers detection confidence, pose angles, and face size.
+    Base score from compute_identity_quality (confidence × size, pose-neutral,
+    FIR2-BR-03). Multiplied by representative_quality_multiplier when floors are
+    active and all S1 factors are present; otherwise f≡1.0 (dark parity).
 
     Args:
-        identity: MediaIdentity with confidence and bbox dimensions.
-        settings: Clustering settings containing quality parameters.
+        identity: MediaIdentity with confidence, bbox, and optional quality factors.
+        settings: Clustering settings containing quality parameters + enrollment floors.
 
     Returns:
         Quality score between 0.0 and 1.0.
     """
     info = _compute_quality_info(
         confidence=identity.confidence,
-        pose_pitch=identity.pose_pitch,
-        pose_yaw=identity.pose_yaw,
-        pose_roll=identity.pose_roll,
         bbox_width=identity.bbox_width,
         bbox_height=identity.bbox_height,
         settings=settings.quality,
+        occlusion_severity=identity.occlusion_severity,
     )
-    return info.score
+    floors = enrollment_floors_from_settings(settings)
+    multiplier = representative_quality_multiplier(
+        sharpness=identity.sharpness,
+        embedding_norm=identity.embedding_norm,
+        occlusion_severity=identity.occlusion_severity,
+        floors=floors,
+    )
+    return round(max(0.0, min(1.0, info.score * multiplier)), 3)
 
 
 def _select_diverse_representatives(
@@ -270,6 +401,28 @@ class RepresentativeSelector:
         # for the accepted-assignment path (Phase 3: remove duplicate reads).
         existing_reps: list[ClusterRepresentative] = list(await self._clusters.get_all_representatives(cluster_id))
         current_count = len(existing_reps)
+
+        # FIR-6 S3b: quality-gated enrollment — below active floors never enter
+        # representative/centroid updates (dark no-op floors accept everything).
+        identity = decision.candidate.identity
+        floors = enrollment_floors_from_settings(self._settings)
+        if not passes_enrollment_floors(identity, floors):
+            logger.info(
+                "[enrollment_gate] EXCLUDED cluster=%s identity=%s "
+                "sharpness=%s embedding_norm=%s occlusion_severity=%s "
+                "floors=(s>=%.3f,n>=%.3f,o<=%.3f)",
+                cluster_id,
+                identity.id,
+                identity.sharpness,
+                identity.embedding_norm,
+                identity.occlusion_severity,
+                floors.floor_sharpness,
+                floors.floor_embedding_norm,
+                floors.ceiling_occlusion,
+            )
+            return RepAdmission(
+                False, existing_reps, current_count, was_upgrade=False, was_novel_pose=False
+            )
 
         # Track which rep was removed so cached_reps reflects current DB state.
         removed_rep_id: str | None = None

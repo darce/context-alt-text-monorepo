@@ -125,10 +125,14 @@ class NullClusterRepository(ClusterRepository):
         cluster_id: str,
         *,
         limit: int | None = None,
+        offset: int = 0,
     ) -> list[tuple[MediaIdentity, float]]:
         identities = list(self._member_identities_by_cluster.get(cluster_id, []))
+        start = max(0, offset)
         if limit is not None:
-            identities = identities[:limit]
+            identities = identities[start : start + limit]
+        elif start:
+            identities = identities[start:]
         return [(identity, 0.0) for identity in identities]
 
     async def get_member_identities_for_clusters(

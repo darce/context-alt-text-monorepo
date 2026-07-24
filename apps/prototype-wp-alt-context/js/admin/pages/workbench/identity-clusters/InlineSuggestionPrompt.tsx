@@ -3,18 +3,19 @@
  *
  * Shows a compact confirmation UI directly on the identity card instead of
  * requiring users to open the dropdown to see suggestions.
+ *
+ * Presentational: the top suggestion is supplied by the caller (a single
+ * batched fetch at the list level), so this component owns no data fetching.
  */
 
 import React from 'react';
 import { __ } from '@wordpress/i18n';
-import { useQuery } from '@tanstack/react-query';
 
-import { queryKeys } from '../../../api/queryKeys';
-import { fetchIdentitySuggestions, type ClusterSuggestion } from '../../../api/recognition';
+import type { ProjectedSuggestion } from './suggestionProjection';
 
 interface InlineSuggestionPromptProps {
-  /** Identity ID to fetch suggestions for */
-  identityId: string;
+  /** Top server-ranked suggestion for this identity, or undefined when none applies */
+  match: ProjectedSuggestion | undefined;
   /** Called when user confirms the suggestion */
   onConfirm: (clusterId: string, label: string) => void;
   /** Called when user rejects the suggestion */
@@ -30,35 +31,26 @@ interface InlineSuggestionPromptProps {
  * it means the backend determined it's worth showing to the user.
  */
 export const InlineSuggestionPrompt = ({
-  identityId,
+  match,
   onConfirm,
   onReject,
   isPending,
 }: InlineSuggestionPromptProps): React.JSX.Element | null => {
-  // Fetch top suggestion for this identity
-  const { data: suggestions, isLoading } = useQuery({
-    queryKey: queryKeys.suggestions.inlineFor(identityId),
-    queryFn: () => fetchIdentitySuggestions(identityId, 1), // Only fetch top 1
-    staleTime: 60000, // Cache for 1 minute
-    enabled: Boolean(identityId),
-  });
-
-  // Get the top suggestion - backend already filtered for threshold
-  const topMatch: ClusterSuggestion | undefined = suggestions?.matches?.[0];
-  const hasSuggestion = topMatch?.label;
-
-  // Don't render if loading or no suggestion with a label
-  if (isLoading || !hasSuggestion || !topMatch) {
+  // Capture trimmed label so TS narrows string | null | undefined → string for
+  // onConfirm, and whitespace-only labels never render (defense-in-depth: the
+  // hooks already filter, but this gate must not be weaker than theirs).
+  const label = match?.label?.trim();
+  if (!match || !label) {
     return null;
   }
 
-  const matchPercent = Math.round(topMatch.similarity * 100);
+  const matchPercent = Math.round(match.similarity * 100);
 
   return (
     <div className="acx-inline-suggestion">
       <div className="acx-inline-suggestion__prompt">
         <span className="acx-inline-suggestion__question">
-          {__('Is this', 'alt-context')} <strong>{topMatch.label}</strong>?
+          {__('Is this', 'alt-context')} <strong>{label}</strong>?
         </span>
         <span className="acx-inline-suggestion__confidence">{matchPercent}%</span>
       </div>
@@ -66,7 +58,7 @@ export const InlineSuggestionPrompt = ({
         <button
           type="button"
           className="button button-primary button-small acx-inline-suggestion__yes"
-          onClick={() => onConfirm(topMatch.cluster_id, topMatch.label)}
+          onClick={() => onConfirm(match.clusterId, label)}
           disabled={isPending}
         >
           {__('Yes', 'alt-context')}

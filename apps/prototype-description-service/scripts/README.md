@@ -11,13 +11,33 @@ scripts/
 ├── reset_dev_db.sh             # Database reset
 ├── setup.sh                    # Initial environment setup
 ├── start_prototype_local.sh    # Local development server
-├── install_insightface_mac.sh  # macOS ARM64 insightface setup
+├── fetch_face_pipeline_models.py  # Fetch/verify YuNet+SFace ONNX (--verify-only)
+├── install_insightface_mac.sh  # Default: fetch face_pipeline models; --bench = insightface
 ├── generate_canonical_report.py # Canonical reporting utility
 ├── manage_api_keys.py          # Create/list/revoke tenant API keys
 ├── verify_identity_schema.py   # Assert the baseline schema footprint
 └── utilities/
     └── compare_media_embeddings.py  # Embedding similarity comparison
 ```
+
+### Face pipeline models
+
+```bash
+# Download + sha256-verify into recognition/infrastructure/face_pipeline/models/
+uv run python scripts/fetch_face_pipeline_models.py
+
+# Offline preflight (no network): exit non-zero if missing or hash-mismatched
+uv run python scripts/fetch_face_pipeline_models.py --verify-only
+
+# Wrapper (default = fetch; --bench installs insightface for bake-off / incumbent)
+./scripts/install_insightface_mac.sh
+./scripts/install_insightface_mac.sh --bench
+```
+
+The production Docker image still installs `.[bench]` (insightface) through FIR-4
+for the dark-default incumbent profile; it does **not** bake face_pipeline ONNX
+bytes. Dark-env operators who set `RECOGNITION_FACE_PIPELINE_PROFILE=face_pipeline`
+must provision models with the fetch script and re-check with `--verify-only`.
 
 ## start_prototype_local.sh
 

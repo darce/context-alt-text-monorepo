@@ -165,7 +165,15 @@ local/*-worktrees.txt
 /docs/workbay/rules
 /scripts/workbay
 /.grok/plugins/workbay-system
+/.workbay-cache
 # <<< WORKBAY_BOOTSTRAP OVERLAY IGNORE <<<
 
 # codemap MCP index artifact (local, regenerated)
 .codebase-memory/
+
+# Benchmark metrics/reports — local-only, privacy-sensitive (never in repo)
+/benchmarks/
+
+# Offload lane manifests — regenerated per task by materialize_offload_lane_manifest;
+# embed absolute local worktree paths, so machine-specific (never in repo)
+/config/lane-orchestration/

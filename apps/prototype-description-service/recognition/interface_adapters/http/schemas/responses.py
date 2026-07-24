@@ -97,23 +97,6 @@ class PoseBucketResponse(BaseModel):
     current_bucket: tuple[int, int] | None = None
 
 
-class DetectedIdentityDebugExtras(BaseModel):
-    """Debug-only fields returned when include_debug=true."""
-
-    pose: PoseResponse
-    age: float
-    gender: Literal["female", "male"]
-    det_score: float
-    bbox_area: int
-    landmark_quality: float
-    clustering_method: str | None = None
-    clustering_algorithm: str | None = None
-    similarity_threshold: float | None = None
-    match_similarity: float | None = None
-    representative_count: int | None = None
-    pose_buckets: PoseBucketResponse | None = None
-
-
 class RepresentativeResponse(BaseModel):
     """Cluster representative details."""
 
@@ -214,7 +197,12 @@ class BulkAcceptResponse(BaseModel):
 
 
 class MergeSuggestionResponse(BaseModel):
-    """Merge suggestion details."""
+    """Merge suggestion details.
+
+    After accept, ``source_cluster_id`` (retired) and ``target_cluster_id``
+    (survivor) are the authoritative ordering from ``_select_merge_target`` —
+    not a client-side guess from cluster_a/b presentation fields.
+    """
 
     id: str
     cluster_a_id: str
@@ -234,10 +222,20 @@ class MergeSuggestionResponse(BaseModel):
     confidence_score: float | None = None
     expires_at: datetime | None = None
     source_job_id: str | None = None
+    # Authoritative post-accept merge topology (source=retired, target=survivor).
+    source_cluster_id: str | None = None
+    target_cluster_id: str | None = None
 
     @field_validator("id", "cluster_a_id", "cluster_b_id")
     @classmethod
     def validate_ids(cls, v: str) -> str:
+        return _validate_uuid(v)
+
+    @field_validator("source_cluster_id", "target_cluster_id")
+    @classmethod
+    def validate_optional_merge_cluster_ids(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
         return _validate_uuid(v)
 
 
@@ -317,7 +315,7 @@ class ExportResponse(BaseModel):
 
     tenant_id: str
     exported_at: datetime
-    schema_version: int = 2
+    schema_version: int = 3
     counts: dict[str, int] = Field(default_factory=dict)
     data: dict[str, Any] = Field(default_factory=dict)
 
@@ -375,6 +373,19 @@ class IdentitySuggestionsResponse(BaseModel):
     """Response for identity suggestions endpoint (frontend-compatible format)."""
 
     matches: list[ClusterSuggestionMatch]
+
+
+class IdentityBatchSuggestionsResponse(BaseModel):
+    """Batch identity-suggestions envelope keyed by identity id (UXP-2 Slice 3a).
+
+    Distinct from the flat ``IdentitySuggestionsResponse``: matches are grouped
+    per requested identity, ranked server-side (similarity DESC, created_at DESC),
+    and bounded to ``top_k`` rows per identity by construction. Requested
+    identities with no eligible suggestion are omitted from the mapping.
+    Keys are canonicalized lowercase UUID strings as stored in the DB.
+    """
+
+    matches: dict[str, list[ClusterSuggestionMatch]]
 
 
 class ScanProgressEnvelopeResponse(BaseModel):
@@ -665,9 +676,9 @@ __all__ = [
     "ClusterSnapshotResponse",
     "ConnectionPoolStats",
     "CreateClusterForIdentityResponse",
-    "DetectedIdentityDebugExtras",
     "FaceBoxResponse",
     "HealthCheckResponse",
+    "IdentityBatchSuggestionsResponse",
     "IdentityResponse",
     "IdentitySuggestionsResponse",
     "JobProgressResponse",

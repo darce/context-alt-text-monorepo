@@ -39,6 +39,75 @@ class IdentityMembersReadRepositoryTest extends TestCase
         $this->assertStringContainsString('INNER JOIN `wp_acx_clusters` c', $sql);
     }
 
+    /**
+     * rg-005: members list order must match recognition source-of-truth
+     * (assigned_at ASC, identity_uuid). Rows sharing an identical assigned_at
+     * must page deterministically — without the PK tie-breaker, LIMIT/OFFSET
+     * can overlap or skip rows across pages. Pin both query variants.
+     */
+    public function testListForClusterOrdersWithIdentityUuidTieBreakerInBothVariants(): void
+    {
+        global $wpdb;
+
+        $this->repository->list_for_cluster('cluster-page', 2, 0, self::currentTenantId());
+        $this->repository->list_for_cluster('cluster-page', 2, 2);
+
+        $this->assertCount(2, $wpdb->queries);
+        foreach ($wpdb->queries as $sql) {
+            $this->assertStringContainsString('ORDER BY m.assigned_at ASC, m.identity_uuid LIMIT', $sql);
+        }
+    }
+
+    /**
+     * S4-05 / rg-005: the show-all preview window must rank members by the SAME
+     * key as the detail path (assigned_at ASC, identity_uuid) so the top-N card
+     * preview is a prefix of the opened cluster's first page and of recognition
+     * source-of-truth order. updated_at is projection-sync time (curation bumps it
+     * without moving assignment order), so ranking the preview by updated_at DESC
+     * showed a different, differently-ordered set than the detail list. The
+     * identity_uuid tie-breaker keeps the top-N slice deterministic when rows share
+     * an assigned_at.
+     */
+    public function testListForClusterUuidsPreviewWindowMatchesDetailOrder(): void
+    {
+        global $wpdb;
+
+        $this->repository->list_for_cluster_uuids(['cluster-a', 'cluster-b'], 3);
+
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString(
+            'ROW_NUMBER() OVER (PARTITION BY m.cluster_uuid ORDER BY m.assigned_at ASC, m.identity_uuid)',
+            $sql
+        );
+    }
+
+    public function testCountForClusterScopesToTenantWhenProvided(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '2';
+
+        $count = $this->repository->count_for_cluster('cluster-count-scoped', self::currentTenantId());
+
+        $this->assertSame(2, $count);
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('INNER JOIN `wp_acx_clusters` c ON c.cluster_uuid = m.cluster_uuid', $sql);
+        $this->assertStringContainsString('c.tenant_id =', $sql);
+        $this->assertStringContainsString("'cluster-count-scoped'", $sql);
+    }
+
+    public function testCountForClusterWithoutTenantStaysUnscoped(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '3';
+
+        $count = $this->repository->count_for_cluster('cluster-count-open');
+
+        $this->assertSame(3, $count);
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('SELECT COUNT(*) FROM `wp_acx_identity_members`', $sql);
+        $this->assertStringNotContainsString('tenant_id', $sql);
+    }
+
     public function testFindByIdentityUuidReturnsRow(): void
     {
         global $wpdb;

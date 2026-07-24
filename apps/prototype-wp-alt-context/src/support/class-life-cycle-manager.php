@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace AltContext\Support;
 
 require_once __DIR__ . '/../sovereign/sync/class-outbox-drain.php';
+require_once __DIR__ . '/../api/services/class-person-resolution-service.php';
 
+use AltContext\Api\Services\PersonResolutionService;
 use AltContext\Sovereign\Sync\OutboxDrain;
 use function defined;
 use function function_exists;
@@ -196,9 +198,10 @@ class LifecycleManager {
 			return true;
 		}
 
-		$tags        = isset( $entry['tags'] ) ? (array) $entry['tags'] : array();
-		$existing_id = $wpdb->get_var(
-			$wpdb->prepare( 'SELECT id FROM %i WHERE name = %s', $table_persons, $name )
+		$tags             = isset( $entry['tags'] ) ? (array) $entry['tags'] : array();
+		$normalized_name  = PersonResolutionService::normalize_name( $name );
+		$existing_id      = $wpdb->get_var(
+			$wpdb->prepare( 'SELECT id FROM %i WHERE normalized_name = %s', $table_persons, $normalized_name )
 		);
 
 		if ( $existing_id ) {
@@ -211,11 +214,12 @@ class LifecycleManager {
 		$inserted    = $wpdb->insert(
 			$table_persons,
 			array(
-				'person_uuid' => $person_uuid,
-				'name'        => $name,
-				'tags'        => wp_json_encode( $tags ),
-				'created_at'  => $now,
-				'updated_at'  => $now,
+				'person_uuid'     => $person_uuid,
+				'name'            => $name,
+				'normalized_name' => $normalized_name,
+				'tags'            => wp_json_encode( $tags ),
+				'created_at'      => $now,
+				'updated_at'      => $now,
 			)
 		);
 
@@ -244,15 +248,21 @@ class LifecycleManager {
 		if ( $legacy_entry_id && isset( $id_map[ $legacy_entry_id ] ) ) {
 			$final_person_id = $id_map[ $legacy_entry_id ];
 		} elseif ( $legacy_entry_id && isset( $legacy_entry_names_by_id[ $legacy_entry_id ] ) ) {
+			$legacy_name = $legacy_entry_names_by_id[ $legacy_entry_id ];
 			$existing_id = $wpdb->get_var(
-				$wpdb->prepare( 'SELECT id FROM %i WHERE name = %s', $table_persons, $legacy_entry_names_by_id[ $legacy_entry_id ] )
+				$wpdb->prepare(
+					'SELECT id FROM %i WHERE normalized_name = %s',
+					$table_persons,
+					PersonResolutionService::normalize_name( $legacy_name )
+				)
 			);
 			if ( $existing_id ) {
 				$final_person_id = (int) $existing_id;
 			}
 		} elseif ( '' !== \trim( $new_name ) ) {
-			$existing_id = $wpdb->get_var(
-				$wpdb->prepare( 'SELECT id FROM %i WHERE name = %s', $table_persons, $new_name )
+			$normalized_name = PersonResolutionService::normalize_name( $new_name );
+			$existing_id     = $wpdb->get_var(
+				$wpdb->prepare( 'SELECT id FROM %i WHERE normalized_name = %s', $table_persons, $normalized_name )
 			);
 			if ( $existing_id ) {
 				$final_person_id = (int) $existing_id;
@@ -262,11 +272,12 @@ class LifecycleManager {
 				$inserted    = $wpdb->insert(
 					$table_persons,
 					array(
-						'person_uuid' => $person_uuid,
-						'name'        => $new_name,
-						'tags'        => wp_json_encode( array() ),
-						'created_at'  => $now,
-						'updated_at'  => $now,
+						'person_uuid'     => $person_uuid,
+						'name'            => $new_name,
+						'normalized_name' => $normalized_name,
+						'tags'            => wp_json_encode( array() ),
+						'created_at'      => $now,
+						'updated_at'      => $now,
 					)
 				);
 
@@ -500,10 +511,13 @@ class LifecycleManager {
 		$topology_table  = $wpdb->prefix . 'acx_topology_commands';
 		$conflicts_table = $wpdb->prefix . 'acx_sync_conflicts';
 
+		// E21-9: uniqueness is product policy via normalized_name (utf8mb4_bin), not
+		// collation-folded idx_name. Greenfield — edit CREATE TABLE directly; no migration.
 		$persons_sql = "CREATE TABLE {$persons_table} (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 			person_uuid char(36) NOT NULL,
 			name varchar(255) NOT NULL,
+			normalized_name varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
 			tags text DEFAULT '',
 			local_revision bigint(20) unsigned NOT NULL DEFAULT 0,
 			reference_thumb_path varchar(512) DEFAULT NULL,
@@ -511,7 +525,7 @@ class LifecycleManager {
 			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			updated_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			PRIMARY KEY  (id),
-			UNIQUE KEY idx_name (name),
+			UNIQUE KEY idx_normalized_name (normalized_name),
 			UNIQUE KEY idx_person_uuid (person_uuid)
 		) {$charset_collate};";
 
@@ -542,6 +556,10 @@ class LifecycleManager {
 			KEY tenant_revision (tenant_id, local_revision)
 		) {$charset_collate};";
 
+		// rg-005 / DATA-09: assigned_at is the recognition source-of-truth membership-order
+		// key (ORDER BY assigned_at ASC, identity_uuid); datetime(6) preserves recognition's
+		// sub-second precision so same-second members keep true order. Greenfield —
+		// no migration; CREATE TABLE is authoritative after wipe-on-deploy.
 		$members_sql = "CREATE TABLE {$members_table} (
 			identity_uuid varchar(64) NOT NULL,
 			cluster_uuid varchar(64) NOT NULL,
@@ -552,6 +570,7 @@ class LifecycleManager {
 			similarity_threshold double NULL,
 			is_curated tinyint(1) NOT NULL DEFAULT 0,
 			projection_version bigint(20) unsigned NOT NULL DEFAULT 0,
+			assigned_at datetime(6) NOT NULL,
 			created_at datetime NOT NULL,
 			updated_at datetime NOT NULL,
 			PRIMARY KEY  (identity_uuid),
@@ -675,6 +694,8 @@ class LifecycleManager {
 			created_at datetime NOT NULL,
 			claimed_at datetime DEFAULT NULL,
 			last_attempted_at datetime DEFAULT NULL,
+			next_attempt_at datetime DEFAULT NULL,
+			first_failed_at datetime DEFAULT NULL,
 			acknowledged_at datetime DEFAULT NULL,
 			PRIMARY KEY  (id),
 			UNIQUE KEY uq_idempotency (idempotency_key),

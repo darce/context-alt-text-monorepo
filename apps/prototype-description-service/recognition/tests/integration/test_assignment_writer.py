@@ -66,6 +66,7 @@ def _make_media_identity_model(
         bbox_height=1,
         confidence=confidence,
         embedding=[float(x) for x in embedding.tolist()],
+        embedding_model="buffalo_l@insightface",
         created_at=datetime.now(tz=UTC),
     )
 

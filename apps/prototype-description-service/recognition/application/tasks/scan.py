@@ -86,39 +86,17 @@ async def process_scan_job_inline(
     from recognition.config import get_settings as get_recognition_settings
 
     settings = get_recognition_settings()
-    runtime_mode = settings.runtime_mode
 
+    from recognition.infrastructure.embeddings.runtime_factory import build_embedding_runtime
+
+    # Inline/HTTP path: no shared httpx client (URL-fetch opens per-image clients
+    # by design). Worker injects a process-scoped client — see E2E-08 / services.py.
     detector: FaceDetectorProtocol
     generator: EmbeddingGeneratorProtocol
-
-    if runtime_mode == "test":
-        from recognition.application.embedding.detector import StubFaceDetector
-        from recognition.application.embedding.generator import StubEmbeddingGenerator
-
-        detector = StubFaceDetector()
-        generator = StubEmbeddingGenerator()
-    else:
-        try:
-            from recognition.application.embedding.detector import InsightFaceFaceDetector
-            from recognition.application.embedding.generator import InsightFaceEmbeddingGenerator
-
-            if adapter_provider is not None:
-                adapter: InsightFaceAdapter = await adapter_provider()
-            else:
-                from recognition.infrastructure.embeddings import get_shared_insightface_adapter
-
-                adapter = await get_shared_insightface_adapter()
-
-            detector = InsightFaceFaceDetector(adapter)
-            generator = InsightFaceEmbeddingGenerator(adapter)
-        except Exception as exc:
-            from recognition.application.embedding.detector import UnavailableFaceDetector
-            from recognition.application.embedding.generator import UnavailableEmbeddingGenerator
-
-            logger.exception("InsightFace runtime unavailable; inline scan will fail closed.")
-            reason = str(exc) or exc.__class__.__name__
-            detector = UnavailableFaceDetector(reason)
-            generator = UnavailableEmbeddingGenerator(reason)
+    detector, generator = await build_embedding_runtime(
+        settings=settings,
+        adapter_provider=adapter_provider,
+    )
 
     sources_list = list(media_sources) if media_sources else (list(media_ids) if media_ids else [])
 
@@ -161,17 +139,24 @@ async def process_scan_job_inline(
                 generator=generator,
             )
 
-            return await scan_service.save_job_results(
-                job_id=uuid.UUID(str(job_id)),
-                tenant_id=str(tenant_id),
-                media_ids=media_ids or [],
-                media_sources=media_sources,
-                detections=detections,
-            )
+            try:
+                return await scan_service.save_job_results(
+                    job_id=uuid.UUID(str(job_id)),
+                    tenant_id=str(tenant_id),
+                    media_ids=media_ids or [],
+                    media_sources=media_sources,
+                    detections=detections,
+                )
+            except Exception:
+                # Explicit rollback before context exit so staged identity work
+                # cannot ride a later failure-status session (LOCAL47C-02).
+                # Do not rely on AsyncSession.__aexit__ alone.
+                await session.rollback()
+                raise
+
+    from recognition.application.scan.service import PersistIntegrityError, run_scan_three_phase
 
     try:
-        from recognition.application.scan.service import run_scan_three_phase
-
         await run_scan_three_phase(
             mark_running=mark_running_phase,
             detect=detect_phase,
@@ -183,6 +168,7 @@ async def process_scan_job_inline(
         EmbeddingTimeoutError,
         DetectionAdapterError,
         EmbeddingAdapterError,
+        PersistIntegrityError,
     ) as exc:
         async with session_factory() as session:
             tenant_uuid = uuid.UUID(str(tenant_id))

@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import type { SyncHealthResponse } from '../../../api/recognition/types/sync';
-import { SCAN_CONFLICTS_HREF, SCAN_DEAD_LETTER_HREF } from '../workbenchOverlayLinks';
+import { SCAN_CONFLICTS_HREF, SCAN_DEAD_LETTER_HREF } from '../../../navigation/appLinks';
 import { DegradedModeBannerView } from '../DegradedModeBanner';
 import { getDegradedDebtLinks, isSyncOffline, shouldShowDegradedBanner } from '../degradedModeBannerLogic';
 

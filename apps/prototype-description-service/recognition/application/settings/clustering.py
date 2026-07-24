@@ -6,6 +6,13 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+# Canonical no-op enrollment triple (FIR-6 S3b / EMB-07). Single source for
+# QualitySettings defaults, FacePipelineSettings dark defaults, EnrollmentFloors.is_noop,
+# and insightface profile-gating of factor floors.
+ENROLLMENT_NOOP_FLOOR_SHARPNESS = 0.0
+ENROLLMENT_NOOP_FLOOR_EMBEDDING_NORM = 0.0
+ENROLLMENT_NOOP_CEILING_OCCLUSION = 1.0
+
 
 class QualitySettings(BaseModel):
     """Settings for identity quality scoring.
@@ -14,12 +21,6 @@ class QualitySettings(BaseModel):
     """
 
     model_config = ConfigDict(frozen=True)
-
-    # Pose penalty settings
-    pose_penalty_divisor: float = Field(
-        default=90.0,
-        description="Total angle at which pose_penalty becomes zero.",
-    )
 
     # Size factor settings
     min_face_size: float = Field(
@@ -57,6 +58,34 @@ class QualitySettings(BaseModel):
     poor_quality_adjustment: float = Field(
         default=0.05,
         description="Threshold adjustment for poor quality faces (positive = strict).",
+    )
+
+    # FIR-6 S1 OACT channel (bridged from FacePipelineSettings via profile helper).
+    # Default 0.0 ⇒ dark no-op until S4 calibration apply-commit.
+    # ge=0: negative coefficient would *reward* occlusion (FIR6RC-01 / FIR6S1-M-02).
+    oact_coefficient: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Occlusion-adaptive coefficient for threshold_adjustment (0.0 = no-op).",
+    )
+
+    # FIR-6 S3b enrollment floors (bridged from FacePipelineSettings; no-op defaults).
+    # floors accept everything; ceiling accepts full [0, 1] until S4.
+    factor_floor_sharpness: float = Field(
+        default=ENROLLMENT_NOOP_FLOOR_SHARPNESS,
+        ge=0.0,
+        description="Enrollment sharpness floor (0.0 accepts everything until S4).",
+    )
+    factor_floor_embedding_norm: float = Field(
+        default=ENROLLMENT_NOOP_FLOOR_EMBEDDING_NORM,
+        ge=0.0,
+        description="Enrollment embedding-norm floor (0.0 accepts everything until S4).",
+    )
+    factor_ceiling_occlusion: float = Field(
+        default=ENROLLMENT_NOOP_CEILING_OCCLUSION,
+        ge=0.0,
+        le=1.0,
+        description="Enrollment occlusion ceiling (1.0 accepts full range until S4).",
     )
 
     # Scoring weights

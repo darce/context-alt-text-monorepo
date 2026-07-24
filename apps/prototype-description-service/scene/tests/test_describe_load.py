@@ -163,9 +163,7 @@ def test_run_startup_load_snapshot_writes_file_with_counts(tmp_path: Path):
     asyncio.run(body())
 
 
-def test_run_startup_load_snapshot_resolves_env_path_when_path_none(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_run_startup_load_snapshot_resolves_env_path_when_path_none(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """VLM5-S4A-BR-01: path=None uses resolve_load_path() / ACX_DESCRIBE_LOAD_PATH."""
 
     async def body():

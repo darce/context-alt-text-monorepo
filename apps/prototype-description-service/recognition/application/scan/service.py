@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from collections.abc import Awaitable, Callable, Iterable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -35,6 +37,59 @@ ObjectStoreFactory = Callable[[str], ObjectStore]
 logger = logging.getLogger(__name__)
 
 _DB_SETTINGS = get_database_settings()
+
+
+class PersistIntegrityError(ValueError):
+    """Durable terminal failure during identity persist (wrong dim / missing provenance).
+
+    Raised instead of bare ``ValueError`` so job orchestrators can catch it and
+    mark the scan job FAILED rather than leaving it stuck in RUNNING [RLSE-05][OBS-08].
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class ReconcileResult:
+    """Per-media identity reconcile counts (row recycling, not assignment/unknown).
+
+    ``matched`` counts durable **writes** of IoU-matched rows (pairs that survive
+    embedding / ``model_id`` guards), not raw IoU pair count. ``new`` is newly
+    inserted rows. Assignment/unknown metrics live in clustering (FIR-6).
+    ``detected`` is the inbound detection count; ``total`` is rows written/updated
+    (``matched + new``), preserving the pre-S4 ``process_media_item`` int semantics
+    on the normal path where every IoU match is written.
+
+    FIR23-02: ``skipped`` is inbound detections that produced no durable write
+    (typically missing embedding). ``mixed_model`` is true when existing rows and
+    new detections disagree on ``embedding_model`` (re-scan model flip visible).
+    """
+
+    detected: int
+    matched: int
+    new: int
+    skipped: int = 0
+    mixed_model: bool = False
+
+    @property
+    def total(self) -> int:
+        """Rows written/updated (historical identities_detected count)."""
+        return self.matched + self.new
+
+    def __int__(self) -> int:
+        return self.total
+
+
+@dataclass(slots=True)
+class _PendingReconcileEvent:
+    """Telemetry payload stashed until the caller's durable commit succeeds."""
+
+    media_id: int
+    tenant_id: str
+    job_id: str | None
+    result: ReconcileResult
+    detections: list[FaceDetection]
+    persist_ms: float
+    detect_ms: float
+    blob_read_ms: float | None = None
 
 
 async def run_scan_three_phase[PersistResult](
@@ -75,6 +130,11 @@ class ScanService:
         # callers (tests, scan_worker before S1.5) leave this None and
         # the URL string is passed straight to the detector unchanged.
         self._object_store_factory = object_store_factory
+        # Cached once per service instance (S4CR-06); settings load is not free.
+        self._cached_face_pipeline_profile: str | None = None
+        # Stashed by process_media_item for emit after the caller's durable commit
+        # (handler session boundary). Not used by save_job_results.
+        self._pending_reconcile_event: _PendingReconcileEvent | None = None
 
     async def analyze_media(
         self,
@@ -140,7 +200,11 @@ class ScanService:
         media_sources: Iterable[str] | None,
         detections: list[FaceDetection],
     ) -> IdentityScanJob:
-        """Persist detection results and mark job as completed."""
+        """Persist detection results and mark job as completed.
+
+        Emits ``scan_media_reconciled`` only after the batch commit succeeds
+        (S4CR-03). Detect is out of scope here — events carry ``persist_ms`` only.
+        """
         media_ids_list = list(media_ids)
         sources_list = list(media_sources) if media_sources else media_ids_list
         source_to_media_id = dict(zip(sources_list, media_ids_list, strict=False))
@@ -149,8 +213,6 @@ class ScanService:
         scan_job = await self._session.get(IdentityScanJob, job_id)
         if scan_job is None:
             raise RuntimeError(f"scan job not found: {job_id}")
-
-        [_extract_media_id(mid) for mid in media_ids_list]
 
         # Group detections by media_id to process them per image for ID recycling
         detections_by_media: dict[int, list[FaceDetection]] = {}
@@ -162,8 +224,24 @@ class ScanService:
                 detections_by_media[mid_int] = []
             detections_by_media[mid_int].append(det)
 
+        # Union media_ids_list + detection keys so zero-detection media still
+        # run orphan cleanup and emit detected=0 events (S4CR-02).
+        ordered_media: list[int] = []
+        seen_media: set[int] = set()
+        for mid in media_ids_list:
+            mid_int = _extract_media_id(mid)
+            if mid_int not in seen_media:
+                ordered_media.append(mid_int)
+                seen_media.add(mid_int)
+        for mid_int in detections_by_media:
+            if mid_int not in seen_media:
+                ordered_media.append(mid_int)
+                seen_media.add(mid_int)
+
         total_persisted = 0
-        for mid_int, dets in detections_by_media.items():
+        pending_events: list[tuple[int, ReconcileResult, list[FaceDetection], float]] = []
+        for mid_int in ordered_media:
+            dets = detections_by_media.get(mid_int, [])
             # Use specific URL if available from sources
             url = None
             for s, m_int in source_to_media_id_int.items():
@@ -171,18 +249,33 @@ class ScanService:
                     url = s
                     break
 
-            total_persisted += await self._persist_identities(
+            started = time.perf_counter()
+            result = await self._persist_identities(
                 tenant_uuid=tenant_uuid,
                 media_id=mid_int,
                 detections=dets,
                 media_url=url,
             )
+            persist_ms = (time.perf_counter() - started) * 1000.0
+            pending_events.append((mid_int, result, dets, persist_ms))
+            total_persisted += result.total
 
         scan_job.processed_media = len(media_ids_list)
         scan_job.identities_detected = total_persisted
         scan_job.status = JobStatus.COMPLETED
         scan_job.completed_at = datetime.now(tz=UTC)
         await self._session.commit()
+
+        for mid_int, result, dets, persist_ms in pending_events:
+            _emit_scan_media_reconciled(
+                media_id=mid_int,
+                tenant_id=str(tenant_uuid),
+                job_id=str(job_id),
+                result=result,
+                detections=dets,
+                persist_ms=persist_ms,
+                get_profile=self._face_pipeline_profile_cached,
+            )
         return scan_job
 
     async def process_scan_job(
@@ -219,7 +312,12 @@ class ScanService:
             EmbeddingTimeoutError,
             DetectionAdapterError,
             EmbeddingAdapterError,
+            PersistIntegrityError,
         ) as exc:
+            # Discard any staged identity/reconcile work before the FAILED
+            # status commit so partial rows never ride along (LOCAL47C-02).
+            # RUNNING is already committed and is intentionally preserved.
+            await self._session.rollback()
             await self.mark_job_failed(job_id, str(exc))
             raise
 
@@ -229,7 +327,8 @@ class ScanService:
         tenant_id: str,
         media_id: int,
         media_url: str,
-    ) -> int:
+        job_id: uuid.UUID | str | None = None,
+    ) -> ReconcileResult:
         """Process a single media item and persist detected identities.
 
         Uses 'Identity ID Recycling' to preserve existing UUIDs for the same faces,
@@ -241,19 +340,70 @@ class ScanService:
         cross-tenant URIs at open() time) and pass the bytes to the
         detector. Legacy URL transport (http://, https://) keeps passing
         the URL string unchanged.
+
+        Flush-only on this session: the worker handler owns the durable commit
+        together with queue-item status (pre-S4 / rg-002). Call
+        :meth:`emit_pending_scan_media_reconciled` only after that commit so
+        ``scan_media_reconciled`` never outruns durability (S4CR-03).
+
+        Returns:
+            ReconcileResult with detected/matched/new counts. Callers that need
+            the historical int (identities_detected = matched + new) use
+            ``.total`` or ``int(result)``.
         """
+        self._pending_reconcile_event = None
         tenant_uuid = uuid.UUID(str(tenant_id))
         detector_source: bytes | str = media_url
+        blob_read_ms: float | None = None
         if media_url.startswith("file://") and self._object_store_factory is not None:
             store = self._object_store_factory(str(tenant_id))
+            blob_started = time.perf_counter()
             with store.open(media_url) as fh:
                 detector_source = fh.read()
+            blob_read_ms = (time.perf_counter() - blob_started) * 1000.0
+        detect_started = time.perf_counter()
         detections: list[FaceDetection] = await self._detector.detect([detector_source])
-        return await self._persist_identities(
+        detect_ms = (time.perf_counter() - detect_started) * 1000.0
+        persist_started = time.perf_counter()
+        result = await self._persist_identities(
             tenant_uuid=tenant_uuid,
             media_id=media_id,
             detections=detections,
             media_url=media_url,
+        )
+        persist_ms = (time.perf_counter() - persist_started) * 1000.0
+        # Stash only — emit after the caller's durable commit (handler boundary).
+        self._pending_reconcile_event = _PendingReconcileEvent(
+            media_id=media_id,
+            tenant_id=str(tenant_uuid),
+            job_id=str(job_id) if job_id is not None else None,
+            result=result,
+            detections=detections,
+            persist_ms=persist_ms,
+            detect_ms=detect_ms,
+            blob_read_ms=blob_read_ms,
+        )
+        return result
+
+    def emit_pending_scan_media_reconciled(self) -> None:
+        """Emit the stashed ``process_media_item`` event after a durable commit.
+
+        No-op when nothing is pending (e.g. detect/persist raised before stash).
+        """
+        pending = self._pending_reconcile_event
+        if pending is None:
+            return
+        self._pending_reconcile_event = None
+        _emit_scan_media_reconciled(
+            media_id=pending.media_id,
+            tenant_id=pending.tenant_id,
+            job_id=pending.job_id,
+            result=pending.result,
+            detections=pending.detections,
+            persist_ms=pending.persist_ms,
+            detect_ms=pending.detect_ms,
+            blob_read_ms=pending.blob_read_ms,
+            get_profile=self._face_pipeline_profile_cached,
         )
 
     async def _persist_identities(
@@ -263,8 +413,12 @@ class ScanService:
         media_id: int,
         detections: list[FaceDetection],
         media_url: str | None = None,
-    ) -> int:
-        """Helper to persist detections with Identity ID Recycling."""
+    ) -> ReconcileResult:
+        """Persist detections with Identity ID Recycling; return reconcile counts.
+
+        ``matched`` / ``new`` are re-scan row recycling counts, not assignment or
+        unknown labels (those live in clustering / FIR-6).
+        """
         # 1. Fetch existing identities for this media item
         stmt = select(MediaIdentity).where(
             MediaIdentity.tenant_id == tenant_uuid,
@@ -304,25 +458,44 @@ class ScanService:
                 matched.append((old, unmatched_new.pop(best_det_idx)))
                 orphaned_old.remove(old)
 
-        # 4. Update matched identities (preserves PK/UUID)
+        expected_dim = int(_DB_SETTINGS.pgvector_dimension)
+
+        existing_models = {
+            str(row.embedding_model)
+            for row in existing_identities
+            if getattr(row, "embedding_model", None)
+        }
+        detection_models = {str(det.model_id) for det in detections if det.model_id}
+        mixed_model = bool(existing_models and detection_models and existing_models != detection_models)
+
+        # 4. Update matched identities (preserves PK/UUID); count durable writes only.
+        matched_written = 0
+        skipped = 0
         for old_row, det in matched:
             if det.embedding is None:
+                skipped += 1
                 continue
+            _assert_embedding_dimension(det, expected_dim=expected_dim)
+            if not det.model_id:
+                raise PersistIntegrityError("embedding_model provenance missing on FaceDetection")
             old_row.bbox_x = int(det.bbox[0])
             old_row.bbox_y = int(det.bbox[1])
             old_row.bbox_width = int(det.bbox[2] - det.bbox[0])
             old_row.bbox_height = int(det.bbox[3] - det.bbox[1])
             old_row.confidence = float(det.confidence)
             old_row.embedding = det.embedding.tolist()
+            old_row.embedding_model = det.model_id
             old_row.pose_pitch = det.pose_pitch
             old_row.pose_yaw = det.pose_yaw
             old_row.pose_roll = det.pose_roll
+            old_row.sharpness = det.sharpness
+            old_row.embedding_norm = det.embedding_norm
+            old_row.occlusion_severity = det.occlusion_severity
             if det.landmark_quality is not None:
                 old_row.quality_score = det.landmark_quality
-            old_row.age = det.age
-            old_row.gender = det.gender
             old_row.image_phash = det.image_phash
             old_row.updated_at = datetime.now(tz=UTC)
+            matched_written += 1
 
         # 5. Insert new detections
         new_rows = []
@@ -331,7 +504,11 @@ class ScanService:
 
         for det in unmatched_new:
             if det.embedding is None:
+                skipped += 1
                 continue
+            _assert_embedding_dimension(det, expected_dim=expected_dim)
+            if not det.model_id:
+                raise PersistIntegrityError("embedding_model provenance missing on FaceDetection")
             new_rows.append(
                 MediaIdentity(
                     tenant_id=tenant_uuid,
@@ -343,12 +520,14 @@ class ScanService:
                     bbox_height=int(det.bbox[3] - det.bbox[1]),
                     confidence=float(det.confidence),
                     embedding=det.embedding.tolist(),
+                    embedding_model=det.model_id,
                     pose_pitch=det.pose_pitch,
                     pose_yaw=det.pose_yaw,
                     pose_roll=det.pose_roll,
+                    sharpness=det.sharpness,
+                    embedding_norm=det.embedding_norm,
+                    occlusion_severity=det.occlusion_severity,
                     quality_score=det.landmark_quality,
-                    age=det.age,
-                    gender=det.gender,
                     image_phash=det.image_phash,
                 )
             )
@@ -360,7 +539,106 @@ class ScanService:
                 await self._session.delete(orphan)
 
         await self._session.flush()
-        return len(matched) + len(new_rows)
+        # matched = durable IoU-match writes (not raw IoU pair count); total =
+        # matched + new is rows written/updated (pre-S4 identities_detected).
+        return ReconcileResult(
+            detected=len(detections),
+            matched=matched_written,
+            new=len(new_rows),
+            skipped=skipped,
+            mixed_model=mixed_model,
+        )
+
+    def _face_pipeline_profile_cached(self) -> str:
+        """Return face_pipeline profile, loaded once per service instance."""
+        if self._cached_face_pipeline_profile is None:
+            self._cached_face_pipeline_profile = _face_pipeline_profile()
+        return self._cached_face_pipeline_profile
+
+
+def _assert_embedding_dimension(det: FaceDetection, *, expected_dim: int) -> None:
+    """Fail closed when a detection embedding does not match pgvector width ([EMB-01])."""
+    if det.embedding is None:
+        return
+    actual = len(det.embedding)
+    if actual != expected_dim:
+        raise PersistIntegrityError(
+            f"embedding length {actual} != pgvector_dimension {expected_dim}"
+        )
+
+
+def _face_pipeline_profile() -> str:
+    from recognition.config import get_settings
+
+    return str(get_settings().face_pipeline.profile)
+
+
+def _embedding_model_from_detections(detections: list[FaceDetection]) -> str | None:
+    for det in detections:
+        if det.model_id:
+            return det.model_id
+    return None
+
+
+def _emit_scan_media_reconciled(
+    *,
+    media_id: int,
+    tenant_id: str,
+    job_id: str | None,
+    result: ReconcileResult,
+    detections: list[FaceDetection],
+    persist_ms: float,
+    detect_ms: float | None = None,
+    blob_read_ms: float | None = None,
+    get_profile: Callable[[], str] | None = None,
+) -> None:
+    """Emit one wide structured log event per successfully reconciled media ([OBS-01..03]).
+
+    **Absence-means-failure contract (S4CR-05):** this event is success-only and
+    is emitted only after a durable commit. Detect/persist exceptions, batch
+    rollback, or pre-commit failure produce **no** ``scan_media_reconciled``
+    event for that media (or for earlier media in a failed ``save_job_results``
+    batch). Callers must not emit on the exception path.
+
+    ``matched`` is durable match-writes; ``new`` is inserts — not assignment/unknown.
+    Timing fields are scope-honest: ``persist_ms`` always; ``detect_ms`` only when
+    detect ran in the same call stack (worker ``process_media_item``); ``blob_read_ms``
+    only when an ObjectStore ``file://`` blob was read (E2E-09). HTTP/inline
+    ``save_job_results`` omits ``detect_ms`` / ``blob_read_ms`` (out of scope).
+
+    Telemetry failures are swallowed so logging can never fail the scan (S4CR-06).
+    """
+    try:
+        # Late import: correlation middleware lives under interface_adapters.http and
+        # importing it at module load would cycle through deps.services → ScanService.
+        from recognition.interface_adapters.http.middleware.correlation import get_correlation_id
+
+        profile = get_profile() if get_profile is not None else _face_pipeline_profile()
+        detection_models = sorted({str(det.model_id) for det in detections if det.model_id})
+        extra: dict[str, object] = {
+            "event": "scan_media_reconciled",
+            "media_id": media_id,
+            "tenant_id": tenant_id,
+            "job_id": job_id,
+            "correlation_id": get_correlation_id(),
+            "detected": result.detected,
+            "matched": result.matched,
+            "new": result.new,
+            # FIR23-02: honest skip count + mixed-model surfacing (always present).
+            "skipped": result.skipped,
+            "mixed_model": result.mixed_model,
+            "embedding_model": _embedding_model_from_detections(detections),
+            "embedding_models": detection_models,
+            "profile": profile,
+            "persist_ms": round(persist_ms, 3),
+        }
+        if detect_ms is not None:
+            extra["detect_ms"] = round(detect_ms, 3)
+        if blob_read_ms is not None:
+            extra["blob_read_ms"] = round(blob_read_ms, 3)
+        logger.info("scan_media_reconciled", extra=extra)
+    except Exception:
+        logger.exception("scan_media_reconciled emission failed")
 
 
 def _extract_media_id(value: str) -> int:
@@ -394,4 +672,4 @@ def _compute_iou(bbox1: tuple[float, float, float, float], bbox2: tuple[float, f
     return intersection_area / union_area
 
 
-__all__ = ["ScanService", "run_scan_three_phase"]
+__all__ = ["PersistIntegrityError", "ReconcileResult", "ScanService", "run_scan_three_phase"]

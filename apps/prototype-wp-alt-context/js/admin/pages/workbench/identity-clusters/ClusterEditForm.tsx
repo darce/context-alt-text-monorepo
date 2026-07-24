@@ -6,9 +6,51 @@ import React, { useEffect, useRef } from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
 import type { ComboboxOption } from '../../../../components/ui/combobox';
+import { NAMING_GROUP_SUGGESTED, parseNamingOptionValue, unwrapClusterOptionId } from './buildNamingOptions';
 
 /** Similarity at-or-above this threshold uses the high match-score band. */
 const MATCH_BAND_HIGH_THRESHOLD = 0.7;
+
+const sourceBadgeLabel = (option: ComboboxOption): string | null => {
+  const source =
+    option.source === 'person' || option.source === 'cluster'
+      ? option.source
+      : parseNamingOptionValue(String(option.value))?.source;
+  if (source === 'person') {
+    return __('Person', 'alt-context');
+  }
+  // Include source on Suggested and All Labels cluster rows (A11Y-04 / FIX-7).
+  if (source === 'cluster') {
+    return __('Cluster', 'alt-context');
+  }
+  return null;
+};
+
+/** Max overlay rows; Suggested budget first so persons/All Labels are not starved (FIX-6). */
+export const OVERLAY_OPTIONS_LIMIT = 5;
+export const OVERLAY_SUGGESTED_BUDGET = 3;
+
+/**
+ * Budget overlay rows: up to OVERLAY_SUGGESTED_BUDGET Suggested, remainder from union, total ≤ limit.
+ */
+export const budgetOverlayOptions = (
+  options: readonly ComboboxOption[],
+  limit = OVERLAY_OPTIONS_LIMIT,
+  suggestedBudget = OVERLAY_SUGGESTED_BUDGET,
+): ComboboxOption[] => {
+  const suggested: ComboboxOption[] = [];
+  const union: ComboboxOption[] = [];
+  for (const option of options) {
+    if (option.group === NAMING_GROUP_SUGGESTED) {
+      suggested.push(option);
+    } else {
+      union.push(option);
+    }
+  }
+  const suggestedSlice = suggested.slice(0, suggestedBudget);
+  const remainder = Math.max(0, limit - suggestedSlice.length);
+  return [...suggestedSlice, ...union.slice(0, remainder)];
+};
 
 interface ClusterEditFormProps {
   /** Current label input value */
@@ -25,6 +67,11 @@ interface ClusterEditFormProps {
   saveLabel?: string;
   /** Called when save button is clicked */
   onSave: (labelOverride?: string) => void;
+  /**
+   * Explicit person-source confirm path — rename/create only; never merge (PR-16 / FIX-1).
+   * When provided, person-row confirm uses this instead of onSave.
+   */
+  onPersonSelect?: (label: string) => void;
   /** Called when a suggestion is confirmed */
   onConfirmSuggestion?: (clusterId: string, label: string) => void;
   /** Called when cancel button is clicked */
@@ -40,13 +87,16 @@ export const ClusterEditForm = ({
   labelInput,
   onLabelChange,
   options,
+  isLoading,
   isPending,
   saveLabel,
   onSave,
+  onPersonSelect,
   onConfirmSuggestion,
   onCancel,
   onRejectSuggestion,
 }: ClusterEditFormProps): React.JSX.Element => {
+  void isLoading;
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Autofocus on mount
@@ -64,10 +114,23 @@ export const ClusterEditForm = ({
     }
   };
 
-  // Display up to 5 options from the hook (which already handles search/filtering)
-  const displayedOptions = options.slice(0, 5);
+  // Per-group budget so Suggested rows cannot starve persons / All Labels (FIX-6).
+  const displayedOptions = React.useMemo(() => budgetOverlayOptions(options), [options]);
 
   const saveButtonLabel = saveLabel ?? (isPending ? __('Saving…', 'alt-context') : __('Save', 'alt-context'));
+
+  // Live-region status (A11Y-21): announce save progress/success at the field (PERC-05 fovea).
+  // saveLabel carries "Saving…" / "Saved!" from the parent save-status pipeline.
+  const resultCountAnnouncement = React.useMemo(() => {
+    if (isPending) {
+      return saveButtonLabel;
+    }
+    return sprintf(
+      /* translators: %d: number of naming suggestions shown */
+      __('%d naming options', 'alt-context'),
+      displayedOptions.length,
+    );
+  }, [displayedOptions.length, isPending, saveButtonLabel]);
 
   const handleSuggestionSelect = React.useCallback(
     (label: string) => () => {
@@ -79,13 +142,25 @@ export const ClusterEditForm = ({
   const handleConfirmSuggestionClick = React.useCallback(
     (option: ComboboxOption) => (event: React.MouseEvent<HTMLButtonElement>) => {
       event.stopPropagation();
-      if (onConfirmSuggestion) {
-        onConfirmSuggestion(option.value, option.label);
+      const parsed = parseNamingOptionValue(String(option.value));
+      // Person selection uses the dedicated person path — never merge/assign (PR-16 / FIX-1).
+      if (parsed?.source === 'person' || option.source === 'person') {
+        if (onPersonSelect) {
+          onPersonSelect(option.label);
+        } else {
+          onSave(option.label);
+        }
+        return;
+      }
+      // Namespaced cluster: values only (no bare-id fallback — FIX-10).
+      const clusterId = unwrapClusterOptionId(String(option.value));
+      if (onConfirmSuggestion && clusterId) {
+        onConfirmSuggestion(clusterId, option.label);
       } else {
         onSave(option.label);
       }
     },
-    [onConfirmSuggestion, onSave],
+    [onConfirmSuggestion, onPersonSelect, onSave],
   );
 
   const handleRejectSuggestionClick = React.useCallback(
@@ -125,8 +200,23 @@ export const ClusterEditForm = ({
                   className="acx-identity-cluster__suggestion-item"
                   onClick={handleSuggestionSelect(option.label)}
                   title={sprintf(__('Use label "%s"', 'alt-context'), option.label)}
+                  aria-label={
+                    sourceBadgeLabel(option)
+                      ? sprintf(
+                          /* translators: 1: person/cluster name, 2: source (Person or Cluster) */
+                          __('%1$s (%2$s)', 'alt-context'),
+                          option.label,
+                          sourceBadgeLabel(option) ?? '',
+                        )
+                      : option.label
+                  }
                 >
                   <span className="acx-identity-cluster__suggestion-label">{option.label}</span>
+                  {sourceBadgeLabel(option) && (
+                    <span className="acx-badge acx-badge--source" data-source={option.source ?? ''}>
+                      {sourceBadgeLabel(option)}
+                    </span>
+                  )}
                   {option.similarity !== undefined && (
                     <span
                       className={`acx-identity-cluster__match-score ${
@@ -171,6 +261,10 @@ export const ClusterEditForm = ({
           </div>
         )}
       </div>
+
+      <p className="acx-identity-cluster__result-count" role="status" aria-live="polite">
+        {resultCountAnnouncement}
+      </p>
 
       <div className="acx-identity-cluster__edit-actions">
         <button

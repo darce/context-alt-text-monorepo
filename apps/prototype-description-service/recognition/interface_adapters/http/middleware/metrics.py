@@ -14,6 +14,11 @@ import time
 
 from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram
 
+from recognition.observability.face_pipeline_metrics import (
+    FACE_PIPELINE_SUBMIT_WAIT_BUCKETS,
+    FacePipelineMetrics,
+)
+
 try:
     from starlette.types import ASGIApp, Message, Receive, Scope, Send
 except ImportError:  # pragma: no cover - starlette is a FastAPI dep
@@ -98,6 +103,14 @@ class MetricsRegistry:
             buckets=DEFAULT_BUCKETS,
             registry=self.registry,
         )
+        # FINALB-06: compose neutral FacePipelineMetrics on the same registry so
+        # API /metrics continues to expose face_pipeline series without the
+        # infrastructure adapter importing this HTTP module.
+        self.face_pipeline = FacePipelineMetrics(registry=self.registry)
+        self.face_pipeline_submit_wait_seconds = self.face_pipeline.face_pipeline_submit_wait_seconds
+        self.face_pipeline_admission_timeouts_total = (
+            self.face_pipeline.face_pipeline_admission_timeouts_total
+        )
 
 
 _default: MetricsRegistry | None = None
@@ -162,6 +175,8 @@ class MetricsMiddleware:
 __all__ = [
     "CLUSTERING_ADMISSION_BUCKETS_MS",
     "DEFAULT_BUCKETS",
+    "FACE_PIPELINE_SUBMIT_WAIT_BUCKETS",
+    "FacePipelineMetrics",
     "MetricsMiddleware",
     "MetricsRegistry",
     "get_default_metrics",

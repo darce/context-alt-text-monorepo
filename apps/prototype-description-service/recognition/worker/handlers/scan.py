@@ -13,9 +13,15 @@ from db.models import IdentityClusteringJob
 from db.tenant_context import enable_rls_bypass
 from recognition.application.embedding.detector import FaceDetectorProtocol
 from recognition.application.embedding.generator import EmbeddingGeneratorProtocol
+from recognition.application.scan.capability import ScanWorkerCounters
 from recognition.application.scan.queue_repository import ScanQueueItem
 from recognition.application.scan.scan_queue_service import ScanQueueService
-from recognition.application.scan.service import ObjectStoreFactory, ScanService
+from recognition.application.scan.service import (
+    ObjectStoreFactory,
+    PersistIntegrityError,
+    ReconcileResult,
+    ScanService,
+)
 from recognition.application.storage import ObjectStoreError
 from recognition.domain.job import JobStatus
 from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
@@ -39,6 +45,7 @@ class ScanItemHandler:
         max_attempts: int,
         max_concurrency: int,
         object_store_factory: ObjectStoreFactory | None = None,
+        counters: ScanWorkerCounters | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._detector = detector
@@ -51,6 +58,7 @@ class ScanItemHandler:
         # in _refresh_job_progress also goes through this factory once a
         # job completes.
         self._object_store_factory = object_store_factory
+        self._counters = counters
 
     async def process_items(self, *, claimed: list[ScanQueueItem]) -> None:
         if not claimed:
@@ -73,7 +81,6 @@ class ScanItemHandler:
                 await enable_rls_bypass(session)
                 repo = SqlAlchemyScanQueueRepository(session)
                 scan_service = self._build_scan_service(session)
-                now = datetime.now(tz=UTC)
                 logger.info(
                     "[worker] START scan_item request_id=%s job_id=%s item_id=%s media_id=%s",
                     request_id,
@@ -82,17 +89,42 @@ class ScanItemHandler:
                     item.media_id,
                 )
                 try:
-                    identities_detected = await scan_service.process_media_item(
+                    # process_media_item is flush-only (pre-S4); this session
+                    # commits identity rows + queue-item status together, then
+                    # emits scan_media_reconciled and bumps counters only after
+                    # the durable commit gate (S4CR-03, rg-002, E2E-01).
+                    reconcile = await scan_service.process_media_item(
                         tenant_id=str(item.tenant_id),
                         media_id=item.media_id,
                         media_url=item.media_url,
+                        job_id=item.job_id,
                     )
+                    # Capture completion time after work so completed_at reflects
+                    # end-of-processing (not claim/start).
+                    completed_at = datetime.now(tz=UTC)
+                    identities_detected = _identities_detected_count(reconcile)
                     await repo.mark_item_completed(
                         item_id=item.id,
-                        completed_at=now,
+                        completed_at=completed_at,
                         identities_detected=identities_detected,
                     )
                     await session.commit()
+                    if self._counters is not None:
+                        if isinstance(reconcile, ReconcileResult):
+                            self._counters.record(
+                                detected=reconcile.detected,
+                                matched=reconcile.matched,
+                                new=reconcile.new,
+                                skipped=reconcile.skipped,
+                                mixed_model=reconcile.mixed_model,
+                            )
+                        else:
+                            self._counters.record(
+                                detected=identities_detected,
+                                matched=0,
+                                new=0,
+                            )
+                    scan_service.emit_pending_scan_media_reconciled()
                     logger.info(
                         "[worker] COMPLETE scan_item request_id=%s job_id=%s item_id=%s identities=%s",
                         request_id,
@@ -100,13 +132,25 @@ class ScanItemHandler:
                         item.id,
                         identities_detected,
                     )
-                except Exception as exc:  # pragma: no cover
+                except Exception as exc:
                     error_message = str(exc)
+                    # Drop staged identity work before any failure-status write
+                    # so FAILED/retry commits only queue state (LOCAL47C-03).
+                    await session.rollback()
+                    # SET LOCAL bypass dies with the rolled-back txn; restore
+                    # before status writes so FORCE RLS still updates the row
+                    # (FIR-FINAL2-LOCAL-01).
+                    await enable_rls_bypass(session)
+                    # Anchor retry backoff / failed completed_at at failure time,
+                    # not processing-start, so slow failures (e.g. embedding
+                    # timeout) still get a full not-before delay (R2-04 / RES-06).
+                    failure_now = datetime.now(tz=UTC)
                     await self._handle_item_failure(
                         repo=repo,
                         item=item,
-                        now=now,
+                        now=failure_now,
                         error_message=error_message,
+                        exc=exc,
                     )
                     await session.commit()
                     logger.exception(
@@ -184,11 +228,19 @@ class ScanItemHandler:
         item: ScanQueueItem,
         now: datetime,
         error_message: str,
+        exc: BaseException | None = None,
     ) -> None:
-        if item.attempts < self._max_attempts:
-            await repo.release_item_for_retry(item_id=item.id, error_message=error_message)
+        # Deterministic persistence failures never succeed on retry: fail the
+        # item immediately regardless of remaining attempts (LOCAL47C-03).
+        if isinstance(exc, PersistIntegrityError) or item.attempts >= self._max_attempts:
+            await repo.mark_item_failed(item_id=item.id, completed_at=now, error_message=error_message)
             return
-        await repo.mark_item_failed(item_id=item.id, completed_at=now, error_message=error_message)
+        await repo.release_item_for_retry(
+            item_id=item.id,
+            error_message=error_message,
+            attempts=item.attempts,
+            now=now,
+        )
 
     def _build_scan_service(self, session: AsyncSession) -> ScanService:
         """Create a ScanService bound to the provided session."""
@@ -198,3 +250,10 @@ class ScanItemHandler:
             generator=self._generator,
             object_store_factory=self._object_store_factory,
         )
+
+
+def _identities_detected_count(result: ReconcileResult | int) -> int:
+    """Preserve pre-S4 int contract: matched + new (or plain int from mocks)."""
+    if isinstance(result, ReconcileResult):
+        return result.total
+    return int(result)

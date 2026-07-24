@@ -73,8 +73,6 @@ class AttachmentXmpMetricsPersistorTest extends TestCase
                             ],
                             'det_score' => 0.94,
                             'landmark_quality' => 0.87,
-                            'age' => 41,
-                            'gender' => 'male',
                         ],
                     ],
                 ];

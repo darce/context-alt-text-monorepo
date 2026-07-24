@@ -31,7 +31,7 @@ describe('ConfirmPanel', () => {
       />,
     );
 
-    const button = screen.getByRole('button', { name: 'Open clusters in roster' });
+    const button = screen.getByRole('button', { name: 'Open roster' });
     expect(button).toBeDisabled();
   });
 
@@ -48,7 +48,7 @@ describe('ConfirmPanel', () => {
       />,
     );
 
-    const button = screen.getByRole('button', { name: 'Open clusters in roster' });
+    const button = screen.getByRole('button', { name: 'Open roster' });
     await userEvent.click(button);
     expect(viewClusters).toHaveBeenCalled();
   });
@@ -105,7 +105,7 @@ describe('Workbench follow-up coverage', () => {
     expect(screen.getByText('Synced')).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Cluster the latest job results' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Open clusters in roster' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Open roster' }));
 
     expect(onCluster).toHaveBeenCalledTimes(1);
     expect(onViewClusters).toHaveBeenCalledTimes(1);

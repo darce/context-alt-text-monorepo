@@ -1,6 +1,8 @@
 import React from 'react';
 import { __ } from '@wordpress/i18n';
 
+import { toDescriptionHistoryRun } from '../../navigation/appLinks';
+
 interface BulkDescribeReviewLinkProps {
   runId: string | null;
   isTerminal: boolean;
@@ -25,7 +27,7 @@ export const BulkDescribeReviewLink = ({
   return (
     <a
       className="acx-media-selection__bulk-describe-review button button-primary"
-      href={`#/description-history?run=${encodeURIComponent(runId)}`}
+      href={toDescriptionHistoryRun(runId)}
     >
       {__('Review & apply drafts', 'alt-context')}
     </a>

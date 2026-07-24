@@ -4,6 +4,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { UseMutationResult, UseQueryResult } from '@tanstack/react-query';
 import type { RetentionStatusResponse, SyncStatusResponse, SyncTriggerResponse } from '../../../api/recognition';
 import { createMockQuery } from '../../../test-utils/mockHooks';
+import { SYNC_VOCABULARY } from '../syncVocabulary';
 
 const buildSyncStatus = (overrides: Partial<SyncStatusResponse> = {}): SyncStatusResponse => ({
   last_snapshot_version: 0,
@@ -197,7 +198,7 @@ describe('SyncStatusIndicator', () => {
     );
   });
 
-  it('renders delta sync mode when provided', () => {
+  it('does not render the internal sync-mode badge (delta/full are payload-only)', () => {
     mockReturn.data = buildSyncStatus({
       last_snapshot_version: 5,
       last_synced_at: '2026-02-14 12:00:00',
@@ -206,19 +207,29 @@ describe('SyncStatusIndicator', () => {
 
     render(<SyncStatusIndicator />);
 
-    expect(screen.getByText('Delta sync')).toBeInTheDocument();
+    expect(screen.queryByText('Delta sync')).not.toBeInTheDocument();
+    expect(screen.queryByText('Full sync')).not.toBeInTheDocument();
   });
 
-  it('renders full sync mode when provided', () => {
+  it('renders pending-work counts without banned ops dialect when topology and delta mode are present', () => {
     mockReturn.data = buildSyncStatus({
-      last_snapshot_version: 5,
-      last_synced_at: '2026-02-14 12:00:00',
-      sync_mode: 'full',
+      sync_health: 'queued',
+      sync_mode: 'delta',
+      topology_commands: {
+        pending: 2,
+        applied: 1,
+        failed: 1,
+        conflict: 1,
+        last_reconciled_at: null,
+      },
     });
 
-    render(<SyncStatusIndicator />);
+    const { container } = render(<SyncStatusIndicator />);
+    const text = container.textContent ?? '';
 
-    expect(screen.getByText('Full sync')).toBeInTheDocument();
+    expect(text).not.toMatch(/Delta sync|Machine sync|Machine state|Sync backlog/i);
+    expect(screen.getByText('2 waiting, 1 synced, 1 failed, 1 need review')).toBeInTheDocument();
+    expect(screen.getByText('Waiting to sync')).toBeInTheDocument();
   });
 
   it('shows the purge-on-demand retention badge label when configured', () => {
@@ -279,8 +290,10 @@ describe('SyncStatusIndicator', () => {
 
     render(<SyncStatusIndicator />);
 
-    expect(screen.getByText('Local changes are waiting to sync.')).toBeInTheDocument();
-    expect(screen.getByText('Queued')).toBeInTheDocument();
+    expect(
+      screen.getByText('Your changes are saved here and will sync when the service is available.'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Waiting to sync')).toBeInTheDocument();
   });
 
   it('renders failures state with failed-ops affordance', () => {
@@ -311,10 +324,34 @@ describe('SyncStatusIndicator', () => {
 
     const { container } = render(<SyncStatusIndicator />);
 
-    expect(screen.getByText('Waiting for service…')).toBeInTheDocument();
+    expect(
+      screen.getByText('Recognition service unreachable — showing your local copy.'),
+    ).toBeInTheDocument();
     expect(screen.getByText('Offline')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
     expect(container.firstChild).toHaveClass('acx-sync-status--warning');
+  });
+
+  it('announces the offline transition through the role=status sync-status strip (§7 announce channel, Slice-8 / BR-77)', () => {
+    // The §7 offline matrix routes the offline announcement through the EXISTING
+    // sync-status live region — the CTAs only carry a static aria-describedby reason
+    // and must not add a duplicate live region. This asserts that channel is present.
+    mockReturn.data = buildSyncStatus({
+      sync_health: 'offline',
+      is_stale: false,
+      last_sync_result: 'unreachable',
+    });
+
+    render(<SyncStatusIndicator />);
+
+    const strip = screen.getByTestId('acx-sync-status-strip');
+    expect(strip).toHaveAttribute('role', 'status');
+    expect(strip).toHaveAttribute('aria-live', 'polite');
+    // The offline reason is surfaced inside that one live region.
+    expect(strip).toHaveTextContent('Recognition service unreachable — showing your local copy.');
+    expect(strip).toHaveTextContent('Offline');
+    // Exactly one status live region — no duplicate channel introduced by Slice-8.
+    expect(document.querySelectorAll('[data-testid="acx-sync-status-strip"]')).toHaveLength(1);
   });
 
   it('overrides healthy sync-status when sync-health envelope reports offline', () => {
@@ -334,7 +371,9 @@ describe('SyncStatusIndicator', () => {
 
     const { container } = render(<SyncStatusIndicator />);
 
-    expect(screen.getByText('Waiting for service…')).toBeInTheDocument();
+    expect(
+      screen.getByText('Recognition service unreachable — showing your local copy.'),
+    ).toBeInTheDocument();
     expect(screen.getByText('Offline')).toBeInTheDocument();
     expect(container.firstChild).toHaveClass('acx-sync-status--warning');
     expect(container.querySelector('.acx-sync-status__badge--ok')).not.toBeInTheDocument();
@@ -393,24 +432,28 @@ describe('SyncStatusIndicator', () => {
     expect(screen.getByText('Fresh')).toBeInTheDocument();
   });
 
-  it('renders waiting-for-service state when sync was attempted but failed', () => {
+  it('renders offline recovery state when sync was attempted but failed', () => {
     mockReturn.data = buildSyncStatus({ is_stale: true, sync_health: 'offline', last_sync_result: 'unreachable' });
     (mockTrigger as Record<string, unknown>).isSuccess = true;
     (mockTrigger as Record<string, unknown>).data = buildSyncTriggerResponse();
 
     render(<SyncStatusIndicator />);
 
-    expect(screen.getByText('Waiting for service…')).toBeInTheDocument();
+    expect(
+      screen.getByText('Recognition service unreachable — showing your local copy.'),
+    ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
   });
 
-  it('renders waiting-for-service state on trigger error', () => {
+  it('renders offline recovery state on trigger error', () => {
     mockReturn.data = buildSyncStatus({ is_stale: true, sync_health: 'offline', last_sync_result: 'unreachable' });
     (mockTrigger as Record<string, unknown>).isError = true;
 
     render(<SyncStatusIndicator />);
 
-    expect(screen.getByText('Waiting for service…')).toBeInTheDocument();
+    expect(
+      screen.getByText('Recognition service unreachable — showing your local copy.'),
+    ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
   });
 
@@ -510,7 +553,7 @@ describe('SyncStatusIndicator', () => {
     expect(screen.getByText(/Last failure:/)).toBeInTheDocument();
   });
 
-  it('renders sync backlog details when present', () => {
+  it('renders pending-work details when topology counts are present', () => {
     mockReturn.data = buildSyncStatus({
       sync_health: 'queued',
       topology_commands: {
@@ -524,7 +567,8 @@ describe('SyncStatusIndicator', () => {
 
     render(<SyncStatusIndicator />);
 
-    expect(screen.getByText('Sync backlog: pending 2, applied 5, failed 1, conflicts 3')).toBeInTheDocument();
+    expect(screen.getByText('2 waiting, 5 synced, 1 failed, 3 need review')).toBeInTheDocument();
+    expect(screen.queryByText(/Sync backlog/i)).not.toBeInTheDocument();
   });
 
   it('renders projecting sync progress ahead of the generic stale indicator', () => {
@@ -569,12 +613,13 @@ describe('SyncStatusIndicator', () => {
       <SyncStatusIndicator
         pipelinePhase="projecting"
         projectionState="error"
-        projectionError="Waiting for service…"
+        projectionError={SYNC_VOCABULARY.resultsErrorHeadline}
         onRetryProjection={retryProjection}
       />,
     );
 
-    expect(screen.getByText('Waiting for service…')).toBeInTheDocument();
+    expect(screen.getByText(SYNC_VOCABULARY.resultsErrorHeadline)).toBeInTheDocument();
+    expect(screen.queryByText('Waiting for service…')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry sync' }));
     expect(retryProjection).toHaveBeenCalledTimes(1);
   });
@@ -592,12 +637,13 @@ describe('SyncStatusIndicator', () => {
       <SyncStatusIndicator
         pipelinePhase="idle"
         projectionState="error"
-        projectionError="Waiting for service…"
+        projectionError={SYNC_VOCABULARY.resultsErrorHeadline}
         onRetryProjection={retryProjection}
       />,
     );
 
-    expect(screen.getByText('Waiting for service…')).toBeInTheDocument();
+    expect(screen.getByText(SYNC_VOCABULARY.resultsErrorHeadline)).toBeInTheDocument();
+    expect(screen.queryByText('Waiting for service…')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry sync' }));
     expect(retryProjection).toHaveBeenCalledTimes(1);
   });

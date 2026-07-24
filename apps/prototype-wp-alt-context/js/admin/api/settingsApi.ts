@@ -19,8 +19,19 @@ export interface SettingsResponse {
   tenant_id: string;
   tenant_id_source: 'constant' | 'option' | 'filter' | 'default' | 'derived';
   tenant_paired: boolean;
+  // ALTQ-1: where describe writes land — mirrors the PHP AltStyle constants
+  // (class-alt-style.php) bit-for-bit; invalid stored values are normalized
+  // to 'alt_only' server-side before reaching this payload.
+  alt_style: AltStyleValue;
   description_budget: DescriptionBudget;
 }
+
+export const AltStyle = {
+  ALT_ONLY: 'alt_only',
+  ALT_PLUS_DESCRIPTION: 'alt_plus_description',
+} as const;
+
+export type AltStyleValue = (typeof AltStyle)[keyof typeof AltStyle];
 
 export interface DescriptionBudgetUsage {
   attempts: number;
@@ -53,6 +64,7 @@ export type RecognitionSourceValue = (typeof RecognitionSource)[keyof typeof Rec
 export interface SaveSettingsPayload {
   url?: string;
   api_key?: string;
+  alt_style?: AltStyleValue;
   description_budget?: {
     max_attempts: number;
   };

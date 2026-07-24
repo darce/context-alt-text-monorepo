@@ -68,8 +68,8 @@ class ClustersReadRepository {
 				'SELECT COUNT(*) OVER() AS total_count, c.*, COALESCE(p.name, c.label) as label 
 				 FROM %%i c 
 				 LEFT JOIN %%i p ON c.person_id = p.id
-				 WHERE %s 
-				 ORDER BY c.updated_at DESC 
+				 WHERE %s
+				 ORDER BY c.updated_at DESC, c.cluster_uuid ASC
 				 LIMIT %%d OFFSET %%d',
 				implode( ' AND ', $conditions )
 			),
@@ -215,7 +215,7 @@ class ClustersReadRepository {
 					AND (c.label IS NULL OR c.label = '' OR c.label LIKE 'cluster-%%')
 					AND c.identity_count >= 2
 					AND (c.curation_state IS NULL OR c.curation_state <> 'dismissed')
-				ORDER BY c.identity_count DESC, c.updated_at DESC
+				ORDER BY c.identity_count DESC, c.updated_at DESC, c.cluster_uuid ASC
 				LIMIT %d",
 				array(
 					$this->table_name,

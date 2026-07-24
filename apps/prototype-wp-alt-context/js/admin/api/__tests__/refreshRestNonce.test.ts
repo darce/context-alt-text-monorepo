@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   getNonce,
+  NONCE_REFRESH_TIMEOUT_MS,
   NonceRefreshFailedError,
   refreshRestNonce,
   registerConfig,
@@ -102,6 +103,42 @@ describe('refreshRestNonce (UXP-NET-2 slice 1)', () => {
     expect(getNonce()).toBe('deadbeef01');
   });
 
+  it('hung refresh aborts after NONCE_REFRESH_TIMEOUT_MS and releases the single-flight slot [RES-02][TEST-15]', async () => {
+    vi.useFakeTimers();
+    try {
+      let aborted = false;
+      const fetchMock = vi
+        .spyOn(globalThis, 'fetch')
+        .mockImplementationOnce(
+          (_url, init?: RequestInit) =>
+            new Promise<Response>((_resolve, reject) => {
+              (init?.signal as AbortSignal | undefined)?.addEventListener('abort', () => {
+                aborted = true;
+                reject(new DOMException('The operation was aborted.', 'AbortError'));
+              });
+            }),
+        )
+        .mockResolvedValue(new Response('cafebabe01', { status: 200 }));
+
+      const hung = refreshRestNonce();
+      const rejection = expect(hung).rejects.toBeInstanceOf(NonceRefreshFailedError);
+      // Discrimination: before the timeout fires the promise is still pending.
+      await vi.advanceTimersByTimeAsync(NONCE_REFRESH_TIMEOUT_MS - 1);
+      expect(aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(aborted).toBe(true);
+      await rejection;
+      expect(getNonce()).toBe('stale-nonce-abcdef');
+
+      // Slot released → a subsequent call issues a fresh fetch and succeeds.
+      await expect(refreshRestNonce()).resolves.toBe('cafebabe01');
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(getNonce()).toBe('cafebabe01');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('setNonce mutates cached config so getConfig().nonce stays live', () => {
     setNonce('mutated1234');
     expect(getNonce()).toBe('mutated1234');
@@ -109,7 +146,7 @@ describe('refreshRestNonce (UXP-NET-2 slice 1)', () => {
 
   it('missing ajaxUrl fails SOFT: config stays usable, only refresh degrades (UXPNET2-BR-02) [TEST-15]', async () => {
     resetConfigCache();
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const config = registerConfig({
       nonce: 'abc',
       ajaxUrl: '',

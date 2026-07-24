@@ -192,60 +192,60 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded sr-004, frontend-guidelines, and the `tokens/` surface before editing.
-- [ ] Confirmed `ctx7` not required.
-- [ ] Recorded that REFA-3 owns the `--acx-radius-*`/`--acx-text-*`/`--acx-font-weight-*` family definitions (cross-file blast radius incl. `_media-selection.scss`).
+- [x] Loaded sr-004, frontend-guidelines, and the `tokens/` surface before editing.
+- [x] Confirmed `ctx7` not required.
+- [x] Recorded that REFA-3 owns the `--acx-radius-*`/`--acx-text-*`/`--acx-font-weight-*` family definitions (cross-file blast radius incl. `_media-selection.scss`).
 
 ### Checklist for Slice 1: Token-surface foundation + visual guard + radius correction
 
-- [ ] `tokens/_radius.scss` defines semantic `--acx-radius-sm/md/lg` + pill + circle; `--acx-radius-8/10` aliased to semantic (PR-02); `@use` wired.
-- [ ] `_typography.scss` defines `--acx-text-*` ramp + documented font-size snap map + `--acx-font-weight-*`.
-- [ ] 3 colors + card shadow added to `_colors.scss`.
-- [ ] Zero dangling `var(--acx-radius-…)`/`var(--acx-text-…)` repo-wide.
-- [ ] Required `toHaveScreenshot` workbench spec added (pre-change captured, corrected baseline accepted).
-- [ ] Radius correction (workbench + `_media-selection.scss`) reviewed + accepted as new baseline; build + `a11y:localwp` green. (Raw font-size snaps deferred to Slice 4 — PR-01.)
+- [x] `tokens/_radius.scss` defines semantic `--acx-radius-sm/md/lg` + pill + circle; `--acx-radius-8/10` aliased to semantic (PR-02); `@use` wired.
+- [x] `_typography.scss` defines `--acx-text-*` ramp + documented font-size snap map + `--acx-font-weight-*`.
+- [x] 3 colors + card shadow added to `_colors.scss`.
+- [x] Zero dangling `var(--acx-radius-…)`/`var(--acx-text-…)` repo-wide.
+- [x] Required `toHaveScreenshot` workbench spec added (pre-change captured, corrected baseline accepted).
+- [x] Radius correction (workbench + `_media-selection.scss`) reviewed + accepted as new baseline; build + `a11y:localwp` green. (Raw font-size snaps deferred to Slice 4 — PR-01.)
 
 ### Checklist for Slice 2: Color + shadow
 
-- [ ] 11 hex → `--acx-color-*`; raw `box-shadow` → card `--acx-shadow-*`.
-- [ ] Zero raw hex/shadow remain; build + a11y green; visual unchanged vs baseline.
+- [x] 11 hex → `--acx-color-*`; raw `box-shadow` → card `--acx-shadow-*`.
+- [x] Zero raw hex/shadow remain; build + a11y green; visual unchanged vs baseline.
 
 ### Checklist for Slice 3: Radius literals + spacing-as-radius fix
 
-- [ ] Raw `999px`/`50%`/`4-10px` radii → radius tokens.
-- [ ] `border-radius: var(--acx-space-*)` (80/278/377/461) corrected to radius tokens.
-- [ ] Zero raw radius literals; build + a11y green; visual unchanged vs baseline.
+- [x] Raw `999px`/`50%`/`4-10px` radii → radius tokens.
+- [x] `border-radius: var(--acx-space-*)` (80/278/377/461) corrected to radius tokens.
+- [x] Zero raw radius literals; build + a11y green; visual unchanged vs baseline.
 
 ### Checklist for Slice 4: Font-size + font-weight (owns font-snap delta)
 
-- [ ] 35 `font-size` → `--acx-text-*` per snap map; 13 `font-weight` → `--acx-font-weight-*`.
-- [ ] Zero raw `font-size`/`font-weight` remain; build + `a11y:localwp` green.
-- [ ] `toHaveScreenshot` diff reviewed against the snap map; each delta intentional; baseline refreshed (PR-01).
+- [x] 35 `font-size` → `--acx-text-*` per snap map; 13 `font-weight` → `--acx-font-weight-*`.
+- [x] Zero raw `font-size`/`font-weight` remain; build + `a11y:localwp` green.
+- [x] `toHaveScreenshot` diff reviewed against the snap map; each delta intentional; baseline refreshed (PR-01).
 
 ### Checklist for Slice 5: Spacing/size sweep + disposition
 
-- [ ] Spacing px → `--acx-space-*`; new steps added only where no acceptable nearest mapping; no silent rounding.
-- [ ] Layout-width + `1px`-border policy decided and documented.
-- [ ] Disposition of every literal recorded; all 5 sr-004 families fully tokenized; build + lint + a11y green.
+- [x] Spacing px → `--acx-space-*`; new steps added only where no acceptable nearest mapping; no silent rounding.
+- [x] Layout-width + `1px`-border policy decided and documented.
+- [x] Disposition of every literal recorded; all 5 sr-004 families fully tokenized; build + lint + a11y green.
 
 ## Review Readiness
 
-- [ ] No boundary-touching change without matching evidence (token defs + resolving `var()` references verified).
-- [ ] The intentional radius + font-snap corrections are explicitly reviewed and re-baselined, not slipped in as "unchanged."
-- [ ] Handoff decision records the family additions, the corrections, and the cross-file blast radius.
+- [x] No boundary-touching change without matching evidence (token defs + resolving `var()` references verified).
+- [x] The intentional radius + font-snap corrections are explicitly reviewed and re-baselined, not slipped in as "unchanged."
+- [x] Handoff decision records the family additions, the corrections, and the cross-file blast radius.
 
 ## Stretch Goals
 
-- [ ] Clean the same undefined-radius references in `_media-selection.scss` in-task (swap its 6 `var(--acx-radius-*)` consumers to the now-canonical semantic names) if review wants the consumer cleaned here; else leave to its own task. (Verification of those sites is already required by Slice 1.)
+- [x] Clean the same undefined-radius references in `_media-selection.scss` in-task (swap its 6 `var(--acx-radius-*)` consumers to the now-canonical semantic names) if review wants the consumer cleaned here; else leave to its own task. (Verification of those sites is already required by Slice 1.)
 
 ## Success Criteria
 
 - [x] Zero sr-004-governed raw literals (color, radius, font-size, font-weight, shadow) in `_workbench.scss`; spacing on `--acx-space-*`.
-- [ ] Zero dangling `--acx-radius-*`/`--acx-text-*`/`--acx-font-weight-*` references repo-wide.
+- [x] Zero dangling `--acx-radius-*`/`--acx-text-*`/`--acx-font-weight-*` references repo-wide.
 - [x] `npm run build`, `npm run lint`, `npm run a11y:localwp` green.
-- [ ] `toHaveScreenshot` workbench guard exists and passes against the final baseline (radius correction in Slice 1, font snaps in Slice 4).
-- [ ] `_media-selection.scss` consumers of the newly-defined radius tokens verified.
-- [ ] Disposition of every literal (tokenized vs intentionally raw) documented; font-size snap map recorded.
+- [x] `toHaveScreenshot` workbench guard exists and passes against the final baseline (radius correction in Slice 1, font snaps in Slice 4).
+- [x] `_media-selection.scss` consumers of the newly-defined radius tokens verified.
+- [x] Disposition of every literal (tokenized vs intentionally raw) documented; font-size snap map recorded.
 
 ## Resolved Planning Decisions
 

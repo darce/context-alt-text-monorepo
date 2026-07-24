@@ -6,12 +6,12 @@ from __future__ import annotations
 
 import numpy as np
 
-from recognition.config import get_settings
-
 
 def face_embedding_dim() -> int:
-    """Live embedding dimension from recognition settings (not import-time)."""
-    return get_settings().identity_detection.embedding_dimension
+    """Live embedding dimension from profile-resolved detection settings (S2)."""
+    from recognition.config.settings import resolve_effective_detection_settings
+
+    return resolve_effective_detection_settings().embedding_dimension
 
 
 def extract_face_embedding(embedding: np.ndarray) -> np.ndarray:

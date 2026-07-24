@@ -57,11 +57,17 @@ class ReconcileResult:
     ``detected`` is the inbound detection count; ``total`` is rows written/updated
     (``matched + new``), preserving the pre-S4 ``process_media_item`` int semantics
     on the normal path where every IoU match is written.
+
+    FIR23-02: ``skipped`` is inbound detections that produced no durable write
+    (typically missing embedding). ``mixed_model`` is true when existing rows and
+    new detections disagree on ``embedding_model`` (re-scan model flip visible).
     """
 
     detected: int
     matched: int
     new: int
+    skipped: int = 0
+    mixed_model: bool = False
 
     @property
     def total(self) -> int:
@@ -454,10 +460,20 @@ class ScanService:
 
         expected_dim = int(_DB_SETTINGS.pgvector_dimension)
 
+        existing_models = {
+            str(row.embedding_model)
+            for row in existing_identities
+            if getattr(row, "embedding_model", None)
+        }
+        detection_models = {str(det.model_id) for det in detections if det.model_id}
+        mixed_model = bool(existing_models and detection_models and existing_models != detection_models)
+
         # 4. Update matched identities (preserves PK/UUID); count durable writes only.
         matched_written = 0
+        skipped = 0
         for old_row, det in matched:
             if det.embedding is None:
+                skipped += 1
                 continue
             _assert_embedding_dimension(det, expected_dim=expected_dim)
             if not det.model_id:
@@ -472,6 +488,9 @@ class ScanService:
             old_row.pose_pitch = det.pose_pitch
             old_row.pose_yaw = det.pose_yaw
             old_row.pose_roll = det.pose_roll
+            old_row.sharpness = det.sharpness
+            old_row.embedding_norm = det.embedding_norm
+            old_row.occlusion_severity = det.occlusion_severity
             if det.landmark_quality is not None:
                 old_row.quality_score = det.landmark_quality
             old_row.image_phash = det.image_phash
@@ -485,6 +504,7 @@ class ScanService:
 
         for det in unmatched_new:
             if det.embedding is None:
+                skipped += 1
                 continue
             _assert_embedding_dimension(det, expected_dim=expected_dim)
             if not det.model_id:
@@ -504,6 +524,9 @@ class ScanService:
                     pose_pitch=det.pose_pitch,
                     pose_yaw=det.pose_yaw,
                     pose_roll=det.pose_roll,
+                    sharpness=det.sharpness,
+                    embedding_norm=det.embedding_norm,
+                    occlusion_severity=det.occlusion_severity,
                     quality_score=det.landmark_quality,
                     image_phash=det.image_phash,
                 )
@@ -522,6 +545,8 @@ class ScanService:
             detected=len(detections),
             matched=matched_written,
             new=len(new_rows),
+            skipped=skipped,
+            mixed_model=mixed_model,
         )
 
     def _face_pipeline_profile_cached(self) -> str:
@@ -589,6 +614,7 @@ def _emit_scan_media_reconciled(
         from recognition.interface_adapters.http.middleware.correlation import get_correlation_id
 
         profile = get_profile() if get_profile is not None else _face_pipeline_profile()
+        detection_models = sorted({str(det.model_id) for det in detections if det.model_id})
         extra: dict[str, object] = {
             "event": "scan_media_reconciled",
             "media_id": media_id,
@@ -598,7 +624,11 @@ def _emit_scan_media_reconciled(
             "detected": result.detected,
             "matched": result.matched,
             "new": result.new,
+            # FIR23-02: honest skip count + mixed-model surfacing (always present).
+            "skipped": result.skipped,
+            "mixed_model": result.mixed_model,
             "embedding_model": _embedding_model_from_detections(detections),
+            "embedding_models": detection_models,
             "profile": profile,
             "persist_ms": round(persist_ms, 3),
         }

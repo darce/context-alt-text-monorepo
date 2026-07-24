@@ -19,6 +19,55 @@ import pytest
 
 from recognition.tests.unit.face_pipeline_support import MODELS_PRESENT, MODELS_SKIP
 
+_EMBEDDING_SUBMODULES = (
+    "runtime_factory",
+    "face_pipeline_adapter",
+)
+
+
+def _resync_embedding_package_attrs() -> None:
+    """Rebind package attributes to the live sys.modules entries.
+
+    ``monkeypatch.delitem(sys.modules, ...)`` + reimport leaves
+    ``recognition.infrastructure.embeddings.<submod>`` pointing at the
+    reimported module while teardown restores the *old* object into
+    ``sys.modules``. Production ``from ...X import y`` reads sys.modules;
+    ``from package import X`` / bare ``import package.X`` can still return the
+    stale package attribute. Rebind so both paths share one module object.
+    """
+    import recognition.infrastructure.embeddings as emb_pkg
+
+    for name in _EMBEDDING_SUBMODULES:
+        full = f"recognition.infrastructure.embeddings.{name}"
+        if full in sys.modules:
+            setattr(emb_pkg, name, sys.modules[full])
+        else:
+            setattr(emb_pkg, name, importlib.import_module(full))
+
+
+def _clear_embedding_shared_state() -> None:
+    """Clear process singletons on the live (sys.modules) modules."""
+    fpa = importlib.import_module(
+        "recognition.infrastructure.embeddings.face_pipeline_adapter"
+    )
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+    emb = importlib.import_module("recognition.infrastructure.embeddings")
+    if hasattr(emb, "reset_shared_insightface_adapter_for_tests"):
+        emb.reset_shared_insightface_adapter_for_tests()
+    from db.settings import get_database_settings
+    from recognition.config import get_settings
+
+    get_settings.cache_clear()
+    get_database_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _restore_embedding_modules_after_isolation() -> None:
+    """After del/reimport isolation, re-sync package attrs + clear caches."""
+    yield
+    _resync_embedding_package_attrs()
+    _clear_embedding_shared_state()
+
 
 class _InsightfaceBlockFinder(importlib.abc.MetaPathFinder):
     """sys.meta_path finder that refuses insightface* imports (S5CR-07)."""

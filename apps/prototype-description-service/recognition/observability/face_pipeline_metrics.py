@@ -28,6 +28,15 @@ FACE_PIPELINE_SUBMIT_WAIT_BUCKETS: tuple[float, ...] = (
 )
 
 
+# Low-cardinality drop reasons for FIR23-05 quality-drop metering.
+FACE_DROP_REASON_BBOX = "bbox_degenerate"
+FACE_DROP_REASON_ALIGN_EMBED = "align_or_embed"
+FACE_DROP_REASONS: tuple[str, ...] = (
+    FACE_DROP_REASON_BBOX,
+    FACE_DROP_REASON_ALIGN_EMBED,
+)
+
+
 class FacePipelineMetricsObserver(Protocol):
     """Infrastructure-neutral observer seam for face_pipeline admission metrics.
 
@@ -42,6 +51,26 @@ class FacePipelineMetricsObserver(Protocol):
     def record_admission_timeout(self) -> None:
         """Increment admission-timeout counter."""
         ...
+
+    def observe_quality_factors(
+        self,
+        *,
+        sharpness: float,
+        embedding_norm: float,
+        occlusion_severity: float,
+    ) -> None:
+        """Record per-factor quality breakdown (CAL-09). Optional for older injectors."""
+        ...
+
+    def record_faces_dropped(self, reason: str, count: int = 1) -> None:
+        """Increment quality-drop counter split by low-cardinality reason (FIR23-05)."""
+        ...
+
+
+# Low-cardinality factor histograms (no media/path labels).
+_SHARPNESS_BUCKETS: tuple[float, ...] = (1.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 5000.0)
+_NORM_BUCKETS: tuple[float, ...] = (0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0)
+_OCCLUSION_BUCKETS: tuple[float, ...] = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0)
 
 
 class FacePipelineMetrics:
@@ -67,6 +96,31 @@ class FacePipelineMetrics:
             "Face pipeline submit admission timeouts (deadline expired before slot)",
             registry=self.registry,
         )
+        self.face_pipeline_factor_sharpness = Histogram(
+            "face_pipeline_factor_sharpness",
+            "Per-face sharpness (variance of Laplacian) under face_pipeline",
+            buckets=_SHARPNESS_BUCKETS,
+            registry=self.registry,
+        )
+        self.face_pipeline_factor_embedding_norm = Histogram(
+            "face_pipeline_factor_embedding_norm",
+            "Per-face pre-normalization embedding L2 norm under face_pipeline",
+            buckets=_NORM_BUCKETS,
+            registry=self.registry,
+        )
+        self.face_pipeline_factor_occlusion_severity = Histogram(
+            "face_pipeline_factor_occlusion_severity",
+            "Per-face occlusion severity [0,1] under face_pipeline",
+            buckets=_OCCLUSION_BUCKETS,
+            registry=self.registry,
+        )
+        # FIR23-05: split quality-drop counter (bbox clamp vs align/embed fail).
+        self.face_pipeline_faces_dropped_total = Counter(
+            "face_pipeline_faces_dropped_total",
+            "Faces dropped during face_pipeline detect path (quality / hard fail)",
+            ["reason"],
+            registry=self.registry,
+        )
 
     def observe_submit_wait(self, wait_s: float) -> None:
         """Record admission wait duration (success or timeout path)."""
@@ -76,8 +130,31 @@ class FacePipelineMetrics:
         """Increment admission-timeout counter."""
         self.face_pipeline_admission_timeouts_total.inc()
 
+    def observe_quality_factors(
+        self,
+        *,
+        sharpness: float,
+        embedding_norm: float,
+        occlusion_severity: float,
+    ) -> None:
+        """Record per-factor quality breakdown (CAL-09)."""
+        self.face_pipeline_factor_sharpness.observe(float(sharpness))
+        self.face_pipeline_factor_embedding_norm.observe(float(embedding_norm))
+        self.face_pipeline_factor_occlusion_severity.observe(float(occlusion_severity))
+
+    def record_faces_dropped(self, reason: str, count: int = 1) -> None:
+        """Increment quality-drop counter for a low-cardinality reason (FIR23-05)."""
+        label = reason if reason in FACE_DROP_REASONS else "other"
+        n = int(count)
+        if n <= 0:
+            return
+        self.face_pipeline_faces_dropped_total.labels(reason=label).inc(n)
+
 
 __all__ = [
+    "FACE_DROP_REASON_ALIGN_EMBED",
+    "FACE_DROP_REASON_BBOX",
+    "FACE_DROP_REASONS",
     "FACE_PIPELINE_SUBMIT_WAIT_BUCKETS",
     "FacePipelineMetrics",
     "FacePipelineMetricsObserver",

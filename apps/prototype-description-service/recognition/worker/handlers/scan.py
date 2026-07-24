@@ -110,13 +110,20 @@ class ScanItemHandler:
                     )
                     await session.commit()
                     if self._counters is not None:
-                        self._counters.record(
-                            detected=reconcile.detected
-                            if isinstance(reconcile, ReconcileResult)
-                            else identities_detected,
-                            matched=reconcile.matched if isinstance(reconcile, ReconcileResult) else 0,
-                            new=reconcile.new if isinstance(reconcile, ReconcileResult) else 0,
-                        )
+                        if isinstance(reconcile, ReconcileResult):
+                            self._counters.record(
+                                detected=reconcile.detected,
+                                matched=reconcile.matched,
+                                new=reconcile.new,
+                                skipped=reconcile.skipped,
+                                mixed_model=reconcile.mixed_model,
+                            )
+                        else:
+                            self._counters.record(
+                                detected=identities_detected,
+                                matched=0,
+                                new=0,
+                            )
                     scan_service.emit_pending_scan_media_reconciled()
                     logger.info(
                         "[worker] COMPLETE scan_item request_id=%s job_id=%s item_id=%s identities=%s",

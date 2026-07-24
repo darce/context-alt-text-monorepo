@@ -132,6 +132,23 @@ class ProvenanceSource(StrEnum):
     FIXTURE = "fixture"
 
 
+class SliceTag(StrEnum):
+    """Image-slice strata for face bake-off rollups (FIR-5).
+
+    Seven values only — the SC3 slice list. ``unknown`` is structural via
+    face_boxes name=None; ``demographic`` is a person cohort (roster_cohorts /
+    demographic_cohort), not an image tag (rg-009).
+    """
+
+    MASKED = "masked"
+    SUNGLASSES = "sunglasses"
+    OCCLUSION_OTHER = "occlusion_other"
+    PROFILE = "profile"
+    LOW_RES = "low_res"
+    BLUR = "blur"
+    SIMILAR_PEOPLE = "similar_people"
+
+
 # Private roots are LOCAL-ONLY: a personal photo is never publishable regardless of
 # license or an explicit flag (fail-closed on the "never publish uploads" invariant).
 PRIVATE_SOURCES: frozenset[ProvenanceSource] = frozenset({ProvenanceSource.LOCALWP, ProvenanceSource.OPERATOR})
@@ -345,6 +362,10 @@ class GoldenEntry(BaseModel):
     # truth for the FIR-1 bake-off; additive/optional (see FIR-1 §Coordination).
     face_boxes: list[FaceBox] = Field(default_factory=list)
     provenance: Provenance | None = None
+    # FIR-5 S1: bake-off image-slice tags (additive; legacy entries omit → []).
+    tags: list[SliceTag] = Field(default_factory=list)
+    # Optional image-level cohort fallback; single-subject celebs01 only (S3d enforces).
+    demographic_cohort: str | None = None
 
     @field_validator("sha256")
     @classmethod
@@ -378,6 +399,8 @@ class GoldenManifest(BaseModel):
     manifest_version: int
     roster: list[str]
     entries: list[GoldenEntry]
+    # FIR-5 S1: roster-name -> demographic cohort; keys validated ⊆ roster at load.
+    roster_cohorts: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("manifest_version")
     @classmethod
@@ -402,7 +425,7 @@ def load_manifest(path: str, images_dir: str | None = None) -> GoldenManifest:
 
     Raises ManifestError on: missing/unreadable file, malformed JSON, schema
     violations, unsupported version, empty corpus, duplicate media_id/path,
-    identities outside the roster, and (when ``images_dir`` is given) missing
+    identities outside the roster, roster_cohorts keys outside the roster, and (when ``images_dir`` is given) missing
     image files or sha256 mismatches. Emits ``RubricEmptyWarning`` if the corpus
     defines no Must-Right/Easy-Wrong entries — the caption hard gate is then
     vacuous but that is surfaced, not silent (S1-02).
@@ -458,6 +481,11 @@ def load_manifest(path: str, images_dir: str | None = None) -> GoldenManifest:
         for name in (*entry.present_identities, *entry.must_right, *entry.easy_wrong):
             if name not in roster:
                 raise ManifestError(f"identity {name!r} in {entry.path} is not in the roster")
+    for cohort_key in manifest.roster_cohorts:
+        if cohort_key not in roster:
+            raise ManifestError(
+                f"roster_cohorts key {cohort_key!r} is not in the roster"
+            )
 
     if not any(entry.must_right or entry.easy_wrong for entry in manifest.entries):
         warnings.warn(

@@ -13,7 +13,7 @@ from sqlalchemy.orm import joinedload
 
 from db.models import IdentityCluster, MediaIdentity
 from recognition.application.settings import ClusteringSettings
-from recognition.config import get_settings as get_recognition_settings
+from recognition.config.settings import resolve_effective_clustering_settings
 from recognition.domain.repositories import ClusterRepository
 from recognition.domain.suggestion import SuggestedLabel, SuggestedLabelSource
 
@@ -41,7 +41,7 @@ async def infer_suggested_label(
     Returns:
         SuggestedLabel or None if no reliable inference found.
     """
-    inference_settings = settings or get_recognition_settings().clustering
+    inference_settings = settings or resolve_effective_clustering_settings()
     threshold = inference_settings.suggestion_floor
 
     try:
@@ -210,7 +210,14 @@ async def infer_suggested_label(
         # In-process search was authoritative; skip the DB fallback.
         return None
 
-    # Find nearest labeled cluster using embedding distance (DB fallback)
+    # Find nearest labeled cluster using embedding distance (DB fallback).
+    # FIR23-01: restrict to the same embedding_model as the query face so
+    # mixed-model rows cannot win nearest-neighbor. Single-model tenants are a
+    # no-op (predicate matches every candidate).
+    rep_identity = target_cluster.representative_identity
+    target_model = (
+        getattr(rep_identity, "embedding_model", None) if rep_identity is not None else None
+    )
     stmt = (
         select(IdentityCluster)
         .join(MediaIdentity, IdentityCluster.representative_identity_id == MediaIdentity.id)
@@ -218,7 +225,12 @@ async def infer_suggested_label(
         .where(IdentityCluster.label.isnot(None))
         .where(IdentityCluster.label != "")
         .where(IdentityCluster.id != cluster_uuid)
-        .order_by(MediaIdentity.embedding.cosine_distance(target_embedding))
+        .where(MediaIdentity.embedding.isnot(None))
+    )
+    if target_model is not None:
+        stmt = stmt.where(MediaIdentity.embedding_model == target_model)
+    stmt = (
+        stmt.order_by(MediaIdentity.embedding.cosine_distance(target_embedding))
         .limit(1)
         .options(joinedload(IdentityCluster.representative_identity))
     )

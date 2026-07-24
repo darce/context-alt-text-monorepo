@@ -36,6 +36,13 @@ const DEFAULT_MAX_MEDIA_PER_BATCH = 10000;
 /** WP rest-nonce handler exits the raw nonce string; reject sentinels and HTML. */
 const NONCE_BODY_PATTERN = /^[a-f0-9]{8,20}$/i;
 
+/**
+ * Bounds the refresh network round-trip so a hung admin-ajax request cannot pin
+ * the single-flight slot forever — otherwise every subsequent nonce-403 caller
+ * awaits a promise that never settles and the whole SPA stalls ([RES-02]).
+ */
+export const NONCE_REFRESH_TIMEOUT_MS = 10_000;
+
 export class NonceRefreshFailedError extends Error {
   readonly causeStatus: number | undefined;
   readonly bodyPreview: string;
@@ -163,15 +170,34 @@ export const refreshRestNonce = (): Promise<string> => {
       });
     }
     const url = `${ajaxUrl}${ajaxUrl.includes('?') ? '&' : '?'}action=rest-nonce`;
-    const response = await fetch(url, {
-      method: 'GET',
-      credentials: 'same-origin',
-    });
-    const rawBody = await response.text();
-    const body = rawBody.trim();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), NONCE_REFRESH_TIMEOUT_MS);
+    let ok: boolean;
+    let status: number;
+    let body: string;
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        credentials: 'same-origin',
+        signal: controller.signal,
+      });
+      ok = response.ok;
+      status = response.status;
+      body = (await response.text()).trim();
+    } catch (error) {
+      // Timeout-abort or transport failure: a typed refresh failure, never a
+      // hung promise. The single-flight slot is released by the finally below.
+      throw new NonceRefreshFailedError({
+        message: controller.signal.aborted
+          ? `REST nonce refresh timed out after ${NONCE_REFRESH_TIMEOUT_MS}ms.`
+          : `REST nonce refresh network error: ${error instanceof Error ? error.message : String(error)}.`,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
 
     if (
-      response.ok &&
+      ok &&
       body !== '' &&
       body !== '0' &&
       body !== '-1' &&
@@ -182,8 +208,8 @@ export const refreshRestNonce = (): Promise<string> => {
     }
 
     throw new NonceRefreshFailedError({
-      message: `REST nonce refresh failed (${response.status}): unexpected body.`,
-      causeStatus: response.status,
+      message: `REST nonce refresh failed (${status}): unexpected body.`,
+      causeStatus: status,
       bodyPreview: body.slice(0, 240),
     });
   })().finally(() => {

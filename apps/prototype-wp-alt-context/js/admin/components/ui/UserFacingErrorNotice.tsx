@@ -6,11 +6,7 @@
 import * as React from 'react';
 import { __ } from '@wordpress/i18n';
 
-import {
-  formatUserFacingError,
-  isAuthExpiredError,
-  SPA_SESSION_EXPIRED_COPY,
-} from '../../utils/userFacingError';
+import { formatUserFacingError, isAuthExpiredError } from '../../utils/userFacingError';
 
 export interface UserFacingErrorNoticeProps {
   error: unknown;
@@ -41,7 +37,8 @@ export const UserFacingErrorNotice: React.FC<UserFacingErrorNoticeProps> = ({
       <span>{message}</span>
       {authExpired ? (
         <button type="button" onClick={() => window.location.reload()}>
-          {__(SPA_SESSION_EXPIRED_COPY.reloadPage, 'alt-context')}
+          {/* Literal (not a variable) so wp i18n string extraction sees it ([RLSE-04]). */}
+          {__('Reload page', 'alt-context')}
         </button>
       ) : null}
     </div>

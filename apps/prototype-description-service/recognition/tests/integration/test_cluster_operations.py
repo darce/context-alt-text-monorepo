@@ -114,6 +114,7 @@ async def test_merge_recomputes_representatives(db_session, tenant) -> None:
         bbox_height=1,
         confidence=0.99,
         embedding=embedding_a,
+        embedding_model="buffalo_l@insightface",
     )
     identity_b = MediaIdentityModel(
         tenant_id=tenant.id,
@@ -125,6 +126,7 @@ async def test_merge_recomputes_representatives(db_session, tenant) -> None:
         bbox_height=1,
         confidence=0.99,
         embedding=embedding_b,
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add_all([identity_a, identity_b])
     await db_session.flush()
@@ -187,6 +189,7 @@ async def test_create_cluster_for_identity_creates_labeled_cluster_with_member_a
         bbox_height=1,
         confidence=0.99,
         embedding=embedding,
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add(identity)
     await db_session.flush()
@@ -240,6 +243,7 @@ async def test_cluster_unclustered_identities_refreshes_centroids_after_clusteri
                 bbox_height=1,
                 confidence=0.99,
                 embedding=embedding,
+                embedding_model="buffalo_l@insightface",
             )
         )
     db_session.add_all(identities)
@@ -273,6 +277,7 @@ async def test_split_cluster_preserves_user_label_for_representative_group(db_se
             bbox_height=1,
             confidence=0.99,
             embedding=embedding_a,
+            embedding_model="buffalo_l@insightface",
         ),
         MediaIdentityModel(
             tenant_id=tenant.id,
@@ -284,6 +289,7 @@ async def test_split_cluster_preserves_user_label_for_representative_group(db_se
             bbox_height=1,
             confidence=0.99,
             embedding=embedding_a,
+            embedding_model="buffalo_l@insightface",
         ),
         MediaIdentityModel(
             tenant_id=tenant.id,
@@ -295,6 +301,7 @@ async def test_split_cluster_preserves_user_label_for_representative_group(db_se
             bbox_height=1,
             confidence=0.99,
             embedding=embedding_a,
+            embedding_model="buffalo_l@insightface",
         ),
     ]
     representative = MediaIdentityModel(
@@ -307,6 +314,7 @@ async def test_split_cluster_preserves_user_label_for_representative_group(db_se
         bbox_height=1,
         confidence=0.99,
         embedding=embedding_b,
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add_all([*identities, representative])
     await db_session.flush()
@@ -367,6 +375,7 @@ async def test_split_cluster_keeps_label_on_anchor_group(db_session, tenant) -> 
         bbox_height=1,
         confidence=0.99,
         embedding=embedding_a,
+        embedding_model="buffalo_l@insightface",
     )
     group_a_identity = MediaIdentityModel(
         tenant_id=tenant.id,
@@ -378,6 +387,7 @@ async def test_split_cluster_keeps_label_on_anchor_group(db_session, tenant) -> 
         bbox_height=1,
         confidence=0.99,
         embedding=embedding_a,
+        embedding_model="buffalo_l@insightface",
     )
     representative = MediaIdentityModel(
         tenant_id=tenant.id,
@@ -389,6 +399,7 @@ async def test_split_cluster_keeps_label_on_anchor_group(db_session, tenant) -> 
         bbox_height=1,
         confidence=0.99,
         embedding=embedding_b,
+        embedding_model="buffalo_l@insightface",
     )
     group_b_identity = MediaIdentityModel(
         tenant_id=tenant.id,
@@ -400,6 +411,7 @@ async def test_split_cluster_keeps_label_on_anchor_group(db_session, tenant) -> 
         bbox_height=1,
         confidence=0.99,
         embedding=embedding_b,
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add_all([anchor_identity, group_a_identity, representative, group_b_identity])
     await db_session.flush()
@@ -456,6 +468,7 @@ async def test_split_cluster_forces_two_groups_with_anchor(db_session, tenant) -
         bbox_height=1,
         confidence=0.99,
         embedding=embedding,
+        embedding_model="buffalo_l@insightface",
     )
     other_identity = MediaIdentityModel(
         tenant_id=tenant.id,
@@ -467,6 +480,7 @@ async def test_split_cluster_forces_two_groups_with_anchor(db_session, tenant) -
         bbox_height=1,
         confidence=0.99,
         embedding=embedding,
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add_all([anchor_identity, other_identity])
     await db_session.flush()
@@ -527,6 +541,7 @@ async def test_split_cluster_blocks_moved_identities(db_session, tenant) -> None
         bbox_height=1,
         confidence=0.99,
         embedding=embedding,
+        embedding_model="buffalo_l@insightface",
     )
     moved_identity = MediaIdentityModel(
         tenant_id=tenant.id,
@@ -538,6 +553,7 @@ async def test_split_cluster_blocks_moved_identities(db_session, tenant) -> None
         bbox_height=1,
         confidence=0.99,
         embedding=embedding,
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add_all([anchor_identity, moved_identity])
     await db_session.flush()
@@ -619,6 +635,7 @@ async def test_pin_representative(db_session, tenant) -> None:
         bbox_height=1,
         confidence=0.99,
         embedding=embedding,
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add(identity_model)
     await db_session.flush()

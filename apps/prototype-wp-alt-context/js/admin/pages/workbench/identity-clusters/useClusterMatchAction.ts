@@ -1,12 +1,23 @@
 /**
  * Hook for executing matched cluster actions with optional confirmation.
+ *
+ * Match ids are bare cluster ids (source-gated / unwrapped by callers). Person
+ * option values never enter this path (PR-16).
  */
 
 import React from 'react';
 
 import type { ComboboxOption } from '../../../../components/ui/combobox';
+import { unwrapClusterOptionId } from './buildNamingOptions';
 import type { ClusterGroup } from './types';
 import type { SaveDialogAction } from './useClusterConfirmDialog';
+
+/** Cluster match from option or remote label lookup (optional member count for merge confirm). */
+export interface ClusterLabelMatch {
+  id: string;
+  label: string;
+  identityCount?: number;
+}
 
 interface ClusterMatchMutations {
   merge: (targetClusterId: string, targetLabel?: string, signal?: AbortSignal) => void;
@@ -22,6 +33,33 @@ interface UseClusterMatchActionOptions {
   requestConfirm: (action: SaveDialogAction, label: string) => Promise<boolean>;
 }
 
+/** Merges of 5+ members require confirm; unknown size also requires confirm (FIX-3). */
+export const DANGEROUS_MERGE_MEMBER_THRESHOLD = 5;
+
+const optionClusterId = (option: ComboboxOption): string | null => unwrapClusterOptionId(String(option.value));
+
+/**
+ * Resolve member count for a match: prefer the match payload, then options.
+ * Returns undefined when unknown (remote-only match with no count).
+ */
+export const resolveMatchMemberCount = (
+  match: ClusterLabelMatch,
+  options: readonly ComboboxOption[],
+): number | undefined => {
+  if (typeof match.identityCount === 'number') {
+    return match.identityCount;
+  }
+  const option = options.find((entry) => optionClusterId(entry) === match.id);
+  if (typeof option?.identityCount === 'number') {
+    return option.identityCount;
+  }
+  return undefined;
+};
+
+/** Confirm when count is unknown or at/above the large-merge threshold (FIX-3). */
+export const requiresMergeConfirm = (memberCount: number | undefined): boolean =>
+  memberCount === undefined || memberCount >= DANGEROUS_MERGE_MEMBER_THRESHOLD;
+
 export const useClusterMatchAction = ({
   members,
   editableClusterId,
@@ -30,19 +68,12 @@ export const useClusterMatchAction = ({
   mutations,
   requestConfirm,
 }: UseClusterMatchActionOptions) => {
-  const isDangerousMerge = React.useCallback(
-    (clusterId: string) => {
-      const targetMemberCount = (options.find((option) => option.value === clusterId)?.identityCount ?? 0) as number;
-      return targetMemberCount >= 5;
-    },
-    [options],
-  );
-
   const runMatchedAction = React.useCallback(
-    async (match: { id: string; label: string }, abortController: AbortController) => {
+    async (match: ClusterLabelMatch, abortController: AbortController) => {
       const action: SaveDialogAction = canSearchForMatch ? 'assign' : 'merge';
+      const memberCount = resolveMatchMemberCount(match, options);
 
-      if (isDangerousMerge(match.id)) {
+      if (requiresMergeConfirm(memberCount)) {
         const confirmed = await requestConfirm(action, match.label);
         if (!confirmed) {
           return false;
@@ -63,7 +94,7 @@ export const useClusterMatchAction = ({
       }
       return true;
     },
-    [canSearchForMatch, editableClusterId, isDangerousMerge, members, mutations, requestConfirm],
+    [canSearchForMatch, editableClusterId, members, mutations, options, requestConfirm],
   );
 
   return { runMatchedAction };

@@ -5,6 +5,8 @@ import { getConfig } from '../api/config';
 import { queryKeys } from '../api/queryKeys';
 import type { SyncTriggerResponse } from '../api/recognition';
 import type { BatchRunStatus, JobStatusResponse } from '../api/recognition/types/scan';
+import { SYNC_VOCABULARY } from '../pages/workbench/syncVocabulary';
+import { runAfterCooldown } from '../utils/recognitionCooldown';
 import { isScanSuccessStatus, type PipelinePhase } from './jobStateMachineUtils';
 import type { PersistedJob } from './useJobPersistence';
 import type { JobStatus } from './useJobProgressStream';
@@ -28,7 +30,7 @@ const refetchFindingsQueries = (queryClient: QueryClient): Promise<unknown> => {
   }
 
   const refetches = [
-    queryClient.refetchQueries({ queryKey: queryKeys.suggestions.pending() }),
+    queryClient.refetchQueries({ queryKey: queryKeys.suggestions.projection.all }),
     queryClient.refetchQueries({ queryKey: queryKeys.suggestions.mergePending() }),
     queryClient.refetchQueries({ queryKey: queryKeys.suggestions.namePending() }),
     queryClient.refetchQueries({ queryKey: queryKeys.media.identities() }),
@@ -115,9 +117,12 @@ export const useJobStateMachineEffects = ({
     // BND-1: completed_with_errors is a terminal partial-success — refresh findings just like a
     // clean completion so a partially-failed scan still surfaces its results immediately.
     if (isScanSuccessStatus(scanStatus?.status)) {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.all });
+      // Refetch burst bypasses refetchInterval — hold it out of an active 429 cooldown.
+      runAfterCooldown(() => {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.all });
+      });
     }
   }, [scanStatus?.status, queryClient]);
 
@@ -128,8 +133,10 @@ export const useJobStateMachineEffects = ({
 
     setIsWaitingForScanCompletion(false);
     activeJobs.filter((job) => job.type === 'scan').forEach((job) => removeJob(job.id));
-    void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
-    void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
+    runAfterCooldown(() => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
+    });
     if (!backendHandledClustering && batchRunStatus.failed_total === 0 && batchRunStatus.accepted_total > 0) {
       cluster();
     }
@@ -180,7 +187,11 @@ export const useJobStateMachineEffects = ({
 
         const syncResult = await syncProjectionRef.current();
         if (!syncResult.synced) {
-          throw new Error(syncResult.reason === 'sync_failed' ? 'Waiting for service…' : 'Syncing results failed.');
+          throw new Error(
+            syncResult.reason === 'sync_failed'
+              ? SYNC_VOCABULARY.resultsErrorHeadline
+              : SYNC_VOCABULARY.resultsSyncFailed,
+          );
         }
 
         if (lastProjectionAttemptRef.current !== projectionTarget.attemptKey) {
@@ -195,7 +206,9 @@ export const useJobStateMachineEffects = ({
         }
 
         setProjectionSyncState('error');
-        setProjectionError(error instanceof Error ? error.message : 'Syncing results failed.');
+        setProjectionError(
+          error instanceof Error ? error.message : SYNC_VOCABULARY.resultsSyncFailed,
+        );
       }
     };
 

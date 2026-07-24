@@ -7,6 +7,7 @@ import type { MutableRefObject } from 'react';
 import type { ComboboxOption } from '../../../../components/ui/combobox';
 import type { ClusterGroup } from './types';
 import type { SaveDialogAction } from './useClusterConfirmDialog';
+import type { ClusterLabelMatch } from './useClusterMatchAction';
 import type { SaveStatus } from './useClusterSaveStatus';
 import { useClusterConfirmSuggestion } from './useClusterConfirmSuggestion';
 import { useClusterSaveAction } from './useClusterSaveAction';
@@ -27,11 +28,11 @@ interface UseClusterSaveHandlersOptions {
   canEdit: boolean;
   canSearchForMatch: boolean;
   labelInput: string;
-  matchedCluster: { id: string; label: string } | null;
+  matchedCluster: ClusterLabelMatch | null;
   options: ComboboxOption[];
   saveStatus: SaveStatus;
   mutations: ClusterSaveMutations;
-  findClusterByLabel: (label: string, signal?: AbortSignal) => Promise<{ id: string; label: string } | null>;
+  findClusterByLabel: (label: string, signal?: AbortSignal) => Promise<ClusterLabelMatch | null>;
   requestConfirm: (action: SaveDialogAction, label: string) => Promise<boolean>;
   cancelEditing: () => void;
   setError: (message: string) => void;
@@ -42,11 +43,12 @@ interface UseClusterSaveHandlersOptions {
 
 export const useClusterSaveHandlers = (options: UseClusterSaveHandlersOptions) => {
   const { handleConfirmSuggestion } = useClusterConfirmSuggestion(options);
-  const { handleSave, handleCancel } = useClusterSaveAction(options);
+  const { handleSave, handleCancel, handlePersonSelect } = useClusterSaveAction(options);
 
   return {
     handleCancel,
     handleConfirmSuggestion,
     handleSave,
+    handlePersonSelect,
   };
 };

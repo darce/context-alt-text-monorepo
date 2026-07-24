@@ -7,9 +7,9 @@ from collections.abc import Sequence
 import numpy as np
 
 from recognition.shared.similarity import (
-    FACE_EMBEDDING_DIM,
     compute_face_similarity,
     extract_face_embedding,
+    face_embedding_dim,
     normalize_vector,
 )
 
@@ -24,7 +24,7 @@ def _to_face_embedding(vec: np.ndarray) -> np.ndarray:
     This ensures similarity calculations use only the face identity vector,
     not the metadata portion which can cause false matches.
     """
-    if len(vec) >= FACE_EMBEDDING_DIM:
+    if len(vec) >= face_embedding_dim():
         return extract_face_embedding(vec)
     # Unknown dimension - return as-is and let caller handle
     return vec
@@ -56,7 +56,7 @@ def compute_similarity(
     Return cosine similarity between two embeddings clamped to [0, 1].
 
     IMPORTANT: Uses only the face embedding portion (first 512D) for similarity.
-    This prevents false matches due to metadata attributes (pose, age, etc.)
+    This prevents false matches due to metadata attributes (pose, etc.)
     """
     vec_a = np.array(embedding_a, dtype=np.float32)
     vec_b = np.array(embedding_b, dtype=np.float32)

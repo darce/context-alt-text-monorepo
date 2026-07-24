@@ -171,7 +171,7 @@ class LifecycleManagerTest extends TestCase
                 'roster_entry_id' => 7,
             ],
         ]);
-        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE name = 'Ada Lovelace'"] = null;
+        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE normalized_name = 'ada lovelace'"] = null;
 
         $this->manager->activate();
 
@@ -205,7 +205,7 @@ class LifecycleManagerTest extends TestCase
 
         $this->setOption('acx_roster_entries', $legacyEntries);
         $this->setOption('acx_roster_assignments', $legacyAssignments);
-        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE name = 'Grace Hopper'"] = null;
+        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE normalized_name = 'grace hopper'"] = null;
         $wpdb->defaultUpdateResult = 0;
 
         $this->manager->activate();
@@ -236,7 +236,7 @@ class LifecycleManagerTest extends TestCase
             ],
         ]);
 
-        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE name = 'Katherine Johnson'"] = 13;
+        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE normalized_name = 'katherine johnson'"] = 13;
         $wpdb->queryResults["SELECT person_id FROM `wp_acx_clusters` WHERE cluster_uuid = 'cluster-321' LIMIT 1"] = 13;
         $wpdb->defaultUpdateResult = 0;
 
@@ -271,7 +271,7 @@ class LifecycleManagerTest extends TestCase
             ],
             'cluster-invalid' => 'skip-me',
         ]);
-        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE name = 'Dorothy Vaughan'"] = null;
+        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE normalized_name = 'dorothy vaughan'"] = null;
 
         $this->manager->activate();
 
@@ -494,6 +494,29 @@ class LifecycleManagerTest extends TestCase
         $this->assertIsArray($queries);
         $this->assertNotEmpty($queries, 'Projection tables should be created when version is missing');
         $this->assertSame(ACX_VERSION, get_option('acx_version'));
+    }
+
+    public function testMaybeUpgradeOutboxSchemaCarriesRetryBackoffColumns(): void
+    {
+        // E15-35 Slice 1: existing installs heal the two new outbox retry columns through the
+        // plugin version bump -> maybe_upgrade() -> dbDelta($outbox_sql) path (no hand-rolled
+        // ALTER TABLE). dbDelta caveats: one column per line, dbDelta-normalized nullable datetime.
+        $this->setOption('acx_version', '0.0.1-stale');
+
+        $this->manager->maybe_upgrade();
+
+        $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
+        $outboxSql = '';
+        foreach ($queries as $sql) {
+            if (str_contains($sql, 'acx_sync_outbox')) {
+                $outboxSql = $sql;
+                break;
+            }
+        }
+
+        $this->assertNotSame('', $outboxSql, 'Expected the outbox CREATE TABLE to run on upgrade.');
+        $this->assertMatchesRegularExpression('/^\s*next_attempt_at datetime DEFAULT NULL,$/m', $outboxSql);
+        $this->assertMatchesRegularExpression('/^\s*first_failed_at datetime DEFAULT NULL,$/m', $outboxSql);
     }
 
     public function testMaybeUpgradeIsStrictNoopWhenStoredVersionMatches(): void

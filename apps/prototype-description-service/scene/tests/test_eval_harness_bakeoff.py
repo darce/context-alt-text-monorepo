@@ -359,3 +359,115 @@ def test_fetch_run_record_bounded_stall_aborts_on_repeated_failures(tmp_path: Pa
         client.close()
     assert excinfo.value.partial_record["aborted"] is True
     assert all(item["error"] is not None for item in excinfo.value.partial_record["items"])
+
+
+# --- ALTQ-1: fetch-time eval-mode transforms ---
+
+
+def test_ablate_names_replaces_word_boundary_case_insensitive() -> None:
+    from scripts.eval_harness.bakeoff import _ablate_names
+
+    pack = {
+        "title": "Antarctica expedition",
+        "caption": "CAITLIN WEAVER on the peninsula.",
+        "description": "Caitlin Weaver reached the peninsula. Caitlin Weavers' gear stayed aboard.",
+    }
+    out, ablated = _ablate_names(pack, ["Caitlin Weaver"])
+    assert ablated == ["Caitlin Weaver"]
+    assert out["caption"] == "someone on the peninsula."
+    assert out["description"].startswith("someone reached the peninsula.")
+    # word boundary (S2-06): "Caitlin Weavers'" is a different token and must survive.
+    assert "Caitlin Weavers'" in out["description"]
+    assert "Caitlin Weaver reached" not in out["description"]
+    assert out["title"] == "Antarctica expedition"
+
+
+def test_ablate_names_reports_only_names_found() -> None:
+    from scripts.eval_harness.bakeoff import _ablate_names
+
+    out, ablated = _ablate_names({"caption": "A quiet lake."}, ["Caitlin Weaver"])
+    assert ablated == []
+    assert out == {"caption": "A quiet lake."}
+
+
+def test_inject_distractor_picks_first_easy_wrong() -> None:
+    from scripts.eval_harness.bakeoff import _inject_distractor
+
+    pack, injected = _inject_distractor({"caption": "By a pool."}, ["Mallory Trap", "Ned Nemo"])
+    assert injected == "Mallory Trap"
+    assert pack["also_pictured"] == "Mallory Trap"
+    assert pack["caption"] == "By a pool."
+
+
+def test_inject_distractor_none_without_easy_wrong() -> None:
+    from scripts.eval_harness.bakeoff import _inject_distractor
+
+    pack, injected = _inject_distractor({"caption": "By a pool."}, [])
+    assert injected is None
+    assert pack == {"caption": "By a pool."}
+
+
+def _eval_mode_client(captured: list[dict], mode: str, traits: dict) -> BakeoffClient:
+    return BakeoffClient(
+        base_url="http://candidate.test:8080",
+        model_id="qwen3-vl-4b-instruct",
+        transport=_chat_transport(captured),
+        eval_mode=mode,
+        entry_traits=traits,
+    )
+
+
+def test_name_ablation_mode_strips_names_from_prompt_and_stamps() -> None:
+    captured: list[dict] = []
+    client = _eval_mode_client(captured, "name_ablation", {7: {"present": ["Caitlin Weaver"], "easy_wrong": []}})
+    describe = _describe(client, {"caption": "Caitlin Weaver on the peninsula."})
+    prompt_text = json.dumps(captured[0]["payload"])
+    assert "Caitlin Weaver" not in prompt_text
+    assert "someone" in prompt_text
+    assert describe["ablated_names"] == ["Caitlin Weaver"]
+
+
+def test_context_distractor_mode_injects_and_stamps() -> None:
+    captured: list[dict] = []
+    client = _eval_mode_client(
+        captured, "context_distractor", {7: {"present": ["Caitlin Weaver"], "easy_wrong": ["Mallory Trap"]}}
+    )
+    describe = _describe(client, {"caption": "Caitlin Weaver on the peninsula."})
+    prompt_text = json.dumps(captured[0]["payload"])
+    assert "Mallory Trap" in prompt_text
+    assert "also_pictured" in prompt_text
+    assert describe["injected_distractor"] == "Mallory Trap"
+
+
+def test_context_distractor_without_easy_wrong_stamps_nothing() -> None:
+    captured: list[dict] = []
+    client = _eval_mode_client(captured, "context_distractor", {7: {"present": [], "easy_wrong": []}})
+    describe = _describe(client, {"caption": "A quiet lake."})
+    assert "injected_distractor" not in describe
+
+
+def test_standard_mode_default_leaves_context_untouched() -> None:
+    captured: list[dict] = []
+    describe = _describe(_client(captured), {"caption": "Caitlin Weaver on the peninsula."})
+    assert "ablated_names" not in describe
+    assert "injected_distractor" not in describe
+    assert "Caitlin Weaver" in json.dumps(captured[0]["payload"])
+
+
+def test_unknown_eval_mode_rejected_at_construction() -> None:
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError):
+        BakeoffClient(
+            base_url="http://candidate.test:8080",
+            model_id="m",
+            transport=_chat_transport([]),
+            eval_mode="bogus",
+        )
+    with _pytest.raises(ValueError):
+        BakeoffClient(
+            base_url="http://candidate.test:8080",
+            model_id="m",
+            transport=_chat_transport([]),
+            eval_mode="name_ablation",  # requires entry_traits
+        )

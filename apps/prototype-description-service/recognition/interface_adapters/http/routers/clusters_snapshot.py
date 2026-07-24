@@ -16,8 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from recognition.application.settings import ClusteringSettings
 from recognition.application.suggestions.label_inference import infer_suggested_label
-from recognition.config import get_settings as get_recognition_settings
 from recognition.config.security import get_security_settings
+from recognition.config.settings import resolve_effective_clustering_settings
 from recognition.domain.repositories import ClusterRepository
 from recognition.interface_adapters.http.blob_url import build_face_thumb_path
 from recognition.interface_adapters.http.deps import (
@@ -256,7 +256,7 @@ async def get_tenant_cluster_snapshot(
 
     # Build responses
     cluster_responses = _build_cluster_responses(clusters)
-    clustering_settings = get_recognition_settings().clustering
+    clustering_settings = resolve_effective_clustering_settings()
     await _enrich_with_suggested_labels(cluster_responses, tenant_id, session, repo, clustering_settings)
     member_responses = _build_member_responses(members_with_identities)
 
@@ -325,7 +325,7 @@ async def get_tenant_cluster_delta(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No clusters found for tenant")
 
     cluster_responses = _build_cluster_responses(clusters)
-    clustering_settings = get_recognition_settings().clustering
+    clustering_settings = resolve_effective_clustering_settings()
     await _enrich_with_suggested_labels(cluster_responses, tenant_id, session, repo, clustering_settings)
 
     return ClusterDeltaResponse(
@@ -358,7 +358,7 @@ async def get_top_unlabeled_clusters(
     allowed_sources = {"identity", "roster", "similar_cluster", "none"}
 
     responses: list[ClusterResponse] = []
-    clustering_settings = get_recognition_settings().clustering
+    clustering_settings = resolve_effective_clustering_settings()
     for c in clusters:
         suggested_label = getattr(c, "suggested_label", None)
 
@@ -440,13 +440,17 @@ async def list_cluster_members(
     cluster_id: str,
     tenant_id: str = Depends(get_authenticated_tenant_id),
     cluster_service_builder=Depends(get_cluster_service_builder),
+    limit: int = Query(CLUSTER_MEMBERS_PAGE_LIMIT),
+    offset: int = Query(0),
 ) -> ClusterMembersEnvelopeResponse:
-    """List all identities in a cluster with membership data.
+    """List identities in a cluster with membership data (paged).
 
     Returns identity details combined with membership similarity scores,
-    formatted for the frontend ClusterReviewPanel.
+    formatted for the frontend ClusterReviewPanel. Envelope shape is
+    ``{members, limit, total, truncated}``; clients page via limit/offset.
     """
     validate_entity_id(cluster_id, field_name="cluster_id")
+    validate_paging(limit, offset, CLUSTER_MEMBERS_PAGE_LIMIT)
     cluster_service = await cluster_service_builder(tenant_id)
     cluster_repo = cluster_service.cluster_repository
 
@@ -457,11 +461,12 @@ async def list_cluster_members(
     representative_id = str(representative_id) if representative_id else None
 
     total = await cluster_repo.get_member_identity_count(cluster_id)
-    truncated = total > CLUSTER_MEMBERS_PAGE_LIMIT
     visible_members = await cluster_repo.get_member_identities_with_similarity(
         cluster_id,
-        limit=CLUSTER_MEMBERS_PAGE_LIMIT,
+        limit=limit,
+        offset=offset,
     )
+    truncated = (offset + len(visible_members)) < total
 
     return ClusterMembersEnvelopeResponse(
         members=[
@@ -483,7 +488,7 @@ async def list_cluster_members(
             )
             for identity, similarity in visible_members
         ],
-        limit=CLUSTER_MEMBERS_PAGE_LIMIT,
+        limit=limit,
         total=total,
         truncated=truncated,
     )

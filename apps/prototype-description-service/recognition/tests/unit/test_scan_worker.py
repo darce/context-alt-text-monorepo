@@ -50,8 +50,9 @@ async def test_scan_worker_main_uses_database_settings_dsn(monkeypatch: pytest.M
             return None
 
     class _FakeWorker:
-        def __init__(self, config) -> None:  # noqa: ANN001
+        def __init__(self, config, *, metrics=None) -> None:  # noqa: ANN001
             used["dsn"] = config.postgres_dsn
+            used["metrics"] = metrics
 
         async def __aenter__(self):
             return self
@@ -62,6 +63,11 @@ async def test_scan_worker_main_uses_database_settings_dsn(monkeypatch: pytest.M
         async def run_forever(self) -> None:
             raise asyncio.CancelledError()
 
+    exporter_calls: list[object] = []
+
+    def _fake_start_exporter(*, metrics, config) -> None:  # noqa: ANN001
+        exporter_calls.append((metrics, config))
+
     monkeypatch.setattr(
         scan_worker_module,
         "get_database_settings",
@@ -69,10 +75,15 @@ async def test_scan_worker_main_uses_database_settings_dsn(monkeypatch: pytest.M
     )
     monkeypatch.setattr(scan_worker_module, "create_async_engine", lambda dsn, **_kwargs: _FakeEngine())
     monkeypatch.setattr(scan_worker_module, "ScanWorker", _FakeWorker)
+    # Composition root starts the exporter once — never bind a real port in unit tests.
+    monkeypatch.setattr(scan_worker_module, "start_process_metrics_exporter", _fake_start_exporter)
 
     await scan_worker_module._main()
 
     assert used["dsn"] == "postgresql+asyncpg://context:context@localhost:5432/alt_context_service"
+    assert used["metrics"] is not None
+    assert len(exporter_calls) == 1
+    assert exporter_calls[0][0] is used["metrics"]
 
 
 @pytest.mark.asyncio
@@ -80,19 +91,21 @@ async def test_scan_worker_reuses_shared_insightface_adapter(monkeypatch: pytest
     adapter = object()
     calls = 0
 
-    async def _fake_get_shared_adapter() -> object:
+    async def _fake_build_embedding_runtime(*, settings, http_client=None, adapter_provider=None, metrics=None, **_kwargs):
         nonlocal calls
         calls += 1
-        return adapter
+        return _FakeDetector(adapter, client=http_client), _FakeGenerator(adapter)
 
     monkeypatch.setattr(
         scan_worker_module,
         "get_recognition_settings",
-        lambda: SimpleNamespace(runtime_mode="prod", blob_root=tmp_path / "blobs"),
+        lambda: SimpleNamespace(
+            runtime_mode="prod",
+            blob_root=tmp_path / "blobs",
+            face_pipeline=SimpleNamespace(profile="insightface"),
+        ),
     )
-    monkeypatch.setattr(scan_worker_module, "get_shared_insightface_adapter", _fake_get_shared_adapter)
-    monkeypatch.setattr(scan_worker_module, "InsightFaceFaceDetector", _FakeDetector)
-    monkeypatch.setattr(scan_worker_module, "InsightFaceEmbeddingGenerator", _FakeGenerator)
+    monkeypatch.setattr(scan_worker_module, "build_embedding_runtime", _fake_build_embedding_runtime)
 
     worker = scan_worker_module.ScanWorker(
         scan_worker_module.ScanWorkerConfig(postgres_dsn="sqlite+aiosqlite:///:memory:")
@@ -112,19 +125,29 @@ async def test_scan_worker_reuses_shared_insightface_adapter(monkeypatch: pytest
 
 @pytest.mark.asyncio
 async def test_scan_worker_retries_runtime_init_after_failure(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    from recognition.application.embedding.detector import UnavailableFaceDetector
+    from recognition.application.embedding.generator import UnavailableEmbeddingGenerator
+
     calls = 0
 
-    async def _failing_get_shared_adapter() -> object:
+    async def _failing_build(*, settings, http_client=None, adapter_provider=None, metrics=None, **_kwargs):
         nonlocal calls
         calls += 1
-        raise RuntimeError("transient load failure")
+        return (
+            UnavailableFaceDetector("transient load failure"),
+            UnavailableEmbeddingGenerator("transient load failure"),
+        )
 
     monkeypatch.setattr(
         scan_worker_module,
         "get_recognition_settings",
-        lambda: SimpleNamespace(runtime_mode="prod", blob_root=tmp_path / "blobs"),
+        lambda: SimpleNamespace(
+            runtime_mode="prod",
+            blob_root=tmp_path / "blobs",
+            face_pipeline=SimpleNamespace(profile="insightface"),
+        ),
     )
-    monkeypatch.setattr(scan_worker_module, "get_shared_insightface_adapter", _failing_get_shared_adapter)
+    monkeypatch.setattr(scan_worker_module, "build_embedding_runtime", _failing_build)
 
     worker = scan_worker_module.ScanWorker(
         scan_worker_module.ScanWorkerConfig(postgres_dsn="sqlite+aiosqlite:///:memory:")
@@ -134,6 +157,8 @@ async def test_scan_worker_retries_runtime_init_after_failure(monkeypatch: pytes
     assert calls == 1
     assert worker._embedding_runtime_ready is False
     assert worker._embedding_retry_after is not None
+    # S3CR-02: no httpx client while runtime is not ready.
+    assert worker._http_client is None
     assert not isinstance(worker._scan_handler._detector, StubFaceDetector)
     assert not isinstance(worker._scan_handler._generator, StubEmbeddingGenerator)
 
@@ -143,6 +168,7 @@ async def test_scan_worker_retries_runtime_init_after_failure(monkeypatch: pytes
     worker._embedding_retry_after = None
     await worker._ensure_embedding_runtime()
     assert calls == 2
+    assert worker._http_client is None
 
     await worker.__aexit__(None, None, None)
 
@@ -264,17 +290,19 @@ async def test_scan_handler_keeps_object_store_factory_after_embedding_init(
     strings to the detector and worker-side cleanup is silently disabled.
     """
 
-    async def _fake_get_shared_adapter() -> object:
-        return object()
+    async def _fake_build(*, settings, http_client=None, adapter_provider=None, metrics=None, **_kwargs):
+        return _FakeDetector(object(), client=http_client), _FakeGenerator(object())
 
     monkeypatch.setattr(
         scan_worker_module,
         "get_recognition_settings",
-        lambda: SimpleNamespace(runtime_mode="prod", blob_root=tmp_path / "blobs"),
+        lambda: SimpleNamespace(
+            runtime_mode="prod",
+            blob_root=tmp_path / "blobs",
+            face_pipeline=SimpleNamespace(profile="insightface"),
+        ),
     )
-    monkeypatch.setattr(scan_worker_module, "get_shared_insightface_adapter", _fake_get_shared_adapter)
-    monkeypatch.setattr(scan_worker_module, "InsightFaceFaceDetector", _FakeDetector)
-    monkeypatch.setattr(scan_worker_module, "InsightFaceEmbeddingGenerator", _FakeGenerator)
+    monkeypatch.setattr(scan_worker_module, "build_embedding_runtime", _fake_build)
 
     worker = scan_worker_module.ScanWorker(
         scan_worker_module.ScanWorkerConfig(postgres_dsn="sqlite+aiosqlite:///:memory:")
@@ -306,15 +334,22 @@ async def test_scan_handler_factory_persists_through_embedding_failure_fallback(
     factory must survive that failure rebuild as well — otherwise a
     transient adapter failure permanently disables multipart support."""
 
-    async def _failing_adapter() -> object:
-        raise RuntimeError("transient failure")
+    async def _failing_build(*, settings, http_client=None, adapter_provider=None, metrics=None, **_kwargs):
+        from recognition.application.embedding.detector import UnavailableFaceDetector
+        from recognition.application.embedding.generator import UnavailableEmbeddingGenerator
+
+        return UnavailableFaceDetector("transient failure"), UnavailableEmbeddingGenerator("transient failure")
 
     monkeypatch.setattr(
         scan_worker_module,
         "get_recognition_settings",
-        lambda: SimpleNamespace(runtime_mode="prod", blob_root=tmp_path / "blobs"),
+        lambda: SimpleNamespace(
+            runtime_mode="prod",
+            blob_root=tmp_path / "blobs",
+            face_pipeline=SimpleNamespace(profile="insightface"),
+        ),
     )
-    monkeypatch.setattr(scan_worker_module, "get_shared_insightface_adapter", _failing_adapter)
+    monkeypatch.setattr(scan_worker_module, "build_embedding_runtime", _failing_build)
 
     worker = scan_worker_module.ScanWorker(
         scan_worker_module.ScanWorkerConfig(postgres_dsn="sqlite+aiosqlite:///:memory:")
@@ -642,5 +677,268 @@ async def test_process_pending_jobs_routes_handler_failure_to_recovery_seam(
     assert recorded["session"] is sentinel_session
     assert recorded["job_id"] == job_id
     assert recorded["tenant_id"] == tenant_id
+
+    await worker.__aexit__(None, None, None)
+
+
+# ---------------------------------------------------------------------------
+# FIR-4-E2E-10: runtime-ready claim guard (clustering still processes)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_can_claim_scan_items_false_when_runtime_not_ready(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setattr(
+        scan_worker_module,
+        "get_recognition_settings",
+        lambda: SimpleNamespace(
+            runtime_mode="prod",
+            blob_root=tmp_path / "blobs",
+            face_pipeline=SimpleNamespace(profile="insightface"),
+        ),
+    )
+    worker = scan_worker_module.ScanWorker(
+        scan_worker_module.ScanWorkerConfig(postgres_dsn="sqlite+aiosqlite:///:memory:")
+    )
+    worker._embedding_runtime_ready = False
+    assert worker._can_claim_scan_items() is False
+    worker._embedding_runtime_ready = True
+    assert worker._can_claim_scan_items() is True
+    await worker.__aexit__(None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_can_claim_scan_items_true_in_test_mode_even_when_not_ready(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setattr(
+        scan_worker_module,
+        "get_recognition_settings",
+        lambda: SimpleNamespace(runtime_mode="test", blob_root=tmp_path / "blobs"),
+    )
+    worker = scan_worker_module.ScanWorker(
+        scan_worker_module.ScanWorkerConfig(postgres_dsn="sqlite+aiosqlite:///:memory:")
+    )
+    worker._embedding_runtime_ready = False
+    assert worker._can_claim_scan_items() is True
+    await worker.__aexit__(None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_run_forever_skips_pending_claim_when_runtime_not_ready(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """When embedding runtime is not ready, do not claim scan items; clustering still runs."""
+    monkeypatch.setattr(
+        scan_worker_module,
+        "get_recognition_settings",
+        lambda: SimpleNamespace(
+            runtime_mode="prod",
+            blob_root=tmp_path / "blobs",
+            face_pipeline=SimpleNamespace(profile="insightface"),
+        ),
+    )
+    worker = scan_worker_module.ScanWorker(
+        scan_worker_module.ScanWorkerConfig(
+            postgres_dsn="sqlite+aiosqlite:///:memory:",
+            poll_interval_seconds=0,
+        )
+    )
+    worker._embedding_runtime_ready = False
+
+    claim_calls: list[object] = []
+    clustering_calls = 0
+    cycles = 0
+
+    class _FakeRepo:
+        async def reclaim_stale_items(self, **_kwargs):  # noqa: ANN001
+            return 0
+
+        async def claim_pending_items_any(self, **kwargs):  # noqa: ANN001
+            claim_calls.append(kwargs)
+            return []
+
+        async def mark_job_running(self, **_kwargs):  # noqa: ANN001
+            return None
+
+    class _FakeQueue:
+        def __init__(self, _repo) -> None:  # noqa: ANN001
+            pass
+
+        async def terminate_stalled_jobs(self, **_kwargs):  # noqa: ANN001
+            return 0
+
+    class _FakeSession:
+        async def commit(self) -> None:
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):  # noqa: ANN001
+            return None
+
+    async def _probe() -> None:
+        return None
+
+    async def _refresh(_session, _now) -> None:  # noqa: ANN001
+        return None
+
+    async def _clustering(*, session, now):  # noqa: ANN001
+        nonlocal clustering_calls, cycles
+        clustering_calls += 1
+        cycles += 1
+        if cycles >= 2:
+            raise asyncio.CancelledError()
+        return False  # no clustering job; would fall through to claim without the guard
+
+    async def _rls(_session) -> None:  # noqa: ANN001
+        return None
+
+    monkeypatch.setattr(worker, "_probe_and_publish_embedding_runtime_capability", _probe)
+    monkeypatch.setattr(worker, "_refresh_mv_if_needed", _refresh)
+    monkeypatch.setattr(worker, "_process_pending_clustering_jobs", _clustering)
+    monkeypatch.setattr(worker, "_session_factory", lambda: _FakeSession())
+    monkeypatch.setattr(scan_worker_module, "enable_rls_bypass", _rls)
+    monkeypatch.setattr(scan_worker_module, "SqlAlchemyScanQueueRepository", lambda _s: _FakeRepo())
+    monkeypatch.setattr(scan_worker_module, "ScanQueueService", _FakeQueue)
+
+    with pytest.raises(asyncio.CancelledError):
+        await worker.run_forever()
+
+    assert clustering_calls == 2
+    assert claim_calls == [], "must not claim pending scan items while runtime is not ready"
+
+    await worker.__aexit__(None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_run_forever_claims_when_runtime_ready(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Ready runtime may claim; clustering branch still preferred when it returns True."""
+    monkeypatch.setattr(
+        scan_worker_module,
+        "get_recognition_settings",
+        lambda: SimpleNamespace(
+            runtime_mode="prod",
+            blob_root=tmp_path / "blobs",
+            face_pipeline=SimpleNamespace(profile="insightface"),
+        ),
+    )
+    worker = scan_worker_module.ScanWorker(
+        scan_worker_module.ScanWorkerConfig(
+            postgres_dsn="sqlite+aiosqlite:///:memory:",
+            poll_interval_seconds=0,
+        )
+    )
+    worker._embedding_runtime_ready = True
+
+    claim_calls: list[object] = []
+    cycles = 0
+
+    class _FakeRepo:
+        async def reclaim_stale_items(self, **_kwargs):  # noqa: ANN001
+            return 0
+
+        async def claim_pending_items_any(self, **kwargs):  # noqa: ANN001
+            claim_calls.append(kwargs)
+            return []
+
+        async def mark_job_running(self, **_kwargs):  # noqa: ANN001
+            return None
+
+    class _FakeQueue:
+        def __init__(self, _repo) -> None:  # noqa: ANN001
+            pass
+
+        async def terminate_stalled_jobs(self, **_kwargs):  # noqa: ANN001
+            return 0
+
+    class _FakeSession:
+        async def commit(self) -> None:
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):  # noqa: ANN001
+            return None
+
+    async def _probe() -> None:
+        return None
+
+    async def _refresh(_session, _now) -> None:  # noqa: ANN001
+        return None
+
+    async def _clustering(*, session, now):  # noqa: ANN001
+        nonlocal cycles
+        cycles += 1
+        if cycles >= 2:
+            raise asyncio.CancelledError()
+        return False
+
+    async def _rls(_session) -> None:  # noqa: ANN001
+        return None
+
+    monkeypatch.setattr(worker, "_probe_and_publish_embedding_runtime_capability", _probe)
+    monkeypatch.setattr(worker, "_refresh_mv_if_needed", _refresh)
+    monkeypatch.setattr(worker, "_process_pending_clustering_jobs", _clustering)
+    monkeypatch.setattr(worker, "_session_factory", lambda: _FakeSession())
+    monkeypatch.setattr(scan_worker_module, "enable_rls_bypass", _rls)
+    monkeypatch.setattr(scan_worker_module, "SqlAlchemyScanQueueRepository", lambda _s: _FakeRepo())
+    monkeypatch.setattr(scan_worker_module, "ScanQueueService", _FakeQueue)
+
+    with pytest.raises(asyncio.CancelledError):
+        await worker.run_forever()
+
+    assert len(claim_calls) == 1
+
+    await worker.__aexit__(None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_unavailable_detector_demotes_sticky_ready_flag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """R2-06: mid-life Unavailable detector must demote ready and block claims."""
+    from recognition.application.embedding.detector import UnavailableFaceDetector
+    from recognition.application.embedding.generator import UnavailableEmbeddingGenerator
+
+    monkeypatch.setattr(
+        scan_worker_module,
+        "get_recognition_settings",
+        lambda: SimpleNamespace(
+            runtime_mode="prod",
+            blob_root=tmp_path / "blobs",
+            face_pipeline=SimpleNamespace(profile="insightface"),
+        ),
+    )
+    worker = scan_worker_module.ScanWorker(
+        scan_worker_module.ScanWorkerConfig(postgres_dsn="sqlite+aiosqlite:///:memory:")
+    )
+    # Simulate prior success then mid-life Unavailable swap.
+    worker._embedding_runtime_ready = True
+    worker._detector = UnavailableFaceDetector("mid-life outage")
+    worker._generator = UnavailableEmbeddingGenerator("mid-life outage")
+
+    assert worker._can_claim_scan_items() is False
+    assert worker._embedding_runtime_ready is False
+
+    rebuilds = 0
+
+    async def _rebuild(*, settings, http_client=None, adapter_provider=None, metrics=None, **_kwargs):
+        nonlocal rebuilds
+        rebuilds += 1
+        return UnavailableFaceDetector("still down"), UnavailableEmbeddingGenerator("still down")
+
+    monkeypatch.setattr(scan_worker_module, "build_embedding_runtime", _rebuild)
+    worker._embedding_retry_after = None
+    await worker._ensure_embedding_runtime()
+    assert rebuilds == 1
+    assert worker._embedding_runtime_ready is False
+    assert worker._can_claim_scan_items() is False
 
     await worker.__aexit__(None, None, None)

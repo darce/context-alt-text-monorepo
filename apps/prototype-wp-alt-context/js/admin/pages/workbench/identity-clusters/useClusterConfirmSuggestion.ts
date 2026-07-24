@@ -77,7 +77,8 @@ export const useClusterConfirmSuggestion = ({
 
       try {
         const currentLabel = clusterLabel ?? '';
-        if (label.toLowerCase() === currentLabel.toLowerCase()) {
+        // Exact no-op (B6 / PR-09): case-only confirm ("bob"→"Bob") must apply.
+        if (label === currentLabel) {
           cancelEditing();
           resetSaveStatus();
           return;

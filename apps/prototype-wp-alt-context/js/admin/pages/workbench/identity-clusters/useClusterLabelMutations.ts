@@ -17,6 +17,7 @@ import {
   isAbortError,
   isProjectionNotReadyError,
 } from './clusterMutationUtils';
+import { useOptionalMergeSurvivors } from './MergeSurvivorContext';
 
 interface UseClusterLabelMutationsOptions {
   clusterId: string | null;
@@ -45,6 +46,7 @@ export const useClusterLabelMutations = ({
   invalidateQueries,
   updateCachedClusterLabel,
 }: UseClusterLabelMutationsOptions) => {
+  const mergeSurvivors = useOptionalMergeSurvivors();
   const renameMutation = useMutation({
     mutationKey: ['rename-cluster', clusterId],
     mutationFn: ({ label, signal }: { label: string; signal?: AbortSignal }) =>
@@ -103,6 +105,10 @@ export const useClusterLabelMutations = ({
     // Don't retry on client errors
     retry: false,
     onSuccess: (result) => {
+      // Authoritative survivor from MergeClusterResponse (source retired → target survives).
+      if (result.source_id && result.target_id) {
+        mergeSurvivors?.recordMergeSurvivor(result.source_id, result.target_id);
+      }
       if (clusterId) {
         updateCachedClusterLabel(clusterId, result.target_label ?? '');
       }

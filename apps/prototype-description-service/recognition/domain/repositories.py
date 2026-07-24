@@ -59,6 +59,10 @@ class ClusterRepository(Protocol):
     # Core CRUD
     async def get_by_id(self, cluster_id: str) -> IdentityCluster | None: ...
 
+    async def get_by_ids(self, cluster_ids: Sequence[str]) -> list[IdentityCluster]:
+        """Fetch multiple clusters in one query (batched ``get_by_id``)."""
+        ...
+
     async def get_by_tenant(
         self,
         tenant_id: str,
@@ -159,6 +163,7 @@ class ClusterRepository(Protocol):
         cluster_id: str,
         *,
         limit: int | None = None,
+        offset: int = 0,
     ) -> list[tuple[Any, float]]:
         """Fetch cluster members and similarity scores for review UIs."""
         ...
@@ -519,6 +524,16 @@ class SuggestionRepository(Protocol):
 
     async def get_by_identity(self, tenant_id: str, identity_id: str) -> list[AssignmentSuggestion]:
         """List suggestions for an identity within a tenant."""
+        ...
+
+    async def list_for_identities(
+        self,
+        tenant_id: str,
+        identity_ids: Sequence[str],
+        *,
+        top_k: int,
+    ) -> list[SuggestionDetails]:
+        """Top-k pending labeled-cluster suggestions per identity (one windowed query)."""
         ...
 
     async def get_by_cluster(self, tenant_id: str, cluster_id: str) -> list[AssignmentSuggestion]:

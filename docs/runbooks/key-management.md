@@ -24,7 +24,7 @@ key minted in, and which service is the client actually calling?*
 | What the plugin calls | `https://api.altcontext.com` (or staging/dev vhosts) | `http://localhost:8000` (local description-service) |
 | Who uses it | Real sites, demo, **and any LocalWP install exercising the product path** | Developers iterating on recognition-service code |
 | Where tenants/keys live | **Prod identity DB on the OCI VM** | Laptop-local Postgres (throwaway fixtures) |
-| How to mint | Prod `/admin` console over the tailnet (canonical), or `make provision-customer EMAIL=<e> ENV=prod`, or `manage_api_keys --env prod` exec'd in the prod container | `make dev-setup` / `make dev-mint-key`, or the local `admin-dev` console |
+| How to mint | **`make admin-oci-mint TENANT=<uuid>`** (automated, recommended for scratch/eval/LocalWP), the prod `/admin` console over the tailnet, `make provision-customer EMAIL=<e> ENV=prod` (real customers), or `manage_api_keys --env prod` exec'd in the prod container | `make dev-setup` / `make dev-mint-key`, or the local `admin-dev` console |
 | How the plugin selects it | Default — `recognition_source` resolves to `service`; no config needed | **Dev hatch only**: `ACX_RECOGNITION_SOURCE=local` constant/filter (RECOG-1 removed the product toggle) |
 | Key install in the plugin | wp-admin **Settings page** (user way, stored as options) or `wp-config.local.php` constants (gate/reproducible way) | Local fixture key via the same two mechanisms |
 | Product surface? | Yes | **Never.** Dev convenience only; retirement deferred, kept as a fast iteration loop ([tech-debt entry](../tasks/tech-debt/local-vs-oci-description-service-drift-and-retirement.md)) |
@@ -52,6 +52,27 @@ never the local one.
   local-fixture UUID that `make dev-mint-key` uses in laptop DBs. Reusing it
   for anything else guarantees a collision or a very confusing debugging
   session.
+
+### Fastest: `make admin-oci-mint` (automated, no secret to the laptop)
+
+For a scratch/eval or LocalWP tenant, one command mints the key with no manual tunnel or
+token copy:
+
+```sh
+cd apps/prototype-description-service
+make admin-oci-mint TENANT=<uuid> [SITE_URL=<url>]   # SITE_URL defaults to http://localhost:10018
+```
+
+It SSHes to the prod VM and runs the canonical `manage_api_keys --env prod` CLI **inside the
+prod `api` container**, so the container's own DB creds do the write — the `/admin` HTTP
+route and its `RECOGNITION_ADMIN_TOKEN` are never involved, and no prod secret reaches the
+laptop (only the freshly-minted key comes back, printed once). `TENANT`/`SITE_URL` are routed
+through the environment and validated (UUID / URL charset) before use, so a pasted value
+cannot inject a command over the ssh hop [WEB-02/WEB-16/SEC-01]. It ensures the tenant
+(idempotent `tenant create`) then mints the key; paste the printed `api_key=` into the plugin
+**Settings**. Host/user override via `OCI_HOST`/`OCI_USER` (default
+`acx-backend.tail1a44b8.ts.net` / `ubuntu`). Use the manual `/admin` console below when you
+need to browse/list/revoke keys, and `make provision-customer` for a real customer tenant.
 
 ### Steps (prod `/admin` console — canonical)
 

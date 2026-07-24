@@ -153,10 +153,11 @@ describe('buildSyncPresentation state matrix', () => {
     const p = buildSyncPresentation({
       legacySyncHealth: 'stale',
       resultsSyncState: 'error',
-      resultsError: 'Waiting for service…',
+      resultsError: SYNC_VOCABULARY.resultsErrorHeadline,
     });
     expect(p.action?.kind).toBe('retry_results');
-    expect(p.headline).toBe('Waiting for service…');
+    expect(p.headline).toBe(SYNC_VOCABULARY.resultsErrorHeadline);
+    expect(p.headline).not.toBe('Waiting for service…');
   });
 
   it('shows connected-empty when trigger returns no_remote_data', () => {

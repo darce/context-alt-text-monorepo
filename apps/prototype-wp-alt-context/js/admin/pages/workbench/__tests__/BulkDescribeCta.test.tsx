@@ -1,8 +1,10 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { DescribeRunProgress } from '../../../hooks/useDescribeRunProgress';
+import type { DescribeRunResponse } from '../../../api/describeApi';
+import { _resetCooldownForTests, openCooldown } from '../../../utils/recognitionCooldown';
 import { BulkDescribeCta } from '../MediaSelection';
 
 vi.mock('@wordpress/i18n', () => ({
@@ -44,6 +46,10 @@ const baseProps = {
 };
 
 describe('BulkDescribeCta state matrix (A11Y-24)', () => {
+  afterEach(() => {
+    _resetCooldownForTests();
+  });
+
   // empty / loading / error fill gaps left by the offline column (Slice 2).
   it('disables submit in empty selection state (zero selection)', () => {
     render(<BulkDescribeCta {...baseProps} selectedCount={0} />);
@@ -63,23 +69,80 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
     expect(screen.getByText('Describe service unavailable')).toBeInTheDocument();
   });
 
-  it('disables submit with offline reason when remoteActionDisabled', async () => {
+  it('gates submit with aria-disabled + a reason when offline (§7: never HTML disabled)', () => {
     const onSubmit = vi.fn();
     render(
       <BulkDescribeCta
         {...baseProps}
         onSubmit={onSubmit}
-        remoteActionDisabled
         remoteActionAriaDisabled
         remoteActionTitle="Unavailable while the recognition service is offline"
       />,
     );
 
     const button = screen.getByRole('button', { name: 'Describe selected' });
-    expect(button).toBeDisabled();
-    expect(button).toHaveAttribute('title', 'Unavailable while the recognition service is offline');
+    // §7 offline row: still focusable (not HTML disabled), reason reachable.
+    expect(button).not.toBeDisabled();
     expect(button).toHaveAttribute('aria-disabled', 'true');
-    await userEvent.click(button);
+    expect(button).toHaveAttribute('title', 'Unavailable while the recognition service is offline');
+    const reasonId = button.getAttribute('aria-describedby');
+    expect(reasonId).toBeTruthy();
+    expect(document.getElementById(reasonId ?? '')).toHaveTextContent(
+      'Unavailable while the recognition service is offline',
+    );
+    // The onSubmit prop itself guards offline in the container (if (offline) return).
+  });
+
+  it('marks the SUBMIT BUTTON (not a neutral wrapper) as the accent primary when it owns the footer accent (§7 / BR-73)', () => {
+    const { rerender, container } = render(<BulkDescribeCta {...baseProps} accentPrimary />);
+    const marked = container.querySelectorAll('[data-acx-accent-primary]');
+    expect(marked).toHaveLength(1);
+    // BR-73: the marker sits on the actually-accent-styled submit button — never the
+    // wrapper div — and the accent chrome class rides with it.
+    const button = screen.getByRole('button', { name: 'Describe selected' });
+    expect(marked[0]).toBe(button);
+    expect(button.className).toContain('acx-accent-primary-action');
+
+    rerender(<BulkDescribeCta {...baseProps} accentPrimary={false} />);
+    expect(container.querySelectorAll('[data-acx-accent-primary]')).toHaveLength(0);
+    expect(screen.getByRole('button', { name: 'Describe selected' }).className).not.toContain(
+      'acx-accent-primary-action',
+    );
+  });
+
+  it('offline never HTML-disables even at zero selection — reason stays reachable (§7 / BR-74)', () => {
+    render(
+      <BulkDescribeCta
+        {...baseProps}
+        selectedCount={0}
+        remoteActionAriaDisabled
+        remoteActionTitle="Unavailable while the recognition service is offline"
+      />,
+    );
+
+    const button = screen.getByRole('button', { name: 'Describe selected' });
+    // Airplane-mode reload at zero selection: focusable (not HTML disabled), reason reachable.
+    expect(button).not.toBeDisabled();
+    expect(button).toHaveAttribute('aria-disabled', 'true');
+    const reasonId = button.getAttribute('aria-describedby');
+    expect(reasonId).toBeTruthy();
+    expect(document.getElementById(reasonId ?? '')).toHaveTextContent(
+      'Unavailable while the recognition service is offline',
+    );
+  });
+
+  it('does not fire onSubmit when clicked while offline-gated (§7 / BR-76)', async () => {
+    const onSubmit = vi.fn();
+    render(
+      <BulkDescribeCta
+        {...baseProps}
+        onSubmit={onSubmit}
+        remoteActionAriaDisabled
+        remoteActionTitle="Unavailable while the recognition service is offline"
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Describe selected' }));
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
@@ -91,6 +154,67 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
     expect(button).not.toBeDisabled();
     await userEvent.click(button);
     expect(onSubmit).toHaveBeenCalledOnce();
+  });
+
+  it('announces a frozen-progress waiting state instead of an error dead-end (BR-07 / A11Y-21)', () => {
+    const runningRun = {
+      run_id: 'run-1',
+      status: 'running',
+      completed: 2,
+      failed: 0,
+      skipped: 0,
+      total: 4,
+      eta_seconds: 30,
+    } as DescribeRunResponse;
+    const progress = {
+      ...idleProgress,
+      run: runningRun,
+      status: 'running',
+      isFrozen: true,
+      isPolling: true,
+      progressFraction: 0.5,
+      stalledForSeconds: null,
+    } as DescribeRunProgress;
+
+    render(<BulkDescribeCta {...baseProps} isRunning runId="run-1" progress={progress} isPanelVisible />);
+
+    const notice = screen.getByText(/Waiting for the service — progress updates paused/);
+    // Announced via the surrounding polite live region, not a visual-only hint.
+    expect(notice.closest('[role="status"]')).not.toBeNull();
+    // The frozen state keeps the last-known progress visible — no error dead-end.
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    expect(screen.getByRole('progressbar')).toBeInTheDocument();
+  });
+
+  it('announces the shared recognition cooldown with its remaining window', () => {
+    openCooldown(30);
+    const runningRun = {
+      run_id: 'run-1',
+      status: 'running',
+      completed: 1,
+      failed: 0,
+      skipped: 0,
+      total: 4,
+      eta_seconds: 60,
+    } as DescribeRunResponse;
+    const progress = {
+      ...idleProgress,
+      run: runningRun,
+      status: 'running',
+      isFrozen: false,
+      isPolling: true,
+      progressFraction: 0.25,
+      stalledForSeconds: null,
+    } as DescribeRunProgress;
+
+    render(<BulkDescribeCta {...baseProps} isRunning runId="run-1" progress={progress} isPanelVisible />);
+
+    // The remaining window is visible but aria-hidden so the polite live region
+    // is not re-announced every second (A11Y-21); the announced sentence stays
+    // static while only the countdown ticks.
+    const countdown = screen.getByText(/Retrying in 30s\./);
+    expect(countdown).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getByText('Waiting for the service — progress updates paused.')).toBeInTheDocument();
   });
 
   it('keeps cancel enabled while a run is active even when offline gate is set', async () => {
@@ -108,7 +232,6 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
         runId="run-1"
         progress={progress}
         isPanelVisible
-        remoteActionDisabled
         remoteActionAriaDisabled
         remoteActionTitle="Unavailable while the recognition service is offline"
         onCancel={onCancel}

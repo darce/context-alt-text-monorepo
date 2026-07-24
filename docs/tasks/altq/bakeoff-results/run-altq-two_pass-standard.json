@@ -1,0 +1,1013 @@
+{
+  "items": [
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Maria Correonero crouches inside a blue ice cave, looking toward the camera. She wears a white helmet with a headlamp, a black winter jacket with a fur-lined hood, and brown boots with orange crampons. Her long brown hair falls over her shoulders as she crouches on wet, rocky ground beneath dark, textured ice walls.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 8.989,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"center\", \"appearance\": \"a person with long brown hair wearing a white helmet with a headlamp, a black winter jacket with a fur-lined hood, black pants, and brown boots with orange crampons\"}], \"setting\": \"an icy cave with dark, textured ice walls and rocky, wet ground\", \"action\": \"crouching and looking toward the camera\", \"legible_text\": [\"Black Diamond\"], \"atmosphere\": \"cold and adventurous\"}"
+          },
+          {
+            "latency_s": 8.888,
+            "pass": "ground_weave",
+            "raw": "Maria Correonero crouches inside a blue ice cave, looking toward the camera. She wears a white helmet with a headlamp, a black winter jacket with a fur-lined hood, and brown boots with orange crampons. Her long brown hair falls over her shoulders as she crouches on wet, rocky ground beneath dark, textured ice walls."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 17.887,
+      "media_id": 1,
+      "path": "mock_images/Brei\u00f0amerkurjo\u0308kull.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Bea Burke takes a mirror selfie in a bathroom, wearing a rhinestone \"Happy Birthday\" tiara and a teal crop top. She sticks her tongue out with wide eyes, making a playful face. Her long blonde hair falls over her shoulders, and she holds a glittery phone case in her hand. A white towel hangs on a rack behind her, and a shower and bathtub are visible in the background.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 2.928,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"center\", \"appearance\": \"a woman with long blonde hair, wearing a tiara, a blue crop top, and white pants, making a playful face with her tongue out\"}], \"setting\": \"a bathroom with a mirror, a shower, and a bathtub\", \"action\": \"taking a selfie in a mirror\", \"legible_text\": [\"HAPPY BIRTHDAY\", \"YACHT PARTY\"], \"atmosphere\": \"playful and celebratory\"}"
+          },
+          {
+            "latency_s": 2.816,
+            "pass": "ground_weave",
+            "raw": "Bea Burke takes a mirror selfie in a bathroom, wearing a rhinestone \"Happy Birthday\" tiara and a teal crop top. She sticks her tongue out with wide eyes, making a playful face. Her long blonde hair falls over her shoulders, and she holds a glittery phone case in her hand. A white towel hangs on a rack behind her, and a shower and bathtub are visible in the background."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 5.745,
+      "media_id": 2,
+      "path": "mock_images/bea-nye.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Caitlin Weaver stands on a rocky shore with her eyes closed and a slight smile. She wears a black hooded jacket and a white running vest as wind blows her hair across her face. A pale lagoon stretches behind her, bordered by snow-dusted hills under a calm sky.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 2.721,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"front and left\", \"appearance\": \"person wearing a black hooded jacket and a white vest, with long hair blowing in the wind, eyes closed, and a slight smile\"}], \"setting\": \"a rocky shoreline next to a body of water with snow-dusted hills in the background under a pale sky\", \"action\": \"a person standing with their eyes closed, seemingly enjoying the moment\", \"legible_text\": [], \"atmosphere\": \"calm and serene\"}"
+          },
+          {
+            "latency_s": 2.537,
+            "pass": "ground_weave",
+            "raw": "Caitlin Weaver stands on a rocky shore with her eyes closed and a slight smile. She wears a black hooded jacket and a white running vest as wind blows her hair across her face. A pale lagoon stretches behind her, bordered by snow-dusted hills under a calm sky."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 5.26,
+      "media_id": 3,
+      "path": "mock_images/ccqw-antartica.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Caitlin Weaver leans on a wooden bar counter, looking at the camera. She wears a light-colored t-shirt with a dark graphic and has long brown hair. The background shows shelves of bottles and a dimly lit bar interior.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 8.304,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"center\", \"appearance\": \"person with long brown hair, wearing a light-colored t-shirt with a dark graphic, looking at the camera\"}], \"setting\": \"dimly lit bar or restaurant with wooden surfaces and shelves of bottles in the background\", \"action\": \"person leaning on a surface and looking at the camera\", \"legible_text\": [], \"atmosphere\": \"intimate, casual, dimly lit\"}"
+          },
+          {
+            "latency_s": 8.143,
+            "pass": "ground_weave",
+            "raw": "Caitlin Weaver leans on a wooden bar counter, looking at the camera. She wears a light-colored t-shirt with a dark graphic and has long brown hair. The background shows shelves of bottles and a dimly lit bar interior."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 16.452,
+      "media_id": 4,
+      "path": "mock_images/ccqw-bar.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Caitlin Weaver smiles widely in a mirror selfie, her long brown hair falling over her shoulders. Erika Hansen Miller stands to her right, holding a phone and wearing a light-colored headband. The mirror reflects two other patrons in the background, one in a red shirt and another in a dark shirt, both holding phones. The scene is warmly lit, suggesting a casual and social atmosphere in a bar.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 9.008,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"top center\", \"appearance\": \"woman with long brown hair, smiling, wearing a dark top\"}, {\"position\": \"right side\", \"appearance\": \"person with dark hair, wearing a light-colored headband, holding a phone\"}, {\"position\": \"bottom right\", \"appearance\": \"reflection of a person with short hair, wearing a red shirt, holding a phone\"}, {\"position\": \"bottom right\", \"appearance\": \"reflection of a person with short hair, wearing a dark shirt, holding a phone\"}], \"setting\": \"indoor space with warm lighting, possibly a bar or restaurant, with a mirror reflecting the scene\", \"action\": \"a person is taking a selfie in a mirror, showing their reflection and the reflections of others in the background\", \"legible_text\": [], \"atmosphere\": \"casual and social\"}"
+          },
+          {
+            "latency_s": 8.389,
+            "pass": "ground_weave",
+            "raw": "Caitlin Weaver smiles widely in a mirror selfie, her long brown hair falling over her shoulders. Erika Hansen Miller stands to her right, holding a phone and wearing a light-colored headband. The mirror reflects two other patrons in the background, one in a red shirt and another in a dark shirt, both holding phones. The scene is warmly lit, suggesting a casual and social atmosphere in a bar."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 17.4,
+      "media_id": 5,
+      "path": "mock_images/ccqw-erika.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Caitlin Weaver peeks through a bouquet of flowers, her face partially hidden by pink roses, white alstroemeria, and blue delphiniums. She reaches a hand toward the camera, her fingers extending forward. Her expression is playful and intimate, with one eye visible through the blooms. Green stems and leaves fill the frame around her.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 2.636,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"center\", \"appearance\": \"person with light skin and brown hair, partially obscured by flowers\"}], \"setting\": \"indoor setting with a bouquet of flowers\", \"action\": \"person holding a bouquet of flowers and peeking through them\", \"legible_text\": [], \"atmosphere\": \"intimate and playful\"}"
+          },
+          {
+            "latency_s": 2.617,
+            "pass": "ground_weave",
+            "raw": "Caitlin Weaver peeks through a bouquet of flowers, her face partially hidden by pink roses, white alstroemeria, and blue delphiniums. She reaches a hand toward the camera, her fingers extending forward. Her expression is playful and intimate, with one eye visible through the blooms. Green stems and leaves fill the frame around her."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 5.254,
+      "media_id": 6,
+      "path": "mock_images/ccqw-flowers.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Caitlin Weaver looks at the camera with long brown hair blowing across her face. She wears a yellow sweater over a pink shirt and a denim jacket. The sky behind her is a clear, deep blue. Sunlight illuminates her face and hair.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 2.494,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"center\", \"appearance\": \"person with long brown hair, wearing a yellow sweater over a pink shirt and a denim jacket\"}], \"setting\": \"outdoors with a clear blue sky\", \"action\": \"person looking at the camera with hair blowing in the wind\", \"legible_text\": [], \"atmosphere\": \"bright and sunny\"}"
+          },
+          {
+            "latency_s": 2.459,
+            "pass": "ground_weave",
+            "raw": "Caitlin Weaver looks at the camera with long brown hair blowing across her face. She wears a yellow sweater over a pink shirt and a denim jacket. The sky behind her is a clear, deep blue. Sunlight illuminates her face and hair."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 4.953,
+      "media_id": 7,
+      "path": "mock_images/ccqw-hair.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Caitlin Weaver holds a black rangefinder camera to her eye. She wears a red ribbed tank top over a blue bra, a gold watch, and a necklace with a pendant. Her brown hair is pulled back in a bun. She looks intently through the camera lens in a focused pose.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 5.441,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"center\", \"appearance\": \"a woman with brown hair in a bun, wearing a red ribbed tank top over a blue bra, a gold watch, and a necklace with a pendant\"}], \"setting\": \"an indoor space with a white wall and a framed picture in the background\", \"action\": \"a woman holding a black camera up to her eye, appearing to take a photograph\", \"legible_text\": [], \"atmosphere\": \"focused and artistic\"}"
+          },
+          {
+            "latency_s": 5.539,
+            "pass": "ground_weave",
+            "raw": "Caitlin Weaver holds a black rangefinder camera to her eye. She wears a red ribbed tank top over a blue bra, a gold watch, and a necklace with a pendant. Her brown hair is pulled back in a bun. She looks intently through the camera lens in a focused pose."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 10.985,
+      "media_id": 8,
+      "path": "mock_images/ccqw-occlusion-2.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Caitlin Weaver holds a black rangefinder camera to her right eye with both hands. She has brown hair pulled back and wears a blue top with a red bra strap visible. Her expression is focused as she takes a mirror selfie in front of a white wall. A bookshelf is blurred in the background.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 4.885,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"center\", \"appearance\": \"woman with brown hair pulled back, wearing a blue top with a red bra strap visible, holding a black camera\"}], \"setting\": \"indoor space with a white wall and a bookshelf in the background\", \"action\": \"taking a mirror selfie with a camera\", \"legible_text\": [], \"atmosphere\": \"intimate and focused\"}"
+          },
+          {
+            "latency_s": 4.854,
+            "pass": "ground_weave",
+            "raw": "Caitlin Weaver holds a black rangefinder camera to her right eye with both hands. She has brown hair pulled back and wears a blue top with a red bra strap visible. Her expression is focused as she takes a mirror selfie in front of a white wall. A bookshelf is blurred in the background."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 9.744,
+      "media_id": 9,
+      "path": "mock_images/ccqw-occlusion.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Caitlin Weaver looks down with a contemplative expression. She wears a blue shirt under intense purple-violet lighting. Her long hair falls over her shoulder as she gazes away from the camera.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 2.343,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"center\", \"appearance\": \"woman with long hair, wearing a blue shirt\"}], \"setting\": \"indoor space with purple lighting\", \"action\": \"looking down\", \"legible_text\": [], \"atmosphere\": \"contemplative\"}"
+          },
+          {
+            "latency_s": 2.145,
+            "pass": "ground_weave",
+            "raw": "Caitlin Weaver looks down with a contemplative expression. She wears a blue shirt under intense purple-violet lighting. Her long hair falls over her shoulder as she gazes away from the camera."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 4.489,
+      "media_id": 10,
+      "path": "mock_images/ccqw-purple.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Caitlin Weaver runs mid-stride across a finish line in a winter race. She wears a teal beanie, sunglasses, a black neck gaiter, and a green long-sleeve shirt with matching leggings. A magenta layer is tied around her waist and a race bib numbered 1690 is pinned to her leg. Spectators behind a barrier watch as she crosses the pavement under a clear sky.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 4.897,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"foreground\", \"appearance\": \"a person wearing a green long-sleeve shirt, green leggings, a teal beanie, sunglasses, and a black neck gaiter, running with a race bib numbered 1690\"}, {\"position\": \"background\", \"appearance\": \"a group of spectators behind a barrier, some holding phones, wearing winter clothing\"}], \"setting\": \"an outdoor urban park with bare trees and buildings in the distance, during a race event\", \"action\": \"a person running in a race, crossing a finish line\", \"legible_text\": [\"1690\", \"NYRUNS\", \"WINTER RACE\"], \"atmosphere\": \"energetic and focused\"}"
+          },
+          {
+            "latency_s": 4.578,
+            "pass": "ground_weave",
+            "raw": "Caitlin Weaver runs mid-stride across a finish line in a winter race. She wears a teal beanie, sunglasses, a black neck gaiter, and a green long-sleeve shirt with matching leggings. A magenta layer is tied around her waist and a race bib numbered 1690 is pinned to her leg. Spectators behind a barrier watch as she crosses the pavement under a clear sky."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 9.477,
+      "media_id": 11,
+      "path": "mock_images/ccqw-running-2.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Caitlin Weaver runs on a paved road beside a rocky shoreline. She wears a pink cap, mirrored sunglasses, a green and black tank top, black shorts, and a white running vest with bib number 960. A man in a black cap and white pullover runs beside her with bib number 967. The scene is active and focused under soft morning or evening light.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 2.218,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"left\", \"appearance\": \"woman wearing a pink cap, sunglasses, a green and black tank top, black shorts, and a white running vest with a race bib numbered 960\"}, {\"position\": \"right\", \"appearance\": \"man wearing a black cap, a white long-sleeved pullover, dark shorts, and a race bib numbered 967\"}], \"setting\": \"a paved road near a rocky shoreline during early morning or late evening\", \"action\": \"running\", \"legible_text\": [\"Carlsberg\", \"CATLIN\", \"960\", \"Carlsberg\", \"BEN HAM\", \"967\"], \"atmosphere\": \"active and focused\"}"
+          },
+          {
+            "latency_s": 1.752,
+            "pass": "ground_weave",
+            "raw": "Caitlin Weaver runs on a paved road beside a rocky shoreline. She wears a pink cap, mirrored sunglasses, a green and black tank top, black shorts, and a white running vest with bib number 960. A man in a black cap and white pullover runs beside her with bib number 967. The scene is active and focused under soft morning or evening light."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 3.97,
+      "media_id": 12,
+      "path": "mock_images/ccqw-running.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Caitlin Weaver takes a selfie under a canopy of pink magnolia blossoms.  \nShe wears a grey cap, rose-tinted sunglasses, and a black jacket with \"BANDIT RUN\" on the collar.  \nSunlight glints through the branches behind her, creating lens flares.  \nHer long brown hair is pulled into low pigtails, and she smiles softly.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 2.7,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"center\", \"appearance\": \"a woman with long brown hair, wearing a grey cap, sunglasses, and a black jacket\"}], \"setting\": \"an outdoor scene with a blooming pink magnolia tree and a tall building in the background under a clear blue sky\", \"action\": \"a woman taking a selfie\", \"legible_text\": [\"BANDIT RUN\", \"20\"], \"atmosphere\": \"bright, sunny, and cheerful\"}"
+          },
+          {
+            "latency_s": 2.652,
+            "pass": "ground_weave",
+            "raw": "Caitlin Weaver takes a selfie under a canopy of pink magnolia blossoms.  \nShe wears a grey cap, rose-tinted sunglasses, and a black jacket with \"BANDIT RUN\" on the collar.  \nSunlight glints through the branches behind her, creating lens flares.  \nHer long brown hair is pulled into low pigtails, and she smiles softly."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 5.353,
+      "media_id": 13,
+      "path": "mock_images/ccqw-sunglasses-flowers.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Caitlin Weaver smiles in dark sunglasses and a cream hoodie on a rooftop.  \nShe touches her face with her hand, her long brown hair blowing in the wind.  \nA small tree stands beside her under a clear blue sky, with city towers visible in the distance.  \nThe sun shines brightly behind the tree, casting a warm glow on her face.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 2.921,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"front and left\", \"appearance\": \"person with long brown hair, wearing dark sunglasses, a light-colored hoodie, and a black wristband\"}], \"setting\": \"outdoors on a sunny day, with a clear blue sky, a small tree, and distant buildings visible\", \"action\": \"person smiling and touching their face with their hand\", \"legible_text\": [\"FIRE ISLAND\", \"EST. 1983\"], \"atmosphere\": \"bright and sunny\"}"
+          },
+          {
+            "latency_s": 2.678,
+            "pass": "ground_weave",
+            "raw": "Caitlin Weaver smiles in dark sunglasses and a cream hoodie on a rooftop.  \nShe touches her face with her hand, her long brown hair blowing in the wind.  \nA small tree stands beside her under a clear blue sky, with city towers visible in the distance.  \nThe sun shines brightly behind the tree, casting a warm glow on her face."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 5.6,
+      "media_id": 14,
+      "path": "mock_images/ccqw-sunglasses.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Caitlin Weaver walks across a city street in a grainy black-and-white photo. She wears a long-sleeved top and flared pants, carrying a large shoulder bag and a watch. Her expression is neutral as she moves past a truck with beverage cans on its side. The scene has a gritty, hazy urban atmosphere.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 4.366,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"center\", \"appearance\": \"a person wearing a long-sleeved top and flared pants, carrying a large bag and wearing a watch\"}], \"setting\": \"a street with a truck in the background\", \"action\": \"walking across the street\", \"legible_text\": [\"0057-128-855\"], \"atmosphere\": \"gritty, urban, and slightly hazy\"}"
+          },
+          {
+            "latency_s": 4.401,
+            "pass": "ground_weave",
+            "raw": "Caitlin Weaver walks across a city street in a grainy black-and-white photo. She wears a long-sleeved top and flared pants, carrying a large shoulder bag and a watch. Her expression is neutral as she moves past a truck with beverage cans on its side. The scene has a gritty, hazy urban atmosphere."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 8.769,
+      "media_id": 15,
+      "path": "mock_images/ccqw-underexposed.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Caitlin Weaver holds a camera in a dimly lit concert space. Her face appears blurred and glowing under pink stage lighting. Reflections and bokeh lights obscure the view through a transparent surface. The atmosphere is dreamy and vibrant.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 1.105,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"center\", \"appearance\": \"a person holding a camera, seen through a reflective surface with light reflections\"}], \"setting\": \"a dimly lit environment with colorful light reflections, possibly a concert or event\", \"action\": \"a person holding a camera, capturing a moment\", \"legible_text\": [], \"atmosphere\": \"dreamy and vibrant\"}"
+          },
+          {
+            "latency_s": 0.886,
+            "pass": "ground_weave",
+            "raw": "Caitlin Weaver holds a camera in a dimly lit concert space. Her face appears blurred and glowing under pink stage lighting. Reflections and bokeh lights obscure the view through a transparent surface. The atmosphere is dreamy and vibrant."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 1.993,
+      "media_id": 16,
+      "path": "mock_images/ccqw.blurry.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Cristina Quintana sits on the left with dark hair in a high bun, wearing a green bikini top and a pink mesh cover-up, her face painted with tear-like makeup and tattoos visible on her chest and arm. In the center, a person wears a white fluffy sheep hat with pink ears, a pink long-sleeved crop top, and holds a plastic cup. On the right, a woman with long dark hair wears a black and white checkered dress and holds a cup, all three looking toward the camera in a dimly lit indoor space with a gray cinder block wall behind them.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 2.285,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"left\", \"appearance\": \"woman with dark hair in a high bun, wearing a green bikini top, a pink mesh cover-up, and a pink choker, with makeup resembling tears and tattoos on her chest and arm\"}, {\"position\": \"center\", \"appearance\": \"person wearing a white fluffy sheep hat with pink ears, a pink long-sleeved crop top, and braided hair, holding a cup\"}, {\"position\": \"right\", \"appearance\": \"woman with long dark hair, wearing a black and white checkered dress and a gold necklace, holding a cup\"}], \"setting\": \"indoor space with a gray cinder block wall and a painted mural in the background\", \"action\": \"three people sitting together, holding plastic cups, looking toward the camera\", \"legible_text\": [\"THY\"], \"atmosphere\": \"dark, party-like, with a playful and slightly chaotic mood\"}"
+          },
+          {
+            "latency_s": 1.989,
+            "pass": "ground_weave",
+            "raw": "Cristina Quintana sits on the left with dark hair in a high bun, wearing a green bikini top and a pink mesh cover-up, her face painted with tear-like makeup and tattoos visible on her chest and arm. In the center, a person wears a white fluffy sheep hat with pink ears, a pink long-sleeved crop top, and holds a plastic cup. On the right, a woman with long dark hair wears a black and white checkered dress and holds a cup, all three looking toward the camera in a dimly lit indoor space with a gray cinder block wall behind them."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 4.275,
+      "media_id": 17,
+      "path": "mock_images/cristina-1.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Ellyn Heald poses in a kitchen with gold leaf on her face and chest. She wears red lipstick and gold drop earrings, her brown hair in an updo. White cabinets and a refrigerator are visible behind her.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 4.333,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"center\", \"appearance\": \"a woman with brown hair in an updo, green eyes, red lipstick, and gold leaf on her face and chest\"}], \"setting\": \"a kitchen with white cabinets, a refrigerator, and a countertop\", \"action\": \"a woman posing for the camera with gold leaf on her face and chest\", \"legible_text\": [], \"atmosphere\": \"playful and artistic\"}"
+          },
+          {
+            "latency_s": 4.213,
+            "pass": "ground_weave",
+            "raw": "Ellyn Heald poses in a kitchen with gold leaf on her face and chest. She wears red lipstick and gold drop earrings, her brown hair in an updo. White cabinets and a refrigerator are visible behind her."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 8.548,
+      "media_id": 18,
+      "path": "mock_images/example-ellynheald-goldleaf.jpeg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Kirstie Mccarrel wears a silver tiara and a \"BIRTHDAY PRINCESS\" sash while posing with a friend.  \nThe woman on the right wears glasses and a gold headband, smiling with her hand on her hip.  \nThey stand in front of a balloon arch of purple, gold, and teal balloons, with Mardi Gras decorations on the wall.  \nThe atmosphere is celebratory and festive.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 3.006,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"left\", \"appearance\": \"woman with blonde hair, wearing a silver tiara, a sparkly silver dress, and a silver sash that says \\\"BIRTHDAY PRINCESS\\\"\"}, {\"position\": \"right\", \"appearance\": \"woman with blonde hair, wearing glasses, a black sleeveless dress, and a gold headband\"}], \"setting\": \"indoor party setting with a balloon arch of purple, gold, and teal balloons, a round mirror, and Mardi Gras-style decorations on the wall\", \"action\": \"two women posing together for a photo\", \"legible_text\": [\"BIRTHDAY PRINCESS\"], \"atmosphere\": \"celebratory and festive\"}"
+          },
+          {
+            "latency_s": 2.649,
+            "pass": "ground_weave",
+            "raw": "Kirstie Mccarrel wears a silver tiara and a \"BIRTHDAY PRINCESS\" sash while posing with a friend.  \nThe woman on the right wears glasses and a gold headband, smiling with her hand on her hip.  \nThey stand in front of a balloon arch of purple, gold, and teal balloons, with Mardi Gras decorations on the wall.  \nThe atmosphere is celebratory and festive."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 5.656,
+      "media_id": 19,
+      "path": "mock_images/k.mcc-1.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Kirstie Mccarrel kneels on a wooden floor hugging a blue merle Australian Shepherd.  \nShe wears a beige sweater and smiles at the camera.  \nThe dog has white and black fur and looks toward the viewer with its tongue out.  \nThey are in front of a marble fireplace with a black and gold insert.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 8.504,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"kneeling on the floor\", \"appearance\": \"a woman with long blonde hair, wearing a beige sweater, smiling\"}], \"setting\": \"a living room with a fireplace, marble surround, and wooden floor\", \"action\": \"a woman kneeling and holding a dog in front of a fireplace\", \"legible_text\": [], \"atmosphere\": \"warm and cozy\"}"
+          },
+          {
+            "latency_s": 8.741,
+            "pass": "ground_weave",
+            "raw": "Kirstie Mccarrel kneels on a wooden floor hugging a blue merle Australian Shepherd.  \nShe wears a beige sweater and smiles at the camera.  \nThe dog has white and black fur and looks toward the viewer with its tongue out.  \nThey are in front of a marble fireplace with a black and gold insert."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 17.259,
+      "media_id": 20,
+      "path": "mock_images/kirstie-1.jpeg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Two women sit on the bow of a motorboat, smiling at the camera. The woman on the left wears a red tank top and denim shorts, while the woman on the right, identified as Kirstie Mccarrel, wears a pink bucket hat and a white and black striped top. A man in a black cap sits at the helm in the background. The boat floats on calm water under a hazy sky.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 3.116,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"front left\", \"appearance\": \"woman with blonde hair, wearing a red tank top and denim shorts, sunglasses, and a necklace\"}, {\"position\": \"front right\", \"appearance\": \"woman with blonde hair, wearing a pink bucket hat, a white and black striped top, and black shorts, with tattoos on her arm\"}, {\"position\": \"background\", \"appearance\": \"man wearing a black cap and sunglasses, sitting at the helm of the boat\"}], \"setting\": \"a boat on a body of water with a shoreline in the distance\", \"action\": \"two women sitting on the bow of a boat, smiling at the camera\", \"legible_text\": [], \"atmosphere\": \"relaxed and cheerful\"}"
+          },
+          {
+            "latency_s": 2.613,
+            "pass": "ground_weave",
+            "raw": "Two women sit on the bow of a motorboat, smiling at the camera. The woman on the left wears a red tank top and denim shorts, while the woman on the right, identified as Kirstie Mccarrel, wears a pink bucket hat and a white and black striped top. A man in a black cap sits at the helm in the background. The boat floats on calm water under a hazy sky."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 5.731,
+      "media_id": 21,
+      "path": "mock_images/kirstie-boat.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Kirstie Mccarrel and Daniel Arce lie side by side on a colorful beach towel. Kirstie wears a tan baseball cap with a white NY logo, sunglasses, and a black bikini top. Daniel wears dark sunglasses and has graying hair and a beard. They are taking a selfie in bright sunlight.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 8.649,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"left\", \"appearance\": \"woman with blonde hair, wearing a beige baseball cap with a white NY logo, sunglasses, a black bikini top, and a silver necklace with interlocking rings\"}, {\"position\": \"right\", \"appearance\": \"man with graying hair and a beard, wearing dark sunglasses\"}], \"setting\": \"a colorful towel with blue, purple, and brown sections, possibly at a beach or poolside\", \"action\": \"lying on a towel, taking a selfie\", \"legible_text\": [\"NY\"], \"atmosphere\": \"relaxed and sunny\"}"
+          },
+          {
+            "latency_s": 8.492,
+            "pass": "ground_weave",
+            "raw": "Kirstie Mccarrel and Daniel Arce lie side by side on a colorful beach towel. Kirstie wears a tan baseball cap with a white NY logo, sunglasses, and a black bikini top. Daniel wears dark sunglasses and has graying hair and a beard. They are taking a selfie in bright sunlight."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 17.155,
+      "media_id": 23,
+      "path": "mock_images/kirstie-daniel-sunglasses.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Kirstie Mccarrel floats on her back in a tiled indoor pool. She wears a black swimsuit with a pattern and has a tattoo on her left arm. Her blonde hair is tied in a bun as she moves through the pale green water. A metal handrail and a shallow water sign are visible near the pool edge.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 8.562,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"in the pool\", \"appearance\": \"a person with blonde hair in a bun, wearing a black swimsuit with a pattern, and a tattoo on their left arm\"}], \"setting\": \"an indoor swimming pool with tiled walls and floor, a metal handrail, and a shallow water sign\", \"action\": \"swimming underwater\", \"legible_text\": [\"SHALLOW WATER\", \"1.17M/3'-10\\\"\"], \"atmosphere\": \"calm and serene\"}"
+          },
+          {
+            "latency_s": 8.555,
+            "pass": "ground_weave",
+            "raw": "Kirstie Mccarrel floats on her back in a tiled indoor pool. She wears a black swimsuit with a pattern and has a tattoo on her left arm. Her blonde hair is tied in a bun as she moves through the pale green water. A metal handrail and a shallow water sign are visible near the pool edge."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 17.123,
+      "media_id": 24,
+      "path": "mock_images/kirstie-pool.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Liam Maloney lies back against a patterned pillow, looking up at the camera. He wears round black-rimmed glasses and a dark shirt. His expression is calm and contemplative in the high-contrast black-and-white light.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 7.981,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"center\", \"appearance\": \"bald man wearing round black-rimmed glasses and a dark shirt\"}], \"setting\": \"dark room with a patterned pillow behind the person's head\", \"action\": \"lying down and looking at the camera\", \"legible_text\": [], \"atmosphere\": \"intimate, contemplative\"}"
+          },
+          {
+            "latency_s": 8.141,
+            "pass": "ground_weave",
+            "raw": "Liam Maloney lies back against a patterned pillow, looking up at the camera. He wears round black-rimmed glasses and a dark shirt. His expression is calm and contemplative in the high-contrast black-and-white light."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 16.124,
+      "media_id": 25,
+      "path": "mock_images/liam-maloney-2.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Liam Maloney takes a selfie in his kitchen.  \nHe wears a black t-shirt with a yellow and white baseball-themed skull design, a green and pink baseball cap, and black-rimmed glasses.  \nBehind him, a white shelving unit holds kitchenware, a stainless steel refrigerator stands against a brick wall, and a checkered floor extends beneath his feet.  \nA yellow Rockwell drill hangs on the wall above the shelves.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 8.585,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"center\", \"appearance\": \"a man wearing a black t-shirt with a yellow and white baseball-themed skull design, a green and pink baseball cap, and black-rimmed glasses\"}], \"setting\": \"a kitchen with a checkered floor, a white shelving unit with kitchenware, a stainless steel refrigerator, and a brick wall\", \"action\": \"taking a selfie\", \"legible_text\": [\"ROCKWELL\", \"DARLING\", \"LOVE IS LOVE\", \"THANK YOU\", \"P\"], \"atmosphere\": \"casual and personal\"}"
+          },
+          {
+            "latency_s": 8.628,
+            "pass": "ground_weave",
+            "raw": "Liam Maloney takes a selfie in his kitchen.  \nHe wears a black t-shirt with a yellow and white baseball-themed skull design, a green and pink baseball cap, and black-rimmed glasses.  \nBehind him, a white shelving unit holds kitchenware, a stainless steel refrigerator stands against a brick wall, and a checkered floor extends beneath his feet.  \nA yellow Rockwell drill hangs on the wall above the shelves."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 17.221,
+      "media_id": 26,
+      "path": "mock_images/liam-maloney-home.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "A portrait painting in a gold frame hangs on a white wall. The painting depicts a man with dark hair and a somber expression, wearing a jacket with pockets. The artwork is rendered in muted greys with visible brushstrokes. The artist's signature \"TAM\" appears in the lower right corner.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 1.869,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"in painting\", \"appearance\": \"person with dark hair, wearing a jacket with pockets\"}], \"setting\": \"a framed painting hanging on a wall\", \"action\": \"a person is depicted in a portrait painting\", \"legible_text\": [\"TAM\"], \"atmosphere\": \"somber\"}"
+          },
+          {
+            "latency_s": 1.782,
+            "pass": "ground_weave",
+            "raw": "A portrait painting in a gold frame hangs on a white wall. The painting depicts a man with dark hair and a somber expression, wearing a jacket with pockets. The artwork is rendered in muted greys with visible brushstrokes. The artist's signature \"TAM\" appears in the lower right corner."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 3.689,
+      "media_id": 27,
+      "path": "mock_images/liam-maloney-painting.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Four women pose for a photo at a formal dinner. The woman on the front right, Maria Correonero, wears a white spaghetti strap dress and red lipstick while taking a selfie. The woman on the front left wears a red sequined dress and red lipstick. The woman in the back center wears a gold sequined dress. The setting is an ornate dining room with gold trim and blue velvet curtains.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 2.368,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"front left\", \"appearance\": \"woman with dark hair, red lipstick, wearing a red sequined dress and a gold necklace\"}, {\"position\": \"front center\", \"appearance\": \"woman with blonde hair, wearing a silver sequined dress and a pearl necklace\"}, {\"position\": \"back center\", \"appearance\": \"woman with long dark hair, wearing a gold sequined dress\"}, {\"position\": \"front right\", \"appearance\": \"woman with brown hair, red lipstick, wearing a white spaghetti strap dress and a gold necklace\"}], \"setting\": \"formal dining room with gold trim, blue velvet curtains, and a white tablecloth\", \"action\": \"four women posing for a photo at a table\", \"legible_text\": [\"H\"], \"atmosphere\": \"elegant and celebratory\"}"
+          },
+          {
+            "latency_s": 1.88,
+            "pass": "ground_weave",
+            "raw": "Four women pose for a photo at a formal dinner. The woman on the front right, Maria Correonero, wears a white spaghetti strap dress and red lipstick while taking a selfie. The woman on the front left wears a red sequined dress and red lipstick. The woman in the back center wears a gold sequined dress. The setting is an ornate dining room with gold trim and blue velvet curtains."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 4.248,
+      "media_id": 28,
+      "path": "mock_images/maria-cocktail.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Maria Correonero bites into a slice of cake with red and white stripes.  \nShe holds a smartphone in her left hand, capturing her reflection on the screen.  \nA couple embraces in the background near a shelf and a round mirror.  \nThe room has a casual, intimate atmosphere with dim lighting.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 2.434,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"foreground\", \"appearance\": \"woman with long brown hair, wearing a sparkly dark top, holding a piece of cake and a phone\"}, {\"position\": \"background\", \"appearance\": \"person wearing a dark beanie, sitting with another person\"}, {\"position\": \"background\", \"appearance\": \"person with brown hair, sitting with another person\"}], \"setting\": \"indoor space with shelves, a mirror, and a refrigerator\", \"action\": \"a woman is eating a piece of cake while being photographed with a smartphone\", \"legible_text\": [], \"atmosphere\": \"casual and intimate\"}"
+          },
+          {
+            "latency_s": 2.107,
+            "pass": "ground_weave",
+            "raw": "Maria Correonero bites into a slice of cake with red and white stripes.  \nShe holds a smartphone in her left hand, capturing her reflection on the screen.  \nA couple embraces in the background near a shelf and a round mirror.  \nThe room has a casual, intimate atmosphere with dim lighting."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 4.542,
+      "media_id": 29,
+      "path": "mock_images/maria-party.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Maria Correonero sits on a rose-gold glitter mermaid-tail float in a blue pool. She wears a red and navy bikini and smiles while making a peace sign with her right hand. The float has \"SUNNY LIFE\" printed on its side. The pool water is clear and rippling in the sunlight.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 2.557,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"center\", \"appearance\": \"woman with brown hair, wearing a red and blue bikini, making a peace sign with her right hand\"}], \"setting\": \"a swimming pool with clear blue water and a decorative tile border\", \"action\": \"a woman sitting on a large inflatable float shaped like a dolphin tail, smiling and making a peace sign\", \"legible_text\": [\"SUNNY LIFE\"], \"atmosphere\": \"relaxed and cheerful\"}"
+          },
+          {
+            "latency_s": 2.483,
+            "pass": "ground_weave",
+            "raw": "Maria Correonero sits on a rose-gold glitter mermaid-tail float in a blue pool. She wears a red and navy bikini and smiles while making a peace sign with her right hand. The float has \"SUNNY LIFE\" printed on its side. The pool water is clear and rippling in the sunlight."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 5.042,
+      "media_id": 30,
+      "path": "mock_images/maria-pool.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Maria Correonero holds a geometric puzzle toy over her right eye.  \nShe grips a string attached to the device with her right hand.  \nHer dark lipstick contrasts with the blue-and-teal lighting.  \nThe translucent surface behind her reflects the glowing colors.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 1.853,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"center\", \"appearance\": \"a person with dark hair, dark lipstick, and a device with geometric patterns over their eye\"}], \"setting\": \"a blue-lit environment with a translucent surface\", \"action\": \"a person holding a string attached to a device over their eye\", \"legible_text\": [], \"atmosphere\": \"mysterious and futuristic\"}"
+          },
+          {
+            "latency_s": 1.934,
+            "pass": "ground_weave",
+            "raw": "Maria Correonero holds a geometric puzzle toy over her right eye.  \nShe grips a string attached to the device with her right hand.  \nHer dark lipstick contrasts with the blue-and-teal lighting.  \nThe translucent surface behind her reflects the glowing colors."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 3.791,
+      "media_id": 31,
+      "path": "mock_images/mcm-eye-blocked.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Maria Correonero crouches in a dark ice cave, wearing a white Black Diamond helmet with a headlamp and a fur-hooded parka. She looks toward the camera with a calm expression, her brown boots fitted with orange crampons resting on wet rocks. A DSLR camera hangs at her knee as she sits beside a wall of translucent blue ice.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 9.127,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"center\", \"appearance\": \"a person wearing a white helmet with a headlamp, a black jacket with a fur-lined hood, black pants, and brown boots with orange crampons, sitting on rocky ground\"}], \"setting\": \"a dark cave with rocky and icy walls\", \"action\": \"sitting and looking toward the camera\", \"legible_text\": [\"Black Diamond\"], \"atmosphere\": \"dark and cold\"}"
+          },
+          {
+            "latency_s": 9.417,
+            "pass": "ground_weave",
+            "raw": "Maria Correonero crouches in a dark ice cave, wearing a white Black Diamond helmet with a headlamp and a fur-hooded parka. She looks toward the camera with a calm expression, her brown boots fitted with orange crampons resting on wet rocks. A DSLR camera hangs at her knee as she sits beside a wall of translucent blue ice."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 18.576,
+      "media_id": 32,
+      "path": "mock_images/mcm-icecave.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Maria Correonero crouches inside the damaged fuselage of a wrecked aircraft. She wears a dark coat with a fur-trimmed hood and looks toward the camera. The aircraft's metal frame is torn and exposed, set against a barren, grey landscape.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 8.997,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"center\", \"appearance\": \"woman with long brown hair wearing a black coat and black pants\"}], \"setting\": \"inside a damaged aircraft wreckage on a barren, rocky landscape\", \"action\": \"woman crouching and looking at the camera\", \"legible_text\": [], \"atmosphere\": \"somber, desolate\"}"
+          },
+          {
+            "latency_s": 9.348,
+            "pass": "ground_weave",
+            "raw": "Maria Correonero crouches inside the damaged fuselage of a wrecked aircraft. She wears a dark coat with a fur-trimmed hood and looks toward the camera. The aircraft's metal frame is torn and exposed, set against a barren, grey landscape."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 18.365,
+      "media_id": 33,
+      "path": "mock_images/mcm-planecrash.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "A black dog on a leash stands at the end of a narrow alley between brick townhouses. The dog wears a collar with the name Machiavelli stitched on it. The alley stretches into the distance under a dusky sky glowing with orange and pink light. White garage doors line both sides of the paved path, and a modern building is visible in the distance.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 4.323,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [], \"setting\": \"a narrow alley between brick townhouses with garage doors, at dusk\", \"action\": \"a black dog on a leash stands at the end of the alley, looking down the path\", \"legible_text\": [\"Machiavelli\"], \"atmosphere\": \"calm and quiet\"}"
+          },
+          {
+            "latency_s": 4.454,
+            "pass": "ground_weave",
+            "raw": "A black dog on a leash stands at the end of a narrow alley between brick townhouses. The dog wears a collar with the name Machiavelli stitched on it. The alley stretches into the distance under a dusky sky glowing with orange and pink light. White garage doors line both sides of the paved path, and a modern building is visible in the distance."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 8.835,
+      "media_id": 34,
+      "path": "mock_images/nina-machiavelli.jpeg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "A woman with long dark hair kisses her reflection in a mirror. She crouches on a white vanity in a bathroom with green patterned wallpaper and a gold-framed shower. She wears a light blue dress and white knee-high boots. The scene feels intimate and surreal.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 2.111,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"in front of the mirror\", \"appearance\": \"a woman with long dark hair, wearing a light blue dress and white boots, leaning over a sink\"}], \"setting\": \"a bathroom with green patterned wallpaper, a white vanity, a mirror, and a shower with a gold-framed glass door\", \"action\": \"kissing her reflection in the mirror\", \"legible_text\": [\"@rachelrabbatwhite\", \"@jamesm\"], \"atmosphere\": \"intimate and surreal\"}"
+          },
+          {
+            "latency_s": 1.752,
+            "pass": "ground_weave",
+            "raw": "A woman with long dark hair kisses her reflection in a mirror. She crouches on a white vanity in a bathroom with green patterned wallpaper and a gold-framed shower. She wears a light blue dress and white knee-high boots. The scene feels intimate and surreal."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 3.865,
+      "media_id": 35,
+      "path": "mock_images/rrw-mirror.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Ryann Wiseman holds a salt-rimmed margarita in a pink-lit room. She leans against a radiator in a black backless top and sheer patterned skirt. A Pink Panther poster and a gold-framed mirror hang on the brick wall behind her. The atmosphere is intimate and moody under the pink glow.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 4.507,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"center\", \"appearance\": \"a woman with long blonde hair wearing a black top and patterned black pants\"}], \"setting\": \"a room with pink lighting, a marble-topped table, a white stool, a radiator, a mirror with a gold frame, and a brick wall\", \"action\": \"a woman holding a drink and leaning against a radiator\", \"legible_text\": [\"RASPBERRY OAT MILK\", \"G.P.\"], \"atmosphere\": \"intimate and moody\"}"
+          },
+          {
+            "latency_s": 4.428,
+            "pass": "ground_weave",
+            "raw": "Ryann Wiseman holds a salt-rimmed margarita in a pink-lit room. She leans against a radiator in a black backless top and sheer patterned skirt. A Pink Panther poster and a gold-framed mirror hang on the brick wall behind her. The atmosphere is intimate and moody under the pink glow."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 8.937,
+      "media_id": 36,
+      "path": "mock_images/ryann-bar.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Ryann Wiseman raises a drink among five friends in matching pink satin pajamas, dancing by an iridescent foil curtain and a silver number 2 balloon. A woman in a black top holds a bottle and smiles, while another woman in a pink satin dress holds a red object aloft. The group stands in front of a lamp with a warm glow, their faces lit with joy. The atmosphere is festive and celebratory, with pink and silver streamers hanging behind them.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 2.875,
+            "pass": "describe_facts",
+            "raw": "{\"people\": [{\"position\": \"front center\", \"appearance\": \"woman with long dark hair, wearing a pink satin dress, holding a red object in her right hand\"}, {\"position\": \"center left\", \"appearance\": \"woman with long blonde hair, wearing a black top, holding a bottle and smiling\"}, {\"position\": \"left\", \"appearance\": \"woman with long blonde hair, wearing a pink satin dress, smiling\"}, {\"position\": \"center back\", \"appearance\": \"woman with long dark hair, wearing a pink satin dress, smiling\"}, {\"position\": \"right center\", \"appearance\": \"woman with blonde hair, wearing a pink satin dress, smiling\"}, {\"position\": \"right front\", \"appearance\": \"woman with long dark hair, wearing a black top, seen from the back\"}], \"setting\": \"indoor party setting with pink and silver streamers, a large number 2 balloon, and a lamp with a warm glow\", \"action\": \"group of women celebrating, holding drinks and smiling\", \"legible_text\": [\"2\"], \"atmosphere\": \"festive and joyful\"}"
+          },
+          {
+            "latency_s": 2.039,
+            "pass": "ground_weave",
+            "raw": "Ryann Wiseman raises a drink among five friends in matching pink satin pajamas, dancing by an iridescent foil curtain and a silver number 2 balloon. A woman in a black top holds a bottle and smiles, while another woman in a pink satin dress holds a red object aloft. The group stands in front of a lamp with a warm glow, their faces lit with joy. The atmosphere is festive and celebratory, with pink and silver streamers hanging behind them."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 4.914,
+      "media_id": 37,
+      "path": "mock_images/ryann-group-party.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Ryann Wiseman and a friend pose together on a couch. Ryann wears a white lace top, a white skirt, and long white lace gloves while her friend wears a black top with pink trim and a white feather boa. The woman on the right wears a black glove and has her hand near her face. They sit beneath a red clock and framed pictures on a wall.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M",
+        "passes": [
+          {
+            "latency_s": 5.24,
+            "pass": "describe_facts",
+            "raw": "{\n  \"people\": [\n    {\n      \"position\": \"left\",\n      \"appearance\": \"woman with blonde hair wearing a white lace top, white skirt, and white lace gloves\"\n    },\n    {\n      \"position\": \"right\",\n      \"appearance\": \"woman with dark hair wearing a black top with pink trim, a white feather boa, and a black glove\"\n    }\n  ],\n  \"setting\": \"indoor room with a couch, a wall with framed pictures, and a red clock\",\n  \"action\": \"two women posing together on a couch\",\n  \"legible_text\": [\n    \"12\",\n    \"1\",\n    \"2\",\n    \"3\",\n    \"4\",\n    \"5\",\n    \"6\",\n    \"7\",\n    \"8\",\n    \"9\",\n    \"10\",\n    \"11\"\n  ],\n  \"atmosphere\": \"playful and stylized\"\n}"
+          },
+          {
+            "latency_s": 4.786,
+            "pass": "ground_weave",
+            "raw": "Ryann Wiseman and a friend pose together on a couch. Ryann wears a white lace top, a white skirt, and long white lace gloves while her friend wears a black top with pink trim and a white feather boa. The woman on the right wears a black glove and has her hand near her face. They sit beneath a red clock and framed pictures on a wall."
+          }
+        ],
+        "prompt_variant": "v2"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 10.028,
+      "media_id": 38,
+      "path": "mock_images/ryann-party.jpg"
+    }
+  ],
+  "kind": "run_record",
+  "provenance": {
+    "base_url": "http://localhost:8000",
+    "head_sha": "4be31eae6967cebddc04c6a0234d583600450662",
+    "manifest_sha256": "747e603176269cedbdfc376d5f8cff794179c378f9fd219247907db59cb0aa4f",
+    "prompt_variant": "v2",
+    "started_at": "2026-07-16T21:14:21Z",
+    "two_pass": true
+  },
+  "schema": "acx-eval/v1"
+}

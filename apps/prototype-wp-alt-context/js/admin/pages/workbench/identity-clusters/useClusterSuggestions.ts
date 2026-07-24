@@ -1,102 +1,144 @@
 /**
  * Hook for fetching and formatting cluster label suggestions.
  *
- * Combines identity-based similarity suggestions with existing labels.
+ * Combines identity-based similarity suggestions with the shared naming union
+ * (roster persons ∪ human-labeled clusters).
  */
 
 import React from 'react';
 
-import type { ClusterSummary, IdentitySuggestionsResponse } from '../../../api/recognition';
 import type { ComboboxOption } from '../../../../components/ui/combobox';
+import {
+  isClusterNamingOption,
+  NAMING_GROUP_ALL_LABELS,
+  NAMING_GROUP_SUGGESTED,
+  type NamingOption,
+  unwrapClusterOptionId,
+  namingOptionValue,
+} from './buildNamingOptions';
 import { useClusterSuggestionsLoader, type ClusterSuggestionsLoaderOptions } from './useClusterSuggestionsLoader';
+import type { ProjectedSuggestion } from './suggestionProjection';
+import type { ClusterLabelMatch } from './useClusterMatchAction';
 
 type UseClusterSuggestionsOptions = ClusterSuggestionsLoaderOptions;
 
 interface UseClusterSuggestionsReturn {
-  /** Formatted options for Combobox */
+  /** Formatted options for Combobox / edit form */
   options: ComboboxOption[];
   /** Whether suggestions are loading */
   isLoading: boolean;
-  /** Find cluster ID by label (case-insensitive) */
-  findClusterByLabel: (label: string, signal?: AbortSignal) => Promise<{ id: string; label: string } | null>;
+  /** Pre-dedupe collisions for the duplicate guard */
+  collisionsByLabel: ReadonlyMap<string, readonly NamingOption[]>;
+  /** Find cluster ID by label (case-insensitive); cluster-source options only (PR-16) */
+  findClusterByLabel: (label: string, signal?: AbortSignal) => Promise<ClusterLabelMatch | null>;
 }
 
 export const selectClusterSuggestions = ({
-  identitySuggestions,
-  labelMatches,
+  identityProjection,
+  namingOptions,
   editableClusterId,
   labelInput = '',
 }: {
-  identitySuggestions?: IdentitySuggestionsResponse;
-  labelMatches?: ClusterSummary[];
+  identityProjection?: readonly ProjectedSuggestion[];
+  namingOptions?: readonly NamingOption[];
   editableClusterId?: string | null;
   labelInput?: string;
 }): ComboboxOption[] => {
   const result: ComboboxOption[] = [];
-  const seen = new Set<string>();
+  /** Cluster labels only — persons never suppress a same-named cluster (FIX-5). */
+  const seenClusterLabels = new Set<string>();
   const searchLower = labelInput.toLowerCase().trim();
 
-  // 1. Identity-based suggestions (filtered by current input)
-  (identitySuggestions?.matches ?? [])
-    .sort((a, b) => b.similarity - a.similarity)
-    .forEach((match) => {
-      const normalizedLabel = match.label?.trim() ?? '';
-      if (!normalizedLabel) {
-        return;
-      }
-      if (match.cluster_id === editableClusterId) {
-        return;
-      }
-      const key = normalizedLabel.toLowerCase();
-
-      // Filter: label must match input if any provided
-      if (searchLower && !key.includes(searchLower)) {
-        return;
-      }
-      if (seen.has(key)) {
-        return;
-      }
-
-      seen.add(key);
-      result.push({
-        value: match.cluster_id,
-        label: normalizedLabel,
-        group: 'Suggested',
-        similarity: match.similarity,
-        identityCount: match.identity_count,
-      });
-    });
-
-  // 2. Label search matches (already filtered by API)
-  (labelMatches ?? []).forEach((cluster) => {
-    if (!cluster.label?.trim()) {
+  // 1. Identity-based suggestions (filtered by current input) — server order, no re-sort.
+  (identityProjection ?? []).forEach((projected) => {
+    const normalizedLabel = projected.label?.trim() ?? '';
+    if (!normalizedLabel) {
       return;
     }
-    if (cluster.id === editableClusterId) {
+    if (projected.clusterId === editableClusterId) {
       return;
     }
-    const normalizedLabel = cluster.label.trim();
     const key = normalizedLabel.toLowerCase();
-    if (seen.has(key)) {
+
+    if (searchLower && !key.includes(searchLower)) {
+      return;
+    }
+    if (seenClusterLabels.has(key)) {
       return;
     }
 
-    // Try to find similarity from identitySuggestions if this cluster label is also suggested for identity
-    const identityMatch = identitySuggestions?.matches?.find(
-      (match) => match.cluster_id === cluster.id || match.label?.toLowerCase() === key,
-    );
-
-    seen.add(key);
+    seenClusterLabels.add(key);
     result.push({
-      value: cluster.id,
+      value: namingOptionValue('cluster', projected.clusterId),
       label: normalizedLabel,
-      group: 'All Labels',
-      similarity: identityMatch?.similarity,
-      identityCount: cluster.identity_count,
+      group: NAMING_GROUP_SUGGESTED,
+      source: 'cluster',
+      similarity: projected.similarity,
+      identityCount: projected.identityCount,
+      suggestion_id: projected.suggestionId,
+    });
+  });
+
+  // 2. Union naming options: person rows always render; cluster rows dedupe vs Suggested (FIX-5).
+  (namingOptions ?? []).forEach((option) => {
+    const key = option.label.toLowerCase();
+    if (searchLower && !key.includes(searchLower)) {
+      return;
+    }
+
+    if (option.source === 'person') {
+      result.push({
+        value: option.value,
+        label: option.label,
+        group: NAMING_GROUP_ALL_LABELS,
+        source: option.source,
+        identityCount: option.identityCount,
+      });
+      return;
+    }
+
+    if (seenClusterLabels.has(key)) {
+      return;
+    }
+    seenClusterLabels.add(key);
+    result.push({
+      value: option.value,
+      label: option.label,
+      group: NAMING_GROUP_ALL_LABELS,
+      source: option.source,
+      identityCount: option.identityCount,
     });
   });
 
   return result;
+};
+
+/**
+ * Resolve a merge/assign target from options: cluster-source only (PR-16).
+ * Person hits return null so the save path renames instead of merging.
+ */
+export const resolveClusterMatchFromOptions = (
+  options: readonly ComboboxOption[],
+  label: string,
+): ClusterLabelMatch | null => {
+  const normalizedLabel = label.toLowerCase().trim();
+  if (!normalizedLabel) {
+    return null;
+  }
+
+  const fromOptions = options.find((opt) => opt.label.toLowerCase() === normalizedLabel && isClusterNamingOption(opt));
+  if (!fromOptions?.value) {
+    return null;
+  }
+
+  const id = unwrapClusterOptionId(String(fromOptions.value));
+  if (!id) {
+    return null;
+  }
+
+  const identityCount = typeof fromOptions.identityCount === 'number' ? fromOptions.identityCount : undefined;
+
+  return { id, label: fromOptions.label, identityCount };
 };
 
 /**
@@ -105,6 +147,7 @@ export const selectClusterSuggestions = ({
  * Fetches:
  * 1. Similarity-based suggestions for the identity
  * 2. Label-based search results for existing clusters (debounced)
+ * 3. Roster persons via the shared buildNamingOptions union
  *
  * Returns formatted ComboboxOptions grouped by "Suggested" and "All Labels".
  */
@@ -116,8 +159,9 @@ export const useClusterSuggestions = ({
   debounceMs,
 }: UseClusterSuggestionsOptions): UseClusterSuggestionsReturn => {
   const {
-    identitySuggestions,
-    labelMatches,
+    identityProjection,
+    namingOptions,
+    collisionsByLabel,
     isLoading,
     findClusterByLabel: findClusterByLabelRemote,
   } = useClusterSuggestionsLoader({
@@ -129,20 +173,15 @@ export const useClusterSuggestions = ({
   });
 
   const options = React.useMemo(
-    () => selectClusterSuggestions({ identitySuggestions, labelMatches, editableClusterId, labelInput }),
-    [identitySuggestions, labelMatches, editableClusterId, labelInput],
+    () => selectClusterSuggestions({ identityProjection, namingOptions, editableClusterId, labelInput }),
+    [identityProjection, namingOptions, editableClusterId, labelInput],
   );
 
   const findClusterByLabel = React.useCallback(
-    async (label: string, signal?: AbortSignal): Promise<{ id: string; label: string } | null> => {
-      const normalizedLabel = label.toLowerCase().trim();
-      if (!normalizedLabel) {
-        return null;
-      }
-
-      const fromOptions = options.find((opt) => opt.label.toLowerCase() === normalizedLabel);
-      if (fromOptions?.value) {
-        return { id: fromOptions.value, label: fromOptions.label };
+    async (label: string, signal?: AbortSignal): Promise<ClusterLabelMatch | null> => {
+      const fromOptions = resolveClusterMatchFromOptions(options, label);
+      if (fromOptions) {
+        return fromOptions;
       }
 
       return findClusterByLabelRemote(label, signal);
@@ -153,6 +192,7 @@ export const useClusterSuggestions = ({
   return {
     options,
     isLoading,
+    collisionsByLabel,
     findClusterByLabel,
   };
 };

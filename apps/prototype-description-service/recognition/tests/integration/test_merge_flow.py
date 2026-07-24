@@ -122,6 +122,7 @@ async def test_merge_flow_records_moved_member_provenance(
             bbox_height=12,
             confidence=0.97,
             embedding=[0.1] * 512,
+            embedding_model="buffalo_l@insightface",
         )
     )
     await db_session.flush()

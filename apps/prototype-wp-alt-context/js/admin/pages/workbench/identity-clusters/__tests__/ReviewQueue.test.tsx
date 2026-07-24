@@ -1,0 +1,2803 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import React from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import {
+  acceptMergeSuggestion,
+  acceptSuggestion,
+  bulkAcceptSuggestions,
+  fetchClusterMembers,
+  fetchPendingMergeSuggestions,
+  fetchPendingNameSuggestions,
+  fetchPendingSuggestions,
+  fetchTopUnlabeledClusters,
+  rejectSuggestion,
+  updateClusterLabel,
+} from '../../../../api/recognition';
+import { DATA_SOURCE } from '../../../../api/recognition/types';
+import { resetConfigCache } from '../../../../api/config';
+import { queryKeys } from '../../../../api/queryKeys';
+import {
+  commitClusterToRosterEntry,
+  listRosterEntries,
+  type RosterClusterCommitResponse,
+} from '../../../../api/rosterApi';
+import type {
+  ReviewQueueBandParam,
+  ReviewQueueKindParam,
+} from '../../../../hooks/workbenchQueueUrl';
+import {
+  JUST_LABEL_COPY,
+  MODEL_OUTPUT_DISCLOSURE,
+  PERSON_COMMIT_CONFIRM_COPY,
+  VIEW_IN_ROSTER_COPY,
+  VIEW_IN_ROSTER_HREF,
+} from '../personCommitCopy';
+import { MergeSurvivorProvider } from '../MergeSurvivorContext';
+import { CommitHoldRegion, ReviewQueue, type ReviewQueueHandle } from '../ReviewQueue';
+import { REVIEW_QUEUE_DRAIN_MESSAGE } from '../reviewQueueDriver';
+import * as useAriaAnnounceMod from '../useAriaAnnounce';
+import { HOLD_STATUS_COPY, UNDO_HOLD_MS } from '../useSuggestionReviewMutations';
+import { LIVE_TARGET_CLOSE_ANNOUNCE } from '../useLiveReviewTarget';
+import { HTTPError } from '../../../../utils/http';
+
+const rosterCommitFixture = (
+  overrides: Partial<RosterClusterCommitResponse> = {},
+): RosterClusterCommitResponse => ({
+  cluster_id: 'cluster-1',
+  person_id: 7,
+  person_uuid: 'person-uuid-7',
+  person_name: 'Alex',
+  updated_at: '2026-01-01T00:00:00Z',
+  ...overrides,
+});
+
+/**
+ * Click an accept/reject control under fake setTimeout so the Slice-2 hold can
+ * expire deterministically without 5s wall-clock waits (promises stay real).
+ */
+const clickAndCommitHold = async (button: HTMLElement): Promise<void> => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    act(() => {
+      button.click();
+    });
+    // Hold should be open (Saving…); expire the window.
+    await act(async () => {
+      vi.advanceTimersByTime(UNDO_HOLD_MS);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  } finally {
+    vi.useRealTimers();
+  }
+};
+
+vi.mock('@wordpress/i18n', () => ({
+  __: (text: string) => text,
+  _n: (single: string, plural: string, number: number) => (number === 1 ? single : plural),
+  sprintf: (format: string, ...args: (string | number)[]) => {
+    let i = 0;
+    return format.replace(/%(\d+)\$[sd]|%[sd]/g, () => String(args[i++]));
+  },
+}));
+
+vi.mock('@radix-ui/react-avatar', async () => {
+  const ReactMod = await import('react');
+  return {
+    Root: ReactMod.forwardRef(function MockRoot({ children, ...props }: Record<string, unknown>, ref: unknown) {
+      return ReactMod.createElement(
+        'span',
+        { ...props, ref } as React.HTMLAttributes<HTMLSpanElement>,
+        children as React.ReactNode,
+      );
+    }),
+    Image: ReactMod.forwardRef(function MockImage(props: Record<string, unknown>, ref: unknown) {
+      return ReactMod.createElement('img', { ...props, ref } as React.ImgHTMLAttributes<HTMLImageElement>);
+    }),
+    Fallback: ReactMod.forwardRef(function MockFallback() {
+      return null;
+    }),
+  };
+});
+
+vi.mock('../../../../api/recognition', async () => {
+  const actual = await vi.importActual<typeof import('../../../../api/recognition')>('../../../../api/recognition');
+  return {
+    ...actual,
+    fetchPendingSuggestions: vi.fn(),
+    fetchPendingMergeSuggestions: vi.fn(),
+    fetchPendingNameSuggestions: vi.fn(),
+    acceptSuggestion: vi.fn(),
+    acceptMergeSuggestion: vi.fn(),
+    acceptNameSuggestion: vi.fn(),
+    rejectSuggestion: vi.fn(),
+    rejectMergeSuggestion: vi.fn(),
+    rejectNameSuggestion: vi.fn(),
+    bulkAcceptSuggestions: vi.fn(),
+    fetchClusterMembers: vi.fn().mockResolvedValue({
+      members: [],
+      limit: 25,
+      total: 0,
+      truncated: false,
+    }),
+    fetchTopUnlabeledClusters: vi.fn(),
+    dismissCluster: vi.fn().mockResolvedValue(undefined),
+    mergeCluster: vi.fn().mockResolvedValue(undefined),
+    updateClusterLabel: vi.fn().mockResolvedValue(undefined),
+  };
+});
+
+vi.mock('../../../../api/rosterApi', () => ({
+  commitClusterToRosterEntry: vi.fn().mockResolvedValue({
+    cluster_id: 'cluster-1',
+    person_id: 7,
+    person_uuid: 'person-uuid-7',
+    person_name: 'Alex',
+    updated_at: '2026-01-01T00:00:00Z',
+  }),
+  listRosterEntries: vi.fn().mockResolvedValue([
+    {
+      id: 7,
+      person_uuid: 'person-uuid-7',
+      name: 'Alex',
+      tags: [],
+      cluster_count: 0,
+      clusters: [],
+      queue_memberships: [],
+      updated_at: '2026-01-01T00:00:00Z',
+      source_version: 1,
+      projection_status: 'current',
+      projection_refreshed_at: null,
+    },
+  ]),
+}));
+
+interface HarnessProps {
+  initialIndex?: number;
+  initialKind?: ReviewQueueKindParam;
+  initialBand?: ReviewQueueBandParam;
+  emptyStateAnchorRef?: React.RefObject<HTMLElement | null>;
+  queueRef?: React.RefObject<ReviewQueueHandle>;
+  onLabel?: (clusterId: string) => void;
+  onReview?: (clusterId: string) => void;
+  /** Expose selection for M2 asserts (optional). */
+  selectionRef?: React.MutableRefObject<Set<string>>;
+}
+
+const ReviewQueueHarness = ({
+  initialIndex = 0,
+  initialKind = 'all',
+  initialBand = 'all',
+  emptyStateAnchorRef,
+  queueRef,
+  onLabel,
+  onReview,
+  selectionRef,
+}: HarnessProps): React.JSX.Element => {
+  const [index, setIndex] = React.useState(initialIndex);
+  const [kind, setKind] = React.useState<ReviewQueueKindParam>(initialKind);
+  const [band, setBand] = React.useState<ReviewQueueBandParam>(initialBand);
+  const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
+  if (selectionRef) {
+    selectionRef.current = selectedIds;
+  }
+  return (
+    <ReviewQueue
+      ref={queueRef}
+      index={index}
+      onIndexChange={setIndex}
+      kind={kind}
+      onKindChange={setKind}
+      band={band}
+      onBandChange={setBand}
+      selectedIds={selectedIds}
+      onSelectedIdsChange={setSelectedIds}
+      emptyStateAnchorRef={emptyStateAnchorRef}
+      onLabel={onLabel}
+      onReview={onReview}
+    />
+  );
+};
+
+const withQueueProviders = (queryClient: QueryClient, children: React.ReactNode) => (
+  <QueryClientProvider client={queryClient}>
+    <MergeSurvivorProvider>{children}</MergeSurvivorProvider>
+  </QueryClientProvider>
+);
+
+const renderQueue = (props: HarnessProps = {}) => {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, retryDelay: 0 },
+    },
+  });
+
+  const utils = render(withQueueProviders(queryClient, <ReviewQueueHarness {...props} />));
+
+  return { queryClient, ...utils };
+};
+
+describe('ReviewQueue', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  beforeEach(() => {
+    window.AltContextAdmin = {
+      nonce: 'test-nonce',
+      endpoints: {
+        recognitionSuggestions: 'http://localhost/recognition/suggestions',
+        recognitionMergeSuggestions: 'http://localhost/recognition/suggestions/merge',
+        recognitionNameSuggestions: 'http://localhost/recognition/suggestions/name',
+        recognitionBulkAcceptSuggestions: 'http://localhost/recognition/suggestions/bulk-accept',
+        recognitionClusters: 'http://localhost/recognition/clusters',
+      },
+      tenant_id: 'test-tenant-id',
+    };
+
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({ suggestions: [], limit: 25, offset: 0 });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 0,
+      truncated: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(listRosterEntries).mockResolvedValue([
+      {
+        id: 7,
+        person_uuid: 'person-uuid-7',
+        name: 'Alex',
+        tags: [],
+        cluster_count: 0,
+        clusters: [],
+        queue_memberships: [],
+        updated_at: '2026-01-01T00:00:00Z',
+        source_version: 1,
+        projection_status: 'current',
+        projection_refreshed_at: null,
+      },
+    ]);
+    vi.mocked(commitClusterToRosterEntry).mockResolvedValue(rosterCommitFixture());
+    resetConfigCache();
+  });
+
+  it('renders exactly one review card at a time (one-card invariant)', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+        {
+          id: 'sugg-2',
+          identity_id: 'identity-2',
+          suggested_cluster_id: 'cluster-2',
+          representative_similarity: 0.8,
+          avg_member_similarity: 0.75,
+          cluster_label: 'Jordan',
+          cluster_identity_count: 2,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+
+    renderQueue();
+
+    await screen.findByRole('button', { name: 'Yes' });
+    expect(screen.getAllByTestId('acx-review-card')).toHaveLength(1);
+    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+  });
+
+  it('navigates with prev/next without changing index on accept (PR-54 live-queue semantics)', async () => {
+    // Live list: refetch after accept must return the remaining item only.
+    let pendingRows = [
+      {
+        id: 'sugg-1',
+        identity_id: 'identity-1',
+        suggested_cluster_id: 'cluster-1',
+        representative_similarity: 0.95,
+        avg_member_similarity: 0.9,
+        cluster_label: 'Alex',
+        cluster_identity_count: 3,
+      },
+      {
+        id: 'sugg-2',
+        identity_id: 'identity-2',
+        suggested_cluster_id: 'cluster-2',
+        representative_similarity: 0.7,
+        avg_member_similarity: 0.65,
+        cluster_label: 'Jordan',
+        cluster_identity_count: 2,
+      },
+    ];
+    vi.mocked(fetchPendingSuggestions).mockImplementation(() =>
+      Promise.resolve({
+        suggestions: pendingRows.map((row) => ({ ...row })),
+        limit: 10,
+        offset: 0,
+      }),
+    );
+    vi.mocked(acceptSuggestion).mockImplementation((id: string) => {
+      pendingRows = pendingRows.filter((row) => row.id !== id);
+      return Promise.resolve({
+        suggestion_id: id,
+        resolution: 'accepted' as const,
+        identity_id: 'identity-1',
+        cluster_id: 'cluster-1',
+        message: 'ok',
+      });
+    });
+
+    const user = userEvent.setup();
+    renderQueue();
+
+    await screen.findByText(/Is this/);
+    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    // Face label + question both render the name — assert via card textContent.
+    expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Alex/);
+
+    await user.click(screen.getByRole('button', { name: 'Next review item' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Jordan/);
+    });
+    expect(screen.getByText('2 of 2')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Previous review item' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Alex/);
+    });
+    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+
+    await clickAndCommitHold(screen.getByRole('button', { name: 'Yes' }));
+    await waitFor(() => {
+      expect(acceptSuggestion).toHaveBeenCalledWith('sugg-1');
+    });
+    // BR-08: index stays at head; next card occupies the slot after removal.
+    await waitFor(() => {
+      expect(screen.getByText('1 of 1')).toBeInTheDocument();
+      expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Jordan/);
+    });
+  });
+
+  it('focuses next card primary action after accept (authoritative advance-focus gate)', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.95,
+          avg_member_similarity: 0.9,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+        {
+          id: 'sugg-2',
+          identity_id: 'identity-2',
+          suggested_cluster_id: 'cluster-2',
+          representative_similarity: 0.7,
+          avg_member_similarity: 0.65,
+          cluster_label: 'Jordan',
+          cluster_identity_count: 2,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(acceptSuggestion).mockImplementation((id: string) =>
+      // Simulate optimistic removal by resolving; mutation onMutate removes from cache.
+      Promise.resolve({
+        suggestion_id: id,
+        resolution: 'accepted' as const,
+        identity_id: 'identity-1',
+        cluster_id: 'cluster-1',
+        message: 'ok',
+      }),
+    );
+
+    renderQueue();
+
+    const yes = await screen.findByRole('button', { name: 'Yes' });
+    yes.focus();
+    expect(yes).toHaveFocus();
+
+    await clickAndCommitHold(yes);
+
+    await waitFor(() => {
+      expect(acceptSuggestion).toHaveBeenCalled();
+    });
+
+    // Bare toHaveFocus — never tabUntilFocused for this assert.
+    await waitFor(() => {
+      const nextPrimary = screen.getByRole('button', { name: 'Yes' });
+      expect(nextPrimary).toHaveFocus();
+    });
+  });
+
+  it('focuses empty-state anchor when the queue drains', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-only',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 1,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(acceptSuggestion).mockResolvedValue({
+      suggestion_id: 'sugg-only',
+      resolution: 'accepted',
+      identity_id: 'identity-1',
+      cluster_id: 'cluster-1',
+      message: 'ok',
+    });
+
+    const anchorRef = React.createRef<HTMLDivElement>();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MergeSurvivorProvider>
+          <div ref={anchorRef} className="acx-findings-detail-anchor" tabIndex={-1}>
+            <ReviewQueueHarness emptyStateAnchorRef={anchorRef} />
+          </div>
+        </MergeSurvivorProvider>
+      </QueryClientProvider>,
+    );
+
+    await clickAndCommitHold(await screen.findByRole('button', { name: 'Yes' }));
+
+    await waitFor(() => {
+      expect(acceptSuggestion).toHaveBeenCalled();
+    });
+
+    await waitFor(() => {
+      expect(anchorRef.current).toHaveFocus();
+    });
+  });
+
+  it('filters with kind chips and shows one card for the filtered set', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'merge-1',
+          cluster_a_id: 'a',
+          cluster_b_id: 'b',
+          similarity: 0.88,
+          status: 'pending',
+          cluster_a_label: 'Alex',
+          cluster_b_label: 'Jordan',
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+
+    const user = userEvent.setup();
+    renderQueue();
+
+    await screen.findByText(/Is this/);
+    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    // BR-14: two KIND chips only — no third "All" button.
+    expect(screen.queryByRole('button', { name: 'All' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Possible duplicates' }));
+    expect(await screen.findByText('Are these the same person?')).toBeInTheDocument();
+    expect(screen.getAllByTestId('acx-review-card')).toHaveLength(1);
+    expect(screen.getByText('1 of 1')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Possible duplicates' })).toHaveAttribute('aria-pressed', 'true');
+
+    // Toggle active chip → unfiltered/all.
+    await user.click(screen.getByRole('button', { name: 'Possible duplicates' }));
+    await waitFor(() => {
+      expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: 'Possible duplicates' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: 'Close matches' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('fires existing accept mutation and invalidates projection keys', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(acceptSuggestion).mockResolvedValue({
+      suggestion_id: 'sugg-1',
+      resolution: 'accepted',
+      identity_id: 'identity-1',
+      cluster_id: 'cluster-1',
+      message: 'ok',
+    });
+
+    const { queryClient } = renderQueue();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    await clickAndCommitHold(await screen.findByRole('button', { name: 'Yes' }));
+
+    await waitFor(() => {
+      expect(acceptSuggestion).toHaveBeenCalledWith('sugg-1');
+    });
+    await waitFor(() => {
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.projection.all });
+    });
+  });
+
+  it('fires reject mutation after hold window', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(rejectSuggestion).mockResolvedValue({
+      suggestion_id: 'sugg-1',
+      resolution: 'rejected',
+      identity_id: 'identity-1',
+      cluster_id: 'cluster-1',
+      message: 'ok',
+    });
+
+    renderQueue();
+
+    await clickAndCommitHold(await screen.findByRole('button', { name: 'No' }));
+
+    await waitFor(() => {
+      expect(rejectSuggestion).toHaveBeenCalledWith('sugg-1');
+    });
+  });
+
+  it('BR-16: undo before navigate yields 0 POSTs', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.95,
+          avg_member_similarity: 0.9,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+        {
+          id: 'sugg-2',
+          identity_id: 'identity-2',
+          suggested_cluster_id: 'cluster-2',
+          representative_similarity: 0.7,
+          avg_member_similarity: 0.65,
+          cluster_label: 'Jordan',
+          cluster_identity_count: 2,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(acceptSuggestion).mockResolvedValue({
+      suggestion_id: 'sugg-1',
+      resolution: 'accepted',
+      identity_id: 'identity-1',
+      cluster_id: 'cluster-1',
+      message: 'ok',
+    });
+
+    renderQueue();
+    await screen.findByRole('button', { name: 'Yes' });
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      act(() => {
+        screen.getByRole('button', { name: 'Yes' }).click();
+      });
+      expect(screen.getByText('Saving… — Undo')).toBeInTheDocument();
+      act(() => {
+        screen.getByRole('button', { name: 'Undo' }).click();
+      });
+      act(() => {
+        screen.getByRole('button', { name: 'Next review item' }).click();
+      });
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(acceptSuggestion).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('BR-16: navigate during hold flushes exactly 1 POST and announces', async () => {
+    let pendingRows = [
+      {
+        id: 'sugg-1',
+        identity_id: 'identity-1',
+        suggested_cluster_id: 'cluster-1',
+        representative_similarity: 0.95,
+        avg_member_similarity: 0.9,
+        cluster_label: 'Alex',
+        cluster_identity_count: 3,
+      },
+      {
+        id: 'sugg-2',
+        identity_id: 'identity-2',
+        suggested_cluster_id: 'cluster-2',
+        representative_similarity: 0.7,
+        avg_member_similarity: 0.65,
+        cluster_label: 'Jordan',
+        cluster_identity_count: 2,
+      },
+    ];
+    vi.mocked(fetchPendingSuggestions).mockImplementation(() =>
+      Promise.resolve({
+        suggestions: pendingRows.map((row) => ({ ...row })),
+        limit: 10,
+        offset: 0,
+      }),
+    );
+    vi.mocked(acceptSuggestion).mockImplementation((id: string) => {
+      pendingRows = pendingRows.filter((row) => row.id !== id);
+      return Promise.resolve({
+        suggestion_id: id,
+        resolution: 'accepted' as const,
+        identity_id: 'identity-1',
+        cluster_id: 'cluster-1',
+        message: 'ok',
+      });
+    });
+
+    renderQueue();
+    await screen.findByRole('button', { name: 'Yes' });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      act(() => {
+        screen.getByRole('button', { name: 'Yes' }).click();
+      });
+      expect(screen.getByText('Saving… — Undo')).toBeInTheDocument();
+
+      await act(async () => {
+        screen.getByRole('button', { name: 'Next review item' }).click();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(acceptSuggestion).toHaveBeenCalledTimes(1);
+      expect(acceptSuggestion).toHaveBeenCalledWith('sugg-1');
+      expect(screen.getByText('Saved. Moving to next review item.')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('BR-15: accept A, next to B (flush), accept B → 2 POSTs order preserved; held card disabled only', async () => {
+    const order: string[] = [];
+    let pendingRows = [
+      {
+        id: 'sugg-1',
+        identity_id: 'identity-1',
+        suggested_cluster_id: 'cluster-1',
+        representative_similarity: 0.95,
+        avg_member_similarity: 0.9,
+        cluster_label: 'Alex',
+        cluster_identity_count: 3,
+      },
+      {
+        id: 'sugg-2',
+        identity_id: 'identity-2',
+        suggested_cluster_id: 'cluster-2',
+        representative_similarity: 0.7,
+        avg_member_similarity: 0.65,
+        cluster_label: 'Jordan',
+        cluster_identity_count: 2,
+      },
+    ];
+    vi.mocked(fetchPendingSuggestions).mockImplementation(() =>
+      Promise.resolve({
+        suggestions: pendingRows.map((row) => ({ ...row })),
+        limit: 10,
+        offset: 0,
+      }),
+    );
+    vi.mocked(acceptSuggestion).mockImplementation((id: string) => {
+      order.push(id);
+      pendingRows = pendingRows.filter((row) => row.id !== id);
+      return Promise.resolve({
+        suggestion_id: id,
+        resolution: 'accepted' as const,
+        identity_id: `identity-${id}`,
+        cluster_id: 'cluster-1',
+        message: 'ok',
+      });
+    });
+
+    renderQueue();
+    const yes = await screen.findByRole('button', { name: 'Yes' });
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    act(() => {
+      yes.click();
+    });
+    // Held card accept disabled; Next remains enabled (not global hold-disable).
+    expect(screen.getByRole('button', { name: 'Yes' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Next review item' })).not.toBeDisabled();
+
+    act(() => {
+      screen.getByRole('button', { name: 'Next review item' }).click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    vi.useRealTimers();
+
+    await waitFor(() => {
+      expect(acceptSuggestion).toHaveBeenCalledTimes(1);
+      expect(acceptSuggestion).toHaveBeenCalledWith('sugg-1');
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Jordan/);
+    });
+
+    await clickAndCommitHold(screen.getByRole('button', { name: 'Yes' }));
+
+    await waitFor(() => {
+      expect(acceptSuggestion).toHaveBeenCalledTimes(2);
+    });
+    expect(order).toEqual(['sugg-1', 'sugg-2']);
+  });
+
+  it('exposes focusCurrentCard imperative handle', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+
+    const queueRef = React.createRef<ReviewQueueHandle>();
+    renderQueue({ queueRef });
+
+    await screen.findByRole('button', { name: 'Yes' });
+    act(() => {
+      queueRef.current?.focusCurrentCard();
+    });
+    expect(screen.getByRole('button', { name: 'Yes' })).toHaveFocus();
+  });
+
+  it('preserves controlled index across unmount/remount (panel round-trip)', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.95,
+          avg_member_similarity: 0.9,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+        {
+          id: 'sugg-2',
+          identity_id: 'identity-2',
+          suggested_cluster_id: 'cluster-2',
+          representative_similarity: 0.7,
+          avg_member_similarity: 0.65,
+          cluster_label: 'Jordan',
+          cluster_identity_count: 2,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+
+    const Parent = (): React.JSX.Element => {
+      const [index, setIndex] = React.useState(1);
+      const [kind, setKind] = React.useState<ReviewQueueKindParam>('all');
+      const [band, setBand] = React.useState<ReviewQueueBandParam>('all');
+      const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
+      const [mounted, setMounted] = React.useState(true);
+      return (
+        <div>
+          <button type="button" onClick={() => setMounted((v) => !v)}>
+            toggle-panel
+          </button>
+          {mounted ? (
+            <ReviewQueue
+              index={index}
+              onIndexChange={setIndex}
+              kind={kind}
+              onKindChange={setKind}
+              band={band}
+              onBandChange={setBand}
+              selectedIds={selectedIds}
+              onSelectedIdsChange={setSelectedIds}
+            />
+          ) : (
+            <p>panel-mode</p>
+          )}
+        </div>
+      );
+    };
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MergeSurvivorProvider>
+          <Parent />
+        </MergeSurvivorProvider>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Jordan/);
+    });
+    expect(screen.getByText('2 of 2')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'toggle-panel' }));
+    expect(screen.getByText('panel-mode')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'toggle-panel' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Jordan/);
+    });
+    expect(screen.getByText('2 of 2')).toBeInTheDocument();
+  });
+
+  it('announces card transitions via role=status live region', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.95,
+          avg_member_similarity: 0.9,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+        {
+          id: 'sugg-2',
+          identity_id: 'identity-2',
+          suggested_cluster_id: 'cluster-2',
+          representative_similarity: 0.7,
+          avg_member_similarity: 0.65,
+          cluster_label: 'Jordan',
+          cluster_identity_count: 2,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+
+    const user = userEvent.setup();
+    renderQueue();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Alex/);
+    });
+    await user.click(screen.getByRole('button', { name: 'Next review item' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Jordan/);
+    });
+
+    const statuses = screen.getAllByRole('status');
+    expect(statuses.some((node) => within(node).queryByText(/Review item/i))).toBe(true);
+  });
+
+  it('renders unavailable guidance instead of a false empty state', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.UNAVAILABLE,
+    });
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.UNAVAILABLE,
+    });
+
+    renderQueue();
+
+    await waitFor(() => {
+      expect(screen.getByText('Suggestion service not configured')).toBeInTheDocument();
+    });
+  });
+
+  it('does not render bulk-accept or grouped Yes-all chrome', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-group-1',
+          identity_id: 'identity-group-1',
+          suggested_cluster_id: 'cluster-maria',
+          representative_similarity: 0.68,
+          avg_member_similarity: 0.6,
+          cluster_label: 'Maria',
+          cluster_identity_count: 13,
+        },
+        {
+          id: 'sugg-group-2',
+          identity_id: 'identity-group-2',
+          suggested_cluster_id: 'cluster-maria',
+          representative_similarity: 0.63,
+          avg_member_similarity: 0.57,
+          cluster_label: 'Maria',
+          cluster_identity_count: 13,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+
+    renderQueue();
+
+    await screen.findByRole('button', { name: 'Yes' });
+    expect(screen.queryByRole('button', { name: 'Yes all' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Bulk accept')).not.toBeInTheDocument();
+    expect(screen.getAllByTestId('acx-review-card')).toHaveLength(1);
+  });
+
+  it('preserves restored index across staggered query resolution (BR-06 reload gate)', async () => {
+    // assignment+merge resolve first (1 assignment only) while name/cluster stay
+    // pending. Old gate treated findings as settled → clamped index 3 → 0 permanently.
+    let resolveName!: (value: Awaited<ReturnType<typeof fetchPendingNameSuggestions>>) => void;
+    let resolveClusters!: (value: Awaited<ReturnType<typeof fetchTopUnlabeledClusters>>) => void;
+
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-0',
+          identity_id: 'identity-0',
+          suggested_cluster_id: 'cluster-0',
+          representative_similarity: 0.95,
+          avg_member_similarity: 0.9,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveName = resolve;
+        }),
+    );
+    vi.mocked(fetchTopUnlabeledClusters).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveClusters = resolve;
+        }),
+    );
+
+    // Seeded like rq=…all.3 — controlled index 3 owned by parent (ScanTabContent).
+    const Parent = (): React.JSX.Element => {
+      const [index, setIndex] = React.useState(3);
+      const [kind, setKind] = React.useState<ReviewQueueKindParam>('all');
+      const [band, setBand] = React.useState<ReviewQueueBandParam>('all');
+      const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
+      return (
+        <div>
+          <span data-testid="parent-index">{index}</span>
+          <ReviewQueue
+            index={index}
+            onIndexChange={setIndex}
+            kind={kind}
+            onKindChange={setKind}
+            band={band}
+            onBandChange={setBand}
+            selectedIds={selectedIds}
+            onSelectedIdsChange={setSelectedIds}
+          />
+        </div>
+      );
+    };
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MergeSurvivorProvider>
+          <Parent />
+        </MergeSurvivorProvider>
+      </QueryClientProvider>,
+    );
+
+    // Partial settle: assignment+merge done, name/cluster still in flight.
+    await waitFor(() => {
+      expect(fetchPendingSuggestions).toHaveBeenCalled();
+      expect(fetchPendingMergeSuggestions).toHaveBeenCalled();
+      // Queue shell may render the partial assignment card, but must NOT clamp.
+      expect(screen.getByTestId('parent-index')).toHaveTextContent('3');
+    });
+
+    act(() => {
+      resolveName({ suggestions: [], limit: 25, offset: 0 });
+      resolveClusters({
+        clusters: [
+          {
+            id: 'cluster-c1',
+            tenant_id: 'test-tenant-id',
+            label: null,
+            is_labeled: false,
+            is_auto_label: false,
+            identity_count: 5,
+            user_confirmed: false,
+            representatives: [],
+          },
+          {
+            id: 'cluster-c2',
+            tenant_id: 'test-tenant-id',
+            label: null,
+            is_labeled: false,
+            is_auto_label: false,
+            identity_count: 4,
+            user_confirmed: false,
+            representatives: [],
+          },
+          {
+            id: 'cluster-c3',
+            tenant_id: 'test-tenant-id',
+            label: null,
+            is_labeled: false,
+            is_auto_label: false,
+            identity_count: 3,
+            user_confirmed: false,
+            representatives: [],
+          },
+          {
+            id: 'cluster-c4',
+            tenant_id: 'test-tenant-id',
+            label: null,
+            is_labeled: false,
+            is_auto_label: false,
+            identity_count: 2,
+            user_confirmed: false,
+            representatives: [],
+          },
+        ],
+        limit: 20,
+        total: 4,
+        truncated: false,
+        singleton_count: 0,
+        data_source: DATA_SOURCE.LOCAL_PROJECTION,
+      });
+    });
+
+    // Full queue: [Alex, c1, c2, c3, c4] — index 3 is cluster-c3.
+    await waitFor(() => {
+      expect(screen.getByTestId('parent-index')).toHaveTextContent('3');
+      expect(screen.getByText('4 of 5')).toBeInTheDocument();
+      expect(screen.getByTestId('acx-review-card')).toHaveAttribute('data-review-kind', 'cluster');
+    });
+  });
+
+  it('does not move focus on Next after a failed accept (BR-13)', async () => {
+    // Use merge accept (no optimistic remove) so a failure leaves the card in place
+    // with a stale pending-focus ref — the bug the clear-on-error fix targets.
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'merge-1',
+          cluster_a_id: 'a',
+          cluster_b_id: 'b',
+          similarity: 0.88,
+          status: 'pending',
+          cluster_a_label: 'Alex',
+          cluster_b_label: 'Jordan',
+        },
+        {
+          id: 'merge-2',
+          cluster_a_id: 'c',
+          cluster_b_id: 'd',
+          similarity: 0.8,
+          status: 'pending',
+          cluster_a_label: 'Casey',
+          cluster_b_label: 'Drew',
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(acceptMergeSuggestion).mockRejectedValue(new Error('merge accept failed'));
+
+    const user = userEvent.setup();
+    renderQueue();
+
+    const yes = await screen.findByRole('button', { name: 'Yes' });
+    yes.focus();
+    await clickAndCommitHold(yes);
+
+    await waitFor(() => {
+      expect(acceptMergeSuggestion).toHaveBeenCalled();
+    });
+    // Still on first merge card (failure leaves item at head).
+    expect(screen.getByText('Are these the same person?')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    // Persistent failure alert.
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+
+    // Blur so a later surprise-focus is unambiguous.
+    (document.activeElement as HTMLElement | null)?.blur();
+
+    await user.click(screen.getByRole('button', { name: 'Next review item' }));
+    await waitFor(() => {
+      expect(screen.getByText('2 of 2')).toBeInTheDocument();
+    });
+    // Stale pending-focus must not auto-focus the primary after Next.
+    expect(screen.getByRole('button', { name: 'Yes' })).not.toHaveFocus();
+  });
+
+  it('uses the shared drain message for empty state and drain announcement', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-only',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 1,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(acceptSuggestion).mockResolvedValue({
+      suggestion_id: 'sugg-only',
+      resolution: 'accepted',
+      identity_id: 'identity-1',
+      cluster_id: 'cluster-1',
+      message: 'ok',
+    });
+
+    renderQueue();
+
+    await clickAndCommitHold(await screen.findByRole('button', { name: 'Yes' }));
+    await waitFor(() => {
+      expect(acceptSuggestion).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      const statuses = screen.getAllByRole('status');
+      expect(statuses.some((node) => within(node).queryByText(REVIEW_QUEUE_DRAIN_MESSAGE))).toBe(true);
+      expect(screen.getByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeInTheDocument();
+    });
+  });
+
+  it('re-announces identical live copy via seq-keyed region (HARM-02 / BR-68)', async () => {
+    // Capture announce so we can fire the SAME string twice consecutively —
+    // plain useState would Object.is-bail; useAriaAnnounce must bump seq.
+    const original = useAriaAnnounceMod.useAriaAnnounce;
+    let latestAnnounce: ((message: string) => void) | null = null;
+    const spy = vi.spyOn(useAriaAnnounceMod, 'useAriaAnnounce').mockImplementation(() => {
+      const result = original();
+      latestAnnounce = result.announce;
+      return result;
+    });
+
+    try {
+      vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+        suggestions: [
+          {
+            id: 'sugg-1',
+            identity_id: 'identity-1',
+            suggested_cluster_id: 'cluster-1',
+            representative_similarity: 0.9,
+            avg_member_similarity: 0.85,
+            cluster_label: 'Alex',
+            cluster_identity_count: 1,
+          },
+        ],
+        limit: 10,
+        offset: 0,
+      });
+
+      renderQueue();
+      await screen.findByRole('button', { name: 'Yes' });
+      await waitFor(() => {
+        expect(latestAnnounce).not.toBeNull();
+      });
+
+      const repeatCopy = LIVE_TARGET_CLOSE_ANNOUNCE;
+      act(() => {
+        latestAnnounce?.(repeatCopy);
+      });
+      const live1 = document.querySelector('.acx-review-queue__live');
+      expect(live1).toHaveTextContent(repeatCopy);
+      const seq1 = live1?.getAttribute('data-announce-seq');
+      expect(seq1).toBeTruthy();
+
+      act(() => {
+        latestAnnounce?.(repeatCopy);
+      });
+      await waitFor(() => {
+        const live2 = document.querySelector('.acx-review-queue__live');
+        expect(live2).toHaveTextContent(repeatCopy);
+        expect(live2?.getAttribute('data-announce-seq')).not.toBe(seq1);
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('shows filtered-empty escape hatch when filters hide pending work (S1-01 / COG-03)', async () => {
+    // Assignments only in the unfiltered queue; merge KIND filter → empty view.
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'assign-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 2,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+
+    const onKindChange = vi.fn();
+    const onBandChange = vi.fn();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+
+    const FilteredEmptyHarness = (): React.JSX.Element => {
+      const [index, setIndex] = React.useState(0);
+      const [kind, setKind] = React.useState<ReviewQueueKindParam>('merge');
+      const [band, setBand] = React.useState<ReviewQueueBandParam>('all');
+      const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
+      return (
+        <ReviewQueue
+          index={index}
+          onIndexChange={setIndex}
+          kind={kind}
+          onKindChange={(next) => {
+            onKindChange(next);
+            setKind(next);
+          }}
+          band={band}
+          onBandChange={(next) => {
+            onBandChange(next);
+            setBand(next);
+          }}
+          selectedIds={selectedIds}
+          onSelectedIdsChange={setSelectedIds}
+        />
+      );
+    };
+
+    const user = userEvent.setup();
+    render(withQueueProviders(queryClient, <FilteredEmptyHarness />));
+
+    await waitFor(() => {
+      expect(screen.getByText('No items match the current filters.')).toBeInTheDocument();
+    });
+    expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).not.toBeInTheDocument();
+    const clearBtn = screen.getByRole('button', { name: 'Clear filters' });
+    expect(clearBtn).toBeInTheDocument();
+
+    await user.click(clearBtn);
+    expect(onKindChange).toHaveBeenCalledWith('all');
+    expect(onBandChange).toHaveBeenCalledWith('all');
+    await waitFor(() => {
+      expect(screen.getByTestId('acx-review-card')).toBeInTheDocument();
+    });
+  });
+
+  it('shows true drain copy when unfiltered queue is empty', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+
+    renderQueue();
+
+    await waitFor(() => {
+      expect(screen.getByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeInTheDocument();
+    });
+    expect(screen.queryByText('No items match the current filters.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Clear filters' })).not.toBeInTheDocument();
+  });
+
+  // --- Slice 3: person-commit on the card ---
+
+  it('shows person-commit + HAI-05 disclosure on ASSIGNMENT when clusterId present', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+
+    renderQueue();
+
+    await screen.findByRole('button', { name: 'Yes' });
+    expect(screen.getByTestId('acx-person-commit')).toBeInTheDocument();
+    expect(screen.getByText(MODEL_OUTPUT_DISCLOSURE)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY })).toBeInTheDocument();
+  });
+
+  it('hides person-commit on MERGE cards', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'merge-1',
+          cluster_a_id: 'a',
+          cluster_b_id: 'b',
+          similarity: 0.88,
+          status: 'pending',
+          cluster_a_label: 'Alex',
+          cluster_b_label: 'Jordan',
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+
+    renderQueue();
+
+    await screen.findByText('Are these the same person?');
+    expect(screen.queryByTestId('acx-person-commit')).not.toBeInTheDocument();
+  });
+
+  it('shows person-commit as primary on NAME cards with disclosure', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'name-1',
+          cluster_id: 'cluster-name-1',
+          suggested_name: 'Morgan',
+          confidence_score: 0.91,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+      ],
+      limit: 25,
+      offset: 0,
+    });
+
+    renderQueue();
+
+    await screen.findByText(/Suggested name:/);
+    const commit = screen.getByTestId('acx-person-commit');
+    expect(commit).toHaveAttribute('data-person-commit-primary', 'true');
+    expect(screen.getByText(MODEL_OUTPUT_DISCLOSURE)).toBeInTheDocument();
+  });
+
+  it('shows person-commit as primary on CLUSTER cards', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [
+        {
+          id: 'cluster-top-1',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 4,
+          user_confirmed: false,
+          suggested_label: null,
+          suggested_target_cluster_id: null,
+          representatives: [],
+        },
+      ],
+      limit: 20,
+      total: 1,
+      truncated: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    renderQueue();
+
+    await screen.findByTestId('acx-review-card');
+    expect(screen.getByTestId('acx-person-commit')).toHaveAttribute('data-person-commit-primary', 'true');
+  });
+
+  it('person-commit confirm calls commitClusterToRosterEntry not updateClusterLabel', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+
+    const user = userEvent.setup();
+    renderQueue();
+
+    await screen.findByTestId('acx-person-commit');
+    // Open combobox and select roster entry "Alex".
+    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
+    await user.click(await screen.findByRole('option', { name: /Alex/i }));
+    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+
+    await waitFor(() => {
+      expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
+        clusterId: 'cluster-1',
+        rosterEntryId: 7,
+        newEntryName: undefined,
+      });
+    });
+    expect(updateClusterLabel).not.toHaveBeenCalled();
+  });
+
+  it('person-commit success renders View in roster → link to #/roster', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(commitClusterToRosterEntry).mockResolvedValue(rosterCommitFixture());
+
+    const user = userEvent.setup();
+    renderQueue();
+
+    await screen.findByTestId('acx-person-commit');
+    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
+    await user.click(await screen.findByRole('option', { name: /Alex/i }));
+    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+
+    const link = await screen.findByRole('link', { name: VIEW_IN_ROSTER_COPY });
+    expect(link).toHaveAttribute('href', VIEW_IN_ROSTER_HREF);
+  });
+
+  it('person-commit failure shows persistent role=alert with retry', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(commitClusterToRosterEntry).mockRejectedValue(new Error('fail'));
+
+    const user = userEvent.setup();
+    renderQueue();
+
+    await screen.findByTestId('acx-person-commit');
+    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
+    await user.click(await screen.findByRole('option', { name: /Alex/i }));
+    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toBeInTheDocument();
+    expect(within(alert).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  });
+
+  it('tertiary just label dispatches open_label with the card clusterId', async () => {
+    const onLabel = vi.fn();
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MergeSurvivorProvider>
+          <ReviewQueueHarness onLabel={onLabel} />
+        </MergeSurvivorProvider>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByTestId('acx-person-commit');
+    await user.click(screen.getByRole('button', { name: JUST_LABEL_COPY }));
+    expect(onLabel).toHaveBeenCalledWith('cluster-1');
+  });
+
+  it('person-commit while accept hold is open flushes held accept first', async () => {
+    const order: string[] = [];
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(acceptSuggestion).mockImplementation((id: string) => {
+      order.push(`accept:${id}`);
+      return Promise.resolve({
+        suggestion_id: id,
+        resolution: 'accepted' as const,
+        identity_id: 'identity-1',
+        cluster_id: 'cluster-1',
+        message: 'ok',
+      });
+    });
+    vi.mocked(commitClusterToRosterEntry).mockImplementation(() => {
+      order.push('person-commit');
+      return Promise.resolve(rosterCommitFixture());
+    });
+
+    const user = userEvent.setup();
+    renderQueue();
+
+    const yes = await screen.findByRole('button', { name: 'Yes' });
+    // Open hold without expiring it.
+    await user.click(yes);
+    expect(screen.getByText(HOLD_STATUS_COPY)).toBeInTheDocument();
+    expect(acceptSuggestion).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
+    await user.click(await screen.findByRole('option', { name: /Alex/i }));
+    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+
+    await waitFor(() => {
+      expect(commitClusterToRosterEntry).toHaveBeenCalled();
+    });
+    expect(order[0]).toBe('accept:sugg-1');
+    expect(order).toContain('person-commit');
+    expect(order.indexOf('accept:sugg-1')).toBeLessThan(order.indexOf('person-commit'));
+  });
+
+  it('BR-27: focus on NAME card lands on person-commit combobox/confirm (not demoted Accept)', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'name-1',
+          cluster_id: 'cluster-name-1',
+          suggested_name: 'Morgan',
+          confidence_score: 0.91,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+      ],
+      limit: 25,
+      offset: 0,
+    });
+
+    const queueRef = React.createRef<ReviewQueueHandle>();
+    renderQueue({ queueRef });
+
+    await screen.findByTestId('acx-review-card');
+    expect(screen.getByTestId('acx-review-card')).toHaveAttribute('data-review-kind', 'name');
+
+    act(() => {
+      queueRef.current?.focusCurrentCard();
+    });
+
+    const focused = document.activeElement as HTMLElement | null;
+    expect(focused).not.toBe(document.body);
+    expect(focused?.closest('[data-testid="acx-person-commit"]')).not.toBeNull();
+    // Demoted Accept suggestion must not steal primacy.
+    expect(focused?.classList.contains('acx-suggestion-card__accept')).toBe(false);
+  });
+
+  it('BR-27: focus on CLUSTER with nothing selected lands on enabled person-commit control', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [
+        {
+          id: 'cluster-top-1',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 4,
+          user_confirmed: false,
+          suggested_label: null,
+          suggested_target_cluster_id: null,
+          representatives: [],
+        },
+      ],
+      limit: 20,
+      total: 1,
+      truncated: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const queueRef = React.createRef<ReviewQueueHandle>();
+    renderQueue({ queueRef });
+
+    await screen.findByTestId('acx-review-card');
+    expect(screen.getByTestId('acx-review-card')).toHaveAttribute('data-review-kind', 'cluster');
+
+    act(() => {
+      queueRef.current?.focusCurrentCard();
+    });
+
+    const focused = document.activeElement as HTMLElement | null;
+    expect(focused).not.toBe(document.body);
+    expect(focused?.closest('[data-testid="acx-person-commit"]')).not.toBeNull();
+    expect((focused as HTMLButtonElement | null)?.disabled).not.toBe(true);
+  });
+
+  it('BR-30: person-commit failure after accept advances shows queue-level alert; retry fires 1 POST', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+        {
+          id: 'sugg-2',
+          identity_id: 'identity-2',
+          suggested_cluster_id: 'cluster-2',
+          representative_similarity: 0.8,
+          avg_member_similarity: 0.75,
+          cluster_label: 'Jordan',
+          cluster_identity_count: 2,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+
+    let rejectPerson!: (reason?: unknown) => void;
+    const personGate = new Promise<RosterClusterCommitResponse>((_resolve, reject) => {
+      rejectPerson = reject;
+    });
+    // First call hangs until we reject (after accept advanced).
+    vi.mocked(commitClusterToRosterEntry)
+      .mockImplementationOnce(() => personGate)
+      .mockResolvedValueOnce(rosterCommitFixture());
+    // Prevent invalidate refetch from restoring the accepted row while person-commit is open.
+    vi.mocked(acceptSuggestion).mockImplementation((id: string) => {
+      vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+        suggestions: [
+          {
+            id: 'sugg-2',
+            identity_id: 'identity-2',
+            suggested_cluster_id: 'cluster-2',
+            representative_similarity: 0.8,
+            avg_member_similarity: 0.75,
+            cluster_label: 'Jordan',
+            cluster_identity_count: 2,
+          },
+        ],
+        limit: 10,
+        offset: 0,
+      });
+      return Promise.resolve({
+        suggestion_id: id,
+        resolution: 'accepted' as const,
+        identity_id: 'identity-1',
+        cluster_id: 'cluster-1',
+        message: 'ok',
+      });
+    });
+
+    const user = userEvent.setup();
+    renderQueue();
+
+    const yes = await screen.findByRole('button', { name: 'Yes' });
+    // Hold accept open, then person-commit flushes it.
+    await user.click(yes);
+    expect(screen.getByText(HOLD_STATUS_COPY)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
+    await user.click(await screen.findByRole('option', { name: /Alex/i }));
+    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+
+    // Accept flushed → card advanced to sugg-2 before person-commit settles.
+    await waitFor(() => {
+      expect(acceptSuggestion).toHaveBeenCalledWith('sugg-1');
+      expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Jordan/);
+    });
+
+    await act(async () => {
+      rejectPerson(new Error('network'));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const fallback = await screen.findByTestId('acx-person-commit-queue-fallback');
+    expect(fallback).toHaveAttribute('role', 'alert');
+    const retry = within(fallback).getByRole('button', { name: 'Retry' });
+    await user.click(retry);
+
+    await waitFor(() => {
+      expect(commitClusterToRosterEntry).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('BR-31: CLUSTER card renders Review members affordance and drives onReview', async () => {
+    const onReview = vi.fn();
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [
+        {
+          id: 'cluster-top-1',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 4,
+          user_confirmed: false,
+          suggested_label: null,
+          suggested_target_cluster_id: null,
+          representatives: [],
+        },
+      ],
+      limit: 20,
+      total: 1,
+      truncated: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MergeSurvivorProvider>
+          <ReviewQueueHarness onReview={onReview} />
+        </MergeSurvivorProvider>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByTestId('acx-review-card');
+    const reviewBtn = screen.getByRole('button', { name: 'Review' });
+    await user.click(reviewBtn);
+    expect(onReview).toHaveBeenCalledWith('cluster-top-1');
+  });
+
+  it('BR-34: null-clusterId assignment item renders no person-commit chrome', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-null',
+          identity_id: 'identity-null',
+          // Runtime null — matrix hides person-commit; item.clusterId is authoritative (no fallback).
+          suggested_cluster_id: null as unknown as string,
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+
+    renderQueue();
+    await screen.findByRole('button', { name: 'Yes' });
+    expect(screen.queryByTestId('acx-person-commit')).not.toBeInTheDocument();
+  });
+
+  it('BR-35: substring match still allows Create new person via explicit call-site action', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+
+    const user = userEvent.setup();
+    renderQueue();
+    await screen.findByTestId('acx-person-commit');
+
+    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
+    // Type a substring of existing "Alex" — shared combobox would hide Create.
+    const search = await screen.findByPlaceholderText(/Choose or create/i);
+    await user.clear(search);
+    await user.type(search, 'Al');
+
+    const createBtn = await screen.findByRole('button', { name: /Create new person "Al"/i });
+    await user.click(createBtn);
+
+    // Confirm uses create path with the typed name.
+    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+    await waitFor(() => {
+      expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
+        clusterId: 'cluster-1',
+        rosterEntryId: undefined,
+        newEntryName: 'Al',
+      });
+    });
+  });
+
+  describe('Slice 5 multi-select bulk + matrix M1 surface', () => {
+    const seedMariaGroup = () => {
+      vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+        suggestions: [
+          {
+            id: 'sugg-m1',
+            identity_id: 'identity-m1',
+            suggested_cluster_id: 'cluster-maria',
+            representative_similarity: 0.95,
+            avg_member_similarity: 0.9,
+            cluster_label: 'Maria',
+            cluster_identity_count: 5,
+          },
+          {
+            id: 'sugg-m2',
+            identity_id: 'identity-m2',
+            suggested_cluster_id: 'cluster-maria',
+            representative_similarity: 0.9,
+            avg_member_similarity: 0.85,
+            cluster_label: 'Maria',
+            cluster_identity_count: 5,
+          },
+        ],
+        limit: 10,
+        offset: 0,
+      });
+    };
+
+    it('default-empty selection tray; Select toggles; PR-38 Accept N for label; zero bulk-accept', async () => {
+      seedMariaGroup();
+      vi.mocked(acceptSuggestion).mockImplementation((id: string) =>
+        Promise.resolve({
+          suggestion_id: id,
+          resolution: 'accepted' as const,
+          identity_id: `identity-${id}`,
+          cluster_id: 'cluster-maria',
+          message: 'ok',
+        }),
+      );
+      vi.mocked(fetchClusterMembers).mockResolvedValue({
+        members: [],
+        limit: 25,
+        total: 2,
+        truncated: false,
+      });
+
+      const user = userEvent.setup();
+      renderQueue();
+
+      await screen.findByRole('button', { name: 'Yes' });
+      expect(screen.getByTestId('acx-review-selection-tray')).toHaveTextContent('0 selected');
+      expect(screen.getAllByTestId('acx-review-card')).toHaveLength(1);
+
+      await user.click(screen.getByTestId('acx-review-select'));
+      expect(screen.getByTestId('acx-review-selection-tray')).toHaveTextContent('1 selected');
+
+      await user.click(screen.getByRole('button', { name: 'Next review item' }));
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-review-select')).toBeInTheDocument();
+      });
+      await user.click(screen.getByTestId('acx-review-select'));
+      expect(screen.getByTestId('acx-review-selection-tray')).toHaveTextContent('2 selected');
+
+      await user.click(screen.getByRole('button', { name: 'Review selection' }));
+      expect(screen.getByTestId('acx-review-selection-panel')).toBeInTheDocument();
+      expect(screen.getByTestId('acx-bulk-commit')).toHaveTextContent('Accept 2 for Maria');
+
+      // Wait for truncation prefetch to settle (commit is disabled while loading).
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-bulk-commit')).not.toBeDisabled();
+      });
+
+      // Arm hold under fake timers so UNDO_HOLD_MS advance is deterministic.
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await act(async () => {
+          screen.getByTestId('acx-bulk-commit').click();
+          await Promise.resolve();
+        });
+        expect(screen.getByTestId('acx-bulk-hold')).toHaveTextContent('Saving 2… — Undo');
+        expect(acceptSuggestion).not.toHaveBeenCalled();
+        expect(bulkAcceptSuggestions).not.toHaveBeenCalled();
+
+        await act(async () => {
+          vi.advanceTimersByTime(UNDO_HOLD_MS);
+          await Promise.resolve();
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+
+      await waitFor(() => {
+        expect(acceptSuggestion).toHaveBeenCalled();
+      });
+      const mutated = vi.mocked(acceptSuggestion).mock.calls.map((c) => c[0]);
+      expect(mutated).toEqual(['sugg-m1', 'sugg-m2']);
+      expect(bulkAcceptSuggestions).not.toHaveBeenCalled();
+    });
+
+    it('BR-47: selected card disables single Accept/Reject with deselect reason; deselect re-enables', async () => {
+      seedMariaGroup();
+      const user = userEvent.setup();
+      renderQueue();
+
+      const yes = await screen.findByRole('button', { name: 'Yes' });
+      const no = screen.getByRole('button', { name: 'No' });
+      expect(yes).not.toBeDisabled();
+      expect(no).not.toBeDisabled();
+
+      await user.click(screen.getByTestId('acx-review-select'));
+      expect(yes).toBeDisabled();
+      expect(no).toBeDisabled();
+      expect(yes).toHaveAttribute(
+        'title',
+        'Deselect this item to accept or reject it individually.',
+      );
+      expect(no).toHaveAttribute(
+        'title',
+        'Deselect this item to accept or reject it individually.',
+      );
+
+      await user.click(screen.getByTestId('acx-review-select'));
+      expect(yes).not.toBeDisabled();
+      expect(no).not.toBeDisabled();
+    });
+
+    it('BR-54: tray count changes announced via polite live region on select/deselect', async () => {
+      seedMariaGroup();
+      const user = userEvent.setup();
+      const { container } = renderQueue();
+
+      await screen.findByRole('button', { name: 'Yes' });
+      // HARM-02: the live region is now seq-keyed (useAriaAnnounce), so it REMOUNTS
+      // on each announce — re-query the current node inside waitFor rather than
+      // holding a stale reference to the mount-time node.
+      const liveRegion = container.querySelector('.acx-review-queue__live');
+      expect(liveRegion).not.toBeNull();
+      expect(liveRegion).toHaveAttribute('aria-live', 'polite');
+
+      await user.click(screen.getByTestId('acx-review-select'));
+      await waitFor(() => {
+        expect(container.querySelector('.acx-review-queue__live')).toHaveTextContent('1 selected');
+      });
+
+      await user.click(screen.getByTestId('acx-review-select'));
+      await waitFor(() => {
+        expect(container.querySelector('.acx-review-queue__live')).toHaveTextContent('0 selected');
+      });
+    });
+
+    it('bulk undo during hold = 0 POSTs', async () => {
+      seedMariaGroup();
+      vi.mocked(acceptSuggestion).mockClear();
+      vi.mocked(fetchClusterMembers).mockResolvedValue({
+        members: [],
+        limit: 25,
+        total: 2,
+        truncated: false,
+      });
+      const user = userEvent.setup();
+      renderQueue();
+      await screen.findByRole('button', { name: 'Yes' });
+      await user.click(screen.getByTestId('acx-review-select'));
+      await user.click(screen.getByRole('button', { name: 'Review selection' }));
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-bulk-commit')).not.toBeDisabled();
+      });
+
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await act(async () => {
+          screen.getByTestId('acx-bulk-commit').click();
+          await Promise.resolve();
+        });
+        expect(screen.getByTestId('acx-bulk-hold')).toBeInTheDocument();
+        act(() => {
+          screen.getByRole('button', { name: 'Undo' }).click();
+        });
+        await act(async () => {
+          vi.advanceTimersByTime(UNDO_HOLD_MS);
+          await Promise.resolve();
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+      expect(acceptSuggestion).not.toHaveBeenCalled();
+      expect(bulkAcceptSuggestions).not.toHaveBeenCalled();
+    });
+
+    it('truncation gate: truncated target disables commit until total-N confirm', async () => {
+      seedMariaGroup();
+      vi.mocked(fetchClusterMembers).mockResolvedValue({
+        members: [
+          {
+            identity_id: 'i1',
+            media_id: 1,
+            similarity: 0.9,
+            confidence: 0.9,
+            bbox: { x: 0, y: 0, width: 1, height: 1 },
+          },
+        ],
+        limit: 1,
+        total: 12,
+        truncated: true,
+      });
+
+      const user = userEvent.setup();
+      renderQueue();
+      await screen.findByRole('button', { name: 'Yes' });
+      await user.click(screen.getByTestId('acx-review-select'));
+      await user.click(screen.getByRole('button', { name: 'Review selection' }));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-bulk-commit')).toBeDisabled();
+      });
+      expect(screen.getByTestId('acx-review-selection-panel')).toHaveTextContent(/12 total/);
+
+      await user.click(screen.getByRole('button', { name: /Confirm 12 total/i }));
+      expect(screen.getByTestId('acx-bulk-commit')).not.toBeDisabled();
+    });
+
+    it('selection survives panel round-trip (lifted selectedIds)', async () => {
+      seedMariaGroup();
+      const user = userEvent.setup();
+
+      const Parent = (): React.JSX.Element => {
+        const [index, setIndex] = React.useState(0);
+        const [kind, setKind] = React.useState<ReviewQueueKindParam>('all');
+        const [band, setBand] = React.useState<ReviewQueueBandParam>('all');
+        const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
+        const [mounted, setMounted] = React.useState(true);
+        return (
+          <div>
+            <button type="button" onClick={() => setMounted((v) => !v)}>
+              toggle-panel
+            </button>
+            <span data-testid="selection-size">{selectedIds.size}</span>
+            {mounted ? (
+              <ReviewQueue
+                index={index}
+                onIndexChange={setIndex}
+                kind={kind}
+                onKindChange={setKind}
+                band={band}
+                onBandChange={setBand}
+                selectedIds={selectedIds}
+                onSelectedIdsChange={setSelectedIds}
+              />
+            ) : (
+              <p>panel-mode</p>
+            )}
+          </div>
+        );
+      };
+
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+      });
+      render(
+        <QueryClientProvider client={queryClient}>
+          <MergeSurvivorProvider>
+            <Parent />
+          </MergeSurvivorProvider>
+        </QueryClientProvider>,
+      );
+
+      await screen.findByRole('button', { name: 'Yes' });
+      await user.click(screen.getByTestId('acx-review-select'));
+      expect(screen.getByTestId('selection-size')).toHaveTextContent('1');
+
+      await user.click(screen.getByRole('button', { name: 'toggle-panel' }));
+      expect(screen.getByText('panel-mode')).toBeInTheDocument();
+      expect(screen.getByTestId('selection-size')).toHaveTextContent('1');
+
+      await user.click(screen.getByRole('button', { name: 'toggle-panel' }));
+      await screen.findByRole('button', { name: 'Yes' });
+      expect(screen.getByTestId('acx-review-selection-tray')).toHaveTextContent('1 selected');
+      expect(screen.getByTestId('acx-review-select')).toHaveAttribute('aria-pressed', 'true');
+    });
+  });
+
+  describe('Slice 6 band chips (④) + matrix M2 surface', () => {
+    it('band chips filter queue by similarity post-eligibility; compose with KIND; merge excluded (BR-60)', async () => {
+      vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+        suggestions: [
+          {
+            id: 'strong-1',
+            identity_id: 'id-1',
+            suggested_cluster_id: 'c-strong',
+            representative_similarity: 0.5,
+            cluster_label: 'Maria',
+            cluster_identity_count: 3,
+          },
+          {
+            id: 'weak-1',
+            identity_id: 'id-2',
+            suggested_cluster_id: 'c-weak',
+            representative_similarity: 0.4,
+            cluster_label: 'Alex',
+            cluster_identity_count: 2,
+          },
+        ],
+        limit: 10,
+        offset: 0,
+      });
+      vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+        suggestions: [
+          {
+            id: 'merge-1',
+            cluster_a_id: 'a',
+            cluster_b_id: 'b',
+            similarity: 0.88,
+            status: 'pending',
+          },
+        ],
+        limit: 10,
+        offset: 0,
+      });
+
+      const user = userEvent.setup();
+      renderQueue();
+
+      await screen.findByText(/Is this/);
+      // 2 assignments + 1 merge
+      expect(screen.getByText('1 of 3')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Strong matches' })).toHaveAttribute(
+        'aria-pressed',
+        'false',
+      );
+
+      await user.click(screen.getByRole('button', { name: 'Strong matches' }));
+      await waitFor(() => {
+        // strong-1 (0.50) only — merge-1 excluded from bands (BR-60); weak-1 dropped
+        expect(screen.getByText('1 of 1')).toBeInTheDocument();
+      });
+      expect(screen.getByRole('button', { name: 'Strong matches' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+      expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Maria/);
+
+      // KIND ∩ band: Close matches ∩ Strong → still only strong-1
+      await user.click(screen.getByRole('button', { name: 'Close matches' }));
+      await waitFor(() => {
+        expect(screen.getByText('1 of 1')).toBeInTheDocument();
+      });
+      expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Maria/);
+
+      // Toggle band active → all (band clears; KIND still assignment)
+      await user.click(screen.getByRole('button', { name: 'Strong matches' }));
+      await waitFor(() => {
+        // assignment only: strong + weak
+        expect(screen.getByText('1 of 2')).toBeInTheDocument();
+      });
+
+      // Merge stays reachable under band=all via its KIND chip.
+      await user.click(screen.getByRole('button', { name: 'Close matches' }));
+      await user.click(screen.getByRole('button', { name: 'Possible duplicates' }));
+      await waitFor(() => {
+        expect(screen.getByText('1 of 1')).toBeInTheDocument();
+      });
+      // Merge ∩ strong band → empty (merge similarity is a different domain).
+      await user.click(screen.getByRole('button', { name: 'Strong matches' }));
+      await waitFor(() => {
+        expect(screen.getByText('0 of 0')).toBeInTheDocument();
+      });
+    });
+
+    it('matrix M2 surface: bulk preview/commit label uses selection ∩ band ∩ kind; fired ids = intersection (BR-61); split tray copy (BR-63)', async () => {
+      vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+        suggestions: [
+          {
+            id: 's-strong',
+            identity_id: 'id-1',
+            suggested_cluster_id: 'c1',
+            representative_similarity: 0.5,
+            cluster_label: 'Maria',
+            cluster_identity_count: 2,
+          },
+          {
+            id: 's-weak',
+            identity_id: 'id-2',
+            suggested_cluster_id: 'c2',
+            representative_similarity: 0.4,
+            cluster_label: 'Alex',
+            cluster_identity_count: 2,
+          },
+        ],
+        limit: 10,
+        offset: 0,
+      });
+      vi.mocked(fetchClusterMembers).mockResolvedValue({
+        members: [],
+        limit: 25,
+        total: 2,
+        truncated: false,
+      });
+      vi.mocked(acceptSuggestion).mockImplementation((id: string) =>
+        Promise.resolve({
+          suggestion_id: id,
+          resolution: 'accepted' as const,
+          identity_id: `identity-${id}`,
+          cluster_id: 'c1',
+          message: 'ok',
+        }),
+      );
+
+      // Seed selection after settle (avoid prune-on-empty-queue wiping ids).
+      const Parent = (): React.JSX.Element => {
+        const [index, setIndex] = React.useState(0);
+        const [kind, setKind] = React.useState<ReviewQueueKindParam>('all');
+        const [band, setBand] = React.useState<ReviewQueueBandParam>('all');
+        const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
+        return (
+          <div>
+            <button
+              type="button"
+              data-testid="seed-selection"
+              onClick={() => setSelectedIds(new Set(['s-strong', 's-weak']))}
+            >
+              seed
+            </button>
+            <button
+              type="button"
+              data-testid="apply-strong-band"
+              onClick={() => {
+                setBand('strong');
+                setIndex(0);
+              }}
+            >
+              strong-band
+            </button>
+            <ReviewQueue
+              index={index}
+              onIndexChange={setIndex}
+              kind={kind}
+              onKindChange={setKind}
+              band={band}
+              onBandChange={setBand}
+              selectedIds={selectedIds}
+              onSelectedIdsChange={setSelectedIds}
+            />
+          </div>
+        );
+      };
+
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+      });
+      const user = userEvent.setup();
+      render(
+        <QueryClientProvider client={queryClient}>
+          <MergeSurvivorProvider>
+            <Parent />
+          </MergeSurvivorProvider>
+        </QueryClientProvider>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('1 of 2')).toBeInTheDocument();
+      });
+      await user.click(screen.getByTestId('seed-selection'));
+      expect(screen.getByTestId('acx-review-selection-tray')).toHaveTextContent('2 selected');
+
+      // Activate strong band → queue shows only s-strong; selection still 2.
+      await user.click(screen.getByTestId('apply-strong-band'));
+      await waitFor(() => {
+        expect(screen.getByText('1 of 1')).toBeInTheDocument();
+      });
+      expect(screen.getByTestId('acx-review-card')).toHaveTextContent('Maria');
+      // BR-63: split copy — selection extends beyond the active filter view.
+      expect(screen.getByTestId('acx-review-selection-tray')).toHaveTextContent(
+        '2 selected — 1 in current filter',
+      );
+
+      await user.click(screen.getByRole('button', { name: 'Review selection' }));
+
+      // Commit label + preview count only the filter-visible selection (M2 exact-id).
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-bulk-commit')).toHaveTextContent('Accept 1 for Maria');
+      });
+      const preview = screen.getByTestId('acx-review-selection-panel');
+      expect(within(preview).getAllByRole('listitem')).toHaveLength(1);
+
+      // BR-61 (TEST-08): fire the bulk hold under the active band×kind — the
+      // exact acceptSuggestion id set equals the selection ∩ filters intersection.
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-bulk-commit')).not.toBeDisabled();
+      });
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await act(async () => {
+          screen.getByTestId('acx-bulk-commit').click();
+          await Promise.resolve();
+        });
+        expect(screen.getByTestId('acx-bulk-hold')).toHaveTextContent('Saving 1… — Undo');
+        await act(async () => {
+          vi.advanceTimersByTime(UNDO_HOLD_MS);
+          await Promise.resolve();
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+
+      await waitFor(() => {
+        expect(acceptSuggestion).toHaveBeenCalled();
+      });
+      const mutated = vi.mocked(acceptSuggestion).mock.calls.map((c) => c[0]);
+      expect(mutated).toEqual(['s-strong']);
+      expect(mutated).not.toContain('s-weak');
+      expect(bulkAcceptSuggestions).not.toHaveBeenCalled();
+    });
+
+    it('BR-59: truncation gate keys off the filter-intersected selection only', async () => {
+      // s-strong targets c-ok (not truncated); s-weak targets c-trunc (truncated).
+      vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+        suggestions: [
+          {
+            id: 's-strong',
+            identity_id: 'id-1',
+            suggested_cluster_id: 'c-ok',
+            representative_similarity: 0.5,
+            cluster_label: 'Maria',
+            cluster_identity_count: 2,
+          },
+          {
+            id: 's-weak',
+            identity_id: 'id-2',
+            suggested_cluster_id: 'c-trunc',
+            representative_similarity: 0.4,
+            cluster_label: 'Alex',
+            cluster_identity_count: 12,
+          },
+        ],
+        limit: 10,
+        offset: 0,
+      });
+      vi.mocked(fetchClusterMembers).mockImplementation((clusterId: string) =>
+        clusterId === 'c-trunc'
+          ? Promise.resolve({
+              members: [
+                {
+                  identity_id: 'i1',
+                  media_id: 1,
+                  similarity: 0.9,
+                  confidence: 0.9,
+                  bbox: { x: 0, y: 0, width: 1, height: 1 },
+                },
+              ],
+              limit: 1,
+              total: 12,
+              truncated: true,
+            })
+          : Promise.resolve({
+              members: [],
+              limit: 25,
+              total: 2,
+              truncated: false,
+            }),
+      );
+
+      const Parent = (): React.JSX.Element => {
+        const [index, setIndex] = React.useState(0);
+        const [kind, setKind] = React.useState<ReviewQueueKindParam>('all');
+        const [band, setBand] = React.useState<ReviewQueueBandParam>('all');
+        const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
+        return (
+          <div>
+            <button
+              type="button"
+              data-testid="seed-selection"
+              onClick={() => setSelectedIds(new Set(['s-strong', 's-weak']))}
+            >
+              seed
+            </button>
+            <button
+              type="button"
+              data-testid="apply-strong-band"
+              onClick={() => {
+                setBand('strong');
+                setIndex(0);
+              }}
+            >
+              strong-band
+            </button>
+            <button
+              type="button"
+              data-testid="apply-all-band"
+              onClick={() => {
+                setBand('all');
+                setIndex(0);
+              }}
+            >
+              all-band
+            </button>
+            <ReviewQueue
+              index={index}
+              onIndexChange={setIndex}
+              kind={kind}
+              onKindChange={setKind}
+              band={band}
+              onBandChange={setBand}
+              selectedIds={selectedIds}
+              onSelectedIdsChange={setSelectedIds}
+            />
+          </div>
+        );
+      };
+
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+      });
+      const user = userEvent.setup();
+      render(
+        <QueryClientProvider client={queryClient}>
+          <MergeSurvivorProvider>
+            <Parent />
+          </MergeSurvivorProvider>
+        </QueryClientProvider>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('1 of 2')).toBeInTheDocument();
+      });
+      await user.click(screen.getByTestId('seed-selection'));
+
+      // Strong band: truncated c-trunc is filtered OUT of the commit set → not blocked.
+      await user.click(screen.getByTestId('apply-strong-band'));
+      await user.click(screen.getByRole('button', { name: 'Review selection' }));
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-bulk-commit')).not.toBeDisabled();
+      });
+      expect(screen.queryByRole('button', { name: /Confirm 12 total/i })).not.toBeInTheDocument();
+
+      // band=all: truncated target back in the commit set → gate blocks as before.
+      await user.click(screen.getByTestId('apply-all-band'));
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-bulk-commit')).toBeDisabled();
+      });
+      expect(screen.getByRole('button', { name: /Confirm 12 total/i })).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: /Confirm 12 total/i }));
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-bulk-commit')).not.toBeDisabled();
+      });
+    });
+
+    it('rq= band initial state filters on mount (round-trip seed)', async () => {
+      vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+        suggestions: [
+          {
+            id: 's-strong',
+            identity_id: 'id-1',
+            suggested_cluster_id: 'c1',
+            representative_similarity: 0.5,
+            cluster_label: 'StrongPerson',
+            cluster_identity_count: 1,
+          },
+          {
+            id: 's-weak',
+            identity_id: 'id-2',
+            suggested_cluster_id: 'c2',
+            representative_similarity: 0.4,
+            cluster_label: 'WeakPerson',
+            cluster_identity_count: 1,
+          },
+        ],
+        limit: 10,
+        offset: 0,
+      });
+
+      renderQueue({ initialBand: 'weaker' });
+      await waitFor(() => {
+        expect(screen.getByText('1 of 1')).toBeInTheDocument();
+      });
+      expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/WeakPerson/);
+      expect(screen.getByRole('button', { name: 'Weaker matches' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+    });
+  });
+
+  describe('open-target lifecycle (E21-5 Slice 7 / FBT-1 criterion 4)', () => {
+    it('announces retirement and suppresses head card when head cluster 404s', async () => {
+      vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+        suggestions: [
+          {
+            id: 'assign-live-1',
+            identity_id: 'id-1',
+            suggested_cluster_id: 'cluster-head',
+            representative_similarity: 0.95,
+            avg_member_similarity: 0.9,
+            cluster_label: 'Alex',
+            cluster_identity_count: 2,
+          },
+        ],
+        limit: 50,
+        offset: 0,
+        data_source: DATA_SOURCE.LOCAL_PROJECTION,
+      });
+      vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+        suggestions: [],
+        limit: 10,
+        offset: 0,
+      });
+      vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+        suggestions: [],
+        limit: 10,
+        offset: 0,
+      });
+      vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+        clusters: [],
+        limit: 20,
+        total: 0,
+        truncated: false,
+        singleton_count: 0,
+        data_source: DATA_SOURCE.LOCAL_PROJECTION,
+      });
+      vi.mocked(fetchClusterMembers).mockRejectedValue(
+        new HTTPError({
+          status: 404,
+          retryAfterSeconds: undefined,
+          endpoint: '/clusters/cluster-head/members',
+          bodyPreview: 'cluster_not_found',
+          message: 'not found',
+        }),
+      );
+
+      renderQueue();
+
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-review-queue-retired-head')).toBeInTheDocument();
+      });
+      expect(screen.getByRole('status')).toHaveTextContent(LIVE_TARGET_CLOSE_ANNOUNCE);
+      // Criterion 4: no stale card body for the retired head cluster.
+      expect(screen.queryByTestId('acx-review-card')).not.toBeInTheDocument();
+    });
+  });
+});
+
+describe('CommitHoldRegion (shipped hold chrome — BR-19)', () => {
+  it('renders role=status with HOLD_STATUS_COPY, pause-on-focus/hover, resume-on-leave, Undo tab order', async () => {
+    const onPausedChange = vi.fn();
+    const onUndo = vi.fn();
+    const user = userEvent.setup();
+
+    render(
+      <div>
+        <button type="button">Yes</button>
+        <CommitHoldRegion
+          phase="holding"
+          errorMessage={null}
+          onUndo={onUndo}
+          onRetry={() => undefined}
+          onPausedChange={onPausedChange}
+        />
+      </div>,
+    );
+
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent(HOLD_STATUS_COPY);
+    const undo = screen.getByRole('button', { name: 'Undo' });
+
+    // Undo follows the actioned control in tab order.
+    const yes = screen.getByRole('button', { name: 'Yes' });
+    yes.focus();
+    await user.tab();
+    expect(undo).toHaveFocus();
+    expect(onPausedChange).toHaveBeenCalledWith(true);
+    onPausedChange.mockClear();
+
+    await user.hover(status);
+    expect(onPausedChange).toHaveBeenCalledWith(true);
+    onPausedChange.mockClear();
+
+    await user.unhover(status);
+    expect(onPausedChange).toHaveBeenCalledWith(false);
+  });
+
+  it('failed phase renders persistent role=alert; Retry disabled while retryPending (BR-17)', () => {
+    const { rerender } = render(
+      <CommitHoldRegion
+        phase="failed"
+        errorMessage="Accept failed."
+        onUndo={() => undefined}
+        onRetry={() => undefined}
+        onPausedChange={() => undefined}
+        retryPending={false}
+      />,
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent('Accept failed.');
+    expect(screen.getByRole('button', { name: 'Retry' })).not.toBeDisabled();
+
+    rerender(
+      <CommitHoldRegion
+        phase="failed"
+        errorMessage="Accept failed."
+        onUndo={() => undefined}
+        onRetry={() => undefined}
+        onPausedChange={() => undefined}
+        retryPending
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeDisabled();
+  });
+});

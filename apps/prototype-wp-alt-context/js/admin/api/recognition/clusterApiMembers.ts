@@ -26,10 +26,25 @@ const requireClusterMembersBoolean = (value: unknown, fieldName: string): boolea
   return value;
 };
 
-export const fetchClusterMembers = async (clusterId: string): Promise<ClusterMembersResponse> => {
+export interface FetchClusterMembersParams {
+  limit?: number;
+  offset?: number;
+}
+
+export const fetchClusterMembers = async (
+  clusterId: string,
+  params: FetchClusterMembersParams = {},
+): Promise<ClusterMembersResponse> => {
   const base = getEndpoint('recognitionClusters');
-  const url = `${stripTrailingSlash(base)}/${clusterId}/members`;
-  const payload = await fetchRequiredApi<ClusterMembersResponsePayload>(url, {
+  const url = new URL(`${stripTrailingSlash(base)}/${clusterId}/members`, window.location.origin);
+  if (params.limit !== undefined && Number.isFinite(params.limit)) {
+    url.searchParams.set('limit', String(params.limit));
+  }
+  if (params.offset !== undefined && Number.isFinite(params.offset)) {
+    url.searchParams.set('offset', String(params.offset));
+  }
+
+  const payload = await fetchRequiredApi<ClusterMembersResponsePayload>(url.toString(), {
     method: 'GET',
     restNonce: getConfig().nonce,
   });

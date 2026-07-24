@@ -89,7 +89,7 @@ vi.mock('../../workbench/identity-clusters', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../workbench/identity-clusters')>();
   return {
     ...actual,
-    SuggestionReviewPanel: () => null,
+    ReviewQueue: () => null,
     IdentityClusterList: () => null,
   };
 });
@@ -361,7 +361,7 @@ describe('WorkbenchPage (integration-lite)', () => {
           last_reconciled_at: null,
         },
       } satisfies SyncStatusResponse,
-      expectedText: 'Queued',
+      expectedText: 'Waiting to sync',
       linkName: null,
       linkHref: null,
     },
@@ -780,12 +780,14 @@ describe('WorkbenchPage (integration-lite)', () => {
     await user.click(rowCheckbox);
 
     const scanButton = await screen.findByRole('button', { name: /Analyze selected media/i });
-    // Selection present so disable is from the breaker gate, not zero-selection.
+    // Selection present so the gate is from the breaker, not zero-selection.
     expect(await screen.findByText(/Ready to analyze 1 media item/i)).toBeInTheDocument();
     await waitFor(() => {
-      expect(scanButton).toBeDisabled();
-      expect(scanButton).toHaveAttribute('title', 'Unavailable while the recognition service is offline');
+      // §7 offline row: aria-disabled + reason, NEVER HTML disabled (still focusable).
+      expect(scanButton).not.toBeDisabled();
       expect(scanButton).toHaveAttribute('aria-disabled', 'true');
+      expect(scanButton).toHaveAttribute('title', 'Unavailable while the recognition service is offline');
+      expect(scanButton).toHaveAttribute('aria-describedby');
     });
 
     // Simulate the 15s health poll delivering a healed envelope (same QueryClient /
@@ -795,6 +797,7 @@ describe('WorkbenchPage (integration-lite)', () => {
     await waitFor(() => {
       expect(scanButton).toBeEnabled();
       expect(scanButton).not.toHaveAttribute('title');
+      expect(scanButton).not.toHaveAttribute('aria-disabled');
     });
   });
 });

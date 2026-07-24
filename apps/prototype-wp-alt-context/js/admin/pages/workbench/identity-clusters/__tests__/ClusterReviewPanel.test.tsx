@@ -1,3 +1,4 @@
+import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -6,7 +7,22 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fetchClusterMembers, removeClusterMember } from '../../../../api/recognition';
 import { queryKeys } from '../../../../api/queryKeys';
 import type { ClusterMembersResponse } from '../../../../api/recognition';
+import { HTTPError } from '../../../../utils/http';
+import { ClusterPanelProvider, useClusterPanel } from '../../ClusterPanelContext';
 import { ClusterReviewPanel } from '../ClusterReviewPanel';
+import { MergeSurvivorProvider, useMergeSurvivors } from '../MergeSurvivorContext';
+import { useAriaAnnounce } from '../useAriaAnnounce';
+import { LIVE_TARGET_CLOSE_ANNOUNCE, LIVE_TARGET_REBIND_ANNOUNCE } from '../useLiveReviewTarget';
+import { useOpenReviewTargetLifecycle } from '../useOpenReviewTargetLifecycle';
+
+const membersNotFound = (clusterId = 'x'): HTTPError =>
+  new HTTPError({
+    status: 404,
+    retryAfterSeconds: undefined,
+    endpoint: `/acx/v1/recognition/clusters/${clusterId}/members`,
+    bodyPreview: 'cluster_not_found',
+    message: 'cluster not found',
+  });
 
 const reactQueryState = vi.hoisted(() => ({
   useQueryOverride: null as Record<string, unknown> | null,
@@ -28,6 +44,12 @@ vi.mock('@tanstack/react-query', async () => {
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
+  sprintf: (text: string, ...values: (string | number)[]) => {
+    let index = 0;
+    return text
+      .replace(/%(\d+)\$[sd]/g, (_match, group: string) => String(values[Number(group) - 1] ?? ''))
+      .replace(/%[sd]/g, () => String(values[index++] ?? ''));
+  },
 }));
 
 vi.mock('../../../../api/recognition', async () => {
@@ -39,7 +61,74 @@ vi.mock('../../../../api/recognition', async () => {
   };
 });
 
-const renderPanel = (clusterId = 'cluster-123', onClose: () => void = () => undefined) => {
+const PanelProviders = ({ children }: { children: React.ReactNode }) => (
+  <ClusterPanelProvider>
+    <MergeSurvivorProvider>{children}</MergeSurvivorProvider>
+  </ClusterPanelProvider>
+);
+
+/** Always-mounted owner (mirrors ScanTabContent): opens the review via the panel
+ * reducer, runs the retirement lifecycle through the PRODUCTION owner wiring
+ * (`useOpenReviewTargetLifecycle`), owns the persistent seq-keyed `role=status`
+ * live region (survives rebind remount / retirement unmount), and mounts the
+ * panel on the returned `reviewClusterId` (null once retired). Retirement close
+ * routes to the provided spies. BR-65: all panel tests now go through the real
+ * owner path — no ABANDONED effect-callback `useLiveReviewTarget` wiring. */
+const OwnedPanel = ({
+  clusterId,
+  onClose,
+  onFocusQueueRoot,
+}: {
+  clusterId: string;
+  onClose: () => void;
+  onFocusQueueRoot?: () => void;
+}) => {
+  const { clusterPanel, dispatchClusterPanel } = useClusterPanel();
+  const { message, seq, announce } = useAriaAnnounce();
+  const opened = React.useRef(false);
+
+  const { reviewClusterId } = useOpenReviewTargetLifecycle({
+    requestedClusterId: clusterPanel.mode === 'review' ? clusterPanel.clusterId : null,
+    onAnnounce: announce,
+    onFocusQueueRoot,
+    onRetireClose: () => {
+      dispatchClusterPanel({ type: 'close' });
+      onClose();
+    },
+    onRebindSync: (survivorId) => dispatchClusterPanel({ type: 'open_review', clusterId: survivorId }),
+  });
+
+  React.useEffect(() => {
+    if (!opened.current) {
+      opened.current = true;
+      dispatchClusterPanel({ type: 'open_review', clusterId });
+    }
+  }, [dispatchClusterPanel, clusterId]);
+
+  return (
+    <>
+      <p key={seq} role="status" aria-live="polite">
+        {message}
+      </p>
+      {reviewClusterId !== null ? (
+        <ClusterReviewPanel
+          key={reviewClusterId}
+          clusterId={reviewClusterId}
+          onClose={() => {
+            dispatchClusterPanel({ type: 'close' });
+            onClose();
+          }}
+        />
+      ) : null}
+    </>
+  );
+};
+
+const renderPanel = (
+  clusterId = 'cluster-123',
+  onClose: () => void = () => undefined,
+  onFocusQueueRoot?: () => void,
+) => {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -48,11 +137,109 @@ const renderPanel = (clusterId = 'cluster-123', onClose: () => void = () => unde
 
   const utils = render(
     <QueryClientProvider client={queryClient}>
-      <ClusterReviewPanel clusterId={clusterId} onClose={onClose} />
+      <PanelProviders>
+        <OwnedPanel clusterId={clusterId} onClose={onClose} onFocusQueueRoot={onFocusQueueRoot} />
+      </PanelProviders>
     </QueryClientProvider>,
   );
 
   return { queryClient, ...utils };
+};
+
+/** Mirrors ScanTabContent ownership: the always-mounted owner opens the review
+ * via the panel reducer (user action), runs the retirement lifecycle through the
+ * shared owner wiring, and mounts the panel on the returned `reviewClusterId`
+ * (the rebound survivor, or null once retired). */
+const OwnedReviewHarness = ({
+  initialClusterId,
+  onFocusQueueRoot,
+  seedSurvivor,
+}: {
+  initialClusterId: string;
+  onFocusQueueRoot?: () => void;
+  seedSurvivor?: { retiredId: string; survivorId: string };
+}) => {
+  const { clusterPanel, dispatchClusterPanel } = useClusterPanel();
+  const { recordMergeSurvivor } = useMergeSurvivors();
+  const { message, seq, announce } = useAriaAnnounce();
+  const seeded = React.useRef(false);
+
+  const { reviewClusterId } = useOpenReviewTargetLifecycle({
+    requestedClusterId: clusterPanel.mode === 'review' ? clusterPanel.clusterId : null,
+    onAnnounce: announce,
+    onFocusQueueRoot,
+    onRetireClose: () => dispatchClusterPanel({ type: 'close' }),
+    // BR-66: mirror ScanTabContent — advance the reducer to the survivor on rebind.
+    onRebindSync: (survivorId) => dispatchClusterPanel({ type: 'open_review', clusterId: survivorId }),
+  });
+
+  React.useEffect(() => {
+    if (!seeded.current) {
+      seeded.current = true;
+      if (seedSurvivor) {
+        recordMergeSurvivor(seedSurvivor.retiredId, seedSurvivor.survivorId);
+      }
+      dispatchClusterPanel({ type: 'open_review', clusterId: initialClusterId });
+    }
+  }, [dispatchClusterPanel, initialClusterId, recordMergeSurvivor, seedSurvivor]);
+
+  return (
+    <>
+      <p key={seq} role="status" aria-live="polite">
+        {message}
+      </p>
+      {/* BR-66: observable mirror of the panel reducer's current review id. */}
+      <span data-testid="reducer-cluster-id">{clusterPanel.clusterId ?? 'none'}</span>
+      {reviewClusterId === null ? (
+        <div data-testid="review-closed">closed</div>
+      ) : (
+        <ClusterReviewPanel
+          key={reviewClusterId}
+          clusterId={reviewClusterId}
+          onClose={() => dispatchClusterPanel({ type: 'close' })}
+        />
+      )}
+    </>
+  );
+};
+
+/** BR-68: drives sequential retirements through the production owner path. Two
+ * consecutive identical close announcements must each force a fresh live-region
+ * render (seq bump) so a screen reader re-reads the repeated copy instead of an
+ * Object.is state bail-out swallowing the second. */
+const SequentialRetireHarness = ({ ids }: { ids: readonly string[] }) => {
+  const { clusterPanel, dispatchClusterPanel } = useClusterPanel();
+  const { message, seq, announce } = useAriaAnnounce();
+
+  const { reviewClusterId } = useOpenReviewTargetLifecycle({
+    requestedClusterId: clusterPanel.mode === 'review' ? clusterPanel.clusterId : null,
+    onAnnounce: announce,
+    onRetireClose: () => dispatchClusterPanel({ type: 'close' }),
+  });
+
+  return (
+    <>
+      <p key={seq} role="status" aria-live="polite" data-announce-seq={seq}>
+        {message}
+      </p>
+      {ids.map((id) => (
+        <button
+          key={id}
+          type="button"
+          onClick={() => dispatchClusterPanel({ type: 'open_review', clusterId: id })}
+        >
+          {`open ${id}`}
+        </button>
+      ))}
+      {reviewClusterId !== null ? (
+        <ClusterReviewPanel
+          key={reviewClusterId}
+          clusterId={reviewClusterId}
+          onClose={() => dispatchClusterPanel({ type: 'close' })}
+        />
+      ) : null}
+    </>
+  );
 };
 
 const makeClusterMembersResponse = (members: ClusterMembersResponse['members'] = []): ClusterMembersResponse => ({
@@ -97,6 +284,72 @@ describe('ClusterReviewPanel', () => {
     expect(screen.queryByText('No members found.')).not.toBeInTheDocument();
   });
 
+  it('pages through show-all when the members envelope is truncated', async () => {
+    const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
+    const user = userEvent.setup();
+
+    fetchClusterMembersMock.mockImplementation((_clusterId, params = {}) => {
+      if ((params.offset ?? 0) === 0) {
+        return Promise.resolve({
+          members: [
+            {
+              identity_id: 'identity-1',
+              media_id: 1,
+              similarity: 0.95,
+              confidence: 0.99,
+              bbox: { x: 0, y: 0, width: 10, height: 10 },
+              thumb_url: 'http://example.test/thumb-1.jpg',
+            },
+          ],
+          limit: 1,
+          total: 2,
+          truncated: true,
+        });
+      }
+      return Promise.resolve({
+        members: [
+          {
+            identity_id: 'identity-2',
+            media_id: 2,
+            similarity: 0.9,
+            confidence: 0.9,
+            bbox: { x: 0, y: 0, width: 10, height: 10 },
+            thumb_url: 'http://example.test/thumb-2.jpg',
+          },
+        ],
+        limit: 1,
+        total: 2,
+        truncated: false,
+      });
+    });
+
+    const { container } = renderPanel('cluster-truncated');
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Show all (2)' })).toBeInTheDocument();
+    });
+
+    const showAll = screen.getByRole('button', { name: 'Show all (2)' });
+    expect(showAll).toHaveAttribute('data-truncated', 'true');
+    expect(showAll).toHaveAttribute('data-total', '2');
+
+    await user.click(showAll);
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('img', { name: 'Cluster member' })).toHaveLength(2);
+    });
+    expect(screen.queryByRole('button', { name: 'Show all (2)' })).not.toBeInTheDocument();
+    expect(fetchClusterMembersMock).toHaveBeenCalledWith('cluster-truncated', {
+      limit: 1,
+      offset: 1,
+    });
+
+    // AT affordance: completion is announced and focus lands on the member
+    // grid because the show-all button just unmounted.
+    expect(screen.getByText('All 2 members shown')).toHaveAttribute('role', 'status');
+    expect(container.querySelector('.acx-cluster-review-panel__grid')).toHaveFocus();
+  });
+
   it('removes a cluster member and invalidates related queries', async () => {
     const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
     const removeClusterMemberMock = vi.mocked(removeClusterMember);
@@ -136,7 +389,7 @@ describe('ClusterReviewPanel', () => {
     await waitFor(() => {
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.clusters.memberList(clusterId) });
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.clusters.all });
-      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.pending() });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.projection.all });
     });
   });
 
@@ -262,5 +515,337 @@ describe('ClusterReviewPanel', () => {
 
     await user.click(screen.getByLabelText('Close'));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Flipped characterization (E21-5 Slice 7 / FBT-1 ⑤): members 404 is retirement.
+   * No recorded survivor → branch (A) close + announce + focus queue root.
+   */
+  it('retire-no-survivor: members 404 closes panel, announces, and focuses queue root', async () => {
+    const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
+    const onClose = vi.fn();
+    const onFocusQueueRoot = vi.fn();
+    fetchClusterMembersMock.mockRejectedValue(membersNotFound('cluster-retired-x'));
+
+    renderPanel('cluster-retired-x', onClose, onFocusQueueRoot);
+
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+    expect(onFocusQueueRoot).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('status')).toHaveTextContent(LIVE_TARGET_CLOSE_ANNOUNCE);
+    // Criterion 4: no member faces painted for the retired cluster.
+    expect(screen.queryByRole('img', { name: 'Cluster member' })).not.toBeInTheDocument();
+  });
+
+  it('retire-while-open with recorded survivor rebinds panel to survivor and announces', async () => {
+    const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
+    fetchClusterMembersMock.mockImplementation((clusterId) => {
+      if (clusterId === 'cluster-retired') {
+        return Promise.reject(membersNotFound(clusterId));
+      }
+      return Promise.resolve(
+        makeClusterMembersResponse([
+          {
+            identity_id: 'surv-1',
+            media_id: 9,
+            similarity: 0.9,
+            confidence: 0.9,
+            bbox: { x: 0, y: 0, width: 10, height: 10 },
+            thumb_url: 'http://example.test/survivor.jpg',
+          },
+        ]),
+      );
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PanelProviders>
+          <OwnedReviewHarness
+            initialClusterId="cluster-retired"
+            seedSurvivor={{ retiredId: 'cluster-retired', survivorId: 'cluster-survivor' }}
+          />
+        </PanelProviders>
+      </QueryClientProvider>,
+    );
+
+    // Persistent owner-owned live region announces the rebind (survives the
+    // panel remount). Target the text: the remounted survivor panel also renders
+    // its own (empty) show-all role=status region.
+    await waitFor(() => {
+      expect(screen.getByText(LIVE_TARGET_REBIND_ANNOUNCE)).toHaveAttribute('role', 'status');
+    });
+    // Remounted on survivor — live membership of the survivor, never the retired id.
+    await waitFor(() => {
+      expect(screen.getByRole('img', { name: 'Cluster member' })).toHaveAttribute(
+        'src',
+        'http://example.test/survivor.jpg',
+      );
+    });
+    expect(fetchClusterMembersMock).toHaveBeenCalledWith('cluster-survivor');
+  });
+
+  it('BR-66: rebind syncs the panel reducer to the survivor id', async () => {
+    const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
+    fetchClusterMembersMock.mockImplementation((clusterId) => {
+      if (clusterId === 'cluster-retired') {
+        return Promise.reject(membersNotFound(clusterId));
+      }
+      return Promise.resolve(
+        makeClusterMembersResponse([
+          {
+            identity_id: 'surv-1',
+            media_id: 9,
+            similarity: 0.9,
+            confidence: 0.9,
+            bbox: { x: 0, y: 0, width: 10, height: 10 },
+            thumb_url: 'http://example.test/survivor.jpg',
+          },
+        ]),
+      );
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PanelProviders>
+          <OwnedReviewHarness
+            initialClusterId="cluster-retired"
+            seedSurvivor={{ retiredId: 'cluster-retired', survivorId: 'cluster-survivor' }}
+          />
+        </PanelProviders>
+      </QueryClientProvider>,
+    );
+
+    // The reducer advances from the retired id to the survivor (canonical sync),
+    // so it agrees with the mounted review target instead of stranding the
+    // retired id. No requestedRef loop: survivor === openTarget on the next render.
+    await waitFor(() => {
+      expect(screen.getByTestId('reducer-cluster-id')).toHaveTextContent('cluster-survivor');
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('img', { name: 'Cluster member' })).toHaveAttribute(
+        'src',
+        'http://example.test/survivor.jpg',
+      );
+    });
+  });
+
+  it('wrong-survivor-guess self-heals: rebind then close when survivor also 404s', async () => {
+    const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
+    fetchClusterMembersMock.mockImplementation((clusterId) => Promise.reject(membersNotFound(clusterId)));
+
+    const onFocusQueueRoot = vi.fn();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PanelProviders>
+          <OwnedReviewHarness
+            initialClusterId="cluster-retired"
+            seedSurvivor={{ retiredId: 'cluster-retired', survivorId: 'cluster-wrong' }}
+            onFocusQueueRoot={onFocusQueueRoot}
+          />
+        </PanelProviders>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('review-closed')).toBeInTheDocument();
+    });
+    expect(onFocusQueueRoot).toHaveBeenCalled();
+  });
+
+  it('FBT-1 criterion 4: open pane never shows retired membership after merge 404', async () => {
+    const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
+    // First paint members, then retirement 404 on existence/refetch paths.
+    let call = 0;
+    fetchClusterMembersMock.mockImplementation(() => {
+      call += 1;
+      if (call <= 2) {
+        // First page + live-target probe for initial open.
+        return Promise.resolve(
+          makeClusterMembersResponse([
+            {
+              identity_id: 'stale-face',
+              media_id: 1,
+              similarity: 0.9,
+              confidence: 0.9,
+              bbox: { x: 0, y: 0, width: 10, height: 10 },
+              thumb_url: 'http://example.test/stale.jpg',
+            },
+          ]),
+        );
+      }
+      return Promise.reject(membersNotFound('cluster-stale'));
+    });
+
+    const onClose = vi.fn();
+    const { queryClient } = renderPanel('cluster-stale', onClose);
+
+    await waitFor(() => {
+      expect(screen.getByRole('img', { name: 'Cluster member' })).toBeInTheDocument();
+    });
+
+    // Simulate post-merge invalidation → members queries re-run as 404.
+    await queryClient.invalidateQueries({ queryKey: queryKeys.clusters.memberList('cluster-stale') });
+
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalled();
+    });
+    expect(screen.queryByRole('img', { name: 'Cluster member' })).not.toBeInTheDocument();
+    // BR-71: the stale member's thumbnail is gone (can fail if a retired face
+    // lingers — unlike the old `queryByText('stale')`, which never matched the
+    // src-only URL and so could never fail).
+    expect(document.querySelector('img[src="http://example.test/stale.jpg"]')).toBeNull();
+  });
+
+  it('BR-68: two sequential retirement closes both re-announce the identical copy', async () => {
+    const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
+    fetchClusterMembersMock.mockRejectedValue(membersNotFound());
+    const user = userEvent.setup();
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PanelProviders>
+          <SequentialRetireHarness ids={['cluster-a', 'cluster-b']} />
+        </PanelProviders>
+      </QueryClientProvider>,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'open cluster-a' }));
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(LIVE_TARGET_CLOSE_ANNOUNCE);
+    });
+    const firstSeq = screen.getByRole('status').getAttribute('data-announce-seq');
+    expect(firstSeq).not.toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'open cluster-b' }));
+    // Identical copy, fresh render: the live region re-keyed (seq advanced), so
+    // the repeated announcement is not swallowed by an Object.is bail-out.
+    await waitFor(() => {
+      expect(screen.getByRole('status').getAttribute('data-announce-seq')).not.toBe(firstSeq);
+    });
+    expect(screen.getByRole('status')).toHaveTextContent(LIVE_TARGET_CLOSE_ANNOUNCE);
+  });
+
+  /**
+   * E215-BR-01: record-after-404 must rebind in the LIFECYCLE consumer.
+   * The lifecycle latches exactly-once and nulls openTarget on retire; a survivor
+   * recorded after that close must still rebind (S5-02 alone is unreachable here).
+   */
+  it('E215-BR-01: lifecycle record-after-404 rebinds after retire-close latch', async () => {
+    const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
+    fetchClusterMembersMock.mockImplementation((clusterId) => {
+      if (clusterId === 'cluster-late-retired') {
+        return Promise.reject(membersNotFound(clusterId));
+      }
+      return Promise.resolve(
+        makeClusterMembersResponse([
+          {
+            identity_id: 'surv-late',
+            media_id: 9,
+            similarity: 0.9,
+            confidence: 0.9,
+            bbox: { x: 0, y: 0, width: 10, height: 10 },
+            thumb_url: 'http://example.test/late-survivor.jpg',
+          },
+        ]),
+      );
+    });
+
+    const LateRecordHarness = () => {
+      const { clusterPanel, dispatchClusterPanel } = useClusterPanel();
+      const { recordMergeSurvivor } = useMergeSurvivors();
+      const { message, seq, announce } = useAriaAnnounce();
+      const opened = React.useRef(false);
+
+      const { reviewClusterId } = useOpenReviewTargetLifecycle({
+        requestedClusterId: clusterPanel.mode === 'review' ? clusterPanel.clusterId : null,
+        onAnnounce: announce,
+        onRetireClose: () => dispatchClusterPanel({ type: 'close' }),
+        onRebindSync: (survivorId) => dispatchClusterPanel({ type: 'open_review', clusterId: survivorId }),
+      });
+
+      React.useEffect(() => {
+        if (!opened.current) {
+          opened.current = true;
+          dispatchClusterPanel({ type: 'open_review', clusterId: 'cluster-late-retired' });
+        }
+      }, [dispatchClusterPanel]);
+
+      return (
+        <>
+          <p key={seq} role="status" aria-live="polite">
+            {message}
+          </p>
+          <button
+            type="button"
+            onClick={() => recordMergeSurvivor('cluster-late-retired', 'cluster-late-survivor')}
+          >
+            record survivor
+          </button>
+          <span data-testid="lifecycle-review-id">{reviewClusterId ?? 'none'}</span>
+          {reviewClusterId === null ? (
+            <div data-testid="review-closed">closed</div>
+          ) : (
+            <ClusterReviewPanel
+              key={reviewClusterId}
+              clusterId={reviewClusterId}
+              onClose={() => dispatchClusterPanel({ type: 'close' })}
+            />
+          )}
+        </>
+      );
+    };
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const user = userEvent.setup();
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PanelProviders>
+          <LateRecordHarness />
+        </PanelProviders>
+      </QueryClientProvider>,
+    );
+
+    // First: 404 with empty survivor map → retire close.
+    await waitFor(() => {
+      expect(screen.getByTestId('review-closed')).toBeInTheDocument();
+    });
+    expect(screen.getByRole('status')).toHaveTextContent(LIVE_TARGET_CLOSE_ANNOUNCE);
+    expect(screen.getByTestId('lifecycle-review-id')).toHaveTextContent('none');
+
+    // Then: survivor recorded after the latch — lifecycle must rebind.
+    await user.click(screen.getByRole('button', { name: 'record survivor' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('lifecycle-review-id')).toHaveTextContent('cluster-late-survivor');
+    });
+    await waitFor(() => {
+      expect(screen.getByText(LIVE_TARGET_REBIND_ANNOUNCE)).toHaveAttribute('role', 'status');
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('img', { name: 'Cluster member' })).toHaveAttribute(
+        'src',
+        'http://example.test/late-survivor.jpg',
+      );
+    });
   });
 });

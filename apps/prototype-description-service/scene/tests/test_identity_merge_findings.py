@@ -294,6 +294,7 @@ class TestJoinFilters:
                 bbox_height=bbox[3],
                 confidence=0.95,
                 embedding=[1.0] + [0.0] * (_DB_SETTINGS.pgvector_dimension - 1),
+                embedding_model="buffalo_l@insightface",
                 disposed_at=datetime.now(tz=UTC) if disposed else None,
             )
 

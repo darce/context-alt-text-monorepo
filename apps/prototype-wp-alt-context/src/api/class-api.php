@@ -5,16 +5,31 @@ declare(strict_types=1);
 namespace AltContext\Api;
 
 require_once __DIR__ . '/class-media-detail-controller.php';
+require_once __DIR__ . '/class-recognition-data-source.php';
+require_once __DIR__ . '/services/class-person-resolution-service.php';
+require_once __DIR__ . '/../sovereign/repositories/class-clusters-repository.php';
+require_once __DIR__ . '/../sovereign/repositories/class-identity-members-repository.php';
 require_once __DIR__ . '/../sovereign/repositories/class-roster-entry-projection-repository.php';
+require_once __DIR__ . '/../sovereign/repositories/class-sync-state-repository.php';
+require_once __DIR__ . '/../sovereign/sync/interface-sync-pull-job.php';
 require_once __DIR__ . '/../sovereign/sync/class-outbox-drain.php';
 require_once __DIR__ . '/../sovereign/sync/class-outbox-writer.php';
 require_once __DIR__ . '/../sovereign/sync/class-split-topology-command-drain.php';
+require_once __DIR__ . '/../sovereign/sync/class-sync-pull-job-factory.php';
 
 use AltContext\Api\RecognitionController;
+use AltContext\Api\Services\PersonResolutionService;
+use AltContext\Sovereign\Repositories\ClustersRepository;
+use AltContext\Sovereign\Repositories\IdentityMembersRepository;
 use AltContext\Sovereign\Repositories\RosterEntryProjectionRepository;
+use AltContext\Sovereign\Repositories\SyncStateRepository;
 use AltContext\Sovereign\Sync\OutboxDrain;
 use AltContext\Sovereign\Sync\OutboxWriter;
+use AltContext\Sovereign\Sync\SnapshotClient;
 use AltContext\Sovereign\Sync\SplitTopologyCommandDrain;
+use AltContext\Sovereign\Sync\SyncPullJobFactory;
+use AltContext\Sovereign\Sync\SyncPullJobInterface;
+use Throwable;
 use WP_Error;
 use WP_Query;
 use WP_REST_Request;
@@ -22,6 +37,8 @@ use WP_REST_Response;
 use function absint;
 use function add_action;
 use function current_time;
+use function do_action;
+use function trim;
 use function current_user_can;
 use function get_edit_post_link;
 use function get_option;
@@ -55,20 +72,67 @@ class Api {
 	private ?XmpEmbedController $xmpEmbedController;
 	private OutboxDrain $outboxDrain;
 	private SplitTopologyCommandDrain $splitTopologyCommandDrain;
+	private ?SyncPullJobInterface $bootstrapSyncPullJob;
 
-	public function __construct( ?XmpEmbedController $xmp_embed_controller = null, ?OutboxDrain $outbox_drain = null, ?SplitTopologyCommandDrain $split_topology_command_drain = null ) {
+	public function __construct( ?XmpEmbedController $xmp_embed_controller = null, ?OutboxDrain $outbox_drain = null, ?SplitTopologyCommandDrain $split_topology_command_drain = null, ?SyncPullJobInterface $bootstrap_sync_pull_job = null ) {
 		$this->recognitionController = new RecognitionController();
 		$this->mediaDetailController = new MediaDetailController();
 		$this->settingsController = new SettingsController();
 		$this->xmpEmbedController = $xmp_embed_controller;
 		$this->outboxDrain = $outbox_drain ?? new OutboxDrain();
 		$this->splitTopologyCommandDrain = $split_topology_command_drain ?? new SplitTopologyCommandDrain();
+		$this->bootstrapSyncPullJob = $bootstrap_sync_pull_job;
 	}
 
 	public function init(): void {
 		$this->outboxDrain->register();
 		$this->splitTopologyCommandDrain->register();
+		// E15-37: wp-cron never fires rest_api_init, so the bootstrap-sync handler
+		// must be bound at plugin load or scheduled events dispatch to zero listeners.
+		add_action( RecognitionDataSource::BOOTSTRAP_SYNC_HOOK, array( $this, 'handle_bootstrap_sync' ), 10, 1 );
 		add_action( 'rest_api_init', array( $this, 'register_routes' ) );
+	}
+
+	public function handle_bootstrap_sync( string $tenant_id ): void {
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			return;
+		}
+
+		$sync_pull_job = $this->resolve_bootstrap_sync_pull_job();
+		if ( null === $sync_pull_job ) {
+			return;
+		}
+
+		$sync_pull_job->perform_bypass_cooldown( $normalized_tenant_id );
+	}
+
+	private function resolve_bootstrap_sync_pull_job(): ?SyncPullJobInterface {
+		if ( null !== $this->bootstrapSyncPullJob ) {
+			return $this->bootstrapSyncPullJob;
+		}
+
+		try {
+			$factory = new SyncPullJobFactory(
+				new ClustersRepository(),
+				new IdentityMembersRepository(),
+				new SyncStateRepository(),
+				new SnapshotClient()
+			);
+			$this->bootstrapSyncPullJob = $factory->create();
+		} catch ( Throwable $e ) {
+			do_action(
+				'acx_recognition_composition_failed',
+				array(
+					'message' => $e->getMessage(),
+					'controller' => __CLASS__,
+					'context' => 'bootstrap_sync_cron_handler',
+				)
+			);
+			return null;
+		}
+
+		return $this->bootstrapSyncPullJob;
 	}
 
 	public function register_routes(): void {
@@ -352,55 +416,36 @@ class Api {
 			return new WP_Error( 'acx_db_error', __( 'Could not start local transaction.', 'alt-context' ), array( 'status' => 500 ) );
 		}
 
-		// If new name provided, create person within the same transaction as the bind.
+		// If new name provided, resolve-or-create person inside the caller's transaction.
+		// PersonResolutionService is transaction-agnostic (no nested START TRANSACTION).
 		if ( ! $person_id && $new_name ) {
 			$new_name = sanitize_text_field( (string) $new_name );
 			if ( ! empty( trim( $new_name ) ) ) {
-				$existing = $wpdb->get_row( $wpdb->prepare( 'SELECT id, person_uuid FROM %i WHERE name = %s', $table_persons, $new_name ) );
-
-				if ( $existing ) {
-					$person_id   = (int) $existing->id;
-					$person_uuid = (string) ( $existing->person_uuid ?? '' );
-					$resolved_person_name = $new_name;
-				} else {
-					$person_uuid       = wp_generate_uuid4();
-					$person_created_at = current_time( 'mysql' );
-					$inserted          = $wpdb->insert(
-						$table_persons,
-						array(
-							'person_uuid'    => $person_uuid,
-							'name'           => $new_name,
-							'tags'           => wp_json_encode( array() ),
-							'local_revision' => 1,
-							'created_at'     => $person_created_at,
-							'updated_at'     => $person_created_at,
-						),
-						array( '%s', '%s', '%s', '%d', '%s', '%s' )
-					);
-					if ( false === $inserted ) {
-						$this->rollback_database_transaction();
-						return new WP_Error( 'acx_db_error', __( 'Could not create person for cluster assignment.', 'alt-context' ), array( 'status' => 500 ) );
+				$resolver = new PersonResolutionService();
+				$resolved = $resolver->resolve_or_create(
+					$new_name,
+					function ( string $created_person_uuid, string $created_name, array $created_tags ): bool {
+						return $this->enqueue_curation_operation(
+							'person_created',
+							'person',
+							$created_person_uuid,
+							1,
+							array(
+								'person_uuid' => $created_person_uuid,
+								'name'        => $created_name,
+								'tags'        => $created_tags,
+							)
+						);
 					}
-
-					$person_id = (int) $wpdb->insert_id;
-					$queued_person = $this->enqueue_curation_operation(
-						'person_created',
-						'person',
-						(string) $person_uuid,
-						1,
-						array(
-							'person_uuid' => $person_uuid,
-							'name'        => $new_name,
-							'tags'        => array(),
-						)
-					);
-					if ( ! $queued_person ) {
-						$this->rollback_database_transaction();
-						return new WP_Error( 'acx_db_error', __( 'Could not queue person creation replay operation.', 'alt-context' ), array( 'status' => 500 ) );
-					}
-
-					$resolved_person_name = $new_name;
+				);
+				if ( is_wp_error( $resolved ) ) {
+					$this->rollback_database_transaction();
+					return $resolved;
 				}
+
+				$person_id            = $resolved['person_id'];
+				$person_uuid          = $resolved['person_uuid'];
+				$resolved_person_name = $resolved['name'];
 			}
 		}
 
@@ -483,11 +528,14 @@ class Api {
 			return new WP_Error( 'acx_db_error', __( 'Could not commit local transaction.', 'alt-context' ), array( 'status' => 500 ) );
 		}
 
+		// Bound person identity for both create and rebind outcomes (E21-9 Slice 1 DoD).
 		return rest_ensure_response(
 			array(
-				'cluster_id' => $cluster_id,
-				'person_id'  => $person_id,
-				'updated_at' => $now,
+				'cluster_id'  => $cluster_id,
+				'person_id'   => $person_id,
+				'person_uuid' => ( null === $person_id ) ? null : ( is_string( $person_uuid ) ? $person_uuid : null ),
+				'person_name' => ( null === $person_id || ! is_string( $resolved_person_name ) || '' === trim( $resolved_person_name ) ) ? null : trim( $resolved_person_name ),
+				'updated_at'  => $now,
 			)
 		);
 	}
@@ -506,9 +554,11 @@ class Api {
 			);
 		}
 
-			// Check for existing name
-			$table_name = $wpdb->prefix . 'acx_persons';
-			$existing   = $wpdb->get_var( $wpdb->prepare( 'SELECT id FROM %i WHERE name = %s', $table_name, $name ) );
+		$table_name      = $wpdb->prefix . 'acx_persons';
+		$normalized_name = PersonResolutionService::normalize_name( $name );
+		$existing        = $wpdb->get_var(
+			$wpdb->prepare( 'SELECT id FROM %i WHERE normalized_name = %s', $table_name, $normalized_name )
+		);
 		if ( $existing ) {
 			return new WP_Error( 'acx_person_exists', __( 'A person with this name already exists.', 'alt-context' ), array( 'status' => 409 ) );
 		}
@@ -523,14 +573,15 @@ class Api {
 		$result = $wpdb->insert(
 			$table_name,
 			array(
-				'person_uuid' => $person_uuid,
-				'name'        => $name,
-				'tags'        => wp_json_encode( $tags ),
-				'local_revision' => 1,
-				'created_at'  => $now,
-				'updated_at'  => $now,
+				'person_uuid'     => $person_uuid,
+				'name'            => $name,
+				'normalized_name' => $normalized_name,
+				'tags'            => wp_json_encode( $tags ),
+				'local_revision'  => 1,
+				'created_at'      => $now,
+				'updated_at'      => $now,
 			),
-			array( '%s', '%s', '%s', '%d', '%s', '%s' )
+			array( '%s', '%s', '%s', '%s', '%d', '%s', '%s' )
 		);
 
 		if ( false === $result ) {
@@ -601,15 +652,25 @@ class Api {
 		$update_fmt  = array();
 
 		if ( null !== $name ) {
-			$name = sanitize_text_field( (string) $name );
-				// Check for conflict if name changed
+			$name            = sanitize_text_field( (string) $name );
+			$normalized_name = PersonResolutionService::normalize_name( $name );
+			// Conflict on normalized_name policy when display name changes.
 			if ( $name !== $person->name ) {
-				$conflict = $wpdb->get_var( $wpdb->prepare( 'SELECT id FROM %i WHERE name = %s AND id != %d', $table_name, $name, $id ) );
+				$conflict = $wpdb->get_var(
+					$wpdb->prepare(
+						'SELECT id FROM %i WHERE normalized_name = %s AND id != %d',
+						$table_name,
+						$normalized_name,
+						$id
+					)
+				);
 				if ( $conflict ) {
 					return new WP_Error( 'acx_person_exists', __( 'Another person with this name already exists.', 'alt-context' ), array( 'status' => 409 ) );
 				}
-				$update_data['name'] = $name;
-				$update_fmt[]        = '%s';
+				$update_data['name']            = $name;
+				$update_data['normalized_name'] = $normalized_name;
+				$update_fmt[]                   = '%s';
+				$update_fmt[]                   = '%s';
 			}
 		}
 

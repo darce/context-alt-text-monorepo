@@ -20,18 +20,22 @@ export { ClusterPreview } from './ClusterPreview';
 export { ClusterActions } from './ClusterActions';
 export { ClusterEditForm } from './ClusterEditForm';
 export { MergeUndoBanner } from './MergeUndoBanner';
-export { SuggestionReviewPanel } from './SuggestionReviewPanel';
+export { ReviewQueue } from './ReviewQueue';
+export type { ReviewQueueHandle, ReviewQueueProps } from './ReviewQueue';
+export { ReviewCardLightbox } from './ReviewCardLightbox';
 export { ClusterLabelingPanel } from './ClusterLabelingPanel';
 export { ClusterReviewPanel } from './ClusterReviewPanel';
 export { InlineSuggestionPrompt } from './InlineSuggestionPrompt';
 export { AnchorSelectionModal } from './AnchorSelectionModal';
-export { TopClustersSection } from './TopClustersSection';
+export { TopClusterCard } from './TopClusterCard';
 export { WorkbenchFindingsPanel } from './WorkbenchFindingsPanel';
 
 // Hooks
 export { useClusterEditState } from './useClusterEditState';
 export { useClusterMutations } from './useClusterMutations';
 export { useClusterSuggestions } from './useClusterSuggestions';
+export { useInlineSuggestionBatch } from './useInlineSuggestionBatch';
+export type { InlineSuggestionBatchResult } from './useInlineSuggestionBatch';
 
 // Utils
 export { formatClusterLabel, groupIdentitiesByClusters, getEditableClusterId } from './utils';

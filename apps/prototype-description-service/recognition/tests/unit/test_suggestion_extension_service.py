@@ -63,6 +63,7 @@ async def _create_identity(
         bbox_height=10,
         confidence=0.95,
         embedding=_unit_embedding(),
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add(identity)
     await db_session.flush()

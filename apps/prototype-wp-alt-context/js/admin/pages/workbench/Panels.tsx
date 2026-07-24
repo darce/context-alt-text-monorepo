@@ -2,10 +2,11 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 
 import type { JobProgress } from '../../api/recognition/types/scan';
 import type { RecognitionHistorySource } from '../../hooks/recognitionJobHistoryUtils';
+import { CONFIRM_NO_JOB_ZERO_STATE, CONFIRM_PANEL_INTRO } from './confirmTabCopy';
 import type { ScanRunViewModel } from './JobPipelineContext';
 import { JOB_PHASE_PRESENTATION } from './phasePresentation';
 import { formatSyncJobPhase } from './syncPresentation';
-export { mediaEditUrl, rosterClustersUrl } from '../../utils/adminUrls';
+export { mediaEditUrl, rosterUrl } from '../../utils/adminUrls';
 
 export const isClusteringActive = (phase?: string | null): boolean => phase === 'clustering' || phase === 'retrying';
 
@@ -22,6 +23,7 @@ export const ScanActionPanel = ({ scanRun, onCancelScan, onRetryStream }: ScanAc
     statusText,
     jobId,
     errorMessage,
+    onRetryClustering,
     progress,
     batchRunStatus,
     stallSeconds,
@@ -49,7 +51,7 @@ export const ScanActionPanel = ({ scanRun, onCancelScan, onRetryStream }: ScanAc
         </button>
       )}
       {statusText && (
-        <p className="acx-apply-panel__status">
+        <p className="acx-apply-panel__status" role="status" aria-live="polite">
           {sprintf(__('Job %s: %s', 'alt-context'), jobId ?? __('pending', 'alt-context'), statusText)}
         </p>
       )}
@@ -147,7 +149,18 @@ export const ScanActionPanel = ({ scanRun, onCancelScan, onRetryStream }: ScanAc
           )}
         </>
       )}
-      {errorMessage && <p className="acx-apply-panel__status acx-apply-panel__status--error">{errorMessage}</p>}
+      {errorMessage && (
+        <div className="acx-apply-panel__status acx-apply-panel__status--error" role="alert">
+          <p>{errorMessage}</p>
+          {onRetryClustering && (
+            <div className="acx-apply-panel__actions">
+              <button type="button" className="acx-link-button" onClick={onRetryClustering}>
+                {__('Retry clustering', 'alt-context')}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
@@ -183,15 +196,19 @@ export const ConfirmPanel = ({
   remoteActionAriaDisabled,
 }: ConfirmPanelProps) => (
   <div className="acx-apply-panel">
-    <p>{__('Review the most recent recognition job and cluster the detected embeddings.', 'alt-context')}</p>
-    <ul className="acx-apply-panel__list">
-      <li>
-        <strong>{__('Latest job', 'alt-context')}</strong> — {jobId ?? __('No job yet', 'alt-context')}
-      </li>
-      <li>
-        {__('Status', 'alt-context')} — {status ?? __('Pending', 'alt-context')}
-      </li>
-    </ul>
+    <p>{CONFIRM_PANEL_INTRO}</p>
+    {jobId == null ? (
+      <p className="acx-apply-panel__status">{CONFIRM_NO_JOB_ZERO_STATE}</p>
+    ) : (
+      <ul className="acx-apply-panel__list">
+        <li>
+          <strong>{__('Latest job', 'alt-context')}</strong> — {jobId}
+        </li>
+        <li>
+          {__('Status', 'alt-context')} — {status ?? __('Pending', 'alt-context')}
+        </li>
+      </ul>
+    )}
     <button
       type="button"
       className="acx-apply-panel__scan"
@@ -203,7 +220,7 @@ export const ConfirmPanel = ({
       {isClustering ? __('Clustering faces…', 'alt-context') : __('Cluster the latest job results', 'alt-context')}
     </button>
     <button type="button" className="acx-link-button" onClick={onViewClusters} disabled={!jobId}>
-      {__('Open clusters in roster', 'alt-context')}
+      {__('Open roster', 'alt-context')}
     </button>
     {progress && progress.total > 0 && (
       <>

@@ -1,0 +1,98 @@
+"""Typed embedding-model manifest (plain value — no registry service).
+
+Incumbent production value describes InsightFace buffalo_l @ settings dim / l2 / cosine.
+Adapters stamp ``FaceDetection.model_id`` from ``model_id``.
+
+Example model_id: ``insightface-buffalo_l@512d/l2/cosine``
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from recognition.config import get_settings
+
+
+@dataclass(frozen=True, slots=True)
+class EmbeddingModelManifest:
+    """Model provenance for a detection/embedding seam emission.
+
+    Validated at construction (FIR23-03): empty / non-positive fields fail closed
+    so adapters cannot stamp a silent garbage ``model_id``.
+    """
+
+    framework: str
+    name: str
+    dimensions: int
+    normalization: str
+    metric: str
+
+    def __post_init__(self) -> None:
+        framework = str(self.framework).strip() if self.framework is not None else ""
+        name = str(self.name).strip() if self.name is not None else ""
+        normalization = str(self.normalization).strip() if self.normalization is not None else ""
+        metric = str(self.metric).strip() if self.metric is not None else ""
+        if not framework:
+            raise ValueError("EmbeddingModelManifest.framework must be a non-empty string")
+        if not name:
+            raise ValueError("EmbeddingModelManifest.name must be a non-empty string")
+        if not isinstance(self.dimensions, int) or isinstance(self.dimensions, bool) or self.dimensions <= 0:
+            raise ValueError(
+                f"EmbeddingModelManifest.dimensions must be a positive int, got {self.dimensions!r}"
+            )
+        if not normalization:
+            raise ValueError("EmbeddingModelManifest.normalization must be a non-empty string")
+        if not metric:
+            raise ValueError("EmbeddingModelManifest.metric must be a non-empty string")
+        # Normalize whitespace so model_id is stable for equal logical inputs.
+        object.__setattr__(self, "framework", framework)
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "normalization", normalization)
+        object.__setattr__(self, "metric", metric)
+
+    @property
+    def model_id(self) -> str:
+        """Stable identifier stamped onto FaceDetection.model_id."""
+        return f"{self.framework}-{self.name}@{self.dimensions}d/{self.normalization}/{self.metric}"
+
+
+def incumbent_embedding_model_manifest() -> EmbeddingModelManifest:
+    """Resolve the currently wired production model from recognition settings."""
+    settings = get_settings()
+    return EmbeddingModelManifest(
+        framework="insightface",
+        name=settings.insightface.model_name,
+        dimensions=settings.identity_detection.embedding_dimension,
+        normalization="l2",
+        metric="cosine",
+    )
+
+
+def active_embedding_model_id() -> str:
+    """Resolve the runtime embedding space id for the active profile (FIR23-01).
+
+    Fail-closed: returns a non-empty model_id or raises. Single-model tenants
+    that already stamp this id see a no-op filter on read paths.
+    """
+    settings = get_settings()
+    if settings.runtime_mode == "test":
+        model_id = "stub-detector@test"
+    elif settings.face_pipeline.profile == "face_pipeline":
+        # Lazy import: keep insightface dark-default free of face_pipeline graph.
+        from recognition.infrastructure.embeddings.face_pipeline_adapter import (
+            sface_embedding_model_manifest,
+        )
+
+        model_id = sface_embedding_model_manifest().model_id
+    else:
+        model_id = incumbent_embedding_model_manifest().model_id
+    if not model_id or not str(model_id).strip():
+        raise RuntimeError("active embedding_model unresolved (empty model_id)")
+    return str(model_id).strip()
+
+
+__all__ = [
+    "EmbeddingModelManifest",
+    "active_embedding_model_id",
+    "incumbent_embedding_model_manifest",
+]

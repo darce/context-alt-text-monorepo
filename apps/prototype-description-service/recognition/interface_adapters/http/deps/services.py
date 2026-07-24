@@ -108,8 +108,43 @@ class AuditRepositoryProtocol(Protocol):
 
 @lru_cache
 def get_settings() -> ClusteringSettings:
-    """Provide clustering settings from the recognition config."""
-    return get_recognition_settings().clustering
+    """Profile-resolved clustering settings: S2 threshold rebinding + S1 OACT bridge.
+
+    Under face_pipeline the FacePipelineSettings threshold overrides apply and the
+    profile-gated oact_coefficient is bridged into .quality; under insightface the
+    shared buffalo-era anchors are returned unchanged (coefficient already 0.0).
+    """
+    from recognition.config.settings import (
+        apply_oact_bridge_to_clustering,
+        resolve_effective_clustering_settings,
+        resolve_face_pipeline_knobs,
+    )
+
+    recog = get_recognition_settings()
+    resolved = resolve_effective_clustering_settings(recognition=recog)
+    knobs = resolve_face_pipeline_knobs(
+        face_pipeline=recog.face_pipeline,
+        clustering=recog.clustering,
+        clustering_limits=recog.clustering_limits,
+        identity_detection=recog.identity_detection,
+    )
+    return apply_oact_bridge_to_clustering(resolved, knobs)
+
+
+@lru_cache
+def get_clustering_limits_settings():
+    """Profile-resolved ClusteringLimitsSettings (S2 limits-threshold rebinding)."""
+    from recognition.config.settings import resolve_effective_limits_settings
+
+    return resolve_effective_limits_settings(recognition=get_recognition_settings())
+
+
+@lru_cache
+def get_identity_detection_settings():
+    """Profile-resolved IdentityDetectionSettings (S2 detection-threshold rebinding)."""
+    from recognition.config.settings import resolve_effective_detection_settings
+
+    return resolve_effective_detection_settings(recognition=get_recognition_settings())
 
 
 async def get_suggestion_service(
@@ -263,6 +298,7 @@ async def build_cluster_service(
     settings: ClusteringSettings | None = None,
 ) -> ClusterService:
     """Construct a ClusterService wired with SQLAlchemy repositories."""
+    # Profile-resolved thresholds for gate + discovery (S2 rebinding surface).
     settings = settings or get_settings()
 
     # Require an existing tenant record before clustering work proceeds.
@@ -279,6 +315,7 @@ async def build_cluster_service(
     assignment_writer = AssignmentWriter(settings, cluster_repo, member_repo, session=session)
     constraint_repo = SqlAlchemyConstraintRepository(session)
 
+    # Gate construction sites (services.py:153,282) consume resolved thresholds.
     gate = AssignmentGate(
         settings=settings,
         cluster_repository=cluster_repo,
@@ -367,49 +404,29 @@ def get_scan_service_builder(
 ) -> Callable[[str], Awaitable[ScanService]]:
     """Return a builder for ScanService with DB session and embedder.
 
-    Uses real InsightFace adapters in production mode, stubs in test mode.
-    Set RECOGNITION_RUNTIME_MODE=test to use deterministic stubs.
-    """
-    from recognition.application.embedding.detector import (
-        InsightFaceFaceDetector,
-        StubFaceDetector,
-        UnavailableFaceDetector,
-    )
-    from recognition.application.embedding.generator import (
-        InsightFaceEmbeddingGenerator,
-        StubEmbeddingGenerator,
-        UnavailableEmbeddingGenerator,
-    )
-    from recognition.config import get_settings as get_recognition_settings
+    Profile-aware via ``build_embedding_runtime`` (insightface default /
+    face_pipeline dark). Set RECOGNITION_RUNTIME_MODE=test for stubs.
 
-    settings = get_recognition_settings()
-    runtime_mode = settings.runtime_mode
+    HTTP/inline paths intentionally omit a shared httpx client: URL-fetch
+    opens a per-image ``AsyncClient`` inside the detector (face_pipeline and
+    insightface) by design. The worker injects a process-scoped client for
+    connection reuse; wiring request-scoped lifecycle here would need app
+    lifespan plumbing and is out of scope for this surface (E2E-08).
+    """
+    from recognition.config import get_settings as get_recognition_settings
+    from recognition.infrastructure.embeddings.runtime_factory import build_embedding_runtime
+    from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
 
     async def _builder(tenant_id: str) -> ScanService:
         if session is None:
             raise RuntimeError("Database session is required for ScanService")
 
-        if runtime_mode == "test":
-            # Use deterministic stubs for testing
-            detector = StubFaceDetector()
-            generator = StubEmbeddingGenerator()
-        else:
-            # Production mode: use real InsightFace (shared singleton)
-            try:
-                adapter = await get_shared_insightface_adapter()
-                detector = InsightFaceFaceDetector(adapter)
-                generator = InsightFaceEmbeddingGenerator(adapter)
-            except Exception as exc:
-                # Production must fail closed; deterministic stubs are test-only.
-                import logging
-
-                logging.getLogger(__name__).exception(
-                    "InsightFace runtime unavailable; scan service will fail closed. "
-                    "Install with: pip install 'prototype-description-service[local]'",
-                )
-                reason = str(exc) or exc.__class__.__name__
-                detector = UnavailableFaceDetector(reason)
-                generator = UnavailableEmbeddingGenerator(reason)
+        settings = get_recognition_settings()
+        # API process observer: same registry as /metrics (FINALB-06).
+        detector, generator = await build_embedding_runtime(
+            settings=settings,
+            metrics=get_default_metrics().face_pipeline,
+        )
 
         return ScanService(
             session=session,
@@ -613,6 +630,8 @@ async def get_persisted_cluster_job_service_clustering(
 
 __all__ = [
     "get_settings",
+    "get_clustering_limits_settings",
+    "get_identity_detection_settings",
     "get_shared_insightface_adapter",
     "get_suggestion_service",
     "get_cluster_repository",

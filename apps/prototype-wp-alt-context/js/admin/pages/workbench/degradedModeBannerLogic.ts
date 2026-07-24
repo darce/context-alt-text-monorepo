@@ -2,7 +2,8 @@ import { __ } from '@wordpress/i18n';
 
 import type { SyncHealth, SyncHealthResponse, SyncHealthWarning } from '../../api/recognition/types/sync';
 
-import { SCAN_CONFLICTS_HREF, SCAN_DEAD_LETTER_HREF } from './workbenchOverlayLinks';
+import { SYNC_VOCABULARY } from './syncVocabulary';
+import { SCAN_CONFLICTS_HREF, SCAN_DEAD_LETTER_HREF } from '../../navigation/appLinks';
 
 // "Offline" means the recognition service is *currently unreachable*, which is
 // the breaker's job (2-failure threshold, self-healing / 60s auto-expire).
@@ -22,30 +23,30 @@ export const resolveEffectiveSyncHealth = (
 /**
  * Plain-language dashboard summary. Kept free of syncPresentation imports to
  * avoid a circular dependency (syncPresentation consumes resolveEffectiveSyncHealth).
- * Copy must stay in lockstep with getSyncPresentationSummary.
+ * All copy reads from SYNC_VOCABULARY (single declaration site).
  */
 export const getDashboardSyncHealthSummary = (
   effectiveSyncHealth: SyncHealth,
   syncHealthEnvelope: SyncHealthResponse | null | undefined,
 ): string => {
   if (syncHealthEnvelope && hasSyncHealthWarnings(syncHealthEnvelope) && effectiveSyncHealth === 'healthy') {
-    return getDegradedWarningMessage(syncHealthEnvelope) ?? __('Sync attention needed.', 'alt-context');
+    return getDegradedWarningMessage(syncHealthEnvelope) ?? SYNC_VOCABULARY.attentionSummary;
   }
 
   switch (effectiveSyncHealth) {
     case 'healthy':
-      return __('Machine sync is healthy and local changes are caught up.', 'alt-context');
+      return SYNC_VOCABULARY.healthySummary;
     case 'queued':
-      return __('Local changes are waiting to sync.', 'alt-context');
+      return SYNC_VOCABULARY.queuedSummary;
     case 'conflicts':
-      return __('Conflict resolution is blocking part of the sync queue.', 'alt-context');
+      return SYNC_VOCABULARY.conflictsSummary;
     case 'failures':
-      return __('Some sync operations failed and need operator attention.', 'alt-context');
+      return SYNC_VOCABULARY.failuresSummary;
     case 'offline':
-      return __('The recognition backend is currently unreachable.', 'alt-context');
+      return SYNC_VOCABULARY.offlineSummary;
     case 'stale':
     default:
-      return __('Machine state is stale and should be refreshed.', 'alt-context');
+      return SYNC_VOCABULARY.staleSummary;
   }
 };
 
@@ -55,15 +56,16 @@ export const shouldShowDegradedBanner = (health: SyncHealthResponse): boolean =>
   isSyncOffline(health) || hasSyncHealthWarnings(health);
 
 export const getDegradedBannerTitle = (health: SyncHealthResponse): string =>
-  isSyncOffline(health) ? __('Working offline', 'alt-context') : __('Sync attention needed', 'alt-context');
+  isSyncOffline(health) ? SYNC_VOCABULARY.offlineBannerTitle : SYNC_VOCABULARY.attentionBannerTitle;
 
-export const getDegradedBannerMessage = (): string =>
-  __('Showing your local copy; changes will sync when the service returns.', 'alt-context');
+export const getDegradedBannerMessage = (): string => SYNC_VOCABULARY.offlineDetail;
 
 export const translateSyncHealthWarning = (warning: SyncHealthWarning): string => {
   switch (warning.code) {
     case 'open_conflicts_high':
       return __('Open sync conflicts exceed the configured warning threshold.', 'alt-context');
+    case 'backend_roster_regressed':
+      return SYNC_VOCABULARY.backendRegressionWarning;
     default:
       return warning.message;
   }

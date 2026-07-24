@@ -35,6 +35,7 @@ class IdentityMembersSchemaParityTest extends TestCase
         'similarity_threshold',
         'is_curated',
         'projection_version',
+        'assigned_at',
         'created_at',
         'updated_at',
     ];

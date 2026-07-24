@@ -20,6 +20,8 @@ export interface ScanRunViewModel {
   statusText?: string;
   jobId?: string | null;
   errorMessage?: string | null;
+  /** When set, ScanActionPanel shows manual Retry clustering after auto-retry ceiling. */
+  onRetryClustering?: () => void;
   progress?: JobProgress | null;
   batchRunStatus?: BatchRunStatus | null;
   stallSeconds?: number | null;
@@ -53,6 +55,7 @@ export interface JobPipelineContextValue {
   scan: (mediaIds: number[]) => void;
   cancelScan: (jobIds: string[]) => void;
   cluster: () => void;
+  retryClustering: () => void;
   retryProjectionSync: () => void;
   retryScanStream: () => void;
   handleSelectJobFromHistory: (id: string) => void;
@@ -96,6 +99,8 @@ export const JobPipelineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     scan,
     cancelScan,
     cluster,
+    retryClustering,
+    canRetryClustering,
     retryProjectionSync,
     retryScanStream,
   } = useJobStateMachine({
@@ -116,6 +121,7 @@ export const JobPipelineProvider: React.FC<{ children: React.ReactNode }> = ({ c
       setScanError(message);
     },
     onClusterComplete: (data: ClusterResponse) => {
+      setScanError(null);
       setClusterMessage(
         sprintf(
           __('Created %d clusters for %d identities.', 'alt-context'),
@@ -145,6 +151,12 @@ export const JobPipelineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         statusText,
         jobId: latestJobId ?? jobId,
         errorMessage: scanError,
+        onRetryClustering: canRetryClustering
+          ? () => {
+              setScanError(null);
+              retryClustering();
+            }
+          : undefined,
         progress:
           (currentPhase === 'clustering' || currentPhase === 'projecting') && clusterProgress
             ? clusterProgress
@@ -174,6 +186,7 @@ export const JobPipelineProvider: React.FC<{ children: React.ReactNode }> = ({ c
       scan,
       cancelScan,
       cluster,
+      retryClustering,
       retryProjectionSync,
       retryScanStream,
       handleSelectJobFromHistory,
@@ -186,6 +199,8 @@ export const JobPipelineProvider: React.FC<{ children: React.ReactNode }> = ({ c
       latestJobId,
       jobId,
       scanError,
+      canRetryClustering,
+      retryClustering,
       currentPhase,
       clusterProgress,
       scanProgress,

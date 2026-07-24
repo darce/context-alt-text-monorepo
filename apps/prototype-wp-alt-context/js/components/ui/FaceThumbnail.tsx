@@ -11,6 +11,7 @@ import * as React from 'react';
 import { __ } from '@wordpress/i18n';
 
 import type { BoundingBox } from '../../admin/api/recognition/types/identity';
+import { cropTransformFor } from './faceGeometry';
 
 export type FaceThumbnailSize = 'sm' | 'md' | 'lg';
 
@@ -54,16 +55,7 @@ export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps
     const imgRef = React.useRef<HTMLImageElement | null>(null);
     const displaySize = sizePx ?? sizeMap[size];
     const borderRadius = shape === 'square' ? '0' : '50%';
-
-    // Calculate scale to fit bbox into display size
-    // Use the larger dimension to ensure the face fills the container
-    const scale = displaySize / Math.max(bbox.width, bbox.height);
-
-    // For non-square bounding boxes, center the smaller dimension
-    const scaledWidth = bbox.width * scale;
-    const scaledHeight = bbox.height * scale;
-    const offsetX = (displaySize - scaledWidth) / 2;
-    const offsetY = (displaySize - scaledHeight) / 2;
+    const { scale, offsetX, offsetY } = cropTransformFor(bbox, displaySize);
 
     const handleLoad = React.useCallback(() => {
       setLoadState('loaded');

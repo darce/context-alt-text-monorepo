@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { OutboxListResponse, OutboxMutationResponse, OutboxOperation } from '../../../api/recognition';
+import type { BulkRetryResponse, OutboxListResponse, OutboxMutationResponse, OutboxOperation } from '../../../api/recognition';
 import { createMockMutation, createMockQuery } from '../../../test-utils/mockHooks';
+import { useBulkRetryOperations } from '../../../hooks/useBulkRetryOperations';
 import { useDeadLetterOperations } from '../../../hooks/useDeadLetterOperations';
 import { useDiscardOperation } from '../../../hooks/useDiscardOperation';
 import { useOutboxOperations } from '../../../hooks/useOutboxOperations';
@@ -20,6 +21,10 @@ vi.mock('@wordpress/i18n', () => ({
     }
     return result;
   },
+}));
+
+vi.mock('../../../hooks/useBulkRetryOperations', () => ({
+  useBulkRetryOperations: vi.fn(),
 }));
 
 vi.mock('../../../hooks/useDeadLetterOperations', () => ({
@@ -62,6 +67,7 @@ const buildOperation = (overrides: Partial<OutboxOperation> = {}): OutboxOperati
 });
 
 describe('DeadLetterPanel', () => {
+  const mockedUseBulkRetryOperations = vi.mocked(useBulkRetryOperations);
   const mockedUseDeadLetterOperations = vi.mocked(useDeadLetterOperations);
   const mockedUseRetryOperation = vi.mocked(useRetryOperation);
   const mockedUseOutboxOperations = vi.mocked(useOutboxOperations);
@@ -80,6 +86,11 @@ describe('DeadLetterPanel', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedUseBulkRetryOperations.mockReturnValue(
+      createMockMutation<BulkRetryResponse, Error, void>({
+        mutateAsync: vi.fn().mockResolvedValue({ requeued: 1, failed_remaining: 0 }),
+      }),
+    );
     mockedUseDeadLetterOperations.mockReturnValue(
       createMockQuery<OutboxListResponse>({
         data: {
@@ -236,7 +247,7 @@ describe('DeadLetterPanel', () => {
     expect(screen.getByText('Entity: cluster-42 (cluster)')).toBeInTheDocument();
   });
 
-  it('surfaces topology command status when backlog exists', () => {
+  it('surfaces topology command status via pending-work vocabulary (no Sync backlog)', () => {
     mockedUseSyncStatus.mockReturnValue(
       createMockQuery({
         data: {
@@ -258,7 +269,8 @@ describe('DeadLetterPanel', () => {
 
     renderPanel();
 
-    expect(screen.getByText('Sync backlog: 2 waiting, 1 applied, 1 failed, 3 conflicts.')).toBeInTheDocument();
+    expect(screen.getByText('2 waiting, 1 synced, 1 failed, 3 need review')).toBeInTheDocument();
+    expect(screen.queryByText(/Sync backlog/i)).not.toBeInTheDocument();
   });
 
   it('renders pagination state and advances to the next page', () => {
@@ -368,5 +380,178 @@ describe('DeadLetterPanel', () => {
     });
 
     expect(screen.getByText('Unable to discard this operation. Please try again.')).toBeInTheDocument();
+  });
+
+  it('shows the bulk retry control with the failed count', () => {
+    renderPanel();
+
+    const button = screen.getByRole('button', { name: 'Retry all failed (1)' });
+    expect(button).toBeEnabled();
+  });
+
+  it('disables the bulk retry control at zero failed changes while keeping the count visible', () => {
+    // rg-003 intent: the bulk action is inherently N-dependent, so zero-state renders
+    // the control disabled with the (0) count visible rather than hiding it.
+    mockedUseDeadLetterOperations.mockReturnValue(
+      createMockQuery<OutboxListResponse>({
+        data: { items: [], total: 0, limit: 20, offset: 0 },
+      }),
+    );
+
+    renderPanel();
+
+    expect(screen.getByRole('button', { name: 'Retry all failed (0)' })).toBeDisabled();
+  });
+
+  it('requires confirmation before bulk retry and shows the requeued count on success', async () => {
+    const mutateAsync = vi.fn().mockResolvedValue({ requeued: 5, failed_remaining: 0 });
+    mockedUseBulkRetryOperations.mockReturnValue(
+      createMockMutation<BulkRetryResponse, Error, void>({
+        mutateAsync,
+      }),
+    );
+    mockedUseDeadLetterOperations.mockReturnValue(
+      createMockQuery<OutboxListResponse>({
+        data: { items: [buildOperation()], total: 5, limit: 20, offset: 0 },
+      }),
+    );
+
+    renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry all failed (5)' }));
+
+    expect(screen.getByRole('button', { name: 'Confirm retry all failed (5)' })).toBeInTheDocument();
+    expect(mutateAsync).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm retry all failed (5)' }));
+
+    await waitFor(() => {
+      expect(mutateAsync).toHaveBeenCalledTimes(1);
+    });
+
+    expect(screen.getByText('5 failed changes queued to retry.')).toBeInTheDocument();
+    // failed_remaining: 0 -> no remainder copy.
+    expect(screen.queryByText(/remain — run again to queue the rest/)).not.toBeInTheDocument();
+  });
+
+  it('surfaces the remainder when the bulk retry response reports failed changes left over', async () => {
+    const mutateAsync = vi.fn().mockResolvedValue({ requeued: 1000, failed_remaining: 234 });
+    mockedUseBulkRetryOperations.mockReturnValue(
+      createMockMutation<BulkRetryResponse, Error, void>({
+        mutateAsync,
+      }),
+    );
+
+    renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry all failed (1)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm retry all failed (1)' }));
+
+    await waitFor(() => {
+      expect(mutateAsync).toHaveBeenCalledTimes(1);
+    });
+
+    expect(
+      screen.getByText('1000 failed changes queued to retry. 234 remain — run again to queue the rest.'),
+    ).toBeInTheDocument();
+  });
+
+  it('auto-disarms the bulk retry confirmation after the timeout', () => {
+    vi.useFakeTimers();
+    try {
+      const mutateAsync = vi.fn().mockResolvedValue({ requeued: 1, failed_remaining: 0 });
+      mockedUseBulkRetryOperations.mockReturnValue(
+        createMockMutation<BulkRetryResponse, Error, void>({
+          mutateAsync,
+        }),
+      );
+
+      renderPanel();
+      fireEvent.click(screen.getByRole('button', { name: 'Retry all failed (1)' }));
+      expect(screen.getByRole('button', { name: 'Confirm retry all failed (1)' })).toBeInTheDocument();
+
+      act(() => {
+        vi.advanceTimersByTime(9000);
+      });
+
+      // Disarmed: the next click re-arms instead of firing the mutation.
+      const button = screen.getByRole('button', { name: 'Retry all failed (1)' });
+      fireEvent.click(button);
+      expect(mutateAsync).not.toHaveBeenCalled();
+      expect(screen.getByRole('button', { name: 'Confirm retry all failed (1)' })).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('disarms the bulk retry confirmation when the failed total changes', () => {
+    const mutateAsync = vi.fn().mockResolvedValue({ requeued: 1, failed_remaining: 0 });
+    mockedUseBulkRetryOperations.mockReturnValue(
+      createMockMutation<BulkRetryResponse, Error, void>({
+        mutateAsync,
+      }),
+    );
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <DeadLetterPanel />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry all failed (1)' }));
+    expect(screen.getByRole('button', { name: 'Confirm retry all failed (1)' })).toBeInTheDocument();
+
+    mockedUseDeadLetterOperations.mockReturnValue(
+      createMockQuery<OutboxListResponse>({
+        data: {
+          items: [buildOperation(), buildOperation({ id: 12, entity_key: 'cluster-2' })],
+          total: 2,
+          limit: 20,
+          offset: 0,
+        },
+      }),
+    );
+    rerender(
+      <QueryClientProvider client={client}>
+        <DeadLetterPanel />
+      </QueryClientProvider>,
+    );
+
+    // Disarmed by the total change: the next click re-arms instead of firing.
+    const button = screen.getByRole('button', { name: 'Retry all failed (2)' });
+    fireEvent.click(button);
+    expect(mutateAsync).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Confirm retry all failed (2)' })).toBeInTheDocument();
+  });
+
+  it('shows progress while the bulk retry is pending', () => {
+    mockedUseBulkRetryOperations.mockReturnValue(
+      createMockMutation<BulkRetryResponse, Error, void>({
+        isPending: true,
+        mutateAsync: vi.fn(),
+      }),
+    );
+
+    renderPanel();
+
+    expect(screen.getByRole('button', { name: 'Retrying all failed…' })).toBeDisabled();
+  });
+
+  it('shows mutation error feedback when bulk retry fails', async () => {
+    const mutateAsync = vi.fn().mockRejectedValue(new Error('boom'));
+    mockedUseBulkRetryOperations.mockReturnValue(
+      createMockMutation<BulkRetryResponse, Error, void>({
+        mutateAsync,
+      }),
+    );
+
+    renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry all failed (1)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm retry all failed (1)' }));
+
+    await waitFor(() => {
+      expect(mutateAsync).toHaveBeenCalledTimes(1);
+    });
+
+    expect(screen.getByText('Unable to retry all failed changes. Please try again.')).toBeInTheDocument();
   });
 });

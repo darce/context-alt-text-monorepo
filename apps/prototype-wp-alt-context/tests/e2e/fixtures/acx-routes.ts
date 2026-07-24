@@ -15,6 +15,14 @@ const adminRoutes = [
     label: 'Settings',
     slug: 'alt-context-settings',
   },
+  {
+    label: 'Retention',
+    slug: 'alt-context-retention',
+  },
+  {
+    label: 'Description History',
+    slug: 'alt-context-description-history',
+  },
 ] as const;
 
 export type AcxAdminRoute = (typeof adminRoutes)[number];
@@ -39,5 +47,21 @@ export const getAcxAdminRouteUrlWithParams = (
     url.searchParams.set(key, value);
   }
 
+  return url.toString();
+};
+
+/**
+ * E21-10: compose a WP admin page URL with a contract hash href in one navigation.
+ * Shape: `admin.php?page=<slug>#<hashHref>` (hash may start with `#/…` or `/…`).
+ * When a hash is pre-set, `ensureHashInitialized` leaves it alone (no WP-param forward).
+ */
+export const getAcxAdminHashUrl = (
+  baseUrl: string,
+  slug: AcxAdminRouteSlug,
+  hashHref: string,
+): string => {
+  const url = new URL(getAcxAdminRouteUrl(baseUrl, slug));
+  const normalized = hashHref.startsWith('#') ? hashHref.slice(1) : hashHref;
+  url.hash = normalized.startsWith('/') ? normalized : `/${normalized}`;
   return url.toString();
 };

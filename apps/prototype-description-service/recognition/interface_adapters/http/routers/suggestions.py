@@ -40,16 +40,21 @@ from recognition.interface_adapters.http.schemas.responses import (
     BulkAcceptResponse,
     ClusterSuggestionMatch,
     FaceBoxResponse,
+    IdentityBatchSuggestionsResponse,
     IdentitySuggestionsResponse,
     MergeSuggestionResponse,
     NameSuggestionResponse,
     SuggestionResponse,
 )
-from recognition.interface_adapters.http.validation import validate_entity_id, validate_paging
+from recognition.interface_adapters.http.validation import validate_entity_id, validate_paging, validate_top_k
 
 router = APIRouter(tags=["suggestions"], dependencies=[Depends(require_auth), Depends(enforce_rate_limit)])
 
 T_Suggestion = TypeVar("T_Suggestion")
+
+# URL-budget bound for the batch identity-suggestions route (UXP-2 3a): a
+# comma-joined list of 100 UUIDs is ~3.7 KB, safely inside proxy query limits.
+MAX_BATCH_IDENTITY_IDS = 100
 
 
 @router.get("/suggestions", response_model=list[SuggestionResponse])
@@ -103,11 +108,59 @@ async def list_pending_merge_suggestions(
     return [_to_merge_response(s) for s in suggestions]
 
 
+@router.get("/identities/suggestions", response_model=IdentityBatchSuggestionsResponse)
+async def list_identities_suggestions(
+    identity_ids: str = Query(description="Comma-joined identity UUIDs (max 100)."),
+    _tenant_id: str = Depends(get_tenant_id),
+    top_k: int = Query(default=1),
+    suggestion_service=Depends(get_suggestion_service),
+) -> IdentityBatchSuggestionsResponse:
+    """Top-k labeled-cluster suggestions for a batch of identities, keyed by identity id.
+
+    One bounded call for "top suggestion for each of these identities": response
+    row count is <= len(identity_ids) x top_k by construction. Filter parity with
+    the per-card route is literal (pending + truthy cluster label only).
+    Out-of-range ``top_k`` is rejected with 400, never clamped (``MAX_TOP_K``,
+    ``validate_paging`` convention).
+    """
+    raw_ids = [item.strip() for item in identity_ids.split(",")]
+    if len(raw_ids) > MAX_BATCH_IDENTITY_IDS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"identity_ids exceeds maximum of {MAX_BATCH_IDENTITY_IDS}",
+        )
+    validated_ids = [validate_entity_id(item, field_name="identity_ids") for item in raw_ids]
+    validate_top_k(top_k)
+
+    grouped = await suggestion_service.list_for_identities(validated_ids, top_k=top_k)
+    matches: dict[str, list[ClusterSuggestionMatch]] = {}
+    for identity_id, rows in grouped.items():
+        identity_matches: list[ClusterSuggestionMatch] = []
+        for row in rows:
+            if not row.cluster_label:
+                # The windowed query filters to truthy labels; guard narrows the optional type.
+                continue
+            identity_matches.append(
+                ClusterSuggestionMatch(
+                    suggestion_id=row.id,
+                    cluster_id=row.cluster_id,
+                    label=row.cluster_label,
+                    similarity=row.representative_similarity,
+                    identity_count=row.cluster_identity_count or 0,
+                )
+            )
+        if identity_matches:
+            matches[identity_id] = identity_matches
+
+    return IdentityBatchSuggestionsResponse(matches=matches)
+
+
 @router.get("/identities/{identity_id}/suggestions", response_model=IdentitySuggestionsResponse)
 async def list_suggestions(
     identity_id: str,
     _tenant_id: str = Depends(get_tenant_id),
     min_confidence: float | None = Query(default=None, ge=0.0, le=1.0),
+    top_k: int | None = Query(default=None),
     suggestion_service=Depends(get_suggestion_service),
     cluster_repo=Depends(get_cluster_repository),
 ) -> IdentitySuggestionsResponse:
@@ -116,17 +169,27 @@ async def list_suggestions(
     Returns suggestions in frontend-compatible format with cluster labels
     and member counts. Only returns suggestions for labeled clusters - unlabeled
     cluster suggestions are not actionable (asking "Is this Unnamed cluster?" is meaningless).
+
+    ``top_k`` bounds the match count after ranking (UXP-2 3a: previously accepted
+    but silently ignored); omitting it keeps the unbounded behavior. Out-of-range
+    ``top_k`` is rejected with 400, never clamped (``MAX_TOP_K``,
+    ``validate_paging`` convention).
     """
     validate_entity_id(identity_id, field_name="identity_id")
+    if top_k is not None:
+        validate_top_k(top_k)
     suggestions = await suggestion_service.list_for_identity(identity_id)
     if min_confidence is not None:
         suggestions = [suggestion for suggestion in suggestions if _meets_min_confidence(suggestion, min_confidence)]
 
-    # Enrich suggestions with cluster details - only include labeled clusters
+    # Enrich suggestions with cluster details in one batched fetch - only include labeled clusters
+    cluster_ids = list({suggestion.cluster_id for suggestion in suggestions})
+    clusters = await cluster_repo.get_by_ids(cluster_ids) if cluster_ids else []
+    clusters_by_id = {cluster.id: cluster for cluster in clusters}
+
     matches: list[ClusterSuggestionMatch] = []
     for suggestion in suggestions:
-        # Fetch cluster to get label and member count
-        cluster = await cluster_repo.get_by_id(suggestion.cluster_id)
+        cluster = clusters_by_id.get(suggestion.cluster_id)
         # Only include suggestions for clusters with actual labels
         if cluster and cluster.label:
             matches.append(
@@ -139,8 +202,11 @@ async def list_suggestions(
                 )
             )
 
-    # Sort by similarity descending
+    # Sort by similarity descending; the stable sort keeps the repository's
+    # created_at DESC ordering as the tie-break, matching the batch route's window.
     matches.sort(key=lambda m: m.similarity, reverse=True)
+    if top_k is not None:
+        matches = matches[:top_k]
 
     return IdentitySuggestionsResponse(matches=matches)
 
@@ -339,11 +405,22 @@ async def accept_merge_suggestion(
     suggestion = await repo.get_by_id(request.tenant_id, suggestion_id)
     if suggestion is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Merge suggestion not found")
-    if suggestion.status != SuggestionStatus.PENDING:
-        return _to_merge_response(suggestion)
 
     cluster_service = await cluster_service_builder(request.tenant_id)
     cluster_repo = cluster_service.assignment_writer.cluster_repository
+
+    # E215-BR-02: non-PENDING ACCEPTED replay still stamps authoritative ids
+    # (resolve survivor via cluster existence, or re-rank if both still present).
+    if suggestion.status != SuggestionStatus.PENDING:
+        if suggestion.status == SuggestionStatus.ACCEPTED:
+            source_id, target_id = await _resolve_accepted_merge_ids(suggestion, cluster_repo)
+            return _to_merge_response(
+                suggestion,
+                source_cluster_id=source_id,
+                target_cluster_id=target_id,
+            )
+        return _to_merge_response(suggestion)
+
     cluster_a = await cluster_repo.get_by_id(suggestion.cluster_a_id)
     cluster_b = await cluster_repo.get_by_id(suggestion.cluster_b_id)
     if not cluster_a or not cluster_b:
@@ -368,7 +445,13 @@ async def accept_merge_suggestion(
     # (see clusters.py PATCH handler comment for full race condition explanation).
     await session.commit()
 
-    return _to_merge_response(suggestion)
+    # Authoritative survivor/retired ids from _select_merge_target (source=retired,
+    # target=survivor). Clients must not re-rank cluster_a/b presentation fields.
+    return _to_merge_response(
+        suggestion,
+        source_cluster_id=source_cluster_id,
+        target_cluster_id=target_cluster_id,
+    )
 
 
 @router.post("/suggestions/merge/{suggestion_id}/reject", response_model=MergeSuggestionResponse)
@@ -627,8 +710,45 @@ def _select_merge_target(cluster_a: IdentityCluster, cluster_b: IdentityCluster)
     return source.id, target.id, target.label
 
 
-def _to_merge_response(suggestion: MergeSuggestion | MergeSuggestionDetails) -> MergeSuggestionResponse:
-    """Convert merge suggestion to API response model."""
+async def _resolve_accepted_merge_ids(
+    suggestion: MergeSuggestion | MergeSuggestionDetails,
+    cluster_repo: object,
+) -> tuple[str | None, str | None]:
+    """Stamp source/target on ACCEPTED replay (E215-BR-02).
+
+    Prefer existence: the missing side is retired (source), the remaining side is
+    survivor (target). When both still exist, re-run ``_select_merge_target``.
+    """
+    get_by_id = getattr(cluster_repo, "get_by_id", None)
+    if get_by_id is None:
+        return None, None
+    cluster_a = await get_by_id(suggestion.cluster_a_id)
+    cluster_b = await get_by_id(suggestion.cluster_b_id)
+    if cluster_a and not cluster_b:
+        return suggestion.cluster_b_id, suggestion.cluster_a_id
+    if cluster_b and not cluster_a:
+        return suggestion.cluster_a_id, suggestion.cluster_b_id
+    if cluster_a and cluster_b:
+        try:
+            source_id, target_id, _ = _select_merge_target(cluster_a, cluster_b)
+        except HTTPException:
+            return None, None
+        return source_id, target_id
+    return None, None
+
+
+def _to_merge_response(
+    suggestion: MergeSuggestion | MergeSuggestionDetails,
+    *,
+    source_cluster_id: str | None = None,
+    target_cluster_id: str | None = None,
+) -> MergeSuggestionResponse:
+    """Convert merge suggestion to API response model.
+
+    Pass ``source_cluster_id`` / ``target_cluster_id`` after accept so the
+    response carries the authoritative survivor/retired pair from
+    ``_select_merge_target`` (source=retired, target=survivor).
+    """
     status_value = suggestion.status if isinstance(suggestion.status, str) else suggestion.status.value
     cluster_a_bbox = getattr(suggestion, "cluster_a_representative_bbox", None)
     cluster_b_bbox = getattr(suggestion, "cluster_b_representative_bbox", None)
@@ -666,4 +786,6 @@ def _to_merge_response(suggestion: MergeSuggestion | MergeSuggestionDetails) -> 
         confidence_score=getattr(suggestion, "confidence_score", None),
         expires_at=getattr(suggestion, "expires_at", None),
         source_job_id=getattr(suggestion, "source_job_id", None),
+        source_cluster_id=source_cluster_id,
+        target_cluster_id=target_cluster_id,
     )

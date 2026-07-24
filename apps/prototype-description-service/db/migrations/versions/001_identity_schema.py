@@ -6,12 +6,15 @@ import sqlalchemy as sa
 from alembic import op
 from pgvector.sqlalchemy import Vector
 
+from db.settings import get_database_settings
+
 revision = "001_identity_schema"
 down_revision = None
 branch_labels = None
 depends_on = None
 
-EMBEDDING_DIMENSION = 512
+# Sole root: PGVECTOR_DIM → DatabaseSettings.pgvector_dimension (no bare 512).
+EMBEDDING_DIMENSION = int(get_database_settings().pgvector_dimension)
 SAFE_TENANT_EXPR = "NULLIF(current_setting('app.current_tenant', true), '')::uuid"
 BYPASS_RLS_EXPR = "COALESCE(NULLIF(current_setting('app.bypass_rls', true), ''), 'false')::boolean"
 
@@ -121,7 +124,7 @@ DOWNGRADE_TABLE_ORDER = [
 
 
 def _relkind(op, name: str) -> str | None:
-    return (
+    raw = (
         op.get_bind()
         .execute(
             sa.text(
@@ -133,6 +136,10 @@ def _relkind(op, name: str) -> str | None:
         )
         .scalar()
     )
+    if raw is None:
+        return None
+    # pg_class.relkind is a single-char code ('r', 'i', 'm', ...); coerce Any→str.
+    return str(raw)
 
 
 def _existing_columns(op, table_name: str) -> set[str]:
@@ -325,12 +332,16 @@ def ensure_tables(op) -> None:
         sa.Column("bbox_height", sa.Integer(), nullable=False),
         sa.Column("confidence", sa.Float(), nullable=False),
         sa.Column("embedding", Vector(EMBEDDING_DIMENSION), nullable=False),
-        # InsightFace metadata
+        # Embedding provenance: required, no default (missing must fail closed — RLSE-05).
+        sa.Column("embedding_model", sa.Text(), nullable=False),
+        # InsightFace metadata (pose for quality/clustering; age/gender removed FIR-2 S4)
         sa.Column("pose_pitch", sa.Float(), nullable=True),
         sa.Column("pose_yaw", sa.Float(), nullable=True),
         sa.Column("pose_roll", sa.Float(), nullable=True),
-        sa.Column("age", sa.Integer(), nullable=True),
-        sa.Column("gender", sa.Integer(), nullable=True),  # 0=female, 1=male
+        # FIR-6 S1 quality factors (face_pipeline scan only; NULL under insightface)
+        sa.Column("sharpness", sa.Float(), nullable=True),
+        sa.Column("embedding_norm", sa.Float(), nullable=True),
+        sa.Column("occlusion_severity", sa.Float(), nullable=True),
         sa.Column("quality_score", sa.Float(), nullable=True),
         sa.Column("image_phash", sa.String(length=64), nullable=True),
         sa.Column("last_exported_snapshot_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=True),
@@ -1364,6 +1375,9 @@ def ensure_tables(op) -> None:
         sa.Column("prompt_or_task_version", sa.String(length=64), nullable=False),
         sa.Column("visual_facts", sa.dialects.postgresql.JSONB(), nullable=False),
         sa.Column("alt_text_draft", sa.Text(), nullable=False),
+        # ALTQ-1: optional long-form surface (dual-length prompting); nullable so
+        # short-only adapters and pre-ALTQ-1 rows need no backfill.
+        sa.Column("alt_text_long", sa.Text(), nullable=True),
         sa.Column("context_used", sa.dialects.postgresql.JSONB(), nullable=False),
         sa.Column("provider_disclosure", sa.dialects.postgresql.JSONB(), nullable=False),
         # E19-4a: caption phrase-grounding boxes persisted with the cached
@@ -1715,14 +1729,46 @@ def ensure_matview(op) -> None:
     op.execute(
         f"""
         CREATE MATERIALIZED VIEW IF NOT EXISTS mv_identity_cluster_centroids AS
-        WITH normalized_embeddings AS (
+        WITH member_rows AS (
             SELECT
                 im.cluster_id,
                 mi.tenant_id,
-                l2_normalize(mi.embedding)::vector({EMBEDDING_DIMENSION}) AS unit_embedding,
+                mi.embedding,
+                mi.embedding_model,
                 mi.updated_at
             FROM identity_members im
             JOIN media_identities mi ON mi.id = im.identity_id
+            WHERE mi.embedding IS NOT NULL
+              AND mi.embedding_model IS NOT NULL
+        ),
+        -- FIR23-01: frame each cluster centroid to a single embedding_model
+        -- (majority, lex-stable tie-break). Single-model data is a no-op;
+        -- load-bearing when mixed models coexist.
+        model_counts AS (
+            SELECT
+                cluster_id,
+                embedding_model,
+                COUNT(*) AS n
+            FROM member_rows
+            GROUP BY cluster_id, embedding_model
+        ),
+        chosen_model AS (
+            SELECT DISTINCT ON (cluster_id)
+                cluster_id,
+                embedding_model
+            FROM model_counts
+            ORDER BY cluster_id, n DESC, embedding_model ASC
+        ),
+        normalized_embeddings AS (
+            SELECT
+                mr.cluster_id,
+                mr.tenant_id,
+                l2_normalize(mr.embedding)::vector({EMBEDDING_DIMENSION}) AS unit_embedding,
+                mr.updated_at
+            FROM member_rows mr
+            JOIN chosen_model cm
+              ON cm.cluster_id = mr.cluster_id
+             AND cm.embedding_model = mr.embedding_model
         ),
         cluster_embeddings AS (
             SELECT

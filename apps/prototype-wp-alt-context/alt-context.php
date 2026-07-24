@@ -4,7 +4,7 @@
  * Plugin Name: Alt Context
  * Plugin URI: https://github.com/darce/context-alt-text-monorepo
  * Description: Batch-generate contextually rich alt-text with facial recognition.
- * Version: 0.0.4
+ * Version: 0.0.5
  * Author: Daniel Arcé
  * License: GPL v2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -137,6 +137,7 @@ require_once ACX_PLUGIN_DIR . 'src/support/trait-batch-limits.php';
 require_once ACX_PLUGIN_DIR . 'src/media/class-xmp-persistence-factory.php';
 require_once ACX_PLUGIN_DIR . 'src/api/class-xmp-embed-controller.php';
 require_once ACX_PLUGIN_DIR . 'src/admin/class-admin.php';
+require_once ACX_PLUGIN_DIR . 'src/admin/class-attachment-fields.php';
 require_once ACX_PLUGIN_DIR . 'src/admin/class-abstract-spa-page.php';
 require_once ACX_PLUGIN_DIR . 'src/admin/class-dashboard-page.php';
 require_once ACX_PLUGIN_DIR . 'src/admin/class-workbench-page.php';

@@ -42,7 +42,7 @@ class ContractSnapshotSchemaTest extends TestCase
         $members_repo = new class() extends NullIdentityMembersRepository {
             public array $calls = [];
 
-            public function merge_snapshot_for_tenant(string $tenant_id, array $members, int $snapshot_version): void
+            public function merge_snapshot_for_tenant(string $tenant_id, array $members, int $snapshot_version, bool $suppress_conflict_storm = false): void
             {
                 $this->calls[] = [$tenant_id, $members, $snapshot_version];
             }

@@ -645,8 +645,8 @@ open a card. Deeper argument for each lives in
 | Research papers | `/Users/daniel/Documents/__research_papers/` | 108 files. Complete for CV/PEFT/diffusion/segmentation; **incomplete for statistics** — see §1. |
 | Book catalogue | `/Volumes/Chimay/___Books/CATALOG.md` | 1,966 lines, 72 sections. Swept; §2f lists what is already registered. |
 | Canon target | `/Users/daniel/Development/heuristics-canon/` | Private repo, outside the monorepo boundary. Writes go here only via the maintainer. |
-| This queue | `/Users/daniel/Development/context-alt-text-monorepo/docs/research/library-heuristics-intake-consolidation.md` | On `feature/libsyn-1`. |
-| Companion reasoning | `/Users/daniel/Development/context-alt-text-monorepo/docs/research/cross-domain-bridges-and-caption-register.md` | On `feature/libsyn-1`. |
+| This queue | `/Users/daniel/Development/context-alt-text-monorepo/docs/research/library-heuristics-intake-consolidation.md` | On `main`. |
+| Companion reasoning | `/Users/daniel/Development/context-alt-text-monorepo/docs/research/cross-domain-bridges-and-caption-register.md` | On `main`. Optional depth — see §9c. |
 
 Tier-1 photography titles, exact filenames under
 `/Volumes/Chimay/___Books/_inbox/`:
@@ -695,21 +695,21 @@ Priority classes, not a reading order. **Distil P1 and P2 only unless
 instructed otherwise**; P3 is listed for completeness and will mostly regenerate
 rules the `engineering` lexicon already holds.
 
-Paths under `…-libsyn-1/` exist **only on branch `feature/libsyn-1`**; all
-`docs/assessments/**` paths are byte-identical in both worktrees.
+All paths below are on `main` in the root worktree
+`/Users/daniel/Development/context-alt-text-monorepo/`.
 
 **P1 — the driver (1). Send this alone if sending one thing.**
 
 ```
-/Users/daniel/Development/context-alt-text-monorepo-libsyn-1/docs/research/library-heuristics-intake-consolidation.md
+/Users/daniel/Development/context-alt-text-monorepo/docs/research/library-heuristics-intake-consolidation.md
 ```
 
 **P1b — optional depth (3). Not required by any card in this queue.**
 
 ```
-/Users/daniel/Development/context-alt-text-monorepo-libsyn-1/docs/research/cross-domain-bridges-and-caption-register.md
-/Users/daniel/Development/context-alt-text-monorepo-libsyn-1/docs/research/arxiv-2605-27361-query2conf-applicability-2026-07-14.md
-/Users/daniel/Development/context-alt-text-monorepo-libsyn-1/docs/runbooks/fir-captioning-orchestrator-playbook.md
+/Users/daniel/Development/context-alt-text-monorepo/docs/research/cross-domain-bridges-and-caption-register.md
+/Users/daniel/Development/context-alt-text-monorepo/docs/research/arxiv-2605-27361-query2conf-applicability-2026-07-14.md
+/Users/daniel/Development/context-alt-text-monorepo/docs/runbooks/fir-captioning-orchestrator-playbook.md
 ```
 
 `cross-domain-bridges-and-caption-register.md` carries the long-form argument

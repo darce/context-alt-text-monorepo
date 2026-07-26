@@ -5,7 +5,14 @@
 Consolidates every book and paper surfaced across the library sweeps
 (FIR occlusion · research-paper sweep · VLM-6 / captioning sweep · gap-closure
 proposal · cross-domain bridges · photography-criticism vector) into a single
-intake queue for `github.com/darce/heuristics-canon`.
+intake queue for the **private research corpus**,
+`github.com/darce/heuristics-canon-research`.
+
+> **Target repo.** All intake lands in `heuristics-canon-research`. The public
+> `heuristics-canon` repo is a **projection** of it, produced by
+> `tools/publish.py --public ../heuristics-canon`, and **must never be edited
+> directly** — a change that lands there without a research-repo source is
+> overwritten at the next cut. Nothing in this queue targets the public repo.
 
 **This file is the complete intake instruction surface.** It carries every
 title, every extraction rule, every exclusion, and every output contract the
@@ -16,16 +23,32 @@ that file is the *reasoning*, this one is the *queue*.
 
 ## 0. Boundary and authority
 
-- Canon lives **only** in the private `heuristics-canon` repo. This file is a
+- Canon lives **only** in the private `heuristics-canon-research` repo, cloned
+  at `/Users/daniel/Development/heuristics-canon-research`. This file is a
   *proposal*: source-registry candidates, family placements, and card
   mechanisms. It contains **no copied lexicon rows** and is not a snapshot.
-- `reasoning/CONTRACT.md` forbids inventing rule IDs, principle numbers, or
-  source slugs. Every ID cited below as *existing* was read directly out of
-  `lexicons/*.md` this session. Everything proposed is marked **NEW** and
-  carries no ID — IDs are assigned by the canon maintainer at intake.
+- **Never write to the public `heuristics-canon` clone.** It is regenerated
+  from the research repo by `tools/publish.py`; direct edits are silently lost
+  and break the projection's provenance. If a change is needed publicly, make
+  it in the research repo and cut a release.
+- `public/reasoning/CONTRACT.md` (in the research repo — the `public/` tree is
+  the projection *template*, authored privately) forbids inventing rule IDs,
+  principle numbers, or source slugs. Every ID cited below as *existing* was
+  read directly out of `lexicons/*.md`. Everything proposed is marked **NEW**
+  and carries no ID.
+- **ID assignment is tooled, not manual.** In-flight authoring claims a
+  short-lived block via `tools/canon.py reserve` (`rule-reservations.json`),
+  and IDs are owned by the append-only `rule-ledger.json` once promoted into a
+  lexicon. Do not hand-pick an ID because a range looks free.
 - Card prose, when authored, follows the 14 required sections in order and the
   WRIT style family. Nothing here is card text; it is the mechanism brief a
   card would be written from.
+- **Lane names differ from lexicon filenames.** `distilled/` and
+  `literature/extracted/` use short lane names: `accessibility`, `business`,
+  `design`, `engineering`, `epistemics`, `graph`, `interaction`, `ml-systems`,
+  `security`, `writing`. Where this file says *target lexicon*
+  `design-aesthetics` / `graph-theory` / `interaction-ux` / `business-marketing`,
+  the corresponding lane is `design` / `graph` / `interaction` / `business`.
 
 ## 1. Rescan result — `/Users/daniel/Documents/__research_papers/`
 
@@ -536,19 +559,53 @@ chunking, and claim identification run locally. **Distilled claims** — one-lin
 operational restatements, no source prose — may be sent to remote lanes for
 clustering and card drafting.
 
-### 7b. Extraction mechanics
+The research repo already enforces the same split structurally, and this intake
+inherits it rather than inventing a parallel convention:
+`literature/extracted/<lane>/<slug>.txt` holds full third-party text and is
+**gitignored** (research-copy-only under `RIGHTS_DEFAULT`);
+`literature/extraction-manifest.json` is committed and carries **provenance
+only** — slug, lane, title/creator, source basename, sha256, byte and char
+counts, extractor id, date. No source text. The distillation is the publishable
+artifact.
 
-- EPUBs are single-file archives; stdlib `zipfile` opens them with no
-  dependencies. Verified against *On Photography* — two HTML documents, whole
-  book in `index.html`.
-- **PDFs in this corpus may be image scans.** `Image, Music, Text` yields no
+### 7b. Extraction mechanics — use the repo's tooling
+
+Do **not** hand-roll EPUB unzipping. The research repo ships an extractor that
+also records the provenance the distillation must cite:
+
+```
+python3 tools/extract.py <source.epub|pdf> --lane <lane> --slug <slug>
+python3 tools/extract.py --list
+python3 tools/extract.py --verify --sources <dir>     # or set CANON_SOURCE_DIR
+```
+
+Photography-criticism sources take `--lane writing` (register and description
+practice) or `--lane accessibility` where the claim governs description
+delivered to BLV users; C10's material is genuinely both — pick the lane the
+resulting rule will live in, not the one the book belongs to.
+
+- Run `--verify` before authoring. It re-hashes each manifest source and
+  reports `ok` / `DRIFTED` / `MISSING`, so an edition cannot change under a
+  distillation unnoticed (`[PROV-03]`, `[GRPH-14]`). The manifest records
+  **basenames only**, so point it at `/Volumes/Chimay/___Books/_inbox/` via
+  `--sources` or `CANON_SOURCE_DIR`.
+- **PDFs in this corpus may be image scans.** *Image, Music, Text* yields no
   extractable strings, so it needs OCR or a different edition. Check before
-  budgeting time; do not assume PDF means text.
+  budgeting time; do not assume PDF means text. (Verified separately: the EPUBs
+  including Azoulay are real text.)
 - Never quote at length. The distillation stores restatements, not passages —
-  this is both a `CONTRACT.md` anti-reconstruction requirement and the reason
-  the output is safe to send anywhere.
+  both a `CONTRACT.md` anti-reconstruction requirement and the reason the
+  output is safe to send anywhere.
 
 ### 7c. Output contract — per retained claim
+
+**`distilled/DISTILLATION_SPEC.md` is binding and takes precedence.** The table
+below is a lane-local tightening for this corpus, not a replacement: every
+distillation must still make findable the spec's required facts — Source,
+Contributes, stable retrieval key, evidence body, observable trigger,
+action-and-consequence, provenance, applicability and exemptions, and
+**candidate disposition** (what happened to every proposed row, including the
+rejected ones). The fields below map onto that skeleton; they do not shorten it.
 
 | Field | Content |
 |---|---|
@@ -556,7 +613,7 @@ clustering and card drafting.
 | Register(s) | Which of `FORENSIC` / `EDITORIAL` / `INTERPRETIVE` it constrains |
 | Checkability | `mechanical` (grammar or counter over the output) · `judge` (requires a judge model) · `none` |
 | Failure prevented | The concrete wrong output it stops |
-| Source | Slug from §6a plus section pointer |
+| Source | Slug from §6a plus section pointer — must resolve to a durable anchor, not a page number |
 
 **Discard every claim scoring `none` on checkability.** Literary appreciation
 is not the deliverable, and a distillation that keeps it will bury the three
@@ -580,8 +637,11 @@ drafted:
 
 ## 8. Intake sequence
 
-1. Maintainer reviews §2, §5, §6a slugs; assigns IDs. No IDs are assigned in
-   this file.
+0. Work in `/Users/daniel/Development/heuristics-canon-research/`. Never in the
+   public projection.
+1. Maintainer reviews §2, §5, §6a slugs; reserves an ID block with
+   `tools/canon.py reserve` and lets the ledger own the IDs on promotion. No
+   IDs are assigned in this file.
 2. Author C1, C2, C3 first — each blocks live FIR-7 implementation decisions.
 3. Author C5, C6 next — each blocks a VLM-6 slice that is still open and cheap
    to change.
@@ -644,7 +704,8 @@ open a card. Deeper argument for each lives in
 | Photography criticism (§6) | `/Volumes/Chimay/___Books/_inbox/` | **Closed.** 30 in-scope titles + 12 excluded software titles. Rescanned 2026-07-26. |
 | Research papers | `/Users/daniel/Documents/__research_papers/` | 108 files. Complete for CV/PEFT/diffusion/segmentation; **incomplete for statistics** — see §1. |
 | Book catalogue | `/Volumes/Chimay/___Books/CATALOG.md` | 1,966 lines, 72 sections. Swept; §2f lists what is already registered. |
-| Canon target | `/Users/daniel/Development/heuristics-canon/` | Private repo, outside the monorepo boundary. Writes go here only via the maintainer. |
+| **Canon target** | `/Users/daniel/Development/heuristics-canon-research/` | **Private research corpus — the only write target.** `github.com/darce/heuristics-canon-research`. Outside the monorepo boundary; writes go via the maintainer. |
+| Public projection | `/Users/daniel/Development/heuristics-canon/` | **Read-only.** Generated by `tools/publish.py --public ../heuristics-canon`. Never edit; edits are lost at the next cut. |
 | This queue | `/Users/daniel/Development/context-alt-text-monorepo/docs/research/library-heuristics-intake-consolidation.md` | On `main`. |
 | Companion reasoning | `/Users/daniel/Development/context-alt-text-monorepo/docs/research/cross-domain-bridges-and-caption-register.md` | On `main`. Optional depth — see §9c. |
 
@@ -669,11 +730,14 @@ egress rule, and the per-claim output contract. No other project file must be
 read to *execute* the distillation.
 
 **One external read remains necessary**, and it is not a gap in this document:
-the canon's own contract — `heuristics-canon/reasoning/CONTRACT.md`,
-`SOURCES.md`, `PRINCIPLES.md`, and the target `lexicons/*.md`. Card sections,
-existing IDs, and existing slugs are defined there and must never be invented.
-Unavoidable by design: this file is the *input queue*, the canon is the
-*schema*.
+the canon's own contract, all of it inside
+`/Users/daniel/Development/heuristics-canon-research/` —
+`public/reasoning/CONTRACT.md` (card structure),
+`distilled/DISTILLATION_SPEC.md` (distillation structure), `SOURCES.md`,
+`PRINCIPLES.md`, `AGENTS.md` (family routing), and the target `lexicons/*.md`.
+Card sections, existing IDs, and existing slugs are defined there and must
+never be invented. Unavoidable by design: this file is the *input queue*, the
+research repo is the *schema*.
 
 Everything else is now inlined. C9–C14 briefs are in §8. The companion doc is
 optional depth, not a dependency.

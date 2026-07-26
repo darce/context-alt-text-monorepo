@@ -2,9 +2,17 @@
 
 **Task**: LIBSYN-1 · **Date**: 2026-07-25 · **Status**: candidate manifest, not canon
 
-Consolidates every book and paper surfaced across the four library sweeps
+Consolidates every book and paper surfaced across the library sweeps
 (FIR occlusion · research-paper sweep · VLM-6 / captioning sweep · gap-closure
-proposal) into a single intake queue for `github.com/darce/heuristics-canon`.
+proposal · cross-domain bridges · photography-criticism vector) into a single
+intake queue for `github.com/darce/heuristics-canon`.
+
+**This file is the complete intake instruction surface.** It carries every
+title, every extraction rule, every exclusion, and every output contract the
+distillation needs. Nothing else must be read to run the intake. Mechanism
+briefs for the cross-domain and register work live in
+[`cross-domain-bridges-and-caption-register.md`](cross-domain-bridges-and-caption-register.md);
+that file is the *reasoning*, this one is the *queue*.
 
 ## 0. Boundary and authority
 
@@ -381,12 +389,183 @@ for the first landing.** Two sequential ORT sessions; defer the merge.
   Reading LoRA as the primary will produce rank/α advice that does not transfer.
 - **Do not author the score-interval card from secondaries** (§2e).
 
-## 5. Intake sequence
+## 5. Cross-domain bridge sources (NEW)
 
-1. Maintainer reviews §2 slugs; assigns IDs. No IDs are assigned in this file.
+Domains already forced to describe images in words under an external
+constraint. Full reasoning in the companion doc; the intake queue is here.
+
+| Proposed slug | Work / body | Target lexicon | Priority |
+|---|---|---|---|
+| `werner-nomenclature-of-colours` | Syme (after Werner). *Werner's Nomenclature of Colours*. 1821 | `writing`, `design-aesthetics` | High — see §2d |
+| `iconclass` | Iconclass iconographic classification system (Brill / RKD), continuous since the 1940s | `ml-systems` (RAG/FM), `writing` | High |
+| `getty-vocabularies` | Getty Research Institute. *Art & Architecture Thesaurus*, *ULAN*, *TGN*. Open linked data | `ml-systems` (RAG), `graph-theory` | High |
+| `shot-grammar-cinematography` | Standard shot-size / angle / framing taxonomy (film language) | `ml-systems`, `interaction-ux` | **Highest value-per-hour** |
+| `cartographic-generalization` | Map generalization operator theory (selection, simplification, aggregation, displacement, exaggeration) | `ml-systems` (EVAL), `interaction-ux` (VIZ) | Medium |
+| `heraldic-blazon` | The blazon grammar; ordering as reconstruction contract | `writing`, `engineering` (API) | Medium |
+| `anti-racist-description-resources` | Archives for Black Lives in Philadelphia. *Anti-Racist Description Resources*; reparative-description literature | `accessibility`, `writing` | High |
+| `dcmp-description-key` | DCMP *Description Key*; Netflix / BBC audio-description style guides | `accessibility` | **High — most actionable for register** |
+
+`christen-data-matching` (§2d) supports the Getty/Iconclass entity-linkage
+path. Canon already carries `dictionary-of-color-combinations`,
+`interaction-of-color`, `rescribe-audio-descriptions`, `screen-parsing`,
+`building-knowledge-graphs` — do not duplicate them.
+
+## 6. Photography-criticism corpus — `/Volumes/Chimay/___Books/_inbox/`
+
+The register vector (`DescriptionRegister`, cards C10 / C11). Rescanned
+2026-07-26; **12 titles added 2026-07-25 20:16–20:27**, closing every gap
+flagged in the prior pass except Azoulay.
+
+### 6a. Proposed slugs
+
+| Proposed slug | Work |
+|---|---|
+| `berger-ways-of-seeing` | Berger, John, and Michael Dibb. *Ways of Seeing*. Penguin, 1972 (2008 printing) |
+| `berger-understanding-a-photograph` | Berger, John, ed. Geoff Dyer. *Understanding a Photograph*. Penguin Classics, 2013 |
+| `berger-about-looking` | Berger, John. *About Looking*. Vintage International, 2011 |
+| `sontag-on-photography` | Sontag, Susan. *On Photography*. Penguin Modern Classics, 2008 |
+| `sontag-regarding-the-pain-of-others` | Sontag, Susan. *Regarding the Pain of Others*. Picador, 2004 |
+| `barthes-camera-lucida` | Barthes, Roland, tr. Richard Howard. *Camera Lucida*. 2011 |
+| `barthes-image-music-text` | Barthes, Roland, tr. Stephen Heath. *Image, Music, Text* — contains *Rhetoric of the Image* |
+
+Seven slugs, not thirty. The remainder of the inbox is evidence breadth or out
+of scope; see §6b–§6d. One-card-per-book is rejected by `CONTRACT.md`.
+
+### 6b. Priority tiers — extract in this order
+
+**Tier 1 — carries nearly all the operational content. Extract first.**
+
+1. *Ways of Seeing* (Berger) — **the canonical text of this vector**, and newly
+   present. Reproduction changes meaning; the constructed gaze; publicity.
+2. *On Photography* (Sontag) — photographs are not transparent evidence.
+3. *Regarding the Pain of Others* (Sontag) — the late self-revision,
+   specifically on describing suffering. **Governs the gravity flag directly.**
+4. *Rhetoric of the Image*, inside *Image, Music, Text* (Barthes) — anchorage
+   vs relay: the theory of what a caption *does*. Extract the essay, not the
+   volume.
+5. *Camera Lucida* (Barthes) — studium vs punctum; the culturally-legible
+   content versus the detail that pierces one viewer. This is the
+   measurable-versus-conceptual split in its original terms.
+6. *Understanding a Photograph* (Berger) — the most directly practical Berger.
+
+**Tier 2 — extract if Tier 1 yields under ~25 retained claims.**
+
+*About Looking* (Berger) · *The Shape of a Pocket* (Berger) · *Portraits*
+(Berger) · *Permanent Red* (Berger) · *Selected Essays* (Berger) ·
+*Confabulations* (Berger) · *Under the Sign of Saturn* (Sontag) · *Posters*
+(Sontag) · *The Many Ways of Seeing* (Moore).
+
+**Tier 3 — Barthes secondary. Extract only for the semiotic apparatus, and
+only if Tier 1 leaves the anchorage/relay treatment thin.**
+
+*Mythologies* (as *The Eiffel Tower Effect and Other Mythologies*) ·
+*Système de la Mode* (a full formal grammar for describing garments in words —
+structurally the closest thing in the corpus to §5's blazon entry, and worth a
+look on that ground alone) · *Empire of Signs* · *Le degré zéro de l'écriture*
+· *Roland Barthes by Roland Barthes*.
+
+**Tier 4 — do not extract.** Almost nothing on description practice; high token
+cost, near-zero yield. Journals, letters, poetry, correspondence, biography:
+*Reborn* · *As Consciousness Is Harnessed to Flesh* · *Mourning Diary* ·
+*Album* · *From A to X* · *Mural* · the Rolling Stone interview ·
+*John Berger (Critical Lives)* · *Illness as Metaphor* · *On Women* ·
+*Nine Ways of Seeing a Body* (somatics — the title is a false friend) ·
+*Synaesthesia in Cixous and Barthes*.
+
+### 6c. Hard exclusions
+
+Every software title in `_inbox` is **out of scope for this vector**: all
+Robert C. Martin volumes (*Clean Code*, *Clean Architecture*, *Clean Agile*,
+*The Clean Coder*, *Agile Software Development*, *Designing OO C++ with
+Booch*), the three *Pattern Languages of Program Design* volumes, *Patterns of
+Distributed Systems*, *Implementing Effective Code Reviews*, *Clean Code in
+Python*, *Scaling Python with Dask*, *Hands-On GPU Computing with Python*.
+These are a separate later sweep against the `engineering` lexicon and must not
+be mixed into this run.
+
+### 6d. Still to acquire
+
+**Azoulay, Ariella. *The Civil Contract of Photography*** — the strongest
+counter-position to Sontag. Without it the distillation is single-voiced, and a
+register contract derived from one critical tradition will encode that
+tradition's blind spots as system behaviour. This is the last real gap.
+
+## 7. Extraction and distillation contract
+
+Binding for whoever runs the intake.
+
+### 7a. Egress — non-negotiable
+
+**Raw book text must not leave the laptop.** These are copyrighted works from a
+shadow library; shipping them to a third-party inference host is a data-egress
+decision nobody has made, and it is avoidable at zero cost. Extraction,
+chunking, and claim identification run locally. **Distilled claims** — one-line
+operational restatements, no source prose — may be sent to remote lanes for
+clustering and card drafting.
+
+### 7b. Extraction mechanics
+
+- EPUBs are single-file archives; stdlib `zipfile` opens them with no
+  dependencies. Verified against *On Photography* — two HTML documents, whole
+  book in `index.html`.
+- **PDFs in this corpus may be image scans.** `Image, Music, Text` yields no
+  extractable strings, so it needs OCR or a different edition. Check before
+  budgeting time; do not assume PDF means text.
+- Never quote at length. The distillation stores restatements, not passages —
+  this is both a `CONTRACT.md` anti-reconstruction requirement and the reason
+  the output is safe to send anywhere.
+
+### 7c. Output contract — per retained claim
+
+| Field | Content |
+|---|---|
+| Restatement | One line, operational, imperative. Not a paraphrase of the author's prose. |
+| Register(s) | Which of `FORENSIC` / `EDITORIAL` / `INTERPRETIVE` it constrains |
+| Checkability | `mechanical` (grammar or counter over the output) · `judge` (requires a judge model) · `none` |
+| Failure prevented | The concrete wrong output it stops |
+| Source | Slug from §6a plus section pointer |
+
+**Discard every claim scoring `none` on checkability.** Literary appreciation
+is not the deliverable, and a distillation that keeps it will bury the three
+rules that matter. **Target ≈30 retained claims across the entire corpus**, not
+300. If a tier yields more, the filter is too loose.
+
+### 7d. Expected load-bearing output
+
+The distillation should independently rediscover these three; if it does not,
+the extraction filter is wrong and should be rerun before the cards are
+drafted:
+
+1. **Separate the depicted from the depiction** — claims about what was
+   photographed and claims about how it was photographed are different kinds
+   and must not share a voice.
+2. **Attribute every non-visual claim to its bearer** — the artefact, the
+   source, or the viewer; never the depicted person. Mechanically checkable.
+   The single highest-value rule in the vector.
+3. **The assertable set from an image alone is bounded** — everything past it
+   is construction and must be sourced or dropped.
+
+## 8. Intake sequence
+
+1. Maintainer reviews §2, §5, §6a slugs; assigns IDs. No IDs are assigned in
+   this file.
 2. Author C1, C2, C3 first — each blocks live FIR-7 implementation decisions.
 3. Author C5, C6 next — each blocks a VLM-6 slice that is still open and cheap
    to change.
 4. C4 authored now for *design*; the interval-implementation card held pending
    the Tango/Newcombe primaries.
-5. C7, C8 last — real, but neither blocks a decision this week.
+5. C9 (`constrained-domains-have-solved-it`) and C12
+   (`quantization-delta-on-the-failure-metric`) next — C9 is the generating
+   rule behind §5 and pays for itself on every future sweep; C12 gates the
+   Bonsai-27B adoption decision.
+6. Run the §6/§7 photography-criticism intake, then author C10
+   (`attribute-claims-to-their-bearer`) from its output. **C10 is the highest-
+   value card in the whole queue for user safety** — do not author it from
+   these notes alone; it needs the distillation behind it.
+7. C7, C8, C11, C13, C14 last — real, but none blocks a decision this week.
+
+**Card index.** C1–C8 in §3 of this file. C9–C14 in the companion doc's final
+section: C9 `constrained-domains-have-solved-it` · C10
+`attribute-claims-to-their-bearer` · C11 `compression-is-selection-not-truncation`
+· C12 `quantization-delta-on-the-failure-metric` · C13
+`runtime-fork-is-part-of-provenance` · C14 `bounded-role-lets-a-small-model-be-safe`.

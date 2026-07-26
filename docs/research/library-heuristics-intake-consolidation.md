@@ -597,11 +597,43 @@ drafted:
    these notes alone; it needs the distillation behind it.
 7. C7, C8, C11, C13, C14 last — real, but none blocks a decision this week.
 
-**Card index.** C1–C8 in §3 of this file. C9–C14 in the companion doc's final
-section: C9 `constrained-domains-have-solved-it` · C10
-`attribute-claims-to-their-bearer` · C11 `compression-is-selection-not-truncation`
-· C12 `quantization-delta-on-the-failure-metric` · C13
-`runtime-fork-is-part-of-provenance` · C14 `bounded-role-lets-a-small-model-be-safe`.
+### C9–C14 · candidate cards (inlined — no companion read required)
+
+C1–C8 are specified in full in §3. C9–C14 are stated here at brief depth: the
+causal mechanism and the predicted failure, which is what `CONTRACT.md` needs to
+open a card. Deeper argument for each lives in
+`docs/research/cross-domain-bridges-and-caption-register.md`, but that read is
+**optional** — no card below depends on it.
+
+- **C9 · `constrained-domains-have-solved-it`** — when a task requires
+  describing something in words, look first for a domain already forced to do it
+  under an external constraint; the constraint is what produced a reusable
+  vocabulary, grammar, or ordering rule. Predicted failure: reinventing a
+  controlled vocabulary badly, and generating where a lookup would do. This is
+  the generating rule behind §5.
+- **C10 · `attribute-claims-to-their-bearer`** — every non-visual claim in a
+  description is attributed to the artefact, the source, or the viewer, never to
+  the depicted person. Predicted failure: the system asserts inner states,
+  relationships, and significance it cannot know, in the confident register
+  readers trust most. Tension cut in §6e.
+- **C11 · `compression-is-selection-not-truncation`** — a short output at a
+  tighter budget is a different selection under declared survival rules, not a
+  truncated long one. Predicted failure: the short caption drops mandatory facts
+  and keeps decorative ones, because truncation is position-based and importance
+  is not.
+- **C12 · `quantization-delta-on-the-failure-metric`** — an aggregate retention
+  figure for a quantized model is not evidence about the metric that ranks it;
+  measure the delta on the failure mode that decides adoption, stratified.
+  Predicted failure: a model retaining 95% of aggregate score while losing most
+  of its factual calibration is adopted on the aggregate.
+- **C13 · `runtime-fork-is-part-of-provenance`** — a model requiring a vendor
+  fork of the inference runtime carries that fork as a production dependency;
+  the weight licence is not the whole provenance question. Extends C3.
+- **C14 · `bounded-role-lets-a-small-model-be-safe`** — where a contract forbids
+  introducing new facts, model capability buys fluency rather than truth, and a
+  small model is correct; where capability buys truth, it is not. Predicted
+  failure: one model tier chosen for the whole pipeline, over-paying at the
+  fusion stage and under-paying at the captioner.
 
 ## 9. Corpus locations and completeness
 
@@ -636,20 +668,116 @@ candidate, every priority tier, every exclusion, the extraction mechanics, the
 egress rule, and the per-claim output contract. No other project file must be
 read to *execute* the distillation.
 
-Three external reads remain necessary, and none is a gap in this document:
+**One external read remains necessary**, and it is not a gap in this document:
+the canon's own contract — `heuristics-canon/reasoning/CONTRACT.md`,
+`SOURCES.md`, `PRINCIPLES.md`, and the target `lexicons/*.md`. Card sections,
+existing IDs, and existing slugs are defined there and must never be invented.
+Unavoidable by design: this file is the *input queue*, the canon is the
+*schema*.
 
-1. **The canon's own contract** — `heuristics-canon/reasoning/CONTRACT.md`,
-   `SOURCES.md`, `PRINCIPLES.md`, and the target `lexicons/*.md`. Required
-   because card sections, existing IDs, and existing slugs are defined there
-   and must not be invented. Unavoidable by design.
-2. **The companion doc** — for the *mechanism briefs* behind C9–C14. Not
-   needed to extract or to queue; needed to write those six cards.
-3. **`docs/assessments/current/caption-context-enrichment-assessment-2026-07-05.md`
-   §9** — the verdict table for 27 already-dispositioned captioning papers.
-   Deliberately referenced rather than inlined: copying it here would create a
-   second source of truth that rots. Read it *only* to avoid re-sweeping those
-   papers; it feeds no card in this queue.
+Everything else is now inlined. C9–C14 briefs are in §8. The companion doc is
+optional depth, not a dependency.
+
+The one deliberate pointer that stays a pointer:
+`docs/assessments/current/caption-context-enrichment-assessment-2026-07-05.md`
+§9, the verdict table for 27 already-dispositioned captioning papers. Copying
+it here would create a second source of truth that rots. Read it *only* to
+avoid re-sweeping those papers — it feeds no card in this queue, so a distiller
+that skips it loses nothing but time.
 
 Known incompleteness, already stated and not resolvable by editing this file:
 the **statistics primaries** (§1) are unacquired and paywalled, which is why
 the interval-implementation card is explicitly held rather than queued.
+
+### 9c. Project-document corpus — absolute paths
+
+Priority classes, not a reading order. **Distil P1 and P2 only unless
+instructed otherwise**; P3 is listed for completeness and will mostly regenerate
+rules the `engineering` lexicon already holds.
+
+Paths under `…-libsyn-1/` exist **only on branch `feature/libsyn-1`**; all
+`docs/assessments/**` paths are byte-identical in both worktrees.
+
+**P1 — the driver (1). Send this alone if sending one thing.**
+
+```
+/Users/daniel/Development/context-alt-text-monorepo-libsyn-1/docs/research/library-heuristics-intake-consolidation.md
+```
+
+**P1b — optional depth (3). Not required by any card in this queue.**
+
+```
+/Users/daniel/Development/context-alt-text-monorepo-libsyn-1/docs/research/cross-domain-bridges-and-caption-register.md
+/Users/daniel/Development/context-alt-text-monorepo-libsyn-1/docs/research/arxiv-2605-27361-query2conf-applicability-2026-07-14.md
+/Users/daniel/Development/context-alt-text-monorepo-libsyn-1/docs/runbooks/fir-captioning-orchestrator-playbook.md
+```
+
+`cross-domain-bridges-and-caption-register.md` carries the long-form argument
+behind the eight bridges (§5), the Bonsai/PrismML triage, and the
+`DescriptionRegister` product design. The heuristics engine does not need it —
+its card-relevant content is in §5 and §8 of this file. It is an artefact of
+record and a design input, not an intake source. The playbook is an
+implementation dispatch surface; it generates no cards. The Query2Conf note is
+a single-paper applicability check already dispositioned.
+
+**P2 — assessments that carry pipeline claims (8)**
+
+```
+/Users/daniel/Development/context-alt-text-monorepo/docs/assessments/current/caption-context-enrichment-assessment-2026-07-05.md
+/Users/daniel/Development/context-alt-text-monorepo/docs/assessments/current/commercial-face-pipeline-replacement-assessment-2026-07-15.md
+/Users/daniel/Development/context-alt-text-monorepo/docs/assessments/current/vector-store-and-vlm-upgrade-evaluation-2026-07-18.md
+/Users/daniel/Development/context-alt-text-monorepo/docs/assessments/current/google-edge-ai-stack-evaluation-fir-2026-07-18.md
+/Users/daniel/Development/context-alt-text-monorepo/docs/assessments/current/segmentation-vlm-pipeline-feasibility-2026-06-15.md
+/Users/daniel/Development/context-alt-text-monorepo/docs/assessments/current/identity-prose-merge-design-2026-06-15.md
+/Users/daniel/Development/context-alt-text-monorepo/docs/assessments/current/privacy-trust-and-vlm-fit-investigation-2026-06-13.md
+/Users/daniel/Development/context-alt-text-monorepo/docs/assessments/current/cpu-tiered-serving-plan-2026-07-16.md
+```
+
+**P3 — remaining assessments (43), rooted at
+`/Users/daniel/Development/context-alt-text-monorepo/docs/assessments/`**
+
+`current/`: `ace-framework-usefulness-audit-2026-06-18.md` ·
+`agent-skill-workflow-friction-assessment-2026-05-15.md` ·
+`alt-context-dashboard-ux-assessment-2026-05-05.md` ·
+`context7-usefulness-audit-2026-06-18.md` ·
+`durability-gap-fixes-plan-2026-07-10.md` ·
+`e15-app-refactoring-preimplementation-assessment-2026-05-06.md` ·
+`gpu-availability-async-pool-adversarial-review-2026-07-16.md` ·
+`identity-schema-truth-divergence-assessment-2026-07-05.md` ·
+`localwp-batch-smoke-argument-plumbing-2026-05-05.md` ·
+`opportunistic-gpu-provisioning-plan-2026-07-16.md` ·
+`opportunistic-gpu-provisioning-plan-2026-07-16-grok-review.md` ·
+`portfolio-quadrant-mvp-strategy-assessment-2026-06-11.md` ·
+`public-demo-wp-plugin-launch-assessment-2026-04-30.md` ·
+`python-env-unification-uv-assessment-2026-07-10.md` ·
+`recognition-roster-suggestion-workflow-assessment-2026-05-05.md` ·
+`remote-gate-oci-tailscale-security-assessment-2026-07-12.md` ·
+`roster-dashboard-workbench-ux-assessment-2026-07-04.md` ·
+`ux-ui-pass-assessment-2026-07-15.md` ·
+`workbench-ui-refactor-assessment-2026-07-04.md` ·
+`wp-alt-context-cross-cutting-assessment.md` ·
+`wp-demo-provisioning-assessment-triage-2026-04-30.md`
+
+top level: `README.md` ·
+`clustering-pipeline-postgres-refactor-literature-2026-04-26.md` ·
+`pgcache-description-service-db-read-write-assessment-2026-04-30.md` ·
+`security-review-prototype-wp-alt-context-2026-07-11.md`
+
+`archive/`: `README.md` ·
+`agent-handoff-mcp-cli-vs-native-tools-investigation-2026-04-16.md` ·
+`agent-performance-cold-start-compaction-tree-layout-2026-04-23.md` ·
+`agent-skills-vs-spec-kit-evaluation.md` ·
+`dashboard-md-vs-txt-guidance-drift-investigation-2026-04-16.md` ·
+`e15-3a-br21-clustering-insert-statement-timeout-2026-04-23.md` ·
+`e17-12-codex-skill-registration-discovery-2026-04-18.md` ·
+`e17-13-hoisted-surface-inventory.md` ·
+`infailed-sql-transaction-investigation-2026-04-09.md` ·
+`infailed-sql-transaction-persistent-after-slr-2026-04-10.md` ·
+`parallel-reviews-and-autonomous-debug-assessment-2026-04-16.md` ·
+`review-guide-hardening-source-crosswalk.md` ·
+`review-runs-tool-bridge-gap-investigation-2026-04-16.md` ·
+`skill-pattern-extraction-assessment.md` · `superpowers-evaluation.md`
+
+**Egress note.** These are project documents, not shadow-library text. The §7a
+egress prohibition does **not** apply to them — they may go to remote lanes
+whole. §7a governs only the book and paper corpora.

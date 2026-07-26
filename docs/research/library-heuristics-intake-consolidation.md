@@ -579,10 +579,12 @@ python3 tools/extract.py --list
 python3 tools/extract.py --verify --sources <dir>     # or set CANON_SOURCE_DIR
 ```
 
-Photography-criticism sources take `--lane writing` (register and description
-practice) or `--lane accessibility` where the claim governs description
-delivered to BLV users; C10's material is genuinely both — pick the lane the
-resulting rule will live in, not the one the book belongs to.
+Photography-criticism sources take **`--lane writing`**. Not
+`--lane accessibility`: that lexicon is WCAG conformance mechanics and owns
+whether a text equivalent exists, not what it may claim — see §10. If the
+distillation clears the §10d threshold and a `depiction` lexicon is opened, the
+lane is renamed then; extracting into `writing` first costs nothing and the
+manifest records the move.
 
 - Run `--verify` before authoring. It re-hashes each manifest source and
   reports `ok` / `DRIFTED` / `MISSING`, so an edition cannot change under a
@@ -845,3 +847,77 @@ top level: `README.md` ·
 **Egress note.** These are project documents, not shadow-library text. The §7a
 egress prohibition does **not** apply to them — they may go to remote lanes
 whole. §7a governs only the book and paper corpora.
+
+## 10. Proposed new lexicon — `depiction` (NEW)
+
+**Photography criticism does not belong in `accessibility`.** That lexicon is
+WCAG conformance mechanics: contrast floors, programmatic structure, accessible
+names, reflow. Its one adjacent row, `A11Y-02`, governs *whether a text
+equivalent exists and states the content's purpose* — not what the equivalent
+may claim. Twenty rows about register, attribution, and the assertable set
+would swamp a conformance lexicon and would fire on artifacts that have no
+accessibility context at all.
+
+**Recommendation: open a new lexicon.** Proposed name `depiction` (alternative:
+`image-description`; prefer the shorter — it covers analysis as well as
+description).
+
+### 10a. Scope
+
+Rules that fire on **an artifact that describes or interprets a depicted image
+in words**. Deliberately artifact-triggered, not audience-triggered, so it
+serves alt text, museum and archival catalogue records, audio-description
+scripts, art-historical analysis, VLM captions, and image-dataset labels
+without special-casing any of them. The art-image use is not a bonus — it is
+the generality test that keeps the rules from collapsing into alt-text
+folklore.
+
+### 10b. Proposed families (NEW — no IDs, no prefix collisions with the
+existing 74)
+
+| Prefix | Covers | Feeding sources |
+|---|---|---|
+| `REG` | Register and voice: `FORENSIC` / `EDITORIAL` / `INTERPRETIVE`, the restrict-only gravity flag, register declared per artifact rather than inferred | Sontag (both), Azoulay, DCMP/Netflix/BBC style guides |
+| `ATTR` | Claim attribution and the assertable set: what an image alone supports, who a non-visual claim is attributed to, depicted vs depiction | Azoulay, Sontag, Berger, Barthes (anchorage/relay) |
+| `ICON` | Iconography and subject vocabulary: closed classification, entity binding, name-to-region binding | Iconclass, Getty AAT/ULAN/TGN, `christen-data-matching` |
+| `FRAM` | Framing as meaning: shot grammar, gaze, crop, reproduction context altering sense | Berger *Ways of Seeing*, shot-grammar taxonomy |
+| `SEL` | Selection under a length budget, and ordering as a reconstruction contract | Cartographic generalization, heraldic blazon |
+
+**Colour stays where it is.** `COL` already exists in `design-aesthetics`;
+Werner extends it rather than seeding `ICON`. C7's *binding rule* is a `COL`/
+`ICON` row, while the *measurement* of hallucination under that binding stays
+in `ml-systems` EVAL.
+
+### 10c. Boundary cuts — state these in the lexicon header
+
+- **vs `accessibility`** — a11y owns whether a text equivalent exists, reaches
+  AT, and serves the content's purpose. `depiction` owns what it is permitted
+  to say. `A11Y-02` is the handoff point and should cross-reference, not absorb.
+- **vs `writing`** — writing owns prose mechanics: clarity, structure, register
+  discipline in general. `depiction` owns claims about an image. A rule that
+  would be true of a memo belongs in `writing`.
+- **vs `epistemics`** — epistemics owns evidence and claim discipline in
+  general. `depiction` rules are its image-specific instance and must **cite**
+  the epistemics row, never restate it. This is the largest duplication risk.
+- **vs `design-aesthetics`** — that lexicon is about *making* visual artifacts;
+  `depiction` is about *reading* them.
+- **vs `ml-systems`** — EVAL/CAL/FM own how caption quality is measured and how
+  a model is ranked. `depiction` owns what the output must contain and may
+  assert. C5 and C6 stay in `ml-systems`; C10 and C11 move here.
+
+### 10d. The falsifiable test — decide after distillation, not before
+
+A new lexicon earns its existence at roughly the scale of the smallest current
+one (`writing`, 46 rows; `graph-theory`, 39). §7c targets ≈30 retained claims
+across the whole photography corpus, and the §5 bridges should add ~10–15 more.
+
+**If the §6/§7 run yields fewer than ~15 rows that survive the checkability
+filter, do not open the lexicon** — fold them into `writing` as a `REG`/`ATTR`
+family pair and revisit when the art-analysis use case actually lands. Opening
+a thin lexicon that mostly cross-references `epistemics` and `writing` is worse
+than a well-placed family, and `CONTRACT.md`'s coverage policy rejects it on
+the same grounds it rejects one-card-per-book.
+
+Sequence: run the distillation first (§8 step 6), count survivors, then decide.
+The lane for extraction in the meantime is `writing` — it is the correct
+fallback and requires no new tree.

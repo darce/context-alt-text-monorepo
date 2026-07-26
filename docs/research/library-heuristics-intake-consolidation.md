@@ -427,8 +427,9 @@ flagged in the prior pass except Azoulay.
 | `sontag-regarding-the-pain-of-others` | Sontag, Susan. *Regarding the Pain of Others*. Picador, 2004 |
 | `barthes-camera-lucida` | Barthes, Roland, tr. Richard Howard. *Camera Lucida*. 2011 |
 | `barthes-image-music-text` | Barthes, Roland, tr. Stephen Heath. *Image, Music, Text* — contains *Rhetoric of the Image* |
+| `azoulay-civil-contract-of-photography` | Azoulay, Ariella. *The Civil Contract of Photography*. Zone Books, 2021 |
 
-Seven slugs, not thirty. The remainder of the inbox is evidence breadth or out
+Eight slugs, not thirty. The remainder of the inbox is evidence breadth or out
 of scope; see §6b–§6d. One-card-per-book is rejected by `CONTRACT.md`.
 
 ### 6b. Priority tiers — extract in this order
@@ -447,6 +448,16 @@ of scope; see §6b–§6d. One-card-per-book is rejected by `CONTRACT.md`.
    content versus the detail that pierces one viewer. This is the
    measurable-versus-conceptual split in its original terms.
 6. *Understanding a Photograph* (Berger) — the most directly practical Berger.
+7. *The Civil Contract of Photography* (Azoulay) — **read against Sontag, not
+   after her.** Where Sontag treats the photograph as an authored artefact that
+   risks aestheticising its subject, Azoulay treats photography as a civil
+   relation among photographer, photographed, and spectator in which the
+   photographed person is a participant with a claim, not a passive object.
+   That reframing is what makes the attribution rule (§7d.2) a *right* rather
+   than a stylistic preference, and it is the direct source for treating the
+   depicted person as a party the description is accountable to. Its presence
+   is what allows the register contract to be derived from a genuine tension
+   rather than from one tradition's settled opinion.
 
 **Tier 2 — extract if Tier 1 yields under ~25 retained claims.**
 
@@ -483,12 +494,34 @@ Python*, *Scaling Python with Dask*, *Hands-On GPU Computing with Python*.
 These are a separate later sweep against the `engineering` lexicon and must not
 be mixed into this run.
 
-### 6d. Still to acquire
+### 6d. Acquisition status — complete
 
-**Azoulay, Ariella. *The Civil Contract of Photography*** — the strongest
-counter-position to Sontag. Without it the distillation is single-voiced, and a
-register contract derived from one critical tradition will encode that
-tradition's blind spots as system behaviour. This is the last real gap.
+**Nothing further is outstanding.** Azoulay arrived 2026-07-25 20:34 and was
+the last gap. Every Tier-1 title is present and extractable. The corpus is
+closed for this intake run.
+
+Verified extractable, no OCR required: Azoulay (31 XHTML documents, 1.6 MB of
+text; the 83 MB file size is 92 embedded images), *On Photography* (single-file
+EPUB). The one known OCR case is *Image, Music, Text* — see §7b.
+
+### 6e. Required tension — do not resolve it
+
+The corpus now contains a genuine disagreement, and the distillation must
+preserve it rather than average it away. Sontag argues the photograph is an
+authored artefact whose circulation can aestheticise or anaesthetise suffering;
+Azoulay argues photography is a civil relation in which the photographed person
+holds a standing claim on the spectator. Both bear directly on what a caption
+may say about a person, and they do not reduce to one rule.
+
+`CONTRACT.md` requires a **Tensions** table with an explicit cut. For card C10
+the cut is: *the depicted person is a party the description is accountable to
+(Azoulay), which is why non-visual claims are attributed to the artefact or
+source rather than to them (Sontag's caution operationalised) — accountability
+is discharged by attribution, not by silence.* A distillation that returns only
+one side has filtered wrongly and should be rerun.
+
+Berger sits across both and supplies the third rule (the assertable set is
+bounded); Barthes supplies the vocabulary (anchorage/relay, studium/punctum).
 
 ## 7. Extraction and distillation contract
 
@@ -569,3 +602,54 @@ section: C9 `constrained-domains-have-solved-it` · C10
 `attribute-claims-to-their-bearer` · C11 `compression-is-selection-not-truncation`
 · C12 `quantization-delta-on-the-failure-metric` · C13
 `runtime-fork-is-part-of-provenance` · C14 `bounded-role-lets-a-small-model-be-safe`.
+
+## 9. Corpus locations and completeness
+
+### 9a. Absolute paths
+
+| Corpus | Absolute path | State |
+|---|---|---|
+| Photography criticism (§6) | `/Volumes/Chimay/___Books/_inbox/` | **Closed.** 30 in-scope titles + 12 excluded software titles. Rescanned 2026-07-26. |
+| Research papers | `/Users/daniel/Documents/__research_papers/` | 108 files. Complete for CV/PEFT/diffusion/segmentation; **incomplete for statistics** — see §1. |
+| Book catalogue | `/Volumes/Chimay/___Books/CATALOG.md` | 1,966 lines, 72 sections. Swept; §2f lists what is already registered. |
+| Canon target | `/Users/daniel/Development/heuristics-canon/` | Private repo, outside the monorepo boundary. Writes go here only via the maintainer. |
+| This queue | `/Users/daniel/Development/context-alt-text-monorepo/docs/research/library-heuristics-intake-consolidation.md` | On `feature/libsyn-1`. |
+| Companion reasoning | `/Users/daniel/Development/context-alt-text-monorepo/docs/research/cross-domain-bridges-and-caption-register.md` | On `feature/libsyn-1`. |
+
+Tier-1 photography titles, exact filenames under
+`/Volumes/Chimay/___Books/_inbox/`:
+
+```
+Ways of seeing - based on the BBC television series directed -- John Berger; Michael Dibb -- Penguin Books for Art, 2008 -- Penguin Books Ltd -- isbn13 9780140135152 -- 8d6d01a254c3f90dced09998c57b976e -- Anna’s Archive.epub
+On Photography -- Susan Sontag -- Penguin modern classics, Reissued, London, 2008 -- Penguin Classics -- isbn13 9780141035789 -- 6b0a00d96b998a8c6fa0994f4bb6a2b0 -- Anna’s Archive.epub
+Regarding the Pain of Others -- Susan Sontag -- First Picador edition, New York, 2004 -- Farrar, Straus and Giroux -- isbn13 9781466853577 -- 317c1f6bd0892acd7539e3411e83159a -- Anna’s Archive.epub
+Image, music, text (Barthes, Roland, 1915-1980, Heath, Stephen) (z-library.sk, 1lib.sk, z-lib.sk).pdf
+Camera Lucida- Reflections on Photography -- Barthes, Roland -- 2011 -- 504c753f6934a6a8407553e8e0cb22ae -- Anna’s Archive.epub
+Understanding a Photograph -- Berger, John; Dyer, Geoff; Dyer, Geoff -- Penguin classics, London, 2013 -- Penguin Books, Limited -- isbn13 9780718196011 -- 503c5cab6b4cb75220175a6e77dc96e7 -- Anna’s Archive.epub
+The Civil Contract of Photography -- Ariella Azoulay -- 2021 -- Zone Books -- 2c84bfd4c0ab85c7c900417db2776f5e -- Anna’s Archive.epub
+```
+
+### 9b. Completeness statement
+
+**This file is sufficient to run the intake.** It contains every source
+candidate, every priority tier, every exclusion, the extraction mechanics, the
+egress rule, and the per-claim output contract. No other project file must be
+read to *execute* the distillation.
+
+Three external reads remain necessary, and none is a gap in this document:
+
+1. **The canon's own contract** — `heuristics-canon/reasoning/CONTRACT.md`,
+   `SOURCES.md`, `PRINCIPLES.md`, and the target `lexicons/*.md`. Required
+   because card sections, existing IDs, and existing slugs are defined there
+   and must not be invented. Unavoidable by design.
+2. **The companion doc** — for the *mechanism briefs* behind C9–C14. Not
+   needed to extract or to queue; needed to write those six cards.
+3. **`docs/assessments/current/caption-context-enrichment-assessment-2026-07-05.md`
+   §9** — the verdict table for 27 already-dispositioned captioning papers.
+   Deliberately referenced rather than inlined: copying it here would create a
+   second source of truth that rots. Read it *only* to avoid re-sweeping those
+   papers; it feeds no card in this queue.
+
+Known incompleteness, already stated and not resolvable by editing this file:
+the **statistics primaries** (§1) are unacquired and paywalled, which is why
+the interval-implementation card is explicitly held rather than queued.

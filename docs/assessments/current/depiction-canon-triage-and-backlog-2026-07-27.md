@@ -44,8 +44,12 @@ Consequences, in order of how much they move the plan:
 
 The eval's §6 opens with F2. It should open with the seam, then F1.
 
-**Canon**: [PROV-09] prompt configuration is production lineage · [NAME-03] no lying
-names · [REF-26] DRY is knowledge, not text · [TEST-15] prove the green can go red.
+**Canon**: [PROV-09] prompt configuration is production lineage · [TEST-15] prove
+the green can go red · [REF-10] extract only what must change together.
+([NAME-03] and [REF-26] are **not** load-bearing for DEPICT-0: the dishonest
+stamp is a provenance/value defect, not a naming defect; REF-26's multi-format
+trigger does not fire on same-format Python string copies — see
+`DEPICT-0-prompt-lineage-seam-task-plan.md` Workflow Principles and Not-Doing.)
 
 ### D2 — The production prompt version label is wrong
 
@@ -58,7 +62,9 @@ prompt_or_task_version, context_hash)`).
 Any cross-version quality comparison keyed on that field is mislabelled, and a real
 promotion to v2/v3 cannot be distinguished from the current state by the stamp.
 
-**Canon**: [PROV-09] · [NAME-03] · [PROV-01] every output walks back to its evidence.
+**Canon**: [PROV-09] · [PROV-01] every output walks back to its evidence · [TEST-15].
+([NAME-03] not load-bearing — stamp lie is provenance/value, not a naming defect;
+matches DEPICT-0.)
 
 ### D3 — v3 has not shipped, so F4's window is open
 
@@ -78,8 +84,8 @@ severity and appears in the Canon column.
 
 | # | Task | Canon | Enforcement point | Cost | Mode |
 |---|---|---|---|---|---|
-| 1 | **DEPICT-0 — one prompt source, one parity test, an honest version stamp.** Extract the shared prompt text to a single module consumed by both `gpu_remote_adapter` and `bakeoff`; add a test that fails when they diverge; derive or assert `prompt_or_task_version` against the prompt actually shipped. | [PROV-09] [NAME-03] [REF-26] [REF-10] [TEST-15] | `system_prompt` | S–M | grok flock |
-| 2 | **F1 split — do not treat a single DEPICT-1 row as "F1 closed".** **(a) Service/contract half (this wave, DEPICT-1):** `voice` on speech-allowlist context-pack entries (`creator \| catalogue \| operator \| derived`); pure `partition_context_pack` so creator-tagged fields are quotable-only, never absorbable; boundary→partition voice-value proofs (including `ProductContext` / `IdentityContextItem`). Additive under `extra="forbid"`. **Does not** change production weave wording or wire partition into the adapter. **(b) Production-weave half (OUT of this wave, unowned — no plan file):** stop unmarked weave of creator-tagged fields in the shared production system prompt; render creator entries quoted/voice-tagged on the service pack path; REBIND-ONLY of post-DEPICT-0 `PRODUCTION_PROMPT` (never mutate frozen `.body`); consumers stay accessor-only via `production_system_prompt()`. **Acceptance for (b):** rebind lands voice-honouring body + lineage together; service-path test proves creator speech is not absorbed unmarked; DEPICT-0 seam + DEPICT-1 (a) are prerequisites. **Harness `ContextPack.voice`** (`scripts/eval_harness/manifest.py`) is **also OUT / unowned** — neither (a) nor (b). | `ATTRIB-07` (B·d) `ATTRIB-02` (B·v) `BOUND-02` · [API-09] don't change it, add it · [TEST-15] | (a) `context_pack_input` (service unit) · (b) `system_prompt` + service render (unowned) | (a) M · (b) unowned | (a) grok flock this wave · (b) no owner |
+| 1 | **DEPICT-0 — one prompt source, one parity test, an honest version stamp.** Extract the shared prompt text to a single module consumed by both `gpu_remote_adapter` and `bakeoff`; add a test that fails when they diverge; derive or assert `prompt_or_task_version` against the prompt actually shipped. | [PROV-09] [TEST-15] [REF-10] (load-bearing; matches DEPICT-0). **Not** [NAME-03] / [REF-26] — plan refuses both (stamp = provenance/value; REF-26 multi-format trigger does not fire). | `system_prompt` | S–M | grok flock |
+| 2 | **F1 split — do not treat a single DEPICT-1 row as "F1 closed".** **(a) Service/contract half (this wave, DEPICT-1):** `voice` on speech-allowlist context-pack entries (`creator \| catalogue \| operator \| derived`); pure `partition_context_pack` so creator-tagged fields are quotable-only, never absorbable; boundary→partition voice-value proofs (including `ProductContext` / `IdentityContextItem`). Additive under `extra="forbid"`. **Does not** change production weave wording or wire partition into the adapter. **(b) Production-weave half (OUT of this wave, unowned — no plan file):** stop unmarked weave of creator-tagged fields in the shared production system prompt; render creator entries quoted/voice-tagged on the service pack path; REBIND-ONLY of post-DEPICT-0 `PRODUCTION_PROMPT` (never mutate frozen `.body`); consumers stay accessor-only via `production_system_prompt()`. **Acceptance for (b):** rebind lands voice-honouring body + lineage together; service-path test proves creator speech is not absorbed unmarked; DEPICT-0 seam + DEPICT-1 (a) are prerequisites. **Harness `ContextPack.voice`** (`scripts/eval_harness/manifest.py`) is **also OUT / unowned** — neither (a) nor (b). | `ATTRIB-07` (B·d, oppressive-string subset only) · [API-09] shape only · [TEST-15]. **Not** `ATTRIB-02` / `BOUND-02` as F1 (a) warrants — both are *output* rules (who/by-whom; craft/staging mix); DEPICT-1 explicitly refuses them for input CMS provenance (`DEPICT-1` Slice 1 Canon + "No canon warrant"). | (a) `context_pack_input` (service unit) · (b) `system_prompt` + service render (unowned) | (a) M · (b) unowned | (a) grok flock this wave · (b) no owner |
 
 Rank 1 before rank 2 only because rank 2's **(b) prompt-side half** has nowhere
 safe to land until the seam is closed. The **(a) pack-side / contract half** of
@@ -91,8 +97,8 @@ not close F1** — only F1 (a) is delivered in this wave; F1 (b) and harness
 
 | # | Task | Canon | Enforcement point | Cost | Mode |
 |---|---|---|---|---|---|
-| 3 | **DEPICT-2 (F8) — inner-state-attribution counter** in `caption_metrics.py`. Report-only first. LIBSYN-1 §3.4 called this the highest-value safety signal; it is now canon-backed. | `ATTRIB-01` (B·d) · [EVAL-11] open-ended tasks need the right scorer · [EVAL-08] CACE · [TEST-15] | `eval_metric` | S | grok flock |
-| 4 | **DEPICT-3 (F6) — agentless-passive / mutual-event detector.** Pure grammar, no model, no context, no aggregate. Same shape as the existing `_META_FRAMING_PHRASES` detector at `caption_metrics.py:39`. | `ATTRIB-08` (S·d) · [TEST-15] | `post_generation_check` | XS | grok flock |
+| 3 | **DEPICT-2 (F8 + F6) — inner-state-attribution counter (Slice 1) AND the agentless-passive / mutual-event detector (Slice 2, absorbed from row 4)** in `caption_metrics.py`. Report-only first. LIBSYN-1 §3.4 called this the highest-value safety signal; it is now canon-backed. | `ATTRIB-01` (B·d) · `ATTRIB-08` (S·d) · [EVAL-11] open-ended tasks need the right scorer · [EVAL-08] CACE · [TEST-15] | `eval_metric` | S | grok flock |
+| 4 | **DEPICT-3 (F6) — agentless-passive / mutual-event detector.** **ABSORBED into DEPICT-2 Slice 2** — do not dispatch as a separate lane. Delivered by `DEPICT-2-depiction-metrics-task-plan.md` § Slice 2 (plan pin `:596-893`; heading `### Slice 2: Agentless-passive / mutual-event detector (report-only)`), sole owner of `caption_metrics.py`. Same shape as the existing `_META_FRAMING_PHRASES` detector. Dual-lane collision with §6e Lane C if re-opened. | `ATTRIB-08` (S·d) · [TEST-15] | `post_generation_check` (via DEPICT-2 / Lane C) | — | **absorbed → DEPICT-2 Slice 2 / Lane C** |
 | 5 | **DEPICT-4 (F2) — give emotion a bearer** in the v2/v3 prompt. *"her expression reads as anxious"* satisfies both `ATTRIB-01` and the ALTQ-1 *emotion legitimate* finding; *"she is anxious"* satisfies neither. Register, not silence. | `ATTRIB-01` `ATTRIB-03` · [EVAL-08] | `system_prompt` | XS | grok flock |
 
 **Ordering correction.** The eval sequences F2 → F8. Reverse it. F2 is a prompt change
@@ -340,11 +346,11 @@ inner-state counter and the §3.1 density metric both land in
 `caption_metrics.py`. Two concurrent lanes mutating one file will conflict and
 raise phantom review alarms. Revised fan-out, no file collisions:
 
-| Lane | Owns | Carries |
+| Lane | Owns (hard path set — transcribed from current plans; no unbound "any test") | Carries |
 |---|---|---|
-| **A — DEPICT-0** | `gpu_remote_adapter.py`, `bakeoff.py` prompt constants, `settings.py`, new parity test | prompt-lineage seam, honest version stamp |
-| **B — DEPICT-C** | `scene/` contract models, context-pack schema | F1 `voice` field, register enum, restrict-only gravity, §11c bound-term shape. **Contract only — no metrics.** |
-| **C — METRICS** | `caption_metrics.py` (sole owner) | F8 inner-state attribution counter, §3.1 signal density, §6c's Williams/C5 resolution stated in the module docstring |
+| **A — DEPICT-0** | From DEPICT-0 Constraints (hard boundary): `scene/infrastructure/vlm/gpu_remote_adapter.py`; `scripts/eval_harness/bakeoff.py`; `scene/config/settings.py`; `scene/interface_adapters/http/deps.py` (**only** the one-line drop of free-string `prompt_or_task_version=` once the adapter rejects free-string stamp kwargs); new shared-prompt module `scene/prompts/caption_system.py` (and package init as needed); tests that prove those surfaces (new + existing assertions that encode the old lying default `"3"` or the free-string constructor override). Paths relative to `apps/prototype-description-service/`. | prompt-lineage seam, honest version stamp ([PROV-09] [TEST-15] [REF-10]) |
+| **B — DEPICT-C / DEPICT-1** | From DEPICT-1 Constraints + Files and Surfaces: `scene/interface_adapters/http/schemas/requests.py`; co-located schema helpers under `scene/interface_adapters/http/schemas/` including new `scene/interface_adapters/http/schemas/context_contract.py`; domain `StrEnum` vocabularies in `scene/domain/description.py`; characterization / contract tests under `scene/tests/` (`test_context_pack.py`, new `test_context_voice_contract.py`, `test_description_register_contract.py`, `test_gravity_contract.py`). **Does not own** Lane A paths, `caption_metrics.py`, `responses.py`, `visual_facts_service.py`, or harness `manifest.py`. | F1 (a) `voice` field + partition, register enum, restrict-only gravity. **Contract only — no metrics.** (Bound-term shape withdrawn per §10g.) |
+| **C — METRICS / DEPICT-2** | From DEPICT-2 Constraints (exact set): `scripts/eval_harness/caption_metrics.py` (**sole owner**); `scene/tests/test_eval_harness_caption_metrics.py`; and (Slice 4 only) `scripts/eval_harness/report.py` plus the **reserved** report-emit test `scene/tests/test_eval_harness_report_depiction.py`. No edits under any other path. Paths relative to `apps/prototype-description-service/`. | **F8** inner-state attribution counter (`ATTRIB-01`); **F6** agentless-passive / mutual-event detector (`ATTRIB-08`, DEPICT-2 Slice 2 — absorbs former P1 item 4 / DEPICT-3); §3.1 signal density; §6c's Williams/C5 resolution in the module docstring; report emit of new fields |
 
 Lane C is the one that unblocks the GPU window. Lane B is the one that must not
 be deferred, because its cost grows with every call site. Lane A is independent
@@ -797,14 +803,17 @@ Two more cheap, warranted items, both prompt-and-metric only:
 
 | Lane | Before | **After** | Warrant |
 |---|---|---|---|
-| **C — METRICS** | first; F8 counter + §3.1 density + Williams/C5 | **first, unchanged, + `EVAL-11` guard and its discrimination test** | `EVAL-11`, [TEST-15] |
-| **B — CONTRACT** | F1 `voice` + register enum + gravity + bound-term shape | **unchanged, minus the bound-term shape** — no colour field until §10e's trigger | `API-09`, `API-10` |
-| **A — DEPICT-0** | prompt-lineage seam | unchanged | `PROV-09` |
+| **C — METRICS / DEPICT-2** | first; F8 counter + §3.1 density + Williams/C5 | **first; + F6 agentless-passive / mutual-event (`ATTRIB-08`, absorbs P1 item 4 / DEPICT-3 into Slice 2) + `EVAL-11` guard and its discrimination test** | `ATTRIB-01` (F8), `ATTRIB-08` (F6), `EVAL-11`, [TEST-15] |
+| **B — CONTRACT** | F1 `voice` + register enum + gravity + bound-term shape | **unchanged, minus the bound-term shape** — no colour field until §10e's trigger | `ATTRIB-07`, `API-09`, `API-10`, [TEST-15] (no `ATTRIB-02`/`BOUND-02` for input voice) |
+| **A — DEPICT-0** | prompt-lineage seam | unchanged | `PROV-09`, [TEST-15], [REF-10] (not `NAME-03` / `REF-26`) |
 | **D — WERNER-FCA** | rebuilt on ISCC–NBS, last | **out of scope; trigger-gated (§10e)** | `FM-04` when it fires |
 | **new — abstain** | — | **OUT of this wave; unowned.** `CAL-02` abstain + `PROV-01` evidence-walkback, prompt+metric only | `CAL-02`, `PROV-01` |
 
 **Abstain lane is OUT and unowned.** No plan file in this wave delivers it:
-DEPICT-2 scopes it out explicitly (`DEPICT-2-depiction-metrics-task-plan.md:248-256`),
+DEPICT-2 scopes it out explicitly under heading
+`### CAL-02 and density numerator — metric side only (scope decision)`
+(`DEPICT-2-depiction-metrics-task-plan.md:269-280`; disposition
+"**Scoped out of DEPICT-2**" at the CAL-02 row),
 and DEPICT-0 / DEPICT-1 never touch `CAL-02`. Merging DEPICT-0 + DEPICT-1 +
 DEPICT-2 does **not** land abstain behaviour. Named acceptance criteria for
 whoever authors it later: (1) the production prompt instructs abstention when

@@ -448,3 +448,92 @@ What changed is that it moved from *blocked pending an admissible vocabulary* to
   is binary, so applying FCA means thresholding away the metric that does the
   work. Roster record linkage is a genuine formal context but is already assigned
   to `christen-data-matching` (§2d). Both recorded here so neither is reopened.
+
+## 8. Colour-name APIs assessed; §7e corrected
+
+### 8a. Correction to §7e — re-extraction is pinned and verified, not open-ended
+
+§7e claimed the literal catalogue "is in neither repo" and that re-extraction was
+"not free, and not currently on anyone's list." The first half is true only in
+the trivial sense; the framing was wrong.
+
+- The books in `/Volumes/Chimay/___Books/` **are the complete originals**.
+  `_graph/` is a derivative metadata artifact, not the book.
+- `literature/extraction-manifest.json[124]` pins the extraction completely:
+  `source_sha256: 2790d75d…b57631`, `source_bytes: 7508006`,
+  `extracted_chars: 32233`, `extractor: "stdlib-epub"`, `extracted: 2026-07-26`,
+  3 chapters.
+- **The epub's SHA-256 was recomputed and matches the manifest exactly.**
+
+⇒ Re-extraction is *deterministic, provenance-verified, and small* — 32,233
+characters for the entire book. The `L00109`/`L00115` line references throughout
+§11 are stable against that pinned extract. **Lane D step 0 is re-running a
+named extractor against a SHA-matched file**, not a research task. Revise the
+cost accordingly.
+
+### 8b. `meodai/color-name-api` — yes for one specific slot, no for the one it looks like it fills
+
+MIT, self-hostable (Dockerfile + compose), CIEDE2000 ΔE in LAB with a VP-tree
+index, serving several lists including a **`basic` list of 21 colours**.
+
+**It cannot supply `binding` for FORENSIC.** Its mechanism is nearest-by-numeric-
+distance. Amended §11d: a numeric mapping, if added, is *"for rendering or
+clustering, **never for `binding`**."* Adopting ΔE as the binding mechanism walks
+straight into the constraint that exists to prevent the `FM-11` error.
+
+**It fails §11c's admission bar — on the versioning half, not the referent
+half.** The bar is *versioned **and** every term carries a public referent*.
+
+- *Referent*: **it beats Werner here.** Every term carries a hex — public,
+  exactly reproducible, and it survives as text, which §11d says Werner's
+  hand-coloured plate does not. Worth stating plainly.
+- *Versioned*: the endpoint is `/v1/`; the **source data carries no published
+  version**. §11c's own justification for `vocabulary_version` is that an
+  unversionable vocabulary "cannot be diffed or re-scored." Self-hosting and
+  pinning a dataset commit manufactures a usable version, but pinning a
+  dependency is not the publisher versioning the vocabulary. Honest label:
+  **pin-able, not published-versioned.**
+
+**No structured attributes** — name↔hex plus computed colour values, "no
+hierarchical relations or categorical metadata." So there is no `delta` except a
+float. §11c-i's achievement is a delta that reads as Werner's own *incline
+towards* / *intermediate* / *fall or pass into* — auditable in kind, not just in
+magnitude. A ΔE number tells you *how far*, never *in what respect*, and §11c's
+second bullet ("makes degradation observable") wants the latter.
+
+### 8c. What it does solve: the slot §11d left empty
+
+§11d requires *"a common-language colour set in `EDITORIAL`"* and names none.
+**The 21-colour `basic` list is that set.** Right size for a screen-reader
+consumer, close to the Berlin & Kay basic terms, and it ends the open question.
+
+The large lists (NTC, XKCD, Wikipedia, ~30k names) are **worse than useless
+here**: "Fuzzy Wuzzy Brown" is no more readable than "Skimmed-milk White", and
+crowd-aggregated names carry no per-term provenance. Size is the feature, and
+only the small list has it.
+
+**Do not import the API's algorithm along with its list.** §11d requires *"same
+structure, same `binding` semantics, two emission vocabularies."* A readable
+attribute-set delta on the FORENSIC side and an opaque float on the EDITORIAL
+side is two semantics, not one.
+
+The resolution is already licensed by §11d: use CIEDE2000 **offline, at build
+time**, to cluster observations onto the 21 basic terms; emit an attribute-set
+delta at runtime. That is *clustering*, which §11d permits, not *binding*, which
+it forbids. With 21 terms the component-part context is small enough to author
+and source directly.
+
+### 8d. `joshbeckman/thecolorapi` — skip
+
+Dominated by the above on every axis that matters (maintenance, self-hosting,
+metric transparency, list granularity). No reason to evaluate further.
+
+### 8e. Net effect on the lanes
+
+| Lane | Change |
+|---|---|
+| **D — WERNER-FCA** | Step 0 re-costed *down* (§8a: pinned 32k-char extraction, SHA verified). FORENSIC binding unchanged — Werner + FCA. |
+| **D′ — EDITORIAL colour set** | New, small, and now *specified*: vendor the 21-term `basic` list self-hosted, pin the dataset commit, author its component-part context, use ΔE at build time only. Closes §11d's open question. |
+
+Neither promotes above Lane C or B. Both are behaviour; §11c's shape-now argument
+still orders them last.

@@ -36,20 +36,28 @@ bounds every nested string, but it carries **no voice provenance**. CMS-authored
 caption/title/taxonomy strings are rendered into the production prompt and the
 shipping system prompt (today
 `scene/infrastructure/vlm/gpu_remote_adapter.py` `_SYSTEM_PROMPT` L28–37;
-post-DEPICT-0 the same v1 body lives in the selected
-`ProductionPrompt` in `scene/prompts/caption_system.py`, and **consumers bind
-only via** `production_system_prompt()` — DEPICT-0 **Consumers:** rule at
-`DEPICT-0:432-461`, verbatim: *"Only permitted binding form for production
-consumers: the accessor functions. Do **not** read `PRODUCTION_PROMPT.body`
-/ `.lineage_version` at the call site"* — DEPICT-0 forbids a separate
-`PRODUCTION_SYSTEM_PROMPT` string global) instructs the
-model to *weave* names and factual details *where they fit naturally* —
-dissolving the seam between creator speech and the system's unmarked
-descriptive voice. That is live production exposure of eval finding F1. When
-the dissolved speech is **oppressive creator wording**, it is a direct
-`ATTRIB-07` hit; the operator also defaults **all** creator-tagged CMS speech
-to quotable-only as a conservative policy beyond that canon trigger (see
-Workflow Principles).
+post-DEPICT-0 the same v1 body lives in the selected `ProductionPrompt` in
+`scene/prompts/caption_system.py`. **Production consumer binding** follows
+DEPICT-0 section **Consumers:** (`:454-536`; re-verify after concurrent
+DEPICT-0 edits) and FROZEN CONTRACT A: consumers of the **selected config**
+obtain it only through the accessor functions (`production_prompt()` /
+`production_system_prompt()` / `production_prompt_or_task_version()`); do
+**not** bind via `from … import PRODUCTION_PROMPT`, and do **not** introduce a
+dedicated frozen body export. The production adapter **snapshots once** at
+construction (`self._production_prompt = production_prompt()`;
+`self.prompt_or_task_version = self._production_prompt.lineage_version`) and
+posts **`self._production_prompt.body`** at describe/payload time — **not** a
+second call to `production_system_prompt()` / `production_prompt()` at describe
+time, and not a live re-read of module-level `PRODUCTION_PROMPT`. (Temporal
+invariant: body and stamp come from the same snapshot object at `__init__`.)
+DEPICT-0 also forbids a separate `PRODUCTION_SYSTEM_PROMPT` string global.
+That prompt body instructs the model to *weave* names and factual details
+*where they fit naturally* — dissolving the seam between creator speech and
+the system's unmarked descriptive voice. That is live production exposure of
+eval finding F1. When the dissolved speech is **oppressive creator wording**,
+it is a direct `ATTRIB-07` hit; the operator also defaults **all**
+creator-tagged CMS speech to quotable-only as a conservative policy beyond
+that canon trigger (see Workflow Principles).
 
 Separately, the FORENSIC / EDITORIAL / INTERPRETIVE vocabulary is already the
 spine of canon's `attribute-claims-to-their-bearer` reasoning card and of every
@@ -73,8 +81,9 @@ partitioned, not a blended middle.
   `scene/prompts/caption_system.py`), Lane C paths (`caption_metrics.py`),
   `scene/interface_adapters/http/schemas/responses.py` (no response register
   field in this task — see Target Outcome / Slice 2),
-  `packages/shared-contracts/...` (unchanged when present; path absent from
-  this sparse checkout — no response register property to mirror),
+  `packages/shared-contracts/...` (unchanged; verified present at
+  `packages/shared-contracts/schemas/image-description-response.schema.json`
+  — no response register property to mirror),
   `scene/application/visual_facts_service.py` (no register propagation path
   in this task), or `scripts/eval_harness/manifest.py` (unowned harness
   ContextPack).
@@ -104,15 +113,20 @@ partitioned, not a blended middle.
   `scene/prompts/caption_system.py` (DEPICT-0: *"A future promotion replaces
   `PRODUCTION_PROMPT` (or rebinds the selected instance)"*). **Never** mutate
   `.body` on the frozen dataclass (`@dataclass(frozen=True)` →
-  `FrozenInstanceError`). Consumers continue to bind **accessor-only** via
-  `production_system_prompt()` — never `PRODUCTION_PROMPT.body` at the call
-  site (`DEPICT-0:432-461`, section **Consumers:**). A module-level REBIND
-  does **not** retroactively change an already-constructed adapter that
-  already bound body/stamp at init (or held a one-shot snapshot); only
-  subsequent call-time accessor reads observe the new `PRODUCTION_PROMPT`.
-  Not the deleted `gpu_remote_adapter._SYSTEM_PROMPT` constant and not a
-  separate `PRODUCTION_SYSTEM_PROMPT` string global. Do not edit prompt
-  strings here; do not attribute the weave edit to DEPICT-0.
+  `FrozenInstanceError`). Production consumers of the selected config still
+  obtain it through the accessors (`production_prompt()` /
+  `production_system_prompt()` / `production_prompt_or_task_version()`) —
+  never via `from … import PRODUCTION_PROMPT`, never via a dedicated frozen
+  body export (DEPICT-0 section **Consumers:**, `:454-536`). The
+  production adapter continues to post **`self._production_prompt.body`**
+  from its construction-time snapshot (no describe-time accessor re-read).
+  A module-level REBIND does **not** retroactively change an
+  already-constructed adapter that already bound body/stamp at init; only
+  **new** adapters that call `production_prompt()` after the rebind observe
+  the new `PRODUCTION_PROMPT`. Not the deleted
+  `gpu_remote_adapter._SYSTEM_PROMPT` constant and not a separate
+  `PRODUCTION_SYSTEM_PROMPT` string global. Do not edit prompt strings here;
+  do not attribute the weave edit to DEPICT-0.
 - **Bound-term / colour field shape is out of scope.** Assessment §10g removed
   it. `FM-11` is retired canon and must not be cited. Trigger for any colour
   vocabulary is §10e (machine-consumed colour token) — not this task.
@@ -210,10 +224,10 @@ partitioned, not a blended middle.
   schema path expected by `test_response_schema_parity.py:SCHEMA_PATH` at
   L11–17: monorepo
   `packages/shared-contracts/schemas/image-description-response.schema.json`).
-  **That packages tree is absent from this sparse checkout** (repo root has
-  only `apps/` + `docs/`; `SCHEMA_PATH.exists()` is false here). **This task
-  does not add `description_register` to the response** (no request→response
-  propagation path is owned here — verified: `build_visual_facts_envelope` at
+  **That schema file is present in this checkout** (`SCHEMA_PATH.exists()` is
+  true; verified ~8413 bytes). **This task does not add
+  `description_register` to the response** (no request→response propagation
+  path is owned here — verified: `build_visual_facts_envelope` at
   `visual_facts_service.py` L71–83 takes no register parameter and constructs
   `VisualFactsResponse` without one; grep for `description_register` across
   `apps/` returns zero hits).
@@ -224,15 +238,18 @@ partitioned, not a blended middle.
   in `gpu_remote_adapter.py` L33–34 today — **Lane A owned**; not editable
   here. DEPICT-0 **moves** that body into
   `scene/prompts/caption_system.py` as the selected `ProductionPrompt.body`
-  field on frozen `PRODUCTION_PROMPT` (consumers bind **only** via
-  `production_system_prompt()` — DEPICT-0 **Consumers:** rule at
-  `DEPICT-0:432-461`; no separate `PRODUCTION_SYSTEM_PROMPT` string global —
-  DEPICT-0 Slice 2 / Terminology) and deletes the local constant; DEPICT-0
-  **Not-Does** F1 weave *wording* (DEPICT-0 Not-Doing section). **F1 (b)
-  production-weave** (OUT of this wave, unowned) later **rebinds**
-  `PRODUCTION_PROMPT` to a new
+  field on frozen `PRODUCTION_PROMPT` (DEPICT-0 section **Consumers:**, today
+  `:454-536`: selected-config consumers bind via the accessor functions; the
+  adapter snapshots once at `__init__` and posts `self._production_prompt.body`
+  — no describe-time accessor re-read; no `from … import PRODUCTION_PROMPT`
+  bind; no dedicated frozen body export; no separate
+  `PRODUCTION_SYSTEM_PROMPT` string global — DEPICT-0 Slice 2 / Terminology)
+  and deletes the local constant; DEPICT-0 **Not-Does** F1 weave *wording*
+  (DEPICT-0 Not-Doing section). **F1 (b) production-weave** (OUT of this wave,
+  unowned) later **rebinds** `PRODUCTION_PROMPT` to a new
   `ProductionPrompt(body=<rewritten weave>, lineage_version=…)` — never edits
-  `.body` in place on the frozen instance; consumers keep accessor-only binds.
+  `.body` in place on the frozen instance; consumers keep the DEPICT-0
+  **Consumers:** bind form (accessors + adapter instance snapshot body).
   A REBIND does **not** rewrite body/stamp already captured on a live adapter
   instance at construction time.
 - Defaulted `voice` keys on speech-allowlist nested models enter the normalized
@@ -245,12 +262,13 @@ partitioned, not a blended middle.
   `set(schema["required"]) == set(VisualFactsResponse.model_fields) - PREVIEW_FIELDS`
   at L61; **`set(schema["properties"]) == set(VisualFactsResponse.model_fields)`
   at L63** — adding any model field without a matching shared-schema property
-  turns that assertion red when the schema file is present). Shared JSON
-  schema path is **absent from this sparse tree** (see SCHEMA_PATH above); when
-  present in a full monorepo it currently has **no** `description_register`
-  property and DEPICT-1 still does not edit it. Pack characterization **is
-  present** at `scene/tests/test_context_pack.py` (`_context_pack` at L43;
-  route dump-equality at L137: `assert adapter.context == _context_pack()` —
+  turns that assertion red). Shared JSON schema path is **present** (see
+  SCHEMA_PATH above; verified exists); it currently has **no**
+  `description_register` property and DEPICT-1 still does not edit it. Pack
+  characterization **is present** at `scene/tests/test_context_pack.py`
+  (`_context_pack` defined at L43; used at L69 / L94 / L108 / L134; route
+  dump-equality assertion at **L139**:
+  `assert adapter.context == _context_pack()` — L137 is blank —
   **the specific assertion default `voice` keys break** when the expected
   dump omits them while the route emits them). Slice 1 owns the fixture split
   for that dump (see Post-Slice-1 dump contract).
@@ -305,7 +323,7 @@ Load before implementing any slice:
   `scene/interface_adapters/http/schemas/context_contract.py` (new),
   `scene/domain/description.py`
 - Characterization tests: `scene/tests/test_context_pack.py` (present in this
-  checkout; dump-equality L137), new contract modules under `scene/tests/`
+  checkout; dump-equality assert L139), new contract modules under `scene/tests/`
 
 ### Canon warrants (definition-anchor verified)
 
@@ -362,9 +380,10 @@ cross-reference).
   `voice`) is **OUT of this wave and unowned** — not part of F1 (a) or F1 (b).
   F1 (a) contract traps are **service-unit-only**. F1 (b) production-weave
   (OUT of this wave, unowned) rebinds the shared selected `PRODUCTION_PROMPT`
-  (accessor-visible via `production_system_prompt()`); it does **not** deliver
-  harness voice-honouring lockstep. A future named lane must claim
-  `manifest.py` voice + fixtures before harness F1 traps exist.
+  (consumers of the selected config still obtain it via accessors; adapters
+  post `self._production_prompt.body` from the construction-time snapshot);
+  it does **not** deliver harness voice-honouring lockstep. A future named
+  lane must claim `manifest.py` voice + fixtures before harness F1 traps exist.
 - **Response-side `description_register` echo** is not in this task (no owned
   path from request → `build_visual_facts_envelope` → cache row → response).
 
@@ -375,8 +394,8 @@ cross-reference).
 | `POST /scene/describe/multipart` request JSON (`context_pack`) | Lane B (this task) | `ContextPack` + nested models, `extra="forbid"` | Additive `voice` on speech-allowlist nested models (not on `IdentityContext` or `IdentityPolicyContext`); defaults applied server-side | Shape: omit → default; invalid enum → 422 ([API-09]). Observable default keys + `context_hash` change: Greenfield Policy | `test_context_pack.py` + new voice tests (param IN/OUT inventory) |
 | `DescribeImageEnvelope` | Lane B | tenant/media/context/context_pack/decorative/tier | Additive defaulted `description_register`, `gravity` | Shape: omit → defaults ([API-09]) | schema unit tests |
 | `VisualFactsResponse` | **Unchanged this task** | 17 core + additive optionals | **No** `description_register` field; no echo | n/a — response contract frozen for this lane | Existing `test_response_schema_parity.py` stays green without edit |
-| Shared JSON schema `packages/shared-contracts/schemas/image-description-response.schema.json` | **Unchanged this task** (path expected by `test_response_schema_parity.py:SCHEMA_PATH` L11–17; **absent from this sparse checkout**; no `description_register` property when present) | mirrors response model | **No edit** — response field not in DEPICT-1 scope | n/a | Parity baseline not a DEPICT-1 deliverable; do **not** add package-absent skip or property-missing xfail for a field we are not introducing |
-| Production system prompt / weave | **F1 (b) — OUT of this wave, unowned** (not DEPICT-0/1/2) | unmarked weave (today `gpu_remote_adapter.py` L33–34; post-DEPICT-0 body lives on frozen selected `PRODUCTION_PROMPT` in `scene/prompts/caption_system.py`; consumers bind **accessor-only** via `production_system_prompt()` — never `.body` at call site; `DEPICT-0:432-461` **Consumers:**) | Must honour quotable-only partition on the **service** pack path (REBIND `PRODUCTION_PROMPT`; never mutate frozen `.body`; rebind does not rewrite already-constructed adapters) | Cross-lane / future | Not in this task; DEPICT-0 only moves prompts; harness pack `voice` remains OUT/unowned; merging DEPICT-0+1+2 does **not** close F1 |
+| Shared JSON schema `packages/shared-contracts/schemas/image-description-response.schema.json` | **Unchanged this task** (path expected by `test_response_schema_parity.py:SCHEMA_PATH` L11–17; **verified present**; no `description_register` property) | mirrors response model | **No edit** — response field not in DEPICT-1 scope | n/a | Parity baseline not a DEPICT-1 deliverable; do **not** add package-absent skip or property-missing xfail for a field we are not introducing |
+| Production system prompt / weave | **F1 (b) — OUT of this wave, unowned** (not DEPICT-0/1/2) | unmarked weave (today `gpu_remote_adapter.py` L33–34; post-DEPICT-0 body lives on frozen selected `PRODUCTION_PROMPT` in `scene/prompts/caption_system.py`; consumers of the selected config bind via accessors; adapter snapshots once and posts `self._production_prompt.body` — DEPICT-0 section **Consumers:** `:454-536`) | Must honour quotable-only partition on the **service** pack path (REBIND `PRODUCTION_PROMPT`; never mutate frozen `.body`; rebind does not rewrite already-constructed adapters) | Cross-lane / future | Not in this task; DEPICT-0 only moves prompts; harness pack `voice` remains OUT/unowned; merging DEPICT-0+1+2 does **not** close F1 |
 | Eval harness metrics | Lane C | no register/voice axes | future register-compliance arm | Cross-lane | Not in this task |
 
 ## Proposed Solution
@@ -412,15 +431,15 @@ Three reviewable slices, each behaviour + proof:
 | tests | `scene/tests/test_context_voice_contract.py` (new) | Voice partition + extra-forbid + defaults + **parametrized IN/OUT inventory against explicit expected paths** |
 | tests | `scene/tests/test_description_register_contract.py` (new) | Register enum + frozen expected-set exhaustiveness + request default/reject (no response echo) |
 | tests | `scene/tests/test_gravity_contract.py` (new) | Exact min(requested, ceiling) + obligate_inventory discrimination |
-| tests | `scene/tests/test_context_pack.py` | Keep `_context_pack()` voice-free for raw-dict paths; add `_context_pack_dump()` with default `voice` keys for L137 dump-equality only |
+| tests | `scene/tests/test_context_pack.py` | Keep `_context_pack()` voice-free for raw-dict paths; add `_context_pack_dump()` with default `voice` keys for L139 dump-equality only |
 
 **Not edited by this lane (owned elsewhere, unowned, or withdrawn from scope):**
 
 | Surface | File | Status |
 |---|---|---|
 | response contract | `scene/interface_adapters/http/schemas/responses.py` | **No edit** — response `description_register` / echo withdrawn (no owned propagation path). |
-| shared JSON schema | `packages/shared-contracts/schemas/image-description-response.schema.json` | **No edit** — no response property to mirror; path **absent from this sparse checkout** (see `SCHEMA_PATH` L11–17); when present in full monorepo, leave unchanged. |
-| response parity tests | `scene/tests/test_response_schema_parity.py` | **No edit** — `PREVIEW_FIELDS` / properties equality stay as-is without a new model field. Do **not** introduce package-absent skip or property-missing xfail as a DEPICT-1 deliverable (DEPICT-1 adds no response field; sparse-tree package absence is pre-existing, not introduced here). |
+| shared JSON schema | `packages/shared-contracts/schemas/image-description-response.schema.json` | **No edit** — no response property to mirror; path **verified present** (see `SCHEMA_PATH` L11–17); leave unchanged. |
+| response parity tests | `scene/tests/test_response_schema_parity.py` | **No edit** — `PREVIEW_FIELDS` / properties equality stay as-is without a new model field. Do **not** introduce package-absent skip or property-missing xfail as a DEPICT-1 deliverable (DEPICT-1 adds no response field; schema file exists — those skip/xfail branches would be dead code). |
 | production weave prompt body (post-DEPICT-0) | `scene/prompts/caption_system.py` | **F1 (b) production-weave — OUT of this wave, unowned.** Prerequisites when owned later: DEPICT-0 then DEPICT-1. Mutation is REBIND-ONLY of `PRODUCTION_PROMPT`. |
 | production adapter render helpers | `scene/infrastructure/vlm/gpu_remote_adapter.py` (`_render_context` / `_user_text`) | **F1 (b) — unowned future work** may still edit render helpers to voice-tag creator entries; system *wording* lives in caption_system after DEPICT-0. |
 | visual facts service | `scene/application/visual_facts_service.py` | **No edit** — no register threading into envelope / cache. |
@@ -434,9 +453,9 @@ Three reviewable slices, each behaviour + proof:
 | `scene/application/visual_facts_service.py` | `build_visual_facts_envelope` L71–83 — no register parameter today; **not edited**. Confirms why response echo is out of scope. |
 | `scene/application/fusion/reconcile.py` | Neighbour provenance (`FactSource`). Caption-fact paths are the inventory alignment *floor*; Slice 1 inventory is the full IN/OUT table. Do not overload with `ContextVoice`. |
 | `scene/application/hashing.py` | Defaulted `voice` keys change the hash once for all packs. Acceptable under **Greenfield Policy** (not under API-09); no migration. |
-| `scene/infrastructure/vlm/gpu_remote_adapter.py` | Today: `_SYSTEM_PROMPT` L28–37 + weave L33–34; production serialization path `_render_context` L73–86 / `_user_text` L90–101 / `_describe` L176–182. Post-DEPICT-0: local constant deleted; body lives in `caption_system.py`; consumer binds via `production_system_prompt()` only (`DEPICT-0:432-461` **Consumers:** — not the accessor-definition block at DEPICT-0:381-411, which itself reads `.body`). F1 (b) weave is OUT of this wave / unowned. |
-| `scene/prompts/caption_system.py` | **Created by DEPICT-0.** Post-seam home of selected frozen `PRODUCTION_PROMPT` (`body` + `lineage_version`) and accessors `production_system_prompt()` / `production_prompt_or_task_version()`. **Consumer bind rule** (`DEPICT-0:432-461`, section **Consumers:**, verbatim): only the accessor functions; do **not** read `PRODUCTION_PROMPT.body` / `.lineage_version` at the call site. **Mutation rule:** REBIND-ONLY — replace `PRODUCTION_PROMPT` with a new `ProductionPrompt(body=…, lineage_version=…)`; never assign to `.body` on the frozen instance (`FrozenInstanceError`). A rebind is **not** retroactive on already-constructed adapters that bound body/stamp earlier. No separate `PRODUCTION_SYSTEM_PROMPT` string global. |
-| `scripts/eval_harness/bakeoff.py` | Lane A / DEPICT-0 — harness prompt seam. After DEPICT-0, v1 system text binds **accessor-only** via `production_system_prompt()` (not `PRODUCTION_PROMPT.body` at call site; `DEPICT-0:432-461` **Consumers:**). A future F1 (b) rebind of `PRODUCTION_PROMPT` changes bakeoff system **wording** only for subsequent accessor reads. Full harness F1 voice-honouring is **OUT / unowned** (no harness pack `voice`). |
+| `scene/infrastructure/vlm/gpu_remote_adapter.py` | Today: `_SYSTEM_PROMPT` L28–37 + weave L33–34; production serialization path `_render_context` L73–87 / `_user_text` L90–101 / `_describe` L176–182. Post-DEPICT-0: local constant deleted; body lives in `caption_system.py`; adapter **snapshots once** at `__init__` via `production_prompt()` and posts `self._production_prompt.body` (DEPICT-0 section **Consumers:** `:454-536` — not a describe-time `production_system_prompt()` re-read; not the accessor-definition block at DEPICT-0 `:405-433`, which itself reads `.body` inside the accessor). F1 (b) weave is OUT of this wave / unowned. |
+| `scene/prompts/caption_system.py` | **Created by DEPICT-0.** Post-seam home of selected frozen `PRODUCTION_PROMPT` (`body` + `lineage_version`) and accessors `production_prompt()` / `production_system_prompt()` / `production_prompt_or_task_version()`. **Consumer bind rule** (DEPICT-0 section **Consumers:** `:454-536`): only permitted binding form for production consumers **of the selected config** is the accessor functions; do **not** read `PRODUCTION_PROMPT.body` / `.lineage_version` at the call site **via `from … import PRODUCTION_PROMPT`**, and do **not** introduce a dedicated frozen body export. The adapter posts `self._production_prompt.body` off its construction-time snapshot (required; not a call-site module bind). **Mutation rule:** REBIND-ONLY — replace `PRODUCTION_PROMPT` with a new `ProductionPrompt(body=…, lineage_version=…)`; never assign to `.body` on the frozen instance (`FrozenInstanceError`). A rebind is **not** retroactive on already-constructed adapters that bound body/stamp earlier. No separate `PRODUCTION_SYSTEM_PROMPT` string global. |
+| `scripts/eval_harness/bakeoff.py` | Lane A / DEPICT-0 — harness prompt seam. After DEPICT-0, bakeoff v1 system text obtains the selected body via `production_system_prompt()` (accessor call at use site — not `from … import PRODUCTION_PROMPT`; DEPICT-0 section **Consumers:** `:454-536`). A future F1 (b) rebind of `PRODUCTION_PROMPT` changes bakeoff system **wording** only for subsequent accessor reads. Full harness F1 voice-honouring is **OUT / unowned** (no harness pack `voice`). |
 | `scripts/eval_harness/caption_metrics.py` | Lane C — scorers. |
 | `scripts/eval_harness/manifest.py` | Separate flat harness `ContextPack` (`extra="allow"`; fields `title`/`caption`/`description` only at L165–176 — **no** `voice`). **OUT of this wave and unowned** — not F1 (a), not F1 (b); not mirrored here. |
 | Reasoning card `attribute-claims-to-their-bearer` (canon, not vendored) | Design warrant for register vocabulary — cite as plain text, do not markdown-link into `canon/`. |
@@ -452,7 +471,7 @@ Eval finding F1 has **two halves**. Merging DEPICT-0 + DEPICT-1 + DEPICT-2
 | Half | Scope | In this wave? | Owner | Acceptance criteria (named) |
 |---|---|---|---|---|
 | **F1 (a) — service/contract** | `voice` on speech-allowlist nested pack models; `iter_context_facts` + `partition_context_pack`; creator never absorbable; Product/Identity voice value propagates boundary→partition; register + gravity contract | **Yes** | **DEPICT-1** (this plan) | Slice 1–3 success criteria green; scoped pytest green; no prompt wording change required |
-| **F1 (b) — production-weave** | Stop unmarked weave of creator-tagged fields in the **shared** production system prompt; render creator entries as quoted/voice-tagged on the **service** pack path; wire partition (or honour it) into adapter render | **No — OUT of this wave** | **Unowned** (no plan file; optional future label "DEPICT-1b" only when authored) | (1) Module-level `PRODUCTION_PROMPT` is **rebound** to a new `ProductionPrompt(body=<voice-honouring text>, lineage_version=…)` — **never** in-place `.body = …` on the frozen dataclass (rebind is not retroactive on already-constructed adapters); (2) production consumer still binds **accessor-only** via `production_system_prompt()` (`DEPICT-0:432-461` **Consumers:**); (3) a service-path test with `voice=creator` proves the model is not instructed to absorb creator speech unmarked; (4) DEPICT-0 seam + DEPICT-1 Slice 1 are prerequisites |
+| **F1 (b) — production-weave** | Stop unmarked weave of creator-tagged fields in the **shared** production system prompt; render creator entries as quoted/voice-tagged on the **service** pack path; wire partition (or honour it) into adapter render | **No — OUT of this wave** | **Unowned** (no plan file; optional future label "DEPICT-1b" only when authored) | (1) Module-level `PRODUCTION_PROMPT` is **rebound** to a new `ProductionPrompt(body=<voice-honouring text>, lineage_version=…)` — **never** in-place `.body = …` on the frozen dataclass (rebind is not retroactive on already-constructed adapters); (2) production adapter still **snapshots once** at `__init__` via `production_prompt()` and posts **`self._production_prompt.body`** at describe/payload time — **no** describe-time call to `production_system_prompt()` / `production_prompt()`, and no `from … import PRODUCTION_PROMPT` bind (DEPICT-0 section **Consumers:** / temporal invariant, `:454-536`); (3) a service-path test with `voice=creator` proves the model is not instructed to absorb creator speech unmarked; (4) DEPICT-0 seam + DEPICT-1 Slice 1 are prerequisites |
 | **Harness `ContextPack.voice`** | `scripts/eval_harness/manifest.py` `ContextPack` (L165–176: `title`/`caption`/`description` only today) | **No — OUT of this wave** | **Unowned** (neither F1 (a) nor F1 (b)) | Future lane adds `voice` + creator-trap fixtures; not delivered by DEPICT-0/1/2 or by F1 (b) wording rebind alone |
 
 **Prerequisite ordering (explicit):**
@@ -472,16 +491,18 @@ Eval finding F1 has **two halves**. Merging DEPICT-0 + DEPICT-1 + DEPICT-2
    `ProductionPrompt(body=…, lineage_version=…)"`*) — **not**
    `PRODUCTION_PROMPT.body = …` (`@dataclass(frozen=True)` raises
    `FrozenInstanceError`), **not** a freestanding `PRODUCTION_SYSTEM_PROMPT`
-   string global, and **not** consumer reads of `.body` at the call site
-   (accessor-only). Harness pack `voice` / bakeoff F1 traps remain separately
-   **unowned**.
+   string global, and **not** an import-time `from … import PRODUCTION_PROMPT`
+   bind at the consumer call site. Adapters continue to post
+   `self._production_prompt.body` from the construction-time snapshot
+   (DEPICT-0 section **Consumers:** / temporal invariant). Harness pack
+   `voice` / bakeoff F1 traps remain separately **unowned**.
 
 | Dependency | Exact file | Exact change needed | Owner / sequencing |
 |---|---|---|---|
-| Prompt seam (no wording) | `gpu_remote_adapter.py`, `bakeoff.py`, `scene/prompts/caption_system.py` (new) | Single source for production system prompt text; delete local `_SYSTEM_PROMPT`; consumers call **`production_system_prompt()` only** (`DEPICT-0:432-461` **Consumers:** — do not read `.body` at call site; DEPICT-0:381-411 is the accessor *definition* that itself reads `.body`, not the consumer prohibition) | **DEPICT-0 / Lane A** — lands **first**; Not-Does F1 weave rewrite (DEPICT-0 §Not-Doing) |
+| Prompt seam (no wording) | `gpu_remote_adapter.py`, `bakeoff.py`, `scene/prompts/caption_system.py` (new) | Single source for production system prompt text; delete local `_SYSTEM_PROMPT`; consumers of the selected config bind via the accessor functions; adapter snapshots once at `__init__` and posts `self._production_prompt.body` (DEPICT-0 section **Consumers:** `:454-536` — no describe-time accessor re-read; no `from … import PRODUCTION_PROMPT` bind; DEPICT-0 `:405-433` is the accessor *definition* that itself reads `.body`, not the consumer prohibition) | **DEPICT-0 / Lane A** — lands **first**; Not-Does F1 weave rewrite (DEPICT-0 §Not-Doing) |
 | **F1 (a) — service/contract voice partition** | `requests.py`, `context_contract.py`, `description.py`, voice contract tests | `voice` field + partition; boundary→partition value proofs for Product and Identity | **DEPICT-1** (this plan) — **this wave** |
-| **F1 (b) — production voice-honouring weave** | **Primary:** `scene/prompts/caption_system.py` — **REBIND** module-level `PRODUCTION_PROMPT` to a new `ProductionPrompt(body=…, lineage_version=…)` (DEPICT-0 atomic config; frozen dataclass — **never** mutate `.body` in place; rebind does **not** rewrite already-constructed adapters). Consumers keep **accessor-only** binds via `production_system_prompt()` — `DEPICT-0:432-461` **Consumers:** verbatim: *"Do **not** read `PRODUCTION_PROMPT.body` / `.lineage_version` at the call site"*. **Secondary (if render must voice-tag):** `scene/infrastructure/vlm/gpu_remote_adapter.py` (`_render_context` L73–86 / `_user_text` L90–101) | Stop instructing unmarked weave of creator-tagged fields in the **shared** system prompt body; render creator entries as quoted/voice-tagged only; consume pack `voice` from the **service** normalized context dict; call `partition_context_pack` (or honour its partition). **Do not** retarget at `gpu_remote_adapter._SYSTEM_PROMPT` — DEPICT-0 deletes that constant. **Do not** invent a freestanding `PRODUCTION_SYSTEM_PROMPT` body global. **Do not** `PRODUCTION_PROMPT.body = …` (FrozenInstanceError). | **OUT of this wave — unowned.** Prerequisites when owned later: (1) DEPICT-0 seam merged, (2) DEPICT-1 Slice 1 contract merged. After DEPICT-0+1+2 alone, `partition_context_pack` is pure/unwired and production still weaves unmarked creator fields — **F1 is not closed**. |
-| Shared prompt body consumed by bakeoff v1 | `scripts/eval_harness/bakeoff.py` (`PROMPT_VARIANTS["v1"].system` after DEPICT-0 parity) | After DEPICT-0, bakeoff v1 system text binds **accessor-only** via `production_system_prompt()` (`DEPICT-0:432-461` **Consumers:** — no direct `.body` read). A future F1 (b) rebind of `PRODUCTION_PROMPT` therefore changes the **system-string wording** subsequent bakeoff accessor reads post. That is **wording lockstep only** — not full harness F1 voice-honouring (no pack `voice`, no creator-trap fixtures). | **Wording side-effect of a future F1 (b) rebind** (via DEPICT-0 seam). **Not** harness voice-honouring; harness half remains unowned. |
+| **F1 (b) — production voice-honouring weave** | **Primary:** `scene/prompts/caption_system.py` — **REBIND** module-level `PRODUCTION_PROMPT` to a new `ProductionPrompt(body=…, lineage_version=…)` (DEPICT-0 atomic config; frozen dataclass — **never** mutate `.body` in place; rebind does **not** rewrite already-constructed adapters). Consumers of the selected config keep the DEPICT-0 **Consumers:** form (accessors at call time; adapter posts `self._production_prompt.body` from its construction-time snapshot — no describe-time `production_system_prompt()` re-read; no `from … import PRODUCTION_PROMPT`). **Secondary (if render must voice-tag):** `scene/infrastructure/vlm/gpu_remote_adapter.py` (`_render_context` L73–87 / `_user_text` L90–101) | Stop instructing unmarked weave of creator-tagged fields in the **shared** system prompt body; render creator entries as quoted/voice-tagged only; consume pack `voice` from the **service** normalized context dict; call `partition_context_pack` (or honour its partition). **Do not** retarget at `gpu_remote_adapter._SYSTEM_PROMPT` — DEPICT-0 deletes that constant. **Do not** invent a freestanding `PRODUCTION_SYSTEM_PROMPT` body global. **Do not** `PRODUCTION_PROMPT.body = …` (FrozenInstanceError). | **OUT of this wave — unowned.** Prerequisites when owned later: (1) DEPICT-0 seam merged, (2) DEPICT-1 Slice 1 contract merged. After DEPICT-0+1+2 alone, `partition_context_pack` is pure/unwired and production still weaves unmarked creator fields — **F1 is not closed**. |
+| Shared prompt body consumed by bakeoff v1 | `scripts/eval_harness/bakeoff.py` (`PROMPT_VARIANTS["v1"].system` after DEPICT-0 parity) | After DEPICT-0, bakeoff v1 system text obtains the selected body via `production_system_prompt()` at the use site (DEPICT-0 section **Consumers:** `:454-536` — no `from … import PRODUCTION_PROMPT`). A future F1 (b) rebind of `PRODUCTION_PROMPT` therefore changes the **system-string wording** subsequent bakeoff accessor reads post. That is **wording lockstep only** — not full harness F1 voice-honouring (no pack `voice`, no creator-trap fixtures). | **Wording side-effect of a future F1 (b) rebind** (via DEPICT-0 seam). **Not** harness voice-honouring; harness half remains unowned. |
 | Shared JSON schema mirror | `packages/shared-contracts/schemas/image-description-response.schema.json` | **No change required by DEPICT-1** (response register field withdrawn) | n/a this task |
 | Register-compliance metric | `scripts/eval_harness/caption_metrics.py` | Future scored arm for register violations | Lane C — unblocked by Slice 2 vocabulary, not planned here |
 | v3 caption split (DEPICT-5) | harness + future output schema | Split grounded inventory vs attributed span | Unblocked by Slice 2; **not planned** in DEPICT-1 |
@@ -501,7 +522,8 @@ Eval finding F1 has **two halves**. Merging DEPICT-0 + DEPICT-1 + DEPICT-2
     voice-free; add `test_context_pack._context_pack_dump` for expected dumps).
   - Invalid enum values raise `ValidationError`.
   - Response model / shared schema path / `PREVIEW_FIELDS` **unchanged** (schema
-    file absent from this sparse checkout; do not invent package-absent skips).
+    file verified present; do not invent package-absent skips — they would be
+    dead code).
   - Defaulted `voice` keys change `context_hash` once for all packs
     (**Greenfield Policy**, not API-09; no migration).
 - Manual verification: none required for this contract-only task.
@@ -688,8 +710,8 @@ a subset of IN paths **fails** the parametrized IN-row cases below.
   slice. Tests **may import and call** production pure helpers
   (`gpu_remote_adapter._render_context` / `_user_text`) without editing them.
 - **Post-Slice-1 dump contract** (prescribed fixture split — not left to
-  implementer choice; `_context_pack` today serves three roles at
-  `test_context_pack.py` L43 / L68–70 / L92 / L104–107 / L137):
+  implementer choice; `_context_pack` today is defined at
+  `test_context_pack.py` L43 and used at L69 / L94 / L108 / **L134**):
   1. Router stays zero-churn (no new dump flags). Production route dump is
      exactly `envelope.context_pack.model_dump(exclude_none=True)` at
      `scene/interface_adapters/http/routers/describe.py:446` — **only**
@@ -699,23 +721,24 @@ a subset of IN paths **fails** the parametrized IN-row cases below.
      under those real route flags.
   3. **Fixture split (mandatory symbols):**
      - Keep `test_context_pack._context_pack()` as the **raw / no-voice**
-       input fixture (today's body at L43–64). Used by validate input
-       (L68–70), seeded-adapter raw-dict (L92), and service raw-dict
-       (L104–107). **Do not** add default `voice` keys to this helper.
+       input fixture (today's body at L43–64). Used by validate input (L69),
+       seeded-adapter raw-dict (L94), service raw-dict (L108), and the route
+       POST body (L134). **Do not** add default `voice` keys to this helper.
      - Add `test_context_pack._context_pack_dump()` as a separate helper
        carrying the documented default voices on each **allowlist** nested
        object (`AttachmentContext`/`PostContext`/`ProductContext` →
        `"creator"`; `TaxonomyTermContext` → `"catalogue"`;
        `IdentityContextItem` when present → `"operator"` — **not** on
        `IdentityPolicyContext` / `IdentityContext`). Used **only** as the
-       expected dump at L137 (`assert adapter.context == _context_pack_dump()`)
+       expected dump at **L139**
+       (`assert adapter.context == _context_pack_dump()`; L137 is blank)
        and any other dump-equality site. **Item 3 and item 4 are no longer
-       mutually unprovable:** after this split, L137 compares against
+       mutually unprovable:** after this split, L139 compares against
        `_context_pack_dump`, while raw-dict paths still receive
        `_context_pack` without voice keys.
   4. Raw-dict seeded-adapter / service paths (no Pydantic validate → no
      default injection) keep working without `voice` keys because they still
-     call `_context_pack()` — proved by L92 / L104–107 remaining on that
+     call `_context_pack()` — proved by L94 / L108 remaining on that
      symbol. Do not force voice into that raw-dict path.
 - Tests in `scene/tests/test_context_voice_contract.py` (and extend
   `test_context_pack.py` with the fixture split above).
@@ -736,7 +759,7 @@ uv run --extra dev pytest scene/tests/test_context_voice_contract.py scene/tests
 | **Frozen voice contract + exhaustive partition** | Permanently assert `set(ContextVoice) == set(_VOICE_CONTRACT_VALUES)` and `_QUOTABLE_ONLY_VOICES \| _ABSORBABLE_VOICES == _VOICE_CONTRACT_VALUES` with empty intersection (via `assert_voice_contract()`). **Red if** a fifth `ContextVoice` lands without updating the freezes, or if DERIVED is dropped from `_ABSORBABLE_VOICES`. | Hand-edit `_ABSORBABLE_VOICES` to drop `DERIVED` while enum still has four → `assert_voice_contract` fails (partition no longer covers contract). **`else: raise` arm seam:** `monkeypatch.setattr(context_contract, "iter_context_facts", lambda pack: [ContextFact(path="attachment.caption", value="x", voice=<locally-defined unhandled ContextVoice-shaped member>)])` then call `partition_context_pack(pack)` → `ValueError` whose **message contains the offending value** (no silent default branch; a bare `raise` without the value fails the message assertion). |
 | Content-blind partition | Two packs identical except `attachment.caption` value (`"alpha"` vs `"beta"`), both `voice="creator"`. Assert: both yield the same absorbable/quotable path sets (only `value` differs). Proves discrimination is on `voice`, not content — no need for oppressive strings in fixtures. **Red if** partition keys on content. | Same two captions with `voice="operator"` both land in absorbable. |
 | **Parametrized IN-row inventory (one case per IN path)** | `@pytest.mark.parametrize` over every **IN** row in the inventory table. For each path template, build a pack that populates **only** that speech field (plus any structural keys required for model validity, e.g. `taxonomy` when testing `taxonomy_terms[0].name`, `policy.person_naming` when testing an identity name) with a distinctive non-empty string; leave all other IN fields empty/absent. Assert: `set(f.path for f in iter_context_facts(pack)) == {expected_path}` where `expected_path` is the **literal** path string for that row (e.g. `"attachment.description"`, `"post.excerpt"`, `"product.short_description"`, `"identity.identities[0].name"`). **Never** derive the expected set from `iter_context_facts` itself. **Red if** any IN path is omitted from the implementation. | **Cheating impl killed:** `iter_context_facts` that only emits `attachment.caption` / `attachment.title` / `post.title` / `taxonomy_terms[i].name` (the previously tested subset) fails the cases for `attachment.description`, `attachment.alt_text`, `post.excerpt`, `product.name`, `product.short_description`, and `identity.identities[0].name`. A no-op `return []` fails every IN case. |
-| **Parametrized OUT-row exclusion (one case per OUT path)** | `@pytest.mark.parametrize` over every **OUT** row. For each, build a pack that populates **only** that OUT field (plus minimum structural keys) and assert `set(f.path for f in iter_context_facts(pack)) == set()` — the explicit empty expected set, not "whatever the function returned." **Red if** filename / post_type / status / sku / price / taxonomy / slug / identity ids / `person_naming` / `review_reasons` enter inventory. | **Cheating impl killed:** an always-`True` "emit every non-empty string under the pack" walker fails every OUT case. Pairing: same fixture plus one IN field (e.g. `attachment.title="t"`) yields exactly `{attachment.title}` against the explicit expected set. |
+| **Parametrized OUT-row exclusion (one case per OUT path)** | `@pytest.mark.parametrize` over every **OUT** row. Split into **two assertion forms** (do **not** weaken either form to "OUT path not in the set" alone): **(i) Independent OUT rows** (no required IN sibling forced by the pydantic model) — build a pack that populates **only** that OUT field (plus minimum structural keys that are themselves OUT or non-inventoried) and assert `set(f.path for f in iter_context_facts(pack)) == set()` — the explicit empty expected set. Named independent OUT paths: `attachment.filename`, `post.post_type`, `post.status`, `product.sku`, `product.price`, `identity.policy.person_naming`, `identity.review_reasons[{i}]`. **(ii) Dependent OUT rows** (model has a required IN field that must be present for validity) — assert `set(f.path for f in iter_context_facts(pack)) == {required_IN_path}` **and** that the OUT path under test is **absent** from that set. **Named five dependent OUT rows** (required IN sibling in parentheses; verified in `requests.py`): (1) `taxonomy_terms[{i}].taxonomy` → expected `{"taxonomy_terms[{i}].name"}` (`TaxonomyTermContext.name` required L40; `taxonomy` required L39 but OUT); (2) `taxonomy_terms[{i}].slug` → expected `{"taxonomy_terms[{i}].name"}` (`name` + `taxonomy` required for model validity; only `name` is IN); (3) `identity.identities[{i}].identity_id` → expected `{"identity.identities[{i}].name"}` (`IdentityContextItem.name` required L68); (4) `identity.identities[{i}].cluster_id` → expected `{"identity.identities[{i}].name"}`; (5) `identity.identities[{i}].source` → expected `{"identity.identities[{i}].name"}`. For identity item rows also supply `identity.policy.person_naming` (OUT, structural). **Never** derive the expected set from `iter_context_facts` itself. **Red if** filename / post_type / status / sku / price / taxonomy / slug / identity ids / `person_naming` / `review_reasons` enter inventory. | **Cheating impl killed:** an always-`True` "emit every non-empty string under the pack" walker fails every independent OUT case (non-empty set) and every dependent OUT case (expected set is exactly the required IN path, not the OUT path). Pairing: independent fixture plus one IN field (e.g. `attachment.title="t"`) yields exactly `{attachment.title}` against the explicit expected set. **Why the split is mandatory:** a single `== set()` assertion is **unsatisfiable** for the five dependent rows — constructing a valid `TaxonomyTermContext` / `IdentityContextItem` always injects an IN path (`name`), so an implementer would silently weaken to "OUT path absent" (forbidden). |
 | Mixed-pack explicit expected set | One fixture that populates **all ten IN paths** with known values and mixed voices. Assert emitted path set equals the **hand-written** frozenset of those ten path strings (and values match). Also assert `paths(absorbable) ∩ paths(quotable_only) == ∅` and `paths(absorbable) ∪ paths(quotable_only) == <that same hand-written frozenset>` — **not** `== paths(iter_context_facts(pack))` as the only check. **Red if** a path is duplicated, dropped, or invented. | Empty pack → both lists empty; expected path set `frozenset()`. **Cheating impl killed:** partition that re-wraps `iter_context_facts` into one side only still fails the hand-written expected set if inventory is partial; a hardcoded `return ( [], [])` fails the ten-path fixture. |
 | Non-attachment creator-default path | Pack with only `post.title="Creator post title"` (omit `post.voice` → default `creator`). Assert: `post.title` ∈ quotable_only, ∉ absorbable. **Red if** inventory skips `post.title` or default lands in absorbable. | Explicit `post.voice="operator"` moves `post.title` to absorbable. |
 | Non-attachment catalogue path | Pack with `taxonomy_terms=[{"taxonomy":"product_cat","name":"Jackets","slug":"jackets"}]` (default `voice=catalogue`). Assert: `taxonomy_terms[0].name` ∈ absorbable. **Red if** taxonomy names are omitted from inventory or forced into quotable_only. | Override term `voice="creator"` → name moves to quotable_only only. |
@@ -745,9 +768,9 @@ uv run --extra dev pytest scene/tests/test_context_voice_contract.py scene/tests
 | Invalid voice rejected | Envelope with `context_pack.attachment.voice="archivist"` (unknown token). `DescribeImageEnvelope.model_validate(...)` raises `ValidationError` mentioning `voice`. | `voice="creator"` validates. |
 | Additive under `extra="forbid"` | Payload **identical to today's** pack fixture shape (no `voice` keys anywhere). Must validate; filled defaults are `creator` / `catalogue` / `operator` per **allowlist** model rules above (`IdentityPolicyContext` has no `voice` key after validate). **Red if** validation requires explicit `voice`, or if `IdentityPolicyContext` gains a serialized `voice`. | Payload with an **extra** unknown key `context_pack.attachment.tone="warm"` still 422 (`extra="forbid"` preserved). |
 | Default fail-closed | Omit `voice` on `attachment`; after validate, `partition_context_pack` places attachment speech strings in quotable_only. **Red if** omitted voice defaults into absorbable. | Explicit `voice="operator"` on attachment moves those strings to absorbable. |
-| Dump equality after defaults (fixture split) | `test_route_passes_normalized_context_pack_to_adapter` posts `_context_pack()` (**no** voice keys) and asserts `adapter.context == _context_pack_dump()` (L137 retarget). `_context_pack_dump` carries default voices on allowlist models only. **Red if** expected dump omits `voice` while route emits it (or vice versa), or if expected dump puts `voice` on `IdentityPolicyContext`. | Raw-dict seeded-adapter / service tests still call `_context_pack()` without voice keys and still apply sources (item 4 still proved). |
-| **Omit-voice route dump under REAL route flags (F1(a))** | POST `/scene/describe/multipart` with a request whose `context_pack` is `_context_pack()` (omits `voice` entirely). Capture the dict the route hands the adapter (`CapturingAdapter.context` in `test_context_pack.py`). Assert it equals `_context_pack_dump()` and that allowlist nested objects carry the documented default voice strings. **Real route flags named:** production dump is `ContextPack.model_dump(exclude_none=True)` at `describe.py:446` — **not** `exclude_defaults=True`, **not** `exclude_unset=True`. **Red if** defaults are dropped by those flags, if the test only validates a pure `model_dump` with different flags, or if the request fixture itself injects voice (would hide `exclude_defaults` / `exclude_unset` cheating). | Pure unit: `DescribeImageEnvelope.model_validate({..., "context_pack": _context_pack()}).context_pack.model_dump(exclude_none=True) == _context_pack_dump()` — same flags as `describe.py:446`. **Cheating impl killed:** router switched to `exclude_defaults=True` or `exclude_unset=True` fails L137 / this proof while pure partition tests stay green. |
-| **Boundary voice survives adapter serialization path (F1(a))** | Build a normalized pack dump that includes an explicit boundary voice (e.g. `attachment.voice == "creator"` from validate+dump, or a hand-built dump matching `_context_pack_dump`). Call production helpers **without editing the adapter**: `scene.infrastructure.vlm.gpu_remote_adapter._render_context(dump)` (L73–86) and/or `_user_text(dump)` (L90–101; invoked by `_describe` at L176). Assert the returned render / user-text string contains the boundary voice value (e.g. the substring `"creator"` inside the attachment mapping serialization). **Red if** voice is stripped before render, or if the proof only checks pure partition / pydantic dump and never touches `_render_context` / `_user_text`. | Same dump with `attachment.voice="operator"` produces render text containing `"operator"` and not only the speech strings. **Cheating impl killed:** F1(a) that injects voice into pydantic dumps/`context_hash` but loses it before the adapter serialization surface still fails this proof. |
+| Dump equality after defaults (fixture split) | `test_route_passes_normalized_context_pack_to_adapter` posts `_context_pack()` (**no** voice keys; body uses `_context_pack()` at L134) and asserts `adapter.context == _context_pack_dump()` (**L139** retarget; L137 is blank). `_context_pack_dump` carries default voices on allowlist models only. **Red if** expected dump omits `voice` while route emits it (or vice versa), or if expected dump puts `voice` on `IdentityPolicyContext`. | Raw-dict seeded-adapter / service tests still call `_context_pack()` without voice keys (L94 / L108) and still apply sources (item 4 still proved). |
+| **Omit-voice route dump under REAL route flags (F1(a))** | POST `/scene/describe/multipart` with a request whose `context_pack` is `_context_pack()` (omits `voice` entirely; L134). Capture the dict the route hands the adapter (`CapturingAdapter.context` in `test_context_pack.py`). Assert it equals `_context_pack_dump()` and that allowlist nested objects carry the documented default voice strings (**L139**). **Real route flags named:** production dump is `ContextPack.model_dump(exclude_none=True)` at `describe.py:446` — **not** `exclude_defaults=True`, **not** `exclude_unset=True`. **Red if** defaults are dropped by those flags, if the test only validates a pure `model_dump` with different flags, or if the request fixture itself injects voice (would hide `exclude_defaults` / `exclude_unset` cheating). | Pure unit: `DescribeImageEnvelope.model_validate({..., "context_pack": _context_pack()}).context_pack.model_dump(exclude_none=True) == _context_pack_dump()` — same flags as `describe.py:446`. **Cheating impl killed:** router switched to `exclude_defaults=True` or `exclude_unset=True` fails L139 / this proof while pure partition tests stay green. |
+| **Boundary voice survives adapter serialization path (F1(a))** | Build the render input **only** from the production dump path under test: `dump = DescribeImageEnvelope.model_validate({..., "context_pack": <pack with explicit boundary voice, e.g. attachment.voice="creator">}).context_pack.model_dump(exclude_none=True)` — same flags as `describe.py:446`. **Do not** hand-build a dump matching `_context_pack_dump` (that makes the assertion a tautology over a literal the test itself wrote: `_render_context` at L73–87 stringifies top-level values via `json.dumps(str(value))`, so `"creator" in str({..."voice":"creator"...})` is true by construction with no pydantic model, no route, and no F1(a) code in the path). Call production helpers **without editing the adapter**: `scene.infrastructure.vlm.gpu_remote_adapter._render_context(dump)` (L73–87) and/or `_user_text(dump)` (L90–101; invoked by `_describe` at L176). Assert the returned render / user-text string contains the boundary voice value (e.g. the substring `"creator"` inside the attachment mapping serialization). **Red if** voice is stripped before render (validate accepts it but dump/`_render_context` lose it), or if the proof only checks pure partition / a hand-built dict and never touches validate→`model_dump(exclude_none=True)`→`_render_context` / `_user_text`. | Same validate+dump path with `attachment.voice="operator"` produces render text containing `"operator"` and not only the speech strings. **Cheating impl killed:** F1(a) that injects voice into pydantic dumps/`context_hash` but loses it before the adapter serialization surface still fails this proof; a hand-built dump no longer greens the test before any DEPICT-1 code lands. |
 | No voice on IdentityPolicyContext | After validate of a pack with `identity.policy.person_naming="allow"`, `model_dump(exclude_none=True)` of policy has keys exactly `{"person_naming": ...}` — no `voice`. **Red if** voice was added to that model. | `IdentityContextItem` with a name **does** dump `voice` (operator default). |
 
 ### Slice 2: `DescriptionRegister` on the **request** contract (enforcement deferred; no response echo)
@@ -791,10 +814,11 @@ Changes:
   `test_schemas.py` `PREVIEW_FIELDS`. Adding a response model field without a
   matching schema property turns
   `set(schema["properties"]) == set(VisualFactsResponse.model_fields)`
-  (`test_response_schema_parity.py` L63) red; `PREVIEW_FIELDS` only rescues the
-  *required* assertion (L61), not the properties equality. Package-absent skip
-  and property-missing xfail branches are **dead code** in this checkout
-  (schema file exists) and must not be introduced.
+  (`test_response_schema_parity.py` L63) red; `PREVIEW_FIELDS` (L50–56) only
+  rescues the *required* assertion (L61), not the properties equality.
+  Package-absent skip and property-missing xfail branches are **dead code**
+  in this checkout (schema file exists; verified present) and must not be
+  introduced.
 - **Frozen contract set + exhaustiveness** (same `context_contract.py` or
   adjacent). Do **not** use `set(DescriptionRegister)` as the permanent green —
   that is tautological after any enum extension:
@@ -983,11 +1007,13 @@ Recorded so implementers and reviewers do not "helpfully" hardcode a class table
 - [ ] Confirmed no edits under Lane A or Lane C paths; cross-lane deps recorded
       with **F1 ownership split**: F1 (a) service/contract = this plan; F1 (b)
       production-weave = **OUT of this wave, unowned** (REBIND-ONLY of
-      `PRODUCTION_PROMPT`; consumers accessor-only via
-      `production_system_prompt()` — never `.body` at call site per
-      `DEPICT-0:432-461` **Consumers:**; never mutate frozen `.body`; rebind
-      not retroactive on already-constructed adapters); harness pack `voice`
-      **OUT/unowned** (not F1 a/b). Merging DEPICT-0+1+2 does **not** close F1.
+      `PRODUCTION_PROMPT`; consumers of the selected config bind via accessors;
+      adapter posts `self._production_prompt.body` from construction-time
+      snapshot — no describe-time accessor re-read; no
+      `from … import PRODUCTION_PROMPT` — DEPICT-0 section **Consumers:** today
+      `:454-536`; never mutate frozen `.body`; rebind not retroactive on
+      already-constructed adapters); harness pack `voice` **OUT/unowned**
+      (not F1 a/b). Merging DEPICT-0+1+2 does **not** close F1.
 - [ ] Every cited rule ID definition-anchor-verified; no `FM-11`, no `REG-*`, no
       `HARM-01`, no `BOUND-02` for input voice, no `RLSE-02` for disposition prose.
 - [ ] Boundary table filled; additive-only under `extra="forbid"`; API-09 limited
@@ -1017,16 +1043,18 @@ Recorded so implementers and reviewers do not "helpfully" hardcode a class table
       **ProductContext voice value propagates boundary→partition**,
       **IdentityContextItem voice value propagates boundary→partition**,
       omit-still-valid, unknown-key still forbid, invalid enum 422,
-      dump-equality via `_context_pack_dump` (L137) while `_context_pack`
-      stays voice-free, **omit-voice route dump under `model_dump(exclude_none=True)`
-      (`describe.py:446`)**, **boundary voice survives `_render_context` /
-      `_user_text`**, no voice on `IdentityPolicyContext`.
+      dump-equality via `_context_pack_dump` (L139) while `_context_pack`
+      stays voice-free (uses L69 / L94 / L108 / L134), **omit-voice route dump
+      under `model_dump(exclude_none=True)` (`describe.py:446`)**, **boundary
+      voice survives `_render_context` / `_user_text` via validate+dump only
+      (no hand-built dump)**, no voice on `IdentityPolicyContext`.
 - [ ] Router churn zero; seeded raw-dict path still uses `_context_pack()`
       (no voice keys).
 - [ ] `uv run --extra dev pytest scene/tests/test_context_voice_contract.py scene/tests/test_context_pack.py -q` green.
 - [ ] No prompt / adapter source edits (F1 (b) weave is OUT of this wave /
       unowned; tests may call `_render_context` / `_user_text`; when F1 (b)
-      owned later: REBIND `PRODUCTION_PROMPT`, accessor-only consumers).
+      owned later: REBIND `PRODUCTION_PROMPT`; consumers keep DEPICT-0
+      **Consumers:** bind form — snapshot body, no describe-time re-read).
 
 ### Checklist for Slice 2: DescriptionRegister (request only)
 
@@ -1065,8 +1093,8 @@ Recorded so implementers and reviewers do not "helpfully" hardcode a class table
   4. atrocity tension averaged → two dispositions, report-bool discrimination test, memo not middle mode (`STRAT-11`)
   5. additive vs `extra="forbid"` → omit-still-valid + unknown-key-still-422 tests
   6. response echo without wiring → **deleted from scope** (no response field; no PREVIEW_FIELDS / schema xfail trap)
-  7. weave retargeted post-DEPICT-0 → F1 (b) is **OUT/unowned**; when owned: **REBIND-ONLY** `PRODUCTION_PROMPT` (never mutate frozen `.body`; rebind not retroactive on already-constructed adapters); consumers **accessor-only** via `production_system_prompt()` (`DEPICT-0:432-461` **Consumers:**; no `PRODUCTION_SYSTEM_PROMPT` global); harness pack `voice` still OUT/unowned
-  11. dump-contract fixture split → `_context_pack` remains raw/no-voice (item 4); `_context_pack_dump` only at L137; omit-voice route proof uses real `describe.py:446` flags; adapter-path voice proof touches `_render_context` / `_user_text`
+  7. weave retargeted post-DEPICT-0 → F1 (b) is **OUT/unowned**; when owned: **REBIND-ONLY** `PRODUCTION_PROMPT` (never mutate frozen `.body`; rebind not retroactive on already-constructed adapters); consumers of the selected config bind via accessors; adapter posts `self._production_prompt.body` from construction-time snapshot (DEPICT-0 section **Consumers:** `:454-536`; no describe-time re-read; no `from … import PRODUCTION_PROMPT`; no `PRODUCTION_SYSTEM_PROMPT` global); harness pack `voice` still OUT/unowned
+  11. dump-contract fixture split → `_context_pack` remains raw/no-voice (item 4; uses L69/L94/L108/L134); `_context_pack_dump` only at L139; omit-voice route proof uses real `describe.py:446` flags; adapter-path voice proof requires validate+`model_dump(exclude_none=True)` dump into `_render_context` / `_user_text` (no hand-built dump)
   12. `else: raise` arm → monkeypatch `iter_context_facts` seam + message contains offending value (not freestanding SimpleNamespace)
   8. ATTRIB-07 not overclaimed → oppressive subset only; blanket quotable-only = operator policy
   9. API-09 not used to warrant hash churn → shape only; Greenfield authorizes observability
@@ -1099,12 +1127,14 @@ Recorded so implementers and reviewers do not "helpfully" hardcode a class table
       sku / person_naming are OUT; mixed-pack expected frozenset holds.
 - [ ] Payloads without new keys still validate; invalid enum values 422; `extra="forbid"` preserved;
       dump equality uses `_context_pack_dump()` default voices on allowlist
-      models only (L137) while `_context_pack()` stays voice-free for raw-dict
-      paths (no voice on `IdentityPolicyContext`); omit-voice route dump under
-      real `model_dump(exclude_none=True)` (`describe.py:446`) carries defaults;
-      boundary voice survives `gpu_remote_adapter._render_context` /
-      `_user_text`; `context_hash` one-time change accepted under
-      **Greenfield Policy** (despite API-09 Hyrum note on changed defaults).
+      models only (L139) while `_context_pack()` stays voice-free for raw-dict
+      paths (uses L69 / L94 / L108 / L134; no voice on `IdentityPolicyContext`);
+      omit-voice route dump under real `model_dump(exclude_none=True)`
+      (`describe.py:446`) carries defaults; boundary voice survives
+      `gpu_remote_adapter._render_context` / `_user_text` only when the dump
+      is produced by validate+`model_dump(exclude_none=True)` (no hand-built
+      dump); `context_hash` one-time change accepted under **Greenfield
+      Policy** (despite API-09 Hyrum note on changed defaults).
 - [ ] `DescriptionRegister` has exactly three values frozen in
       `_REGISTER_CONTRACT_VALUES`, default request `EDITORIAL`, **no response
       echo**, permanent contract-set guard red when enum drifts.
@@ -1118,8 +1148,10 @@ Recorded so implementers and reviewers do not "helpfully" hardcode a class table
 - [ ] Scoped pytest commands above green at branch HEAD (no parity skips/xfails).
 - [ ] F1 production weave explicitly **not** claimed closed — F1 (b) is **OUT
       of this wave and unowned** (REBIND-ONLY of post-DEPICT-0
-      `PRODUCTION_PROMPT`; consumers accessor-only via
-      `production_system_prompt()` per `DEPICT-0:432-461` **Consumers:**; no
+      `PRODUCTION_PROMPT`; consumers of the selected config bind via accessors;
+      adapter posts `self._production_prompt.body` from construction-time
+      snapshot — DEPICT-0 section **Consumers:** `:454-536`; no
+      describe-time re-read; no `from … import PRODUCTION_PROMPT`; no
       `PRODUCTION_SYSTEM_PROMPT` string global; never mutate frozen `.body`;
       rebind not retroactive on already-constructed adapters). Harness
       voice-honouring lockstep is **OUT/unowned**. Merging DEPICT-0+1+2 does
@@ -1138,11 +1170,13 @@ Recorded so implementers and reviewers do not "helpfully" hardcode a class table
   DEPICT-0+1+2 alone, `partition_context_pack` is pure/unwired and production
   still weaves unmarked creator fields (today `gpu_remote_adapter.py` L33–34;
   post-DEPICT-0 the same wording lives on frozen selected `PRODUCTION_PROMPT`
-  in `scene/prompts/caption_system.py`; consumers bind **accessor-only** via
-  `production_system_prompt()` — `DEPICT-0:432-461` **Consumers:** forbids
-  reading `PRODUCTION_PROMPT.body` at the call site; do **not** cite the
-  accessor-definition block at DEPICT-0:381-411 as that prohibition). When
-  F1 (b) is later owned, mutation is **REBIND-ONLY**
+  in `scene/prompts/caption_system.py`; consumers of the selected config bind
+  via the accessor functions; the adapter snapshots once and posts
+  `self._production_prompt.body` — DEPICT-0 section **Consumers:** today
+  `:454-536` forbids `from … import PRODUCTION_PROMPT` and a dedicated frozen
+  body export, and forbids describe-time accessor re-read of the body; do
+  **not** cite the accessor-definition block at DEPICT-0 `:405-433` as that
+  prohibition). When F1 (b) is later owned, mutation is **REBIND-ONLY**
   (`PRODUCTION_PROMPT = ProductionPrompt(body=…, lineage_version=…)`) —
   never `PRODUCTION_PROMPT.body = …` (`@dataclass(frozen=True)` →
   `FrozenInstanceError`), never a separate `PRODUCTION_SYSTEM_PROMPT`
@@ -1152,8 +1186,8 @@ Recorded so implementers and reviewers do not "helpfully" hardcode a class table
   cache propagation — withdrawn from this task (no owned path; see Slice 2).
 - Shared JSON schema mirror for a response register property — not required
   while response field is out of scope; schema path expected by
-  `test_response_schema_parity.py:SCHEMA_PATH` is **absent from this sparse
-  checkout** and is not edited by DEPICT-1 when present.
+  `test_response_schema_parity.py:SCHEMA_PATH` is **verified present** and
+  is not edited by DEPICT-1.
 - Harness `ContextPack` voice mirror (`scripts/eval_harness/manifest.py`
   L165–176) and harness F1 voice-honouring lockstep — **OUT of this wave and
   unowned** (neither F1 (a) nor F1 (b)). F1 (a) contract traps are

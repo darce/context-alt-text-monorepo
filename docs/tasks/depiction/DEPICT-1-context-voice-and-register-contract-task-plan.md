@@ -437,14 +437,18 @@ cross-reference).
 Three reviewable slices, each behaviour + proof:
 
 1. **Voice vocabulary + pack partition** — `ContextVoice` StrEnum; `voice` on
-   speech-allowlist nested models with fail-closed defaults (**not** on
+   speech-allowlist nested models with **per-model** defaults (CREATOR /
+   CATALOGUE / OPERATOR — **no** universal-CREATOR snippet; **not** on
    `IdentityPolicyContext` or `IdentityContext`); fixed fact inventory; pure
    `partition_context_pack` that never places `creator` in absorbable and
    places `derived` only in absorbable; frozen `_VOICE_CONTRACT_VALUES` /
    `_ABSORBABLE_VOICES` / `_QUOTABLE_ONLY_VOICES` with no silent default
-   branch; **parametrized one-case-per-IN-row and one-case-per-OUT-row** tests
+   branch; permanent `_EXPECTED_VOICE_DEFAULTS` field-default freeze;
+   **parametrized one-case-per-IN-row and one-case-per-OUT-row** tests
    against an explicit expected path set (never against `iter_context_facts`
-   output); content-blind + dump contract for default voices.
+   output); content-blind + dump contract for default voices; boundary-voice
+   proof asserts the **parsed** L85-serialized `voice` field (not raw
+   substring co-occurrence).
 2. **Register vocabulary (request only)** — `DescriptionRegister` StrEnum;
    request default `EDITORIAL`; frozen contract-set exhaustiveness; **no**
    response field, **no** shared-schema edit, **no** PREVIEW_FIELDS change,
@@ -452,8 +456,10 @@ Three reviewable slices, each behaviour + proof:
 3. **Gravity directive** — `GravityDisposition` + `GravityDirective` model;
    pure `effective_register` as exact `min(rank(requested), rank(ceiling))`
    under `restrict` and `inventory_obligation` (bool report) under
-   `obligate_inventory`; exact-table tests for both poles; operator memo for
-   class partition recorded, not coded.
+   `obligate_inventory`; frozen `_GRAVITY_CONTRACT_VALUES` + exhaustive
+   branch arms (no silent RESTRICT fall-through for a fourth member);
+   exact-table tests for both poles; operator memo for class partition
+   recorded, not coded.
 
 ## Files and Surfaces to Change
 
@@ -461,10 +467,10 @@ Three reviewable slices, each behaviour + proof:
 |---|---|---|
 | domain enums | `scene/domain/description.py` | Add `ContextVoice`, `DescriptionRegister`, `GravityDisposition` StrEnums (`sr-007`) |
 | request contract | `scene/interface_adapters/http/schemas/requests.py` | `voice` on speech-allowlist nested models only; `description_register` + `gravity` on `DescribeImageEnvelope` |
-| schema helpers (new) | `scene/interface_adapters/http/schemas/context_contract.py` | Pure `partition_context_pack`, `effective_register`, `inventory_obligation` (+ small fact dataclass); fixed fact inventory |
-| tests | `scene/tests/test_context_voice_contract.py` (new) | Voice partition + extra-forbid + defaults + **parametrized IN/OUT inventory against explicit expected paths** |
+| schema helpers (new) | `scene/interface_adapters/http/schemas/context_contract.py` | Pure `partition_context_pack`, `effective_register`, `inventory_obligation` (+ small fact dataclass); fixed fact inventory; frozen `_VOICE_CONTRACT_VALUES` / `_REGISTER_CONTRACT_VALUES` / `_GRAVITY_CONTRACT_VALUES` |
+| tests | `scene/tests/test_context_voice_contract.py` (new) | Voice partition + extra-forbid + **per-model `_EXPECTED_VOICE_DEFAULTS`** + **parametrized IN/OUT inventory against explicit expected paths** + boundary-voice parsed-field serialization proof |
 | tests | `scene/tests/test_description_register_contract.py` (new) | Register enum + frozen expected-set exhaustiveness + request default/reject (no response echo) |
-| tests | `scene/tests/test_gravity_contract.py` (new) | Exact min(requested, ceiling) + obligate_inventory discrimination |
+| tests | `scene/tests/test_gravity_contract.py` (new) | Exact min(requested, ceiling) + obligate_inventory discrimination + frozen `_GRAVITY_CONTRACT_VALUES` + exhaustive branch seam |
 | tests | `scene/tests/test_context_pack.py` | Keep `_context_pack()` voice-free for raw-dict paths; add `_context_pack_dump()` with default `voice` keys for L139 dump-equality only |
 
 **Not edited by this lane (owned elsewhere, unowned, or withdrawn from scope):**
@@ -597,15 +603,25 @@ Changes:
       OPERATOR = "operator"
       DERIVED = "derived"
   ```
-- On each nested pack model in the **voice-field allowlist** below, add:
+- On each nested pack model in the **voice-field allowlist**, add `voice` with
+  that model's own default from the table below. **Do not** paste a shared
+  `voice: ContextVoice = ContextVoice.CREATOR` onto every model — that default
+  is correct only for CMS speech surfaces and is silently wrong for catalogue
+  and operator surfaces (a junior implementing from a universal-CREATOR snippet
+  ships the wrong default for every non-creator allowlist model).
+  Explicit per-model construction sites (no shared snippet default):
   ```python
-  voice: ContextVoice = ContextVoice.CREATOR  # fail-closed default
+  # AttachmentContext / PostContext / ProductContext (CMS speech — fail-closed):
+  voice: ContextVoice = ContextVoice.CREATOR
+  # TaxonomyTermContext (catalogue labels):
+  voice: ContextVoice = ContextVoice.CATALOGUE
+  # IdentityContextItem (roster names are operator-confirmed, not creator speech):
+  voice: ContextVoice = ContextVoice.OPERATOR
   ```
-  Defaults by model:
+  Defaults by model (same table the permanent field-default proof freezes):
   - `AttachmentContext`, `PostContext`, `ProductContext` → `CREATOR`
   - `TaxonomyTermContext` → `CATALOGUE`
   - `IdentityContextItem` → `OPERATOR`
-    (roster names are operator-confirmed, not creator folder-title speech).
 - **`IdentityPolicyContext` does not get a `voice` field.** Its only field is
   `person_naming` (`requests.py` L55–60), which is **OUT** of the fact
   inventory. Adding `voice` there cannot influence any partition and would
@@ -805,8 +821,20 @@ uv run --extra dev pytest scene/tests/test_context_voice_contract.py scene/tests
 | Additive under `extra="forbid"` | Payload **identical to today's** pack fixture shape (no `voice` keys anywhere). Must validate; filled defaults are `creator` / `catalogue` / `operator` per **allowlist** model rules above (`IdentityPolicyContext` has no `voice` key after validate). **Red if** validation requires explicit `voice`, or if `IdentityPolicyContext` gains a serialized `voice`. | Payload with an **extra** unknown key `context_pack.attachment.tone="warm"` still 422 (`extra="forbid"` preserved). |
 | Default fail-closed | Omit `voice` on `attachment`; after validate, `partition_context_pack` places attachment speech strings in quotable_only. **Red if** omitted voice defaults into absorbable. | Explicit `voice="operator"` on attachment moves those strings to absorbable. |
 | Dump equality after defaults (fixture split) | `test_route_passes_normalized_context_pack_to_adapter` posts `_context_pack()` (**no** voice keys; body uses `_context_pack()` at L134) and asserts `adapter.context == _context_pack_dump()` (**L139** retarget; L137 is blank). `_context_pack_dump` carries default voices on allowlist models only. **Red if** expected dump omits `voice` while route emits it (or vice versa), or if expected dump puts `voice` on `IdentityPolicyContext`. | Raw-dict seeded-adapter / service tests still call `_context_pack()` without voice keys (L94 / L108) and still apply sources (item 4 still proved). |
+| **Per-model voice field defaults match table (snippet trap)** | Permanent freeze of allowlist model field defaults — inspect the pydantic field default, **not** omit-behaviour alone and **not** a value derived from the live model at call time: ```python
+_EXPECTED_VOICE_DEFAULTS: dict[type, ContextVoice] = {
+    AttachmentContext: ContextVoice.CREATOR,
+    PostContext: ContextVoice.CREATOR,
+    ProductContext: ContextVoice.CREATOR,
+    TaxonomyTermContext: ContextVoice.CATALOGUE,
+    IdentityContextItem: ContextVoice.OPERATOR,
+}
+for model, expected in _EXPECTED_VOICE_DEFAULTS.items():
+    assert model.model_fields["voice"].default is expected
+```
+**Red if** a universal `= ContextVoice.CREATOR` snippet is applied to `TaxonomyTermContext` or `IdentityContextItem`, if any allowlist model lacks an explicit default, or if `IdentityPolicyContext` / `IdentityContext` gain a `voice` field. | Omit-path behavioural cross-check (must still green for legitimate shapes): validate packs that omit `voice` on taxonomy → `pack.taxonomy_terms[0].voice is CATALOGUE` and path ∈ absorbable; omit on identity item → `OPERATOR` and absorbable; omit on attachment → `CREATOR` and quotable_only. **Cheating impl killed:** all models `voice: ContextVoice = ContextVoice.CREATOR` fails the Taxonomy/Identity entries of `_EXPECTED_VOICE_DEFAULTS` even if dump fixtures are hand-aligned to `"creator"`; deriving expected defaults via `{m: m.model_fields["voice"].default for m in …}` is tautological and is **not** the permanent green. |
 | **Omit-voice route dump under REAL route flags (F1(a))** | POST `/scene/describe/multipart` with a request whose `context_pack` is `_context_pack()` (omits `voice` entirely; L134). Capture the dict the route hands the adapter (`CapturingAdapter.context` in `test_context_pack.py`). Assert it equals `_context_pack_dump()` and that allowlist nested objects carry the documented default voice strings (**L139**). **Real route flags named:** production dump is `ContextPack.model_dump(exclude_none=True)` at `describe.py:446` — **not** `exclude_defaults=True`, **not** `exclude_unset=True`. **Red if** defaults are dropped by those flags, if the test only validates a pure `model_dump` with different flags, or if the request fixture itself injects voice (would hide `exclude_defaults` / `exclude_unset` cheating). | Pure unit: `DescribeImageEnvelope.model_validate({..., "context_pack": _context_pack()}).context_pack.model_dump(exclude_none=True) == _context_pack_dump()` — same flags as `describe.py:446`. **Cheating impl killed:** router switched to `exclude_defaults=True` or `exclude_unset=True` fails L139 / this proof while pure partition tests stay green. |
-| **Boundary voice survives adapter serialization path (F1(a))** | Build the render input **only** from the production dump path under test: `dump = DescribeImageEnvelope.model_validate({..., "context_pack": <pack with explicit boundary voice, e.g. attachment.voice="creator">}).context_pack.model_dump(exclude_none=True)` — same flags as `describe.py:446`. **Do not** hand-build a dump matching `_context_pack_dump` (that makes the assertion a tautology over a literal the test itself wrote: `_render_context` at L73–87 stringifies each top-level value via `json.dumps(str(value))` at L85, so a hand-built nested dict already embeds the voice token in `str(value)` with no pydantic model, no route, and no F1(a) code in the path). Call production helpers **without editing the adapter**: `scene.infrastructure.vlm.gpu_remote_adapter._render_context(dump)` (L73–87) and/or `_user_text(dump)` (L90–101; invoked by `_describe` at L176). **Real nested-pack render form (verified against L85):** top-level keys (e.g. `attachment`) are nested mappings after `model_dump`; `str(mapping)` uses Python single-quoted repr, then `json.dumps` wraps that whole string — so the live render looks like `attachment: "{'caption': '…', 'voice': 'creator'}"` and the voice token appears as the **single-quoted** substring `'creator'` (or co-located `'voice': 'creator'`), **not** the double-quoted token `"creator"` (which never occurs for nested pack dumps on this path). Assert the returned render / user-text string contains that single-quoted form (e.g. `"'creator'" in rendered` **and** `"'voice'" in rendered` for the attachment line). **Red if** voice is stripped before render (validate accepts it but dump/`_render_context` lose it), if the proof asserts the double-quoted token `"creator"` (always false on nested dumps → vacuous red or wrong oracle), or if the proof only checks pure partition / a hand-built dict and never touches validate→`model_dump(exclude_none=True)`→`_render_context` / `_user_text`. | Same validate+dump path with `attachment.voice="operator"` produces render text containing the single-quoted form `'operator'` (e.g. `"'operator'" in rendered`) and not only the speech strings. **Cheating impl killed:** F1(a) that injects voice into pydantic dumps/`context_hash` but loses it before the adapter serialization surface still fails this proof; a hand-built dump no longer greens the test before any DEPICT-1 code lands; an oracle that demands `"creator"` (double quotes) cannot green against the real L85 path. |
+| **Boundary voice survives adapter serialization path (F1(a))** | Build the render input **only** from the production dump path under test: `dump = DescribeImageEnvelope.model_validate({..., "context_pack": <pack with explicit boundary voice, e.g. attachment.voice="creator">}).context_pack.model_dump(exclude_none=True)` — same flags as `describe.py:446`. **Do not** hand-build a dump matching `_context_pack_dump` (that makes the assertion a tautology over a literal the test itself wrote: `_render_context` at L73–87 stringifies each top-level value via `json.dumps(str(value), ensure_ascii=False)` at L85, so a hand-built nested dict already embeds the voice token in `str(value)` with no pydantic model, no route, and no F1(a) code in the path). **Precondition on the dump field (structured, not raw-payload substring):** assert `dump["attachment"]["voice"] == "creator"` — nested mapping key after `model_dump`, **not** `"creator" in str(dump)` / not `"voice" in str(dump)`. Call production helpers **without editing the adapter**: `rendered, sources = scene.infrastructure.vlm.gpu_remote_adapter._render_context(dump)` (L73–87 returns `(str, tuple[str, …])`) and/or `_user_text(dump)` (L90–101; `_user_text` calls `_render_context` at L93; `_describe` calls `_user_text` at L176). **Real nested-pack render form (verified against L85):** for each top-level key the adapter emits `{key}: {json.dumps(str(value), ensure_ascii=False)}` where `value` is the nested mapping; `str(mapping)` is Python single-quoted dict repr, then `json.dumps` wraps that whole string as one JSON string — live line shape is `attachment: "{'caption': '…', 'voice': 'creator'}"`. The double-quoted token `"creator"` **never** appears for nested pack dumps on this path (DPR12-M-11). **Assert on the parsed serialized field — not bare token co-occurrence on the raw render string** (M-09). Exact parse steps (stdlib only: `json` + `ast`): (1) split `rendered` on `"\n"`; for the line whose key is `attachment`, split once on `": "` → `(key, rhs)`; (2) `py_repr = json.loads(rhs)` recovers the Python `str(mapping)` L85 fed to `json.dumps`; (3) `fields = ast.literal_eval(py_repr)` recovers the nested mapping; (4) assert `fields["voice"] == "creator"` (identity on the parsed **voice** field after the full adapter path). Optional exact-line check: the attachment line equals `f"attachment: {json.dumps(str(dump['attachment']), ensure_ascii=False)}"` (production formula at L85). **Forbidden weak oracles (must not be the permanent green):** `"'creator'" in rendered`, `"'voice'" in rendered`, `"creator" in rendered`, `'"creator"' in rendered`, or any co-occurrence of those substrings on the raw payload/render — those green when caption/title embeds the tokens while `voice` is dropped, and the double-quoted form is factually false on this path. **Red if** voice is stripped before render (step 4 KeyError / wrong value), if the proof greps raw render/payload for token co-occurrence, if the proof asserts the double-quoted token `"creator"`, or if the proof only checks pure partition / a hand-built dict and never touches validate→`model_dump(exclude_none=True)`→`_render_context` / `_user_text`. | Same validate+dump path with `attachment.voice="operator"`: parse the attachment line the same way; assert `fields["voice"] == "operator"`. **Discrimination (legitimate shape that must still green):** caption may contain the literal substring `creator` while `voice="operator"` — parsed `fields["voice"]` is still `"operator"` and step 4 passes (a raw `"creator" in rendered` oracle would false-red). **Cheating impl killed:** F1(a) that injects voice into pydantic dumps/`context_hash` but drops it before the adapter serialization surface fails step 4; a hand-built dump no longer greens before DEPICT-1 code lands; an oracle that demands `"creator"` (double quotes) or bare `"'creator'" in rendered and "'voice'" in rendered` co-occurrence cannot stand in for the parsed-field assert. |
 | No voice on IdentityPolicyContext | After validate of a pack with `identity.policy.person_naming="allow"`, `model_dump(exclude_none=True)` of policy has keys exactly `{"person_naming": ...}` — no `voice`. **Red if** voice was added to that model. | `IdentityContextItem` with a name **does** dump `voice` (operator default). |
 
 ### Slice 2: `DescriptionRegister` on the **request** contract (enforcement deferred; no response echo)
@@ -945,8 +973,37 @@ Changes:
   ```python
   gravity: GravityDirective = Field(default_factory=GravityDirective)
   ```
-- Pure functions in `context_contract.py`:
+- Pure functions in `context_contract.py`. **Frozen gravity contract set**
+  (same freeze pattern as `_VOICE_CONTRACT_VALUES` / `_REGISTER_CONTRACT_VALUES`
+  — literal enumeration, **NOT** `set(GravityDisposition)` derived at call
+  time). A fourth enum member must not silently fall through to the RESTRICT
+  arm (the safest-looking default masks an unhandled case — M-10 / sr-007):
   ```python
+  # Permanent freeze — not derived from the enum at call time.
+  _GRAVITY_CONTRACT_VALUES: frozenset[GravityDisposition] = frozenset({
+      GravityDisposition.RESTRICT,
+      GravityDisposition.OBLIGATE_INVENTORY,
+  })
+
+  def assert_gravity_contract() -> None:
+      """REF-29 / sr-007 permanent guard: enum membership equals the frozen
+      contract set. A fourth GravityDisposition fails until it is explicitly
+      dispositioned in freezes + branch arms below."""
+      actual = set(GravityDisposition)
+      if actual != set(_GRAVITY_CONTRACT_VALUES):
+          raise AssertionError(
+              f"GravityDisposition drifted from contract: "
+              f"extra={actual - set(_GRAVITY_CONTRACT_VALUES)} "
+              f"missing={set(_GRAVITY_CONTRACT_VALUES) - actual}"
+          )
+
+  def assert_gravity_exhaustive(handled: set[GravityDisposition]) -> None:
+      missing = set(_GRAVITY_CONTRACT_VALUES) - handled
+      if missing:
+          raise AssertionError(
+              f"unhandled GravityDisposition values: {missing}"
+          )
+
   _REGISTER_RANK = {
       DescriptionRegister.FORENSIC: 0,
       DescriptionRegister.EDITORIAL: 1,
@@ -972,10 +1029,17 @@ Changes:
       min(rank(requested), rank(ceiling)) — exact min, not a one-sided
       inequality. Under OBLIGATE_INVENTORY, return requested unchanged
       (restriction must not silently rewrite the altitude of an obligation
-      description; inventory duty is a separate flag)."""
+      description; inventory duty is a separate flag).
+
+      No silent default branch: a future GravityDisposition must not fall
+      through to RESTRICT (or any other arm) without an explicit update.
+      """
       if gravity.disposition is GravityDisposition.OBLIGATE_INVENTORY:
           return requested
-      return _by_rank(min(_rank(requested), _rank(restrict_ceiling)))
+      if gravity.disposition is GravityDisposition.RESTRICT:
+          return _by_rank(min(_rank(requested), _rank(restrict_ceiling)))
+      # Future enum values cannot silently take the RESTRICT path.
+      raise ValueError(f"unhandled GravityDisposition: {gravity.disposition!r}")
 
   def inventory_obligation(gravity: GravityDirective) -> bool:
       """Report-only: True when disposition is obligate_inventory.
@@ -983,14 +1047,25 @@ Changes:
       This function does **not** refuse, raise, or rewrite caller behaviour.
       Callers that need to block inventory-suppression must read this flag and
       act; a caller that ignores it is outside this helper's authority.
+
+      Exhaustive on the frozen contract set — no `is OBLIGATE else False`
+      fall-through that would mask a fourth member as non-obligation.
       """
-      return gravity.disposition is GravityDisposition.OBLIGATE_INVENTORY
+      if gravity.disposition is GravityDisposition.OBLIGATE_INVENTORY:
+          return True
+      if gravity.disposition is GravityDisposition.RESTRICT:
+          return False
+      raise ValueError(f"unhandled GravityDisposition: {gravity.disposition!r}")
   ```
   Spec property under RESTRICT (default ceiling `EDITORIAL`):
   `rank(result) == min(rank(requested), rank(ceiling))`.
   Exact table (default ceiling):
   `(FORENSIC→FORENSIC)`, `(EDITORIAL→EDITORIAL)`,
   `(INTERPRETIVE→EDITORIAL)`.
+  Permanent green: `assert_gravity_contract()` (and/or
+  `assert set(GravityDisposition) == set(_GRAVITY_CONTRACT_VALUES)` in the
+  test module). A fourth enum value fails that guard even if a junior also
+  ships a tautological `assert_gravity_exhaustive(set(GravityDisposition))`.
 - **Do not** ship a hardcoded map
   `{"atrocity": OBLIGATE_INVENTORY, "product": RESTRICT, ...}`.
   That map is the DEPICT-D1 operator decision memo (below). The schema only
@@ -1011,6 +1086,8 @@ uv run --extra dev pytest scene/tests/test_gravity_contract.py -q
 | Exact min under default ceiling | Parametrize `(requested, expected)`: `(FORENSIC, FORENSIC)`, `(EDITORIAL, EDITORIAL)`, `(INTERPRETIVE, EDITORIAL)` with `GravityDirective(disposition=RESTRICT)` and default `restrict_ceiling=EDITORIAL`. Assert `effective_register(...) is expected` (identity, not mere `rank <=`). **Red if** implementation always returns `FORENSIC` under RESTRICT (passes `rank(result) <= rank(requested)` vacuously) or `return requested` (leaves INTERPRETIVE unclamped). | Custom ceiling: `restrict_ceiling=FORENSIC` forces `effective_register(EDITORIAL, RESTRICT, restrict_ceiling=FORENSIC) is FORENSIC` and `effective_register(INTERPRETIVE, …) is FORENSIC`. |
 | Rank equality property | For every `(requested, ceiling)` pair in the enum × enum grid under RESTRICT: assert `_rank(effective_register(...)) == min(_rank(requested), _rank(ceiling))`. **Red if** any pair violates exact min. | OBLIGATE path is excluded from this grid (separate check). |
 | Obligation flag reports (not enforces) | `inventory_obligation(GravityDirective(disposition=OBLIGATE_INVENTORY, image_class="public_atrocity")) is True`, and `effective_register(EDITORIAL, that_directive) is EDITORIAL`; also `effective_register(INTERPRETIVE, that_directive) is INTERPRETIVE` (no silent demotion by the pure helper). **Red if** only `RESTRICT` exists or if OBLIGATE path reuses restrict clamping. **Note:** this proves the *report*; it does not grant the helper refusal authority over a caller that ignores the bool. | Same directive with `disposition=RESTRICT` → `inventory_obligation` is False and INTERPRETIVE clamps to EDITORIAL. **Cheating impl killed:** `def inventory_obligation(...): return True` fails the RESTRICT discrimination; `return False` always fails the OBLIGATE case. |
+| **Frozen gravity contract set (sr-007)** | Permanently assert `set(GravityDisposition) == set(_GRAVITY_CONTRACT_VALUES)` via `assert_gravity_contract()` where `_GRAVITY_CONTRACT_VALUES` is the literal frozenset `{RESTRICT, OBLIGATE_INVENTORY}` — **not** `set(GravityDisposition)` derived at call time. **Red if** a third (or fourth) value is added to the enum without updating the freeze, or if a value is removed. | Hand-edit the freeze to drop `OBLIGATE_INVENTORY` while enum still has two → `assert_gravity_contract` fails (proves non-tautology). **Cheating impl killed:** adding `EXPAND = "expand"` (or any new member) to the enum without updating `_GRAVITY_CONTRACT_VALUES` turns this permanent green red; a tautological `assert set(GravityDisposition) == set(GravityDisposition)` is **not** the permanent green. |
+| **Exhaustive disposition branches (no silent RESTRICT fall-through)** | Call `assert_gravity_exhaustive({RESTRICT})` (omit OBLIGATE) → raises `AssertionError` naming `OBLIGATE_INVENTORY`. **Red if** the helper is a no-op. **Production branch seam:** `monkeypatch` / inject a locally-defined unhandled `GravityDisposition`-shaped member onto a `GravityDirective` (same shape as the voice `else: raise` seam) and call `effective_register(EDITORIAL, that_directive)` **and** `inventory_obligation(that_directive)` → each raises `ValueError` whose **message contains the offending disposition value**. **Red if** `effective_register` is written as `if OBLIGATE: return requested; return _by_rank(...)` (fourth member silently clamps) or `inventory_obligation` is written as `return disposition is OBLIGATE` (fourth member silently reports False). | `assert_gravity_exhaustive(set(_GRAVITY_CONTRACT_VALUES))` passes; do **not** treat `assert_gravity_exhaustive(set(GravityDisposition))` alone as the permanent green. Both known members still behave: RESTRICT clamps INTERPRETIVE→EDITORIAL; OBLIGATE leaves INTERPRETIVE unchanged and reports True. |
 | Invalid disposition rejected | `gravity={"disposition": "expand"}` → `ValidationError`. | `restrict` and `obligate_inventory` both validate. |
 | Additive envelope | Envelope without `gravity` validates; default disposition is `restrict`. | Envelope with only `gravity: {image_class: "public_atrocity"}` still defaults disposition to `restrict` (operator must set disposition explicitly for obligation — fail-closed). |
 
@@ -1059,10 +1136,12 @@ Recorded so implementers and reviewers do not "helpfully" hardcode a class table
 ### Checklist for Slice 1: ContextVoice + partition
 
 - [ ] `ContextVoice` StrEnum in `scene/domain/description.py`.
-- [ ] `voice` field on voice-allowlist nested models with documented defaults
-      (creator / catalogue / operator as specified); **no** `voice` on
-      `IdentityContext` or **`IdentityPolicyContext`**; `review_reasons` and
-      `person_naming` outside speech inventory.
+- [ ] `voice` field on voice-allowlist nested models with **per-model** defaults
+      (creator / catalogue / operator as specified — **no** universal
+      `= ContextVoice.CREATOR` snippet); permanent `_EXPECTED_VOICE_DEFAULTS`
+      field-default freeze; **no** `voice` on `IdentityContext` or
+      **`IdentityPolicyContext`**; `review_reasons` and `person_naming`
+      outside speech inventory.
 - [ ] `iter_context_facts` implements the fixed path inventory (IN/OUT table).
 - [ ] `partition_context_pack` pure function; creator ⊆ quotable_only only;
       catalogue/operator/**derived** ⊆ absorbable; disjoint invariant asserted
@@ -1081,10 +1160,13 @@ Recorded so implementers and reviewers do not "helpfully" hardcode a class table
       **IdentityContextItem voice value propagates boundary→partition**,
       omit-still-valid, unknown-key still forbid, invalid enum 422,
       dump-equality via `_context_pack_dump` (L139) while `_context_pack`
-      stays voice-free (uses L69 / L94 / L108 / L134), **omit-voice route dump
-      under `model_dump(exclude_none=True)` (`describe.py:446`)**, **boundary
-      voice survives `_render_context` / `_user_text` via validate+dump only
-      (no hand-built dump)**, no voice on `IdentityPolicyContext`.
+      stays voice-free (uses L69 / L94 / L108 / L134), **per-model voice
+      field-default freeze (`_EXPECTED_VOICE_DEFAULTS`)**, **omit-voice route
+      dump under `model_dump(exclude_none=True)` (`describe.py:446`)**,
+      **boundary voice survives `_render_context` / `_user_text` via
+      validate+dump only (no hand-built dump); assert on
+      `ast.literal_eval(json.loads(rhs))["voice"]` after L85 serialize — not
+      raw substring co-occurrence**, no voice on `IdentityPolicyContext`.
 - [ ] Router churn zero; seeded raw-dict path still uses `_context_pack()`
       (no voice keys).
 - [ ] `uv run --extra dev pytest scene/tests/test_context_voice_contract.py scene/tests/test_context_pack.py -q` green.
@@ -1109,14 +1191,20 @@ Recorded so implementers and reviewers do not "helpfully" hardcode a class table
 ### Checklist for Slice 3: Gravity directive
 
 - [ ] `GravityDisposition` + `GravityDirective` on request envelope.
+- [ ] Frozen `_GRAVITY_CONTRACT_VALUES` + `assert_gravity_contract()` permanent
+      green (sr-007; not tautological `set(enum)`); fourth member turns red
+      until freezes + branch arms are updated.
 - [ ] `effective_register` under RESTRICT implements exact
       `min(rank(requested), rank(ceiling))` — table
       FORENSIC→FORENSIC, EDITORIAL→EDITORIAL, INTERPRETIVE→EDITORIAL at default
-      ceiling; custom `restrict_ceiling=FORENSIC` forces EDITORIAL→FORENSIC.
+      ceiling; custom `restrict_ceiling=FORENSIC` forces EDITORIAL→FORENSIC;
+      **no silent RESTRICT fall-through** (`else: raise` with offending value).
 - [ ] `inventory_obligation` is a **report-only bool** (true only for
-      `obligate_inventory`); OBLIGATE does not clamp register; caller honours.
+      `obligate_inventory`); OBLIGATE does not clamp register; caller honours;
+      exhaustive arms (RESTRICT→False, OBLIGATE→True, else raise).
 - [ ] Tests cover exact-min (not one-sided inequality), full rank grid, obligation
-      report discrimination, invalid disposition, additive default.
+      report discrimination, frozen gravity contract, exhaustive branch seam,
+      invalid disposition, additive default.
 - [ ] No hardcoded image-class → disposition table; DEPICT-D1 memo left to operators.
 - [ ] `uv run --extra dev pytest scene/tests/test_gravity_contract.py -q` green.
 
@@ -1127,12 +1215,13 @@ Recorded so implementers and reviewers do not "helpfully" hardcode a class table
   1. voice without enforcement → partition function + creator-not-absorbable + **DERIVED-only-absorbable** + frozen `_VOICE_CONTRACT_VALUES` / exhaustive no-default partition + **parametrized full IN/OUT inventory against explicit expected sets** + **Product/Identity boundary→partition voice value proofs**
   2. register without real exhaustiveness → frozen `_REGISTER_CONTRACT_VALUES` (not tautological `set(enum)`)
   3. restrict-only only in prose or vacuous rank≤ → exact min table + always-FORENSIC fails
-  4. atrocity tension averaged → two dispositions, report-bool discrimination test, memo not middle mode (`STRAT-11`)
+  4. atrocity tension averaged → two dispositions, report-bool discrimination test, memo not middle mode (`STRAT-11`); **gravity membership freeze** `_GRAVITY_CONTRACT_VALUES` + exhaustive `else: raise` arms so a fourth member cannot silent-RESTRICT
   5. additive vs `extra="forbid"` → omit-still-valid + unknown-key-still-422 tests
   6. response echo without wiring → **deleted from scope** (no response field; no PREVIEW_FIELDS / schema xfail trap)
   7. weave retargeted post-DEPICT-0 → F1 (b) is **OUT/unowned**; when owned: **REBIND-ONLY** `PRODUCTION_PROMPT` (never mutate frozen `.body`; rebind not retroactive on already-constructed adapters); consumers of the selected config bind via accessors; adapter posts `self._production_prompt.body` from construction-time snapshot (DEPICT-0 section **Consumers:** `:476-567`; no describe-time re-read; no `from … import PRODUCTION_PROMPT`; no `PRODUCTION_SYSTEM_PROMPT` global); harness pack `voice` still OUT/unowned
-  11. dump-contract fixture split → `_context_pack` remains raw/no-voice (item 4; uses L69/L94/L108/L134); `_context_pack_dump` only at L139; omit-voice route proof uses real `describe.py:446` flags; adapter-path voice proof requires validate+`model_dump(exclude_none=True)` dump into `_render_context` / `_user_text` (no hand-built dump)
-  12. `else: raise` arm → monkeypatch `iter_context_facts` seam + message contains offending value (not freestanding SimpleNamespace)
+  11. dump-contract fixture split → `_context_pack` remains raw/no-voice (item 4; uses L69/L94/L108/L134); `_context_pack_dump` only at L139; omit-voice route proof uses real `describe.py:446` flags; adapter-path voice proof requires validate+`model_dump(exclude_none=True)` dump into `_render_context` / `_user_text` (no hand-built dump); **assert parsed `fields["voice"]` after L85 serialize** (not raw substring co-occurrence of `voice`/`creator`; not double-quoted `"creator"`)
+  12. `else: raise` arm → monkeypatch `iter_context_facts` seam + message contains offending value (not freestanding SimpleNamespace); gravity helpers same pattern
+  13. universal-CREATOR voice snippet → per-model defaults + permanent `_EXPECTED_VOICE_DEFAULTS` field-default freeze (Taxonomy→CATALOGUE, Identity item→OPERATOR)
   8. ATTRIB-07 not overclaimed → oppressive subset only; blanket quotable-only = operator policy
   9. API-09 not used to warrant hash churn → shape only; Greenfield authorizes observability
   10. no pure-hash voice on IdentityPolicyContext
@@ -1170,15 +1259,21 @@ Recorded so implementers and reviewers do not "helpfully" hardcode a class table
       (`describe.py:446`) carries defaults; boundary voice survives
       `gpu_remote_adapter._render_context` / `_user_text` only when the dump
       is produced by validate+`model_dump(exclude_none=True)` (no hand-built
-      dump); `context_hash` one-time change accepted under **Greenfield
-      Policy** (despite API-09 Hyrum note on changed defaults).
+      dump) **and** the permanent green asserts
+      `ast.literal_eval(json.loads(rhs))["voice"]` on the L85-serialized
+      attachment line (not raw substring co-occurrence; not double-quoted
+      `"creator"`); per-model `voice` defaults match
+      `_EXPECTED_VOICE_DEFAULTS` (no universal-CREATOR snippet);
+      `context_hash` one-time change accepted under **Greenfield Policy**
+      (despite API-09 Hyrum note on changed defaults).
 - [ ] `DescriptionRegister` has exactly three values frozen in
       `_REGISTER_CONTRACT_VALUES`, default request `EDITORIAL`, **no response
       echo**, permanent contract-set guard red when enum drifts.
 - [ ] Gravity `restrict` equals exact min(requested, ceiling) under test (not mere
       rank≤); `obligate_inventory` is a distinct disposition with
       `inventory_obligation is True` as a **report**; no averaged middle mode and
-      no coded class table.
+      no coded class table; frozen `_GRAVITY_CONTRACT_VALUES` + exhaustive
+      branch arms (fourth member cannot silent-RESTRICT).
 - [ ] No files under Lane A or Lane C ownership modified; no `responses.py` edit;
       no shared-schema file edit; no bound-term/colour fields; no prompt text
       changes.

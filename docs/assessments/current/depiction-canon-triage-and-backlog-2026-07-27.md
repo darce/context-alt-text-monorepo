@@ -4,11 +4,16 @@
 >
 > - **Date**: 2026-07-27
 > - **Input**: [`depiction-canon-fit-captioning-pipeline-2026-07-27.md`](depiction-canon-fit-captioning-pipeline-2026-07-27.md) (F1–F9)
-> - **Canon**: `heuristics-canon-research` @ `v0.16.0-9-g1b1ddb8` — `lexicons/depiction.md`
->   (`ATTRIB-01..10`, `BOUND-01..05`), `lexicons/engineering.md`, `lexicons/ml-systems.md`,
->   `lexicons/accessibility.md`, `public/reasoning/` cards.
+> - **Canon**: `heuristics-canon-research` @ **`v0.17.0-8-g0264a38`** — re-ingested at
+>   HEAD for §10; §§1–9 were authored against `v0.16.0-9-g1b1ddb8` and re-verified
+>   at HEAD in §10a. Surfaces: `lexicons/depiction.md` (`ATTRIB-01..10`,
+>   `BOUND-01..05` — **exactly 15 rows at HEAD**), `lexicons/engineering.md`,
+>   `lexicons/ml-systems.md`, `lexicons/writing.md`, `lexicons/accessibility.md`,
+>   `literature/HELD.md`, `public/reasoning/` cards.
 > - **Verified at**: `main` `41d9f591`, branch `feature/depiction-canon-eval-2026-07-27` `fbe90028`
 > - **Status**: triage + proposal. No implementation. No gate decision.
+> - **Reading order caution**: §10 supersedes §9 on scope and §8b on the `FM-11`
+>   citation. Read §10 before acting on §§8–9.
 
 ---
 

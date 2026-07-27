@@ -216,12 +216,28 @@ entity) is a record-linkage problem, not a prompting problem — Christen,
 
 ### 3.5 Controlled colour vocabulary (small, high return)
 
-Card **C7**. Bind colour description to Werner's *Nomenclature of Colours* — a
-closed set with named referents. Validate emitted colour terms against the set
-deterministically; out-of-set terms degrade to the nearest in-set term. This
-raises signal per word, removes a hallucination surface, and supplies the
-vocabulary source the caption assessment's informativeness metric currently
-lacks. Feeds directly into §3.1's "verified" definition.
+Card **C7**. Bind colour description to **ISCC–NBS** (`iscc-nbs`, pinned to NBS
+SP 440, 1976) — a versioned standard whose every term carries a public referent:
+Munsell-block membership plus a published centroid. Validate emitted colour
+terms against the set deterministically; an out-of-set observation is *referred
+in* to the nearest block and the difference recorded, **never refused**. That
+distinction is load-bearing: the rejection half was retired as `FM-11` and is
+not sourced. This raises signal per word, removes a hallucination surface, and
+supplies the vocabulary source the caption assessment's informativeness metric
+currently lacks. Feeds directly into §3.1's "verified" definition.
+
+Emit at the depth the register calls for — ISCC–NBS nests 13 basic names / 29
+intermediate hues / 267 blocks, so EDITORIAL takes a basic name and FORENSIC the
+full block, from one vocabulary. Werner's *Nomenclature of Colours* is the
+**warrant** for this rule, not the set to emit: it argues that free colour names
+are unreliable between observers and that an unlisted shade must be referred
+into a standard, but it is a single unversioned 1821 edition whose referents are
+plates that do not survive as text. It stays available to the cataloguing and
+specimen lane. See §11 of
+[`library-heuristics-intake-consolidation.md`](../research/library-heuristics-intake-consolidation.md)
+for the provider decision, the bound-term contract, and the reason the
+`werner` colour list published with hex values must not be used as a numeric
+layer.
 
 ### 3.6 Visual primitives / name-to-face binding
 

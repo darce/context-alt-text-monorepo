@@ -164,3 +164,97 @@ is re-litigated.
   overlap, the wrong-name trap, and two-arm context-obedience scoring
   (`name_ablation` + `distractor`) — which already satisfies the
   `context-obedience-is-a-separate-capability` card outright.
+
+---
+
+## 5. Re-evaluation after intake §10/§11 (2026-07-27, same day)
+
+`docs/research/library-heuristics-intake-consolidation.md` — the complete intake
+instruction surface — gained a §11 (Werner post-distillation findings and the
+bound-term contract). Read together with §10 (proposed `depiction` lexicon) it
+moves the top of §2's backlog. Canon re-checked at **v0.17.0** (was v0.16.0-9 at
+first triage).
+
+### 5a. §11e's canon-side claims are accurate — verified, not taken on trust
+
+| Claim | Verified |
+|---|---|
+| `distilled/design/werner-nomenclature-of-colours.md` exists | yes, 22,677 bytes |
+| Werner absent from `SOURCES.md` | yes — zero hits |
+| Zero lexicon rows cite Werner | yes — zero hits across `lexicons/` |
+| `FM-11` retired, never published | yes — `literature/HELD.md:69` |
+| Colour stays in `design-aesthetics` `COL` | `COL-01..18` present; a normalisation row would be new |
+
+### 5b. §10d's falsifiable test has resolved — and three families never shipped
+
+§10d set the bar: *fewer than ~15 surviving rows ⇒ do not open the lexicon.*
+`depiction.md` shipped with **exactly 15**: `ATTRIB-01..10` + `BOUND-01..05`.
+It cleared the bar at the bar.
+
+§10b proposed **five** families. Two exist. **`REG`, `ICON`, `FRAM`, `SEL` are
+absent from every lexicon** (verified by prefix grep across `lexicons/`).
+
+Consequence for this backlog — one item loses its canon warrant:
+
+- **DEPICT-6 (`DescriptionRegister` enum)** was ranked as canon-adjacent. There
+  is **no `REG` family**. Its warrant is this repo's own §3.3 of
+  `cross-domain-bridges-and-caption-register.md`, an operator-reserved design
+  call. It still ships — but it must not be reviewed as canon compliance, and no
+  lane may cite a `REG-xx` rule. There is nothing to cite.
+- **DEPICT-7 (F9)** keeps its warrant, but from `A11Y-02` (B·w) plus the
+  `compression-is-selection-not-truncation` card — **not** from a `SEL` rule.
+- F1–F8 are unaffected: every rule they cite (`ATTRIB-01..10`, `BOUND-02/03/05`)
+  is shipped and real.
+
+### 5c. The direction change — contract-first beats prompt-first
+
+§3.4 of the bridges doc and §11c of the intake doc make the same argument
+independently: **the parameter must exist in the contract from the start; the
+behaviour lands later.** §3.4's "now, cheap, additive" tranche is *register enum
++ restrict-only gravity flag + inner-state-attribution counter*. §11c adds the
+bound-term shape to the same tranche and gives the reason: *one contract change
+now instead of a rewrite later.*
+
+That merges four separately-ranked items into one slice:
+
+| Was | Ranked | Now |
+|---|---|---|
+| DEPICT-1 (F1 `voice` on context-pack entries) | P0 | **DEPICT-C** |
+| DEPICT-2 (F8 inner-state attribution counter) | P1 | **DEPICT-C** |
+| DEPICT-6 (register enum + gravity flag) | P2 | **DEPICT-C** |
+| §11c bound-term shape (`term`/`vocabulary`/`vocabulary_version`/`binding`/`delta`) | not ranked | **DEPICT-C** |
+
+The merge is not bundling for convenience. F1's `voice` field and §11c's
+`binding` field are **the same pattern** — non-visual assertions carry their
+provenance in the data, not in prose. Shipped in separate slices they become two
+incompatible provenance idioms inside one response body.
+
+Revised P0, two independent lanes:
+
+- **DEPICT-0** — prompt-lineage seam (single prompt source, parity test, honest
+  `ACX_GPU_PROMPT_VERSION`). Unchanged by §10/§11. Nothing in the contract slice
+  depends on it and vice versa, so the two run in parallel.
+- **DEPICT-C** — the contract slice above. Carries the only tier-B finding with
+  live production exposure (F1) and the only member of §3.4's "now" tranche with
+  a canon rule behind it (F8 → `ATTRIB-01`).
+
+### 5d. Two constraints that must be stated before DEPICT-C is built
+
+- **Ship the shape with an empty provider registry.** §11c's own admission
+  criterion — versioned **and** every term carries a public referent — is met by
+  **none** of the named Phase-2 vocabularies today. Werner is `REFERENCE-ONLY`,
+  absent from `SOURCES.md`, cited by zero rows; Iconclass and Getty are unwired.
+  `binding: unbound` is the honest default at launch.
+- **Do not build the `unbound must be zero in FORENSIC` check yet.** With no
+  admissible provider it can never fire red. A green that cannot go red
+  certifies nothing — [TEST-15]. Land the check in the same slice as the first
+  admitted vocabulary, with a discrimination guard.
+
+### 5e. Canon-side follow-ups this repo does not own
+
+- §10 still reads as an open proposal; the lexicon shipped. The intake doc should
+  record the outcome — opened at 15 rows, 2 of 5 families — so §10d stops
+  reading as an undecided question.
+- §11e's requested `COL` normalisation row in `design-aesthetics` needs a tooled
+  ID (`tools/canon.py reserve`), a `SOURCES.md` entry, and `REFERENCE-ONLY`
+  lifted for the positive half only. Canon-side work; not this backlog.

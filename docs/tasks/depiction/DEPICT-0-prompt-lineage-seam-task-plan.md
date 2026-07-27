@@ -30,10 +30,11 @@ upgrade unsafe or untraceable today:
    `scripts/eval_harness/bakeoff.py:89` `_PROMPT_V1_SYSTEM`. The lockstep is a
    comment at `gpu_remote_adapter.py:23` ("Keep in lockstep with … bakeoff.py
    (VLMRP-HARM-01)") and nothing else.
-   `scene/tests/test_eval_harness_pipeline.py:104-141` compares harness
-   variants to each other; **nothing compares harness to production**. A
-   prompt fix landed only in `bakeoff.py` changes nothing that ships, and
-   there is no mechanical path to promote a harness variant into production.
+   `scene/tests/test_eval_harness_pipeline.py:104-145` compares harness
+   variants to each other (including the v1 system-message equality at
+   `:145`); **nothing compares harness to production**. A prompt fix
+   landed only in `bakeoff.py` changes nothing that ships, and there is no
+   mechanical path to promote a harness variant into production.
 2. **D2 — lying version stamp (default + free-string constructor hole).**
    `scene/config/settings.py:40` `gpu_prompt_or_task_version` defaults to
    `"3"` (`ACX_GPU_PROMPT_VERSION`) while the prompt text it labels is v1.
@@ -285,7 +286,8 @@ split literal (`"2-" + "4 plain sentences"`).
     `ACX_GPU_PROMPT_VERSION` env-no-effect proof must ship — a conditional
     "if a settings test previously mentioned the field" rewrite never fires.
 - Harness tests compare variants to each other only
-  (`test_eval_harness_pipeline.py:104-141`); no production cross-check.
+  (`test_eval_harness_pipeline.py:104-145`, including the v1 system-message
+  equality at `:145`); no production cross-check.
 - Whitespace-normalised identity of the two v1 bodies verified in this planning
   pass (length 528, equal).
 
@@ -425,6 +427,18 @@ authority for:
    def production_prompt_or_task_version() -> str:
        return production_prompt().lineage_version
    ```
+   **`lineage_version` construction pin (mandatory — source shape, not
+   runtime value):** the `lineage_version=` argument at the module-level
+   `PRODUCTION_PROMPT = ProductionPrompt(...)` site **must** be the
+   constant literal `"1"`. It must **not** be an import-time env read
+   (`os.environ.get("ACX_GPU_PROMPT_VERSION", "1")`, `os.getenv(...)`, or
+   any other `Call` / name that resolves from the environment). A runtime
+   equality check against `production_prompt_or_task_version() == "1"`
+   cannot discriminate that cheat under pytest (env unset at import →
+   snapshot holds `"1"`; `monkeypatch.setenv` after import never reaches
+   the import-time read). The mandated **lineage-version-literal** AST
+   proof (Slice 2) is the surface that kills it — same shape as the
+   registry-provenance assertion over `PROMPT_VARIANTS`.
    **Primary accessor:** `production_prompt()` returns the selected instance.
    Field accessors always re-read through it. There is **no** separate
    `PRODUCTION_SYSTEM_PROMPT` string global that can stay on v1 while a
@@ -589,16 +603,29 @@ Tests (same slices as the behaviour they load-bear):
   lineage while posting another body; free-string env stamp path is absent
   (field deleted; unconditional `ACX_GPU_PROMPT_VERSION` env-no-effect);
   free-string constructor override path is absent ([PROV-09], [TEST-15]).
+  **Must include a DI-resolver leg** that constructs via
+  `deps.get_gpu_description_adapter` (not only direct
+  `GpuRemoteDescriptionAdapter(...)`) so a post-init env stamp inside the
+  factory is reachable by a Named RED ([TEST-15]).
 - **Settings GPU-stamp deletion (mandatory, unconditional)** —
   `not hasattr(DescriptionSettings(), "gpu_prompt_or_task_version")` **and**
   `"gpu_prompt_or_task_version" not in DescriptionSettings.model_fields`
   **and** `"gpu_prompt_or_task_version" not in DescriptionSettings().model_dump()`
   and junk `ACX_GPU_PROMPT_VERSION` has no effect on adapter stamp
   ([TEST-15]).
+- **Lineage-version literal provenance (mandatory)** — source-level AST
+  assertion over `caption_system.py`: the module-level
+  `PRODUCTION_PROMPT = ProductionPrompt(...)` call's `lineage_version=`
+  keyword value is the constant literal `"1"`, not an env `Call` or other
+  non-constant expression ([TEST-15]; same discipline as registry-
+  provenance over `PROMPT_VARIANTS`).
 - **Free-string constructor rejection (mandatory)** — full construction of
   `GpuRemoteDescriptionAdapter` with an arbitrary `prompt_or_task_version=`
   kwarg raises `TypeError` matching unexpected-keyword; positive control
-  without the kwarg succeeds ([TEST-15]).
+  without the kwarg succeeds; **and** a source-level `__init__` parameter-
+  set allowlist rejects any differently-named free-string stamp parameter
+  (e.g. `stamp_version=`) that the keyword-name-only `TypeError` proof
+  cannot see ([TEST-15]).
 - Update existing **resolved-default** assertions that hard-code GPU `"3"`
   (`test_description_profiles.py:214`/`:263`); **rewrite/delete** the
   free-string explicit-override shape at
@@ -667,7 +694,7 @@ this seam.
 | harness | `…/scripts/eval_harness/bakeoff.py` | Delete local `_PROMPT_V1_SYSTEM` only; import shared v1 body + markers via accessors; **keep local `PromptVariant`** and `_PROMPT_V2_SYSTEM`; introduce **`build_prompt_variants() -> dict[str, PromptVariant]`** and set module-level `PROMPT_VARIANTS = build_prompt_variants()` (**v1 `system=` resolved through `production_system_prompt()` / `production_prompt().body` inside the helper when it runs** — construction site today `bakeoff.py:138-141`; consumer read at `:595`); keep `DEFAULT_PROMPT_VARIANT = "v1"` defined here; re-export names tests already import **plus `build_prompt_variants`**; leave pass-1 / weave / compress / face-gate logic in place. **Parity temporal scope:** same-construction-epoch only (option (a)); already-built `PROMPT_VARIANTS` does not track a later rebind; rebind proof must call `build_prompt_variants()` after rebind |
 | settings | `…/scene/config/settings.py` | **Delete** `gpu_prompt_or_task_version` field entirely (today `settings.py:40`) — zero production readers after `deps.py:98` drop; drop free-string `ACX_GPU_PROMPT_VERSION` with it |
 | deps (one-line) | `…/scene/interface_adapters/http/deps.py:98` | Drop `prompt_or_task_version=settings.gpu_prompt_or_task_version` once the adapter no longer accepts that kwarg; no other deps edits |
-| tests (new) | `…/scene/tests/test_prompt_lineage_seam.py` (new) | Default-path parity (transport-stubbed posted system string vs harness v1) + **rebind-before-construction** bakeoff v1 proof that **calls `build_prompt_variants()` after rebind** and compares `registry["v1"]` to a fresh adapter (parity temporal scope option (a); not a hand-built `PromptVariant`) + **mandatory** foldable-constant single-source inventory (incl. split-literal + function-local + **default-argument** discrimination via `roots=` injection; walks `args.defaults` / `args.kw_defaults`) + atomic body+stamp discrimination on fresh adapters (incl. `_production_prompt is PRODUCTION_PROMPT` identity) + temporal snapshot proof + resolver no-divergence + free-string constructor rejection (full construction + positive control) + unconditional settings-field-deleted (`not hasattr` + `not in model_fields` + absent from `model_dump()`) + env-no-effect proof, all with red-first documentation in docstrings |
+| tests (new) | `…/scene/tests/test_prompt_lineage_seam.py` (new) | Default-path parity (transport-stubbed posted system string vs harness v1) + **rebind-before-construction** bakeoff v1 proof that **calls `build_prompt_variants()` after rebind** and compares `registry["v1"]` to a fresh adapter (parity temporal scope option (a); not a hand-built `PromptVariant`) + **mandatory** foldable-constant single-source inventory (incl. split-literal + function-local + **default-argument** discrimination via `roots=` injection; walks `args.defaults` / `args.kw_defaults`) + atomic body+stamp discrimination on fresh adapters (incl. `_production_prompt is PRODUCTION_PROMPT` identity) + temporal snapshot proof + resolver no-divergence **including DI-resolver leg via `deps.get_gpu_description_adapter`** + free-string constructor rejection (full construction + positive control + **`__init__` parameter-set allowlist AST**) + **lineage-version-literal AST** over `PRODUCTION_PROMPT = ProductionPrompt(...)` + unconditional settings-field-deleted (`not hasattr` + `not in model_fields` + absent from `model_dump()`) + env-no-effect proof, all with red-first documentation in docstrings |
 | tests (correct) | `…/scene/tests/test_description_profiles.py:214`/`:263`, `test_settings.py`; **rewrite** `test_gpu_remote_adapter.py:51-65` (delete free-string `"3"` override; omit kwarg; assert stamp = snapshot / `"1"`); **add** no-arg default + free-string rejection proofs; **add** unconditional `not hasattr(DescriptionSettings(), "gpu_prompt_or_task_version")` + `"gpu_prompt_or_task_version" not in DescriptionSettings.model_fields` + absent from `DescriptionSettings().model_dump()` + `ACX_GPU_PROMPT_VERSION` env-no-effect (today `test_settings.py:8-14` never mentions the field) | Resolved-default adapter stamp expects honest `"1"`; free-string constructor override is gone (DPR3-M-02 preserve-override **wontfix**); settings field deleted from attribute **and** schema surface with red-first proof |
 
 ## Related Files
@@ -1226,6 +1253,13 @@ Changes:
   def production_prompt_or_task_version() -> str:
       return production_prompt().lineage_version
   ```
+  **`lineage_version=` must be the constant literal `"1"`** at this
+  construction site (not `os.environ.get(...)`, not `os.getenv(...)`, not
+  any other non-constant expression). The **lineage-version-literal** AST
+  proof (below) pins that source shape; a runtime
+  `production_prompt_or_task_version() == "1"` check cannot, because an
+  import-time env read under pytest (env unset at import) still yields
+  `"1"` and `monkeypatch.setenv` after import never reaches it.
   **Forbidden shapes (these re-introduce the lineage lie):**
   - Independent `PRODUCTION_SYSTEM_PROMPT = "…v1…"` plus a separate
     `production_prompt_or_task_version()` that subscripts
@@ -1238,6 +1272,18 @@ Changes:
     global that can change independently.
   - Import-time-frozen default-arg of a version string that ignores a later
     rebind of `PRODUCTION_PROMPT`.
+  - **Import-time env-backed `lineage_version` at the `PRODUCTION_PROMPT`
+    construction site** — e.g.
+    `PRODUCTION_PROMPT = ProductionPrompt(body=<v1>,
+    lineage_version=os.environ.get("ACX_GPU_PROMPT_VERSION", "1"))`. Under
+    pytest the env is unset at import so the snapshot holds `"1"`, every
+    runtime stamp equality stays green, and
+    `monkeypatch.setenv("ACX_GPU_PROMPT_VERSION", "9")` after import cannot
+    reach the import-time read. In production uvicorn can boot with
+    `ACX_GPU_PROMPT_VERSION=9` and stamp `"9"` over a v1 body — exactly the
+    free-string env stamp FROZEN CONTRACT B deletes. Runtime env-no-effect
+    proofs structurally cannot see this siting; only the
+    lineage-version-literal AST proof can.
   - Consumer binding via `from … import PRODUCTION_PROMPT` then
     `.body` / `.lineage_version`, or a dedicated import-time
     `DEDICATED = PRODUCTION_PROMPT.body` export — both miss the Slice-2
@@ -1262,6 +1308,18 @@ Changes:
     `self.prompt_or_task_version` at `gpu_remote_adapter.py:133`/`:143`)
     that lets `GpuRemoteDescriptionAdapter(prompt_or_task_version="9")`
     stamp `"9"` over the v1 body posted at `:182`.
+  - **Differently-named free-string stamp parameter** on
+    `GpuRemoteDescriptionAdapter.__init__` (e.g.
+    `stamp_version: str | None = None` honored when passed) after the
+    `prompt_or_task_version` name is removed — the keyword-name-only
+    `TypeError` proof on `prompt_or_task_version=` stays green while
+    constructor-level stamp/body desync is restored. Closed by the
+    `__init__` parameter-set allowlist AST (free-string rejection proof).
+  - **Post-init env stamp inside `deps.get_gpu_description_adapter`**
+    (or a factory wrapper it returns) after the settings field and deps
+    kwarg are dropped — every direct-constructor proof stays green because
+    none of them route through deps. Closed by the DI-resolver leg of the
+    resolver / env-no-effect surface.
 - `settings.py` — **delete**
   `DescriptionSettings.gpu_prompt_or_task_version` entirely (today
   `settings.py:40` including
@@ -1444,7 +1502,9 @@ settings field:**
   to `self.prompt_or_task_version` → free-string rejection proof (below)
   fails (`TypeError` with `match="unexpected keyword argument"` expected on
   full construction with `prompt_or_task_version="9"`, or stamp equals `"9"`
-  over v1 body).
+  over v1 body). Renaming the free-string formal (e.g. `stamp_version=`)
+  instead of restoring the old name → TypeError stays green; parameter-set
+  allowlist + stamp assignment provenance AST **must** go red.
 
 **(b) Discrimination case — synthetic v2 config on a FRESH adapter
 (kills body/stamp desync)**
@@ -1580,12 +1640,16 @@ lie. After this plan, the adapter snapshots `production_prompt()` once at
 free-string stamp kwarg; the settings field is deleted. Slice-2 atomic
 discrimination covers selected-config rebind on a **fresh** adapter; the
 temporal proof covers construct-then-rebind; this test covers the
-**configured production path** (adapter construction as production does +
-posted body) and the absence of free-string escape hatches.
+**configured production path** — both the direct constructor shape **and**
+the real DI resolver `deps.get_gpu_description_adapter` (verified today at
+`deps.py:84-109`; construction site `:94-103`) — plus the absence of
+free-string escape hatches. Naming deps in prose while only constructing
+the adapter directly leaves a post-init env stamp inside the factory
+invisible to every assertion ([TEST-15] unrun mutation).
 
 **What it asserts:**
 
-1. Build a GPU adapter the way production will after this plan: construct
+1. **Direct constructor leg.** Build a GPU adapter with
    `GpuRemoteDescriptionAdapter` **without** a `prompt_or_task_version`
    kwarg (matching post-edit `deps.py`, which no longer passes it) with the
    **full** remaining required kwargs
@@ -1593,16 +1657,17 @@ posted body) and the absence of free-string escape hatches.
    `gpu_remote_adapter.py:127-132`) plus transport-stubbed `describe()`.
 2. Assert stamped `adapter.prompt_or_task_version` equals
    `production_prompt_or_task_version()` and the posted
-   `messages[0]["content"]` equals the adapter snapshot body / 
+   `messages[0]["content"]` equals the adapter snapshot body /
    `production_system_prompt()` (whitespace-normalised) under the default
    selected config.
 3. Rebind `PRODUCTION_PROMPT` to the synthetic v2 config, then construct a
    **fresh** adapter and repeat: stamp and posted body both reflect the
    synthetic values together (same as atomic (b); not a pre-rebind
    instance).
-4. **Negative env path (unconditional; always fires):** via
-   `monkeypatch.setenv("ACX_GPU_PROMPT_VERSION", "9")`, construct a fresh
-   adapter (full required kwargs, no free-string stamp kwarg) and assert
+4. **Negative env path — direct constructor (unconditional; always
+   fires):** via `monkeypatch.setenv("ACX_GPU_PROMPT_VERSION", "9")`,
+   construct a fresh adapter (full required kwargs, no free-string stamp
+   kwarg) and assert
    `adapter.prompt_or_task_version == production_prompt_or_task_version()`
    / `"1"` **and** posted body matches the selected config body. The junk
    env value must **not** become the stamp. Implementation:
@@ -1619,6 +1684,32 @@ posted body) and the absence of free-string escape hatches.
    `prompt_or_task_version="9"` must be impossible / rejected (see free-
    string constructor rejection proof below) — not a supported stamp
    escape hatch.
+6. **DI-resolver leg (mandatory — kills the post-init-in-deps cheat).**
+   Construct the adapter **through** production DI, not the direct
+   constructor. Pattern mirrors
+   `test_description_profiles.py:173-184` / `:249-263` (verified):
+   ```text
+   monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://10.0.1.42:8000")
+   monkeypatch.setenv("ACX_GPU_PROMPT_VERSION", "9")  # junk; must not stamp
+   from scene.interface_adapters.http.deps import get_gpu_description_adapter
+   from scene.infrastructure.vlm.gpu_remote_adapter import (
+       GpuRemoteDescriptionAdapter,
+   )
+   adapter = get_gpu_description_adapter()
+   assert isinstance(adapter, GpuRemoteDescriptionAdapter)
+   assert adapter.prompt_or_task_version == production_prompt_or_task_version()
+   assert adapter.prompt_or_task_version == "1"
+   ```
+   Endpoint value must be private/loopback under the allowlist so the
+   resolver returns `GpuRemoteDescriptionAdapter` rather than
+   `UnavailableDescriptionAdapter` (same contract as
+   `test_description_profiles.py:173-184`: private literal IP
+   `http://10.0.1.42:8000`). **Do not** substitute a direct
+   `GpuRemoteDescriptionAdapter(...)` call for this leg — that is the
+   shape every other proof already uses and the gap this leg closes.
+   Transport-stubbed `describe()` is optional on this leg (the resolver
+   does not expose a transport kwarg today at `deps.py:94-103`); stamp
+   equality is the load-bearing assertion.
 
 **(a) Exact edit that makes it go red**
 
@@ -1627,8 +1718,18 @@ posted body) and the absence of free-string escape hatches.
   proof fails.
 - Restore a free-string stamp path that production wiring can feed (e.g.
   reintroduce constructor kwarg + `deps.py:98` threading of an env-backed
-  settings field) with `ACX_GPU_PROMPT_VERSION=9` → assertion (4)/(5) fail
-  (stamp `"9"` while body stays v1).
+  settings field) with `ACX_GPU_PROMPT_VERSION=9` → assertion (4)/(5)/(6)
+  fail (stamp `"9"` while body stays v1).
+- **Named RED (DI post-init cheat — DPR13-H-03):** drop the settings field
+  and the `deps.py:98` kwarg as instructed, then re-introduce a post-init
+  env stamp inside `get_gpu_description_adapter` itself — e.g. after the
+  `GpuRemoteDescriptionAdapter(...)` call,
+  `adapter.prompt_or_task_version = os.environ.get("ACX_GPU_PROMPT_VERSION",
+  adapter.prompt_or_task_version)` (or an equivalent factory wrapper that
+  rewrites the stamp from env). Assertions (1)–(5) stay **green** (none
+  route through deps). Assertion (6) **must fail** (stamp `"9"` under the
+  junk env). A mutation named as red that only runs on the direct-
+  constructor leg is an unrun mutation for this cheat ([TEST-15]).
 
 **(b) Discrimination**
 
@@ -1640,6 +1741,8 @@ posted body) and the absence of free-string escape hatches.
   is constructed **after** rebind, but fails the temporal proof; this
   resolver test still requires stamp and body to match on the instance
   under test.
+- Direct-constructor-only env-no-effect (assertions (1)–(5)) stays green
+  under the Named RED post-init-in-deps cheat; only assertion (6) goes red.
 
 **Operator promotion path (explicit):** promoting lineage is a deliberate
 code rebind of `PRODUCTION_PROMPT` (body + `lineage_version` together),
@@ -1679,6 +1782,16 @@ would ship with no red-first evidence. The proof below **always runs**.
    assert `adapter.prompt_or_task_version == production_prompt_or_task_version()`
    / `"1"` (junk env does not become the stamp). Optional: transport-stubbed
    `describe()` still posts the selected v1 body.
+3. **DI-resolver env-no-effect (same junk env):** with
+   `ACX_GPU_PROMPT_VERSION=9` still set, also construct via
+   `deps.get_gpu_description_adapter` under a private endpoint
+   (`ACX_GPU_ENDPOINT_URL=http://10.0.1.42:8000` — same pattern as
+   `test_description_profiles.py:173-184`) and assert the resolved
+   `GpuRemoteDescriptionAdapter.prompt_or_task_version == "1"`. This is the
+   same DI leg as resolver assertion (6); it may live in either test so
+   long as it ships once and is named as covering the post-init-in-deps
+   cheat. Direct-constructor assertion (2) alone does **not** cover that
+   siting.
 
 **(a) Exact edit / red-first state that makes it go red**
 
@@ -1691,9 +1804,20 @@ would ship with no red-first evidence. The proof below **always runs**.
   override instance attribute access so `hasattr` is false → `model_fields`
   and/or `model_dump()` assertions still fail. That is why both schema
   checks are mandatory.
-- Field (or any free-string env stamp path) still honours
-  `ACX_GPU_PROMPT_VERSION=9` into the adapter stamp → assertion (2) fails
-  (stamp `"9"` while body stays v1).
+- Field (or any **post-import** free-string env stamp path that the
+  direct-constructor or DI-resolver construction still honours) still
+  honours `ACX_GPU_PROMPT_VERSION=9` into the adapter stamp → assertion
+  (2) and/or (3) fails (stamp `"9"` while body stays v1).
+- **Scope limit (DPR13-H-02) — this proof does not cover import-time env
+  reads at the `PRODUCTION_PROMPT` construction site.** Cheat:
+  `PRODUCTION_PROMPT = ProductionPrompt(body=<v1>,
+  lineage_version=os.environ.get("ACX_GPU_PROMPT_VERSION", "1"))` at
+  module import. Under pytest the env is unset at import, so the snapshot
+  holds `"1"`, assertion (2) stays **green**, and
+  `monkeypatch.setenv` after import structurally cannot reach the
+  import-time read. Do **not** document that edit as a red for this test —
+  it is an unrun mutation ([TEST-15]). That siting is covered by the
+  **lineage-version-literal** AST proof below; its Named RED lives there.
 
 **(b) Discrimination**
 
@@ -1702,11 +1826,100 @@ would ship with no red-first evidence. The proof below **always runs**.
   triple (`not hasattr` + `not in model_fields` + absent from `model_dump()`)
   + env-no-effect pair goes red. Do **not** reintroduce a positive read of
   the deleted field as the discrimination surface.
+- Direct-constructor assertion (2) alone stays green under a post-init
+  stamp rewrite inside `get_gpu_description_adapter`; DI assertion (3) is
+  what goes red for that siting (see resolver Named RED).
+
+#### [TEST-15] red-first proof — lineage-version literal provenance (MANDATORY)
+
+**Test name (proposed):**
+`test_production_prompt_lineage_version_is_literal_not_env`
+
+**Why mandatory (same discipline as registry-provenance / DPR12-H-01):**
+The env-no-effect proofs (settings deletion assertion (2); resolver
+assertions (4)/(6)) assert
+`adapter.prompt_or_task_version == production_prompt_or_task_version()` /
+`"1"` after `monkeypatch.setenv("ACX_GPU_PROMPT_VERSION", "9")`. That kills
+an **accessor** or **settings-field** env read and a **post-import**
+adapter-side env stamp. It does **not** kill an **import-time** env read
+at the `PRODUCTION_PROMPT` construction site:
+
+```text
+PRODUCTION_PROMPT = ProductionPrompt(
+    body=<v1>,
+    lineage_version=os.environ.get("ACX_GPU_PROMPT_VERSION", "1"),
+)
+```
+
+Under pytest the env is unset at import, so the snapshot holds `"1"`, the
+accessor returns `"1"`, and every runtime stamp equality stays green.
+`monkeypatch.setenv` after import structurally cannot reach an import-time
+read. In production uvicorn can boot with `ACX_GPU_PROMPT_VERSION=9` and
+the adapter stamps `"9"` over a v1 body — the free-string env stamp
+FROZEN CONTRACT B exists to delete. The plan's older Named RED ("field or
+any free-string env stamp path still honours `ACX_GPU_PROMPT_VERSION=9`
+into the adapter stamp") does **not** fire for this siting: an unrun
+mutation ([TEST-15]). Runtime equality cannot stand in here, for the same
+reason registry-provenance cannot be a runtime equality check on
+`PROMPT_VARIANTS` in the import epoch.
+
+**What it asserts (source-level AST over `caption_system.py`):**
+
+1. Parse `scene/prompts/caption_system.py` (the shared module this plan
+   creates). Locate the module-level assignment whose target is the name
+   `PRODUCTION_PROMPT` and whose value is a `Call`.
+2. The call's function resolves to `ProductionPrompt` (a `Name` or
+   equivalent attribute load of that class).
+3. Among the call's keywords, there is a keyword named `lineage_version`
+   whose **value node** is a constant string literal `"1"` —
+   `ast.Constant(value="1")` (Python 3.11+; or the equivalent
+   `ast.Str`/`Constant` form the tree actually uses). The value node must
+   **not** be a `Call`, `Name`, `Attribute`, `BinOp`, `IfExp`, `JoinedStr`,
+   or any other non-constant expression.
+4. Runtime equality is **not** an acceptable substitute for (3). A check
+   that only reads `production_prompt().lineage_version == "1"` or
+   `PRODUCTION_PROMPT.lineage_version == "1"` after import stays green under
+   the import-time env-read cheat and is **forbidden** as the sole form of
+   this proof.
+
+**(a) Exact edit that makes it go red**
+
+- **Named RED (import-time env lineage — DPR13-H-02):** replace the
+  literal at the construction site with an env read —
+  `lineage_version=os.environ.get("ACX_GPU_PROMPT_VERSION", "1")` (or
+  `os.getenv(...)`, or any other `Call` / non-constant expression) —
+  while leaving body as the v1 text. Runtime env-no-effect and
+  `== "1"` stamp assertions stay **green** under pytest. This AST proof
+  **must** go red (value node is no longer `Constant("1")`).
+- Equivalent reds: `lineage_version=_VERSION` where `_VERSION` is bound
+  from env; `lineage_version=os.environ["ACX_GPU_PROMPT_VERSION"]` with a
+  try/default wrapper; any non-constant value node for that keyword.
+
+**(b) Discrimination**
+
+- **Cheating shape killed:** import-time env-backed
+  `lineage_version` at `PRODUCTION_PROMPT = ProductionPrompt(...)` that
+  every runtime stamp equality and every post-import `monkeypatch.setenv`
+  env-no-effect proof structurally cannot see.
+- Permanent guard is the AST shape assertion (3). Runtime equality of the
+  resolved stamp string is **not** a substitute (same import-epoch
+  blindness as a runtime check that `PROMPT_VARIANTS` equals a helper
+  product while a hand-built dict is the real module-level bind).
+- **Scope limit:** this proof pins the **source shape** of the
+  `lineage_version=` keyword at the selected-config construction site. It
+  does not pin the body text (single-source inventory does) and does not
+  pin post-construction rebind (intentional DEPICT-1 mutation path).
+  Assertion (3) requires the constant `"1"`, so a hard-coded dishonest
+  literal such as `lineage_version="3"` also fails this proof (as well as
+  default-honesty / atomic assertions).
 
 #### [TEST-15] red-first proof — free-string constructor override rejected (MANDATORY)
 
 **Test name (proposed):**
 `test_gpu_adapter_rejects_free_string_prompt_version_kwarg`
+(pair with
+`test_gpu_adapter_init_has_no_free_string_stamp_parameter` or fold both
+into one test module — both surfaces are mandatory).
 
 **Why mandatory:** Dropping only the env stamp path still leaves
 `GpuRemoteDescriptionAdapter(prompt_or_task_version="9")` as a supported
@@ -1727,6 +1940,17 @@ kwarg still present and still honoured. A test that elides the required
 kwargs, specifies no `match=`, and has no positive control stays green
 under the current free-string hole and under the prescribed red-first
 mutation. The proof must pin the *unexpected keyword* failure mode.
+
+**Why a keyword-name-only `TypeError` is also insufficient (DPR13-H-04):**
+Removing `prompt_or_task_version` from the signature and adding a
+differently-named free-string stamp parameter (e.g.
+`stamp_version: str | None = None` that, when passed, overrides the
+snapshot-derived stamp) keeps the `TypeError` on
+`prompt_or_task_version=` **green** (the old name genuinely is unexpected)
+while fully restoring constructor-level stamp/body desync — the defect
+DPR3-M-02 was closed wontfix to prevent. The Named RED for that cheat
+is a **source-level parameter-set allowlist** over `__init__`, not another
+runtime `TypeError` on a second guessed name.
 
 **What it asserts:**
 
@@ -1766,10 +1990,49 @@ mutation. The proof must pin the *unexpected keyword* failure mode.
    kwarg and asserts the honest stamp (or the free-string-rejection test
    owns the negative path exclusively). Payload/transport assertions in
    that file may remain.
+5. **`__init__` parameter-set allowlist (mandatory — source-level AST).**
+   Parse `gpu_remote_adapter.py`. Locate the `FunctionDef` (or
+   `AsyncFunctionDef`) named `__init__` on `GpuRemoteDescriptionAdapter`.
+   Collect the formal parameter names excluding `self`:
+   `args.args` names after `self` plus all `args.kwonlyargs` names. Assert
+   that set equals **exactly** this frozen allowlist (order free; verified
+   against today's signature at `gpu_remote_adapter.py:127-140` minus the
+   deleted `prompt_or_task_version`):
+   ```text
+   {
+       "endpoint_url",
+       "model_id",
+       "model_version",
+       "connect_timeout_s",
+       "read_timeout_s",
+       "api_key",
+       "max_concurrent_calls",
+       "transport",
+   }
+   ```
+   Also assert `args.vararg is None` and `args.kwarg is None` (no `*args` /
+   `**kwargs` smuggling surface that would accept an arbitrary free-string
+   stamp under a different call-site name). Runtime `TypeError` on one
+   keyword name is **not** a substitute for this allowlist.
+6. **Stamp assignment provenance (mandatory — source-level AST companion).**
+   In the same `__init__` body, every assignment target
+   `self.prompt_or_task_version` must have a value node that is the
+   attribute load `self._production_prompt.lineage_version` (or the
+   equivalent `Attribute` chain on the snapshot name bound earlier in
+   `__init__` from `production_prompt()`). A value node that is a `Name`
+   of a free-string parameter, an `IfExp` selecting a parameter over the
+   snapshot, a `Call` to `os.environ.get`, or any other non-snapshot
+   expression fails this assertion. An in-body env read such as
+   `self.prompt_or_task_version = os.environ.get(...)` adds no new formal
+   and would pass the parameter allowlist alone; the assignment-provenance
+   pin is what goes red for that siting. (Post-import env-no-effect also
+   covers it at runtime; the AST pin makes the Named RED local to this
+   proof.)
 
 **(a) Exact edit that makes it go red**
 
-- Reintroduce a free-string constructor parameter that is assigned to
+- Reintroduce a free-string constructor parameter named
+  `prompt_or_task_version` that is assigned to
   `self.prompt_or_task_version` (today's shape at
   `gpu_remote_adapter.py:133`/`:143`, any default including
   `str | None = None` that is honored when provided) → assertion (1)
@@ -1777,26 +2040,50 @@ mutation. The proof must pin the *unexpected keyword* failure mode.
   raises `TypeError` matching `unexpected keyword argument`, **and/or** a
   constructed instance stamps `"9"` while `describe()` still posts the v1
   body at the payload site. (A missing-arg-only `TypeError` from an elided
-  call is **not** a valid red signal.)
+  call is **not** a valid red signal.) Assertion (5) also fails (name not
+  in allowlist / extra formal).
+- **Named RED (differently-named free-string stamp — DPR13-H-04):** remove
+  `prompt_or_task_version` from the signature exactly as mandated, then add
+  `stamp_version: str | None = None` (or any other name) which, when
+  passed, overrides the snapshot-derived stamp:
+  `self.prompt_or_task_version = stamp_version if stamp_version is not None
+  else self._production_prompt.lineage_version`. Assertion (1) stays
+  **green** (old keyword genuinely unexpected). Assertion (2) positive
+  control stays green when the new kwarg is omitted. Assertion (5)
+  **must** fail (parameter set ≠ allowlist). Assertion (6) **must** fail
+  (assignment value is not purely the snapshot attribute). A mutation
+  named as red that only reintroduces the old keyword name is an unrun
+  mutation for this cheat ([TEST-15]).
 
 **(b) Discrimination / permanent guard**
 
-- **Cheating shape killed:** keep production honest but re-add the
-  free-string constructor kwarg so direct construction (and any future
-  caller) can lie about lineage without touching `PRODUCTION_PROMPT`.
+- **Cheating shape killed (name-pinned):** keep production honest but
+  re-add the free-string constructor kwarg so direct construction (and any
+  future caller) can lie about lineage without touching
+  `PRODUCTION_PROMPT`. Assertion (1) goes red.
+- **Cheating shape killed (renamed free-string — DPR13-H-04):** remove the
+  old name, add `stamp_version` (or any other free-string stamp formal)
+  that overrides the snapshot. Assertion (1) stays green; assertions
+  (5)/(6) go red.
 - Permanent guard ships as assertion (1) (`TypeError` with
   `match="unexpected keyword argument"` on the **full** construction) plus
   assertion (2) (positive control succeeds) plus assertion (3) (stamp ==
-  selected config snapshot). A "silent ignore of the kwarg" implementation
-  (parameter still present, value discarded) fails assertion (1) — the
-  preferred shape is **no caller-supplied version exists at all**, not a
-  no-op parameter. An elided-only call with no `match=` fails to go red
-  under today's hole and is **forbidden** as the form of this test.
+  selected config snapshot) plus assertion (5) (exact parameter-set
+  allowlist, no `*args`/`**kwargs`) plus assertion (6) (stamp assignment
+  from snapshot only). A "silent ignore of the kwarg" implementation
+  (parameter still present, value discarded) fails assertion (1) **and**
+  (5) — the preferred shape is **no caller-supplied version exists at
+  all**, not a no-op parameter. An elided-only call with no `match=` fails
+  to go red under today's hole and is **forbidden** as the form of this
+  test.
 - Alternative closed-lineage-enum shape (only if removal is blocked by an
   unforeseen interface constraint — **not** the planned path): kwarg type
   is a closed enum of selected lineage ids and any free string is
   rejected; red-first then is accepting an arbitrary string again. This
   plan's prescribed implementation is **removal**, not the enum fallback.
+  If the enum fallback were ever taken, the allowlist would have to be
+  updated in the same change as the signature — do not leave the allowlist
+  stale.
 
 ## Consolidated Checklist
 
@@ -1953,6 +2240,19 @@ mutation. The proof must pin the *unexpected keyword* failure mode.
       `production_prompt_or_task_version()` / `"1"`. Red-first: field still
       present at `settings.py:40` (including the hasattr-only cheat that
       keeps the field in `model_fields` while masking attribute access).
+      **Scope limit:** runtime env-no-effect does **not** cover import-time
+      env reads at `PRODUCTION_PROMPT` construction — that is the
+      lineage-version-literal AST proof's job.
+- [ ] **Add** **lineage-version-literal** AST proof
+      (`test_production_prompt_lineage_version_is_literal_not_env`):
+      parse `caption_system.py`; module-level
+      `PRODUCTION_PROMPT = ProductionPrompt(...)` has keyword
+      `lineage_version` whose value node is `Constant("1")` — **not**
+      `os.environ.get(...)` / any non-constant expression. **Named RED:**
+      `lineage_version=os.environ.get("ACX_GPU_PROMPT_VERSION", "1")` must
+      turn this proof RED while runtime `== "1"` stamp checks stay green
+      under pytest ([TEST-15]; same discipline as registry-provenance).
+      Runtime equality is **not** an acceptable substitute.
 - [ ] **Rewrite** `test_gpu_remote_adapter.py:51-65`: remove
       `prompt_or_task_version="3"` and `assert == "3"`; omit the kwarg;
       assert stamp equals `production_prompt_or_task_version()` / `"1"`.
@@ -1965,7 +2265,17 @@ mutation. The proof must pin the *unexpected keyword* failure mode.
       full construction with `endpoint_url` / `model_id` / `model_version`
       plus `prompt_or_task_version="9"` raises
       `pytest.raises(TypeError, match="unexpected keyword argument")`;
-      positive control without the kwarg succeeds.
+      positive control without the kwarg succeeds; **and** source-level
+      `__init__` parameter-set allowlist equals exactly
+      `{endpoint_url, model_id, model_version, connect_timeout_s,
+      read_timeout_s, api_key, max_concurrent_calls, transport}` with no
+      `*args`/`**kwargs`; **and** every `self.prompt_or_task_version`
+      assignment in `__init__` is from
+      `self._production_prompt.lineage_version` (snapshot only).
+      **Named RED (DPR13-H-04):** remove old name, add
+      `stamp_version: str | None = None` that overrides the snapshot →
+      TypeError on `prompt_or_task_version=` stays green; allowlist +
+      assignment-provenance **must** go red.
 - [ ] Add default-honesty + **synthetic-v2** discrimination on a **fresh**
       adapter: inject `ProductionPrompt(body="SYNTHETIC…",
       lineage_version="2")` **then** construct; assert posted
@@ -1980,7 +2290,14 @@ mutation. The proof must pin the *unexpected keyword* failure mode.
 - [ ] Add **resolver no-divergence** test: production path cannot stamp one
       lineage while posting another body; `ACX_GPU_PROMPT_VERSION=9` must not
       affect adapter stamp (field deleted; unconditional env-no-effect);
-      free-string constructor path must not either.
+      free-string constructor path must not either. **Mandatory DI-resolver
+      leg:** construct via `deps.get_gpu_description_adapter` under
+      `ACX_GPU_ENDPOINT_URL=http://10.0.1.42:8000` + junk
+      `ACX_GPU_PROMPT_VERSION=9` and assert resolved
+      `GpuRemoteDescriptionAdapter.prompt_or_task_version == "1"`.
+      **Named RED (DPR13-H-03):** post-init env stamp inside
+      `get_gpu_description_adapter` after the settings field / deps kwarg
+      drop → direct-constructor legs stay green; DI leg **must** go red.
 - [ ] State cache-key consequence in the PR/handoff note: greenfield accept;
       no migration/shim.
 - [ ] Verification:
@@ -2011,7 +2328,11 @@ mutation. The proof must pin the *unexpected keyword* failure mode.
       unconditional `not hasattr` + `not in model_fields` + absent from
       `model_dump()` + env-no-effect proof always runs);
       free-string constructor `prompt_or_task_version="9"` is impossible /
-      rejected (parameter removed; full-construction proof with `match=`).
+      rejected (parameter removed; full-construction proof with `match=`);
+      differently-named free-string stamp formals rejected by `__init__`
+      parameter-set allowlist + stamp assignment provenance AST;
+      import-time env-backed `lineage_version=` at `PRODUCTION_PROMPT`
+      construction rejected by lineage-version-literal AST.
 - [ ] Atomic discrimination reaches red under: independent body+version
       globals, always-`"1"` stamp function, import-time-frozen adapter
       default, import-time body binding that misses the module-attribute
@@ -2021,8 +2342,10 @@ mutation. The proof must pin the *unexpected keyword* failure mode.
 - [ ] Temporal snapshot proof reaches red under stamp-at-init +
       body-at-describe live re-read after rebind.
 - [ ] Resolver no-divergence test covers production adapter stamp + posted
-      body together (including negative env-stamp absence and free-string
-      constructor paths).
+      body together (including negative env-stamp absence, free-string
+      constructor paths, **and** the DI-resolver leg via
+      `deps.get_gpu_description_adapter` that goes red under a post-init
+      env stamp inside the factory).
 - [ ] No second foldable-constant definition of the production system-prompt
       body remains under `apps/prototype-description-service/`; inventory
       keys on foldable-constant sites equal to
@@ -2092,15 +2415,20 @@ mutation. The proof must pin the *unexpected keyword* failure mode.
       `prompt_or_task_version=` kwarg. `DescriptionSettings.gpu_prompt_or_task_version`
       is deleted with unconditional
       `not hasattr` + `not in model_fields` + absent from `model_dump()` +
-      env-no-effect proof (always runs).
+      env-no-effect proof (always runs). **Lineage-version-literal AST** pins
+      `PRODUCTION_PROMPT = ProductionPrompt(..., lineage_version="1")` as a
+      constant literal (not import-time env read).
 - [ ] `GpuRemoteDescriptionAdapter` has **no** free-string
-      `prompt_or_task_version` constructor parameter; stamp and body always
-      bind from the `production_prompt()` snapshot taken once at `__init__`
+      `prompt_or_task_version` constructor parameter **and no differently-
+      named free-string stamp formal**; stamp and body always bind from the
+      `production_prompt()` snapshot taken once at `__init__`
       (`adapter._production_prompt is caption_system.PRODUCTION_PROMPT` at
       construction; stamp == snapshot `.lineage_version`). Free-string
       rejection proof (full construction +
-      `match="unexpected keyword argument"` + positive control) is red if
-      the kwarg is reintroduced and honored.
+      `match="unexpected keyword argument"` + positive control + `__init__`
+      parameter-set allowlist AST + stamp assignment provenance AST) is red
+      if the old kwarg is reintroduced **or** if a renamed free-string stamp
+      formal (e.g. `stamp_version=`) overrides the snapshot.
 - [ ] Atomic discrimination: injecting
       `ProductionPrompt(body="SYNTHETIC…", lineage_version="2")` **then**
       constructing a fresh adapter makes the posted system content and the
@@ -2109,7 +2437,9 @@ mutation. The proof must pin the *unexpected keyword* failure mode.
       adapter stays wholly old (body **and** stamp), fresh adapter is wholly
       new.
 - [ ] Resolver no-divergence: no configured production path stamps one
-      lineage while posting another body.
+      lineage while posting another body — including the path through
+      `deps.get_gpu_description_adapter` (DI-resolver leg; Named RED is a
+      post-init env stamp inside that factory).
 - [ ] Existing GPU adapter + harness pipeline tests green under
       `uv run --extra dev pytest` with the paths above;
       `test_gpu_remote_adapter.py:51-65` rewritten (no free-string `"3"`

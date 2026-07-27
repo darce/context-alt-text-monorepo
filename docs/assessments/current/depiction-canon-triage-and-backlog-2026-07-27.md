@@ -258,3 +258,86 @@ Revised P0, two independent lanes:
 - §11e's requested `COL` normalisation row in `design-aesthetics` needs a tooled
   ID (`tools/canon.py reserve`), a `SOURCES.md` entry, and `REFERENCE-ONLY`
   lifted for the positive half only. Canon-side work; not this backlog.
+
+## 6. Re-evaluation against the orchestrator playbook (same day)
+
+`docs/runbooks/fir-captioning-orchestrator-playbook.md` governs the FIR and
+captioning tracks and was not in scope at first triage. It carries a do-not-do
+list that gates work this backlog assumed was free, and a C7 card that §11c
+generalises. Both checked against code.
+
+### 6a. Playbook status is half-stale — verify before dispatching §6's list
+
+| Playbook item | Claimed | Actual |
+|---|---|---|
+| §3.2 context arm + obedience scoring | open, "cheap only while Slice 1 is open" | **LANDED.** `bakeoff.py:574` `name_ablation`, `:582` `context_distractor`, `:251` `_inject_distractor`. Shipped by ALTQ-1. |
+| §3.1 signal-density metric | open | **NOT LANDED.** `caption_metrics.py` has `score_caption`, `insertion_rate`, `name_precision`, `wrong_name_image_rate`, `score_hallucination`, `fabricated_fact_rate`, `fabrication_by_kind`. No facts-per-100-words, no density axis. |
+
+§6's suggested dispatch #2 would re-commission built work. Fix the playbook
+before it is handed to a lane.
+
+### 6b. The GPU window has a second, cheaper gate than curation
+
+The do-not-do list says: *"Do not run the GPU window before §3.1 and §3.2
+land."* §3.2 has landed. **§3.1 is the last unlanded gate**, and it is CPU-only,
+local, and small. §2 of this doc ranked VLM-6 Golden-150 curation as the binding
+constraint on the eval-metric items; it is not the only one, and it is not the
+cheapest. Signal density promotes out of the P4 program track.
+
+### 6c. A live contradiction the bake-off ranking depends on
+
+`caption_metrics.py:8-10` states the harness's chosen policy: *"No hard length
+cap — Williams et al.: longer descriptions score higher; penalize missing
+content."* Playbook §3.1 states the opposite risk from card **C5**: *"every
+quality metric it does measure is length-correlated ... the bake-off as written
+will rank the most verbose candidate highest."*
+
+They are reconcilable, but only if someone writes down how: **Williams governs
+the gate (do not cap length, do not penalise a long description for being long);
+C5 governs the axis (do not reward verbosity — score facts per word).** Both
+hold simultaneously if density is added as a *separate* report axis rather than
+as a length penalty. Nothing currently records that. Until it does, two
+governing documents point the ranking in opposite directions and whichever lane
+implements §3.1 will pick one by accident.
+
+### 6d. C7 extends §3.1 — it does not gate it
+
+Playbook §3.5 says C7 *"feeds directly into §3.1's 'verified' definition."* §11c
+generalises C7's binding into the bound-term shape; §11e confirms C7's
+normalisation half is sourceable and its rejection half is not.
+
+Chain: **bound-term shape → C7 → §3.1's verified set → GPU window.** But the
+coupling is *extension*, not blocking — §3.1's "verified" means checkable
+against the image or a trusted source, and controlled colour is one class of
+such term. §3.1 must therefore land with an **extensible** verified-term
+predicate, or it is reworked when C7 arrives. That is the only design constraint
+the chain imposes.
+
+Per §11d, C7 splits by register when it is built: Werner names in `FORENSIC`
+(reproducibility is the point), a common-language colour set in `EDITORIAL` (the
+consumer is a screen-reader user, not a mineralogist), same `binding` semantics
+both sides. And per §11a the wording is **refer-in, not refuse** — the playbook's
+":219 out-of-set terms degrade to the nearest in-set term" is already correct and
+needs no rewrite, only that label.
+
+### 6e. Dispatch shape — file ownership, not just task ownership
+
+Playbook §5 already states the operator's standing protocol (mechanical work to
+remote grok lanes, judgment and review local, `/review-parallel` with a remote
+reviewer at milestones, cite only verified canon IDs). §3 of this doc restates
+it; the playbook is its source.
+
+What §5 does not state is **file ownership**, and this backlog needs it: the F8
+inner-state counter and the §3.1 density metric both land in
+`caption_metrics.py`. Two concurrent lanes mutating one file will conflict and
+raise phantom review alarms. Revised fan-out, no file collisions:
+
+| Lane | Owns | Carries |
+|---|---|---|
+| **A — DEPICT-0** | `gpu_remote_adapter.py`, `bakeoff.py` prompt constants, `settings.py`, new parity test | prompt-lineage seam, honest version stamp |
+| **B — DEPICT-C** | `scene/` contract models, context-pack schema | F1 `voice` field, register enum, restrict-only gravity, §11c bound-term shape. **Contract only — no metrics.** |
+| **C — METRICS** | `caption_metrics.py` (sole owner) | F8 inner-state attribution counter, §3.1 signal density, §6c's Williams/C5 resolution stated in the module docstring |
+
+Lane C is the one that unblocks the GPU window. Lane B is the one that must not
+be deferred, because its cost grows with every call site. Lane A is independent
+of both.

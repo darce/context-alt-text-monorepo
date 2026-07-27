@@ -1,0 +1,240 @@
+# UX Map — workbench-2pane
+
+**Product:** `prototype-wp-alt-context`
+**Source fixture:** `apps/prototype-wp-alt-context/docs/ux-maps/workbench-2pane.uxmap.json`
+
+## Goals
+- Operator runs the full recognize -> name -> curate loop and edits alt-text/descriptions without leaving one surface (control-left, library-right)
+- Read cluster structure at a glance via a UMAP scatter and act on the selection in the same viewport
+- Decompose the 2-pane redesign from screens/zones/states/flows instead of inventing IA mid-plan
+
+## Jobs
+- `job-cluster-recognize` — Cluster & recognize faces (build/refresh clusters, run recognition)
+- `job-name-curate` — Name & curate identities (confirm/correct/merge/split, assign names)
+- `job-caption-library` — Caption & describe media (alt-text + long description on library rows)
+- `job-triage-sync` — Triage identity conflicts / failed sync (overlays)
+
+## Screens
+| id | kind | route | title |
+| --- | --- | --- | --- |
+| `workbench-2pane-shell` | screen | `#/workbench` | Workbench (2-pane) |
+| `workbench-control` | screen | `#/workbench?pane=control` | Control surface (left pane) |
+| `workbench-library` | screen | `#/workbench?pane=library` | Media library (right pane) |
+| `workbench-conflicts` | overlay | `#/workbench?panel=conflicts` | Conflict Inbox |
+| `workbench-dead-letter` | overlay | `#/workbench?panel=dead-letter` | Failed Sync Queue (Dead Letter) |
+| `exit-roster` | exit | `#/roster` | Roster (person workspace) |
+| `exit-settings` | exit | `#/settings` | Settings / service health |
+
+### Workbench (2-pane) (`workbench-2pane-shell`)
+
+```
++------------------------------------------------------------+
+| Workbench (2-pane)  [screen]  #/workbench                  |
+| Two-pane operator surface: left control (cluster/recogniz… |
++------------------------------------------------------------+
+| ZONES                                                      |
+|   - Workbench header + recognition endpoint selector + sy… |
+|   - Left pane host (control surface) (content) states=[de… |
+|   - Pane divider / collapse-left control (other) states=[… |
+|   - Right pane host (media library) (content) states=[def… |
+|   - Overlay host (conflicts | dead-letter) (other) states… |
++------------------------------------------------------------+
+| ACTIONS                                                    |
+|   [PRIMARY] Run / refresh recognition + clustering -> job… |
+|   [secondary] Open Conflict Inbox -> workbench-conflicts   |
+|   [secondary] Open Failed Sync Queue -> workbench-dead-le… |
++------------------------------------------------------------+
+| states: default | loading | error | degraded | offline     |
++------------------------------------------------------------+
+```
+
+### Control surface (left pane) (`workbench-control`)
+
+```
++------------------------------------------------------------+
+| Control surface (left pane)  [screen]  #/workbench?pane=c… |
+| Cluster, recognize, name, and curate: recognition endpoin… |
++------------------------------------------------------------+
+| ZONES                                                      |
+|   - Recognition endpoint + health (InsightFace :10010 int… |
+|   - Cluster/recognition controls (run, refresh, threshold… |
+|   - UMAP cluster scatter (2D projection of face embedding… |
+|   - Cluster list / selection (size, confidence, unnamed-f… |
+|   - Name & curate (assign name; confirm / correct / merge… |
++------------------------------------------------------------+
+| ACTIONS                                                    |
+|   [PRIMARY] Run / refresh recognition + clustering -> job… |
+|   [PRIMARY] Assign name to cluster -> identity-store (cos… |
+|   [PRIMARY] Select cluster (UMAP or list) -> workbench-li… |
+|   [secondary] Go to Roster -> exit-roster                  |
+|   [secondary] Switch recognition endpoint (:10010 interim… |
+|   [DESTRUCTIVE] Merge / split / correct cluster -> identi… |
++------------------------------------------------------------+
+| states: default | loading | empty | error | first_time | … |
++------------------------------------------------------------+
+```
+
+### Media library (right pane) (`workbench-library`)
+
+```
++------------------------------------------------------------+
+| Media library (right pane)  [screen]  #/workbench?pane=li… |
+| Media library table with alt-text caption and long-descri… |
++------------------------------------------------------------+
+| ZONES                                                      |
+|   - Library filters (status, has-alt, has-description, cl… |
+|   - Media library table (thumb | title | status | alt-tex… |
+|   - Inline alt-text / long-description editor (per row) (… |
+|   - AI caption/description suggestions (evidence-linked; … |
+|   - Bulk describe / scan CTAs + job progress (job) states… |
++------------------------------------------------------------+
+| ACTIONS                                                    |
+|   [PRIMARY] Edit alt-text inline -> media-store            |
+|   [PRIMARY] Bulk describe selected media -> job-pipeline … |
+|   [PRIMARY] Edit long description inline -> media-store    |
+|   [secondary] Accept AI caption/description (editable) ->… |
++------------------------------------------------------------+
+| states: default | loading | empty | error | first_time | … |
++------------------------------------------------------------+
+```
+
+### Conflict Inbox (`workbench-conflicts`)
+
+```
++------------------------------------------------------------+
+| Conflict Inbox  [overlay]  #/workbench?panel=conflicts     |
+| Review identity conflicts; commit human judgment with evi… |
++------------------------------------------------------------+
+| ZONES                                                      |
+|   - Conflict list (queue) states=[default,loading,empty]   |
+|   - Conflict detail / candidates (forced_choice) states=[… |
+|   - Resolve / defer actions (form) states=[default]        |
++------------------------------------------------------------+
+| ACTIONS                                                    |
+|   [PRIMARY] Resolve conflict -> identity-store (costly,pr… |
++------------------------------------------------------------+
+| states: default | loading | empty | error                  |
++------------------------------------------------------------+
+```
+
+### Failed Sync Queue (Dead Letter) (`workbench-dead-letter`)
+
+```
++------------------------------------------------------------+
+| Failed Sync Queue (Dead Letter)  [overlay]  #/workbench?p… |
+| Inspect failed sync ops; retry or discard                  |
++------------------------------------------------------------+
+| ZONES                                                      |
+|   - Dead-letter items (queue) states=[default,loading,emp… |
+|   - Retry / discard (form) states=[default]                |
++------------------------------------------------------------+
+| ACTIONS                                                    |
+|   [PRIMARY] Retry failed op -> sync (costly,preview)       |
+|   [DESTRUCTIVE] Discard failed op -> sync (costly,preview… |
++------------------------------------------------------------+
+| states: default | loading | empty | error                  |
++------------------------------------------------------------+
+```
+
+### Roster (person workspace) (`exit-roster`)
+
+```
++------------------------------------------------------------+
+| Roster (person workspace)  [exit]  #/roster                |
+| Manage identified persons after naming/curating in Workbe… |
++------------------------------------------------------------+
+| ZONES                                                      |
+|   - Roster entry (nav) states=[default]                    |
++------------------------------------------------------------+
+| states: default | loading | empty | error                  |
++------------------------------------------------------------+
+```
+
+### Settings / service health (`exit-settings`)
+
+```
++------------------------------------------------------------+
+| Settings / service health  [exit]  #/settings              |
+| Configure recognition target and connection health         |
++------------------------------------------------------------+
+| ZONES                                                      |
+|   - Settings form + test connection (form) states=[defaul… |
++------------------------------------------------------------+
+| states: default | loading | error                          |
++------------------------------------------------------------+
+```
+
+## Flows
+### Run recognition -> select cluster -> name/curate -> library people column updates (`flow-recognize-name-curate`)
+
+```mermaid
+flowchart TD
+  %% flow: Run recognition -> select cluster -> name/curate -> library people column updates job=job-name-curate
+  n_workbench_2pane_shell["Workbench (2-pane) (screen)"]
+  n_workbench_control["Control surface (left pane) (screen)"]
+  n_workbench_2pane_shell -->|enter| n_workbench_control
+  n_workbench_control -->|run recognition (preview cost)| n_workbench_control
+  n_workbench_control -->|select cluster (umap/list)| n_workbench_control
+  n_workbench_library["Media library (right pane) (screen)"]
+  n_workbench_control -->|name / curate| n_workbench_library
+```
+
+### Filter needs-alt -> accept/edit AI caption -> edit long description (`flow-caption-library`)
+
+```mermaid
+flowchart TD
+  %% flow: Filter needs-alt -> accept/edit AI caption -> edit long description job=job-caption-library
+  n_workbench_library["Media library (right pane) (screen)"]
+  n_workbench_library -->|filter has-alt=false| n_workbench_library
+  n_workbench_library -->|accept/edit AI caption| n_workbench_library
+```
+
+### UMAP scatter -> select cluster -> right library filters to cluster media (`flow-umap-select-to-library`)
+
+```mermaid
+flowchart TD
+  %% flow: UMAP scatter -> select cluster -> right library filters to cluster media job=job-cluster-recognize
+  n_workbench_control["Control surface (left pane) (screen)"]
+  n_workbench_control -->|umap scatter| n_workbench_control
+  n_workbench_library["Media library (right pane) (screen)"]
+  n_workbench_control -->|select cluster point/region| n_workbench_library
+```
+
+### Recognition produces conflicts -> conflict overlay -> resolve -> roster if needed (`flow-scan-to-conflict`)
+
+```mermaid
+flowchart TD
+  %% flow: Recognition produces conflicts -> conflict overlay -> resolve -> roster if needed job=job-triage-sync
+  n_workbench_control["Control surface (left pane) (screen)"]
+  n_workbench_conflicts["Conflict Inbox (overlay)"]
+  n_workbench_control -->|recognition produces conflicts| n_workbench_conflicts
+  n_workbench_conflicts -->|open panel=conflicts| n_workbench_conflicts
+  n_exit_roster["Roster (person workspace) (exit)"]
+  n_workbench_conflicts -->|resolve| n_exit_roster
+```
+
+### Sync failure -> dead letter -> retry/discard (`flow-dead-letter-recover`)
+
+```mermaid
+flowchart TD
+  %% flow: Sync failure -> dead letter -> retry/discard job=job-triage-sync
+  n_workbench_2pane_shell["Workbench (2-pane) (screen)"]
+  n_workbench_dead_letter["Failed Sync Queue (Dead Letter) (overlay)"]
+  n_workbench_2pane_shell -->|degraded sync strip| n_workbench_dead_letter
+  n_workbench_dead_letter -->|panel=dead-letter| n_workbench_2pane_shell
+```
+
+## Open questions
+- Selecting a UMAP cluster: does it filter the right library pane, open the naming form, or both (coordinated views)? [VIZ]
+- Endpoint switch (:10010 InsightFace 512d <-> FIR/SFace 128d) changes embedding dimensionality; do existing clusters invalidate and require re-projection? [HAI]
+- Left/right min-width + left-collapse behaviour on narrow (<1100px) viewports; does control collapse to a drawer? [NAV]
+- Alt-text vs long-description: two fixed columns or one expandable row-detail? column-width vs scannability tradeoff [PERC]
+- Bulk-describe cost preview granularity: per-image cost surfaced before start? [INT]
+- UMAP is expensive to recompute; is the scatter cached/incremental or recomputed each recognition run? [VIZ]
+
+## Not doing
+- Clusters tab inside Roster (retired; cluster structure lives in Workbench left pane now)
+- Pixel/token values (design tokens referenced --acx-*, not specified here)
+- Attachment-edit SPA (separate map_ref)
+- Big-bang removal of the current tabbed shell (migration path, not in this map)
+- REST sequence diagrams (see docs/workbench-data-flow.mmd)

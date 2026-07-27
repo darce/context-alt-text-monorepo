@@ -98,7 +98,7 @@ not close F1** — only F1 (a) is delivered in this wave; F1 (b) and harness
 | # | Task | Canon | Enforcement point | Cost | Mode |
 |---|---|---|---|---|---|
 | 3 | **DEPICT-2 (F8 + F6) — inner-state-attribution counter (Slice 1) AND the agentless-passive / mutual-event detector (Slice 2, absorbed from row 4)** in `caption_metrics.py`. Report-only first. LIBSYN-1 §3.4 called this the highest-value safety signal; it is now canon-backed. | `ATTRIB-01` (B·d) · `ATTRIB-08` (S·d) · [EVAL-11] open-ended tasks need the right scorer · [EVAL-08] CACE · [TEST-15] | `eval_metric` | S | grok flock |
-| 4 | **DEPICT-3 (F6) — agentless-passive / mutual-event detector.** **ABSORBED into DEPICT-2 Slice 2** — do not dispatch as a separate lane. Delivered by `DEPICT-2-depiction-metrics-task-plan.md` § Slice 2 (plan pin `:596-893`; heading `### Slice 2: Agentless-passive / mutual-event detector (report-only)`), sole owner of `caption_metrics.py`. Same shape as the existing `_META_FRAMING_PHRASES` detector. Dual-lane collision with §6e Lane C if re-opened. | `ATTRIB-08` (S·d) · [TEST-15] | `post_generation_check` (via DEPICT-2 / Lane C) | — | **absorbed → DEPICT-2 Slice 2 / Lane C** |
+| 4 | **DEPICT-3 (F6) — agentless-passive / mutual-event detector.** **ABSORBED into DEPICT-2 Slice 2** — do not dispatch as a separate lane. Delivered by `DEPICT-2-depiction-metrics-task-plan.md` § Slice 2 (heading `### Slice 2: Agentless-passive / mutual-event detector (report-only)`; plan pin `:684-1152`), sole owner of `caption_metrics.py`. Same shape as the existing `_META_FRAMING_PHRASES` detector. Dual-lane collision with §6e Lane C if re-opened. | `ATTRIB-08` (S·d) · [TEST-15] | `post_generation_check` (via DEPICT-2 / Lane C) | — | **absorbed → DEPICT-2 Slice 2 / Lane C** |
 | 5 | **DEPICT-4 (F2) — give emotion a bearer** in the v2/v3 prompt. *"her expression reads as anxious"* satisfies both `ATTRIB-01` and the ALTQ-1 *emotion legitimate* finding; *"she is anxious"* satisfies neither. Register, not silence. | `ATTRIB-01` `ATTRIB-03` · [EVAL-08] | `system_prompt` | XS | grok flock |
 
 **Ordering correction.** The eval sequences F2 → F8. Reverse it. F2 is a prompt change
@@ -334,6 +334,8 @@ Playbook §3.5 says C7 *"feeds directly into §3.1's 'verified' definition."* §
 generalises C7's binding into the bound-term shape; §11e confirms C7's
 normalisation half is sourceable and its rejection half is not.
 
+#### §6d claim — C7 extends §3.1; it does not gate the GPU window
+
 Chain: **bound-term shape → C7 → §3.1's verified set → GPU window.** But the
 coupling is *extension*, not blocking — §3.1's "verified" means checkable
 against the image or a trusted source, and controlled colour is one class of
@@ -378,11 +380,13 @@ of both.
 > path set above was reconciled against DEPICT-0's corrected `## Constraints`
 > ownership bullet list (DEPICT-0 `:81-101`) after the markdown-nesting defect
 > was fixed; the five owned test files are now enumerated rather than
-> paraphrased. `responses.py` is **unowned in this wave** in all three
-> documents: DEPICT-0 marks it unowned (`:106`, `:385`, `:649`, `:1905`,
-> `:1979`), DEPICT-1 disclaims it (`:82`, `:223`, `:305`), and Lane B above
-> disclaims it. Any lane needing it must claim it explicitly in its own
-> Constraints first.
+> paraphrased. `responses.py` is **unowned in this wave** in both documents that
+> name it (DEPICT-0, DEPICT-1); DEPICT-2 never mentions it. DEPICT-0 marks it
+> unowned (`:106`, `:385`, `:649`, `:1905`, `:1979`); DEPICT-1 disclaims it
+> under `## Constraints` (`:82`), acceptance criteria (`:305`), and the
+> **Not edited by this lane** table row for the response contract (`:440`);
+> Lane B above also disclaims it. Any lane needing it must claim it explicitly
+> in its own Constraints first.
 
 ## 7. Reflow after intake §11c-i (FCA) — same day
 
@@ -840,8 +844,8 @@ Two more cheap, warranted items, both prompt-and-metric only:
 **Abstain lane is OUT and unowned.** No plan file in this wave delivers it:
 DEPICT-2 scopes it out explicitly under heading
 `### CAL-02 and density numerator — metric side only (scope decision)`
-(`DEPICT-2-depiction-metrics-task-plan.md:269-280`; disposition
-"**Scoped out of DEPICT-2**" at the CAL-02 row),
+(`DEPICT-2-depiction-metrics-task-plan.md:288-296`; disposition
+"**Scoped out of DEPICT-2**" at the CAL-02 row `:290`),
 and DEPICT-0 / DEPICT-1 never touch `CAL-02`. Merging DEPICT-0 + DEPICT-1 +
 DEPICT-2 does **not** land abstain behaviour. Named acceptance criteria for
 whoever authors it later: (1) the production prompt instructs abstention when

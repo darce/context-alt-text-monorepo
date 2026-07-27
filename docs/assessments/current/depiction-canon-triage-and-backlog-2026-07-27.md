@@ -537,3 +537,118 @@ metric transparency, list granularity). No reason to evaluate further.
 
 Neither promotes above Lane C or B. Both are behaviour; §11c's shape-now argument
 still orders them last.
+
+## 9. Lane D and the description pipeline — retire the vocabulary, keep the method, swap the source
+
+Question put directly: does Lane D work for captioning and scene description, or
+should it be retired from the description pipeline?
+
+**Answer: retire *Werner* from the description pipeline. Keep the *method*.
+Rebuild Lane D on ISCC–NBS, which the same API already serves.**
+
+### 9a. Nothing in the pipeline consumes a colour term today
+
+Verified across `apps/prototype-description-service/scripts/eval_harness/` and
+`scene/`: 63 matches for `colou?r`, **all** of them either report-builder CSS or
+`corpus_inventory.py`'s `flat_color_coverage` — top-N pixel share after 5-bit
+quantization, a chart/screenshot detector that never names a colour.
+
+- **No VLM prompt asks for colour.** Not in `_PROMPT_V1/V2/V3`, not in
+  `gpu_remote_adapter.py:28`.
+- **No metric scores colour.** `caption_metrics.py` has no colour axis.
+
+Lane D currently has **zero consumers**, built or wired.
+
+### 9b. Its specified consumer is real but two gates away
+
+The register table gives `FORENSIC` — and only `FORENSIC` — *"controlled-
+vocabulary colour and object terms."* §3.4 phasing puts *"controlled colour
+vocabulary (Werner) … wired as Phase-2 providers"* in the **Next phase**, behind
+the contract that Lane B has not landed.
+
+So Lane D is correctly specified and correctly sequenced *last*. That is not a
+reason to retire it. The reasons below are.
+
+### 9c. Werner is wrong for the registers users actually receive
+
+`EDITORIAL` is the default; `INTERPRETIVE` sits above it. Werner's terms are
+*Skimmed-milk White*, *Arterial Blood Red*, *Gamboge Yellow*, *Ash Grey*. As
+emitted alt text these are **less** accessible than plain language — the same
+objection §8c raised against the 30k crowd-sourced lists applies with full force
+to a 205-year-old naturalist's vocabulary.
+
+⇒ **Werner must never be an emission vocabulary in `EDITORIAL` or
+`INTERPRETIVE`.** Record this as a boundary, not a preference.
+
+Werner is a *specimen* vocabulary — built for describing minerals, plants and
+animals against a hand-coloured plate. That is the photography/cataloguing lane
+moved off accessibility in `41d9f591`, and it is where Werner belongs.
+
+### 9d. ISCC–NBS dominates Werner on every axis §11c cares about
+
+`api.color.pizza` ships `nbsIscc` — **267 terms, CC0**, "the ISCC–NBS system of
+color designation based on 12 basic color terms." Live-verified: `Vivid Pink`,
+`Strong Pink`, each with hex + LAB.
+
+| §11c requirement | Werner | ISCC–NBS |
+|---|---|---|
+| **Versioned** | none | **NBS Special Publication 440 (1976)**, consolidating the 1955 and 1965 editions — a standards-body publication with editions |
+| **Public referent per term** | 1821 hand-coloured plate; does not survive as text | **Munsell blocks** (published, reproducible) + hex/LAB per term |
+| **Attributes without encoding decisions** | overstated — composition appears *"typically"*, in prose (§7b) | **attributes are in the name**: 20 documented modifiers × 29 hue terms, compositional by construction |
+| **Readable `delta`** | *incline towards / intermediate / fall or pass into* | modifier steps — "one lightness step", "adds a grayish component" |
+| **Register split** | none; unrelated to any common-language set | **nested levels: 13 / 29 / 267** |
+
+The modifier set is published and closed: *vivid, brilliant, strong, deep, very
+deep, very light, light, moderate, dark, very dark, very pale, pale/light
+grayish, grayish, dark grayish, blackish*, plus the `-ish white / -ish gray /
+-ish black` neutral forms.
+
+Two consequences worth stating plainly:
+
+1. **It repairs §11c-i rather than retiring it.** §11c-i claimed Werner supplies
+   *"a complete binary object × attribute table, present in the text, requiring
+   no encoding decisions."* §7b showed that is false of Werner. **It is true of
+   ISCC–NBS** — parsing *"Dark Grayish Yellowish Brown"* into attributes is a
+   lookup, not a judgement. The claim was right about what was needed and wrong
+   about where to get it.
+2. **It may make the lattice derivation unnecessary.** If names are compositional
+   by construction, the system *is* already a structured vocabulary; FCA becomes
+   a **validation** tool ("does the lattice match the published blocks?") rather
+   than the derivation mechanism. Simplification, not loss. Note the naming is
+   *constraint-based* — there is no *brilliant brown*, no *very deep pink* — so
+   the 267 are **not** a naive cross-product and the attribute table has real
+   gaps. Those gaps are what make the lattice informative.
+
+### 9e. This supersedes §8c's `basic`-21 recommendation
+
+§8c proposed meodai's 21-term `basic` list for the `EDITORIAL` slot. **Withdraw
+that as the primary option.** `basic`-21 and Werner-110 are unrelated
+vocabularies with no shared structure, so `delta` would mean something different
+in each register — the exact failure §11d forbids (*"same structure, same
+`binding` semantics, two emission vocabularies"*).
+
+**ISCC–NBS Level 1 (13 terms) for `EDITORIAL`, Level 3 (267) for `FORENSIC`**
+gives one vocabulary, one attribute decomposition, one `binding` semantics, two
+emission granularities. `basic`-21 remains a fallback if the Level-1 set proves
+too coarse in practice.
+
+The §8b findings stand unchanged: ΔE stays out of `binding`, permitted at build
+time for clustering only; and cite **SP 440** as `vocabulary` — the API is a
+convenience carrier of 267 centroids, not the authority. Pin the dataset commit.
+
+### 9f. Revised Lane D
+
+| | Before | After |
+|---|---|---|
+| **Vocabulary** | Werner 110, re-extracted from epub | **ISCC–NBS 267**, CC0, already machine-readable |
+| **Step 0** | re-run pinned extractor (§8a) | **none** — fetch and pin |
+| **Registers** | FORENSIC only, no EDITORIAL answer | **both**, via nested levels |
+| **FCA role** | derive the lattice | **validate** it against published blocks |
+| **Werner** | the deliverable | **out of the description pipeline**; belongs to the photography/cataloguing lane |
+
+Still last in priority — it is behaviour, and §11c's shape-now argument still
+orders Lane B and Lane C ahead of it. But it is now **cheaper, better sourced,
+and answers both registers instead of one.**
+
+§8a's re-extraction finding stays valid and stays useful — for the photography
+lane, not for captioning.

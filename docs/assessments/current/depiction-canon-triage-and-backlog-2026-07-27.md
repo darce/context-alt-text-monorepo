@@ -801,7 +801,19 @@ Two more cheap, warranted items, both prompt-and-metric only:
 | **B — CONTRACT** | F1 `voice` + register enum + gravity + bound-term shape | **unchanged, minus the bound-term shape** — no colour field until §10e's trigger | `API-09`, `API-10` |
 | **A — DEPICT-0** | prompt-lineage seam | unchanged | `PROV-09` |
 | **D — WERNER-FCA** | rebuilt on ISCC–NBS, last | **out of scope; trigger-gated (§10e)** | `FM-04` when it fires |
-| **new — abstain** | — | `CAL-02` abstain + `PROV-01` evidence-walkback, prompt+metric only | `CAL-02`, `PROV-01` |
+| **new — abstain** | — | **OUT of this wave; unowned.** `CAL-02` abstain + `PROV-01` evidence-walkback, prompt+metric only | `CAL-02`, `PROV-01` |
+
+**Abstain lane is OUT and unowned.** No plan file in this wave delivers it:
+DEPICT-2 scopes it out explicitly (`DEPICT-2-depiction-metrics-task-plan.md:248-256`),
+and DEPICT-0 / DEPICT-1 never touch `CAL-02`. Merging DEPICT-0 + DEPICT-1 +
+DEPICT-2 does **not** land abstain behaviour. Named acceptance criteria for
+whoever authors it later: (1) the production prompt instructs abstention when
+evidence supports no in-set term, rather than forcing the nearest one
+(`CAL-02`); (2) a metric counts forced-precision emissions so the abstain rate
+is observable, not asserted; (3) an evidence-walkback path lets a claim be
+traced to the context field that warranted it (`PROV-01`,
+`canon/lexicons/ml-systems.md`); (4) each of the three ships with a red-first
+discrimination guard [TEST-15]. Do not absorb this into Lane C.
 
 **Net: the colour thread leaves the critical path entirely, and Lane C gains one
 guard plus one test.** Lane C was already the recommendation; it is now the

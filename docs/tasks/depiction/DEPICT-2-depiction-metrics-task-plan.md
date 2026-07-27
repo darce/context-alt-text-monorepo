@@ -151,8 +151,12 @@ prerequisite for §3.1 or the GPU window.
   of the reading off the depicted person — e.g. "her expression reads as…",
   "appears…", "looks…", "seems…", "as if…", "read as…", "according to…".
   Same epistemic-hedge class (ATTRIB-01 cut: person-subject + mental predicate
-  **without** appears / looks / seems / as-if / according-to). Not to be
-  confused with DEPICT-1 `DescriptionRegister`.
+  **without** appears / looks / seems / as-if / according-to). Those examples
+  are exemplars of an **open** class, not its enumeration — ATTRIB-01 licenses
+  any frame that seats the reading in viewer, convention, artefact, or named
+  source, so the detector's exemption path must be structural (reporting /
+  perception complement, or source-attributing adjunct) rather than a literal
+  blocklist. Not to be confused with DEPICT-1 `DescriptionRegister`.
 - **Agentless passive / mutual-event noun**: oppression or violence prose that
   hides a record-supported actor behind passive voice ("were killed") or an
   event noun that carries no actor ("a clash", "an incident") — the ATTRIB-08
@@ -405,7 +409,28 @@ Changes:
   )  # EVERY member must have a positive; no open "…" tail
   _INNER_COPULA_AFFECT = ("anxious", "angry", "proud")  # copula + interior adj
   _INNER_WILL_VERBS = ("want", "refuse")  # stems; match 3sg -s too (wants/refuses)
+  # Exemption side. Membership is a FLOOR, not the whole contract: ATTRIB-01
+  # licenses an OPEN class — "attribute the reading to viewer, convention,
+  # artefact, or named source" — so these are the members that must each carry
+  # a zero-hit proof, NOT an enumeration of what may be silenced. A suppression
+  # mechanism that is a membership test over these two tuples is a cheat the
+  # held-out set (item 4b) turns red.
+  _INNER_EPISTEMIC_HEDGES = ("seems", "looks", "appears", "as if", "reads as")
+  _INNER_BEARER_FRAMES = ("apparently", "according to", "it seems", "said to be")
   ```
+
+  **Exemption mechanism (locked):** the frame check is **structural**, not a
+  literal-membership test — the affect / will predicate is exempt when it sits
+  inside the complement of a reporting or perception predicate, or under a
+  source-attributing adjunct, whoever the bearer is. Closed lexicons are right
+  for the **positive** side (the violating forms are enumerable) and wrong for
+  this side (the licensed forms are not). This is the same cut Slice 2 makes
+  for ATTRIB-08 — grammar plus a closed lexicon, not a full voice tagger — with
+  the grammar on the exemption side here because that is where the open class
+  is. Scoring an open acceptable set by string membership measures wording, not
+  attribution (mechanism sibling: [EVAL-11]; the load-bearing rows are
+  ATTRIB-01 for the license and [MEAS-11] for defining the observable on the
+  side being exempted, not only the side being counted).
 
   Minimum detectable patterns:
   - person pronoun / common person noun subject + **unmarked** copula +
@@ -421,7 +446,11 @@ Changes:
   `appears anxious`, `he seems angry`, `as if anxious`, `read as anxious`,
   furrowed-brow **visible cue** inventory without mental-state ownership.
   `seems` is the same hedge class as `looks` / `appears` (ATTRIB-01 / Berger
-  recipe); do **not** treat hedged readings as person-as-fact-owner.
+  recipe); do **not** treat hedged readings as person-as-fact-owner. The
+  listed forms are the floor, not the boundary: any reporting / perception
+  complement or source-attributing adjunct silences the reading, including
+  frames no table names (`the catalogue records that…`, `on the curator's
+  reading,…`) — proved by the held-out set in Proof item 4b.
 - Surface hits as an additive report-only field on `CaptionScores`
   (`inner_state_attribution_hits: list[str]`, parallel to
   `meta_framing_hits` at `caption_metrics.py:115`) populated inside
@@ -555,6 +584,38 @@ defect even if every scaffold-variance case is listed.
      visible cues only, or attribute the reading to viewer, convention,
      artefact, or named source") that a frame-blind adjacency matcher
      cannot silence.
+   - **4b. Held-out generalisation set (mandatory; the frames below appear in
+     NO frozen table and MUST NOT be added to one).** Every negative above
+     uses a member of `_INNER_EPISTEMIC_HEDGES` / `_INNER_BEARER_FRAMES`, so
+     a suppression rule that is a **membership test over those two tuples** —
+     a hedge blocklist — passes item 4 entire while flagging attributions
+     ATTRIB-01 explicitly licenses. ATTRIB-01's licensed class is open
+     ("viewer, convention, artefact, or **named source**"); a closed literal
+     list cannot be the contract on that side, and freezing one there is the
+     [MEAS-11] failure of measuring the wording instead of the observable.
+     These captions are the permanent [TEST-15] guard on the **exemption**
+     mechanism — each is person subject + copula + affect **adjacent** (so a
+     bare adjacency regex fires) with an ATTRIB-01 frame that no table names,
+     and each must return **zero** hits:
+     - `"The catalogue records that she is proud by the doorway."`
+       (artefact / record frame)
+     - `"Her granddaughter insists that he is angry in the courtyard."`
+       (named-source frame, reporting verb absent from every table)
+     - `"On the curator's reading, she is anxious near the window."`
+       (viewer frame, nominalised)
+     - `"By the conventions of the studio portrait, the woman is proud near
+       the gate."` (convention frame — the fourth ATTRIB-01 bearer, and a
+       common-noun subject)
+     - `"Museum records suggest the man is anxious by the window."`
+       (artefact frame + common-noun subject)
+     - Assert each: **zero** hits. A detector whose exemption path is
+       `any(frame in caption for frame in _INNER_BEARER_FRAMES +
+       _INNER_EPISTEMIC_HEDGES)` fires on all five and fails — that is the
+       named RED for this item, and it is the reason the exemption side is
+       specified as structure (reporting / perception complement, or
+       source-attributing adjunct) rather than membership. Held-out means
+       held out: fixing a failure here by appending `"the catalogue
+       records"` to a table is the cheat, not the fix.
 5. **Discrimination — will branch non-hit** (physical action / no interior
    ownership):
    - Caption: `"She reaches for the gate."`
@@ -1894,6 +1955,16 @@ consumer; it is **not** a prerequisite for §3.1 or the GPU window.
       `"She is said to be {adj}…"`; hedged-will
       `"He appears to want to open the gate."` (external-frame fixtures
       force frame check; intervening-frame alone does not defeat adjacency).
+- [ ] Write the **held-out exemption-frame set** (item 4b) → 0 hits each:
+      `"The catalogue records that she is proud…"`,
+      `"Her granddaughter insists that he is angry…"`,
+      `"On the curator's reading, she is anxious…"`,
+      `"By the conventions of the studio portrait, the woman is proud…"`,
+      `"Museum records suggest the man is anxious…"` — none of these frames
+      may appear in `_INNER_EPISTEMIC_HEDGES` / `_INNER_BEARER_FRAMES`
+      (source-level guard: the implementation file contains none of these
+      frame strings). Named RED: a hedge-blocklist exemption path fires on
+      all five.
 - [ ] Write will-branch non-hit: `"She reaches for the gate."` → 0 hits.
 - [ ] Write visible-cue control: furrowed brow / tight jaw → 0 hits.
 - [ ] Parametrize common-noun copula over EVERY noun × EVERY affect adj
@@ -2091,7 +2162,12 @@ consumer; it is **not** a prerequisite for §3.1 or the GPU window.
       `appears` / `as if` — each proved zero-hit), visible-cue inventory,
       non-person subjects with affect/will, and person subjects without a
       frozen predicate; mixed hedged+unhedged captions still fire on the
-      unhedged clause; no caption-literal frozenset detector passes the suite.
+      unhedged clause; **and stays silent on the held-out ATTRIB-01 frames
+      named in no frozen table** (`"The catalogue records that…"`,
+      `"Her granddaughter insists that…"`, `"On the curator's reading,…"`,
+      `"By the conventions of the studio portrait,…"`, `"Museum records
+      suggest…"`), so a hedge-blocklist exemption path fails; no
+      caption-literal frozenset detector passes the suite.
 - [ ] Agentless-passive detector fires on **every** frozen passive form and
       **every** frozen mutual-event noun under `_VIOLENCE_CONTEXT_TERMS`
       membership via `_contains` (including active-voice violence + `clash`

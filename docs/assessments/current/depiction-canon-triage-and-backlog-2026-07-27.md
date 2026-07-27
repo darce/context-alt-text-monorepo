@@ -5,13 +5,13 @@
 > - **Date**: 2026-07-27
 > - **Input**: [`depiction-canon-fit-captioning-pipeline-2026-07-27.md`](depiction-canon-fit-captioning-pipeline-2026-07-27.md) (F1–F9)
 > - **Canon**: pin **`v0.17.2`** / `4e099ded65ee33bc4db85dfd4c65409a0087a752`
->   (`canon/lexicons/`, `canon/literature/`, `canon/distilled/` in this review bundle).
+>   (`canon/lexicons/`, `canon/literature/`, `canon/distilled/`).
 >   §§1–9 were authored against earlier pins; §10a is the governing delta against
 >   **`v0.17.2`**. Surfaces: `lexicons/depiction.md`
 >   (`ATTRIB-01..10`, `BOUND-01..05` — **exactly 15 rule rows at v0.17.2**),
 >   `lexicons/engineering.md`, `lexicons/ml-systems.md`, `lexicons/writing.md`,
 >   `lexicons/accessibility.md`, `literature/HELD.md`. **No**
->   `canon/PROVENANCE.txt` — do not cite one. **Held at exactly 909 lines** (external pins: DEPICT-1 `### 6e…` `:355` / Lane B `:380`; DEPICT-2 `#### §6e ownership table` L375).
+>   `canon/PROVENANCE.txt` — do not cite one.
 > - **Verified at**: `main` `41d9f591`, branch `feature/depiction-canon-eval-2026-07-27` `fbe90028`
 > - **Status**: triage + proposal. No implementation. No gate decision.
 > - **Reading order caution**: §10 supersedes §9 on scope and §8b on the `FM-11`
@@ -113,15 +113,15 @@ F2 is not shipping today (D1), so nothing is bleeding while the counter lands fi
 |---|---|---|---|---|---|
 | 6 | **DEPICT-5 (F4) — split the v3 `caption`** into a grounded-inventory span and an attributed span. Cheap now, a contract break after v3 promotion (D3). | `ATTRIB-03` `ATTRIB-04` `BOUND-05` · [API-09] [API-10] interface is its own artifact | `output_schema` | M | grok flock |
 | 7 | **DEPICT-6 — land `DescriptionRegister` in the contract** (`FORENSIC \| EDITORIAL \| INTERPRETIVE`), enforcement deferred. **ABSORBED into DEPICT-1 / Lane B** — do not dispatch as a separate lane. Delivered by `DEPICT-1-context-voice-and-register-contract-task-plan.md` Slice 2 (heading text: ``### Slice 2: `DescriptionRegister` on the **request** contract (enforcement deferred; no response echo)``) plus restrict-only gravity (DEPICT-1 Slice 3 / assessment §5c merge of DEPICT-6 into **DEPICT-C**). No `REG` family in canon (§5b); warrant is contract-shape + [API-09]/[REF-29], not a lexicon `REG-xx`. Retrofitting the enum later is a rewrite of every call site — that is why §5c pulled it forward. | `ATTRIB-01` `ATTRIB-03` · card `attribute-claims-to-their-bearer` · [API-09] [REF-29] enum completeness | `output_schema` (via DEPICT-1 request contract; no `responses.py` echo) | — | **absorbed → DEPICT-1 Slice 2–3 / Lane B** |
-| 8 | **DEPICT-7 (F9) — declared survival list for compression.** `_COMPRESS_SYSTEM_PROMPT` forbids new facts but never says what must survive; truncation is position-based and importance is not. The gist ≤125 bound and Must-Right presence gate are the attach points. | `A11Y-02` (B·w) · card `compression-is-selection-not-truncation` | `system_prompt` → `output_schema` | S | grok flock |
+| 8 | **DEPICT-7 (F9) — declared survival list for compression.** `_COMPRESS_SYSTEM_PROMPT` forbids new facts but never names what must survive. **OUT of this wave / unowned** (zero hits in DEPICT-0/1/2). **Successor:** standalone **DEPICT-7** under `docs/tasks/depiction/`. **Trigger:** operator schedules compression/gist after DEPICT-0 merges. | `A11Y-02` (B·w) · card `compression-is-selection-not-truncation` | `system_prompt` → `output_schema` | S | **OUT of wave — unowned** |
 
 ### P3 — needs a decision or a sizing, not an implementation
 
 | # | Task | Canon | Why it is not a build task |
 |---|---|---|---|
-| 9 | **DEPICT-D1 (F3) — obligation class for the gravity flag** | `ATTRIB-05` `ATTRIB-04` `BOUND-03` · [STRAT-11] do not average opposed goods | Monotone-restrict is right for most sensitive classes and wrong for public atrocity imagery. Canon's distillation spec forbids averaging opposed instructions into a middle row — the pipeline carries **both**, partitioned by image class. Operator decision memo. |
-| 10 | **DEPICT-D2 (F7) — roster withhold flag** | `ATTRIB-10` (S·e) `ATTRIB-05` | FIR confirmation answers *"is this who we think it is?"*, not *"may this person be named in public alt text?"*. The machine must not infer the second. Roster-entry flag honoured by the pack assembler; human sets it. |
-| 11 | **DEPICT-S1 (F5) — size the race warrant/parity gate** | `ATTRIB-06` (S·v) · [FAIR-01] [FAIR-02] | Parity is a property of a *pass*, not an image. The harness scores per-image only. Size the pass-level aggregate before promising the check. (Not [EVAL-17]: that row is multi-observation pooling for identification matchers — ml-systems.md definition — not race-parity pass aggregation.) |
+| 9 | **DEPICT-D1 (F3) — obligation class for the gravity flag** | `ATTRIB-04` only among depiction co-cites (distress → literal inventory → *obligate_inventory* pole) · [STRAT-11] partition opposed goods. **Not** `BOUND-03` (frame-before-institution ordering) · **not** `ATTRIB-05` (source name/withhold). | Monotone-restrict fits most sensitive classes; wrong for public atrocity imagery — carry **both** poles by image class, never average. Operator decision memo. **OUT of this wave / unowned** (DEPICT-1 ships gravity *shape* only). **Successor:** DEPICT-D1 memo. **Trigger:** callers need class→disposition defaults beyond fail-closed `restrict`. |
+| 10 | **DEPICT-D2 (F7) — roster withhold flag** | `ATTRIB-10` (S·e) `ATTRIB-05` | FIR confirmation ≠ public-naming permission. Human sets roster withhold; pack assembler honours it. **OUT of this wave / unowned** (no DEPICT-0/1/2 delivery). **Successor:** **DEPICT-D2** plan. **Trigger:** identity-pack work must distinguish public-naming withhold from FIR confirmation. |
+| 11 | **DEPICT-S1 (F5) — size the race warrant/parity gate** | `ATTRIB-06` (S·v) only — warrant **and** white/BIPOC parity when race is used. **Not** [FAIR-01]/[FAIR-02] (ML cohort/intersectional *error* tables, not caption race-descriptor parity). | Parity is a property of a *pass*, not an image. Harness scores per-image only — size the pass-level aggregate first. (Not [EVAL-17]: multi-observation pooling for identification matchers.) |
 
 ### P4 — program track (competes for the same slots; mostly operator-gated)
 
@@ -189,7 +189,7 @@ is re-litigated.
 instruction surface — gained a §11 (Werner post-distillation findings and the
 bound-term contract). Read together with §10 (proposed `depiction` lexicon) it
 moves the top of §2's backlog. Canon re-checked at **v0.17.2** @ `4e099ded65ee33bc4db85dfd4c65409a0087a752`
-(commit pin verified via git rev-parse; no provenance file in this bundle — see §10; was v0.16.0-9 at first triage).
+(commit pin verified via git rev-parse; no `canon/PROVENANCE.txt` — see §10; was v0.16.0-9 at first triage).
 
 ### 5a. §11e's canon-side claims are accurate — verified, not taken on trust
 
@@ -217,8 +217,7 @@ Consequence for this backlog — one item loses its canon warrant:
   `cross-domain-bridges-and-caption-register.md`, an operator-reserved design
   call. It still ships — but it must not be reviewed as canon compliance, and no
   lane may cite a `REG-xx` rule. There is nothing to cite.
-- **DEPICT-7 (F9)** keeps its warrant, but from `A11Y-02` (B·w) plus the
-  `compression-is-selection-not-truncation` card — **not** from a `SEL` rule.
+- **DEPICT-7 (F9)** keeps warrant from `A11Y-02` + `compression-is-selection-not-truncation` (not a `SEL` rule) but is **OUT of this wave / unowned** — see §2 row 8 successor/trigger.
 - F1–F8 are unaffected: every rule they cite (`ATTRIB-01..10`, `BOUND-02/03/05`)
   is shipped and real.
 
@@ -366,19 +365,20 @@ raise phantom review alarms. Revised fan-out, no file collisions.
 
 **Partition falsifiability (load-bearing):** each lane's Owns column is an
 **enumerated production/test code-path set** (not a directory prefix), re-derived
-from DEPICT-0/1/2 `## Constraints`. DEPICT-1 plan text still says "co-located…
-including only" for one new helper — this table closes that to **exact files**
-so A∩B=A∩C=B∩C=∅ is computable. **Scope:** code paths only; planning docs (this
-assessment + DEPICT plans) sit outside the collision oracle and use the dual-edit
-rule: amend the owning plan's Constraints **and** this table in the same change.
+from DEPICT-0/1/2 `## Constraints` (see rows below). **When this table and a
+plan disagree, the owning plan's `## Constraints` is normative for that lane's
+implementers** — this table is a wave-level collision summary and must not be
+looser than the plan; any extension amends the plan Constraints **and** this
+table in the same change. **Scope:** code paths only; planning docs sit outside
+the collision oracle.
 
 #### §6e ownership table
 
-| Lane | Owns (**enumerated** hard path set — collision oracle; must match each plan's `## Constraints`) | Carries |
+| Lane | Owns (**enumerated** hard path set — re-derived from that plan's `## Constraints`; plan wins on conflict) | Carries |
 |---|---|---|
-| **A — DEPICT-0** | **Closed set** (matches DEPICT-0 `## Constraints` closed path set): `scene/infrastructure/vlm/gpu_remote_adapter.py`; `scripts/eval_harness/bakeoff.py`; `scene/config/settings.py` (**delete** `gpu_prompt_or_task_version` / `ACX_GPU_PROMPT_VERSION` — not "make honest"); `scene/interface_adapters/http/deps.py` (**only** the one-line drop of free-string `prompt_or_task_version=` once the adapter rejects free-string stamp kwargs); new shared-prompt module `scene/prompts/caption_system.py` (plus package `__init__.py` only if package does not already exist; closed); **exactly these five test surfaces** — `scene/tests/test_prompt_lineage_seam.py` (new), `scene/tests/test_gpu_remote_adapter.py`, `scene/tests/test_description_profiles.py`, `scene/tests/test_settings.py`, and production↔harness v1 lockstep assertions under `scene/tests/test_eval_harness_pipeline.py` (edit only assertions that encode the old lying default `"3"` or the free-string constructor override / lockstep). **Collision rule:** any additional production or test path requires amending DEPICT-0 `## Constraints` **and** this row before edit. Paths relative to `apps/prototype-description-service/`. | prompt-lineage seam; stamp = selected `ProductionPrompt.lineage_version`; **delete** free-string env stamp ([PROV-09] [TEST-15] [REF-10]) |
-| **B — DEPICT-C / DEPICT-1** | **Enumerated closed set** (matches DEPICT-1 `## Constraints` intent; collision oracle is these exact paths, not a `schemas/` prefix): `scene/interface_adapters/http/schemas/requests.py`; `scene/interface_adapters/http/schemas/context_contract.py` (new — sole new schema helper this wave; no other new schema module without amending this row); domain `StrEnum` vocabularies in `scene/domain/description.py`; **exactly these four test files** under `scene/tests/`: `test_context_pack.py` (**sole editor this wave** for DEPICT-1 voice-related edits — "co-owned" in DEPICT-1 means shared pre-existing coverage, not dual-lane concurrent edit), `test_context_voice_contract.py` (new, Lane B sole), `test_description_register_contract.py` (new, Lane B sole), `test_gravity_contract.py` (new, Lane B sole). **Does not own** Lane A paths, `caption_metrics.py`, `responses.py`, `schemas/__init__.py` (untouched), `visual_facts_service.py`, or harness `manifest.py`. **Collision rule:** any fifth test module or extra schema file requires amending DEPICT-1 `## Constraints` **and** this row before edit. | F1 (a) `voice` field + partition, register enum (**absorbs DEPICT-6**), restrict-only gravity. **Contract only — no metrics.** (Bound-term shape withdrawn per §10g.) |
-| **C — METRICS / DEPICT-2** | **Closed set** (matches DEPICT-2 Constraints exact set): `scripts/eval_harness/caption_metrics.py` (**sole owner**); `scene/tests/test_eval_harness_caption_metrics.py`; and (Slice 4 only) `scripts/eval_harness/report.py` plus the **reserved** report-emit test `scene/tests/test_eval_harness_report_depiction.py`. No edits under any other path. **Collision rule:** no fifth path without amending DEPICT-2 Constraints **and** this row. Paths relative to `apps/prototype-description-service/`. | **F8** inner-state attribution counter (`ATTRIB-01`); **F6** agentless-passive / mutual-event / actorless-event-noun detector (`ATTRIB-08` three disjuncts, DEPICT-2 Slice 2 — absorbs former P1 item 4 / DEPICT-3); §3.1 signal density; §6c's Williams/C5 resolution in the module docstring; **Slice 4 report emit** of new fields (this assessment dispatches report emit under Lane C Carries / DoD; GPU-window *gate* remains §6b §3.1 density + Williams/C5 from Slice 3 — report emit is the live-axis emit so pure APIs are not orphaned) |
+| **A — DEPICT-0** | **Closed set** = DEPICT-0 `## Constraints` "Lane A file ownership" bullet (paths under `apps/prototype-description-service/`; table lists the service-relative form): `scene/infrastructure/vlm/gpu_remote_adapter.py`; `scripts/eval_harness/bakeoff.py`; `scene/config/settings.py` (**delete** `gpu_prompt_or_task_version` / `ACX_GPU_PROMPT_VERSION` — not "make honest"); `scene/interface_adapters/http/deps.py` (**only** the one-line drop of free-string `prompt_or_task_version=` once the adapter rejects free-string stamp kwargs); **exactly one** new shared-prompt module `scene/prompts/caption_system.py` (plus package `__init__.py` only if the package does not already exist); **exactly these five test surfaces** — `scene/tests/test_prompt_lineage_seam.py` (new), `scene/tests/test_gpu_remote_adapter.py`, `scene/tests/test_description_profiles.py`, `scene/tests/test_settings.py`, and — for `scene/tests/test_eval_harness_pipeline.py` — **only these named test functions** (closed set over **function names**, not an open assertion filter over the file path): `test_v1_variant_is_the_unchanged_baseline_prompt`, `test_selected_variant_reaches_system_message`. Edits to any other function in that file are out of scope; adding a new test function there for lineage/lockstep requires naming it in DEPICT-0 Constraints **and** this row first. **Collision rule (matches DEPICT-0):** any additional production or test path **or** any additional named test function in a shared file requires amending DEPICT-0 `## Constraints` **and** this row before edit. | prompt-lineage seam; stamp = selected `ProductionPrompt.lineage_version`; **delete** free-string env stamp ([PROV-09] [TEST-15] [REF-10]) |
+| **B — DEPICT-C / DEPICT-1** | **Closed set** from DEPICT-1 `## Constraints` "File ownership" (exact files named by plan's "including only"; residual "co-located under schemas/" open prose is DEPICT-1's to close): `scene/interface_adapters/http/schemas/requests.py`; `scene/interface_adapters/http/schemas/context_contract.py` (new; sole new schema helper); domain `StrEnum`s in `scene/domain/description.py`; **exactly four tests** under `scene/tests/`: `test_context_pack.py` (sole editor this wave for DEPICT-1 voice edits), `test_context_voice_contract.py`, `test_description_register_contract.py`, `test_gravity_contract.py` (last three new, Lane B sole). **Does not own** Lane A paths, `caption_metrics.py`, `responses.py`, `schemas/__init__.py`, `visual_facts_service.py`, `packages/shared-contracts/…`, or `manifest.py`. **Collision rule:** fifth test or extra schema file → amend DEPICT-1 Constraints **and** this row first. | F1 (a) `voice` + partition, register enum (**absorbs DEPICT-6**), restrict-only gravity. **Contract only.** (Bound-term withdrawn §10g.) |
+| **C — METRICS / DEPICT-2** | **Closed set** = DEPICT-2 `## Constraints` "Owned paths only" exact set: `scripts/eval_harness/caption_metrics.py` (**sole owner**); `scene/tests/test_eval_harness_caption_metrics.py`; and (Slice 4 only) `scripts/eval_harness/report.py` plus the **reserved** report-emit test `scene/tests/test_eval_harness_report_depiction.py`. No edits under any other path (including no `test_eval_harness_pipeline.py`). **Collision rule:** no fifth path without amending DEPICT-2 Constraints **and** this row. Paths relative to `apps/prototype-description-service/`. | **F8** inner-state attribution counter (`ATTRIB-01`); **F6** agentless-passive / mutual-event / actorless-event-noun detector (`ATTRIB-08` three disjuncts, DEPICT-2 Slice 2 — absorbs former P1 item 4 / DEPICT-3); §3.1 signal density; §6c's Williams/C5 resolution in the module docstring; **Slice 4 report emit** of new fields (Lane C Carries / DoD; GPU-window *gate* remains §6b §3.1 density + Williams/C5 from Slice 3) |
 
 #### §6e claim — Lane C unblocks the GPU window
 
@@ -386,26 +386,11 @@ Lane C is the one that unblocks the GPU window. Lane B is the one that must not
 be deferred, because its cost grows with every call site. Lane A is independent
 of both.
 
-> **Coordinator note (round-9 ownership reconciliation — resolved; pins by
-> heading, not bare line numbers):** The Lane A path set above was reconciled
-> against DEPICT-0 `## Constraints` (ownership hard-boundary bullets + the five
-> named test files) after the markdown-nesting defect was fixed; this table
-> **closes** that set (see partition falsifiability above). `responses.py` is
-> **unowned in this wave** in both documents that name it (DEPICT-0, DEPICT-1);
-> DEPICT-2 never mentions it. Cite by heading text (line numbers move under
-> concurrent plan edits — do not hand-repair arithmetic pins):
->
-> - **DEPICT-0** marks `responses.py` unowned under: `## Constraints` (unowned-
->   this-wave bullet), `## Contract and Boundary Impact` (Describe response
->   schema row), `## Related Files` (`responses.py` row), and DoD / Not-Doing
->   checklist bullets that restate the disclaimer.
-> - **DEPICT-1** disclaims `responses.py` under: `## Constraints` (Do **not**
->   edit … `responses.py`), `## Target Outcome` (acceptance: no `responses.py`
->   edit), and the **Not edited by this lane** table row for the response
->   contract.
->
-> Lane B above also disclaims it. Any lane needing it must claim it explicitly
-> in its own Constraints **and** this §6e table first.
+> **`responses.py` unowned this wave** in DEPICT-0 and DEPICT-1 (heading cites
+> only: each plan's `## Constraints` unowned / do-not-edit bullets, DEPICT-0
+> `## Contract and Boundary Impact` / `## Related Files` response rows, DEPICT-1
+> **Not edited by this lane** response-contract row). Lane B disclaims it above.
+> Any lane that needs it must claim it in its Constraints **and** this table first.
 
 ## 7. Reflow after intake §11c-i (FCA) — same day
 
@@ -877,20 +862,18 @@ Two more cheap, warranted items, both prompt-and-metric only:
 | **new — abstain** | — | **OUT of this wave; unowned.** `CAL-02` abstain + `PROV-01` evidence-walkback, prompt+metric only | `CAL-02`, `PROV-01` |
 
 **Abstain lane is OUT and unowned.** No plan file in this wave delivers it:
-DEPICT-2 scopes it out explicitly under heading
+DEPICT-2 scopes it out under heading
 ``### `CAL-02` and density numerator — metric side only (scope decision)``
-(cite by heading text; at reconciliation commit `8651337a` the heading is at DEPICT-2
-`:325` and the disposition table row carrying **Scoped out of DEPICT-2.** is the
-CAL-02 row at `:333` — in the CAL-02 scope-decision table, **not** in `## Target Outcome` prose about
-assessment §10f / Williams collapse; line numbers move under concurrent DEPICT-2
-edits — re-grep the heading after those land). DEPICT-0 / DEPICT-1 never touch
-`CAL-02`. Merging DEPICT-0 + DEPICT-1 + DEPICT-2 does **not** land abstain
-behaviour. Named acceptance criteria for
-whoever authors it later: (1) the production prompt instructs abstention when
-evidence supports no in-set term, rather than forcing the nearest one
-(`CAL-02`); (2) a metric counts forced-precision emissions so the abstain rate
-is observable, not asserted; (3) an evidence-walkback path lets a claim be
-traced to the context field that warranted it (`PROV-01`,
+— cite that heading only (no numeric line pin into DEPICT-2). The disposition
+row carrying **Scoped out of DEPICT-2.** lives in the CAL-02 scope-decision
+table under that heading, **not** in `## Target Outcome` prose about assessment
+§10f / Williams collapse. DEPICT-0 / DEPICT-1 never touch `CAL-02`. Merging
+DEPICT-0 + DEPICT-1 + DEPICT-2 does **not** land abstain behaviour. Named
+acceptance criteria for whoever authors it later: (1) the production prompt
+instructs abstention when evidence supports no in-set term, rather than forcing
+the nearest one (`CAL-02`); (2) a metric counts forced-precision emissions so
+the abstain rate is observable, not asserted; (3) an evidence-walkback path lets
+a claim be traced to the context field that warranted it (`PROV-01`,
 `canon/lexicons/ml-systems.md`); (4) each of the three ships with a red-first
 discrimination guard [TEST-15]. Do not absorb this into Lane C.
 

@@ -13,10 +13,10 @@
 >   `distilled/accessibility/` source distillations, and `public/reasoning/`
 >   cards.
 > - **Supersedes the captioning half of**:
->   `omg-spec-fit-fir-captioning-pipelines-2026-07-26.md` (that document
->   evaluated OMG *specifications* against the FIR harness; this one evaluates
->   the *captioning pipeline* against the depiction canon — different question,
->   different corpus).
+>   `docs/assessments/current/omg-spec-fit-fir-captioning-pipelines-2026-07-26.md`
+>   (that document evaluated OMG *specifications* against the FIR harness; this
+>   one evaluates the *captioning pipeline* against the depiction canon —
+>   different question, different corpus).
 > - **Status**: evaluation only. No code changed, no gate decision made.
 
 ---
@@ -88,26 +88,25 @@ One day later the canon shipped `lexicons/depiction.md` and the reasoning card
 FORENSIC / EDITORIAL / INTERPRETIVE vocabulary and which cites `ATTRIB-01..05`
 and `BOUND-01..05` by ID.
 
-The practical consequence for this repository is large and specific:
+The practical consequence is more limited than "canon shipped our enum":
 
-> The `DescriptionRegister` proposal is no longer a local design idea awaiting
-> justification. It is the consumer-side implementation of a canon model, and
-> the three-register split can now cite rule IDs instead of citing Berger.
+> `DescriptionRegister` remains a **local design choice** (LIBSYN-1 §3.3). No
+> `REG-*` family exists at v0.17.2 (prefix grep of definition anchors across
+> `lexicons/` → zero). The card uses FORENSIC / EDITORIAL / INTERPRETIVE
+> *vocabulary* and warrants its Required action with `ATTRIB-01..05` /
+> `BOUND-01..05`, so the *behaviours* can cite rule IDs, but the enum itself
+> is not a consumer implementation of a lexicon family and must not be reviewed
+> as canon compliance (matches triage §5b: contract-shape, not a `REG-xx` row).
 
-That upgrade is worth naming because it changes the cost/benefit of §3.4's
-phasing. But the convergence is not total, and the gaps are where the value is:
-
-**Canon shipped thirteen rules LIBSYN-1 did not anticipate.** LIBSYN-1's three
-constraints map cleanly onto `ATTRIB-01` / `ATTRIB-03` / `BOUND-01` / `BOUND-02`.
-The following have **no counterpart** anywhere in this repository's design
-documents or code: `ATTRIB-04` (distress undercoding), `ATTRIB-06` (race warrant
-and parity), `ATTRIB-07` (quote the creator, never speak as them), `ATTRIB-08`
-(active voice keeps the agent), `ATTRIB-09` (enslaved person's name is the
-entry), `ATTRIB-10` (subject/creator naming parity), `BOUND-03` (frame before
-institutional story), `BOUND-04` (refuse restage, refuse erasure), `BOUND-05`
-(*emphase* is not image privilege).
-
-Findings F1–F8 below are drawn from that unanticipated set.
+**Fifteen depiction rules at the definition anchors** (`grep -E
+'^\| (ATTRIB|BOUND)-[0-9]+<a name=' lexicons/depiction.md` → 15:
+`ATTRIB-01..10`, `BOUND-01..05`). LIBSYN-1's three constraints map onto four of
+them (`ATTRIB-01`, `ATTRIB-03`, `BOUND-01`, `BOUND-02`). The **eleven
+unanticipated** rows (15 − those four) with no counterpart in this repository's
+design or code are: `ATTRIB-02`, `ATTRIB-04`, `ATTRIB-05`, `ATTRIB-06`,
+`ATTRIB-07`, `ATTRIB-08`, `ATTRIB-09`, `ATTRIB-10`, `BOUND-03`, `BOUND-04`,
+`BOUND-05`. Findings F1–F9 draw on that set (F9 also uses the compression
+reasoning card, which is not a depiction-lexicon row).
 
 ---
 
@@ -116,11 +115,11 @@ Findings F1–F8 below are drawn from that unanticipated set.
 Ranked by value, not by severity. Each carries the canon rule IDs, the
 enforcement point, and how it was verified.
 
-### F1 — The context pack launders creator speech into the model's own voice
+### F1 — The context pack can launder *oppressive* creator wording into the model's voice
 
-**Rules**: `ATTRIB-07` (B·d)
+**Rules**: `ATTRIB-07` (B·d) — **oppressive creator wording only**
 **Enforcement point**: `context_pack_input` (primary), `output_schema` (secondary)
-**Verified**: in code, `scene/infrastructure/vlm/gpu_remote_adapter.py`
+**Verified**: in code, `apps/prototype-description-service/scene/infrastructure/vlm/gpu_remote_adapter.py`
 
 The context pack carries CMS-authored strings — the existing `alt`, the
 `caption`, `taxonomy_terms`, the post `title` and `excerpt`. `_render_context`
@@ -136,39 +135,32 @@ and `_SYSTEM_PROMPT` instructs:
 > "Weave the people's names and factual details it supplies into the description
 > where they fit naturally."
 
-*Weave* and *fit naturally* are instructions to **dissolve the seam**. A phrase
-authored by whoever wrote the original caption — including a legacy caption
-written in the language of its period — can therefore emerge inside the
-machine's own unmarked descriptive voice, with no quotation, no scope note, and
-no creator tag.
+*Weave* and *fit naturally* dissolve the seam. When the CMS string is **racist
+or otherwise oppressive creator language**, it can emerge in the machine's
+unmarked voice — the Failure `ATTRIB-07` names (oppressive creator wording
+carried into published description with nothing to distinguish it from the
+institution's own words). Fix: quote / scope-note / processing-note; never
+leave those terms unmarked in describer-supplied fields.
 
-`ATTRIB-07` is a **blocker** and it names this exact motion. Its source, the
-A4BLiP distillation, states it directly:
+**Warrant scope.** `ATTRIB-07` covers **only** oppressive creator wording, not
+all unmarked creator speech. No v0.17.2 lexicon row requires voice-tagging
+creator speech in general; a non-oppressive phrase absorbed unmarked is an
+engineering seam risk, not an `ATTRIB-07` violation. A4BLiP (L00552–L00554)
+states the oppressive case and a verification recipe this pipeline cannot run:
+every public string with creator racist language quoted or voice-tagged;
+describer notes grepped against creator folder-title lexicon for unmarked reuse.
 
-> "Make a distinction between the institutional voice/archivist's voice and the
-> voice of the collection creator (ex. don't use the same racist terms a creator
-> may have used in folder titles in scope and content notes or other notes that
-> are supplied by the archivist.)" (L00552–L00554)
-
-and supplies a verification recipe this pipeline currently cannot run:
-
-> "Every public string that contains creator racist language is quoted or
-> otherwise voice-tagged; archivist scope/bio notes grepped against creator
-> folder-title lexicon for unmarked reuse."
-
-**Recommendation.** Make voice a *typed property of each context field*, not a
-property of the block. The pack already forbids unknown keys (`extra="forbid"`),
-so the change is additive and closed: every context entry declares
-`voice: creator | catalogue | operator | derived`. Fields tagged `creator`
-become quotable-only — the weave may cite them, never absorb them. This is
-cheap, it is data rather than prose, and it survives model substitution, which
-is the same argument LIBSYN-1 §3.3 makes for the register itself.
+**Recommendation.** Typed `voice: creator | catalogue | operator | derived` on
+each context field (`extra="forbid"` keeps it closed). Creator-tagged fields
+are quotable-only. That design is **broader** than `ATTRIB-07` (all creator
+fields, not only oppressive ones); the canon blocker is the oppressive subset.
+Breadth is defence-in-depth, not a second rule ID.
 
 ### F2 — `_PROMPT_V2_SYSTEM` licenses the exact claim `ATTRIB-01` blocks
 
 **Rules**: `ATTRIB-01` (B·d), `ATTRIB-03` (S·d)
 **Enforcement point**: `system_prompt`
-**Verified**: in code, `scripts/eval_harness/bakeoff.py:112`
+**Verified**: in code, `apps/prototype-description-service/scripts/eval_harness/bakeoff.py` (`_PROMPT_V2_SYSTEM`, "Facial expressions, emotion, and atmosphere are worth describing.")
 
 The v2 prompt instructs:
 
@@ -183,8 +175,9 @@ cannot make; 'her brow is furrowed' is a visual fact."*
 
 The prompt bundles the two together. "Facial expressions" is a visible cue and is
 fine. "Emotion" is an inner state and is not. Nothing downstream separates them:
-there is **no inner-state or affect detector anywhere in `scripts/eval_harness/`**
-(verified by grep — the module has `score_hallucination`, `fabricated_fact_rate`,
+there is **no inner-state or affect detector anywhere in
+`apps/prototype-description-service/scripts/eval_harness/`** (verified by grep —
+the module has `score_hallucination`, `fabricated_fact_rate`,
 `_context_trigram_overlap` and a meta-framing detector, and nothing that looks at
 attribution).
 
@@ -203,7 +196,7 @@ it is the highest value-per-line change in this document.
 
 ### F3 — The gravity flag's monotone-restrict rule is backwards for atrocity
 
-**Rules**: `ATTRIB-05` (S·v), `ATTRIB-04` (S·e), `BOUND-03` (S·d)
+**Rules**: `ATTRIB-05` (S·v)
 **Enforcement point**: `context_pack_input` + `human_gate`
 **Verified**: two independent remote lanes converged (Sontag *Regarding the Pain
 of Others* 10/10 proofs; Azoulay 9/9)
@@ -229,20 +222,21 @@ records the operational partition:
 Azoulay's civil-contract argument reaches the same place from civic obligation:
 silence-as-respect on a circulating emergency-claim image can be abandonment
 rather than courtesy. And `ATTRIB-05` forbids the specific move a
-restrict-only gravity flag produces: *never mint a plight-type, invent a
-withheld name, or write an interchangeable illustration line.* Auto-restricting
-a named, singular person into an anonymous instance of suffering is exactly that.
+restrict-only gravity flag produces. Definition Fix: *never mint a plight-type
+to replace a missing name, invent a name when withheld, or write an
+interchangeable illustration line.* Auto-restricting a named, singular person
+into an anonymous instance of suffering is exactly that. (Only `ATTRIB-05`
+warrants this claim; `ATTRIB-04` and `BOUND-03` do not and are not co-cited.)
 
-**Recommendation.** Keep the monotone-restrict property for the classes it fits
-and add an explicit **obligation** class that a restriction may not silently
-enter. Do not resolve this with a middle setting — see §5, which is a canon
-instruction, not a stylistic preference.
+**Recommendation.** Keep monotone-restrict for the classes it fits; add an
+**obligation** class a restriction may not silently enter. No middle setting —
+see §5.
 
 ### F4 — v3's `caption` field is a rule-violation surface by construction
 
 **Rules**: `ATTRIB-03` (S·d), `ATTRIB-04` (S·e), `BOUND-05` (S·d)
 **Enforcement point**: `output_schema`
-**Verified**: in code, `bakeoff.py:203`
+**Verified**: in code, `apps/prototype-description-service/scripts/eval_harness/bakeoff.py` (`_V3_THREE_SURFACE_INSTRUCTIONS`, `"caption"` field)
 
 `_V3_THREE_SURFACE_INSTRUCTIONS` defines the third publish surface as:
 
@@ -298,14 +292,17 @@ before the check is promised.
 **Rules**: `ATTRIB-08` (S·d)
 **Enforcement point**: `post_generation_check`
 
-> An agentless passive, a mutual-event noun, or an event noun that carries no
-> actor ("a clash", "an incident", "were killed") → make the record-supported
-> actor the grammatical subject, or state the gap.
+`ATTRIB-08` (Failure / Fix columns of one row; join marked — see Appendix
+citation convention):
 
-This is purely grammatical, fully deterministic, needs no model, no context, and
-no aggregate. It is the highest value-per-effort item in this document and could
-ship as a report-only signal in a single function alongside the existing
-meta-framing detector, which is the same shape of check.
+- **Failure:** violence / oppression / enslavement prose uses an agentless
+  passive, a mutual-event noun, or an actorless event noun ("a clash", "an
+  incident", "were killed").
+- **Fix:** make the record-supported actor the grammatical subject, or state
+  the gap.
+
+Purely grammatical, deterministic, no model. Highest value-per-effort item here;
+report-only signal beside the existing meta-framing detector.
 
 ### F7 — FIR confirmation is not consent
 
@@ -336,29 +333,29 @@ inner-state-attribution counter in the eval harness (it is a scored metric even
 with a single register, and it is the highest-value safety signal in the whole
 caption pipeline)."*
 
-Verified by grep: `DescriptionRegister`, `FORENSIC`, `EDITORIAL` and
-`INTERPRETIVE` appear **nowhere** in `scene/` or `scripts/`, and no
-attribution or affect counter exists in `caption_metrics.py`. The proposal was
-correct and remains unbuilt. It is now also canon-backed, which is the change
-this evaluation contributes.
+Verified by grep: `DescriptionRegister` / `FORENSIC` / `EDITORIAL` /
+`INTERPRETIVE` appear nowhere under
+`apps/prototype-description-service/scene/` or `…/scripts/`; no attribution
+counter in `…/scripts/eval_harness/caption_metrics.py`. Still unbuilt. The
+*counter* is canon-backed via `ATTRIB-01` (not via any `REG-*` — §2).
 
-### F9 — The compression path truncates where the canon requires selection
+### F9 — The compression path truncates where selection is required
 
-**Rules**: `A11Y-02` (B·w); reasoning card `compression-is-selection-not-truncation`
+**Rules**: none from lexicons at v0.17.2; reasoning card
+`compression-is-selection-not-truncation` only
 **Enforcement point**: `system_prompt` + `output_schema`
 
-`_COMPRESS_SYSTEM_PROMPT` compresses a long description into ≤125 characters and
-correctly forbids adding new facts. It does **not** declare what must survive.
-The card's mechanism claim is that a short output at a tighter budget is *a
-different selection under declared survival rules*, not a shortened long one —
-and its predicted failure is precise: the short form keeps decorative detail and
-loses purpose-critical facts, because truncation is position-based and importance
-is not.
+`_COMPRESS_SYSTEM_PROMPT` compresses to ≤125 characters and forbids new facts
+but does **not** declare what must survive. The card: a short output is a
+*different selection under declared survival rules*, not a tail-cut long draft;
+predicted failure is keeping decorative detail and losing purpose-critical
+facts.
 
-`A11Y-02` sets the standard the survival list must satisfy: the alt serves the
-content's *purpose*. The harness already computes a first-sentence gist ≤125
-chars and a Must-Right presence gate, so the ranked keep-list has somewhere to
-attach.
+**Not `A11Y-02`.** That row is missing-alt / decorative-marking purpose
+equivalence (Failure: image without alt or decorative mark; Fix: text
+equivalent for purpose, or `alt=""`). It is not a compression-survival rule; no
+`SEL-*` family shipped. F9 cites the card alone. Harness already has gist ≤125
+and Must-Right presence — a ranked keep-list has somewhere to attach.
 
 ---
 
@@ -455,35 +452,36 @@ evaluated: apps/prototype-description-service
 date: 2026-07-27
 findings:
   - id: F1
-    summary: Context pack launders creator speech into the model's unmarked voice
+    summary: Context pack can launder oppressive creator wording into the model's unmarked voice
     rule_ids: [ATTRIB-07]
     tier: B
     enforcement_point: context_pack_input
     secondary_enforcement: output_schema
-    evidence: scene/infrastructure/vlm/gpu_remote_adapter.py::_render_context,_user_text,_SYSTEM_PROMPT
+    evidence: apps/prototype-description-service/scene/infrastructure/vlm/gpu_remote_adapter.py::_render_context,_user_text,_SYSTEM_PROMPT
     verified: code
+    note: ATTRIB-07 warrants the oppressive-wording subset only; no lexicon row governs all unmarked creator speech
   - id: F2
     summary: v2 prompt licenses inner-state attribution that ATTRIB-01 blocks
     rule_ids: [ATTRIB-01, ATTRIB-03]
     tier: B
     enforcement_point: system_prompt
-    evidence: scripts/eval_harness/bakeoff.py:112
+    evidence: apps/prototype-description-service/scripts/eval_harness/bakeoff.py (_PROMPT_V2_SYSTEM)
     verified: code
     note: tension with ALTQ-1 findings section 3; resolution is attributed voice, not deletion
   - id: F3
     summary: Monotone-restrict gravity flag is the wrong direction for public atrocity imagery
-    rule_ids: [ATTRIB-05, ATTRIB-04, BOUND-03]
+    rule_ids: [ATTRIB-05]
     tier: S
     enforcement_point: context_pack_input
     secondary_enforcement: human_gate
-    evidence: docs/research/cross-domain-bridges-and-caption-register.md#3.3
+    evidence: docs/research/cross-domain-bridges-and-caption-register.md (LIBSYN-1 §3.3 gravity flag)
     verified: source
   - id: F4
     summary: v3 caption field invites lyrical register with no bearer requirement
     rule_ids: [ATTRIB-03, ATTRIB-04, BOUND-05]
     tier: S
     enforcement_point: output_schema
-    evidence: scripts/eval_harness/bakeoff.py:203
+    evidence: apps/prototype-description-service/scripts/eval_harness/bakeoff.py (_V3_THREE_SURFACE_INSTRUCTIONS)
     verified: code
   - id: F5
     summary: Race labels have no warrant, non-assumption, or parity gate
@@ -512,15 +510,16 @@ findings:
     rule_ids: [ATTRIB-01]
     tier: B
     enforcement_point: eval_metric
-    evidence: grep - no DescriptionRegister/FORENSIC/EDITORIAL/INTERPRETIVE in scene/ or scripts/
+    evidence: grep - no DescriptionRegister/FORENSIC/EDITORIAL/INTERPRETIVE under apps/prototype-description-service/scene/ or scripts/
     verified: absence
   - id: F9
     summary: Compression prompt truncates without a declared survival list
-    rule_ids: [A11Y-02]
+    rule_ids: []
     tier: B
     enforcement_point: system_prompt
     secondary_enforcement: output_schema
     reasoning_card: compression-is-selection-not-truncation
+    note: no lexicon row warrants survival-selection; A11Y-02 is missing-alt purpose equivalence, not cited
     verified: code
 not_enforceable:
   - rule_ids: [BOUND-04]
@@ -549,61 +548,30 @@ already_covered:
 ## Appendix — method and verification
 
 **Canon currency.** Pinned to heuristics-canon-research `v0.17.2` @
-`4e099ded65ee33bc4db85dfd4c65409a0087a752` (this review wave's governing pin).
-INDEX.md at that pin lists **1143 rules** across 11 lexicons. Every
-cross-lexicon rule cited here (`A11Y-02`, `WRIT-26`, `WRIT-03`, `PROV-01`,
-`CLM-04`, `BIAS-02`, `BIAS-03`, `HAI-01`) was re-read from the lexicon file at
-this pin rather than cited from an earlier evaluation. `depiction.md` was read
-in full (exactly 15 definition-anchor rows: `ATTRIB-01..10`, `BOUND-01..05`).
-The private repo reachable over `gh` (`darce/heuristics-canon-research`) is the
-same repository as the local clone and `distilled/depiction/*` is tracked in it
-— one source, already current.
+`4e099ded65ee33bc4db85dfd4c65409a0087a752`. INDEX.md: **1143 rules** / 11
+lexicons. Lexicon warrants here are depiction definition anchors only (15 rows;
+§2). No `REG-*` family. F9 uses the compression reasoning card, not a lexicon
+ID. Private `gh` clone (`darce/heuristics-canon-research`) matches local;
+`distilled/depiction/*` is tracked — one source.
 
-**Source mining.** Seven remote grok-4.5 lanes in history-stripped OCI-VM
-sandboxes, one per distilled source, each brief inlining the full distilled text
-(the sandbox has no repository history, so nothing can be fetched). Output was
-bounded by a JSON schema requiring, per claim, a `proof_of_reading` string, an
-enforcement point from the closed vocabulary above, and an `already_covered`
-field — the last to force lanes past restating what the pipeline does.
+**Citation convention.** An illustrative quote may join the Failure and Fix
+columns of a **single** lexicon row when each column is labelled (see F6); that
+join is not continuous source prose.
 
-An earlier attempt inlined four books per brief and failed instructively: both
-multi-source lanes returned every claim from the **last** source in the brief
-(8/8 from `berger-understanding-a-photograph`; 6/6 from
-`barthes-systeme-de-la-mode`). Tail-anchoring, not fabrication. One brief per
-source fixed it.
+**Source mining.** Seven remote grok-4.5 lanes, one distilled source each
+(history-stripped OCI-VM; full text inlined). Schema required per claim:
+`proof_of_reading`, closed enforcement-point vocabulary, `already_covered`.
+Multi-source briefs tail-anchored (last source only); one brief per source
+fixed it. Every `proof_of_reading` grepped against that lane's own source +
+`depiction.md`: 50/66 verbatim, 16 after markdown/punctuation normalise, 0
+unverifiable. By lane: A4BLiP 10/10, DCMP 9/10, Sontag *On Photography* 8/8,
+Berger *Ways* 7/9, Sontag *Pain* 6/10, Azoulay 6/9, Barthes *IMT* 4/10
+(weakest; none of F1–F9 rests on it). One live-research lane rejected (6/7
+quotes unfindable); re-derived from local distillations.
 
-**Anti-fabrication gate.** Every `proof_of_reading` was grepped against the
-material that lane's brief actually inlined — its own distilled source plus
-`depiction.md`. Of 66 claims across the seven lanes, **50 matched verbatim in the
-lane's own source and the remaining 16 matched after normalising markdown
-emphasis markers and punctuation. None was unverifiable.**
+**Code verification.** F1, F2, F4, F9 by source read; F6, F8 by absence grep
+under `apps/prototype-description-service/scene/` and `…/scripts/`.
 
-The per-lane distribution matters more than the total, because a proof that
-quotes the *rule text* is weaker evidence of engaging the *source* than one that
-quotes the book distillation. By verbatim-in-own-source count:
-`anti-racist-description-resources` 10/10, `dcmp-description-key` 9/10,
-`sontag-on-photography` 8/8, `berger-ways-of-seeing` 7/9,
-`sontag-regarding-the-pain-of-others` 6/10,
-`azoulay-civil-contract-of-photography` 6/9, and
-`barthes-image-music-text` 4/10. The Barthes lane leaned hardest on compressed
-labels of its own making; its underlying terms were separately confirmed present
-(`anchorage` ×8, `relay` ×8, `message without a code` ×4, `metalanguage` ×2,
-`floating chain` ×2, but `literal letter` ×0). **It is the weakest-supported lane
-and none of F1–F9 rests on it.**
-
-One earlier lane was **rejected outright**. It claimed to have researched DCMP
-and A4BLiP live; it ran a single turn on roughly the brief's own token count, and
-six of its seven quotations could not be found in either source. Its substantive
-conclusions were re-derived from the local distilled files by dedicated lanes
-(`dcmp-description-key` 10/10, `anti-racist-description-resources` 10/10) rather
-than repaired.
-
-**Code verification.** F1, F2, F4 and F9 were confirmed by reading the source,
-not by trusting a lane. F6 and F8 are absence findings confirmed by grep across
-`scene/` and `scripts/`.
-
-**Limit.** This evaluates the *captioning* path. The FIR bake-off and calibration
-harness were assessed against a different corpus in
-`omg-spec-fit-fir-captioning-pipelines-2026-07-26.md`, and nothing here revisits
-that verdict. Rule tiers (B/S/J) are quoted from the lexicon; they are the
-canon's severity, not this document's.
+**Limit.** Captioning path only. FIR bake-off assessed in
+`docs/assessments/current/omg-spec-fit-fir-captioning-pipelines-2026-07-26.md`
+(Metadata supersedes note). Tiers B/S/J are the canon's, not this document's.

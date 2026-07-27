@@ -53,13 +53,16 @@ there before the ranking gate opens.
 
 ## Constraints
 
-- **Owned paths only**:
+- **Owned paths only** (exact set; no unbound "any test" path):
   `apps/prototype-description-service/scripts/eval_harness/caption_metrics.py`,
   `apps/prototype-description-service/scene/tests/test_eval_harness_caption_metrics.py`,
-  and (Slice 4 only) thin additive emit in
-  `apps/prototype-description-service/scripts/eval_harness/report.py` plus any
-  test that asserts the report JSON carries the new keys. No edits under any
-  other path in this task.
+  and (Slice 4 only)
+  `apps/prototype-description-service/scripts/eval_harness/report.py` plus the
+  **reserved** report-emit test
+  `apps/prototype-description-service/scene/tests/test_eval_harness_report_depiction.py`.
+  No edits under any other path in this task. Do **not** edit
+  `scene/tests/test_eval_harness_pipeline.py` (DEPICT-0) or any other shared
+  harness test.
 - **Report-only first**: no new hard gate, no threshold, no zeroing of
   `gated_score` from the new counters or the density axis in their first slice.
 - **Deterministic, pure, no network**: preserve bit-identical re-score.
@@ -70,9 +73,10 @@ there before the ranking gate opens.
 - **No prompt, schema, or contract changes** (Lanes A and B).
 - **TEST-15 red-first is mandatory** for every new check: exact failing input
   before green, plus a discrimination case that a vacuous implementation fails.
-- Test command from `apps/prototype-description-service/`:
+- Test commands from `apps/prototype-description-service/`:
   `uv run --extra dev pytest scene/tests/test_eval_harness_caption_metrics.py -q`
-  (plus the report-emit test named under Slice 4).
+  and (Slice 4)
+  `uv run --extra dev pytest scene/tests/test_eval_harness_report_depiction.py -q`.
 
 ## Workflow Principles
 
@@ -148,12 +152,18 @@ there before the ranking gate opens.
 - `score_hallucination` / `fabricated_fact_rate` already measure the
   **known-false assertion** axis against authored traps. They do **not**
   measure attribution grammar, agentless passive, or verified density.
-- `report.py` `_quality_block` (approx. L540–553) emits only
+- `report.py` `_quality_block` (L540–553) emits only
   `meta_framing_images`, context-duplication, name-front-loaded rate, and
-  sentence-band stats; caption aggregate (approx. L565–574) has
+  sentence-band stats; caption aggregate (L565–574) has
   `mean_gated_score` and existing gate rates. No density or depiction-hit
-  keys. Per-image rows (approx. L473–493) surface `meta_framing_hits` but not
-  inner-state / agentless / density fields.
+  keys. Per-image row dict opens at L472 and the associated long-block emit
+  runs through L517 (`report.py:472-517`): surfaces `meta_framing_hits` but
+  not inner-state / agentless / density fields.
+- `score_caption` is called with only names/traps/objects/roster/context
+  (`report.py:398-406`); `reference_facts` is **not** passed. Manifest entry
+  type exposes `reference_facts: list[ReferenceFact]`
+  (`manifest.py:GoldenEntry` L359), but `score_run_record` receives entries as
+  dicts (`report.py:320-327`) and never reads `entry["reference_facts"]` today.
 - `bakeoff.py` does **not** import `caption_metrics` today (verified by search).
   Bake-off ranking consumption of density remains a separate consumer after
   report emit lands; this plan owns report emit only (Slice 4), not bakeoff
@@ -187,7 +197,8 @@ Load before implementing any slice:
   `apps/prototype-description-service/scripts/eval_harness/report.py`
 - Owned tests:
   `apps/prototype-description-service/scene/tests/test_eval_harness_caption_metrics.py`
-  (plus report-emit assertion under Slice 4)
+  and (Slice 4, **new reserved file**)
+  `apps/prototype-description-service/scene/tests/test_eval_harness_report_depiction.py`
 - Manifest types already imported by the module:
   `scripts/eval_harness/manifest.py` (`ReferenceFact`, `FactKind`,
   `FactPolarity`) — **read-only adjacency**, not owned
@@ -205,8 +216,8 @@ HTTP, or WP boundary change.
 
 | Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
 | --- | --- | --- | --- | --- | --- |
-| Caption scoring pure API | Lane C (this task) | `score_caption` / `score_hallucination` in `caption_metrics.py` | additive fields + new pure functions | no — greenfield additive | unit tests below |
-| Report JSON quality / per-image emit | Lane C (Slice 4) | `report.py` `_quality_block` + per-image rows read known `CaptionScores` fields | additive density + hit-list keys only | no — additive keys | Slice 4 report JSON key test |
+| Caption scoring pure API | Lane C (this task) | `score_caption` / `score_hallucination` in `caption_metrics.py` | additive `CaptionScores` hit-list fields + sibling `score_signal_density` | no — greenfield additive | unit tests below |
+| Report JSON quality / per-image emit | Lane C (Slice 4) | `report.py` `_quality_block` + per-image rows read known `CaptionScores` fields; no `reference_facts` wire | additive nested `signal_density` object + hit-list keys + quality mean/counts; wire facts → density | no — additive keys | `test_eval_harness_report_depiction.py` exact-value proofs |
 | Bake-off ranking consumption | **unowned** by this task | `bakeoff.py` does not import `caption_metrics` | **none in this task** (keys available after Slice 4; ranking logic is a separate consumer) | n/a | explicit non-scope |
 
 ## Proposed Solution
@@ -249,10 +260,10 @@ refusing a restated metric is preferred to citing `CAL-02` on a clone of
 
 | Surface | File | Change |
 | --- | --- | --- |
-| metrics | `apps/prototype-description-service/scripts/eval_harness/caption_metrics.py` | Inner-state counter; agentless-passive detector; `score_signal_density`; Williams/C5 docstring resolution; additive score fields |
-| tests | `apps/prototype-description-service/scene/tests/test_eval_harness_caption_metrics.py` | Red-first + discrimination tests for every new signal |
-| report emit (Slice 4) | `apps/prototype-description-service/scripts/eval_harness/report.py` | Thin additive: emit density + depiction hit-list keys in per-image rows and quality block; no ranking logic, no gates |
-| report tests (Slice 4) | existing report / harness test surface under `scene/tests/` (or adjacent harness test that builds report JSON) | Assert report JSON carries density / hit-list keys |
+| metrics | `apps/prototype-description-service/scripts/eval_harness/caption_metrics.py` | Inner-state counter; agentless-passive detector; `score_signal_density` sibling pure function; Williams/C5 docstring resolution; additive `CaptionScores` hit-list fields |
+| tests | `apps/prototype-description-service/scene/tests/test_eval_harness_caption_metrics.py` | Red-first + discrimination tests for every new pure signal (Slices 1–3) |
+| report emit (Slice 4) | `apps/prototype-description-service/scripts/eval_harness/report.py` | Thin additive: wire `reference_facts` → `score_signal_density`; emit exact density object + hit-list keys in per-image rows and quality block; no ranking logic, no gates |
+| report tests (Slice 4) | `apps/prototype-description-service/scene/tests/test_eval_harness_report_depiction.py` | **New reserved file** owned by DEPICT-2 only. Assert report JSON carries exact density object + hit-list keys **and values**. Do not extend DEPICT-0's `test_eval_harness_pipeline.py` or any other shared harness test. |
 
 ## Related Files
 
@@ -278,8 +289,8 @@ This plan does **not** edit bakeoff ranking, Lane A prompts, or Lane B contracts
 - Deterministic tests (from `apps/prototype-description-service/`):
   - `uv run --extra dev pytest scene/tests/test_eval_harness_caption_metrics.py -q`
   - Per-slice filters as named under each slice Proof (Slices 1–3).
-  - Slice 4: pytest filter asserting report JSON density / hit-list keys (see
-    Slice 4 Proof).
+  - Slice 4 (exact path):
+    `uv run --extra dev pytest scene/tests/test_eval_harness_report_depiction.py -q`
 - No runtime-parity / GPU / live endpoint required — pure CPU scoring + report
   dict emit.
 - No contract/fixture boundary work.
@@ -334,15 +345,21 @@ Changes:
   furrowed-brow **visible cue** inventory without mental-state ownership.
   `seems` is the same hedge class as `looks` / `appears` (ATTRIB-01 / Berger
   recipe); do **not** treat hedged readings as person-as-fact-owner.
-- Surface hits as an additive report-only field (e.g.
-  `CaptionScores.inner_state_attribution_hits: list[str]`) populated from
-  `score_caption`, **or** a sibling pure function
-  `score_inner_state_attribution(caption) -> list[str]` called by tests and
-  later by report. Prefer extending `score_caption` only if the field stays
-  zero-cost when absent; do not touch `gated_score`.
+- Surface hits as an additive report-only field on `CaptionScores`
+  (`inner_state_attribution_hits: list[str]`, parallel to
+  `meta_framing_hits` at `caption_metrics.py:115`) populated inside
+  `score_caption`. Do **not** leave the surface shape open (no "or sibling
+  pure function" fork for the hit list that report emits). A pure helper used
+  internally by `score_caption` is fine; the report-facing field is the
+  `CaptionScores` list. Do not touch `gated_score`.
 - Document in a short comment that this is report-only (LIBSYN-1 / F8) and that
   picture-in-picture style false positives are accepted at this stage the same
   way meta-framing accepts them.
+- **Subject branch locked**: detector must accept **both** person pronouns
+  (`she`/`he`/`they` and possessives used as subject frames) **and** common
+  person nouns (`woman`, `man`, `child`, `person`, `girl`, `boy`, … — closed
+  list). A pronoun-only regex is a [TEST-15] defect; proofs 7–9 below force
+  the common-noun branch.
 
 Proof (TEST-15, `canon/lexicons/engineering.md#test-15`):
 
@@ -371,8 +388,28 @@ Proof (TEST-15, `canon/lexicons/engineering.md#test-15`):
 6. **Visible-cue control**:
    - `"She stands with a furrowed brow and tight jaw."`
    - Assert: zero hits (inventory of visibles, no mental-state ownership).
-7. **Command**:
-   `uv run --extra dev pytest scene/tests/test_eval_harness_caption_metrics.py -k inner_state -q`
+7. **Red-first — common person noun, copula / affect** (pronoun-only detectors
+   fail; locks the advertised common-noun subject branch):
+   - Caption: `"The woman is anxious beside the railing."`
+   - Assert: ≥1 hit on the anxious / interior ownership span.
+   - **Trivial cheating implementation that must fail**:
+     `re.search(r"\b(she|he|they)\b.+\b(is|are)\b.+\b(anxious|angry)\b", …)`
+     (pronoun-only subject). This case has no `she`/`he`/`they` subject and
+     still must hit — the pronoun-only cheat returns `[]` and fails.
+8. **Red-first — common person noun, will / intent**:
+   - Caption: `"The child wants to leave the railing."`
+   - Assert: ≥1 hit on the will / intent ownership span.
+   - Same pronoun-only cheat fails; a copula-only common-noun detector that
+     ignores will verbs also fails this case.
+9. **Discrimination — attributed common-noun bearer frame** (common-noun
+   subject + attributive frame must **not** hit):
+   - Caption: `"The woman's expression reads as anxious beside the railing."`
+   - Assert: **zero** hits.
+   - **Trivial cheating implementation that must fail**: flag any caption
+     containing both a common person noun and `anxious` (no frame check).
+     This attributed reading has both and must still return `[]`.
+10. **Command**:
+    `uv run --extra dev pytest scene/tests/test_eval_harness_caption_metrics.py -k inner_state -q`
 
 ### Slice 2: Agentless-passive / mutual-event detector (report-only)
 
@@ -399,9 +436,10 @@ Changes:
   - **mutual-event / symmetry nouns**: e.g. `a clash`, `the clash`,
     `an incident`, `the incident` in violence contexts (closed list; do not
     generalise to every English passive).
-- Surface as report-only hit list
-  (`agentless_passive_hits` or sibling pure function). No `gated_score`
-  change.
+- Surface as report-only hit list on `CaptionScores`
+  (`agentless_passive_hits: list[str]`, parallel to `meta_framing_hits`).
+  Same surface lock as Slice 1: report-facing field is the `CaptionScores`
+  list, not an open "or sibling pure function" fork. No `gated_score` change.
 - **Scope (pure-grammar mode, locked)**: detector is grammar + closed
   violence/oppression lexicon, not a full voice tagger and not a compliance
   rewriter. A passive without a same-clause `by`-agent is a hit **even when**
@@ -410,6 +448,11 @@ Changes:
   than invent an agent") is a *rewrite* obligation for authors, not a detector
   non-fire. Do not implement a silent compliance-mode zeroing of gap-marked
   passives. Name the gap-language test so this choice cannot flip silently.
+- **Same-clause `by`-agent and violence-context locks** (proofs 5–6 force both):
+  - A `by`-agent PP in a **different** clause does **not** exempt a passive in
+    this clause (same-clause requirement is real, not "any ` by ` substring").
+  - Mutual-event nouns fire **only** in violence / oppression contexts from
+    the closed list; a benign `"clash of colors"` must not hit.
 
 Proof (TEST-15, `canon/lexicons/engineering.md#test-15`):
 
@@ -438,7 +481,25 @@ Proof (TEST-15, `canon/lexicons/engineering.md#test-15`):
      does **not** suppress the hit (see scope lock above). Test name must
      include `gap_language_still_hits` (or equivalent) so a compliance-mode
      flip that zeros the hit is a regression, not a silent reinterpretation.
-5. **Command**:
+5. **Same-clause discrimination — unrelated `by` does not exempt**
+   (`test_agentless_passive_unrelated_by_still_hits` or equivalent):
+   - Caption: `"A report by a journalist says four students were killed on campus."`
+   - Assert: ≥1 agentless-passive hit on `were killed` (the `by a journalist`
+     PP modifies `report` in a different clause; it is **not** a same-clause
+     agent of the passive).
+   - **Trivial cheating implementation that must fail**:
+     `if " by " in caption: return []; flag "were killed"`. This caption
+     contains ` by ` and still must hit — the cheat returns `[]` and fails.
+6. **Violence-context discrimination — benign mutual-event noun**
+   (`test_agentless_passive_benign_clash_no_hit` or equivalent):
+   - Caption: `"A clash of colors fills the poster."`
+   - Assert: **zero** mutual-event hits (and zero hits overall). `clash` here is
+     not a violence / oppression frame.
+   - **Trivial cheating implementation that must fail**:
+     `if re.search(r"\ba clash\b", caption, re.I): return ["a clash"]`
+     (no violence-context gate). This benign caption must return `[]`; the
+     fire-on-any-`clash` cheat fails.
+7. **Command**:
    `uv run --extra dev pytest scene/tests/test_eval_harness_caption_metrics.py -k agentless_passive -q`
 
 ### Slice 3: Verified signal-density ranking axis + Williams/C5 resolution
@@ -480,26 +541,33 @@ Changes:
    - Ranking (C5 / playbook §3.1): report **verified signal density** as a
      separate axis; do not rank candidates by length-correlated quality alone.
 2. **`score_signal_density(caption, *, reference_facts) -> SignalDensityScores`**
-   — **mandated** frozen dataclass (or `NamedTuple`) with fields
-   `verified_count: int`, `word_count: int`,
-   `density_per_100w: float | None`. Do **not** return a bare `float`; every
-   Slice 3 proof asserts the three fields, so a float return makes the stated
-   tests unwritable.
+   — **mandated sibling pure function** (not a `CaptionScores` field; density
+   needs `reference_facts`, which `score_caption` does not take — see
+   `score_caption` signature at `caption_metrics.py:191-201`). Frozen
+   dataclass (or `NamedTuple`) with fields `verified_count: int`,
+   `word_count: int`, `density_per_100w: float | None`. Do **not** return a
+   bare `float`; every Slice 3 proof asserts the three fields, so a float
+   return makes the stated tests unwritable.
    - `word_count` = existing `_WORD_RE` tokenisation (same as `score_caption`;
      `caption_metrics.py` L27: `re.compile(r"[A-Za-z']+")`).
    - `verified_count` = number of **distinct** true-polarity `ReferenceFact`
-     rows whose `match_targets()` hit via `_contains` (reuse the dedupe
-     identity pattern from `score_hallucination` so duplicate authored facts
-     do not inflate the numerator).
+     rows whose `match_targets()` hit via `_contains`. Dedupe identity is
+     **exactly** the `score_hallucination` pattern at
+     `caption_metrics.py:409-414`:
+     `(fact.text, fact.kind, fact.polarity, tuple(fact.phrases))` — a
+     duplicated reference fact must not double-count. Proof 5 forces this.
    - **False-polarity traps never increment the numerator** (they are
      fabrication, already scored elsewhere).
    - `density_per_100w = (verified_count / word_count) * 100` when
      `word_count > 0`; **`density_per_100w is None` only when
-     `word_count == 0`**.
+     `word_count == 0`** (empty / whitespace-only caption → `word_count == 0`
+     under `_WORD_RE`; proof 6 forces this).
    - Unmatched free text — including rare, precise-sounding nouns with no
      fact membership — contributes **zero** to `verified_count`.
-3. Optional corpus helper `mean_signal_density(scores)` only if tests need it;
-   not required for the first land.
+3. Optional pure corpus helper
+   `mean_signal_density(scores: Sequence[SignalDensityScores]) -> float | None`
+   may land in `caption_metrics.py` if useful for unit tests; Slice 4 defines
+   the **report** aggregation independently (exact schema locked there).
 4. **Extensible verified-term predicate**: the true-polarity `ReferenceFact`
    set is the verified predicate for this slice. Do **not** hard-code a colour
    catalogue. Comment that future bound-term providers (assessment §6d C7
@@ -553,9 +621,33 @@ could never go green.
    - A no-op that always returns `verified_count=0` fails the paired case; an
      implementation that counts any matched phrase regardless of polarity fails
      the trap-only case (or pairs both as 2).
-5. **Command**:
+5. **Dedupe control — duplicate identical true-fact rows count once**
+   (locks `score_hallucination` identity at `caption_metrics.py:409-414`):
+   - Facts: **two** identical true-polarity rows
+     `ReferenceFact(text="bicycle", kind=OBJECT, polarity=TRUE,
+     phrases=["bicycle"])` (same text/kind/polarity/phrases twice).
+   - Caption: `"A bicycle leans on a wall."`
+   - Assert: `verified_count == 1` (not 2), `word_count == 6`,
+     `density_per_100w == pytest.approx(100 / 6)`.
+   - **Trivial cheating implementation that must fail**:
+     `verified_count = sum(1 for fact in reference_facts if fact.polarity is
+     TRUE and any(_contains(caption, t) for t in fact.match_targets()))`
+     with **no `seen` set**. Two identical rows both match → returns 2; this
+     proof fails that no-dedupe sum.
+6. **Empty / whitespace caption — density is None, not 0.0**
+   (locks `density_per_100w is None iff word_count == 0`):
+   - Facts: one true fact `bicycle` (same as proof 1).
+   - Caption: `""` **and** a second parametrize case `"   \n\t  "`
+     (whitespace-only; `_WORD_RE` yields no tokens → `word_count == 0`).
+   - Assert for both: `word_count == 0`, `verified_count == 0`,
+     `density_per_100w is None`.
+   - **Trivial cheating implementation that must fail**:
+     `density_per_100w = 0.0 if word_count == 0 else …` (treats empty as zero
+     density). Assertion `is None` kills it. Also kills a hard-coded
+     `verified_count=1` that ignores the empty caption.
+7. **Command**:
    `uv run --extra dev pytest scene/tests/test_eval_harness_caption_metrics.py -k signal_density -q`
-6. **Docstring check** (lightweight): a test or review step confirms the module
+8. **Docstring check** (lightweight): a test or review step confirms the module
    docstring contains both the Williams gate statement and the C5 ranking /
    density statement as distinct roles (string presence is enough; do not parse
    prose quality in pytest).
@@ -565,58 +657,186 @@ could never go green.
 **Goal**: Close the orphaned-consumer gap. Playbook §3.1 makes density the
 GPU-window ranking gate; pure scorers in `caption_metrics.py` that nobody
 emits leave that gate closed. Own a **thin additive** emit in `report.py` so
-report JSON carries the new keys. Do **not** implement bake-off ranking order
-here (still unowned).
+report JSON carries the new keys **with live values**. Do **not** implement
+bake-off ranking order here (still unowned).
 
 **Depends on**: Slices 1–3 pure APIs green.
 
-**Owned paths for this slice only**:
+**Owned paths for this slice only** (exact; no unbound path):
 - `apps/prototype-description-service/scripts/eval_harness/report.py`
-- a test under `scene/tests/` (extend an existing report/harness test, or add a
-  focused test) that builds report JSON and asserts the new keys
+- `apps/prototype-description-service/scene/tests/test_eval_harness_report_depiction.py`
+  (**new reserved file** — DEPICT-2 only; do not extend
+  `test_eval_harness_pipeline.py` / DEPICT-0, and do not invent a shared
+  `test_eval_harness_report.py` edit)
 
-**Current emit (verified anchors)**:
-- Per-image row ~L473–493: includes `meta_framing_hits`, not depiction hits /
-  density.
-- `_quality_block` ~L540–553: `meta_framing_images`, sentence band, etc. only.
-- Caption aggregate ~L565–574: `mean_gated_score` and gate rates; no density.
+**Current emit (verified anchors, open the file)**:
+- Per-image row dict + long-block emit: `report.py:472-517` — includes
+  `meta_framing_hits` (L486), not depiction hits / density.
+- `_quality_block`: `report.py:540-553` — `meta_framing_images`, sentence band,
+  etc. only.
+- Caption aggregate: `report.py:565-574` — `mean_gated_score` and gate rates;
+  no density.
+- `score_caption` call site: `report.py:398-406` builds `score_kwargs` with
+  names/traps/objects/roster/context only — **no `reference_facts`**.
+- Manifest adjacency: `GoldenEntry.reference_facts` at `manifest.py:359`;
+  `score_run_record` takes `manifest_entries: list[dict]` (`report.py:320-327`)
+  so facts arrive as dicts and must be re-validated.
 - `bakeoff.py`: no `caption_metrics` import (ranking consumer remains unowned).
+
+#### Locked report JSON schema (exact; no "or flat keys" fork)
+
+**Per-image row** (additive keys on the dict opened at `report.py:472`; when
+`scores is None` because of `short_error`, emit the same keys with
+`None` / empty values as noted):
+
+| Key | Type when scored | Type when `scores is None` |
+| --- | --- | --- |
+| `inner_state_attribution_hits` | `list[str]` (from `scores.inner_state_attribution_hits`) | `[]` (key always present; empty list, never omit) |
+| `agentless_passive_hits` | `list[str]` (from `scores.agentless_passive_hits`) | `[]` (key always present) |
+| `signal_density` | **nested object** (not flat keys): `{ "verified_count": int, "word_count": int, "density_per_100w": float \| null }` | `{ "verified_count": 0, "word_count": 0, "density_per_100w": null }` |
+
+`signal_density` is **always** the nested object mirroring `SignalDensityScores`
+field names. Density is computed by the **sibling pure function**
+`score_signal_density` (Slice 3) — **not** a `CaptionScores` field.
+
+**Quality / corpus block** (additive keys on `_quality_block` return at
+`report.py:540-553`, parallel to `meta_framing_images`):
+
+| Key | Type | Definition |
+| --- | --- | --- |
+| `inner_state_attribution_images` | `int` | `sum(1 for s in scores if s.inner_state_attribution_hits)` |
+| `agentless_passive_images` | `int` | `sum(1 for s in scores if s.agentless_passive_hits)` |
+| `mean_signal_density` | `float \| null` | Mean of per-image `density_per_100w` over the retained density list (see denominator below) |
+
+**Aggregation denominator (locked)**: retain a per-image list
+`density_scores: list[SignalDensityScores]` for every short-surface caption
+that was scored (same loop iteration that calls `score_caption` when
+`short_error is None`). Then:
+
+```
+non_none = [d.density_per_100w for d in density_scores if d.density_per_100w is not None]
+mean_signal_density = round(sum(non_none) / len(non_none), 4) if non_none else None
+```
+
+Denominator = count of scored short-surface images with `word_count > 0`
+(equivalently `density_per_100w is not None`). Empty corpus or all-empty
+captions → `mean_signal_density is None`. Do **not** ship "per-image density
+only" without the quality-level mean key.
 
 Changes (additive only; no gates, no thresholding, no ranking sort):
 
-1. Where per-image `CaptionScores` (and density scores) are available, emit:
-   - `inner_state_attribution_hits` (list; empty list when none),
-   - `agentless_passive_hits` (list; empty list when none),
-   - `signal_density` object or flat keys:
-     `verified_count`, `word_count`, `density_per_100w`
-     (mirror `SignalDensityScores` field names).
-2. In corpus quality / caption aggregate sections, emit at least one
-   density-related summary key (e.g. `mean_signal_density` over scored images
-   with non-`None` density, or per-image density only if a corpus mean is not
-   yet required — prefer mean when cheap) and image counts for non-empty hit
-   lists, parallel to `meta_framing_images`.
-3. Wire by **importing** the Slice 1–3 pure functions / fields from
-   `caption_metrics`; do not re-implement detectors inside `report.py`.
-4. Markdown human summary may mention the new numbers; JSON keys are the
-   contract for the GPU ranking gate.
+1. **Import** from `caption_metrics`:
+   `score_signal_density` (and `ReferenceFact` from `manifest` if not already
+   imported). Do not re-implement detectors inside `report.py`.
+2. **Wire `reference_facts` at the call site**:
+   - **Init** (with the other accumulators near `caption_scores: list[CaptionScores] = []`
+     at `report.py:335`):
+     `density_scores: list[SignalDensityScores] = []`
+     (import `SignalDensityScores` from `caption_metrics` alongside
+     `score_signal_density`).
+   - **Per item** (inside the `for item in run_record["items"]` loop, after
+     `entry` is resolved and the short caption is available — next to
+     `score_caption` at L416–417, only on the `short_error is None` path):
 
-Proof (TEST-15):
+     ```python
+     facts = [
+         ReferenceFact.model_validate(f)
+         for f in entry.get("reference_facts", [])
+     ]
+     density = score_signal_density(caption, reference_facts=facts)
+     density_scores.append(density)  # retain for quality aggregation
+     ```
 
-1. **Red-first**: build a minimal report payload (or call the report builder)
-   for a caption that scores non-zero density and/or non-empty hit lists under
-   Slices 1–3 fixtures. Assert the report JSON (or the dict the report builder
-   returns before write) **contains** the density keys and hit-list keys named
-   above. A pre-Slice-4 `report.py` that only knows `meta_framing_hits` fails.
-2. **Discrimination / vacuous emit**: a caption with zero hits and
-   `verified_count == 0` still **has** the keys present (empty list / zero /
-   0.0 or `None` per word_count rule) — absence of keys is a defect; presence
-   with empty values is correct. An implementation that only adds keys when
-   non-zero fails this case if the test requires key presence on clean rows.
-3. **Command**: pytest filter covering the new report-emit test (name must
-   include `report` and `density` or `depict` so it is selectable), e.g.
-   `uv run --extra dev pytest scene/tests/ -k "report and (density or depict or inner_state or agentless)" -q`
-   — exact path chosen by implementer; plan requires at least one assertion on
-   report JSON keys.
+   When `short_error is not None` (no short caption scored), do **not** append
+   a density score; emit the empty/zero `signal_density` object on the row
+   (table above). `entry.get("reference_facts", [])` is required because
+   entries arrive as dicts (`score_run_record` signature
+   `manifest_entries: list[dict[str, Any]]` at `report.py:320-327`), not as
+   `GoldenEntry` models.
+3. **Per-image emit** (extend the row dict at `report.py:472-517`):
+   - `"inner_state_attribution_hits": scores.inner_state_attribution_hits if scores is not None else []`
+   - `"agentless_passive_hits": scores.agentless_passive_hits if scores is not None else []`
+   - `"signal_density": {"verified_count": density.verified_count, "word_count": density.word_count, "density_per_100w": density.density_per_100w}`
+     (or the empty/zero object when no short caption was scored).
+4. **Quality block emit** (extend `_quality_block` or the quality dict that
+   consumes it): add `inner_state_attribution_images`,
+   `agentless_passive_images`, and `mean_signal_density` per the locked schema
+   and denominator above. `mean_signal_density` needs the retained
+   `density_scores` list — pass it in or compute beside `_quality_block`.
+5. Markdown human summary may mention the new numbers; the JSON keys above are
+   the contract for the GPU ranking gate. No other key shape is permitted.
+
+Proof (TEST-15) — file
+`scene/tests/test_eval_harness_report_depiction.py` only:
+
+Build a minimal run-record + manifest entry and call `score_run_record` (or
+the thinnest public report builder that returns the metrics dict). Do **not**
+assert key presence alone.
+
+1. **Red-first — non-zero fixture, exact values**
+   (`test_report_emit_depiction_nonzero_values` or equivalent):
+   - Manifest entry carries one true
+     `reference_facts` row for `bicycle`
+     (`{"text": "bicycle", "kind": "object", "polarity": true,
+     "phrases": ["bicycle"]}` — shape matches `ReferenceFact` at
+     `manifest.py:209-224`).
+   - Run-record item caption (short surface):
+     `"She is anxious. A bicycle leans on a wall. Four students were killed during a clash."`
+     (or three separate images if one multi-signal caption is awkward —
+     preferred: **one image** with a caption that trips inner-state +
+     agentless-passive + density together, so a single row carries all keys).
+   - Assert on `report["per_image"][0]`:
+     - `"anxious"` (or the detector's hit span string) ∈
+       `inner_state_attribution_hits` (non-empty; exact span membership as
+       returned by the Slice 1 detector).
+     - agentless-passive hit list is non-empty and includes a span covering
+       `were killed` **and** a mutual-event span covering `clash`.
+     - `signal_density == {"verified_count": 1, "word_count": <exact _WORD_RE
+       count of that caption>, "density_per_100w": pytest.approx(100 *
+       1 / word_count)}`.
+   - Assert on `report["quality"]`:
+     - `inner_state_attribution_images == 1`
+     - `agentless_passive_images == 1`
+     - `mean_signal_density == pytest.approx(per-image density_per_100w)`
+   - **Red before Slice 4**: pre-emit `report.py` raises `KeyError` or fails
+     equality on missing keys.
+   - **Trivial cheating implementation that must fail**:
+     ```python
+     row["inner_state_attribution_hits"] = []
+     row["agentless_passive_hits"] = []
+     row["signal_density"] = {
+         "verified_count": 0, "word_count": 0, "density_per_100w": None
+     }
+     ```
+     (unconditional empty/zero emit). Exact-value asserts above fail.
+   - **Mutation that provably flips the report assertion**: after a correct
+     wire-up, change the fixture caption's verified noun from `bicycle` to
+     `velocipede` (no matching true fact) **or** monkeypatch
+     `score_signal_density` to return `verified_count=0` — the report
+     assertion `verified_count == 1` must fail. This proves the report reads
+     live scorer output, not a hardcoded literal.
+2. **Discrimination — clean fixture, exact empty/zero values**
+   (`test_report_emit_depiction_clean_zeros` or equivalent):
+   - Caption: `"A red bicycle leans on a wall."` with **empty**
+     `reference_facts` (and no inner-state / agentless patterns).
+   - Assert on `report["per_image"][0]`:
+     - `inner_state_attribution_hits == []`
+     - `agentless_passive_hits == []`
+     - `signal_density == {"verified_count": 0, "word_count": 7,
+       "density_per_100w": 0.0}`
+       (`_WORD_RE` on that caption → 7 tokens: A red bicycle leans on a wall).
+   - Assert on `report["quality"]`:
+     - `inner_state_attribution_images == 0`
+     - `agentless_passive_images == 0`
+     - `mean_signal_density == 0.0` (one scored image with non-`None` density).
+   - **Trivial cheating implementation that must fail**: omit the keys entirely
+     on clean rows, **or** emit non-empty hit lists / non-zero
+     `verified_count` unconditionally. Key-present + exact-empty asserts kill
+     both.
+3. **Command** (exact path; not "chosen by implementer"):
+   ```
+   uv run --extra dev pytest scene/tests/test_eval_harness_report_depiction.py -q
+   ```
 
 **GPU-window unblock condition**: playbook §3.1 is unblocked for *measurement
 emit* only after Slice 4 is green. Bake-off *ranking order* that sorts on
@@ -628,9 +848,11 @@ full ranking gate is done.
 ### Context and Ownership
 
 - [ ] Loaded testing-python / backend-python / development-workflow rules.
-- [ ] Confirmed owned paths: `caption_metrics.py`, caption-metrics tests,
-      and Slice 4 thin `report.py` emit + report key test only; no bakeoff
-      ranking, schemas, prompts, or `canon/` edits.
+- [ ] Confirmed owned paths: `caption_metrics.py`,
+      `test_eval_harness_caption_metrics.py`, Slice 4 thin `report.py` emit,
+      and reserved `test_eval_harness_report_depiction.py` only; no bakeoff
+      ranking, schemas, prompts, `test_eval_harness_pipeline.py`, or `canon/`
+      edits.
 - [ ] Re-verified cited rule IDs with definition-anchor grep before
       implementation review.
 - [ ] Relative markdown links resolve from `docs/tasks/depiction/` (no
@@ -644,7 +866,10 @@ full ranking gate is done.
 - [ ] Write hedge discrimination: `"He seems angry beside the railing."` expects 0 hits.
 - [ ] Write will-branch non-hit: `"She reaches for the gate."` expects 0 hits.
 - [ ] Write visible-cue control: furrowed brow / tight jaw → 0 hits.
-- [ ] Implement detector + report-only surface in `caption_metrics.py`.
+- [ ] Write common-noun copula red-first: `"The woman is anxious beside the railing."` ≥1 hit.
+- [ ] Write common-noun will red-first: `"The child wants to leave the railing."` ≥1 hit.
+- [ ] Write attributed common-noun discrimination: `"The woman's expression reads as anxious…"` → 0 hits.
+- [ ] Implement detector + `CaptionScores.inner_state_attribution_hits` in `caption_metrics.py`.
 - [ ] Confirm `gated_score` unchanged on positive hits.
 - [ ] Terminology: attributive/bearer frame only — not "register".
 - [ ] `uv run --extra dev pytest scene/tests/test_eval_harness_caption_metrics.py -k inner_state -q` green.
@@ -655,7 +880,9 @@ full ranking gate is done.
 - [ ] Write discrimination test: active-voice named agent → 0 hits.
 - [ ] Write by-agent exemption test: `"Four students were killed by the Ohio National Guard on campus."` → 0 agentless-passive hits (named test).
 - [ ] Lock gap-language pure-grammar behaviour: gap-marked agentless passive still hits (`gap_language_still_hits` or equivalent).
-- [ ] Implement detector + report-only surface.
+- [ ] Write unrelated-`by` still-hits test: `"A report by a journalist says four students were killed on campus."` → ≥1 passive hit.
+- [ ] Write benign-clash no-hit test: `"A clash of colors fills the poster."` → 0 hits.
+- [ ] Implement detector + `CaptionScores.agentless_passive_hits`.
 - [ ] Confirm no gate side-effect.
 - [ ] `uv run --extra dev pytest scene/tests/test_eval_harness_caption_metrics.py -k agentless_passive -q` green.
 
@@ -667,8 +894,12 @@ full ranking gate is done.
 - [ ] Write padding/verbosity density drop test.
 - [ ] Write false-trap control: trap-only dog caption → `verified_count == 0`;
       paired bicycle+dog → `verified_count == 1`.
-- [ ] Implement `score_signal_density` → frozen `SignalDensityScores` (or NamedTuple)
-      with `verified_count`, `word_count`, `density_per_100w` only — no bare float.
+- [ ] Write dedupe control: two identical true-fact rows → `verified_count == 1`.
+- [ ] Write empty/whitespace caption control: `word_count == 0`,
+      `verified_count == 0`, `density_per_100w is None`.
+- [ ] Implement sibling pure function `score_signal_density` → frozen
+      `SignalDensityScores` with `verified_count`, `word_count`,
+      `density_per_100w` only — no bare float, not a `CaptionScores` field.
 - [ ] Rewrite module docstring: Williams = gate, C5 = ranking axis.
 - [ ] `uv run --extra dev pytest scene/tests/test_eval_harness_caption_metrics.py -k signal_density -q` green.
 - [ ] Full metrics file:
@@ -676,10 +907,19 @@ full ranking gate is done.
 
 ### Checklist for Slice 4: Report emit
 
-- [ ] After Slices 1–3 green, add thin additive keys to `report.py` per-image and quality blocks.
-- [ ] Write test asserting report JSON carries density + hit-list keys (present even when empty/zero).
+- [ ] After Slices 1–3 green, wire
+      `facts = [ReferenceFact.model_validate(f) for f in entry.get("reference_facts", [])]`
+      and `score_signal_density(caption, reference_facts=facts)` in `report.py`
+      next to the `score_caption` call; retain `density_scores` for aggregation.
+- [ ] Emit locked per-image keys: `inner_state_attribution_hits`,
+      `agentless_passive_hits`, nested `signal_density` object only (no flat keys).
+- [ ] Emit locked quality keys: `inner_state_attribution_images`,
+      `agentless_passive_images`, `mean_signal_density` with the non-`None`
+      density denominator.
+- [ ] Write `scene/tests/test_eval_harness_report_depiction.py` with exact-value
+      non-zero and clean-zero proofs (not presence-only).
 - [ ] Confirm no new gate / threshold / bakeoff ranking sort.
-- [ ] Report-emit pytest filter green.
+- [ ] `uv run --extra dev pytest scene/tests/test_eval_harness_report_depiction.py -q` green.
 
 ### Review Readiness
 
@@ -687,7 +927,9 @@ full ranking gate is done.
 - [ ] Every new assertion has red input + discrimination case in the same PR.
 - [ ] Williams/C5 resolution is written in-module, not only in this plan.
 - [ ] No colour IDs, no `FM-11`, no fabricated `REG`/`ICON`/`FRAM`/`SEL` IDs.
-- [ ] Report emit owned by Slice 4; bake-off ranking order still explicit non-scope.
+- [ ] Report emit owned by Slice 4 via reserved
+      `test_eval_harness_report_depiction.py`; bake-off ranking order still
+      explicit non-scope.
 - [ ] Canon IDs cited as plain text with lexicon path, not monorepo markdown links.
 
 ## Stretch Goals
@@ -702,22 +944,31 @@ full ranking gate is done.
 ## Success Criteria
 
 - [ ] Inner-state counter fires on unmarked person-as-fact-owner mental-state and
-      will prose and stays silent on attributive/bearer frames, epistemic hedges
-      (`seems`/`looks`/`appears`), and visible-cue inventory.
-- [ ] Agentless-passive detector fires on the Kent State failure shape, stays
-      silent on named-agent active voice **and** same-clause `by`-agent passives,
-      and still hits gap-marked agentless passives (pure-grammar mode).
+      will prose for **both** pronouns and common person nouns, and stays silent
+      on attributive/bearer frames (including attributed common-noun frames),
+      epistemic hedges (`seems`/`looks`/`appears`), and visible-cue inventory.
+- [ ] Agentless-passive detector fires on the Kent State failure shape **and**
+      on passives whose only `by` is in a different clause, stays silent on
+      named-agent active voice, same-clause `by`-agent passives, and benign
+      `"clash of colors"`, and still hits gap-marked agentless passives
+      (pure-grammar mode).
 - [ ] Signal density ranks grounded captions above rare-ungrounded and
       ornament-padded captions with equal or fewer verified facts; rare
       ungrounded nouns never raise the score; false-polarity traps never increment
-      `verified_count`.
+      `verified_count`; duplicate true-fact rows count once; empty caption →
+      `density_per_100w is None`.
 - [ ] `score_signal_density` returns the mandated multi-field score object
-      (`word_count == 6` and `approx(100/6)` on the bicycle fixture).
+      (`word_count == 6` and `approx(100/6)` on the bicycle fixture) as a
+      **sibling pure function**, not a `CaptionScores` field.
 - [ ] Module docstring states Williams (gate) and C5 (ranking) as distinct roles.
-- [ ] Report JSON emits density + depiction hit-list keys (Slice 4).
-- [ ] Metrics and report-emit tests green at branch HEAD.
-- [ ] No files outside the owned paths (metrics + tests + Slice 4 report emit)
-      modified.
+- [ ] Report JSON emits the locked schema: per-image nested `signal_density`
+      object + hit lists with **exact values**, and quality-level
+      `mean_signal_density` + hit-image counts (Slice 4).
+- [ ] Metrics tests and
+      `scene/tests/test_eval_harness_report_depiction.py` green at branch HEAD.
+- [ ] No files outside the owned paths (`caption_metrics.py`,
+      `test_eval_harness_caption_metrics.py`, `report.py`,
+      `test_eval_harness_report_depiction.py`) modified.
 
 ## Not-Doing
 

@@ -15,15 +15,18 @@
 >
 > Four backend dependencies the preview draws but the current backend does not provide, each
 > tracked as a **DEP** row in the plan: **DEP-1** — the **long-description** column persists to
-> WordPress `post_content` (the attachment description written via `class-settings-controller.php`),
+> WordPress `post_content` (the attachment description written via `DescribeMediaService::maybe_write_long_description`),
 > not a new schema field; `WorkbenchMediaItem` exposes only `altText` today. **DEP-2** — the
 > **cluster map** scatter needs a new `clusterMapLayout` endpoint returning 2D layout coordinates
 > (today the backend has only bbox + 3D head pose, no 2D layout), so **day one ships the cluster
 > _list_** and the scatter lands with DEP-2 in Slice 4. **DEP-3** — filtering the library to a
-> cluster needs a new `cluster` query param on the media read path (`fetchWorkbenchMedia` accepts
-> only page/per_page/status/search/ids today). **DEP-4** — commit-before-reveal and merge/split
-> need persisted pre-reveal state + multi-level undo the current single-write mutation path lacks.
-> UI copy says "cluster map", never "embeddings" or "projection" (banned UI vocabulary).
+> cluster needs a new **`cluster_id`** query param on the media **list** read path (`fetchWorkbenchMedia`
+> today accepts only page/per_page/status/search; `ids[]` belongs to the separate `fetchWorkbenchMediaDetail`
+> endpoint). **DEP-4** — commit-before-reveal and merge/split need persisted pre-reveal state + multi-level
+> undo the current single-write mutation path lacks. UI copy for the **new cluster-map layout** says
+> "cluster map", never "embeddings" or "projection" — `projection` is the banned token in
+> `banned-vocabulary.test.tsx` `BANNED_STRINGS`. The pre-existing roster **sync-projection** status
+> (§6, `PersonWorkspacePanel`) is a separate, legitimately-named concept, **not** the new layout.
 
 ---
 
@@ -120,54 +123,60 @@ candidate is shown, so the model cannot anchor the human. State: `judgment_pendi
 ```
 
 `○ can't tell` is a first-class commit (abstain): it advances to `revealed` as an explicit
-judgment, not a skip. **Undo** returns to `judgment_pending` with the model node unmounted
-again — no peeking via the back-button.
+judgment, not a skip. **Undo** (day-one, session-local **single step**) returns to `judgment_pending`
+with the model node unmounted again — no peeking via the back-button. **Multilevel** LIFO undo
+of name/merge/split is **DEP-4**.
 
 ---
 
 ## 3. Media library (right pane, detailed) — `workbench-library`
 
 ```
-┌─ MEDIA LIBRARY ─────────────────────────────────────────────────────────────────────────┐
-│ filter: status[ all ▼ ]  □ needs-alt  □ needs-desc   cluster:[ ① ✕ ]   search[______] 🔍 │ (z-lib-filters · form)
-├──┬───────┬──────────────────┬───────────┬─────────────────────┬────────────────────┬──────┤
-│▢ │ thumb │ title            │ status    │ alt-text            │ long description   │people│ (z-lib-table · queue)
-├──┼───────┼──────────────────┼───────────┼─────────────────────┼────────────────────┼──────┤
-│▢ │ [▦]   │ conf-2019-07.jpg │ ✓ described│ "Ada at the podium" │ "A woman in a dark…│ Ada  │
-│☑ │ [▦]   │ group-shot.jpg   │ ⧗ queued  │ ✎ (empty)           │ ✎ (empty)          │ ①,②  │
-│▢ │ [▦]   │ keynote.png      │ ⚠ failed  │ "Two people on…"    │ ✎ (empty)          │ —    │
-├──┴───────┴──────────────────┴───────────┴─────────────────────┴────────────────────┴──────┤
-│ ▼ group-shot.jpg — inline edit                                                             │ (z-lib-inline-edit · form)
-│   alt-text  [ Two people seated at a panel table________________ ]  63/125                 │
-│   AI suggests: "Two panelists at a table with microphones"      [ use ] [ edit ]           │ (z-lib-ai-suggest · ai_review)
-│   long desc [ A wide shot of two panelists seated behind a table… ] (expandable)           │
-├────────────────────────────────────────────────────────────────────────────────────────────┤
-│ 2 selected · [ Describe selected ⟳ ]  est. $0.03  · job: idle                              │ (z-lib-actions · job)
-└────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─ MEDIA LIBRARY ───────────────────────────────────────────────────────────────────────────────┐
+│ filter: status[ all ▼ ]  □ needs-alt  □ needs-desc   cluster:[ ① ✕ ](DEP-3)  search[______] 🔍 │ (z-lib-filters · form)
+├──┬───────┬──────────────────┬───────────┬─────────────────────┬────────────────────┬──────────┤
+│▢ │ thumb │ title            │ status    │ alt-text            │ long description   │people    │ (z-lib-table · queue)
+├──┼───────┼──────────────────┼───────────┼─────────────────────┼────────────────────┼──────────┤
+│▢ │ [▦]   │ conf-2019-07.jpg │ ✓ described│ "Ada at the podium" │ "A woman in a dark…│ Ada     │
+│☑ │ [▦]   │ group-shot.jpg   │ ⧗ queued  │ ✎ (empty)           │ ✎ (empty)          │ ①,②      │
+│▢ │ [▦]   │ keynote.png      │ ⚠ failed  │ "Two people on…"    │ ✎ (empty)          │ —        │
+├──┴───────┴──────────────────┴───────────┴─────────────────────┴────────────────────┴──────────┤
+│ ▼ group-shot.jpg — inline edit                                                                │ (z-lib-inline-edit · form)
+│   alt-text  [ Two people seated at a panel table________________ ]  63/125                    │
+│   AI suggests: "Two panelists at a table with microphones"      [ use ] [ edit ]              │ (z-lib-ai-suggest · ai_review)
+│   long desc [ A wide shot of two panelists seated behind a table… ] (expandable)              │
+├───────────────────────────────────────────────────────────────────────────────────────────────┤
+│ 2 selected · [ Describe selected ⟳ ]  est. $0.03  · job: idle                                 │ (z-lib-actions · job)
+└───────────────────────────────────────────────────────────────────────────────────────────────┘
   columns are truncated + hover-expand; alt-text and long-description are SEPARATE columns so
   a scanning operator sees at a glance which rows still need each field (needs-alt ≠ needs-desc).
+  Day-one shows reciprocal **highlight** of cluster-① rows on the loaded page; the cluster
+  **filter chip + filtered table** is **DEP-3**.
 ```
 
 ---
 
-## 4. Coordinated selection (cluster map → library) — the core interaction
+## 4. Coordinated selection — day-one linked-highlight · **DEP-3** filter
 
 ```
    CONTROL                                    MEDIA LIBRARY
-   ┌───────────────────────┐                  ┌──────────────────────────────────────┐
-   │ cluster map            │   select ①      │ filter: cluster:[ ① ✕ ]               │
-   │   ·· ●②  ·  ⟦●①●⟧  ·   │ ───────────────▶ │ (table now shows only cluster-① media)│
-   │  ·   ●●  ·   ⟦●●⟧  ·   │                  │ □ conf.jpg   ✓  "Ada…"  … people: Ada │
-   │      ●③●     ··  ·     │                  │ □ podium.jpg ✓  "Ada…"  … people: Ada │
-   └───────────────────────┘                  └──────────────────────────────────────┘
-   selecting a cluster point/region on the left FILTERS the right pane to that cluster's
-   media (url ?cluster=①). Naming ① in z-name-curate updates the "people" column live.
-   Two coordinated views over one selection; no context switch, no lost place.
+   ┌───────────────────────┐                  ┌───────────────────────────────────────────┐
+   │ cluster map            │   select ①      │ filter: cluster:[ ① ✕ ]                   │
+   │   ·· ●②  ·  ⟦●①●⟧  ·   │ ───────────────▶ │ (DEP-3: table filtered to cluster-① media)│
+   │  ·   ●●  ·   ⟦●●⟧  ·   │                  │ □ conf.jpg   ✓  "Ada…"  … people: Ada     │
+   │      ●③●     ··  ·     │                  │ □ podium.jpg ✓  "Ada…"  … people: Ada     │
+   └───────────────────────┘                  └───────────────────────────────────────────┘
+   Day-one: selecting a cluster **highlights** that cluster's rows already on the page
+   (url ?cluster=①). **With DEP-3**, the same selection **filters** the right pane to that
+   cluster's media. Coordination is **exactly one** active cluster; a multi-cluster row
+   (e.g. the ①,② row in §3) selects via a chip, not the bare row. Naming ① in z-name-curate
+   updates the "people" column live. Two coordinated views over one selection; no context
+   switch, no lost place.
 ```
 
 ---
 
-## 5. Narrow viewport (<1100px) — left collapses to a drawer
+## 5. Medium viewport (<1100px) — control collapses to an optional drawer (IA, not the WCAG reflow)
 
 ```
 ┌──────────────────────────────────────────────────┐
@@ -180,6 +189,9 @@ again — no peeking via the back-button.
 └──────────────────────────────────────────────────┘
    ☰ Control opens the control surface as a left overlay drawer; primary caption/library
    work stays reachable at all widths (control is not gated behind a wide viewport).
+   This <1100px drawer is **optional IA**. The **hard WCAG 1.4.10 reflow** at ≤320px / 200%
+   zoom instead **stacks vertically, library-first** (control host below), splitter→section
+   toggle, no 2-D scroll — see plan Slice-1 `[A11Y-08]`. The reflow stack **overrides** the drawer.
 ```
 
 ---
@@ -191,7 +203,7 @@ again — no peeking via the back-button.
 ```
 ┌─ ROSTER (People) ───────────────────────────────────────────────────────┐
 │ [ ● Needs assignment (12) ]  [ All people ]      search[__________] 🔍   │ (z-needs-assignment / filters)
-│ ⓘ projection current                                                     │ (z-projection-gate · status)
+│ ⓘ sync-projection: current  (existing roster concept)                   │ (z-projection-gate · status)
 ├──────────────────────────────────────────────────────────────────────────┤
 │ person              media  identities  last seen        │                 │ (z-entries · content)
 │ ▸ Ada Lovelace       31       2        conf-2019-07.jpg  │ [ open ]        │
@@ -209,7 +221,7 @@ again — no peeking via the back-button.
 
 ```
 ┌─ Ada Lovelace ──────────────────────────────────────────┐ (roster-person-workspace)
-│ 31 media · 2 identities · projection ✓                   │ (z-person-header)
+│ 31 media · 2 identities · sync-projection ✓              │ (z-person-header)
 ├──────────────────────────────────────────────────────────┤
 │ Linked identities / faces (evidence)                     │ (z-person-identities · ai_review)
 │  [▦][▦][▦][▦][▦]  +26   · confidence 0.88                │
@@ -259,13 +271,13 @@ again — no peeking via the back-button.
                                  [row: long description] ──edit──▶ [description saved]
 ```
 
-### 7c. Cluster map select → library (`flow-umap-select-to-library`, job-cluster-recognize)
+### 7c. Cluster map select → library (`flow-umap-select-to-library`, job-cluster-recognize) · DEP-2 scatter + DEP-3 filter
 
 ```
  [control: cluster map scatter] ──lasso/click cluster──▶ [?cluster=① set]
                                                         │
                                                         ▼
-                                          [library filtered to cluster-① media]
+                                          [library filtered to cluster-① media] (DEP-3)
 ```
 
 ### 7d. Conflicts / dead-letter (triage, overlays — unchanged from baseline)

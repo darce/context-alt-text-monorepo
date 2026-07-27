@@ -1,6 +1,6 @@
 # Library → Heuristics Canon Intake Consolidation
 
-**Task**: LIBSYN-1 · **Date**: 2026-07-25 · **Status**: candidate manifest, not canon
+**Task**: LIBSYN-1 · **Date**: 2026-07-25 (§11 appended 2026-07-27) · **Status**: candidate manifest, not canon
 
 Consolidates every book and paper surfaced across the library sweeps
 (FIR occlusion · research-paper sweep · VLM-6 / captioning sweep · gap-closure
@@ -152,6 +152,11 @@ hallucination surface, and it supplies the vocabulary source the caption
 assessment's informativeness metric currently lacks. Canon already carries
 `dictionary-of-color-combinations` (Wada) and `interaction-of-color`; Werner is
 distinct because it is a *naming* system, not a combination or perception one.
+
+> **Superseded in part by §11.** Werner has since been distilled. "Closed
+> vocabulary" is the wrong frame: the source argues for referring unlisted
+> shades *into* the standard, and never for refusing them. Read §11 before
+> acting on this entry or on Card C7.
 
 ### 2e. Statistics primaries → `epistemics` (MEAS, EXP), `ml-systems` (EVAL, AUDIT)
 
@@ -921,3 +926,201 @@ the same grounds it rejects one-card-per-book.
 Sequence: run the distillation first (§8 step 6), count survivors, then decide.
 The lane for extraction in the meantime is `writing` — it is the correct
 fallback and requires no new tree.
+
+## 11. Werner post-distillation findings and the bound-term contract (NEW)
+
+**Added 2026-07-27.** Werner has since been acquired, extracted, and distilled
+in the research repo (`distilled/design/werner-nomenclature-of-colours.md`), and
+the result changes what §2d and Card **C7** can claim. This section supersedes
+§2d's optimism about a "closed vocabulary" and states what the source actually
+licenses, plus the contract shape that follows from it. It is a request back to
+this repo, not canon.
+
+### 11a. The two halves — one is sourced, one is not
+
+A candidate canon rule (`FM-11`, *Closed colour identity*) proposed binding
+colour to a named vocabulary **and rejecting membership outside it**. It was
+retired 2026-07-26 and never published (`literature/HELD.md`). Werner was
+acquired specifically to re-source it, and the answer was no.
+
+| Half | Claim | Werner's position |
+|---|---|---|
+| **Rejection** | A colour term outside the set is invalid and must be refused | **Not argued.** `reject`, `refuse`, `must not`, `forbid`, `invalid`, `improper`, `inadmissible`, `ought not` return zero hits across the whole extract. The distillation's decision table records: *"No rule in this source to reject membership; author maps unknowns into the series."* |
+| **Normalisation** | Free colour names are unreliable between observers; prefer a versioned standard and refer an out-of-set variety *into* it | **Directly argued.** Description is defective "when the terms used are ambiguous; and where there is no regular standard to refer to"; "the names of colours are frequently misapplied" (L00109). Method for placing an unlisted shade is comparison against the series by component parts (L00113–L00115). |
+
+**Consequence for C7.** C7 as written in
+[`fir-captioning-orchestrator-playbook.md:219`](../runbooks/fir-captioning-orchestrator-playbook.md)
+says *"out-of-set terms degrade to the nearest in-set term."* That is the
+normalisation half, and it **is** sourceable from Werner. The card needs no
+rewrite for warrant. Only the canon's rejection-flavoured phrasing failed. The
+distillation labels the operational move *refer-in, not refuse*; C7 should adopt
+that wording so the two repos do not drift back toward the retired claim.
+
+### 11b. The structure worth transferring is not the colour list
+
+Werner is four layers, and the reusable one is the fourth:
+
+1. **Name** — Werner's 79 tints, Syme's extension to 110 "standard colours" (L00111).
+2. **Exemplar patch** — the printed sample. The standard is explicitly *not* a
+   bare word list; it requires "proper coloured examples of the different tints"
+   as the thing "to refer to" (L00109).
+3. **Tri-kingdom annexes** — each tint also points at well-known objects across
+   animal, vegetable and mineral kingdoms, so the name survives when the pigment
+   is not at hand (L00113). Completeness is partial, by the author's own note.
+4. **Component parts and referral** — the decomposition that places an unlisted
+   variety *into* the series: *incline towards* / *intermediate* / *fall or pass
+   into* (L00115). Modifiers plus tingeing multiply the 110 to tens of thousands
+   of controlled variants without leaving the standard language (L00111–L00113).
+
+Layer 4 is not about colour. It is the degradation rule that every controlled
+vocabulary in the caption pipeline currently lacks — §1.1 Iconclass, §1.2 Getty
+AAT/ULAN/TGN, §1.3 shot grammar all face the same question and none of them
+answers it: **what is emitted when the observed thing is not in the set?**
+Werner's answer is nearest-in-set plus the delta; never a free string, never
+silence, never a rejection.
+
+### 11c. Request — one bound-term shape in the transfer contract
+
+The highest-value move is *not* a colour field on the description response. It
+is a single term shape that every controlled vocabulary in the
+`DescriptionRegister` contract (§3.3 of
+[`cross-domain-bridges-and-caption-register.md`](cross-domain-bridges-and-caption-register.md))
+uses identically:
+
+| Field | Purpose |
+|---|---|
+| `term` | The emitted string |
+| `vocabulary` | Which set it is drawn from (`werner`, `iconclass`, `aat`, `ulan`, `tgn`, `shot-grammar`) |
+| `vocabulary_version` | Pinned; a vocabulary that cannot be versioned cannot be diffed or re-scored |
+| `binding` | `exact` \| `nearest` \| `unbound` |
+| `delta` | Present only when `binding: nearest` — the component-part attributes separating the observation from the term chosen, computed per §11c-i |
+
+Three reasons this belongs in the contract rather than in prompt text, matching
+§3.3's own argument for the register:
+
+- **It makes the FORENSIC clause enforceable.** §3.3 permits FORENSIC to assert
+  "controlled-vocabulary colour and object terms". That is currently aspiration;
+  with this shape it is a check — `unbound` must be zero in FORENSIC.
+- **It makes degradation observable.** A `nearest` binding with a recorded delta
+  is auditable. A model silently substituting a plausible free colour word is
+  not, and that is the hallucination surface §2d wanted removed.
+- **It costs one contract change now instead of a rewrite later.** Same argument
+  §3.4 already makes for the register enum itself: the parameter must exist from
+  the start; the behaviour can land in the next phase.
+
+**Admission criterion for any Phase-2 vocabulary provider**, taken from Werner's
+own bar (L00109): a vocabulary qualifies as *controlled* only if it is versioned
+**and** every term carries a public referent. A bare word list fails. This is
+worth stating in §3.3's table, because it is the test that keeps "controlled
+vocabulary" from degrading into "a list someone wrote down."
+
+### 11c-i. How `nearest` and `delta` are computed — the source is already a formal context
+
+The open question in the shape above is what `nearest` *means*. The obvious
+answer is a distance in sRGB or Lab, and it is the wrong one: it imports a
+numeric layer Werner does not contain (§11d). The source supplies its own
+answer, and it is exact.
+
+Werner's **component parts** section describes each standard colour by which
+principal colours it is mixed with — greyish white into apple green, lemon
+yellow into grass green, black into blackish green (L00115) — plus the modifier
+set *pale, deep, dark, bright, dull* and light tingeing with grey, black or
+brown (L00111). Objects are the 110 standard tints; attributes are the component
+parts and modifiers. That is a complete binary object × attribute table, present
+in the text, requiring no encoding decisions.
+
+A table of that shape is a **formal context** in the sense of Formal Concept
+Analysis (Wille, 1982), and its concept lattice is derived rather than designed:
+one lattice per context, no tuning, no threshold. It computes both fields
+directly.
+
+| Field | Derivation |
+|---|---|
+| `binding: nearest` | The neighbouring concept sharing the largest component-part intent with the observation |
+| `delta` | The attribute-set difference between observation and chosen term — which is Werner's own *incline towards* / *intermediate* / *fall or pass into* trichotomy (L00115), not a metric invented for the pipeline |
+
+Three practical consequences:
+
+- **It retires the numeric-layer constraint.** No digitised colour mapping is
+  needed for degradation, so C7 acquires no unattributed second source. See the
+  amended §11d.
+- **Scale is not a problem here.** 110 objects against roughly 20 attributes.
+  The lattice computes in milliseconds and ships as a static lookup table
+  generated once and version-pinned alongside `vocabulary_version`. FCA's
+  exponential worst case needs far larger contexts to bite.
+- **It is deterministic and diffable.** Regenerating the table from the same
+  context yields the same lattice, so a change in degradation behaviour is
+  always traceable to a change in the context, never to drift.
+
+**Second, weaker FCA use — do not build infrastructure for it.** Over eval
+output, with captions as objects and the register's compliance predicates as
+attributes (inner-state attribution present, unsourced context claim,
+unattributed interpretive claim, `unbound` term, active register, gravity flag),
+the Duquenne-Guigues implication basis returns a minimal non-redundant set of
+implications holding with zero counterexamples. Those are failure-mode
+hypotheses generated from the run rather than guessed. The caveat is real:
+implications are exceptionless by definition, so noisy eval data yields few or
+none, and the relaxed support/confidence version is ordinary frequent-itemset
+mining with FCA only as framing. Worth one afternoon as a post-hoc diagnostic
+against a real eval run; not worth a component.
+
+**FCA does not apply to FIR.** Detection, embedding and matching are continuous,
+compared by cosine — FIR-3's parity gate is `embeddings cosine ≥ 0.999`. A
+formal context is binary, so applying FCA means thresholding embeddings into
+attributes and discarding the metric that does the work. Roster record linkage
+is a genuine formal context but is already assigned to `christen-data-matching`
+(§2d); blocking plus scored comparison solves it with better tooling. Neither is
+worth opening.
+
+### 11d. Constraints to state before C7 is built
+
+- **The numeric layer is not Werner, and is not needed for degradation.** The
+  referents are hand-coloured plates from 1821; they do not survive as text.
+  Binding emitted terms to sRGB or Lab would require a digitised mapping from
+  another source, cited and versioned separately — and letting that in
+  unattributed would repeat exactly the error that retired `FM-11`, an exhibit
+  mistaken for an argument. §11c-i removes the need: nearest-in-set is computed
+  from the component-part context the source states. A numeric mapping is
+  therefore optional, and if it is ever added it is for rendering or clustering,
+  never for `binding`.
+- **110 archaic names will hurt EDITORIAL captions.** "Skimmed-milk White" is
+  reproducible and unreadable, and the consumer of an EDITORIAL caption is a
+  screen-reader user, not a mineralogist. Split C7 by register: Werner's names
+  in `FORENSIC`, where inter-observer reproducibility is the point; a
+  common-language colour set in `EDITORIAL`. Same structure, same `binding`
+  semantics, two emission vocabularies. Werner's own modifier system
+  ("pale, deep, dark, bright, dull", L00111) is the bridge between them.
+
+### 11e. Canon-side status — what this repo should and should not expect
+
+| Item | State |
+|---|---|
+| `werner-nomenclature-of-colours` in `SOURCES.md` | **Not present.** Distilled but not promoted. |
+| Rows citing Werner | **None.** |
+| Distillation marking | `REFERENCE-ONLY`; must not be cited as rejection-half authority. |
+| `FM-11` | Retired, never published. Stays retired. Unblocking it needs a source that argues the rejection half; Werner is not it. |
+
+What is *available* on the canon side is a different rule from `FM-11`: a
+normalisation row in `design-aesthetics` `COL` — when a colour term must travel
+between observers who do not share the object, name a member of a versioned
+standard that carries a public referent, and refer an out-of-set variety into
+the series by component parts rather than emitting a free name. Sourced at
+L00109 / L00113 / L00115. **NEW, no ID** — per §0, assignment is tooled
+(`tools/canon.py reserve`), not hand-picked here. Promoting it also requires a
+`SOURCES.md` entry and lifting `REFERENCE-ONLY` for the positive half only,
+leaving the `HELD.md` block on the rejection half intact.
+
+§10b's placement call stands: **colour stays in `design-aesthetics`**, Werner
+extends `COL`, it does not seed `ICON`. Measurement of hallucination under the
+binding stays in `ml-systems` EVAL.
+
+### 11f. Not `depiction`
+
+`depiction` governs what a description may *assert* — `ATTRIB` and `BOUND`. A
+vocabulary-binding rule is about how a term is spelled and which set it comes
+from, which is a different question and a different lexicon. The one honest
+connection is a cross-reference, not a row: Werner's tri-kingdom annex is the
+same move as anchoring a name to a public referent, which is what the
+anti-racist-description and DCMP naming rows already do for identity terms.
+Note it as a cross-ref when the `depiction` rows are authored; do not fold
+colour into the new lexicon.

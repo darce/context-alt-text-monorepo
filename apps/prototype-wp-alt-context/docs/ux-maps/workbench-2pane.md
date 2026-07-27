@@ -33,7 +33,7 @@
 | Two-pane operator surface: left control (cluster/recogniz… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Workbench header + recognition endpoint selector + sy… |
+|   - Workbench header + recognition endpoint (read-only st… |
 |   - Left pane host (control surface) (content) states=[de… |
 |   - Pane divider / collapse-left control (other) states=[… |
 |   - Right pane host (media library) (content) states=[def… |
@@ -56,7 +56,7 @@
 | Cluster, recognize, name, and curate: recognition endpoin… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Recognition endpoint + health (InsightFace :10010 int… |
+|   - Recognition endpoint + health (read-only: InsightFace… |
 |   - Cluster/recognition controls (run, refresh, threshold… |
 |   - UMAP cluster scatter (2D projection of face embedding… |
 |   - Cluster list / selection (size, confidence, unnamed-f… |
@@ -67,7 +67,7 @@
 |   [PRIMARY] Assign name to cluster -> identity-store (cos… |
 |   [PRIMARY] Select cluster (UMAP or list) -> workbench-li… |
 |   [secondary] Go to Roster -> exit-roster                  |
-|   [secondary] Switch recognition endpoint (:10010 interim… |
+|   [secondary] View / change recognition endpoint (Setting… |
 |   [DESTRUCTIVE] Merge / split / correct cluster -> identi… |
 +------------------------------------------------------------+
 | states: default | loading | empty | error | first_time | … |
@@ -225,15 +225,19 @@ flowchart TD
 ```
 
 ## Open questions
-- Selecting a UMAP cluster: does it filter the right library pane, open the naming form, or both (coordinated views)? [VIZ]
-- Endpoint switch (:10010 InsightFace 512d <-> FIR/SFace 128d) changes embedding dimensionality; do existing clusters invalidate and require re-projection? [HAI]
-- Left/right min-width + left-collapse behaviour on narrow (<1100px) viewports; does control collapse to a drawer? [NAV]
-- Alt-text vs long-description: two fixed columns or one expandable row-detail? column-width vs scannability tradeoff [PERC]
-- Bulk-describe cost preview granularity: per-image cost surfaced before start? [INT]
-- UMAP is expensive to recompute; is the scatter cached/incremental or recomputed each recognition run? [VIZ]
+- DEP: long-description has no data field yet (WorkbenchMediaItem has only altText). The long-description column depends on a new media schema field + REST + backend. Ship alt-text column first, long-description behind the field? [FORM]
+- DEP: no 2D projection data exists (only bbox + 3D head pose; 'embeddings' is banned UI vocab). The cluster-map scatter depends on a new backend 2D-projection endpoint. Ship left pane as cluster LIST first, scatter as fast-follow? [VIZ-01,VIZ-15]
+- Cluster-map label: user-facing name must avoid 'embeddings' (banned vocab) — 'cluster map' / 'face map'? [copy]
+- Selecting a cluster in the map/list: filter the right library pane, open the naming form, or both (coordinated views)? [VIZ-15]
+- Naming form ordering: adopt commit-before-reveal (operator judges before model candidates shown) or reveal-first? confirm-only logs agreement, not verification [HAI-15]
+- Endpoint switch (:10010 InsightFace 512d vs FIR/SFace 128d) changes embedding dimensionality server-side; do existing clusters invalidate + need re-projection on switch? [HAI-02]
+- Left/right min-width + left-collapse on narrow (<1100px) viewports; control collapses to a drawer, library stays reachable? [NAV-08,A11Y-08]
+- Alt-text vs long-description: two fixed columns or one expandable row-detail? column-width vs scannability [PERC-01,UI-04]
+- Bulk-describe cost preview granularity: per-image cost surfaced before start? [INT-07]
 
 ## Not doing
 - Clusters tab inside Roster (retired; cluster structure lives in Workbench left pane now)
+- UI toggle for the recognition endpoint (server-resolved per RECOG-1; topbar is read-only status)
 - Pixel/token values (design tokens referenced --acx-*, not specified here)
 - Attachment-edit SPA (separate map_ref)
 - Big-bang removal of the current tabbed shell (migration path, not in this map)

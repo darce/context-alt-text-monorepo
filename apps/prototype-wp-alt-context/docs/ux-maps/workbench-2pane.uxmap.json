@@ -58,7 +58,7 @@
       "zones": [
         {
           "id": "z-topbar",
-          "label": "Workbench header + recognition endpoint selector + sync/projection status strip",
+          "label": "Workbench header + recognition endpoint (read-only status; server-resolved) + sync/projection status strip",
           "role": "status",
           "states": [
             "default",
@@ -134,7 +134,7 @@
       "zones": [
         {
           "id": "z-endpoint",
-          "label": "Recognition endpoint + health (InsightFace :10010 interim; FIR when stable)",
+          "label": "Recognition endpoint + health (read-only: InsightFace :10010 interim; FIR when stable; target is server-resolved via ACX_RECOGNITION_URL, no UI toggle per RECOG-1)",
           "role": "status",
           "states": [
             "default",
@@ -465,13 +465,13 @@
       "screen_id": "workbench-control"
     },
     {
-      "id": "act-switch-endpoint",
-      "verb": "Switch recognition endpoint (:10010 interim <-> FIR)",
-      "target": "recognition",
+      "id": "act-view-endpoint-settings",
+      "verb": "View / change recognition endpoint (Settings; server-resolved)",
+      "target": "exit-settings",
       "hierarchy": "secondary",
       "costly": false,
       "irreversible": false,
-      "preview_required": true,
+      "preview_required": false,
       "screen_id": "workbench-control"
     },
     {
@@ -685,15 +685,19 @@
     }
   ],
   "open_questions": [
-    "Selecting a UMAP cluster: does it filter the right library pane, open the naming form, or both (coordinated views)? [VIZ]",
-    "Endpoint switch (:10010 InsightFace 512d <-> FIR/SFace 128d) changes embedding dimensionality; do existing clusters invalidate and require re-projection? [HAI]",
-    "Left/right min-width + left-collapse behaviour on narrow (<1100px) viewports; does control collapse to a drawer? [NAV]",
-    "Alt-text vs long-description: two fixed columns or one expandable row-detail? column-width vs scannability tradeoff [PERC]",
-    "Bulk-describe cost preview granularity: per-image cost surfaced before start? [INT]",
-    "UMAP is expensive to recompute; is the scatter cached/incremental or recomputed each recognition run? [VIZ]"
+    "DEP: long-description has no data field yet (WorkbenchMediaItem has only altText). The long-description column depends on a new media schema field + REST + backend. Ship alt-text column first, long-description behind the field? [FORM]",
+    "DEP: no 2D projection data exists (only bbox + 3D head pose; 'embeddings' is banned UI vocab). The cluster-map scatter depends on a new backend 2D-projection endpoint. Ship left pane as cluster LIST first, scatter as fast-follow? [VIZ-01,VIZ-15]",
+    "Cluster-map label: user-facing name must avoid 'embeddings' (banned vocab) — 'cluster map' / 'face map'? [copy]",
+    "Selecting a cluster in the map/list: filter the right library pane, open the naming form, or both (coordinated views)? [VIZ-15]",
+    "Naming form ordering: adopt commit-before-reveal (operator judges before model candidates shown) or reveal-first? confirm-only logs agreement, not verification [HAI-15]",
+    "Endpoint switch (:10010 InsightFace 512d vs FIR/SFace 128d) changes embedding dimensionality server-side; do existing clusters invalidate + need re-projection on switch? [HAI-02]",
+    "Left/right min-width + left-collapse on narrow (<1100px) viewports; control collapses to a drawer, library stays reachable? [NAV-08,A11Y-08]",
+    "Alt-text vs long-description: two fixed columns or one expandable row-detail? column-width vs scannability [PERC-01,UI-04]",
+    "Bulk-describe cost preview granularity: per-image cost surfaced before start? [INT-07]"
   ],
   "not_doing": [
     "Clusters tab inside Roster (retired; cluster structure lives in Workbench left pane now)",
+    "UI toggle for the recognition endpoint (server-resolved per RECOG-1; topbar is read-only status)",
     "Pixel/token values (design tokens referenced --acx-*, not specified here)",
     "Attachment-edit SPA (separate map_ref)",
     "Big-bang removal of the current tabbed shell (migration path, not in this map)",

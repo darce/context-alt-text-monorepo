@@ -12,81 +12,67 @@
 > **Governing assessment**: [`depiction-canon-triage-and-backlog-2026-07-27.md`](../../assessments/current/depiction-canon-triage-and-backlog-2026-07-27.md)
 > (§2 items 3–4, §6b–§6c, §10f–§10g). Upstream eval:
 > [`depiction-canon-fit-captioning-pipeline-2026-07-27.md`](../../assessments/current/depiction-canon-fit-captioning-pipeline-2026-07-27.md)
-> (F6, F8). **Playbook** (governing §3.1 source): monorepo path
+> (F6, F8). **Playbook** (governing §3.1 source):
 > `docs/runbooks/fir-captioning-orchestrator-playbook.md` §3.1 (signal density;
-> §3.2 is stale — ALTQ-1 shipped it). **Present in this plan-review bundle**
-> at `repo/docs/runbooks/fir-captioning-orchestrator-playbook.md` (relative
-> from this file: `../../runbooks/fir-captioning-orchestrator-playbook.md`).
-> Cite by section heading (e.g. `### 3.1 Add a signal-density metric to the
-> eval harness`) — line numbers move.
+> §3.2 is stale — ALTQ-1 shipped it). Relative from this file:
+> `../../runbooks/fir-captioning-orchestrator-playbook.md`. Cite by section
+> heading (e.g. `### 3.1 Add a signal-density metric to the eval harness`) —
+> line numbers move.
 >
-> **Canon**: heuristics-canon **`v0.17.2`** at this plan-review bundle's
-> `canon/lexicons/` (sibling of `repo/`; private repo, not vendored inside
-> `repo/`). There is **no** `canon/PROVENANCE.txt` in this bundle — do not
-> cite one. Do **not** label the pin `v0.17.0-11-ga238620` (that is a
-> pre-tag `git describe` string for commit `a238620`; `git describe --tags
-> a238620` resolves to **`v0.17.1`**, not a v0.17.0-distance label). This
-> bundle already carries the **v0.17.2** ATTRIB-08 row text at
-> `canon/lexicons/depiction.md:80` (definition-anchor form resolves there
-> identically at both `a238620` / `v0.17.1` and `v0.17.2` — the anchor line
-> did **not** move). What **did** change across `a238620..v0.17.2` in
-> `lexicons/` is the ATTRIB-08 **row text** (in-place replacement adding the
-> third disjunct and `"an incident"` exemplar); an anchor-only grep cannot
-> detect that text change. Do **not** rest a re-sync decision on an
-> anchor-line test that resolves identically either way, and do **not**
-> summarise the delta as a vague "one row moved" without naming the text
-> change this plan depends on (other lexicon rows, including API-08, also
-> changed across the same range — they are **not** load-bearing for this
-> plan). Slice 2 cites the **v0.17.2** three-disjunct wording present in
-> this bundle. **Resolvable lexicon root
-> (`CANON_LEXICONS_ROOT`)**: the plan-review bundle root's `canon/lexicons/`
-> directory — sibling of `repo/`, **not** under `repo/`. Citation form only
-> (not a path that resolves from `repo/`): `canon/lexicons/<file>.md#anchor`.
-> Before implementation review re-verify every rule ID with the
-> definition-anchor form against that resolvable root:
-> `grep -rE '^\| *`?<ID><a name' "$CANON_LEXICONS_ROOT"/`
-> (or the absolute path `<bundle-root>/canon/lexicons/` where `<bundle-root>`
-> is the parent of `repo/`). Do **not** run the grep with bare `canon/lexicons/`
-> from inside `repo/` — that root does not resolve there.
+> **Canon**: heuristics-canon **`v0.17.2`**, commit
+> `4e099ded65ee33bc4db85dfd4c65409a0087a752`. Citable rule surface:
+> `canon/lexicons/`. Do **not** cite `canon/PROVENANCE.txt`. Do **not** label
+> the pin `v0.17.0-11-ga238620` (that is a pre-tag `git describe` string for
+> commit `a238620`; `git describe --tags a238620` resolves to **`v0.17.1`**).
+> Slice 2 cites the **v0.17.2** three-disjunct ATTRIB-08 wording at
+> `canon/lexicons/depiction.md#attrib-08` (third disjunct + `"an incident"`
+> exemplar). Citation form: `canon/lexicons/<file>.md#anchor`. Before
+> implementation review re-verify every rule ID with the definition-anchor
+> form: `grep -rE '^\| *`?<ID><a name' canon/lexicons/`.
 
 ## Objective
 
 Land three pure, deterministic, report-only scoring signals in
 `caption_metrics.py` that make **F6 / F8**, **future attributed-emotion
-prompt work**, and the **GPU-window density axis** measurable (not a claim
+prompt work**, and the **density measurement** measurable (not a claim
 that DEPICT-0 lineage or DEPICT-1 contract shape are scored here —
 DEPICT-1 register-compliance is Stretch / future work only): an
 inner-state-attribution counter
 (ATTRIB-01 / F8, `canon/lexicons/depiction.md#attrib-01`), an
 agentless-passive / mutual-event / actorless-event-noun detector
 (ATTRIB-08 / F6, `canon/lexicons/depiction.md#attrib-08`), and a
-**verified** signal-density ranking *measurement*
+**verified** signal-density *measurement*
 (EVAL-11, `canon/lexicons/ml-systems.md#eval-11`). Emit the new hit lists and
-density from `report.py` (thin additive Slice 4) so density is a live report
-axis.
+density from `report.py` (thin additive Slice 4) so density is a **live
+report measurement** (JSON emit only — not a ranking consumer).
 
-**Canonical DoD / ownership boundary (authoritative; other sections
-cross-refer here — do not restate the full boundary elsewhere):**
+**Canonical DoD / ownership boundary (authoritative — state once; every
+other section cross-refers here and does not restate the full boundary):**
 
 | Boundary | Landed by | Not landed by this plan |
 | --- | --- | --- |
-| **This plan's §3.1 land DoD** — produce the density axis (metric in `caption_metrics.py` + Williams/C5 docstring) | Slice 3 green | bake-off ranking *sort* |
-| **GPU-window gate** (playbook do-not-do: §3.1 + already-landed §3.2) | density axis existing (Slice 3) | ranking consumer |
-| **Assessment §6e Lane C Carries** "report emit of new fields" | Slice 4 green | — |
-| Bake-off ranking *sort* that *orders* candidates by density | **unowned follow-on** (no lane in this wave) | Slice 3/4 green does **not** land sort |
+| **This plan's §3.1 land DoD** — density *measurement* in `caption_metrics.py` + Williams/C5 docstring | Slice 3 green | bake-off ranking *sort* |
+| **Report emit of density + depiction hit lists** (assessment §6e Lane C Carries "report emit of new fields") | Slice 4 green | ranking *sort* |
+| Bake-off ranking *sort* that *orders* candidates by density | **unowned** — no lane in this wave owns the ordering change | Slice 3/4 green does **not** land sort |
 
-Assessment anchors for the table (cite by heading, not line): playbook
+**Ranking / GPU-window honesty (locked):** `report.py` today emits quality
+JSON and performs **no** candidate selection or density ordering (see
+`_quality_block` / `result` construction). Playbook §3.1 describes density
+as the companion that stops length-only ranking from preferring the most
+verbose candidate — but **no consumer in this plan orders by density**.
+This plan therefore lands the **measurement + report emit** only. The
+bake-off ranking *sort* remains **unowned and unmet**. Do **not** claim
+the ranking gate is satisfied by a metric nothing consumes. Resolve the
+Williams/C5 length contradiction in the module docstring so gate policy
+and ranking policy cannot be read as opposites.
+
+Assessment anchors (cite by heading, not line): playbook
 `### 3.1 Add a signal-density metric to the eval harness`; assessment
 `#### §6b claim — §3.1 is the last unlanded GPU-window gate`;
 `#### §6c claim — Williams/C5 resolution (companion axes)`;
 `### 6a. Playbook status is half-stale — verify before dispatching §6's list`
 table row **§3.1 signal-density metric** Actual **NOT LANDED**;
-`#### §6e ownership table` (Lane C Carries ends with **"report emit of new
-fields"**); `#### §6e claim — Lane C unblocks the GPU window` (parent
-`### 6e. Dispatch shape — file ownership, not just task ownership`) stakes
-unblock on the density axis — **not** on a ranking consumer. Resolve the
-Williams/C5 length contradiction in the module docstring so gate policy
-and ranking policy cannot be read as opposites.
+`#### §6e ownership table`; `#### §6e claim — Lane C unblocks the GPU window`.
 
 ## Problem Statement
 
@@ -97,16 +83,10 @@ cheapest grammar failure in the depiction lexicon (agentless passive / "clash"
 frames), and measures no signal density at all. Every length-correlated quality
 axis therefore still rewards verbosity. Until these scorers exist, F6/F8 and the density axis stay unmeasurable —
 exactly what EVAL-08 (`canon/lexicons/ml-systems.md#eval-08`, CACE)
-forbids — and the GPU window remains gated by playbook §3.1 (see Objective
-DoD table; §6a heading
-`### 6a. Playbook status is half-stale — verify before dispatching §6's list`
-table row **§3.1 signal-density metric** Actual **NOT LANDED**). Pure
-scorers alone are not enough for *this plan's* DoD: `report.py` today
-builds its quality block from `meta_framing_hits` / sentence band /
-`mean_gated_score` only (see Current State), so density must also be
-emitted there (Objective: Slice 4 = Lane C Carries report emit). Bake-off
-code that *sorts* survivors by density is an unowned follow-on — not a
-DEPICT-2 acceptance criterion (Objective DoD table).
+forbids. Pure scorers alone are not enough for *this plan's* DoD: density
+must also be emitted from `report.py` (see **Objective** DoD table).
+Bake-off ranking *sort* is unowned and unmet — not a DEPICT-2 acceptance
+criterion.
 
 ## Constraints
 
@@ -137,82 +117,99 @@ DEPICT-2 acceptance criterion (Objective DoD table).
 
 ## Source-guard contract (locked; every held-out proof)
 
-All "source-level guard" assertions in this plan share one mechanical
-contract. A prose-only "held-out means held out" sentence is **not** a
-guard. Proofs that name held-out literals invoke this contract; none
-re-implement a raw `Path.read_text()` contiguous-substring check.
+All "source-level guard" assertions share this one mechanical contract.
+A prose-only "held-out means held out" sentence is **not** a guard.
 
-### Scope (owned closed path set + no external table import)
+### Scope
 
-Guard scope is the **whole owned implementation closed path set** from
-## Constraints that can hold detector tables:
+Owned implementation path set (from **Constraints**):
 
 - `apps/prototype-description-service/scripts/eval_harness/caption_metrics.py`
-- **and** any additional module under
-  `apps/prototype-description-service/scripts/eval_harness/` that
-  `caption_metrics.py` imports for string / tuple / list / frozenset
-  table constants (sibling constants modules, helpers that re-export
-  phrase tables, etc.)
+- any sibling under `scripts/eval_harness/` that `caption_metrics.py`
+  imports for string / tuple / list / frozenset detector tables
 
-Creating a sibling constants module is already out of Constraints
-("No edits under any other path") unless this plan **and** assessment
-`#### §6e ownership table` are amended first. Independently:
+**Import RED**: AST-parse `caption_metrics.py`; it must not import detector
+tables from outside that set, and must not load YAML / JSON / data files of
+phrase tables for detector membership. Test modules are **out of guard
+scope** — held-out fixtures live there.
 
-- **Import RED (mandatory)**: AST-parse `caption_metrics.py` and assert it
-  does **not** import any name bound to a string / tuple / list /
-  frozenset detector table from a module **outside** the owned closed
-  path set (no `from elsewhere import _SOME_TABLE`, no loading
-  YAML / JSON / data files of phrase tables from outside that set for
-  detector membership). Floor tables live **only** in owned
-  implementation modules.
+### Extraction (constant-fold AST, not raw text)
 
-Test modules (`test_eval_harness_caption_metrics.py`,
-`test_eval_harness_report_depiction.py`) are **out of guard scope** —
-held-out fixtures and pools **must** live there.
-
-### Extraction (AST string constants, not raw module text)
-
-Guards operate on **decoded string constant values** from the AST of
-each in-scope module, **not** on raw `Path.read_text()` substrings:
+Guards operate on **fully folded string values** from the AST — not raw
+`Path.read_text()` substrings, and not leaf `ast.Constant` nodes alone.
+**Constant-fold before matching** so non-contiguous encodings cannot hide
+held-out literals:
 
 ```python
 import ast
 from pathlib import Path
 
+def _fold_str(node: ast.AST) -> str | None:
+    """Fold literal string expressions; None if not a pure string literal expr."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    # Implicit concat is already one Constant after parse; handle BinOp +
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left, right = _fold_str(node.left), _fold_str(node.right)
+        if left is not None and right is not None:
+            return left + right
+    if isinstance(node, ast.JoinedStr):  # f-string of only constants
+        parts: list[str] = []
+        for v in node.values:
+            if isinstance(v, ast.Constant) and isinstance(v.value, str):
+                parts.append(v.value)
+            elif isinstance(v, ast.FormattedValue):
+                return None  # non-literal f-string arm
+            else:
+                return None
+        return "".join(parts)
+    if isinstance(node, ast.Call):
+        # "".join([...]) / str.join over a list/tuple of string constants
+        func = node.func
+        if (isinstance(func, ast.Attribute) and func.attr == "join"
+                and isinstance(func.value, ast.Constant)
+                and func.value.value == ""
+                and node.args):
+            elt = node.args[0]
+            if isinstance(elt, (ast.List, ast.Tuple)):
+                parts = [_fold_str(e) for e in elt.elts]
+                if parts and all(p is not None for p in parts):
+                    return "".join(parts)  # type: ignore[arg-type]
+        # "a".replace("x","y") chain over constants
+        if (isinstance(func, ast.Attribute) and func.attr == "replace"
+                and len(node.args) >= 2):
+            base = _fold_str(func.value)
+            a0, a1 = _fold_str(node.args[0]), _fold_str(node.args[1])
+            if base is not None and a0 is not None and a1 is not None:
+                return base.replace(a0, a1)
+    return None
+
 def module_string_constants(path: Path) -> set[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
     out: set[str] = set()
     for node in ast.walk(tree):
+        folded = _fold_str(node)
+        if folded is not None:
+            out.add(folded.lower())
+        # Also collect every Constant str leaf (covers non-expr positions)
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             out.add(node.value.lower())
-        if isinstance(node, ast.JoinedStr):
-            for v in node.values:
-                if isinstance(v, ast.Constant) and isinstance(v.value, str):
-                    out.add(v.value.lower())
     return out
 ```
 
-Why AST, not raw text (closes three defeats of contiguous lower-cased
-substring checks over raw module text):
+What this closes beyond leaf-Constant matching:
 
-1. **Comments stay legal** — a WHY comment such as
-   `# ACX_GPU_PROMPT_VERSION is deliberately not read on this path`
-   is not an `ast.Constant`, so short-token guards do not false-RED
-   documentation. (Docstring text *is* an `ast.Constant`; put fixture
-   documentation in test modules, or name held-out tokens only by
-   indirection in implementation docstrings — e.g. "held-out 4b frames",
-   not the frame text itself.)
-2. **Escape / hex encoding is decoded** — `'\x73kirmish'` becomes
-   Constant value `'skirmish'` and is caught.
-3. **Implicit adjacent-literal concatenation** (`"skir" "mish"`) is
-   folded by the parser into one Constant and caught. Runtime
-   concatenation via helpers (`_j("skir", "mish")`) is closed by the
-   **semantic** arm below, not by spelling.
+1. **Comments stay legal** — not `ast.Constant` / not foldable expressions.
+2. **Escape / hex** — `'\x73kirmish'` → `'skirmish'`.
+3. **Implicit adjacent-literal concat** — `"skir" "mish"` → one Constant.
+4. **`+` concatenation** — `"ACX_GPU_" + "PROMPT_VERSION"` folds to one value.
+5. **`"".join([...])` over constant fragments** — folds to one value.
+6. **`.replace()` over constants** — folds to the replaced value.
+7. **Data-file reads** — closed by Import RED (no external table load) **and**
+   the **runtime arm** below (positive set must not contain the held-out at
+   call time even if built dynamically).
 
 ### Matching (whole phrase + article-stripped forms)
-
-For each held-out literal `L` (lower-cased), the guard **fails** if any
-collected string constant `C` satisfies:
 
 ```python
 import re
@@ -220,12 +217,8 @@ _ART_ANY = re.compile(r"\b(the|a|an)\s+", re.I)
 
 def article_stripped_forms(phrase: str) -> set[str]:
     p = phrase.strip().lower()
-    forms = {p}
-    # Strip articles in any position so "the catalogue records" also
-    # yields "catalogue records", and "by the mayor" yields "by mayor".
-    forms.add(_ART_ANY.sub("", p).strip())
-    # Leading-article-only strip (same result for many phrases).
-    forms.add(re.sub(r"^(the|a|an)\s+", "", p).strip())
+    forms = {p, _ART_ANY.sub("", p).strip(),
+             re.sub(r"^(the|a|an)\s+", "", p).strip()}
     return {f for f in forms if f}
 
 def constant_hides_held_out(constant: str, phrase: str) -> bool:
@@ -233,51 +226,37 @@ def constant_hides_held_out(constant: str, phrase: str) -> bool:
     return any(f in c for f in article_stripped_forms(phrase))
 ```
 
-Article-stripped matching closes the truncated-fragment cheat: guarding
-only `"the catalogue records"` would allow a table entry
-`"catalogue records"` to silence the fixture while greening a
-leading-article-only check. Single-token held-outs have `forms == {token}`.
+**Legitimate shapes still accepted**: bare role / person heads (e.g.
+`"mayor"`) do **not** hide held-out `"by the mayor"`; only full phrase
+forms (`"by the mayor"`, `"by mayor"`) do.
 
-**Legitimate shapes the guard must still accept**: a correct agentivity
-lexicon may contain bare role / person heads (e.g. common nouns used by
-proof 4f's animacy test) **without** embedding the full held-out PP
-phrase. The guard matches the **held-out phrase forms** above, not every
-token of the phrase in isolation when the constant is a bare head equal
-to a single content word of a multi-word PP. Concretely: constant
-`"mayor"` does **not** hide held-out `"by the mayor"`; constant
-`"by the mayor"` or `"by mayor"` does. Semantic arm still requires
-emptying `_BY_AGENT_PPS` to leave held-out 4d zero-hit via generic
-`by` + agent-NP grammar.
+### Semantic arm + runtime positive-set arm (mandatory)
 
-### Semantic arm (capability, not spelling) — mandatory companion
-
-Spelling / AST guards alone cannot close runtime concatenation or
-out-of-process table loads that never appear as string constants.
-Every held-out proof therefore also carries a **semantic** arm:
-
-- **Held-out POSITIVES** (open class must fire): with the detector's
-  finite floor tables left at their frozen membership (**no** held-out
-  token appended) **and** every *additional* noun / phrase membership
-  table the implementation introduced beyond the frozen floors named in
-  this plan emptied to `()` (monkeypatch acceptable — includes tables
-  built at import time from concatenation, decoding, or file loads),
-  each held-out positive caption still produces the mandated hit. A
-  detector whose only path to the held-out is membership over any finite
-  set fails.
-- **Held-out NEGATIVES / exemptions** (must stay silent): with every
-  frozen exemption / hedge / bearer / gap / by-agent **floor** table
-  the proof is generalising beyond emptied to `()` **and** every
-  additional exemption-membership table emptied (monkeypatch
-  acceptable), each held-out negative caption still returns **zero**
-  hits. A detector whose exemption path is membership over the floor
-  (or floor + append + runtime-built set) fires and fails.
+- **Held-out POSITIVES** (must still fire): floor tables at frozen membership
+  (**no** held-out token appended) **and** every *additional* membership
+  table beyond named floors emptied to `()` → each held-out positive still
+  hits.
+- **Held-out NEGATIVES / exemptions** (must stay silent): every frozen
+  exemption / hedge / bearer / gap / by-agent **floor** the proof extends
+  beyond emptied to `()` **and** every additional exemption-membership
+  table emptied → each held-out negative still returns **zero** hits under
+  the scoped assert the proof names.
+- **Runtime positive-set arm (mandatory companion to AST fold)**: after
+  import, for every held-out literal `L`, assert `L` (and each
+  article-stripped form) is **not** a member of any detector positive /
+  exemption membership collection the implementation exposes or that the
+  test can reach via the module's table attributes (tuples / lists /
+  frozensets / sets of strings used for detector membership). This catches
+  tables built at import from concatenation, decoding, or in-module data
+  that the fold arm already saw **and** any residual dynamic construction
+  the fold arm cannot see. A cheat that builds the held-out only inside a
+  function body still fails the semantic arm above.
 
 ### Shared helper
 
-One helper in the test module implements scope walk + import RED + AST
-extract + article-strip match + semantic monkeypatch. Every proof that
-says "source-level guard" calls this helper over its held-out literal
-set.
+One test-module helper: scope walk + import RED + folded-AST extract +
+article-strip match + semantic monkeypatch + runtime positive-set arm.
+Every "source-level guard" proof calls it.
 
 ## Workflow Principles
 
@@ -285,10 +264,11 @@ set.
   prompt edits they make measurable (EVAL-08, `canon/lexicons/ml-systems.md#eval-08`).
 - **Williams vs C5 — both hold, different roles.** Williams governs the **gate**:
   do not hard-cap length; do not zero a long description for being long.
-  C5 / playbook §3.1 governs the **ranking axis**: do not reward verbosity;
-  rank on verified facts per 100 words. Density is a companion ranking column,
-  never a length penalty on `gated_score`. Write this into the module docstring
-  in Slice 3 so the two governing documents stop pointing opposite ways.
+  C5 / playbook §3.1 names density as the companion that prevents
+  length-only ranking from preferring verbosity. This plan lands the
+  **measurement** only (see **Objective** — ranking *sort* unowned/unmet).
+  Density is never a length penalty on `gated_score`. Write Williams/C5 into
+  the module docstring in Slice 3.
 - **Attributive / bearer frame, not silence for affect.** Attributed readings
   ("her expression reads as anxious") are legitimate access content; unmarked
   person-as-fact-owner ("she is anxious") is the defect. The counter must
@@ -296,6 +276,10 @@ set.
   the word **register** / `DescriptionRegister` for DEPICT-1 contract vocabulary
   (`FORENSIC | EDITORIAL | INTERPRETIVE`); do not reuse "register" for this
   grammar cut.
+- **Voice disambiguation (DEPICT-2):** in this plan **voice** means the
+  grammatical/narrative surface of caption prose (active vs agentless
+  passive, reporting frame). It does **not** mean DEPICT-1's `ContextVoice`
+  provenance tag on a context field.
 - **Verified numerator or the metric is wrong.** Unverifiable specificity
   scores zero, not one. A naive facts/100w that counts rare free nouns trips
   the reasoning card
@@ -312,39 +296,31 @@ set.
   confirm ("she is anxious", "he wants", "they are proud"), with no attributive
   frame naming viewer, convention, artefact, or source.
 - **Attributive frame / bearer frame**: a grammatical frame that moves ownership
-  of the reading off the depicted person — e.g. "her expression reads as…",
-  "appears…", "looks…", "seems…", "as if…", "read as…", "according to…".
-  Same epistemic-hedge class (ATTRIB-01 cut: person-subject + mental predicate
-  **without** appears / looks / seems / as-if / according-to). Those examples
-  are exemplars of an **open** class, not its enumeration — ATTRIB-01 licenses
-  any frame that seats the reading in viewer, convention, artefact, or named
-  source, so the detector's exemption path must be structural (reporting /
-  perception complement, or source-attributing adjunct) rather than a literal
-  blocklist. Not to be confused with DEPICT-1 `DescriptionRegister`.
+  of the reading off the depicted person. Slice 1's exemption proof covers
+  **exactly** the frozen floor hedges/bearers plus the five published held-out
+  frames in proof 4b (see Slice 1 — **bounded**, not an open class). Recovery
+  uses the closed reporting lexicon + linear window named there. Not to be
+  confused with DEPICT-1 `DescriptionRegister`.
 - **Agentless passive / mutual-event / actorless event noun (ATTRIB-08
   three disjuncts)**: oppression or violence prose that hides a
   record-supported actor behind **any** of the three ATTRIB-08
-  (`canon/lexicons/depiction.md#attrib-08`, `depiction.md:80`) trigger
-  disjuncts — (1) an **agentless passive** ("were killed"), (2) a
-  **mutual-event noun** ("a clash"), **or** (3) an **event noun that
-  carries no actor** ("an incident" and the open class that exemplar
-  stands for). Do **not** collapse (2) and (3) into a single
-  "mutual-event / symmetry" label: (3) is an open class of actorless event
-  nouns, not a mutual-event synonym. Frozen table members `"clash"` /
-  `"incident"` are **floor exemplars**, not the closed vocabulary of (3).
-  Explicit same-clause unknown-agent / gap statements (`agent not named in
-  the record`) are an ATTRIB-08 **exemption**, not a hit — the lexicon row
-  warrants this as "when the record does not support naming who acted,
-  state the gap rather than invent an agent" (not a distilled-only slogan).
+  (`canon/lexicons/depiction.md#attrib-08`) Trigger-column disjuncts —
+  (1) an **agentless passive** ("were killed"), (2) a **mutual-event noun**
+  ("a clash"), **or** (3) an **event noun that carries no actor**
+  ("an incident"). Do **not** collapse (2) and (3). Floor table members
+  `"clash"` / `"incident"` are mandatory hits; disjunct-3 noun heads beyond
+  the floor are the **published held-out pool** in Slice 2 proof 2b (bounded
+  proof set). Explicit same-clause gap statements are an ATTRIB-08
+  **exemption** (lexicon: "when the record does not support naming who
+  acted, state the gap rather than invent an agent").
 - **Verified fact (density numerator)**: a `ReferenceFact` with
-  `polarity=FactPolarity.TRUE` (StrEnum value `"true"`, `manifest.py:81-91`)
-  whose `match_targets()` hit the caption under the existing word-boundary
-  matcher (`_contains`). Claims with no such membership hit contribute
-  **zero** to the numerator, even if lexically rare or specific. (Operational
-  membership only — not a PROV-01 citation.)
-- **Signal density (ranking axis)**: verified facts per 100 words =
+  `polarity=FactPolarity.TRUE` (StrEnum value `"true"`) whose
+  `match_targets()` hit the caption under `_contains`. Unmatched claims
+  contribute **zero** (operational membership only — not a PROV-01 citation).
+- **Signal density (measurement axis)**: verified facts per 100 words =
   `(verified_count / word_count) * 100`, or `None` when `word_count == 0`.
-  Ranking companion only — not a hard gate.
+  Report measurement only — not a hard gate and not a landed ranking *sort*
+  (see **Objective**).
 - **Williams gate policy**: no hard length cap; longer descriptions are not
   penalised for length; missing content is penalised via existing axes.
 - **C5 ranking policy**: length-correlated quality alone ranks the most verbose
@@ -370,22 +346,14 @@ set.
 - `score_hallucination` / `fabricated_fact_rate` already measure the
   **known-false assertion** axis against authored traps. They do **not**
   measure attribution grammar, agentless passive, or verified density.
-- `report.py` `_quality_block` (L540–553) emits only
-  `meta_framing_images`, context-duplication, name-front-loaded rate, and
-  sentence-band stats; caption aggregate dict-entry block (L565–574) has
-  `mean_gated_score` and existing gate rates. No density or depiction-hit
-  keys. Per-image **row dict literal** is `report.py:472-495` (closes at
-  L495; L496–517 are post-literal `if short_error…` / `row["long"] = {…}` /
-  `per_image.append(...)` **statements**): surfaces `meta_framing_hits` at
-  L486 but not inner-state / agentless / density fields.
-- `score_caption` is called with only names/traps/objects/roster/context
-  (`report.py:398-406`); `reference_facts` is **not** passed. Manifest entry
-  type exposes `reference_facts: list[ReferenceFact]`
-  (`manifest.py:GoldenEntry` L359), but `score_run_record` receives entries as
-  dicts (`report.py:320-327`) and never reads `entry["reference_facts"]` today.
-- `bakeoff.py` does **not** import `caption_metrics` today (verified by search).
-  A future bake-off *sort* by density is an unowned follow-on after Slice 4
-  keys exist (Objective DoD table — not this plan's §3.1 land DoD).
+- `report.py` `_quality_block` emits only meta-framing / sentence-band /
+  name-front-loaded stats; caption aggregate has `mean_gated_score` and
+  existing gate rates. No density or depiction-hit keys. Per-image row
+  surfaces `meta_framing_hits` but not inner-state / agentless / density.
+- `score_caption` is called without `reference_facts`; manifest entries
+  expose `reference_facts` but `score_run_record` never reads them today.
+- `bakeoff.py` does **not** import `caption_metrics` today. Ranking *sort*
+  by density is unowned and unmet (see **Objective**).
 
 ## Target Outcome
 
@@ -394,14 +362,13 @@ set.
    - count inner-state-attribution hits (report-only; F8);
    - list agentless-passive / mutual-event / actorless-event-noun hits
      (report-only; F6; ATTRIB-08 three disjuncts);
-   - compute verified signal density as a ranking companion (GPU-window
-     density axis).
-2. Module docstring resolves Williams (gate) vs C5 (ranking) in writing.
+   - compute verified signal density as a report measurement (see
+     **Objective** — ranking *sort* unowned/unmet).
+2. Module docstring resolves Williams (gate) vs C5 (density measurement).
 3. Every new assertion has a red-first proof and a discrimination case that
    rejects vacuous implementations.
-4. `report.py` emits the new per-image hit lists and density numbers in its
-   JSON quality / per-image sections (Slice 4). DoD / Carries / ranking
-   boundary: see Objective DoD table.
+4. `report.py` emits the new per-image hit lists and density numbers
+   (Slice 4). DoD boundary: see **Objective**.
 
 ## Context Loading
 
@@ -437,7 +404,7 @@ HTTP, or WP boundary change.
 | --- | --- | --- | --- | --- | --- |
 | Caption scoring pure API | Lane C (this task) | `score_caption` / `score_hallucination` in `caption_metrics.py` | additive `CaptionScores` hit-list fields + sibling `score_signal_density` | no — greenfield additive | unit tests below |
 | Report JSON quality / per-image emit | Lane C (Slice 4) | `report.py` `_quality_block` + per-image rows read known `CaptionScores` fields; no `reference_facts` wire | additive nested `signal_density` object + hit-list keys; SHORT quality mean/counts assigned **after** the `result` dict literal closes at `report.py:604` **and after** the `short_failed_images` block at `report.py:608-610` (do not extend `_quality_block`; do not insert inside the open literal; do not insert between the ALTQ-1 comment and its statement); wire facts → density | no — additive keys | `test_eval_harness_report_depiction.py` exact-value proofs |
-| Bake-off ranking *sort* (optional follow-on) | **unowned** by this task | `bakeoff.py` does not import `caption_metrics` | **none in this task** (keys available after Slice 4; sort is optional, not the §3.1 gate) | n/a | explicit non-scope |
+| Bake-off ranking *sort* | **unowned** | `bakeoff.py` does not import `caption_metrics` | **none** — ranking unowned and unmet (see **Objective**) | n/a | explicit non-scope |
 
 ## Proposed Solution
 
@@ -450,8 +417,7 @@ predicate (true-polarity `ReferenceFact` + `_contains` hit), not a PROV-01
 citation (PROV-01 obligates model/input lineage on outputs; see scope decision
 below). Document Williams/C5 in the module header so ranking and gate cannot
 be collapsed. Emit the new fields from `report.py` (Slice 4) so pure APIs are
-not orphaned behind zero report consumers. DoD / Carries / ranking
-boundary: see Objective DoD table.
+not orphaned behind zero report consumers. DoD: see **Objective**.
 
 ### `CAL-02` and density numerator — metric side only (scope decision)
 
@@ -500,15 +466,15 @@ refusing a restated metric is preferred to citing `CAL-02` on a clone of
 | File | Note |
 | --- | --- |
 | `scripts/eval_harness/manifest.py` | `ReferenceFact.match_targets()` is the density walkback primitive — read only |
-| `scripts/eval_harness/bakeoff.py` | Unowned future *sort* consumer of density — does not import `caption_metrics` today; sort is **not** this plan's §3.1 land DoD (Objective DoD table) |
-| `docs/runbooks/fir-captioning-orchestrator-playbook.md` §3.1 | Governing density-metric requirement (cite by section heading). Gate / emit split: Objective DoD table. |
+| `scripts/eval_harness/bakeoff.py` | Unowned ranking *sort* consumer — does not import `caption_metrics` (see **Objective**) |
+| `docs/runbooks/fir-captioning-orchestrator-playbook.md` §3.1 | Governing density-metric requirement (cite by heading). DoD: **Objective**. |
 
 ### Cross-lane dependency
 
 | File | Exact change needed | Who lands first |
 | --- | --- | --- |
-| `scripts/eval_harness/report.py` | Emit the new per-image hit lists and density number in **JSON** quality / per-image sections so density is a live report axis (Lane C Carries "report emit of new fields" — Objective DoD table). Markdown human summary is **out of contract** for this task — no `_quality_lines` edit and no markdown proof required (see Slice 4) | **Lane C, Slice 4 of this task** (after pure APIs Slices 1–3 are green); thin additive import of this module only — not a deferred orphan |
-| Bake-off ranking *sort* (unowned follow-on) | Optionally consume density key to order survivors | **unowned by DEPICT-2 and by every lane in this wave**; follow-on after Slice 4 keys exist; **not** this plan's §3.1 land DoD (Objective DoD table) |
+| `scripts/eval_harness/report.py` | Emit per-image hit lists + density in **JSON** (Lane C Carries report emit — **Objective**). Markdown summary out of contract. | **Lane C, Slice 4** after Slices 1–3 green |
+| Bake-off ranking *sort* | Optionally order survivors by density | **unowned and unmet** (see **Objective**) |
 | Lane A prompt emotion-bearer (DEPICT-4) | Prompt text change so attributed emotion is licensed | **After** Slice 1 counter exists (EVAL-08 ordering) |
 | Lane B contracts / `DescriptionRegister` | None for DEPICT-2 metrics; a future register-compliance arm would read `DescriptionRegister` (`FORENSIC\|EDITORIAL\|INTERPRETIVE`) from the contract envelope — not planned here | n/a |
 
@@ -529,8 +495,7 @@ This plan does **not** edit bakeoff ranking, Lane A prompts, or Lane B contracts
   the C5 ranking / density statement as distinct roles (string-presence
   check). That proof is the acceptance criterion — there is **no**
   subjective manual re-read clause in this plan's DoD.
-- DoD land conditions: see Objective DoD table (Slice 3 = §3.1 density axis;
-  Slice 4 = Lane C Carries report emit; ranking *sort* unowned).
+- DoD land conditions: see **Objective**.
 
 ## Slice Delivery
 
@@ -552,26 +517,14 @@ Proof discipline: TEST-15 (`canon/lexicons/engineering.md#test-15`
 
 **Distilled load-bearing residue used here**: Berger's face-reading mechanism
 forbids treating the person as fact-owner of mental-state predicates without a
-frame ("prefer visible cues… or frame the reading"). The reasoning card
-`attribute-claims-to-their-bearer` (private canon path
-`canon/public/reasoning/…`; **not** present under this bundle's `canon/` —
-load if available) does **not** supply a single "required action" slogan for
-this detector: its Required action is a multi-item list written in
-FORENSIC / EDITORIAL / INTERPRETIVE **register** vocabulary (fit assessment
-`depiction-canon-fit-captioning-pipeline-2026-07-27.md:86-88`). Item 2 of
-that list includes the character-exact sentence *"Never make the depicted
-person fact-owner of will, essence, uncited identity, or guilt."* — quote
-that sentence only as card item-2 text when the card is loaded; do **not**
-present a truncated splice as "the card's required action". The load-bearing
-lexicon warrant for the Slice 1 cut is ATTRIB-01
-(`canon/lexicons/depiction.md:73`): "state visible cues only, or attribute
-the reading to viewer, convention, artefact, or named source". Berger
-verification recipe (distilled): pattern-match person-subject + mental
-predicate **without** appears / as-if / according-to (and the same hedge
-class: looks / seems). The attributive-frame / bearer-frame cut from
-assessment §2 item 5 is the operational cut: attributed surface readings
-stay; unmarked ownership fails. Do not call this cut "register" —
-`DescriptionRegister` is DEPICT-1 contract vocabulary.
+frame. The load-bearing lexicon warrant is ATTRIB-01
+(`canon/lexicons/depiction.md#attrib-01`): "state visible cues only, or
+attribute the reading to viewer, convention, artefact, or named source".
+Berger verification recipe (distilled evidence, not vocabulary): person-subject
++ mental predicate **without** appears / as-if / according-to (and looks /
+seems). Operational cut: attributed surface readings stay; unmarked ownership
+fails. Do not call this cut "register" — `DescriptionRegister` is DEPICT-1
+contract vocabulary.
 
 Changes:
 
@@ -589,72 +542,79 @@ Changes:
   )  # EVERY member must have a positive; no open "…" tail
   _INNER_COPULA_AFFECT = ("anxious", "angry", "proud")  # copula + interior adj
   _INNER_WILL_VERBS = ("want", "refuse")  # stems; match 3sg -s too (wants/refuses)
-  # Exemption side. Membership is a FLOOR, not the whole contract: ATTRIB-01
-  # licenses an OPEN class — "attribute the reading to viewer, convention,
-  # artefact, or named source" — so these are the members that must each carry
-  # a zero-hit proof, NOT an enumeration of what may be silenced. A suppression
-  # mechanism that is a membership test over these two tuples is a cheat the
-  # held-out set (item 4b) turns red.
+  # Exemption floor (must each carry a zero-hit proof). A suppression
+  # mechanism that is *only* membership over these two tuples fails proof 4b.
   _INNER_EPISTEMIC_HEDGES = ("seems", "looks", "appears", "as if", "reads as")
   _INNER_BEARER_FRAMES = ("apparently", "according to", "it seems", "said to be")
+  # Closed reporting / perception / source-frame lexicon for surface recovery
+  # (H-18: enumerated here — not invented by the implementer). Covers exactly
+  # the stems/frames needed by the floor + the five published 4b fixtures +
+  # the 4c trailing frame. Extending requires amending this plan.
+  _INNER_REPORTING_STEMS = (
+      "seems", "looks", "appears", "reads",           # perception / hedge
+      "records", "insists", "suggest", "suggests",    # reporting (4b)
+      "said",                                         # "said to be"
+  )
+  _INNER_SOURCE_FRAME_PATTERNS = (
+      "according to",           # floor bearer
+      "on ",                    # prefix for "on the curator's reading" — 4b
+      "by the conventions of",  # 4b convention frame
+      "apparently",             # floor bearer
+      "it seems",               # floor bearer
+      "as if",                  # floor hedge
+      "reads as",               # floor hedge
+  )
   ```
 
-  **Exemption mechanism (locked):** the frame check is **structural**, not a
-  literal-membership test — the affect / will predicate is exempt when it sits
-  inside the complement of a reporting or perception predicate, or under a
-  source-attributing adjunct, whoever the bearer is. Closed lexicons are right
-  for the **positive** side (the violating forms are enumerable) and wrong for
-  this side (the licensed forms are not). This is the same cut Slice 2 makes
-  for ATTRIB-08 — grammar plus a closed lexicon, not a full voice tagger — with
-  the grammar on the exemption side here because that is where the open class
-  is. Scoring an open acceptable set by string membership measures wording, not
-  attribution (mechanism sibling: [EVAL-11]; the load-bearing rows are
-  ATTRIB-01 for the license and [MEAS-11] for defining the observable on the
-  side being exempted, not only the side being counted).
+  **Exemption scope (EXIT B — bounded; not an open class):** the exemption
+  proof covers **exactly** (a) every member of `_INNER_EPISTEMIC_HEDGES` +
+  `_INNER_BEARER_FRAMES` and (b) the **five published held-out frames** in
+  proof 4b plus the trailing-frame negative in 4c. It does **not**
+  generalise beyond that published set; extending it requires amending this
+  plan. ATTRIB-01's lexicon license is broader in prose, but **this detector
+  contract is the finite published set below**.
 
-  **Surface recovery of "complement of" / "under" (locked; no parser, no
-  voice tagger):** "Complement of" is recovered by a **closed reporting /
-  perception / source-frame lexicon + linear token-window scan**, not a
-  dependency parse. Locked algorithm:
+  **Exemption mechanism (locked):** the affect / will predicate is exempt
+  when the linear-window test below recovers a frame from the closed
+  reporting lexicon / source-frame patterns (not a membership test over the
+  two floor tuples alone). Grammar + closed lexicon; no parser / voice tagger.
 
-  1. **Closed floor lexicons** (positive violation side stays
-     `_INNER_COPULA_AFFECT` / `_INNER_WILL_VERBS` / person tables;
-     exemption floor is `_INNER_EPISTEMIC_HEDGES` +
-     `_INNER_BEARER_FRAMES`). Floor membership is the proof floor for
-     item 4, **not** the boundary of ATTRIB-01's open licensed class
-     (held-out 4b proves the open side).
+  **Surface recovery (locked algorithm):**
+
+  1. **Closed floor + closed reporting lexicon** (tables above). Floor
+     membership is the proof floor for item 4; 4b held-outs are additional
+     published forms recovered via `_INNER_REPORTING_STEMS` /
+     `_INNER_SOURCE_FRAME_PATTERNS` + the linear window — **not** by
+     appending their full strings to the floor tuples.
   2. **Complementiser / frame-linker surface set** (closed):
      ` that `, zero-complementiser finite complement after a reporting
-     stem, and sentence-initial / pre-subject source-frame PPs
-     (`according to …`, `on … reading`, `by the conventions of …`).
+     stem, and sentence-initial / pre-subject source-frame PPs matching
+     `_INNER_SOURCE_FRAME_PATTERNS`.
   3. **Linear "sits inside the complement" test** (tokenise on whitespace /
      punctuation into list `T`; ownership span = person subject + unmarked
      copula+affect or person subject + will stem as index range `[i, j]`):
      the span is **exempt** when **any** of:
-     - **(a) Pre-subject frame adjunct**: a source-attributing PP /
-       adverbial (floor member **or** open-class held-out frame under 4b)
-       occupies tokens before the person subject in the same clause
+     - **(a) Pre-subject frame adjunct**: a source-frame pattern from the
+       closed set (floor or a 4b published form recovered via the reporting
+       lexicon) occupies tokens before the person subject in the same clause
        segment, with no clause splitter between frame and subject;
-     - **(b) Reporting-predicate + complementiser window**: a reporting /
-       perception stem at index `r < i` such that between `r` and `i`
-       there is a complementiser from the closed set (or
+     - **(b) Reporting-predicate + complementiser window**: a stem from
+       `_INNER_REPORTING_STEMS` at index `r < i` such that between `r` and
+       `i` there is a complementiser from the closed set (or
        zero-complementiser for finite-complement stems) **and** no clause
-       splitter, and `i - r ≤ 12` tokens (window bound — prevents
-       whole-caption forward silence);
-     - **(c) Post-predicate parenthetical / trailing frame**: a
-       bearer-frame or hedge (floor **or** held-out trailing frame under
-       4c) appears after `j` in the same clause segment within **8**
-       tokens (covers `"She is anxious, it seems,"` and trailing
-       `"…, on the curator's reading."`).
-  4. **Named REDs for this surface test**:
-     - membership-only over the two exemption floor tuples with no window /
-       structure → fails 4b;
+       splitter, and `i - r ≤ 12` tokens;
+     - **(c) Post-predicate parenthetical / trailing frame**: a floor
+       bearer/hedge **or** the published 4c trailing frame appears after
+       `j` in the same clause segment within **8** tokens.
+  4. **Named REDs**:
+     - membership-only over the two exemption floor tuples → fails 4b;
      - whole-caption "any hedge token anywhere" → fails 11a / 11b / 11c;
      - unlimited forward scan past clause splitters → fails mixed-caption
        proofs;
-     - a parser or voice-tagger dependency → **out of scope** (this plan
-       forbids it; the linear window + closed lexicon **is** the
-       mechanism a junior agent implements).
+     - stem-regex / alternation over only the five 4b stems with no window
+       structure → fails position-axis 4c positives and/or mixed-caption
+       proofs;
+     - parser or voice-tagger → **out of scope**.
 
   Minimum detectable patterns:
   - person pronoun / common person noun subject + **unmarked** copula +
@@ -673,27 +633,21 @@ Changes:
   furrowed-brow **visible cue** inventory without mental-state ownership.
   `seems` is the same hedge class as `looks` / `appears` (ATTRIB-01 / Berger
   recipe); do **not** treat hedged readings as person-as-fact-owner. The
-  listed forms are the floor, not the boundary: any reporting / perception
-  complement or source-attributing adjunct silences the reading, including
-  frames no table names (`the catalogue records that…`, `on the curator's
-  reading,…`) — proved by the held-out set in Proof item 4b.
+  listed forms are the floor; the five published 4b frames are additional
+  bounded exemptions recovered via the closed reporting lexicon (not by
+  appending their full strings to the floor tuples).
 - Surface hits as an additive report-only field on `CaptionScores`
   (`inner_state_attribution_hits: list[str]`, parallel to
-  `meta_framing_hits` at `caption_metrics.py:115`) populated inside
+  `meta_framing_hits`) populated inside
   `score_caption`. Do **not** leave the surface shape open (no "or sibling
   pure function" fork for the hit list that report emits). A pure helper used
   internally by `score_caption` is fine; the report-facing field is the
   `CaptionScores` list. Do not touch `gated_score`.
 - **Hit-list element semantics (locked; Slice 1)**: each element is the
   **matched surface text** of the ownership pattern, **lower-cased**, in
-  **source order** of first match — same contract shape as
-  `meta_framing_hits` (built at `caption_metrics.py:242-244` as `meta_hits`;
-  assigned onto `CaptionScores.meta_framing_hits` at
-  `caption_metrics.py:270`; field declared at `:115` — the matched table
-  phrase; here the matched caption span, lower-cased). Examples of legal
-  elements: `"she is anxious"`, `"he wants"`, `"the woman is proud"`.
-  Marker tokens (`"inner_state"`, `"copula"`, rule IDs) are **not** legal
-  elements. Slice 4 asserts exact literal membership against this contract.
+  **source order** of first match (same contract shape as
+  `meta_framing_hits`). Examples: `"she is anxious"`, `"he wants"`,
+  `"the woman is proud"`. Marker tokens are **not** legal elements.
 - Document in a short comment that this is report-only (LIBSYN-1 / F8) and that
   picture-in-picture style false positives are accepted at this stage the same
   way meta-framing accepts them.
@@ -808,42 +762,31 @@ defect even if every scaffold-variance case is listed.
      `"According to the curator, she is anxious by the doorway."`, and
      `"She is anxious, it seems, in the courtyard."` — and fails those
      zero-hit asserts. Those are the ATTRIB-01-licensed attributed
-     readings (`canon/lexicons/depiction.md:73`, `attrib-01`: "state
-     visible cues only, or attribute the reading to viewer, convention,
+     readings (`canon/lexicons/depiction.md#attrib-01`: "state visible
+     cues only, or attribute the reading to viewer, convention,
      artefact, or named source") that a frame-blind adjacency matcher
      cannot silence.
-   - **4b. Held-out generalisation set (mandatory; the frames below appear in
-     NO frozen table and MUST NOT be added to one).** Every negative above
-     uses a member of `_INNER_EPISTEMIC_HEDGES` / `_INNER_BEARER_FRAMES`, so
-     a suppression rule that is a **membership test over those two tuples** —
-     a hedge blocklist — passes item 4 entire while flagging attributions
-     ATTRIB-01 explicitly licenses. ATTRIB-01's licensed class is open
-     ("viewer, convention, artefact, or **named source**"); a closed literal
-     list cannot be the contract on that side, and freezing one there is the
-     [MEAS-11] failure of measuring the wording instead of the observable.
-     These captions are the permanent [TEST-15] guard on the **exemption**
-     mechanism — each is person subject + copula + affect **adjacent** (so a
-     bare adjacency regex fires) with an ATTRIB-01 frame that no table names,
-     and each must return **zero** hits:
+   - **4b. Published held-out exemption set (bounded; exactly five frames).**
+     Every negative above uses a member of `_INNER_EPISTEMIC_HEDGES` /
+     `_INNER_BEARER_FRAMES`, so a suppression rule that is **only**
+     membership over those two tuples passes item 4 while still flagging
+     the five frames below. These five are the **entire** additional
+     exemption proof set for Slice 1 — not an open class, not a sample of a
+     larger class. Extending beyond them requires amending this plan.
+     Each is person subject + copula + affect **adjacent** with a frame
+     recovered via `_INNER_REPORTING_STEMS` / `_INNER_SOURCE_FRAME_PATTERNS`
+     (not by appending the full frame string to the floor tuples), and each
+     must return **zero** hits:
      - `"The catalogue records that she is proud by the doorway."`
-       (artefact / record frame)
      - `"Her granddaughter insists that he is angry in the courtyard."`
-       (named-source frame, reporting verb absent from every table)
      - `"On the curator's reading, she is anxious near the window."`
-       (viewer frame, nominalised)
      - `"By the conventions of the studio portrait, the woman is proud near
-       the gate."` (convention frame — the fourth ATTRIB-01 bearer, and a
-       common-noun subject)
+       the gate."`
      - `"Museum records suggest the man is anxious by the window."`
-       (artefact frame + common-noun subject)
-     - Assert each: **zero** hits. A detector whose exemption path is
-       `any(frame in caption for frame in _INNER_BEARER_FRAMES +
-       _INNER_EPISTEMIC_HEDGES)` fires on all five and fails — that is the
-       named RED for this item, and it is the reason the exemption side is
-       specified as structure (reporting / perception complement, or
-       source-attributing adjunct) rather than membership. Held-out means
-       held out: fixing a failure here by appending `"the catalogue
-       records"` to a table is the cheat, not the fix.
+     - Assert each: **zero** hits. Named RED: membership-only over the two
+       floor tuples. Named RED: fixing a failure by appending full frame
+       strings (`"the catalogue records"`, etc.) to a floor table — the
+       source-guard contract forbids those literals in implementation.
    - **4c. Position-axis lock — leading-adjunct POSITIVE that must hit**
      (`test_inner_state_leading_adjunct_still_hits` or equivalent; kills the
      position cheat left open by 4b **and** its successor whitelist of
@@ -1118,7 +1061,7 @@ defect even if every scaffold-variance case is listed.
       (same contract; same test-module helper): the 4b/4c frame +
       held-out leading-adjunct guard under item 4c, and the Slice-2
       held-out event-noun / by-agent / non-agentive-by / gap-pool guards
-      — each freezes a different open class; none is prose-only.
+      — each invokes **## Source-guard contract**; none is prose-only.
     - **Trivial cheating implementation that must fail**:
       `return [caption.lower()] if caption in _PROOF_CAPTIONS else []`
       or any `frozenset` / dict membership over the finite closed list of
@@ -1130,7 +1073,7 @@ defect even if every scaffold-variance case is listed.
 13. **Command**:
     `uv run --extra dev pytest scene/tests/test_eval_harness_caption_metrics.py -k inner_state -q`
 
-### Slice 2: Agentless-passive / mutual-event detector (report-only)
+### Slice 2: Agentless-passive / mutual-event / actorless-event-noun detector (report-only)
 
 **Goal**: Pure-grammar detector for agentless passives, mutual-event nouns,
 and actorless event nouns (ATTRIB-08 **three** disjuncts) in violence /
@@ -1160,40 +1103,29 @@ Changes:
       "were beaten",
       "was enslaved",
       "were arrested",
-      "was shot",    # violence-sense shot (passive); NOT bare "shot"
+      "was shot",    # violence-sense shot passive; NOT bare shot
       "were shot",
   )  # EVERY form must have a positive + same-clause by-agent negative
-  # Floor exemplars for ATTRIB-08 disjuncts (2) mutual-event noun and
-  # (3) event noun that carries no actor. Name is historical; do NOT read
+  # Floor exemplars for ATTRIB-08 disjuncts 2 mutual-event noun and
+  # 3 event noun that carries no actor. Name is historical; do NOT read
   # membership as "mutual-event / symmetry only" — `"incident"` is the row's
-  # actorless-event-noun exemplar, not a mutual-event synonym. The third
-  # disjunct is an **open class**; these two tokens are the closed floor the
-  # detector must hit, not the vocabulary of the open class.
+  # actorless-event-noun exemplar. These two tokens are the closed floor.
   _MUTUAL_EVENT_NOUNS = (
-      "clash",      # mutual-event noun exemplar (disjunct 2)
-      "incident",   # actorless event-noun exemplar (disjunct 3)
-  )  # with determiner variants a/the/an as applicable; EVERY noun must have
-     # a violence-context positive AND a benign-context negative
+      "clash",      # mutual-event noun exemplar — disjunct 2
+      "incident",   # actorless event-noun exemplar — disjunct 3
+  )
+  # Gap-exemption proof floor (lexicon: "state the gap rather than invent an
+  # agent"). Structural gap patterns below cover exactly the published closed
+  # gap lexicon — not an open class (see gap-language exemption).
   _GAP_AGENT_PHRASES = (
       "agent not named in the record",
       "agent not in the record",
       "agent unknown",
-  )  # ATTRIB-08 gap-exemption **proof floor** only (lexicon: "state the
-     # gap rather than invent an agent"). Table membership is NOT the open
-     # class of compliant gap prose — proof 7's structural gap-statement
-     # test + held-out gap pool generalise beyond these three strings.
-  # Violence / oppression context gate for mutual-event / actorless-event
-  # nouns (TABLE MEMBERSHIP IS THE CONTRACT — independent of the passive
-  # detector). EVERY mutual-event / actorless-event positive must contain
-  # ≥1 member; benign negatives must contain none.
-  # Membership checks MUST use `_contains` (caption_metrics.py:59-74), not
-  # raw `needle in haystack` — see word-boundary lock below.
-  # Bare `"shot"` is INTENTIONALLY ABSENT from this context gate: it is a
-  # dominant photographic term in this corpus ("wide shot", "snapshot").
-  # Violence-sense `shot` is covered by the passive forms `"was shot"` /
-  # `"were shot"` in `_AGENTLESS_PASSIVE_FORMS` (proof 1 + photographic
-  # zero-hit in 8b) — do **not** re-add bare `"shot"` here without a
-  # disambiguating rule.
+  )
+  # Violence / oppression context gate (TABLE MEMBERSHIP IS THE CONTRACT).
+  # Scope: CAPTION-level (see violence-context scope lock below).
+  # Membership via `_contains` (word-boundary), not raw `in`.
+  # Bare `"shot"` INTENTIONALLY ABSENT (photographic dominant sense).
   _VIOLENCE_CONTEXT_TERMS = (
       "killed",
       "beaten",
@@ -1202,86 +1134,66 @@ Changes:
       "violence",
       "oppression",
   )
-  # Agent PP phrases for same-clause by-agent exemption proofs (parametrized;
-  # different word counts + internal capitalisation — do NOT freeze a single
-  # "by the Ohio National Guard" literal as the only agent). This table is a
-  # **proof floor**, not the exemption vocabulary: proof 4d holds out
-  # non-table agent phrases that must still exempt under generic by+agent-NP
-  # grammar.
+  # By-agent proof floor (exactly three). Held-out 4d covers exactly three
+  # additional published PPs — not an open agent class (see proof 4d).
   _BY_AGENT_PPS = (
-      "by the Ohio National Guard",   # multi-word, internal capitals
-      "by soldiers",                  # single common noun, lowercase
-      "by a campus patrol officer",   # multi-word, mixed case, article
+      "by the Ohio National Guard",
+      "by soldiers",
+      "by a campus patrol officer",
   )
   ```
 
   - **agentless passives** on the frozen violence/oppression forms **without**
-    a same-clause `by`-agent PP and **without** a same-clause gap-agent phrase
-    from `_GAP_AGENT_PHRASES`;
-  - **mutual-event nouns and actorless event nouns** from
-    `_MUTUAL_EVENT_NOUNS` when the caption also contains ≥1 member of
-    `_VIOLENCE_CONTEXT_TERMS` (closed list; do not generalise to every
-    English passive). The violence gate is **membership in
-    `_VIOLENCE_CONTEXT_TERMS` via the existing `_contains` helper**
-    (`caption_metrics.py:59-74` — word-boundary, case-insensitive;
-    documents the `cat`/`scattered` false-positive class). **Do not** use a
-    raw `term in caption.lower()` substring test — that passes every
-    mandated proof while false-firing on `"skilled"` (`killed`) and
-    `"snapshot"` (were bare `"shot"` present). Membership is independent of
-    whether any `_AGENTLESS_PASSIVE_FORMS` member is present — ATTRIB-08
-    (`canon/lexicons/depiction.md#attrib-08`, `depiction.md:80`) lists
-    **three** trigger disjuncts ("an agentless passive, a mutual-event
-    noun, **or** an event noun that carries no actor"), so a noun hit needs
-    no passive. Both `_MUTUAL_EVENT_NOUNS` members are **row exemplars** of
-    distinct disjuncts: `"a clash"` (mutual-event) and `"an incident"`
-    (actorless event noun) under v0.17.2. The third disjunct is an open
-    class; the table freezes only the floor exemplars the detector must
-    hit. Quote the lexicon row, not its `Src` distillation — distilled
-    source notes are evidence, not projected surfaces.
+    a same-clause `by`-agent PP and **without** a same-clause gap-statement
+    (floor `_GAP_AGENT_PHRASES` or structural gap pattern);
+  - **mutual-event nouns and actorless event nouns** from the floor +
+    published held-out noun pools when the **caption** also contains ≥1
+    member of `_VIOLENCE_CONTEXT_TERMS` via `_contains` (word-boundary;
+    not raw `in`). Gate is independent of passive presence — ATTRIB-08
+    (`canon/lexicons/depiction.md#attrib-08`) lists **three** Trigger-column
+    disjuncts. Quote the lexicon row, not its `Src` distillation.
+
+  **Violence-context scope (locked once; EXIT chosen = CAPTION):** the
+  violence gate is **caption-level** — fire the mutual-event / actorless-
+  event-noun branch when the **caption** (not merely the same clause as the
+  event nominal) contains ≥1 `_VIOLENCE_CONTEXT_TERMS` member via
+  `_contains`. Multi-clause captions where the violence term and the event
+  nominal sit in different clauses still gate on. Straddling fixture
+  (mandatory; makes the choice observable):
+  - `"Four students were killed; an incident followed."` → `"incident"` ∈
+    hits (and `"were killed"` ∈ hits). A clause-scoped gate that requires
+    the violence term inside the event-nominal's clause returns no
+    `"incident"` hit and fails.
+  Do **not** restate the gate as "clause also carries" anywhere else in
+  this plan — caption scope is the single contract.
 - Surface as report-only hit list on `CaptionScores`
   (`agentless_passive_hits: list[str]`, parallel to `meta_framing_hits`).
   Same surface lock as Slice 1: report-facing field is the `CaptionScores`
   list, not an open "or sibling pure function" fork. No `gated_score` change.
 - **Hit-list element semantics (locked; Slice 2)**: each element is the
   **matched surface text**, **lower-cased**, in **source order** of first
-  match — same contract as Slice 1 / `meta_framing_hits`. Passive hits emit
-  the matched form (e.g. `"were killed"`, `"was enslaved"`); mutual-event
-  hits emit the matched noun (e.g. `"clash"`, `"incident"`, and held-out
-  event-noun pool members under proofs 2b / 2c — pool members are
-  **not** published in this plan). Marker tokens (`"agentless"`,
-  `"mutual"`, rule IDs) are **not** legal elements.
-- **Scope (ATTRIB-08-aligned grammar + gap exemption, locked)**: detector is
-  grammar + closed violence/oppression lexicon, not a full voice tagger and
-  not a compliance rewriter. **Lexicon vs distilled (do not splice)**:
-  - Canon ATTRIB-08 (`canon/lexicons/depiction.md#attrib-08`,
-    `depiction.md:80`) warrants the exemption as: *"when the record does
-    not support naming who acted, state the gap rather than invent an
-    agent"*. Quote that lexicon wording for the rule; do **not** cite
-    distilled phrases as ATTRIB-08 row text.
-  - Distilled evidence
-    (`canon/distilled/accessibility/anti-racist-description-resources.md:29-30`)
-    separately records the exemption slogan *"Agent truly unknown from the
-    record → state unknown"* and the verification recipe *"named agent or
-    explicit 'agent not in record'"* — these are **evidence**, not lexicon
-    vocabulary. Cite them only as distilled, never as ATTRIB-08 text.
-  Therefore:
+  match. Passive hits emit the matched form; mutual-event / actorless-event
+  hits emit the matched noun (floor + published pool members under 2b/2c).
+  Marker tokens are **not** legal elements.
+- **Scope (ATTRIB-08-aligned grammar + gap exemption, locked)**: grammar +
+  closed violence/oppression lexicon; no voice tagger. Canon ATTRIB-08
+  (`canon/lexicons/depiction.md#attrib-08`) warrants the exemption as:
+  *"when the record does not support naming who acted, state the gap rather
+  than invent an agent"*. Distilled evidence is evidence only, never lexicon
+  vocabulary.
   - A passive **without** a same-clause `by`-agent and **without** a
-    same-clause gap-agent phrase is a hit.
-  - An explicit same-clause unknown-agent / gap statement from
-    `_GAP_AGENT_PHRASES` **does** exempt the passive (zero hit) — this is
-    compliant ATTRIB-08 prose (lexicon: state the gap), not a violation.
-    Do **not** flag captions that correctly state the gap.
-  - Name the gap-language test so a pure-syntax flip that re-flags compliant
-    gap prose is a regression.
-  - **Gap-language exemption — structural test (locked; not a three-string
-    floor)**: a passive is gap-exempt when the **same clause segment**
-    contains an **explicit gap-statement** about the agent, recovered by
-    grammar + closed gap lexicon — not by membership over
-    `_GAP_AGENT_PHRASES` alone:
-    1. **Closed gap-head / gap-predicate floor** — `_GAP_AGENT_PHRASES`
-       members are fixtures that must each zero-hit (proof 7); they do
-       **not** exhaust ATTRIB-08-compliant gap prose.
-    2. **Structural gap-statement patterns** (surface; no parser):
+    same-clause gap-statement is a hit.
+  - A same-clause gap-statement **does** exempt the passive — compliant
+    ATTRIB-08 prose. Do **not** flag captions that correctly state the gap.
+  - **Gap-language exemption — structural test (EXIT B: finite published
+    lexicon; not an open class)**: a passive is gap-exempt when the **same
+    clause segment** contains an **explicit gap-statement** about the agent.
+    Covers **exactly** the patterns and closed sets below; does not
+    generalise beyond them; extending requires amending this plan.
+    1. **Floor fixtures** — every `_GAP_AGENT_PHRASES` member must zero-hit
+       (proof 7).
+    2. **Structural gap-statement patterns** (surface; no parser) — closed
+       inventories:
        - parenthetical or same-clause phrase headed by `agent` + a
          gap-predicate from the closed set
          `{unknown, unnamed, not named, not in the record,
@@ -1294,17 +1206,50 @@ Changes:
          disagree on, omits, omit, unknown}` + optional
          `who` / `the agent` / `responsibility` complement
          (word-boundary, case-insensitive).
-    3. **Held-out gap pool** (test-module only; ≥2 strings; members **not**
-       published in this plan; disjoint from `_GAP_AGENT_PHRASES` and from
-       every published proof-7 caption): each pool member placed in the
-       parenthetical / same-clause slot of
-       `"Four students were killed ({gap}) on campus."` → **zero** hits.
-       Source-guard contract applies to pool members. Semantic arm: with
-       `_GAP_AGENT_PHRASES` emptied to `()`, each held-out gap caption
-       still zero-hits (structural path, not floor membership).
-    4. **Named RED**: `if any(g in clause for g in _GAP_AGENT_PHRASES):
-       exempt` as the whole exemption — fails the held-out gap pool.
-       Appending pool members to the floor fails the source guard.
+    3. **Published held-out gap pool** (test-module constants OK; **published
+       here for reproducibility** — EXIT B, not invent-your-own):
+       `("perpetrator unspecified", "responsible party not identified")`.
+       Each in `"Four students were killed ({gap}) on campus."` → **zero
+       agentless-passive hits** (scoped; the combined hit list must also
+       contain **no** actorless-event-noun element — see evidentiary-gap
+       exclusion below). Source-guard: these two full strings must not appear
+       as implementation membership-table constants (structural recovery via
+       the closed predicate set above). Semantic arm: with
+       `_GAP_AGENT_PHRASES` emptied to `()`, each still zero-hits.
+    4. **Named RED**: floor-membership-only exemption → fails held-out gap
+       pool. Appending pool strings to the floor → fails source guard.
+
+  - **Evidentiary-gap exclusion class for event-nominal detection (R-03;
+    computed property — do NOT close the noun-head class)**: disjunct-3
+    event-nominal matching **must not** flag gap-marking language the canon
+    rewards. Property (not a gap-noun membership list):
+
+    > A candidate event-nominal span is **suppressed** when its token span
+    > **overlaps** any structural gap-statement span recovered in the same
+    > clause segment (the patterns in (2) above, including floor
+    > `_GAP_AGENT_PHRASES` matches).
+
+    Consequences for published fixtures:
+    - `"Four students were killed (agent not in the record) on campus."` —
+      the PP `in the record` matches the event-locative slot shape
+      (`in` + `the` + singular noun) but **overlaps** the gap-statement
+      `agent not in the record` → **suppressed**. Assert: **zero entries**
+      in `agentless_passive_hits` (scoped once for all proof-7 / gap
+      fixtures: no passive element **and** no event-nominal element).
+    - Same for every proof-7 floor gap and the published held-out gap pool.
+    - Named RED: event-nominal slot matcher with only proper/temporal
+      exclusions and **no** gap-span overlap exclusion → false-fires on
+      `record` / `records` / `source` / `sources` / `archive` under
+      `in the ___` and fails proof 7's zero-hit assert.
+    - Do **not** fix this by adding `{record, records, …}` to a closed
+      exclusion-noun table — that re-freezes heads. The computed overlap
+      property is the contract.
+
+  **Hit-scope wording (locked once):** every "zero hits" / "0 hits" assert
+  under Slice 2 gap and by-agent exemptions means **zero entries in
+  `agentless_passive_hits`** (the combined list). When a fixture can also
+  trigger disjunct 2/3, the proof states which elements must be absent.
+  Prefer the scoped phrase **"zero agentless-passive hits"** in new text.
 - **Same-clause contract and clause-splitting rule (frozen)**: "same clause"
   is not "anywhere in the caption" and not "any text after the passive to
   end of caption". A junior implementer must split the caption into clause
@@ -1385,8 +1330,8 @@ Changes:
     **not** exempt a passive in this clause.
   - A **non-adjacent** same-clause `by`-agent (material between the passive
     and the `by`-PP) **does** exempt.
-  - Mutual-event nouns fire **only** when ≥1 `_VIOLENCE_CONTEXT_TERMS`
-    member is present; a benign `"clash of colors"` / `"incident of paint"`
+  - Mutual-event nouns fire **only** when the **caption** contains ≥1
+    `_VIOLENCE_CONTEXT_TERMS` member; a benign `"clash of colors"` / `"incident of paint"`
     must not hit. The gate does **not** require an `_AGENTLESS_PASSIVE_FORMS`
     member (active-voice violence + mutual-event still hits the noun).
 
@@ -1413,24 +1358,21 @@ Proof (TEST-15, `canon/lexicons/engineering.md#test-15`):
      membership `"were killed"` ∈ hits and (`"clash"` ∈ hits or
      `"incident"` ∈ hits). A detector that only knows `clash` fails on
      `incident`.
-2b. **Held-out actorless-event-noun generalisation (ATTRIB-08 disjunct 3
-   open class)**
+2b. **Actorless-event-noun beyond floor (ATTRIB-08 disjunct 3)**
    (`test_agentless_passive_held_out_actorless_event_noun` or equivalent;
    kills a frozen two-token vocabulary for disjunct 3). Canon
-   ATTRIB-08 (`canon/lexicons/depiction.md#attrib-08`, definition-anchor
-   form at `depiction.md:80`) lists the parenthetical
-   `("a clash", "an incident", "were killed")` as **exemplification**,
-   not enumeration: the Failure column names "an agentless passive, a
-   mutual-event noun, **or** an event noun that carries no actor". The
-   third disjunct is an open class; `_MUTUAL_EVENT_NOUNS = ("clash",
-   "incident")` freezes only the floor exemplars the detector must hit.
-   A suite that only proves those two tokens lets
-   `if noun in _MUTUAL_EVENT_NOUNS: flag` pretend to be the rule.
-   - **Class property — event-nominal slot under violence context
-     (locked; not "any determiner + singular noun")**: disjunct 3 fires
-     on a **singular common noun head in an event-nominal slot** when
-     the clause also carries ≥1 `_VIOLENCE_CONTEXT_TERMS` member via
-     `_contains`. Locked event-nominal slots (surface; no parser):
+   ATTRIB-08 (`canon/lexicons/depiction.md#attrib-08`) Trigger column
+   names "an agentless passive, a mutual-event noun, **or** an event noun
+   that carries no actor"; the parenthetical
+   `("a clash", "an incident", "were killed")` is exemplification.
+   `_MUTUAL_EVENT_NOUNS = ("clash", "incident")` is the closed floor.
+
+   - **Event-nominal slots (EXIT B — finite published inventory)**:
+     disjunct 3 fires on a singular common noun head in one of these
+     **exactly-N** published slots when the **caption** carries ≥1
+     `_VIOLENCE_CONTEXT_TERMS` member via `_contains`. Covers exactly
+     these forms; does not generalise beyond them; extending requires
+     amending this plan:
      1. object of event-locative preposition from closed set
         `{during, after, in, amid, following}` + determiner
         `{a, an, the}` + singular common noun head;
@@ -1438,116 +1380,78 @@ Proof (TEST-15, `canon/lexicons/engineering.md#test-15`):
         `{left, occurred, erupted, followed, began, ended}` with
         determiner + singular common noun head
         (template: `"An {n} of violence left four students dead on
-        campus."` — `"violence"` supplies the context term when the
-        gate is membership-only).
-     The open class is **independent of a closed event-noun vocabulary**
-     beyond the floor exemplars. It does **not** mean "any determiner +
-     singular noun head anywhere in a violence-context clause".
-   - **Disambiguator / negative class (locked; bounds 2b against proofs
-     3 and 4e)**: the open-class rule MUST NOT fire on NPs that are not
-     actorless event nouns. Closed exclusion classes are legal here —
-     they bound closed grammatical classes; they are **not** the open
-     event vocabulary:
-     1. **Proper / organization NP**: any token inside the NP after the
-        determiner carries internal capitalisation
-        (`the Ohio National Guard`), or the NP is a multi-token proper
-        name. **Negative fixture of the open-class rule** (also proof 3):
+        campus."`).
+     Not "any determiner + singular noun anywhere".
+
+   - **Noun heads**: floor `"incident"` (disjunct 3) is mandatory. Beyond
+     the floor, proof uses the **published pool** below (reproducible;
+     not invent-your-own). The head class is **not** closed by adding
+     gap-nouns to an exclusion table — evidentiary-gap exclusion is the
+     computed overlap property under Scope above.
+
+   - **Closed exclusion classes (EXIT B — not "open-class
+     disambiguators")**: the slot rule MUST NOT fire on:
+     1. **Proper / organization NP**: internal capitalisation after the
+        determiner, or multi-token proper name.
         `"Members of the Ohio National Guard killed four students on
         campus."` → **zero** actorless-event-noun hits (and zero passive
-        hits). Load-bearing claim: `Guard` / `National Guard` is **not**
-        an actorless event noun under the rule.
-     2. **Temporal NP**: head ∈ closed temporal set
+        hits).
+     2. **Temporal NP**: head ∈ closed set
         `{day, night, morning, evening, noon, afternoon, week, month,
-        year, hour, moment, time, season}` (word-boundary). **Negative
-        fixture of the open-class rule** (also keeps proof 4e green):
-        the determiner+noun `that day` inside
-        `"Four students were killed that day by soldiers."` contributes
-        **no** event-noun hit. (The by-agent exemption covers the
-        passive; the open-class rule must not independently flag `day`.)
-     3. **Slot discipline**: agent / patient participant NPs in
-        non-event slots (subject of an active violence verb; complement
-        of agentive `by`) are out of the event-nominal slots above by
-        construction — do **not** broaden to "any determiner + singular
-        noun in a violence-context clause".
-     **Named RED for over-broad open-class**:
-     `determiner + singular noun + violence → flag` with no slot
-     restriction and no proper/temporal exclusion → fails the negatives
-     above and/or proofs 3 / 4e.
-   - **Held-out positive pool (test-module only; class-level, not an
-     instance pair)**: do **not** treat any two published nouns as the
-     contract. A pool `_HELD_OUT_ACTORLESS_EVENT_NOUNS` lives **only**
-     in the test module and must satisfy:
-     1. **Minimum size** ≥3 singular common event nouns;
-     2. **Category**: each noun is placeable in an event-nominal slot
-        under violence context and denotes an event / occurrence (not a
-        person, org, temporal, or concrete object);
-     3. **Disjoint** (case-insensitive) from `_MUTUAL_EVENT_NOUNS`, every
-        other frozen Slice 2 table, and every caption literal published
-        in this plan's Slice 2 proofs;
-     4. **Not published** as concrete strings in this plan or any other
-        plan document;
-     5. **Authoring separation**: written in the test module without
-        copying implementation noun tables beyond the floor exemplars
-        named here.
-     At test time, for each pool noun `n`, assert a hit on:
-     - `"Four students were killed during a {n} on campus."` → `n` ∈ hits
-       (or whole-word in a hit); violence via `"killed"`;
-     - and at least one pool noun also under the non-agentive-subject
-       template
+        year, hour, moment, time, season}` (word-boundary).
+        `"Four students were killed that day by soldiers."` → `day`
+        contributes **no** event-noun hit.
+     3. **Slot discipline**: agent / patient participant NPs outside the
+        two published slots are out by construction.
+     4. **Evidentiary-gap overlap** (Scope): candidate spans overlapping
+        a gap-statement are suppressed.
+     **Named RED**: `determiner + singular noun + violence → flag` with
+     no slot restriction / no proper/temporal/gap exclusion → fails the
+     negatives above, proofs 3 / 4e, and/or proof 7.
+
+   - **Published positive pool** (EXIT B; published here for
+     reproducibility — M-17). `_HELD_OUT_ACTORLESS_EVENT_NOUNS` in the
+     **test module** (not implementation), exact members:
+     `("skirmish", "outbreak", "fracas")`.
+     Disjoint from `_MUTUAL_EVENT_NOUNS` and every frozen Slice 2 table.
+     For each pool noun `n`:
+     - `"Four students were killed during a {n} on campus."` → `n` ∈ hits;
+     - and at least one pool noun under
        `"An {n} of violence left four students dead on campus."`
-       (adjust `A`/`An`; sole load-bearing noun still `n`).
-     Floor passive may co-occur; the load-bearing assert is the
-     **actorless-event-noun** element, not only `"were killed"`.
-   - **Source-level guard (mandatory)**: per **## Source-guard contract**
-     over every pool member (AST constants on owned implementation path
-     set + article-strip + import RED + semantic arm: floor tables only,
-     no pool member appended → each pool caption still hits). Appending
-     pool members to `_MUTUAL_EVENT_NOUNS` (or any parallel noun table,
-     sibling module, or external import) goes red.
-   - **Named RED for membership-append / instance-pair floor**:
-     `if re.search(r"\b(clash|incident)\b", caption, re.I) and violence:
-     flag` (or membership over `_MUTUAL_EVENT_NOUNS` alone, or that floor
-     plus any finite append of pool members visible in implementation
-     constants). Pool members are absent from the floor at authoring
-     time; the cheat returns no noun hit and fails. A detector that only
-     lists any historical illustration pair published in older plan
-     drafts also fails the unpublished pool.
-   - **Legitimate shapes that must still pass**: benign non-violence
-     uses of novel event nouns remain zero-hit under the violence-context
-     gate (proof 8's class); only violence-context actorless event nouns
-     in event-nominal slots fire. Floor exemplars `"clash"` /
-     `"incident"` remain mandatory hits under proof 2 — the open-class
-     generalisation does **not** drop the floor. Proper/temporal
-     negatives above stay zero-hit.
-2c. **Held-out mutual-event-noun generalisation (ATTRIB-08 disjunct 2
-   open class)**
-   (`test_agentless_passive_held_out_mutual_event_noun` or equivalent;
-   companion to 2b — disjunct 2 must not rest on the single floor token
-   `"clash"` alone). Canon Failure column names "a mutual-event noun"
-   as its own disjunct; `"a clash"` is exemplification, not enumeration.
-   - **Class property**: same event-nominal slots and violence-context
-     gate as 2b, restricted to nouns that denote a **reciprocal /
-     symmetric multi-party event** (conflict / confrontation between
-     parties) rather than a one-sided actorless incident. Surface
-     recovery does **not** require a voice tagger: place the noun in an
-     event-nominal slot under violence context; the open class is
-     broader than membership in `{clash}`.
-   - **Disambiguator**: same proper-NP / temporal-NP / slot-discipline
-     exclusions as 2b (negatives under 2b / proofs 3 / 4e apply).
-   - **Held-out positive pool** `_HELD_OUT_MUTUAL_EVENT_NOUNS` in the
-     test module only: ≥2 nouns; disjoint from `_MUTUAL_EVENT_NOUNS`,
-     from `_HELD_OUT_ACTORLESS_EVENT_NOUNS`, from every frozen Slice 2
-     table, and from every published Slice 2 caption literal; members
-     **not** published in this plan; authoring separation as in 2b.
-     Template per pool noun `n`:
-     `"Four students were killed during a {n} on campus."` → `n` ∈ hits
-     (or whole-word in a hit).
-   - **Source-level guard**: per **## Source-guard contract** on every
-     pool member (semantic arm: floor only → still hits).
-   - **Named RED**:
-     `if re.search(r"\bclash\b", caption, re.I) and violence: flag`
-     (single-token floor, or floor plus finite append) — fails the
-     unpublished mutual-event pool.
+       (adjust `A`/`An`).
+     Load-bearing assert is the **actorless-event-noun** element.
+     **Hold-out axis** (not invent-your-own nouns): the subject-slot
+     template above must hit without template-specific hardcoding of only
+     the `during a {n}` shape — a detector that only regex-matches
+     `during (?:a|an|the) (?:skirmish|outbreak|fracas|incident|clash)`
+     and ignores the subject-slot template fails the subject-slot row.
+
+   - **Source-level guard**: per **## Source-guard contract** over every
+     pool member (folded-AST + runtime positive-set arm + semantic arm:
+     floor only, no pool member appended → each pool caption still hits).
+
+   - **Named RED**: membership over `_MUTUAL_EVENT_NOUNS` alone (or floor
+     + append of pool members into implementation constants).
+
+   - **Legitimate shapes**: floor `"clash"` / `"incident"` remain
+     mandatory under proof 2; benign non-violence uses stay zero-hit
+     (proof 8); proper/temporal/gap negatives stay zero-hit.
+
+2c. **Mutual-event-noun beyond floor (ATTRIB-08 disjunct 2)**
+   (`test_agentless_passive_held_out_mutual_event_noun` or equivalent).
+   Trigger column names "a mutual-event noun" as its own disjunct; floor
+   token is `"clash"`.
+   - **Slots + violence gate**: same finite published slots and
+     caption-level violence gate as 2b, restricted to nouns that denote a
+     **reciprocal / symmetric multi-party event**.
+   - **Exclusions**: same closed proper/temporal/slot/gap exclusions as 2b.
+   - **Published positive pool** (EXIT B; exact members):
+     `_HELD_OUT_MUTUAL_EVENT_NOUNS = ("melee", "brawl")` in the test
+     module only; disjoint from floor and from the 2b pool.
+     Template: `"Four students were killed during a {n} on campus."` →
+     `n` ∈ hits.
+   - **Source-level guard**: per **## Source-guard contract**.
+   - **Named RED**: single-token `"clash"` floor (or floor + append).
 3. **Discrimination case — active voice named agent, no mutual-event noun**:
    - Caption: `"Members of the Ohio National Guard killed four students on campus."`
    - Assert: **zero** hits (active voice; no `_MUTUAL_EVENT_NOUNS` member).
@@ -1579,7 +1483,7 @@ Proof (TEST-15, `canon/lexicons/engineering.md#test-15`):
      mutual-event noun present. **At least one caption must be active
      voice** (no `_AGENTLESS_PASSIVE_FORMS` member) so ATTRIB-08's
      mutual-event failure is independent of passive voice
-     (`canon/lexicons/depiction.md:80`).
+     (`canon/lexicons/depiction.md#attrib-08`).
    - **Locked fixture set** (parametrize; assert `"clash"` ∈ hits or
      `"incident"` ∈ hits as noted; exact lower-cased matched surface):
      | Term (sole context) | Caption | Voice | Assert |
@@ -1620,50 +1524,34 @@ Proof (TEST-15, `canon/lexicons/engineering.md#test-15`):
      fire-on-any-passive implementation fails this case; a detector that
      special-cases only `"by the Ohio National Guard"` fails on
      `"by soldiers"` and `"by a campus patrol officer"`.
-4d. **Held-out by-agent generalisation — non-table agent phrases MUST exempt**
+4d. **Held-out by-agent phrases — non-table agents MUST exempt (EXIT B:
+   exactly three published PPs)**
    (`test_agentless_passive_held_out_by_agent_exempt` or equivalent; kills
-   an exact agent-phrase whitelist over `_BY_AGENT_PPS`). Every exemption
-   proof in 4 / 5 / 6a draws its agent from the three frozen
-   `_BY_AGENT_PPS` strings, so
-   `if any(a in clause for a in _BY_AGENT_PPS): exempt` satisfies the whole
-   suite without recognising generic `by` + agent-NP grammar.
-   - **Held-out agent phrases** (appear in **no** frozen table; MUST NOT be
-     added to `_BY_AGENT_PPS` to green the suite):
+   an exact agent-phrase whitelist over `_BY_AGENT_PPS` alone). Every
+   exemption proof in 4 / 5 / 6a draws its agent from the three frozen
+   `_BY_AGENT_PPS` strings, so floor-membership-only exemption greening
+   those proofs does not cover the three held-outs below.
+   - **Held-out agent phrases** (covers **exactly** these three; does not
+     generalise beyond them; extending requires amending this plan; MUST
+     NOT be added to `_BY_AGENT_PPS`):
      - `"by the mayor"`
      - `"by a journalist"`
      - `"by campus security staff"`
    - Templates (adjacent + one non-adjacent):
      - `"Four students were killed {held_out_pp} on campus."` for each
-       held-out PP → **zero** agentless-passive hits (and zero combined
-       hit-list entries from the passive — Slice 2 emits one combined hit
-       list; scoped assert is **zero agentless-passive hits**, which with
-       no mutual-event noun present means the whole list is empty).
+       held-out PP → **zero agentless-passive hits**.
      - `"Four students were killed on campus yesterday {held_out_pp}
-       during roll call."` for at least one held-out PP → **zero**
-       agentless-passive hits (same scoped reading).
-   - Assert each: **zero agentless-passive hits** (scoped; not a vague
-     "0 hits" that could be read as a different combined-list contract).
-   - **Source-level guard (mandatory; not prose-only)**: per
-     **## Source-guard contract** over the three held-out PP literals
-     (AST constants on owned implementation path set + article-stripped
-     phrase forms e.g. `"by the mayor"` / `"by mayor"` — **not** bare
-     `"mayor"` alone, which a legitimate agentivity head lexicon may
-     contain — + import RED + **semantic arm**: with `_BY_AGENT_PPS`
-     emptied to `()`, each held-out caption still returns zero
-     agentless-passive hits via generic `by` + agent-NP grammar).
-     Appending these phrases to `_BY_AGENT_PPS` (or a sibling / external
-     table) is the cheat and fails the guard — the prose "Held-out means
-     held out" is **not** sufficient on its own.
-   - **Trivial cheating implementation that must fail**:
-     `if any(a in clause for a in _BY_AGENT_PPS): exempt else: hit` —
-     held-out agents are absent from the table, so the whitelist still hits
-     and fails. The exemption path must recognise generic same-clause
-     `by` + **agentive** NP (see proof 4f for the agentivity cut), not
-     membership in the proof-floor table.
-   - **Interaction with proof 6a**: still-hit fixtures continue to use
-     **only** `_BY_AGENT_PPS` members so a membership-only exemption with
-     no clause model cannot pass by ignoring unknown agents. 4d is the
-     exemption-side generalisation; 6a is the locality-side lock.
+       during roll call."` for at least one held-out PP → **zero
+       agentless-passive hits**.
+   - **Source-level guard**: per **## Source-guard contract** over the
+     three PP literals (article-stripped forms e.g. `"by the mayor"` /
+     `"by mayor"` — **not** bare `"mayor"` alone; semantic arm: with
+     `_BY_AGENT_PPS` emptied to `()`, each still zero-hits via same-clause
+     `by` + agentive-NP recovery for these published forms; see 4f).
+   - **Named RED**: `if any(a in clause for a in _BY_AGENT_PPS): exempt
+     else: hit` — fails the three held-outs.
+   - **Interaction with proof 6a**: still-hit fixtures use **only**
+     `_BY_AGENT_PPS` members (locality lock).
 4e. **Determiner-`that` / prepositional-`as` before a same-clause by-PP MUST
    still exempt**
    (`test_agentless_passive_that_as_not_unconditional_splitters` or
@@ -1880,45 +1768,32 @@ Proof (TEST-15, `canon/lexicons/engineering.md#test-15`):
      - `if any(a in caption.lower() for a in _BY_AGENT_PPS): return []`
        (membership, no clause model) — every caption here contains a table
        member and still must hit.
-7. **Gap-language exemption (ATTRIB-08 compliant prose → zero hit),
-   parametrized over EVERY `_GAP_AGENT_PHRASES` member + held-out
-   structural gap pool**
+7. **Gap-language exemption (ATTRIB-08 compliant prose → zero combined
+   hits), parametrized over EVERY `_GAP_AGENT_PHRASES` member + published
+   held-out gap pool**
    (`test_agentless_passive_gap_language_exempt` or equivalent):
-   - **Floor fixtures** (explicit same-clause unknown-agent statement)
-     for each
+   - **Floor fixtures** for each
      `gap ∈ {agent not named in the record, agent not in the record,
      agent unknown}`:
      `"Four students were killed ({gap}) on campus."`
-     Assert each: **zero** agentless-passive hits. Canon ATTRIB-08
-     (`depiction.md:80`) warrants this as *"state the gap rather than
-     invent an agent"* — compliant, not a violation. Distilled evidence
-     (`anti-racist-description-resources.md:29-30`) records a parallel
-     exemption slogan; cite it only as distilled, not as ATTRIB-08 text.
-   - **Structural test** (locked under Scope above): gap exemption is the
-     structural gap-statement predicate over the closed gap-head /
-     gap-predicate lexicon, **not** membership over the three floor
-     strings alone. Unlisted compliant phrasings that match the
-     structural patterns (record-gap clause / agent+gap-predicate) must
-     also zero-hit.
-   - **Held-out gap pool** (test-module only; ≥2; members not published
-     in this plan; disjoint from `_GAP_AGENT_PHRASES`): each
-     `"Four students were killed ({gap}) on campus."` → **zero**
-     agentless-passive hits. **Source-level guard** per
-     **## Source-guard contract** on pool members. **Semantic arm**: with
-     `_GAP_AGENT_PHRASES` emptied to `()`, each held-out gap caption still
-     zero-hits.
-   - **Trivial cheating implementations that must fail**:
-     - fire on every `were killed` regardless of gap phrase (pure-syntax
-       counter with no ATTRIB-08 exemption);
-     - hardcode only the single string
-       `"agent not named in the record"` — fails on
-       `"agent not in the record"` and `"agent unknown"`;
-     - `if any(g in clause for g in _GAP_AGENT_PHRASES): exempt` as the
-       whole exemption — fails the held-out gap pool;
-     - appending pool members to `_GAP_AGENT_PHRASES` — fails the source
-       guard.
-   - Companion red-first (no gap phrase): `"Four students were killed on campus."`
-     still hits (proof 1) so a constant-empty "always exempt" cheat fails.
+     Assert each: **zero entries in `agentless_passive_hits`** — no
+     passive element **and** no event-nominal element (evidentiary-gap
+     exclusion suppresses `in the record` as a false disjunct-3 hit).
+     Canon ATTRIB-08 (`canon/lexicons/depiction.md#attrib-08`) warrants
+     this as *"state the gap rather than invent an agent"*.
+   - **Structural test**: see Scope (finite published gap lexicon +
+     span-overlap exclusion for event-nominals).
+   - **Published held-out gap pool**
+     `("perpetrator unspecified", "responsible party not identified")`:
+     each `"Four students were killed ({gap}) on campus."` → **zero
+     entries in `agentless_passive_hits`**. Source-guard + semantic arm
+     per Scope.
+   - **Named REDs**: fire on every `were killed` regardless of gap;
+     floor-membership-only exemption; event-nominal slot matcher without
+     gap-span overlap exclusion (false-fires on `record`); append pool
+     strings to floor.
+   - Companion red-first: `"Four students were killed on campus."` still
+     hits (proof 1).
 7b. **Different-clause / prior-sentence gap does NOT exempt**
    (`test_agentless_passive_gap_different_clause_still_hits` or equivalent;
    mirrors proof 6's different-clause `by` lock; kills whole-caption substring
@@ -1957,7 +1832,8 @@ Proof (TEST-15, `canon/lexicons/engineering.md#test-15`):
    - Captions: `"A clash of colors fills the poster."` and
      `"An incident of paint stains the canvas."`
    - Assert each: **zero** mutual-event hits (and zero hits overall). Neither
-     caption contains any `_VIOLENCE_CONTEXT_TERMS` member.
+     caption contains any `_VIOLENCE_CONTEXT_TERMS` member (caption-level
+     gate; see Scope).
    - **Trivial cheating implementation that must fail**:
      `if re.search(r"\b(clash|incident)\b", caption, re.I): return [match]`
      (no `_VIOLENCE_CONTEXT_TERMS` membership gate). These benign captions
@@ -2031,11 +1907,12 @@ Proof (TEST-15, `canon/lexicons/engineering.md#test-15`):
 9. **Command**:
    `uv run --extra dev pytest scene/tests/test_eval_harness_caption_metrics.py -k agentless_passive -q`
 
-### Slice 3: Verified signal-density ranking axis + Williams/C5 resolution
+### Slice 3: Verified signal-density measurement + Williams/C5 resolution
 
-**Goal**: Land **verified facts per 100 words** as a ranking companion (not a
-gate), with the EVAL-11 / card guard that unverifiable specificity scores zero;
-write the Williams/C5 resolution into the module docstring.
+**Goal**: Land **verified facts per 100 words** as a report measurement (not a
+gate; ranking *sort* unowned — see **Objective**), with the EVAL-11 / card
+guard that unverifiable specificity scores zero; write the Williams/C5
+resolution into the module docstring.
 
 **Canon**:
 
@@ -2068,8 +1945,8 @@ write the Williams/C5 resolution into the module docstring.
 **Distilled load-bearing residue for EVAL-11**: Huyen ch.3 — open-ended
 generation scored by exact match / lexical flash rejects good novel phrasings
 and accepts fluent wrong ones; pick a scorer from task success. Density is that
-scorer for the bake-off ranking axis: checkable substance per listen cost, not
-word count or rare nouns.
+scorer for density as a measurement companion: checkable substance per listen cost, not
+word count or rare nouns. Ranking *sort* remains unowned (see **Objective**).
 
 Changes:
 
@@ -2330,12 +2207,9 @@ could never go green.
 **Goal**: Close the orphaned-consumer gap for *measurement*. Pure scorers in
 `caption_metrics.py` that nobody emits leave density numbers unreachable.
 Own a **thin additive** emit in `report.py` so report JSON carries the new
-keys **with live values**. This emit **is** assessment §6e Lane C Carries
-"report emit of new fields" (assessment heading
-`#### §6e ownership table`; Lane C Carries) — dispatched Lane C work, not
-an extra invented outside the assessment. Slice 3 / Slice 4 / ranking
-boundary: see Objective DoD table. Do **not** implement bake-off ranking
-*sort* here.
+keys **with live values**. This emit is the Lane C Carries report-emit
+row in the **Objective** DoD table. Do **not** implement bake-off ranking
+*sort* here (unowned and unmet).
 
 **Depends on**: Slices 1–3 pure APIs green.
 
@@ -2806,9 +2680,8 @@ Do **not** assert key presence alone.
    uv run --extra dev pytest scene/tests/test_eval_harness_report_depiction.py -q
    ```
 
-**§3.1 land condition / GPU-window gate**: see Objective DoD table
-(Slice 3 = produce density axis + Williams/C5; Slice 4 = Lane C Carries
-report emit; ranking *sort* unowned). Playbook anchor:
+**§3.1 land condition**: see **Objective** (measurement + emit landed;
+ranking *sort* unowned/unmet). Playbook:
 `### 3.1 Add a signal-density metric to the eval harness`.
 
 ## Consolidated Checklist
@@ -2816,277 +2689,62 @@ report emit; ranking *sort* unowned). Playbook anchor:
 ### Context and Ownership
 
 - [ ] Loaded testing-python / backend-python / development-workflow rules.
-- [ ] Confirmed owned paths: `caption_metrics.py`,
-      `test_eval_harness_caption_metrics.py`, Slice 4 thin `report.py` emit,
-      and reserved `test_eval_harness_report_depiction.py` only; no bakeoff
-      ranking, schemas, prompts, `test_eval_harness_pipeline.py`, or `canon/`
-      edits.
-- [ ] Re-verified cited rule IDs with definition-anchor grep against
-      `$CANON_LEXICONS_ROOT` / `<bundle-root>/canon/lexicons/` (sibling of
-      `repo/`; not bare `canon/lexicons/` from inside `repo/`) before
-      implementation review.
-- [ ] Relative markdown links resolve from `docs/tasks/depiction/` (no
-      `../../docs/...` extra segment; no `../../../canon/...` links). Playbook
-      is **in-tree** at `docs/runbooks/fir-captioning-orchestrator-playbook.md`
-      — cite by section heading.
+- [ ] Owned paths only (see **Constraints**); no bakeoff ranking, schemas,
+      prompts, `test_eval_harness_pipeline.py`, or `canon/` edits.
+- [ ] Re-verified cited rule IDs:
+      `grep -rE '^\| *\`?<ID><a name' canon/lexicons/`.
+- [ ] Relative markdown links resolve from `docs/tasks/depiction/`. Playbook:
+      `docs/runbooks/fir-captioning-orchestrator-playbook.md` (cite by heading).
 
 ### Checklist for Slice 1: Inner-state-attribution counter
 
-- [ ] Freeze closed tables `_INNER_PERSON_PRONOUNS`, `_INNER_COMMON_PERSON_NOUNS`,
-      `_INNER_COPULA_AFFECT`, `_INNER_WILL_VERBS` exactly as Slice 1 lists.
-- [ ] Parametrize copula/affect red-first over every pronoun × every affect adj
-      (incl. `proud`) with **varied scaffolds** (no sole `"beside the railing"`;
-      e.g. near the window / by the doorway / in the courtyard).
-- [ ] Parametrize will red-first over every pronoun × every will stem
-      (`want`/`refuse`, incl. 3sg `wants`/`refuses`) with **varied complements**
-      (no sole `"to leave the railing"`).
-- [ ] Write discrimination: attributed `"Her expression reads as {adj}…"` for
-      every affect adj → 0 hits.
-- [ ] Write hedge discrimination for **each** of `seems` / `looks` / `appears` /
-      `as if` → 0 hits (not just `seems` / `reads as`).
-- [ ] Write hedged-WITH-COPULA / external-frame negatives → 0 hits:
-      adjacent-copula + external frame `"Apparently she is {adj}…"`,
-      `"According to the curator, she is {adj}…"`,
-      `"She is {adj}, it seems, …"`; keep one intervening-frame
-      `"She is said to be {adj}…"`; hedged-will
-      `"He appears to want to open the gate."` (external-frame fixtures
-      force frame check; intervening-frame alone does not defeat adjacency).
-- [ ] Write the **held-out exemption-frame set** (item 4b) → 0 hits each:
-      `"The catalogue records that she is proud…"`,
-      `"Her granddaughter insists that he is angry…"`,
-      `"On the curator's reading, she is anxious…"`,
-      `"By the conventions of the studio portrait, the woman is proud…"`,
-      `"Museum records suggest the man is anxious…"` — none of these frames
-      may appear in `_INNER_EPISTEMIC_HEDGES` / `_INNER_BEARER_FRAMES`.
-      **Source-level guard (item 4c)** per **## Source-guard contract**
-      (AST + article-strip + import RED + semantic arm — not raw
-      `read_text()`, not prose alone). Named RED: a hedge-blocklist
-      exemption path fires on all five.
-- [ ] Write **position-axis lock** (item 4c): scaffold leading-adjunct
-      positives `"Near the window, she is anxious."` /
-      `"By the doorway, he is angry."` /
-      `"In the courtyard, the woman is proud."` → ≥1 hit each; **held-out**
-      leading-adjunct positives `"Outside the gate, she is anxious."` /
-      `"Along the fence line, he is angry."` → ≥1 hit each (source guard
-      per **## Source-guard contract**); trailing-frame negative
-      `"She is anxious near the window, on the curator's reading."` → 0
-      hits. Named RED: `not subject_is_sentence_initial` exemption **or**
-      any closed set of leading-adjunct strings.
-- [ ] Write will-branch non-hit: `"She reaches for the gate."` → 0 hits;
-      physical/non-person will-stem zeros `"The gate refuses to open."` /
-      `"The poster wants for nothing."` → 0 hits each.
-- [ ] Write visible-cue control: furrowed brow / tight jaw → 0 hits.
-- [ ] Parametrize common-noun copula over EVERY noun × EVERY affect adj
-      (`anxious`/`angry`/`proud`) with varied scaffolds → ≥1 hit each.
-- [ ] Parametrize common-noun will over EVERY noun × EVERY will stem
-      (`wants` and `refuses` surfaces; varied complements) → ≥1 hit each.
-- [ ] Parametrize attributed common-noun discrimination over EVERY noun → 0 hits.
-- [ ] Write permanent subject-class / predicate-class strip guards
-      (non-person subject + affect/will → 0; person subject + no frozen
-      predicate → 0) and keep scaffold-variance positive
-      `"She is anxious near the window."` as the railing-lookup kill.
-- [ ] Write mixed-caption hedge discrimination:
-      11a cross-sentence `"He seems angry…. She is anxious…."` → ≥1 hit;
-      11b co-sentential `"He seems angry near the window and she is anxious
-      by the doorway."` → ≥1 hit (kills per-sentence hedge suppression);
-      11c intra-clause `"She is anxious in a scene that looks staged."` /
-      `"He is angry beside a poster that appears torn."` → ≥1 hit each
-      (kills per-clause / `" and "`-split hedge suppression).
-- [ ] Write held-out generalisation proof: compose frozen subject × predicate
-      tables with adjuncts from a pool declared in the TEST module only;
-      pool meets quality bar (min size, grammatical category, disjoint from
-      frozen tables/fixtures, authoring separation); assert ≥1 hit each;
-      source-level guard per **## Source-guard contract**.
-- [ ] Hit-list elements = lower-cased matched surface text in source order
-      (not marker tokens).
-- [ ] Implement detector + `CaptionScores.inner_state_attribution_hits` in `caption_metrics.py`.
-- [ ] Confirm `gated_score` unchanged on positive hits.
-- [ ] Terminology: attributive/bearer frame only — not "register".
-- [ ] `uv run --extra dev pytest scene/tests/test_eval_harness_caption_metrics.py -k inner_state -q` green.
+- [ ] Freeze positive tables + exemption floor + `_INNER_REPORTING_STEMS` /
+      `_INNER_SOURCE_FRAME_PATTERNS` exactly as Slice 1 lists (EXIT B
+      exemption set: floor + five published 4b frames).
+- [ ] Implement all Slice 1 Proof items 1–13 (parametrized positives,
+      hedges, 4b/4c, will carve-outs, common-noun product, mixed 11a–11c,
+      held-out adjunct pool, source-guard contract).
+- [ ] `CaptionScores.inner_state_attribution_hits`; `gated_score` unchanged.
+- [ ] `pytest … -k inner_state -q` green.
 
-### Checklist for Slice 2: Agentless-passive / mutual-event detector
+### Checklist for Slice 2: Agentless-passive / mutual-event / actorless-event-noun
 
-- [ ] Freeze `_AGENTLESS_PASSIVE_FORMS` (incl. `"was shot"` / `"were shot"`),
-      `_MUTUAL_EVENT_NOUNS` (clash = mutual-event exemplar; incident =
-      actorless-event-noun exemplar — three ATTRIB-08 disjuncts),
-      `_GAP_AGENT_PHRASES`, `_VIOLENCE_CONTEXT_TERMS` (**no** bare `"shot"`),
-      `_BY_AGENT_PPS` (proof floor, not exemption whitelist).
-- [ ] State frozen clause-splitting rule (sentence terminators + `;` +
-      coordinating-comma patterns `, and `/`, but `/`, or ` + subordinators;
-      bare `,` is NOT a splitter; bare `\bthat\b` / `\bas\b` are NOT
-      unconditional splitters — clausal only when the locked finite-clause
-      surface test fires: finite auxiliary/modal/copula from the closed
-      set in the next N=6 tokens) as part of the same-clause contract.
-- [ ] Violence-context membership uses `_contains` (`caption_metrics.py:59-74`),
-      not raw `in`.
-- [ ] Parametrize agentless-passive red-first over EVERY passive form
-      (`was killed`, `were killed`, `were beaten`, `was enslaved`,
-      `were arrested`, `was shot`, `were shot`).
-- [ ] Parametrize mutual-event / actorless-event red-first over EVERY noun
-      (`clash`, `incident`) under `_VIOLENCE_CONTEXT_TERMS` membership.
-- [ ] Write held-out actorless-event-noun generalisation (proof 2b):
-      class property = event-nominal slot under violence context with
-      proper/temporal exclusions; test-module pool ≥3 (members not
-      published); source guard per **## Source-guard contract**; negatives
-      include proof 3 / `that day` as open-class discrimination cases.
-- [ ] Write held-out mutual-event-noun generalisation (proof 2c):
-      test-module pool ≥2 reciprocal-event nouns; source guard per
-      contract; kills single-token `"clash"` floor as the whole of
-      disjunct 2.
-- [ ] Write discrimination: active-voice named agent, no mutual-event → 0 hits.
-- [ ] Write active-voice + clash under violence context → `"clash"` hit,
-      no passive-form element (proof 3b).
-- [ ] Write per-term violence-context positives (proof 3c): each remaining
-      `_VIOLENCE_CONTEXT_TERMS` member as SOLE signal, ≥1 active-voice → hit
-      (kills `"killed"`-only proxy).
-- [ ] Parametrize adjacent same-clause by-agent exemption over EVERY passive
-      form × EVERY `_BY_AGENT_PPS` member → 0 hits.
-- [ ] Parametrize non-adjacent same-clause by-agent exemption over EVERY
-      passive form × EVERY `_BY_AGENT_PPS` member → 0 hits.
-- [ ] Write held-out by-agent generalisation (proof 4d): non-table agents
-      `"by the mayor"` / `"by a journalist"` / `"by campus security staff"`
-      → **zero agentless-passive hits** each (scoped wording; kills exact
-      agent-phrase whitelist); source guard per **## Source-guard
-      contract** (not prose-only).
-- [ ] Write non-agentive `by` still-hits (proof 4f): agentivity class
-      property (animacy/organisation-head test); fixtures
-      `"…killed by noon…"` / `"…by mistake…"` / `"…by chance…"` →
-      `"were killed"` ∈ hits each; held-out non-agentive pool ≥1; source
-      guard per contract (kills generic `by`+token exemption and
-      three-string blocklist).
-- [ ] Write determiner-`that` / prepositional-`as` zero-hits (proof 4e):
-      `"…killed that day by soldiers."` /
-      `"…killed as teenagers by the Ohio National Guard."` /
-      `"…killed by that campus patrol officer…"` → 0 hits each.
-- [ ] Write different-clause unrelated-`by` still-hits (prior clause) using a
-      `_BY_AGENT_PPS` MEMBER
-      (`"A report by soldiers says four students were killed…"`) → ≥1 hit.
-- [ ] Write clause-splitter still-hits (proof 6a): parametrize over EVERY
-      locked terminator / coordinator / subordinator with `_BY_AGENT_PPS`
-      MEMBERS only (table in proof 6a) → `"were killed"` ∈ hits each; re-check
-      gap `"…were killed, agent unknown, on campus."` → 0 hits under bare-comma
-      non-split rule. No non-table agents (`"by the mayor"`, etc.).
-- [ ] Parametrize following-sentence by-agent still-hits over EVERY passive
-      form × `_BY_AGENT_PPS` members
-      (`…{passive_form} on campus. The parade was led {agent_pp}."`)
-      → ≥1 hit each.
-- [ ] Write shared `_contains` **dependency** proof 8c: monkeypatch
-      `_contains` to always-False → mutual-event element absent; restore →
-      present (verdict flips with return value; call-only spy is not enough).
-- [ ] Write violence-sense shot positives (paired with photographic zero-hit):
-      `"Four students were shot on campus."` / `"The man was shot near the
-      gate."` → hit; `"…wide shot…"` → 0 hits.
-- [ ] Parametrize gap-language **exemption** over EVERY `_GAP_AGENT_PHRASES`
-      member (same-clause parenthetical) → 0 hits; plus held-out structural
-      gap pool ≥2 with source guard / semantic arm (structural gap-
-      statement test, not a three-string floor).
-- [ ] Write different-clause / prior-sentence gap still-hits
-      (`"Agent unknown. Four students were killed on campus."` and the other
-      two gap phrases as prior sentence) → ≥1 hit each.
-- [ ] Parametrize following-sentence gap still-hits over EVERY passive form ×
-      EVERY gap phrase → ≥1 hit each.
-- [ ] Parametrize benign mutual-event no-hit over EVERY noun
-      (`clash of colors`, `incident of paint`) → 0 hits.
-- [ ] Write word-boundary negative (proof 8b):
-      `"A skilled artist captures a clash of colors."` → 0 hits
-      (`killed`⊂`skilled` only; no dead `shot`/`snapshot` arm — `"shot"`
-      intentionally absent from the table); plus photographic absence
-      `"A clash of colors dominates this wide shot."` → 0 hits.
-- [ ] Hit-list elements = lower-cased matched surface text in source order
-      (form / noun strings, not marker tokens).
-- [ ] Implement detector + `CaptionScores.agentless_passive_hits`.
-- [ ] Confirm no gate side-effect.
-- [ ] `uv run --extra dev pytest scene/tests/test_eval_harness_caption_metrics.py -k agentless_passive -q` green.
+- [ ] Freeze Slice 2 tables; caption-level violence gate via `_contains`;
+      clause-splitting rule; gap structural lexicon + evidentiary-gap
+      span-overlap exclusion; published pools 2b/2c/gap/4d as specified.
+- [ ] Implement all Slice 2 Proof items 1–9 (including straddling fixture
+      under violence-scope lock, proof 7 zero combined hits, 4d/4f/4e).
+- [ ] `CaptionScores.agentless_passive_hits`; no gate side-effect.
+- [ ] `pytest … -k agentless_passive -q` green.
 
 ### Checklist for Slice 3: Signal density + Williams/C5
 
-- [ ] Write red-first density test: bicycle caption → `word_count == 6`,
-      `verified_count == 1`, `density_per_100w == pytest.approx(100 / 6)`.
-- [ ] Write mandatory rare-ungrounded discrimination pair (`vermilion velocipede` vs `bicycle`) with expected scores.
-- [ ] Write padding/verbosity density drop test.
-- [ ] Write false-trap control: trap-only dog caption → `verified_count == 0`;
-      paired bicycle+dog → `verified_count == 1`.
-- [ ] Write dedupe 5a: two identical true-fact rows → `verified_count == 1`.
-- [ ] Write dedupe 5b: same text, different kind, both match → `verified_count == 2`.
-- [ ] Write dedupe 5c: same text, different phrases, both match → `verified_count == 2`.
-- [ ] Write step-order 5d: FALSE-then-TRUE same `(text, kind, phrases)` →
-      `verified_count == 1` (filter TRUE **before** three-field dedupe; kills
-      "dedupe before the TRUE filter"). Do **not** reframe 5d as polarity-
-      as-identity-field (structurally vacuous after TRUE filter). Contract:
-      filter TRUE → order-insensitive three-field dedupe → count matches.
-- [ ] Write phrase-order dedupe 5e: same text/kind, phrases
-      `["bicycle","bike"]` vs `["bike","bicycle"]` → `verified_count == 1`
-      (order-insensitive frozenset identity; kills raw `tuple(phrases)`).
-- [ ] Write density `_contains` dependency 5f: true fact `phrases=["cat"]` +
-      caption `"A scattered pile leans on a wall."` → `verified_count == 0`
-      under real `_contains`; flips to 1 under always-True patch (kills raw
-      `in` substring numerator).
-- [ ] Write empty/whitespace caption control: `word_count == 0`,
-      `verified_count == 0`, `density_per_100w is None`.
-- [ ] Implement sibling pure function `score_signal_density` → frozen
-      `SignalDensityScores` with `verified_count`, `word_count`,
-      `density_per_100w` only — no bare float, not a `CaptionScores` field.
-- [ ] Rewrite module docstring: Williams = gate, C5 = ranking axis.
+- [ ] Implement `score_signal_density` → `SignalDensityScores` and all
+      Slice 3 Proof items (incl. 5a–5f, empty caption, docstring).
 - [ ] Do **not** cite PROV-01 as density-numerator warrant.
-- [ ] `uv run --extra dev pytest scene/tests/test_eval_harness_caption_metrics.py -k signal_density -q` green.
-- [ ] Full metrics file:
-      `uv run --extra dev pytest scene/tests/test_eval_harness_caption_metrics.py -q` green.
+- [ ] `pytest … -k signal_density -q` and full metrics file green.
 
 ### Checklist for Slice 4: Report emit
 
-- [ ] After Slices 1–3 green, wire
-      `facts = [ReferenceFact.model_validate(f) for f in entry.get("reference_facts", [])]`
-      and `score_signal_density(caption, reference_facts=facts)` in `report.py`
-      next to the `score_caption` call; retain `density_scores` for **short**
-      aggregation.
-- [ ] Initialise density safely so the `short_error` / `scores is None` path
-      never reads an unbound name; emit exact fallback empty/zero object.
-- [ ] Emit locked per-image keys: `inner_state_attribution_hits`,
-      `agentless_passive_hits` (exact lower-cased matched surface text), nested
-      `signal_density` object only (no flat keys).
-- [ ] Emit locked SHORT quality keys **after** the `result` dict literal
-      closes at `report.py:604` **and after** the entire
-      `short_failed_images` block at `report.py:608-610` (insert after L610;
-      do **not** insert between the ALTQ-1 comment at L606–607 and L608; do
-      **not** extend `_quality_block`; do **not** insert statements inside
-      the open literal at the L575 dict ENTRY):
-      `inner_state_attribution_images`, `agentless_passive_images`,
-      `mean_signal_density` with the non-`None` density denominator. Those
-      three keys **must not** appear under `caption_long.quality`.
-- [ ] Write `scene/tests/test_eval_harness_report_depiction.py` with exact-value
-      proofs: non-zero (exact hit literals `"she is anxious"` / `"were killed"`
-      / `"clash"`), clean-zero, short_error fallback, multi-image mean
-      (unequal densities + empty row + exact denominator), all-empty → None,
-      caption_long.quality exact key set with `alt_text_long` fixture.
-- [ ] Use `"polarity": "true"` (string) in fixtures; assert
-      `ReferenceFact.model_validate` succeeds before `score_run_record`.
-- [ ] Leave `test_eval_harness_report.py` deliberately unedited.
-- [ ] Confirm no new hard gate / threshold; bakeoff ranking *sort* stays out of scope
-      (optional follow-on — not required for §3.1).
-- [ ] `uv run --extra dev pytest scene/tests/test_eval_harness_report_depiction.py -q` green.
-- [ ] Slice 3 / Slice 4 land conditions per Objective DoD table (density
-      axis; report emit; ranking *sort* unowned).
+- [ ] Wire `reference_facts` → `score_signal_density`; emit locked
+      per-image + SHORT quality keys per Slice 4 schema (after `result`
+      literal and `short_failed_images` block; do not extend
+      `_quality_block`).
+- [ ] Reserved `test_eval_harness_report_depiction.py` exact-value proofs.
+- [ ] No ranking *sort*; DoD per **Objective**.
+- [ ] `pytest scene/tests/test_eval_harness_report_depiction.py -q` green.
 
 ### Review Readiness
 
-- [ ] No new hard gate or threshold on first land.
-- [ ] Every new assertion has red input + discrimination case in the same PR.
-- [ ] Williams/C5 resolution is written in-module, not only in this plan
-      (mechanical docstring proof — Slice 3 item 8).
-- [ ] No colour IDs, no `FM-11`, no fabricated `REG`/`ICON`/`FRAM`/`SEL` IDs.
-- [ ] Report emit owned by Slice 4 via reserved
-      `test_eval_harness_report_depiction.py`; existing
-      `test_eval_harness_report.py` deliberately unedited; bake-off ranking
-      *sort* still explicit non-scope (Objective DoD table).
-- [ ] DoD / Carries / ranking boundary matches Objective DoD table (no
-      silent redefinition of §3.1 land as bake-off sort).
-- [ ] Canon IDs cited as plain text with lexicon path, not monorepo markdown
-      links; verification grep uses `$CANON_LEXICONS_ROOT` / bundle-root
-      `canon/lexicons/` (sibling of `repo/`).
-- [ ] No PROV-01 citation on density numerator membership.
-- [ ] Every held-out proof invokes **## Source-guard contract** (AST +
-      article-strip + import RED + semantic arm) — no raw-`read_text()`
-      substring guards remain.
+- [ ] No new hard gate or threshold on first land; every assertion has red
+      input + discrimination in the same PR.
+- [ ] Williams/C5 written in-module (Slice 3 item 8 mechanical proof).
+- [ ] No colour IDs, no `FM-11`, no fabricated rule IDs; no PROV-01 on
+      density numerator membership.
+- [ ] Report emit via reserved `test_eval_harness_report_depiction.py`;
+      bake-off ranking *sort* explicit non-scope (**Objective** DoD table).
+- [ ] Every held-out proof invokes **## Source-guard contract** (folded-AST
+      + runtime positive-set arm + semantic arm).
 
 ## Stretch Goals
 
@@ -3099,109 +2757,35 @@ report emit; ranking *sort* unowned). Playbook anchor:
 
 ## Success Criteria
 
-- [ ] Inner-state counter fires on unmarked person-as-fact-owner mental-state and
-      will prose for **every** frozen pronoun, **every** frozen common-person
-      noun (`woman`/`man`/`child`/`person`/`girl`/`boy`), **every** frozen
-      affect adjective (incl. `proud` — common-noun copula is the full
-      noun × affect product, not `anxious` alone), and **every** frozen will
-      stem (incl. `refuse`/`refuses`); positives use **varied scaffolds**
-      (not a single railing adjunct/complement) **and** held-out adjuncts
-      composed at test time from a test-module-only pool (source-level guard);
-      hit elements are lower-cased matched surface text; stays silent on
-      attributive/bearer frames (including attributed common-noun frames **and**
-      adjacent-copula + external-frame hedges such as
-      `"Apparently she is anxious…"` /
-      `"According to the curator, she is anxious…"` /
-      `"She is anxious, it seems, …"` / intervening-frame
-      `"She is said to be anxious…"` /
-      `"He appears to want…"`), epistemic hedges (`seems` / `looks` /
-      `appears` / `as if` — each proved zero-hit), visible-cue inventory,
-      non-person subjects with affect/will, and person subjects without a
-      frozen predicate; mixed hedged+unhedged captions still fire on the
-      unhedged ownership **across sentences (11a), co-sententially across
-      ` and ` (11b), and intra-clausally with a co-occurring hedge (11c)**;
-      leading-adjunct unmarked ownership still fires (4c scaffold
-      `"Near the window, she is anxious."` **and** held-out
-      `"Outside the gate, she is anxious."` / `"Along the fence line, he
-      is angry."`); physical/non-person will-stem
-      uses stay silent (`"The gate refuses to open."` /
-      `"The poster wants for nothing."`); **and stays silent on the held-out
-      ATTRIB-01 frames named in no frozen table** (`"The catalogue records
-      that…"`, `"Her granddaughter insists that…"`, `"On the curator's
-      reading,…"`, `"By the conventions of the studio portrait,…"`,
-      `"Museum records suggest…"`), so a hedge-blocklist exemption path
-      fails; no caption-literal frozenset detector passes the suite.
-- [ ] Agentless-passive detector fires on **every** frozen passive form
-      (including `"was shot"` / `"were shot"`) and **every** frozen
-      mutual-event / actorless-event noun under `_VIOLENCE_CONTEXT_TERMS`
-      membership via `_contains` (including active-voice violence + `clash`
-      → `"clash"` hit with no passive-form element, **every** remaining
-      context term as sole signal — not a `"killed"`-only proxy, **and**
-      held-out actorless event nouns under proof 2b's test-module pool and
-      held-out mutual-event nouns under proof 2c's pool — not a two-token
-      floor as the whole of disjuncts 2–3; open-class event-nominal slots
-      with proper/temporal exclusions so proofs 3 / 4e stay green);
-      fires on
-      passives whose only `by` is in a different clause (prior **or following**,
-      including coordinating-comma and subordinator splitters) **and** on
-      passives whose only gap phrase is in a prior **or following** sentence /
-      different clause; stays silent on named-agent active voice without
-      mutual-event, adjacent **and** non-adjacent same-clause `by`-agent
-      passives for **every** frozen passive form × **every** `_BY_AGENT_PPS`
-      agent phrase **and** held-out non-table agents (proof 4d, with
-      source-guard contract), still hits on non-agentive same-clause `by`
-      under the agentivity class property (proof 4f fixtures + held-out
-      non-agentive pool), determiner-`that` / prepositional-`as` same-clause
-      by-agent prose (proof 4e; finite-clause surface test),
-      benign mutual-event uses, substring false-positives
-      (`killed`⊂`skilled` word-boundary via `_contains`), photographic bare
-      `"shot"` (wide-shot zero-hit) while violence-sense shot passives hit,
-      cross-clause still-hits for **every** locked splitter with
-      table-member agents only, `_contains` **dependency** for violence-
-      context membership (verdict flips with return value), and
-      ATTRIB-08-compliant same-clause gap-language statements for **every**
-      `_GAP_AGENT_PHRASES` member **and** the held-out structural gap pool
-      (including `"…killed, agent unknown, …"` under bare-comma non-split);
-      clause-splitting rule is frozen (bare `\bthat\b` / `\bas\b` not
-      unconditional — finite auxiliary window only); hit elements are
-      lower-cased matched surface text.
-- [ ] Signal density ranks grounded captions above rare-ungrounded and
-      ornament-padded captions with equal or fewer verified facts; rare
-      ungrounded nouns never raise the score; false-polarity traps never
-      increment `verified_count` (TRUE filter before count); duplicate
-      identical true-fact rows count once; true facts sharing `text` but
-      differing in `kind` or phrase multiset are not collapsed by a text-only
-      `seen` key (5a–5c: three-field identity after TRUE filter — polarity is
-      **not** a density identity field; phrases are order-insensitive
-      frozensets per 5e); FALSE-then-TRUE same three-field identity still
-      yields `verified_count == 1` (5d step-order: filter before dedupe);
-      numerator membership **depends on** `_contains` return value (5f);
-      empty caption → `density_per_100w is None`.
-- [ ] `score_signal_density` returns the mandated multi-field score object
-      (`word_count == 6` and `approx(100/6)` on the bicycle fixture) as a
-      **sibling pure function**, not a `CaptionScores` field.
-- [ ] Module docstring states Williams (gate) and C5 (ranking) as distinct roles.
-- [ ] Report JSON emits the locked schema: per-image nested `signal_density`
-      object + hit lists with **exact lower-cased matched surface literals**
-      (keys inside row dict literal `report.py:472-495`), SHORT quality-level
-      `mean_signal_density` (multi-image mean with non-None denominator;
-      all-empty → None) + hit-image counts assigned **after** the `result`
-      literal closes at `report.py:604` **and after** the
-      `short_failed_images` block at `report.py:608-610` (not between the
-      ALTQ-1 comment and its statement; not via `_quality_block`; not inside
-      the open literal at the L575 dict ENTRY), `caption_long.quality` keeps
-      only pre-existing `_quality_block` keys, and exact fallback keys when
-      `short_error` makes `scores is None` (Slice 4 — Lane C Carries report
-      emit; Objective DoD table).
-- [ ] Fixtures use `"polarity": "true"` (StrEnum string); `ReferenceFact.model_validate`
-      succeeds on them.
-- [ ] Metrics tests and
-      `scene/tests/test_eval_harness_report_depiction.py` green at branch HEAD.
-- [ ] No files outside the owned paths (`caption_metrics.py`,
-      `test_eval_harness_caption_metrics.py`, `report.py`,
-      `test_eval_harness_report_depiction.py`) modified; existing
-      `test_eval_harness_report.py` deliberately unedited.
-- [ ] DoD land conditions met per Objective DoD table.
+Acceptance is the union of the per-slice Proofs under **Slice Delivery**
+(Slices 1–4) plus the **Objective** DoD table. Do **not** re-derive DoD,
+ranking ownership, or proof fixtures here.
+
+- [ ] Slice 1 proofs green (`-k inner_state`): every frozen person/predicate
+      member hits on varied scaffolds; floor hedges/bearers + the five
+      published 4b frames + 4c position lock are zero-hit / still-hit as
+      specified; mixed-caption 11a–11c still fire on unmarked ownership;
+      hit elements are lower-cased matched surface text; `gated_score`
+      unchanged.
+- [ ] Slice 2 proofs green (`-k agentless_passive`): every frozen passive
+      form and floor mutual/actorless noun under caption-level
+      `_VIOLENCE_CONTEXT_TERMS` via `_contains`; published 2b/2c pools hit;
+      by-agent floor × product + three published 4d held-outs exempt;
+      non-agentive `by` still hits (4f); clause-splitter / following-
+      sentence locality locks; gap floor + published gap pool → **zero
+      entries in `agentless_passive_hits`** (evidentiary-gap exclusion);
+      straddling fixture `"Four students were killed; an incident
+      followed."` hits `"incident"`; photographic bare `shot` silent,
+      violence-sense shot passives hit.
+- [ ] Slice 3 proofs green (`-k signal_density`): verified density fields;
+      rare-ungrounded and padding controls; TRUE filter before three-field
+      dedupe; `_contains` dependency; empty caption → `density_per_100w is
+      None`; Williams/C5 docstring roles present.
+- [ ] Slice 4 proofs green (`test_eval_harness_report_depiction.py`): locked
+      per-image + SHORT quality keys and exact values; no ranking *sort*.
+- [ ] Owned paths only; no PROV-01 citation on density numerator; no `FM-11`.
+- [ ] DoD land conditions met per **Objective** (measurement + report emit
+      landed; ranking *sort* unowned and unmet).
 
 ## Not-Doing
 
@@ -3209,9 +2793,7 @@ report emit; ranking *sort* unowned). Playbook anchor:
 - Contract, schema, enum, `voice`, `DescriptionRegister`, bound-term fields
   (Lane B). Future register-compliance metric that would read
   `DescriptionRegister` is named only (Stretch); not implemented here.
-- Bake-off ranking *order* / sort-by-density logic (`bakeoff.py` consumer) —
-  **unowned** follow-on (Objective DoD table); keys land in Slice 4 but
-  sort code does not.
+- Bake-off ranking *sort* — **unowned and unmet** (see **Objective**).
 - Colour vocabulary of any kind; `FM-11` citations; Lane D trigger work.
 - Race warrant / parity gate (ATTRIB-06) — pass-level property; harness is
   per-image only.

@@ -92,14 +92,19 @@ split literal (`"2-" + "4 plain sentences"`).
   - any **new** shared-prompt module under `scene/` introduced by this task
     (planned path: `scene/prompts/caption_system.py` + package `__init__.py`
     as needed)
-  - tests that prove those surfaces (new + existing assertions that encode the
-    old lying default `"3"` or the free-string constructor override), including
+  - **exactly these five test surfaces** (closed set; the assessment's
+    `#### §6e ownership table` Lane A row is the collision oracle for the
+    wave and supersedes any open wording here):
     `scene/tests/test_prompt_lineage_seam.py` (new),
     `scene/tests/test_gpu_remote_adapter.py`,
     `scene/tests/test_description_profiles.py`,
     `scene/tests/test_settings.py`,
-    and any assertions under `scene/tests/test_eval_harness_pipeline.py`
-    that encode the production↔harness v1 lockstep
+    and — for `scene/tests/test_eval_harness_pipeline.py` — **only** those
+    assertions that encode the old lying default `"3"`, the free-string
+    constructor override, or the production↔harness v1 lockstep.
+    **Collision rule:** any additional production or test path requires
+    amending DEPICT-0 `## Constraints` **and** the assessment's
+    `#### §6e ownership table` Lane A row before the edit.
 - **Do not edit** Lane B surfaces owned by DEPICT-1
   (`scene/interface_adapters/http/schemas/requests.py` and co-located schema
   helpers / domain enums that DEPICT-1 claims) or Lane C surfaces

@@ -4,12 +4,14 @@
 >
 > - **Date**: 2026-07-27
 > - **Input**: [`depiction-canon-fit-captioning-pipeline-2026-07-27.md`](depiction-canon-fit-captioning-pipeline-2026-07-27.md) (F1–F9)
-> - **Canon**: `heuristics-canon-research` @ **`v0.17.0-8-g0264a38`** — re-ingested at
->   HEAD for §10; §§1–9 were authored against `v0.16.0-9-g1b1ddb8` and re-verified
->   at HEAD in §10a. Surfaces: `lexicons/depiction.md` (`ATTRIB-01..10`,
->   `BOUND-01..05` — **exactly 15 rows at HEAD**), `lexicons/engineering.md`,
->   `lexicons/ml-systems.md`, `lexicons/writing.md`, `lexicons/accessibility.md`,
->   `literature/HELD.md`, `public/reasoning/` cards.
+> - **Canon**: bundle pin **`v0.17.2`** (`canon/lexicons/`, `canon/literature/`,
+>   `canon/distilled/` in this review bundle). §§1–9 were authored against
+>   `v0.16.0-9-g1b1ddb8` and later re-checked at intermediate pins; §10a is the
+>   governing delta against **`v0.17.2`**. Surfaces: `lexicons/depiction.md`
+>   (`ATTRIB-01..10`, `BOUND-01..05` — **exactly 15 rule rows at v0.17.2**),
+>   `lexicons/engineering.md`, `lexicons/ml-systems.md`, `lexicons/writing.md`,
+>   `lexicons/accessibility.md`, `literature/HELD.md`. There is **no**
+>   `canon/PROVENANCE.txt` in this bundle — do not cite one.
 > - **Verified at**: `main` `41d9f591`, branch `feature/depiction-canon-eval-2026-07-27` `fbe90028`
 > - **Status**: triage + proposal. No implementation. No gate decision.
 > - **Reading order caution**: §10 supersedes §9 on scope and §8b on the `FM-11`
@@ -85,7 +87,7 @@ severity and appears in the Canon column.
 | # | Task | Canon | Enforcement point | Cost | Mode |
 |---|---|---|---|---|---|
 | 1 | **DEPICT-0 — one prompt source, one parity test, an honest version stamp.** Extract the shared prompt text to a single module consumed by both `gpu_remote_adapter` and `bakeoff`; add a test that fails when they diverge; stamp = selected `ProductionPrompt.lineage_version` only. **Deletes** `DescriptionSettings.gpu_prompt_or_task_version` and the `ACX_GPU_PROMPT_VERSION` env control outright (does **not** "make the env stamp honest" or repoint it as a settings mirror — DEPICT-0 Constraints / Slice 2 settings delete). | [PROV-09] [TEST-15] [REF-10] (load-bearing; matches DEPICT-0). **Not** [NAME-03] / [REF-26] — plan refuses both (stamp = provenance/value; REF-26 multi-format trigger does not fire). | `system_prompt` | S–M | grok flock |
-| 2 | **F1 split — do not treat a single DEPICT-1 row as "F1 closed".** **(a) Service/contract half (this wave, DEPICT-1):** `voice` on speech-allowlist context-pack entries (`creator \| catalogue \| operator \| derived`); pure `partition_context_pack` so creator-tagged fields are quotable-only, never absorbable; boundary→partition voice-value proofs (including `ProductContext` / `IdentityContextItem`). Additive under `extra="forbid"`. **Does not** change production weave wording or wire partition into the adapter. **(b) Production-weave half (OUT of this wave, unowned — no plan file):** stop unmarked weave of creator-tagged fields in the shared production system prompt; render creator entries quoted/voice-tagged on the service pack path; REBIND-ONLY of post-DEPICT-0 `PRODUCTION_PROMPT` (never mutate frozen `.body`). Production consumer binding of the selected config follows DEPICT-0 **Consumers:** (verbatim): Constructor removes the free-string `prompt_or_task_version` parameter entirely and snapshots once: `self._production_prompt = production_prompt()`; `self.prompt_or_task_version = self._production_prompt.lineage_version`. Payload system message posts `self._production_prompt.body` — not a second call to `production_system_prompt()` / `production_prompt()` at describe time, and not a live re-read of module-level `PRODUCTION_PROMPT`. Temporal invariant (load-bearing): body and stamp are taken from the same snapshot object at the same instant (`__init__`), so rebinding `caption_system.PRODUCTION_PROMPT` after construction cannot produce a v2 body under a v1 stamp (or the reverse) on that instance. Only permitted binding form for production consumers of the selected config: the accessor functions (`production_prompt()` / `production_system_prompt()` / `production_prompt_or_task_version()`). Do not read `PRODUCTION_PROMPT.body` / `.lineage_version` at the call site VIA `from … import PRODUCTION_PROMPT`, and do not introduce a dedicated frozen body export. **Acceptance for (b):** rebind lands voice-honouring body + lineage together; service-path test proves creator speech is not absorbed unmarked; DEPICT-0 seam + DEPICT-1 (a) are prerequisites. **Harness `ContextPack.voice`** (`scripts/eval_harness/manifest.py`) is **also OUT / unowned** — neither (a) nor (b). | `ATTRIB-07` (B·d, oppressive-string subset only) · [API-09] shape only · [TEST-15]. **Not** `ATTRIB-02` / `BOUND-02` as F1 (a) warrants — both are *output* rules (who/by-whom; craft/staging mix); DEPICT-1 explicitly refuses them for input CMS provenance (`DEPICT-1` Slice 1 Canon + "No canon warrant"). | (a) `context_pack_input` (service unit) · (b) `system_prompt` + service render (unowned) | (a) M · (b) unowned | (a) grok flock this wave · (b) no owner |
+| 2 | **F1 split — do not treat a single DEPICT-1 row as "F1 closed".** **(a) Service/contract half (this wave, DEPICT-1):** `voice` on speech-allowlist context-pack entries (`creator \| catalogue \| operator \| derived`); pure `partition_context_pack` so creator-tagged fields are quotable-only, never absorbable; boundary→partition voice-value proofs (including `ProductContext` / `IdentityContextItem`). Additive under `extra="forbid"`. **Does not** change production weave wording or wire partition into the adapter. **(b) Production-weave half (OUT of this wave, unowned — no plan file):** stop unmarked weave of creator-tagged fields in the shared production system prompt; render creator entries quoted/voice-tagged on the service pack path; REBIND-ONLY of post-DEPICT-0 `PRODUCTION_PROMPT` (never mutate frozen `.body`). Production consumer binding of the selected config follows DEPICT-0 section **Consumers:** (character-exact extract from DEPICT-0 Constructor / temporal-invariant / binding-form clauses under `Consumers:`; re-verify against DEPICT-0 after concurrent DEPICT-0 edits): Constructor **removes the free-string `prompt_or_task_version` parameter entirely** (today `gpu_remote_adapter.py:133` / assigned at `:143`) and **snapshots once**: `self._production_prompt = production_prompt()` then `self.prompt_or_task_version = self._production_prompt.lineage_version`. Payload system message at the site of today's `_SYSTEM_PROMPT` (`gpu_remote_adapter.py:182`) posts **`self._production_prompt.body`** — not a second call to `production_system_prompt()` / `production_prompt()` at describe time, and not a live re-read of module-level `PRODUCTION_PROMPT`. **Temporal invariant (load-bearing):** body and stamp are taken from the same snapshot object at the same instant (`__init__`), so rebinding `caption_system.PRODUCTION_PROMPT` after construction cannot produce a v2 body under a v1 stamp (or the reverse) on that instance. **Only permitted binding form for production consumers of the selected config:** the accessor functions (`production_prompt()` / `production_system_prompt()` / `production_prompt_or_task_version()`). Do **not** read `PRODUCTION_PROMPT.body` / `.lineage_version` at the call site via `from … import PRODUCTION_PROMPT`, and do **not** introduce a dedicated frozen body export. **Acceptance for (b):** rebind lands voice-honouring body + lineage together; service-path test proves creator speech is not absorbed unmarked; DEPICT-0 seam + DEPICT-1 (a) are prerequisites. **Harness `ContextPack.voice`** (`scripts/eval_harness/manifest.py`) is **also OUT / unowned** — neither (a) nor (b). | `ATTRIB-07` (B·d, oppressive-string subset only) · [API-09] shape only · [TEST-15]. **Not** `ATTRIB-02` / `BOUND-02` as F1 (a) warrants — both are *output* rules (who/by-whom; craft/staging mix); DEPICT-1 explicitly refuses them for input CMS provenance (`DEPICT-1` Slice 1 Canon + "No canon warrant"). | (a) `context_pack_input` (service unit) · (b) `system_prompt` + service render (unowned) | (a) M · (b) unowned | (a) grok flock this wave · (b) no owner |
 
 Rank 1 before rank 2 only because rank 2's **(b) prompt-side half** has nowhere
 safe to land until the seam is closed. The **(a) pack-side / contract half** of
@@ -97,8 +99,8 @@ not close F1** — only F1 (a) is delivered in this wave; F1 (b) and harness
 
 | # | Task | Canon | Enforcement point | Cost | Mode |
 |---|---|---|---|---|---|
-| 3 | **DEPICT-2 (F8 + F6) — inner-state-attribution counter (Slice 1) AND the agentless-passive / mutual-event detector (Slice 2, absorbed from row 4)** in `caption_metrics.py`. Report-only first. LIBSYN-1 §3.4 called this the highest-value safety signal; it is now canon-backed. | `ATTRIB-01` (B·d) · `ATTRIB-08` (S·d) · [EVAL-11] open-ended tasks need the right scorer · [EVAL-08] CACE · [TEST-15] | `eval_metric` | S | grok flock |
-| 4 | **DEPICT-3 (F6) — agentless-passive / mutual-event detector.** **ABSORBED into DEPICT-2 Slice 2** — do not dispatch as a separate lane. Delivered by `DEPICT-2-depiction-metrics-task-plan.md` § Slice 2 (heading `### Slice 2: Agentless-passive / mutual-event detector (report-only)`; plan pin `:684-1152`), sole owner of `caption_metrics.py`. Same shape as the existing `_META_FRAMING_PHRASES` detector. Dual-lane collision with §6e Lane C if re-opened. | `ATTRIB-08` (S·d) · [TEST-15] | `post_generation_check` (via DEPICT-2 / Lane C) | — | **absorbed → DEPICT-2 Slice 2 / Lane C** |
+| 3 | **DEPICT-2 (F8 + F6 + §3.1 density) — full Lane C gate, not counter-only.** **Slice 1:** inner-state-attribution counter (`ATTRIB-01`) in `caption_metrics.py`. **Slice 2:** agentless-passive / mutual-event / actorless-event-noun detector (`ATTRIB-08`, absorbs row 4 / DEPICT-3). **Slice 3:** verified signal-density ranking axis (playbook §3.1 / assessment §6b GPU-window gate) **and** Williams/C5 companion-axis resolution written into the module docstring (§6c). **Slice 4:** thin additive JSON emit of density + depiction hit lists from `report.py` (+ reserved `test_eval_harness_report_depiction.py`) so pure APIs are not orphaned — Lane C Carries / DEPICT-2 DoD. Report-only first (no hard gate on `gated_score`). LIBSYN-1 §3.4 called the safety signal highest-value; it is now canon-backed. | `ATTRIB-01` (B·d) · `ATTRIB-08` (S·d, v0.17.2 row text including "an incident") · [EVAL-11] open-ended tasks need the right scorer · [EVAL-08] CACE · [TEST-15] | `eval_metric` (+ Slice 4 `report.py` emit) | S–M | grok flock |
+| 4 | **DEPICT-3 (F6) — agentless-passive / mutual-event detector.** **ABSORBED into DEPICT-2 Slice 2** — do not dispatch as a separate lane. Delivered by `DEPICT-2-depiction-metrics-task-plan.md` § Slice 2 (heading `### Slice 2: Agentless-passive / mutual-event detector (report-only)` — cite by heading; line range moves under concurrent DEPICT-2 edits), sole owner of `caption_metrics.py`. Same shape as the existing `_META_FRAMING_PHRASES` detector. Dual-lane collision with §6e Lane C if re-opened. | `ATTRIB-08` (S·d) · [TEST-15] | `post_generation_check` (via DEPICT-2 / Lane C) | — | **absorbed → DEPICT-2 Slice 2 / Lane C** |
 | 5 | **DEPICT-4 (F2) — give emotion a bearer** in the v2/v3 prompt. *"her expression reads as anxious"* satisfies both `ATTRIB-01` and the ALTQ-1 *emotion legitimate* finding; *"she is anxious"* satisfies neither. Register, not silence. | `ATTRIB-01` `ATTRIB-03` · [EVAL-08] | `system_prompt` | XS | grok flock |
 
 **Ordering correction.** The eval sequences F2 → F8. Reverse it. F2 is a prompt change
@@ -110,7 +112,7 @@ F2 is not shipping today (D1), so nothing is bleeding while the counter lands fi
 | # | Task | Canon | Enforcement point | Cost | Mode |
 |---|---|---|---|---|---|
 | 6 | **DEPICT-5 (F4) — split the v3 `caption`** into a grounded-inventory span and an attributed span. Cheap now, a contract break after v3 promotion (D3). | `ATTRIB-03` `ATTRIB-04` `BOUND-05` · [API-09] [API-10] interface is its own artifact | `output_schema` | M | grok flock |
-| 7 | **DEPICT-6 — land `DescriptionRegister` in the contract** (`FORENSIC \| EDITORIAL \| INTERPRETIVE`), enforcement deferred. Canon's `attribute-claims-to-their-bearer` card is written in this vocabulary; retrofitting the enum later is a rewrite of every call site. | `ATTRIB-01` `ATTRIB-03` · card `attribute-claims-to-their-bearer` · [API-09] [REF-29] enum completeness | `output_schema` | M | grok flock |
+| 7 | **DEPICT-6 — land `DescriptionRegister` in the contract** (`FORENSIC \| EDITORIAL \| INTERPRETIVE`), enforcement deferred. **ABSORBED into DEPICT-1 / Lane B** — do not dispatch as a separate lane. Delivered by `DEPICT-1-context-voice-and-register-contract-task-plan.md` Slice 2 (heading text: Slice 2: DescriptionRegister on the **request** contract (enforcement deferred; no response echo)) plus restrict-only gravity (DEPICT-1 Slice 3 / assessment §5c merge of DEPICT-6 into **DEPICT-C**). No `REG` family in canon (§5b); warrant is contract-shape + [API-09]/[REF-29], not a lexicon `REG-xx`. Retrofitting the enum later is a rewrite of every call site — that is why §5c pulled it forward. | `ATTRIB-01` `ATTRIB-03` · card `attribute-claims-to-their-bearer` · [API-09] [REF-29] enum completeness | `output_schema` (via DEPICT-1 request contract; no `responses.py` echo) | — | **absorbed → DEPICT-1 Slice 2–3 / Lane B** |
 | 8 | **DEPICT-7 (F9) — declared survival list for compression.** `_COMPRESS_SYSTEM_PROMPT` forbids new facts but never says what must survive; truncation is position-based and importance is not. The gist ≤125 bound and Must-Right presence gate are the attach points. | `A11Y-02` (B·w) · card `compression-is-selection-not-truncation` | `system_prompt` → `output_schema` | S | grok flock |
 
 ### P3 — needs a decision or a sizing, not an implementation
@@ -360,15 +362,23 @@ it; the playbook is its source.
 What §5 does not state is **file ownership**, and this backlog needs it: the F8
 inner-state counter and the §3.1 density metric both land in
 `caption_metrics.py`. Two concurrent lanes mutating one file will conflict and
-raise phantom review alarms. Revised fan-out, no file collisions:
+raise phantom review alarms. Revised fan-out, no file collisions.
+
+**Partition falsifiability (load-bearing):** each lane's Owns column is a
+**closed** path set. A plan `## Constraints` bullet that says "including" or
+"plus new modules" does **not** license paths outside this table. Collision
+check = pairwise empty intersection of the three closed sets (A ∩ B = ∅,
+A ∩ C = ∅, B ∩ C = ∅). Any path that appears in two rows, or any edit under a
+path in none of the rows, fails the partition. To add a path: amend the owning
+plan's Constraints **and** this table in the same change.
 
 #### §6e ownership table
 
-| Lane | Owns (hard path set — reconciled by the coordinator against each plan's `## Constraints` ownership list at DEPICT-0 `:81-101`, DEPICT-1 Constraints, DEPICT-2 Constraints) | Carries |
+| Lane | Owns (**closed** hard path set — this table is the collision oracle for the wave; where a plan's `## Constraints` uses open language, this closed set prevails for partition) | Carries |
 |---|---|---|
-| **A — DEPICT-0** | From DEPICT-0 Constraints (hard boundary): `scene/infrastructure/vlm/gpu_remote_adapter.py`; `scripts/eval_harness/bakeoff.py`; `scene/config/settings.py` (**delete** `gpu_prompt_or_task_version` / `ACX_GPU_PROMPT_VERSION` — not "make honest"); `scene/interface_adapters/http/deps.py` (**only** the one-line drop of free-string `prompt_or_task_version=` once the adapter rejects free-string stamp kwargs); new shared-prompt module `scene/prompts/caption_system.py` (and package init as needed); tests that prove those surfaces (new + existing assertions that encode the old lying default `"3"` or the free-string constructor override), specifically `scene/tests/test_prompt_lineage_seam.py` (new), `scene/tests/test_gpu_remote_adapter.py`, `scene/tests/test_description_profiles.py`, `scene/tests/test_settings.py`, and the production↔harness v1 lockstep assertions under `scene/tests/test_eval_harness_pipeline.py`. Paths relative to `apps/prototype-description-service/`. | prompt-lineage seam; stamp = selected `ProductionPrompt.lineage_version`; **delete** free-string env stamp ([PROV-09] [TEST-15] [REF-10]) |
-| **B — DEPICT-C / DEPICT-1** | From DEPICT-1 Constraints + Files and Surfaces: `scene/interface_adapters/http/schemas/requests.py`; co-located schema helpers under `scene/interface_adapters/http/schemas/` including new `scene/interface_adapters/http/schemas/context_contract.py`; domain `StrEnum` vocabularies in `scene/domain/description.py`; characterization / contract tests under `scene/tests/` (`test_context_pack.py`, new `test_context_voice_contract.py`, `test_description_register_contract.py`, `test_gravity_contract.py`). **Does not own** Lane A paths, `caption_metrics.py`, `responses.py`, `visual_facts_service.py`, or harness `manifest.py`. | F1 (a) `voice` field + partition, register enum, restrict-only gravity. **Contract only — no metrics.** (Bound-term shape withdrawn per §10g.) |
-| **C — METRICS / DEPICT-2** | From DEPICT-2 Constraints (exact set): `scripts/eval_harness/caption_metrics.py` (**sole owner**); `scene/tests/test_eval_harness_caption_metrics.py`; and (Slice 4 only) `scripts/eval_harness/report.py` plus the **reserved** report-emit test `scene/tests/test_eval_harness_report_depiction.py`. No edits under any other path. Paths relative to `apps/prototype-description-service/`. | **F8** inner-state attribution counter (`ATTRIB-01`); **F6** agentless-passive / mutual-event detector (`ATTRIB-08`, DEPICT-2 Slice 2 — absorbs former P1 item 4 / DEPICT-3); §3.1 signal density; §6c's Williams/C5 resolution in the module docstring; report emit of new fields |
+| **A — DEPICT-0** | **Closed set** (assessment supersedes DEPICT-0 Constraints' open "including <tests>" wording for partition): `scene/infrastructure/vlm/gpu_remote_adapter.py`; `scripts/eval_harness/bakeoff.py`; `scene/config/settings.py` (**delete** `gpu_prompt_or_task_version` / `ACX_GPU_PROMPT_VERSION` — not "make honest"); `scene/interface_adapters/http/deps.py` (**only** the one-line drop of free-string `prompt_or_task_version=` once the adapter rejects free-string stamp kwargs); new shared-prompt module `scene/prompts/caption_system.py` (and package init as needed); **exactly these five test surfaces** — `scene/tests/test_prompt_lineage_seam.py` (new), `scene/tests/test_gpu_remote_adapter.py`, `scene/tests/test_description_profiles.py`, `scene/tests/test_settings.py`, and production↔harness v1 lockstep assertions under `scene/tests/test_eval_harness_pipeline.py` (edit only assertions that encode the old lying default `"3"` or the free-string constructor override / lockstep). **Collision rule:** any additional production or test path requires amending DEPICT-0 `## Constraints` **and** this row before edit. Paths relative to `apps/prototype-description-service/`. | prompt-lineage seam; stamp = selected `ProductionPrompt.lineage_version`; **delete** free-string env stamp ([PROV-09] [TEST-15] [REF-10]) |
+| **B — DEPICT-C / DEPICT-1** | **Closed set** (assessment closes DEPICT-1 Constraints' open "plus new contract test modules" / co-owned phrasing for partition): `scene/interface_adapters/http/schemas/requests.py`; co-located schema helpers under `scene/interface_adapters/http/schemas/` **including only** the new `scene/interface_adapters/http/schemas/context_contract.py` (no other new schema modules without amending this row); domain `StrEnum` vocabularies in `scene/domain/description.py`; **exactly these four test files** under `scene/tests/`: `test_context_pack.py` (**sole editor this wave** for DEPICT-1 voice-related edits — "co-owned" in DEPICT-1 means shared pre-existing coverage, not dual-lane concurrent edit), `test_context_voice_contract.py` (new, Lane B sole), `test_description_register_contract.py` (new, Lane B sole), `test_gravity_contract.py` (new, Lane B sole). **Does not own** Lane A paths, `caption_metrics.py`, `responses.py`, `visual_facts_service.py`, or harness `manifest.py`. **Collision rule:** any fifth test module or extra schema file requires amending DEPICT-1 `## Constraints` **and** this row before edit. | F1 (a) `voice` field + partition, register enum (**absorbs DEPICT-6**), restrict-only gravity. **Contract only — no metrics.** (Bound-term shape withdrawn per §10g.) |
+| **C — METRICS / DEPICT-2** | **Closed set** (matches DEPICT-2 Constraints exact set): `scripts/eval_harness/caption_metrics.py` (**sole owner**); `scene/tests/test_eval_harness_caption_metrics.py`; and (Slice 4 only) `scripts/eval_harness/report.py` plus the **reserved** report-emit test `scene/tests/test_eval_harness_report_depiction.py`. No edits under any other path. **Collision rule:** no fifth path without amending DEPICT-2 Constraints **and** this row. Paths relative to `apps/prototype-description-service/`. | **F8** inner-state attribution counter (`ATTRIB-01`); **F6** agentless-passive / mutual-event detector (`ATTRIB-08`, DEPICT-2 Slice 2 — absorbs former P1 item 4 / DEPICT-3); §3.1 signal density; §6c's Williams/C5 resolution in the module docstring; **Slice 4 report emit** of new fields (this assessment dispatches report emit under Lane C Carries / DoD; GPU-window *gate* remains §6b §3.1 density + Williams/C5 from Slice 3 — report emit is the live-axis emit so pure APIs are not orphaned) |
 
 #### §6e claim — Lane C unblocks the GPU window
 
@@ -376,17 +386,26 @@ Lane C is the one that unblocks the GPU window. Lane B is the one that must not
 be deferred, because its cost grows with every call site. Lane A is independent
 of both.
 
-> **Coordinator note (round-9 ownership reconciliation — resolved):** The Lane A
-> path set above was reconciled against DEPICT-0's corrected `## Constraints`
-> ownership bullet list (DEPICT-0 `:81-101`) after the markdown-nesting defect
-> was fixed; the five owned test files are now enumerated rather than
-> paraphrased. `responses.py` is **unowned in this wave** in both documents that
-> name it (DEPICT-0, DEPICT-1); DEPICT-2 never mentions it. DEPICT-0 marks it
-> unowned (`:106`, `:385`, `:649`, `:1905`, `:1979`); DEPICT-1 disclaims it
-> under `## Constraints` (`:82`), acceptance criteria (`:305`), and the
-> **Not edited by this lane** table row for the response contract (`:440`);
+> **Coordinator note (round-9 ownership reconciliation — resolved; pins by
+> heading, not bare line numbers):** The Lane A path set above was reconciled
+> against DEPICT-0 `## Constraints` (ownership hard-boundary bullets + the five
+> named test files) after the markdown-nesting defect was fixed; this table
+> **closes** that set (see partition falsifiability above). `responses.py` is
+> **unowned in this wave** in both documents that name it (DEPICT-0, DEPICT-1);
+> DEPICT-2 never mentions it. Cite by heading text (line numbers move under
+> concurrent plan edits — do not hand-repair arithmetic pins):
+>
+> - **DEPICT-0** marks `responses.py` unowned under: `## Constraints` (unowned-
+>   this-wave bullet), `## Contract and Boundary Impact` (Describe response
+>   schema row), `## Related Files` (`responses.py` row), and DoD / Not-Doing
+>   checklist bullets that restate the disclaimer.
+> - **DEPICT-1** disclaims `responses.py` under: `## Constraints` (Do **not**
+>   edit … `responses.py`), `## Target Outcome` (acceptance: no `responses.py`
+>   edit), and the **Not edited by this lane** table row for the response
+>   contract.
+>
 > Lane B above also disclaims it. Any lane needing it must claim it explicitly
-> in its own Constraints first.
+> in its own Constraints **and** this §6e table first.
 
 ## 7. Reflow after intake §11c-i (FCA) — same day
 
@@ -701,35 +720,51 @@ and answers both registers instead of one.**
 §8a's re-extraction finding stays valid and stays useful — for the photography
 lane, not for captioning.
 
-## 10. Reflow against re-ingested canon (HEAD, 8 commits past v0.17.0)
+## 10. Reflow against re-ingested canon (bundle pin `v0.17.2`)
 
-Canon was re-read at `0264a38` — **not** the stale copy. Local `main` is *ahead*
-of `origin` by 2, so this checkout is the freshest copy in existence; `git fetch`
-brought nothing incoming.
+Canon in this review bundle is pinned at **`v0.17.2`**. Earlier triage text that
+named intermediate describe-strings (`v0.17.0-8-g0264a38`,
+`v0.17.0-11-ga238620`) is superseded by this pin. `canon/PROVENANCE.txt` does
+**not** exist in the bundle — plans that cite it are citing a non-existent file.
 
-### 10a. What actually moved since `v0.17.0`
+### 10a. What actually moved through `v0.17.2` (depiction surface)
 
-Eight commits. Two touch this work:
+Verified by opening `canon/lexicons/depiction.md` at the bundle pin (not by
+restating an intermediate commit note):
 
-- **`lexicons/depiction.md`** — prose only. A historical note about `ATTRIB`/
-  `BOUND` relocating from `writing.md` was replaced with a route statement.
-  **Rule rows re-counted at HEAD: exactly 15** (`ATTRIB-01..10`, `BOUND-01..05`).
-  §5b's conclusion is unchanged. *(The deleted prose claimed "sixteen rows" — it
-  was wrong, and it is gone.)*
-- **`literature/extraction-manifest.json`** — lost 42 lines. **Not Werner.** The
-  removed entry is `product-deploy-agents-fields`. Werner survives at 129
-  entries with `source_sha256 2790d75d…b57631`, `extracted_chars 32233`,
-  `extractor stdlib-epub`. **§8a stands.**
+- **`ATTRIB-08` rule row was rewritten — not "prose only".** Definition anchor
+  remains `canon/lexicons/depiction.md:80` (`ATTRIB-08<a name="attrib-08"></a>`).
+  The **row text** at v0.17.2 reads: an agentless passive, a mutual-event noun,
+  **or an event noun that carries no actor** ("a clash", **"an incident"**,
+  "were killed"). This is the load-bearing F6 warrant Lane C / DEPICT-2 Slice 2
+  dispatches on. A section-2 or §10a reader that treats depiction.md as
+  preamble-only drift will under-specify the agentless / mutual-event /
+  actorless-event-noun detector.
+- **Preamble is a source-provenance paragraph**, not a route-only note. Lines
+  26–32 name Sontag (*On Photography*, *Regarding the Pain of Others*), Berger
+  (*Ways of Seeing*), Azoulay (*The Civil Contract of Photography*), A4BLiP
+  (*Anti-Racist Description Resources*), and Barthes (*Image Music Text*) as the
+  rows' held sources.
+- **Rule-row count is still exactly 15** (`ATTRIB-01..10`, `BOUND-01..05`) —
+  §5b's "exactly 15 rows" conclusion is unchanged. Families `REG`, `ICON`,
+  `FRAM`, `SEL` remain absent.
+- Intermediate pin label `v0.17.0-11-ga238620` (commit `a238620`) is a pre-tag
+  describe string; `git describe --tags a238620` resolves to **v0.17.1**. Do not
+  treat that string as a release label for F6 warrant text — implement against
+  **v0.17.2** row wording above.
 
-All 15 depiction IDs and 33 of 35 other cited IDs verified present at HEAD.
+All 15 depiction IDs verified present at the bundle pin by definition-anchor
+grep (`^\| *\`?<ID><a name`). Other cited IDs (`TEST-15`, `PROV-09`, `PROV-01`,
+`EVAL-11`, `CAL-02`, `FM-04`, `FM-11` retired in `literature/HELD.md:69`) re-checked
+as before.
 
 ### 10b. Citation audit of this document
 
 | ID | Status | Action |
 |---|---|---|
 | `HARM-01` | **false alarm** — it is `VLMRP-HARM-01`, a project finding ref, not a canon ID | none |
-| `FM-11` @:185 | correct — §5a already verified it retired | none |
-| `FM-11` @:482 | **defect** — cited as a live constraint | fixed in place |
+| `FM-11` in §5a verification table | correct — already verified retired at `literature/HELD.md:69` | none |
+| `FM-11` formerly cited as a live constraint (see §8b correction note near the colour-thread close) | **defect** — was cited as live | fixed in place (re-cite hazard to `FM-04` / `CAL-02` per §10c–§10h) |
 
 Also corrected: `PROV-01` lives in **`ml-systems.md`**, not `engineering.md`. A
 first-match sweep hit a cross-reference rather than the definition.
@@ -844,10 +879,13 @@ Two more cheap, warranted items, both prompt-and-metric only:
 **Abstain lane is OUT and unowned.** No plan file in this wave delivers it:
 DEPICT-2 scopes it out explicitly under heading
 `### CAL-02 and density numerator — metric side only (scope decision)`
-(`DEPICT-2-depiction-metrics-task-plan.md:288-296`; disposition
-"**Scoped out of DEPICT-2**" at the CAL-02 row `:290`),
-and DEPICT-0 / DEPICT-1 never touch `CAL-02`. Merging DEPICT-0 + DEPICT-1 +
-DEPICT-2 does **not** land abstain behaviour. Named acceptance criteria for
+(cite by heading text; at freeze commit `7396a678` the heading is at DEPICT-2
+`:296` and the disposition table row carrying **Scoped out of DEPICT-2.** is the
+CAL-02 row at `:304` — **not** `:290`, which is Target Outcome prose about
+assessment §10f / Williams collapse; line numbers move under concurrent DEPICT-2
+edits — re-grep the heading after those land). DEPICT-0 / DEPICT-1 never touch
+`CAL-02`. Merging DEPICT-0 + DEPICT-1 + DEPICT-2 does **not** land abstain
+behaviour. Named acceptance criteria for
 whoever authors it later: (1) the production prompt instructs abstention when
 evidence supports no in-set term, rather than forcing the nearest one
 (`CAL-02`); (2) a metric counts forced-precision emissions so the abstain rate

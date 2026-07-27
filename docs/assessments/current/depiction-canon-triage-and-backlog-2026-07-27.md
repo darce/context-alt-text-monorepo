@@ -878,8 +878,8 @@ Two more cheap, warranted items, both prompt-and-metric only:
 
 **Abstain lane is OUT and unowned.** No plan file in this wave delivers it:
 DEPICT-2 scopes it out explicitly under heading
-`### CAL-02 and density numerator — metric side only (scope decision)`
-(cite by heading text; at freeze commit `7396a678` the heading is at DEPICT-2
+``### `CAL-02` and density numerator — metric side only (scope decision)``
+(cite by heading text; at reconciliation commit `8651337a` the heading is at DEPICT-2
 `:325` and the disposition table row carrying **Scoped out of DEPICT-2.** is the
 CAL-02 row at `:333` — in the CAL-02 scope-decision table, **not** in `## Target Outcome` prose about
 assessment §10f / Williams collapse; line numbers move under concurrent DEPICT-2

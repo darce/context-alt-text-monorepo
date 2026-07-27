@@ -89,9 +89,9 @@ split literal (`"2-" + "4 plain sentences"`).
     `prompt_or_task_version=settings.gpu_prompt_or_task_version` at
     `deps.py:98` once the adapter no longer accepts a free-string stamp
     kwarg — no other deps edits)
-  - any **new** shared-prompt module under `scene/` introduced by this task
-    (planned path: `scene/prompts/caption_system.py` + package `__init__.py`
-    as needed)
+  - **exactly one** new shared-prompt module: `scene/prompts/caption_system.py`
+    (plus package `__init__.py` only if the package does not already exist;
+    closed set — same collision rule as the test-set bullet below)
   - **exactly these five test surfaces** (closed set; the assessment's
     `#### §6e ownership table` Lane A row is the collision oracle for the
     wave and supersedes any open wording here):
@@ -402,7 +402,7 @@ surface change.
 
 ## Proposed Solution
 
-Introduce a new shared-prompt module under `scene/` that is the single
+Introduce exactly one shared-prompt module — `scene/prompts/caption_system.py` — that is the single
 authority for:
 
 1. Context fence markers used by the caption system prompt
@@ -694,7 +694,7 @@ this seam.
 
 | Surface | File | Change |
 | --- | --- | --- |
-| new shared-prompt module | `apps/prototype-description-service/scene/prompts/caption_system.py` (new; `__init__.py` as needed) | Own markers, production v1 system body, selected `ProductionPrompt` (body + `lineage_version`), accessors `production_prompt()` / `production_system_prompt()` / `production_prompt_or_task_version()`; **not** `PromptVariant`, v2/v3 bodies, or full `PROMPT_VARIANTS` |
+| new shared-prompt module | `apps/prototype-description-service/scene/prompts/caption_system.py` (new; package `__init__.py` only if the package does not already exist) | Own markers, production v1 system body, selected `ProductionPrompt` (body + `lineage_version`), accessors `production_prompt()` / `production_system_prompt()` / `production_prompt_or_task_version()`; **not** `PromptVariant`, v2/v3 bodies, or full `PROMPT_VARIANTS` |
 | production adapter | `…/scene/infrastructure/vlm/gpu_remote_adapter.py` | Delete local `_SYSTEM_PROMPT`; **delete** the `ACX_GPU_PROMPT_VERSION` bump instruction at lines **23-24** and replace the "Keep in lockstep…" comment with a pointer to the shared module + parity/inventory tests; import `production_prompt` + markers; **remove free-string `prompt_or_task_version` constructor kwarg** (today `:133`/`:143`); snapshot `self._production_prompt = production_prompt()` once at `__init__`; bind stamp from `self._production_prompt.lineage_version` and post `self._production_prompt.body` at the payload site; keep describe behaviour identical otherwise |
 | harness | `…/scripts/eval_harness/bakeoff.py` | Delete local `_PROMPT_V1_SYSTEM` only; import shared v1 body + markers via accessors; **keep local `PromptVariant`** and `_PROMPT_V2_SYSTEM`; introduce **`build_prompt_variants() -> dict[str, PromptVariant]`** and set module-level `PROMPT_VARIANTS = build_prompt_variants()` (**v1 `system=` resolved through `production_system_prompt()` / `production_prompt().body` inside the helper when it runs** — construction site today `bakeoff.py:138-141`; consumer read at `:595`); keep `DEFAULT_PROMPT_VARIANT = "v1"` defined here; re-export names tests already import **plus `build_prompt_variants`**; leave pass-1 / weave / compress / face-gate logic in place. **Parity temporal scope:** same-construction-epoch only (option (a)); already-built `PROMPT_VARIANTS` does not track a later rebind; rebind proof must call `build_prompt_variants()` after rebind |
 | settings | `…/scene/config/settings.py` | **Delete** `gpu_prompt_or_task_version` field entirely (today `settings.py:40`) — zero production readers after `deps.py:98` drop; drop free-string `ACX_GPU_PROMPT_VERSION` with it |
@@ -2097,8 +2097,8 @@ runtime `TypeError` on a second guessed name.
 - [ ] Loaded governing assessment §1 D1–D3 and §10g Lane A scope before editing.
 - [ ] Verified every cited rule ID via definition-anchor grep under
       `canon/lexicons/`; read distilled evidence for each load-bearing rule.
-- [ ] Confirmed file ownership: only Lane A paths + new shared-prompt module +
-      proving tests + owned one-line `deps.py:98` drop of free-string stamp
+- [ ] Confirmed file ownership: only Lane A paths + `scene/prompts/caption_system.py` +
+      the five test surfaces named in `## Constraints` + owned one-line `deps.py:98` drop of free-string stamp
       kwarg; no Lane B schema edits; no Lane C metrics edits.
 - [ ] Confirmed prompt-body copies: exactly two live v1 copies before the
       change; zero local copies after.

@@ -5,7 +5,7 @@ Date: 2026-07-27 · Author: grok-4.5 (remote flock lane A) · Project: prototype
 Review Coverage Target: 2
 
 > **DEPICT task family**: depiction-canon backlog item 1 (P0) from
-> [`docs/assessments/current/depiction-canon-triage-and-backlog-2026-07-27.md`](../../docs/assessments/current/depiction-canon-triage-and-backlog-2026-07-27.md)
+> [`docs/assessments/current/depiction-canon-triage-and-backlog-2026-07-27.md`](../../assessments/current/depiction-canon-triage-and-backlog-2026-07-27.md)
 > §2 / §10g. Plans for this flock lane live under `docs/tasks/` once accepted;
 > this file is the implementation task plan only.
 
@@ -45,14 +45,17 @@ upgrade unsafe or untraceable today:
    the stamp.
 3. **D3 — v3 promotion window still open.**
    No three-surface JSON path exists outside the harness; production returns
-   single-surface prose. Closing D1 is what makes a later v2/v3 promotion a
-   registry/config change rather than a hand-copy.
+   single-surface prose. Closing D1 (one production v1 source + parity) is the
+   prerequisite so a later v2/v3 promotion can move that variant's text into
+   the shared module and flip `PRODUCTION_PROMPT_VARIANT` rather than
+   hand-copying strings into the adapter.
 
-Inventory of the production v1 system-prompt body (unique clause
-`"Weave the people's names and factual details it supplies"`): **exactly two
-Python call sites** — `gpu_remote_adapter.py` and `bakeoff.py`. No third
-live copy. Harness-only v2/v3 bodies live only in `bakeoff.py` and are
-intentionally different text (not production defects; see Out of Scope).
+Inventory of the production v1 system-prompt body (v1-unique greppable token
+`"2-4 plain sentences"` at `gpu_remote_adapter.py:30` and `bakeoff.py:91`):
+**exactly two live v1 body literals** — `gpu_remote_adapter.py` and
+`bakeoff.py` `_PROMPT_V1_SYSTEM`. No third live copy. Harness-only v2/v3
+bodies live only in `bakeoff.py` and are intentionally different text (not
+production defects; see Out of Scope / Not-Doing — they stay in bakeoff).
 
 ## Constraints
 
@@ -81,42 +84,52 @@ intentionally different text (not production defects; see Out of Scope).
 ## Workflow Principles
 
 - **One authority for the production caption system prompt**
-  [[REF-26](canon/lexicons/engineering.md#ref-26)]
+  [REF-26]
   (`canon/lexicons/engineering.md` →
   `canon/distilled/engineering/pragmatic-programmer.md`): DRY is knowledge,
-  not text. The acid test is one fact needing a multi-place edit — here, any
-  production prompt fix must today be hand-copied between adapter and harness.
+  not text. Here the same production-v1 intent is scattered across two consumer
+  modules (`gpu_remote_adapter.py` and `bakeoff.py`) — multi-place knowledge
+  scatter warrants extraction. REF-26's full acid test is multi-place *and*
+  multi-format (code + docs, schema + struct); both live copies are Python
+  string constants (same format), so the multi-format half is **not**
+  applicable — the extract is warranted by intent duplication alone.
 - **Extract only what must change together**
-  [[REF-10](canon/lexicons/engineering.md#ref-10)]
+  [REF-10]
   (`canon/lexicons/engineering.md` →
   `canon/distilled/engineering/refactoring-fowler-beck.md` +
-  `canon/distilled/engineering/modern-software-engineering.md`): production v1
-  and harness `PROMPT_VARIANTS["v1"]` are the same intent and ship together.
-  Harness-only pass-1 / weave / compress prompts are **different facts** and
-  stay in `bakeoff.py`. DRY stops at the deployable unit (this service), not
-  across unrelated pipeline stages.
+  `canon/distilled/engineering/modern-software-engineering.md`): **Fowler** —
+  do not merge bodies that will not change together (production v1 and harness
+  `PROMPT_VARIANTS["v1"]` *do* change together; harness-only v2/v3 text,
+  pass-1 / weave / compress do **not** and stay in `bakeoff.py`). **Farley** —
+  DRY within this deployable unit (this service / one deployment pipeline) is
+  in bounds; do not invent a cross-service share. Farley's ch-13 rule is a
+  cross-*service* boundary (do not share code between independently deployed
+  services), not a ban on within-service extraction.
 - **Prove the green can go red**
-  [[TEST-15](canon/lexicons/engineering.md#test-15)]
+  [TEST-15]
   (`canon/lexicons/engineering.md` →
   `canon/distilled/engineering/modern-software-engineering.md`): a parity test
   that only re-reads the same constant twice certifies nothing.
 - **Prompt configuration is production lineage**
-  [[PROV-09](canon/lexicons/ml-systems.md#prov-09)]
+  [PROV-09]
   (`canon/lexicons/ml-systems.md` →
   `canon/distilled/ml-systems/ai-engineering.md`): the version stamp on each
-  output must identify the prompt text that produced it.
-- **No lying names**
-  [[NAME-03](canon/lexicons/engineering.md#name-03)]
-  (`canon/lexicons/engineering.md` →
-  `canon/distilled/engineering/programmers-brain.md`): a field named
-  `prompt_or_task_version` defaulting to `"3"` while shipping v1 text is a
-  linguistic antipattern (name promises a version the body does not hold).
+  output must identify the prompt text that produced it. This is the
+  load-bearing warrant for correcting the dishonest `"3"` default over v1 text
+  (with [TEST-15] proving the correction is enforceable).
 - **Every output walks back to its evidence**
-  [[PROV-01](canon/lexicons/ml-systems.md#prov-01)]
+  [PROV-01]
   (`canon/lexicons/ml-systems.md` →
   `canon/distilled/ml-systems/model-cards.md`): the stamp is part of the
   result's lineage graph (and of the cache key); a mislabelled stamp makes
   reproduction and comparison impossible.
+- **NAME-03 note (weak analogy, not a rule hit).**
+  [NAME-03] (`canon/lexicons/engineering.md` →
+  `canon/distilled/engineering/programmers-brain.md`) is about identifier
+  linguistic antipatterns — a name promising a type/behaviour the code lacks.
+  The identifier `prompt_or_task_version` *does* hold a version string; only
+  the default *value* (`"3"` over v1 text) lies. PROV-09 (+ TEST-15) carry the
+  work; do not treat NAME-03 as a load-bearing warrant for this slice.
 
 ## Terminology
 
@@ -126,17 +139,22 @@ intentionally different text (not production defects; see Out of Scope).
 - **Harness v1 / v2 / v3**: named entries in `bakeoff.PROMPT_VARIANTS`. Only v1
   is textually identical to production today. v2 encodes ALTQ-1 style rules;
   v3 reuses v2's system text with `three_surface=True` and a weave addendum.
-- **Shared-prompt module**: new single authority under `scene/` for caption
-  system-prompt text, context markers used by that text, the named variant
-  registry, and the production-selected variant + its version stamp.
+- **Shared-prompt module**: new single authority under `scene/` for the
+  **production** caption system-prompt text (today: v1 body), context markers
+  used by that text, the `PromptVariant` dataclass shape, and the
+  production-selected variant key + its derived version stamp. Harness-only
+  v2/v3 bodies and the full `PROMPT_VARIANTS` registry stay in `bakeoff.py`.
 - **Honest version stamp**: the default
   `gpu_prompt_or_task_version` / adapter `prompt_or_task_version` value that
   names the production-selected variant's lineage id (today: `"1"` for v1
-  text), not a free-floating `"3"`.
+  text), obtained via live `production_prompt_or_task_version()` lookup — not
+  a free-floating `"3"` and not an import-time-frozen constant that ignores
+  `PRODUCTION_PROMPT_VARIANT`.
 - **Parity surface**: the two *consumer binding sites* the runtime actually
-  uses — the string the production adapter puts in `messages[0].content`, and
+  uses — the system string the production adapter **POSTs** as
+  `messages[0]["content"]` (captured via transport stub on `describe()`), and
   `PROMPT_VARIANTS["v1"].system` as used by `BakeoffClient` — not a double
-  import of the shared constant alone.
+  import of the shared constant alone, and not an attribute-only comparison.
 
 ## Current State Analysis
 
@@ -170,14 +188,16 @@ intentionally different text (not production defects; see Out of Scope).
   (and of the context-marker pair the system prompt interpolates).
 - Production adapter and harness v1 both import that definition; no local
   re-declaration of the v1 body remains in either consumer file.
-- The named variant registry (v1/v2/v3 text, unchanged) lives in the shared
-  module so a later promotion is "select a different production variant +
-  version" rather than hand-copying strings into the adapter.
-- A deterministic parity test fails if the production runtime system string and
+- Harness-only v2/v3 bodies remain in `bakeoff.py` (different knowledge —
+  [REF-10]); a later v2/v3 production promotion moves that variant's text into
+  the shared module as its own deliberate change, not as part of this seam.
+- A deterministic parity test fails if the production runtime system string
+  (the string `describe()` actually POSTs as `messages[0]["content"]`) and
   harness `PROMPT_VARIANTS["v1"].system` diverge (whitespace-normalised).
 - Default `gpu_prompt_or_task_version` is derived from the production-selected
-  variant (today `"1"`), co-located with that selection in the shared module —
-  not a hand-maintained `"3"` under a new name.
+  variant (today `"1"`) via a live lookup co-located with that selection in the
+  shared module — not a free-floating module constant that can ignore the
+  selected key.
 - Cache-key consequence of the stamp correction is stated in-plan and accepted
   under greenfield policy; no migration/shim code.
 
@@ -207,24 +227,28 @@ intentionally different text (not production defects; see Out of Scope).
 - Canon (verified definition anchors, `grep -rE '^\| *\`?<ID><a name' canon/lexicons/`):
   - [REF-26] `canon/lexicons/engineering.md` → distilled
     `canon/distilled/engineering/pragmatic-programmer.md` (Topic 9 DRY-as-knowledge;
-    acid test: multi-place multi-format edit for one fact).
+    multi-place knowledge scatter across two consumer modules; multi-format
+    half of the acid test not applicable — both copies are Python strings).
   - [REF-10] `canon/lexicons/engineering.md` → distilled
     `canon/distilled/engineering/refactoring-fowler-beck.md` (change-together /
     Extract) + `canon/distilled/engineering/modern-software-engineering.md`
-    (ch-13: DRY scope = one deployment pipeline).
+    (ch-13: DRY within one deployment pipeline / deployable unit is in bounds;
+    do not share code *between* independently deployed services).
   - [TEST-15] `canon/lexicons/engineering.md` → distilled
     `canon/distilled/engineering/modern-software-engineering.md` (ch-8: predict
     the exact failure message; a test never seen failing is unverified;
     assertion-free / vacuous tests are defects).
   - [PROV-09] `canon/lexicons/ml-systems.md` → distilled
     `canon/distilled/ml-systems/ai-engineering.md` (named mechanism **prompt
-    configuration is production lineage**).
-  - [NAME-03] `canon/lexicons/engineering.md` → distilled
-    `canon/distilled/engineering/programmers-brain.md` (ch-9 linguistic
-    antipatterns; lying names raise measured cognitive load).
+    configuration is production lineage** — load-bearing for honest stamp).
   - [PROV-01] `canon/lexicons/ml-systems.md` (**not** `engineering.md`) →
     distilled `canon/distilled/ml-systems/model-cards.md` (versioned model
     reporting; every output walks back to evidence).
+  - [NAME-03] `canon/lexicons/engineering.md` → distilled
+    `canon/distilled/engineering/programmers-brain.md` (ch-9 linguistic
+    antipatterns) — **weak analogy only** for this task; not load-bearing
+    (the identifier holds a version string; the default *value* is the lie;
+    PROV-09 + TEST-15 carry the warrant).
 
 ### Known non-citable traps (do not cite)
 
@@ -240,7 +264,7 @@ intentionally different text (not production defects; see Out of Scope).
 | --- | --- | --- | --- | --- | --- |
 | Describe response schema (`prompt_or_task_version` field) | Lane B | optional/required string already present on response models | **none** — field shape unchanged; only the default *value* for the GPU profile changes from `"3"` → honest `"1"` | no schema compat work; greenfield accepts value change | existing schema/parity tests still pass; GPU profile tests updated to expect `"1"` |
 | Description cache key | this service | includes `prompt_or_task_version` | default GPU stamp changes ⇒ new keys for previously `"3"`-labelled rows | **no** — greenfield, no migration, no dual-read | document in plan; unit tests of hashing unchanged (they take the stamp as input) |
-| Eval harness run-record provenance | harness | `prompt_variant` already stamped | registry import path may change; provenance field names unchanged | no | `pytest scene/tests/ -k eval_harness` green |
+| Eval harness run-record provenance | harness | `prompt_variant` already stamped | v1 body import path may change; `PROMPT_VARIANTS` still built in bakeoff; provenance field names unchanged | no | `pytest scene/tests/ -k eval_harness` green |
 
 Strictly local to the description service. No WP contract change. No bulk/async
 surface change.
@@ -252,37 +276,57 @@ authority for:
 
 1. Context fence markers used by the caption system prompt
    (`<<<CONTEXT>>>` / `<<<END_CONTEXT>>>`).
-2. The named caption system-prompt registry currently in `bakeoff.py`
-   (`v1`, `v2`, `v3` — **text moved byte-for-byte**, including
-   `system` / `system_long` / `three_surface`).
-3. Production selection constants co-located with that registry:
+2. The **production v1** caption system-prompt body (moved byte-for-byte from
+   `gpu_remote_adapter.py` / bakeoff `_PROMPT_V1_SYSTEM`) and the
+   `PromptVariant` dataclass shape (same fields as today's bakeoff dataclass).
+3. Production selection + **live** version derivation co-located with that body:
    - `PRODUCTION_PROMPT_VARIANT = "v1"` (what the GPU adapter ships today)
-   - `PRODUCTION_PROMPT_OR_TASK_VERSION` **derived** from that selection
-     (map `v1→"1"`, `v2→"2"`, `v3→"3"`), never a free-floating default
-     independent of the selected text.
+   - `_VARIANT_TO_TASK_VERSION = {"v1": "1", "v2": "2", "v3": "3"}` (naming
+     scheme for the stamp; v2/v3 keys reserved for a later promotion)
+   - `def production_prompt_or_task_version() -> str:` returns
+     `_VARIANT_TO_TASK_VERSION[PRODUCTION_PROMPT_VARIANT]` — a **live lookup**,
+     not a module-level constant bound once at import.
+
+**Not moved into the shared module (harness-only; [REF-10]):**
+
+- v2 / v3 system-prompt bodies and the full `PROMPT_VARIANTS` registry
+  construction remain in `bakeoff.py`. Production does not execute those paths
+  today; shipping them in the production package would put harness-only text
+  on a surface it never runs (plan's own harness-only-stays-put criterion).
+- `DEFAULT_PROMPT_VARIANT = "v1"` stays defined and exported in `bakeoff.py`
+  (harness CLI default at `bakeoff.py:154` today; distinct from
+  `PRODUCTION_PROMPT_VARIANT`). Importers such as
+  `test_eval_harness_pipeline.py:22` keep
+  `from scripts.eval_harness.bakeoff import DEFAULT_PROMPT_VARIANT`.
+- Pass-1 / weave / compress prompts stay in `bakeoff.py`.
 
 Consumers:
 
 - `gpu_remote_adapter.py` imports production system prompt + markers; deletes
   local `_SYSTEM_PROMPT` / local marker constants used only for that prompt;
-  constructor default for `prompt_or_task_version` imports
-  `PRODUCTION_PROMPT_OR_TASK_VERSION`.
-- `bakeoff.py` imports the registry (and markers as needed); deletes local
-  `_PROMPT_V1_SYSTEM` / `_PROMPT_V2_SYSTEM` / local `PROMPT_VARIANTS`
-  definition; re-exports `PROMPT_VARIANTS` / `DEFAULT_PROMPT_VARIANT` so
+  constructor default for `prompt_or_task_version` calls
+  `production_prompt_or_task_version()` at init time (not a frozen import-time
+  constant).
+- `bakeoff.py` imports the shared v1 body, markers, and `PromptVariant`;
+  deletes local `_PROMPT_V1_SYSTEM`; keeps local `_PROMPT_V2_SYSTEM` and builds
+  `PROMPT_VARIANTS` in place (v1 entry bound to the shared v1 body; v2/v3
+  unchanged local text); keeps `DEFAULT_PROMPT_VARIANT = "v1"` locally;
+  re-exports `PROMPT_VARIANTS` / `DEFAULT_PROMPT_VARIANT` / `PromptVariant` so
   existing `from scripts.eval_harness.bakeoff import PROMPT_VARIANTS` tests
   keep working.
 - `settings.py` default for `gpu_prompt_or_task_version` becomes
-  `os.environ.get("ACX_GPU_PROMPT_VERSION", PRODUCTION_PROMPT_OR_TASK_VERSION)`
-  so the env override remains, but the **unconfigured** default is honest.
+  `os.environ.get("ACX_GPU_PROMPT_VERSION", production_prompt_or_task_version())`
+  so the env override remains, but the **unconfigured** default is a live
+  honest lookup.
 
 Tests (same slices as the behaviour they load-bear):
 
-- **Parity** between production consumer binding and harness v1 consumer
-  binding, with explicit red-first and discrimination cases ([TEST-15]).
-- **Honest stamp** between production-selected variant text and default
-  version, with red-first and discrimination cases ([PROV-09], [NAME-03],
-  [PROV-01]).
+- **Parity** between production consumer binding (posted system message) and
+  harness v1 consumer binding, with explicit red-first and discrimination
+  cases ([TEST-15]).
+- **Honest stamp** between production-selected variant key and default
+  version, with red-first and discrimination cases ([PROV-09], [PROV-01],
+  [TEST-15]).
 - Update existing assertions that hard-code GPU `"3"`.
 
 ### Cache-key hazard (explicit)
@@ -301,28 +345,38 @@ Tests (same slices as the behaviour they load-bear):
 
 ### Cross-lane dependency
 
-**None for landing this task.**
+**No inbound dependency blocks landing this task.** Lane B / Lane C need no
+edits for DEPICT-0 to merge.
 
 | Need | File | Exact change | Lane | Ordering |
 | --- | --- | --- | --- | --- |
 | — | — | No Lane B schema/enum edit required; field already exists as a free string. | B | n/a |
 | — | — | No Lane C metrics edit required. | C | n/a |
 
+**Downstream (explicitly unowned by this plan):** DEPICT-1 declares a weave-
+integration dependency on DEPICT-0 (DEPICT-1 §Cross-lane dependency,
+`gpu_remote_adapter.py` / bakeoff voice-honouring prompt change after the seam
+closes). This plan **Not-Does** F1 weave-instruction rewrite and does **not**
+deliver weave-side context consumption. After all three current depiction lanes
+merge, the F1 weave half remains open — no lane in this wave owns weave-side
+context consumption. Do not silently absorb that work here.
+
 `deps.py` already threads `settings.gpu_prompt_or_task_version`; once settings
 defaults honestly, resolvers pick up the fix without an owned-file edit. If a
 future promotion wants production to ship v2 text, that is a later DEPICT
-slice (prompt content / promotion), not this seam.
+slice (move v2 body into the shared module + flip
+`PRODUCTION_PROMPT_VARIANT`), not this seam.
 
 ## Files and Surfaces to Change
 
 | Surface | File | Change |
 | --- | --- | --- |
-| new shared-prompt module | `apps/prototype-description-service/scene/prompts/caption_system.py` (new; `__init__.py` as needed) | Own markers, `PromptVariant` dataclass (or import-shared equivalent), `PROMPT_VARIANTS` registry with v1/v2/v3 text moved unchanged from `bakeoff.py`, `PRODUCTION_PROMPT_VARIANT`, derived `PRODUCTION_PROMPT_OR_TASK_VERSION`, helpers if needed (`system_prompt_for(variant)`, whitespace normaliser used by tests) |
-| production adapter | `…/scene/infrastructure/vlm/gpu_remote_adapter.py` | Delete local `_SYSTEM_PROMPT` and the lockstep comment's "nothing else enforces this" gap; import production system prompt + markers from shared module; default `prompt_or_task_version` from `PRODUCTION_PROMPT_OR_TASK_VERSION`; keep describe payload behaviour identical |
-| harness | `…/scripts/eval_harness/bakeoff.py` | Delete local `_PROMPT_V1_SYSTEM`, `_PROMPT_V2_SYSTEM`, and the inline `PROMPT_VARIANTS` construction; import registry + markers from shared module; re-export names tests already import; leave pass-1 / weave / compress / face-gate logic in place |
-| settings | `…/scene/config/settings.py` | Default `gpu_prompt_or_task_version` from shared `PRODUCTION_PROMPT_OR_TASK_VERSION` (env override preserved) |
-| tests (new) | `…/scene/tests/test_prompt_lineage_seam.py` (new) | Parity + honest-stamp tests with red-first documentation in docstrings |
-| tests (correct) | `…/scene/tests/test_gpu_remote_adapter.py`, `test_description_profiles.py`, `test_settings.py`, and any other GPU `"3"` assertions that encode the old default | Expect honest `"1"` (or import the shared constant) |
+| new shared-prompt module | `apps/prototype-description-service/scene/prompts/caption_system.py` (new; `__init__.py` as needed) | Own markers, `PromptVariant` dataclass, production v1 system body, `PRODUCTION_PROMPT_VARIANT`, `_VARIANT_TO_TASK_VERSION`, live `production_prompt_or_task_version()`, `PRODUCTION_SYSTEM_PROMPT` bound to the v1 body; **not** the v2/v3 bodies or full `PROMPT_VARIANTS` registry |
+| production adapter | `…/scene/infrastructure/vlm/gpu_remote_adapter.py` | Delete local `_SYSTEM_PROMPT` and the lockstep comment's "nothing else enforces this" gap; import production system prompt + markers from shared module; default `prompt_or_task_version` via live `production_prompt_or_task_version()`; keep describe payload behaviour identical |
+| harness | `…/scripts/eval_harness/bakeoff.py` | Delete local `_PROMPT_V1_SYSTEM` only; import shared v1 body + markers + `PromptVariant`; keep `_PROMPT_V2_SYSTEM` and build `PROMPT_VARIANTS` locally (v1 entry uses shared body); keep `DEFAULT_PROMPT_VARIANT = "v1"` defined here; re-export names tests already import; leave pass-1 / weave / compress / face-gate logic in place |
+| settings | `…/scene/config/settings.py` | Default `gpu_prompt_or_task_version` from live `production_prompt_or_task_version()` (env override preserved) |
+| tests (new) | `…/scene/tests/test_prompt_lineage_seam.py` (new) | Parity (transport-stubbed posted system string) + honest-stamp tests with red-first documentation in docstrings |
+| tests (correct) | `…/scene/tests/test_gpu_remote_adapter.py`, `test_description_profiles.py`, `test_settings.py`, and any other GPU `"3"` assertions that encode the old default | Expect honest `"1"` (or call the shared live lookup) |
 
 ## Related Files
 
@@ -372,28 +426,37 @@ consume it; a parity test fails when the two consumer bindings diverge.
 Changes:
 
 - Add `scene/prompts/caption_system.py` (and package init) containing:
-  - `CONTEXT_BEGIN` / `CONTEXT_END` (same string values as today).
-  - `PromptVariant` dataclass (same fields as today's bakeoff dataclass:
-    `name`, `system`, `system_long`, `three_surface=False`).
-  - `PROMPT_VARIANTS` with v1/v2/v3 entries moved **without wording changes**
-    from `bakeoff.py` (including the v1 long-band replace
-    `"2-4 plain sentences" → "4-8 plain sentences"` and the v2 long-band
-    replace `"Write 2-4 sentences." → "Write 4-8 sentences."`).
+  - `CONTEXT_BEGIN` / `CONTEXT_END` (same string values as today:
+    `<<<CONTEXT>>>` / `<<<END_CONTEXT>>>`).
+  - `PromptVariant` dataclass (same fields as today's bakeoff dataclass at
+    `bakeoff.py:124-136`: `name`, `system`, `system_long`,
+    `three_surface=False`).
+  - Production v1 system body moved **without wording changes** from
+    `gpu_remote_adapter.py:28-37` / `bakeoff.py:89-98` (the shared
+    `PRODUCTION_SYSTEM_PROMPT` / `V1_SYSTEM_PROMPT`).
   - `PRODUCTION_PROMPT_VARIANT = "v1"`.
-  - `production_system_prompt()` / module-level
-    `PRODUCTION_SYSTEM_PROMPT` bound to
-    `PROMPT_VARIANTS[PRODUCTION_PROMPT_VARIANT].system`.
+  - **Do not** move v2/v3 bodies or the full `PROMPT_VARIANTS` registry here
+    ([REF-10]; harness-only text stays in `bakeoff.py`).
+  - **Do not** define `DEFAULT_PROMPT_VARIANT` here — that harness default
+    remains in `bakeoff.py` (see rewire below).
 - Rewire `gpu_remote_adapter.py`:
   - Import `PRODUCTION_SYSTEM_PROMPT` (or equivalent) and markers.
-  - Use that string in the chat payload system message (same place as today's
-    `_SYSTEM_PROMPT`).
+  - Use that string in the chat payload system message at the same site as
+    today's `_SYSTEM_PROMPT` (`gpu_remote_adapter.py:182`
+    `messages[0]["content"]`).
   - Delete the local duplicated v1 body. Replace the "Keep in lockstep…"
     comment with a pointer to the shared module and the parity test path.
 - Rewire `bakeoff.py`:
-  - Import `PROMPT_VARIANTS`, `DEFAULT_PROMPT_VARIANT` (harness default remains
-    `"v1"`), and markers from the shared module.
-  - Delete local `_PROMPT_V1_SYSTEM` / `_PROMPT_V2_SYSTEM` / local registry
-    construction.
+  - Import shared v1 body, markers, and `PromptVariant` from the shared
+    module.
+  - Delete local `_PROMPT_V1_SYSTEM` only. Keep local `_PROMPT_V2_SYSTEM`.
+  - Build `PROMPT_VARIANTS` locally: v1 entry uses the shared v1 body (and the
+    same long-band replace `"2-4 plain sentences" → "4-8 plain sentences"`);
+    v2/v3 entries keep today's local text and long-band replace unchanged.
+  - Keep `DEFAULT_PROMPT_VARIANT = "v1"` **defined and exported in bakeoff.py**
+    (today at `bakeoff.py:154`; still imported by
+    `test_eval_harness_pipeline.py:22`). Do **not** import it from the shared
+    module (it is not defined there).
   - Re-export `PROMPT_VARIANTS`, `DEFAULT_PROMPT_VARIANT`, and `PromptVariant`
     so `from scripts.eval_harness.bakeoff import PROMPT_VARIANTS` keeps working.
   - Leave `_PASS1_SYSTEM_PROMPT`, `_WEAVE_INSTRUCTIONS`,
@@ -413,56 +476,80 @@ uv run --extra dev pytest scene/tests/test_prompt_lineage_seam.py scene/tests/te
 **Test name (proposed):**
 `test_production_system_prompt_matches_harness_v1`
 
-**What it asserts (non-vacuous binding sites):**
+**What it asserts (mandatory non-vacuous binding sites):**
 
-1. Import the production consumer binding actually used at describe time —
-   e.g. the module attribute `gpu_remote_adapter` uses when building
-   `messages[0]["content"]` (after Slice 1 this is the imported production
-   system prompt, **not** a second import of the shared constant under a
-   different alias in the test alone).
+1. **Transport-stubbed production path (mandatory, not optional).** Construct
+   `GpuRemoteDescriptionAdapter` with `httpx.MockTransport` (same pattern as
+   `test_gpu_remote_adapter.py:35-86`
+   `test_gpu_remote_adapter_posts_bakeoff_aligned_prompt_and_returns_adapter_result`).
+   Call `describe(...)`. Capture the posted JSON payload and read
+   `messages[0]["content"]` (the system role string actually POSTed — today
+   wired at `gpu_remote_adapter.py:182`).
 2. Import the harness consumer binding —
    `scripts.eval_harness.bakeoff.PROMPT_VARIANTS["v1"].system` (the object
    `BakeoffClient` selects for `--prompt-variant v1`).
-3. Assert whitespace-normalised equality:
-   `re.sub(r"\s+", " ", prod.strip()) == re.sub(r"\s+", " ", harness_v1.strip())`.
-4. Optionally assert a live transport-stubbed production `describe()` posts
-   that exact system string (extends the existing bakeoff-aligned prompt test
-   in `test_gpu_remote_adapter.py`).
+3. Assert **whitespace-normalised equality** of the two strings:
+   `re.sub(r"\s+", " ", posted_system.strip()) == re.sub(r"\s+", " ", harness_v1.strip())`
+   where `posted_system = captured_payload["messages"][0]["content"]` and
+   `harness_v1 = bakeoff.PROMPT_VARIANTS["v1"].system`.
+4. **Forbid attribute-only comparison.** The test docstring **must** state that
+   comparing module attributes / shared-constant imports alone
+   (e.g. `gpu_remote_adapter.PRODUCTION_SYSTEM_PROMPT` vs
+   `caption_system.PRODUCTION_SYSTEM_PROMPT`, or two aliases of the same
+   shared symbol) is **not** a valid form of this test. Existing
+   `test_gpu_remote_adapter.py` only substring-checks the posted system
+   message (`"Never name or guess" in …`); that does **not** close this hole —
+   the new test owns full whitespace-normalised equality against harness v1.
 
 **(a) Exact edit that makes it go red**
 
-- In `gpu_remote_adapter.py`, re-introduce a local system-prompt string that
-  differs by any non-whitespace character (e.g. append `" RED."`) and wire the
-  describe payload to that local string instead of the shared production
-  binding → parity test **must fail**.
+- Change **only** the string inserted into the describe payload's
+  `messages[0]["content"]` in `gpu_remote_adapter.py` so it differs by any
+  non-whitespace character from the shared/harness v1 body (e.g. append
+  `" RED."` at the payload site, or re-bind the payload to a local divergent
+  literal). Do **not** redefine a module attribute that the test never reads.
+  Under that edit the transport-captured equality assertion **must fail**.
 - Symmetric red: in `bakeoff.py`, re-bind
   `PROMPT_VARIANTS["v1"]` to a `PromptVariant` whose `system` differs from the
-  shared production text → parity test **must fail**.
+  string the adapter POSTs → parity test **must fail**.
 
 **(b) Discrimination case (proves the check is not vacuous)**
 
 - A vacuous alternative would be:
   `assert caption_system.PRODUCTION_SYSTEM_PROMPT == caption_system.PRODUCTION_SYSTEM_PROMPT`
-  or comparing two imports of the same shared symbol only. That stays green
-  even when the adapter has been re-wired to a divergent local string.
-- The shipped test **must** read through the two consumer modules' runtime
-  binding sites listed above. Document this in the test docstring so a later
-  "simplify the imports" refactor cannot silently vacate the assertion.
-- Permanent discrimination guard (recommended): also assert that the production
-  system string equals
-  `PROMPT_VARIANTS[PRODUCTION_PROMPT_VARIANT].system` **and** that
-  `PRODUCTION_PROMPT_VARIANT == "v1"` today — so selecting a different
-  production variant without updating the parity expectation is a deliberate,
-  visible edit.
+  or comparing two imports of the same shared symbol only, or comparing a
+  module attribute the adapter no longer uses in the payload. Those stay green
+  even when the adapter has been re-wired to a divergent local payload string
+  — which is exactly why attribute-only comparison is forbidden.
+- An always-constant / no-op implementation (e.g. assert `True`, or assert two
+  hard-coded identical literals in the test) also stays green under the red
+  edit in (a). The shipped test fails that discrimination because it reads the
+  **posted** system string and the harness registry entry.
+- Permanent discrimination guard (recommended): also assert
+  `PRODUCTION_PROMPT_VARIANT == "v1"` today and that the posted system string
+  equals the shared `PRODUCTION_SYSTEM_PROMPT` — so a future promotion that
+  flips production selection without updating the parity expectation is a
+  deliberate, visible edit.
 
 **Inventory guard (pre-empts "second copy still alive"):**
 
-- After extraction, `grep -rn 'You write alt text for images on a personal website' apps/prototype-description-service --include='*.py'`
-  must hit **only** the shared module (plus any test that quotes a snippet).
-  Zero hits in `gpu_remote_adapter.py` or as a string literal body in
-  `bakeoff.py`.
-- Same for the unique weave clause
-  `"Weave the people's names and factual details it supplies"`.
+- After extraction, grep the **v1-unique, source-greppable** sentence-band
+  token `"2-4 plain sentences"` (present in production/harness v1 body at
+  `gpu_remote_adapter.py:30` / `bakeoff.py:91` today; **not** in the v2 body,
+  which uses `"Write 2-4 sentences."` — verified against
+  `bakeoff.py:105-121`). Allowed post-extraction hits:
+  - the shared module (the v1 body literal),
+  - bakeoff's long-band `.replace("2-4 plain sentences", "4-8 plain sentences")`
+    on the imported v1 body (string appears as the replace argument, not a
+    second full body),
+  - tests that quote the token (e.g. `test_eval_harness_pipeline.py:113-117`).
+  **Forbidden:** a full v1 body literal still in `gpu_remote_adapter.py` or a
+  second `_PROMPT_V1_SYSTEM`-style body in `bakeoff.py`.
+- Do **not** use as the single-source grep:
+  - `"You write alt text for images on a personal website"` — shared opener
+    with local v2 text.
+  - `"Weave the people's names and factual details it supplies"` — also in
+    the v2 body (`bakeoff.py:116-118` when lines are joined).
 
 ### Slice 2: Honest `prompt_or_task_version` derived from shipped text
 
@@ -473,41 +560,53 @@ accepted without a shim.
 **Canon**: [PROV-09]
 (`canon/lexicons/ml-systems.md` →
 `canon/distilled/ml-systems/ai-engineering.md`);
-[NAME-03]
-(`canon/lexicons/engineering.md` →
-`canon/distilled/engineering/programmers-brain.md`);
 [PROV-01]
 (`canon/lexicons/ml-systems.md` →
 `canon/distilled/ml-systems/model-cards.md`);
 [TEST-15]
 (`canon/lexicons/engineering.md` →
 `canon/distilled/engineering/modern-software-engineering.md`).
+([NAME-03] is a weak analogy only — see Workflow Principles; not load-bearing.)
 
 Changes:
 
-- In the shared module, co-locate production selection with version derivation:
+- In the shared module, co-locate production selection with **live** version
+  derivation (not an import-time constant):
   ```text
   PRODUCTION_PROMPT_VARIANT = "v1"
   _VARIANT_TO_TASK_VERSION = {"v1": "1", "v2": "2", "v3": "3"}
-  PRODUCTION_PROMPT_OR_TASK_VERSION = _VARIANT_TO_TASK_VERSION[PRODUCTION_PROMPT_VARIANT]
+
+  def production_prompt_or_task_version() -> str:
+      return _VARIANT_TO_TASK_VERSION[PRODUCTION_PROMPT_VARIANT]
   ```
-  The stamp is **derived** from the selected variant key. It is not a second
-  independently maintained string that can drift to `"3"` while the variant
-  remains `"v1"`. A future promotion edits `PRODUCTION_PROMPT_VARIANT` (and
-  thus the derived stamp) in the same module as the text being shipped.
+  The stamp is **looked up** from the selected variant key on each call. It is
+  not a free-floating module-level
+  `PRODUCTION_PROMPT_OR_TASK_VERSION = "1"` that can ignore
+  `PRODUCTION_PROMPT_VARIANT`, and it is not a once-bound
+  `PRODUCTION_PROMPT_OR_TASK_VERSION = _VARIANT_TO_TASK_VERSION[PRODUCTION_PROMPT_VARIANT]`
+  constant that freezes the value at import (monkeypatching the variant key
+  after import would not update such a constant). A future promotion that
+  moves v2 text into this module also flips `PRODUCTION_PROMPT_VARIANT` so the
+  live lookup yields `"2"`.
 - `settings.py`:
   `gpu_prompt_or_task_version` default_factory uses
-  `os.environ.get("ACX_GPU_PROMPT_VERSION", PRODUCTION_PROMPT_OR_TASK_VERSION)`.
+  `os.environ.get("ACX_GPU_PROMPT_VERSION", production_prompt_or_task_version())`
+  so each settings construction re-evaluates the live lookup when the env var
+  is unset.
 - `gpu_remote_adapter.py`:
-  constructor default `prompt_or_task_version=PRODUCTION_PROMPT_OR_TASK_VERSION`
-  (not `"3"`).
+  constructor must not bake an import-time default of a frozen string.
+  Preferred shape: default parameter `prompt_or_task_version: str | None = None`
+  and inside `__init__` assign
+  `self.prompt_or_task_version = prompt_or_task_version if prompt_or_task_version is not None else production_prompt_or_task_version()`
+  so a monkeypatched `PRODUCTION_PROMPT_VARIANT` is visible on new instances.
+  (A bare default-arg call evaluated at `def` time would re-freeze the value.)
 - Correct tests that encoded the lie:
-  - `test_gpu_remote_adapter.py` — stop asserting `"3"`; assert the shared
-    constant / `"1"`.
+  - `test_gpu_remote_adapter.py` — stop asserting `"3"`; assert
+    `production_prompt_or_task_version()` / `"1"` under default env.
   - `test_description_profiles.py` — resolved GPU adapters expose `"1"` under
     default env.
   - `test_settings.py` — add assertion that default
-    `gpu_prompt_or_task_version == PRODUCTION_PROMPT_OR_TASK_VERSION == "1"`.
+    `gpu_prompt_or_task_version == production_prompt_or_task_version() == "1"`.
   - Any other hard-coded GPU `"3"` expectations that break under the honest
     default (stubs that *intentionally* pass an explicit version remain free
     to pass `"3"` as a caller-supplied override — only **defaults** must be
@@ -533,41 +632,55 @@ uv run --extra dev pytest scene/tests/test_prompt_lineage_seam.py scene/tests/te
 
 1. With `ACX_GPU_PROMPT_VERSION` unset,
    `DescriptionSettings().gpu_prompt_or_task_version == "1"`.
-2. `GpuRemoteDescriptionAdapter(... default ...).prompt_or_task_version == "1"`.
-3. `PRODUCTION_PROMPT_OR_TASK_VERSION == _VARIANT_TO_TASK_VERSION[PRODUCTION_PROMPT_VARIANT]`.
-4. The production system prompt text equals
-   `PROMPT_VARIANTS[PRODUCTION_PROMPT_VARIANT].system` (ties stamp lineage to
-   text identity — [PROV-01] / [PROV-09]).
+2. `GpuRemoteDescriptionAdapter(... default ...).prompt_or_task_version == "1"`
+   (construct without passing `prompt_or_task_version`, so the live default
+   path runs).
+3. `production_prompt_or_task_version() == _VARIANT_TO_TASK_VERSION[PRODUCTION_PROMPT_VARIANT]`
+   and, under today's selection,
+   `PRODUCTION_PROMPT_VARIANT == "v1"` and the function returns `"1"`.
+4. The production system prompt text equals the shared v1 body
+   (`PRODUCTION_SYSTEM_PROMPT`) that the adapter POSTs (ties stamp lineage to
+   text identity — [PROV-01] / [PROV-09]). Do **not** require
+   `PROMPT_VARIANTS` to live in the shared module for this assertion; harness
+   `bakeoff.PROMPT_VARIANTS["v1"].system` is already locked to that body by the
+   Slice 1 parity test.
 5. Negative honesty check: production-selected variant is `"v1"` **and**
    default stamp is **not** `"3"` (names the bug class this slice kills —
-   [NAME-03]).
+   dishonest value over v1 text; warrant is [PROV-09], not NAME-03).
 
 **(a) Exact edit that makes it go red**
 
 - Change `_VARIANT_TO_TASK_VERSION["v1"]` to `"3"` while
-  `PRODUCTION_PROMPT_VARIANT` stays `"v1"` → test (5) / derived-honesty
-  assertions fail (or, if the map is the sole derivation, change the test's
-  expected pairing by forcing `PRODUCTION_PROMPT_VARIANT = "v1"` and expecting
-  stamp `"1"` — the red is: any code path that restores default `"3"` for
-  production v1 text).
+  `PRODUCTION_PROMPT_VARIANT` stays `"v1"` → assertions (1)/(2)/(3)/(5) fail
+  (function now returns `"3"` for production v1).
 - Concrete production-path red: restore
   `settings.py` default to literal `"3"` →
   `test_gpu_prompt_version_default_matches_production_variant` fails.
+- Free-floating regression red: replace the live function body with
+  `return "1"` (ignore the map / variant key) → discrimination case (b) fails
+  even though assertions (1)–(2) stay green under the default selection.
 
 **(b) Discrimination case**
 
-- Prove the stamp tracks selection, not a frozen constant under a new name:
-  temporarily point `PRODUCTION_PROMPT_VARIANT` at `"v2"` in a unit test
-  (monkeypatch the shared module attribute) and assert the **derived**
-  version becomes `"2"` while `PROMPT_VARIANTS["v2"].system` is the production
-  system prompt under that patch. A hand-maintained
-  `PRODUCTION_PROMPT_OR_TASK_VERSION = "1"` that ignores the variant key would
-  fail this discrimination case — that is the point.
+- Prove the stamp tracks selection via **live lookup**, not a frozen
+  import-time constant under a new name:
+  1. `monkeypatch.setattr(caption_system, "PRODUCTION_PROMPT_VARIANT", "v2")`
+     (or patch the attribute on the module under test).
+  2. Assert `production_prompt_or_task_version() == "2"`.
+  3. Construct a fresh `GpuRemoteDescriptionAdapter` without an explicit
+     `prompt_or_task_version` and assert
+     `.prompt_or_task_version == "2"`.
+  A hand-maintained `PRODUCTION_PROMPT_OR_TASK_VERSION = "1"` module constant
+  (or a once-bound import-time constant, or a function that always returns
+  `"1"`) fails this discrimination case — that is the point. Because the plan
+  uses a live function, monkeypatching the variant key is reachable; a module
+  constant would make this case dead.
 - Env override discrimination: with
   `monkeypatch.setenv("ACX_GPU_PROMPT_VERSION", "9")`, settings surface `"9"`
-  (operator override still works) while the module's derived production
-  constant remains `"1"`. The default-honesty test only applies when the env
-  var is unset.
+  (operator override still works) while
+  `production_prompt_or_task_version()` remains `"1"` under the default
+  variant key. The default-honesty test only applies when the env var is
+  unset.
 
 ## Consolidated Checklist
 
@@ -583,33 +696,41 @@ uv run --extra dev pytest scene/tests/test_prompt_lineage_seam.py scene/tests/te
 
 ### Checklist for Slice 1: Single prompt source + parity test
 
-- [ ] Create `scene/prompts/caption_system.py` with markers, registry (v1/v2/v3
-      text unchanged), `PRODUCTION_PROMPT_VARIANT`, production system prompt
-      binding.
+- [ ] Create `scene/prompts/caption_system.py` with markers, `PromptVariant`,
+      production v1 body, `PRODUCTION_PROMPT_VARIANT`, production system prompt
+      binding — **not** v2/v3 bodies or full `PROMPT_VARIANTS`.
 - [ ] Rewire `gpu_remote_adapter.py` to import production system prompt; delete
-      local `_SYSTEM_PROMPT` body.
-- [ ] Rewire `bakeoff.py` to import/re-export registry; delete local v1/v2
-      string bodies and local registry construction; keep pass-1/weave/compress
-      local.
-- [ ] Add `test_prompt_lineage_seam.py` parity test reading **consumer**
-      binding sites (not a double import of the shared symbol alone).
-- [ ] Document red-first edit (a) and discrimination case (b) in the test
-      docstring.
-- [ ] Grep guard: no residual full v1 body outside the shared module.
+      local `_SYSTEM_PROMPT` body; use shared string at the payload site
+      (`messages[0]["content"]`).
+- [ ] Rewire `bakeoff.py`: import shared v1 body + `PromptVariant`; delete local
+      `_PROMPT_V1_SYSTEM` only; keep `_PROMPT_V2_SYSTEM` and local
+      `PROMPT_VARIANTS` construction; keep `DEFAULT_PROMPT_VARIANT = "v1"`
+      defined in bakeoff; keep pass-1/weave/compress local.
+- [ ] Add `test_prompt_lineage_seam.py` parity test that **transport-stubs**
+      `describe()`, captures `messages[0]["content"]`, and asserts
+      whitespace-normalised equality to
+      `bakeoff.PROMPT_VARIANTS["v1"].system` (attribute-only comparison
+      forbidden in the docstring).
+- [ ] Document red-first edit (a) — change only the payload-inserted string —
+      and discrimination case (b) in the test docstring.
+- [ ] Grep guard: no residual full v1 body outside the shared module (unique
+      weave clause is the hard single-source check).
 - [ ] Verification:
       `uv run --extra dev pytest scene/tests/test_prompt_lineage_seam.py scene/tests/test_gpu_remote_adapter.py scene/tests/test_eval_harness_pipeline.py -q`
 
 ### Checklist for Slice 2: Honest version stamp
 
-- [ ] Derive `PRODUCTION_PROMPT_OR_TASK_VERSION` from
-      `PRODUCTION_PROMPT_VARIANT` in the shared module (no free-floating
-      default).
-- [ ] Point `settings.gpu_prompt_or_task_version` default at that derived
-      constant (env override preserved).
-- [ ] Point `GpuRemoteDescriptionAdapter` constructor default at the same
-      constant.
+- [ ] Add live `production_prompt_or_task_version()` that subscripts
+      `_VARIANT_TO_TASK_VERSION[PRODUCTION_PROMPT_VARIANT]` (no free-floating
+      or import-time-frozen default).
+- [ ] Point `settings.gpu_prompt_or_task_version` default_factory at that live
+      lookup (env override preserved).
+- [ ] Point `GpuRemoteDescriptionAdapter` constructor default through the live
+      lookup at init time (not a frozen default-arg constant).
 - [ ] Update tests that asserted GPU default `"3"`; add default-honesty +
-      derivation discrimination tests.
+      derivation discrimination tests (monkeypatch
+      `PRODUCTION_PROMPT_VARIANT` → `"v2"`, expect `"2"` from the live
+      function and a fresh adapter instance).
 - [ ] State cache-key consequence in the PR/handoff note: greenfield accept;
       no migration/shim.
 - [ ] Verification:
@@ -618,11 +739,17 @@ uv run --extra dev pytest scene/tests/test_prompt_lineage_seam.py scene/tests/te
 ### Review Readiness
 
 - [ ] No boundary-touching schema change left undocumented (expected: none).
-- [ ] Parity test cannot pass by reading the same constant twice.
+- [ ] Parity test cannot pass by reading the same constant twice or by
+      attribute-only comparison; it reads the posted system string.
 - [ ] Version stamp cannot sit at `"3"` for production v1 text under default env.
+- [ ] Live derivation discrimination reaches red under a free-floating
+      always-`"1"` implementation.
 - [ ] No second full copy of the production system-prompt body remains under
       `apps/prototype-description-service/`.
+- [ ] Harness-only v2/v3 bodies remain in `bakeoff.py` (not shipped as unused
+      production registry entries).
 - [ ] Cache-key hazard acknowledged; no compatibility shim introduced.
+- [ ] DEPICT-1 weave-side F1 consumption explicitly unowned / Not-Done.
 - [ ] F2 / F4 / colour work not smuggled into this branch.
 
 ## Stretch Goals
@@ -638,10 +765,15 @@ uv run --extra dev pytest scene/tests/test_prompt_lineage_seam.py scene/tests/te
 - [ ] Exactly one definition of the production caption system-prompt text;
       production adapter and harness v1 both consume it.
 - [ ] `test_production_system_prompt_matches_harness_v1` (or equivalent) is red
-      under the documented divergent-local-string edit and green at HEAD.
+      under the documented payload-string edit and green at HEAD; it compares
+      the transport-captured posted system string to
+      `bakeoff.PROMPT_VARIANTS["v1"].system`.
 - [ ] Default `gpu_prompt_or_task_version` is `"1"` when
-      `ACX_GPU_PROMPT_VERSION` is unset, matching production v1 text; derived
-      from `PRODUCTION_PROMPT_VARIANT`, not hand-maintained beside it.
+      `ACX_GPU_PROMPT_VERSION` is unset, matching production v1 text; returned
+      by live `production_prompt_or_task_version()` from
+      `PRODUCTION_PROMPT_VARIANT`, not hand-maintained beside it.
+- [ ] Derivation discrimination: monkeypatching `PRODUCTION_PROMPT_VARIANT` to
+      `"v2"` makes the live lookup (and a fresh adapter default) return `"2"`.
 - [ ] Existing GPU adapter + harness pipeline tests green under
       `uv run --extra dev pytest` with the paths above.
 - [ ] No edits to Lane B schema files or Lane C `caption_metrics.py`.
@@ -653,6 +785,13 @@ uv run --extra dev pytest scene/tests/test_prompt_lineage_seam.py scene/tests/te
 - Changing what any prompt **says** (F2 emotion-bearer wording, F4
   three-surface production promotion, F1 weave clause rewrite). Unblocked by
   this seam; not shipping in DEPICT-0.
+- **Weave-side context consumption / F1 voice-honouring prompt behaviour**
+  that DEPICT-1 declares as a downstream dependency on DEPICT-0. This plan
+  closes the dual-prompt *seam* only; no lane in this wave owns the weave
+  rewrite. Leave it explicitly open.
+- Moving harness-only v2/v3 prompt bodies or the full `PROMPT_VARIANTS`
+  registry into the production shared module ([REF-10]: different knowledge;
+  production does not execute those paths today).
 - Metrics, scorers, or any edit to `caption_metrics.py` (Lane C).
 - Contract, schema, or enum changes (Lane B).
 - Colour vocabulary of any kind (assessment §10e trigger-gated).
@@ -660,6 +799,8 @@ uv run --extra dev pytest scene/tests/test_prompt_lineage_seam.py scene/tests/te
 - Moving harness-only pass-1 / weave / compress prompts into the shared module
   ([REF-10]: different knowledge).
 - Citing `FM-11`, `HARM-01`, or non-existent `REG`/`ICON`/`FRAM`/`SEL` IDs.
+- Treating [NAME-03] as a load-bearing warrant for the dishonest stamp (weak
+  analogy only; PROV-09 + TEST-15 carry the work).
 
 ## No canon warrant
 

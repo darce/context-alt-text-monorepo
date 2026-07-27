@@ -36,9 +36,12 @@ bounds every nested string, but it carries **no voice provenance**. CMS-authored
 caption/title/taxonomy strings are rendered into the production prompt and the
 shipping system prompt (today
 `scene/infrastructure/vlm/gpu_remote_adapter.py` `_SYSTEM_PROMPT` L28–37;
-post-DEPICT-0 the same v1 body lives in
-`scene/prompts/caption_system.py` as `PRODUCTION_PROMPT.body`, accessed via
-`production_system_prompt()` — DEPICT-0 forbids a separate
+post-DEPICT-0 the same v1 body lives in the selected
+`ProductionPrompt` in `scene/prompts/caption_system.py`, and **consumers bind
+only via** `production_system_prompt()` — DEPICT-0 accessor-only rule,
+verbatim: *"Only permitted binding form for production consumers: the
+accessor functions. Do **not** read `PRODUCTION_PROMPT.body` /
+`.lineage_version` at the call site"* — DEPICT-0 forbids a separate
 `PRODUCTION_SYSTEM_PROMPT` string global) instructs the
 model to *weave* names and factual details *where they fit naturally* —
 dissolving the seam between creator speech and the system's unmarked
@@ -92,13 +95,19 @@ partitioned, not a blended middle.
   safe to land until DEPICT-0 closes the prompt *seam* (move-only; DEPICT-0
   Not-Doing: "Changing what any prompt **says**" / "Weave-side context
   consumption / F1 voice-honouring prompt behaviour"). The actual
-  voice-honouring weave rewrite is **DEPICT-1b** (Lane A, after DEPICT-0 seam
-  + this contract). Post-DEPICT-0, DEPICT-1b edits the selected
-  `PRODUCTION_PROMPT.body` (via `production_system_prompt()` / rebind of
-  `PRODUCTION_PROMPT`) in `scene/prompts/caption_system.py` — **not** the
-  deleted `gpu_remote_adapter._SYSTEM_PROMPT` constant and **not** a separate
-  `PRODUCTION_SYSTEM_PROMPT` string global (DEPICT-0 forbids that shape). Do
-  not edit prompt strings here; do not attribute the weave edit to DEPICT-0.
+  voice-honouring weave rewrite is **F1 (b) production-weave** — **OUT of this
+  wave, unowned** (no plan file delivers it; optional future label "DEPICT-1b"
+  only when a plan is authored). Post-DEPICT-0, that future work **REBINDS**
+  the module-level `PRODUCTION_PROMPT` to a new
+  `ProductionPrompt(body=…, lineage_version=…)` in
+  `scene/prompts/caption_system.py` (DEPICT-0: *"A future promotion replaces
+  `PRODUCTION_PROMPT` (or rebinds the selected instance)"*). **Never** mutate
+  `.body` on the frozen dataclass (`@dataclass(frozen=True)` →
+  `FrozenInstanceError`). Consumers continue to bind **accessor-only** via
+  `production_system_prompt()` — never `PRODUCTION_PROMPT.body` at the call
+  site. Not the deleted `gpu_remote_adapter._SYSTEM_PROMPT` constant and not a
+  separate `PRODUCTION_SYSTEM_PROMPT` string global. Do not edit prompt
+  strings here; do not attribute the weave edit to DEPICT-0.
 - **Bound-term / colour field shape is out of scope.** Assessment §10g removed
   it. `FM-11` is retired canon and must not be cited. Trigger for any colour
   vocabulary is §10e (machine-consumed colour token) — not this task.
@@ -205,13 +214,15 @@ partitioned, not a blended middle.
 - Production weave clause ("Weave the people's names and factual details…") is
   in `gpu_remote_adapter.py` L33–34 today — **Lane A owned**; not editable
   here. DEPICT-0 **moves** that body into
-  `scene/prompts/caption_system.py` as the selected `PRODUCTION_PROMPT.body`
-  (accessed via `production_system_prompt()`; no separate
+  `scene/prompts/caption_system.py` as the selected `ProductionPrompt.body`
+  field on frozen `PRODUCTION_PROMPT` (consumers bind **only** via
+  `production_system_prompt()` — DEPICT-0 accessor-only; no separate
   `PRODUCTION_SYSTEM_PROMPT` string global — DEPICT-0 Slice 2 / Terminology)
   and deletes the local constant; DEPICT-0 **Not-Does** F1 weave *wording*
-  (DEPICT-0 Not-Doing section). **DEPICT-1b** (post-DEPICT-0) rewrites the
-  weave clause on that same selected body (`PRODUCTION_PROMPT.body` /
-  `production_system_prompt()`), not a freestanding string global.
+  (DEPICT-0 Not-Doing section). **F1 (b) production-weave** (OUT of this wave,
+  unowned) later **rebinds** `PRODUCTION_PROMPT` to a new
+  `ProductionPrompt(body=<rewritten weave>, lineage_version=…)` — never edits
+  `.body` in place on the frozen instance; consumers keep accessor-only binds.
 - Defaulted `voice` keys on speech-allowlist nested models enter the normalized
   pack dump (callers that omit `voice` still validate; dumps include defaults)
   and therefore change `context_hash` for otherwise-identical packs. That
@@ -333,10 +344,12 @@ cross-reference).
   **despite** API-09's Hyrum note, not under API-09.
 - **Harness-side `ContextPack` voice mirror** (`scripts/eval_harness/manifest.py`
   `ContextPack` L165–176: `title` / `caption` / `description` only — no
-  `voice`) has no owner in this flock; F1 contract traps are
-  **service-unit-only**. DEPICT-1b owns the **production** weave half (shared
-  `PRODUCTION_PROMPT.body`); it does **not** deliver harness voice-honouring
-  lockstep. A future named lane must claim `manifest.py` voice + fixtures.
+  `voice`) is **OUT of this wave and unowned** — not part of F1 (a) or F1 (b).
+  F1 (a) contract traps are **service-unit-only**. F1 (b) production-weave
+  (OUT of this wave, unowned) rebinds the shared selected `PRODUCTION_PROMPT`
+  (accessor-visible via `production_system_prompt()`); it does **not** deliver
+  harness voice-honouring lockstep. A future named lane must claim
+  `manifest.py` voice + fixtures before harness F1 traps exist.
 - **Response-side `description_register` echo** is not in this task (no owned
   path from request → `build_visual_facts_envelope` → cache row → response).
 
@@ -348,7 +361,7 @@ cross-reference).
 | `DescribeImageEnvelope` | Lane B | tenant/media/context/context_pack/decorative/tier | Additive defaulted `description_register`, `gravity` | Shape: omit → defaults ([API-09]) | schema unit tests |
 | `VisualFactsResponse` | **Unchanged this task** | 17 core + additive optionals | **No** `description_register` field; no echo | n/a — response contract frozen for this lane | Existing `test_response_schema_parity.py` stays green without edit |
 | Shared JSON schema `packages/shared-contracts/schemas/image-description-response.schema.json` | **Unchanged this task** (exists in tree; no `description_register` property today) | mirrors response model | **No edit** — response field not in DEPICT-1 scope | n/a | Parity test unchanged; no package-absent skip; no property-missing xfail |
-| Production system prompt / weave | **DEPICT-1b** (Lane A; after DEPICT-0 + DEPICT-1) | unmarked weave (today `gpu_remote_adapter.py` L33–34; post-DEPICT-0 body is selected `PRODUCTION_PROMPT.body` in `scene/prompts/caption_system.py`, via `production_system_prompt()`) | Must honour quotable-only partition on the **service** pack path | Cross-lane follow-on | Not in this task; DEPICT-0 only moves prompts; harness pack `voice` remains unowned |
+| Production system prompt / weave | **F1 (b) — OUT of this wave, unowned** (not DEPICT-0/1/2) | unmarked weave (today `gpu_remote_adapter.py` L33–34; post-DEPICT-0 body lives on frozen selected `PRODUCTION_PROMPT` in `scene/prompts/caption_system.py`; consumers bind **accessor-only** via `production_system_prompt()` — never `.body` at call site) | Must honour quotable-only partition on the **service** pack path (REBIND `PRODUCTION_PROMPT`; never mutate frozen `.body`) | Cross-lane / future | Not in this task; DEPICT-0 only moves prompts; harness pack `voice` remains OUT/unowned; merging DEPICT-0+1+2 does **not** close F1 |
 | Eval harness metrics | Lane C | no register/voice axes | future register-compliance arm | Cross-lane | Not in this task |
 
 ## Proposed Solution
@@ -393,8 +406,8 @@ Three reviewable slices, each behaviour + proof:
 | response contract | `scene/interface_adapters/http/schemas/responses.py` | **No edit** — response `description_register` / echo withdrawn (no owned propagation path). |
 | shared JSON schema | `packages/shared-contracts/schemas/image-description-response.schema.json` | **No edit** — no response property to mirror; package exists and stays as-is. |
 | response parity tests | `scene/tests/test_response_schema_parity.py` | **No edit** — `PREVIEW_FIELDS` / properties equality stay green without a new model field. Do **not** introduce package-absent skip or property-missing xfail (dead code: package exists). |
-| production weave prompt body (post-DEPICT-0) | `scene/prompts/caption_system.py` | **DEPICT-1b** follow-on (Lane A). Prerequisites: DEPICT-0 then DEPICT-1. |
-| production adapter render helpers | `scene/infrastructure/vlm/gpu_remote_adapter.py` (`_render_context` / `_user_text`) | **DEPICT-1b** may still edit render helpers to voice-tag creator entries; system *wording* lives in caption_system after DEPICT-0. |
+| production weave prompt body (post-DEPICT-0) | `scene/prompts/caption_system.py` | **F1 (b) production-weave — OUT of this wave, unowned.** Prerequisites when owned later: DEPICT-0 then DEPICT-1. Mutation is REBIND-ONLY of `PRODUCTION_PROMPT`. |
+| production adapter render helpers | `scene/infrastructure/vlm/gpu_remote_adapter.py` (`_render_context` / `_user_text`) | **F1 (b) — unowned future work** may still edit render helpers to voice-tag creator entries; system *wording* lives in caption_system after DEPICT-0. |
 | visual facts service | `scene/application/visual_facts_service.py` | **No edit** — no register threading into envelope / cache. |
 | harness ContextPack | `scripts/eval_harness/manifest.py` | **Unowned** — F1 traps are service-unit-only in DEPICT-1. |
 
@@ -406,14 +419,26 @@ Three reviewable slices, each behaviour + proof:
 | `scene/application/visual_facts_service.py` | `build_visual_facts_envelope` L71–83 — no register parameter today; **not edited**. Confirms why response echo is out of scope. |
 | `scene/application/fusion/reconcile.py` | Neighbour provenance (`FactSource`). Caption-fact paths are the inventory alignment *floor*; Slice 1 inventory is the full IN/OUT table. Do not overload with `ContextVoice`. |
 | `scene/application/hashing.py` | Defaulted `voice` keys change the hash once for all packs. Acceptable under **Greenfield Policy** (not under API-09); no migration. |
-| `scene/infrastructure/vlm/gpu_remote_adapter.py` | Today: `_SYSTEM_PROMPT` L28–37 + weave L33–34. Post-DEPICT-0: local constant deleted; body lives in `caption_system.py`. DEPICT-1b owns weave. |
-| `scene/prompts/caption_system.py` | **Created by DEPICT-0.** Post-seam home of selected `PRODUCTION_PROMPT` (`body` + `lineage_version`) and accessors `production_system_prompt()` / `production_prompt_or_task_version()`. DEPICT-1b's wording edit targets `PRODUCTION_PROMPT.body` (or rebinds the selected `ProductionPrompt`) — **not** a separate `PRODUCTION_SYSTEM_PROMPT` string global (DEPICT-0 forbids that shape). |
-| `scripts/eval_harness/bakeoff.py` | Lane A / DEPICT-0 — harness prompt seam. After DEPICT-0, v1 system text binds from `PRODUCTION_PROMPT.body` / `production_system_prompt()`; a DEPICT-1b body edit changes bakeoff system **wording** only. Full harness F1 voice-honouring is **not** DEPICT-1b (no harness pack `voice`). |
+| `scene/infrastructure/vlm/gpu_remote_adapter.py` | Today: `_SYSTEM_PROMPT` L28–37 + weave L33–34. Post-DEPICT-0: local constant deleted; body lives in `caption_system.py`; consumer binds via `production_system_prompt()` only (DEPICT-0:360–374 accessor-only). F1 (b) weave is OUT of this wave / unowned. |
+| `scene/prompts/caption_system.py` | **Created by DEPICT-0.** Post-seam home of selected frozen `PRODUCTION_PROMPT` (`body` + `lineage_version`) and accessors `production_system_prompt()` / `production_prompt_or_task_version()`. **Consumer bind rule (DEPICT-0 verbatim):** only the accessor functions; do **not** read `PRODUCTION_PROMPT.body` / `.lineage_version` at the call site. **Mutation rule:** REBIND-ONLY — replace `PRODUCTION_PROMPT` with a new `ProductionPrompt(body=…, lineage_version=…)`; never assign to `.body` on the frozen instance (`FrozenInstanceError`). No separate `PRODUCTION_SYSTEM_PROMPT` string global. |
+| `scripts/eval_harness/bakeoff.py` | Lane A / DEPICT-0 — harness prompt seam. After DEPICT-0, v1 system text binds **accessor-only** via `production_system_prompt()` (not `PRODUCTION_PROMPT.body` at call site; DEPICT-0:372–374). A future F1 (b) rebind of `PRODUCTION_PROMPT` changes bakeoff system **wording** only. Full harness F1 voice-honouring is **OUT / unowned** (no harness pack `voice`). |
 | `scripts/eval_harness/caption_metrics.py` | Lane C — scorers. |
-| `scripts/eval_harness/manifest.py` | Separate flat harness `ContextPack` (`extra="allow"`; fields `title`/`caption`/`description` only at L165–176 — **no** `voice`). **Unowned** in this flock; not mirrored here; not a DEPICT-1b deliverable. |
+| `scripts/eval_harness/manifest.py` | Separate flat harness `ContextPack` (`extra="allow"`; fields `title`/`caption`/`description` only at L165–176 — **no** `voice`). **OUT of this wave and unowned** — not F1 (a), not F1 (b); not mirrored here. |
 | Reasoning card `attribute-claims-to-their-bearer` (canon, not vendored) | Design warrant for register vocabulary — cite as plain text, do not markdown-link into `canon/`. |
 
 ## Cross-lane dependency
+
+### F1 ownership split (this wave vs OUT)
+
+Eval finding F1 has **two halves**. Merging DEPICT-0 + DEPICT-1 + DEPICT-2
+**does not close F1**. There is no `DEPICT-1b` plan file under
+`docs/tasks/depiction/` in this wave.
+
+| Half | Scope | In this wave? | Owner | Acceptance criteria (named) |
+|---|---|---|---|---|
+| **F1 (a) — service/contract** | `voice` on speech-allowlist nested pack models; `iter_context_facts` + `partition_context_pack`; creator never absorbable; Product/Identity voice value propagates boundary→partition; register + gravity contract | **Yes** | **DEPICT-1** (this plan) | Slice 1–3 success criteria green; scoped pytest green; no prompt wording change required |
+| **F1 (b) — production-weave** | Stop unmarked weave of creator-tagged fields in the **shared** production system prompt; render creator entries as quoted/voice-tagged on the **service** pack path; wire partition (or honour it) into adapter render | **No — OUT of this wave** | **Unowned** (no plan file; optional future label "DEPICT-1b" only when authored) | (1) Module-level `PRODUCTION_PROMPT` is **rebound** to a new `ProductionPrompt(body=<voice-honouring text>, lineage_version=…)` — **never** in-place `.body = …` on the frozen dataclass; (2) production consumer still binds **accessor-only** via `production_system_prompt()` (DEPICT-0:360–374); (3) a service-path test with `voice=creator` proves the model is not instructed to absorb creator speech unmarked; (4) DEPICT-0 seam + DEPICT-1 Slice 1 are prerequisites |
+| **Harness `ContextPack.voice`** | `scripts/eval_harness/manifest.py` `ContextPack` (L165–176: `title`/`caption`/`description` only today) | **No — OUT of this wave** | **Unowned** (neither F1 (a) nor F1 (b)) | Future lane adds `voice` + creator-trap fixtures; not delivered by DEPICT-0/1/2 or by F1 (b) wording rebind alone |
 
 **Prerequisite ordering (explicit):**
 
@@ -422,26 +447,30 @@ Three reviewable slices, each behaviour + proof:
    wording identical. DEPICT-0 **Not-Does** F1 weave rewrite (section
    **Not-Doing**: "Changing what any prompt **says**" and "Weave-side context
    consumption / F1 voice-honouring prompt behaviour").
-2. **DEPICT-1** (this plan) lands the request-side voice/register/gravity
-   contract and pure partition helpers. Does **not** edit prompt text or wire
-   partition into production.
-3. **DEPICT-1b** (named follow-on, Lane A) lands **after** DEPICT-0 + DEPICT-1
-   Slice 1. Edits the post-DEPICT-0 selected `PRODUCTION_PROMPT.body` (via
-   `production_system_prompt()` / rebind of `PRODUCTION_PROMPT` — **not** a
-   `PRODUCTION_SYSTEM_PROMPT` string global) and (if needed) adapter render
-   helpers on the **service** pack path. **F1 production weave is not closed**
-   by DEPICT-0+1 alone. Harness pack `voice` / bakeoff F1 traps remain
-   **unowned** — DEPICT-1b does not deliver harness voice-honouring lockstep.
+2. **DEPICT-1** (this plan) lands **F1 (a)** only — request-side
+   voice/register/gravity contract and pure partition helpers. Does **not**
+   edit prompt text or wire partition into production.
+3. **F1 (b) production-weave** remains **OUT of this wave and unowned** after
+   DEPICT-0 + DEPICT-1. When a future plan owns it, mutation is **REBIND-ONLY**
+   of `PRODUCTION_PROMPT` (DEPICT-0: *"A future promotion replaces
+   `PRODUCTION_PROMPT` (or rebinds the selected instance) with a new
+   `ProductionPrompt(body=…, lineage_version=…)"`*) — **not**
+   `PRODUCTION_PROMPT.body = …` (`@dataclass(frozen=True)` raises
+   `FrozenInstanceError`), **not** a freestanding `PRODUCTION_SYSTEM_PROMPT`
+   string global, and **not** consumer reads of `.body` at the call site
+   (accessor-only). Harness pack `voice` / bakeoff F1 traps remain separately
+   **unowned**.
 
 | Dependency | Exact file | Exact change needed | Owner / sequencing |
 |---|---|---|---|
-| Prompt seam (no wording) | `gpu_remote_adapter.py`, `bakeoff.py`, `scene/prompts/caption_system.py` (new) | Single source for production system prompt text; delete local `_SYSTEM_PROMPT` | **DEPICT-0 / Lane A** — lands **first**; Not-Does F1 weave rewrite (DEPICT-0 §Not-Doing) |
-| **Production voice-honouring weave (F1 prompt half)** | **Primary:** `scene/prompts/caption_system.py` — edit target is the selected `PRODUCTION_PROMPT.body` (read via `production_system_prompt()`; DEPICT-0 atomic config — **no** separate `PRODUCTION_SYSTEM_PROMPT` string global). **Secondary (if render must voice-tag):** `scene/infrastructure/vlm/gpu_remote_adapter.py` (`_render_context` L73–87 / `_user_text` L90–101) | Stop instructing unmarked weave of creator-tagged fields in the **shared** system prompt body; render creator entries as quoted/voice-tagged only; consume pack `voice` from the **service** normalized context dict; call `partition_context_pack` (or honour its partition). **Do not** retarget DEPICT-1b at `gpu_remote_adapter._SYSTEM_PROMPT` — DEPICT-0 deletes that constant. **Do not** invent a freestanding `PRODUCTION_SYSTEM_PROMPT` body global — rebind or edit `PRODUCTION_PROMPT` / `PRODUCTION_PROMPT.body` so body and `lineage_version` stay one object (DEPICT-0 Slice 2). | **DEPICT-1b** — named follow-on, Lane A prompt owner. **Prerequisites (hard):** (1) DEPICT-0 seam merged, (2) DEPICT-1 Slice 1 contract merged. **Not owned by DEPICT-0 or DEPICT-1.** After DEPICT-0+1 alone, `partition_context_pack` is pure/unwired and production still weaves unmarked creator fields — **F1 is not closed**. |
-| Shared prompt body consumed by bakeoff v1 | `scripts/eval_harness/bakeoff.py` (`PROMPT_VARIANTS["v1"].system` after DEPICT-0 parity) | After DEPICT-0, bakeoff v1 system text is bound from the same selected `PRODUCTION_PROMPT.body` / `production_system_prompt()`. A DEPICT-1b body edit therefore changes the **system-string wording** bakeoff posts. That is **wording lockstep only** — not full harness F1 voice-honouring (no pack `voice`, no creator-trap fixtures). | **Wording side-effect of DEPICT-1b body edit** (via DEPICT-0 seam). **Not** a claim that DEPICT-1b delivers harness voice-honouring lockstep. |
+| Prompt seam (no wording) | `gpu_remote_adapter.py`, `bakeoff.py`, `scene/prompts/caption_system.py` (new) | Single source for production system prompt text; delete local `_SYSTEM_PROMPT`; consumers call **`production_system_prompt()` only** (DEPICT-0:360–374) | **DEPICT-0 / Lane A** — lands **first**; Not-Does F1 weave rewrite (DEPICT-0 §Not-Doing) |
+| **F1 (a) — service/contract voice partition** | `requests.py`, `context_contract.py`, `description.py`, voice contract tests | `voice` field + partition; boundary→partition value proofs for Product and Identity | **DEPICT-1** (this plan) — **this wave** |
+| **F1 (b) — production voice-honouring weave** | **Primary:** `scene/prompts/caption_system.py` — **REBIND** module-level `PRODUCTION_PROMPT` to a new `ProductionPrompt(body=…, lineage_version=…)` (DEPICT-0 atomic config; frozen dataclass — **never** mutate `.body` in place). Consumers keep **accessor-only** binds via `production_system_prompt()` — DEPICT-0 verbatim: *"Do **not** read `PRODUCTION_PROMPT.body` / `.lineage_version` at the call site"*. **Secondary (if render must voice-tag):** `scene/infrastructure/vlm/gpu_remote_adapter.py` (`_render_context` L73–87 / `_user_text` L90–101) | Stop instructing unmarked weave of creator-tagged fields in the **shared** system prompt body; render creator entries as quoted/voice-tagged only; consume pack `voice` from the **service** normalized context dict; call `partition_context_pack` (or honour its partition). **Do not** retarget at `gpu_remote_adapter._SYSTEM_PROMPT` — DEPICT-0 deletes that constant. **Do not** invent a freestanding `PRODUCTION_SYSTEM_PROMPT` body global. **Do not** `PRODUCTION_PROMPT.body = …` (FrozenInstanceError). | **OUT of this wave — unowned.** Prerequisites when owned later: (1) DEPICT-0 seam merged, (2) DEPICT-1 Slice 1 contract merged. After DEPICT-0+1+2 alone, `partition_context_pack` is pure/unwired and production still weaves unmarked creator fields — **F1 is not closed**. |
+| Shared prompt body consumed by bakeoff v1 | `scripts/eval_harness/bakeoff.py` (`PROMPT_VARIANTS["v1"].system` after DEPICT-0 parity) | After DEPICT-0, bakeoff v1 system text binds **accessor-only** via `production_system_prompt()` (DEPICT-0:372–374 — no direct `.body` read). A future F1 (b) rebind of `PRODUCTION_PROMPT` therefore changes the **system-string wording** bakeoff posts. That is **wording lockstep only** — not full harness F1 voice-honouring (no pack `voice`, no creator-trap fixtures). | **Wording side-effect of a future F1 (b) rebind** (via DEPICT-0 seam). **Not** harness voice-honouring; harness half remains unowned. |
 | Shared JSON schema mirror | `packages/shared-contracts/schemas/image-description-response.schema.json` | **No change required by DEPICT-1** (response register field withdrawn) | n/a this task |
 | Register-compliance metric | `scripts/eval_harness/caption_metrics.py` | Future scored arm for register violations | Lane C — unblocked by Slice 2 vocabulary, not planned here |
 | v3 caption split (DEPICT-5) | harness + future output schema | Split grounded inventory vs attributed span | Unblocked by Slice 2; **not planned** in DEPICT-1 |
-| Harness ContextPack `voice` + bakeoff F1 traps | `scripts/eval_harness/manifest.py` (`ContextPack` L165–176: `title` / `caption` / `description` only; no `voice`) | Would need a `voice` field + creator-trap fixtures for bakeoff-side F1 traps; render helpers would need to consume it | **Explicitly unowned — no lane in this flock delivers it.** DEPICT-1 F1 contract traps are **service-unit-only**. **DEPICT-1b does not** deliver harness voice-honouring lockstep: shared body wording may change bakeoff's system string, but without a harness `voice` mirror the bakeoff path cannot honour creator-tagged pack entries. A future named lane must own `manifest.py` voice + fixtures before harness F1 traps exist. |
+| Harness ContextPack `voice` + bakeoff F1 traps | `scripts/eval_harness/manifest.py` (`ContextPack` L165–176: `title` / `caption` / `description` only; no `voice`) | Would need a `voice` field + creator-trap fixtures for bakeoff-side F1 traps; render helpers would need to consume it | **OUT of this wave — unowned.** Not F1 (a); not F1 (b). DEPICT-1 F1 (a) traps are **service-unit-only**. A future F1 (b) rebind may change bakeoff's system string without a harness `voice` mirror — that is **not** harness F1 voice-honouring. |
 
 ## Verification Strategy
 
@@ -460,8 +489,9 @@ Three reviewable slices, each behaviour + proof:
     (**Greenfield Policy**, not API-09; no migration).
 - Manual verification: none required for this contract-only task.
 - **Out of verification for this task:** production weave still instructs
-  unmarked weave until **DEPICT-1b**; F1 not closed by DEPICT-0+1 alone;
-  request `description_register` is not present on any response.
+  unmarked weave until **F1 (b)** is owned and lands (OUT of this wave);
+  F1 is **not** closed by DEPICT-0+1+2 alone; request `description_register`
+  is not present on any response; harness `ContextPack.voice` remains OUT.
 
 ---
 
@@ -623,7 +653,8 @@ taxonomy model `voice` for their fields). An implementation that iterates only
 a subset of IN paths **fails** the parametrized IN-row cases below.
 
 - Do **not** edit `gpu_remote_adapter.py` or `scene/prompts/caption_system.py`.
-  Runtime weave honouring is **DEPICT-1b**, not this slice.
+  Runtime weave honouring is **F1 (b)** (OUT of this wave, unowned), not this
+  slice.
 - **Post-Slice-1 dump contract** (prescribed, not left to implementer choice):
   1. Router stays zero-churn (no new dump flags).
   2. Pack dump continues to emit default `voice` keys on allowlist models
@@ -659,6 +690,8 @@ uv run --extra dev pytest scene/tests/test_context_voice_contract.py scene/tests
 | Mixed-pack explicit expected set | One fixture that populates **all ten IN paths** with known values and mixed voices. Assert emitted path set equals the **hand-written** frozenset of those ten path strings (and values match). Also assert `paths(absorbable) ∩ paths(quotable_only) == ∅` and `paths(absorbable) ∪ paths(quotable_only) == <that same hand-written frozenset>` — **not** `== paths(iter_context_facts(pack))` as the only check. **Red if** a path is duplicated, dropped, or invented. | Empty pack → both lists empty; expected path set `frozenset()`. **Cheating impl killed:** partition that re-wraps `iter_context_facts` into one side only still fails the hand-written expected set if inventory is partial; a hardcoded `return ( [], [])` fails the ten-path fixture. |
 | Non-attachment creator-default path | Pack with only `post.title="Creator post title"` (omit `post.voice` → default `creator`). Assert: `post.title` ∈ quotable_only, ∉ absorbable. **Red if** inventory skips `post.title` or default lands in absorbable. | Explicit `post.voice="operator"` moves `post.title` to absorbable. |
 | Non-attachment catalogue path | Pack with `taxonomy_terms=[{"taxonomy":"product_cat","name":"Jackets","slug":"jackets"}]` (default `voice=catalogue`). Assert: `taxonomy_terms[0].name` ∈ absorbable. **Red if** taxonomy names are omitted from inventory or forced into quotable_only. | Override term `voice="creator"` → name moves to quotable_only only. |
+| **ProductContext voice value propagates (boundary → partition)** | Validate a pack with `product={"name":"Widget X","voice":"creator"}` (today `ProductContext` at `requests.py` L44–52 has `name`/`sku`/`price`/`short_description` only — **no** `voice`; Slice 1 adds it). From the validated pack, take the `ContextFact` for path `product.name` emitted by `iter_context_facts` / present in `partition_context_pack`. Assert: `fact.voice is ContextVoice.CREATOR` **and** `product.name` ∈ quotable_only, ∉ absorbable. Repeat with explicit `voice="catalogue"` on the same product name: assert `fact.voice is ContextVoice.CATALOGUE` **and** path ∈ absorbable, ∉ quotable_only. **Permanent discrimination guard:** assert the observed `fact.voice` equals the request-boundary value (`pack.product.voice` after validate) — not merely that the path is inventoried. **Red if** schema accepts `voice` but `iter_context_facts` hardcodes `CREATOR` / drops the field / reads a different model's voice (IN-row path test still green). **Red-first mutation:** drop `voice=` when constructing `ContextFact` for product fields (mapper always uses default `CREATOR`) while request still carries `voice="catalogue"` → equality `fact.voice is pack.product.voice` fails and catalogue absorbable assertion fails. | Same product name with `voice="operator"` lands in absorbable with `fact.voice is OPERATOR`. Omit `voice` → default `CREATOR` propagates to fact.voice and quotable_only. **Cheating impl killed:** accept `voice` on `ProductContext` but ignore it in `iter_context_facts` (path-only inventory tests still pass). |
+| **IdentityContextItem voice value propagates (boundary → partition)** | Validate a pack with `identity={"policy":{"person_naming":"allow"},"identities":[{"name":"Ada Lovelace","voice":"creator"}]}` (today `IdentityContextItem` at `requests.py` L63–71 has `name`/`identity_id`/`cluster_id`/`source` only — **no** `voice`; Slice 1 adds it with default `OPERATOR`). Assert the `ContextFact` for `identity.identities[0].name` has `fact.voice is ContextVoice.CREATOR` **and** path ∈ quotable_only, ∉ absorbable. Repeat with `voice="operator"` (and with omit → default `operator`): `fact.voice is OPERATOR` **and** path ∈ absorbable. **Permanent discrimination guard:** `fact.voice is pack.identity.identities[0].voice` (boundary value == partition-observed value). **Red if** schema accepts item `voice` but mapper drops it or forces the model default regardless of request. **Red-first mutation:** drop the field in the mapper (`ContextFact(..., voice=ContextVoice.OPERATOR)` always, ignoring item.voice) while request sends `voice="creator"` → boundary equality fails and creator-not-absorbable for identity name fails. | Override to `voice="catalogue"` → absorbable with matching fact.voice. **Cheating impl killed:** inventory emits `identity.identities[0].name` with a hardcoded default while accepting `voice` on the pydantic model. |
 | Invalid voice rejected | Envelope with `context_pack.attachment.voice="archivist"` (unknown token). `DescribeImageEnvelope.model_validate(...)` raises `ValidationError` mentioning `voice`. | `voice="creator"` validates. |
 | Additive under `extra="forbid"` | Payload **identical to today's** pack fixture shape (no `voice` keys anywhere). Must validate; filled defaults are `creator` / `catalogue` / `operator` per **allowlist** model rules above (`IdentityPolicyContext` has no `voice` key after validate). **Red if** validation requires explicit `voice`, or if `IdentityPolicyContext` gains a serialized `voice`. | Payload with an **extra** unknown key `context_pack.attachment.tone="warm"` still 422 (`extra="forbid"` preserved). |
 | Default fail-closed | Omit `voice` on `attachment`; after validate, `partition_context_pack` places attachment speech strings in quotable_only. **Red if** omitted voice defaults into absorbable. | Explicit `voice="operator"` on attachment moves those strings to absorbable. |
@@ -896,11 +929,12 @@ Recorded so implementers and reviewers do not "helpfully" hardcode a class table
 
 - [ ] Loaded assessment §2/§5c/§5d/§10g, eval F1/F3, reasoning card, and owned schemas.
 - [ ] Confirmed no edits under Lane A or Lane C paths; cross-lane deps recorded
-      including **DEPICT-1b** (F1 weave targets post-DEPICT-0 selected
-      `PRODUCTION_PROMPT.body` / `production_system_prompt()` in
-      `scene/prompts/caption_system.py` — **not** a `PRODUCTION_SYSTEM_PROMPT`
-      string global) and harness pack `voice` **unowned** (DEPICT-1b does
-      **not** deliver harness voice-honouring lockstep).
+      with **F1 ownership split**: F1 (a) service/contract = this plan; F1 (b)
+      production-weave = **OUT of this wave, unowned** (REBIND-ONLY of
+      `PRODUCTION_PROMPT`; consumers accessor-only via
+      `production_system_prompt()` — never `.body` at call site; never mutate
+      frozen `.body`); harness pack `voice` **OUT/unowned** (not F1 a/b).
+      Merging DEPICT-0+1+2 does **not** close F1.
 - [ ] Every cited rule ID definition-anchor-verified; no `FM-11`, no `REG-*`, no
       `HARM-01`, no `BOUND-02` for input voice, no `RLSE-02` for disposition prose.
 - [ ] Boundary table filled; additive-only under `extra="forbid"`; API-09 limited
@@ -925,13 +959,15 @@ Recorded so implementers and reviewers do not "helpfully" hardcode a class table
       contract exhaustiveness, content-blind, **parametrized one case per
       IN row**, **parametrized one case per OUT row**, mixed-pack explicit
       expected frozenset, non-attachment creator/catalogue paths,
+      **ProductContext voice value propagates boundary→partition**,
+      **IdentityContextItem voice value propagates boundary→partition**,
       omit-still-valid, unknown-key still forbid, invalid enum 422,
       dump-equality with default voices on allowlist models only, no voice on
       `IdentityPolicyContext`.
 - [ ] Router churn zero; seeded raw-dict path unchanged.
 - [ ] `uv run --extra dev pytest scene/tests/test_context_voice_contract.py scene/tests/test_context_pack.py -q` green.
-- [ ] No prompt / adapter edits (weave is DEPICT-1b on
-      `PRODUCTION_PROMPT.body` / `production_system_prompt()`).
+- [ ] No prompt / adapter edits (F1 (b) weave is OUT of this wave / unowned;
+      when owned later: REBIND `PRODUCTION_PROMPT`, accessor-only consumers).
 
 ### Checklist for Slice 2: DescriptionRegister (request only)
 
@@ -964,17 +1000,17 @@ Recorded so implementers and reviewers do not "helpfully" hardcode a class table
 
 - [ ] Every new check has a [TEST-15] red input and discrimination case in this plan and in test names/docstrings.
 - [ ] Reviewer attack surface pre-empted:
-  1. voice without enforcement → partition function + creator-not-absorbable + **DERIVED-only-absorbable** + frozen `_VOICE_CONTRACT_VALUES` / exhaustive no-default partition + **parametrized full IN/OUT inventory against explicit expected sets**
+  1. voice without enforcement → partition function + creator-not-absorbable + **DERIVED-only-absorbable** + frozen `_VOICE_CONTRACT_VALUES` / exhaustive no-default partition + **parametrized full IN/OUT inventory against explicit expected sets** + **Product/Identity boundary→partition voice value proofs**
   2. register without real exhaustiveness → frozen `_REGISTER_CONTRACT_VALUES` (not tautological `set(enum)`)
   3. restrict-only only in prose or vacuous rank≤ → exact min table + always-FORENSIC fails
   4. atrocity tension averaged → two dispositions, report-bool discrimination test, memo not middle mode (`STRAT-11`)
   5. additive vs `extra="forbid"` → omit-still-valid + unknown-key-still-422 tests
   6. response echo without wiring → **deleted from scope** (no response field; no PREVIEW_FIELDS / schema xfail trap)
-  7. weave retargeted post-DEPICT-0 → DEPICT-1b edits `PRODUCTION_PROMPT.body` / `production_system_prompt()` (no `PRODUCTION_SYSTEM_PROMPT` global); harness pack `voice` still unowned — **no** DEPICT-1b harness voice-honouring lockstep claim
+  7. weave retargeted post-DEPICT-0 → F1 (b) is **OUT/unowned**; when owned: **REBIND-ONLY** `PRODUCTION_PROMPT` (never mutate frozen `.body`); consumers **accessor-only** via `production_system_prompt()` (DEPICT-0:360–374; no `PRODUCTION_SYSTEM_PROMPT` global); harness pack `voice` still OUT/unowned
   8. ATTRIB-07 not overclaimed → oppressive subset only; blanket quotable-only = operator policy
   9. API-09 not used to warrant hash churn → shape only; Greenfield authorizes observability
   10. no pure-hash voice on IdentityPolicyContext
-- [ ] Cross-lane deps explicit; F1 **production** weave is **DEPICT-1b** after DEPICT-0 + DEPICT-1; harness F1 traps remain unowned.
+- [ ] Cross-lane deps explicit; F1 split recorded: **(a)** service/contract = DEPICT-1 this wave; **(b)** production-weave = OUT/unowned; harness `voice` = OUT/unowned; DEPICT-0+1+2 merge does **not** close F1.
 - [ ] Handoff decision will record contract field names, defaults, and verification commands (at implementation time).
 
 ## Stretch Goals
@@ -993,6 +1029,9 @@ Recorded so implementers and reviewers do not "helpfully" hardcode a class table
 - [ ] DERIVED-tagged speech appears **only** in absorbable (explicit fixture);
       frozen `_VOICE_CONTRACT_VALUES` / `_ABSORBABLE_VOICES` cover all four
       `ContextVoice` members; partition has no silent default branch.
+- [ ] **ProductContext** and **IdentityContextItem** each prove request-boundary
+      `voice` equals partition-observed `fact.voice` (permanent discrimination
+      guard); red-first mutation drops the field in the mapper.
 - [ ] Fact inventory matches the IN/OUT table with **one parametrized test per
       IN row and per OUT row** against **explicit expected path sets** (not
       against `iter_context_facts` output); `review_reasons` / filename / slug /
@@ -1013,32 +1052,43 @@ Recorded so implementers and reviewers do not "helpfully" hardcode a class table
       no shared-schema file edit; no bound-term/colour fields; no prompt text
       changes.
 - [ ] Scoped pytest commands above green at branch HEAD (no parity skips/xfails).
-- [ ] F1 production weave explicitly **not** claimed closed — owned by DEPICT-1b
-      editing post-DEPICT-0 selected `PRODUCTION_PROMPT.body` /
-      `production_system_prompt()` in `scene/prompts/caption_system.py` (no
-      `PRODUCTION_SYSTEM_PROMPT` string global). Harness voice-honouring
-      lockstep is **not** claimed under DEPICT-1b.
+- [ ] F1 production weave explicitly **not** claimed closed — F1 (b) is **OUT
+      of this wave and unowned** (REBIND-ONLY of post-DEPICT-0
+      `PRODUCTION_PROMPT`; consumers accessor-only via
+      `production_system_prompt()`; no `PRODUCTION_SYSTEM_PROMPT` string
+      global; never mutate frozen `.body`). Harness voice-honouring lockstep
+      is **OUT/unowned**. Merging DEPICT-0+1+2 does **not** close F1.
+- [ ] ProductContext and IdentityContextItem each have a permanent proof that
+      request-boundary `voice` equals partition-observed `fact.voice` (red-first
+      mutation: drop field in mapper).
 
 ## Not-Doing
 
-- Prompt / weave instruction edits — **DEPICT-1b** follow-on (Lane A). DEPICT-0
-  closes the seam only and **Not-Does** F1 weave wording (DEPICT-0 section
-  **Not-Doing**: "Changing what any prompt **says**" / "Weave-side context
-  consumption / F1 voice-honouring prompt behaviour"). After DEPICT-0+1 alone,
-  `partition_context_pack` is pure/unwired and production still weaves unmarked
-  creator fields (today `gpu_remote_adapter.py` L33–34; post-DEPICT-0 the same
-  wording lives as selected `PRODUCTION_PROMPT.body` in
-  `scene/prompts/caption_system.py`, accessed via `production_system_prompt()`).
-  DEPICT-1b must edit that body / rebind `PRODUCTION_PROMPT` — **not** invent a
-  separate `PRODUCTION_SYSTEM_PROMPT` string global (DEPICT-0 forbids it).
+- Prompt / weave instruction edits — **F1 (b) production-weave**, **OUT of this
+  wave and unowned** (no plan file in `docs/tasks/depiction/` delivers it).
+  DEPICT-0 closes the seam only and **Not-Does** F1 weave wording (DEPICT-0
+  section **Not-Doing**: "Changing what any prompt **says**" / "Weave-side
+  context consumption / F1 voice-honouring prompt behaviour"). After
+  DEPICT-0+1+2 alone, `partition_context_pack` is pure/unwired and production
+  still weaves unmarked creator fields (today `gpu_remote_adapter.py` L33–34;
+  post-DEPICT-0 the same wording lives on frozen selected `PRODUCTION_PROMPT`
+  in `scene/prompts/caption_system.py`; consumers bind **accessor-only** via
+  `production_system_prompt()` — DEPICT-0:360–374 forbids reading
+  `PRODUCTION_PROMPT.body` at the call site). When F1 (b) is later owned,
+  mutation is **REBIND-ONLY**
+  (`PRODUCTION_PROMPT = ProductionPrompt(body=…, lineage_version=…)`) —
+  never `PRODUCTION_PROMPT.body = …` (`@dataclass(frozen=True)` →
+  `FrozenInstanceError`), and never a separate `PRODUCTION_SYSTEM_PROMPT`
+  string global.
 - Response `description_register` field / request→response echo / service or
   cache propagation — withdrawn from this task (no owned path; see Slice 2).
 - Shared JSON schema mirror for a response register property — not required
   while response field is out of scope; package file left unchanged.
 - Harness `ContextPack` voice mirror (`scripts/eval_harness/manifest.py`
-  L165–176) and harness F1 voice-honouring lockstep — **unowned**; F1 contract
-  traps are service-unit-only in this task. DEPICT-1b does **not** deliver
-  harness voice-honouring (shared body wording side-effect ≠ pack-voice honour).
+  L165–176) and harness F1 voice-honouring lockstep — **OUT of this wave and
+  unowned** (neither F1 (a) nor F1 (b)). F1 (a) contract traps are
+  service-unit-only in this task. A future F1 (b) rebind may change bakeoff
+  system wording without delivering harness pack-voice honour.
 - `voice` on `IdentityPolicyContext` (only field is OUT `person_naming`).
 - Bound-term shape, colour vocabulary, Werner/ISCC–NBS, `FM-11` anything (assessment §10g; retired ID).
 - `caption_metrics.py` or any scorer (Lane C).

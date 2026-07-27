@@ -10,8 +10,8 @@
 >   **`v0.17.2`**. Surfaces: `lexicons/depiction.md`
 >   (`ATTRIB-01..10`, `BOUND-01..05` — **exactly 15 rule rows at v0.17.2**),
 >   `lexicons/engineering.md`, `lexicons/ml-systems.md`, `lexicons/writing.md`,
->   `lexicons/accessibility.md`, `literature/HELD.md`. There is **no**
->   `canon/PROVENANCE.txt` in this bundle — do not cite one.
+>   `lexicons/accessibility.md`, `literature/HELD.md`. **No**
+>   `canon/PROVENANCE.txt` — do not cite one. **Held at exactly 909 lines** (external pins: DEPICT-1 `### 6e…` `:355` / Lane B `:380`; DEPICT-2 `#### §6e ownership table` L375).
 > - **Verified at**: `main` `41d9f591`, branch `feature/depiction-canon-eval-2026-07-27` `fbe90028`
 > - **Status**: triage + proposal. No implementation. No gate decision.
 > - **Reading order caution**: §10 supersedes §9 on scope and §8b on the `FM-11`
@@ -121,7 +121,7 @@ F2 is not shipping today (D1), so nothing is bleeding while the counter lands fi
 |---|---|---|---|
 | 9 | **DEPICT-D1 (F3) — obligation class for the gravity flag** | `ATTRIB-05` `ATTRIB-04` `BOUND-03` · [STRAT-11] do not average opposed goods | Monotone-restrict is right for most sensitive classes and wrong for public atrocity imagery. Canon's distillation spec forbids averaging opposed instructions into a middle row — the pipeline carries **both**, partitioned by image class. Operator decision memo. |
 | 10 | **DEPICT-D2 (F7) — roster withhold flag** | `ATTRIB-10` (S·e) `ATTRIB-05` | FIR confirmation answers *"is this who we think it is?"*, not *"may this person be named in public alt text?"*. The machine must not infer the second. Roster-entry flag honoured by the pack assembler; human sets it. |
-| 11 | **DEPICT-S1 (F5) — size the race warrant/parity gate** | `ATTRIB-06` (S·v) · [EVAL-17] evaluate at the unit operations aggregates · [FAIR-01] [FAIR-02] | Parity is a property of a *pass*, not an image. The harness scores per-image only. Size the pass-level aggregate before promising the check. |
+| 11 | **DEPICT-S1 (F5) — size the race warrant/parity gate** | `ATTRIB-06` (S·v) · [FAIR-01] [FAIR-02] | Parity is a property of a *pass*, not an image. The harness scores per-image only. Size the pass-level aggregate before promising the check. (Not [EVAL-17]: that row is multi-observation pooling for identification matchers — ml-systems.md definition — not race-parity pass aggregation.) |
 
 ### P4 — program track (competes for the same slots; mostly operator-gated)
 
@@ -189,7 +189,7 @@ is re-litigated.
 instruction surface — gained a §11 (Werner post-distillation findings and the
 bound-term contract). Read together with §10 (proposed `depiction` lexicon) it
 moves the top of §2's backlog. Canon re-checked at **v0.17.2** @ `4e099ded65ee33bc4db85dfd4c65409a0087a752`
-(PIN.txt; was v0.16.0-9 at first triage).
+(commit pin verified via git rev-parse; no provenance file in this bundle — see §10; was v0.16.0-9 at first triage).
 
 ### 5a. §11e's canon-side claims are accurate — verified, not taken on trust
 
@@ -364,20 +364,20 @@ inner-state counter and the §3.1 density metric both land in
 `caption_metrics.py`. Two concurrent lanes mutating one file will conflict and
 raise phantom review alarms. Revised fan-out, no file collisions.
 
-**Partition falsifiability (load-bearing):** each lane's Owns column is a
-**closed** path set, re-derived from DEPICT-0/1/2 `## Constraints` (verified
-closed — plan-side open "including"/"plus new modules" is gone). Collision
-check = pairwise empty intersection of the three closed sets (A ∩ B = ∅,
-A ∩ C = ∅, B ∩ C = ∅). Any path that appears in two rows, or any edit under a
-path in none of the rows, fails the partition. To add a path: amend the owning
-plan's Constraints **and** this table in the same change.
+**Partition falsifiability (load-bearing):** each lane's Owns column is an
+**enumerated production/test code-path set** (not a directory prefix), re-derived
+from DEPICT-0/1/2 `## Constraints`. DEPICT-1 plan text still says "co-located…
+including only" for one new helper — this table closes that to **exact files**
+so A∩B=A∩C=B∩C=∅ is computable. **Scope:** code paths only; planning docs (this
+assessment + DEPICT plans) sit outside the collision oracle and use the dual-edit
+rule: amend the owning plan's Constraints **and** this table in the same change.
 
 #### §6e ownership table
 
-| Lane | Owns (**closed** hard path set — collision oracle; closed path sets must match each plan's `## Constraints`) | Carries |
+| Lane | Owns (**enumerated** hard path set — collision oracle; must match each plan's `## Constraints`) | Carries |
 |---|---|---|
 | **A — DEPICT-0** | **Closed set** (matches DEPICT-0 `## Constraints` closed path set): `scene/infrastructure/vlm/gpu_remote_adapter.py`; `scripts/eval_harness/bakeoff.py`; `scene/config/settings.py` (**delete** `gpu_prompt_or_task_version` / `ACX_GPU_PROMPT_VERSION` — not "make honest"); `scene/interface_adapters/http/deps.py` (**only** the one-line drop of free-string `prompt_or_task_version=` once the adapter rejects free-string stamp kwargs); new shared-prompt module `scene/prompts/caption_system.py` (plus package `__init__.py` only if package does not already exist; closed); **exactly these five test surfaces** — `scene/tests/test_prompt_lineage_seam.py` (new), `scene/tests/test_gpu_remote_adapter.py`, `scene/tests/test_description_profiles.py`, `scene/tests/test_settings.py`, and production↔harness v1 lockstep assertions under `scene/tests/test_eval_harness_pipeline.py` (edit only assertions that encode the old lying default `"3"` or the free-string constructor override / lockstep). **Collision rule:** any additional production or test path requires amending DEPICT-0 `## Constraints` **and** this row before edit. Paths relative to `apps/prototype-description-service/`. | prompt-lineage seam; stamp = selected `ProductionPrompt.lineage_version`; **delete** free-string env stamp ([PROV-09] [TEST-15] [REF-10]) |
-| **B — DEPICT-C / DEPICT-1** | **Closed set** (matches DEPICT-1 `## Constraints` closed path set): `scene/interface_adapters/http/schemas/requests.py`; co-located schema helpers under `scene/interface_adapters/http/schemas/` **including only** the new `scene/interface_adapters/http/schemas/context_contract.py` (no other new schema modules without amending this row); domain `StrEnum` vocabularies in `scene/domain/description.py`; **exactly these four test files** under `scene/tests/`: `test_context_pack.py` (**sole editor this wave** for DEPICT-1 voice-related edits — "co-owned" in DEPICT-1 means shared pre-existing coverage, not dual-lane concurrent edit), `test_context_voice_contract.py` (new, Lane B sole), `test_description_register_contract.py` (new, Lane B sole), `test_gravity_contract.py` (new, Lane B sole). **Does not own** Lane A paths, `caption_metrics.py`, `responses.py`, `visual_facts_service.py`, or harness `manifest.py`. **Collision rule:** any fifth test module or extra schema file requires amending DEPICT-1 `## Constraints` **and** this row before edit. | F1 (a) `voice` field + partition, register enum (**absorbs DEPICT-6**), restrict-only gravity. **Contract only — no metrics.** (Bound-term shape withdrawn per §10g.) |
+| **B — DEPICT-C / DEPICT-1** | **Enumerated closed set** (matches DEPICT-1 `## Constraints` intent; collision oracle is these exact paths, not a `schemas/` prefix): `scene/interface_adapters/http/schemas/requests.py`; `scene/interface_adapters/http/schemas/context_contract.py` (new — sole new schema helper this wave; no other new schema module without amending this row); domain `StrEnum` vocabularies in `scene/domain/description.py`; **exactly these four test files** under `scene/tests/`: `test_context_pack.py` (**sole editor this wave** for DEPICT-1 voice-related edits — "co-owned" in DEPICT-1 means shared pre-existing coverage, not dual-lane concurrent edit), `test_context_voice_contract.py` (new, Lane B sole), `test_description_register_contract.py` (new, Lane B sole), `test_gravity_contract.py` (new, Lane B sole). **Does not own** Lane A paths, `caption_metrics.py`, `responses.py`, `schemas/__init__.py` (untouched), `visual_facts_service.py`, or harness `manifest.py`. **Collision rule:** any fifth test module or extra schema file requires amending DEPICT-1 `## Constraints` **and** this row before edit. | F1 (a) `voice` field + partition, register enum (**absorbs DEPICT-6**), restrict-only gravity. **Contract only — no metrics.** (Bound-term shape withdrawn per §10g.) |
 | **C — METRICS / DEPICT-2** | **Closed set** (matches DEPICT-2 Constraints exact set): `scripts/eval_harness/caption_metrics.py` (**sole owner**); `scene/tests/test_eval_harness_caption_metrics.py`; and (Slice 4 only) `scripts/eval_harness/report.py` plus the **reserved** report-emit test `scene/tests/test_eval_harness_report_depiction.py`. No edits under any other path. **Collision rule:** no fifth path without amending DEPICT-2 Constraints **and** this row. Paths relative to `apps/prototype-description-service/`. | **F8** inner-state attribution counter (`ATTRIB-01`); **F6** agentless-passive / mutual-event / actorless-event-noun detector (`ATTRIB-08` three disjuncts, DEPICT-2 Slice 2 — absorbs former P1 item 4 / DEPICT-3); §3.1 signal density; §6c's Williams/C5 resolution in the module docstring; **Slice 4 report emit** of new fields (this assessment dispatches report emit under Lane C Carries / DoD; GPU-window *gate* remains §6b §3.1 density + Williams/C5 from Slice 3 — report emit is the live-axis emit so pure APIs are not orphaned) |
 
 #### §6e claim — Lane C unblocks the GPU window
@@ -756,7 +756,7 @@ restating an intermediate commit note):
 All 15 depiction IDs verified present at the bundle pin by definition-anchor
 grep (`^\| *\`?<ID><a name`). Non-depiction: **`API-08` also moved** across the
 intermediate-to-v0.17.2 range (`engineering.md` API-08 definition row: backoff,
-bounded, 5xx-only; never retry an unmodified 4xx). Other cited IDs re-checked as before.
+bounded, 5xx-only; never retry an unmodified 4xx). Other cited IDs (TEST-15, PROV-09, PROV-01, EVAL-11, CAL-02, FM-04, FM-11 retired in literature/HELD.md:69) re-checked as before.
 
 ### 10b. Citation audit of this document
 
@@ -811,7 +811,7 @@ question outright:
 
 | Partition | Side A | Side B | **Cut** |
 |---|---|---|---|
-| surface | ordinary colour words without catalog pretence (`WRIT-02`, `WRIT-03`) | machine-consumed or identity-bearing colour must be catalog-bound (`FM-04`) | **"If the string is a token, filter, recipe, or validated label, Side B; if it is narrative only, Side A"** |
+| surface | ordinary colour words in narrative alt text (`FM-11` retired at `literature/HELD.md:69` — no closed-colour gate on prose; ISCC–NBS binds only when colour is machine-consumed) | machine-consumed or identity-bearing colour must be catalog-bound (`FM-04`; ISCC–NBS per §10e) | **"If the string is a token, filter, recipe, or validated label, Side B; if it is narrative only, Side A"** |
 
 Card **Scope** excludes *"open literary description with no claim of catalog
 identity"*; **Exemptions** exclude *"open prose that does not claim catalog
@@ -853,24 +853,24 @@ Verified: `caption_metrics.py` today has **no** rarity, specificity, density, or
 informativeness signal (the only `distinct*` helpers are name-token matchers).
 So the guard is not currently needed and becomes needed the moment Lane C lands.
 
-⇒ **Cite `EVAL-11` on Lane C's density metric**, and add a test that a rare
-ungrounded noun does not raise the score. That is a [TEST-15] discrimination
-case with a real red state — better grounded than §7c's, which depended on the
-Werner lattice.
+⇒ **Density zero-score is playbook §3.1 / the card Verification line**, not
+`EVAL-11` as a zero-score licence. EVAL-11 (ml-systems.md: open-ended tasks need
+the right scorer) is a **mechanism sibling** only. Load-bearing: unverifiable
+specificity scores zero; [TEST-15] test that a rare ungrounded noun does not raise density.
 
 Two more cheap, warranted items, both prompt-and-metric only:
 
 - **`CAL-02`** — when evidence supports no in-set term, **abstain**; do not emit
   a precise invented label. Directly targets the fabrication axis
   `score_hallucination` already measures.
-- **`PROV-01`** — an attribute claim must walk back to evidence, not to fluent
-  invention. Already the spirit of `fabricated_fact_rate`; now has an ID.
+- **`PROV-01`** — every output walks back to its evidence: model revision,
+  preprocessing, thresholds, source observations (lineage/reproducibility — not anti-invention; fabrication stays `score_hallucination` / `CAL-02`).
 
 ### 10g. Reflowed scope
 
 | Lane | Before | **After** | Warrant |
 |---|---|---|---|
-| **C — METRICS / DEPICT-2** | first; F8 counter + §3.1 density + Williams/C5 | **first; + F6 agentless-passive / mutual-event / actorless-event-noun (`ATTRIB-08` three disjuncts, absorbs P1 item 4 / DEPICT-3 into Slice 2) + `EVAL-11` guard and its discrimination test** | `ATTRIB-01` (F8), `ATTRIB-08` (F6), `EVAL-11`, [TEST-15] |
+| **C — METRICS / DEPICT-2** | first; F8 counter + §3.1 density + Williams/C5 | **first; + F6 agentless-passive / mutual-event / actorless-event-noun (`ATTRIB-08` three disjuncts, absorbs P1 item 4 / DEPICT-3 into Slice 2) + §3.1 density zero-score guard (EVAL-11 mechanism sibling) and its discrimination test** | `ATTRIB-01` (F8), `ATTRIB-08` (F6), playbook §3.1, [TEST-15] |
 | **B — CONTRACT** | F1 `voice` + register enum + gravity + bound-term shape | **unchanged, minus the bound-term shape** — no colour field until §10e's trigger | `ATTRIB-07`, `API-09`, `API-10`, [TEST-15] (no `ATTRIB-02`/`BOUND-02` for input voice) |
 | **A — DEPICT-0** | prompt-lineage seam | unchanged | `PROV-09`, [TEST-15], [REF-10] (not `NAME-03` / `REF-26`) |
 | **D — WERNER-FCA** | rebuilt on ISCC–NBS, last | **out of scope; trigger-gated (§10e)** | `FM-04` when it fires |

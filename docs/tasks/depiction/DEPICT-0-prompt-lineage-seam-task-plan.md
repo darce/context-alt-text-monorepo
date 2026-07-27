@@ -184,7 +184,7 @@ split literal (`"2-" + "4 plain sentences"`).
 - **Harness v1 / v2 / v3**: named entries in `bakeoff.PROMPT_VARIANTS`. Only v1
   is textually identical to production today. v2 encodes ALTQ-1 style rules;
   v3 reuses v2's system text with `three_surface=True` and a weave addendum.
-- **Shared-prompt module**: new single authority under `scene/` for the
+- **Shared-prompt module**: `scene/prompts/caption_system.py` — single authority for the
   **production** caption system-prompt text (today: v1 body), the context
   markers used by that text, and one selected **`ProductionPrompt`** config
   that carries **body + lineage version together**. Harness-only surfaces stay

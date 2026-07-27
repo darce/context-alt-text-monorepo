@@ -45,13 +45,17 @@ agentless-passive / mutual-event detector
 (EVAL-11, `canon/lexicons/ml-systems.md#eval-11`). Emit the new hit lists and
 density from `report.py` (thin additive Slice 4) so density is a live report
 axis — **DEPICT-2's own additional acceptance criterion**, not an assessment
-requirement. **Assessment §3.1 / GPU-window gate** (assessment §6b L287-293,
-§6c L295-309): density metric in `caption_metrics.py` + Williams/C5 docstring.
+requirement. **Assessment §3.1 / GPU-window gate** (assessment §6b "The GPU
+window has a second, cheaper gate than curation" L303-309; §6c "A live
+contradiction the bake-off ranking depends on" L303-315, Williams/C5
+resolution L309-311; §6a "Playbook status is half-stale" NOT-LANDED evidence
+L288): density metric in `caption_metrics.py` + Williams/C5 docstring.
 Assessment §6b/§6c list **no** report emit. **Lane C unblocks the GPU window**
-(assessment §6e L349). Bake-off ranking *sort* that *orders* candidates by
-density is an **optional follow-on consumer**, not the §3.1 / GPU-window gate.
-Resolve the Williams/C5 length contradiction in the module docstring so gate
-policy and ranking policy cannot be read as opposites.
+(assessment §6e "Dispatch shape — file ownership, not just task ownership"
+L355). Bake-off ranking *sort* that *orders* candidates by density is an
+**optional follow-on consumer**, not the §3.1 / GPU-window gate. Resolve the
+Williams/C5 length contradiction in the module docstring so gate policy and
+ranking policy cannot be read as opposites.
 
 ## Problem Statement
 
@@ -63,16 +67,19 @@ frames), and measures no signal density at all. Every length-correlated quality
 axis therefore still rewards verbosity. Until these scorers exist, Lane A/B
 prompt changes are unmeasurable — exactly what EVAL-08
 (`canon/lexicons/ml-systems.md#eval-08`, CACE) forbids — and the GPU window
-remains gated by playbook §3.1 (assessment §6b L287-293: §3.1 is the last
-unlanded gate — density metric in `caption_metrics.py`). Pure scorers alone
-are not enough for *this plan's* DoD: `report.py` today builds its quality
-block from `meta_framing_hits` / sentence band / `mean_gated_score` only (see
-Current State), so density must also be emitted there as **DEPICT-2's own
-additional acceptance criterion** (not attributed to assessment §6b/§6e).
-Assessment §6c is the Williams/C5 companion-axis write-up; §6e L349 is Lane C
-unblocking the GPU window via the density metric. Bake-off code that *sorts*
-survivors by density is an optional follow-on, not a prerequisite for §3.1 or
-the GPU window.
+remains gated by playbook §3.1 (assessment §6b "The GPU window has a second,
+cheaper gate than curation" L303-309: §3.1 is the last unlanded gate —
+density metric in `caption_metrics.py`; §6a NOT-LANDED row L288). Pure
+scorers alone are not enough for *this plan's* DoD: `report.py` today builds
+its quality block from `meta_framing_hits` / sentence band /
+`mean_gated_score` only (see Current State), so density must also be emitted
+there as **DEPICT-2's own additional acceptance criterion** (not attributed
+to assessment §6b/§6e). Assessment §6c ("A live contradiction the bake-off
+ranking depends on" L303-315; Williams/C5 L309-311) is the companion-axis
+write-up; §6e ("Dispatch shape — file ownership, not just task ownership"
+L355) is Lane C unblocking the GPU window via the density metric. Bake-off
+code that *sorts* survivors by density is an optional follow-on, not a
+prerequisite for §3.1 or the GPU window.
 
 ## Constraints
 
@@ -181,11 +188,12 @@ the GPU window.
   measure attribution grammar, agentless passive, or verified density.
 - `report.py` `_quality_block` (L540–553) emits only
   `meta_framing_images`, context-duplication, name-front-loaded rate, and
-  sentence-band stats; caption aggregate (L565–574) has
+  sentence-band stats; caption aggregate dict-entry block (L565–574) has
   `mean_gated_score` and existing gate rates. No density or depiction-hit
-  keys. Per-image row dict opens at L472 and the associated long-block emit
-  runs through L517 (`report.py:472-517`): surfaces `meta_framing_hits` but
-  not inner-state / agentless / density fields.
+  keys. Per-image **row dict literal** is `report.py:472-495` (closes at
+  L495; L496–517 are post-literal `if short_error…` / `row["long"] = {…}` /
+  `per_image.append(...)` **statements**): surfaces `meta_framing_hits` at
+  L486 but not inner-state / agentless / density fields.
 - `score_caption` is called with only names/traps/objects/roster/context
   (`report.py:398-406`); `reference_facts` is **not** passed. Manifest entry
   type exposes `reference_facts: list[ReferenceFact]`
@@ -193,8 +201,10 @@ the GPU window.
   dicts (`report.py:320-327`) and never reads `entry["reference_facts"]` today.
 - `bakeoff.py` does **not** import `caption_metrics` today (verified by search).
   A future bake-off *sort* by density is an optional follow-on after Slice 4
-  keys exist; it is **not** the §3.1 / GPU-window gate (assessment §6b L287-293
-  density metric; §6e L349: Lane C unblocks the GPU window).
+  keys exist; it is **not** the §3.1 / GPU-window gate (assessment §6b "The
+  GPU window has a second, cheaper gate than curation" L303-309 density
+  metric; §6e "Dispatch shape — file ownership, not just task ownership"
+  L355: Lane C unblocks the GPU window).
 
 ## Target Outcome
 
@@ -210,9 +220,12 @@ the GPU window.
    JSON quality / per-image sections (Slice 4 thin additive emit) —
    **DEPICT-2's own additional acceptance criterion**, not an assessment
    requirement. Slice 3 (density metric + Williams/C5 docstring) lands the
-   assessment §3.1 / GPU-window gate (assessment §6b L287-293, §6c L295-309;
-   §6e L349: Lane C unblocks). Bake-off ranking code that *orders* candidates
-   by density remains an **optional unowned follow-on** — not the §3.1 gate.
+   assessment §3.1 / GPU-window gate (assessment §6b "The GPU window has a
+   second, cheaper gate than curation" L303-309; §6c "A live contradiction
+   the bake-off ranking depends on" L303-315; §6e "Dispatch shape — file
+   ownership, not just task ownership" L355: Lane C unblocks). Bake-off
+   ranking code that *orders* candidates by density remains an **optional
+   unowned follow-on** — not the §3.1 gate.
 
 ## Context Loading
 
@@ -247,7 +260,7 @@ HTTP, or WP boundary change.
 | Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
 | --- | --- | --- | --- | --- | --- |
 | Caption scoring pure API | Lane C (this task) | `score_caption` / `score_hallucination` in `caption_metrics.py` | additive `CaptionScores` hit-list fields + sibling `score_signal_density` | no — greenfield additive | unit tests below |
-| Report JSON quality / per-image emit | Lane C (Slice 4) | `report.py` `_quality_block` + per-image rows read known `CaptionScores` fields; no `reference_facts` wire | additive nested `signal_density` object + hit-list keys; SHORT quality mean/counts assigned **beside** `_quality_block` at `report.py:575` (do not extend the helper); wire facts → density | no — additive keys | `test_eval_harness_report_depiction.py` exact-value proofs |
+| Report JSON quality / per-image emit | Lane C (Slice 4) | `report.py` `_quality_block` + per-image rows read known `CaptionScores` fields; no `reference_facts` wire | additive nested `signal_density` object + hit-list keys; SHORT quality mean/counts assigned **after** the `result` dict literal closes at `report.py:604` (do not extend `_quality_block`; do not insert inside the open literal); wire facts → density | no — additive keys | `test_eval_harness_report_depiction.py` exact-value proofs |
 | Bake-off ranking *sort* (optional follow-on) | **unowned** by this task | `bakeoff.py` does not import `caption_metrics` | **none in this task** (keys available after Slice 4; sort is optional, not the §3.1 gate) | n/a | explicit non-scope |
 
 ## Proposed Solution
@@ -296,7 +309,7 @@ refusing a restated metric is preferred to citing `CAL-02` on a clone of
 | --- | --- | --- |
 | metrics | `apps/prototype-description-service/scripts/eval_harness/caption_metrics.py` | Inner-state counter; agentless-passive detector; `score_signal_density` sibling pure function; Williams/C5 docstring resolution; additive `CaptionScores` hit-list fields |
 | tests | `apps/prototype-description-service/scene/tests/test_eval_harness_caption_metrics.py` | Red-first + discrimination tests for every new pure signal (Slices 1–3) |
-| report emit (Slice 4) | `apps/prototype-description-service/scripts/eval_harness/report.py` | Thin additive: wire `reference_facts` → `score_signal_density`; emit exact density object + hit-list keys in per-image rows; assign SHORT quality depiction keys beside `report.py:575` (do not extend `_quality_block`); no ranking logic, no gates |
+| report emit (Slice 4) | `apps/prototype-description-service/scripts/eval_harness/report.py` | Thin additive: wire `reference_facts` → `score_signal_density`; emit exact density object + hit-list keys in the per-image row dict literal (`report.py:472-495`); assign SHORT quality depiction keys after the `result` literal closes at `report.py:604` (do not extend `_quality_block`); no ranking logic, no gates |
 | report tests (Slice 4) | `apps/prototype-description-service/scene/tests/test_eval_harness_report_depiction.py` | **New reserved file** owned by DEPICT-2 only. Assert report JSON carries exact density object + hit-list keys **and values**. Do not extend DEPICT-0's `test_eval_harness_pipeline.py` or any other shared harness test. |
 
 ## Related Files
@@ -312,7 +325,7 @@ refusing a restated metric is preferred to citing `CAL-02` on a clone of
 | File | Exact change needed | Who lands first |
 | --- | --- | --- |
 | `scripts/eval_harness/report.py` | Emit the new per-image hit lists and density number in JSON/markdown quality sections so density is a live report axis (**DEPICT-2 own acceptance criterion**, not assessment §6b/§6e) | **Lane C, Slice 4 of this task** (after pure APIs Slices 1–3 are green); thin additive import of this module only — not a deferred orphan |
-| Bake-off ranking *sort* (optional) | Optionally consume density key to order survivors | **unowned by DEPICT-2**; optional follow-on after Slice 4 keys exist; **not** the §3.1 / GPU-window gate (assessment §6b L287-293: §3.1 = density metric; §6e L349: Lane C unblocks GPU window) |
+| Bake-off ranking *sort* (optional) | Optionally consume density key to order survivors | **unowned by DEPICT-2**; optional follow-on after Slice 4 keys exist; **not** the §3.1 / GPU-window gate (assessment §6b "The GPU window has a second, cheaper gate than curation" L303-309: §3.1 = density metric; §6e "Dispatch shape — file ownership, not just task ownership" L371-373: Lane C unblocks GPU window) |
 | Lane A prompt emotion-bearer (DEPICT-4) | Prompt text change so attributed emotion is licensed | **After** Slice 1 counter exists (EVAL-08 ordering) |
 | Lane B contracts / `DescriptionRegister` | None for DEPICT-2 metrics; a future register-compliance arm would read `DescriptionRegister` (`FORENSIC\|EDITORIAL\|INTERPRETIVE`) from the contract envelope — not planned here | n/a |
 
@@ -331,9 +344,11 @@ This plan does **not** edit bakeoff ranking, Lane A prompts, or Lane B contracts
 - Manual: re-read module docstring after Slice 3 and confirm Williams (gate) and
   C5 (ranking) both appear as distinct roles, not a single averaged policy.
 - Assessment §3.1 / GPU-window gate lands when Slice 3 is green (density
-  metric + Williams/C5; assessment §6b L287-293, §6e L349). Slice 4 report
-  emit is DEPICT-2's own additional acceptance criterion. Bake-off ranking
-  *sort* remains an optional unowned follow-on (see Cross-lane dependency).
+  metric + Williams/C5; assessment §6b "The GPU window has a second, cheaper
+  gate than curation" L303-309; §6e "Dispatch shape — file ownership, not
+  just task ownership" L355). Slice 4 report emit is DEPICT-2's own
+  additional acceptance criterion. Bake-off ranking *sort* remains an
+  optional unowned follow-on (see Cross-lane dependency).
 
 ## Slice Delivery
 
@@ -477,16 +492,44 @@ defect even if every scaffold-variance case is listed.
    - Assert each: **zero** hits. An implementation that greps bare affect
      adjectives anywhere fails — that is the point of the attributive-frame cut.
 4. **Discrimination — epistemic hedges (`seems` / `looks` / `appears` /
-   `as if`)** (locks the full hedge class named in Success Criteria so a
-   single-token special case cannot pass):
-   - Captions (each must return **zero** hits):
+   `as if`) and hedged-WITH-COPULA frames** (locks the full hedge class
+   named in Success Criteria so a single-token special case **or** a bare
+   copula+affect regex with zero hedge/frame logic cannot pass):
+   - **Bare-hedge captions** (no copula; each must return **zero** hits):
      - `"He seems angry near the window."`
      - `"She looks anxious by the doorway."`
      - `"He appears proud in the courtyard."`
      - `"She stands as if anxious near the gate."`
-   - Assert each: **zero** hits. An implementation that treats any of these
-     hedges like unmarked copula ownership fails the matching case. A suite
-     that only proves `seems` / `reads as` does not satisfy this item.
+   - **Hedged-WITH-COPULA negatives** (person subject + copula + affect /
+     will, but attributive / named-source frame — the only fixtures that
+     force a frame check to exist; each must return **zero** hits):
+     - `"She is said to be {adj} near the window."` for each
+       `adj ∈ {anxious, angry, proud}`
+     - `"The {noun} is described as {adj} by the doorway."` for at least
+       one `noun ∈ {woman, man}` and each `adj ∈ {anxious, angry, proud}`
+       (minimum: full product over `{woman, man}` × the three adjs, or
+       parametrize all six nouns if preferred — both shapes force the
+       frame check)
+     - `"She is apparently {adj} in the courtyard."` for each
+       `adj ∈ {anxious, angry, proud}`
+     - **Hedged-will negative**: `"He appears to want to open the gate."`
+       → **zero** hits (will stem present under hedge/frame; must not fire
+       as unmarked ownership).
+   - Assert each: **zero** hits. An implementation that treats any bare
+     hedge like unmarked copula ownership fails the matching bare-hedge
+     case. A suite that only proves `seems` / `reads as` does not satisfy
+     this item. **Trivial cheating implementation that must fail**: a bare
+     regex for
+     `(she|he|they|woman|man|…)\s+(is|are)\s+(anxious|angry|proud)` (plus
+     will alternation) with **zero** hedge or bearer-frame logic — that
+     detector passes every bare-hedge negative (they omit copula) and every
+     pre-existing positive, but fires on
+     `"She is said to be anxious near the window."` and
+     `"The woman is described as anxious by the doorway."` and fails those
+     zero-hit asserts. These are the ATTRIB-01-licensed attributed readings
+     (`canon/lexicons/depiction.md:73`, `attrib-01`: "state visible cues
+     only, or attribute the reading to viewer, convention, artefact, or
+     named source").
 5. **Discrimination — will branch non-hit** (physical action / no interior
    ownership):
    - Caption: `"She reaches for the gate."`
@@ -571,25 +614,42 @@ defect even if every scaffold-variance case is listed.
       - one subject from `_INNER_PERSON_PRONOUNS` ∪ `_INNER_COMMON_PERSON_NOUNS`
       - one predicate from `_INNER_COPULA_AFFECT` (copula form) **or**
         `_INNER_WILL_VERBS` (will form, incl. 3sg)
-      - an adjunct / complement drawn from a **held-out adjunct pool** that
-        appears **nowhere** in proofs 1–11 fixture text
-        (e.g. `"under the awning"`, `"beside the fountain"`,
-        `"along the embankment"`, `"to ring the bell"`,
-        `"to fold the map"` — exact pool may vary, but **no token sequence
-        from this pool may appear in any other Slice 1 proof caption**).
+      - an adjunct / complement drawn from a **held-out adjunct pool declared
+        in the TEST module only** (e.g. a module-level
+        `_HELD_OUT_ADJUNCTS` / `_HELD_OUT_COMPLEMENTS` tuple in
+        `test_eval_harness_caption_metrics.py` — **never** in
+        `caption_metrics.py`). The pool must appear **nowhere** in proofs
+        1–11 fixture text
+        (example adjuncts for the pool — **illustrative only; the test
+        module owns the definitive list**: `"under the awning"`,
+        `"beside the fountain"`, `"along the embankment"`,
+        `"to ring the bell"`, `"to fold the map"`). **No token sequence
+        from this pool may appear in any other Slice 1 proof caption.**
+    - **Unpredictability / no dual-site literal (locked)**: no caption
+      literal **and no adjunct / complement literal from the held-out
+      pool** may appear in both the implementation module
+      (`caption_metrics.py`) and the test module. Grammar-member tables
+      (pronouns, nouns, affect adjs, will stems) are the only shared
+      closed sets. Publishing the example adjuncts in this plan does **not**
+      license copying them into the detector — they are test-module-only.
     - Minimum product size: ≥6 generated captions covering both copula and
       will branches and both pronoun and common-noun subjects.
     - Assert each generated caption: ≥1 hit (matched surface text,
       lower-cased, per hit-list semantics above).
+    - **Source-level guard (mandatory; makes the pool held-out)**: a test
+      reads `caption_metrics.py` source (or `inspect.getsource` on the
+      detector module) and asserts that **none** of the held-out adjunct /
+      complement strings from the test-module pool appear as substrings of
+      that source. Enumerating the published adjuncts into an
+      implementation lookup table therefore fails the guard even if every
+      generated caption would otherwise hit.
     - **Trivial cheating implementation that must fail**:
       `return [caption.lower()] if caption in _PROOF_CAPTIONS else []`
       or any `frozenset` / dict membership over the finite closed list of
       proof 1–11 captions (scaffold variance enlarges that set; held-out
       adjuncts sit **outside** it). Also fails any implementation that
-      embeds those held-out adjunct strings as caption literals.
-    - **Rule (locked)**: no caption literal may appear in both the
-      implementation and the test module. Grammar-member tables are the
-      only shared closed sets.
+      embeds those held-out adjunct strings as caption literals (source
+      guard goes red).
 13. **Command**:
     `uv run --extra dev pytest scene/tests/test_eval_harness_caption_metrics.py -k inner_state -q`
 
@@ -636,12 +696,19 @@ Changes:
   # Violence / oppression context gate for mutual-event nouns (TABLE MEMBERSHIP
   # IS THE CONTRACT — independent of the passive detector). EVERY mutual-event
   # positive must contain ≥1 member; benign negatives must contain none.
+  # Membership checks MUST use `_contains` (caption_metrics.py:59-74), not
+  # raw `needle in haystack` — see word-boundary lock below.
+  # `"shot"` is INTENTIONALLY ABSENT: it is a dominant photographic term in
+  # this corpus ("wide shot", "snapshot"). Violence-sense passives remain
+  # reachable via the frozen `_AGENTLESS_PASSIVE_FORMS` table if a future
+  # form such as `"was shot"` is added there; do not re-add bare `"shot"`
+  # to this context gate without a disambiguating rule and a
+  # `"…wide shot…"` zero-hit negative.
   _VIOLENCE_CONTEXT_TERMS = (
       "killed",
       "beaten",
       "enslaved",
       "arrested",
-      "shot",
       "violence",
       "oppression",
   )
@@ -661,8 +728,13 @@ Changes:
   - **mutual-event / symmetry nouns** from `_MUTUAL_EVENT_NOUNS` when the
     caption also contains ≥1 member of `_VIOLENCE_CONTEXT_TERMS` (closed list;
     do not generalise to every English passive). The violence gate is
-    **membership in `_VIOLENCE_CONTEXT_TERMS`**, independent of whether any
-    `_AGENTLESS_PASSIVE_FORMS` member is present — ATTRIB-08
+    **membership in `_VIOLENCE_CONTEXT_TERMS` via the existing `_contains`
+    helper** (`caption_metrics.py:59-74` — word-boundary, case-insensitive;
+    documents the `cat`/`scattered` false-positive class). **Do not** use a
+    raw `term in caption.lower()` substring test — that passes every
+    mandated proof while false-firing on `"skilled"` (`killed`) and
+    `"snapshot"` (were `"shot"` still present). Membership is independent of
+    whether any `_AGENTLESS_PASSIVE_FORMS` member is present — ATTRIB-08
     (`canon/lexicons/depiction.md:80`, `attrib-08`) names the mutual-event
     noun as an independent failure mode ("do not hide known agents behind
     'clash,' 'incident,' or agentless 'were killed'").
@@ -699,10 +771,24 @@ Changes:
   splitters** (any of these ends the current clause segment):
   - sentence terminators: `.` `?` `!` (optionally followed by whitespace /
     end);
-  - clause-internal separators: `,` and `;`;
+  - clause-internal separators: `;` **and coordinating-comma patterns only**
+    — `, and ` / `, but ` / `, or ` (case-insensitive; leading comma +
+    whitespace + coordinating conjunction). **Bare `,` alone is NOT a
+    clause splitter** (see gap-exemption resolution below).
   - subordinators that open a new clause boundary for this detector:
     ` that `, ` which `, ` who `, ` while `, ` when `, ` because `,
     ` although `, ` as ` (word-boundary match, case-insensitive).
+  **Gap-exemption resolution (comma / parenthetical)**: a bare-comma
+  unconditional splitter would re-break ATTRIB-08-compliant same-clause gap
+  prose such as `"Four students were killed, agent unknown, on campus."`
+  (splitting the gap into a different segment → false hit). Freezing only
+  coordinating-comma patterns keeps that parenthetical gap same-clause
+  (zero hit under proof 7's exemption) while still splitting
+  `"Four students were killed, and the parade was led by the mayor."`.
+  Preferred same-clause gap form in fixtures remains the parenthetical
+  `"Four students were killed ({gap}) on campus."` (proof 7); the
+  coordinating-comma refinement is the load-bearing rule so an implementer
+  who freezes bare `,` as a splitter fails the gap exemption.
   **Exemption locality (locked)**: a `by`-agent PP or gap phrase exempts a
   passive **only** when it falls in the **same clause segment** as that
   passive under this split **and** (for `by`-agent) occurs **at or after**
@@ -764,6 +850,35 @@ Proof (TEST-15, `canon/lexicons/engineering.md#test-15`):
           flag mutual-event nouns else: pass`
      (mutual-event gated on passive presence). This caption has no passive
      form, contains `clash` + `killed`, and must still hit on `clash`.
+3c. **Per-term violence-context positives — EVERY remaining
+   `_VIOLENCE_CONTEXT_TERMS` member as the SOLE violence signal**
+   (`test_mutual_event_each_violence_context_term` or equivalent; kills a
+   `"killed" in caption` proxy that would pass proofs 2 / 3b / 8 while
+   staying silent on every other context term):
+   - One positive caption per remaining term (not only `killed`), with that
+     term as the **sole** member of `_VIOLENCE_CONTEXT_TERMS` present and a
+     mutual-event noun present. **At least one caption must be active
+     voice** (no `_AGENTLESS_PASSIVE_FORMS` member) so ATTRIB-08's
+     mutual-event failure is independent of passive voice
+     (`canon/lexicons/depiction.md:80`).
+   - **Locked fixture set** (parametrize; assert `"clash"` ∈ hits or
+     `"incident"` ∈ hits as noted; exact lower-cased matched surface):
+     | Term (sole context) | Caption | Voice | Assert |
+     | --- | --- | --- | --- |
+     | `killed` | covered by proof 3b (active) and proof 2 (passive) | both | (no new fixture required) |
+     | `beaten` | `"Guards beaten four students during a clash."` is ungrammatical — use active: `"Guards left four students beaten during a clash."` | active (no passive form) | `"clash"` ∈ hits; no passive-form element |
+     | `enslaved` | `"Traders enslaved four people during a clash."` | **active** | `"clash"` ∈ hits; no passive-form element |
+     | `arrested` | `"Officers arrested four students during a clash."` | **active** | `"clash"` ∈ hits; no passive-form element |
+     | `violence` | `"Witnesses reported violence during a clash on campus."` | active (no passive form) | `"clash"` ∈ hits |
+     | `oppression` | `"The mural depicts oppression during a clash."` | active (no passive form) | `"clash"` ∈ hits |
+   - **Trivial cheating implementation that must fail**:
+     `if "killed" in caption.lower() and re.search(r"\b(clash|incident)\b", …): flag`
+     (killed-only violence proxy). Captions whose sole context term is
+     `arrested` / `enslaved` / `violence` / `oppression` / `beaten` must
+     still hit; the proxy returns `[]` and fails.
+   - Note: `"shot"` is **not** in `_VIOLENCE_CONTEXT_TERMS` (photographic
+     false-positive class; see table freeze above). Do not add a `shot`
+     positive.
 4. **Discrimination — same-clause by-agent exemption, parametrized over EVERY
    passive form × EVERY `_BY_AGENT_PPS` member**
    (`test_agentless_passive_by_agent_exempt` or equivalent;
@@ -809,6 +924,35 @@ Proof (TEST-15, `canon/lexicons/engineering.md#test-15`):
    - **Trivial cheating implementation that must fail**:
      `if " by " in caption: return []; flag "were killed"`. This caption
      contains ` by ` and still must hit — the cheat returns `[]` and fails.
+6a. **Unproven splitter classes still hit — coordinating comma and
+   subordinator** (`test_agentless_passive_clause_splitters_still_hit` or
+   equivalent; kills a sentence-only splitter
+   `re.split(r"[.?!]+", caption)` that would pass every prior proof while
+   wrongly exempting cross-clause by-agent under the frozen rule):
+   - **Coordinating-comma class**:
+     `"Four students were killed, and the parade was led by the mayor."`
+     → assert `"were killed"` ∈ hits. The `, and ` pattern is a frozen
+     clause splitter; `by the mayor` is in a **different** clause segment
+     and must **not** exempt. A sentence-only splitter treats this as one
+     sentence, finds `by the mayor` after the passive, and wrongly
+     returns `[]`.
+   - **Subordinator class** (representative ` while `; the full subordinator
+     list remains locked above — one still-hits fixture is the minimum
+     that forces the class to exist):
+     `"Four students were killed while the parade was led by the mayor."`
+     → assert `"were killed"` ∈ hits. ` while ` opens a new clause; the
+     by-PP does not exempt.
+   - **Gap-exemption re-check under coordinating-comma rule** (resolution
+     of the bare-comma re-break):
+     `"Four students were killed, agent unknown, on campus."`
+     → assert **zero** hits (same-clause gap under the refined rule: bare
+     `,` does **not** split, so `agent unknown` remains same-clause and
+     exempts). An implementation that freezes bare `,` as a splitter
+     wrongly hits this ATTRIB-08-compliant prose and fails.
+   - **Trivial cheating implementation that must fail**:
+     `re.split(r"[.?!]+", caption)` then exempt if any segment tail has
+     ` by ` (sentence-only). That cheat wrongly silences the coordinating-
+     comma and subordinator fixtures.
 6b. **Following-sentence by-agent does NOT exempt, parametrized over EVERY
    `_AGENTLESS_PASSIVE_FORMS` member**
    (`test_agentless_passive_following_sentence_by_agent_still_hits` or
@@ -888,6 +1032,20 @@ Proof (TEST-15, `canon/lexicons/engineering.md#test-15`):
      `if re.search(r"\b(clash|incident)\b", caption, re.I): return [match]`
      (no `_VIOLENCE_CONTEXT_TERMS` membership gate). These benign captions
      must return `[]`.
+8b. **Word-boundary discipline on `_VIOLENCE_CONTEXT_TERMS`**
+   (`test_violence_context_word_boundary_no_hit` or equivalent; locks
+   membership through `_contains` at `caption_metrics.py:59-74` so a raw
+   `in` test cannot pass):
+   - Caption: `"A skilled artist captures a snapshot of a clash of colors."`
+     (contains substrings `killed`⊂`skilled` and `shot`⊂`snapshot`, plus a
+     benign mutual-event noun, and **no** whole-token violence-context term).
+   - Assert: **zero** hits overall.
+   - **Trivial cheating implementation that must fail**:
+     `if any(t in caption.lower() for t in _VIOLENCE_CONTEXT_TERMS) and
+          re.search(r"\b(clash|incident)\b", caption, re.I): flag`
+     (raw substring membership). `"killed" in "skilled"` is True under raw
+     `in`, so the cheat flags `"clash"` and fails. Using `_contains` (or an
+     equivalent `(?<!\w)…(?!\w)` boundary match) keeps this caption silent.
 9. **Command**:
    `uv run --extra dev pytest scene/tests/test_eval_harness_caption_metrics.py -k agentless_passive -q`
 
@@ -1028,12 +1186,14 @@ could never go green.
 5. **Dedupe control — three-field identity after TRUE filter**
    (honest density contract; **not** the four-field
    `score_hallucination` identity at `caption_metrics.py:409-422`).
-   Three cases; a `seen` set keyed on `fact.text` alone fails 5b/5c while
-   still passing 5a. **No density proof claims to lock polarity as an
-   identity field** — after the TRUE filter polarity is constant, so any
-   such proof is structurally vacuous (an implementation that filters
-   polarity before a three-field `seen` always matches four-field behaviour
-   on density outputs).
+   Cases 5a–5c lock the three-field key (a `seen` set keyed on `fact.text`
+   alone fails 5b/5c while still passing 5a). Case **5d locks step order**
+   (filter TRUE → then three-field dedupe → then count), not polarity-as-
+   identity. **No density proof claims to lock polarity as an identity
+   field** — after the TRUE filter polarity is constant, so any such
+   polarity-in-key proof is structurally vacuous (an implementation that
+   filters polarity before a three-field `seen` always matches four-field
+   behaviour on density outputs for TRUE-only rows).
 
    - **5a. Identical rows count once** (retain; DO NOT BREAK arithmetic):
      - Facts: **two** identical true-polarity rows
@@ -1069,16 +1229,34 @@ could never go green.
      - Assert: `verified_count == 2` (not 1). A text-only `seen` set
        collapses these to 1 and fails; the three-field identity keeps both.
 
-   - **5d. DROPPED as a density polarity-identity proof (structurally
-     vacuous — do not reintroduce).** A FALSE-then-TRUE pair with the same
-     `text`/`kind`/`phrases` yields `verified_count == 1` under the honest
-     contract solely because the FALSE row is filtered out before dedupe
-     (covered by proof 4's false-trap control + the TRUE filter above). That
-     outcome is identical for three-field and four-field `seen` keys, so it
-     cannot go red against a three-field implementation and must not be
-     written as a four-field lock. Polarity-in-key discrimination, if needed,
-     belongs on `score_hallucination` (where FALSE and TRUE branches are both
-     observed) — out of scope for density proofs here.
+   - **5d. Step-order lock — filter TRUE before dedupe**
+     (`test_signal_density_filter_before_dedupe` or equivalent; **not** a
+     polarity-as-identity-field claim). The honest density contract at
+     Slice 3 step 2 mandates: (1) filter to `polarity is FactPolarity.TRUE`,
+     (2) **then** dedupe survivors on `(text, kind, tuple(phrases))`,
+     (3) **then** count matches. Proofs 5a–5c are all TRUE+TRUE (or
+     proof 4 uses different texts `bicycle`/`dog`) and therefore cannot
+     distinguish filter→dedupe from dedupe→filter. The existing helper at
+     `caption_metrics.py:409-415` does `seen.add(identity)` **before**
+     branching on `fact.polarity` — exactly the shape a junior will copy.
+     - Facts (order load-bearing): **FALSE first, then TRUE**, same three
+       identity fields:
+       `ReferenceFact(text="bicycle", kind=OBJECT, polarity=FALSE,
+       phrases=["bicycle"])` **and**
+       `ReferenceFact(text="bicycle", kind=OBJECT, polarity=TRUE,
+       phrases=["bicycle"])`.
+     - Caption: `"A bicycle leans on a wall."`
+     - Assert: `verified_count == 1` (not 0).
+     - **Trivial cheating implementation that must fail** ("dedupe before
+       the TRUE filter"): build `seen` on three-field
+       `(text, kind, phrases)` over **all** rows first, then filter TRUE —
+       the TRUE row is dropped as a duplicate of the FALSE row →
+       `verified_count == 0`. Filter-first keeps only the TRUE row, dedupes
+       a one-element set, and counts the match → `1`.
+     - **Do not reframe 5d as a four-field / polarity-in-key proof.** After
+       the TRUE filter polarity is constant; polarity-as-identity-field
+       discrimination remains structurally vacuous for density and belongs
+       on `score_hallucination` only.
 6. **Empty / whitespace caption — density is None, not 0.0**
    (locks `density_per_100w is None iff word_count == 0`):
    - Facts: one true fact `bicycle` (same as proof 1).
@@ -1105,7 +1283,8 @@ Own a **thin additive** emit in `report.py` so report JSON carries the new
 keys **with live values**. This emit is **DEPICT-2's own additional
 acceptance criterion** (not listed in assessment §6b/§6c/§6e). Slice 3 alone
 lands the assessment §3.1 / GPU-window gate (density metric + Williams/C5;
-§6e L349). Do **not** implement bake-off ranking *sort* here — that remains
+assessment §6e "Dispatch shape — file ownership, not just task ownership"
+L355). Do **not** implement bake-off ranking *sort* here — that remains
 an optional unowned follow-on, **not** the §3.1 gate.
 
 **Depends on**: Slices 1–3 pure APIs green.
@@ -1123,18 +1302,35 @@ an optional unowned follow-on, **not** the §3.1 gate.
   DEPICT-0 either. All DEPICT-2 report-emit proofs live only in the new
   reserved file.
 
-**Current emit (verified anchors, open the file)**:
-- Per-image row dict + long-block emit: `report.py:472-517` — includes
-  `meta_framing_hits` (L486), not depiction hits / density.
+**Current emit (verified anchors, open the file — dict ENTRY vs statement)**:
+- Per-image **row dict literal**: `report.py:472-495` (opens
+  `row: dict[str, Any] = {` at L472; closes at L495). Includes
+  `meta_framing_hits` **dict entry** at L486, not depiction hits / density.
+  L496–517 are **statements after** the literal (`if short_error is not None:
+  row["short_error"] = …` at L496-497; `if long_s is not None: row["long"] =
+  {…}` at L498-513; `per_image.append(row)` at L517) — **not** part of the
+  row dict literal.
 - `_quality_block`: `report.py:540-553` — `meta_framing_images`, sentence band,
   etc. only.
-- Caption aggregate: `report.py:565-574` — `mean_gated_score` and gate rates;
-  no density.
+- `result` **dict literal**: `report.py:554-604` (opens
+  `result: dict[str, Any] = {` at L554; closes at L604). Caption aggregate
+  entries at L565–574 (`mean_gated_score`, gate rates); **no density**.
+  SHORT quality is a **dict entry** at L575:
+  `"quality": _quality_block(caption_scores, SHORT_SENTENCE_BAND),`
+  — **not** a statement `result["quality"] = …`. There is no assignment
+  statement at L575.
+- After `result` closes: `short_failed_images` block at `report.py:606-610`
+  is the first post-literal statement that mutates `result["caption"]`.
+- Long quality is a **dict entry** inside the `result["caption_long"] = {…}`
+  literal at `report.py:636-644`:
+  `"quality": _quality_block(long_scores, LONG_SENTENCE_BAND),` at L643 —
+  **not** a statement `result["caption_long"]["quality"] = …`.
 - `score_caption` call site: `report.py:398-406` builds `score_kwargs` with
   names/traps/objects/roster/context only — **no `reference_facts`**.
 - `short_error` path: `report.py:412-417` — `scores` starts `None` and is
-  only populated when `short_error is None`; the per-image row is still built
-  at `report.py:472-517` (and stamps `row["short_error"]` at L496-497).
+  only populated when `short_error is None`; the per-image row literal is
+  still built at `report.py:472-495` (and stamps `row["short_error"]` via
+  the post-literal statement at L496-497).
 - Manifest adjacency: `GoldenEntry.reference_facts` at `manifest.py:359`;
   `score_run_record` takes `manifest_entries: list[dict]` (`report.py:320-327`)
   so facts arrive as dicts and must be re-validated via
@@ -1147,9 +1343,9 @@ an optional unowned follow-on, **not** the §3.1 gate.
 
 #### Locked report JSON schema (exact; no "or flat keys" fork)
 
-**Per-image row** (additive keys on the dict opened at `report.py:472`; when
-`scores is None` because of `short_error`, emit the same keys with
-`None` / empty values as noted):
+**Per-image row** (additive keys **inside** the row dict literal at
+`report.py:472-495`; when `scores is None` because of `short_error`, emit
+the same keys with `None` / empty values as noted):
 
 | Key | Type when scored | Type when `scores is None` |
 | --- | --- | --- |
@@ -1162,8 +1358,10 @@ field names. Density is computed by the **sibling pure function**
 `score_signal_density` (Slice 3) — **not** a `CaptionScores` field.
 
 **Quality / corpus block — SHORT surface only** (additive keys on
-`result["quality"]` at the SHORT-surface call site `report.py:575`,
-**not** by extending `_quality_block`):
+`result["quality"]` assigned **after** the `result` dict literal closes at
+`report.py:604` — e.g. immediately before the `short_failed_images` block at
+`report.py:606-610` — **not** by extending `_quality_block`, and **not** by
+inserting statements inside the open `result` literal):
 
 | Key | Type | Definition |
 | --- | --- | --- |
@@ -1172,14 +1370,17 @@ field names. Density is computed by the **sibling pure function**
 | `mean_signal_density` | `float \| null` | Mean of per-image short-surface `density_per_100w` over the retained density list (see denominator below) |
 
 **Do not extend `_quality_block`** (`report.py:540-553`). That helper is
-called **twice**: once for short at `report.py:575`
-(`result["quality"] = _quality_block(caption_scores, SHORT_SENTENCE_BAND)`)
-and once for long at `report.py:643`
-(`result["caption_long"]["quality"] = _quality_block(long_scores, LONG_SENTENCE_BAND)`).
+referenced **twice as a dict ENTRY** (not as free statements):
+- SHORT: inside the `result` literal at `report.py:575` —
+  `"quality": _quality_block(caption_scores, SHORT_SENTENCE_BAND),`
+- LONG: inside the `result["caption_long"] = {…}` literal at
+  `report.py:643` —
+  `"quality": _quality_block(long_scores, LONG_SENTENCE_BAND),`
 Putting `mean_signal_density` (or the depiction hit-image counts) inside
 `_quality_block` would either emit a short-surface number under
 `caption_long.quality` or invent a null key the locked schema never
-sanctioned.
+sanctioned. Inserting assignment statements at L575 (29 lines inside the
+open `result` literal that runs L554–604) is a `SyntaxError` — never do that.
 
 **`caption_long.quality` contract (locked)**:
 - `inner_state_attribution_images`, `agentless_passive_images`, and
@@ -1193,10 +1394,16 @@ sanctioned.
 **Aggregation denominator (locked)**: retain a per-image list
 `density_scores: list[SignalDensityScores]` for every **short-surface**
 caption that was scored (same loop iteration that calls `score_caption` when
-`short_error is None`). Then, **beside** the short `_quality_block` call at
-`report.py:575` (not inside it):
+`short_error is None`). Then, **after** the `result` dict literal closes at
+`report.py:604` — immediately before the `short_failed_images` block at
+`report.py:606-610` (not inside the open literal; not inside
+`_quality_block`):
 
 ```
+# Placement: AFTER `result: dict[str, Any] = { … }` closes at report.py:604,
+# BEFORE the short_failed_images block at report.py:606-610.
+# result["quality"] already exists from the dict ENTRY at report.py:575:
+#   "quality": _quality_block(caption_scores, SHORT_SENTENCE_BAND),
 non_none = [d.density_per_100w for d in density_scores if d.density_per_100w is not None]
 mean_signal_density = round(sum(non_none) / len(non_none), 4) if non_none else None
 result["quality"]["inner_state_attribution_images"] = sum(
@@ -1245,7 +1452,9 @@ Changes (additive only; no gates, no thresholding, no ranking sort):
    dicts (`score_run_record` signature
    `manifest_entries: list[dict[str, Any]]` at `report.py:320-327`), not as
    `GoldenEntry` models.
-3. **Per-image emit** (extend the row dict at `report.py:472-517`):
+3. **Per-image emit** (extend the **row dict literal** at `report.py:472-495`
+   — add keys **inside** the `{…}` that closes at L495; do **not** treat
+   L496–517 as part of the literal):
    - `"inner_state_attribution_hits": scores.inner_state_attribution_hits if scores is not None else []`
      — elements are lower-cased matched surface text (Slice 1 contract).
    - `"agentless_passive_hits": scores.agentless_passive_hits if scores is not None else []`
@@ -1255,12 +1464,17 @@ Changes (additive only; no gates, no thresholding, no ranking sort):
      `{"verified_count": 0, "word_count": 0, "density_per_100w": None}`.
      Initialise `density = None` before the `short_error` branch (or branch
      the emit) so the `scores is None` path never reads an unbound name.
-4. **Quality block emit (SHORT only)**: after
-   `result["quality"] = _quality_block(caption_scores, SHORT_SENTENCE_BAND)`
-   at `report.py:575`, **assign the three additive keys onto
+4. **Quality block emit (SHORT only)**: **after** the `result` dict literal
+   closes at `report.py:604` (immediately before `short_failed_images` at
+   `report.py:606-610`), **assign the three additive keys onto
    `result["quality"]`** per the locked schema and denominator above.
-   **Do not** modify `_quality_block`'s body or signature. **Do not** add
-   these keys to `caption_long.quality` at `report.py:643`.
+   `result["quality"]` already exists from the dict ENTRY at L575
+   (`"quality": _quality_block(caption_scores, SHORT_SENTENCE_BAND),`).
+   **Do not** modify `_quality_block`'s body or signature. **Do not** insert
+   statements inside the open `result` literal. **Do not** add these keys to
+   the long quality dict ENTRY at `report.py:643`
+   (`"quality": _quality_block(long_scores, LONG_SENTENCE_BAND),` inside
+   `result["caption_long"] = {…}`).
 5. Markdown human summary may mention the new numbers; the JSON keys above are
    the contract for DEPICT-2's report-axis emit. No other key shape is
    permitted. Bake-off ranking *sort* is out of scope (optional follow-on,
@@ -1513,13 +1727,14 @@ Do **not** assert key presence alone.
 
 **§3.1 / GPU-window unblock condition**: Slice 3 green means the density
 metric exists and Williams/C5 is documented in-module — that **is** the
-assessment §3.1 / GPU-window gate (assessment §6b L287-293: §3.1 is the last
-unlanded gate; assessment §6e L349: Lane C unblocks the GPU window). Slice 4
-green is **DEPICT-2's own additional acceptance criterion** (live report JSON
-density + hit lists) — not attributed to assessment §6b/§6e. Bake-off
-*ranking sort* that orders candidates by density remains an optional
-separate unowned consumer; it is **not** a prerequisite for §3.1 or the GPU
-window.
+assessment §3.1 / GPU-window gate (assessment §6b "The GPU window has a
+second, cheaper gate than curation" L303-309: §3.1 is the last unlanded
+gate; assessment §6e "Dispatch shape — file ownership, not just task
+ownership" L355: Lane C unblocks the GPU window). Slice 4 green is
+**DEPICT-2's own additional acceptance criterion** (live report JSON density
++ hit lists) — not attributed to assessment §6b/§6e. Bake-off *ranking sort*
+that orders candidates by density remains an optional separate unowned
+consumer; it is **not** a prerequisite for §3.1 or the GPU window.
 
 ## Consolidated Checklist
 
@@ -1553,6 +1768,10 @@ window.
       every affect adj → 0 hits.
 - [ ] Write hedge discrimination for **each** of `seems` / `looks` / `appears` /
       `as if` → 0 hits (not just `seems` / `reads as`).
+- [ ] Write hedged-WITH-COPULA negatives → 0 hits:
+      `"She is said to be {adj}…"`, `"The {noun} is described as {adj}…"`,
+      `"She is apparently {adj}…"`, and hedged-will
+      `"He appears to want to open the gate."` (forces frame check to exist).
 - [ ] Write will-branch non-hit: `"She reaches for the gate."` → 0 hits.
 - [ ] Write visible-cue control: furrowed brow / tight jaw → 0 hits.
 - [ ] Parametrize common-noun copula over EVERY noun × EVERY affect adj
@@ -1567,8 +1786,10 @@ window.
 - [ ] Write mixed-caption hedge discrimination:
       `"He seems angry…. She is anxious…."` → still ≥1 hit on unhedged clause.
 - [ ] Write held-out generalisation proof: compose frozen subject × predicate
-      tables with adjuncts that appear nowhere in proofs 1–11; assert ≥1 hit
-      each; no caption literal shared between implementation and tests.
+      tables with adjuncts from a pool declared in the TEST module only;
+      assert ≥1 hit each; no caption **or** held-out adjunct literal shared
+      between implementation and tests; source-level guard asserts
+      `caption_metrics.py` contains none of the fixture adjunct strings.
 - [ ] Hit-list elements = lower-cased matched surface text in source order
       (not marker tokens).
 - [ ] Implement detector + `CaptionScores.inner_state_attribution_hits` in `caption_metrics.py`.
@@ -1579,9 +1800,13 @@ window.
 ### Checklist for Slice 2: Agentless-passive / mutual-event detector
 
 - [ ] Freeze `_AGENTLESS_PASSIVE_FORMS`, `_MUTUAL_EVENT_NOUNS`,
-      `_GAP_AGENT_PHRASES`, `_VIOLENCE_CONTEXT_TERMS`, `_BY_AGENT_PPS`.
-- [ ] State frozen clause-splitting rule (sentence terminators + `,` `;` +
-      subordinators) as part of the same-clause contract.
+      `_GAP_AGENT_PHRASES`, `_VIOLENCE_CONTEXT_TERMS` (**no** `"shot"`),
+      `_BY_AGENT_PPS`.
+- [ ] State frozen clause-splitting rule (sentence terminators + `;` +
+      coordinating-comma patterns `, and `/`, but `/`, or ` + subordinators;
+      bare `,` is NOT a splitter) as part of the same-clause contract.
+- [ ] Violence-context membership uses `_contains` (`caption_metrics.py:59-74`),
+      not raw `in`.
 - [ ] Parametrize agentless-passive red-first over EVERY passive form
       (`was killed`, `were killed`, `were beaten`, `was enslaved`, `were arrested`).
 - [ ] Parametrize mutual-event red-first over EVERY noun (`clash`, `incident`)
@@ -1589,12 +1814,21 @@ window.
 - [ ] Write discrimination: active-voice named agent, no mutual-event → 0 hits.
 - [ ] Write active-voice + clash under violence context → `"clash"` hit,
       no passive-form element (proof 3b).
+- [ ] Write per-term violence-context positives (proof 3c): each remaining
+      `_VIOLENCE_CONTEXT_TERMS` member as SOLE signal, ≥1 active-voice → hit
+      (kills `"killed"`-only proxy).
 - [ ] Parametrize adjacent same-clause by-agent exemption over EVERY passive
       form × EVERY `_BY_AGENT_PPS` member → 0 hits.
 - [ ] Parametrize non-adjacent same-clause by-agent exemption over EVERY
       passive form × EVERY `_BY_AGENT_PPS` member → 0 hits.
 - [ ] Write different-clause unrelated-`by` still-hits (prior clause)
       (`"A report by a journalist says four students were killed…"`) → ≥1 hit.
+- [ ] Write clause-splitter still-hits (proof 6a): coordinating-comma
+      `"…were killed, and the parade was led by the mayor."` and subordinator
+      `"…were killed while the parade was led by the mayor."` → `"were killed"`
+      ∈ hits; re-check gap
+      `"…were killed, agent unknown, on campus."` → 0 hits under bare-comma
+      non-split rule.
 - [ ] Parametrize following-sentence by-agent still-hits over EVERY passive
       form (`…{passive_form} on campus. The parade was led by the mayor."`)
       → ≥1 hit each.
@@ -1607,6 +1841,8 @@ window.
       EVERY gap phrase → ≥1 hit each.
 - [ ] Parametrize benign mutual-event no-hit over EVERY noun
       (`clash of colors`, `incident of paint`) → 0 hits.
+- [ ] Write word-boundary negative (proof 8b):
+      `"A skilled artist captures a snapshot of a clash of colors."` → 0 hits.
 - [ ] Hit-list elements = lower-cased matched surface text in source order
       (form / noun strings, not marker tokens).
 - [ ] Implement detector + `CaptionScores.agentless_passive_hits`.
@@ -1624,8 +1860,10 @@ window.
 - [ ] Write dedupe 5a: two identical true-fact rows → `verified_count == 1`.
 - [ ] Write dedupe 5b: same text, different kind, both match → `verified_count == 2`.
 - [ ] Write dedupe 5c: same text, different phrases, both match → `verified_count == 2`.
-- [ ] Do **not** reintroduce a density 5d that claims polarity is a density
-      identity field (structurally vacuous after TRUE filter). Contract:
+- [ ] Write step-order 5d: FALSE-then-TRUE same `(text, kind, phrases)` →
+      `verified_count == 1` (filter TRUE **before** three-field dedupe; kills
+      "dedupe before the TRUE filter"). Do **not** reframe 5d as polarity-
+      as-identity-field (structurally vacuous after TRUE filter). Contract:
       filter TRUE → three-field `(text, kind, phrases)` dedupe → count matches.
 - [ ] Write empty/whitespace caption control: `word_count == 0`,
       `verified_count == 0`, `density_per_100w is None`.
@@ -1650,11 +1888,13 @@ window.
 - [ ] Emit locked per-image keys: `inner_state_attribution_hits`,
       `agentless_passive_hits` (exact lower-cased matched surface text), nested
       `signal_density` object only (no flat keys).
-- [ ] Emit locked SHORT quality keys **beside** `report.py:575` (do **not**
-      extend `_quality_block`): `inner_state_attribution_images`,
-      `agentless_passive_images`, `mean_signal_density` with the non-`None`
-      density denominator. Those three keys **must not** appear under
-      `caption_long.quality`.
+- [ ] Emit locked SHORT quality keys **after** the `result` dict literal
+      closes at `report.py:604` (immediately before `short_failed_images` at
+      `report.py:606-610`; do **not** extend `_quality_block`; do **not**
+      insert statements inside the open literal at the L575 dict ENTRY):
+      `inner_state_attribution_images`, `agentless_passive_images`,
+      `mean_signal_density` with the non-`None` density denominator. Those
+      three keys **must not** appear under `caption_long.quality`.
 - [ ] Write `scene/tests/test_eval_harness_report_depiction.py` with exact-value
       proofs: non-zero (exact hit literals `"she is anxious"` / `"were killed"`
       / `"clash"`), clean-zero, short_error fallback, multi-image mean
@@ -1667,8 +1907,10 @@ window.
       (optional follow-on — not required for §3.1).
 - [ ] `uv run --extra dev pytest scene/tests/test_eval_harness_report_depiction.py -q` green.
 - [ ] Slice 3 green ⇒ assessment §3.1 / GPU-window gate landed (density +
-      Williams/C5; §6b L287-293, §6e L349). Slice 4 green ⇒ DEPICT-2's own
-      report-emit acceptance criterion (bake-off sort not required).
+      Williams/C5; §6b "The GPU window has a second, cheaper gate than
+      curation" L303-309; §6e "Dispatch shape — file ownership, not just
+      task ownership" L355). Slice 4 green ⇒ DEPICT-2's own report-emit
+      acceptance criterion (bake-off sort not required).
 
 ### Review Readiness
 
@@ -1681,8 +1923,10 @@ window.
       `test_eval_harness_report.py` deliberately unedited; bake-off ranking
       *sort* still explicit non-scope (optional follow-on, **not** the §3.1 gate).
 - [ ] §3.1 / GPU-window gate is treated as density metric + Williams/C5
-      (Slice 3; assessment §6b L287-293, §6e L349), not as bake-off sort and
-      not as requiring report emit. Report emit is DEPICT-2's own extra.
+      (Slice 3; assessment §6b "The GPU window has a second, cheaper gate
+      than curation" L303-309; §6e "Dispatch shape — file ownership, not
+      just task ownership" L355), not as bake-off sort and not as requiring
+      report emit. Report emit is DEPICT-2's own extra.
 - [ ] Canon IDs cited as plain text with lexicon path, not monorepo markdown
       links; verification grep uses `$CANON_LEXICONS_ROOT` / bundle-root
       `canon/lexicons/` (sibling of `repo/`).
@@ -1706,26 +1950,34 @@ window.
       noun × affect product, not `anxious` alone), and **every** frozen will
       stem (incl. `refuse`/`refuses`); positives use **varied scaffolds**
       (not a single railing adjunct/complement) **and** held-out adjuncts
-      composed at test time; hit elements are lower-cased matched surface
-      text; stays silent on attributive/bearer frames (including attributed
-      common-noun frames), epistemic hedges (`seems` / `looks` / `appears` /
-      `as if` — each proved zero-hit), visible-cue inventory, non-person
-      subjects with affect/will, and person subjects without a frozen
-      predicate; mixed hedged+unhedged captions still fire on the unhedged
-      clause; no caption-literal frozenset detector passes the suite.
+      composed at test time from a test-module-only pool (source-level guard);
+      hit elements are lower-cased matched surface text; stays silent on
+      attributive/bearer frames (including attributed common-noun frames **and**
+      hedged-WITH-COPULA frames such as `"She is said to be anxious…"` /
+      `"The woman is described as anxious…"` / `"She is apparently anxious…"` /
+      `"He appears to want…"`), epistemic hedges (`seems` / `looks` /
+      `appears` / `as if` — each proved zero-hit), visible-cue inventory,
+      non-person subjects with affect/will, and person subjects without a
+      frozen predicate; mixed hedged+unhedged captions still fire on the
+      unhedged clause; no caption-literal frozenset detector passes the suite.
 - [ ] Agentless-passive detector fires on **every** frozen passive form and
       **every** frozen mutual-event noun under `_VIOLENCE_CONTEXT_TERMS`
-      membership (including active-voice violence + `clash` → `"clash"` hit
-      with no passive-form element); fires on passives whose only `by` is in
-      a different clause (prior **or following**) **and** on passives whose
-      only gap phrase is in a prior **or following** sentence / different
-      clause; stays silent on named-agent active voice without mutual-event,
-      adjacent **and** non-adjacent same-clause `by`-agent passives for
-      **every** frozen passive form × **every** `_BY_AGENT_PPS` agent phrase,
-      benign mutual-event uses, and ATTRIB-08-compliant same-clause
-      gap-language statements for **every** `_GAP_AGENT_PHRASES` member;
-      clause-splitting rule is frozen; hit elements are lower-cased matched
-      surface text.
+      membership via `_contains` (including active-voice violence + `clash`
+      → `"clash"` hit with no passive-form element, and **every** remaining
+      context term as sole signal — not a `"killed"`-only proxy); fires on
+      passives whose only `by` is in a different clause (prior **or following**,
+      including coordinating-comma and subordinator splitters) **and** on
+      passives whose only gap phrase is in a prior **or following** sentence /
+      different clause; stays silent on named-agent active voice without
+      mutual-event, adjacent **and** non-adjacent same-clause `by`-agent
+      passives for **every** frozen passive form × **every** `_BY_AGENT_PPS`
+      agent phrase, benign mutual-event uses, substring false-positives
+      (`skilled`/`snapshot`), photographic `"shot"` (term absent from the
+      table), and ATTRIB-08-compliant same-clause gap-language statements for
+      **every** `_GAP_AGENT_PHRASES` member (including
+      `"…killed, agent unknown, …"` under bare-comma non-split); clause-
+      splitting rule is frozen; hit elements are lower-cased matched surface
+      text.
 - [ ] Signal density ranks grounded captions above rare-ungrounded and
       ornament-padded captions with equal or fewer verified facts; rare
       ungrounded nouns never raise the score; false-polarity traps never
@@ -1733,20 +1985,22 @@ window.
       identical true-fact rows count once; true facts sharing `text` but
       differing in `kind` or `phrases` are not collapsed by a text-only
       `seen` key (5a–5c: three-field identity after TRUE filter — polarity is
-      **not** a density identity field); empty caption →
-      `density_per_100w is None`.
+      **not** a density identity field); FALSE-then-TRUE same three-field
+      identity still yields `verified_count == 1` (5d step-order: filter
+      before dedupe); empty caption → `density_per_100w is None`.
 - [ ] `score_signal_density` returns the mandated multi-field score object
       (`word_count == 6` and `approx(100/6)` on the bicycle fixture) as a
       **sibling pure function**, not a `CaptionScores` field.
 - [ ] Module docstring states Williams (gate) and C5 (ranking) as distinct roles.
 - [ ] Report JSON emits the locked schema: per-image nested `signal_density`
-      object + hit lists with **exact lower-cased matched surface literals**,
-      SHORT quality-level `mean_signal_density` (multi-image mean with
-      non-None denominator; all-empty → None) + hit-image counts assigned
-      beside `report.py:575` (not via `_quality_block`),
-      `caption_long.quality` keeps only pre-existing `_quality_block` keys,
-      and exact fallback keys when `short_error` makes `scores is None`
-      (Slice 4 — DEPICT-2 own criterion).
+      object + hit lists with **exact lower-cased matched surface literals**
+      (keys inside row dict literal `report.py:472-495`), SHORT quality-level
+      `mean_signal_density` (multi-image mean with non-None denominator;
+      all-empty → None) + hit-image counts assigned **after** the `result`
+      literal closes at `report.py:604` (not via `_quality_block`; not inside
+      the open literal at the L575 dict ENTRY), `caption_long.quality` keeps
+      only pre-existing `_quality_block` keys, and exact fallback keys when
+      `short_error` makes `scores is None` (Slice 4 — DEPICT-2 own criterion).
 - [ ] Fixtures use `"polarity": "true"` (StrEnum string); `ReferenceFact.model_validate`
       succeeds on them.
 - [ ] Metrics tests and
@@ -1756,9 +2010,11 @@ window.
       `test_eval_harness_report_depiction.py`) modified; existing
       `test_eval_harness_report.py` deliberately unedited.
 - [ ] Assessment §3.1 / GPU-window gate **landed** by Slice 3 (density metric
-      + Williams/C5; §6b L287-293, §6e L349). Slice 4 report emit is
-      DEPICT-2's own additional acceptance criterion. Bake-off ranking
-      *sort* remains optional unowned follow-on (not the §3.1 gate).
+      + Williams/C5; §6b "The GPU window has a second, cheaper gate than
+      curation" L303-309; §6e "Dispatch shape — file ownership, not just
+      task ownership" L355). Slice 4 report emit is DEPICT-2's own additional
+      acceptance criterion. Bake-off ranking *sort* remains optional unowned
+      follow-on (not the §3.1 gate).
 
 ## Not-Doing
 
@@ -1769,7 +2025,9 @@ window.
 - Bake-off ranking *order* / sort-by-density logic (`bakeoff.py` consumer) —
   **unowned** by this task; keys land in Slice 4 but sort code does not.
   Sort is an **optional follow-on**, not the §3.1 / GPU-window gate
-  (assessment §6b L287-293: §3.1 = density metric; §6e L349: Lane C unblocks).
+  (assessment §6b "The GPU window has a second, cheaper gate than curation"
+  L303-309: §3.1 = density metric; §6e "Dispatch shape — file ownership, not
+  just task ownership" L355: Lane C unblocks).
 - Colour vocabulary of any kind; `FM-11` citations; Lane D trigger work.
 - Race warrant / parity gate (ATTRIB-06) — pass-level property; harness is
   per-image only.

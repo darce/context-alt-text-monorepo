@@ -366,8 +366,10 @@ cross-reference).
   it is DEPICT-D1 (assessment §2 item 9) — operator decision memo.
 - Bound-term / colour shape: deliberately unwarranted for alt text under
   `controlled-vocabulary-caps-hallucination` Side A until §10e fires. Out of scope.
-- **"Disposition is real, not prose"** for `GravityDisposition` is assessment
-  §2 item 9 / F3 operator design, not a release-gate lexicon row. `RLSE-02`
+- **`GravityDisposition` as a typed value rather than prose guidance** is
+  assessment §2 item 9 / F3 operator design, not a release-gate lexicon row.
+  This is the plan's own formulation; no assessment or lexicon sentence is
+  being quoted here (same claim, stated without a quote, in Slice 3). `RLSE-02`
   (ship past an unresolved gate verdict) is **not** cited — Slice 3 ships a
   pure boolean/schema disposition with no gate.
 - **`BOUND-02` is not cited** for the input voice partition. Its definition

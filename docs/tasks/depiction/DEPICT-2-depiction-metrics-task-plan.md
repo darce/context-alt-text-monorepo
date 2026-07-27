@@ -22,7 +22,11 @@
 > root.
 >
 > **Canon**: heuristics-canon `v0.17.0-11-ga238620` (bundle `canon/PROVENANCE.txt`;
-> private repo, not vendored inside `repo/`). **Resolvable lexicon root
+> private repo, not vendored inside `repo/`). **One row moved since this
+> bundle**: `v0.17.2` widens the ATTRIB-08 trigger to name `"an incident"`
+> alongside `"a clash"` (text-only; same ID, tier, phase, `Src`). Slice 2
+> cites the post-`v0.17.2` wording; re-sync the bundle before implementation
+> review so the grep below resolves it. **Resolvable lexicon root
 > (`CANON_LEXICONS_ROOT`)**: the plan-review bundle root's `canon/lexicons/`
 > directory — sibling of `repo/`, **not** under `repo/`. Citation form only
 > (not a path that resolves from `repo/`): `canon/lexicons/<file>.md#anchor`.
@@ -150,8 +154,8 @@ prerequisite for §3.1 or the GPU window.
   **without** appears / looks / seems / as-if / according-to). Not to be
   confused with DEPICT-1 `DescriptionRegister`.
 - **Agentless passive / mutual-event noun**: oppression or violence prose that
-  hides a record-supported actor behind passive voice ("were killed") or a
-  symmetry noun ("a clash", "an incident") — the ATTRIB-08
+  hides a record-supported actor behind passive voice ("were killed") or an
+  event noun that carries no actor ("a clash", "an incident") — the ATTRIB-08
   (`canon/lexicons/depiction.md#attrib-08`) trigger. Explicit same-clause
   unknown-agent / gap statements (`agent not named in the record`) are an
   ATTRIB-08 **exemption**, not a hit.
@@ -763,9 +767,14 @@ Changes:
     mandated proof while false-firing on `"skilled"` (`killed`) and
     `"snapshot"` (were `"shot"` still present). Membership is independent of
     whether any `_AGENTLESS_PASSIVE_FORMS` member is present — ATTRIB-08
-    (`canon/lexicons/depiction.md:80`, `attrib-08`) names the mutual-event
-    noun as an independent failure mode ("do not hide known agents behind
-    'clash,' 'incident,' or agentless 'were killed'").
+    (`canon/lexicons/depiction.md#attrib-08`) lists the noun as its own
+    trigger disjunct ("an agentless passive, a mutual-event noun, **or** an
+    event noun that carries no actor"), so a noun hit needs no passive.
+    Both `_MUTUAL_EVENT_NOUNS` members are row exemplars: `"a clash"` and
+    `"an incident"` (canon ≥ `v0.17.2`; the pre-0.17.2 row named only
+    `"a clash"`, and "incident" was warrantable then from the row's `Src`
+    distillation, not from the row). Quote the row, not its `Src` — the
+    distilled source note is not a projected surface.
 - Surface as report-only hit list on `CaptionScores`
   (`agentless_passive_hits: list[str]`, parallel to `meta_framing_hits`).
   Same surface lock as Slice 1: report-facing field is the `CaptionScores`

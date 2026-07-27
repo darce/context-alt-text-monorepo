@@ -125,7 +125,7 @@ candidate is shown, so the model cannot anchor the human. State: `judgment_pendi
 
 `○ can't tell` is a first-class commit (abstain): it advances to `revealed` as an explicit
 judgment, not a skip. **Undo** (day-one, session-local **single step**) returns to `judgment_pending`
-with the model node unmounted again — no peeking via the back-button. **Multilevel** LIFO undo
+with the model node unmounted again — no peeking via the back-button. **Multilevel atomic per-affected-cluster LIFO** undo
 of name/merge/split is **DEP-4**.
 
 ---

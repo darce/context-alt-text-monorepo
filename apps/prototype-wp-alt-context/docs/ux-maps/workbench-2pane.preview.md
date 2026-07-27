@@ -25,8 +25,9 @@
 > endpoint). **DEP-4** — commit-before-reveal and merge/split need persisted pre-reveal state + multi-level
 > undo the current single-write mutation path lacks. UI copy for the **new cluster-map layout** says
 > "cluster map", never "embeddings" or "projection" — `projection` is the banned token in
-> `banned-vocabulary.test.tsx` `BANNED_STRINGS`. The pre-existing roster **sync-projection** status
-> (§6, `PersonWorkspacePanel`) is a separate, legitimately-named concept, **not** the new layout.
+> `banned-vocabulary.test.tsx` `BANNED_STRINGS` (substring-checked); `embeddings` is asserted
+> separately in the same test. The roster status label portrayed in §6 is **roster sync**
+> (the internal symbol `projectionSyncState` is never rendered copy).
 
 ---
 
@@ -34,27 +35,27 @@
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ Alt-Context · Workbench      endpoint: InsightFace :10010 (interim) ● healthy [ⓘ]   ⟳ sync ✓    │ (z-topbar, read-only)
-├──────────────────────────────────────────────┬─┬─────────────────────────────────────────────────┤
-│ CONTROL — recognize · name · curate          │◀│ MEDIA LIBRARY — caption · describe               │
-│                                              │ │                                                  │
-│  ┌ Endpoint + health ───────────────────┐   │▐│  filter: [all▼] □needs-alt □needs-desc  🔍[____] │
-│  │ InsightFace :10010   ● healthy        │   │▐│  ┌──────────────────────────────────────────────┐│
-│  └───────────────────────────────────────┘   │ │  │□ thumb title        status  alt-text   desc  ││
-│  [ ⟳ Run recognition ]  thr ▐▐▐▐░ 0.62       │ │  │□ [▦] conf.jpg     ✓ done  "Ada at…"  "A wo…" ││
-│  ┌ Cluster map ──────────────────────────┐   │ │  │☑ [▦] group.jpg    ⧗ queue ✎ empty   ✎ empty ││
-│  │   ·· ●②    ·  ●①●    ·                 │   │▐│  │□ [▦] keynote.png  ⚠ fail  "Two…"    ✎ empty ││
-│  │  ·   ●●   ·    ●●    ·· ●④             │   │▐│  └──────────────────────────────────────────────┘│
-│  │     ●③●        ··  ·                   │   │ │  ▼ group.jpg — inline edit                        │
-│  └───────────────────────────────────────┘   │ │  alt [ Two people seated at a panel… ] 63/125     │
-│  Clusters      sort:[ unnamed first ▼ ]      │ │  AI: "Two panelists at a table" [use][edit]       │
-│  ▸①  42  0.91  «unnamed»        [select]     │ │  long[ …expandable textarea… ]                    │
-│  ▸②  31  0.88  Ada Lovelace                  │▐│  ───────────────────────────────────────────────  │
-│  ▸③  17  0.55  «low conf» ⚠                  │ │  2 selected · [ Describe selected ⟳ ] est.$0.03   │
-│                                              │ │                                                  │
-│  (z-left-host → workbench-control)           │ │  (z-right-host → workbench-library)              │
-└──────────────────────────────────────────────┴─┴─────────────────────────────────────────────────┘
-                                            (z-splitter: drag to resize · ◀ collapse left)
+│ Alt-Context · Workbench      endpoint: InsightFace :10010 (interim) ● healthy [ⓘ]   ⟳ sync ✓│ (z-topbar, read-only)
+├──────────────────────────────────────────┬─┬───────────────────────────────────────────────────┤
+│ CONTROL — recognize · name · curate      │◀│ MEDIA LIBRARY — caption · describe                │
+│                                          │ │                                                   │
+│  ┌─ Endpoint + health ─────────────┐     │▐│ filter: [all▼] □needs-alt □needs-desc  🔍[____]    │
+│  │ InsightFace :10010   ● healthy │     │▐│  ┌───────────────────────────────────────────────┐│
+│  └─────────────────────────────────┘     │ │  │□ thumb title        status  alt-text   desc   ││
+│ [ ⟳ Run recognition ]  thr ▐▐▐▐░ 0.62   │ │  │□ [▦] conf.jpg     ✓ done  "Ada at…"  "A wo…"││
+│  ┌─ Cluster map ───────────────────┐     │ │  │☑ [▦] group.jpg    ⧗ queue ✎ empty   ✎ empty  ││
+│  │   ·· ●②    ·  ●①●    ·     │     │▐│  │□ [▦] keynote.png  ⚠ fail  "Two…"    ✎ empty ││
+│  │  ·   ●●   ·    ●●    ·· ●④│     │▐│  └───────────────────────────────────────────────┘│
+│  │     ●③●        ··  ·         │     │ │ ▼ group.jpg — inline edit                         │
+│  └─────────────────────────────────┘     │ │ alt [ Two people seated at a panel… ] 63/125      │
+│ Clusters      sort:[ unnamed first ▼ ]   │ │ AI: "Two panelists at a table" [use][edit]        │
+│ ▸①  42  0.91  «unnamed»        [select]│ │ long[ …expandable textarea… ]                     │
+│ ▸②  31  0.88  Ada Lovelace             │▐│ ───────────────────────────────────────────────   │
+│ ▸③  17  0.55  «low conf» ⚠            │ │ 2 selected · [ Describe selected ⟳ ] est.$0.03    │
+│                                          │ │                                                   │
+│ (z-left-host → workbench-control)        │ │ (z-right-host → workbench-library)                │
+└──────────────────────────────────────────┴─┴───────────────────────────────────────────────────┘
+                          (z-splitter: drag to resize · ◀ collapse left)
 ```
 
 The left pane's cluster map is the **DEP-2 / Slice-4** scatter; **day one ships the cluster
@@ -67,38 +68,38 @@ non-colour encoding `[VIZ-07]/[A11Y-06]`.
 ## 2. Control surface (left pane, detailed) — `workbench-control`
 
 ```
-┌─ CONTROL ───────────────────────────────────────────────┐
+┌─ CONTROL ────────────────────────────────────────────────┐
 │ Endpoint: InsightFace :10010 (interim)      ● healthy   │  (z-endpoint · status)
 │ ⚠ FIR endpoint not yet stable — using interim route     │
-├─────────────────────────────────────────────────────────┤
+├──────────────────────────────────────────────────────────┤
 │ [ ⟳ Run recognition ]   threshold ▐▐▐▐░ 0.62            │  (z-recognition-controls · job)
-│ last run 3m ago · 214 faces · 18 clusters · 41 unnamed  │
+│ last run 3m ago · 214 faces · 18 clusters · 41 unnamed   │
 │ ▸ Run recognition is COSTLY — preview: 214 faces, ~$0.02│  [preview_required]
-├─────────────────────────────────────────────────────────┤
-│ Cluster map · faces — DEP-2 · Slice 4   [ lasso | pan ] │  (z-cluster-umap · ai_review, evidence)
-│                                                         │
-│       · · ·        ·· ◆◆◆                               │  legend (redundant, non-colour):
-│      ·  ·  ▲②     ·   ◆①◆   ← hover ①: 42, 0.91         │   shape+hue per cluster ①◆ ②▲ ③● ④■
-│     ·       ◆◆     ·   ◆◆                               │   ⚠ low-confidence ring (not colour)
-│         ●③●            ·· ·                             │   selected = halo/size-up (additive)
-│      ·  ·  ⚠     ·  ■④  ·                               │  select region → drives right pane
-├─────────────────────────────────────────────────────────┤
-│ Clusters (day-one list)       sort:[ unnamed first ▼ ]  │  (z-cluster-list · queue)
+├──────────────────────────────────────────────────────────┤
+│ Cluster map · faces — DEP-2 · Slice 4   [ lasso | pan ]  │  (z-cluster-umap · ai_review, evidence)
+│                                                          │
+│       · · ·        ·· ◆◆◆                             │  legend (redundant, non-colour):
+│      ·  ·  ▲②     ·   ◆①◆   ← hover ①: 42, 0.91    │   shape+hue per cluster ①◆ ②▲ ③● ④■
+│     ·       ◆◆     ·   ◆◆                            │   ⚠ low-confidence ring (not colour)
+│         ●③●            ·· ·                           │   selected = halo/size-up (additive)
+│      ·  ·  ⚠     ·  ■④  ·                             │  select region → writes ?cluster= (day-one: linked-highlight; filter=DEP-3)
+├──────────────────────────────────────────────────────────┤
+│ Clusters (day-one list)       sort:[ unnamed first ▼ ]   │  (z-cluster-list · queue)
 │ id = number + glyph (non-colour) · sel = ▶ + bold       │  [VIZ-07]/[A11Y-06]
-│▶▶①◆ ·····  42  0.91  «unnamed»      [✓ selected]        │  ← sel: marker+weight, not hue
-│   ②▲ ·····  31  0.88  Ada Lovelace      [select]        │
-│   ③● ·····  17  0.55  «low confidence» ⚠ [select]       │
-│   ④■ ·····   9  0.80  «unnamed»          [select]       │
-├─────────────────────────────────────────────────────────┤
+│▶▶①◆ ·····  42  0.91  «unnamed»      [✓ selected]    │  ← sel: marker+weight, not hue
+│   ②▲ ·····  31  0.88  Ada Lovelace      [select]       │
+│   ③● ·····  17  0.55  «low confidence» ⚠ [select]     │
+│   ④■ ·····   9  0.80  «unnamed»          [select]      │
+├──────────────────────────────────────────────────────────┤
 │ NAME & CURATE — cluster ① (42 faces)                    │  (z-name-curate · commit-before-reveal)
-│ phase 1 · judgment_pending — your call BEFORE model     │  [HAI-15]
-│ model candidates NOT shown yet (no node mounted)        │  reveal-gate
+│ phase 1 · judgment_pending — your call BEFORE model      │  [HAI-15]
+│ model candidates NOT shown yet (no node mounted)         │  reveal-gate
 │ evidence ▸ 5 source frames · 3 captures                 │  [HAI-01/17]
-│ name [ __________________________ ]  ○ can't tell       │
+│ name [ __________________________ ]  ○ can't tell        │
 │ [ Commit my name ▸ reveal ]                             │
-│ [ Merge ▸ ] [ Split ▸ ] [ Not a face ✕ ]                │
-│  Merge/Split are COSTLY + preview affected media        │  [preview_required]
-└─────────────────────────────────────────────────────────┘
+│ [ Merge ▸ ] [ Split ▸ ] [ Not a face ✕ ]               │
+│  Merge/Split are COSTLY + preview affected media         │  [preview_required]
+└──────────────────────────────────────────────────────────┘
 ```
 
 ### 2b. Name & curate — commit-before-reveal state machine `[HAI-15]`
@@ -107,19 +108,19 @@ The name step is a two-phase gate: the operator commits a judgment **before** an
 candidate is shown, so the model cannot anchor the human. State: `judgment_pending → revealed`.
 
 ```
-┌─────────────────────────────────────┐          ┌─────────────────────────────────────┐
-│ NAME · cluster ① — phase 1          │          │ NAME · cluster ① — phase 2          │
-├─────────────────────────────────────┤          ├─────────────────────────────────────┤
-│ evidence ▸ 5 frames · 3 captures    │          │ your name:  Ada Lovelace            │
-│ model candidates: ░░ NOT SHOWN ░░   │          │ model said: Ada Lovelace  ✓ agree   │
-│   (reveal node not mounted)         │commit ──▶│   0.94 · 2nd: Grace (0.11)          │
-│ your name [ Ada Lovelace____ ]      │          │ provenance: human-first [HAI-02]    │
-│ ○ can't tell  (abstain = a commit)  │          │ [ Keep mine ] [ Adopt ] [ Undo ]    │
-│ [ Commit my name ▸ reveal ]         │          │                                     │
-└─────────────────────────────────────┘          └─────────────────────────────────────┘
+┌─────────────────────────────────────────┐           ┌─────────────────────────────────────────┐
+│ NAME · cluster ① — phase 1             │           │ NAME · cluster ① — phase 2             │
+├─────────────────────────────────────────┤           ├─────────────────────────────────────────┤
+│ evidence ▸ 5 frames · 3 captures       │           │ your name:  Ada Lovelace                │
+│ model candidates: ░░ NOT SHOWN ░░   │           │ model said: Ada Lovelace  ✓ agree      │
+│   (reveal node not mounted)             │commit ──▶│   0.94 · 2nd: Grace (0.11)              │
+│ your name [ Ada Lovelace____ ]          │           │ provenance: human-first [HAI-15]        │
+│ ○ can't tell  (abstain = a commit)      │           │ [ Keep mine ] [ Adopt ] [ Undo ]        │
+│ [ Commit my name ▸ reveal ]            │           │                                         │
+└─────────────────────────────────────────┘           └─────────────────────────────────────────┘
   the reveal node is UNMOUNTED in phase 1 (not CSS-hidden) — model output cannot reach the
   DOM before commit [HAI-15]. Post-commit, agreement/disagreement + which side led are
-  recorded [HAI-02], so the audit trail can't be gamed by peeking.
+  recorded [HAI-15], so the audit trail can't be gamed by peeking.
 ```
 
 `○ can't tell` is a first-class commit (abstain): it advances to `revealed` as an explicit
@@ -132,22 +133,22 @@ of name/merge/split is **DEP-4**.
 ## 3. Media library (right pane, detailed) — `workbench-library`
 
 ```
-┌─ MEDIA LIBRARY ───────────────────────────────────────────────────────────────────────────────┐
-│ filter: status[ all ▼ ]  □ needs-alt  □ needs-desc   cluster:[ ① ✕ ](DEP-3)  search[______] 🔍 │ (z-lib-filters · form)
-├──┬───────┬──────────────────┬───────────┬─────────────────────┬────────────────────┬──────────┤
-│▢ │ thumb │ title            │ status    │ alt-text            │ long description   │people    │ (z-lib-table · queue)
-├──┼───────┼──────────────────┼───────────┼─────────────────────┼────────────────────┼──────────┤
-│▢ │ [▦]   │ conf-2019-07.jpg │ ✓ described│ "Ada at the podium" │ "A woman in a dark…│ Ada     │
-│☑ │ [▦]   │ group-shot.jpg   │ ⧗ queued  │ ✎ (empty)           │ ✎ (empty)          │ ①,②      │
-│▢ │ [▦]   │ keynote.png      │ ⚠ failed  │ "Two people on…"    │ ✎ (empty)          │ —        │
-├──┴───────┴──────────────────┴───────────┴─────────────────────┴────────────────────┴──────────┤
-│ ▼ group-shot.jpg — inline edit                                                                │ (z-lib-inline-edit · form)
-│   alt-text  [ Two people seated at a panel table________________ ]  63/125                    │
-│   AI suggests: "Two panelists at a table with microphones"      [ use ] [ edit ]              │ (z-lib-ai-suggest · ai_review)
-│   long desc [ A wide shot of two panelists seated behind a table… ] (expandable)              │
-├───────────────────────────────────────────────────────────────────────────────────────────────┤
-│ 2 selected · [ Describe selected ⟳ ]  est. $0.03  · job: idle                                 │ (z-lib-actions · job)
-└───────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─ MEDIA LIBRARY ─────────────────────────────────────────────────────────────────────────────────┐
+│ filter: status[ all ▼ ]  □ needs-alt  □ needs-desc   cluster:[ ① ✕ ](DEP-3)  search[______] 🔍  │ (z-lib-filters · form)
+├──┬───────┬──────────────────┬─────────────┬─────────────────────┬────────────────────┬──────────┤
+│▢ │ thumb │ title            │ status      │ alt-text            │ long description   │people    │ (z-lib-table · queue)
+├──┼───────┼──────────────────┼─────────────┼─────────────────────┼────────────────────┼──────────┤
+│▢ │ [▦]  │ conf-2019-07.jpg │ ✓ described│ "Ada at the podium" │ "A woman in a dark…│ Ada      │
+│☑ │ [▦]  │ group-shot.jpg   │ ⧗ queued    │ ✎ (empty)           │ ✎ (empty)          │ ①,②    │
+│▢ │ [▦]  │ keynote.png      │ ⚠ failed   │ "Two people on…"    │ ✎ (empty)          │ —        │
+├──┴───────┴──────────────────┴─────────────┴─────────────────────┴────────────────────┴──────────┤
+│ ▼ group-shot.jpg — inline edit                                                                  │ (z-lib-inline-edit · form)
+│   alt-text  [ Two people seated at a panel table________________ ]  63/125                      │
+│   AI suggests: "Two panelists at a table with microphones"      [ use ] [ edit ]                │ (z-lib-ai-suggest · ai_review)
+│   long desc [ A wide shot of two panelists seated behind a table… ] (expandable)                │
+├─────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ 2 selected · [ Describe selected ⟳ ]  est. $0.03  · job: idle                                   │ (z-lib-actions · job)
+└─────────────────────────────────────────────────────────────────────────────────────────────────┘
   columns are truncated + hover-expand; alt-text and long-description are SEPARATE columns so
   a scanning operator sees at a glance which rows still need each field (needs-alt ≠ needs-desc).
   Day-one shows reciprocal **highlight** of cluster-① rows on the loaded page; the cluster
@@ -160,12 +161,12 @@ of name/merge/split is **DEP-4**.
 
 ```
    CONTROL                                    MEDIA LIBRARY
-   ┌───────────────────────┐                  ┌───────────────────────────────────────────┐
-   │ cluster map            │   select ①      │ filter: cluster:[ ① ✕ ]                   │
-   │   ·· ●②  ·  ⟦●①●⟧  ·   │ ───────────────▶ │ (DEP-3: table filtered to cluster-① media)│
-   │  ·   ●●  ·   ⟦●●⟧  ·   │                  │ □ conf.jpg   ✓  "Ada…"  … people: Ada     │
-   │      ●③●     ··  ·     │                  │ □ podium.jpg ✓  "Ada…"  … people: Ada     │
-   └───────────────────────┘                  └───────────────────────────────────────────┘
+   ┌──────────────────────────┐                   ┌────────────────────────────────────────────┐
+   │ cluster map              │   select ①       │ filter: cluster:[ ① ✕ ]                   │
+   │   ·· ●②  ·  ⟦●①●⟧  ·│ ───────────────▶ │ (DEP-3: table filtered to cluster-① media)│
+   │  ·   ●●  ·   ⟦●●⟧  · │                   │ □ conf.jpg   ✓  "Ada…"  … people: Ada     │
+   │      ●③●     ··  ·    │                   │ □ podium.jpg ✓  "Ada…"  … people: Ada     │
+   └──────────────────────────┘                   └────────────────────────────────────────────┘
    Day-one: selecting a cluster **highlights** that cluster's rows already on the page
    (url ?cluster=①). **With DEP-3**, the same selection **filters** the right pane to that
    cluster's media. Coordination is **exactly one** active cluster; a multi-cluster row
@@ -179,14 +180,14 @@ of name/merge/split is **DEP-4**.
 ## 5. Medium viewport (<1100px) — control collapses to an optional drawer (IA, not the WCAG reflow)
 
 ```
-┌──────────────────────────────────────────────────┐
-│ ☰ Control   Workbench   endpoint :10010 ⓘ  ● ⟳✓  │
-├──────────────────────────────────────────────────┤
-│ MEDIA LIBRARY (full width)                        │
+┌────────────────────────────────────────────────────┐
+│ ☰ Control   Workbench   endpoint :10010 ⓘ  ● ⟳✓ │
+├────────────────────────────────────────────────────┤
+│ MEDIA LIBRARY (full width)                         │
 │ filter: […]                                        │
 │ □ thumb title        status  alt-text   desc people│
 │ …                                                  │
-└──────────────────────────────────────────────────┘
+└────────────────────────────────────────────────────┘
    ☰ Control opens the control surface as a left overlay drawer; primary caption/library
    work stays reachable at all widths (control is not gated behind a wide viewport).
    This <1100px drawer is **optional IA**. The **hard WCAG 1.4.10 reflow** at ≤320px / 200%
@@ -201,17 +202,17 @@ of name/merge/split is **DEP-4**.
 ### 6a. Roster shell (people-first)
 
 ```
-┌─ ROSTER (People) ───────────────────────────────────────────────────────┐
+┌─ ROSTER (People) ────────────────────────────────────────────────────────┐
 │ [ ● Needs assignment (12) ]  [ All people ]      search[__________] 🔍   │ (z-needs-assignment / filters)
-│ ⓘ sync-projection: current  (existing roster concept)                   │ (z-projection-gate · status)
+│ ⓘ roster sync: current  (existing roster concept)                       │ (z-projection-gate · status)
 ├──────────────────────────────────────────────────────────────────────────┤
-│ person              media  identities  last seen        │                 │ (z-entries · content)
-│ ▸ Ada Lovelace       31       2        conf-2019-07.jpg  │ [ open ]        │
-│ ▸ Grace Hopper        8       1        keynote.png       │ [ open ]        │
-│ ▸ «unassigned ①»     42       —        —                 │ [ assign ]      │
-│ ▸ «unassigned ③» ⚠   17       —        low-confidence    │ [ review ]      │
+│ person              media  identities  last seen        │                │ (z-entries · content)
+│ ▸ Ada Lovelace       31       2        conf-2019-07.jpg│ [ open ]       │
+│ ▸ Grace Hopper        8       1        keynote.png     │ [ open ]       │
+│ ▸ «unassigned ①»     42       —        —              │ [ assign ]     │
+│ ▸ «unassigned ③» ⚠   17       —        low-confidence│ [ review ]     │
 ├──────────────────────────────────────────────────────────────────────────┤
-│ (person workspace + cluster drawer open here — see 6b/6c)                  │ (z-person-host / z-cluster-host)
+│ (person workspace + cluster drawer open here — see 6b/6c)                │ (z-person-host / z-cluster-host)
 └──────────────────────────────────────────────────────────────────────────┘
    Clusters are RETIRED from Roster as a tab — cluster review is a drawer (?cluster=),
    and cluster building lives in the Workbench control pane. Roster is the people directory.
@@ -220,14 +221,14 @@ of name/merge/split is **DEP-4**.
 ### 6b. Person workspace (deep-linked `?person=`)
 
 ```
-┌─ Ada Lovelace ──────────────────────────────────────────┐ (roster-person-workspace)
-│ 31 media · 2 identities · sync-projection ✓              │ (z-person-header)
+┌─ Ada Lovelace ───────────────────────────────────────────┐ (roster-person-workspace)
+│ 31 media · 2 identities · roster sync ✓                 │ (z-person-header)
 ├──────────────────────────────────────────────────────────┤
 │ Linked identities / faces (evidence)                     │ (z-person-identities · ai_review)
-│  [▦][▦][▦][▦][▦]  +26   · confidence 0.88                │
-│  ⚠ 1 identity below threshold — [ review ]                │
+│  [▦][▦][▦][▦][▦]  +26   · confidence 0.88           │
+│  ⚠ 1 identity below threshold — [ review ]              │
 ├──────────────────────────────────────────────────────────┤
-│ name [ Ada Lovelace_______ ]  [ Save ] [ Assign faces▸ ] │ (z-person-actions · form)
+│ name [ Ada Lovelace_______ ]  [ Save ] [ Assign faces▸ ]│ (z-person-actions · form)
 │  Save is COSTLY + previews affected media                │ [preview_required]
 └──────────────────────────────────────────────────────────┘
 ```
@@ -237,7 +238,7 @@ of name/merge/split is **DEP-4**.
 ```
                         ┌─ Cluster ① drawer ──────────────┐ (roster-cluster-drawer · overlay)
                         │ Sample identities (max 8)        │ (z-cluster-samples · forced_choice)
-                        │  [▦][▦][▦][▦][▦][▦][▦][▦]         │
+                        │  [▦][▦][▦][▦][▦][▦][▦][▦]│
                         │ Assign to: ○ Ada  ○ + new person │
                         │ [ Assign ] [ Dismiss ]           │ (z-cluster-actions · form)
                         └──────────────────────────────────┘

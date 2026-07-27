@@ -1,6 +1,6 @@
 # Library → Heuristics Canon Intake Consolidation
 
-**Task**: LIBSYN-1 · **Date**: 2026-07-25 · **Status**: candidate manifest, not canon
+**Task**: LIBSYN-1 · **Date**: 2026-07-25 (§11 appended 2026-07-27) · **Status**: candidate manifest, not canon
 
 Consolidates every book and paper surfaced across the library sweeps
 (FIR occlusion · research-paper sweep · VLM-6 / captioning sweep · gap-closure
@@ -152,6 +152,13 @@ hallucination surface, and it supplies the vocabulary source the caption
 assessment's informativeness metric currently lacks. Canon already carries
 `dictionary-of-color-combinations` (Wada) and `interaction-of-color`; Werner is
 distinct because it is a *naming* system, not a combination or perception one.
+
+> **Superseded in part by §11.** Werner has since been distilled, and §11
+> records the vocabulary decision that follows. "Closed vocabulary" is the
+> wrong frame: the source argues for referring unlisted shades *into* a
+> versioned standard with public referents, never for refusing them — and the
+> vocabulary that meets that bar is ISCC–NBS, not Werner itself. Read §11
+> before acting on this entry or on Card C7.
 
 ### 2e. Statistics primaries → `epistemics` (MEAS, EXP), `ml-systems` (EVAL, AUDIT)
 
@@ -921,3 +928,287 @@ the same grounds it rejects one-card-per-book.
 Sequence: run the distillation first (§8 step 6), count survivors, then decide.
 The lane for extraction in the meantime is `writing` — it is the correct
 fallback and requires no new tree.
+
+## 11. Bound colour vocabulary — Werner's warrant, ISCC–NBS as provider
+
+**Added and amended 2026-07-27.** Werner was acquired, extracted, and distilled
+in the research repo (`distilled/design/werner-nomenclature-of-colours.md`).
+That distillation changes what §2d and Card **C7** can claim, and a subsequent
+live check of a machine-readable colour list changes which vocabulary C7 should
+bind to. This section supersedes §2d's optimism about a "closed vocabulary",
+states what Werner actually licenses, and records the provider decision:
+**ISCC–NBS is the default colour vocabulary; Werner remains the warrant for the
+normalisation half, not the set the contract emits.** It is a request back to
+this repo, not canon.
+
+### 11a. The two halves — one is sourced, one is not
+
+A candidate canon rule (`FM-11`, *Closed colour identity*) proposed binding
+colour to a named vocabulary **and rejecting membership outside it**. It was
+retired 2026-07-26 and never published (`literature/HELD.md`). Werner was
+acquired specifically to re-source it, and the answer was no.
+
+| Half | Claim | Werner's position |
+|---|---|---|
+| **Rejection** | A colour term outside the set is invalid and must be refused | **Not argued.** `reject`, `refuse`, `must not`, `forbid`, `invalid`, `improper`, `inadmissible`, `ought not` return zero hits across the whole extract. The distillation's decision table records: *"No rule in this source to reject membership; author maps unknowns into the series."* |
+| **Normalisation** | Free colour names are unreliable between observers; prefer a versioned standard and refer an out-of-set variety *into* it | **Directly argued.** Description is defective "when the terms used are ambiguous; and where there is no regular standard to refer to"; "the names of colours are frequently misapplied" (L00109). Method for placing an unlisted shade is comparison against the series by component parts (L00113–L00115). |
+
+**Consequence for C7.** C7 as written in
+[`fir-captioning-orchestrator-playbook.md:219`](../runbooks/fir-captioning-orchestrator-playbook.md)
+says *"out-of-set terms degrade to the nearest in-set term."* That is the
+normalisation half, and it **is** sourceable from Werner. The card needs no
+rewrite for warrant. Only the canon's rejection-flavoured phrasing failed. The
+distillation labels the operational move *refer-in, not refuse*; C7 should adopt
+that wording so the two repos do not drift back toward the retired claim. The
+vocabulary named on the card is a separate decision — §11c–§11d.
+
+### 11b. The structure worth transferring is not the colour list
+
+Werner is four layers, and the reusable one is the fourth:
+
+1. **Name** — Werner's 79 tints, Syme's extension to 110 "standard colours" (L00111).
+2. **Exemplar patch** — the printed sample. The standard is explicitly *not* a
+   bare word list; it requires "proper coloured examples of the different tints"
+   as the thing "to refer to" (L00109).
+3. **Tri-kingdom annexes** — each tint also points at well-known objects across
+   animal, vegetable and mineral kingdoms, so the name survives when the pigment
+   is not at hand (L00113). Completeness is partial, by the author's own note.
+4. **Component parts and referral** — the decomposition that places an unlisted
+   variety *into* the series: *incline towards* / *intermediate* / *fall or pass
+   into* (L00115). Modifiers plus tingeing multiply the 110 to tens of thousands
+   of controlled variants without leaving the standard language (L00111–L00113).
+
+Layer 4 is not about colour. It is the degradation rule that every controlled
+vocabulary in the caption pipeline currently lacks — §1.1 Iconclass, §1.2 Getty
+AAT/ULAN/TGN, §1.3 shot grammar all face the same question and none of them
+answers it: **what is emitted when the observed thing is not in the set?**
+Werner's answer is nearest-in-set plus the delta; never a free string, never
+silence, never a rejection. That answer travels. The 110 names do not: they are
+a specimen vocabulary for the photography and cataloguing lane that moved off
+accessibility at `41d9f591`, not the default emission set for screen-reader
+captions (§11d).
+
+### 11c. Request — one bound-term shape in the transfer contract
+
+The highest-value move is *not* a colour field on the description response. It
+is a single term shape that every controlled vocabulary in the
+`DescriptionRegister` contract (§3.3 of
+[`cross-domain-bridges-and-caption-register.md`](cross-domain-bridges-and-caption-register.md))
+uses identically:
+
+| Field | Purpose |
+|---|---|
+| `term` | The emitted string |
+| `vocabulary` | Which set it is drawn from (`iscc-nbs`, `werner`, `iconclass`, `aat`, `ulan`, `tgn`, `shot-grammar`) |
+| `vocabulary_version` | Pinned; a vocabulary that cannot be versioned cannot be diffed or re-scored |
+| `binding` | `exact` \| `nearest` \| `unbound` |
+| `delta` | Present only when `binding: nearest` — the attributes separating the observation from the term chosen, computed per §11c-i |
+
+`iscc-nbs` is the default colour provider (§11d). `werner` remains a permitted
+value for the cataloguing and specimen lane that still wants the 1821 names; it
+is not the accessibility default. Keeping both values in the enum prevents a
+later second enum when that lane is wired, and makes the register choice
+explicit rather than implicit in prompt text.
+
+**`vocabulary_version` is fillable for the first time.** Under Werner the field
+could not be filled honestly: there is a single 1821 edition and no version
+scheme. ISCC–NBS supplies a real pin — `NBS SP 440 (1976)` (prior editions 1955,
+1965). The field was unfillable for the vocabulary this section was originally
+built around; the provider change is what makes the row operational.
+
+Three reasons this belongs in the contract rather than in prompt text, matching
+§3.3's own argument for the register:
+
+- **It makes the FORENSIC clause enforceable.** §3.3 permits FORENSIC to assert
+  "controlled-vocabulary colour and object terms". That is currently aspiration;
+  with this shape it is a check — `unbound` must be zero in FORENSIC.
+- **It makes degradation observable.** A `nearest` binding with a recorded delta
+  is auditable. A model silently substituting a plausible free colour word is
+  not, and that is the hallucination surface §2d wanted removed.
+- **It costs one contract change now instead of a rewrite later.** Same argument
+  §3.4 already makes for the register enum itself: the parameter must exist from
+  the start; the behaviour can land in the next phase.
+
+**Admission criterion for any Phase-2 vocabulary provider**, taken from Werner's
+own bar (L00109): a vocabulary qualifies as *controlled* only if it is versioned
+**and** every term carries a public referent. A bare word list fails. This is
+worth stating in §3.3's table, because it is the test that keeps "controlled
+vocabulary" from degrading into "a list someone wrote down."
+
+**The criterion works correctly against its own first candidate.** Werner fails
+both clauses of the bar §11c states: it is a single 1821 edition with no version
+scheme, and §11d already concedes that its hand-coloured referents "do not
+survive as text." ISCC–NBS passes both: it is versioned (NBS SP 440, 1976, with
+prior editions) and every term carries a public referent (Munsell-block
+membership, plus published hex and LAB centroids). Werner remains the source
+that *argues* for a versioned standard with public referents (L00109 / L00113 /
+L00115). It is not itself that standard. The warrant stays Werner's; the
+vocabulary becomes ISCC–NBS.
+
+| Axis the criterion states | Werner | ISCC–NBS |
+|---|---|---|
+| Versioned | none (single 1821 edition) | NBS SP 440 (1976); prior editions 1955, 1965 |
+| Public referent | 1821 hand-coloured plate; does not survive as text | Munsell blocks, plus published hex/LAB centroids |
+| Attributes without encoding decisions | prose recipes; distillation records entries are only "**typically**" number / name / composition | carried in the name itself (published modifier × hue structure of SP 440) |
+| Register depth | none | nested 13 / 29 / 267 (published structure of SP 440) |
+
+**Verified live 2026-07-27** at `https://api.color.pizza/v1/?list=nbsIscc`: 267
+entries; fields per entry `name`, `hex`, `rgb`, `hsl`, `lab`, `luminance`,
+`luminanceWCAG`, `bestContrast`, `swatchImg`. Spot checks: `Vivid Pink` =
+`#ffb5ba`, LAB `(80.93, 28.16, 8.79)`; `Strong Pink` = `#ea9399`, LAB
+`(70.28, 34.21, 11.41)`. The same endpoint also serves a `werner` list (110
+entries with `hex` and `lab`, plus a per-entry `meta` object) — see the named
+trap in §11d. Licence: reported CC0; licence to be confirmed from the upstream
+list repository, not the API. The 13-basic / 29-intermediate / 267-block nesting
+is the published structure of SP 440; the live check confirmed the 267-entry
+leaf list only.
+
+### 11c-i. How `nearest` and `delta` are computed — published centroids, not a lattice
+
+The open question in the shape above is what `nearest` *means*. When Werner was
+the candidate vocabulary the answer had to be constructed, because Werner has no
+numeric layer in the text. That construction was Formal Concept Analysis over
+component parts (§11c-i as first written). Two things retire it from the
+`binding` path:
+
+1. **Its premise was false even under Werner.** The first draft claimed Werner's
+   component parts form "a complete binary object × attribute table, present in
+   the text, requiring no encoding decisions." The distillation records that
+   entries are only "**typically**" number, name, and composition — non-uniform —
+   so building the formal context *is* an encoding decision. The distillation's
+   own verdict on the catalogue is that it is a pure **exhibit** of a bound
+   vocabulary, not a machine-ready context.
+2. **Its motive is gone under ISCC–NBS.** The lattice was needed to avoid
+   importing "a numeric layer Werner does not contain." For ISCC–NBS the numeric
+   layer is part of the published standard: every block has a published centroid.
+   `nearest` is distance to that centroid; `delta` is the modifier/hue difference
+   readable straight off the name. No lattice, no lookup table to generate, no
+   version-pinning of a derived artifact.
+
+| Field | Derivation under ISCC–NBS |
+|---|---|
+| `binding: exact` | Observation falls inside the named block (or matches the centroid within a declared tolerance pinned next to `vocabulary_version`) |
+| `binding: nearest` | Closest published centroid among the 267 blocks (LAB distance against the standard's own centroids, not a third-party digitisation) |
+| `delta` | The modifier and/or hue difference between observation and chosen term, read from the two names (e.g. `Vivid Pink` → `Strong Pink`); no separate encoding table |
+
+The FCA construction was reasonable when Werner was the only candidate: it tried
+to honour the source's component-part method without smuggling in an uncited
+digitisation. It is no longer the binding path. Do not generate or pin a concept
+lattice for colour degradation.
+
+**Second, weaker FCA use — do not build infrastructure for it.** Over eval
+output, with captions as objects and the register's compliance predicates as
+attributes (inner-state attribution present, unsourced context claim,
+unattributed interpretive claim, `unbound` term, active register, gravity flag),
+the Duquenne-Guigues implication basis returns a minimal non-redundant set of
+implications holding with zero counterexamples. Those are failure-mode
+hypotheses generated from the run rather than guessed. The caveat is real:
+implications are exceptionless by definition, so noisy eval data yields few or
+none, and the relaxed support/confidence version is ordinary frequent-itemset
+mining with FCA only as framing. Worth one afternoon as a post-hoc diagnostic
+against a real eval run; not worth a component.
+
+**FCA does not apply to FIR.** Detection, embedding and matching are continuous,
+compared by cosine — FIR-3's parity gate is `embeddings cosine ≥ 0.999`. A
+formal context is binary, so applying FCA means thresholding embeddings into
+attributes and discarding the metric that does the work. Roster record linkage
+is a genuine formal context but is already assigned to `christen-data-matching`
+(§2d); blocking plus scored comparison solves it with better tooling. Neither is
+worth opening.
+
+### 11d. Register default, provider choice, and constraints
+
+**EDITORIAL is the default register.** The consumer of a description is a
+screen-reader user. EDITORIAL is the main path, not an edge case to be handled
+after FORENSIC is designed. The first draft of this section filed "110 archaic
+names will hurt EDITORIAL captions" as a constraint bullet and proposed a
+two-vocabulary split (Werner in FORENSIC; an unnamed "common-language colour
+set" in EDITORIAL). That had the governing case backwards.
+
+"Skimmed-milk White" is worse alt text than "pale off-white." The same objection
+already made against the ~30k crowd-sourced name lists does not stop applying
+because the vocabulary is old rather than crowd-sourced. Werner is a **specimen
+vocabulary**: it belongs to the photography and cataloguing lane that moved off
+accessibility at `41d9f591`, not on the path where users receive text.
+
+**ISCC–NBS dissolves the split rather than staffing it.** Its nesting *is* the
+register ladder — one vocabulary, three depths:
+
+| Depth | Size | Register use |
+|---|---|---|
+| Basic names | 13 (published structure of SP 440) | EDITORIAL default |
+| Intermediate hue names | 29 (published structure of SP 440) | EDITORIAL when a basic name underspecifies |
+| Full blocks | 267 (live-verified leaf list) | FORENSIC |
+
+The two-vocabulary split the first draft proposed is no longer needed. Same
+`binding` shape, one provider, depth selected by register.
+
+**Named trap — the color.pizza `werner` list does not give Werner a numeric
+layer.** The same endpoint that serves `nbsIscc` also serves `werner` (110
+entries with `hex` and `lab`). That looks like it settles the numeric-layer
+objection in Werner's favour. It does not. Per-entry `meta` carries a field
+`"color ids in color"` (e.g. `Reddish White` → `"1,93,9"`) that is a
+**third-party encoding of Werner's component parts**, and the payload states no
+source or method for either that encoding or the hex values. Adopting it would
+be exactly the failure this section warns about: a digitised mapping from an
+uncited source, let in unattributed — the error that retired `FM-11`, an exhibit
+mistaken for an argument. The existence of a Werner hex list therefore
+**strengthens** the case for ISCC–NBS rather than rescuing Werner: ISCC–NBS
+centroids are published *in the standard*; Werner's hex values on that endpoint
+are published by a list maintainer. Do not treat the `werner` list as a
+controlled numeric layer.
+
+Other constraints still in force:
+
+- **Do not re-introduce rejection.** Werner does not license it, and the
+  refer-in contract does not either. Out-of-set terms degrade (`nearest` +
+  `delta`); they are never refused.
+- **Licence of the machine-readable list is not settled by the API.** Reported
+  CC0; confirm from the upstream list repository before shipping. Underlying NBS
+  centroid data is US Government work, but that fact alone does not license a
+  third-party packaging.
+- **Numeric mapping, when used, is the standard's own.** Under ISCC–NBS, LAB
+  distance against published centroids is legitimate for `binding`. Under
+  Werner, any numeric mapping remains a second source that must be cited and
+  versioned separately, and is never the accessibility default.
+
+### 11e. Canon-side status — what this repo should and should not expect
+
+| Item | State |
+|---|---|
+| `werner-nomenclature-of-colours` in `SOURCES.md` | **Not present.** Distilled but not promoted. |
+| Rows citing Werner | **None.** |
+| Distillation marking | `REFERENCE-ONLY`; must not be cited as rejection-half authority. |
+| `FM-11` | Retired, never published. Stays retired. Unblocking it needs a source that argues the rejection half; Werner is not it. |
+| Colour vocabulary provider | **ISCC–NBS** (`iscc-nbs`), version pin `NBS SP 440 (1976)`. Machine-readable list verified live 2026-07-27; licence to be confirmed upstream. |
+
+What is *available* on the canon side is a different rule from `FM-11`: a
+normalisation row in `design-aesthetics` `COL` — when a colour term must travel
+between observers who do not share the object, name a member of a versioned
+standard that carries a public referent, and refer an out-of-set variety into
+the series rather than emitting a free name. Sourced at L00109 / L00113 /
+L00115 (Werner's warrant). **The wording is now satisfiable:** ISCC–NBS is that
+versioned standard with public referents; Werner argued for it and is not it.
+Provider on the row: `iscc-nbs`. **NEW, no ID** — per §0, assignment is tooled
+(`tools/canon.py reserve`), not hand-picked here. Promoting it also requires a
+`SOURCES.md` entry for ISCC–NBS (and, if the warrant trail is kept explicit, for
+Werner as the normalisation argument only), lifting `REFERENCE-ONLY` for the
+positive half only, and leaving the `HELD.md` block on the rejection half
+intact.
+
+§10b's placement call stands: **colour stays in `design-aesthetics`**, the
+bound-term rule extends `COL`, it does not seed `ICON`. Measurement of
+hallucination under the binding stays in `ml-systems` EVAL. Werner may still
+extend a cataloguing-side specimen path; it does not become the default
+emission vocabulary.
+
+### 11f. Not `depiction`
+
+`depiction` governs what a description may *assert* — `ATTRIB` and `BOUND`. A
+vocabulary-binding rule is about how a term is spelled and which set it comes
+from, which is a different question and a different lexicon. The one honest
+connection is a cross-reference, not a row: anchoring a name to a public
+referent is the same move the anti-racist-description and DCMP naming rows
+already do for identity terms, and Werner's tri-kingdom annex is one historical
+instance of it. Note it as a cross-ref when the `depiction` rows are authored;
+do not fold colour into the new lexicon.

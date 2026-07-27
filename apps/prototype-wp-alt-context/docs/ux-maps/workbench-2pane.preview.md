@@ -9,13 +9,21 @@
 > route until the FIR endpoint is stable. The endpoint is **server-resolved** (`ACX_RECOGNITION_URL`
 > constant / filter, per RECOG-1) — the topbar shows it **read-only**, there is no UI switcher.
 > Switching endpoints changes embedding dimensionality (512d InsightFace vs 128d SFace/FIR) and
-> therefore invalidates existing clusters — see the plan's endpoint-switch open question.
+> therefore invalidates existing clusters and their `clusterMapLayout` — see the plan's **DEP-2
+> consistency model** (the map is versioned by `clusterMapVersion`; a layout whose version does
+> not match the live cluster set is rejected and re-requested, never silently drawn stale).
 >
-> Two data dependencies the preview draws but the backend does not yet provide: (1) the
-> **long-description** column needs a new media schema field (`WorkbenchMediaItem` has only
-> `altText` today); (2) the **cluster map** scatter needs a new backend 2D-projection endpoint
-> (no projection data exists; only bbox + 3D head pose). UI copy says "cluster map", never
-> "embeddings" (banned UI vocabulary). Both are called out as DEP open questions in the plan.
+> Four backend dependencies the preview draws but the current backend does not provide, each
+> tracked as a **DEP** row in the plan: **DEP-1** — the **long-description** column persists to
+> WordPress `post_content` (the attachment description written via `class-settings-controller.php`),
+> not a new schema field; `WorkbenchMediaItem` exposes only `altText` today. **DEP-2** — the
+> **cluster map** scatter needs a new `clusterMapLayout` endpoint returning 2D layout coordinates
+> (today the backend has only bbox + 3D head pose, no 2D layout), so **day one ships the cluster
+> _list_** and the scatter lands with DEP-2 in Slice 4. **DEP-3** — filtering the library to a
+> cluster needs a new `cluster` query param on the media read path (`fetchWorkbenchMedia` accepts
+> only page/per_page/status/search/ids today). **DEP-4** — commit-before-reveal and merge/split
+> need persisted pre-reveal state + multi-level undo the current single-write mutation path lacks.
+> UI copy says "cluster map", never "embeddings" or "projection" (banned UI vocabulary).
 
 ---
 
@@ -31,7 +39,7 @@
 │  │ InsightFace :10010   ● healthy        │   │▐│  ┌──────────────────────────────────────────────┐│
 │  └───────────────────────────────────────┘   │ │  │□ thumb title        status  alt-text   desc  ││
 │  [ ⟳ Run recognition ]  thr ▐▐▐▐░ 0.62       │ │  │□ [▦] conf.jpg     ✓ done  "Ada at…"  "A wo…" ││
-│  ┌ Cluster map (UMAP) ───────────────────┐   │ │  │☑ [▦] group.jpg    ⧗ queue ✎ empty   ✎ empty ││
+│  ┌ Cluster map ──────────────────────────┐   │ │  │☑ [▦] group.jpg    ⧗ queue ✎ empty   ✎ empty ││
 │  │   ·· ●②    ·  ●①●    ·                 │   │▐│  │□ [▦] keynote.png  ⚠ fail  "Two…"    ✎ empty ││
 │  │  ·   ●●   ·    ●●    ·· ●④             │   │▐│  └──────────────────────────────────────────────┘│
 │  │     ●③●        ··  ·                   │   │ │  ▼ group.jpg — inline edit                        │
@@ -46,12 +54,17 @@
                                             (z-splitter: drag to resize · ◀ collapse left)
 ```
 
+The left pane's cluster map is the **DEP-2 / Slice-4** scatter; **day one ships the cluster
+_list_** beneath it (§2). Cluster identity is carried by **number + shape** (①◆ ②▲ ③● ④■), never
+colour alone, and selection is a marker/weight change, not a hue swap — see §2 for the redundant
+non-colour encoding `[VIZ-07]/[A11Y-06]`.
+
 ---
 
 ## 2. Control surface (left pane, detailed) — `workbench-control`
 
 ```
-┌─ CONTROL ──────────────────────────────────────────────┐
+┌─ CONTROL ───────────────────────────────────────────────┐
 │ Endpoint: InsightFace :10010 (interim)      ● healthy   │  (z-endpoint · status)
 │ ⚠ FIR endpoint not yet stable — using interim route     │
 ├─────────────────────────────────────────────────────────┤
@@ -59,29 +72,56 @@
 │ last run 3m ago · 214 faces · 18 clusters · 41 unnamed  │
 │ ▸ Run recognition is COSTLY — preview: 214 faces, ~$0.02│  [preview_required]
 ├─────────────────────────────────────────────────────────┤
-│ Cluster map · faces (UMAP)              [ lasso | pan ] │  (z-cluster-umap · ai_review, evidence)
+│ Cluster map · faces — DEP-2 · Slice 4   [ lasso | pan ] │  (z-cluster-umap · ai_review, evidence)
 │                                                         │
-│      · · ·        ·· ●●●                                 │   legend:
-│     ·  ·  ●②     ·   ●①●   ← hover ①: 42 faces, 0.91    │    ● named   (hue per person)
-│    ·       ●●     ·   ●●                                 │    ● unnamed (grey)
-│        ●③●            ·· ·                               │    ⚠ low-confidence ring
-│     ·  ·  ⚠     ·  ●④  ·                                 │   select region → drives right pane
+│       · · ·        ·· ◆◆◆                               │  legend (redundant, non-colour):
+│      ·  ·  ▲②     ·   ◆①◆   ← hover ①: 42, 0.91         │   shape+hue per cluster ①◆ ②▲ ③● ④■
+│     ·       ◆◆     ·   ◆◆                               │   ⚠ low-confidence ring (not colour)
+│         ●③●            ·· ·                             │   selected = halo/size-up (additive)
+│      ·  ·  ⚠     ·  ■④  ·                               │  select region → drives right pane
 ├─────────────────────────────────────────────────────────┤
-│ Clusters                     sort:[ unnamed first ▼ ]   │  (z-cluster-list · queue)
-│ ▸ ①  ·····  42  0.91  «unnamed»              [select]   │
-│ ▸ ②  ·····  31  0.88  Ada Lovelace           [select]   │
-│ ▸ ③  ·····  17  0.55  «low confidence» ⚠     [select]   │
-│ ▸ ④  ·····   9  0.80  «unnamed»              [select]   │
+│ Clusters (day-one list)       sort:[ unnamed first ▼ ]  │  (z-cluster-list · queue)
+│ id = number + glyph (non-colour) · sel = ▶ + bold       │  [VIZ-07]/[A11Y-06]
+│▶▶①◆ ·····  42  0.91  «unnamed»      [✓ selected]        │  ← sel: marker+weight, not hue
+│   ②▲ ·····  31  0.88  Ada Lovelace      [select]        │
+│   ③● ·····  17  0.55  «low confidence» ⚠ [select]       │
+│   ④■ ·····   9  0.80  «unnamed»          [select]       │
 ├─────────────────────────────────────────────────────────┤
-│ NAME & CURATE — cluster ① (42 faces)                    │  (z-name-curate · forced_choice, max 5)
-│ Candidates:  ○ Ada Lovelace   0.88                      │
-│              ○ Grace Hopper   0.42                      │
-│              ○ + new person…                            │
-│ name [ __________________________ ]                     │
-│ [ Confirm ] [ Merge ▸ ] [ Split ▸ ] [ Not a face ✕ ]   │
-│  Merge/Split are COSTLY + preview the affected media    │  [preview_required]
+│ NAME & CURATE — cluster ① (42 faces)                    │  (z-name-curate · commit-before-reveal)
+│ phase 1 · judgment_pending — your call BEFORE model     │  [HAI-15]
+│ model candidates NOT shown yet (no node mounted)        │  reveal-gate
+│ evidence ▸ 5 source frames · 3 captures                 │  [HAI-01/17]
+│ name [ __________________________ ]  ○ can't tell       │
+│ [ Commit my name ▸ reveal ]                             │
+│ [ Merge ▸ ] [ Split ▸ ] [ Not a face ✕ ]                │
+│  Merge/Split are COSTLY + preview affected media        │  [preview_required]
 └─────────────────────────────────────────────────────────┘
 ```
+
+### 2b. Name & curate — commit-before-reveal state machine `[HAI-15]`
+
+The name step is a two-phase gate: the operator commits a judgment **before** any model
+candidate is shown, so the model cannot anchor the human. State: `judgment_pending → revealed`.
+
+```
+┌─────────────────────────────────────┐          ┌─────────────────────────────────────┐
+│ NAME · cluster ① — phase 1          │          │ NAME · cluster ① — phase 2          │
+├─────────────────────────────────────┤          ├─────────────────────────────────────┤
+│ evidence ▸ 5 frames · 3 captures    │          │ your name:  Ada Lovelace            │
+│ model candidates: ░░ NOT SHOWN ░░   │          │ model said: Ada Lovelace  ✓ agree   │
+│   (reveal node not mounted)         │commit ──▶│   0.94 · 2nd: Grace (0.11)          │
+│ your name [ Ada Lovelace____ ]      │          │ provenance: human-first [HAI-02]    │
+│ ○ can't tell  (abstain = a commit)  │          │ [ Keep mine ] [ Adopt ] [ Undo ]    │
+│ [ Commit my name ▸ reveal ]         │          │                                     │
+└─────────────────────────────────────┘          └─────────────────────────────────────┘
+  the reveal node is UNMOUNTED in phase 1 (not CSS-hidden) — model output cannot reach the
+  DOM before commit [HAI-15]. Post-commit, agreement/disagreement + which side led are
+  recorded [HAI-02], so the audit trail can't be gamed by peeking.
+```
+
+`○ can't tell` is a first-class commit (abstain): it advances to `revealed` as an explicit
+judgment, not a skip. **Undo** returns to `judgment_pending` with the model node unmounted
+again — no peeking via the back-button.
 
 ---
 
@@ -110,12 +150,12 @@
 
 ---
 
-## 4. Coordinated selection (UMAP → library) — the core interaction
+## 4. Coordinated selection (cluster map → library) — the core interaction
 
 ```
    CONTROL                                    MEDIA LIBRARY
    ┌───────────────────────┐                  ┌──────────────────────────────────────┐
-   │ UMAP                   │   select ①      │ filter: cluster:[ ① ✕ ]               │
+   │ cluster map            │   select ①      │ filter: cluster:[ ① ✕ ]               │
    │   ·· ●②  ·  ⟦●①●⟧  ·   │ ───────────────▶ │ (table now shows only cluster-① media)│
    │  ·   ●●  ·   ⟦●●⟧  ·   │                  │ □ conf.jpg   ✓  "Ada…"  … people: Ada │
    │      ●③●     ··  ·     │                  │ □ podium.jpg ✓  "Ada…"  … people: Ada │
@@ -131,7 +171,7 @@
 
 ```
 ┌──────────────────────────────────────────────────┐
-│ ☰ Control   Workbench   endpoint:[:10010▼] ● ⟳✓  │
+│ ☰ Control   Workbench   endpoint :10010 ⓘ  ● ⟳✓  │
 ├──────────────────────────────────────────────────┤
 │ MEDIA LIBRARY (full width)                        │
 │ filter: […]                                        │
@@ -201,7 +241,7 @@
  [shell] ──enter──▶ [control: Run recognition]
                           │ (costly, preview 214 faces)
                           ▼
-                    [control: UMAP + cluster list]
+                    [control: cluster map + list]
                           │ select cluster ①
                           ▼
                     [control: Name & curate ①]──confirm/merge/split──▶ identity-store
@@ -219,10 +259,10 @@
                                  [row: long description] ──edit──▶ [description saved]
 ```
 
-### 7c. UMAP select → library (`flow-umap-select-to-library`, job-cluster-recognize)
+### 7c. Cluster map select → library (`flow-umap-select-to-library`, job-cluster-recognize)
 
 ```
- [control: UMAP scatter] ──lasso/click cluster──▶ [?cluster=① set]
+ [control: cluster map scatter] ──lasso/click cluster──▶ [?cluster=① set]
                                                         │
                                                         ▼
                                           [library filtered to cluster-① media]

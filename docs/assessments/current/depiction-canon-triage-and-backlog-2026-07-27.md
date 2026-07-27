@@ -79,10 +79,13 @@ severity and appears in the Canon column.
 | # | Task | Canon | Enforcement point | Cost | Mode |
 |---|---|---|---|---|---|
 | 1 | **DEPICT-0 — one prompt source, one parity test, an honest version stamp.** Extract the shared prompt text to a single module consumed by both `gpu_remote_adapter` and `bakeoff`; add a test that fails when they diverge; derive or assert `prompt_or_task_version` against the prompt actually shipped. | [PROV-09] [NAME-03] [REF-26] [REF-10] [TEST-15] | `system_prompt` | S–M | grok flock |
-| 2 | **DEPICT-1 (F1) — `voice` on every context-pack entry** (`creator \| catalogue \| operator \| derived`); creator-tagged fields become quotable-only, never absorbed by the weave. Additive to a model that already sets `extra="forbid"`. | `ATTRIB-07` (B·d) `ATTRIB-02` (B·v) `BOUND-02` · [API-09] don't change it, add it | `context_pack_input` → `output_schema` | M | grok flock |
+| 2 | **F1 split — do not treat a single DEPICT-1 row as "F1 closed".** **(a) Service/contract half (this wave, DEPICT-1):** `voice` on speech-allowlist context-pack entries (`creator \| catalogue \| operator \| derived`); pure `partition_context_pack` so creator-tagged fields are quotable-only, never absorbable; boundary→partition voice-value proofs (including `ProductContext` / `IdentityContextItem`). Additive under `extra="forbid"`. **Does not** change production weave wording or wire partition into the adapter. **(b) Production-weave half (OUT of this wave, unowned — no plan file):** stop unmarked weave of creator-tagged fields in the shared production system prompt; render creator entries quoted/voice-tagged on the service pack path; REBIND-ONLY of post-DEPICT-0 `PRODUCTION_PROMPT` (never mutate frozen `.body`); consumers stay accessor-only via `production_system_prompt()`. **Acceptance for (b):** rebind lands voice-honouring body + lineage together; service-path test proves creator speech is not absorbed unmarked; DEPICT-0 seam + DEPICT-1 (a) are prerequisites. **Harness `ContextPack.voice`** (`scripts/eval_harness/manifest.py`) is **also OUT / unowned** — neither (a) nor (b). | `ATTRIB-07` (B·d) `ATTRIB-02` (B·v) `BOUND-02` · [API-09] don't change it, add it · [TEST-15] | (a) `context_pack_input` (service unit) · (b) `system_prompt` + service render (unowned) | (a) M · (b) unowned | (a) grok flock this wave · (b) no owner |
 
-Rank 1 before rank 2 only because rank 2's prompt-side half has nowhere safe to land
-until the seam is closed. The pack-side half of DEPICT-1 can start in parallel.
+Rank 1 before rank 2 only because rank 2's **(b) prompt-side half** has nowhere
+safe to land until the seam is closed. The **(a) pack-side / contract half** of
+DEPICT-1 can start in parallel. **Merging DEPICT-0 + DEPICT-1 + DEPICT-2 does
+not close F1** — only F1 (a) is delivered in this wave; F1 (b) and harness
+`ContextPack.voice` remain OUT and unowned until a future plan claims them.
 
 ### P1 — cheap, deterministic, and they make P2 measurable
 

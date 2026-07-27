@@ -341,3 +341,110 @@ raise phantom review alarms. Revised fan-out, no file collisions:
 Lane C is the one that unblocks the GPU window. Lane B is the one that must not
 be deferred, because its cost grows with every call site. Lane A is independent
 of both.
+
+## 7. Reflow after intake §11c-i (FCA) — same day
+
+§11c-i replaces "what does `nearest` mean" with a derivation from the source's
+own component-part table, read as a formal context (Wille 1982). It changes two
+of §5d's guard rails and adds a lane. Checked against
+`distilled/design/werner-nomenclature-of-colours.md` and the corpus.
+
+### 7a. The blocking objection dissolves — partially, and for a sourced reason
+
+§5d said: ship an empty provider registry, and do not build the
+`unbound must be zero in FORENSIC` check, because no vocabulary is admissible and
+the check could never fire red ([TEST-15]). §11c-i removes half of that — Werner
+now has a computable `nearest`/`delta` needing no second source.
+
+But **Werner is admissible per-term, not wholesale**, and §11c's own bar is why.
+The bar is *versioned **and** every term carries a public referent*. §11d states
+the hand-coloured plate does not survive as text, so the surviving public
+referent is the tri-kingdom annex — and those are filled in only "as far as the
+author has been able to fill them up" (L00113, quoted in the distillation §
+*Tri-kingdom annexes*). Partial by the author's own note.
+
+⇒ The provider registry ships as a **per-term admissibility table**, not a
+boolean per vocabulary. Forced by the source, and better than either option §5d
+offered.
+
+### 7b. Two overstatements in §11c-i that are implementation-relevant
+
+Neither breaks the derivation. Both break it if quoted as a spec.
+
+- **"a complete binary object × attribute table, present in the text, requiring
+  no encoding decisions."** The distillation's catalogue verdict reads: *"Each
+  entry **typically**: number, name, composition from other named colours"*
+  (`ch-1-catalog`). *Typically*, not universally — and it is prose, not a table.
+  Turning "snow white with a little crimson red" into a binary incidence row
+  requires stated rules: are quantity qualifiers dropped, does "a little" set
+  membership, what happens to an entry with no composition clause. **Those are
+  encoding decisions.** Made silently, they are precisely the unattributed layer
+  §11d exists to prevent — the hazard arrives by a different door than sRGB.
+- **"110 objects against roughly 20 attributes."** The attributes are
+  *"composition from other named colours"* (`ch-1-catalog`) plus the five
+  modifiers and the tingeing set (L00111). The attribute set is therefore closer
+  to the standards themselves than to 20. Immaterial to feasibility — 110 × ~115
+  binary is still milliseconds — but the sizing figure should not be written
+  into a plan as a spec.
+
+⇒ **Version-pin the formal context, not just the lattice.** `vocabulary_version`
+must cover a per-tint provenance table — composition present y/n, parse rule
+applied, annex referent present y/n. Only then is the "deterministic and
+diffable" claim in §11c-i true of the thing that actually varies.
+
+### 7c. The empty intent is the discrimination guard
+
+A tint with no recorded composition has an empty intent. It can bind `exact`
+when the observed term matches its name, but it can **never** be a `nearest`
+target carrying a meaningful delta.
+
+That is the guard §5d said was missing. The check becomes:
+`unbound` is zero **over the admissible subset**, and a term outside that subset
+is flagged, never silently emitted. It can now fire red — an inadmissible term
+reaching a FORENSIC caption is a real, reachable failure. **§5d's "do not build
+it yet" relaxes to "build it scoped to the admissible subset."**
+
+### 7d. FCA has no canon warrant — treat it exactly like `REG-xx`
+
+`formal concept`, `concept lattice`, `Duquenne`, `Guigues`, `Wille` return
+**zero hits** across `lexicons/`, `SOURCES.md`, and `distilled/`.
+
+No lane may cite an FCA rule ID; there is none. The derivation is justified from
+the source text and from Wille directly, in-plan. If it becomes load-bearing,
+that is a canon-side intake request for a distilled FCA source — the mirror of
+§11c-i being a request back to this repo.
+
+### 7e. The literal catalogue is in neither repo
+
+The distillation summarises the catalogue; it does not contain it. Per the §7a
+egress rules the literal extract was not retained. The source is
+`/Volumes/Chimay/___Books/400-Design-and-Visual-Arts/Colour/Werner's
+Nomenclature of Colours - Adapted to Zoology, - Patrick Syme.epub`; the
+`_graph/books/` sibling `.md` is a 27-line metadata card, not text.
+
+**Lane D step 0 is re-extracting the 110-entry catalogue with per-entry
+composition, under the same egress rules.** Not free, and not currently on
+anyone's list.
+
+### 7f. Lane D — WERNER-FCA. Unblocked, not promoted.
+
+| Lane | Owns | Status |
+|---|---|---|
+| **D — WERNER-FCA** | new provider module + generated static table + its provenance record | **Ready when a slot frees.** No file overlap with A, B, or C. |
+
+It stays behind Lane B on §11c's own argument — *shape now, behaviour later*.
+What changed is that it moved from *blocked pending an admissible vocabulary* to
+*buildable*. Do not read that as a promotion.
+
+### 7g. Two doors §11c-i closes — keep them closed
+
+- **Duquenne-Guigues implication basis over eval output.** §11c-i's own verdict:
+  *"Worth one afternoon as a post-hoc diagnostic against a real eval run; not
+  worth a component."* It does not enter the lane structure. The caveat is
+  self-stated — implications are exceptionless, so noisy eval data yields few or
+  none, and the relaxed version is ordinary itemset mining with FCA as framing.
+- **FCA does not apply to FIR.** Detection, embedding and matching are
+  continuous and compared by cosine (FIR-3's gate is `≥ 0.999`); a formal context
+  is binary, so applying FCA means thresholding away the metric that does the
+  work. Roster record linkage is a genuine formal context but is already assigned
+  to `christen-data-matching` (§2d). Both recorded here so neither is reopened.

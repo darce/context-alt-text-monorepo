@@ -60,19 +60,19 @@ agentless-passive / mutual-event detector
 (EVAL-11, `canon/lexicons/ml-systems.md#eval-11`). Emit the new hit lists and
 density from `report.py` (thin additive Slice 4) so density is a live report
 axis. **Assessment §3.1 / GPU-window gate** (assessment §6b "The GPU
-window has a second, cheaper gate than curation" L301-309; §6c "A live
+window has a second, cheaper gate than curation" L303-311; §6c "A live
 contradiction the bake-off ranking depends on" L311-329, Williams/C5
 resolution `#### §6c claim — Williams/C5 resolution (companion axes)`
 L321-329; §6a "Playbook status is half-stale" NOT-LANDED evidence
 L294): density metric in `caption_metrics.py` + Williams/C5 docstring
 (Slice 3). **Assessment §6e Lane C Carries** (assessment
-`#### §6e ownership table` L365; Lane C row L371) ends with
+`#### §6e ownership table` L375; Lane C row L381) ends with
 **"report emit of new fields"** — Slice 4 lands that Carries item; it is
 **dispatched Lane C work**, not an extra invented outside the assessment.
 **Lane C unblocks the GPU window** (assessment
-`#### §6e claim — Lane C unblocks the GPU window` L373-375; parent section
+`#### §6e claim — Lane C unblocks the GPU window` L383-385; parent section
 heading `### 6e. Dispatch shape — file ownership, not just task ownership`
-is at L353, **not** L373). Bake-off ranking *sort* that *orders* candidates
+is at L355, **not** L383). Bake-off ranking *sort* that *orders* candidates
 by density is an **optional follow-on consumer**, not the §3.1 / GPU-window
 gate. Resolve the Williams/C5 length contradiction in the module docstring
 so gate policy and ranking policy cannot be read as opposites.
@@ -88,20 +88,20 @@ axis therefore still rewards verbosity. Until these scorers exist, Lane A/B
 prompt changes are unmeasurable — exactly what EVAL-08
 (`canon/lexicons/ml-systems.md#eval-08`, CACE) forbids — and the GPU window
 remains gated by playbook §3.1 (assessment §6b "The GPU window has a second,
-cheaper gate than curation" L301-309: §3.1 is the last unlanded gate —
+cheaper gate than curation" L303-311: §3.1 is the last unlanded gate —
 density metric in `caption_metrics.py`; §6a NOT-LANDED row L294). Pure
 scorers alone are not enough for *this plan's* DoD: `report.py` today builds
 its quality block from `meta_framing_hits` / sentence band /
 `mean_gated_score` only (see Current State), so density must also be emitted
-there — assessment §6e Lane C Carries (L371) includes **"report emit of new
+there — assessment §6e Lane C Carries (L381) includes **"report emit of new
 fields"**; Slice 4 is that emit (dispatched, not invented outside the
 assessment). Assessment §6c ("A live contradiction the bake-off ranking
 depends on" L311-329; Williams/C5 resolution
 `#### §6c claim — Williams/C5 resolution (companion axes)` L321-329) is the
 companion-axis write-up; §6e claim
-(`#### §6e claim — Lane C unblocks the GPU window` L373-375; parent
+(`#### §6e claim — Lane C unblocks the GPU window` L383-385; parent
 `### 6e. Dispatch shape — file ownership, not just task ownership` is at
-L353) is Lane C unblocking the GPU window via the density metric (Slice 3).
+L355) is Lane C unblocking the GPU window via the density metric (Slice 3).
 Bake-off code that *sorts* survivors by density is an optional follow-on,
 not a prerequisite for §3.1 or the GPU window.
 
@@ -239,10 +239,10 @@ not a prerequisite for §3.1 or the GPU window.
 - `bakeoff.py` does **not** import `caption_metrics` today (verified by search).
   A future bake-off *sort* by density is an optional follow-on after Slice 4
   keys exist; it is **not** the §3.1 / GPU-window gate (assessment §6b "The
-  GPU window has a second, cheaper gate than curation" L301-309 density
+  GPU window has a second, cheaper gate than curation" L303-311 density
   metric; assessment `#### §6e claim — Lane C unblocks the GPU window`
-  L373-375: Lane C unblocks the GPU window; parent `### 6e. Dispatch shape
-  — file ownership, not just task ownership` is at L353).
+  L383-385: Lane C unblocks the GPU window; parent `### 6e. Dispatch shape
+  — file ownership, not just task ownership` is at L355).
 
 ## Target Outcome
 
@@ -258,15 +258,15 @@ not a prerequisite for §3.1 or the GPU window.
 4. `report.py` emits the new per-image hit lists and density numbers in its
    JSON quality / per-image sections (Slice 4 thin additive emit) — this
    **is** the assessment §6e Lane C Carries item "report emit of new
-   fields" (assessment L371), not an extra invented outside the
+   fields" (assessment L381), not an extra invented outside the
    assessment. Slice 3 (density metric + Williams/C5 docstring) lands the
    assessment §3.1 / GPU-window gate (assessment §6b "The GPU window has a
-   second, cheaper gate than curation" L301-309; §6c "A live contradiction
+   second, cheaper gate than curation" L303-311; §6c "A live contradiction
    the bake-off ranking depends on" L311-329 including Williams/C5 resolution
    `#### §6c claim — Williams/C5 resolution (companion axes)` L321-329;
-   `#### §6e claim — Lane C unblocks the GPU window` L373-375: Lane C
+   `#### §6e claim — Lane C unblocks the GPU window` L383-385: Lane C
    unblocks; parent `### 6e. Dispatch shape — file ownership, not just
-   task ownership` is at L353). Bake-off ranking code that *orders*
+   task ownership` is at L355). Bake-off ranking code that *orders*
    candidates by density remains an **optional unowned follow-on** — not
    the §3.1 gate.
 
@@ -318,7 +318,7 @@ citation (PROV-01 obligates model/input lineage on outputs; see scope decision
 below). Document Williams/C5 in the module header so ranking and gate cannot
 be collapsed. Emit the new fields from `report.py` (Slice 4) so pure APIs are
 not orphaned behind zero report consumers — that emit is assessment §6e
-Lane C Carries "report emit of new fields" (assessment L371). Assessment
+Lane C Carries "report emit of new fields" (assessment L381). Assessment
 §3.1 / GPU-window gate = density metric + Williams/C5 (Slice 3 only).
 Ranking *sort* remains an optional separate consumer, not the gate.
 
@@ -361,14 +361,14 @@ refusing a restated metric is preferred to citing `CAL-02` on a clone of
 | --- | --- |
 | `scripts/eval_harness/manifest.py` | `ReferenceFact.match_targets()` is the density walkback primitive — read only |
 | `scripts/eval_harness/bakeoff.py` | Optional future *sort* consumer of density; **unowned** here — does not import `caption_metrics` today; sort is **not** the §3.1 / GPU-window gate |
-| `docs/runbooks/fir-captioning-orchestrator-playbook.md` §3.1 | Governing density-metric requirement (cite by section). **Out-of-tree** in this plan-review bundle; present at that monorepo-relative path in a full checkout. Assessment §6b gate = density metric (Slice 3); report emit is assessment §6e Lane C Carries "report emit of new fields" (L371; Slice 4). |
+| `docs/runbooks/fir-captioning-orchestrator-playbook.md` §3.1 | Governing density-metric requirement (cite by section). **Out-of-tree** in this plan-review bundle; present at that monorepo-relative path in a full checkout. Assessment §6b gate = density metric (Slice 3); report emit is assessment §6e Lane C Carries "report emit of new fields" (L381; Slice 4). |
 
 ### Cross-lane dependency
 
 | File | Exact change needed | Who lands first |
 | --- | --- | --- |
-| `scripts/eval_harness/report.py` | Emit the new per-image hit lists and density number in **JSON** quality / per-image sections so density is a live report axis (assessment §6e Lane C Carries "report emit of new fields", L371 — dispatched Lane C work). Markdown human summary is **out of contract** for this task — no `_quality_lines` edit and no markdown proof required (see Slice 4) | **Lane C, Slice 4 of this task** (after pure APIs Slices 1–3 are green); thin additive import of this module only — not a deferred orphan |
-| Bake-off ranking *sort* (optional) | Optionally consume density key to order survivors | **unowned by DEPICT-2**; optional follow-on after Slice 4 keys exist; **not** the §3.1 / GPU-window gate (assessment §6b "The GPU window has a second, cheaper gate than curation" L301-309: §3.1 = density metric; `#### §6e claim — Lane C unblocks the GPU window` L373-375: Lane C unblocks GPU window; parent `### 6e. Dispatch shape — file ownership, not just task ownership` is at L353) |
+| `scripts/eval_harness/report.py` | Emit the new per-image hit lists and density number in **JSON** quality / per-image sections so density is a live report axis (assessment §6e Lane C Carries "report emit of new fields", L381 — dispatched Lane C work). Markdown human summary is **out of contract** for this task — no `_quality_lines` edit and no markdown proof required (see Slice 4) | **Lane C, Slice 4 of this task** (after pure APIs Slices 1–3 are green); thin additive import of this module only — not a deferred orphan |
+| Bake-off ranking *sort* (optional) | Optionally consume density key to order survivors | **unowned by DEPICT-2**; optional follow-on after Slice 4 keys exist; **not** the §3.1 / GPU-window gate (assessment §6b "The GPU window has a second, cheaper gate than curation" L303-311: §3.1 = density metric; `#### §6e claim — Lane C unblocks the GPU window` L383-385: Lane C unblocks GPU window; parent `### 6e. Dispatch shape — file ownership, not just task ownership` is at L355) |
 | Lane A prompt emotion-bearer (DEPICT-4) | Prompt text change so attributed emotion is licensed | **After** Slice 1 counter exists (EVAL-08 ordering) |
 | Lane B contracts / `DescriptionRegister` | None for DEPICT-2 metrics; a future register-compliance arm would read `DescriptionRegister` (`FORENSIC\|EDITORIAL\|INTERPRETIVE`) from the contract envelope — not planned here | n/a |
 
@@ -388,10 +388,10 @@ This plan does **not** edit bakeoff ranking, Lane A prompts, or Lane B contracts
   C5 (ranking) both appear as distinct roles, not a single averaged policy.
 - Assessment §3.1 / GPU-window gate lands when Slice 3 is green (density
   metric + Williams/C5; assessment §6b "The GPU window has a second, cheaper
-  gate than curation" L301-309; `#### §6e claim — Lane C unblocks the GPU
-  window` L373-375; parent `### 6e. Dispatch shape — file ownership, not
-  just task ownership` is at L353). Slice 4 report emit lands assessment
-  §6e Lane C Carries "report emit of new fields" (L371). Bake-off ranking
+  gate than curation" L303-311; `#### §6e claim — Lane C unblocks the GPU
+  window` L383-385; parent `### 6e. Dispatch shape — file ownership, not
+  just task ownership` is at L355). Slice 4 report emit lands assessment
+  §6e Lane C Carries "report emit of new fields" (L381). Bake-off ranking
   *sort* remains an optional unowned follow-on (see Cross-lane dependency).
 
 ## Slice Delivery
@@ -1750,13 +1750,13 @@ could never go green.
 `caption_metrics.py` that nobody emits leave density numbers unreachable.
 Own a **thin additive** emit in `report.py` so report JSON carries the new
 keys **with live values**. This emit **is** assessment §6e Lane C Carries
-"report emit of new fields" (assessment `#### §6e ownership table` L365;
-Lane C row L371) — dispatched Lane C work, not an extra invented outside
+"report emit of new fields" (assessment `#### §6e ownership table` L375;
+Lane C row L381) — dispatched Lane C work, not an extra invented outside
 the assessment. Slice 3 alone lands the assessment §3.1 / GPU-window gate
 (density metric + Williams/C5; assessment
-`#### §6e claim — Lane C unblocks the GPU window` L373-375; parent
+`#### §6e claim — Lane C unblocks the GPU window` L383-385; parent
 `### 6e. Dispatch shape — file ownership, not just task ownership` is at
-L353). Do **not** implement bake-off ranking *sort* here — that remains an
+L355). Do **not** implement bake-off ranking *sort* here — that remains an
 optional unowned follow-on, **not** the §3.1 gate.
 
 **Depends on**: Slices 1–3 pure APIs green.
@@ -2218,12 +2218,12 @@ Do **not** assert key presence alone.
 **§3.1 / GPU-window unblock condition**: Slice 3 green means the density
 metric exists and Williams/C5 is documented in-module — that **is** the
 assessment §3.1 / GPU-window gate (assessment §6b "The GPU window has a
-second, cheaper gate than curation" L301-309: §3.1 is the last unlanded
+second, cheaper gate than curation" L303-311: §3.1 is the last unlanded
 gate; assessment `#### §6e claim — Lane C unblocks the GPU window`
-L373-375: Lane C unblocks the GPU window; parent
+L383-385: Lane C unblocks the GPU window; parent
 `### 6e. Dispatch shape — file ownership, not just task ownership` is at
-L353). Slice 4 green lands assessment §6e Lane C Carries "report emit of
-new fields" (L371) — live report JSON density + hit lists. Bake-off
+L355). Slice 4 green lands assessment §6e Lane C Carries "report emit of
+new fields" (L381) — live report JSON density + hit lists. Bake-off
 *ranking sort* that orders candidates by density remains an optional
 separate unowned consumer; it is **not** a prerequisite for §3.1 or the
 GPU window.
@@ -2454,10 +2454,10 @@ GPU window.
 - [ ] `uv run --extra dev pytest scene/tests/test_eval_harness_report_depiction.py -q` green.
 - [ ] Slice 3 green ⇒ assessment §3.1 / GPU-window gate landed (density +
       Williams/C5; §6b "The GPU window has a second, cheaper gate than
-      curation" L301-309; `#### §6e claim — Lane C unblocks the GPU window`
-      L373-375; parent `### 6e. Dispatch shape — file ownership, not just
-      task ownership` is at L353). Slice 4 green ⇒ assessment §6e Lane C
-      Carries "report emit of new fields" (L371) landed (bake-off sort not
+      curation" L303-311; `#### §6e claim — Lane C unblocks the GPU window`
+      L383-385; parent `### 6e. Dispatch shape — file ownership, not just
+      task ownership` is at L355). Slice 4 green ⇒ assessment §6e Lane C
+      Carries "report emit of new fields" (L381) landed (bake-off sort not
       required).
 
 ### Review Readiness
@@ -2472,11 +2472,11 @@ GPU window.
       *sort* still explicit non-scope (optional follow-on, **not** the §3.1 gate).
 - [ ] §3.1 / GPU-window gate is treated as density metric + Williams/C5
       (Slice 3; assessment §6b "The GPU window has a second, cheaper gate
-      than curation" L301-309; `#### §6e claim — Lane C unblocks the GPU
-      window` L373-375; parent `### 6e. Dispatch shape — file ownership,
-      not just task ownership` is at L353), not as bake-off sort. Report
+      than curation" L303-311; `#### §6e claim — Lane C unblocks the GPU
+      window` L383-385; parent `### 6e. Dispatch shape — file ownership,
+      not just task ownership` is at L355), not as bake-off sort. Report
       emit is assessment §6e Lane C Carries "report emit of new fields"
-      (L371; Slice 4).
+      (L381; Slice 4).
 - [ ] Canon IDs cited as plain text with lexicon path, not monorepo markdown
       links; verification grep uses `$CANON_LEXICONS_ROOT` / bundle-root
       `canon/lexicons/` (sibling of `repo/`).
@@ -2574,7 +2574,7 @@ GPU window.
       the open literal at the L575 dict ENTRY), `caption_long.quality` keeps
       only pre-existing `_quality_block` keys, and exact fallback keys when
       `short_error` makes `scores is None` (Slice 4 — assessment §6e Lane C
-      Carries "report emit of new fields", L371).
+      Carries "report emit of new fields", L381).
 - [ ] Fixtures use `"polarity": "true"` (StrEnum string); `ReferenceFact.model_validate`
       succeeds on them.
 - [ ] Metrics tests and
@@ -2585,10 +2585,10 @@ GPU window.
       `test_eval_harness_report.py` deliberately unedited.
 - [ ] Assessment §3.1 / GPU-window gate **landed** by Slice 3 (density metric
       + Williams/C5; §6b "The GPU window has a second, cheaper gate than
-      curation" L301-309; `#### §6e claim — Lane C unblocks the GPU window`
-      L373-375; parent `### 6e. Dispatch shape — file ownership, not just
-      task ownership` is at L353). Slice 4 report emit lands assessment §6e
-      Lane C Carries "report emit of new fields" (L371). Bake-off ranking
+      curation" L303-311; `#### §6e claim — Lane C unblocks the GPU window`
+      L383-385; parent `### 6e. Dispatch shape — file ownership, not just
+      task ownership` is at L355). Slice 4 report emit lands assessment §6e
+      Lane C Carries "report emit of new fields" (L381). Bake-off ranking
       *sort* remains optional unowned follow-on (not the §3.1 gate).
 
 ## Not-Doing
@@ -2601,9 +2601,9 @@ GPU window.
   **unowned** by this task; keys land in Slice 4 but sort code does not.
   Sort is an **optional follow-on**, not the §3.1 / GPU-window gate
   (assessment §6b "The GPU window has a second, cheaper gate than curation"
-  L301-309: §3.1 = density metric; `#### §6e claim — Lane C unblocks the
-  GPU window` L373-375: Lane C unblocks; parent `### 6e. Dispatch shape —
-  file ownership, not just task ownership` is at L353).
+  L303-311: §3.1 = density metric; `#### §6e claim — Lane C unblocks the
+  GPU window` L383-385: Lane C unblocks; parent `### 6e. Dispatch shape —
+  file ownership, not just task ownership` is at L355).
 - Colour vocabulary of any kind; `FM-11` citations; Lane D trigger work.
 - Race warrant / parity gate (ATTRIB-06) — pass-level property; harness is
   per-image only.

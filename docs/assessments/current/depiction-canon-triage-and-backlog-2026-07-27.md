@@ -880,8 +880,8 @@ Two more cheap, warranted items, both prompt-and-metric only:
 DEPICT-2 scopes it out explicitly under heading
 `### CAL-02 and density numerator — metric side only (scope decision)`
 (cite by heading text; at freeze commit `7396a678` the heading is at DEPICT-2
-`:296` and the disposition table row carrying **Scoped out of DEPICT-2.** is the
-CAL-02 row at `:304` — **not** `:290`, which is Target Outcome prose about
+`:325` and the disposition table row carrying **Scoped out of DEPICT-2.** is the
+CAL-02 row at `:333` — in the CAL-02 scope-decision table, **not** in `## Target Outcome` prose about
 assessment §10f / Williams collapse; line numbers move under concurrent DEPICT-2
 edits — re-grep the heading after those land). DEPICT-0 / DEPICT-1 never touch
 `CAL-02`. Merging DEPICT-0 + DEPICT-1 + DEPICT-2 does **not** land abstain

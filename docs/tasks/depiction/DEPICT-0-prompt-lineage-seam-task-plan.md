@@ -555,6 +555,19 @@ Tests (same slices as the behaviour they load-bear):
   ([TEST-15]) **and** rebind-before-construction proof that bakeoff v1
   resolves through the accessor inside `build_prompt_variants()` (proof
   calls that helper after rebind; does not hand-build a `PromptVariant`).
+- **Registry provenance (mandatory)** — the registry the harness actually
+  reads at `bakeoff.py:595` must have exactly one construction site, and that
+  site must be the helper. Source-level assertion over `bakeoff.py`'s AST: the
+  module-level `PROMPT_VARIANTS` assignment's value node is a `Call` whose
+  func is the `Name` `build_prompt_variants`, with no arguments. Permanent
+  discrimination guard ([TEST-15]): swapping that RHS for a hand-built dict
+  literal — **even one whose v1 body is correct** — turns it red. A runtime
+  equality check cannot stand in here: in the unrebound import epoch a
+  hand-built dict built from `_FROZEN_V1 = production_system_prompt()` and the
+  helper's product hold the same string, so only the source shape
+  discriminates ([REF-09]: two construction sites for one registry are a drift
+  surface, and under the rebind proof as mandated the second one is the
+  untested one).
 - **Single-source inventory (mandatory)** — inventory of **source-level
   foldable-constant definition sites** (any scope; assignment, call-argument,
   **and** `FunctionDef`/`AsyncFunctionDef` `args.defaults`/`args.kw_defaults`)
@@ -896,14 +909,21 @@ scope of option (a)):**
 
 - **Named RED (mandatory — kills the hand-built-`PromptVariant` cheat):**
   keep a module-level
-  `_FROZEN_V1 = production_system_prompt()` import-time bind and build the
-  registry from `_FROZEN_V1` inside `build_prompt_variants()` (or at the
-  module-level `PROMPT_VARIANTS = …` site). After rebind-then-
+  `_FROZEN_V1 = production_system_prompt()` import-time bind and read it
+  **inside `build_prompt_variants()`**. After rebind-then-
   `build_prompt_variants()`, `registry["v1"].system` stays on the old body
   while a freshly constructed adapter posts the synthetic body →
-  assertion (3) fails. **Keeping the module-level
-  `_FROZEN_V1 = production_system_prompt()` import-time bind and building
-  the registry from it must turn this proof RED.**
+  assertion (3) fails. **Keeping that in-helper `_FROZEN_V1` read must turn
+  this proof RED.**
+- **Siting matters — this proof does not cover the module-level site.** If
+  `_FROZEN_V1` is read at the `PROMPT_VARIANTS = …` site while
+  `build_prompt_variants()` itself correctly calls the accessor, this proof
+  calls the correct helper, sees the synthetic body, and stays **green** — it
+  never reads module-level `PROMPT_VARIANTS`. Do **not** document that edit as
+  a red for this test: a mutation named as red that comes out green is not a
+  discrimination guard, it is an unrun mutation ([TEST-15] — "would this exact
+  assertion turn red; have I seen it?"). That siting is covered by the
+  **registry-provenance** assertion, and its named RED lives there.
 - Equivalent reds: rewire bakeoff v1 to freeze the body via
   `from scene.prompts.caption_system import PRODUCTION_PROMPT` then
   `system=PRODUCTION_PROMPT.body` at a site that does not re-read after a
@@ -929,17 +949,24 @@ scope of option (a)):**
   **transport-captured posted** system string and the harness registry entry
   and requires full whitespace-normalised equality.
 - **Cheating shapes the rebind-before-construction proof kills:**
-  1. **Import-time freeze of the real registry (the DPR10-H-01 cheat):**
+  1. **Import-time freeze inside the helper (the DPR10-H-01 cheat):**
      `_FROZEN_V1 = production_system_prompt()` (or
-     `from … import PRODUCTION_PROMPT`) at module import; real
-     `PROMPT_VARIANTS` / `build_prompt_variants()` built from that frozen
-     string. Default-path parity and AST inventory stay green at
-     import-time state. A hand-built
+     `from … import PRODUCTION_PROMPT`) at module import, read by
+     `build_prompt_variants()` itself. Default-path parity and AST inventory
+     stay green at import-time state. A hand-built
      `PromptVariant(system=production_system_prompt())` inside the test
      would still see the rebind and pass while the real harness at
      `bakeoff.py:595` stays frozen forever — that is why the proof **must**
      call `build_prompt_variants()` and compare its `"v1"` entry against a
      freshly constructed adapter, not construct its own variant.
+     **Scope limit (DPR12-H-01):** calling the helper closes this cheat only
+     when the freeze is *in* the helper. A correct helper plus a separately
+     hand-built module-level `PROMPT_VARIANTS` is invisible to this proof
+     (never read), to the AST inventory (`Call` node, not a foldable
+     constant — see the permitted-non-definition-hit list), and to
+     default-path parity (in the import epoch both hold the same string). The
+     **registry-provenance** assertion is what closes it; the two proofs are
+     not redundant and neither substitutes for the other.
   2. Leftover local full-body literal / copy-paste "share" inside the
      helper while adapters correctly call `production_prompt()`.
   Without calling the real helper after rebind, those cheats ship.
@@ -1825,10 +1852,20 @@ mutation. The proof must pin the *unexpected keyword* failure mode.
       hand-built `PromptVariant`) and construct a fresh adapter; assert
       `registry["v1"].system == synthetic.body` and equals the adapter's
       posted body. **Named RED:** keeping module-level
-      `_FROZEN_V1 = production_system_prompt()` and building the registry
-      from it must turn this proof RED. Also red if bakeoff freezes via
-      `from … import PRODUCTION_PROMPT` / leftover local full-body literal
-      inside the helper.
+      `_FROZEN_V1 = production_system_prompt()` and reading it **inside
+      `build_prompt_variants()`** must turn this proof RED. Also red if
+      bakeoff freezes via `from … import PRODUCTION_PROMPT` / leftover local
+      full-body literal inside the helper. **Not** red — and not to be
+      documented as red — if the freeze sits at the module-level
+      `PROMPT_VARIANTS = …` site with a correct helper; that is the
+      registry-provenance test's job.
+- [ ] Add **registry-provenance** assertion (`test_prompt_variants_is_built_by_the_helper`
+      or equivalent): AST-assert the module-level `PROMPT_VARIANTS` assignment's
+      value node is a no-argument `Call` to `build_prompt_variants`. **Named
+      RED:** replace that RHS with a hand-built dict literal whose v1 body is
+      still correct → must turn red ([TEST-15] permanent discrimination guard;
+      [REF-09] one registry, one construction site). Runtime equality is **not**
+      an acceptable substitute — it cannot discriminate in the import epoch.
 - [ ] Document red-first edit (a) — change only the payload-inserted string —
       rebind-before-construction red (a′) including the named `_FROZEN_V1`
       edit, and discrimination case (b) (including the three default-path
@@ -2029,10 +2066,14 @@ mutation. The proof must pin the *unexpected keyword* failure mode.
 - [ ] `test_bakeoff_v1_body_reflects_rebind_before_variant_construction` (or
       equivalent) calls **`build_prompt_variants()` after rebind** (not a
       hand-built `PromptVariant`), compares `registry["v1"]` to a freshly
-      constructed adapter, is red if bakeoff freezes the v1 body via
-      module-level `_FROZEN_V1 = production_system_prompt()` / `from …
+      constructed adapter, is red if the helper reads a frozen v1 body via
+      an in-helper `_FROZEN_V1 = production_system_prompt()` / `from …
       import PRODUCTION_PROMPT` / leftover local full-body literal, and green
       when helper-time accessor resolution reflects a pre-construction rebind.
+- [ ] Registry-provenance assertion is red when module-level
+      `PROMPT_VARIANTS` is a hand-built dict rather than
+      `build_prompt_variants()`, including when its v1 body is correct — the
+      one cheat the rebind proof structurally cannot see (DPR12-H-01).
 - [ ] `test_production_v1_body_has_exactly_one_definition` (or equivalent)
       is **mandatory**, keys on **foldable-constant definition sites** equal
       to whitespace-normalised `production_system_prompt()` (not source-text

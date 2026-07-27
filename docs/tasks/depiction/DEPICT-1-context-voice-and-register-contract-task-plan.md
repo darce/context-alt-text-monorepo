@@ -37,7 +37,9 @@ caption/title/taxonomy strings are rendered into the production prompt and the
 shipping system prompt (today
 `scene/infrastructure/vlm/gpu_remote_adapter.py` `_SYSTEM_PROMPT` L28–37;
 post-DEPICT-0 the same v1 body lives in
-`scene/prompts/caption_system.py` as `PRODUCTION_SYSTEM_PROMPT`) instructs the
+`scene/prompts/caption_system.py` as `PRODUCTION_PROMPT.body`, accessed via
+`production_system_prompt()` — DEPICT-0 forbids a separate
+`PRODUCTION_SYSTEM_PROMPT` string global) instructs the
 model to *weave* names and factual details *where they fit naturally* —
 dissolving the seam between creator speech and the system's unmarked
 descriptive voice. That is live production exposure of eval finding F1. When
@@ -91,10 +93,12 @@ partitioned, not a blended middle.
   Not-Doing: "Changing what any prompt **says**" / "Weave-side context
   consumption / F1 voice-honouring prompt behaviour"). The actual
   voice-honouring weave rewrite is **DEPICT-1b** (Lane A, after DEPICT-0 seam
-  + this contract). Post-DEPICT-0, DEPICT-1b edits the shared production system
-  prompt body in `scene/prompts/caption_system.py` (not the deleted
-  `gpu_remote_adapter._SYSTEM_PROMPT` constant). Do not edit prompt strings
-  here; do not attribute the weave edit to DEPICT-0.
+  + this contract). Post-DEPICT-0, DEPICT-1b edits the selected
+  `PRODUCTION_PROMPT.body` (via `production_system_prompt()` / rebind of
+  `PRODUCTION_PROMPT`) in `scene/prompts/caption_system.py` — **not** the
+  deleted `gpu_remote_adapter._SYSTEM_PROMPT` constant and **not** a separate
+  `PRODUCTION_SYSTEM_PROMPT` string global (DEPICT-0 forbids that shape). Do
+  not edit prompt strings here; do not attribute the weave edit to DEPICT-0.
 - **Bound-term / colour field shape is out of scope.** Assessment §10g removed
   it. `FM-11` is retired canon and must not be cited. Trigger for any colour
   vocabulary is §10e (machine-consumed colour token) — not this task.
@@ -201,10 +205,13 @@ partitioned, not a blended middle.
 - Production weave clause ("Weave the people's names and factual details…") is
   in `gpu_remote_adapter.py` L33–34 today — **Lane A owned**; not editable
   here. DEPICT-0 **moves** that body into
-  `scene/prompts/caption_system.py` (`PRODUCTION_SYSTEM_PROMPT`) and deletes
-  the local constant; DEPICT-0 **Not-Does** F1 weave *wording* (DEPICT-0
-  Not-Doing section). **DEPICT-1b** (post-DEPICT-0) rewrites the weave clause
-  in the shared caption-system module.
+  `scene/prompts/caption_system.py` as the selected `PRODUCTION_PROMPT.body`
+  (accessed via `production_system_prompt()`; no separate
+  `PRODUCTION_SYSTEM_PROMPT` string global — DEPICT-0 Slice 2 / Terminology)
+  and deletes the local constant; DEPICT-0 **Not-Does** F1 weave *wording*
+  (DEPICT-0 Not-Doing section). **DEPICT-1b** (post-DEPICT-0) rewrites the
+  weave clause on that same selected body (`PRODUCTION_PROMPT.body` /
+  `production_system_prompt()`), not a freestanding string global.
 - Defaulted `voice` keys on speech-allowlist nested models enter the normalized
   pack dump (callers that omit `voice` still validate; dumps include defaults)
   and therefore change `context_hash` for otherwise-identical packs. That
@@ -324,9 +331,12 @@ cross-reference).
   Greenfield Policy (shared formulation with DEPICT-0 Constraints), not a
   lexicon row, and is the warrant for the observable default injection —
   **despite** API-09's Hyrum note, not under API-09.
-- **Harness-side `ContextPack` voice mirror** (`scripts/eval_harness/manifest.py`)
-  has no owner in this flock; F1 contract traps are service-unit-only until a
-  named follow-on claims them.
+- **Harness-side `ContextPack` voice mirror** (`scripts/eval_harness/manifest.py`
+  `ContextPack` L165–176: `title` / `caption` / `description` only — no
+  `voice`) has no owner in this flock; F1 contract traps are
+  **service-unit-only**. DEPICT-1b owns the **production** weave half (shared
+  `PRODUCTION_PROMPT.body`); it does **not** deliver harness voice-honouring
+  lockstep. A future named lane must claim `manifest.py` voice + fixtures.
 - **Response-side `description_register` echo** is not in this task (no owned
   path from request → `build_visual_facts_envelope` → cache row → response).
 
@@ -338,7 +348,7 @@ cross-reference).
 | `DescribeImageEnvelope` | Lane B | tenant/media/context/context_pack/decorative/tier | Additive defaulted `description_register`, `gravity` | Shape: omit → defaults ([API-09]) | schema unit tests |
 | `VisualFactsResponse` | **Unchanged this task** | 17 core + additive optionals | **No** `description_register` field; no echo | n/a — response contract frozen for this lane | Existing `test_response_schema_parity.py` stays green without edit |
 | Shared JSON schema `packages/shared-contracts/schemas/image-description-response.schema.json` | **Unchanged this task** (exists in tree; no `description_register` property today) | mirrors response model | **No edit** — response field not in DEPICT-1 scope | n/a | Parity test unchanged; no package-absent skip; no property-missing xfail |
-| Production system prompt / weave | **DEPICT-1b** (Lane A; after DEPICT-0 + DEPICT-1) | unmarked weave (today `gpu_remote_adapter.py` L33–34; post-DEPICT-0 body in `scene/prompts/caption_system.py`) | Must honour quotable-only partition | Cross-lane follow-on | Not in this task; DEPICT-0 only moves prompts |
+| Production system prompt / weave | **DEPICT-1b** (Lane A; after DEPICT-0 + DEPICT-1) | unmarked weave (today `gpu_remote_adapter.py` L33–34; post-DEPICT-0 body is selected `PRODUCTION_PROMPT.body` in `scene/prompts/caption_system.py`, via `production_system_prompt()`) | Must honour quotable-only partition on the **service** pack path | Cross-lane follow-on | Not in this task; DEPICT-0 only moves prompts; harness pack `voice` remains unowned |
 | Eval harness metrics | Lane C | no register/voice axes | future register-compliance arm | Cross-lane | Not in this task |
 
 ## Proposed Solution
@@ -348,10 +358,12 @@ Three reviewable slices, each behaviour + proof:
 1. **Voice vocabulary + pack partition** — `ContextVoice` StrEnum; `voice` on
    speech-allowlist nested models with fail-closed defaults (**not** on
    `IdentityPolicyContext` or `IdentityContext`); fixed fact inventory; pure
-   `partition_context_pack` that never places `creator` in absorbable;
-   **parametrized one-case-per-IN-row and one-case-per-OUT-row** tests against
-   an explicit expected path set (never against `iter_context_facts` output);
-   content-blind + dump contract for default voices.
+   `partition_context_pack` that never places `creator` in absorbable and
+   places `derived` only in absorbable; frozen `_VOICE_CONTRACT_VALUES` /
+   `_ABSORBABLE_VOICES` / `_QUOTABLE_ONLY_VOICES` with no silent default
+   branch; **parametrized one-case-per-IN-row and one-case-per-OUT-row** tests
+   against an explicit expected path set (never against `iter_context_facts`
+   output); content-blind + dump contract for default voices.
 2. **Register vocabulary (request only)** — `DescriptionRegister` StrEnum;
    request default `EDITORIAL`; frozen contract-set exhaustiveness; **no**
    response field, **no** shared-schema edit, **no** PREVIEW_FIELDS change,
@@ -395,10 +407,10 @@ Three reviewable slices, each behaviour + proof:
 | `scene/application/fusion/reconcile.py` | Neighbour provenance (`FactSource`). Caption-fact paths are the inventory alignment *floor*; Slice 1 inventory is the full IN/OUT table. Do not overload with `ContextVoice`. |
 | `scene/application/hashing.py` | Defaulted `voice` keys change the hash once for all packs. Acceptable under **Greenfield Policy** (not under API-09); no migration. |
 | `scene/infrastructure/vlm/gpu_remote_adapter.py` | Today: `_SYSTEM_PROMPT` L28–37 + weave L33–34. Post-DEPICT-0: local constant deleted; body lives in `caption_system.py`. DEPICT-1b owns weave. |
-| `scene/prompts/caption_system.py` | **Created by DEPICT-0.** Post-seam home of `PRODUCTION_SYSTEM_PROMPT`. DEPICT-1b's wording edit targets this file. |
-| `scripts/eval_harness/bakeoff.py` | Lane A / DEPICT-0 — harness prompt seam; voice-honouring wording is DEPICT-1b (shared source after DEPICT-0). |
+| `scene/prompts/caption_system.py` | **Created by DEPICT-0.** Post-seam home of selected `PRODUCTION_PROMPT` (`body` + `lineage_version`) and accessors `production_system_prompt()` / `production_prompt_or_task_version()`. DEPICT-1b's wording edit targets `PRODUCTION_PROMPT.body` (or rebinds the selected `ProductionPrompt`) — **not** a separate `PRODUCTION_SYSTEM_PROMPT` string global (DEPICT-0 forbids that shape). |
+| `scripts/eval_harness/bakeoff.py` | Lane A / DEPICT-0 — harness prompt seam. After DEPICT-0, v1 system text binds from `PRODUCTION_PROMPT.body` / `production_system_prompt()`; a DEPICT-1b body edit changes bakeoff system **wording** only. Full harness F1 voice-honouring is **not** DEPICT-1b (no harness pack `voice`). |
 | `scripts/eval_harness/caption_metrics.py` | Lane C — scorers. |
-| `scripts/eval_harness/manifest.py` | Separate flat harness `ContextPack` (`extra="allow"`, no `voice`). **Unowned** in this flock; not mirrored here. |
+| `scripts/eval_harness/manifest.py` | Separate flat harness `ContextPack` (`extra="allow"`; fields `title`/`caption`/`description` only at L165–176 — **no** `voice`). **Unowned** in this flock; not mirrored here; not a DEPICT-1b deliverable. |
 | Reasoning card `attribute-claims-to-their-bearer` (canon, not vendored) | Design warrant for register vocabulary — cite as plain text, do not markdown-link into `canon/`. |
 
 ## Cross-lane dependency
@@ -414,18 +426,22 @@ Three reviewable slices, each behaviour + proof:
    contract and pure partition helpers. Does **not** edit prompt text or wire
    partition into production.
 3. **DEPICT-1b** (named follow-on, Lane A) lands **after** DEPICT-0 + DEPICT-1
-   Slice 1. Edits the **post-DEPICT-0** prompt home and (if needed) adapter
-   render helpers. **F1 is not closed** by DEPICT-0+1 alone.
+   Slice 1. Edits the post-DEPICT-0 selected `PRODUCTION_PROMPT.body` (via
+   `production_system_prompt()` / rebind of `PRODUCTION_PROMPT` — **not** a
+   `PRODUCTION_SYSTEM_PROMPT` string global) and (if needed) adapter render
+   helpers on the **service** pack path. **F1 production weave is not closed**
+   by DEPICT-0+1 alone. Harness pack `voice` / bakeoff F1 traps remain
+   **unowned** — DEPICT-1b does not deliver harness voice-honouring lockstep.
 
 | Dependency | Exact file | Exact change needed | Owner / sequencing |
 |---|---|---|---|
 | Prompt seam (no wording) | `gpu_remote_adapter.py`, `bakeoff.py`, `scene/prompts/caption_system.py` (new) | Single source for production system prompt text; delete local `_SYSTEM_PROMPT` | **DEPICT-0 / Lane A** — lands **first**; Not-Does F1 weave rewrite (DEPICT-0 §Not-Doing) |
-| **Production voice-honouring weave (F1 prompt half)** | **Primary:** `scene/prompts/caption_system.py` (`PRODUCTION_SYSTEM_PROMPT` / production v1 body — post-DEPICT-0 location). **Secondary (if render must voice-tag):** `scene/infrastructure/vlm/gpu_remote_adapter.py` (`_render_context` L73–87 / `_user_text` L90–101) | Stop instructing unmarked weave of creator-tagged fields in the **shared** system prompt body; render creator entries as quoted/voice-tagged only; consume pack `voice` from normalized context dict; call `partition_context_pack` (or honour its partition). **Do not** retarget DEPICT-1b at `gpu_remote_adapter._SYSTEM_PROMPT` — DEPICT-0 deletes that constant. | **DEPICT-1b** — named follow-on, Lane A prompt owner. **Prerequisites (hard):** (1) DEPICT-0 seam merged, (2) DEPICT-1 Slice 1 contract merged. **Not owned by DEPICT-0 or DEPICT-1.** After DEPICT-0+1 alone, `partition_context_pack` is pure/unwired and production still weaves unmarked creator fields — **F1 is not closed**. |
-| Harness voice-honouring lockstep | `scripts/eval_harness/bakeoff.py` | Same voice-honouring behaviour once DEPICT-1b edits the shared prompt source in `caption_system.py` | **DEPICT-1b** (with DEPICT-0 parity tests keeping seam aligned) |
+| **Production voice-honouring weave (F1 prompt half)** | **Primary:** `scene/prompts/caption_system.py` — edit target is the selected `PRODUCTION_PROMPT.body` (read via `production_system_prompt()`; DEPICT-0 atomic config — **no** separate `PRODUCTION_SYSTEM_PROMPT` string global). **Secondary (if render must voice-tag):** `scene/infrastructure/vlm/gpu_remote_adapter.py` (`_render_context` L73–87 / `_user_text` L90–101) | Stop instructing unmarked weave of creator-tagged fields in the **shared** system prompt body; render creator entries as quoted/voice-tagged only; consume pack `voice` from the **service** normalized context dict; call `partition_context_pack` (or honour its partition). **Do not** retarget DEPICT-1b at `gpu_remote_adapter._SYSTEM_PROMPT` — DEPICT-0 deletes that constant. **Do not** invent a freestanding `PRODUCTION_SYSTEM_PROMPT` body global — rebind or edit `PRODUCTION_PROMPT` / `PRODUCTION_PROMPT.body` so body and `lineage_version` stay one object (DEPICT-0 Slice 2). | **DEPICT-1b** — named follow-on, Lane A prompt owner. **Prerequisites (hard):** (1) DEPICT-0 seam merged, (2) DEPICT-1 Slice 1 contract merged. **Not owned by DEPICT-0 or DEPICT-1.** After DEPICT-0+1 alone, `partition_context_pack` is pure/unwired and production still weaves unmarked creator fields — **F1 is not closed**. |
+| Shared prompt body consumed by bakeoff v1 | `scripts/eval_harness/bakeoff.py` (`PROMPT_VARIANTS["v1"].system` after DEPICT-0 parity) | After DEPICT-0, bakeoff v1 system text is bound from the same selected `PRODUCTION_PROMPT.body` / `production_system_prompt()`. A DEPICT-1b body edit therefore changes the **system-string wording** bakeoff posts. That is **wording lockstep only** — not full harness F1 voice-honouring (no pack `voice`, no creator-trap fixtures). | **Wording side-effect of DEPICT-1b body edit** (via DEPICT-0 seam). **Not** a claim that DEPICT-1b delivers harness voice-honouring lockstep. |
 | Shared JSON schema mirror | `packages/shared-contracts/schemas/image-description-response.schema.json` | **No change required by DEPICT-1** (response register field withdrawn) | n/a this task |
 | Register-compliance metric | `scripts/eval_harness/caption_metrics.py` | Future scored arm for register violations | Lane C — unblocked by Slice 2 vocabulary, not planned here |
 | v3 caption split (DEPICT-5) | harness + future output schema | Split grounded inventory vs attributed span | Unblocked by Slice 2; **not planned** in DEPICT-1 |
-| Harness ContextPack `voice` | `scripts/eval_harness/manifest.py` | Would need a `voice` field + creator-trap fixtures for bakeoff-side F1 traps | **Explicitly unowned.** DEPICT-1 accepts F1 contract traps as **service-unit-only**; no optional row implying a silent mirror. |
+| Harness ContextPack `voice` + bakeoff F1 traps | `scripts/eval_harness/manifest.py` (`ContextPack` L165–176: `title` / `caption` / `description` only; no `voice`) | Would need a `voice` field + creator-trap fixtures for bakeoff-side F1 traps; render helpers would need to consume it | **Explicitly unowned — no lane in this flock delivers it.** DEPICT-1 F1 contract traps are **service-unit-only**. **DEPICT-1b does not** deliver harness voice-honouring lockstep: shared body wording may change bakeoff's system string, but without a harness `voice` mirror the bakeoff path cannot honour creator-tagged pack entries. A future named lane must own `manifest.py` voice + fixtures before harness F1 traps exist. |
 
 ## Verification Strategy
 
@@ -499,10 +515,69 @@ Changes:
   - `@dataclass(frozen=True) class ContextFact` with
     `path: str`, `value: str`, `voice: ContextVoice`
   - `def iter_context_facts(pack: ContextPack) -> list[ContextFact]`
+  - **Frozen voice contract + absorbable set** (same freeze pattern as
+    `_REGISTER_CONTRACT_VALUES` — **literal enumeration, NOT**
+    `set(ContextVoice)` / not derived from the enum at call time):
+    ```python
+    # Permanent freeze — not derived from the enum at call time.
+    _VOICE_CONTRACT_VALUES: frozenset[ContextVoice] = frozenset({
+        ContextVoice.CREATOR,
+        ContextVoice.CATALOGUE,
+        ContextVoice.OPERATOR,
+        ContextVoice.DERIVED,
+    })
+    # Partition membership freezes — literal, not set(ContextVoice) - {CREATOR}.
+    _QUOTABLE_ONLY_VOICES: frozenset[ContextVoice] = frozenset({
+        ContextVoice.CREATOR,
+    })
+    _ABSORBABLE_VOICES: frozenset[ContextVoice] = frozenset({
+        ContextVoice.CATALOGUE,
+        ContextVoice.OPERATOR,
+        ContextVoice.DERIVED,
+    })
+
+    def assert_voice_contract() -> None:
+        """REF-29 permanent guard: enum membership equals the frozen contract set;
+        quotable ∪ absorbable partitions the contract with no overlap."""
+        actual = set(ContextVoice)
+        if actual != set(_VOICE_CONTRACT_VALUES):
+            raise AssertionError(
+                f"ContextVoice drifted from contract: "
+                f"extra={actual - set(_VOICE_CONTRACT_VALUES)} "
+                f"missing={set(_VOICE_CONTRACT_VALUES) - actual}"
+            )
+        if _QUOTABLE_ONLY_VOICES & _ABSORBABLE_VOICES:
+            raise AssertionError("voice partition overlap")
+        if _QUOTABLE_ONLY_VOICES | _ABSORBABLE_VOICES != _VOICE_CONTRACT_VALUES:
+            raise AssertionError("voice partition does not cover contract")
+    ```
   - `def partition_context_pack(pack: ContextPack) -> tuple[list[ContextFact], list[ContextFact]]`
-    returning `(absorbable, quotable_only)` where
+    returning `(absorbable, quotable_only)` with **no silent default branch**:
+    ```python
+    def partition_context_pack(
+        pack: ContextPack,
+    ) -> tuple[list[ContextFact], list[ContextFact]]:
+        absorbable: list[ContextFact] = []
+        quotable_only: list[ContextFact] = []
+        for fact in iter_context_facts(pack):
+            if fact.voice in _QUOTABLE_ONLY_VOICES:
+                quotable_only.append(fact)
+            elif fact.voice in _ABSORBABLE_VOICES:
+                absorbable.append(fact)
+            else:
+                # Future ContextVoice values cannot silently take a default.
+                raise ValueError(f"unhandled ContextVoice: {fact.voice!r}")
+        return absorbable, quotable_only
+    ```
+    Membership rules (must match the freezes above):
     `voice is ContextVoice.CREATOR` ⇒ **only** quotable_only;
     `catalogue | operator | derived` ⇒ absorbable.
+    **Forbidden cheating shapes:**
+    `return quotable if voice in {CREATOR, DERIVED} else absorbable` (mishandles
+    DERIVED; killed by the DERIVED fixture below);
+    `return quotable if voice is CREATOR else absorbable` with no freeze (future
+    enum values silently absorb; killed by `assert_voice_contract` + the
+    explicit `else: raise` arm when a fourth unfrozen value is injected).
   - Partition invariant (tests): the two lists are disjoint by `path`.
   - **Inventory proof invariant (tests — non-tautological):** for every
     fixture, assert
@@ -576,6 +651,8 @@ uv run --extra dev pytest scene/tests/test_context_voice_contract.py scene/tests
 | Check | Exact red input | Discrimination (non-vacuous green) / cheating impl killed |
 |---|---|---|
 | Creator never absorbable (attachment) | Pack with `attachment.caption="folder title from donor notes"` and `attachment.voice="creator"`. Assert: path `attachment.caption` is **absent** from `partition_context_pack(pack)[0]` (absorbable). **Red if** the partition puts it in absorbable or if the function ignores `voice`. | Same caption with `voice="catalogue"` (or `operator`) **is** present in absorbable and absent from quotable_only. |
+| **DERIVED only absorbable** | Pack with `attachment.caption="derived catalogue expansion"` and `attachment.voice="derived"`. Assert: path `attachment.caption` is **present** in absorbable and **absent** from quotable_only. **Red if** DERIVED is treated as quotable-only (e.g. `voice in {CREATOR, DERIVED}` → quotable) or ignored / dropped. | Same caption with `voice="creator"` is present only in quotable_only. **Cheating impl killed:** `def partition(...): return quotable if voice in {CREATOR, DERIVED} else absorbable` fails this case while still passing creator/catalogue/operator-only fixtures. |
+| **Frozen voice contract + exhaustive partition** | Permanently assert `set(ContextVoice) == set(_VOICE_CONTRACT_VALUES)` and `_QUOTABLE_ONLY_VOICES \| _ABSORBABLE_VOICES == _VOICE_CONTRACT_VALUES` with empty intersection (via `assert_voice_contract()`). **Red if** a fifth `ContextVoice` lands without updating the freezes, or if DERIVED is dropped from `_ABSORBABLE_VOICES`. | Hand-edit `_ABSORBABLE_VOICES` to drop `DERIVED` while enum still has four → `assert_voice_contract` fails (partition no longer covers contract). Partition's `else: raise` arm is exercised by constructing a `ContextFact` with a monkeypatched / synthetic voice value outside both freezes → `ValueError` (no silent default branch). |
 | Content-blind partition | Two packs identical except `attachment.caption` value (`"alpha"` vs `"beta"`), both `voice="creator"`. Assert: both yield the same absorbable/quotable path sets (only `value` differs). Proves discrimination is on `voice`, not content — no need for oppressive strings in fixtures. **Red if** partition keys on content. | Same two captions with `voice="operator"` both land in absorbable. |
 | **Parametrized IN-row inventory (one case per IN path)** | `@pytest.mark.parametrize` over every **IN** row in the inventory table. For each path template, build a pack that populates **only** that speech field (plus any structural keys required for model validity, e.g. `taxonomy` when testing `taxonomy_terms[0].name`, `policy.person_naming` when testing an identity name) with a distinctive non-empty string; leave all other IN fields empty/absent. Assert: `set(f.path for f in iter_context_facts(pack)) == {expected_path}` where `expected_path` is the **literal** path string for that row (e.g. `"attachment.description"`, `"post.excerpt"`, `"product.short_description"`, `"identity.identities[0].name"`). **Never** derive the expected set from `iter_context_facts` itself. **Red if** any IN path is omitted from the implementation. | **Cheating impl killed:** `iter_context_facts` that only emits `attachment.caption` / `attachment.title` / `post.title` / `taxonomy_terms[i].name` (the previously tested subset) fails the cases for `attachment.description`, `attachment.alt_text`, `post.excerpt`, `product.name`, `product.short_description`, and `identity.identities[0].name`. A no-op `return []` fails every IN case. |
 | **Parametrized OUT-row exclusion (one case per OUT path)** | `@pytest.mark.parametrize` over every **OUT** row. For each, build a pack that populates **only** that OUT field (plus minimum structural keys) and assert `set(f.path for f in iter_context_facts(pack)) == set()` — the explicit empty expected set, not "whatever the function returned." **Red if** filename / post_type / status / sku / price / taxonomy / slug / identity ids / `person_naming` / `review_reasons` enter inventory. | **Cheating impl killed:** an always-`True` "emit every non-empty string under the pack" walker fails every OUT case. Pairing: same fixture plus one IN field (e.g. `attachment.title="t"`) yields exactly `{attachment.title}` against the explicit expected set. |
@@ -819,8 +896,11 @@ Recorded so implementers and reviewers do not "helpfully" hardcode a class table
 
 - [ ] Loaded assessment §2/§5c/§5d/§10g, eval F1/F3, reasoning card, and owned schemas.
 - [ ] Confirmed no edits under Lane A or Lane C paths; cross-lane deps recorded
-      including **DEPICT-1b** (F1 weave targets **post-DEPICT-0**
-      `scene/prompts/caption_system.py`) and harness pack unowned.
+      including **DEPICT-1b** (F1 weave targets post-DEPICT-0 selected
+      `PRODUCTION_PROMPT.body` / `production_system_prompt()` in
+      `scene/prompts/caption_system.py` — **not** a `PRODUCTION_SYSTEM_PROMPT`
+      string global) and harness pack `voice` **unowned** (DEPICT-1b does
+      **not** deliver harness voice-honouring lockstep).
 - [ ] Every cited rule ID definition-anchor-verified; no `FM-11`, no `REG-*`, no
       `HARM-01`, no `BOUND-02` for input voice, no `RLSE-02` for disposition prose.
 - [ ] Boundary table filled; additive-only under `extra="forbid"`; API-09 limited
@@ -835,8 +915,14 @@ Recorded so implementers and reviewers do not "helpfully" hardcode a class table
       `person_naming` outside speech inventory.
 - [ ] `iter_context_facts` implements the fixed path inventory (IN/OUT table).
 - [ ] `partition_context_pack` pure function; creator ⊆ quotable_only only;
-      disjoint invariant asserted against **hand-written expected path sets**.
-- [ ] Tests: creator-not-absorbable, content-blind, **parametrized one case per
+      catalogue/operator/**derived** ⊆ absorbable; disjoint invariant asserted
+      against **hand-written expected path sets**; **no silent default branch**
+      (unhandled voice → raise).
+- [ ] Frozen `_VOICE_CONTRACT_VALUES` / `_QUOTABLE_ONLY_VOICES` /
+      `_ABSORBABLE_VOICES` literal frozensets (NOT derived from
+      `set(ContextVoice)`); `assert_voice_contract()` permanent green.
+- [ ] Tests: creator-not-absorbable, **DERIVED-only-absorbable**, frozen voice
+      contract exhaustiveness, content-blind, **parametrized one case per
       IN row**, **parametrized one case per OUT row**, mixed-pack explicit
       expected frozenset, non-attachment creator/catalogue paths,
       omit-still-valid, unknown-key still forbid, invalid enum 422,
@@ -844,7 +930,8 @@ Recorded so implementers and reviewers do not "helpfully" hardcode a class table
       `IdentityPolicyContext`.
 - [ ] Router churn zero; seeded raw-dict path unchanged.
 - [ ] `uv run --extra dev pytest scene/tests/test_context_voice_contract.py scene/tests/test_context_pack.py -q` green.
-- [ ] No prompt / adapter edits (weave is DEPICT-1b on `caption_system.py`).
+- [ ] No prompt / adapter edits (weave is DEPICT-1b on
+      `PRODUCTION_PROMPT.body` / `production_system_prompt()`).
 
 ### Checklist for Slice 2: DescriptionRegister (request only)
 
@@ -877,17 +964,17 @@ Recorded so implementers and reviewers do not "helpfully" hardcode a class table
 
 - [ ] Every new check has a [TEST-15] red input and discrimination case in this plan and in test names/docstrings.
 - [ ] Reviewer attack surface pre-empted:
-  1. voice without enforcement → partition function + creator-not-absorbable + **parametrized full IN/OUT inventory against explicit expected sets**
+  1. voice without enforcement → partition function + creator-not-absorbable + **DERIVED-only-absorbable** + frozen `_VOICE_CONTRACT_VALUES` / exhaustive no-default partition + **parametrized full IN/OUT inventory against explicit expected sets**
   2. register without real exhaustiveness → frozen `_REGISTER_CONTRACT_VALUES` (not tautological `set(enum)`)
   3. restrict-only only in prose or vacuous rank≤ → exact min table + always-FORENSIC fails
   4. atrocity tension averaged → two dispositions, report-bool discrimination test, memo not middle mode (`STRAT-11`)
   5. additive vs `extra="forbid"` → omit-still-valid + unknown-key-still-422 tests
   6. response echo without wiring → **deleted from scope** (no response field; no PREVIEW_FIELDS / schema xfail trap)
-  7. weave retargeted post-DEPICT-0 → DEPICT-1b edits `caption_system.py`; harness pack still unowned
+  7. weave retargeted post-DEPICT-0 → DEPICT-1b edits `PRODUCTION_PROMPT.body` / `production_system_prompt()` (no `PRODUCTION_SYSTEM_PROMPT` global); harness pack `voice` still unowned — **no** DEPICT-1b harness voice-honouring lockstep claim
   8. ATTRIB-07 not overclaimed → oppressive subset only; blanket quotable-only = operator policy
   9. API-09 not used to warrant hash churn → shape only; Greenfield authorizes observability
   10. no pure-hash voice on IdentityPolicyContext
-- [ ] Cross-lane deps explicit; F1 weave is **DEPICT-1b** after DEPICT-0 + DEPICT-1.
+- [ ] Cross-lane deps explicit; F1 **production** weave is **DEPICT-1b** after DEPICT-0 + DEPICT-1; harness F1 traps remain unowned.
 - [ ] Handoff decision will record contract field names, defaults, and verification commands (at implementation time).
 
 ## Stretch Goals
@@ -903,6 +990,9 @@ Recorded so implementers and reviewers do not "helpfully" hardcode a class table
 - [ ] Creator-tagged speech-inventory path cannot appear in `partition_context_pack`
       absorbable list (proven red, then green) for attachment **and** at least one
       non-attachment creator-default path (`post.title`).
+- [ ] DERIVED-tagged speech appears **only** in absorbable (explicit fixture);
+      frozen `_VOICE_CONTRACT_VALUES` / `_ABSORBABLE_VOICES` cover all four
+      `ContextVoice` members; partition has no silent default branch.
 - [ ] Fact inventory matches the IN/OUT table with **one parametrized test per
       IN row and per OUT row** against **explicit expected path sets** (not
       against `iter_context_facts` output); `review_reasons` / filename / slug /
@@ -924,7 +1014,10 @@ Recorded so implementers and reviewers do not "helpfully" hardcode a class table
       changes.
 - [ ] Scoped pytest commands above green at branch HEAD (no parity skips/xfails).
 - [ ] F1 production weave explicitly **not** claimed closed — owned by DEPICT-1b
-      on post-DEPICT-0 `scene/prompts/caption_system.py`.
+      editing post-DEPICT-0 selected `PRODUCTION_PROMPT.body` /
+      `production_system_prompt()` in `scene/prompts/caption_system.py` (no
+      `PRODUCTION_SYSTEM_PROMPT` string global). Harness voice-honouring
+      lockstep is **not** claimed under DEPICT-1b.
 
 ## Not-Doing
 
@@ -934,13 +1027,18 @@ Recorded so implementers and reviewers do not "helpfully" hardcode a class table
   consumption / F1 voice-honouring prompt behaviour"). After DEPICT-0+1 alone,
   `partition_context_pack` is pure/unwired and production still weaves unmarked
   creator fields (today `gpu_remote_adapter.py` L33–34; post-DEPICT-0 the same
-  wording lives in `scene/prompts/caption_system.py`).
+  wording lives as selected `PRODUCTION_PROMPT.body` in
+  `scene/prompts/caption_system.py`, accessed via `production_system_prompt()`).
+  DEPICT-1b must edit that body / rebind `PRODUCTION_PROMPT` — **not** invent a
+  separate `PRODUCTION_SYSTEM_PROMPT` string global (DEPICT-0 forbids it).
 - Response `description_register` field / request→response echo / service or
   cache propagation — withdrawn from this task (no owned path; see Slice 2).
 - Shared JSON schema mirror for a response register property — not required
   while response field is out of scope; package file left unchanged.
-- Harness `ContextPack` voice mirror (`scripts/eval_harness/manifest.py`) —
-  unowned; F1 contract traps are service-unit-only in this task.
+- Harness `ContextPack` voice mirror (`scripts/eval_harness/manifest.py`
+  L165–176) and harness F1 voice-honouring lockstep — **unowned**; F1 contract
+  traps are service-unit-only in this task. DEPICT-1b does **not** deliver
+  harness voice-honouring (shared body wording side-effect ≠ pack-voice honour).
 - `voice` on `IdentityPolicyContext` (only field is OUT `person_naming`).
 - Bound-term shape, colour vocabulary, Werner/ISCC–NBS, `FM-11` anything (assessment §10g; retired ID).
 - `caption_metrics.py` or any scorer (Lane C).

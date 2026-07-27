@@ -6,11 +6,12 @@
 > - **Subject**: `apps/prototype-description-service` — the **captioning** path
 >   (two-pass VLM generation + prompt registry + caption eval harness).
 >   The FIR/bake-off harness is in scope only where captioning depends on it.
-> - **Canon**: heuristics-canon `v0.16.0-2-ga9dccc7` (ledger 1149 rules,
->   1143 active / 6 retired), including the new `lexicons/depiction.md`
->   (16 rules: `ATTRIB-01..10`, `BOUND-01..05`), the `distilled/depiction/`
->   and `distilled/accessibility/` source distillations, and
->   `public/reasoning/` cards.
+> - **Canon**: heuristics-canon-research `v0.17.2` @
+>   `4e099ded65ee33bc4db85dfd4c65409a0087a752` (INDEX.md: 1143 rules across
+>   11 lexicons), including `lexicons/depiction.md` (15 rules:
+>   `ATTRIB-01..10`, `BOUND-01..05`), the `distilled/depiction/` and
+>   `distilled/accessibility/` source distillations, and `public/reasoning/`
+>   cards.
 > - **Supersedes the captioning half of**:
 >   `omg-spec-fit-fir-captioning-pipelines-2026-07-26.md` (that document
 >   evaluated OMG *specifications* against the FIR harness; this one evaluates
@@ -117,7 +118,7 @@ enforcement point, and how it was verified.
 
 ### F1 — The context pack launders creator speech into the model's own voice
 
-**Rules**: `ATTRIB-07` (B·d), `ATTRIB-02` (B·v), `BOUND-02` (S·e)
+**Rules**: `ATTRIB-07` (B·d)
 **Enforcement point**: `context_pack_input` (primary), `output_schema` (secondary)
 **Verified**: in code, `scene/infrastructure/vlm/gpu_remote_adapter.py`
 
@@ -297,8 +298,9 @@ before the check is promised.
 **Rules**: `ATTRIB-08` (S·d)
 **Enforcement point**: `post_generation_check`
 
-> Agentless passive or mutual-event nouns ("a clash", "were killed") → make the
-> record-supported actor the grammatical subject, or state the gap.
+> An agentless passive, a mutual-event noun, or an event noun that carries no
+> actor ("a clash", "an incident", "were killed") → make the record-supported
+> actor the grammatical subject, or state the gap.
 
 This is purely grammatical, fully deterministic, needs no model, no context, and
 no aggregate. It is the highest value-per-effort item in this document and could
@@ -442,17 +444,19 @@ every call site; the enforcement lands later.
 ## 7. Machine-readable findings
 
 For downstream ingestion. `rule_ids` resolve against
-`heuristics-canon-research/lexicons/depiction.md` at `v0.16.0` or later.
+`heuristics-canon-research/lexicons/depiction.md` at `v0.17.2`
+(`4e099ded65ee33bc4db85dfd4c65409a0087a752`) or later.
 
 ```yaml
 schema: acx-depiction-eval/v1
-canon_version: v0.16.0-2-ga9dccc7
+canon_version: v0.17.2
+canon_commit: 4e099ded65ee33bc4db85dfd4c65409a0087a752
 evaluated: apps/prototype-description-service
 date: 2026-07-27
 findings:
   - id: F1
     summary: Context pack launders creator speech into the model's unmarked voice
-    rule_ids: [ATTRIB-07, ATTRIB-02, BOUND-02]
+    rule_ids: [ATTRIB-07]
     tier: B
     enforcement_point: context_pack_input
     secondary_enforcement: output_schema
@@ -491,7 +495,7 @@ findings:
     verified: source
     note: parity is a pass-level property; harness scores per-image only
   - id: F6
-    summary: Agentless passive and mutual-event nouns are unchecked
+    summary: Agentless passive, mutual-event, and actorless event nouns are unchecked
     rule_ids: [ATTRIB-08]
     tier: S
     enforcement_point: post_generation_check
@@ -544,14 +548,16 @@ already_covered:
 
 ## Appendix — method and verification
 
-**Canon currency.** `git describe` = `v0.16.0-2-ga9dccc7`, zero commits behind
-across all three remotes. The ledger grew 1117 → 1149 rules with 6 retired since
-the previous evaluation, so every cross-lexicon rule cited here (`A11Y-02`,
-`WRIT-26`, `WRIT-03`, `PROV-01`, `CLM-04`, `BIAS-02`, `BIAS-03`, `HAI-01`) was
-re-read from the current lexicon file rather than cited from the earlier
-evaluation. `depiction.md` was read in full. The private repo reachable over
-`gh` (`darce/heuristics-canon-research`) is the same repository as the local
-clone and `distilled/depiction/*` is tracked in it — one source, already current.
+**Canon currency.** Pinned to heuristics-canon-research `v0.17.2` @
+`4e099ded65ee33bc4db85dfd4c65409a0087a752` (this review wave's governing pin).
+INDEX.md at that pin lists **1143 rules** across 11 lexicons. Every
+cross-lexicon rule cited here (`A11Y-02`, `WRIT-26`, `WRIT-03`, `PROV-01`,
+`CLM-04`, `BIAS-02`, `BIAS-03`, `HAI-01`) was re-read from the lexicon file at
+this pin rather than cited from an earlier evaluation. `depiction.md` was read
+in full (exactly 15 definition-anchor rows: `ATTRIB-01..10`, `BOUND-01..05`).
+The private repo reachable over `gh` (`darce/heuristics-canon-research`) is the
+same repository as the local clone and `distilled/depiction/*` is tracked in it
+— one source, already current.
 
 **Source mining.** Seven remote grok-4.5 lanes in history-stripped OCI-VM
 sandboxes, one per distilled source, each brief inlining the full distilled text

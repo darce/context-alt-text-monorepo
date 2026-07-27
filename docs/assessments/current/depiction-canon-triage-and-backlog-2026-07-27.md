@@ -479,7 +479,9 @@ index, serving several lists including a **`basic` list of 21 colours**.
 **It cannot supply `binding` for FORENSIC.** Its mechanism is nearest-by-numeric-
 distance. Amended §11d: a numeric mapping, if added, is *"for rendering or
 clustering, **never for `binding`**."* Adopting ΔE as the binding mechanism walks
-straight into the constraint that exists to prevent the `FM-11` error.
+straight into the constraint that hazard names. *(Corrected per §10b: `FM-11`
+is retired canon and carries no warrant — the hazard is real, the ID is not
+citable. See §10c.)*
 
 **It fails §11c's admission bar — on the versioning half, not the referent
 half.** The bar is *versioned **and** every term carries a public referent*.
@@ -652,3 +654,157 @@ and answers both registers instead of one.**
 
 §8a's re-extraction finding stays valid and stays useful — for the photography
 lane, not for captioning.
+
+## 10. Reflow against re-ingested canon (HEAD, 8 commits past v0.17.0)
+
+Canon was re-read at `0264a38` — **not** the stale copy. Local `main` is *ahead*
+of `origin` by 2, so this checkout is the freshest copy in existence; `git fetch`
+brought nothing incoming.
+
+### 10a. What actually moved since `v0.17.0`
+
+Eight commits. Two touch this work:
+
+- **`lexicons/depiction.md`** — prose only. A historical note about `ATTRIB`/
+  `BOUND` relocating from `writing.md` was replaced with a route statement.
+  **Rule rows re-counted at HEAD: exactly 15** (`ATTRIB-01..10`, `BOUND-01..05`).
+  §5b's conclusion is unchanged. *(The deleted prose claimed "sixteen rows" — it
+  was wrong, and it is gone.)*
+- **`literature/extraction-manifest.json`** — lost 42 lines. **Not Werner.** The
+  removed entry is `product-deploy-agents-fields`. Werner survives at 129
+  entries with `source_sha256 2790d75d…b57631`, `extracted_chars 32233`,
+  `extractor stdlib-epub`. **§8a stands.**
+
+All 15 depiction IDs and 33 of 35 other cited IDs verified present at HEAD.
+
+### 10b. Citation audit of this document
+
+| ID | Status | Action |
+|---|---|---|
+| `HARM-01` | **false alarm** — it is `VLMRP-HARM-01`, a project finding ref, not a canon ID | none |
+| `FM-11` @:185 | correct — §5a already verified it retired | none |
+| `FM-11` @:482 | **defect** — cited as a live constraint | fixed in place |
+
+Also corrected: `PROV-01` lives in **`ml-systems.md`**, not `engineering.md`. A
+first-match sweep hit a cross-reference rather than the definition.
+
+### 10c. The adjudication I had not read: `FM-11` was retired *on this exact question*
+
+§5a recorded *that* `FM-11` is retired. It did not record **why**, and the why
+governs everything downstream. From `literature/HELD.md:69`:
+
+> **`FM-11` *Closed colour identity* — retired 2026-07-26, never published.**
+> The rule said: when colour is emitted as if it had fixed system identity, bind
+> it to a named colour vocabulary with fixed referents **and reject membership
+> pretence for out-of-set strings.**
+
+It was withdrawn because its only source (Wada) is *"an **instance** of a bound
+colour vocabulary — not an argument that free-text colour must not pass as
+system identity. **A rule may not rest on an exhibit mistaken for an argument.**"*
+
+**Werner was then acquired specifically to re-source it, and asked directly.
+The answer was no (2026-07-26).** The corpus check is recorded: `reject`,
+`refuse`, `must not`, `forbid`, `invalid`, `improper`, `inadmissible`, `ought
+not` → **zero hits across the whole extract**. Syme teaches the opposite move —
+tints *"differing … from any of the colours given in this series"* still
+*"partake of, or pass into, some one of them."*
+
+> *"re-sourcing `FM-11` from it would repeat the exact error that retired it …
+> must **not** be cited as rejection-half authority."*
+
+**This retires the rejection half generally, not Werner specifically.** §9's
+swap to ISCC–NBS does not restore the warrant — ISCC–NBS is the *same kind of
+witness*, a bound catalogue. Swapping the exhibit cannot manufacture the
+argument.
+
+What §9 proposed is **not** damaged by this: `binding: exact|nearest` with a
+`delta` is *mapping in*, which is precisely what Syme argues for and what the
+reasoning card permits (*"degraded to the nearest in-set term by an explicit
+mapping rule"*). **The mechanism survives; any hard gate built on it does not.**
+
+### 10d. What canon actually says about colour in alt text
+
+The reasoning card `controlled-vocabulary-caps-hallucination` now rests on
+**`FM-04`** (live, `ml-systems.md`). Its Tensions table settles the register
+question outright:
+
+| Partition | Side A | Side B | **Cut** |
+|---|---|---|---|
+| surface | ordinary colour words without catalog pretence (`WRIT-02`, `WRIT-03`) | machine-consumed or identity-bearing colour must be catalog-bound (`FM-04`) | **"If the string is a token, filter, recipe, or validated label, Side B; if it is narrative only, Side A"** |
+
+Card **Scope** excludes *"open literary description with no claim of catalog
+identity"*; **Exemptions** exclude *"open prose that does not claim catalog
+membership (mood, scene, metaphor)"*.
+
+**Alt text is narrative only.** A caption is prose read aloud — not a token, not
+a filter key, not a stored label. ⇒ **Side A. Ordinary colour words. No catalog
+gate.** This is canon, not preference, and it is a stronger and cheaper answer
+than §9's.
+
+### 10e. Consequence: Lane D is trigger-gated, not last-in-queue
+
+§9f left Lane D "still last in priority." **Correct that to out of scope with a
+named trigger.** Priority ordering implies it eventually comes up; a trigger
+says it does not exist until a condition fires.
+
+> **Trigger.** The moment a colour term becomes machine-consumed — a stored tag,
+> a search facet, a filter key, a recipe field, or any validated label — `FM-04`
+> fires and the catalog work becomes **required**, not optional.
+
+Until then no colour vocabulary ships. When it fires, §9's findings are the
+answer already in hand: **ISCC–NBS 267, CC0, `nbsIscc`**, cite SP 440, nested
+levels 13/29/267, ΔE at build time only. §8a's pinned re-extraction stays valid
+for the photography/cataloguing lane, which is outside this pipeline.
+
+### 10f. What survives — and it lands in Lane C
+
+The card's Verification list contains one line that binds work already scheduled:
+
+> *"Metric definition for attribute quality **does not reward lexical rarity
+> without membership or grounding**."*
+
+Playbook §3.1 adds *"verified facts per 100 words … **unverifiable specificity
+scores zero, not one**."* **That clause is the canon guard**, and §3.1 as
+specified already satisfies it. Implemented as naive density — facts per 100
+words without the verified filter — it trips the card directly.
+
+Verified: `caption_metrics.py` today has **no** rarity, specificity, density, or
+informativeness signal (the only `distinct*` helpers are name-token matchers).
+So the guard is not currently needed and becomes needed the moment Lane C lands.
+
+⇒ **Cite `EVAL-11` on Lane C's density metric**, and add a test that a rare
+ungrounded noun does not raise the score. That is a [TEST-15] discrimination
+case with a real red state — better grounded than §7c's, which depended on the
+Werner lattice.
+
+Two more cheap, warranted items, both prompt-and-metric only:
+
+- **`CAL-02`** — when evidence supports no in-set term, **abstain**; do not emit
+  a precise invented label. Directly targets the fabrication axis
+  `score_hallucination` already measures.
+- **`PROV-01`** — an attribute claim must walk back to evidence, not to fluent
+  invention. Already the spirit of `fabricated_fact_rate`; now has an ID.
+
+### 10g. Reflowed scope
+
+| Lane | Before | **After** | Warrant |
+|---|---|---|---|
+| **C — METRICS** | first; F8 counter + §3.1 density + Williams/C5 | **first, unchanged, + `EVAL-11` guard and its discrimination test** | `EVAL-11`, [TEST-15] |
+| **B — CONTRACT** | F1 `voice` + register enum + gravity + bound-term shape | **unchanged, minus the bound-term shape** — no colour field until §10e's trigger | `API-09`, `API-10` |
+| **A — DEPICT-0** | prompt-lineage seam | unchanged | `PROV-09` |
+| **D — WERNER-FCA** | rebuilt on ISCC–NBS, last | **out of scope; trigger-gated (§10e)** | `FM-04` when it fires |
+| **new — abstain** | — | `CAL-02` abstain + `PROV-01` evidence-walkback, prompt+metric only | `CAL-02`, `PROV-01` |
+
+**Net: the colour thread leaves the critical path entirely, and Lane C gains one
+guard plus one test.** Lane C was already the recommendation; it is now the
+recommendation with a canon-cited acceptance criterion.
+
+### 10h. One defect in the governing document
+
+`docs/research/library-heuristics-intake-consolidation.md` §11d states *"The
+`FM-11` warning is retained."* **`FM-11` is retired canon and cannot be cited.**
+The hazard it names is real; the warrant must be re-cited to `FM-04` (structured
+output is a contract) and `CAL-02` (abstain over forced precision).
+
+That file is uncommitted on `main` and is the operator's to edit — flagged, not
+touched.

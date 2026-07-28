@@ -101,10 +101,7 @@ describe('usePanesParam', () => {
     const { result } = renderHook(
       () => {
         const [panes] = usePanesParam();
-        const [overlay, setOverlay] = useOverlayParam<(typeof validPanels)[number]>(
-          'panel',
-          validPanels,
-        );
+        const [overlay, setOverlay] = useOverlayParam<(typeof validPanels)[number]>('panel', validPanels);
         const search = useSearchString();
         return { panes, overlay, setOverlay, search };
       },

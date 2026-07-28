@@ -4,21 +4,24 @@
 **Source fixture:** `packages/mcp-workbay-canvas/tests/fixtures/ux_maps/roster-people.uxmap.json`
 
 ## Goals
+
 - Operator assigns unassigned faces and manages person workspace without losing roster place
 - Decompose Roster UI tasks from screens/zones/states/flows (people-first surface; clusters tab retired)
 
 ## Jobs
+
 - `job-assign-faces` — Assign unassigned faces to people
 - `job-manage-person` — Open person workspace / manage entry
 - `job-cluster-review` — Review recognition cluster in drawer
 
 ## Screens
-| id | kind | route | title |
-| --- | --- | --- | --- |
-| `roster-shell` | screen | `#/roster` | Roster (People) |
-| `roster-person-workspace` | screen | `#/roster?person=` | Person workspace |
-| `roster-cluster-drawer` | overlay | `#/roster?cluster=` | Cluster drawer |
-| `exit-workbench` | exit | `#/workbench` | Workbench |
+
+| id                        | kind    | route               | title            |
+| ------------------------- | ------- | ------------------- | ---------------- |
+| `roster-shell`            | screen  | `#/roster`          | Roster (People)  |
+| `roster-person-workspace` | screen  | `#/roster?person=`  | Person workspace |
+| `roster-cluster-drawer`   | overlay | `#/roster?cluster=` | Cluster drawer   |
+| `exit-workbench`          | exit    | `#/workbench`       | Workbench        |
 
 ### Roster (People) (`roster-shell`)
 
@@ -96,6 +99,7 @@
 ```
 
 ## Flows
+
 ### Filter unassigned → open person → save assignment (`flow-assign-unassigned`)
 
 ```mermaid
@@ -131,11 +135,13 @@ flowchart TD
 ```
 
 ## Open questions
+
 - Is person workspace a route-owned screen or always an in-page panel? (modeled as deep-linkable screen with person=)
 - Should needs-assignment be its own screen_id or remain a zone on roster-shell?
 - Cluster drawer max_candidates=8 — confirm product top-k policy
 
 ## Not doing
+
 - Resurrect Clusters tab surface (retired; cluster= drawer only)
 - Dashboard map (separate map_ref later)
 - Pixel/token design in this map

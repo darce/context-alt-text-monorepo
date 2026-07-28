@@ -1,9 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
-import {
-  correctDescriptionHistoryItem,
-  type DescriptionHistoryItem,
-} from '../api/describeApi';
+import { correctDescriptionHistoryItem, type DescriptionHistoryItem } from '../api/describeApi';
 import { queryKeys } from '../api/queryKeys';
 
 interface CorrectMediaAltVariables {

@@ -244,8 +244,83 @@ class DescriptionHistoryServiceTest extends TestCase
         $this->assertSame(500, $result->get_error_data()['status']);
         $this->assertSame($newAlt, get_post_meta($mediaId, '_wp_attachment_image_alt', true));
         $this->assertSame('', get_post_meta($mediaId, '_acx_description_human_edit', true));
-        // Not a success array with only media_id + current_alt_text.
-        $this->assertFalse(is_array($result) && isset($result['media_id']) && !isset($result['title']));
+    }
+
+    /**
+     * BR-48b: the accepting branch of the human-edit read-back guard.
+     * update_post_meta returns false for a full-payload no-op. Seed storage with
+     * the exact marker this request would write, force the write to return false,
+     * and require 200 with the full item envelope — not a spurious 500.
+     */
+    public function testHumanEditNoOpOverwriteStillSucceeds(): void
+    {
+        $mediaId = 406;
+        $sameAlt = 'Already human-edited alt.';
+        $this->seedAttachment($mediaId, 'Attachment 406');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', $sameAlt);
+        $this->setPostMeta($mediaId, '_acx_description_provenance', [
+            'alt_text_draft' => 'Generated draft.',
+            'model_id' => 'local-v1',
+        ]);
+        // Matching full marker: same alt_text, edited_at (second granularity), user_id.
+        // A genuine same-second re-save produces an identical payload; the write
+        // returns false as a no-op and the read-back must still accept it.
+        $matchingMarker = [
+            'alt_text' => $sameAlt,
+            'edited_at' => current_time('mysql'),
+            'user_id' => get_current_user_id(),
+        ];
+        $this->setPostMeta($mediaId, '_acx_description_human_edit', $matchingMarker);
+        $GLOBALS['__ac_update_post_meta_fail'][$mediaId]['_acx_description_human_edit'] = true;
+
+        $result = (new DescriptionHistoryService())->record_correction($mediaId, $sameAlt);
+
+        $this->assertNotInstanceOf(WP_Error::class, $result);
+        $this->assertIsArray($result);
+        $this->assertSame(
+            ['media_id', 'title', 'mime_type', 'current_alt_text', 'generated_alt_text', 'provenance', 'human_edit', 'run_status'],
+            array_keys($result)
+        );
+        $this->assertSame($mediaId, $result['media_id']);
+        $this->assertSame($sameAlt, $result['current_alt_text']);
+        $this->assertIsArray($result['human_edit']);
+        $this->assertSame($matchingMarker, $result['human_edit']);
+        $this->assertSame($matchingMarker, get_post_meta($mediaId, '_acx_description_human_edit', true));
+    }
+
+    /**
+     * BR-48a: a stale prior marker with the same alt_text but different edited_at
+     * / user_id must not forge success when the human-edit write fails. Full
+     * payload equality is required; alt_text-only comparison would 200 incorrectly.
+     */
+    public function testStaleHumanEditMarkerDoesNotForgeNoOpSuccess(): void
+    {
+        $mediaId = 407;
+        $sameAlt = 'Same text, stale telemetry.';
+        $this->seedAttachment($mediaId, 'Attachment 407');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', $sameAlt);
+        $this->setPostMeta($mediaId, '_acx_description_provenance', [
+            'alt_text_draft' => 'Generated draft.',
+            'model_id' => 'local-v1',
+        ]);
+        // Prior session marker: same alt_text, older time, different operator.
+        $staleMarker = [
+            'alt_text' => $sameAlt,
+            'edited_at' => '2020-01-01 00:00:00',
+            'user_id' => 999,
+        ];
+        $this->setPostMeta($mediaId, '_acx_description_human_edit', $staleMarker);
+        $GLOBALS['__ac_update_post_meta_fail'][$mediaId]['_acx_description_human_edit'] = true;
+
+        $result = (new DescriptionHistoryService())->record_correction($mediaId, $sameAlt);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('description_correction_failed', $result->get_error_code());
+        $this->assertSame(500, $result->get_error_data()['status']);
+        $this->assertStringContainsString('Alt text was saved', $result->get_error_message());
+        // Stale marker left untouched — must not be treated as this correction's telemetry.
+        $this->assertSame($staleMarker, get_post_meta($mediaId, '_acx_description_human_edit', true));
+        $this->assertSame($sameAlt, get_post_meta($mediaId, '_wp_attachment_image_alt', true));
     }
 
     /**

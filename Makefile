@@ -129,7 +129,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/logs.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts test-hooks test-deploy-contract test-vlm3 provision-customer provision-demo expire-demo
+.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts mutation-guard-license-policy test-hooks test-deploy-contract test-vlm3 provision-customer provision-demo expire-demo
 
 # Default target
 help:
@@ -448,6 +448,17 @@ test-scripts:
 		scripts/train/occlusion/test_license_policy.py \
 		-q --tb=short --durations=25
 	@bash scripts/deploy/tests/test-smoke-gate.sh
+
+# Permanent [TEST-15] discrimination guard for the licence/provenance gate.
+# test-scripts above proves test_license_policy.py is green; this proves that
+# green can go red. Applies 10 known-bad mutations to a copy of
+# license_policy.py plus one semantically inert CONTROL, and fails unless every
+# defect mutant is killed by its own named victim tests and the CONTROL
+# survives. Without it a suite that stops discriminating stays green in CI.
+mutation-guard-license-policy:
+	@python3 scripts/train/occlusion/mutation_guard.py --mutation all
+
+test-scripts: mutation-guard-license-policy
 
 # Unit tests backing check-overrides-digest (incl. the committed-lock
 # consistency regression guard). Also collected by test-scripts in check-all;

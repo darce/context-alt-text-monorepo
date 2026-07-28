@@ -20,6 +20,8 @@ from recognition.application.clustering.centroid_utils import compute_centroid
 from recognition.infrastructure.repositories.atlas_repository import (
     AtlasRepository,
     MixedEmbeddingModelError,
+    _coerce_cluster_ids,
+    _require_tenant_uuid,
 )
 from recognition.tests.conftest import _sqlite_vector_norm
 
@@ -106,6 +108,7 @@ async def _seed_identity(
     media_id: int,
     embedding_model: str = _MODEL_A,
     embedding: list[float] | None = None,
+    disposed_at: datetime | None = None,
 ) -> MediaIdentity:
     identity = MediaIdentity(
         tenant_id=tenant_id,
@@ -118,10 +121,19 @@ async def _seed_identity(
         confidence=0.91,
         embedding=list(embedding if embedding is not None else _UNIT_EMBEDDING),
         embedding_model=embedding_model,
+        disposed_at=disposed_at,
     )
     session.add(identity)
     await session.flush()
     return identity
+
+
+async def _seed_tenant(session: AsyncSession, site_url: str) -> Tenant:
+    tenant = Tenant(site_url=site_url)
+    session.add(tenant)
+    await session.commit()
+    await session.refresh(tenant)
+    return tenant
 
 
 @pytest.mark.asyncio
@@ -321,3 +333,224 @@ async def test_get_centroids_mv_refreshed_at_from_mv_only(
     assert ts.replace(tzinfo=UTC) if ts.tzinfo is None else ts.astimezone(UTC)
     # SQLite may return naive string-parsed datetime; compare wall clock components
     assert ts.year == 2026 and ts.month == 6 and ts.day == 15
+
+
+# ---------------------------------------------------------------------------
+# FIR-9 S1d discrimination: kill surviving mutants in the atlas read path
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_iter_tenant_embeddings_isolates_exact_tenant_id_set(
+    atlas_db_session: AsyncSession,
+) -> None:
+    """FIR-9-BR-02A: tenant filter on iter_tenant_embeddings must be non-vacuous.
+
+    Predicted kill of deleting ``MediaIdentity.tenant_id == tenant_uuid``:
+    yielded id set becomes {A, B} instead of exactly {A}.
+    """
+    tenant_a = await _seed_tenant(atlas_db_session, "https://atlas-a.example.edu/wp")
+    tenant_b = await _seed_tenant(atlas_db_session, "https://atlas-b.example.edu/wp")
+    id_a = await _seed_identity(atlas_db_session, tenant_a.id, media_id=8001)
+    id_b = await _seed_identity(atlas_db_session, tenant_b.id, media_id=8002)
+    await atlas_db_session.commit()
+
+    repo = AtlasRepository(atlas_db_session)
+    rows = [
+        row
+        async for row in repo.iter_tenant_embeddings(str(tenant_a.id), _MODEL_A, allow_partial=False)
+    ]
+    yielded_ids = {row[0] for row in rows}
+
+    assert yielded_ids == {id_a.id}, (
+        f"iter_tenant_embeddings must yield exactly tenant A identities; got {yielded_ids}"
+    )
+    assert id_b.id not in yielded_ids
+
+
+@pytest.mark.asyncio
+async def test_list_foreign_embedding_models_ignores_other_tenant_models(
+    atlas_db_session: AsyncSession,
+) -> None:
+    """FIR-9-BR-02B: foreign-model probe must not see other tenants.
+
+    Tenant B holds a model that would be "foreign" for tenant A's request.
+    Predicted kill of deleting tenant_id filter on list_foreign_embedding_models:
+    assert_requested_embedding_model raises MixedEmbeddingModelError for tenant A
+    even though A only has the requested model.
+    """
+    tenant_a = await _seed_tenant(atlas_db_session, "https://atlas-a-emb.example.edu/wp")
+    tenant_b = await _seed_tenant(atlas_db_session, "https://atlas-b-emb.example.edu/wp")
+    await _seed_identity(atlas_db_session, tenant_a.id, media_id=8101, embedding_model=_MODEL_A)
+    await _seed_identity(atlas_db_session, tenant_b.id, media_id=8102, embedding_model=_MODEL_B)
+    await atlas_db_session.commit()
+
+    repo = AtlasRepository(atlas_db_session)
+    foreign = await repo.list_foreign_embedding_models(str(tenant_a.id), _MODEL_A)
+    assert foreign == [], (
+        f"tenant A must see no foreign models; other-tenant {_MODEL_B!r} leaked as {foreign}"
+    )
+
+    # EMB-01 must stay silent for tenant A when only B holds the foreign model.
+    await repo.assert_requested_embedding_model(str(tenant_a.id), _MODEL_A, allow_partial=False)
+
+
+@pytest.mark.asyncio
+async def test_iter_tenant_embeddings_excludes_disposed_identities(
+    atlas_db_session: AsyncSession, atlas_tenant: Tenant
+) -> None:
+    """FIR-9-BR-03: disposed_at IS NULL filter on the read path.
+
+    Predicted kill of deleting ``MediaIdentity.disposed_at.is_(None)``:
+    disposed identity re-enters the yielded id set.
+    """
+    live = await _seed_identity(atlas_db_session, atlas_tenant.id, media_id=8201)
+    disposed = await _seed_identity(
+        atlas_db_session,
+        atlas_tenant.id,
+        media_id=8202,
+        disposed_at=datetime(2026, 7, 1, 0, 0, 0, tzinfo=UTC),
+    )
+    await atlas_db_session.commit()
+
+    repo = AtlasRepository(atlas_db_session)
+    rows = [
+        row
+        async for row in repo.iter_tenant_embeddings(
+            str(atlas_tenant.id), _MODEL_A, allow_partial=False
+        )
+    ]
+    yielded_ids = {row[0] for row in rows}
+
+    assert yielded_ids == {live.id}, (
+        f"disposed identities must not enter atlas read path; got {yielded_ids}"
+    )
+    assert disposed.id not in yielded_ids
+
+
+@pytest.mark.asyncio
+async def test_centroid_fallback_uses_representatives_not_members(
+    atlas_db_session: AsyncSession, atlas_tenant: Tenant
+) -> None:
+    """FIR-9-BR-04A: mean-of-representatives tier when cluster absent from MV.
+
+    Cluster has both a representative (distinct vector) and a member (different
+    vector). Correct path must return the representative mean. Mutating the
+    first assignment in ``_mean_of_representatives_centroid`` to ``embeddings = []``
+    forces member fallback and yields the wrong vector.
+    """
+    cluster = IdentityCluster(tenant_id=atlas_tenant.id, label="RepTier", identity_count=1)
+    atlas_db_session.add(cluster)
+    await atlas_db_session.flush()
+
+    member_id = await _seed_identity(
+        atlas_db_session, atlas_tenant.id, media_id=8301, embedding=_UNIT_EMBEDDING
+    )
+    # Separate identity supplies the representative embedding so rep vector != member vector.
+    rep_source = await _seed_identity(
+        atlas_db_session, atlas_tenant.id, media_id=8302, embedding=_ALT_EMBEDDING
+    )
+    atlas_db_session.add_all(
+        [
+            IdentityMember(
+                tenant_id=atlas_tenant.id,
+                cluster_id=cluster.id,
+                identity_id=member_id.id,
+                similarity=0.99,
+            ),
+            IdentityClusterRepresentative(
+                tenant_id=atlas_tenant.id,
+                cluster_id=cluster.id,
+                identity_id=rep_source.id,
+                embedding=list(_ALT_EMBEDDING),
+                quality_score=0.95,
+            ),
+        ]
+    )
+    await atlas_db_session.commit()
+
+    repo = AtlasRepository(atlas_db_session)
+    pairs, _ = await repo.get_tenant_cluster_centroids(
+        str(atlas_tenant.id),
+        cluster_ids=[str(cluster.id)],
+    )
+    by_id = {cid: emb for cid, emb in pairs}
+
+    assert cluster.id in by_id, "missing-MV cluster must be filled by representative fallback"
+    expected_rep = compute_centroid([np.asarray(_ALT_EMBEDDING, dtype=np.float32)])
+    expected_member = compute_centroid([np.asarray(_UNIT_EMBEDDING, dtype=np.float32)])
+    np.testing.assert_allclose(by_id[cluster.id], expected_rep, rtol=1e-5)
+    # Guard: member mean must differ so a silent member-fallback mutant cannot pass.
+    assert not np.allclose(expected_rep, expected_member, rtol=1e-5)
+
+
+@pytest.mark.asyncio
+async def test_centroid_fallback_uses_member_embeddings_when_no_reps(
+    atlas_db_session: AsyncSession, atlas_tenant: Tenant
+) -> None:
+    """FIR-9-BR-04B: member-fallback tier when no representatives exist.
+
+    Predicted kill of forcing ``get_member_fallback_embeddings`` empty:
+    cluster absent from returned pairs (no other source).
+    """
+    cluster = IdentityCluster(tenant_id=atlas_tenant.id, label="MemTier", identity_count=1)
+    atlas_db_session.add(cluster)
+    await atlas_db_session.flush()
+
+    member = await _seed_identity(
+        atlas_db_session, atlas_tenant.id, media_id=8401, embedding=_ALT_EMBEDDING
+    )
+    atlas_db_session.add(
+        IdentityMember(
+            tenant_id=atlas_tenant.id,
+            cluster_id=cluster.id,
+            identity_id=member.id,
+            similarity=0.91,
+        )
+    )
+    await atlas_db_session.commit()
+
+    repo = AtlasRepository(atlas_db_session)
+    pairs, _ = await repo.get_tenant_cluster_centroids(
+        str(atlas_tenant.id),
+        cluster_ids=[str(cluster.id)],
+    )
+    by_id = {cid: emb for cid, emb in pairs}
+
+    assert cluster.id in by_id, "member-only missing-MV cluster must use member fallback"
+    expected = compute_centroid([np.asarray(_ALT_EMBEDDING, dtype=np.float32)])
+    np.testing.assert_allclose(by_id[cluster.id], expected, rtol=1e-5)
+
+
+def test_require_tenant_uuid_rejects_malformed_id() -> None:
+    """FIR-9-BR-05: invalid tenant_id must fail closed with ValueError naming the value.
+
+    Predicted kill of replacing the raise with ``return uuid.UUID(int=0)``:
+    this assertion never fires (nil UUID is returned instead).
+    """
+    bad = "not-a-uuid"
+    with pytest.raises(ValueError, match=r"invalid tenant_id: 'not-a-uuid'") as exc_info:
+        _require_tenant_uuid(bad)
+    assert bad in str(exc_info.value)
+    assert "invalid tenant_id" in str(exc_info.value)
+
+
+def test_coerce_cluster_ids_rejects_malformed_id() -> None:
+    """FIR-9-BR-05 companion: invalid cluster_id must name the offending value."""
+    bad = "not-a-cluster-id"
+    with pytest.raises(ValueError, match=r"invalid cluster_id: 'not-a-cluster-id'") as exc_info:
+        _coerce_cluster_ids([bad])
+    assert bad in str(exc_info.value)
+    assert "invalid cluster_id" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_iter_tenant_embeddings_rejects_malformed_tenant_id(
+    atlas_db_session: AsyncSession,
+) -> None:
+    """Public read surface must surface the tenant_id ValueError (not query nil UUID)."""
+    repo = AtlasRepository(atlas_db_session)
+    bad = "%%not-a-uuid%%"
+    with pytest.raises(ValueError, match=r"invalid tenant_id:") as exc_info:
+        _ = [row async for row in repo.iter_tenant_embeddings(bad, _MODEL_A)]
+    assert bad in str(exc_info.value)

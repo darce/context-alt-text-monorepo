@@ -960,4 +960,177 @@ describe('MediaAltSuggest', () => {
       .join(' ');
     expect(descriptionText).toMatch(/could not save|couldn.?t save|unable to save/i);
   });
+
+  // --- S2c-3b: the Regenerate leg of the accept/edit/regenerate triad --------
+  // [HAI-12] an operator who finds the draft wrong but not worth hand-writing
+  // must be able to request another draft without Dismiss → Suggest (which
+  // reads as discarding work rather than retrying it).
+
+  const regeneratedDraft = 'A red brick viaduct crossing a canal at midday.';
+
+  it('offers a Regenerate control that requests a fresh draft for the same media id [HAI-12][WBUX-5-S2C3B]', async () => {
+    describeMock
+      .mockResolvedValueOnce(sampleResponse(draft))
+      .mockResolvedValueOnce(sampleResponse(regeneratedDraft));
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await screen.findByText(draft);
+    fireEvent.click(screen.getByRole('button', { name: /^regenerate$/i }));
+
+    // [TEST-15] discrimination: goes red if Regenerate does not call generate()
+    // / describeMedia for the same media id, or if the new draft fails to replace
+    // the old one on screen (e.g. a no-op control or a forked path that never
+    // mutates). Single-line: onClick={generate} removed from Regenerate, or
+    // regenerate omitted from the review branch entirely.
+    expect(await screen.findByText(regeneratedDraft)).toBeInTheDocument();
+    expect(screen.queryByText(draft)).not.toBeInTheDocument();
+    expect(describeMock).toHaveBeenCalledTimes(2);
+    expect(describeMock).toHaveBeenLastCalledWith(42);
+    // BR-02 companion: fresh draft lands in review, not a stale edit buffer.
+    expect(screen.queryByLabelText(/edit draft alt text/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /accept/i })).toBeInTheDocument();
+  });
+
+  it('re-announces the ready state when a regenerate returns the same cue [WBUX-5-S2C3B][WBUX-5-S2C3A-BR-12]', async () => {
+    // Hold the regenerate request so the Generating cue is stable long enough to
+    // read its seq — mockResolvedValue races past it on a single microtask.
+    let resolveRegenerate!: (value: VisualFactsResponse) => void;
+    describeMock
+      .mockResolvedValueOnce(sampleResponse(draft))
+      .mockReturnValueOnce(
+        new Promise<VisualFactsResponse>((resolve) => {
+          resolveRegenerate = resolve;
+        }),
+      );
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/ready/i));
+    const firstSeq = screen.getByRole('status').getAttribute('data-announce-seq');
+    expect(firstSeq).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: /^regenerate$/i }));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/generating/i));
+    const generatingSeq = screen.getByRole('status').getAttribute('data-announce-seq');
+    expect(generatingSeq).toBeTruthy();
+    expect(generatingSeq).not.toBe(firstSeq);
+
+    resolveRegenerate(sampleResponse(regeneratedDraft));
+
+    // [TEST-15] discrimination: the ready *copy* is identical across generations.
+    // Asserts seq advances from the in-flight Generating cue to the second Ready
+    // cue — not merely that /ready/i is present (that would stay green on the
+    // first generation's leftover message).
+    // Observed mutations:
+    //   - remove setStatusSeq from announceStatus → red (seq stuck at "0")
+    //   - onSuccess uses setStatusMessage(ready) instead of announceStatus → red
+    //     (ready reuses the Generating seq; readySeq === generatingSeq)
+    //   - a test that only checked /ready/i after regenerate → green on both bugs
+    // Single-line each: neither failure needs a conjunction.
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(/ready/i);
+      const readySeq = screen.getByRole('status').getAttribute('data-announce-seq');
+      expect(readySeq).not.toBe(firstSeq);
+      expect(readySeq).not.toBe(generatingSeq);
+    });
+    expect(await screen.findByText(regeneratedDraft)).toBeInTheDocument();
+  });
+
+  it('disables Regenerate while a commit is in flight [WBUX-5-S2C3B]', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    correctMock.mockReturnValue(new Promise<DescriptionHistoryItem>(() => undefined));
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /accept/i }));
+    expect(await screen.findByRole('button', { name: /accepting draft/i })).toBeDisabled();
+
+    // [TEST-15] discrimination: goes red if Regenerate omits disabled={isAccepting}
+    // — the operator could fire a describe while a correction is in flight.
+    // Single-line: `disabled={isAccepting}` removed from the Regenerate button.
+    expect(screen.getByRole('button', { name: /^regenerate$/i })).toBeDisabled();
+  });
+
+  it('lands a failed regenerate on the error branch with Try again [INT-11][WBUX-5-S2C3B]', async () => {
+    describeMock
+      .mockResolvedValueOnce(sampleResponse(draft))
+      .mockRejectedValueOnce(
+        new Error(
+          'Request to /wp-json/acx/v1/recognition/describe failed (502): <html>proxy-internal-detail</html>',
+        ),
+      );
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await screen.findByText(draft);
+    fireEvent.click(screen.getByRole('button', { name: /^regenerate$/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/could not generate|couldn.?t generate|unable to generate/i);
+    expect(alert).not.toHaveTextContent(/proxy-internal-detail/i);
+    // Previous draft leaves the suggest surface (isError short-circuits data);
+    // Try again keeps the generation path, and the row inline editor remains the
+    // manual path [INT-11].
+    expect(screen.queryByText(draft)).not.toBeInTheDocument();
+    // [TEST-15] discrimination: goes red if regenerate failure leaves no Try again
+    // (e.g. a silent swallow, or a branch that only offers Dismiss). Single-line
+    // class: isError branch omitted or Try again not wired to generate.
+    expect(screen.getByRole('button', { name: /try again|retry/i })).toBeInTheDocument();
+  });
+
+  it('keeps focus inside the surface while generating, not on document.body [a11y][WBUX-5-S2C3A-BR-13][WBUX-5-S2C3B]', async () => {
+    describeMock.mockReturnValue(new Promise<VisualFactsResponse>(() => undefined));
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    expect(await screen.findByRole('button', { name: /generating/i })).toBeDisabled();
+    // Stands in for the browser blurring the control native `disabled` just applied.
+    parkFocusOnBody();
+
+    // [TEST-15] discrimination: goes red if the isPending parkIfStranded effect
+    // (or its document focusout listener) is removed — focus stays on
+    // document.body for the whole generation. Single-line: deleting the
+    // useEffect that keys on isPending. Also goes red if the container loses
+    // tabIndex={-1} (focus() is a no-op on non-focusable divs in some agents;
+    // observed here: without tabIndex, activeElement remains body).
+    await waitFor(() => {
+      expect(document.activeElement).not.toBe(document.body);
+      expect(document.activeElement).toHaveClass('acx-media-selection__media-alt-suggest');
+    });
+  });
+
+  it('retires a saved status message when focus leaves the idle surface [WBUX-5-S2C3A-BR-17][WBUX-5-S2C3B]', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    correctMock.mockResolvedValue(sampleHistoryItem());
+    renderSuggest(
+      <>
+        <MediaAltSuggest mediaId={42} />
+        <button type="button">Elsewhere</button>
+      </>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /accept/i }));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/saved/i));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /suggest alt text/i })).toHaveFocus(),
+    );
+
+    // Leave the surface without generating or dismissing — the message has been
+    // announced; keeping "Alt text saved." forever collides with a later inline-
+    // editor save status on the same row. Blur with relatedTarget so the
+    // container's onBlur sees focus exiting (native .focus() on Elsewhere does
+    // not reliably populate relatedTarget under jsdom).
+    const elsewhere = screen.getByRole('button', { name: /^elsewhere$/i });
+    fireEvent.blur(screen.getByRole('button', { name: /suggest alt text/i }), {
+      relatedTarget: elsewhere,
+    });
+
+    // [TEST-15] discrimination: goes red if handleContainerBlur stops clearing
+    // status on idle focus-leave, or if the idle branch omits onBlur. Single-line:
+    // clearStatus() removed from the !data && !isPending && !isError guard.
+    // No real elapsed time — event-driven retirement, not a timeout.
+    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+  });
 });

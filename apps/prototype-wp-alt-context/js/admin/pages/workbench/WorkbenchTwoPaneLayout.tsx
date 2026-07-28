@@ -42,6 +42,9 @@ export interface WorkbenchTwoPaneLayoutProps {
   stackBelowPx?: number;
 }
 
+/** Narrow ReactNode's Iterable member to a real array so children are ReactNode, not any. */
+const isReactNodeArray = (node: ReactNode): node is readonly ReactNode[] => Array.isArray(node);
+
 const isSlotEmpty = (node: ReactNode): boolean => {
   if (node == null || node === false || node === true) {
     return true;
@@ -52,7 +55,7 @@ const isSlotEmpty = (node: ReactNode): boolean => {
   if (typeof node === 'number') {
     return false;
   }
-  if (Array.isArray(node)) {
+  if (isReactNodeArray(node)) {
     return node.every((child) => isSlotEmpty(child));
   }
   if (isValidElement(node) && node.type === Fragment) {

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace AltContext\Api\Services;
 
+use WP_Error;
+
 use function absint;
 use function array_slice;
 use function array_values;
@@ -15,6 +17,7 @@ use function get_post_mime_type;
 use function get_posts;
 use function is_array;
 use function is_object;
+use function is_string;
 use function sanitize_text_field;
 use function trim;
 use function update_post_meta;
@@ -63,11 +66,36 @@ class DescriptionHistoryService {
 	}
 
 	/**
-	 * @return array<string,mixed>
+	 * Persist an operator alt-text correction. The alt write is failure-worthy;
+	 * human-edit meta is provenance/telemetry and is best-effort only (matches
+	 * the bulk-apply path, which only fails on the alt write).
+	 *
+	 * @return array<string,mixed>|WP_Error
 	 */
-	public function record_correction( int $media_id, string $alt_text ): array {
+	public function record_correction( int $media_id, string $alt_text ): array|WP_Error {
 		$normalized_alt_text = sanitize_text_field( trim( $alt_text ) );
-		update_post_meta( $media_id, self::ALT_META, $normalized_alt_text );
+
+		// S3-02: honor the update_post_meta() return. It also returns false when
+		// the stored value is byte-identical to $normalized_alt_text (a no-op
+		// overwrite); distinguish that from a real failure via a read-back so an
+		// unchanged value still counts as success rather than a false error.
+		// [INT-11] a failed write must leave the operator path and data intact —
+		// do not stamp human-edit meta unless the alt write is verified.
+		$alt_written = update_post_meta( $media_id, self::ALT_META, $normalized_alt_text );
+		if ( false === $alt_written ) {
+			$current = get_post_meta( $media_id, self::ALT_META, true );
+			if ( ! is_string( $current ) || $normalized_alt_text !== $current ) {
+				// [HAI-13] surface a visible, operator-actionable failure.
+				return new WP_Error(
+					'description_correction_failed',
+					'Could not save the alt text for this media item. Please try again.',
+					array( 'status' => 500 )
+				);
+			}
+		}
+
+		// Telemetry only: a failed human-edit write does not undo a verified alt
+		// save and is not failure-worthy for the operator response.
 		update_post_meta(
 			$media_id,
 			self::HUMAN_EDIT_META,
@@ -78,9 +106,17 @@ class DescriptionHistoryService {
 			)
 		);
 
-		return $this->build_item( $media_id ) ?? array(
+		$item = $this->build_item( $media_id );
+		if ( null !== $item ) {
+			return $item;
+		}
+
+		// Verified write but build_item still null (e.g. no prior provenance and
+		// human-edit meta write failed). [rg-015]: source envelope fields from
+		// storage, never echo the request as if it were a confirmed read.
+		return array(
 			'media_id'         => $media_id,
-			'current_alt_text' => $normalized_alt_text,
+			'current_alt_text' => (string) get_post_meta( $media_id, self::ALT_META, true ),
 		);
 	}
 

@@ -130,9 +130,7 @@ const WorkbenchPageContent = (): React.JSX.Element => {
           }
           library={
             <>
-              {detailTruncationNotice && (
-                <div className="acx-notice acx-notice--info">{detailTruncationNotice}</div>
-              )}
+              {detailTruncationNotice && <div className="acx-notice acx-notice--info">{detailTruncationNotice}</div>}
               <MediaSelection
                 collapsed={isMediaCollapsed}
                 onExpand={() => setMediaExpanded(true)}

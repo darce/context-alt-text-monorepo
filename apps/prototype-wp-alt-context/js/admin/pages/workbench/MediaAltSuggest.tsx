@@ -21,6 +21,7 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
     error: acceptError,
     reset: resetAccept,
   } = useCorrectMediaAlt();
+  const containerRef = useRef<HTMLDivElement>(null);
   const suggestButtonRef = useRef<HTMLButtonElement>(null);
   const dismissButtonRef = useRef<HTMLButtonElement>(null);
   const retryButtonRef = useRef<HTMLButtonElement>(null);
@@ -29,6 +30,8 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
   const shouldFocusSuggestRef = useRef(false);
   const shouldFocusEditButtonRef = useRef(false);
   const textareaId = useId();
+  const disclosureId = useId();
+  const errorId = useId();
 
   const generate = (): void => {
     setStatusMessage('');
@@ -45,8 +48,18 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
   // the previously focused control has unmounted — restore focus to an actionable
   // control in the new branch so keyboard/SR users are not stranded on body
   // (WBUX-5-S2C-BR-01). Idle focus only when shouldFocusSuggestRef is set (Dismiss),
-  // never on the initial mount.
+  // never on the initial mount. Error/data legs only move focus when this
+  // component still owns it (or focus fell to body from the disabled trigger) —
+  // generation is slow and a per-row control must not yank focus mid-keystroke.
   useEffect(() => {
+    if (isError || data) {
+      const active = document.activeElement;
+      const ownsFocus =
+        !active || active === document.body || containerRef.current?.contains(active);
+      if (!ownsFocus) {
+        return;
+      }
+    }
     if (isError) {
       retryButtonRef.current?.focus();
     } else if (data) {
@@ -70,7 +83,7 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
 
   if (isPending) {
     return (
-      <div className="acx-media-selection__media-alt-suggest">
+      <div ref={containerRef} className="acx-media-selection__media-alt-suggest">
         <button
           type="button"
           className="button acx-media-selection__media-alt-suggest-trigger"
@@ -84,7 +97,7 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
 
   if (isError) {
     return (
-      <div className="acx-media-selection__media-alt-suggest">
+      <div ref={containerRef} className="acx-media-selection__media-alt-suggest">
         <div className="acx-media-selection__media-alt-error" role="alert">
           {resolveDescribeErrorMessage(
             error,
@@ -146,8 +159,11 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
       );
     };
 
+    const editDescribedBy = isAcceptError ? `${disclosureId} ${errorId}` : disclosureId;
+    const canSaveEdit = editDraft.trim() !== '';
+
     return (
-      <div className="acx-media-selection__media-alt-suggest">
+      <div ref={containerRef} className="acx-media-selection__media-alt-suggest">
         {isEditing ? (
           <>
             <label
@@ -163,12 +179,14 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
               value={editDraft}
               onChange={(event) => setEditDraft(event.target.value)}
               disabled={isAccepting}
+              aria-describedby={editDescribedBy}
+              aria-invalid={isAcceptError || undefined}
             />
           </>
         ) : (
           <p className="acx-media-selection__media-alt-draft">{data.alt_text_draft}</p>
         )}
-        <p className="acx-media-selection__media-alt-disclosure">
+        <p id={disclosureId} className="acx-media-selection__media-alt-disclosure">
           {__('Drafted by AI — review before saving.', 'alt-context')}
         </p>
         {statusMessage ? (
@@ -177,7 +195,7 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
           </div>
         ) : null}
         {isAcceptError ? (
-          <div className="acx-media-selection__media-alt-error" role="alert">
+          <div id={errorId} className="acx-media-selection__media-alt-error" role="alert">
             {resolveDescribeErrorMessage(
               acceptError,
               __('Could not save the alt text. Please try again.', 'alt-context'),
@@ -190,9 +208,11 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
               type="button"
               className="button button-primary acx-media-selection__media-alt-suggest-save"
               onClick={saveEdit}
-              disabled={isAccepting}
+              disabled={isAccepting || !canSaveEdit}
             >
-              {isAccepting ? __('Saving…', 'alt-context') : __('Save', 'alt-context')}
+              {isAccepting
+                ? __('Saving alt text…', 'alt-context')
+                : __('Save alt text', 'alt-context')}
             </button>
             <button
               type="button"
@@ -200,7 +220,7 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
               onClick={cancelEdit}
               disabled={isAccepting}
             >
-              {__('Cancel', 'alt-context')}
+              {__('Cancel edit', 'alt-context')}
             </button>
           </>
         ) : (
@@ -220,7 +240,7 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
               onClick={enterEditMode}
               disabled={isAccepting}
             >
-              {__('Edit', 'alt-context')}
+              {__('Edit draft', 'alt-context')}
             </button>
             <button
               type="button"
@@ -244,7 +264,7 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
   }
 
   return (
-    <div className="acx-media-selection__media-alt-suggest">
+    <div ref={containerRef} className="acx-media-selection__media-alt-suggest">
       <button
         type="button"
         ref={suggestButtonRef}

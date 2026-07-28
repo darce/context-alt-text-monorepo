@@ -48,6 +48,7 @@ class DescriptionHistoryServiceTest extends TestCase
 
     public function testCorrectionUpdatesAltAndRecordsHumanEditWithoutRemovingProvenance(): void
     {
+        $this->seedAttachment(201, 'Attachment 201');
         $this->setPostMeta(201, '_wp_attachment_image_alt', 'Generated alt.');
         $this->setPostMeta(201, '_acx_description_provenance', [
             'alt_text_draft' => 'Generated alt.',
@@ -68,6 +69,7 @@ class DescriptionHistoryServiceTest extends TestCase
 
     public function testControllerRegistersHistoryRoutesAndDelegatesCorrection(): void
     {
+        $this->seedAttachment(301, 'Attachment 301');
         $controller = new DescribeController();
         $controller->register_routes();
 
@@ -98,6 +100,7 @@ class DescriptionHistoryServiceTest extends TestCase
     {
         $mediaId = 401;
         $sameAlt = 'Already stored alt.';
+        $this->seedAttachment($mediaId, 'Attachment 401');
         $this->setPostMeta($mediaId, '_wp_attachment_image_alt', $sameAlt);
         $this->setPostMeta($mediaId, '_acx_description_provenance', [
             'alt_text_draft' => 'Generated draft.',
@@ -127,6 +130,7 @@ class DescriptionHistoryServiceTest extends TestCase
         $mediaId = 402;
         $existingAlt = 'Existing stored alt.';
         $requestedAlt = 'Requested but unwritable alt.';
+        $this->seedAttachment($mediaId, 'Attachment 402');
         $this->setPostMeta($mediaId, '_wp_attachment_image_alt', $existingAlt);
         $this->setPostMeta($mediaId, '_acx_description_provenance', [
             'alt_text_draft' => 'Generated draft.',
@@ -171,6 +175,7 @@ class DescriptionHistoryServiceTest extends TestCase
     {
         $mediaId = 403;
         $newAlt = 'Operator-corrected alt.';
+        $this->seedAttachment($mediaId, 'Attachment 403');
         $this->setPostMeta($mediaId, '_wp_attachment_image_alt', 'Old alt.');
         $this->setPostMeta($mediaId, '_acx_description_provenance', [
             'alt_text_draft' => 'Generated draft.',
@@ -187,5 +192,94 @@ class DescriptionHistoryServiceTest extends TestCase
         $this->assertSame($newAlt, get_post_meta($mediaId, '_wp_attachment_image_alt', true));
         // Telemetry write did not persist.
         $this->assertSame('', get_post_meta($mediaId, '_acx_description_human_edit', true));
+    }
+
+    /**
+     * BR-42: a media_id with no post behind it must not write orphan alt or
+     * human-edit meta. Boundary validation before any update_post_meta call.
+     */
+    public function testNonexistentMediaIdReturnsNotFoundAndWritesNoMeta(): void
+    {
+        $mediaId = 999999;
+        $metaBefore = $GLOBALS['__ac_post_meta'];
+
+        $result = (new DescriptionHistoryService())->record_correction($mediaId, 'Orphan alt');
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('description_correction_failed', $result->get_error_code());
+        $this->assertSame(404, $result->get_error_data()['status']);
+        // The part that matters: meta store is untouched.
+        $this->assertSame($metaBefore, $GLOBALS['__ac_post_meta']);
+        $this->assertArrayNotHasKey($mediaId, $GLOBALS['__ac_post_meta']);
+    }
+
+    /**
+     * BR-42: an existing post that is not an attachment must be refused with
+     * 400 and must not receive alt/human-edit meta.
+     */
+    public function testNonAttachmentPostReturnsBadRequestAndWritesNoMeta(): void
+    {
+        $mediaId = 501;
+        $GLOBALS['__ac_posts'][$mediaId] = (object) [
+            'ID' => $mediaId,
+            'post_type' => 'post',
+            'post_title' => 'Regular post',
+        ];
+        $metaBefore = $GLOBALS['__ac_post_meta'];
+
+        $result = (new DescriptionHistoryService())->record_correction($mediaId, 'Should not land');
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('description_correction_failed', $result->get_error_code());
+        $this->assertSame(400, $result->get_error_data()['status']);
+        $this->assertSame($metaBefore, $GLOBALS['__ac_post_meta']);
+        $this->assertArrayNotHasKey($mediaId, $GLOBALS['__ac_post_meta']);
+    }
+
+    /**
+     * BR-42 happy path: a real attachment receives the alt write and returns
+     * the full history item envelope (title, mime, provenance, human_edit).
+     */
+    public function testHappyPathWritesAndReturnsFullItem(): void
+    {
+        $mediaId = 601;
+        $this->seedAttachment($mediaId, 'Harbor photo', 'image/jpeg');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', 'Old harbor alt.');
+        $this->setPostMeta($mediaId, '_acx_description_provenance', [
+            'alt_text_draft' => 'Generated harbor draft.',
+            'model_id' => 'local-v1',
+        ]);
+
+        $result = (new DescriptionHistoryService())->record_correction($mediaId, 'Corrected harbor alt.');
+
+        $this->assertNotInstanceOf(WP_Error::class, $result);
+        $this->assertIsArray($result);
+        $this->assertSame($mediaId, $result['media_id']);
+        $this->assertSame('Harbor photo', $result['title']);
+        $this->assertSame('image/jpeg', $result['mime_type']);
+        $this->assertSame('Corrected harbor alt.', $result['current_alt_text']);
+        $this->assertSame('Generated harbor draft.', $result['generated_alt_text']);
+        $this->assertSame(
+            ['alt_text_draft' => 'Generated harbor draft.', 'model_id' => 'local-v1'],
+            $result['provenance']
+        );
+        $this->assertIsArray($result['human_edit']);
+        $this->assertSame('Corrected harbor alt.', $result['human_edit']['alt_text']);
+        $this->assertSame('Corrected harbor alt.', get_post_meta($mediaId, '_wp_attachment_image_alt', true));
+    }
+
+    /**
+     * @param int    $mediaId
+     * @param string $title
+     * @param string $mime
+     */
+    private function seedAttachment(int $mediaId, string $title = '', string $mime = 'image/jpeg'): void
+    {
+        $GLOBALS['__ac_posts'][$mediaId] = (object) [
+            'ID' => $mediaId,
+            'post_type' => 'attachment',
+            'post_title' => $title,
+        ];
+        $GLOBALS['__ac_attachment_mimes'][$mediaId] = $mime;
     }
 }

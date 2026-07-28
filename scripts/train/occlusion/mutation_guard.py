@@ -18,16 +18,16 @@ Harness integrity (BR-49 / SECD-03 / SECD-05 / TEST-15):
 Mutations:
   CONTROL  inert comment (must SURVIVE — discrimination proof)
   M1  UNKNOWN_SPDX default-deny flipped to PASS
-  M2  delete both insightface patterns from NC_MODEL_PATTERNS (verdict-flipping)
+  M2  drop insightface family from NC_MODEL_IDS (verdict-flipping; B4b)
   M3  NC_MODEL_IDS = frozenset()
   M4  collapse _looks_like_research_source to exact frozenset membership
   M5  REQUIRED_MODEL_INGEST_DISPLAY_NAMES = ()  (suite must still hard-code names)
   M6  _synthetic_audit_targets: empty (source, derived) token loop
   M7  row-category ValueError handler → pass
-  M8  research compact match: drop startswith (exact only)  [one of two paths — see BR-47]
+  M8  research expand: drop unsplit compound forms (single site after B4b / BR-47)
   M9  audit_derived_from_model non-str guard → if False
   M10 disable has_generator_lineage synthetic routing branch
-  M11 separator-parity branch collapsed (casia-device / casiadevice diverge here)
+  M11 slash-component membership disabled (dataset/ffhq path hits)
   M12 get_model_ingest_entry primary raise → pass (xfail_until_b4c; known gap)
 
 Paths resolve from __file__ (never cwd) so this script runs as documented from
@@ -188,28 +188,21 @@ def _m1_unknown_spdx_pass(src: str) -> str:
 
 
 def _m2_drop_insightface_patterns(src: str) -> str:
-    """Delete both insightface patterns (verdict-flipping; BR-63).
+    """Drop insightface family from NC seed set (verdict-flipping; B4b re-point).
 
-    Dropping only ``insightface/*`` is legal-inert: every commercial outcome
-    falls through to bare ``insightface``. Removing both flips
-    ``insightface_buffalo_l`` / ``insightface-buffalo-l`` from FAIL→PASS.
+    After B4b, matching is exact expanded-id membership. Removing every
+    insightface-bearing seed from ``NC_MODEL_IDS`` flips
+    ``insightface_buffalo_l`` / nested ``…/insightface/…`` from FAIL→PASS
+    while buffalo_* pack ids remain denied.
     """
-    old = (
-        "NC_MODEL_PATTERNS: tuple[str, ...] = (\n"
-        '    "insightface/*",\n'
-        '    "insightface",\n'
-        '    "buffalo*",\n'
-        '    "buffalo",\n'
-        ")"
-    )
+    old = "NC_MODEL_IDS: frozenset[str] = _derive_nc_model_ids()"
     new = (
-        "NC_MODEL_PATTERNS: tuple[str, ...] = (\n"
-        "    # MUTATION M2: both insightface patterns removed (verdict-flipping)\n"
-        '    "buffalo*",\n'
-        '    "buffalo",\n'
+        "NC_MODEL_IDS: frozenset[str] = frozenset(  # MUTATION M2: drop insightface family\n"
+        '    x for x in _derive_nc_model_ids() if "insightface" not in x\n'
         ")"
     )
     return _replace_unique(src, old, new, "M2")
+
 
 
 def _m3_empty_nc_ids(src: str) -> str:
@@ -306,20 +299,16 @@ def _m7_category_valueerror_pass(src: str) -> str:
 
 
 def _m8_research_exact_only(src: str) -> str:
-    """Drop startswith compound match in research-source compact scan.
+    """Drop unsplit compound forms from registry-side expansion (B4b / BR-47).
 
-    NOTE (BR-47): this hits only the no-separator unsplit branch inside
-    ``_looks_like_research_source``. A duplicated unsplit startswith lives in
-    the slash-component loop of the same function; B4b owns the collapse.
-    After B4b, re-point M8 at the single surviving implementation.
+    Single surviving implementation: import-time ``_expand_id_forms`` adds
+    unsplit ``base+suffix`` forms (ffhq256, widerfacehd). Disabling that line
+    flips ``test_br27_unsplit_compounds_still_fail``.
     """
-    old = (
-        "            if norm.compact.startswith(src) and _research_unsplit_remainder_ok(\n"
-        "                norm.compact[len(src) :]\n"
-        "            ):"
-    )
-    new = "            if False:  # MUTATION M8: no unsplit compound startswith match"
+    old = '        unsplit = f"{_compact_canonical(c)}{suf}"  # unsplit compound startswith-equivalent'
+    new = '        unsplit = ""  # MUTATION M8: no unsplit compound expansion'
     return _replace_unique(src, old, new, "M8")
+
 
 
 def _m9_skip_derived_type_guard(src: str) -> str:
@@ -337,16 +326,24 @@ def _m10_disable_generator_lineage_branch(src: str) -> str:
 
 
 def _m11_collapse_separator_parity(src: str) -> str:
-    """Collapse separator-parity branch in research matcher (BR-43 / M11).
+    """Disable slash-component exact membership (B4b re-point of M11).
 
-    ``casiadevice`` (no separators) and ``casia-device`` (separators) diverge
-    at ``if not norm.has_separators:``. Forcing the unsplit path always makes
-    ``casia-device`` research-fail and drops slash-component research hits
-    such as ``dataset/ffhq``.
+    Under exact enumeration, separator parity lives in :func:`canonical`.
+    Slash-component hits such as ``dataset/ffhq`` are the remaining
+    path-shape branch; dropping them flips research slash-form controls.
     """
-    old = "    if not norm.has_separators:"
-    new = "    if True:  # MUTATION M11: ignore separator-parity; always unsplit path"
+    old = (
+        "    # Slash components only — never progressive underscore prefixes (BR-50/52).\n"
+        '    if "/" in c:\n'
+        '        for part in c.split("/"):'
+    )
+    new = (
+        "    # MUTATION M11: slash-component membership disabled\n"
+        '    if False and "/" in c:\n'
+        '        for part in c.split("/"):'
+    )
     return _replace_unique(src, old, new, "M11")
+
 
 
 def _m12_ingest_entry_raise_pass(src: str) -> str:
@@ -390,7 +387,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         name="M2",
-        description="delete both insightface patterns from NC_MODEL_PATTERNS (verdict-flip)",
+        description="drop insightface family from NC_MODEL_IDS (verdict-flip; B4b)",
         apply="m2",
         expected_victims=(
             "test_nested_and_separator_insightface_forms_fail",
@@ -440,7 +437,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         name="M8",
-        description="research match: drop unsplit-compound startswith branch",
+        description="research expand: drop unsplit-compound forms (B4b single site)",
         apply="m8",
         expected_victims=("test_br27_unsplit_compounds_still_fail",),
     ),
@@ -458,7 +455,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         name="M11",
-        description="separator-parity branch collapsed (always unsplit path)",
+        description="slash-component membership disabled (B4b separator-parity site)",
         apply="m11",
         expected_victims=(
             "test_research_source_fails_with_research_only_reason",

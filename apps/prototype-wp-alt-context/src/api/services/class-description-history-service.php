@@ -66,9 +66,18 @@ class DescriptionHistoryService {
 	}
 
 	/**
-	 * Persist an operator alt-text correction. The alt write is failure-worthy;
-	 * human-edit meta is provenance/telemetry and is best-effort only (matches
-	 * the bulk-apply path, which only fails on the alt write).
+	 * Persist an operator alt-text correction.
+	 *
+	 * Contract (BR-40 / BR-41): both the alt write and the human-edit telemetry
+	 * write are failure-worthy. A verified alt with a failed human-edit write
+	 * returns 500 so the response never reports success telemetry that storage
+	 * does not hold. The alt is left in place (not rolled back) — the operator
+	 * can retry; the no-op alt path already treats a re-save of the same text as
+	 * success, so a retry can complete the human-edit marker.
+	 *
+	 * Success always returns the full history-item envelope (never a partial
+	 * two-field object). Missing meta is expressed as null / empty string from
+	 * storage, not synthesised client-facing provenance. [rg-015]
 	 *
 	 * @return array<string,mixed>|WP_Error
 	 */
@@ -113,29 +122,50 @@ class DescriptionHistoryService {
 			}
 		}
 
-		// Telemetry only: a failed human-edit write does not undo a verified alt
-		// save and is not failure-worthy for the operator response.
-		update_post_meta(
-			$media_id,
-			self::HUMAN_EDIT_META,
-			array(
-				'alt_text'  => $normalized_alt_text,
-				'edited_at' => current_time( 'mysql' ),
-				'user_id'   => get_current_user_id(),
-			)
+		// Human-edit meta is required for an honest correction response and for
+		// list_history parity. Failure after a verified alt is still an error
+		// (BR-40 option a): do not claim success when stored telemetry lags.
+		// Alt text is intentionally left written — retry completes the marker.
+		$human_edit_payload = array(
+			'alt_text'  => $normalized_alt_text,
+			'edited_at' => current_time( 'mysql' ),
+			'user_id'   => get_current_user_id(),
 		);
+		$human_written = update_post_meta( $media_id, self::HUMAN_EDIT_META, $human_edit_payload );
+		if ( false === $human_written ) {
+			$current_human = get_post_meta( $media_id, self::HUMAN_EDIT_META, true );
+			// Accept only when storage already holds this correction's alt_text
+			// (byte-identical no-op). A missing or mismatched marker is a real fail.
+			$human_ok = is_array( $current_human )
+				&& isset( $current_human['alt_text'] )
+				&& is_string( $current_human['alt_text'] )
+				&& $normalized_alt_text === $current_human['alt_text'];
+			if ( ! $human_ok ) {
+				return new WP_Error(
+					'description_correction_failed',
+					'Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.',
+					array( 'status' => 500 )
+				);
+			}
+		}
 
 		$item = $this->build_item( $media_id );
 		if ( null !== $item ) {
 			return $item;
 		}
 
-		// Verified write but build_item still null (e.g. no prior provenance and
-		// human-edit meta write failed). [rg-015]: source envelope fields from
-		// storage, never echo the request as if it were a confirmed read.
+		// Verified writes but build_item still null (defensive). Return the full
+		// envelope with storage-sourced fields; null/empty = documented absence of
+		// that meta, never synthesised provenance. [rg-015] [BR-41]
 		return array(
-			'media_id'         => $media_id,
-			'current_alt_text' => (string) get_post_meta( $media_id, self::ALT_META, true ),
+			'media_id'           => $media_id,
+			'title'              => is_object( $post ) && isset( $post->post_title ) ? (string) $post->post_title : '',
+			'mime_type'          => (string) get_post_mime_type( $media_id ),
+			'current_alt_text'   => (string) get_post_meta( $media_id, self::ALT_META, true ),
+			'generated_alt_text' => '',
+			'provenance'         => null,
+			'human_edit'         => null,
+			'run_status'         => null,
 		);
 	}
 

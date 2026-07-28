@@ -14,8 +14,10 @@ import {
 } from 'react';
 import { __ } from '@wordpress/i18n';
 
-/** Collapse/host state owned by the caller (URL codec lives elsewhere). */
-export type WorkbenchPanesState = 'both' | 'control-collapsed' | 'library-collapsed';
+import { APP_LINK_VALUES, type PanesState } from '../../navigation/appLinks';
+
+/** Collapse/host state owned by the caller (URL codec lives in appLinks). [sr-007] */
+export type WorkbenchPanesState = PanesState;
 
 /** Default stack breakpoint: ~320px / 200% zoom [A11Y-08]. */
 export const DEFAULT_STACK_BELOW_PX = 320;
@@ -101,13 +103,13 @@ const useStackMatch = (stackBelowPx: number): boolean => {
 };
 
 const nextCollapseState = (current: WorkbenchPanesState): WorkbenchPanesState => {
-  if (current === 'both') {
-    return 'control-collapsed';
+  if (current === APP_LINK_VALUES.panesBoth) {
+    return APP_LINK_VALUES.panesControlCollapsed;
   }
-  if (current === 'control-collapsed') {
-    return 'library-collapsed';
+  if (current === APP_LINK_VALUES.panesControlCollapsed) {
+    return APP_LINK_VALUES.panesLibraryCollapsed;
   }
-  return 'both';
+  return APP_LINK_VALUES.panesBoth;
 };
 
 interface PaneHostProps {
@@ -316,8 +318,8 @@ export const WorkbenchTwoPaneLayout = ({
   const controlTitleId = useId();
   const libraryTitleId = useId();
 
-  const controlCollapsed = panes === 'control-collapsed';
-  const libraryCollapsed = panes === 'library-collapsed';
+  const controlCollapsed = panes === APP_LINK_VALUES.panesControlCollapsed;
+  const libraryCollapsed = panes === APP_LINK_VALUES.panesLibraryCollapsed;
 
   const controlTitle = __('Control', 'alt-context');
   const libraryTitle = __('Library', 'alt-context');
@@ -331,7 +333,7 @@ export const WorkbenchTwoPaneLayout = ({
   );
 
   const controlStyle: CSSProperties | undefined =
-    !stacked && panes === 'both'
+    !stacked && panes === APP_LINK_VALUES.panesBoth
       ? {
           flexGrow: 0,
           flexShrink: 0,
@@ -340,7 +342,7 @@ export const WorkbenchTwoPaneLayout = ({
       : undefined;
 
   const libraryStyle: CSSProperties | undefined =
-    !stacked && panes === 'both'
+    !stacked && panes === APP_LINK_VALUES.panesBoth
       ? {
           flexGrow: 1,
           flexShrink: 1,

@@ -4,7 +4,7 @@
 >
 > - **Date**: 2026-07-06
 > - **Owning task**: E20-11 (`docs/tasks/20.0/E20-11-hosted-provider-benchmark-and-governance-decision-task-plan.md`)
-> - **Status**: FINAL
+> - **Status**: FINAL (boundary refined 2026-07-07 — see [§ Amendment](#amendment-2026-07-07--boundary-is-third-party-model-providers-not-self-hosted-gpu))
 > - **Disposition enum (canonical)**: `ship | benchmark_only | defer_byok | reject`
 
 ## Decision
@@ -61,3 +61,40 @@ the task plan § Proposed Solution for any future re-evaluation.
   for local-profile runs.
 - **VLM-2C** golden-manifest population still owns making insertion/named-entity
   metrics measurable for local-profile evals.
+
+## Amendment (2026-07-07) — boundary is third-party model providers, not self-hosted GPU
+
+Operator governance clarification (2026-07-07). The original decision phrased the
+posture as "only self-hosted, **CPU-run** models," which conflated two separate
+things: **who controls the model** and **what hardware runs it**. The governing
+concern is the former. This amendment refines the boundary:
+
+- **The prohibition is on sending image bytes to a third-party-*hosted model* /
+  model-provider inference API** (e.g. GPT-4o, Gemini, or any service where a
+  third party operates the model, sees the image, and may retain or train on it).
+  That remains `reject` — unchanged. `hosted_gpt4o` / `HostedProviderDescriptionAdapter`
+  stay registered **fail-closed**; `ACX_HOSTED_PROVIDER_OPTIN` is never set.
+- **Running our own self-hosted model (our weights, our code, our control) on a
+  GPU is PERMITTED** — whether an on-prem GPU or rented serverless GPU compute
+  (e.g. Modal, RunPod Serverless) that executes *our* container running *our*
+  Florence-2 weights. The "CPU-run" wording is superseded: GPU execution of a
+  self-hosted model is allowed. The model is not a subprocessor's model; the
+  provider supplies raw compute, not inference.
+
+**Caveat — rented-GPU infrastructure is still a data subprocessor.** Sending
+image bytes to rented GPU infra means bytes transit a third party's hardware,
+so a self-hosted-on-rented-GPU deployment MUST: (a) disclose that infra
+subprocessor, (b) prefer no-retention / ephemeral-storage terms, and (c) keep
+the `provider_disclosure.left_service_boundary` wire field truthful. Wholly
+on-prem GPU has no such subprocessor. This caveat does not block the path; it
+scopes the controls.
+
+**What this unblocks:** scale-to-zero GPU offload of the *self-hosted* Florence
+path (see the WBUX-3 research: ZeroGPU is unusable server-to-server, but
+Modal / RunPod Serverless can run our own container). The GPU-procurement
+work that WBUX-3 defers is now a **governance-permitted** future rather than a
+governance-blocked one, subject to the subprocessor caveat above.
+
+**What is still unchanged / out of scope:** third-party *model-provider* APIs
+(`reject`, as above); BYOK (not implemented, not deferred); any actual GPU-offload
+implementation (still requires its own scoped task with the subprocessor controls).

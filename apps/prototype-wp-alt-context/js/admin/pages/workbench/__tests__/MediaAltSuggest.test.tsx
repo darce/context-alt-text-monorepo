@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { MediaAltInlineEditor } from '../MediaAltInlineEditor';
 import { MediaAltSuggest } from '../MediaAltSuggest';
 import { correctDescriptionHistoryItem, describeMedia } from '../../../api/describeApi';
 import type { DescriptionHistoryItem, VisualFactsResponse } from '../../../api/describeApi';
@@ -76,6 +77,9 @@ const renderSuggest = (element: ReactElement, client = buildClient()) => ({
   client,
   ...render(<QueryClientProvider client={client}>{element}</QueryClientProvider>),
 });
+
+/** Visible-text accessible name for controls whose names come from textContent. */
+const buttonAccessibleName = (button: HTMLElement): string => (button.textContent ?? '').trim();
 
 describe('MediaAltSuggest', () => {
   beforeEach(() => {
@@ -170,6 +174,10 @@ describe('MediaAltSuggest', () => {
 
     expect(screen.queryByText(draft)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /suggest alt text/i })).toBeInTheDocument();
+    // [WBUX-5-S2C3A-BR-15] discrimination: goes red if Dismiss stops clearing
+    // statusMessage — the idle surface would keep "Draft ready. Review before saving."
+    // with no draft left to review.
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
   it('restores focus to the Suggest control after dismiss [a11y][WBUX-5-S2C-BR-01]', async () => {
@@ -204,6 +212,37 @@ describe('MediaAltSuggest', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /try again|retry/i })).toHaveFocus(),
     );
+  });
+
+  it('does not steal focus when a draft lands while the operator is elsewhere [a11y][WBUX-5-S2C3A-BR-11]', async () => {
+    let resolveDescribe!: (value: VisualFactsResponse) => void;
+    describeMock.mockReturnValue(
+      new Promise<VisualFactsResponse>((resolve) => {
+        resolveDescribe = resolve;
+      }),
+    );
+    renderSuggest(
+      <>
+        <button type="button">Elsewhere</button>
+        <MediaAltSuggest mediaId={42} />
+      </>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    expect(await screen.findByRole('button', { name: /generating/i })).toBeDisabled();
+
+    const elsewhere = screen.getByRole('button', { name: /^elsewhere$/i });
+    elsewhere.focus();
+    expect(elsewhere).toHaveFocus();
+
+    resolveDescribe(sampleResponse());
+    await screen.findByText(draft);
+
+    // [TEST-15] discrimination: goes red if the draft-landing focus effect always
+    // focuses Dismiss without checking containerRef.contains(activeElement) —
+    // generation is slow (fixture duration_ms 13800) and a per-row control must
+    // not yank focus mid-keystroke on another control.
+    expect(screen.getByRole('button', { name: /^elsewhere$/i })).toHaveFocus();
   });
 
   it('offers an Accept control alongside the shown draft [HAI-12][S2c-2]', async () => {
@@ -332,7 +371,7 @@ describe('MediaAltSuggest', () => {
 
     // The edit leg must be reachable from the draft state; accept/dismiss-only
     // would collapse the operator's role to rubber-stamping the model.
-    expect(screen.getByRole('button', { name: /^edit$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^edit draft$/i })).toBeInTheDocument();
   });
 
   it('seeds the edit field with the draft so the good prefix is preserved [INT-11][S2c-3a]', async () => {
@@ -340,11 +379,30 @@ describe('MediaAltSuggest', () => {
     renderSuggest(<MediaAltSuggest mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
-    fireEvent.click(await screen.findByRole('button', { name: /^edit$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
 
     // [TEST-15] discrimination: red on an empty field (full-restart authoring)
     // or on a field seeded from the committed alt instead of the shown draft.
     expect(await screen.findByLabelText(/edit draft alt text/i)).toHaveValue(draft);
+  });
+
+  it('re-seeds the edit buffer from the draft on every Edit entry [S2c-3a][WBUX-5-S2C3A-BR-10]', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
+    fireEvent.change(await screen.findByLabelText(/edit draft alt text/i), {
+      target: { value: editedDraft },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^cancel edit$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
+
+    // [TEST-15] discrimination: goes red if enterEditMode uses a conditional seed
+    // such as setEditDraft((prev) => prev || data.alt_text_draft) — the operator's
+    // abandoned amendment would leak back in instead of the machine draft.
+    expect(await screen.findByLabelText(/edit draft alt text/i)).toHaveValue(draft);
+    expect(screen.getByLabelText(/edit draft alt text/i)).not.toHaveValue(editedDraft);
   });
 
   it('names the edit field distinctly from the row inline editor [A11Y-03][A11Y-04][S2c-3a]', async () => {
@@ -352,7 +410,7 @@ describe('MediaAltSuggest', () => {
     renderSuggest(<MediaAltSuggest mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
-    fireEvent.click(await screen.findByRole('button', { name: /^edit$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
 
     // The row also renders MediaAltInlineEditor, whose textarea is labelled
     // "Alt text". Two identically named fields in one row leave a voice-control
@@ -363,12 +421,52 @@ describe('MediaAltSuggest', () => {
     expect(screen.queryByLabelText(/^alt text$/i)).not.toBeInTheDocument();
   });
 
+  it('keeps co-mounted suggest and inline editors free of duplicate accessible names [A11Y-03][WBUX-5-S2C3A-BR-08]', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    renderSuggest(
+      <>
+        <MediaAltInlineEditor mediaId={42} altText="An existing human-authored alt text." />
+        <MediaAltSuggest mediaId={42} />
+      </>,
+    );
+
+    // Open both editors exactly as the table row can: inline edit + suggest edit.
+    fireEvent.click(screen.getByRole('button', { name: /edit alt text/i }));
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
+    await screen.findByLabelText(/edit draft alt text/i);
+
+    const textboxes = screen.getAllByRole('textbox');
+    expect(textboxes).toHaveLength(2);
+    const textboxNames = textboxes.map((el) => {
+      const id = el.getAttribute('id');
+      if (id) {
+        const label = Array.from(document.querySelectorAll('label')).find(
+          (node) => node.htmlFor === id,
+        );
+        if (label?.textContent) {
+          return label.textContent.trim();
+        }
+      }
+      return (el.getAttribute('aria-label') ?? '').trim();
+    });
+    // [TEST-15] discrimination: red if either field reuses the other's label
+    // (e.g. both "Alt text") — voice control cannot disambiguate.
+    expect(new Set(textboxNames).size).toBe(textboxNames.length);
+
+    const buttonNames = screen.getAllByRole('button').map(buttonAccessibleName);
+    const duplicateNames = buttonNames.filter((name, index) => buttonNames.indexOf(name) !== index);
+    // [TEST-15] discrimination: red today with pre-BR-03 labels (two "Save", two
+    // "Cancel"); green once suggest uses "Save alt text" / "Cancel edit".
+    expect(duplicateNames).toEqual([]);
+  });
+
   it('moves focus into the edit field on Edit [a11y][S2c-3a]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
     renderSuggest(<MediaAltSuggest mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
-    fireEvent.click(await screen.findByRole('button', { name: /^edit$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
 
     // Edit unmounts the focused control; a keyboard user must land in the field
     // they asked for, not on document.body (mirrors WBUX-5-S2C-BR-01).
@@ -380,15 +478,38 @@ describe('MediaAltSuggest', () => {
     renderSuggest(<MediaAltSuggest mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
-    fireEvent.click(await screen.findByRole('button', { name: /^edit$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
     await screen.findByLabelText(/edit draft alt text/i);
 
     // Accept commits the ORIGINAL draft. Leaving it live beside Save would let
     // one mis-click silently discard the operator's edit, so edit mode replaces
     // the accept/dismiss pair with save/cancel.
     expect(screen.queryByRole('button', { name: /accept/i })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^save$/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^cancel$/i })).toBeInTheDocument();
+    // [WBUX-5-S2C3A-BR-14] discrimination: goes red if Dismiss stays mounted in
+    // edit mode — a mis-click would destroy the in-progress amendment.
+    expect(screen.queryByRole('button', { name: /dismiss/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^save alt text$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^cancel edit$/i })).toBeInTheDocument();
+  });
+
+  it('disables Save when the edit buffer is empty or whitespace-only [S2c-3a][WBUX-5-S2C3A-BR-04]', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
+    const field = await screen.findByLabelText(/edit draft alt text/i);
+
+    fireEvent.change(field, { target: { value: '' } });
+    // [TEST-15] discrimination: goes red if saveEdit still commits editDraft with
+    // no empty guard — select-all + delete + Save would wipe the attachment alt.
+    expect(screen.getByRole('button', { name: /^save alt text$/i })).toBeDisabled();
+
+    fireEvent.change(field, { target: { value: '   ' } });
+    expect(screen.getByRole('button', { name: /^save alt text$/i })).toBeDisabled();
+
+    fireEvent.change(field, { target: { value: editedDraft } });
+    expect(screen.getByRole('button', { name: /^save alt text$/i })).not.toBeDisabled();
   });
 
   it('commits the edited text, not the original draft [HAI-02][INT-11][S2c-3a]', async () => {
@@ -399,13 +520,13 @@ describe('MediaAltSuggest', () => {
     renderSuggest(<MediaAltSuggest mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
-    fireEvent.click(await screen.findByRole('button', { name: /^edit$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
     fireEvent.change(await screen.findByLabelText(/edit draft alt text/i), {
       target: { value: editedDraft },
     });
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^save alt text$/i }));
 
-    expect(await screen.findByRole('button', { name: /saving/i })).toBeDisabled();
+    expect(await screen.findByRole('button', { name: /saving alt text/i })).toBeDisabled();
     // [TEST-15] discrimination: this is the whole point of the edit leg. It goes
     // red the moment the commit reads data.alt_text_draft instead of the field,
     // which is exactly how a seeded-but-ignored editor would fail.
@@ -418,11 +539,11 @@ describe('MediaAltSuggest', () => {
     renderSuggest(<MediaAltSuggest mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
-    fireEvent.click(await screen.findByRole('button', { name: /^edit$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
     fireEvent.change(await screen.findByLabelText(/edit draft alt text/i), {
       target: { value: editedDraft },
     });
-    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^cancel edit$/i }));
 
     // Abandoning an edit must not write, and must restore the unmodified
     // proposal alongside its accept path.
@@ -430,7 +551,9 @@ describe('MediaAltSuggest', () => {
     expect(screen.getByText(draft)).toBeInTheDocument();
     expect(screen.queryByText(editedDraft)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /accept/i })).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByRole('button', { name: /^edit$/i })).toHaveFocus());
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^edit draft$/i })).toHaveFocus(),
+    );
   });
 
   it('announces the saved state and returns to the Suggest control after an edited save [S2c-3a]', async () => {
@@ -439,11 +562,11 @@ describe('MediaAltSuggest', () => {
     renderSuggest(<MediaAltSuggest mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
-    fireEvent.click(await screen.findByRole('button', { name: /^edit$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
     fireEvent.change(await screen.findByLabelText(/edit draft alt text/i), {
       target: { value: editedDraft },
     });
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^save alt text$/i }));
 
     // The committed alt now lives on the row's inline editor, so the suggest
     // surface resets to idle exactly as the accept leg does.
@@ -465,11 +588,11 @@ describe('MediaAltSuggest', () => {
     renderSuggest(<MediaAltSuggest mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
-    fireEvent.click(await screen.findByRole('button', { name: /^edit$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
     fireEvent.change(await screen.findByLabelText(/edit draft alt text/i), {
       target: { value: editedDraft },
     });
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^save alt text$/i }));
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(/could not save|couldn.?t save|unable to save/i);
@@ -478,7 +601,50 @@ describe('MediaAltSuggest', () => {
     // [INT-11] the operator's typing is the good prefix: a failed save must not
     // drop them back to the machine draft and make them retype the amendment.
     expect(screen.getByLabelText(/edit draft alt text/i)).toHaveValue(editedDraft);
-    expect(screen.getByRole('button', { name: /^save$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^save alt text$/i })).toBeInTheDocument();
+  });
+
+  it('describes the edit field with the disclosure and associates a save error [a11y][WBUX-5-S2C3A-BR-09]', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    correctMock.mockRejectedValueOnce(
+      new Error(
+        'Request to /wp-json/acx/v1/recognition/describe-history/42/correction failed (502): <html>proxy-internal-detail</html>',
+      ),
+    );
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
+    const field = await screen.findByLabelText(/edit draft alt text/i);
+
+    const describedBy = field.getAttribute('aria-describedby');
+    expect(describedBy).toBeTruthy();
+    const descriptionText = (describedBy ?? '')
+      .split(/\s+/)
+      .map((id) => document.getElementById(id)?.textContent ?? '')
+      .join(' ');
+    // [TEST-15] discrimination: goes red if the textarea has no aria-describedby
+    // pointing at the AI disclosure — SR users re-entering the field get no cue.
+    expect(descriptionText).toMatch(/drafted by ai/i);
+    expect(field).not.toHaveAttribute('aria-invalid', 'true');
+
+    fireEvent.change(field, { target: { value: editedDraft } });
+    fireEvent.click(screen.getByRole('button', { name: /^save alt text$/i }));
+    await screen.findByRole('alert');
+
+    const fieldAfterFail = screen.getByLabelText(/edit draft alt text/i);
+    expect(fieldAfterFail).toHaveAttribute('aria-invalid', 'true');
+    const describedByAfter = fieldAfterFail.getAttribute('aria-describedby');
+    expect(describedByAfter).toBeTruthy();
+    const descriptionAfter = (describedByAfter ?? '')
+      .split(/\s+/)
+      .map((id) => document.getElementById(id)?.textContent ?? '')
+      .join(' ');
+    // [TEST-15] discrimination: goes red if a failed save leaves the field without
+    // aria-invalid / without chaining the alert id into describedby — role=alert
+    // only fires once on mount, so returning focus later needs the association.
+    expect(descriptionAfter).toMatch(/drafted by ai/i);
+    expect(descriptionAfter).toMatch(/could not save|couldn.?t save|unable to save/i);
   });
 
   it('does not resurface a prior save error on re-entering edit [INT-11][a11y][WBUX-5-S2C3A-BR-01]', async () => {
@@ -492,20 +658,43 @@ describe('MediaAltSuggest', () => {
 
     // Edit -> Save fails -> the save-failure alert appears for this attempt.
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
-    fireEvent.click(await screen.findByRole('button', { name: /^edit$/i }));
-    fireEvent.click(await screen.findByRole('button', { name: /^save$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^save alt text$/i }));
     await screen.findByRole('alert');
 
     // Back out, then re-enter edit for a fresh attempt.
-    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^cancel edit$/i }));
     await screen.findByRole('button', { name: /accept/i });
-    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^edit draft$/i }));
     await screen.findByLabelText(/edit draft alt text/i);
 
     // [TEST-15] discrimination: the new attempt has not failed, so no stale
     // assertive alert may fire — it announces a false failure to SR users. Red
     // while the correction mutation is not reset on cancel/enter-edit. Same bug
     // class as WBUX-5-S2C2-BR-01, guarded here rather than rediscovered.
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('does not resurface a prior accept error when entering edit from draft review [INT-11][a11y][WBUX-5-S2C3A-BR-07]', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    correctMock.mockRejectedValueOnce(
+      new Error(
+        'Request to /wp-json/acx/v1/recognition/describe-history/42/correction failed (502): <html>proxy-internal-detail</html>',
+      ),
+    );
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    // Accept fails while NOT editing — the path enterEditMode's resetAccept guards.
+    // No Cancel: cancelEdit also resets, so a Cancel-based test cannot pin this line.
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /accept/i }));
+    await screen.findByRole('alert');
+
+    fireEvent.click(screen.getByRole('button', { name: /^edit draft$/i }));
+    await screen.findByLabelText(/edit draft alt text/i);
+
+    // [TEST-15] discrimination: goes red if resetAccept() is removed from
+    // enterEditMode — the Accept failure alert would reappear on a fresh edit.
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
@@ -516,11 +705,11 @@ describe('MediaAltSuggest', () => {
 
     // Edit -> Save succeeds -> surface resets to idle.
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
-    fireEvent.click(await screen.findByRole('button', { name: /^edit$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
     fireEvent.change(await screen.findByLabelText(/edit draft alt text/i), {
       target: { value: editedDraft },
     });
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^save alt text$/i }));
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /suggest alt text/i })).toHaveFocus(),
     );

@@ -7,12 +7,15 @@ import unicodedata
 import warnings
 
 import pytest
+from pydantic import ValidationError
 
 from scripts.eval_harness.manifest import (
+    GoldenEntry,
     GoldenManifest,
     ManifestError,
     ReferenceFact,
     RubricEmptyWarning,
+    SliceTag,
     load_manifest,
 )
 
@@ -402,6 +405,9 @@ def test_legacy_entry_defaults_additive_fields(tmp_path):
     e = manifest.entries[0]
     assert e.difficulty is None and e.domain is None
     assert e.reference_facts == [] and e.spatial_facts == [] and e.provenance is None
+    # FIR-5 S1 / DATA-03: scalar domain + no tags/demographic_cohort still loads.
+    assert e.tags == [] and e.demographic_cohort is None
+    assert manifest.roster_cohorts == {}
 
 
 def test_golden100_fields_roundtrip(tmp_path):
@@ -457,3 +463,99 @@ def test_golden38_subset_pin():
         "golden-38 subset drifted; historical media_ids must never be renumbered — "
         "Golden-100 additions continue from media_id 39"
     )
+
+
+# --- FIR-5 S1: SliceTag + cohort schema --------------------------------------
+
+
+def test_multi_tag_roundtrip():
+    """GoldenEntry with multiple SliceTags survives model_validate -> model_dump."""
+    payload = {
+        "path": "mock_images/scene-001.jpg",
+        "sha256": "a" * 64,
+        "media_id": 1,
+        "face_count": 1,
+        "present_identities": ["Alice Example"],
+        "base_caption": "",
+        "must_right": [],
+        "easy_wrong": [],
+        "policy": {"recognition_enabled": True},
+        "tags": [SliceTag.MASKED, SliceTag.SUNGLASSES],
+    }
+    entry = GoldenEntry.model_validate(payload)
+    assert entry.tags == [SliceTag.MASKED, SliceTag.SUNGLASSES]
+    dumped = entry.model_dump()
+    assert dumped["tags"] == [SliceTag.MASKED, SliceTag.SUNGLASSES]
+    # JSON-mode dump preserves string values for enum members.
+    dumped_json = entry.model_dump(mode="json")
+    assert dumped_json["tags"] == ["masked", "sunglasses"]
+    again = GoldenEntry.model_validate(dumped_json)
+    assert again.tags == [SliceTag.MASKED, SliceTag.SUNGLASSES]
+
+
+def test_legacy_domain_without_tags_or_cohort_loads(tmp_path):
+    """DATA-03: scalar domain + omitted tags/demographic_cohort defaults cleanly."""
+    data = _valid_manifest_dict()
+    data["entries"][0]["domain"] = "people"
+    # deliberately omit tags / demographic_cohort / roster_cohorts
+    manifest = load_manifest(_write_manifest(tmp_path, data))
+    e = manifest.entries[0]
+    assert e.domain.value == "people"
+    assert e.tags == []
+    assert e.demographic_cohort is None
+    assert manifest.roster_cohorts == {}
+
+
+def test_unknown_tag_string_rejected_by_slicetag_enum():
+    """Unknown tag strings fail SliceTag enum coercion — not extra='forbid'.
+
+    extra='forbid' rejects unknown *fields*; enum validation rejects unknown
+    *values* on a known field. These are distinct mechanisms (FIR-5 contract).
+    """
+    payload = {
+        "path": "mock_images/scene-001.jpg",
+        "sha256": "a" * 64,
+        "media_id": 1,
+        "face_count": 0,
+        "present_identities": [],
+        "base_caption": "",
+        "must_right": [],
+        "easy_wrong": [],
+        "policy": {"recognition_enabled": True},
+        "tags": ["wearing_hat"],  # not a SliceTag member
+    }
+    with pytest.raises(ValidationError) as exc_info:
+        GoldenEntry.model_validate(payload)
+    err = exc_info.value
+    # Enum coercion path: error is under tags, not an "extra_forbidden" on a field name.
+    assert any(e["loc"][:1] == ("tags",) for e in err.errors())
+    assert not any(e.get("type") == "extra_forbidden" for e in err.errors())
+
+
+def test_unknown_tag_string_rejected_via_load_manifest(tmp_path):
+    data = _valid_manifest_dict()
+    data["entries"][0]["tags"] = ["wearing_hat"]
+    with pytest.raises(ManifestError, match="schema violation"):
+        load_manifest(_write_manifest(tmp_path, data))
+
+
+def test_roster_cohorts_key_outside_roster_rejected(tmp_path):
+    data = _valid_manifest_dict()
+    data["roster_cohorts"] = {"Nobody Known": "cohort-a"}
+    with pytest.raises(ManifestError, match="Nobody Known"):
+        load_manifest(_write_manifest(tmp_path, data))
+
+
+def test_valid_roster_cohorts_loads(tmp_path):
+    data = _valid_manifest_dict()
+    data["roster_cohorts"] = {
+        "Alice Example": "cohort-a",
+        "Bob Example": "cohort-b",
+    }
+    data["entries"][0]["demographic_cohort"] = "cohort-a"
+    manifest = load_manifest(_write_manifest(tmp_path, data))
+    assert manifest.roster_cohorts == {
+        "Alice Example": "cohort-a",
+        "Bob Example": "cohort-b",
+    }
+    assert manifest.entries[0].demographic_cohort == "cohort-a"

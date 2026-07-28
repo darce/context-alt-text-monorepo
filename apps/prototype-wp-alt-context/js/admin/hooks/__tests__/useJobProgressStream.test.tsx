@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { JOB_PROGRESS_STALL_THRESHOLD_MS, useJobProgressStream } from '../useJobProgressStream';
 import { useJobCoordination } from '../useJobCoordination';
-import { resetConfigCache } from '../../api/config';
+import { resetConfigCache, setNonce } from '../../api/config';
 
 vi.mock('../useJobCoordination', () => ({
   useJobCoordination: vi.fn(),
@@ -49,6 +49,7 @@ describe('useJobProgressStream', () => {
     vi.useRealTimers();
     window.AltContextAdmin = {
       nonce: 'test-nonce',
+      ajaxUrl: '/wp-admin/admin-ajax.php',
       endpoints: {
         recognitionJobs: 'http://localhost/recognition/jobs',
       },
@@ -185,6 +186,24 @@ describe('useJobProgressStream', () => {
     await waitFor(() => expect(MockEventSource.instances).toHaveLength(2));
     expect(firstSource.readyState).toBe(MockEventSource.CLOSED);
     expect(result.current.stalledForSeconds).toBeNull();
+  });
+
+  it('rebuilds EventSource URL with live nonce after setNonce between reconnects [TEST-15]', async () => {
+    const { result } = renderHook(() => useJobProgressStream('job-nonce'));
+
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+    const firstUrl = MockEventSource.instances[0].url;
+    expect(firstUrl).toContain('_wpnonce=test-nonce');
+
+    setNonce('fresh-nonce-99');
+    act(() => {
+      result.current.retry();
+    });
+
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(2));
+    const secondUrl = MockEventSource.instances[1].url;
+    expect(secondUrl).toContain('_wpnonce=fresh-nonce-99');
+    expect(secondUrl).not.toContain('_wpnonce=test-nonce');
   });
 
   it('clears the stalled state when progress resumes', async () => {

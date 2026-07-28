@@ -16,7 +16,7 @@ from recognition.application.assignment import AssignmentCandidate
 from recognition.application.settings import ClusteringSettings
 from recognition.application.suggestions.eligibility import is_eligible_cluster
 from recognition.application.suggestions.label_inference import infer_suggested_label
-from recognition.config import get_settings as get_recognition_settings
+from recognition.config.settings import resolve_effective_clustering_settings
 from recognition.domain.repositories import (
     ClusterRepository,
     IdentityClusterBlockRepository,
@@ -53,7 +53,7 @@ class SuggestionService:
         self._run_context = run_context
         self._block_repository = block_repository
         self._constraint_repository = constraint_repository
-        self._settings = settings or get_recognition_settings().clustering
+        self._settings = settings or resolve_effective_clustering_settings()
 
     def bind_run_context(self, context: RecognitionRunContext | None) -> None:
         """Attach or clear the active recognition run context.

@@ -1,0 +1,258 @@
+{
+  "schema_version": 2,
+  "description": "FIR-6 wave-0 insightface characterization golden: multi-face chunk under insightface through discovery\u2192gate\u2192persist. Discriminating similarities (accept/suggest/no-candidate), threshold metadata, curriculum_t, rep admission.",
+  "profile": "insightface",
+  "tenant_id": "tenant-char-0001",
+  "media_id": "media-char-42",
+  "job_id": "job-char-1",
+  "threshold_context": {
+    "similarity_threshold": 0.55,
+    "suggestion_floor": 0.35,
+    "suggestion_ceiling": 0.55,
+    "curriculum_coefficient": -0.05,
+    "curriculum_t": 0.5
+  },
+  "clusters": [
+    {
+      "id": "cluster-alice-0001",
+      "label": "Alice",
+      "representative": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": "cluster-bob-0001",
+      "label": "Bob",
+      "representative": [
+        0.0,
+        1.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "chunk": [
+    {
+      "id": "identity-face-a",
+      "embedding": [
+        0.98,
+        0.1,
+        0.0,
+        0.0
+      ],
+      "confidence": 0.95,
+      "bbox_width": 100,
+      "bbox_height": 100,
+      "bbox_x": 10,
+      "bbox_y": 20,
+      "pose_pitch": 0.0,
+      "pose_yaw": 0.0,
+      "pose_roll": 0.0
+    },
+    {
+      "id": "identity-face-b",
+      "embedding": [
+        0.0,
+        0.56,
+        0.8284926070883191,
+        0.0
+      ],
+      "confidence": 0.5,
+      "bbox_width": 100,
+      "bbox_height": 100,
+      "bbox_x": 40,
+      "bbox_y": 20,
+      "pose_pitch": 0.0,
+      "pose_yaw": 0.0,
+      "pose_roll": 0.0
+    },
+    {
+      "id": "identity-face-s",
+      "embedding": [
+        0.95,
+        0.05,
+        0.0,
+        0.0
+      ],
+      "confidence": 0.2,
+      "bbox_width": 100,
+      "bbox_height": 100,
+      "bbox_x": 55,
+      "bbox_y": 20,
+      "pose_pitch": 0.0,
+      "pose_yaw": 0.0,
+      "pose_roll": 0.0
+    },
+    {
+      "id": "identity-face-c",
+      "embedding": [
+        0.0,
+        0.0,
+        1.0,
+        0.0
+      ],
+      "confidence": 0.95,
+      "bbox_width": 100,
+      "bbox_height": 100,
+      "bbox_x": 70,
+      "bbox_y": 20,
+      "pose_pitch": 0.0,
+      "pose_yaw": 0.0,
+      "pose_roll": 0.0
+    }
+  ],
+  "expected": {
+    "threshold_context": {
+      "similarity_threshold": 0.55,
+      "suggestion_floor": 0.35,
+      "suggestion_ceiling": 0.55,
+      "curriculum_coefficient": -0.05,
+      "curriculum_t": 0.5
+    },
+    "candidates": [
+      {
+        "identity_id": "identity-face-a",
+        "cluster_id": "cluster-alice-0001",
+        "discovery_method": "representative",
+        "discovery_similarity": 0.9948341846466064
+      },
+      {
+        "identity_id": "identity-face-b",
+        "cluster_id": "cluster-bob-0001",
+        "discovery_method": "representative",
+        "discovery_similarity": 0.5600000619888306
+      },
+      {
+        "identity_id": "identity-face-s",
+        "cluster_id": "cluster-alice-0001",
+        "discovery_method": "representative",
+        "discovery_similarity": 0.9986178278923035
+      }
+    ],
+    "decisions": [
+      {
+        "identity_id": "identity-face-a",
+        "cluster_id": "cluster-alice-0001",
+        "outcome": "accept",
+        "checks_passed": [
+          "confidence_check"
+        ],
+        "checks_failed": [],
+        "rejection_reason": null,
+        "discovery_similarity": 0.9948341846466064,
+        "threshold_meta": {
+          "base_threshold": 0.55,
+          "final_threshold": 0.425,
+          "suggestion_floor": 0.225,
+          "suggestion_ceiling": 0.425,
+          "maturity_adj": -0.05,
+          "quality_adj": -0.05,
+          "curriculum_t": 0.5,
+          "curriculum_adj": -0.025
+        }
+      },
+      {
+        "identity_id": "identity-face-b",
+        "cluster_id": "cluster-bob-0001",
+        "outcome": "accept",
+        "checks_passed": [
+          "confidence_check"
+        ],
+        "checks_failed": [],
+        "rejection_reason": null,
+        "discovery_similarity": 0.5600000619888306,
+        "threshold_meta": {
+          "base_threshold": 0.55,
+          "final_threshold": 0.525,
+          "suggestion_floor": 0.325,
+          "suggestion_ceiling": 0.525,
+          "maturity_adj": -0.05,
+          "quality_adj": 0.05,
+          "curriculum_t": 0.5,
+          "curriculum_adj": -0.025
+        }
+      },
+      {
+        "identity_id": "identity-face-s",
+        "cluster_id": "cluster-alice-0001",
+        "outcome": "suggest",
+        "checks_passed": [],
+        "checks_failed": [
+          "confidence_check"
+        ],
+        "rejection_reason": "fatal_quality_failure_suggest",
+        "discovery_similarity": 0.9986178278923035,
+        "threshold_meta": {
+          "base_threshold": 0.55,
+          "final_threshold": 0.525,
+          "suggestion_floor": 0.325,
+          "suggestion_ceiling": 0.525,
+          "maturity_adj": -0.05,
+          "quality_adj": 0.05,
+          "curriculum_t": 0.5,
+          "curriculum_adj": -0.025
+        }
+      }
+    ],
+    "gate_counts": {
+      "accept_count": 2,
+      "suggest_count": 1,
+      "reject_count": 0,
+      "accepted_ids": [
+        "identity-face-a",
+        "identity-face-b"
+      ],
+      "suggested_ids": [
+        "identity-face-s"
+      ],
+      "rejected_ids": []
+    },
+    "partition": {
+      "still_unclustered_ids": [
+        "identity-face-c",
+        "identity-face-s"
+      ],
+      "no_candidates_ids": [
+        "identity-face-c"
+      ]
+    },
+    "persist": {
+      "persisted": 2,
+      "skipped": 0,
+      "reps_added": 2,
+      "bulk_memberships": [
+        {
+          "cluster_id": "cluster-alice-0001",
+          "members": [
+            [
+              "identity-face-a",
+              0.9948341846466064
+            ]
+          ]
+        },
+        {
+          "cluster_id": "cluster-bob-0001",
+          "members": [
+            [
+              "identity-face-b",
+              0.5600000619888306
+            ]
+          ]
+        }
+      ],
+      "representatives_added": [
+        {
+          "cluster_id": "cluster-alice-0001",
+          "identity_id": "identity-face-a"
+        },
+        {
+          "cluster_id": "cluster-bob-0001",
+          "identity_id": "identity-face-b"
+        }
+      ]
+    }
+  }
+}

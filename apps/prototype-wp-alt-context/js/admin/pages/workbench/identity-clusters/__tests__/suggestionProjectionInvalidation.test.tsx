@@ -102,6 +102,7 @@ describe('SUGGESTION_PROJECTION_INVALIDATION_EVENTS per-site wiring', () => {
     vi.clearAllMocks();
     window.AltContextAdmin = {
       nonce: 'test-nonce',
+      ajaxUrl: '/wp-admin/admin-ajax.php',
       tenant_id: 'tenant-1',
       endpoints: {
         recognitionClusters: 'http://localhost/recognition/clusters',

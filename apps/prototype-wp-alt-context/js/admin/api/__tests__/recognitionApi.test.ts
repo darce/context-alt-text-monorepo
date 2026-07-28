@@ -31,6 +31,7 @@ import { DATA_SOURCE, PROJECTION_STATUS } from '../recognition/types';
 
 const mockConfig = {
   nonce: 'nonce-123',
+  ajaxUrl: '/wp-admin/admin-ajax.php',
   endpoints: {
     retentionPolicy: 'https://example.com/retentionPolicy',
     retentionExport: 'https://example.com/retentionExport',

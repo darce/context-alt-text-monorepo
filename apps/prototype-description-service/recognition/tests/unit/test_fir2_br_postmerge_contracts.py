@@ -67,11 +67,25 @@ def _fresh_migration_module():
     )
 
 
+def _rereload_touched_modules() -> None:
+    """Final reload so sibling files see consistent settings module objects."""
+    import db.settings as db_settings
+    import recognition.config.settings as settings_module
+
+    importlib.reload(settings_module)
+    importlib.reload(db_settings)
+    _clear_settings_caches()
+    fpa = importlib.import_module(
+        "recognition.infrastructure.embeddings.face_pipeline_adapter"
+    )
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+
+
 @pytest.fixture(autouse=True)
 def _restore_settings_caches() -> None:
     """Do not leak PGVECTOR_DIM / RECOGNITION_EMBEDDING_DIMENSION across tests."""
     yield
-    _clear_settings_caches()
+    _rereload_touched_modules()
 
 
 # ---------------------------------------------------------------------------
@@ -299,9 +313,15 @@ class TestFir2Br02LandmarksSeam:
         aligned = MagicMock()
         aligned.crop = crop
         runtime.aligner.align.return_value = aligned  # type: ignore[attr-defined]
+        from recognition.infrastructure.face_pipeline._common import EmbedBatchResult
+
         emb = np.ones(SFACE_EMBEDDING_DIM, dtype=np.float32)
-        emb /= float(np.linalg.norm(emb))
-        runtime.embedder.embed.return_value = [emb]  # type: ignore[attr-defined]
+        raw_norm = float(np.linalg.norm(emb))
+        emb /= raw_norm
+        runtime.embedder.embed.return_value = EmbedBatchResult(  # type: ignore[attr-defined]
+            vectors=np.asarray([emb], dtype=np.float32),
+            norms=np.asarray([raw_norm], dtype=np.float32),
+        )
 
         import io
 

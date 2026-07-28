@@ -24,6 +24,24 @@ def _fresh_settings_class():
     return settings_module.RecognitionSettings
 
 
+def _clear_settings_caches() -> None:
+    from db.settings import get_database_settings
+    from recognition.config import get_settings
+
+    get_settings.cache_clear()
+    get_database_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _restore_settings_after_reload() -> None:
+    """Re-reload settings once more after env monkeypatches undo; clear caches."""
+    yield
+    import recognition.config.settings as settings_module
+
+    importlib.reload(settings_module)
+    _clear_settings_caches()
+
+
 def test_blob_root_honours_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("RECOGNITION_BLOB_ROOT", str(tmp_path / "custom-root"))
     settings_cls = _fresh_settings_class()

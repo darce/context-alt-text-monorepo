@@ -23,7 +23,12 @@ dependencies = [
     # Previously only transitive via hdbscan (rg-001).
     "scipy>=1.11.0,<2.0.0",
     "pillow>=12.0.0,<13.0.0",
-    "opencv-python>=4.12.0,<4.15.0",
+    # v5 changes warpAffine output, so the aligner crop and every SFace embedding shift
+    # slightly. Measured over 56 corpus faces: cross-version self-similarity >= 0.9996 vs
+    # impostor p95 0.278, zero nearest-neighbour flips -- clustering and match decisions
+    # are unaffected, but bit-exact fixtures are not. The aligner goldens are regenerated
+    # in this same commit. Keep both arms of a bake-off on one opencv version.
+    "opencv-python>=5.0.0,<6.0.0",
     "pydantic-settings>=2.12.0,<3.0.0",
     "PyYAML>=6.0.3,<7.0",
     "httpx>=0.28.0,<0.35.0",

@@ -3,24 +3,32 @@
 
 Copies license_policy.py + test_license_policy.py into a scratch tree, applies
 each known vacuity mutation, runs the suite, and classifies the outcome as
-SURVIVED / KILLED / ERROR (never folds import/collection failures into KILLED).
+SURVIVED / KILLED / HARNESS-ERROR (never folds import/collection failures into
+KILLED).
 
 Green baseline is required first. A control mutation must SURVIVE to prove the
 harness can report survivors. Defect mutations must be KILLED by at least one
 named expected victim test.
 
+Harness integrity (BR-49 / SECD-03 / SECD-05 / TEST-15):
+  * Subprocess env is built from an explicit allowlist (not os.environ copy).
+  * Results come from junitxml on disk, not stdout text parsing.
+  * Every mutant run must execute the same number of testcases as baseline.
+
 Mutations:
   CONTROL  inert comment (must SURVIVE — discrimination proof)
   M1  UNKNOWN_SPDX default-deny flipped to PASS
-  M2  delete 'insightface/*' from NC_MODEL_PATTERNS
+  M2  delete both insightface patterns from NC_MODEL_PATTERNS (verdict-flipping)
   M3  NC_MODEL_IDS = frozenset()
   M4  collapse _looks_like_research_source to exact frozenset membership
   M5  REQUIRED_MODEL_INGEST_DISPLAY_NAMES = ()  (suite must still hard-code names)
   M6  _synthetic_audit_targets: empty (source, derived) token loop
   M7  row-category ValueError handler → pass
-  M8  research compact match: drop startswith (exact only)
+  M8  research compact match: drop startswith (exact only)  [one of two paths — see BR-47]
   M9  audit_derived_from_model non-str guard → if False
   M10 disable has_generator_lineage synthetic routing branch
+  M11 separator-parity branch collapsed (casia-device / casiadevice diverge here)
+  M12 get_model_ingest_entry primary raise → pass (xfail_until_b4c; known gap)
 
 Paths resolve from __file__ (never cwd) so this script runs as documented from
 the repo root or from this directory (rg-006).
@@ -35,6 +43,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -45,11 +54,51 @@ _POLICY = _HERE / "license_policy.py"
 _TEST = _HERE / "test_license_policy.py"
 _REPO_ROOT = _HERE.parents[2]
 
+# Explicit env allowlist for child pytest (BR-49). Blocklist would rot.
+_ENV_ALLOWLIST = frozenset(
+    {
+        "PATH",
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "LC_MESSAGES",
+        "LC_NUMERIC",
+        "LC_TIME",
+        "LC_COLLATE",
+        "TMPDIR",
+        "TEMP",
+        "TMP",
+        "SYSTEMROOT",
+        "SYSTEMDRIVE",
+        "USERPROFILE",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "COMSPEC",
+        "WINDIR",
+        "NUMBER_OF_PROCESSORS",
+        "PROCESSOR_ARCHITECTURE",
+    }
+)
+
+# Must never reach the child, even if somehow present on the allowlist later.
+_ENV_DENY_EXACT = frozenset(
+    {
+        "PYTEST_ADDOPTS",
+        "PYTEST_PLUGINS",
+        "PYTHONPATH",
+        "PYTHONSTARTUP",
+        "PYTHONHOME",
+        "PYTHONWARNINGS",
+        "PYTEST_CURRENT_TEST",
+    }
+)
+
 
 class Verdict(str, Enum):
     SURVIVED = "SURVIVED"
     KILLED = "KILLED"
-    ERROR = "ERROR"
+    HARNESS_ERROR = "HARNESS-ERROR"
 
 
 @dataclass(frozen=True)
@@ -57,19 +106,58 @@ class Mutation:
     name: str
     description: str
     apply: str  # key into _APPLIERS
-    # Node-id substrings; at least one must appear among FAILED tests on KILLED.
+    # Exact test-name components (or base name before [param]); at least one
+    # must appear among FAILED tests on KILLED.
     expected_victims: tuple[str, ...] = ()
     # CONTROL: True — must SURVIVE. Defect mutants: False — must be KILLED.
     expect_survived: bool = False
     # When True, a SURVIVED result fails the guard. False for known open gaps
-    # (M6–M10) that stay green until the companion test lane lands; they are
-    # still registered and reported so they cannot rot invisibly.
+    # that stay green until a companion lane lands; they are still registered
+    # and reported so they cannot rot invisibly.
     require_kill: bool = True
     target: str = "policy"  # "policy" | "test"
+    # When True, SURVIVED is reported as a known gap (B4c owns the victim).
+    xfail_until_b4c: bool = False
+
+
+@dataclass(frozen=True)
+class SuiteReport:
+    """Machine-readable suite outcome from junitxml + process rc."""
+
+    rc: int
+    executed: int
+    failed_names: tuple[str, ...]  # test-name components that failed/errored
+    summary: str
+    raw_out: str
+    junit_path: Path | None
+    parse_error: str | None = None
 
 
 # ---------------------------------------------------------------------------
-# Appliers — each verifies its anchor and raises RuntimeError if missing.
+# Anchor helpers (BR-17)
+# ---------------------------------------------------------------------------
+
+
+class AnchorError(RuntimeError):
+    """Raised when a mutation anchor is missing or not unique."""
+
+
+def _assert_unique_anchor(src: str, anchor: str, mut_name: str) -> None:
+    """Require ``anchor`` to occur exactly once in pristine source (BR-17)."""
+    n = src.count(anchor)
+    if n != 1:
+        raise AnchorError(
+            f"ANCHOR-ERROR {mut_name}: anchor occurs {n} time(s), expected exactly 1"
+        )
+
+
+def _replace_unique(src: str, old: str, new: str, mut_name: str) -> str:
+    _assert_unique_anchor(src, old, mut_name)
+    return src.replace(old, new, 1)
+
+
+# ---------------------------------------------------------------------------
+# Appliers — each verifies its anchor and raises if missing / non-unique.
 # ---------------------------------------------------------------------------
 
 
@@ -80,9 +168,7 @@ def _m_control_inert_comment(src: str) -> str:
         "# MUTATION CONTROL: inert comment — harness discrimination probe\n"
         "def _looks_like_research_source(value: str) -> bool:"
     )
-    if old not in src:
-        raise RuntimeError("CONTROL: could not locate _looks_like_research_source anchor")
-    return src.replace(old, new, 1)
+    return _replace_unique(src, old, new, "CONTROL")
 
 
 def _m1_unknown_spdx_pass(src: str) -> str:
@@ -98,18 +184,32 @@ def _m1_unknown_spdx_pass(src: str) -> str:
         "    # MUTATION M1: unknown SPDX incorrectly PASSes\n"
         "    return _pass(detail=f\"license {tag!r} unknown but mutated to pass\")"
     )
-    if old not in src:
-        raise RuntimeError("M1: could not locate UNKNOWN_SPDX fail branch anchor")
-    return src.replace(old, new, 1)
+    return _replace_unique(src, old, new, "M1")
 
 
-def _m2_drop_insightface_star(src: str) -> str:
-    """Delete the insightface/* entry from NC_MODEL_PATTERNS."""
-    old = 'NC_MODEL_PATTERNS: tuple[str, ...] = (\n    "insightface/*",\n    "insightface",\n'
-    new = 'NC_MODEL_PATTERNS: tuple[str, ...] = (\n    "insightface",\n'
-    if old not in src:
-        raise RuntimeError("M2: could not locate insightface/* in NC_MODEL_PATTERNS")
-    return src.replace(old, new, 1)
+def _m2_drop_insightface_patterns(src: str) -> str:
+    """Delete both insightface patterns (verdict-flipping; BR-63).
+
+    Dropping only ``insightface/*`` is legal-inert: every commercial outcome
+    falls through to bare ``insightface``. Removing both flips
+    ``insightface_buffalo_l`` / ``insightface-buffalo-l`` from FAIL→PASS.
+    """
+    old = (
+        "NC_MODEL_PATTERNS: tuple[str, ...] = (\n"
+        '    "insightface/*",\n'
+        '    "insightface",\n'
+        '    "buffalo*",\n'
+        '    "buffalo",\n'
+        ")"
+    )
+    new = (
+        "NC_MODEL_PATTERNS: tuple[str, ...] = (\n"
+        "    # MUTATION M2: both insightface patterns removed (verdict-flipping)\n"
+        '    "buffalo*",\n'
+        '    "buffalo",\n'
+        ")"
+    )
+    return _replace_unique(src, old, new, "M2")
 
 
 def _m3_empty_nc_ids(src: str) -> str:
@@ -117,9 +217,17 @@ def _m3_empty_nc_ids(src: str) -> str:
     pattern = re.compile(
         r"NC_MODEL_IDS:\s*frozenset\[str\]\s*=\s*_derive_nc_model_ids\(\)"
     )
-    updated, n = pattern.subn("NC_MODEL_IDS: frozenset[str] = frozenset()", src, count=1)
+    matches = pattern.findall(src)
+    if len(matches) != 1:
+        raise AnchorError(
+            f"ANCHOR-ERROR M3: NC_MODEL_IDS assignment occurs {len(matches)} time(s), "
+            "expected exactly 1"
+        )
+    updated, n = pattern.subn(
+        "NC_MODEL_IDS: frozenset[str] = frozenset()", src, count=1
+    )
     if n != 1:
-        raise RuntimeError("M3: could not locate NC_MODEL_IDS assignment")
+        raise AnchorError("ANCHOR-ERROR M3: could not locate NC_MODEL_IDS assignment")
     return updated
 
 
@@ -129,6 +237,12 @@ def _m4_exact_research_only(src: str) -> str:
         r"def _looks_like_research_source\(value: str\) -> bool:.*?(?=\ndef )",
         re.DOTALL,
     )
+    found = pattern.findall(src)
+    if len(found) != 1:
+        raise AnchorError(
+            f"ANCHOR-ERROR M4: _looks_like_research_source occurs {len(found)} time(s), "
+            "expected exactly 1"
+        )
     replacement = (
         "def _looks_like_research_source(value: str) -> bool:\n"
         '    """MUTATION M4: exact frozenset membership only."""\n'
@@ -137,7 +251,7 @@ def _m4_exact_research_only(src: str) -> str:
     )
     updated, n = pattern.subn(replacement, src, count=1)
     if n != 1:
-        raise RuntimeError("M4: could not locate _looks_like_research_source")
+        raise AnchorError("ANCHOR-ERROR M4: could not locate _looks_like_research_source")
     return updated
 
 
@@ -149,14 +263,20 @@ def _m5_empty_required_names(src: str) -> str:
         r"\*REQUIRED_CASCADE_PERSON_DETECTOR_DISPLAY_NAMES,\s*\)",
         re.DOTALL,
     )
+    found = pattern.findall(src)
+    if len(found) != 1:
+        raise AnchorError(
+            f"ANCHOR-ERROR M5: REQUIRED_MODEL_INGEST_DISPLAY_NAMES occurs "
+            f"{len(found)} time(s), expected exactly 1"
+        )
     updated, n = pattern.subn(
         "REQUIRED_MODEL_INGEST_DISPLAY_NAMES: tuple[str, ...] = ()",
         src,
         count=1,
     )
     if n != 1:
-        raise RuntimeError(
-            "M5: could not locate REQUIRED_MODEL_INGEST_DISPLAY_NAMES anchor"
+        raise AnchorError(
+            "ANCHOR-ERROR M5: could not locate REQUIRED_MODEL_INGEST_DISPLAY_NAMES"
         )
     return updated
 
@@ -165,13 +285,7 @@ def _m6_empty_synthetic_token_loop(src: str) -> str:
     """Disable SYNTHETIC_SOURCE_ENTRIES routing via (source, derived) loop."""
     old = "    for token in (source, derived):"
     new = "    for token in ():  # MUTATION M6: skip synthetic entry token audit"
-    if old not in src:
-        raise RuntimeError(
-            "M6: could not locate 'for token in (source, derived):' in "
-            "_synthetic_audit_targets"
-        )
-    # Prefer the occurrence inside _synthetic_audit_targets (only one today).
-    return src.replace(old, new, 1)
+    return _replace_unique(src, old, new, "M6")
 
 
 def _m7_category_valueerror_pass(src: str) -> str:
@@ -188,49 +302,71 @@ def _m7_category_valueerror_pass(src: str) -> str:
         "    except ValueError:\n"
         "        return None, None  # MUTATION M7: invalid category silently ignored"
     )
-    if old not in src:
-        raise RuntimeError(
-            "M7: could not locate row-category except ValueError → INVALID_ROW block"
-        )
-    return src.replace(old, new, 1)
+    return _replace_unique(src, old, new, "M7")
 
 
 def _m8_research_exact_only(src: str) -> str:
-    """Drop startswith compound match in research-source compact scan."""
+    """Drop startswith compound match in research-source compact scan.
+
+    NOTE (BR-47): this hits only the no-separator unsplit branch inside
+    ``_looks_like_research_source``. A duplicated unsplit startswith lives in
+    the slash-component loop of the same function; B4b owns the collapse.
+    After B4b, re-point M8 at the single surviving implementation.
+    """
     old = (
         "            if norm.compact.startswith(src) and _research_unsplit_remainder_ok(\n"
         "                norm.compact[len(src) :]\n"
         "            ):"
     )
     new = "            if False:  # MUTATION M8: no unsplit compound startswith match"
-    if old not in src:
-        raise RuntimeError(
-            "M8: could not locate the unsplit-compound startswith branch in "
-            "_looks_like_research_source"
-        )
-    return src.replace(old, new, 1)
+    return _replace_unique(src, old, new, "M8")
 
 
 def _m9_skip_derived_type_guard(src: str) -> str:
     """Disable non-str guard in audit_derived_from_model."""
     old = "    if not isinstance(derived_from_model, str):"
     new = "    if False:  # MUTATION M9: skip non-str type guard"
-    if old not in src:
-        raise RuntimeError(
-            "M9: could not locate 'if not isinstance(derived_from_model, str):'"
-        )
-    return src.replace(old, new, 1)
+    return _replace_unique(src, old, new, "M9")
 
 
 def _m10_disable_generator_lineage_branch(src: str) -> str:
     """Disable has_generator_lineage synthetic routing (FIR-7-BR-16)."""
     old = "    if has_generator_lineage and source:"
     new = "    if False and has_generator_lineage and source:  # MUTATION M10"
-    if old not in src:
-        raise RuntimeError(
-            "M10: could not locate 'if has_generator_lineage and source:'"
-        )
-    return src.replace(old, new, 1)
+    return _replace_unique(src, old, new, "M10")
+
+
+def _m11_collapse_separator_parity(src: str) -> str:
+    """Collapse separator-parity branch in research matcher (BR-43 / M11).
+
+    ``casiadevice`` (no separators) and ``casia-device`` (separators) diverge
+    at ``if not norm.has_separators:``. Forcing the unsplit path always makes
+    ``casia-device`` research-fail and drops slash-component research hits
+    such as ``dataset/ffhq``.
+    """
+    old = "    if not norm.has_separators:"
+    new = "    if True:  # MUTATION M11: ignore separator-parity; always unsplit path"
+    return _replace_unique(src, old, new, "M11")
+
+
+def _m12_ingest_entry_raise_pass(src: str) -> str:
+    """Primary raise LicensePolicyError(result) in get_model_ingest_entry → pass.
+
+    BR-62/B4c: the full suite currently stays green under this mutation.
+    Registered with expected_victims=[] and xfail_until_b4c so the guard
+    reports a KNOWN GAP rather than a silent kill.
+    """
+    old = (
+        "    result = audit_model_ingest(model_id)\n"
+        "    if not result.ok:\n"
+        "        raise LicensePolicyError(result)"
+    )
+    new = (
+        "    result = audit_model_ingest(model_id)\n"
+        "    if not result.ok:\n"
+        "        pass  # MUTATION M12: swallow primary LicensePolicyError"
+    )
+    return _replace_unique(src, old, new, "M12")
 
 
 MUTATIONS: list[Mutation] = [
@@ -254,9 +390,10 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         name="M2",
-        description="delete insightface/* from NC_MODEL_PATTERNS",
+        description="delete both insightface patterns from NC_MODEL_PATTERNS (verdict-flip)",
         apply="m2",
         expected_victims=(
+            "test_nested_and_separator_insightface_forms_fail",
             "test_insightface_prefix_pattern_is_pinned",
         ),
     ),
@@ -285,12 +422,6 @@ MUTATIONS: list[Mutation] = [
             "test_required_display_names_registered",
         ),
     ),
-    # M6–M10: the four surviving mutants round 2 found, plus BR-16. They
-    # survived the 91-test suite; the companion test lane has since landed
-    # dedicated tests, so require_kill=True — a regression that re-opens any
-    # of these branches must fail the gate rather than be listed as a known
-    # survivor. expected_victims are the branch-specific tests measured to
-    # fail under each mutant, not collateral kills.
     Mutation(
         name="M6",
         description="_synthetic_audit_targets: for token in () (skip entry loop)",
@@ -325,12 +456,29 @@ MUTATIONS: list[Mutation] = [
         apply="m10",
         expected_victims=("test_br16_lineage_sole_cause_of_synthetic_pending",),
     ),
+    Mutation(
+        name="M11",
+        description="separator-parity branch collapsed (always unsplit path)",
+        apply="m11",
+        expected_victims=(
+            "test_research_source_fails_with_research_only_reason",
+            "test_br27_controls_still_fail_research",
+        ),
+    ),
+    Mutation(
+        name="M12",
+        description="get_model_ingest_entry primary raise → pass (known gap until B4c)",
+        apply="m12",
+        expected_victims=(),
+        require_kill=False,
+        xfail_until_b4c=True,
+    ),
 ]
 
 _APPLIERS = {
     "control": _m_control_inert_comment,
     "m1": _m1_unknown_spdx_pass,
-    "m2": _m2_drop_insightface_star,
+    "m2": _m2_drop_insightface_patterns,
     "m3": _m3_empty_nc_ids,
     "m4": _m4_exact_research_only,
     "m5": _m5_empty_required_names,
@@ -339,63 +487,124 @@ _APPLIERS = {
     "m8": _m8_research_exact_only,
     "m9": _m9_skip_derived_type_guard,
     "m10": _m10_disable_generator_lineage_branch,
+    "m11": _m11_collapse_separator_parity,
+    "m12": _m12_ingest_entry_raise_pass,
 }
 
-_FAILED_COUNT_RE = re.compile(r"\b(\d+)\s+failed\b")
-_FAILED_NODE_RE = re.compile(r"^FAILED\s+(\S+)", re.MULTILINE)
+
+# ---------------------------------------------------------------------------
+# Subprocess env + junitxml (BR-49)
+# ---------------------------------------------------------------------------
 
 
-def _summary_line(out: str) -> str:
-    lines = [ln for ln in out.splitlines() if ln.strip()]
-    return lines[-1] if lines else "(no output)"
+def _scrubbed_env() -> dict[str, str]:
+    """Build child env from an allowlist; pytest/python injection vars excluded."""
+    env: dict[str, str] = {}
+    for key, val in os.environ.items():
+        if key in _ENV_DENY_EXACT:
+            continue
+        if key.startswith("PYTEST_DEBUG"):
+            continue
+        if key.startswith("PYTEST_"):
+            continue
+        if key in _ENV_ALLOWLIST or key.startswith("LC_"):
+            env[key] = val
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+    # Belt: ensure injection vectors are absent even if allowlist grows.
+    for bad in _ENV_DENY_EXACT:
+        env.pop(bad, None)
+    for key in list(env):
+        if key.startswith("PYTEST_DEBUG") or (
+            key.startswith("PYTEST_") and key != "PYTEST_DISABLE_PLUGIN_AUTOLOAD"
+        ):
+            env.pop(key, None)
+    return env
 
 
-def _failed_nodeids(out: str) -> list[str]:
-    return _FAILED_NODE_RE.findall(out)
+def _parse_junitxml(junit_path: Path) -> tuple[int, list[str], str | None]:
+    """Return (executed_count, failed_test_names, parse_error).
+
+    Failed names are the pytest test-name component (``name`` attribute),
+    including parametrised ``name[param]`` form when present.
+    """
+    if not junit_path.is_file():
+        return 0, [], f"junitxml missing: {junit_path}"
+    try:
+        tree = ET.parse(junit_path)
+    except ET.ParseError as exc:
+        return 0, [], f"junitxml parse error: {exc}"
+    root = tree.getroot()
+    # pytest may emit <testsuites><testsuite>… or a bare <testsuite>.
+    cases = root.findall(".//testcase")
+    failed: list[str] = []
+    for case in cases:
+        name = case.get("name") or ""
+        # failure / error children mark a non-pass (skip is neither).
+        if case.find("failure") is not None or case.find("error") is not None:
+            failed.append(name)
+    return len(cases), failed, None
 
 
-def _has_failed_tests(out: str) -> bool:
-    m = _FAILED_COUNT_RE.search(out)
-    return bool(m and int(m.group(1)) >= 1)
-
-
-def classify_suite_result(rc: int, out: str) -> Verdict:
-    """Three-way classification (FIR-7-BR-17 / TEST-15).
+def classify_suite_result(
+    report: SuiteReport,
+    *,
+    baseline_executed: int | None = None,
+) -> Verdict:
+    """Three-way classification (FIR-7-BR-17 / BR-49 / TEST-15).
 
     - rc == 0 → SURVIVED
-    - rc == 1 and summary reports ≥1 failed → KILLED
-    - anything else (rc >= 2, import/collection errors, no tests ran,
-      empty output, rc==1 without a failed-test summary) → ERROR
+    - executed count ≠ baseline → HARNESS-ERROR (forgery / collection miss)
+    - rc == 1 and ≥1 failed testcase in junit → KILLED
+    - anything else (rc >= 2, import/collection errors, missing junit,
+      rc==1 without failed testcases) → HARNESS-ERROR
     """
-    text = out or ""
-    if not text.strip():
-        return Verdict.ERROR
-    lower = text.lower()
-    if "no tests ran" in lower or "no tests collected" in lower:
-        return Verdict.ERROR
-    # Collection/import failures often surface as "error" without "failed".
-    if rc == 0:
+    if report.parse_error:
+        return Verdict.HARNESS_ERROR
+    if report.executed < 1:
+        return Verdict.HARNESS_ERROR
+    if baseline_executed is not None and report.executed != baseline_executed:
+        return Verdict.HARNESS_ERROR
+    if report.rc == 0:
         return Verdict.SURVIVED
-    if rc == 1 and _has_failed_tests(text):
+    if report.rc == 1 and report.failed_names:
         return Verdict.KILLED
-    return Verdict.ERROR
+    return Verdict.HARNESS_ERROR
 
 
-def _victims_matched(failed_nodes: list[str], expected: tuple[str, ...]) -> list[str]:
+def _test_name_from_nodeid(node: str) -> str:
+    """Last ``::`` component of a nodeid (``name`` or ``name[param]``)."""
+    return node.rsplit("::", 1)[-1]
+
+
+def _victims_matched(failed_names: list[str], expected: tuple[str, ...]) -> list[str]:
+    """Exact test-name match (BR-17) — no substring/prefix matching.
+
+    Parametrised failures use the ``name[param]`` form from junit. An expected
+    victim may be either the full ``name[param]`` or the bare function name
+    (matches any param of that test). A victim that is only a prefix of another
+    test name does **not** match.
+    """
     if not expected:
         return []
     hits: list[str] = []
     for exp in expected:
-        for node in failed_nodes:
-            if exp in node and exp not in hits:
-                hits.append(exp)
+        for raw in failed_names:
+            tname = _test_name_from_nodeid(raw)
+            base = tname.split("[", 1)[0]
+            if exp == tname or exp == base:
+                if exp not in hits:
+                    hits.append(exp)
                 break
     return hits
 
 
-def _run_suite(scratch_dir: Path) -> tuple[int, str]:
-    """Run the license_policy suite against a scratch copy. Returns (rc, output)."""
+def _run_suite(scratch_dir: Path) -> SuiteReport:
+    """Run the license_policy suite against a scratch copy; parse junitxml."""
     test_path = scratch_dir / "test_license_policy.py"
+    junit_path = scratch_dir / "report.xml"
+    if junit_path.exists():
+        junit_path.unlink()
     cmd = [
         sys.executable,
         "-m",
@@ -403,8 +612,11 @@ def _run_suite(scratch_dir: Path) -> tuple[int, str]:
         str(test_path),
         "-q",
         "--tb=no",
+        "-p",
+        "no:cacheprovider",
+        f"--junitxml={junit_path}",
     ]
-    env = dict(os.environ)
+    env = _scrubbed_env()
     proc = subprocess.run(
         cmd,
         cwd=str(scratch_dir),
@@ -412,8 +624,30 @@ def _run_suite(scratch_dir: Path) -> tuple[int, str]:
         text=True,
         env=env,
     )
-    out = (proc.stdout or "") + (proc.stderr or "")
-    return proc.returncode, out
+    raw = (proc.stdout or "") + (proc.stderr or "")
+    executed, failed_names, parse_error = _parse_junitxml(junit_path)
+    # Build summary from the same fields the dataclass will hold.
+    if parse_error:
+        summary = f"HARNESS-ERROR ({parse_error})"
+    else:
+        n_fail = len(failed_names)
+        n_ok = executed - n_fail
+        if proc.returncode == 0:
+            summary = f"{executed} passed (junit executed={executed})"
+        else:
+            summary = (
+                f"{n_fail} failed, {n_ok} passed "
+                f"(junit executed={executed}, rc={proc.returncode})"
+            )
+    return SuiteReport(
+        rc=proc.returncode,
+        executed=executed,
+        failed_names=tuple(failed_names),
+        summary=summary,
+        raw_out=raw,
+        junit_path=junit_path if junit_path.is_file() else None,
+        parse_error=parse_error,
+    )
 
 
 def _prepare_scratch(base: Path) -> Path:
@@ -435,15 +669,52 @@ def _apply_mutation(policy_src: str, mutation: Mutation) -> str:
     return applier(policy_src)
 
 
-def _run_baseline() -> tuple[bool, str]:
-    """Unmutated suite must be green before any mutant verdict is meaningful."""
+def _run_baseline() -> tuple[bool, str, int]:
+    """Unmutated suite must be green before any mutant verdict is meaningful.
+
+    Returns (ok, info, baseline_executed).
+    """
     with tempfile.TemporaryDirectory(prefix="licpol-baseline-") as tmp:
         occ = _prepare_scratch(Path(tmp))
-        rc, out = _run_suite(occ)
-        summary = _summary_line(out)
-        if rc == 0 and classify_suite_result(rc, out) is Verdict.SURVIVED:
-            return True, summary
-        return False, f"rc={rc} summary={summary!r}\n{out}"
+        report = _run_suite(occ)
+        if (
+            report.rc == 0
+            and report.parse_error is None
+            and report.executed >= 1
+            and classify_suite_result(report) is Verdict.SURVIVED
+        ):
+            return True, report.summary, report.executed
+        return (
+            False,
+            f"rc={report.rc} executed={report.executed} "
+            f"summary={report.summary!r}\n{report.raw_out}",
+            report.executed,
+        )
+
+
+def _parent_env_injection_vars() -> list[str]:
+    """Return ambient injection vars that must not be present when the guard runs.
+
+    Child scrub is necessary but not sufficient if an operator (or CI wrapper)
+    believes exporting PYTEST_ADDOPTS is harmless. Refuse to certify under a
+    tainted parent env (SECD-03 complete mediation).
+    """
+    bad: list[str] = []
+    for key in (
+        "PYTEST_ADDOPTS",
+        "PYTEST_PLUGINS",
+        "PYTHONSTARTUP",
+        "PYTHONHOME",
+    ):
+        if os.environ.get(key):
+            bad.append(key)
+    # PYTHONPATH is the load path for `-p certify_nothing`-style plugins.
+    if os.environ.get("PYTHONPATH"):
+        bad.append("PYTHONPATH")
+    for key in os.environ:
+        if key.startswith("PYTEST_DEBUG") and os.environ.get(key):
+            bad.append(key)
+    return bad
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -464,6 +735,18 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
+    injected = _parent_env_injection_vars()
+    if injected:
+        print(
+            "HARNESS-ERROR: refusing to run mutation guard under injected "
+            f"pytest/python env: {', '.join(injected)}\n"
+            "Unset these variables before certifying (BR-49 / SECD-03). "
+            "Child subprocesses also scrub via an allowlist; parent refusal "
+            "closes the 'export and forget' path.",
+            flush=True,
+        )
+        return 2
+
     selected = (
         MUTATIONS
         if args.mutation == "all"
@@ -472,10 +755,8 @@ def main(argv: list[str] | None = None) -> int:
 
     # --- Green baseline first (FIR-7-BR-17) ---------------------------------
     print("BASELINE: running unmutated suite...", flush=True)
-    ok, baseline_info = _run_baseline()
+    ok, baseline_info, baseline_executed = _run_baseline()
     if not ok:
-        # Write the ERROR on stdout so it cannot be reordered past the
-        # BASELINE line when stderr is merged (CI logs, 2>&1).
         print(
             "ERROR: baseline suite is not green; aborting mutation guard.\n"
             "Every downstream verdict is meaningless if the unmutated suite fails.\n"
@@ -483,96 +764,174 @@ def main(argv: list[str] | None = None) -> int:
             flush=True,
         )
         return 2
-    print(f"BASELINE: green ({baseline_info})", flush=True)
+    print(
+        f"BASELINE: green ({baseline_info}; baseline_executed={baseline_executed})",
+        flush=True,
+    )
     print(flush=True)
 
     survivors: list[str] = []
     killed: list[str] = []
     errors: list[str] = []
     unexpected: list[str] = []  # wrong expect_survived / require_kill mismatch
+    known_gaps: list[str] = []
 
+    # Pristine bytes — never leave the tree dirty (restore via scratch only;
+    # original path is never written).
     original = _POLICY.read_text(encoding="utf-8")
+    original_bytes = _POLICY.read_bytes()
 
-    for mutation in selected:
-        with tempfile.TemporaryDirectory(prefix=f"licpol-{mutation.name}-") as tmp:
-            base = Path(tmp)
-            occ = _prepare_scratch(base)
-            try:
-                mutated = _apply_mutation(original, mutation)
-            except RuntimeError as exc:
-                errors.append(mutation.name)
-                print(f"ERROR    {mutation.name}: anchor/apply failure: {exc}")
-                print(f"  detail: missing anchor must never be reported as SURVIVED")
-                continue
-            if mutated == original:
-                errors.append(mutation.name)
-                print(f"ERROR    {mutation.name}: mutation was a no-op (anchor miss)")
-                continue
-            (occ / "license_policy.py").write_text(mutated, encoding="utf-8")
-            rc, out = _run_suite(occ)
-            verdict = classify_suite_result(rc, out)
-            summary = _summary_line(out)
-            failed_nodes = _failed_nodeids(out)
-
-            if verdict is Verdict.ERROR:
-                errors.append(mutation.name)
-                print(f"ERROR    {mutation.name}: {mutation.description}")
-                print(f"  suite: {summary}")
-                print(f"  rc={rc} (not a clean test failure — refusing to count as KILLED)")
-                # Surface a short diagnostic tail for import/pytest problems.
-                tail = "\n".join(out.strip().splitlines()[-5:]) if out.strip() else ""
-                if tail:
-                    print(f"  diag: {tail}")
-                continue
-
-            if verdict is Verdict.SURVIVED:
-                survivors.append(mutation.name)
-                print(f"SURVIVED {mutation.name}: {mutation.description}")
-                print(f"  suite: {summary}")
-                if mutation.expect_survived:
-                    print("  expect: SURVIVED (control / discrimination OK)")
-                elif mutation.require_kill:
-                    unexpected.append(mutation.name)
-                    print("  expect: KILLED — defect mutant survived (FAIL)")
-                else:
+    try:
+        for mutation in selected:
+            with tempfile.TemporaryDirectory(prefix=f"licpol-{mutation.name}-") as tmp:
+                base = Path(tmp)
+                occ = _prepare_scratch(base)
+                policy_path = occ / "license_policy.py"
+                try:
+                    mutated = _apply_mutation(original, mutation)
+                except AnchorError as exc:
+                    errors.append(mutation.name)
+                    print(f"HARNESS-ERROR {mutation.name}: {exc}")
                     print(
-                        "  expect: tracked open gap (require_kill=False); "
-                        "reported honestly, not failing the gate yet"
+                        "  detail: non-unique or missing anchor must never be "
+                        "reported as SURVIVED/KILLED"
                     )
-                continue
+                    continue
+                except RuntimeError as exc:
+                    errors.append(mutation.name)
+                    print(f"HARNESS-ERROR {mutation.name}: anchor/apply failure: {exc}")
+                    print(
+                        "  detail: missing anchor must never be reported as SURVIVED"
+                    )
+                    continue
+                if mutated == original:
+                    errors.append(mutation.name)
+                    print(
+                        f"HARNESS-ERROR {mutation.name}: mutation was a no-op "
+                        "(anchor miss)"
+                    )
+                    continue
+                policy_path.write_text(mutated, encoding="utf-8")
+                report = _run_suite(occ)
+                verdict = classify_suite_result(
+                    report, baseline_executed=baseline_executed
+                )
+                summary = report.summary
+                failed_names = list(report.failed_names)
 
-            # verdict is KILLED
-            hits = _victims_matched(failed_nodes, mutation.expected_victims)
-            if mutation.expect_survived:
-                # Control (or any must-survive) came back KILLED → harness broken.
-                errors.append(mutation.name)
-                print(f"ERROR    {mutation.name}: expected SURVIVED but suite went red")
-                print(f"  suite: {summary}")
-                print(
-                    "  reason: discrimination failure — harness cannot report a "
-                    "true survivor (TEST-15)"
-                )
-                continue
-            if mutation.expected_victims and not hits:
-                errors.append(mutation.name)
-                print(f"ERROR    {mutation.name}: {mutation.description}")
-                print(f"  suite: {summary}")
-                print(
-                    "  reason: suite went red but NONE of the expected victims "
-                    f"failed: {mutation.expected_victims}"
-                )
-                print(f"  failed: {failed_nodes[:12]}")
-                print(
-                    "  a kill by an unrelated test does not prove the branch "
-                    "under test is guarded"
-                )
-                continue
+                # Explicit discrimination invariant message for count mismatch.
+                if (
+                    report.parse_error is None
+                    and report.executed != baseline_executed
+                    and report.executed >= 0
+                ):
+                    errors.append(mutation.name)
+                    print(f"HARNESS-ERROR {mutation.name}: {mutation.description}")
+                    print(f"  suite: {summary}")
+                    print(
+                        f"  reason: executed count {report.executed} != "
+                        f"baseline_executed {baseline_executed} "
+                        "(forgery / collection error / body no-op plugin)"
+                    )
+                    continue
 
-            killed.append(mutation.name)
-            print(f"KILLED   {mutation.name}: {mutation.description}")
-            print(f"  suite: {summary}")
-            if hits:
+                if verdict is Verdict.HARNESS_ERROR:
+                    errors.append(mutation.name)
+                    print(f"HARNESS-ERROR {mutation.name}: {mutation.description}")
+                    print(f"  suite: {summary}")
+                    print(
+                        f"  rc={report.rc} executed={report.executed} "
+                        "(not a clean test failure — refusing to count as KILLED)"
+                    )
+                    if report.parse_error:
+                        print(f"  parse: {report.parse_error}")
+                    tail = (
+                        "\n".join(report.raw_out.strip().splitlines()[-5:])
+                        if report.raw_out.strip()
+                        else ""
+                    )
+                    if tail:
+                        print(f"  diag: {tail}")
+                    continue
+
+                if verdict is Verdict.SURVIVED:
+                    survivors.append(mutation.name)
+                    print(f"SURVIVED {mutation.name}: {mutation.description}")
+                    print(f"  suite: {summary}")
+                    if mutation.expect_survived:
+                        print("  expect: SURVIVED (control / discrimination OK)")
+                    elif mutation.xfail_until_b4c:
+                        known_gaps.append(mutation.name)
+                        print(
+                            "  expect: KNOWN GAP (xfail_until_b4c) — victim test "
+                            "owned by B4c; not counted as a kill"
+                        )
+                    elif mutation.require_kill:
+                        unexpected.append(mutation.name)
+                        print("  expect: KILLED — defect mutant survived (FAIL)")
+                    else:
+                        known_gaps.append(mutation.name)
+                        print(
+                            "  expect: tracked open gap (require_kill=False); "
+                            "reported honestly, not failing the gate yet"
+                        )
+                    continue
+
+                # verdict is KILLED
+                hits = _victims_matched(failed_names, mutation.expected_victims)
+                if mutation.expect_survived:
+                    errors.append(mutation.name)
+                    print(
+                        f"HARNESS-ERROR {mutation.name}: expected SURVIVED but "
+                        "suite went red"
+                    )
+                    print(f"  suite: {summary}")
+                    print(
+                        "  reason: discrimination failure — harness cannot report a "
+                        "true survivor (TEST-15)"
+                    )
+                    continue
+                # Mutants with no named victims cannot certify a kill (BR-43 M12).
+                if not mutation.expected_victims:
+                    if mutation.xfail_until_b4c:
+                        known_gaps.append(mutation.name)
+                        print(
+                            f"KNOWN-GAP {mutation.name}: suite red but "
+                            "expected_victims=[] (xfail_until_b4c); not a certified kill"
+                        )
+                        print(f"  suite: {summary}")
+                    else:
+                        errors.append(mutation.name)
+                        print(
+                            f"HARNESS-ERROR {mutation.name}: suite red but no named "
+                            "victims registered — refusing to count as KILLED"
+                        )
+                        print(f"  suite: {summary}")
+                        print(f"  failed: {failed_names[:12]}")
+                    continue
+                if not hits:
+                    errors.append(mutation.name)
+                    print(f"HARNESS-ERROR {mutation.name}: {mutation.description}")
+                    print(f"  suite: {summary}")
+                    print(
+                        "  reason: suite went red but NONE of the expected victims "
+                        f"failed: {mutation.expected_victims}"
+                    )
+                    print(f"  failed: {failed_names[:12]}")
+                    print(
+                        "  a kill by an unrelated test does not prove the branch "
+                        "under test is guarded"
+                    )
+                    continue
+
+                killed.append(mutation.name)
+                print(f"KILLED   {mutation.name}: {mutation.description}")
+                print(f"  suite: {summary}")
                 print(f"  victims: {', '.join(hits)}")
+    finally:
+        # Byte-identical restore guarantee for the real tree (scratch-only writes).
+        if _POLICY.read_bytes() != original_bytes:
+            _POLICY.write_bytes(original_bytes)
 
     print()
     print(
@@ -583,35 +942,46 @@ def main(argv: list[str] | None = None) -> int:
         print("survivors: " + ", ".join(survivors))
     if errors:
         print("errors: " + ", ".join(errors))
+    if known_gaps:
+        print("known_gaps: " + ", ".join(known_gaps))
 
     # Exit policy:
-    # 1. Any ERROR → non-zero (never certify on broken harness / missing anchor).
+    # 1. Any HARNESS-ERROR → non-zero (never certify on broken harness / anchor).
     # 2. CONTROL (expect_survived) not SURVIVED → already in errors.
     # 3. require_kill mutants that SURVIVED → non-zero.
-    # 4. Tracked open gaps (require_kill=False) may SURVIVE without failing the gate.
+    # 4. Tracked open gaps (require_kill=False / xfail_until_b4c) may SURVIVE.
     if errors:
-        print("FAIL: guard errors (import/collection/anchor/victim/discrimination)")
+        print(
+            "FAIL: guard errors (import/collection/anchor/victim/discrimination/"
+            "executed-count)"
+        )
         return 2
     if unexpected:
         print("FAIL: required-kill mutants survived: " + ", ".join(unexpected))
         return 1
 
-    # Confirm control was in the run when --mutation all
     control_selected = any(m.name == "CONTROL" for m in selected)
     if control_selected and "CONTROL" not in survivors:
-        # Should have been caught as ERROR above; belt-and-braces.
         print("FAIL: CONTROL did not SURVIVE — harness not discriminating (TEST-15)")
         return 1
 
-    if survivors and any(
-        m.name in survivors and not m.expect_survived and not m.require_kill
-        for m in selected
-    ):
-        open_gaps = [
-            m.name
+    if known_gaps or (
+        survivors
+        and any(
+            m.name in survivors and not m.expect_survived and not m.require_kill
             for m in selected
-            if m.name in survivors and not m.expect_survived and not m.require_kill
-        ]
+        )
+    ):
+        open_gaps = sorted(
+            set(known_gaps)
+            | {
+                m.name
+                for m in selected
+                if m.name in survivors
+                and not m.expect_survived
+                and not m.require_kill
+            }
+        )
         print(
             "OK: required mutants killed; control survived; "
             f"open-gap survivors (not gated yet): {', '.join(open_gaps)}"

@@ -5,6 +5,7 @@ import { resolveDescribeErrorMessage } from '../../api/describeApi';
 import { useCorrectMediaAlt } from '../../hooks/useCorrectMediaAlt';
 import { useDescribeMedia } from '../../hooks/useDescribeMedia';
 import { useAriaAnnounce } from './identity-clusters/useAriaAnnounce';
+import { useFocusPark } from './identity-clusters/useFocusPark';
 
 export interface MediaAltSuggestProps {
   mediaId: number;
@@ -134,32 +135,10 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
   // the whole generation. Keep `disabled` (this repo's toBeDisabled() only
   // honours the HTML attribute, not aria-disabled — measured; switching to
   // aria-disabled alone fails the two existing `.toBeDisabled()` pending
-  // assertions). Park focus on the container when focus is stranded on body.
-  // Document-level focusout re-checks after the browser's blur-on-disable (and
-  // after jsdom stand-ins like parkFocusOnBody) without stealing focus from
-  // an operator who has moved elsewhere (activeElement outside + not body).
-  useEffect(() => {
-    if (!isPending) {
-      return;
-    }
-    const parkIfStranded = (): void => {
-      queueMicrotask(() => {
-        const node = containerRef.current;
-        if (!node) {
-          return;
-        }
-        const active = document.activeElement;
-        if (!active || active === document.body) {
-          node.focus();
-        }
-      });
-    };
-    parkIfStranded();
-    document.addEventListener('focusout', parkIfStranded);
-    return () => {
-      document.removeEventListener('focusout', parkIfStranded);
-    };
-  }, [isPending]);
+  // assertions). Park is instance-scoped (BR-33): only strands that left *this*
+  // container are reclaimed — extracted so the host stays within the useEffect
+  // budget (BR-44).
+  useFocusPark(isPending, containerRef);
 
   // BR-17: retire status once it has served its purpose — no timeout. When focus
   // leaves this surface while idle, "Alt text saved." is no longer local context.

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -93,7 +93,11 @@ const parkFocusOnBody = (): void => {
 
 describe('MediaAltSuggest', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    // resetAllMocks (not clearAllMocks): mockResolvedValueOnce / mockRejectedValueOnce
+    // queues survive clearAllMocks and leak into later tests (BR-35). Measured:
+    // residual describeMedia implementations inflated full-file blast radii for
+    // generate-wiring mutations (see REPORT.md).
+    vi.resetAllMocks();
   });
 
   it('renders a Suggest alt text control', () => {
@@ -466,6 +470,8 @@ describe('MediaAltSuggest', () => {
     await screen.findByRole('alert');
 
     // Dismiss the failed draft, then generate a brand-new one.
+    // (Dismiss independently calls resetAccept — this pin does not cover the
+    // Accept-fail → Regenerate path; see the Regenerate companion below.)
     fireEvent.click(screen.getByRole('button', { name: /dismiss/i }));
     await waitFor(() => expect(screen.getByRole('button', { name: /suggest alt text/i })).toHaveFocus());
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
@@ -474,6 +480,35 @@ describe('MediaAltSuggest', () => {
     // [TEST-15] discrimination: the fresh draft was never accepted, so no stale
     // assertive save-failure alert may fire — it would announce a false failure to
     // SR users. Goes red while the accept mutation is not reset on dismiss/generate.
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /accept/i })).toBeInTheDocument();
+  });
+
+  it('clears a prior accept error when Regenerate is pressed [INT-11][a11y][WBUX-5-S2C2-BR-01][BR-36]', async () => {
+    const regenerated = 'A red brick viaduct crossing a canal at midday.';
+    describeMock
+      .mockResolvedValueOnce(sampleResponse(draft))
+      .mockResolvedValueOnce(sampleResponse(regenerated));
+    correctMock.mockRejectedValueOnce(
+      new Error(
+        'Request to /wp-json/acx/v1/recognition/describe-history/42/correction failed (502): <html>proxy-internal-detail</html>',
+      ),
+    );
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    // Draft A -> Accept fails -> sticky accept error alert.
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /accept/i }));
+    await screen.findByRole('alert');
+
+    // Regenerate (not Dismiss): the path resetAccept() inside generate() was
+    // added for. Without it the sticky accept alert rides onto the new draft.
+    fireEvent.click(screen.getByRole('button', { name: /^regenerate$/i }));
+    expect(await screen.findByText(regenerated)).toBeInTheDocument();
+
+    // [TEST-15] discrimination: goes red if resetAccept() is removed from
+    // generate() — Accept-fail → Regenerate leaves role="alert" on the fresh
+    // draft. Single-line: delete `resetAccept();` from generate().
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /accept/i })).toBeInTheDocument();
   });
@@ -1038,7 +1073,8 @@ describe('MediaAltSuggest', () => {
       .mockResolvedValueOnce(sampleResponse(draft))
       .mockRejectedValueOnce(
         new Error('Request to /wp-json/acx/v1/recognition/describe failed (502): <html>proxy-internal-detail</html>'),
-      );
+      )
+      .mockResolvedValueOnce(sampleResponse(regeneratedDraft));
     renderSuggest(<MediaAltSuggest mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
@@ -1052,10 +1088,16 @@ describe('MediaAltSuggest', () => {
     // Try again keeps the generation path, and the row inline editor remains the
     // manual path [INT-11].
     expect(screen.queryByText(draft)).not.toBeInTheDocument();
-    // [TEST-15] discrimination: goes red if regenerate failure leaves no Try again
-    // (e.g. a silent swallow, or a branch that only offers Dismiss). Single-line
-    // class: isError branch omitted or Try again not wired to generate.
     expect(screen.getByRole('button', { name: /try again|retry/i })).toBeInTheDocument();
+
+    // [TEST-15][BR-43] discrimination: presence alone does not pin onClick={generate}
+    // on the error-branch Try again (removing the handler left this green). Click
+    // it and require a third describeMedia call plus a recovered draft — same
+    // wiring pin shape as 're-invokes generation when retry is pressed after a
+    // failure'. Single-line: onClick={generate} removed from the isError Try again.
+    fireEvent.click(screen.getByRole('button', { name: /try again|retry/i }));
+    expect(await screen.findByText(regeneratedDraft)).toBeInTheDocument();
+    expect(describeMock).toHaveBeenCalledTimes(3);
   });
 
   it('keeps focus inside the surface while generating, not on document.body [a11y][WBUX-5-S2C3A-BR-13][WBUX-5-S2C3B]', async () => {
@@ -1067,16 +1109,175 @@ describe('MediaAltSuggest', () => {
     // Stands in for the browser blurring the control native `disabled` just applied.
     parkFocusOnBody();
 
-    // [TEST-15] discrimination: goes red if the isPending parkIfStranded effect
+    // [TEST-15] discrimination: goes red if useFocusPark / its isPending effect
     // (or its document focusout listener) is removed — focus stays on
     // document.body for the whole generation. Single-line: deleting the
-    // useEffect that keys on isPending. Also goes red if the container loses
-    // tabIndex={-1} (focus() is a no-op on non-focusable divs in some agents;
-    // observed here: without tabIndex, activeElement remains body).
+    // useFocusPark(isPending, containerRef) call (or the hook's useEffect).
+    // Also goes red if the container loses tabIndex={-1} (focus() is a no-op on
+    // non-focusable divs in some agents; observed here: without tabIndex,
+    // activeElement remains body).
     await waitFor(() => {
       expect(document.activeElement).not.toBe(document.body);
       expect(document.activeElement).toHaveClass('acx-media-selection__media-alt-suggest');
     });
+  });
+
+  it('does not let a pending row reclaim body focus stranded by a sibling [a11y][BR-33]', async () => {
+    // Row A generating (never settles). Row B Accept disable-blurs to body.
+    // Without instance-scoped park, A's document focusout listener claims body
+    // and focus jumps to A's container.
+    describeMock.mockImplementation((mediaId: number) => {
+      if (mediaId === 1) {
+        return new Promise<VisualFactsResponse>(() => undefined);
+      }
+      return Promise.resolve(sampleResponse(`draft-for-${mediaId}`));
+    });
+    correctMock.mockReturnValue(new Promise<DescriptionHistoryItem>(() => undefined));
+    renderSuggest(
+      <>
+        <div data-testid="row-a">
+          <MediaAltSuggest mediaId={1} />
+        </div>
+        <div data-testid="row-b">
+          <MediaAltSuggest mediaId={2} />
+        </div>
+      </>,
+    );
+
+    const rowA = screen.getByTestId('row-a');
+    const rowB = screen.getByTestId('row-b');
+
+    // fireEvent.click does not move focus — focus explicitly so park ownership
+    // and focusout origin match real pointer activation.
+    const suggestA = within(rowA).getByRole('button', { name: /suggest alt text/i });
+    suggestA.focus();
+    fireEvent.click(suggestA);
+    expect(await within(rowA).findByRole('button', { name: /generating/i })).toBeDisabled();
+
+    const suggestB = within(rowB).getByRole('button', { name: /suggest alt text/i });
+    suggestB.focus();
+    fireEvent.click(suggestB);
+    expect(await screen.findByText('draft-for-2')).toBeInTheDocument();
+    const acceptB = within(rowB).getByRole('button', { name: /accept/i });
+    acceptB.focus();
+    fireEvent.click(acceptB);
+    expect(await within(rowB).findByRole('button', { name: /accepting draft/i })).toBeDisabled();
+    // Sibling Accept disable-blurs to body (jsdom stand-in). focusout target is
+    // B's Accept — A's origin guard must refuse to park.
+    parkFocusOnBody();
+
+    await new Promise<void>((resolve) => {
+      queueMicrotask(() => resolve());
+    });
+
+    // [TEST-15] discrimination: goes red if useFocusPark parks on any body-strand
+    // without checking that the focusout target was inside this container —
+    // single-line: drop the `node.contains(target)` origin guard in useFocusPark.
+    expect(rowA.contains(document.activeElement)).toBe(false);
+  });
+
+  it('does not silently claim body focus when two rows are generating [a11y][BR-33]', async () => {
+    // Design: neither row claims a body-strand that did not originate inside it.
+    // Operator focus sits on an outside control, then falls to body — both rows
+    // stay hands-off (no initiating-row claim for foreign strands).
+    describeMock.mockReturnValue(new Promise<VisualFactsResponse>(() => undefined));
+    renderSuggest(
+      <>
+        <div data-testid="row-a">
+          <MediaAltSuggest mediaId={1} />
+        </div>
+        <div data-testid="row-b">
+          <MediaAltSuggest mediaId={2} />
+        </div>
+        <button type="button">Outside</button>
+      </>,
+    );
+
+    const rowA = screen.getByTestId('row-a');
+    const rowB = screen.getByTestId('row-b');
+
+    const suggestA = within(rowA).getByRole('button', { name: /suggest alt text/i });
+    suggestA.focus();
+    fireEvent.click(suggestA);
+    const suggestB = within(rowB).getByRole('button', { name: /suggest alt text/i });
+    suggestB.focus();
+    fireEvent.click(suggestB);
+    expect(await screen.findAllByRole('button', { name: /generating/i })).toHaveLength(2);
+
+    // Leave both surfaces for a real outside control. Flush the focusout
+    // microtask from the generating row *before* stranding Outside to body —
+    // same-turn body park after a leave would race the leave's microtask
+    // (activeElement already body) and look like a false reclaim. Real pointer
+    // sequences separate those turns.
+    const outside = screen.getByRole('button', { name: /^outside$/i });
+    outside.focus();
+    expect(outside).toHaveFocus();
+    await new Promise<void>((resolve) => {
+      queueMicrotask(() => resolve());
+    });
+    expect(outside).toHaveFocus();
+    parkFocusOnBody();
+    await new Promise<void>((resolve) => {
+      queueMicrotask(() => resolve());
+    });
+
+    // [TEST-15] discrimination: goes red under the pre-BR-33 global park (any
+    // pending instance reclaims any body-strand). With origin scoping, a strand
+    // whose focusout target was outside both containers is not reclaimed.
+    const active = document.activeElement;
+    expect(rowA.contains(active)).toBe(false);
+    expect(rowB.contains(active)).toBe(false);
+  });
+
+  it('restores accept-error focus on row B while row A is still generating [a11y][BR-33]', async () => {
+    // Cross-row correctness: if A's park steals body after B's Accept disables,
+    // B's ownsFocus gate sees focus inside A and skips the accept-error restore.
+    describeMock.mockImplementation((mediaId: number) => {
+      if (mediaId === 1) {
+        return new Promise<VisualFactsResponse>(() => undefined);
+      }
+      return Promise.resolve(sampleResponse(`draft-for-${mediaId}`));
+    });
+    correctMock.mockRejectedValueOnce(
+      new Error(
+        'Request to /wp-json/acx/v1/recognition/describe-history/2/correction failed (502): <html>proxy-internal-detail</html>',
+      ),
+    );
+    renderSuggest(
+      <>
+        <div data-testid="row-a">
+          <MediaAltSuggest mediaId={1} />
+        </div>
+        <div data-testid="row-b">
+          <MediaAltSuggest mediaId={2} />
+        </div>
+      </>,
+    );
+
+    const rowA = screen.getByTestId('row-a');
+    const rowB = screen.getByTestId('row-b');
+
+    const suggestA = within(rowA).getByRole('button', { name: /suggest alt text/i });
+    suggestA.focus();
+    fireEvent.click(suggestA);
+    expect(await within(rowA).findByRole('button', { name: /generating/i })).toBeDisabled();
+
+    const suggestB = within(rowB).getByRole('button', { name: /suggest alt text/i });
+    suggestB.focus();
+    fireEvent.click(suggestB);
+    expect(await screen.findByText('draft-for-2')).toBeInTheDocument();
+    const acceptB = within(rowB).getByRole('button', { name: /accept/i });
+    acceptB.focus();
+    fireEvent.click(acceptB);
+    parkFocusOnBody();
+
+    await screen.findByRole('alert');
+    // [TEST-15] discrimination: goes red if pending row A parks on itself when
+    // B disable-blurs to body — B's accept-error restore then sees active inside
+    // A and refuses to move focus back to Accept. Single-line: drop the origin
+    // guard in useFocusPark (global body reclaim).
+    expect(within(rowB).getByRole('button', { name: /accept/i })).toHaveFocus();
+    expect(rowA.contains(document.activeElement)).toBe(false);
   });
 
   it('retires a saved status message when focus leaves the idle surface [WBUX-5-S2C3A-BR-17][WBUX-5-S2C3B]', async () => {

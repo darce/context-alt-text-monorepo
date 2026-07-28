@@ -4,13 +4,22 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { resolveDescribeErrorMessage } from '../../api/describeApi';
 import { useCorrectMediaAlt } from '../../hooks/useCorrectMediaAlt';
 import { useDescribeMedia } from '../../hooks/useDescribeMedia';
+import { useAriaAnnounce } from './identity-clusters/useAriaAnnounce';
 
 export interface MediaAltSuggestProps {
   mediaId: number;
 }
 
 export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.Element => {
-  const [statusMessage, setStatusMessage] = useState('');
+  // House BR-68 pattern (same hook ScanTabContent uses one directory away): seq
+  // bumps on every announce so a repeated string (regenerate → same "Draft
+  // ready…") still remounts the live region. Plain useState<string> bails out
+  // on Object.is-equal sets and aria-live stays silent.
+  const {
+    message: statusMessage,
+    seq: statusSeq,
+    announce: announceStatus,
+  } = useAriaAnnounce();
   const [isEditing, setIsEditing] = useState(false);
   const [editDraft, setEditDraft] = useState('');
   const { mutate, isPending, isError, error, data, reset } = useDescribeMedia();
@@ -35,13 +44,24 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
   const disclosureId = useId();
   const errorId = useId();
 
+  // WHY: useAriaAnnounce has no clear; empty message unmounts the truthy-gated region.
+  // Note: this bumps seq on clear (local clear did not).
+  const clearStatus = (): void => {
+    announceStatus('');
+  };
+
   const generate = (): void => {
-    setStatusMessage('');
+    // Announce generating immediately so the pending branch's live region has
+    // distinct text from a prior "Draft ready…" (regenerate re-announce path).
+    announceStatus(__('Generating…', 'alt-context'));
     resetAccept();
     setIsEditing(false);
     mutate(mediaId, {
       onSuccess: () => {
-        setStatusMessage(__('Draft ready. Review before saving.', 'alt-context'));
+        announceStatus(__('Draft ready. Review before saving.', 'alt-context'));
+      },
+      onError: () => {
+        clearStatus();
       },
     });
   };
@@ -109,9 +129,75 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
     }
   }, [isAcceptError, isEditing]);
 
+  // BR-13: native `disabled` on the Generating control blurs focus to body for
+  // the whole generation. Keep `disabled` (this repo's toBeDisabled() only
+  // honours the HTML attribute, not aria-disabled — measured; switching to
+  // aria-disabled alone fails the two existing `.toBeDisabled()` pending
+  // assertions). Park focus on the container when focus is stranded on body.
+  // Document-level focusout re-checks after the browser's blur-on-disable (and
+  // after jsdom stand-ins like parkFocusOnBody) without stealing focus from
+  // an operator who has moved elsewhere (activeElement outside + not body).
+  useEffect(() => {
+    if (!isPending) {
+      return;
+    }
+    const parkIfStranded = (): void => {
+      queueMicrotask(() => {
+        const node = containerRef.current;
+        if (!node) {
+          return;
+        }
+        const active = document.activeElement;
+        if (!active || active === document.body) {
+          node.focus();
+        }
+      });
+    };
+    parkIfStranded();
+    document.addEventListener('focusout', parkIfStranded);
+    return () => {
+      document.removeEventListener('focusout', parkIfStranded);
+    };
+  }, [isPending]);
+
+  // BR-17: retire status once it has served its purpose — no timeout. When focus
+  // leaves this surface while idle, "Alt text saved." is no longer local context.
+  // Review/error/pending keep their messages (still describing this surface).
+  const handleContainerBlur = (event: React.FocusEvent<HTMLDivElement>): void => {
+    const next = event.relatedTarget;
+    if (next instanceof Node && containerRef.current?.contains(next)) {
+      return;
+    }
+    if (!data && !isPending && !isError) {
+      clearStatus();
+    }
+  };
+
+  // Named polite live region [A11Y-08]. key={statusSeq} forces a remount when
+  // the same copy is re-announced (regenerate). Conditional on truthy message
+  // (hook starts at null; clear uses '') so we do not always-mount a second
+  // row-level status next to MediaAltInlineEditor (§2 choice c — row-level
+  // ownership deferred to S2c-4 / BR-06).
+  const statusRegion = statusMessage ? (
+    <div
+      key={statusSeq}
+      role="status"
+      aria-live="polite"
+      className="screen-reader-text"
+      data-announce-seq={statusSeq}
+    >
+      {statusMessage}
+    </div>
+  ) : null;
+
   if (isPending) {
     return (
-      <div ref={containerRef} className="acx-media-selection__media-alt-suggest">
+      <div
+        ref={containerRef}
+        className="acx-media-selection__media-alt-suggest"
+        tabIndex={-1}
+        onBlur={handleContainerBlur}
+      >
         <button
           type="button"
           className="button acx-media-selection__media-alt-suggest-trigger"
@@ -119,13 +205,19 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
         >
           {__('Generating…', 'alt-context')}
         </button>
+        {statusRegion}
       </div>
     );
   }
 
   if (isError) {
     return (
-      <div ref={containerRef} className="acx-media-selection__media-alt-suggest">
+      <div
+        ref={containerRef}
+        className="acx-media-selection__media-alt-suggest"
+        tabIndex={-1}
+        onBlur={handleContainerBlur}
+      >
         <div className="acx-media-selection__media-alt-error" role="alert">
           {resolveDescribeErrorMessage(
             error,
@@ -151,8 +243,9 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
         {
           onSuccess: () => {
             shouldFocusSuggestRef.current = true;
-            setStatusMessage(__('Alt text saved.', 'alt-context'));
-            setIsEditing(false);
+            announceStatus(__('Alt text saved.', 'alt-context'));
+            // BR-30: setIsEditing(false) removed — Accept only renders in the
+            // non-edit branch, so isEditing is already false on every path here.
             reset();
           },
         },
@@ -179,7 +272,7 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
         {
           onSuccess: () => {
             shouldFocusSuggestRef.current = true;
-            setStatusMessage(__('Alt text saved.', 'alt-context'));
+            announceStatus(__('Alt text saved.', 'alt-context'));
             setIsEditing(false);
             reset();
           },
@@ -192,7 +285,12 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
     const canAcceptDraft = data.alt_text_draft.trim() !== '';
 
     return (
-      <div ref={containerRef} className="acx-media-selection__media-alt-suggest">
+      <div
+        ref={containerRef}
+        className="acx-media-selection__media-alt-suggest"
+        tabIndex={-1}
+        onBlur={handleContainerBlur}
+      >
         {isEditing ? (
           <>
             <label
@@ -218,11 +316,7 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
         <p id={disclosureId} className="acx-media-selection__media-alt-disclosure">
           {__('Drafted by AI — review before saving.', 'alt-context')}
         </p>
-        {statusMessage ? (
-          <div role="status" aria-live="polite" className="screen-reader-text">
-            {statusMessage}
-          </div>
-        ) : null}
+        {statusRegion}
         {isAcceptError ? (
           <div id={errorId} className="acx-media-selection__media-alt-error" role="alert">
             {resolveDescribeErrorMessage(
@@ -276,13 +370,21 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
             </button>
             <button
               type="button"
+              className="button acx-media-selection__media-alt-suggest-regenerate"
+              onClick={generate}
+              disabled={isAccepting}
+            >
+              {__('Regenerate', 'alt-context')}
+            </button>
+            <button
+              type="button"
               ref={dismissButtonRef}
               className="button button-link acx-media-selection__media-alt-suggest-dismiss"
               onClick={() => {
                 shouldFocusSuggestRef.current = true;
                 reset();
                 resetAccept();
-                setStatusMessage('');
+                clearStatus();
                 setIsEditing(false);
               }}
               disabled={isAccepting}
@@ -296,7 +398,12 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
   }
 
   return (
-    <div ref={containerRef} className="acx-media-selection__media-alt-suggest">
+    <div
+      ref={containerRef}
+      className="acx-media-selection__media-alt-suggest"
+      tabIndex={-1}
+      onBlur={handleContainerBlur}
+    >
       <button
         type="button"
         ref={suggestButtonRef}
@@ -305,11 +412,7 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
       >
         {__('Suggest alt text', 'alt-context')}
       </button>
-      {statusMessage ? (
-        <div role="status" aria-live="polite" className="screen-reader-text">
-          {statusMessage}
-        </div>
-      ) : null}
+      {statusRegion}
     </div>
   );
 };

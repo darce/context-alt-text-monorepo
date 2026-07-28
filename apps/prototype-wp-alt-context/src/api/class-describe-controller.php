@@ -292,13 +292,16 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 		);
 	}
 
-	public function correct_description_history_item( WP_REST_Request $request ): WP_REST_Response {
-		return new WP_REST_Response(
-			$this->description_history_service->record_correction(
-				absint( $request->get_param( 'media_id' ) ),
-				(string) $request->get_param( 'alt_text' )
-			)
+	public function correct_description_history_item( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$result = $this->description_history_service->record_correction(
+			absint( $request->get_param( 'media_id' ) ),
+			(string) $request->get_param( 'alt_text' )
 		);
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		return new WP_REST_Response( $result );
 	}
 
 	public function submit_describe_run( WP_REST_Request $request ): WP_REST_Response|WP_Error {

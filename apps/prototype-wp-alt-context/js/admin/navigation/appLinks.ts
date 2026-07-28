@@ -65,6 +65,19 @@ const PANES_VALID: readonly PanesState[] = [
   APP_LINK_VALUES.panesLibraryCollapsed,
 ];
 
+/**
+ * Parse `panes` search param. Valid collapse states pass through; absent/other → `'both'`
+ * (default two-pane open; param omitted on clean URLs).
+ */
+export const parsePanes = (raw: string | null | undefined): PanesState =>
+  raw != null && (PANES_VALID as readonly string[]).includes(raw)
+    ? (raw as PanesState)
+    : APP_LINK_VALUES.panesBoth;
+
+/** Serialize panes state; `'both'` → null so callers omit the param (absent default). */
+export const serializePanes = (v: PanesState): string | null =>
+  v === APP_LINK_VALUES.panesBoth ? null : v;
+
 export interface ToWorkbenchOptions {
   status?: WorkbenchMediaStatus;
   tab?: WorkbenchTab;
@@ -195,16 +208,3 @@ export const parseMediaExpanded = (raw: string | null | undefined): boolean =>
 /** Serialize expand state; false → null so callers omit the param (absent default). */
 export const serializeMediaExpanded = (expanded: boolean): string | null =>
   expanded ? APP_LINK_VALUES.mediaExpanded : null;
-
-/**
- * Parse `panes` search param. Valid collapse states pass through; absent/other → `'both'`
- * (default two-pane open; param omitted on clean URLs).
- */
-export const parsePanes = (raw: string | null | undefined): PanesState =>
-  raw != null && (PANES_VALID as readonly string[]).includes(raw)
-    ? (raw as PanesState)
-    : APP_LINK_VALUES.panesBoth;
-
-/** Serialize panes state; `'both'` → null so callers omit the param (absent default). */
-export const serializePanes = (v: PanesState): string | null =>
-  v === APP_LINK_VALUES.panesBoth ? null : v;

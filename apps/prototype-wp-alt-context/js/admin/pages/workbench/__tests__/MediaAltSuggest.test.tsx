@@ -81,6 +81,16 @@ const renderSuggest = (element: ReactElement, client = buildClient()) => ({
 /** Visible-text accessible name for controls whose names come from textContent. */
 const buttonAccessibleName = (button: HTMLElement): string => (button.textContent ?? '').trim();
 
+// jsdom neither blurs on disable nor honours blur() on an already-disabled element,
+// so the disabled Accept/Save keeps focus. Park on body via a focusable stand-in.
+const parkFocusOnBody = (): void => {
+  const parking = document.createElement('button');
+  document.body.appendChild(parking);
+  parking.focus();
+  parking.blur();
+  parking.remove();
+};
+
 describe('MediaAltSuggest', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -307,6 +317,28 @@ describe('MediaAltSuggest', () => {
     );
   });
 
+  it('settles accept without waiting for media-tree invalidation [WBUX-5-S2C3A-BR-05]', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    correctMock.mockResolvedValue(sampleHistoryItem());
+    const client = buildClient();
+    // Never resolves: splits void vs await in useCorrectMediaAlt's hook-level
+    // onSuccess. With await, query-core never dispatches success.
+    vi.spyOn(client, 'invalidateQueries').mockReturnValue(new Promise<void>(() => undefined));
+    renderSuggest(<MediaAltSuggest mediaId={42} />, client);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /accept/i }));
+
+    // [TEST-15] discrimination: goes red if useCorrectMediaAlt restores
+    // `onSuccess: async () => { await queryClient.invalidateQueries(...) }` —
+    // the mutation stays pending for the never-settling invalidation, so the
+    // component's mutate-level onSuccess never runs and these time out.
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/saved/i));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /suggest alt text/i })).toHaveFocus(),
+    );
+  });
+
   it('keeps the draft and shows a user-safe error when accept fails [INT-11][S2c-2]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
     correctMock.mockRejectedValueOnce(
@@ -326,6 +358,61 @@ describe('MediaAltSuggest', () => {
     // The operator keeps the draft and can retry the accept — no full restart (INT-11).
     expect(screen.getByText(draft)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /accept/i })).toBeInTheDocument();
+  });
+
+  it('returns focus to Accept after a failed accept when the browser blurred the disabled control [a11y][WBUX-5-S2C3A-BR-18]', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    correctMock.mockRejectedValueOnce(
+      new Error(
+        'Request to /wp-json/acx/v1/recognition/describe-history/42/correction failed (502): <html>proxy-internal-detail</html>',
+      ),
+    );
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    const accept = await screen.findByRole('button', { name: /accept/i });
+    accept.focus();
+    fireEvent.click(accept);
+    // Stands in for the browser blurring the control isAccepting just disabled.
+    parkFocusOnBody();
+
+    await screen.findByRole('alert');
+    // [TEST-15] discrimination: goes red if the isAcceptError focus-restore effect
+    // (or its acceptButtonRef) is removed from MediaAltSuggest.tsx — focus stays
+    // on document.body instead of returning to Accept.
+    expect(screen.getByRole('button', { name: /accept/i })).toHaveFocus();
+  });
+
+  it('does not steal focus from elsewhere on the page when accept fails [a11y][WBUX-5-S2C3A-BR-20]', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    correctMock.mockRejectedValueOnce(
+      new Error(
+        'Request to /wp-json/acx/v1/recognition/describe-history/42/correction failed (502): <html>proxy-internal-detail</html>',
+      ),
+    );
+    renderSuggest(
+      <>
+        <MediaAltSuggest mediaId={42} />
+        <button type="button">Elsewhere</button>
+      </>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await screen.findByText(draft);
+    fireEvent.click(screen.getByRole('button', { name: /accept/i }));
+    // Operator tabs away while the commit is in flight. fireEvent.click is
+    // synchronous and React Query invokes the mutationFn on a microtask, so
+    // this focus must land before the rejection settles and the restore effect
+    // runs — no await between the click and .focus().
+    const elsewhere = screen.getByRole('button', { name: /^elsewhere$/i });
+    elsewhere.focus();
+    expect(elsewhere).toHaveFocus();
+
+    await screen.findByRole('alert');
+    // [TEST-15] discrimination: goes red if the ownsFocus block is deleted from
+    // the isAcceptError effect in MediaAltSuggest.tsx — focus is pulled back to
+    // Accept even though the operator has moved on.
+    expect(screen.getByRole('button', { name: /^elsewhere$/i })).toHaveFocus();
   });
 
   it('does not resurface a prior accept error on a freshly regenerated draft [INT-11][a11y][WBUX-5-S2C2-BR-01]', async () => {
@@ -602,6 +689,33 @@ describe('MediaAltSuggest', () => {
     // drop them back to the machine draft and make them retype the amendment.
     expect(screen.getByLabelText(/edit draft alt text/i)).toHaveValue(editedDraft);
     expect(screen.getByRole('button', { name: /^save alt text$/i })).toBeInTheDocument();
+  });
+
+  it('returns focus to Save alt text after a failed save when the browser blurred the disabled control [a11y][WBUX-5-S2C3A-BR-18]', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    correctMock.mockRejectedValueOnce(
+      new Error(
+        'Request to /wp-json/acx/v1/recognition/describe-history/42/correction failed (502): <html>proxy-internal-detail</html>',
+      ),
+    );
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
+    fireEvent.change(await screen.findByLabelText(/edit draft alt text/i), {
+      target: { value: editedDraft },
+    });
+    const save = screen.getByRole('button', { name: /^save alt text$/i });
+    save.focus();
+    fireEvent.click(save);
+    // Stands in for the browser blurring the control isAccepting just disabled.
+    parkFocusOnBody();
+
+    await screen.findByRole('alert');
+    // [TEST-15] discrimination: goes red if the isAcceptError focus-restore effect
+    // (or its saveButtonRef) is removed from MediaAltSuggest.tsx — focus stays
+    // on document.body instead of returning to Save alt text.
+    expect(screen.getByRole('button', { name: /^save alt text$/i })).toHaveFocus();
   });
 
   it('describes the edit field with the disclosure and associates a save error [a11y][WBUX-5-S2C3A-BR-09]', async () => {

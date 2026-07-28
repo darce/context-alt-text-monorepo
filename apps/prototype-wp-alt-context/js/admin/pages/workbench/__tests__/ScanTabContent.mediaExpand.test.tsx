@@ -125,6 +125,10 @@ vi.mock('../WorkbenchMediaContext', () => ({
   }),
 }));
 
+vi.mock('../ReviewSurfaceContext', () => ({
+  useReviewSurface: () => ({ cardPrimaryPresent: false, setCardPrimaryPresent: vi.fn() }),
+}));
+
 vi.mock('../MediaSelection', () => ({
   MediaSelection: ({
     collapsed,

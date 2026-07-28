@@ -23,6 +23,7 @@ import { MediaSelection } from './MediaSelection';
 import { useJobPipeline } from './JobPipelineContext';
 import { useClusterPanel } from './ClusterPanelContext';
 import { useWorkbenchMediaContext } from './WorkbenchMediaContext';
+import { useReviewSurface } from './ReviewSurfaceContext';
 
 const ScanScrollRestoration = () => {
   useScrollRestoration('workbench-scan');
@@ -82,7 +83,7 @@ export const ScanTabContent = (): React.JSX.Element => {
   // primary (its card marker or bulk-commit marker). This — not findings totals —
   // drives footer demotion, so the signal that places the queue's accent marker is the
   // same one that steps the footer CTAs down (BR-83: this is the ONLY footer input).
-  const [cardPrimaryPresent, setCardPrimaryPresent] = React.useState(false);
+  const { cardPrimaryPresent, setCardPrimaryPresent } = useReviewSurface();
 
   // Lifted queue index + kind + band — survives label/review panel unmount of ReviewQueue.
   const [queueIndex, setQueueIndex] = React.useState(queueState.index);

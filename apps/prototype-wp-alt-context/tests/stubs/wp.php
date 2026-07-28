@@ -1640,7 +1640,12 @@ if (!function_exists('wp_rand')) {
 if (!function_exists('current_time')) {
     function current_time($type, $gmt = 0)
     {
-        $timestamp = time();
+        // Opt-in freeze for payload-equality tests (BR-50): when set to an int
+        // unix timestamp, every current_time() call returns that moment instead
+        // of time(). Unset by default — same shape as __ac_update_post_meta_fail.
+        $timestamp = isset($GLOBALS['__ac_current_time']) && is_int($GLOBALS['__ac_current_time'])
+            ? $GLOBALS['__ac_current_time']
+            : time();
         $gmtOffset = (float) get_option('gmt_offset', 0);
         $offsetSeconds = (int) round($gmtOffset * 3600);
         $localizedTimestamp = $timestamp + $offsetSeconds;

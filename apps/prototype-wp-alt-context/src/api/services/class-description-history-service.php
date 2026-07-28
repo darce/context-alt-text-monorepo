@@ -75,6 +75,25 @@ class DescriptionHistoryService {
 	public function record_correction( int $media_id, string $alt_text ): array|WP_Error {
 		$normalized_alt_text = sanitize_text_field( trim( $alt_text ) );
 
+		// Validate attachment identity before any write. Mirrors S3-01 in
+		// DescribeController::apply_describe_run_drafts — refuse to stamp alt
+		// text onto a nonexistent ID or a non-attachment post.
+		$post = get_post( $media_id );
+		if ( ! is_object( $post ) ) {
+			return new WP_Error(
+				'description_correction_failed',
+				'Media item not found.',
+				array( 'status' => 404 )
+			);
+		}
+		if ( 'attachment' !== (string) ( $post->post_type ?? '' ) ) {
+			return new WP_Error(
+				'description_correction_failed',
+				'Media item is not an attachment.',
+				array( 'status' => 400 )
+			);
+		}
+
 		// S3-02: honor the update_post_meta() return. It also returns false when
 		// the stored value is byte-identical to $normalized_alt_text (a no-op
 		// overwrite); distinguish that from a real failure via a read-back so an

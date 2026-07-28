@@ -5,10 +5,11 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import Enum, auto
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, inspect, or_, select
+from sqlalchemy import ColumnElement, delete, inspect, or_, select
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,6 +45,18 @@ ALLOWED_PURGE_SCOPES = ("disposed", "all")
 DEFAULT_PURGE_BATCH_SIZE = 1000
 
 logger = logging.getLogger(__name__)
+
+
+class PurgeRowScope(Enum):
+    """Explicit row scope for a purge predicate.
+
+    A bare ``None`` previously meant both "no extra filter, delete every tenant
+    row" and "this scope resolved to no ids", so a ``disposed`` purge of a tenant
+    with nothing disposed deleted the tenant's live data.
+    """
+
+    ALL_TENANT_ROWS = auto()
+    NO_ROWS = auto()
 
 
 @dataclass(frozen=True)
@@ -224,19 +237,19 @@ class TenantPurgeService:
                 "identity_constraints",
                 IdentityConstraint,
                 IdentityConstraint.tenant_id == tenant_id,
-                self._identity_constraint_predicate(scope_ids.identity_ids),
+                self._identity_constraint_predicate(scope_ids.identity_ids, scope),
             ),
             (
                 "identity_cluster_blocks",
                 IdentityClusterBlock,
                 IdentityClusterBlock.tenant_id == tenant_id,
-                self._cluster_block_predicate(scope_ids),
+                self._cluster_block_predicate(scope_ids, scope),
             ),
             (
                 "identity_suggestions",
                 IdentitySuggestion,
                 IdentitySuggestion.tenant_id == tenant_id,
-                self._identity_suggestion_predicate(scope_ids),
+                self._identity_suggestion_predicate(scope_ids, scope),
             ),
             (
                 "name_suggestions",
@@ -248,19 +261,19 @@ class TenantPurgeService:
                 "cluster_merge_suggestions",
                 ClusterMergeSuggestion,
                 ClusterMergeSuggestion.tenant_id == tenant_id,
-                self._merge_suggestion_predicate(scope_ids.cluster_ids),
+                self._merge_suggestion_predicate(scope_ids.cluster_ids, scope),
             ),
             (
                 "identity_members",
                 IdentityMember,
                 IdentityMember.tenant_id == tenant_id,
-                self._member_predicate(scope_ids),
+                self._member_predicate(scope_ids, scope),
             ),
             (
                 "identity_cluster_representatives",
                 IdentityClusterRepresentative,
                 IdentityClusterRepresentative.tenant_id == tenant_id,
-                self._representative_predicate(scope_ids),
+                self._representative_predicate(scope_ids, scope),
             ),
             (
                 "identity_clusters",
@@ -284,14 +297,14 @@ class TenantPurgeService:
     def _atlas_disposition_predicate(self, scope: str) -> Any:
         # Dispositions have no identity/cluster columns; full-tenant purge only.
         if scope != "disposed":
-            return None
-        return False
+            return PurgeRowScope.ALL_TENANT_ROWS
+        return PurgeRowScope.NO_ROWS
 
     def _atlas_point_predicate(self, scope_ids: PurgeScopeIds, scope: str) -> Any:
         if scope != "disposed":
-            return None
+            return PurgeRowScope.ALL_TENANT_ROWS
         if not scope_ids.identity_ids and not scope_ids.cluster_ids:
-            return False
+            return PurgeRowScope.NO_ROWS
         return or_(
             IdentityAtlasPoint.identity_id.in_(scope_ids.identity_ids),
             IdentityAtlasPoint.cluster_id.in_(scope_ids.cluster_ids),
@@ -300,28 +313,34 @@ class TenantPurgeService:
     def _atlas_run_predicate(self, scope: str) -> Any:
         # Runs have no identity/cluster columns; full-tenant purge only.
         if scope != "disposed":
-            return None
-        return False
+            return PurgeRowScope.ALL_TENANT_ROWS
+        return PurgeRowScope.NO_ROWS
 
-    def _identity_constraint_predicate(self, identity_ids: list[UUID]) -> Any:
+    def _identity_constraint_predicate(self, identity_ids: list[UUID], scope: str) -> Any:
+        if scope != "disposed":
+            return PurgeRowScope.ALL_TENANT_ROWS
         if not identity_ids:
-            return None
+            return PurgeRowScope.NO_ROWS
         return or_(
             IdentityConstraint.identity_a.in_(identity_ids),
             IdentityConstraint.identity_b.in_(identity_ids),
         )
 
-    def _cluster_block_predicate(self, scope_ids: PurgeScopeIds) -> Any:
+    def _cluster_block_predicate(self, scope_ids: PurgeScopeIds, scope: str) -> Any:
+        if scope != "disposed":
+            return PurgeRowScope.ALL_TENANT_ROWS
         if not scope_ids.identity_ids and not scope_ids.cluster_ids:
-            return None
+            return PurgeRowScope.NO_ROWS
         return or_(
             IdentityClusterBlock.identity_id.in_(scope_ids.identity_ids),
             IdentityClusterBlock.blocked_cluster_id.in_(scope_ids.cluster_ids),
         )
 
-    def _identity_suggestion_predicate(self, scope_ids: PurgeScopeIds) -> Any:
+    def _identity_suggestion_predicate(self, scope_ids: PurgeScopeIds, scope: str) -> Any:
+        if scope != "disposed":
+            return PurgeRowScope.ALL_TENANT_ROWS
         if not scope_ids.identity_ids and not scope_ids.cluster_ids:
-            return None
+            return PurgeRowScope.NO_ROWS
         return or_(
             IdentitySuggestion.identity_id.in_(scope_ids.identity_ids),
             IdentitySuggestion.suggested_cluster_id.in_(scope_ids.cluster_ids),
@@ -329,30 +348,36 @@ class TenantPurgeService:
 
     def _name_suggestion_predicate(self, scope_ids: PurgeScopeIds, scope: str) -> Any:
         if scope != "disposed":
-            return None
+            return PurgeRowScope.ALL_TENANT_ROWS
         if not scope_ids.cluster_ids:
-            return False
+            return PurgeRowScope.NO_ROWS
         return NameSuggestion.cluster_id.in_(scope_ids.cluster_ids)
 
-    def _merge_suggestion_predicate(self, cluster_ids: list[UUID]) -> Any:
+    def _merge_suggestion_predicate(self, cluster_ids: list[UUID], scope: str) -> Any:
+        if scope != "disposed":
+            return PurgeRowScope.ALL_TENANT_ROWS
         if not cluster_ids:
-            return None
+            return PurgeRowScope.NO_ROWS
         return or_(
             ClusterMergeSuggestion.cluster_a_id.in_(cluster_ids),
             ClusterMergeSuggestion.cluster_b_id.in_(cluster_ids),
         )
 
-    def _member_predicate(self, scope_ids: PurgeScopeIds) -> Any:
+    def _member_predicate(self, scope_ids: PurgeScopeIds, scope: str) -> Any:
+        if scope != "disposed":
+            return PurgeRowScope.ALL_TENANT_ROWS
         if not scope_ids.identity_ids and not scope_ids.cluster_ids:
-            return None
+            return PurgeRowScope.NO_ROWS
         return or_(
             IdentityMember.identity_id.in_(scope_ids.identity_ids),
             IdentityMember.cluster_id.in_(scope_ids.cluster_ids),
         )
 
-    def _representative_predicate(self, scope_ids: PurgeScopeIds) -> Any:
+    def _representative_predicate(self, scope_ids: PurgeScopeIds, scope: str) -> Any:
+        if scope != "disposed":
+            return PurgeRowScope.ALL_TENANT_ROWS
         if not scope_ids.representative_ids and not scope_ids.identity_ids and not scope_ids.cluster_ids:
-            return None
+            return PurgeRowScope.NO_ROWS
         return or_(
             IdentityClusterRepresentative.id.in_(scope_ids.representative_ids),
             IdentityClusterRepresentative.identity_id.in_(scope_ids.identity_ids),
@@ -360,13 +385,17 @@ class TenantPurgeService:
         )
 
     def _cluster_delete_predicate(self, cluster_ids: list[UUID], scope: str) -> Any:
-        if scope != "disposed" or not cluster_ids:
-            return None
+        if scope != "disposed":
+            return PurgeRowScope.ALL_TENANT_ROWS
+        if not cluster_ids:
+            return PurgeRowScope.NO_ROWS
         return IdentityCluster.id.in_(cluster_ids)
 
     def _identity_delete_predicate(self, identity_ids: list[UUID], scope: str) -> Any:
-        if scope != "disposed" or not identity_ids:
-            return None
+        if scope != "disposed":
+            return PurgeRowScope.ALL_TENANT_ROWS
+        if not identity_ids:
+            return PurgeRowScope.NO_ROWS
         return MediaIdentity.id.in_(identity_ids)
 
     async def _get_identity_ids(self, tenant_id: UUID, scope: str) -> list[UUID]:
@@ -390,7 +419,12 @@ class TenantPurgeService:
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
-    async def _delete_rows(self, model, tenant_predicate, extra_predicate=None) -> int:
+    async def _delete_rows(
+        self,
+        model,
+        tenant_predicate,
+        extra_predicate: Any = PurgeRowScope.ALL_TENANT_ROWS,
+    ) -> int:
         primary_key = self._primary_key_column(model)
         deleted_total = 0
 
@@ -403,9 +437,25 @@ class TenantPurgeService:
             deleted_total += self._rowcount(result)
             await self._session.commit()
 
-    async def _list_batch_ids(self, model, primary_key, tenant_predicate, extra_predicate=None) -> list[object]:
+    async def _list_batch_ids(
+        self,
+        model,
+        primary_key,
+        tenant_predicate,
+        extra_predicate: Any = PurgeRowScope.ALL_TENANT_ROWS,
+    ) -> list[object]:
+        if extra_predicate is PurgeRowScope.NO_ROWS:
+            return []
+
         stmt = select(primary_key).where(tenant_predicate).order_by(primary_key.asc()).limit(self._batch_size)
-        if extra_predicate is not None:
+        if extra_predicate is not PurgeRowScope.ALL_TENANT_ROWS:
+            # Anything else silently widening to a tenant-wide delete is the
+            # defect this sentinel exists to prevent, so refuse it outright.
+            if not isinstance(extra_predicate, ColumnElement):
+                raise TypeError(
+                    f"purge predicate for {model.__name__} must be a SQL expression or "
+                    f"PurgeRowScope member, got {extra_predicate!r}"
+                )
             stmt = stmt.where(extra_predicate)
         result = await self._session.execute(stmt)
         return list(result.scalars().all())

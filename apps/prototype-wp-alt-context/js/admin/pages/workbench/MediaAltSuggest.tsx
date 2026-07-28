@@ -2,6 +2,7 @@ import { __ } from '@wordpress/i18n';
 import { useEffect, useRef, useState } from 'react';
 
 import { resolveDescribeErrorMessage } from '../../api/describeApi';
+import { useCorrectMediaAlt } from '../../hooks/useCorrectMediaAlt';
 import { useDescribeMedia } from '../../hooks/useDescribeMedia';
 
 export interface MediaAltSuggestProps {
@@ -11,6 +12,13 @@ export interface MediaAltSuggestProps {
 export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.Element => {
   const [statusMessage, setStatusMessage] = useState('');
   const { mutate, isPending, isError, error, data, reset } = useDescribeMedia();
+  const {
+    mutate: acceptDraft,
+    isPending: isAccepting,
+    isError: isAcceptError,
+    error: acceptError,
+    reset: resetAccept,
+  } = useCorrectMediaAlt();
   const suggestButtonRef = useRef<HTMLButtonElement>(null);
   const dismissButtonRef = useRef<HTMLButtonElement>(null);
   const retryButtonRef = useRef<HTMLButtonElement>(null);
@@ -18,6 +26,7 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
 
   const generate = (): void => {
     setStatusMessage('');
+    resetAccept();
     mutate(mediaId, {
       onSuccess: () => {
         setStatusMessage(__('Draft ready. Review before saving.', 'alt-context'));
@@ -77,6 +86,19 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
   }
 
   if (data) {
+    const accept = (): void => {
+      acceptDraft(
+        { mediaId, altText: data.alt_text_draft },
+        {
+          onSuccess: () => {
+            shouldFocusSuggestRef.current = true;
+            setStatusMessage(__('Alt text saved.', 'alt-context'));
+            reset();
+          },
+        },
+      );
+    };
+
     return (
       <div className="acx-media-selection__media-alt-suggest">
         <p className="acx-media-selection__media-alt-draft">{data.alt_text_draft}</p>
@@ -88,6 +110,22 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
             {statusMessage}
           </div>
         ) : null}
+        {isAcceptError ? (
+          <div className="acx-media-selection__media-alt-error" role="alert">
+            {resolveDescribeErrorMessage(
+              acceptError,
+              __('Could not save the alt text. Please try again.', 'alt-context'),
+            )}
+          </div>
+        ) : null}
+        <button
+          type="button"
+          className="button button-primary acx-media-selection__media-alt-suggest-accept"
+          onClick={accept}
+          disabled={isAccepting}
+        >
+          {isAccepting ? __('Saving…', 'alt-context') : __('Accept', 'alt-context')}
+        </button>
         <button
           type="button"
           ref={dismissButtonRef}
@@ -95,8 +133,10 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
           onClick={() => {
             shouldFocusSuggestRef.current = true;
             reset();
+            resetAccept();
             setStatusMessage('');
           }}
+          disabled={isAccepting}
         >
           {__('Dismiss', 'alt-context')}
         </button>
@@ -114,6 +154,11 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
       >
         {__('Suggest alt text', 'alt-context')}
       </button>
+      {statusMessage ? (
+        <div role="status" aria-live="polite" className="screen-reader-text">
+          {statusMessage}
+        </div>
+      ) : null}
     </div>
   );
 };

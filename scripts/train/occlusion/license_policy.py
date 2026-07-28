@@ -58,6 +58,7 @@ class RejectionReason(StrEnum):
     UNKNOWN_SPDX = "unknown_spdx"
     UNKNOWN_SOURCE = "unknown_source"
     INVALID_ROW = "invalid_row"
+    UNREGISTERED_DERIVED_MODEL = "unregistered_derived_model"
 
 
 class ClearanceStatus(StrEnum):
@@ -162,7 +163,9 @@ ALLOWED_SPDX_IDS: frozenset[str] = frozenset(
         "ISC",
         "Zlib",
         "Unlicense",
-        "self-generated",  # operator-owned synthetic / internal renders
+        # NOTE: ``self-generated`` is a *source* value, not an SPDX licence tag.
+        # It must not appear here (BR-25); see OCCLUDER_REGISTERED_SOURCES /
+        # _POSITIVE_TRAINING_SOURCES.
     }
 )
 
@@ -235,11 +238,12 @@ _RESEARCH_ONLY_COMPACT: frozenset[str] = frozenset(
 # PINNED non-commercial model pattern list (buffalo OUTPUT ban wall 1)
 # ---------------------------------------------------------------------------
 
-# Patterns are matched case-insensitively against ``derived_from_model``.
-# Glob semantics (applied to every path segment after NFKC + split):
-#   - ``prefix/*``  → any segment equals prefix
-#   - ``prefix*``   → any segment startswith prefix
-#   - bare token    → any segment equals token
+# Patterns are matched case-insensitively against ``derived_from_model``
+# after shared normalisation (NFKC → strip Cf → casefold). Glob semantics
+# (slash-components; see ``_pattern_matches``):
+#   - ``prefix/*``  → slash-component equals prefix (or insightface+buffalo*)
+#   - ``prefix*``   → component == prefix or ^prefix[_-]?[a-z]{0,3}\d*$
+#   - bare token    → same as path-head / constrained exact
 #
 # ``dcface/*`` is intentionally ABSENT — operator clearance
 # ``dcface_operator_clearance_20260723`` keeps it off this list.
@@ -534,6 +538,14 @@ OCCLUDER_REGISTERED_SOURCES: frozenset[str] = frozenset(
     }
 )
 
+# Positive allowlist for TRAINING_DATA source axis (BR-22 / SECD-05).
+# Operator-owned provenance sources; model-ingest keys and synthetic registry
+# heads are recognised separately. Anything else defaults to
+# PENDING-LEGAL-CLEARANCE rather than falling through to PASS.
+_POSITIVE_TRAINING_SOURCES: frozenset[str] = frozenset(
+    s.strip().lower() for s in OCCLUDER_REGISTERED_SOURCES
+)
+
 # Positive clearance statuses accepted at pack-build (module scope).
 OCCLUDER_ALLOWED_CLEARANCES: frozenset[str] = frozenset(
     {
@@ -565,7 +577,17 @@ _MODEL_ALIASES: dict[str, str] = {
 
 
 def _derive_nc_model_ids() -> frozenset[str]:
-    """Build NC model-id set from registry tables ∪ pinned extras."""
+    """Build NC model-id set from registry tables ∪ pinned extras.
+
+    Sources (all unioned):
+      * ``_PINNED_NC_MODEL_IDS`` — ArcFace-ecosystem weights not always registered
+      * ``MODEL_INGEST_ENTRIES`` whose ``commercial_use`` is not ALLOWED
+        (currently every stock ingest entry is ALLOWED; the loop is kept so a
+        future NC-tagged ingest row is denylisted automatically — BR-38)
+      * ``SYNTHETIC_SOURCE_ENTRIES`` whose commercial_use is not ALLOWED
+      * ``PACKAGE_DENYLIST`` entries tagged ``NC_MODEL_DERIVED``
+      * stems extracted from ``NC_MODEL_PATTERNS``
+    """
     ids: set[str] = set(_PINNED_NC_MODEL_IDS)
     for key, entry in MODEL_INGEST_ENTRIES.items():
         if entry.verification.commercial_use is not CommercialUse.ALLOWED:
@@ -600,25 +622,128 @@ NC_MODEL_IDS: frozenset[str] = _derive_nc_model_ids()
 # ---------------------------------------------------------------------------
 
 
+# Version-ish slash-component suffix admitted after an NC id head
+# (retinaface_r50, buffalo_l, mnet025, g1, …) — rejects free-form product words.
+_NC_VERSION_SEG_RE = re.compile(r"^(?:[a-z]{1,3}|[a-z]*\d+[a-z0-9]*)$")
+
+# Constrained buffalo* (and similar) glob: buffalo_l / buffalo_sc / buffalo_l2
+# but not buffalo_bill_detector or buffalo-wings-detector.
+_PREFIX_GLOB_VERSION_RE = re.compile(r"[_-]?[a-z]{0,3}\d*$")
+
+# Research-corpus variant suffixes for unsplit compounds (ffhq256, widerfacehd).
+_RESEARCH_UNSPLIT_SUFFIXES: tuple[str, ...] = (
+    "train",
+    "val",
+    "test",
+    "aligned",
+    "hq",
+    "extra",
+    "hd",
+    "dev",
+    "full",
+    "crop",
+    "raw",
+    "orig",
+    "clean",
+)
+_RESEARCH_VERSION_SEGS: frozenset[str] = frozenset(
+    {
+        "train",
+        "val",
+        "test",
+        "aligned",
+        "hq",
+        "extra",
+        "hd",
+        "dev",
+        "full",
+        "crop",
+        "raw",
+        "orig",
+        "clean",
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _MatchNorm:
+    """Shared normalisation result for NC + research matchers (BR-21)."""
+
+    text: str
+    slash_parts: tuple[str, ...]
+    segments: tuple[str, ...]
+    compact: str
+    has_non_ascii: bool
+    has_separators: bool
+
+
 def _normalize_token(value: str) -> str:
     return value.strip().lower()
 
 
 def _nfkc_lower(value: str) -> str:
-    return unicodedata.normalize("NFKC", value).strip().casefold()
+    """Legacy helper — prefers :func:`_normalize_for_match` for new call sites."""
+    text, _ = _prepare_match_text(value)
+    return text
+
+
+def _prepare_match_text(value: str) -> tuple[str, bool]:
+    """NFKC → strip unicode category Cf → casefold.
+
+    Returns ``(text, has_non_ascii_residue)``. Non-ASCII residue after NFKC is
+    fail-closed by audit callers (``invalid_row``) so confusable scripts cannot
+    launder banned names by compacting away non-Latin letters.
+    """
+    text = unicodedata.normalize("NFKC", str(value))
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
+    text = text.strip().casefold()
+    has_non_ascii = any(ord(ch) > 127 for ch in text)
+    return text, has_non_ascii
+
+
+def _normalize_for_match(value: str) -> _MatchNorm:
+    """Single shared normalisation used by both NC and research matchers."""
+    text, has_non_ascii = _prepare_match_text(value)
+    if not text:
+        return _MatchNorm(
+            text="",
+            slash_parts=(),
+            segments=(),
+            compact="",
+            has_non_ascii=has_non_ascii,
+            has_separators=False,
+        )
+    # Normalise any residual path separators to ``/`` (NFKC already folds
+    # fullwidth solidus); split slash components independently of ``_``/``-``.
+    slash_text = text.replace("\\", "/")
+    slash_parts = tuple(p for p in re.split(r"/+", slash_text) if p)
+    segments = tuple(s for s in re.split(r"[^a-z0-9]+", text) if s)
+    # Only build compact when pure ASCII — otherwise confusables would drop out.
+    compact = "" if has_non_ascii else re.sub(r"[^a-z0-9]+", "", text)
+    has_separators = bool(re.search(r"[^a-z0-9]", text))
+    return _MatchNorm(
+        text=text,
+        slash_parts=slash_parts,
+        segments=segments,
+        compact=compact,
+        has_non_ascii=has_non_ascii,
+        has_separators=has_separators,
+    )
 
 
 def _compact_alnum(value: str) -> str:
     """Strip all non-alphanumeric characters (research-source matching)."""
-    return re.sub(r"[^a-z0-9]+", "", _nfkc_lower(value))
+    return _normalize_for_match(value).compact
 
 
 def _split_segments(value: str) -> list[str]:
-    """NFKC-normalise then split on path/sep punctuation."""
-    text = _nfkc_lower(value)
-    if not text:
-        return []
-    return [s for s in re.split(r"[/\-_\s]+", text) if s]
+    """NFKC-normalise then split on non-alphanumeric runs."""
+    return list(_normalize_for_match(value).segments)
+
+
+def _part_segments(part: str) -> list[str]:
+    """Split a single slash-component on non-alphanumeric runs."""
+    return [s for s in re.split(r"[^a-z0-9]+", part) if s]
 
 
 def _resolve_model_key(model_id: str) -> str:
@@ -633,77 +758,295 @@ def _is_model_ingest_key(head: str) -> bool:
     return resolved in MODEL_INGEST_ENTRIES
 
 
+def _is_nc_version_seg(seg: str) -> bool:
+    return bool(_NC_VERSION_SEG_RE.fullmatch(seg))
+
+
+def _glob_prefix_component_match(prefix: str, component: str) -> bool:
+    """``prefix*`` against one slash-component (not micro-segments).
+
+    Admits ``buffalo``, ``buffalo_l``, ``buffalo-sc``, ``buffalo_l2``;
+    rejects ``buffalo-wings-detector`` and ``buffalo_bill_detector``.
+    """
+    if component == prefix:
+        return True
+    if not component.startswith(prefix):
+        return False
+    return bool(_PREFIX_GLOB_VERSION_RE.fullmatch(component[len(prefix) :]))
+
+
+def _match_insightface_style(prefix: str, norm: _MatchNorm) -> bool:
+    """Match ``insightface`` as a slash-component head / whole token only.
+
+    Mid-token hyphen segments (``not-insightface``) and free suffixes
+    (``insightface-free``) do not match. Underscore model forms such as
+    ``insightface_buffalo_l`` still match when the continuation is buffalo*.
+    Compact equality (``insight face`` → ``insightface``) also matches.
+    """
+    if norm.text == prefix or norm.text.startswith(prefix + "/"):
+        return True
+    if norm.compact == prefix:
+        return True
+    for part in norm.slash_parts:
+        if part == prefix:
+            return True
+        part_segs = _part_segments(part)
+        if not part_segs or part_segs[0] != prefix:
+            continue
+        rest = part_segs[1:]
+        if not rest:
+            return True
+        # Continuation must look like an NC sub-model (buffalo family), not
+        # an unrelated product suffix such as ``free``.
+        if rest[0] == "buffalo" or _glob_prefix_component_match(
+            "buffalo", "_".join(rest)
+        ):
+            return True
+        if rest[0] == "buffalo" or _glob_prefix_component_match("buffalo", rest[0]):
+            return True
+    return False
+
+
+def _match_prefix_glob(prefix: str, norm: _MatchNorm) -> bool:
+    """Constrained ``prefix*`` glob over slash-components and the full token."""
+    if _glob_prefix_component_match(prefix, norm.text):
+        return True
+    for part in norm.slash_parts:
+        if _glob_prefix_component_match(prefix, part):
+            return True
+    return False
+
+
+def _match_nc_ids(norm: _MatchNorm, nc_ids: set[str]) -> str | None:
+    """Match ``NC_MODEL_IDS`` via slash parts + progressive ``_``-joined prefixes.
+
+    A progressive head matches only when the remaining segments are all
+    version-ish (``r50``, ``g1``, ``mnet025``, ``l`` …), so
+    ``arcface_alternative_v2`` and ``not-retinaface`` stay clean while
+    ``retinaface_r50`` / ``vec2face_g1`` fail.
+    """
+    if norm.text in nc_ids:
+        return norm.text
+    # Also accept hyphen form of full text normalised to underscores.
+    text_us = norm.text.replace("-", "_")
+    if text_us in nc_ids:
+        return text_us
+
+    for part in norm.slash_parts:
+        part_us = part.replace("-", "_")
+        if part in nc_ids:
+            return part
+        if part_us in nc_ids:
+            return part_us
+        part_segs = _part_segments(part)
+        for k in range(1, len(part_segs) + 1):
+            joined = "_".join(part_segs[:k])
+            if joined not in nc_ids:
+                continue
+            rest = part_segs[k:]
+            if not rest or all(_is_nc_version_seg(s) for s in rest):
+                return joined
+    return None
+
+
 def match_nc_model_pattern(derived_from_model: str) -> str | None:
     """Return the pinned NC pattern / id that matches ``derived_from_model``.
 
-    Matching is case-insensitive after NFKC normalisation. Every segment from
-    splitting on ``[/-_\\s]+`` is tested against ``NC_MODEL_PATTERNS`` (so
-    nested paths and underscore forms hit ``insightface/*`` / ``buffalo*``).
+    Matching uses the shared :func:`_normalize_for_match` pipeline (NFKC,
+    strip Cf, casefold). ``NC_MODEL_PATTERNS`` and ``NC_MODEL_IDS`` share
+    slash-component + progressive-prefix semantics so versioned forms like
+    ``retinaface_r50`` hit while free-form names like ``buffalo-wings-detector``
+    do not.
 
-    ``NC_MODEL_IDS`` is applied to slash-path heads and exact full tokens only
-    — not to every hyphen segment — so a synthetic successor like
-    ``vec2face-successor/v1`` is not mis-classified as the table entry
-    ``vec2face`` (that case is fail-closed via synthetic clearance instead).
+    Compact alnum form is also checked so ``insight face`` / ``insight.face``
+    collapse to the pinned ``insightface`` id (BR-21).
+
+    ``vec2face-successor/v1`` is not classified as the table entry ``vec2face``
+    (rest segment is not version-ish); that case is fail-closed via synthetic
+    clearance instead.
     """
     if not derived_from_model or not str(derived_from_model).strip():
         return None
-    text = _nfkc_lower(str(derived_from_model))
-    segments = _split_segments(str(derived_from_model))
-    if not segments and not text:
+    norm = _normalize_for_match(str(derived_from_model))
+    if norm.has_non_ascii or (not norm.segments and not norm.text):
         return None
 
     nc_ids = {_normalize_token(m) for m in NC_MODEL_IDS}
 
-    # Prefer a pinned pattern when one matches.
     for pattern in NC_MODEL_PATTERNS:
-        if _pattern_matches(pattern, text, segments):
+        if _pattern_matches(pattern, norm):
             return pattern
 
-    # Table-derived / pinned ids: path heads (slash-separated) + exact token.
-    if text in nc_ids:
-        return text
-    for part in text.split("/"):
-        if part and part in nc_ids:
-            return part
+    hit = _match_nc_ids(norm, nc_ids)
+    if hit is not None:
+        return hit
+
+    # Compact form: "insight face" / "insight.face" → insightface (BR-21).
+    if norm.compact and norm.compact in nc_ids:
+        return norm.compact
+    if norm.compact and _glob_prefix_component_match("buffalo", norm.compact):
+        return "buffalo*"
     return None
 
 
-def _pattern_matches(pattern: str, text: str, segments: list[str]) -> bool:
+def _pattern_matches(pattern: str, norm: _MatchNorm) -> bool:
     p = _normalize_token(pattern)
     if p.endswith("/*"):
-        prefix = p[:-2]
-        if any(seg == prefix for seg in segments):
-            return True
-        return text == prefix or text.startswith(prefix + "/")
+        return _match_insightface_style(p[:-2], norm)
     if p.endswith("*"):
-        prefix = p[:-1]
-        # Segment-prefix match for buffalo* (and similar) globs.
-        if any(seg.startswith(prefix) for seg in segments):
-            return True
-        return text.startswith(prefix)
-    # Bare token: exact segment or classic path prefix.
-    if any(seg == p for seg in segments):
+        return _match_prefix_glob(p[:-1], norm)
+    # Bare token: treat like path-head (insightface) and constrained exact.
+    if _match_insightface_style(p, norm):
         return True
-    return text == p or text.startswith(p + "/")
+    return _match_prefix_glob(p, norm)
+
+
+def _is_research_version_seg(seg: str) -> bool:
+    if seg in _RESEARCH_VERSION_SEGS:
+        return True
+    if re.fullmatch(r"v\d+[a-z0-9]*", seg):
+        return True
+    if re.fullmatch(r"r\d+[a-z0-9]*", seg):
+        return True
+    if re.fullmatch(r"\d+[a-z0-9]*", seg):
+        return True
+    return False
+
+
+def _research_unsplit_remainder_ok(remainder: str) -> bool:
+    """True when unsplit compact remainder is a version/variant suffix (BR-31)."""
+    if not remainder:
+        return True
+    if remainder[0].isdigit():
+        return True
+    for suf in _RESEARCH_UNSPLIT_SUFFIXES:
+        if remainder == suf or remainder.startswith(suf):
+            return True
+    if re.match(r"^(?:v|r)\d+", remainder):
+        return True
+    return False
+
+
+def _research_segments_match(segs: list[str] | tuple[str, ...]) -> bool:
+    """Prefix-match progressive joins from the start; rest must be version-ish.
+
+    Mid-token stems (``our_widerface_replacement``) do not match. Bare ``mfr``
+    is exact-only.
+    """
+    if not segs:
+        return False
+    # Longer stems first when comparing joined forms.
+    stems = sorted(_RESEARCH_ONLY_COMPACT, key=len, reverse=True)
+    for k in range(1, len(segs) + 1):
+        joined = "".join(segs[:k])
+        for src in stems:
+            if src == "mfr":
+                if joined != "mfr":
+                    continue
+            elif joined != src:
+                continue
+            rest = list(segs[k:])
+            if not rest or all(_is_research_version_seg(s) for s in rest):
+                return True
+    return False
 
 
 def _looks_like_research_source(value: str) -> bool:
-    """True when any path segment compact-matches a research-only corpus name."""
+    """True when value identifies a research-only corpus (segment-precise).
+
+    Separated forms match progressive segment joins terminated by version-ish
+    tails (``vggface2_train``) or exact compact equality (``casia_webface`` →
+    ``casiawebface``). Unsplit compounds keep a constrained startswith for
+    version suffixes (``ffhq256``) without sweeping ``celebase`` / ``ffhq-tools``.
+    """
     if not value or not str(value).strip():
         return False
-    text = str(value).strip()
-    segments = _split_segments(text)
-    candidates = [_compact_alnum(text), *(_compact_alnum(s) for s in segments)]
-    for cand in candidates:
-        if not cand:
-            continue
-        if cand in _RESEARCH_ONLY_COMPACT:
-            return True
-        for src in _RESEARCH_ONLY_COMPACT:
-            # Compound dir names: vggface2_train → vggface2train startswith vggface2
-            if cand == src or cand.startswith(src):
+    norm = _normalize_for_match(str(value))
+    if norm.has_non_ascii:
+        # Caller audits as invalid_row; treat as tainted if asked raw.
+        return True
+    if not norm.compact and not norm.segments:
+        return False
+
+    # Exact compact equality (covers casia_webface → casiawebface, wider_face).
+    if norm.compact in _RESEARCH_ONLY_COMPACT:
+        return True
+
+    if not norm.has_separators:
+        for src in sorted(_RESEARCH_ONLY_COMPACT, key=len, reverse=True):
+            if src == "mfr":
+                if norm.compact == "mfr":
+                    return True
+                continue
+            if norm.compact == src:
                 return True
-    return False
+            if norm.compact.startswith(src) and _research_unsplit_remainder_ok(
+                norm.compact[len(src) :]
+            ):
+                return True
+        return False
+
+    # Slash components: exact compact or progressive head + version rest.
+    for part in norm.slash_parts:
+        part_compact = re.sub(r"[^a-z0-9]+", "", part)
+        if part_compact in _RESEARCH_ONLY_COMPACT:
+            return True
+        part_segs = _part_segments(part)
+        if _research_segments_match(part_segs):
+            return True
+        # Unsplit-style on a single slash component (dataset/ffhq256).
+        if not re.search(r"[^a-z0-9]", part):
+            for src in sorted(_RESEARCH_ONLY_COMPACT, key=len, reverse=True):
+                if src == "mfr":
+                    continue
+                if part_compact.startswith(src) and _research_unsplit_remainder_ok(
+                    part_compact[len(src) :]
+                ):
+                    return True
+
+    return _research_segments_match(norm.segments)
+
+
+def _resolve_registry_head(
+    token: str,
+    registry: Mapping[str, Any],
+) -> str | None:
+    """Longest registry key matching slash parts / progressive segment prefixes.
+
+    Resolves ``dcface_v2`` → ``dcface``, ``myorg/dcface`` → ``dcface``,
+    ``dcface/v2`` → ``dcface`` (BR-36).
+    """
+    if not token or not str(token).strip():
+        return None
+    norm = _normalize_for_match(str(token))
+    if norm.has_non_ascii or not norm.text:
+        return None
+
+    best: str | None = None
+    best_len = -1
+
+    def _consider(candidate: str) -> None:
+        nonlocal best, best_len
+        key = candidate.replace("-", "_")
+        if key in registry and len(key) > best_len:
+            best = key
+            best_len = len(key)
+
+    _consider(norm.text)
+    for part in norm.slash_parts:
+        _consider(part)
+        part_segs = _part_segments(part)
+        # Progressive prefixes, longest first.
+        for k in range(len(part_segs), 0, -1):
+            _consider("_".join(part_segs[:k]))
+        for seg in part_segs:
+            _consider(seg)
+    return best
+
+
+# Licence-bearing keys examined together so a denylisted secondary cannot hide
+# behind an allowlisted primary (BR-35).
+_LICENSE_FIELD_KEYS: tuple[str, ...] = ("license", "spdx_id", "license_id")
 
 
 def _require_string_field(
@@ -742,10 +1085,96 @@ def _require_string_field(
 
 
 def _spdx_of(row: Mapping[str, Any]) -> str:
-    raw = row.get("license") or row.get("spdx_id") or row.get("license_id") or ""
-    if not isinstance(raw, str):
-        return ""
-    return raw.strip()
+    """First non-empty licence field (legacy helper; prefer ``_license_values_of``)."""
+    values = _license_values_of(row)
+    return values[0] if values else ""
+
+
+def _license_values_of(row: Mapping[str, Any]) -> list[str]:
+    """Collect every non-empty licence-bearing field present on ``row`` (BR-35)."""
+    values: list[str] = []
+    seen: set[str] = set()
+    for key in _LICENSE_FIELD_KEYS:
+        if key not in row:
+            continue
+        raw = row[key]
+        if raw is None or not isinstance(raw, str):
+            continue
+        tag = raw.strip()
+        if not tag:
+            continue
+        # Preserve declaration order; de-dupe exact strings only.
+        if tag not in seen:
+            seen.add(tag)
+            values.append(tag)
+    return values
+
+
+def _audit_row_licenses(
+    row: Mapping[str, Any],
+    *,
+    category: PolicyCategory,
+    required: bool = True,
+) -> LicenseAuditResult:
+    """Audit every licence field; fail closed on ambiguity or any denylist hit.
+
+    Distinct licence *values* on the same row are ``invalid_row`` (BR-35).
+    When values agree, a single ``audit_spdx`` runs. When they disagree, the
+    row is rejected rather than silently preferring the first-truthy key.
+    """
+    # Type-check every present licence key first.
+    for key in _LICENSE_FIELD_KEYS:
+        if key not in row:
+            continue
+        raw = row[key]
+        if raw is None:
+            return _fail(
+                RejectionReason.INVALID_ROW,
+                detail=f"provenance row field {key!r} must be a string, got None",
+                category=category,
+            )
+        if not isinstance(raw, str):
+            return _fail(
+                RejectionReason.INVALID_ROW,
+                detail=(
+                    f"provenance row field {key!r} must be a string, "
+                    f"got {type(raw).__name__}"
+                ),
+                category=category,
+            )
+
+    values = _license_values_of(row)
+    if not values:
+        if required:
+            return _fail(
+                RejectionReason.MISSING_LICENSE_FIELD,
+                detail="license / spdx_id field is required",
+                category=category,
+            )
+        return _pass(detail="no license field present", category=category)
+
+    # Normalise for comparison (casefold) — disagreeing SPDX ids fail closed.
+    folded = {v.casefold() for v in values}
+    if len(folded) > 1:
+        return _fail(
+            RejectionReason.INVALID_ROW,
+            detail=(
+                "provenance row declares disagreeing licence values "
+                f"{values!r}; fail-closed on ambiguity"
+            ),
+            category=category,
+        )
+
+    # Values agree (possibly different case) — audit the first declaration.
+    spdx_result = audit_spdx(values[0])
+    if not spdx_result.ok:
+        return LicenseAuditResult(
+            verdict=spdx_result.verdict,
+            reason=spdx_result.reason,
+            detail=spdx_result.detail,
+            category=category,
+        )
+    return _pass(detail=spdx_result.detail, category=category)
 
 
 def _source_of(row: Mapping[str, Any]) -> str:
@@ -753,6 +1182,138 @@ def _source_of(row: Mapping[str, Any]) -> str:
     if not isinstance(raw, str):
         return ""
     return raw.strip()
+
+
+def _parse_row_category(
+    row: Mapping[str, Any],
+    *,
+    audit_category: PolicyCategory,
+) -> tuple[PolicyCategory | None, LicenseAuditResult | None]:
+    """Parse row-declared ``category`` once (BR-38). Non-dispatching (BR-34).
+
+    Returns ``(declared_or_None, error_or_None)``. Unknown values fail
+    ``invalid_row``; empty/absent yields ``(None, None)``.
+    """
+    if "category" not in row:
+        return None, None
+    raw_cat = row["category"]
+    if raw_cat is None:
+        return None, None
+    if not isinstance(raw_cat, str):
+        return None, _fail(
+            RejectionReason.INVALID_ROW,
+            detail=(
+                "row category must be a string, "
+                f"got {type(raw_cat).__name__}"
+            ),
+            category=audit_category,
+        )
+    text = raw_cat.strip()
+    if not text:
+        return None, None
+    try:
+        return PolicyCategory(text), None
+    except ValueError:
+        return None, _fail(
+            RejectionReason.INVALID_ROW,
+            detail=f"unknown policy category {raw_cat!r}",
+            category=audit_category,
+        )
+
+
+def _is_operator_owned_source(source: str) -> bool:
+    """True for self-generated / operator-* provenance sources."""
+    return _normalize_token(source) in _POSITIVE_TRAINING_SOURCES
+
+
+def _is_positive_or_registered_source(source: str) -> bool:
+    """Source is on the positive allowlist, model-ingest registry, or synthetic registry."""
+    if not source or not str(source).strip():
+        return False
+    if _is_operator_owned_source(source):
+        return True
+    if _is_model_ingest_key(source) or _resolve_model_key(source) in MODEL_INGEST_ENTRIES:
+        return True
+    if _resolve_registry_head(source, SYNTHETIC_SOURCE_ENTRIES) is not None:
+        return True
+    # Alias forms (blazeface, rtdetr, …).
+    resolved = _resolve_model_key(source)
+    if resolved in MODEL_INGEST_ENTRIES:
+        return True
+    return False
+
+
+def _derived_ingest_key(derived: str) -> str | None:
+    """Return the MODEL_INGEST registry key for ``derived``'s head, or None.
+
+    Uses the full first slash-component (``rt-detr`` → ``rt_detr``) and
+    progressive segment prefixes so multi-token heads resolve correctly.
+    """
+    if not derived or not str(derived).strip():
+        return None
+    norm = _normalize_for_match(str(derived))
+    if norm.has_non_ascii or not norm.text:
+        return None
+
+    candidates: list[str] = []
+    if norm.slash_parts:
+        head = norm.slash_parts[0].replace("-", "_")
+        candidates.append(head)
+        segs = _part_segments(head)
+        for k in range(len(segs), 0, -1):
+            candidates.append("_".join(segs[:k]))
+    candidates.append(norm.text.replace("-", "_"))
+
+    seen: set[str] = set()
+    for cand in candidates:
+        if not cand or cand in seen:
+            continue
+        seen.add(cand)
+        resolved = _resolve_model_key(cand)
+        if resolved in MODEL_INGEST_ENTRIES:
+            return resolved
+    return None
+
+
+def _common_provenance_checks(
+    row: Mapping[str, Any],
+    *,
+    category: PolicyCategory,
+) -> LicenseAuditResult | None:
+    """Unconditional rules shared by every row-shaped entry point (BR-26).
+
+    Currently: ``derived_from_model`` NC ban. Returns a FAIL result when a
+    common rule fires; ``None`` means the caller may continue with
+    category-specific gates.
+    """
+    if "derived_from_model" not in row:
+        return None
+    raw = row["derived_from_model"]
+    if raw is None:
+        return _fail(
+            RejectionReason.INVALID_ROW,
+            detail="provenance row field 'derived_from_model' must be a string, got None",
+            category=category,
+        )
+    if not isinstance(raw, str):
+        return _fail(
+            RejectionReason.INVALID_ROW,
+            detail=(
+                "provenance row field 'derived_from_model' must be a string, "
+                f"got {type(raw).__name__}"
+            ),
+            category=category,
+        )
+    derived_result = audit_derived_from_model(raw)
+    if not derived_result.ok:
+        # Preserve NC / invalid reasons; re-tag category for the calling door.
+        return LicenseAuditResult(
+            verdict=derived_result.verdict,
+            reason=derived_result.reason,
+            detail=derived_result.detail,
+            category=category,
+        )
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -765,7 +1326,8 @@ def audit_derived_from_model(derived_from_model: str | None) -> LicenseAuditResu
 
     Empty string is allowed (not every row is model-derived). Any match
     against the pinned NC pattern list or NC model ids FAILS with
-    ``RejectionReason.NC_MODEL_DERIVED``.
+    ``RejectionReason.NC_MODEL_DERIVED``. Non-ASCII residue after shared
+    normalisation FAILS ``invalid_row`` (BR-21 fail-closed).
     """
     if derived_from_model is None:
         return _pass(detail="no derived_from_model tag")
@@ -782,6 +1344,16 @@ def audit_derived_from_model(derived_from_model: str | None) -> LicenseAuditResu
         return _pass(detail="no derived_from_model tag")
 
     text = derived_from_model.strip()
+    norm = _normalize_for_match(text)
+    if norm.has_non_ascii:
+        return _fail(
+            RejectionReason.INVALID_ROW,
+            detail=(
+                f"derived_from_model={text!r} contains non-ASCII residue after "
+                "NFKC/Cf normalisation; confusable scripts are fail-closed"
+            ),
+            category=PolicyCategory.TRAINING_DATA,
+        )
     matched = match_nc_model_pattern(text)
     if matched is not None:
         return _fail(
@@ -838,9 +1410,11 @@ def audit_spdx(spdx_id: str | None) -> LicenseAuditResult:
 
 
 def audit_source(source: str | None) -> LicenseAuditResult:
-    """Audit a training-data ``source`` field against the research-only set.
+    """Audit a training-data ``source`` field against NC models + research-only.
 
-    Does **not** inspect ``generator_lineage`` — that field is informational.
+    NC model patterns/ids take precedence over research-only (BR-20): banned
+    weights named as ``source`` fail with ``nc_model_derived`` just as they
+    do in ``derived_from_model``. Does **not** inspect ``generator_lineage``.
     """
     if source is None or not str(source).strip():
         return _fail(
@@ -855,6 +1429,27 @@ def audit_source(source: str | None) -> LicenseAuditResult:
             category=PolicyCategory.TRAINING_DATA,
         )
     text = source.strip()
+    norm = _normalize_for_match(text)
+    if norm.has_non_ascii:
+        return _fail(
+            RejectionReason.INVALID_ROW,
+            detail=(
+                f"source {text!r} contains non-ASCII residue after "
+                "NFKC/Cf normalisation; confusable scripts are fail-closed"
+            ),
+            category=PolicyCategory.TRAINING_DATA,
+        )
+    # BR-20: NC matcher over source (precedence over research_only_source).
+    matched = match_nc_model_pattern(text)
+    if matched is not None:
+        return _fail(
+            RejectionReason.NC_MODEL_DERIVED,
+            detail=(
+                f"source={text!r} matches non-commercial pattern {matched!r}; "
+                "NC weights are banned regardless of which field carries them"
+            ),
+            category=PolicyCategory.TRAINING_DATA,
+        )
     if _looks_like_research_source(text):
         return _fail(
             RejectionReason.RESEARCH_ONLY_SOURCE,
@@ -982,6 +1577,9 @@ def audit_occluder_asset(asset: Mapping[str, Any]) -> LicenseAuditResult:
 
     Required: allowlisted license, positive clearance, and a non-empty
     **registered** source. Unknown sources FAIL (not only research names).
+
+    Unconditional NC provenance (``derived_from_model``) is applied via
+    :func:`_common_provenance_checks` before category-specific gates (BR-26).
     """
     if not isinstance(asset, Mapping):
         raise LicensePolicyError(
@@ -992,12 +1590,24 @@ def audit_occluder_asset(asset: Mapping[str, Any]) -> LicenseAuditResult:
             )
         )
 
-    spdx = _spdx_of(asset)
-    if not spdx:
-        return _fail(
-            RejectionReason.MISSING_LICENSE_FIELD,
-            detail="occluder asset missing required license field",
-            category=PolicyCategory.OCCLUDER_ASSET,
+    cat = PolicyCategory.OCCLUDER_ASSET
+
+    # BR-26: NC ban is unconditional across every entry point.
+    common = _common_provenance_checks(asset, category=cat)
+    if common is not None:
+        return common
+
+    license_result = _audit_row_licenses(asset, category=cat, required=True)
+    if not license_result.ok:
+        return LicenseAuditResult(
+            verdict=license_result.verdict,
+            reason=license_result.reason,
+            detail=(
+                license_result.detail
+                if license_result.reason is RejectionReason.INVALID_ROW
+                else f"occluder asset: {license_result.detail}"
+            ),
+            category=cat,
         )
 
     clearance_raw = asset.get("clearance") or asset.get("clearance_status") or ""
@@ -1008,7 +1618,7 @@ def audit_occluder_asset(asset: Mapping[str, Any]) -> LicenseAuditResult:
                 "occluder asset clearance must be a string, "
                 f"got {type(clearance_raw).__name__}"
             ),
-            category=PolicyCategory.OCCLUDER_ASSET,
+            category=cat,
         )
     clearance = _normalize_token(str(clearance_raw)) if clearance_raw else ""
     if clearance not in OCCLUDER_ALLOWED_CLEARANCES:
@@ -1018,16 +1628,7 @@ def audit_occluder_asset(asset: Mapping[str, Any]) -> LicenseAuditResult:
                 f"occluder asset source photo is uncleared "
                 f"(clearance={clearance_raw!r}); pack-build refused"
             ),
-            category=PolicyCategory.OCCLUDER_ASSET,
-        )
-
-    spdx_result = audit_spdx(spdx)
-    if not spdx_result.ok:
-        return LicenseAuditResult(
-            verdict=spdx_result.verdict,
-            reason=spdx_result.reason,
-            detail=f"occluder asset: {spdx_result.detail}",
-            category=PolicyCategory.OCCLUDER_ASSET,
+            category=cat,
         )
 
     source = _source_of(asset)
@@ -1035,7 +1636,7 @@ def audit_occluder_asset(asset: Mapping[str, Any]) -> LicenseAuditResult:
         return _fail(
             RejectionReason.UNKNOWN_SOURCE,
             detail="occluder asset requires a non-empty registered source",
-            category=PolicyCategory.OCCLUDER_ASSET,
+            category=cat,
         )
     source_key = _normalize_token(source)
     if source_key not in {_normalize_token(s) for s in OCCLUDER_REGISTERED_SOURCES}:
@@ -1043,7 +1644,7 @@ def audit_occluder_asset(asset: Mapping[str, Any]) -> LicenseAuditResult:
             return _fail(
                 RejectionReason.RESEARCH_ONLY_SOURCE,
                 detail=f"occluder asset source {source!r} is research-only",
-                category=PolicyCategory.OCCLUDER_ASSET,
+                category=cat,
             )
         return _fail(
             RejectionReason.UNKNOWN_SOURCE,
@@ -1051,12 +1652,12 @@ def audit_occluder_asset(asset: Mapping[str, Any]) -> LicenseAuditResult:
                 f"occluder asset source {source!r} is not a registered "
                 "occluder provenance source"
             ),
-            category=PolicyCategory.OCCLUDER_ASSET,
+            category=cat,
         )
 
     return _pass(
         detail="occluder asset license fields cleared for pack-build",
-        category=PolicyCategory.OCCLUDER_ASSET,
+        category=cat,
     )
 
 
@@ -1069,6 +1670,10 @@ def audit_synthetic_source(
 
     When the registered entry carries a ``clearance_decision``, the caller must
     supply a matching ``row_clearance`` value (PROV-04).
+
+    Registry head resolution uses segment normalisation + progressive prefixes
+    (BR-36): ``dcface_v2``, ``dcface/v2``, and ``myorg/dcface`` all resolve to
+    the ``dcface`` clearance entry.
     """
     if not source_id or not str(source_id).strip():
         return _fail(
@@ -1076,11 +1681,10 @@ def audit_synthetic_source(
             detail="synthetic source_id is required",
             category=PolicyCategory.SYNTHETIC_SOURCE,
         )
-    key = _normalize_token(source_id)
-    # derived_from_model style: dcface/<generator-id> → dcface
-    head = key.split("/", 1)[0]
-    # Also accept underscore-separated heads (synthface3_g1 → try full then head).
-    entry = SYNTHETIC_SOURCE_ENTRIES.get(head)
+    resolved = _resolve_registry_head(source_id, SYNTHETIC_SOURCE_ENTRIES)
+    entry = (
+        SYNTHETIC_SOURCE_ENTRIES.get(resolved) if resolved is not None else None
+    )
     if entry is None:
         # Unknown synthetic sources default to pending (fail-closed).
         return _fail(
@@ -1131,11 +1735,17 @@ def _synthetic_audit_targets(
 ) -> list[str]:
     """Collect synthetic source ids that must be fail-closed audited.
 
-    Routes to ``audit_synthetic_source`` when:
-      - caller category is SYNTHETIC_SOURCE, or
+    Routes to ``audit_synthetic_source`` when (BR-33 / BR-34):
+      - **caller** category is SYNTHETIC_SOURCE (and source is not the
+        operator-owned ``self-generated`` tag), or
       - generator_lineage is present (and source is not pure self-generated), or
-      - derived_from_model head is non-empty and absent from the ingest registry, or
-      - source/derived head is a known SYNTHETIC_SOURCE_ENTRIES key.
+      - source/derived resolves to a known SYNTHETIC_SOURCE_ENTRIES key
+        (segment / progressive-prefix resolve — BR-36), including the
+        no-lineage path so clearance cannot be skipped by omitting lineage.
+
+    Unregistered ``derived_from_model`` values that are **not** synthetic-registry
+    heads are NOT routed here — they use ``UNREGISTERED_DERIVED_MODEL`` (or pass
+    for operator-owned sources) instead of the synthetic clearance gate (BR-33).
     """
     targets: list[str] = []
     seen: set[str] = set()
@@ -1151,7 +1761,9 @@ def _synthetic_audit_targets(
         targets.append(t)
 
     if category is PolicyCategory.SYNTHETIC_SOURCE and source:
-        _add(source)
+        # BR-34: self-generated is an operator source, not a synthetic generator.
+        if _normalize_token(source) != "self-generated":
+            _add(source)
 
     if has_generator_lineage and source:
         # self-generated + lineage disclosure is informational (exemption path);
@@ -1159,22 +1771,52 @@ def _synthetic_audit_targets(
         if _normalize_token(source) != "self-generated":
             _add(source)
 
-    if derived:
-        head = _normalize_token(derived).split("/", 1)[0]
-        head = head.replace("-", "_")
-        # Also try first underscore segment of bare tokens.
-        if head and not _is_model_ingest_key(head):
-            # derived_from_model absent from ingest registry → synthetic path.
-            _add(derived)
-
+    # BR-36: registry resolve on source/derived even without lineage, so
+    # dcface_v2 cannot skip clearance by omitting generator_lineage.
+    # BR-33: only actual synthetic-registry heads — not every unregistered
+    # derived_from_model token.
     for token in (source, derived):
         if not token:
             continue
-        head = _normalize_token(token).split("/", 1)[0]
-        if head in SYNTHETIC_SOURCE_ENTRIES:
+        if _resolve_registry_head(token, SYNTHETIC_SOURCE_ENTRIES) is not None:
             _add(token)
 
     return targets
+
+
+def _audit_derived_registration(
+    *,
+    source: str,
+    derived: str,
+    category: PolicyCategory,
+) -> LicenseAuditResult | None:
+    """BR-33: split unregistered derived from the synthetic clearance path.
+
+    Returns a FAIL when ``derived`` is non-empty, not NC (already checked),
+    not a registered model-ingest head, not a synthetic-registry head, and
+    the row source is not operator-owned. Operator-owned self-generated rows
+    may declare an internal renderer without registering it as a synthetic
+    identity source. Returns ``None`` when no dedicated derived gate fires.
+    """
+    if not derived:
+        return None
+    # Registered commercial ingest head → fine.
+    if _derived_ingest_key(derived) is not None:
+        return None
+    # Synthetic registry head → handled by _synthetic_audit_targets.
+    if _resolve_registry_head(derived, SYNTHETIC_SOURCE_ENTRIES) is not None:
+        return None
+    # Operator-owned sources may reference internal tools/renderers (contract 3).
+    if source and _is_operator_owned_source(source):
+        return None
+    return _fail(
+        RejectionReason.UNREGISTERED_DERIVED_MODEL,
+        detail=(
+            f"derived_from_model={derived!r} is not a registered model-ingest "
+            "or synthetic-source entry; register the model or remove the tag"
+        ),
+        category=category,
+    )
 
 
 def audit_provenance_row(
@@ -1185,15 +1827,24 @@ def audit_provenance_row(
     """Full provenance-row audit for a training-data (or synthetic) manifest row.
 
     ``category`` is supplied by the **caller**, never trusted from the row body
-    for gate selection. A row-declared ``category`` is parsed through
-    ``PolicyCategory`` and rejected when unknown; it does not waive ``source``.
+    for gate selection (BR-34). A row-declared ``category`` is parsed once
+    through ``PolicyCategory`` and rejected when unknown; it is validated but
+    **non-dispatching**. Caller-supplied ``category`` *does* dispatch (BR-23):
 
-    Checks, in order:
+      * ``OCCLUDER_ASSET``  → :func:`audit_occluder_asset`
+      * ``MODEL_INGEST``    → :func:`audit_model_ingest`
+      * ``SYNTHETIC_SOURCE``→ :func:`audit_synthetic_source`
+      * ``TOOLING``         → :func:`audit_tooling_row`
+      * ``TRAINING_DATA``   → training-data path below
+
+    Checks on the training-data path, in order:
       0. structural field validation (types + required keys)
-      1. ``derived_from_model`` against the pinned NC pattern list
-      2. ``source`` against research-only sources (NOT ``generator_lineage``)
-      3. ``license`` / SPDX allow-deny
-      4. synthetic-source clearance (fail-closed for unknown synthetic claims)
+      1. shared unconditional rules via :func:`_common_provenance_checks` (NC)
+      2. ``source`` against research-only / NC (NOT ``generator_lineage``)
+      3. fail-closed unknown source → PENDING-LEGAL-CLEARANCE (BR-22 / SECD-05)
+      4. every licence-bearing field (BR-35)
+      5. synthetic-source clearance for registry heads only (BR-33)
+      6. unregistered ``derived_from_model`` gate (BR-33)
 
     ``generator_lineage`` is informational and never causes research-source
     rejection by itself.
@@ -1216,103 +1867,122 @@ def audit_provenance_row(
             category=PolicyCategory.TRAINING_DATA,
         )
 
-    # If the row declares a category, it must be a valid PolicyCategory value.
-    if "category" in row:
-        raw_cat = row["category"]
-        if raw_cat is not None and not isinstance(raw_cat, str):
+    # Parse row-declared category once (BR-38). Validated, never used for dispatch.
+    _declared_cat, cat_err = _parse_row_category(row, audit_category=audit_category)
+    if cat_err is not None:
+        return cat_err
+    del _declared_cat  # non-dispatching by design (BR-34)
+
+    # ------------------------------------------------------------------
+    # BR-23: caller-supplied category dispatches to the matching gate.
+    # ------------------------------------------------------------------
+    if audit_category is PolicyCategory.OCCLUDER_ASSET:
+        return audit_occluder_asset(row)
+
+    if audit_category is PolicyCategory.TOOLING:
+        return audit_tooling_row(row)
+
+    if audit_category is PolicyCategory.MODEL_INGEST:
+        # Prefer explicit model_id; fall back to source (row-shaped ingest).
+        model_id = ""
+        for key in ("model_id", "source", "package_name", "package"):
+            raw = row.get(key)
+            if isinstance(raw, str) and raw.strip():
+                model_id = raw.strip()
+                break
+        common = _common_provenance_checks(row, category=PolicyCategory.MODEL_INGEST)
+        if common is not None:
+            return common
+        return audit_model_ingest(model_id)
+
+    if audit_category is PolicyCategory.SYNTHETIC_SOURCE:
+        source_raw = row.get("source")
+        if not isinstance(source_raw, str) or not source_raw.strip():
             return _fail(
-                RejectionReason.INVALID_ROW,
-                detail=(
-                    "row category must be a string, "
-                    f"got {type(raw_cat).__name__}"
-                ),
-                category=audit_category,
+                RejectionReason.UNKNOWN_SOURCE,
+                detail="synthetic_source category requires a non-empty source field",
+                category=PolicyCategory.SYNTHETIC_SOURCE,
             )
-        if isinstance(raw_cat, str) and raw_cat.strip():
-            try:
-                PolicyCategory(raw_cat.strip())
-            except ValueError:
-                return _fail(
-                    RejectionReason.INVALID_ROW,
-                    detail=f"unknown policy category {raw_cat!r}",
-                    category=audit_category,
-                )
+        common = _common_provenance_checks(row, category=PolicyCategory.SYNTHETIC_SOURCE)
+        if common is not None:
+            return common
+        row_clearance_raw = row.get("clearance")
+        row_clearance = (
+            row_clearance_raw.strip()
+            if isinstance(row_clearance_raw, str)
+            else None
+        )
+        return audit_synthetic_source(source_raw.strip(), row_clearance=row_clearance)
+
+    # ------------------------------------------------------------------
+    # TRAINING_DATA path (default)
+    # ------------------------------------------------------------------
 
     # Structural validation — require derived_from_model KEY ('' is valid opt-out).
-    if "derived_from_model" not in row:
-        return _fail(
-            RejectionReason.INVALID_ROW,
-            detail="provenance row missing required field 'derived_from_model'",
-            category=audit_category,
+    _derived_val, derived_err = _require_string_field(
+        row, "derived_from_model", required=True, category=audit_category
+    )
+    if derived_err is not None:
+        return derived_err
+
+    for key in ("source", "clearance", "generator_lineage"):
+        _val, field_err = _require_string_field(
+            row, key, required=False, category=audit_category
         )
+        if field_err is not None:
+            return field_err
+        del _val
 
-    for key in (
-        "source",
-        "license",
-        "derived_from_model",
-        "clearance",
-        "generator_lineage",
-    ):
-        if key not in row:
-            continue
-        raw = row[key]
-        if raw is None:
-            return _fail(
-                RejectionReason.INVALID_ROW,
-                detail=f"provenance row field {key!r} must be a string, got None",
-                category=audit_category,
-            )
-        if not isinstance(raw, str):
-            return _fail(
-                RejectionReason.INVALID_ROW,
-                detail=(
-                    f"provenance row field {key!r} must be a string, "
-                    f"got {type(raw).__name__}"
-                ),
-                category=audit_category,
-            )
+    # Licence keys type-checked inside _audit_row_licenses.
 
-    derived = str(row["derived_from_model"]).strip()
-    derived_result = audit_derived_from_model(derived)
-    if not derived_result.ok:
-        return derived_result
+    # BR-26: shared unconditional NC (and type) checks.
+    common = _common_provenance_checks(row, category=audit_category)
+    if common is not None:
+        return common
+
+    derived = (_derived_val or "").strip() if _derived_val is not None else ""
 
     source = ""
     if "source" in row and isinstance(row["source"], str):
         source = row["source"].strip()
 
     # Training-data audits always require source (row cannot waive via category).
-    if audit_category is PolicyCategory.TRAINING_DATA:
-        if not source:
-            return _fail(
-                RejectionReason.UNKNOWN_SOURCE,
-                detail="training-data provenance row requires a source field",
-                category=PolicyCategory.TRAINING_DATA,
-            )
-        source_result = audit_source(source)
-        if not source_result.ok:
-            return source_result
-    elif source:
-        source_result = audit_source(source)
-        if not source_result.ok:
-            return source_result
+    if not source:
+        return _fail(
+            RejectionReason.UNKNOWN_SOURCE,
+            detail="training-data provenance row requires a source field",
+            category=PolicyCategory.TRAINING_DATA,
+        )
+    source_result = audit_source(source)
+    if not source_result.ok:
+        return source_result
 
-    spdx = _spdx_of(row)
-    spdx_result = audit_spdx(spdx)
-    if not spdx_result.ok:
-        return spdx_result
+    # Licence before the fail-closed source allowlist so a pseudo-licence tag
+    # (e.g. ``self-generated`` as SPDX — BR-25) is reported rather than masked
+    # by the later PENDING-LEGAL-CLEARANCE default.
+    license_result = _audit_row_licenses(
+        row, category=audit_category, required=True
+    )
+    if not license_result.ok:
+        return license_result
+
+    # BR-22 / SECD-05: fail closed on the source axis. Research / NC already
+    # handled by audit_source; remaining unknowns are PENDING-LEGAL-CLEARANCE
+    # unless positively allowlisted or registered.
+    if not _is_positive_or_registered_source(source):
+        return _fail(
+            RejectionReason.PENDING_LEGAL_CLEARANCE,
+            detail=(
+                f"source {source!r} is not on the positive allowlist or a "
+                "registered ingest/synthetic entry; defaults to "
+                "PENDING-LEGAL-CLEARANCE"
+            ),
+            category=PolicyCategory.TRAINING_DATA,
+        )
 
     has_lineage = bool(str(row.get("generator_lineage") or "").strip())
-    # When caller marks synthetic, or row declares synthetic_source category value.
-    effective_synth_category = audit_category
-    if "category" in row and isinstance(row["category"], str):
-        try:
-            declared = PolicyCategory(row["category"].strip())
-            if declared is PolicyCategory.SYNTHETIC_SOURCE:
-                effective_synth_category = PolicyCategory.SYNTHETIC_SOURCE
-        except ValueError:
-            pass
-
+    # BR-34: only the *caller-supplied* category participates in synthetic
+    # routing — never the row-declared value.
     row_clearance_raw = row.get("clearance")
     row_clearance = (
         row_clearance_raw.strip()
@@ -1323,12 +1993,19 @@ def audit_provenance_row(
     for cand in _synthetic_audit_targets(
         source=source,
         derived=derived,
-        category=effective_synth_category,
+        category=audit_category,
         has_generator_lineage=has_lineage,
     ):
         synth_result = audit_synthetic_source(cand, row_clearance=row_clearance)
         if not synth_result.ok:
             return synth_result
+
+    # BR-33: unregistered derived (after NC + synthetic-head routing).
+    unreg = _audit_derived_registration(
+        source=source, derived=derived, category=audit_category
+    )
+    if unreg is not None:
+        return unreg
 
     return _pass(
         detail="provenance row passes license policy",
@@ -1337,8 +2014,64 @@ def audit_provenance_row(
 
 
 def audit_tooling_row(row: Mapping[str, Any]) -> LicenseAuditResult:
-    """Audit a tooling dependency row (caller-owned TOOLING category)."""
-    return audit_provenance_row(row, category=PolicyCategory.TOOLING)
+    """Audit a tooling dependency row (caller-owned TOOLING category).
+
+    Resolves a package identifier from ``package`` / ``package_name`` /
+    ``source`` and runs :func:`audit_tooling_dependency` **before** any
+    row-declared SPDX check so a self-declared licence cannot launder a
+    denylisted package (BR-24). Missing package identifier fails closed.
+    """
+    if not isinstance(row, Mapping):
+        raise LicensePolicyError(
+            _fail(
+                RejectionReason.UNKNOWN_SOURCE,
+                detail="tooling row must be a mapping",
+                category=PolicyCategory.TOOLING,
+            )
+        )
+
+    cat = PolicyCategory.TOOLING
+
+    common = _common_provenance_checks(row, category=cat)
+    if common is not None:
+        return common
+
+    package = ""
+    for key in ("package", "package_name", "source"):
+        raw = row.get(key)
+        if isinstance(raw, str) and raw.strip():
+            package = raw.strip()
+            break
+
+    if not package:
+        return _fail(
+            RejectionReason.UNKNOWN_SOURCE,
+            detail=(
+                "tooling row requires a package identifier "
+                "(package / package_name / source)"
+            ),
+            category=cat,
+        )
+
+    # Authoritative package gate — denylist / allowlist pin wins over row SPDX.
+    dep_result = audit_tooling_dependency(package)
+    if not dep_result.ok:
+        return dep_result
+
+    # Optional extra: if the row self-declares a licence, it must not be
+    # denylisted. The pinned allowlist entry remains authoritative for PASS.
+    license_values = _license_values_of(row)
+    if license_values:
+        license_result = _audit_row_licenses(row, category=cat, required=False)
+        if not license_result.ok:
+            # Denylisted / research / unknown SPDX on the row still fails, but
+            # denylisted *packages* already returned above.
+            return license_result
+
+    return _pass(
+        detail=dep_result.detail,
+        category=cat,
+    )
 
 
 def require_pass(result: LicenseAuditResult) -> LicenseAuditResult:

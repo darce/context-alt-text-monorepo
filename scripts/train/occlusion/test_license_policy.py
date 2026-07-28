@@ -249,9 +249,11 @@ class TestApacheSelfGeneratedPasses:
         assert result.verdict is policy.LicenseVerdict.PASS
         assert result.reason is None
 
-    def test_self_generated_spdx_allowlisted(self) -> None:
+    def test_self_generated_is_not_an_spdx_pass(self) -> None:
+        # BR-25: self-generated is a source value, not an SPDX licence tag.
         result = policy.audit_spdx("self-generated")
-        assert result.ok is True
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.UNKNOWN_SPDX
 
     def test_apache_spdx_allowlisted(self) -> None:
         result = policy.audit_spdx("Apache-2.0")
@@ -499,13 +501,8 @@ class TestOccluderAssetPackBuildGate:
 class TestUmapLearnToolingAllowlist:
     """Behaviour 6: umap-learn is TOOLING-allowlisted (not training data)."""
 
-    def test_umap_learn_on_tooling_allowlist(self) -> None:
-        assert "umap-learn" in policy.TOOLING_ALLOWLIST
-        entry = policy.TOOLING_ALLOWLIST["umap-learn"]
-        assert entry.verification.spdx_id == "BSD-3-Clause"
-        assert entry.category is policy.PolicyCategory.TOOLING
-
     def test_umap_learn_audit_passes(self) -> None:
+        # Behavioural (TEST-15): exercises audit_tooling_dependency, not the dict.
         result = policy.audit_tooling_dependency("umap-learn")
         assert result.ok is True
         assert result.category is policy.PolicyCategory.TOOLING
@@ -515,6 +512,18 @@ class TestUmapLearnToolingAllowlist:
         assert policy.is_tooling_allowlisted("umap-learn") is True
         assert policy.is_tooling_allowlisted("not-a-real-tooling-package") is False
 
+    def test_br39_denylisted_tooling_dependency_fails(self) -> None:
+        # BR-39: direct deny path on audit_tooling_dependency (not only row door).
+        result = policy.audit_tooling_dependency("ultralytics")
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+        assert result.category is policy.PolicyCategory.TOOLING
+
+    def test_br39_unknown_tooling_package_fails(self) -> None:
+        result = policy.audit_tooling_dependency("totally-unknown-pkg")
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.UNKNOWN_SOURCE
+        assert result.category is policy.PolicyCategory.TOOLING
 
 # ---------------------------------------------------------------------------
 # (7) DCFace operator-cleared; paired buffalo FAIL; generator_lineage exempt
@@ -530,26 +539,24 @@ class TestDcfaceOperatorClearanceAndLineageExempt:
         derived_from_model: str,
         source: str = "dcface",
         clearance: str | None = None,
-        generator_lineage: str = "ffhq",
+        generator_lineage: str | None = "ffhq",
     ) -> dict[str, Any]:
         row: dict[str, Any] = {
             "source": source,
             "license": "Apache-2.0",
             "derived_from_model": derived_from_model,
-            # Bare research token the matcher CAN hit (BR-12) — must not reject.
-            "generator_lineage": generator_lineage,
         }
+        # BR-29: generator_lineage is optional. Pass None / "__omit__" to leave it
+        # off the row so the SYNTHETIC_SOURCE_ENTRIES registry sweep is the only
+        # path that can force the clearance audit (TEST-15).
+        if generator_lineage is not None and generator_lineage != "__omit__":
+            # Bare research token the matcher CAN hit (BR-12) — must not reject.
+            row["generator_lineage"] = generator_lineage
         if clearance is None:
             row["clearance"] = policy.DCFACE_CLEARANCE_DECISION
         elif clearance != "__omit__":
             row["clearance"] = clearance
         return row
-
-    def test_dcface_clearance_decision_constant(self) -> None:
-        assert policy.DCFACE_CLEARANCE_DECISION == "dcface_operator_clearance_20260723"
-        entry = policy.SYNTHETIC_SOURCE_ENTRIES["dcface"]
-        assert entry.verification.clearance_decision == policy.DCFACE_CLEARANCE_DECISION
-        assert entry.verification.commercial_use is policy.CommercialUse.ALLOWED
 
     def test_dcface_derived_row_passes_with_ffhq_lineage(self) -> None:
         row = self._dcface_row(derived_from_model="dcface/oversample_xid_0.5m")
@@ -609,11 +616,63 @@ class TestDcfaceOperatorClearanceAndLineageExempt:
         assert result.ok is False
         assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
 
+    def test_br29_dcface_no_lineage_correct_clearance_passes(self) -> None:
+        # BR-29: registry sweep alone admits DCFace when clearance matches.
+        row = self._dcface_row(
+            derived_from_model="",
+            generator_lineage="__omit__",
+            clearance=None,  # correct decision token
+        )
+        assert "generator_lineage" not in row
+        result = policy.audit_provenance_row(row)
+        assert result.ok is True, result.detail
+
+    def test_br29_dcface_no_lineage_wrong_clearance_fails(self) -> None:
+        # BR-29: without lineage, only the SYNTHETIC_SOURCE_ENTRIES loop can
+        # force pending_legal_clearance — lineage branch must not mask this.
+        row = self._dcface_row(
+            derived_from_model="",
+            generator_lineage="__omit__",
+            clearance="made_up",
+        )
+        assert "generator_lineage" not in row
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+
+    def test_br29_dcface_no_lineage_missing_clearance_fails(self) -> None:
+        row = self._dcface_row(
+            derived_from_model="",
+            generator_lineage="__omit__",
+            clearance="__omit__",
+        )
+        assert "generator_lineage" not in row
+        assert "clearance" not in row
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+
+    def test_br16_lineage_sole_cause_of_synthetic_pending(self) -> None:
+        # BR-16: registered *model-ingest* source (yunet) PASSes alone; attaching
+        # generator_lineage routes through the lineage branch of
+        # _synthetic_audit_targets as the sole FAIL cause (registry head is None
+        # for yunet, so BR-29's loop cannot substitute).
+        base = {
+            "source": "yunet",
+            "license": "MIT",
+            "derived_from_model": "",
+        }
+        without = policy.audit_provenance_row(base)
+        assert without.ok is True, without.detail
+        with_lineage = {**base, "generator_lineage": "ffhq"}
+        result = policy.audit_provenance_row(with_lineage)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+
     def test_vec2face_still_pending(self) -> None:
         result = policy.audit_synthetic_source("vec2face")
         assert result.ok is False
         assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
-
 
 # ---------------------------------------------------------------------------
 # Synthetic fail-closed + structural validation + category caller-owned
@@ -653,17 +712,17 @@ class TestSyntheticFailClosedAndRowValidation:
         assert result.reason is policy.RejectionReason.UNKNOWN_SOURCE
 
     def test_row_cannot_waive_source_via_bogus_category(self) -> None:
+        # BR-30: otherwise-valid row; only the unknown category must fire.
+        # Exact reason only (TEST-17) — no UNKNOWN_SOURCE disjunction.
         row = {
+            "source": "self-generated",
             "license": "Apache-2.0",
             "derived_from_model": "",
-            "category": "bogus",
+            "category": "not_a_real_category",
         }
         result = policy.audit_provenance_row(row)
         assert result.ok is False
-        assert result.reason in {
-            policy.RejectionReason.INVALID_ROW,
-            policy.RejectionReason.UNKNOWN_SOURCE,
-        }
+        assert result.reason is policy.RejectionReason.INVALID_ROW
 
     def test_missing_derived_from_model_key_fails(self) -> None:
         row = {
@@ -694,20 +753,35 @@ class TestSyntheticFailClosedAndRowValidation:
         assert result.ok is False
         assert result.reason is policy.RejectionReason.INVALID_ROW
 
-    def test_caller_tooling_category_allows_missing_source_only_via_entry_point(
-        self,
-    ) -> None:
-        # audit_tooling_row is the caller-owned entry point; still needs license.
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            ["buffalo"],
+            123,
+            {"model": "buffalo"},
+        ],
+    )
+    def test_br37_audit_derived_from_model_rejects_non_string(self, bad: Any) -> None:
+        # BR-37: direct entry point type guard — row path uses a different loop.
+        result = policy.audit_derived_from_model(bad)  # type: ignore[arg-type]
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.INVALID_ROW
+
+    def test_br37_audit_derived_from_model_none_is_empty_opt_out(self) -> None:
+        # None at the direct entry point is the documented empty opt-out (PASS),
+        # distinct from a missing key on a provenance row (INVALID_ROW above).
+        result = policy.audit_derived_from_model(None)
+        assert result.ok is True
+        assert result.reason is None
+    def test_tooling_row_requires_package_identifier(self) -> None:
+        # BR-24: missing package / package_name / source fails closed.
         row = {
             "license": "Apache-2.0",
             "derived_from_model": "",
         }
-        # Tooling provenance row without source: not research-tainted, no source req
-        # under TOOLING category — but tooling deps go through audit_tooling_dependency.
-        # Training path always requires source; tooling category skips source req.
         result = policy.audit_tooling_row(row)
-        # license ok, no source required for TOOLING category
-        assert result.ok is True, result.detail
+        assert result.ok is False, result.detail
+        assert result.reason is policy.RejectionReason.UNKNOWN_SOURCE
 
 
 # ---------------------------------------------------------------------------
@@ -749,3 +823,706 @@ class TestPolicyEnumsAndHardFail:
     def test_require_pass_returns_on_pass(self) -> None:
         result = policy.audit_spdx("Apache-2.0")
         assert policy.require_pass(result) is result
+
+
+# ---------------------------------------------------------------------------
+# FIR-7-BR-19 / BR-28 — NC id segment matching + constrained buffalo/insightface
+# ---------------------------------------------------------------------------
+
+
+class TestNcModelMatcherPrecision:
+    """BR-19 (too narrow on versioned ids) + BR-28 (too wide on buffalo/insightface)."""
+
+    @pytest.mark.parametrize(
+        "tag",
+        [
+            "retinaface_r50",
+            "retinaface-r50",
+            "arcface_r100",
+            "arcface-r100",
+            "arcface_glint360k_r100",
+            "retinaface_mnet025_v2",
+            "vec2face_g1",
+        ],
+    )
+    def test_br19_versioned_nc_ids_fail(self, tag: str) -> None:
+        result = policy.audit_derived_from_model(tag)
+        assert result.ok is False, f"expected NC fail for {tag!r}, got {result}"
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    @pytest.mark.parametrize(
+        "derived",
+        ["yunet/retinaface_r50", "rt_detr/vec2face_g1"],
+    )
+    def test_br19_versioned_nc_ids_fail_in_composite_row(self, derived: str) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "Apache-2.0",
+            "derived_from_model": derived,
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False, f"expected NC fail for {derived!r}, got {result}"
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    @pytest.mark.parametrize(
+        "tag",
+        [
+            "buffalo-wings-detector",
+            "buffalo_bill_detector",
+            "buffalos-eye/v1",
+            "my-buffalo-free",
+            "sface/buffalo-wings-detector",
+            "not-insightface",
+            "insightface-free",
+        ],
+    )
+    def test_br28_legitimate_names_not_swept_as_nc(self, tag: str) -> None:
+        result = policy.audit_derived_from_model(tag)
+        assert result.ok is True, f"over-blocked {tag!r}: {result.detail}"
+
+    @pytest.mark.parametrize(
+        "tag",
+        [
+            "not-retinaface",
+            "arcface_alternative_v2",
+            "insightfaces-r-us/model",
+            "sface/v1",
+            "retinaface-free-reimpl",
+        ],
+    )
+    def test_br28_controls_still_pass(self, tag: str) -> None:
+        result = policy.audit_derived_from_model(tag)
+        assert result.ok is True, f"over-blocked control {tag!r}: {result.detail}"
+
+    @pytest.mark.parametrize(
+        "tag",
+        ["retinaface/r50", "arcface/r100", "vec2face/g1", "insightface/buffalo_l"],
+    )
+    def test_br19_slash_form_controls_still_fail(self, tag: str) -> None:
+        result = policy.audit_derived_from_model(tag)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    def test_br28_buffalo_version_suffixes_still_fail(self) -> None:
+        for tag in ("buffalo_l", "buffalo_s", "buffalo_sc", "buffalo_l2"):
+            result = policy.audit_derived_from_model(tag)
+            assert result.ok is False, f"expected NC fail for {tag!r}"
+            assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+
+# ---------------------------------------------------------------------------
+# FIR-7-BR-20 — NC provenance laundered through source
+# ---------------------------------------------------------------------------
+
+
+class TestNcModelAlsoGatesSourceField:
+    """BR-20: banned weights as ``source`` must FAIL like ``derived_from_model``."""
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "insightface/buffalo_l",
+            "buffalo_l",
+            "arcface",
+            "retinaface",
+            "deepinsight/insightface",
+        ],
+    )
+    def test_br20_nc_string_fails_from_either_field(self, value: str) -> None:
+        as_source = policy.audit_source(value)
+        assert as_source.ok is False, f"source {value!r} must FAIL NC"
+        assert as_source.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+        as_derived = policy.audit_derived_from_model(value)
+        assert as_derived.ok is False, f"derived {value!r} must FAIL NC"
+        assert as_derived.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+        row = {
+            "source": value,
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+        }
+        row_result = policy.audit_provenance_row(row)
+        assert row_result.ok is False
+        assert row_result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+
+# ---------------------------------------------------------------------------
+# FIR-7-BR-21 — unicode / confusable defeats both matchers
+# ---------------------------------------------------------------------------
+
+
+class TestUnicodeNormalisationSharedByMatchers:
+    """BR-21: ZWSP / space / dot / Cyrillic confusables fail closed."""
+
+    def test_br21_zwsp_insightface_fails_nc(self) -> None:
+        tag = "insight\u200bface"  # zero-width space
+        result = policy.audit_derived_from_model(tag)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    def test_br21_space_and_dot_insightface_fail_nc(self) -> None:
+        for tag in ("insight face", "insight.face"):
+            result = policy.audit_derived_from_model(tag)
+            assert result.ok is False, f"expected NC fail for {tag!r}, got {result}"
+            assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    def test_br21_cyrillic_insightface_fails_closed(self) -> None:
+        # U+0456 Cyrillic small letter byelorussian-ukrainian i
+        tag = "\u0456nsightface"
+        result = policy.audit_derived_from_model(tag)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.INVALID_ROW
+
+    def test_br21_cyrillic_casia_fails_closed(self) -> None:
+        # U+0441 Cyrillic small letter es + "asia"
+        tag = "\u0441asia"
+        result = policy.audit_source(tag)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.INVALID_ROW
+
+    def test_br21_literal_casia_still_research_only(self) -> None:
+        result = policy.audit_source("casia")
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.RESEARCH_ONLY_SOURCE
+
+    def test_br21_yunet_zwsp_insightface_row_fails(self) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "Apache-2.0",
+            "derived_from_model": "yunet/insight\u200bface",
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    def test_br21_yunet_insightface_control_fails_nc(self) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "Apache-2.0",
+            "derived_from_model": "yunet/insightface",
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+
+# ---------------------------------------------------------------------------
+# FIR-7-BR-27 — research matcher rejects legitimate sources
+# ---------------------------------------------------------------------------
+
+
+class TestResearchMatcherPrecision:
+    """BR-27: no bare startswith on whole compact; keep unsplit compounds (BR-31)."""
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "ffhq-tools",
+            "our_widerface_replacement",
+            "casiaset-detector",
+            "mfrx-vendor",
+            "webfaces-r-us",
+            "celebase",
+            "ffhq_free_internal",
+            "glint360k_free",
+            "commercial-ffhq-alternative",
+            "dataset_not_ffhq",
+        ],
+    )
+    def test_br27_legitimate_sources_pass(self, source: str) -> None:
+        result = policy.audit_source(source)
+        assert result.ok is True, f"over-blocked {source!r}: {result.detail}"
+
+    @pytest.mark.parametrize(
+        "source",
+        ["notffhq", "operator-photo", "self-generated", "dcface", "umap-learn"],
+    )
+    def test_br27_controls_still_pass(self, source: str) -> None:
+        result = policy.audit_source(source)
+        assert result.ok is True, f"over-blocked control {source!r}: {result.detail}"
+
+    @pytest.mark.parametrize(
+        "source",
+        ["ffhq", "casia_webface", "dataset/ffhq", "vggface2_train"],
+    )
+    def test_br27_controls_still_fail_research(self, source: str) -> None:
+        result = policy.audit_source(source)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.RESEARCH_ONLY_SOURCE
+
+    @pytest.mark.parametrize(
+        "source",
+        ["ffhq256", "vggface2train", "casiawebfaceextra", "widerfacehd"],
+    )
+    def test_br27_unsplit_compounds_still_fail(self, source: str) -> None:
+        result = policy.audit_source(source)
+        assert result.ok is False, f"expected research fail for {source!r}"
+        assert result.reason is policy.RejectionReason.RESEARCH_ONLY_SOURCE
+
+
+# ---------------------------------------------------------------------------
+# FIR-7-BR-36 — DCFace clearance lookup beyond slash-only heads
+# ---------------------------------------------------------------------------
+
+
+class TestDcfaceClearanceSegmentResolve:
+    """BR-36: dcface_v2 / myorg/dcface resolve registry head; no-lineage agrees."""
+
+    def _row(
+        self,
+        source: str,
+        *,
+        lineage: bool,
+        clearance: str = "dcface_operator_clearance_20260723",
+    ) -> dict[str, Any]:
+        row: dict[str, Any] = {
+            "source": source,
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+            "clearance": clearance,
+        }
+        if lineage:
+            row["generator_lineage"] = "ffhq"
+        return row
+
+    @pytest.mark.parametrize("source", ["dcface_v2", "dcface/v2", "myorg/dcface", "dcface"])
+    @pytest.mark.parametrize("lineage", [True, False])
+    def test_br36_dcface_forms_pass_with_clearance(
+        self, source: str, lineage: bool
+    ) -> None:
+        result = policy.audit_provenance_row(self._row(source, lineage=lineage))
+        assert result.ok is True, (
+            f"source={source!r} lineage={lineage} expected PASS, got {result}"
+        )
+
+    @pytest.mark.parametrize("source", ["dcface_v2", "myorg/dcface"])
+    def test_br36_dcface_forms_fail_without_clearance(self, source: str) -> None:
+        row = self._row(source, lineage=True, clearance="wrong_token")
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+
+    def test_br36_dcface_v2_no_lineage_still_requires_clearance(self) -> None:
+        row = {
+            "source": "dcface_v2",
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+            # no clearance, no lineage — must not silently pass
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+
+
+# ---------------------------------------------------------------------------
+# FIR-7-BR-23 / BR-26 — entry-point parity + shared NC gate
+# ---------------------------------------------------------------------------
+
+
+class TestEntryPointParityAndCommonNcGate:
+    """BR-23: caller category dispatches. BR-26: NC fails from every door."""
+
+    def test_br23_occluder_parity_uncleared(self) -> None:
+        row = {
+            "license": "MIT",
+            "derived_from_model": "",
+            "source": "random_flickr",
+            "clearance": "uncleared",
+        }
+        via_row = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.OCCLUDER_ASSET
+        )
+        via_door = policy.audit_occluder_asset(row)
+        assert via_row.ok is False
+        assert via_door.ok is False
+        assert via_row.reason is policy.RejectionReason.UNCLEARED_OCCLUDER_ASSET
+        assert via_door.reason is policy.RejectionReason.UNCLEARED_OCCLUDER_ASSET
+        assert via_row.reason is via_door.reason
+
+    def test_br23_occluder_parity_cleared_pass(self) -> None:
+        row = {
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+            "source": "self-generated",
+            "clearance": "cleared",
+        }
+        via_row = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.OCCLUDER_ASSET
+        )
+        via_door = policy.audit_occluder_asset(row)
+        assert via_row.ok is True, via_row.detail
+        assert via_door.ok is True, via_door.detail
+        assert via_row.reason is via_door.reason
+
+    def test_br23_synthetic_requires_nonempty_source(self) -> None:
+        for row in (
+            {"license": "Apache-2.0", "derived_from_model": ""},
+            {"source": "", "license": "Apache-2.0", "derived_from_model": ""},
+            {"source": "   ", "license": "Apache-2.0", "derived_from_model": ""},
+        ):
+            result = policy.audit_provenance_row(
+                row, category=policy.PolicyCategory.SYNTHETIC_SOURCE
+            )
+            assert result.ok is False, f"expected fail for {row!r}"
+            assert result.reason is policy.RejectionReason.UNKNOWN_SOURCE
+
+    def test_br23_synthetic_parity_with_audit_synthetic_source(self) -> None:
+        row = {
+            "source": "vec2face",
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+        }
+        via_row = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.SYNTHETIC_SOURCE
+        )
+        via_door = policy.audit_synthetic_source("vec2face")
+        assert via_row.ok is False
+        assert via_door.ok is False
+        assert via_row.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+        assert via_door.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+
+    def test_br23_model_ingest_parity_vendor_missing(self) -> None:
+        row = {
+            "source": "vendorX",
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+        }
+        via_row = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.MODEL_INGEST
+        )
+        via_door = policy.audit_model_ingest("vendorX")
+        assert via_row.ok is False
+        assert via_door.ok is False
+        assert via_row.reason is policy.RejectionReason.MISSING_INGEST_ENTRY
+        assert via_door.reason is policy.RejectionReason.MISSING_INGEST_ENTRY
+
+    def test_br23_model_ingest_parity_yunet_pass(self) -> None:
+        row = {
+            "source": "yunet",
+            "license": "MIT",
+            "derived_from_model": "",
+        }
+        via_row = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.MODEL_INGEST
+        )
+        via_door = policy.audit_model_ingest("yunet")
+        assert via_row.ok is True, via_row.detail
+        assert via_door.ok is True, via_door.detail
+        assert via_row.reason is via_door.reason
+
+    def test_br26_occluder_rejects_nc_derived(self) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "Apache-2.0",
+            "clearance": "cleared",
+            "derived_from_model": "insightface/buffalo_l",
+        }
+        via_door = policy.audit_occluder_asset(row)
+        via_row = policy.audit_provenance_row(row)
+        assert via_door.ok is False
+        assert via_door.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        assert via_row.ok is False
+        assert via_row.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+
+# ---------------------------------------------------------------------------
+# FIR-7-BR-24 — tooling row consults PACKAGE_DENYLIST
+# ---------------------------------------------------------------------------
+
+
+class TestToolingRowDenylist:
+    """BR-24 / BR-39: tooling row + dependency denylist / allowlist-miss."""
+
+    def test_br24_ultralytics_source_field_fails_denylisted(self) -> None:
+        row = {
+            "source": "ultralytics",
+            "license": "BSD-3-Clause",
+            "derived_from_model": "",
+        }
+        result = policy.audit_tooling_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
+    def test_br24_ultralytics_package_name_fails_denylisted(self) -> None:
+        row = {
+            "package_name": "ultralytics",
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+        }
+        result = policy.audit_tooling_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
+    def test_br24_ultralytics_dep_parity(self) -> None:
+        row = {
+            "package_name": "ultralytics",
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+        }
+        via_row = policy.audit_tooling_row(row)
+        via_dep = policy.audit_tooling_dependency("ultralytics")
+        assert via_row.reason is via_dep.reason
+        assert via_row.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
+    def test_br24_umap_learn_tooling_row_passes(self) -> None:
+        row = {
+            "package_name": "umap-learn",
+            "license": "BSD-3-Clause",
+            "derived_from_model": "",
+        }
+        result = policy.audit_tooling_row(row)
+        assert result.ok is True, result.detail
+
+    def test_br39_tooling_row_unknown_package_fails(self) -> None:
+        # BR-39: row door must surface allowlist-miss, not silently pass.
+        row = {
+            "package_name": "totally-unknown-pkg",
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+        }
+        result = policy.audit_tooling_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.UNKNOWN_SOURCE
+
+
+# ---------------------------------------------------------------------------
+# FIR-7-BR-22 — unregistered synthetic sources fail closed (SECD-05)
+# ---------------------------------------------------------------------------
+
+
+class TestUnregisteredSourceFailClosed:
+    """BR-22: unknown sources default to PENDING-LEGAL-CLEARANCE, not PASS."""
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "synthface3",
+            "mysteryganv2",
+            "my-synthetic-gan",
+            "vec2face-successor",
+        ],
+    )
+    def test_br22_unregistered_sources_pending(self, source: str) -> None:
+        row = {
+            "source": source,
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False, f"expected PENDING for {source!r}, got {result}"
+        assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+
+    def test_br22_control_with_derived_also_pending(self) -> None:
+        row = {
+            "source": "synthface3",
+            "license": "Apache-2.0",
+            "derived_from_model": "synthface3/g1",
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+
+
+# ---------------------------------------------------------------------------
+# FIR-7-BR-25 — self-generated is a source, not a licence
+# ---------------------------------------------------------------------------
+
+
+class TestSelfGeneratedIsSourceNotLicense:
+    """BR-25: scraped data cannot self-declare the self-generated licence tag."""
+
+    def test_br25_scraped_with_self_generated_license_fails(self) -> None:
+        row = {
+            "source": "scraped_from_the_web",
+            "license": "self-generated",
+            "derived_from_model": "",
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.UNKNOWN_SPDX
+
+    def test_br25_contract3_self_generated_apache_still_passes(self) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is True, result.detail
+
+
+# ---------------------------------------------------------------------------
+# FIR-7-BR-35 — multi-licence field resolution
+# ---------------------------------------------------------------------------
+
+
+class TestMultiLicenseFieldResolution:
+    """BR-35: disagreeing licence keys fail closed; denylist cannot hide."""
+
+    def test_br35_disagreeing_license_and_spdx_id_fails(self) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "Apache-2.0",
+            "spdx_id": "AGPL-3.0",
+            "derived_from_model": "",
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.INVALID_ROW
+
+    def test_br35_agreeing_license_keys_pass(self) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "Apache-2.0",
+            "spdx_id": "apache-2.0",
+            "derived_from_model": "",
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is True, result.detail
+
+    def test_br35_secondary_only_agpl_still_fails(self) -> None:
+        row = {
+            "source": "self-generated",
+            "spdx_id": "AGPL-3.0",
+            "derived_from_model": "",
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_LICENSE
+
+
+# ---------------------------------------------------------------------------
+# FIR-7-BR-33 — unregistered derived split from synthetic path
+# ---------------------------------------------------------------------------
+
+
+class TestUnregisteredDerivedModel:
+    """BR-33: dedicated reason; operator renderer passes; NC precedence."""
+
+    def test_br33_operator_renderer_passes(self) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "Apache-2.0",
+            "derived_from_model": "acx/occluder-renderer-v1",
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is True, result.detail
+
+    def test_br33_retinaface_r50_is_nc_not_pending(self) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "Apache-2.0",
+            "derived_from_model": "retinaface_r50",
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    def test_br33_registered_rt_detr_passes(self) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "Apache-2.0",
+            "derived_from_model": "rt-detr",
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is True, result.detail
+
+    def test_br33_unregistered_derived_on_ingest_source_fails(self) -> None:
+        row = {
+            "source": "yunet",
+            "license": "MIT",
+            "derived_from_model": "acx/occluder-renderer-v1",
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.UNREGISTERED_DERIVED_MODEL
+
+    def test_br33_nc_precedence_over_synthetic(self) -> None:
+        # Dual violation: NC-derived + synthetic source key. NC wins.
+        row = {
+            "source": "dcface",
+            "license": "Apache-2.0",
+            "derived_from_model": "insightface/buffalo_l",
+            "clearance": policy.DCFACE_CLEARANCE_DECISION,
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+
+# ---------------------------------------------------------------------------
+# FIR-7-BR-34 — row-declared category is non-dispatching
+# ---------------------------------------------------------------------------
+
+
+class TestRowDeclaredCategoryNonDispatching:
+    """BR-34: row category validated but never selects the gate."""
+
+    def test_br34_contract3_passes_with_and_without_row_category(self) -> None:
+        base = {
+            "source": "self-generated",
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+        }
+        without = policy.audit_provenance_row(base)
+        with_cat = policy.audit_provenance_row(
+            {**base, "category": "synthetic_source"}
+        )
+        assert without.ok is True, without.detail
+        assert with_cat.ok is True, with_cat.detail
+
+    def test_br34_caller_category_still_dispatches(self) -> None:
+        # Contrast: *caller* SYNTHETIC_SOURCE with empty source fails.
+        result = policy.audit_provenance_row(
+            {
+                "source": "self-generated",
+                "license": "Apache-2.0",
+                "derived_from_model": "",
+            },
+            category=policy.PolicyCategory.SYNTHETIC_SOURCE,
+        )
+        # self-generated is not a synthetic registry entry → pending via door.
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+
+
+# ---------------------------------------------------------------------------
+# FIR-7-BR-38 — dead surface cleanup + NC ingest derivation path
+# ---------------------------------------------------------------------------
+
+
+class TestBr38NcIngestDerivationAndHelpers:
+    """BR-38: MODEL_INGEST commercial_use loop is exercised via monkeypatch."""
+
+    def test_br38_nc_tagged_ingest_entry_joins_nc_model_ids(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        entry = policy.ModelIngestEntry(
+            model_id="nc_face_weights_v1",
+            display_name="NC Face Weights v1",
+            role=policy.DetectorRole.FACE_DETECTOR,
+            verification=policy.VerificationMetadata(
+                spdx_id="Non-Commercial",
+                commercial_use=policy.CommercialUse.NON_COMMERCIAL,
+            ),
+        )
+        new_ingest = dict(policy.MODEL_INGEST_ENTRIES)
+        new_ingest["nc_face_weights_v1"] = entry
+        monkeypatch.setattr(policy, "MODEL_INGEST_ENTRIES", new_ingest)
+        derived = policy._derive_nc_model_ids()
+        assert "nc_face_weights_v1" in derived
+        monkeypatch.setattr(policy, "NC_MODEL_IDS", derived)
+        result = policy.audit_derived_from_model("nc_face_weights_v1/r50")
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    def test_br38_require_string_field_used_for_missing_derived(self) -> None:
+        # Structural path routes through _require_string_field (BR-38).
+        row = {
+            "source": "self-generated",
+            "license": "Apache-2.0",
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.INVALID_ROW

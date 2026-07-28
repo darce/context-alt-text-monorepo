@@ -64,6 +64,10 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
       onSuccess: () => {
         announceStatus(__('Draft ready. Review before saving.', 'alt-context'));
       },
+      // BR-46: after the live-region hoist the region is always mounted, so this
+      // clear is load-bearing — without it a stale "Generating…" polite cue sits
+      // beside the assertive generate-failure alert (same two-regions defect as
+      // accept onError clear — BR-39).
       onError: () => {
         clearStatus();
       },
@@ -156,9 +160,13 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
   // Named polite live region [A11Y-08]. Always mounted in one stable position
   // outside the branch body (BR-32) so pending → ready → pending only mutates
   // textContent; the AT already tracks the node. Empty while quiet — correct
-  // ARIA pattern; announces nothing until text appears. data-testid disambiguates
-  // from MediaAltInlineEditor's sibling role=status on the same table row.
-  // No key={statusSeq}: a remount on every announce would defeat the stable node.
+  // ARIA pattern; announces nothing until text appears.
+  //
+  // WHY (BR-37): sibling of MediaAltInlineEditor's role=status on the same
+  // table row (MediaSelectionTableBody). Distinct data-testid so row-level
+  // tests can disambiguate; S2c-4 owns consolidating both into one persistent
+  // row-level live region. No key={statusSeq}: a remount on every announce
+  // would defeat the stable node.
   const statusRegion = (
     <div
       role="status"
@@ -173,11 +181,18 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
 
   const body = (() => {
     if (isPending) {
+      // BR-38: explicit name + busy on the focus-park target. Without them an
+      // unnamed div derives its name from the disabled button text (and, before
+      // the live-region hoist, also from the status region) — SR users parked
+      // here heard a stuttered or empty label with no in-progress signal.
+      // Keep native `disabled` on the button (toBeDisabled() / BR-13).
       return (
         <div
           ref={containerRef}
           className="acx-media-selection__media-alt-suggest"
           tabIndex={-1}
+          aria-label={__('Generating…', 'alt-context')}
+          aria-busy="true"
           onBlur={handleContainerBlur}
         >
           <button type="button" className="button acx-media-selection__media-alt-suggest-trigger" disabled>
@@ -222,6 +237,13 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
               // non-edit branch, so isEditing is already false on every path here.
               reset();
             },
+            // BR-39: clear polite "Draft ready…" so it does not co-present with
+            // the assertive save-failure alert (same product concern as generate
+            // onError clearStatus — BR-46). Empty polite region announces nothing;
+            // the role="alert" is the single source of truth for this failure.
+            onError: () => {
+              clearStatus();
+            },
           },
         );
       };
@@ -249,6 +271,11 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
               announceStatus(__('Alt text saved.', 'alt-context'));
               setIsEditing(false);
               reset();
+            },
+            // BR-39 companion: edit-path save failure also must not leave
+            // "Draft ready…" beside the assertive alert.
+            onError: () => {
+              clearStatus();
             },
           },
         );

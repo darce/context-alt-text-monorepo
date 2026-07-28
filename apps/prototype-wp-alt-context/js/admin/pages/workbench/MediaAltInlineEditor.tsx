@@ -152,8 +152,18 @@ export const MediaAltInlineEditor = ({
       >
         {__('Edit alt text', 'alt-context')}
       </button>
+      {/* WHY (BR-37): sibling of MediaAltSuggest's role=status on the same table
+          row (MediaSelectionTableBody). Distinct data-testid so row-level tests
+          can disambiguate; S2c-4 owns consolidating both into one persistent
+          row-level live region. Mount-with-text still present here — out of
+          scope for this stopgap. */}
       {statusMessage ? (
-        <div role="status" aria-live="polite" className="screen-reader-text">
+        <div
+          role="status"
+          aria-live="polite"
+          className="screen-reader-text"
+          data-testid="media-alt-inline-editor-status"
+        >
           {statusMessage}
         </div>
       ) : null}

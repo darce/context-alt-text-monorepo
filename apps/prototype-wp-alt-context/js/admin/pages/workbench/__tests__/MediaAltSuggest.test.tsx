@@ -291,8 +291,8 @@ describe('MediaAltSuggest', () => {
     fireEvent.click(await screen.findByRole('button', { name: /accept/i }));
 
     // React Query dispatches the pending state synchronously but invokes the
-    // mutationFn on a microtask, so await the saving affordance first.
-    expect(await screen.findByRole('button', { name: /saving/i })).toBeDisabled();
+    // mutationFn on a microtask, so await the accepting affordance first.
+    expect(await screen.findByRole('button', { name: /accepting draft/i })).toBeDisabled();
     // [TEST-15] discrimination: red if it commits the wrong id or wrong text, or
     // routes through the read-only describe writeAlt path instead of the
     // correction endpoint.
@@ -589,6 +589,24 @@ describe('MediaAltSuggest', () => {
     // [TEST-15] discrimination: red today with pre-BR-03 labels (two "Save", two
     // "Cancel"); green once suggest uses "Save alt text" / "Cancel edit".
     expect(duplicateNames).toEqual([]);
+
+    // Pending names must stay distinct too (WBUX-5-S2C3A-BR-29): Accept used the
+    // same "Saving…" as MediaAltInlineEditor's Save. Drive both commits pending
+    // with a never-resolving correction mock, then re-check button names.
+    fireEvent.click(screen.getByRole('button', { name: /^cancel edit$/i }));
+    await screen.findByRole('button', { name: /accept/i });
+    correctMock.mockReturnValue(new Promise<DescriptionHistoryItem>(() => undefined));
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /accept/i }));
+    expect(await screen.findByRole('button', { name: /accepting draft/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^saving…$/i })).toBeDisabled();
+    const pendingButtonNames = screen.getAllByRole('button').map(buttonAccessibleName);
+    const pendingDuplicates = pendingButtonNames.filter(
+      (name, index) => pendingButtonNames.indexOf(name) !== index,
+    );
+    // [TEST-15] discrimination: red if Accept's pending label is still "Saving…"
+    // — co-mounted commits yield ["Saving…","Cancel","Saving…",…].
+    expect(pendingDuplicates).toEqual([]);
   });
 
   it('moves focus into the edit field on Edit [a11y][S2c-3a]', async () => {
@@ -875,14 +893,71 @@ describe('MediaAltSuggest', () => {
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     await screen.findByText(draft);
 
-    // [TEST-15] discrimination: red when edit mode is not exited on a successful
-    // save. The stale flag drops the operator straight into a textarea holding
-    // the PREVIOUS row edit instead of showing the new machine proposal for
-    // review — the proposal is never seen, which defeats the review step, and
-    // the draft-land focus target (Dismiss) is not rendered so focus is lost.
+    // [TEST-15] discrimination: red only when setIsEditing(false) is removed from
+    // BOTH generate() and saveEdit's onSuccess. Either call alone masks the other —
+    // reset() clears data, and isEditing is only read inside the data branch, so a
+    // surviving setIsEditing(false) still lands review state on the next generate.
     expect(screen.queryByLabelText(/edit draft alt text/i)).not.toBeInTheDocument();
     expect(screen.queryByDisplayValue(editedDraft)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /accept/i })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole('button', { name: /dismiss/i })).toHaveFocus());
+  });
+
+  it('clears a failed-save alert and focuses Edit draft after Cancel edit [a11y][WBUX-5-S2C3A-BR-27]', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    correctMock.mockRejectedValueOnce(
+      new Error(
+        'Request to /wp-json/acx/v1/recognition/describe-history/42/correction failed (502): <html>proxy-internal-detail</html>',
+      ),
+    );
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    // Reach review via Cancel after a failed save — not enterEditMode. That path
+    // is the only one that observes cancelEdit's resetAccept (enterEditMode also
+    // resets, so a re-Edit test cannot pin this line).
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
+    fireEvent.change(await screen.findByLabelText(/edit draft alt text/i), {
+      target: { value: editedDraft },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^save alt text$/i }));
+    await screen.findByRole('alert');
+
+    fireEvent.click(screen.getByRole('button', { name: /^cancel edit$/i }));
+
+    // [TEST-15] discrimination: goes red if resetAccept() is removed from
+    // cancelEdit — isAcceptError survives the isEditing true→false transition,
+    // the [isAcceptError, isEditing] effect re-keys and focuses Accept, and the
+    // save-failure alert remounts in the review branch.
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^edit draft$/i })).toHaveFocus(),
+    );
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('associates Accept with the save-failure alert after a failed accept [a11y][WBUX-5-S2C3A-BR-28]', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    correctMock.mockRejectedValueOnce(
+      new Error(
+        'Request to /wp-json/acx/v1/recognition/describe-history/42/correction failed (502): <html>proxy-internal-detail</html>',
+      ),
+    );
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /accept/i }));
+    await screen.findByRole('alert');
+
+    const accept = screen.getByRole('button', { name: /accept/i });
+    // [TEST-15] discrimination: goes red if Accept lacks aria-describedby pointing
+    // at the error element — the BR-18 focus restore lands on a control that
+    // announces only "Accept, button" with no persistent failure cue.
+    const describedBy = accept.getAttribute('aria-describedby');
+    expect(describedBy).toBeTruthy();
+    const descriptionText = (describedBy ?? '')
+      .split(/\s+/)
+      .map((id) => document.getElementById(id)?.textContent ?? '')
+      .join(' ');
+    expect(descriptionText).toMatch(/could not save|couldn.?t save|unable to save/i);
   });
 });

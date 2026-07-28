@@ -1,6 +1,6 @@
 import type { Dispatch, JSX, ReactNode, SetStateAction } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
@@ -724,12 +724,16 @@ describe('WorkbenchPage', () => {
     });
   });
 
-  it('falls back to the scan tab when the removed batch tab is requested', () => {
+  // WBUX-5 S1c-2: the single-tab Tabs shell is gone. A legacy ?tab=batch deep-link is inert —
+  // no tablist, no crash, scan content still renders in the left control host.
+  it('ignores the removed batch tab param and renders the two-pane scan workbench', () => {
+    setupScanMutation('success');
     renderWorkbench(undefined, ['/workbench?tab=batch']);
 
-    expect(screen.getByRole('heading', { name: 'Scan Media Queue' })).toBeInTheDocument();
-    expect(screen.queryByRole('tab', { name: 'Batch' })).not.toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Scan Media Queue' })).toHaveAttribute('data-state', 'active');
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument();
+    const control = screen.getByTestId('workbench-two-pane-control');
+    expect(within(control).getByRole('heading', { name: 'Scan Media Queue' })).toBeInTheDocument();
   });
 
   it('shows "Clustering identities…" button text when backend-driven clustering is active', () => {
@@ -778,23 +782,26 @@ describe('WorkbenchPage', () => {
     expect(screen.queryByText(/Processed.*images/i)).not.toBeInTheDocument();
   });
 
-  // E21-3: confirm tab removed in favor of Advanced drawer (would fail on old two-tab UI).
-  it('does not expose a Confirm & Publish tab in the workbench tablist', () => {
+  // E21-3 regression guard, ported to the WBUX-5 S1c-2 two-pane shell: there is no workbench
+  // tablist at all now, so the confirm tab is trivially absent. Advanced stays workbench-level
+  // chrome (a drawer, never a tab). Would fail on the old two-tab UI (tablist present).
+  it('exposes no workbench tablist and no confirm tab in the two-pane shell', () => {
+    setupScanMutation('success');
     renderWorkbench();
 
-    expect(screen.getByRole('tablist', { name: 'Workbench steps' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Scan Media Queue' })).toBeInTheDocument();
-    expect(screen.queryByRole('tab', { name: 'Confirm & Publish' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('tab', { name: 'Confirm' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Advanced: jobs & recovery' })).toHaveAttribute(
       'aria-expanded',
       'false',
     );
   });
 
-  // E21-10 Slice 4: tab=confirm shim deleted. Discriminating degrade proof —
-  // lands on default scan WITHOUT advanced=open and WITHOUT rewriting tab.
-  it('does not shim legacy ?tab=confirm (no advanced open, no tab rewrite)', async () => {
+  // E21-10 Slice 4 regression guard, ported to WBUX-5 S1c-2: the tab=confirm shim stays deleted.
+  // Under the two-pane shell a legacy ?tab=confirm is fully inert — no advanced auto-open, no tab
+  // UI, no URL rewrite — while ?panel=conflicts opens the overlay independently (NAV-11).
+  it('does not shim legacy ?tab=confirm (inert param, overlay stays independent)', async () => {
+    setupScanMutation('success');
     const LocationProbe = (): JSX.Element => {
       const location = useLocation();
       return <output data-testid="location-search">{location.search}</output>;
@@ -810,15 +817,16 @@ describe('WorkbenchPage', () => {
       </QueryClientProvider>,
     );
 
-    // useTabParam falls back to scan for unknown tab values (UI lands on scan).
+    // Two-pane workbench renders (scan control host); ?panel=conflicts opens the overlay.
     expect(screen.getByRole('heading', { name: 'Scan Media Queue' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Conflict Inbox' })).toBeInTheDocument();
-    // Discriminating: shim is GONE — advanced stays closed, tab is not rewritten.
+    // Discriminating: shim is GONE — advanced stays closed, no tab UI exists.
     expect(screen.getByRole('button', { name: 'Advanced: jobs & recovery' })).toHaveAttribute(
       'aria-expanded',
       'false',
     );
     expect(screen.queryByRole('region', { name: 'Advanced: jobs & recovery' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
 
     await waitFor(() => {
       const search = screen.getByTestId('location-search').textContent ?? '';
@@ -862,5 +870,67 @@ describe('WorkbenchPage', () => {
     });
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
     expect(trigger).toHaveFocus();
+  });
+
+  // WBUX-5 Slice 1 (S1c-2): atomic swap of the vestigial single-tab Tabs shell for the
+  // two-pane control|library layout. Scan content rehomes into the left control host; the
+  // media table rehomes into the right library host (with its accordion intact — no
+  // behavior loss). Collapse is driven by ?panes=, independent of the ?panel= overlay.
+  describe('two-pane shell (WBUX-5 S1c-2)', () => {
+    it('renders a control host (left) and library host (right) with a splitter and no tablist', () => {
+      setupScanMutation('success');
+      const { container } = renderWorkbench();
+
+      // Atomic Tabs→two-pane swap: the single-tab tablist shell is gone.
+      expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+      expect(screen.queryByRole('tab')).not.toBeInTheDocument();
+
+      // Both hosts render from zero state (rg-003: primary controls reachable from zero selection).
+      const control = screen.getByTestId('workbench-two-pane-control');
+      const library = screen.getByTestId('workbench-two-pane-library');
+      expect(control).toBeInTheDocument();
+      expect(library).toBeInTheDocument();
+
+      // Resizable/collapsible splitter between the panes [A11Y-08].
+      expect(screen.getByRole('separator')).toBeInTheDocument();
+
+      // Scan content lives left; the media library lives right — MediaSelection appears
+      // exactly once, inside the library host (rehomed, not duplicated).
+      expect(within(control).getByRole('heading', { name: 'Scan Media Queue' })).toBeInTheDocument();
+      const mediaRegions = container.querySelectorAll('.acx-media-selection');
+      expect(mediaRegions).toHaveLength(1);
+      expect(library).toContainElement(mediaRegions[0] as HTMLElement);
+    });
+
+    it('restores ?panes=library-collapsed independently of the ?panel= overlay [NAV-11]', () => {
+      setupScanMutation('success');
+      renderWorkbench(undefined, ['/workbench?panes=library-collapsed&panel=conflicts']);
+
+      // Pane collapse restored from ?panes= …
+      expect(screen.getByTestId('workbench-two-pane-library')).toHaveAttribute('data-collapsed', 'true');
+      expect(screen.getByTestId('workbench-two-pane-control')).toHaveAttribute('data-collapsed', 'false');
+
+      // … while ?panel=conflicts independently opens the overlay (both restore together, NAV-11).
+      expect(screen.getByRole('heading', { name: 'Conflict Inbox' })).toBeInTheDocument();
+    });
+
+    it('clears media=expanded when findings arrive in the rehomed library host', () => {
+      // Auto-collapse effect migrated from ScanTabContent to WorkbenchPageContent alongside
+      // MediaSelection. Rising edge (no findings → findings) clears media=expanded (NAV-11).
+      setupScanMutation('success');
+      mockUseWorkbenchFilters.mockReturnValue(filtersMock({ mediaExpanded: true, setMediaExpanded }));
+      const view = renderWorkbench();
+      expect(setMediaExpanded).not.toHaveBeenCalled();
+
+      mockUseWorkbenchFindings.mockReturnValue(
+        makeFindingsViewModel({
+          counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 0, total: 1 },
+          hasFindings: true,
+        }),
+      );
+      view.rerender(<WorkbenchPage />);
+
+      expect(setMediaExpanded).toHaveBeenCalledWith(false);
+    });
   });
 });

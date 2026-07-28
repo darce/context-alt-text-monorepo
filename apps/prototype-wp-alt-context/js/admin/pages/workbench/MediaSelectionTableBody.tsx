@@ -5,6 +5,7 @@ import type { DataSource } from '../../api/recognition/types';
 import { Checkbox } from '../../../components/ui/checkbox';
 import { IdentityClusterList } from './identity-clusters';
 import { MediaAltInlineEditor } from './MediaAltInlineEditor';
+import { MediaAltSuggest } from './MediaAltSuggest';
 import { mediaEditUrl } from './Panels';
 
 interface MediaSelectionTableBodyProps {
@@ -121,6 +122,7 @@ const MediaSelectionRow = ({
           </p>
         </a>
         <MediaAltInlineEditor mediaId={item.id} altText={item.altText ?? null} />
+        <MediaAltSuggest mediaId={item.id} />
         <div className="acx-media-selection__detail-meta" aria-live="polite">
           {detailReady ? (
             <>

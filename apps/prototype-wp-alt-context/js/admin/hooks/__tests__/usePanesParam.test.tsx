@@ -122,4 +122,32 @@ describe('usePanesParam', () => {
     expect(result.current.search).toContain('panes=control-collapsed');
     expect(result.current.search).toContain('panel=conflicts');
   });
+
+  // [NAV-11] SET branch: collapsed value preserves every non-panes sibling param
+  it('setting panes to a collapsed value preserves multi-param siblings [NAV-11]', () => {
+    const { result } = renderHook(
+      () => {
+        const [panes, setPanes] = usePanesParam();
+        const [searchParams] = useSearchParams();
+        return {
+          panes,
+          setPanes,
+          search: searchParams.toString(),
+        };
+      },
+      {
+        wrapper: wrapperForUrl('/?tab=scan&panel=conflicts&status=needs_review'),
+      },
+    );
+
+    act(() => {
+      result.current.setPanes('library-collapsed');
+    });
+
+    expect(result.current.panes).toBe('library-collapsed');
+    expect(result.current.search).toContain('tab=scan');
+    expect(result.current.search).toContain('panel=conflicts');
+    expect(result.current.search).toContain('status=needs_review');
+    expect(result.current.search).toContain('panes=library-collapsed');
+  });
 });

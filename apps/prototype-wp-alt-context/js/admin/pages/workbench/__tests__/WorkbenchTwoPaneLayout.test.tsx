@@ -125,6 +125,35 @@ describe('WorkbenchTwoPaneLayout', () => {
     expect(library.textContent).not.toBe('');
   });
 
+  it('treats an array of empty children as an empty slot [isSlotEmpty array branch]', () => {
+    renderLayout({ control: [null, false, ''], library: [null, undefined, true] });
+
+    const control = screen.getByTestId('workbench-two-pane-control');
+    const library = screen.getByTestId('workbench-two-pane-library');
+
+    expect(control.getAttribute('data-empty')).toBe('true');
+    expect(library.getAttribute('data-empty')).toBe('true');
+    expect(within(control).getByRole('status')).toBeTruthy();
+    expect(within(library).getByRole('status')).toBeTruthy();
+  });
+
+  it('treats an array with one real child as a non-empty slot [isSlotEmpty array branch]', () => {
+    renderLayout({
+      control: [null, <div key="c">Control from array</div>],
+      library: [false, '', <span key="l">Library from array</span>],
+    });
+
+    const control = screen.getByTestId('workbench-two-pane-control');
+    const library = screen.getByTestId('workbench-two-pane-library');
+
+    expect(control.getAttribute('data-empty')).toBe('false');
+    expect(library.getAttribute('data-empty')).toBe('false');
+    expect(within(control).queryByRole('status')).toBeNull();
+    expect(within(library).queryByRole('status')).toBeNull();
+    expect(within(control).getByText('Control from array')).toBeTruthy();
+    expect(within(library).getByText('Library from array')).toBeTruthy();
+  });
+
   it('marks the library host as the dominant region and sizes the split 35/65 [LAY-01]', () => {
     renderLayout();
 

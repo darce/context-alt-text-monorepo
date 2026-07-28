@@ -4,6 +4,7 @@ import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
 import type { DataSource } from '../../api/recognition/types';
 import { Checkbox } from '../../../components/ui/checkbox';
 import { IdentityClusterList } from './identity-clusters';
+import { MediaAltInlineEditor } from './MediaAltInlineEditor';
 import { mediaEditUrl } from './Panels';
 
 interface MediaSelectionTableBodyProps {
@@ -118,8 +119,8 @@ const MediaSelectionRow = ({
             {item.title}
             <span className="acx-media-selection__media-id"> (#{item.id})</span>
           </p>
-          <p className="acx-media-selection__media-alt">{item.altText ?? __('No alt text yet', 'alt-context')}</p>
         </a>
+        <MediaAltInlineEditor mediaId={item.id} altText={item.altText ?? null} />
         <div className="acx-media-selection__detail-meta" aria-live="polite">
           {detailReady ? (
             <>

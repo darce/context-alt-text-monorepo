@@ -166,6 +166,25 @@ describe('MediaAltSuggest', () => {
     expect(screen.getByRole('button', { name: /try again|retry/i })).toBeInTheDocument();
   });
 
+  it('clears the polite generating cue when generation fails so only the alert describes the row [a11y][BR-46]', async () => {
+    describeMock.mockRejectedValueOnce(
+      new Error('Request to /wp-json/acx/v1/recognition/describe failed (502): <html>proxy-internal-detail</html>'),
+    );
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/could not generate|couldn.?t generate|unable to generate/i);
+
+    // [TEST-15] discrimination: goes red if clearStatus() is removed from
+    // generate()'s onError — the always-mounted polite region keeps the stale
+    // "Generating…" cue beside the assertive failure alert. Single-line: delete
+    // clearStatus() from the onError callback (or the whole onError option).
+    const status = screen.getByTestId('media-alt-suggest-status');
+    expect(status).toHaveTextContent('');
+    expect(status).not.toHaveTextContent(/generating/i);
+  });
+
   it('re-invokes generation when retry is pressed after a failure [INT-11]', async () => {
     describeMock.mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce(sampleResponse());
     renderSuggest(<MediaAltSuggest mediaId={42} />);
@@ -370,6 +389,34 @@ describe('MediaAltSuggest', () => {
     // The operator keeps the draft and can retry the accept — no full restart (INT-11).
     expect(screen.getByText(draft)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /accept/i })).toBeInTheDocument();
+  });
+
+  it('clears the polite ready cue when accept fails so only the alert describes the row [a11y][BR-39]', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    correctMock.mockRejectedValueOnce(
+      new Error(
+        'Request to /wp-json/acx/v1/recognition/describe-history/42/correction failed (502): <html>proxy-internal-detail</html>',
+      ),
+    );
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await waitFor(() => expect(screen.getByTestId('media-alt-suggest-status')).toHaveTextContent(/ready/i));
+    fireEvent.click(await screen.findByRole('button', { name: /accept/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/could not save|couldn.?t save|unable to save/i);
+
+    // [TEST-15] discrimination: goes red if clearStatus() is removed from
+    // accept()'s onError — polite "Draft ready. Review before saving." stays
+    // mounted beside the assertive save-failure alert. Single-line: delete
+    // clearStatus() from accept's onError (or the whole onError option).
+    // Cleared (not restated): the assertive alert is about to speak; a second
+    // polite restatement would only compete.
+    const status = screen.getByTestId('media-alt-suggest-status');
+    expect(status).toHaveTextContent('');
+    expect(status).not.toHaveTextContent(/ready/i);
+    expect(status).not.toHaveTextContent(/draft ready/i);
   });
 
   it('returns focus to Accept after a failed accept when the browser blurred the disabled control [a11y][WBUX-5-S2C3A-BR-18]', async () => {
@@ -1120,6 +1167,30 @@ describe('MediaAltSuggest', () => {
       expect(document.activeElement).not.toBe(document.body);
       expect(document.activeElement).toHaveClass('acx-media-selection__media-alt-suggest');
     });
+  });
+
+  it('names the pending park target explicitly so SR users hear a single generating cue [a11y][BR-38]', async () => {
+    describeMock.mockReturnValue(new Promise<VisualFactsResponse>(() => undefined));
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    const generating = await screen.findByRole('button', { name: /generating/i });
+    expect(generating).toBeDisabled();
+    const park = generating.closest('.acx-media-selection__media-alt-suggest');
+    expect(park).toBeTruthy();
+    if (!(park instanceof HTMLElement)) {
+      throw new Error('expected pending park container');
+    }
+
+    // [TEST-15] discrimination: pins the *computed accessible name*, not merely
+    // aria-busy presence. Goes red if aria-label is removed from the pending
+    // container (name falls back to empty ACCNAME for a generic div, or to a
+    // name-from-contents stutter of button + live-region text when the region
+    // is nested). Single-line: delete aria-label={…} from the isPending branch.
+    expect(park).toHaveAccessibleName('Generating…');
+    expect(park).toHaveAttribute('aria-busy', 'true');
+    // Park target must remain focusable for BR-13.
+    expect(park).toHaveAttribute('tabindex', '-1');
   });
 
   it('does not let a pending row reclaim body focus stranded by a sibling [a11y][BR-33]', async () => {

@@ -25,6 +25,8 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
   const suggestButtonRef = useRef<HTMLButtonElement>(null);
   const dismissButtonRef = useRef<HTMLButtonElement>(null);
   const retryButtonRef = useRef<HTMLButtonElement>(null);
+  const acceptButtonRef = useRef<HTMLButtonElement>(null);
+  const saveButtonRef = useRef<HTMLButtonElement>(null);
   const editButtonRef = useRef<HTMLButtonElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const shouldFocusSuggestRef = useRef(false);
@@ -80,6 +82,27 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
       editButtonRef.current?.focus();
     }
   }, [isEditing]);
+
+  // Accept/Save disable the commit control while isAccepting; the browser blurs
+  // it and focus falls to body. On failure the control re-enables but nothing
+  // else remounts — put focus back on the button that was pressed
+  // (WBUX-5-S2C3A-BR-18). Same ownership gate as draft-landing.
+  useEffect(() => {
+    if (!isAcceptError) {
+      return;
+    }
+    const active = document.activeElement;
+    const ownsFocus =
+      !active || active === document.body || containerRef.current?.contains(active);
+    if (!ownsFocus) {
+      return;
+    }
+    if (isEditing) {
+      saveButtonRef.current?.focus();
+    } else {
+      acceptButtonRef.current?.focus();
+    }
+  }, [isAcceptError, isEditing]);
 
   if (isPending) {
     return (
@@ -206,6 +229,7 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
           <>
             <button
               type="button"
+              ref={saveButtonRef}
               className="button button-primary acx-media-selection__media-alt-suggest-save"
               onClick={saveEdit}
               disabled={isAccepting || !canSaveEdit}
@@ -227,6 +251,7 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
           <>
             <button
               type="button"
+              ref={acceptButtonRef}
               className="button button-primary acx-media-selection__media-alt-suggest-accept"
               onClick={accept}
               disabled={isAccepting}

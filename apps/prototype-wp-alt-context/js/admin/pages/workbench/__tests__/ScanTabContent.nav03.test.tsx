@@ -115,6 +115,10 @@ vi.mock('../WorkbenchMediaContext', () => ({
   useWorkbenchMediaContext: () => ({ mediaQueue: { hasIdentities: true } }),
 }));
 
+vi.mock('../ReviewSurfaceContext', () => ({
+  useReviewSurface: () => ({ cardPrimaryPresent: false, setCardPrimaryPresent: vi.fn() }),
+}));
+
 const SWAPPABLE = new Set(['review-queue', 'review-panel', 'label-panel']);
 
 interface ChromeSignature {

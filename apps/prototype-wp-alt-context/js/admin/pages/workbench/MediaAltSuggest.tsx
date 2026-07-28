@@ -1,5 +1,5 @@
 import { __ } from '@wordpress/i18n';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 
 import { resolveDescribeErrorMessage } from '../../api/describeApi';
 import { useCorrectMediaAlt } from '../../hooks/useCorrectMediaAlt';
@@ -11,6 +11,8 @@ export interface MediaAltSuggestProps {
 
 export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.Element => {
   const [statusMessage, setStatusMessage] = useState('');
+  const [isEditing, setIsEditing] = useState(false);
+  const [editDraft, setEditDraft] = useState('');
   const { mutate, isPending, isError, error, data, reset } = useDescribeMedia();
   const {
     mutate: acceptDraft,
@@ -22,11 +24,16 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
   const suggestButtonRef = useRef<HTMLButtonElement>(null);
   const dismissButtonRef = useRef<HTMLButtonElement>(null);
   const retryButtonRef = useRef<HTMLButtonElement>(null);
+  const editButtonRef = useRef<HTMLButtonElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const shouldFocusSuggestRef = useRef(false);
+  const shouldFocusEditButtonRef = useRef(false);
+  const textareaId = useId();
 
   const generate = (): void => {
     setStatusMessage('');
     resetAccept();
+    setIsEditing(false);
     mutate(mediaId, {
       onSuccess: () => {
         setStatusMessage(__('Draft ready. Review before saving.', 'alt-context'));
@@ -49,6 +56,17 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
       suggestButtonRef.current?.focus();
     }
   }, [isError, data]);
+
+  // Separate from the draft-landing focus effect: entering edit must not re-key
+  // that effect, and Cancel must land on Edit rather than Dismiss.
+  useEffect(() => {
+    if (isEditing) {
+      textareaRef.current?.focus();
+    } else if (shouldFocusEditButtonRef.current) {
+      shouldFocusEditButtonRef.current = false;
+      editButtonRef.current?.focus();
+    }
+  }, [isEditing]);
 
   if (isPending) {
     return (
@@ -93,6 +111,35 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
           onSuccess: () => {
             shouldFocusSuggestRef.current = true;
             setStatusMessage(__('Alt text saved.', 'alt-context'));
+            setIsEditing(false);
+            reset();
+          },
+        },
+      );
+    };
+
+    const enterEditMode = (): void => {
+      // Clear sticky correction error so a prior Accept/Save failure does not
+      // re-fire as a false alert on a fresh edit attempt (WBUX-5-S2C3A-BR-01).
+      resetAccept();
+      setEditDraft(data.alt_text_draft);
+      setIsEditing(true);
+    };
+
+    const cancelEdit = (): void => {
+      resetAccept();
+      shouldFocusEditButtonRef.current = true;
+      setIsEditing(false);
+    };
+
+    const saveEdit = (): void => {
+      acceptDraft(
+        { mediaId, altText: editDraft },
+        {
+          onSuccess: () => {
+            shouldFocusSuggestRef.current = true;
+            setStatusMessage(__('Alt text saved.', 'alt-context'));
+            setIsEditing(false);
             reset();
           },
         },
@@ -101,7 +148,26 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
 
     return (
       <div className="acx-media-selection__media-alt-suggest">
-        <p className="acx-media-selection__media-alt-draft">{data.alt_text_draft}</p>
+        {isEditing ? (
+          <>
+            <label
+              htmlFor={textareaId}
+              className="acx-media-selection__media-alt-suggest-edit-label"
+            >
+              {__('Edit draft alt text', 'alt-context')}
+            </label>
+            <textarea
+              id={textareaId}
+              ref={textareaRef}
+              className="acx-media-selection__media-alt-suggest-edit-input"
+              value={editDraft}
+              onChange={(event) => setEditDraft(event.target.value)}
+              disabled={isAccepting}
+            />
+          </>
+        ) : (
+          <p className="acx-media-selection__media-alt-draft">{data.alt_text_draft}</p>
+        )}
         <p className="acx-media-selection__media-alt-disclosure">
           {__('Drafted by AI — review before saving.', 'alt-context')}
         </p>
@@ -118,28 +184,61 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
             )}
           </div>
         ) : null}
-        <button
-          type="button"
-          className="button button-primary acx-media-selection__media-alt-suggest-accept"
-          onClick={accept}
-          disabled={isAccepting}
-        >
-          {isAccepting ? __('Saving…', 'alt-context') : __('Accept', 'alt-context')}
-        </button>
-        <button
-          type="button"
-          ref={dismissButtonRef}
-          className="button button-link acx-media-selection__media-alt-suggest-dismiss"
-          onClick={() => {
-            shouldFocusSuggestRef.current = true;
-            reset();
-            resetAccept();
-            setStatusMessage('');
-          }}
-          disabled={isAccepting}
-        >
-          {__('Dismiss', 'alt-context')}
-        </button>
+        {isEditing ? (
+          <>
+            <button
+              type="button"
+              className="button button-primary acx-media-selection__media-alt-suggest-save"
+              onClick={saveEdit}
+              disabled={isAccepting}
+            >
+              {isAccepting ? __('Saving…', 'alt-context') : __('Save', 'alt-context')}
+            </button>
+            <button
+              type="button"
+              className="button button-link acx-media-selection__media-alt-suggest-cancel"
+              onClick={cancelEdit}
+              disabled={isAccepting}
+            >
+              {__('Cancel', 'alt-context')}
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              className="button button-primary acx-media-selection__media-alt-suggest-accept"
+              onClick={accept}
+              disabled={isAccepting}
+            >
+              {isAccepting ? __('Saving…', 'alt-context') : __('Accept', 'alt-context')}
+            </button>
+            <button
+              type="button"
+              ref={editButtonRef}
+              className="button acx-media-selection__media-alt-suggest-edit"
+              onClick={enterEditMode}
+              disabled={isAccepting}
+            >
+              {__('Edit', 'alt-context')}
+            </button>
+            <button
+              type="button"
+              ref={dismissButtonRef}
+              className="button button-link acx-media-selection__media-alt-suggest-dismiss"
+              onClick={() => {
+                shouldFocusSuggestRef.current = true;
+                reset();
+                resetAccept();
+                setStatusMessage('');
+                setIsEditing(false);
+              }}
+              disabled={isAccepting}
+            >
+              {__('Dismiss', 'alt-context')}
+            </button>
+          </>
+        )}
       </div>
     );
   }

@@ -267,6 +267,19 @@ describe('MediaAltSuggest', () => {
     expect(screen.getByRole('button', { name: /accept/i })).toBeInTheDocument();
   });
 
+  it('disables Accept when the machine draft is empty or whitespace-only [WBUX-5-S2C3A-BR-24]', async () => {
+    describeMock.mockResolvedValue(sampleResponse('   '));
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await screen.findByRole('button', { name: /accept/i });
+
+    // [TEST-15] discrimination: goes red if canAcceptDraft is dropped from
+    // Accept's disabled expression — Accept would commit a blank draft and
+    // silently erase whatever alt the image already had.
+    expect(screen.getByRole('button', { name: /accept/i })).toBeDisabled();
+  });
+
   it('commits the shown draft as the media alt via the correction endpoint [S2c-2]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
     // Never resolves: hold the correction pending so we can assert the call
@@ -412,6 +425,36 @@ describe('MediaAltSuggest', () => {
     // [TEST-15] discrimination: goes red if the ownsFocus block is deleted from
     // the isAcceptError effect in MediaAltSuggest.tsx — focus is pulled back to
     // Accept even though the operator has moved on.
+    expect(screen.getByRole('button', { name: /^elsewhere$/i })).toHaveFocus();
+  });
+
+  it('does not steal focus from elsewhere on the page after a successful accept [a11y][WBUX-5-S2C3A-BR-22]', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    correctMock.mockResolvedValue(sampleHistoryItem());
+    renderSuggest(
+      <>
+        <MediaAltSuggest mediaId={42} />
+        <button type="button">Elsewhere</button>
+      </>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await screen.findByText(draft);
+    fireEvent.click(screen.getByRole('button', { name: /accept/i }));
+    // Operator tabs away while the commit is in flight. fireEvent.click is
+    // synchronous and React Query invokes the mutationFn on a microtask, so
+    // this focus must land before the resolved mutation's microtasks run and
+    // the idle-focus effect fires — no await between the click and .focus().
+    const elsewhere = screen.getByRole('button', { name: /^elsewhere$/i });
+    elsewhere.focus();
+    expect(elsewhere).toHaveFocus();
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /suggest alt text/i })).toBeInTheDocument(),
+    );
+    // [TEST-15] discrimination: goes red if the ownsFocus gate is removed from
+    // the shouldFocusSuggestRef leg in the [isError, data] effect — focus is
+    // pulled to Suggest even though the operator has moved on.
     expect(screen.getByRole('button', { name: /^elsewhere$/i })).toHaveFocus();
   });
 

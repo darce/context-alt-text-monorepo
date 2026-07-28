@@ -46,29 +46,34 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
     });
   };
 
-  // When a terminal mutation state mounts (error / draft / idle-after-dismiss),
+  // When a terminal mutation state mounts (error / draft / idle-after-accept/dismiss),
   // the previously focused control has unmounted — restore focus to an actionable
   // control in the new branch so keyboard/SR users are not stranded on body
-  // (WBUX-5-S2C-BR-01). Idle focus only when shouldFocusSuggestRef is set (Dismiss),
-  // never on the initial mount. Error/data legs only move focus when this
-  // component still owns it (or focus fell to body from the disabled trigger) —
-  // generation is slow and a per-row control must not yank focus mid-keystroke.
+  // (WBUX-5-S2C-BR-01). Idle focus only when shouldFocusSuggestRef is set
+  // (Dismiss / Accept / Save success), never on the initial mount. Every leg
+  // only moves focus when this component still owns it (or focus fell to body) —
+  // generation and accept are slow and a per-row control must not yank focus
+  // mid-keystroke (WBUX-5-S2C3A-BR-22). shouldFocusSuggestRef is a one-shot
+  // intent: clear it on the transition that raised it, even when focus is not
+  // granted, so a later re-render cannot fire a stale jump.
   useEffect(() => {
-    if (isError || data) {
-      const active = document.activeElement;
-      const ownsFocus =
-        !active || active === document.body || containerRef.current?.contains(active);
-      if (!ownsFocus) {
-        return;
-      }
-    }
+    const active = document.activeElement;
+    const ownsFocus =
+      !active || active === document.body || containerRef.current?.contains(active);
+
     if (isError) {
-      retryButtonRef.current?.focus();
+      if (ownsFocus) {
+        retryButtonRef.current?.focus();
+      }
     } else if (data) {
-      dismissButtonRef.current?.focus();
+      if (ownsFocus) {
+        dismissButtonRef.current?.focus();
+      }
     } else if (shouldFocusSuggestRef.current) {
       shouldFocusSuggestRef.current = false;
-      suggestButtonRef.current?.focus();
+      if (ownsFocus) {
+        suggestButtonRef.current?.focus();
+      }
     }
   }, [isError, data]);
 
@@ -184,6 +189,7 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
 
     const editDescribedBy = isAcceptError ? `${disclosureId} ${errorId}` : disclosureId;
     const canSaveEdit = editDraft.trim() !== '';
+    const canAcceptDraft = data.alt_text_draft.trim() !== '';
 
     return (
       <div ref={containerRef} className="acx-media-selection__media-alt-suggest">
@@ -254,7 +260,7 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
               ref={acceptButtonRef}
               className="button button-primary acx-media-selection__media-alt-suggest-accept"
               onClick={accept}
-              disabled={isAccepting}
+              disabled={isAccepting || !canAcceptDraft}
             >
               {isAccepting ? __('Saving…', 'alt-context') : __('Accept', 'alt-context')}
             </button>

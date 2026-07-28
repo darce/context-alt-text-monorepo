@@ -110,6 +110,9 @@ def test_identity_schema_declares_expected_table_set() -> None:
         "image_description_run_items",
         "clustering_job_reports",
         "assignment_decisions",
+        "identity_atlas_runs",
+        "identity_atlas_points",
+        "identity_atlas_queue_dispositions",
     ]
 
 

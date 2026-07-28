@@ -43,6 +43,9 @@ TENANT_TABLES = [
     "image_description_run_items",
     "clustering_job_reports",
     "assignment_decisions",
+    "identity_atlas_runs",
+    "identity_atlas_points",
+    "identity_atlas_queue_dispositions",
 ]
 
 # Tables this migration creates via raw SQL only — no ORM model exists for
@@ -82,9 +85,15 @@ EXPECTED_SCHEMA_TABLES = [
     "image_description_run_items",
     "clustering_job_reports",
     "assignment_decisions",
+    "identity_atlas_runs",
+    "identity_atlas_points",
+    "identity_atlas_queue_dispositions",
 ]
 
 DOWNGRADE_TABLE_ORDER = [
+    "identity_atlas_queue_dispositions",
+    "identity_atlas_points",
+    "identity_atlas_runs",
     "assignment_decisions",
     "clustering_job_reports",
     "worker_capabilities",
@@ -1569,6 +1578,105 @@ def ensure_tables(op) -> None:
     _ensure_index(op, "idx_assignment_decisions_cluster", "assignment_decisions", ["cluster_id"])
     _ensure_index(op, "idx_assignment_decisions_decision", "assignment_decisions", ["decision"])
     _ensure_index(op, "idx_assignment_decisions_timestamp", "assignment_decisions", ["timestamp"])
+
+    # FIR-9: workbench curation atlas (batch projection of identity embeddings)
+    _ensure_table(
+        op,
+        "identity_atlas_runs",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("embedding_model", sa.Text(), nullable=False),
+        sa.Column("status", sa.Text(), nullable=False),
+        sa.Column("params", sa.dialects.postgresql.JSONB(), nullable=False),
+        sa.Column("point_count", sa.Integer(), nullable=False),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.CheckConstraint(
+            "status IN ('building', 'complete', 'failed')",
+            name="valid_atlas_run_status",
+        ),
+    )
+    _ensure_index(op, "idx_identity_atlas_runs_tenant", "identity_atlas_runs", ["tenant_id"])
+
+    _ensure_table(
+        op,
+        "identity_atlas_points",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "run_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("identity_atlas_runs.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "identity_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("media_identities.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("media_id", sa.Integer(), nullable=False),
+        sa.Column("cluster_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column("x", sa.Float(), nullable=False),
+        sa.Column("y", sa.Float(), nullable=False),
+        sa.Column("queue_rank", sa.Integer(), nullable=False),
+        sa.Column("uncertainty", sa.dialects.postgresql.JSONB(), nullable=False),
+        sa.UniqueConstraint("run_id", "identity_id", name="uq_identity_atlas_points_run_identity"),
+    )
+    _ensure_index(
+        op,
+        "idx_identity_atlas_points_run_queue_rank",
+        "identity_atlas_points",
+        ["run_id", "queue_rank"],
+    )
+    _ensure_index(op, "idx_identity_atlas_points_tenant", "identity_atlas_points", ["tenant_id"])
+
+    _ensure_table(
+        op,
+        "identity_atlas_queue_dispositions",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "run_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("identity_atlas_runs.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "point_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("identity_atlas_points.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("action", sa.Text(), nullable=False),
+        sa.Column("actor", sa.Text(), nullable=False),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.UniqueConstraint("run_id", "point_id", name="uq_identity_atlas_dispositions_run_point"),
+        sa.CheckConstraint(
+            "action IN ('reviewed', 'skipped')",
+            name="valid_atlas_disposition_action",
+        ),
+    )
+    _ensure_index(
+        op,
+        "idx_identity_atlas_queue_dispositions_tenant",
+        "identity_atlas_queue_dispositions",
+        ["tenant_id"],
+    )
 
 
 def ensure_rls(op) -> None:

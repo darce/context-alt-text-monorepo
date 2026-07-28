@@ -135,9 +135,12 @@ describe('MediaAltSuggest', () => {
   it('announces the ready state via a named polite live region [HAI-13]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
     renderSuggest(<MediaAltSuggest mediaId={42} />);
-    // No live region before a generation (conditional render avoids colliding with
-    // other single-status-region consumers on the same row).
-    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    // Always-mounted empty region (BR-32): present before generation, no cue text yet.
+    // data-testid disambiguates from MediaAltInlineEditor's sibling role=status.
+    const status = screen.getByTestId('media-alt-suggest-status');
+    expect(status).toHaveAttribute('role', 'status');
+    expect(status).toHaveAttribute('aria-live', 'polite');
+    expect(status).toHaveTextContent('');
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
 
@@ -160,9 +163,7 @@ describe('MediaAltSuggest', () => {
   });
 
   it('re-invokes generation when retry is pressed after a failure [INT-11]', async () => {
-    describeMock
-      .mockRejectedValueOnce(new Error('boom'))
-      .mockResolvedValueOnce(sampleResponse());
+    describeMock.mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce(sampleResponse());
     renderSuggest(<MediaAltSuggest mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
@@ -186,8 +187,8 @@ describe('MediaAltSuggest', () => {
     expect(screen.getByRole('button', { name: /suggest alt text/i })).toBeInTheDocument();
     // [WBUX-5-S2C3A-BR-15] discrimination: goes red if Dismiss stops clearing
     // statusMessage — the idle surface would keep "Draft ready. Review before saving."
-    // with no draft left to review.
-    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    // with no draft left to review. Region stays mounted (BR-32); cue text clears.
+    expect(screen.getByTestId('media-alt-suggest-status')).toHaveTextContent('');
   });
 
   it('restores focus to the Suggest control after dismiss [a11y][WBUX-5-S2C-BR-01]', async () => {
@@ -219,9 +220,7 @@ describe('MediaAltSuggest', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
 
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /try again|retry/i })).toHaveFocus(),
-    );
+    await waitFor(() => expect(screen.getByRole('button', { name: /try again|retry/i })).toHaveFocus());
   });
 
   it('does not steal focus when a draft lands while the operator is elsewhere [a11y][WBUX-5-S2C3A-BR-11]', async () => {
@@ -325,9 +324,7 @@ describe('MediaAltSuggest', () => {
 
     // Accept unmounts the focused control; focus must return to the reborn
     // Suggest trigger, not fall to document.body (mirrors Dismiss).
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /suggest alt text/i })).toHaveFocus(),
-    );
+    await waitFor(() => expect(screen.getByRole('button', { name: /suggest alt text/i })).toHaveFocus());
   });
 
   it('settles accept without waiting for media-tree invalidation [WBUX-5-S2C3A-BR-05]', async () => {
@@ -347,9 +344,7 @@ describe('MediaAltSuggest', () => {
     // the mutation stays pending for the never-settling invalidation, so the
     // component's mutate-level onSuccess never runs and these time out.
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/saved/i));
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /suggest alt text/i })).toHaveFocus(),
-    );
+    await waitFor(() => expect(screen.getByRole('button', { name: /suggest alt text/i })).toHaveFocus());
   });
 
   it('keeps the draft and shows a user-safe error when accept fails [INT-11][S2c-2]', async () => {
@@ -449,9 +444,7 @@ describe('MediaAltSuggest', () => {
     elsewhere.focus();
     expect(elsewhere).toHaveFocus();
 
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /suggest alt text/i })).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByRole('button', { name: /suggest alt text/i })).toBeInTheDocument());
     // [TEST-15] discrimination: goes red if the ownsFocus gate is removed from
     // the shouldFocusSuggestRef leg in the [isError, data] effect — focus is
     // pulled to Suggest even though the operator has moved on.
@@ -474,9 +467,7 @@ describe('MediaAltSuggest', () => {
 
     // Dismiss the failed draft, then generate a brand-new one.
     fireEvent.click(screen.getByRole('button', { name: /dismiss/i }));
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /suggest alt text/i })).toHaveFocus(),
-    );
+    await waitFor(() => expect(screen.getByRole('button', { name: /suggest alt text/i })).toHaveFocus());
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     await screen.findByText(draft);
 
@@ -571,9 +562,7 @@ describe('MediaAltSuggest', () => {
     const textboxNames = textboxes.map((el) => {
       const id = el.getAttribute('id');
       if (id) {
-        const label = Array.from(document.querySelectorAll('label')).find(
-          (node) => node.htmlFor === id,
-        );
+        const label = Array.from(document.querySelectorAll('label')).find((node) => node.htmlFor === id);
         if (label?.textContent) {
           return label.textContent.trim();
         }
@@ -601,9 +590,7 @@ describe('MediaAltSuggest', () => {
     expect(await screen.findByRole('button', { name: /accepting draft/i })).toBeDisabled();
     expect(screen.getByRole('button', { name: /^saving…$/i })).toBeDisabled();
     const pendingButtonNames = screen.getAllByRole('button').map(buttonAccessibleName);
-    const pendingDuplicates = pendingButtonNames.filter(
-      (name, index) => pendingButtonNames.indexOf(name) !== index,
-    );
+    const pendingDuplicates = pendingButtonNames.filter((name, index) => pendingButtonNames.indexOf(name) !== index);
     // [TEST-15] discrimination: red if Accept's pending label is still "Saving…"
     // — co-mounted commits yield ["Saving…","Cancel","Saving…",…].
     expect(pendingDuplicates).toEqual([]);
@@ -699,9 +686,7 @@ describe('MediaAltSuggest', () => {
     expect(screen.getByText(draft)).toBeInTheDocument();
     expect(screen.queryByText(editedDraft)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /accept/i })).toBeInTheDocument();
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /^edit draft$/i })).toHaveFocus(),
-    );
+    await waitFor(() => expect(screen.getByRole('button', { name: /^edit draft$/i })).toHaveFocus());
   });
 
   it('announces the saved state and returns to the Suggest control after an edited save [S2c-3a]', async () => {
@@ -721,9 +706,7 @@ describe('MediaAltSuggest', () => {
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/saved/i));
     expect(screen.getByRole('button', { name: /suggest alt text/i })).toBeInTheDocument();
     expect(screen.queryByLabelText(/edit draft alt text/i)).not.toBeInTheDocument();
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /suggest alt text/i })).toHaveFocus(),
-    );
+    await waitFor(() => expect(screen.getByRole('button', { name: /suggest alt text/i })).toHaveFocus());
   });
 
   it('keeps the edited text and shows a user-safe error when the edited save fails [INT-11][FORM-05][S2c-3a]', async () => {
@@ -885,9 +868,7 @@ describe('MediaAltSuggest', () => {
       target: { value: editedDraft },
     });
     fireEvent.click(screen.getByRole('button', { name: /^save alt text$/i }));
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /suggest alt text/i })).toHaveFocus(),
-    );
+    await waitFor(() => expect(screen.getByRole('button', { name: /suggest alt text/i })).toHaveFocus());
 
     // Generate again on the same row.
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
@@ -929,9 +910,7 @@ describe('MediaAltSuggest', () => {
     // cancelEdit — isAcceptError survives the isEditing true→false transition,
     // the [isAcceptError, isEditing] effect re-keys and focuses Accept, and the
     // save-failure alert remounts in the review branch.
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /^edit draft$/i })).toHaveFocus(),
-    );
+    await waitFor(() => expect(screen.getByRole('button', { name: /^edit draft$/i })).toHaveFocus());
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
@@ -969,9 +948,7 @@ describe('MediaAltSuggest', () => {
   const regeneratedDraft = 'A red brick viaduct crossing a canal at midday.';
 
   it('offers a Regenerate control that requests a fresh draft for the same media id [HAI-12][WBUX-5-S2C3B]', async () => {
-    describeMock
-      .mockResolvedValueOnce(sampleResponse(draft))
-      .mockResolvedValueOnce(sampleResponse(regeneratedDraft));
+    describeMock.mockResolvedValueOnce(sampleResponse(draft)).mockResolvedValueOnce(sampleResponse(regeneratedDraft));
     renderSuggest(<MediaAltSuggest mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
@@ -994,46 +971,50 @@ describe('MediaAltSuggest', () => {
 
   it('re-announces the ready state when a regenerate returns the same cue [WBUX-5-S2C3B][WBUX-5-S2C3A-BR-12]', async () => {
     // Hold the regenerate request so the Generating cue is stable long enough to
-    // read its seq — mockResolvedValue races past it on a single microtask.
+    // assert textContent transition on the same DOM node (BR-32 persistence).
     let resolveRegenerate!: (value: VisualFactsResponse) => void;
-    describeMock
-      .mockResolvedValueOnce(sampleResponse(draft))
-      .mockReturnValueOnce(
-        new Promise<VisualFactsResponse>((resolve) => {
-          resolveRegenerate = resolve;
-        }),
-      );
+    describeMock.mockResolvedValueOnce(sampleResponse(draft)).mockReturnValueOnce(
+      new Promise<VisualFactsResponse>((resolve) => {
+        resolveRegenerate = resolve;
+      }),
+    );
     renderSuggest(<MediaAltSuggest mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/ready/i));
-    const firstSeq = screen.getByRole('status').getAttribute('data-announce-seq');
+    // Capture the live-region node before regenerate. Persistence across the
+    // branch change (ready → pending → ready) is the re-announce mechanism:
+    // aria-live observes a text change inside a node the AT already tracks.
+    const statusBefore = screen.getByTestId('media-alt-suggest-status');
+    const firstSeq = statusBefore.getAttribute('data-announce-seq');
     expect(firstSeq).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: /^regenerate$/i }));
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/generating/i));
-    const generatingSeq = screen.getByRole('status').getAttribute('data-announce-seq');
+    await waitFor(() => expect(statusBefore).toHaveTextContent(/generating/i));
+    // Same DOM node through pending — not a remount.
+    expect(screen.getByTestId('media-alt-suggest-status')).toBe(statusBefore);
+    const generatingSeq = statusBefore.getAttribute('data-announce-seq');
     expect(generatingSeq).toBeTruthy();
     expect(generatingSeq).not.toBe(firstSeq);
 
     resolveRegenerate(sampleResponse(regeneratedDraft));
 
-    // [TEST-15] discrimination: the ready *copy* is identical across generations.
-    // Asserts seq advances from the in-flight Generating cue to the second Ready
-    // cue — not merely that /ready/i is present (that would stay green on the
-    // first generation's leftover message).
-    // Observed mutations:
-    //   - remove setStatusSeq from announceStatus → red (seq stuck at "0")
-    //   - onSuccess uses setStatusMessage(ready) instead of announceStatus → red
-    //     (ready reuses the Generating seq; readySeq === generatingSeq)
-    //   - a test that only checked /ready/i after regenerate → green on both bugs
-    // Single-line each: neither failure needs a conjunction.
+    // [TEST-15] discrimination: pins the stable-region mechanism (BR-32/BR-34).
+    // Observed mutation: restore per-branch `{statusRegion}` mounting → red
+    // (second !== first; node identity breaks on branch change).
+    // textContent Generating… → Draft ready… is the aria-live content change;
+    // data-announce-seq is secondary only.
+    // Note: generate() always inserts "Generating…" between two "Draft ready…"
+    // cues, so useAriaAnnounce's equal-message seq remount is not load-bearing
+    // here — do not pretend this pin certifies that path.
     await waitFor(() => {
-      expect(screen.getByRole('status')).toHaveTextContent(/ready/i);
-      const readySeq = screen.getByRole('status').getAttribute('data-announce-seq');
-      expect(readySeq).not.toBe(firstSeq);
-      expect(readySeq).not.toBe(generatingSeq);
+      expect(statusBefore).toHaveTextContent(/ready/i);
     });
+    const statusAfter = screen.getByTestId('media-alt-suggest-status');
+    expect(statusAfter).toBe(statusBefore);
+    const readySeq = statusAfter.getAttribute('data-announce-seq');
+    expect(readySeq).not.toBe(firstSeq);
+    expect(readySeq).not.toBe(generatingSeq);
     expect(await screen.findByText(regeneratedDraft)).toBeInTheDocument();
   });
 
@@ -1056,9 +1037,7 @@ describe('MediaAltSuggest', () => {
     describeMock
       .mockResolvedValueOnce(sampleResponse(draft))
       .mockRejectedValueOnce(
-        new Error(
-          'Request to /wp-json/acx/v1/recognition/describe failed (502): <html>proxy-internal-detail</html>',
-        ),
+        new Error('Request to /wp-json/acx/v1/recognition/describe failed (502): <html>proxy-internal-detail</html>'),
       );
     renderSuggest(<MediaAltSuggest mediaId={42} />);
 
@@ -1113,9 +1092,7 @@ describe('MediaAltSuggest', () => {
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /accept/i }));
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/saved/i));
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /suggest alt text/i })).toHaveFocus(),
-    );
+    await waitFor(() => expect(screen.getByRole('button', { name: /suggest alt text/i })).toHaveFocus());
 
     // Leave the surface without generating or dismissing — the message has been
     // announced; keeping "Alt text saved." forever collides with a later inline-
@@ -1131,6 +1108,8 @@ describe('MediaAltSuggest', () => {
     // status on idle focus-leave, or if the idle branch omits onBlur. Single-line:
     // clearStatus() removed from the !data && !isPending && !isError guard.
     // No real elapsed time — event-driven retirement, not a timeout.
-    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+    // Region stays mounted (BR-32); cue text clears so a later inline-editor
+    // save status on the same row is not colliding with a sticky "Alt text saved."
+    await waitFor(() => expect(screen.getByTestId('media-alt-suggest-status')).toHaveTextContent(''));
   });
 });

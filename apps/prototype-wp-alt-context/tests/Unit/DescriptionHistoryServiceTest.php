@@ -167,11 +167,12 @@ class DescriptionHistoryServiceTest extends TestCase
     }
 
     /**
-     * Human-edit meta is provenance/telemetry. A failed human-edit write after a
-     * verified alt save is not failure-worthy — the operator's data already
-     * persisted. Pins the "alt is data, human-edit is telemetry" decision.
+     * BR-40 option (a): a failed human-edit write after a verified alt save is
+     * failure-worthy. Alt stays written (no rollback); response is 500 so the
+     * client never treats missing stored telemetry as a successful correction.
+     * Message tells the operator the alt landed and to retry for history accuracy.
      */
-    public function testHumanEditWriteFailureIsNonFatal(): void
+    public function testHumanEditWriteFailureReturnsErrorAfterAltSaved(): void
     {
         $mediaId = 403;
         $newAlt = 'Operator-corrected alt.';
@@ -186,12 +187,65 @@ class DescriptionHistoryServiceTest extends TestCase
 
         $result = (new DescriptionHistoryService())->record_correction($mediaId, $newAlt);
 
-        $this->assertNotInstanceOf(WP_Error::class, $result);
-        // Alt text from storage, not a fabricated request echo. [rg-015]
-        $this->assertSame($newAlt, $result['current_alt_text']);
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('description_correction_failed', $result->get_error_code());
+        $this->assertSame(500, $result->get_error_data()['status']);
+        $this->assertStringContainsString('Alt text was saved', $result->get_error_message());
+        // Partial success: alt persisted, human-edit did not. [INT-11] does not undo alt.
         $this->assertSame($newAlt, get_post_meta($mediaId, '_wp_attachment_image_alt', true));
-        // Telemetry write did not persist.
         $this->assertSame('', get_post_meta($mediaId, '_acx_description_human_edit', true));
+    }
+
+    /**
+     * BR-41: success never returns the two-field partial. No prior provenance is
+     * fine when human-edit lands — envelope is still the full item shape.
+     */
+    public function testCorrectionWithoutProvenanceReturnsFullItemEnvelope(): void
+    {
+        $mediaId = 404;
+        $this->seedAttachment($mediaId, 'No-provenance photo', 'image/png');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', 'Old bare alt.');
+
+        $result = (new DescriptionHistoryService())->record_correction($mediaId, 'Bare corrected alt.');
+
+        $this->assertNotInstanceOf(WP_Error::class, $result);
+        $this->assertIsArray($result);
+        $this->assertSame(
+            ['media_id', 'title', 'mime_type', 'current_alt_text', 'generated_alt_text', 'provenance', 'human_edit', 'run_status'],
+            array_keys($result)
+        );
+        $this->assertSame($mediaId, $result['media_id']);
+        $this->assertSame('No-provenance photo', $result['title']);
+        $this->assertSame('image/png', $result['mime_type']);
+        $this->assertSame('Bare corrected alt.', $result['current_alt_text']);
+        $this->assertSame('', $result['generated_alt_text']);
+        $this->assertNull($result['provenance']);
+        $this->assertIsArray($result['human_edit']);
+        $this->assertSame('Bare corrected alt.', $result['human_edit']['alt_text']);
+        $this->assertNull($result['run_status']);
+    }
+
+    /**
+     * BR-40 + BR-41 interaction: human-edit failure with no provenance must not
+     * fall through to a 200 two-field partial; it is an error like any other
+     * human-edit failure.
+     */
+    public function testHumanEditFailureWithoutProvenanceIsErrorNotPartial(): void
+    {
+        $mediaId = 405;
+        $newAlt = 'Would-be partial alt.';
+        $this->seedAttachment($mediaId, 'Attachment 405');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', 'Prior alt.');
+        $GLOBALS['__ac_update_post_meta_fail'][$mediaId]['_acx_description_human_edit'] = true;
+
+        $result = (new DescriptionHistoryService())->record_correction($mediaId, $newAlt);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame(500, $result->get_error_data()['status']);
+        $this->assertSame($newAlt, get_post_meta($mediaId, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta($mediaId, '_acx_description_human_edit', true));
+        // Not a success array with only media_id + current_alt_text.
+        $this->assertFalse(is_array($result) && isset($result['media_id']) && !isset($result['title']));
     }
 
     /**

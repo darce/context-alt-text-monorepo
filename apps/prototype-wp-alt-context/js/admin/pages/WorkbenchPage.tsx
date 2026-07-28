@@ -17,6 +17,7 @@ import { useReviewSurface } from './workbench/ReviewSurfaceContext';
 import { deriveReviewSurfaceActive } from './workbench/mediaFooterCtaState';
 import { useWorkbenchFilters } from '../hooks/useWorkbenchFilters';
 import { usePanesParam } from '../hooks/usePanesParam';
+import { APP_LINK_VALUES } from '../navigation/appLinks';
 
 export const WorkbenchPage = (): React.JSX.Element => (
   <WorkbenchProvider>
@@ -54,7 +55,7 @@ const WorkbenchPageContent = (): React.JSX.Element => {
   // renders the queue's card marker `hidden`, so the footer reclaims its accent (WBUX-5 S1c-2).
   const reviewSurfaceActive = deriveReviewSurfaceActive({
     cardPrimaryPresent,
-    controlCollapsed: panes === 'control-collapsed',
+    controlCollapsed: panes === APP_LINK_VALUES.panesControlCollapsed,
   });
 
   return (

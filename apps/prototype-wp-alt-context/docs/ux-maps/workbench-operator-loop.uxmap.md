@@ -7,23 +7,23 @@
 
 ## Jobs
 
-| Job | Primary screens |
-| --- | --- |
-| Clear media queue | Workbench Scan |
-| Resolve identity conflicts | Conflict Inbox overlay |
+| Job                        | Primary screens                  |
+| -------------------------- | -------------------------------- |
+| Clear media queue          | Workbench Scan                   |
+| Resolve identity conflicts | Conflict Inbox overlay           |
 | Recover sync / dead-letter | Dead Letter overlay + sync strip |
-| Assign people | Exit → Roster |
+| Assign people              | Exit → Roster                    |
 
 ## Screens
 
-| id | kind | route | code_ref |
-| --- | --- | --- | --- |
-| workbench-shell | screen | `#/workbench` | `…/pages/WorkbenchPage.tsx` |
-| workbench-scan | screen | `#/workbench?tab=scan` | `…/workbench/ScanTabContent.tsx` |
-| workbench-conflicts | overlay | `#/workbench?panel=conflicts` | `…/workbench/ConflictInbox.tsx` |
+| id                    | kind    | route                           | code_ref                          |
+| --------------------- | ------- | ------------------------------- | --------------------------------- |
+| workbench-shell       | screen  | `#/workbench`                   | `…/pages/WorkbenchPage.tsx`       |
+| workbench-scan        | screen  | `#/workbench?tab=scan`          | `…/workbench/ScanTabContent.tsx`  |
+| workbench-conflicts   | overlay | `#/workbench?panel=conflicts`   | `…/workbench/ConflictInbox.tsx`   |
 | workbench-dead-letter | overlay | `#/workbench?panel=dead-letter` | `…/workbench/DeadLetterPanel.tsx` |
-| exit-roster | exit | `#/roster` | `…/pages/RosterPage.tsx` |
-| exit-settings | exit | `#/settings` | `…/pages/SettingsPage.tsx` |
+| exit-roster           | exit    | `#/roster`                      | `…/pages/RosterPage.tsx`          |
+| exit-settings         | exit    | `#/settings`                    | `…/pages/SettingsPage.tsx`        |
 
 Deep-link param SSOT: `js/admin/navigation/appLinks.ts` (`APP_LINK_PARAMS`).
 
@@ -64,15 +64,15 @@ flowchart TD
 
 ## Suggested task-slice decomposition (from map)
 
-1. **Scan queue empty/first-time** — design empty + first_time states on `z-media-queue` / CTAs  
-2. **Scan costly action preview** — `act-scan-selected` requires preview_required surface  
-3. **Conflict forced-choice bound** — `z-conflict-detail` max_candidates=5 + evidence  
-4. **Dead-letter discard confirm** — destructive + irreversible path  
+1. **Scan queue empty/first-time** — design empty + first_time states on `z-media-queue` / CTAs
+2. **Scan costly action preview** — `act-scan-selected` requires preview_required surface
+3. **Conflict forced-choice bound** — `z-conflict-detail` max_candidates=5 + evidence
+4. **Dead-letter discard confirm** — destructive + irreversible path
 5. **Deep-link parity** — panel/tab/status round-trip via `appLinks` ([NAV-11])
 
 ## Not doing (map-level)
 
-- Confirm tab  
-- Pixel design / tokens  
-- Attachment-edit SPA  
+- Confirm tab
+- Pixel design / tokens
+- Attachment-edit SPA
 - REST sequence diagrams (use existing `workbench-data-flow.mmd`)

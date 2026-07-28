@@ -4,26 +4,29 @@
 **Source fixture:** `apps/prototype-wp-alt-context/docs/ux-maps/workbench-2pane.uxmap.json`
 
 ## Goals
+
 - Operator runs the full recognize -> name -> curate loop and edits alt-text/descriptions without leaving one surface (control-left, library-right)
 - Read cluster structure at a glance via a UMAP scatter and act on the selection in the same viewport
 - Decompose the 2-pane redesign from screens/zones/states/flows instead of inventing IA mid-plan
 
 ## Jobs
+
 - `job-cluster-recognize` — Cluster & recognize faces (build/refresh clusters, run recognition)
 - `job-name-curate` — Name & curate identities (confirm/correct/merge/split, assign names)
 - `job-caption-library` — Caption & describe media (alt-text + long description on library rows)
 - `job-triage-sync` — Triage identity conflicts / failed sync (overlays)
 
 ## Screens
-| id | kind | route | title |
-| --- | --- | --- | --- |
-| `workbench-2pane-shell` | screen | `#/workbench` | Workbench (2-pane) |
-| `workbench-control` | screen | `#/workbench?pane=control` | Control surface (left pane) |
-| `workbench-library` | screen | `#/workbench?pane=library` | Media library (right pane) |
-| `workbench-conflicts` | overlay | `#/workbench?panel=conflicts` | Conflict Inbox |
+
+| id                      | kind    | route                           | title                           |
+| ----------------------- | ------- | ------------------------------- | ------------------------------- |
+| `workbench-2pane-shell` | screen  | `#/workbench`                   | Workbench (2-pane)              |
+| `workbench-control`     | screen  | `#/workbench?pane=control`      | Control surface (left pane)     |
+| `workbench-library`     | screen  | `#/workbench?pane=library`      | Media library (right pane)      |
+| `workbench-conflicts`   | overlay | `#/workbench?panel=conflicts`   | Conflict Inbox                  |
 | `workbench-dead-letter` | overlay | `#/workbench?panel=dead-letter` | Failed Sync Queue (Dead Letter) |
-| `exit-roster` | exit | `#/roster` | Roster (person workspace) |
-| `exit-settings` | exit | `#/settings` | Settings / service health |
+| `exit-roster`           | exit    | `#/roster`                      | Roster (person workspace)       |
+| `exit-settings`         | exit    | `#/settings`                    | Settings / service health       |
 
 ### Workbench (2-pane) (`workbench-2pane-shell`)
 
@@ -165,6 +168,7 @@
 ```
 
 ## Flows
+
 ### Run recognition -> select cluster -> name/curate -> library people column updates (`flow-recognize-name-curate`)
 
 ```mermaid
@@ -225,6 +229,7 @@ flowchart TD
 ```
 
 ## Open questions
+
 - DEP: long-description has no data field yet (WorkbenchMediaItem has only altText). The long-description column depends on a new media schema field + REST + backend. Ship alt-text column first, long-description behind the field? [FORM]
 - DEP: no 2D projection data exists (only bbox + 3D head pose; 'embeddings' is banned UI vocab). The cluster-map scatter depends on a new backend 2D-projection endpoint. Ship left pane as cluster LIST first, scatter as fast-follow? [VIZ-01,VIZ-15]
 - Cluster-map label: user-facing name must avoid 'embeddings' (banned vocab) — 'cluster map' / 'face map'? [copy]
@@ -236,9 +241,10 @@ flowchart TD
 - Bulk-describe cost preview granularity: per-image cost surfaced before start? [INT-07]
 
 ## Not doing
+
 - Clusters tab inside Roster (retired; cluster structure lives in Workbench left pane now)
 - UI toggle for the recognition endpoint (server-resolved per RECOG-1; topbar is read-only status)
-- Pixel/token values (design tokens referenced --acx-*, not specified here)
+- Pixel/token values (design tokens referenced --acx-\*, not specified here)
 - Attachment-edit SPA (separate map_ref)
 - Big-bang removal of the current tabbed shell (migration path, not in this map)
 - REST sequence diagrams (see docs/workbench-data-flow.mmd)

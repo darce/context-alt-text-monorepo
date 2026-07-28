@@ -292,13 +292,13 @@ of name/merge/split is **DEP-4**.
 
 ## 8. State coverage (per screen)
 
-| screen | default | loading | empty | error | first_time | degraded | offline |
-|---|---|---|---|---|---|---|---|
-| workbench-2pane-shell | ✓ | ✓ | — | ✓ | — | ✓ | ✓ |
-| workbench-control | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| workbench-library | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
-| roster-shell | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| roster-person-workspace | ✓ | ✓ | ✓ | ✓ | — | ✓ | — |
+| screen                  | default | loading | empty | error | first_time | degraded | offline |
+| ----------------------- | ------- | ------- | ----- | ----- | ---------- | -------- | ------- |
+| workbench-2pane-shell   | ✓       | ✓       | —     | ✓     | —          | ✓        | ✓       |
+| workbench-control       | ✓       | ✓       | ✓     | ✓     | ✓          | ✓        | —       |
+| workbench-library       | ✓       | ✓       | ✓     | ✓     | ✓          | —        | —       |
+| roster-shell            | ✓       | ✓       | ✓     | ✓     | ✓          | ✓        | —       |
+| roster-person-workspace | ✓       | ✓       | ✓     | ✓     | —          | ✓        | —       |
 
 `empty` and `first_time` are distinct: first_time (never run recognition / no media described)
 gets guidance + the primary CTA; empty (filtered to zero) gets a clear-filter affordance.

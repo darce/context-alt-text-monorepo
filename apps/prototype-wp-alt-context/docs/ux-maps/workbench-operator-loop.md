@@ -4,24 +4,27 @@
 **Source fixture:** `packages/mcp-workbay-canvas/tests/fixtures/ux_maps/workbench-operator-loop.uxmap.json`
 
 ## Goals
+
 - Operator clears media queue via Scan and resolves identity conflicts without losing place
 - Decompose Workbench UI tasks from screens/zones/states/flows instead of inventing IA mid-plan
 
 ## Jobs
+
 - `job-clear-queue` — Clear media queue (scan / describe)
 - `job-resolve-conflicts` — Resolve identity conflicts
 - `job-recover-sync` — Recover from sync / dead-letter failures
 - `job-assign-people` — Assign people (exit to Roster)
 
 ## Screens
-| id | kind | route | title |
-| --- | --- | --- | --- |
-| `workbench-shell` | screen | `#/workbench` | Workbench |
-| `workbench-scan` | screen | `#/workbench?tab=scan` | Scan media queue |
-| `workbench-conflicts` | overlay | `#/workbench?panel=conflicts` | Conflict Inbox |
+
+| id                      | kind    | route                           | title                           |
+| ----------------------- | ------- | ------------------------------- | ------------------------------- |
+| `workbench-shell`       | screen  | `#/workbench`                   | Workbench                       |
+| `workbench-scan`        | screen  | `#/workbench?tab=scan`          | Scan media queue                |
+| `workbench-conflicts`   | overlay | `#/workbench?panel=conflicts`   | Conflict Inbox                  |
 | `workbench-dead-letter` | overlay | `#/workbench?panel=dead-letter` | Failed Sync Queue (Dead Letter) |
-| `exit-roster` | exit | `#/roster` | Roster (person workspace) |
-| `exit-settings` | exit | `#/settings` | Settings / service health |
+| `exit-roster`           | exit    | `#/roster`                      | Roster (person workspace)       |
+| `exit-settings`         | exit    | `#/settings`                    | Settings / service health       |
 
 ### Workbench (`workbench-shell`)
 
@@ -135,6 +138,7 @@
 ```
 
 ## Flows
+
 ### Select media → scan → continue (`flow-scan-happy`)
 
 ```mermaid
@@ -171,11 +175,13 @@ flowchart TD
 ```
 
 ## Open questions
+
 - Should Scan CTAs require selection count preview on the same surface before start? ([INT-07])
 - Conflict shortlist max_candidates=5 — confirm product policy vs model top-k
 - Does empty media queue show first_time guidance or empty-only copy?
 
 ## Not doing
+
 - Resurrect confirm tab (E21-10)
 - Pixel/token design in this map
 - Attachment-edit SPA (separate map_ref later)

@@ -1,5 +1,7 @@
 import { __, sprintf } from '@wordpress/i18n';
 
+import { formatUserFacingError, isAuthExpiredError } from '../../../utils/userFacingError';
+
 export const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const isAbortError = (err: unknown): boolean =>
@@ -24,6 +26,9 @@ export const getInvalidTargetClusterMessage = (label: string): string =>
   sprintf(__('That cluster is already named %s - nothing to merge.', 'alt-context'), label);
 
 export const getClusterMutationErrorMessage = (error: unknown, label: string): string => {
+  if (isAuthExpiredError(error)) {
+    return formatUserFacingError(error, __('An unexpected error occurred. Please try again.', 'alt-context'));
+  }
   if (error instanceof Error) {
     const normalized = error.message.toLowerCase();
     if (error.name === 'AbortError' || normalized.includes('timed out') || normalized.includes('timeout')) {

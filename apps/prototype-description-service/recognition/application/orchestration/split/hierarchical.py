@@ -8,9 +8,24 @@ from collections.abc import Sequence
 from db.models import MediaIdentity as MediaIdentityModel
 from recognition.application.clustering.hierarchical_clustering import HierarchicalClustering
 from recognition.application.orchestration.split.anchor import force_anchor_split
-from recognition.config import get_settings as get_recognition_settings
+from recognition.config.settings import (
+    resolve_effective_clustering_settings,
+    resolve_effective_limits_settings,
+)
 
 logger = logging.getLogger(__name__)
+
+# Historical split distance floor (cosine-distance units). Never loosen past this
+# when limits.similarity is low; stricter limits raise the cut (lower distance).
+_LEGACY_SPLIT_DISTANCE_FLOOR = 0.30
+
+
+def _split_distance_threshold() -> float:
+    """Derive hierarchical split distance from profile-resolved limits similarity."""
+    limits_sim = float(resolve_effective_limits_settings().similarity_threshold)
+    # Unit-vector cosine distance proxy: d ≈ 1 - cosine_similarity.
+    from_limits = max(0.0, 1.0 - limits_sim)
+    return min(_LEGACY_SPLIT_DISTANCE_FLOOR, from_limits)
 
 
 def build_clusters_by_label(
@@ -22,7 +37,7 @@ def build_clusters_by_label(
     cluster_id: str | None = None,
 ) -> dict[int, list[MediaIdentityModel]]:
     """Cluster identities into groups for split operations."""
-    hierarchical = HierarchicalClustering(distance_threshold=0.30)
+    hierarchical = HierarchicalClustering(distance_threshold=_split_distance_threshold())
     identity_list = list(identities)
     clusters_by_label = hierarchical.split_identities(identity_list, n_clusters)
 
@@ -32,7 +47,7 @@ def build_clusters_by_label(
             anchor_key,
             similarity_floor=similarity_floor
             if similarity_floor is not None
-            else get_recognition_settings().clustering.anchor_split_similarity_floor,
+            else resolve_effective_clustering_settings().anchor_split_similarity_floor,
         )
         if cluster_id:
             logger.info("Split cluster %s: forced anchor split for anchor=%s", cluster_id, anchor_key)

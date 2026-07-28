@@ -19,6 +19,9 @@ dependencies = [
     "pgvector>=0.4.0,<0.5.0",
     "alembic>=1.17.0,<2.0.0",
     "numpy>=2.0.0,<3.0.0",
+    # Direct dep for Hungarian matcher (§C association, §F similar_people).
+    # Previously only transitive via hdbscan (rg-001).
+    "scipy>=1.11.0,<2.0.0",
     "pillow>=12.0.0,<13.0.0",
     "opencv-python>=4.12.0,<4.15.0",
     "pydantic-settings>=2.12.0,<3.0.0",
@@ -26,8 +29,9 @@ dependencies = [
     "httpx>=0.28.0,<0.35.0",
     "networkx>=3.6,<4.0",
     "uuid7>=0.1.0,<1.0.0",
-    # Clustering
+    # Clustering (hierarchical / constrained HAC + joint assignment solver)
     "hdbscan>=0.8.33,<1.0.0",
+    "scipy>=1.11.0,<2.0.0",
     # ONNX runtime for inference (required by insightface)
     "onnxruntime>=1.22.0",
     "imagehash>=4.3.0",

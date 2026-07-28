@@ -1,8 +1,8 @@
 version = 1
 revision = 3
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 
 [[package]]
-name = "uxp-2-lane-sandbox-shim"
+name = "context-alt-text-monorepo-root"
 version = "0.0.0"
 source = { virtual = "." }

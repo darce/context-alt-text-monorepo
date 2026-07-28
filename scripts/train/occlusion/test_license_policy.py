@@ -29,8 +29,9 @@ def _load_policy():
         sys.path.insert(0, str(train_root.parent))
 
     mod_name = "train.occlusion.license_policy"
+    # Always reload from disk so mutation_guard scratch copies stay honest.
     if mod_name in sys.modules:
-        return sys.modules[mod_name]
+        del sys.modules[mod_name]
 
     # Guarantee package parents for relative-looking imports.
     for pkg_name, pkg_path in (
@@ -79,17 +80,89 @@ class TestBuffaloAndNcModelDerivedFail:
         assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
 
     def test_insightface_prefix_pattern_is_pinned(self) -> None:
-        # RED-capable: empty NC_MODEL_PATTERNS would not match; assert pattern hit.
+        # RED-capable: must hit the exact pinned pattern, not any id fallback.
         matched = policy.match_nc_model_pattern("insightface/buffalo_l")
-        assert matched is not None
-        assert matched in policy.NC_MODEL_PATTERNS or matched in {
-            p.lower() for p in policy.NC_MODEL_IDS
-        }
+        assert matched == "insightface/*"
 
-    def test_buffalo_star_pattern_is_pinned(self) -> None:
+    def test_buffalo_star_pattern_drives_audit(self) -> None:
+        # Must exercise audit logic, not merely assert a constant property.
+        result = policy.audit_derived_from_model("buffalo_sc")
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
         matched = policy.match_nc_model_pattern("buffalo_sc")
-        assert matched is not None
-        assert any(p.startswith("buffalo") for p in policy.NC_MODEL_PATTERNS)
+        assert matched == "buffalo*"
+
+    @pytest.mark.parametrize(
+        "tag",
+        [
+            "deepinsight/insightface",
+            "deepinsight/insightface/buffalo_l",
+            "models/insightface/buffalo_l",
+            "hf/insightface/buffalo_l",
+            "insightface_buffalo_l",
+            "insightface-buffalo-l",
+            "insightface／buffalo_l",  # U+FF0F fullwidth solidus
+        ],
+    )
+    def test_nested_and_separator_insightface_forms_fail(self, tag: str) -> None:
+        result = policy.audit_derived_from_model(tag)
+        assert result.ok is False, f"expected NC fail for {tag!r}, got {result}"
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    def test_provenance_row_nested_insightface_fails(self) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "Apache-2.0",
+            "derived_from_model": "deepinsight/insightface/buffalo_l",
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    @pytest.mark.parametrize(
+        "tag",
+        ["notdcface/x", "dcface/gen1", "mediapipe/blazeface"],
+    )
+    def test_non_nc_derived_tags_still_pass(self, tag: str) -> None:
+        result = policy.audit_derived_from_model(tag)
+        assert result.ok is True, f"over-blocked {tag!r}: {result.detail}"
+
+    @pytest.mark.parametrize(
+        "tag",
+        ["retinaface/r50", "arcface/r100", "buffalo_sc"],
+    )
+    def test_nc_model_ids_layer_rejects_pinned_ids(self, tag: str) -> None:
+        # Exercises NC_MODEL_IDS second matching layer (M3 discrimination).
+        result = policy.audit_derived_from_model(tag)
+        assert result.ok is False, f"expected NC fail for {tag!r}"
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    def test_vec2face_forbidden_table_entry_drives_nc_ids(self) -> None:
+        # A9: NC_MODEL_IDS derived from tables — vec2face is FORBIDDEN.
+        assert "vec2face" in policy.NC_MODEL_IDS
+        result = policy.audit_derived_from_model("vec2face/g1")
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    def test_new_nc_table_entry_changes_audit_outcome(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Insert a fresh NC synthetic entry and re-derive the id set.
+        entry = policy.SyntheticSourceEntry(
+            source_id="brand_new_nc_synth",
+            verification=policy.VerificationMetadata(
+                spdx_id="PENDING-LEGAL-CLEARANCE",
+                commercial_use=policy.CommercialUse.FORBIDDEN,
+            ),
+        )
+        new_synth = dict(policy.SYNTHETIC_SOURCE_ENTRIES)
+        new_synth["brand_new_nc_synth"] = entry
+        monkeypatch.setattr(policy, "SYNTHETIC_SOURCE_ENTRIES", new_synth)
+        # Recompute NC_MODEL_IDS the same way production does.
+        derived = policy._derive_nc_model_ids()
+        monkeypatch.setattr(policy, "NC_MODEL_IDS", derived)
+        assert "brand_new_nc_synth" in policy.NC_MODEL_IDS
+        result = policy.audit_derived_from_model("brand_new_nc_synth/v1")
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
 
     def test_provenance_row_with_buffalo_output_fails(self) -> None:
         row = {
@@ -112,7 +185,26 @@ class TestResearchOnlySourcesFail:
 
     @pytest.mark.parametrize(
         "source",
-        ["widerface", "mfr", "rmfrd", "casia", "ffhq", "webface260m", "vggface2"],
+        [
+            # Underscore / nested forms (A2) — the common on-disk names.
+            "casia_webface",
+            "CASIA_WebFace",
+            "vggface2_train",
+            "ms1m_v3",
+            "glint360k_r100",
+            "widerface_val",
+            "ffhq_aligned",
+            "celeba_hq",
+            "dataset/ffhq",
+            # Canonical bare tokens still fail.
+            "ffhq",
+            "casia-webface",
+            "widerface",
+            "mfr",
+            "rmfrd",
+            "webface260m",
+            "vggface2",
+        ],
     )
     def test_research_source_fails_with_research_only_reason(self, source: str) -> None:
         result = policy.audit_source(source)
@@ -166,6 +258,36 @@ class TestApacheSelfGeneratedPasses:
         assert result.ok is True
         assert "Apache-2.0" in policy.ALLOWED_SPDX_IDS
 
+    def test_spdx_case_insensitive_allow(self) -> None:
+        result = policy.audit_spdx("apache-2.0")
+        assert result.ok is True
+
+    def test_spdx_case_insensitive_denylist(self) -> None:
+        result = policy.audit_spdx("agpl-3.0")
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_LICENSE
+
+    def test_operator_cleared_is_not_spdx_pass(self) -> None:
+        result = policy.audit_spdx("operator-cleared")
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.UNKNOWN_SPDX
+
+    def test_operator_cleared_row_fails(self) -> None:
+        row = {
+            "source": "scraped_from_the_web",
+            "license": "operator-cleared",
+            "derived_from_model": "",
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.UNKNOWN_SPDX
+
+    def test_unknown_spdx_default_deny(self) -> None:
+        # M1 discrimination: UNKNOWN_SPDX must FAIL (not silent pass).
+        result = policy.audit_spdx("Totally-Made-Up-1.0")
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.UNKNOWN_SPDX
+
 
 # ---------------------------------------------------------------------------
 # (4) named ingest entries for Detector A/B + cascade; Ultralytics AGPL denied
@@ -176,11 +298,23 @@ class TestNamedIngestEntriesAndUltralyticsDeny:
     """Behaviour 4: Detector A/B + cascade person-detectors registered; AGPL banned."""
 
     def test_required_display_names_registered(self) -> None:
+        # Hard-code contract names in the TEST (M5) — do not drive the loop from
+        # the production tuple (that let REQUIRED_MODEL_INGEST_DISPLAY_NAMES=()
+        # run zero assertions). Still pin the production tuple so emptying it
+        # is caught by mutation_guard.
+        required = (
+            "MediaPipe BlazeFace",
+            "Paddle BlazeFace-FPN-SSH",
+            "RT-DETR",
+            "D-FINE",
+            "PP-PicoDet",
+        )
         registered_names = {
             entry.display_name for entry in policy.MODEL_INGEST_ENTRIES.values()
         }
-        for name in policy.REQUIRED_MODEL_INGEST_DISPLAY_NAMES:
+        for name in required:
             assert name in registered_names, f"missing named ingest entry for {name!r}"
+        assert tuple(policy.REQUIRED_MODEL_INGEST_DISPLAY_NAMES) == required
 
     def test_mediapipe_blazeface_ingest_passes(self) -> None:
         result = policy.audit_model_ingest("mediapipe_blazeface")
@@ -210,7 +344,7 @@ class TestNamedIngestEntriesAndUltralyticsDeny:
         assert result.ok is True, result.detail
         entry = policy.get_model_ingest_entry(model_id)
         assert entry.display_name == display_name
-        assert entry.role == "person_detector"
+        assert entry.role is policy.DetectorRole.PERSON_DETECTOR
         assert entry.verification.commercial_use is policy.CommercialUse.ALLOWED
 
     def test_ultralytics_agpl_is_denylisted(self) -> None:
@@ -231,6 +365,44 @@ class TestNamedIngestEntriesAndUltralyticsDeny:
         result = policy.audit_model_ingest("totally_unknown_detector_xyz")
         assert result.ok is False
         assert result.reason is policy.RejectionReason.MISSING_INGEST_ENTRY
+
+    def test_nc_tagged_ingest_entry_fails(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # BR-14: NC-tagged ingest entry FAILS ingest.
+        nc_entry = policy.ModelIngestEntry(
+            model_id="nc_face_toy",
+            display_name="NC Face Toy",
+            role=policy.DetectorRole.FACE_DETECTOR,
+            verification=policy.VerificationMetadata(
+                spdx_id="Apache-2.0",
+                commercial_use=policy.CommercialUse.NON_COMMERCIAL,
+            ),
+        )
+        new_entries = dict(policy.MODEL_INGEST_ENTRIES)
+        new_entries["nc_face_toy"] = nc_entry
+        monkeypatch.setattr(policy, "MODEL_INGEST_ENTRIES", new_entries)
+        result = policy.audit_model_ingest("nc_face_toy")
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    def test_denylisted_spdx_ingest_entry_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # BR-14: ingest entry with denylisted SPDX id fails.
+        bad = policy.ModelIngestEntry(
+            model_id="agpl_face_toy",
+            display_name="AGPL Face Toy",
+            role=policy.DetectorRole.FACE_DETECTOR,
+            verification=policy.VerificationMetadata(
+                spdx_id="AGPL-3.0",
+                commercial_use=policy.CommercialUse.ALLOWED,
+            ),
+        )
+        new_entries = dict(policy.MODEL_INGEST_ENTRIES)
+        new_entries["agpl_face_toy"] = bad
+        monkeypatch.setattr(policy, "MODEL_INGEST_ENTRIES", new_entries)
+        result = policy.audit_model_ingest("agpl_face_toy")
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_LICENSE
 
 
 # ---------------------------------------------------------------------------
@@ -284,6 +456,40 @@ class TestOccluderAssetPackBuildGate:
         assert result.ok is True
         assert result.verdict is policy.LicenseVerdict.PASS
 
+    def test_missing_source_fails(self) -> None:
+        asset = {
+            "asset_id": "x",
+            "license": "CC0-1.0",
+            "clearance": "allowed",
+        }
+        result = policy.audit_occluder_asset(asset)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.UNKNOWN_SOURCE
+
+    def test_unknown_source_fails(self) -> None:
+        asset = {
+            "asset_id": "x",
+            "license": "CC0-1.0",
+            "clearance": "cleared",
+            "source": "random_flickr",
+        }
+        result = policy.audit_occluder_asset(asset)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.UNKNOWN_SOURCE
+
+    def test_operator_cleared_license_not_accepted_on_occluder(self) -> None:
+        asset = {
+            "license": "operator-cleared",
+            "clearance": "cleared",
+            "source": "random_flickr",
+        }
+        result = policy.audit_occluder_asset(asset)
+        assert result.ok is False
+        assert result.reason in {
+            policy.RejectionReason.UNKNOWN_SPDX,
+            policy.RejectionReason.UNKNOWN_SOURCE,
+        }
+
 
 # ---------------------------------------------------------------------------
 # (6) umap-learn (BSD-3-Clause) on TOOLING allowlist
@@ -318,15 +524,26 @@ class TestUmapLearnToolingAllowlist:
 class TestDcfaceOperatorClearanceAndLineageExempt:
     """Behaviour 7: DCFace clearance + lineage exemption + paired buffalo fail."""
 
-    def _dcface_row(self, *, derived_from_model: str) -> dict[str, Any]:
-        return {
-            "source": "dcface",
-            "license": "operator-cleared",
+    def _dcface_row(
+        self,
+        *,
+        derived_from_model: str,
+        source: str = "dcface",
+        clearance: str | None = None,
+        generator_lineage: str = "ffhq",
+    ) -> dict[str, Any]:
+        row: dict[str, Any] = {
+            "source": source,
+            "license": "Apache-2.0",
             "derived_from_model": derived_from_model,
-            "clearance": policy.DCFACE_CLEARANCE_DECISION,
-            # Informational only — must NOT trigger research-source rejection.
-            "generator_lineage": "trained-on:FFHQ+CASIA (disclosed; not a training source)",
+            # Bare research token the matcher CAN hit (BR-12) — must not reject.
+            "generator_lineage": generator_lineage,
         }
+        if clearance is None:
+            row["clearance"] = policy.DCFACE_CLEARANCE_DECISION
+        elif clearance != "__omit__":
+            row["clearance"] = clearance
+        return row
 
     def test_dcface_clearance_decision_constant(self) -> None:
         assert policy.DCFACE_CLEARANCE_DECISION == "dcface_operator_clearance_20260723"
@@ -334,17 +551,13 @@ class TestDcfaceOperatorClearanceAndLineageExempt:
         assert entry.verification.clearance_decision == policy.DCFACE_CLEARANCE_DECISION
         assert entry.verification.commercial_use is policy.CommercialUse.ALLOWED
 
-    def test_dcface_derived_row_passes_with_ffhq_casia_lineage(self) -> None:
+    def test_dcface_derived_row_passes_with_ffhq_lineage(self) -> None:
         row = self._dcface_row(derived_from_model="dcface/oversample_xid_0.5m")
         result = policy.audit_provenance_row(row)
         assert result.ok is True, result.detail
         assert result.verdict is policy.LicenseVerdict.PASS
-        # Lineage present but ignored for rejection.
-        assert "FFHQ" in row["generator_lineage"]
-        assert "CASIA" in row["generator_lineage"]
 
     def test_same_dcface_row_with_buffalo_derived_fails(self) -> None:
-        # Paired fixture from the plan: same row, swap only derived_from_model.
         row = self._dcface_row(derived_from_model="insightface/buffalo_l")
         result = policy.audit_provenance_row(row)
         assert result.ok is False
@@ -357,20 +570,144 @@ class TestDcfaceOperatorClearanceAndLineageExempt:
         )
 
     def test_generator_lineage_does_not_trigger_research_rejection(self) -> None:
-        # source is clean; lineage names research corpora → still PASS.
+        # source is clean; lineage is a bare research token → still PASS.
         row = {
             "source": "self-generated",
             "license": "Apache-2.0",
             "derived_from_model": "",
-            "generator_lineage": "upstream research refs: ffhq, casia (informational)",
+            "generator_lineage": "ffhq",
         }
         result = policy.audit_provenance_row(row)
         assert result.ok is True, result.detail
+
+    def test_same_row_with_source_ffhq_fails_research_only(self) -> None:
+        # Paired negative (BR-12): lineage exemption is narrow, not blanket.
+        row = self._dcface_row(
+            derived_from_model="dcface/oversample_xid_0.5m",
+            source="ffhq",
+        )
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.RESEARCH_ONLY_SOURCE
+
+    def test_dcface_wrong_clearance_fails(self) -> None:
+        row = self._dcface_row(
+            derived_from_model="dcface/x",
+            clearance="totally_made_up_9999",
+        )
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+
+    def test_dcface_missing_clearance_fails(self) -> None:
+        row = self._dcface_row(
+            derived_from_model="dcface/x",
+            clearance="__omit__",
+        )
+        assert "clearance" not in row
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
 
     def test_vec2face_still_pending(self) -> None:
         result = policy.audit_synthetic_source("vec2face")
         assert result.ok is False
         assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+
+
+# ---------------------------------------------------------------------------
+# Synthetic fail-closed + structural validation + category caller-owned
+# ---------------------------------------------------------------------------
+
+
+class TestSyntheticFailClosedAndRowValidation:
+    def test_unknown_synthetic_source_pending(self) -> None:
+        row = {
+            "source": "synthface3",
+            "license": "Apache-2.0",
+            "derived_from_model": "synthface3/g1",
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+
+    def test_explicit_synthetic_category_unknown_source_pending(self) -> None:
+        row = {
+            "category": "synthetic_source",
+            "source": "vec2face-successor",
+            "license": "Apache-2.0",
+            "derived_from_model": "vec2face-successor/v1",
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+
+    def test_row_cannot_waive_source_via_tooling_category(self) -> None:
+        row = {
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+            "category": "tooling",
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.UNKNOWN_SOURCE
+
+    def test_row_cannot_waive_source_via_bogus_category(self) -> None:
+        row = {
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+            "category": "bogus",
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason in {
+            policy.RejectionReason.INVALID_ROW,
+            policy.RejectionReason.UNKNOWN_SOURCE,
+        }
+
+    def test_missing_derived_from_model_key_fails(self) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "Apache-2.0",
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.INVALID_ROW
+
+    def test_list_derived_from_model_fails(self) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "Apache-2.0",
+            "derived_from_model": ["insightface/buffalo_l"],
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.INVALID_ROW
+
+    def test_none_derived_from_model_fails(self) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "Apache-2.0",
+            "derived_from_model": None,
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.INVALID_ROW
+
+    def test_caller_tooling_category_allows_missing_source_only_via_entry_point(
+        self,
+    ) -> None:
+        # audit_tooling_row is the caller-owned entry point; still needs license.
+        row = {
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+        }
+        # Tooling provenance row without source: not research-tainted, no source req
+        # under TOOLING category — but tooling deps go through audit_tooling_dependency.
+        # Training path always requires source; tooling category skips source req.
+        result = policy.audit_tooling_row(row)
+        # license ok, no source required for TOOLING category
+        assert result.ok is True, result.detail
 
 
 # ---------------------------------------------------------------------------
@@ -387,6 +724,21 @@ class TestPolicyEnumsAndHardFail:
     def test_rejection_reasons_are_strenum(self) -> None:
         assert issubclass(policy.RejectionReason, policy.StrEnum)
         assert policy.RejectionReason.NC_MODEL_DERIVED == "nc_model_derived"
+
+    def test_detector_role_strenum(self) -> None:
+        assert issubclass(policy.DetectorRole, policy.StrEnum)
+        entry = policy.get_model_ingest_entry("yunet")
+        assert entry.role is policy.DetectorRole.FACE_DETECTOR
+
+    def test_clearance_status_includes_folded_literals(self) -> None:
+        assert policy.ClearanceStatus.CLEARED == "cleared"
+        assert policy.ClearanceStatus.LICENSE_CLEARED == "license_cleared"
+        assert "cleared" in policy.OCCLUDER_ALLOWED_CLEARANCES
+        assert "denied" == policy.ClearanceStatus.DENIED.value
+        assert (
+            "pending_legal_clearance"
+            == policy.ClearanceStatus.PENDING_LEGAL_CLEARANCE.value
+        )
 
     def test_require_pass_raises_on_fail(self) -> None:
         result = policy.audit_derived_from_model("insightface/buffalo_l")

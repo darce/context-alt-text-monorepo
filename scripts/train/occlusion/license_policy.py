@@ -14,6 +14,8 @@ informational ``generator_lineage`` field (exempt from research-source rejection
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Mapping
@@ -55,6 +57,7 @@ class RejectionReason(StrEnum):
     MISSING_LICENSE_FIELD = "missing_license_field"
     UNKNOWN_SPDX = "unknown_spdx"
     UNKNOWN_SOURCE = "unknown_source"
+    INVALID_ROW = "invalid_row"
 
 
 class ClearanceStatus(StrEnum):
@@ -65,6 +68,8 @@ class ClearanceStatus(StrEnum):
     PENDING_LEGAL_CLEARANCE = "pending_legal_clearance"
     OPERATOR_CLEARED = "operator_cleared"
     UNCLEARED = "uncleared"
+    CLEARED = "cleared"
+    LICENSE_CLEARED = "license_cleared"
 
 
 class CommercialUse(StrEnum):
@@ -73,6 +78,14 @@ class CommercialUse(StrEnum):
     ALLOWED = "allowed"
     NON_COMMERCIAL = "non_commercial"
     FORBIDDEN = "forbidden"
+
+
+class DetectorRole(StrEnum):
+    """Role of a registered model-ingest entry."""
+
+    FACE_DETECTOR = "face_detector"
+    PERSON_DETECTOR = "person_detector"
+    FACE_EMBEDDER = "face_embedder"
 
 
 # ---------------------------------------------------------------------------
@@ -132,11 +145,12 @@ class LicensePolicyError(Exception):
 
 
 # ---------------------------------------------------------------------------
-# SPDX allow / deny lists
+# SPDX allow / deny lists (stored casefolded for SPDX case-insensitive rules)
 # ---------------------------------------------------------------------------
 
 # Commercially usable SPDX identifiers accepted for training data, model ingest,
-# and occluder assets (after other gates).
+# and occluder assets (after other gates). Canonical display forms kept for
+# documentation; comparisons use the casefolded frozensets.
 ALLOWED_SPDX_IDS: frozenset[str] = frozenset(
     {
         "Apache-2.0",
@@ -172,6 +186,22 @@ DENYLISTED_SPDX_IDS: frozenset[str] = frozenset(
     }
 )
 
+ALLOWED_SPDX_IDS_CF: frozenset[str] = frozenset(x.casefold() for x in ALLOWED_SPDX_IDS)
+DENYLISTED_SPDX_IDS_CF: frozenset[str] = frozenset(x.casefold() for x in DENYLISTED_SPDX_IDS)
+
+# NC-family tags map to RESEARCH_ONLY_LICENSE rather than DENYLISTED_LICENSE.
+_RESEARCH_ONLY_LICENSE_CF: frozenset[str] = frozenset(
+    {
+        "research-only",
+        "non-commercial",
+        "nc",
+        "proprietary-nc",
+        "cc-by-nc-4.0",
+        "cc-by-nc-sa-4.0",
+        "cc-by-nc-nd-4.0",
+    }
+)
+
 # Training-data / corpus sources that taint commercial use when present in
 # the row ``source`` (or ``license`` tag) field. ``generator_lineage`` is NOT
 # checked against this set — it is informational only.
@@ -195,16 +225,21 @@ RESEARCH_ONLY_SOURCES: frozenset[str] = frozenset(
     }
 )
 
+# Compact (separator-stripped) forms of research-only sources for matching.
+_RESEARCH_ONLY_COMPACT: frozenset[str] = frozenset(
+    re.sub(r"[^a-z0-9]+", "", s.casefold()) for s in RESEARCH_ONLY_SOURCES
+)
+
 
 # ---------------------------------------------------------------------------
 # PINNED non-commercial model pattern list (buffalo OUTPUT ban wall 1)
 # ---------------------------------------------------------------------------
 
 # Patterns are matched case-insensitively against ``derived_from_model``.
-# Glob semantics:
-#   - ``prefix/*``  → exact prefix + "/" + any non-empty suffix
-#   - ``prefix*``   → prefix + any suffix (including empty)
-#   - bare token    → exact match OR token + "/" + suffix
+# Glob semantics (applied to every path segment after NFKC + split):
+#   - ``prefix/*``  → any segment equals prefix
+#   - ``prefix*``   → any segment startswith prefix
+#   - bare token    → any segment equals token
 #
 # ``dcface/*`` is intentionally ABSENT — operator clearance
 # ``dcface_operator_clearance_20260723`` keeps it off this list.
@@ -215,14 +250,11 @@ NC_MODEL_PATTERNS: tuple[str, ...] = (
     "buffalo",
 )
 
-# Models registered as non-commercial in the policy table; any
-# ``derived_from_model`` whose first path segment equals one of these ids
-# also FAILS (covers NC-tagged entries beyond the pinned pattern list).
-NC_MODEL_IDS: frozenset[str] = frozenset(
+# Extra pinned NC model ids beyond table-derived entries (ArcFace ecosystem
+# weights that are non-commercial but not always present as registry rows).
+_PINNED_NC_MODEL_IDS: frozenset[str] = frozenset(
     {
-        "insightface",
         "buffalo",
-        "buffalo_l",
         "buffalo_s",
         "buffalo_sc",
         "retinaface",
@@ -255,7 +287,7 @@ class ModelIngestEntry:
 
     model_id: str
     display_name: str
-    role: str  # "face_detector" | "person_detector"
+    role: DetectorRole
     verification: VerificationMetadata
     category: PolicyCategory = PolicyCategory.MODEL_INGEST
 
@@ -295,7 +327,7 @@ MODEL_INGEST_ENTRIES: dict[str, ModelIngestEntry] = {
     "mediapipe_blazeface": ModelIngestEntry(
         model_id="mediapipe_blazeface",
         display_name="MediaPipe BlazeFace",
-        role="face_detector",
+        role=DetectorRole.FACE_DETECTOR,
         verification=VerificationMetadata(
             spdx_id="Apache-2.0",
             commercial_use=CommercialUse.ALLOWED,
@@ -308,7 +340,7 @@ MODEL_INGEST_ENTRIES: dict[str, ModelIngestEntry] = {
     "paddle_blazeface_fpn_ssh": ModelIngestEntry(
         model_id="paddle_blazeface_fpn_ssh",
         display_name="Paddle BlazeFace-FPN-SSH",
-        role="face_detector",
+        role=DetectorRole.FACE_DETECTOR,
         verification=VerificationMetadata(
             spdx_id="Apache-2.0",
             commercial_use=CommercialUse.ALLOWED,
@@ -321,7 +353,7 @@ MODEL_INGEST_ENTRIES: dict[str, ModelIngestEntry] = {
     "rt_detr": ModelIngestEntry(
         model_id="rt_detr",
         display_name="RT-DETR",
-        role="person_detector",
+        role=DetectorRole.PERSON_DETECTOR,
         verification=VerificationMetadata(
             spdx_id="Apache-2.0",
             commercial_use=CommercialUse.ALLOWED,
@@ -334,7 +366,7 @@ MODEL_INGEST_ENTRIES: dict[str, ModelIngestEntry] = {
     "d_fine": ModelIngestEntry(
         model_id="d_fine",
         display_name="D-FINE",
-        role="person_detector",
+        role=DetectorRole.PERSON_DETECTOR,
         verification=VerificationMetadata(
             spdx_id="Apache-2.0",
             commercial_use=CommercialUse.ALLOWED,
@@ -347,7 +379,7 @@ MODEL_INGEST_ENTRIES: dict[str, ModelIngestEntry] = {
     "pp_picodet": ModelIngestEntry(
         model_id="pp_picodet",
         display_name="PP-PicoDet",
-        role="person_detector",
+        role=DetectorRole.PERSON_DETECTOR,
         verification=VerificationMetadata(
             spdx_id="Apache-2.0",
             commercial_use=CommercialUse.ALLOWED,
@@ -361,7 +393,7 @@ MODEL_INGEST_ENTRIES: dict[str, ModelIngestEntry] = {
     "yunet": ModelIngestEntry(
         model_id="yunet",
         display_name="YuNet",
-        role="face_detector",
+        role=DetectorRole.FACE_DETECTOR,
         verification=VerificationMetadata(
             spdx_id="MIT",
             commercial_use=CommercialUse.ALLOWED,
@@ -374,7 +406,7 @@ MODEL_INGEST_ENTRIES: dict[str, ModelIngestEntry] = {
     "sface": ModelIngestEntry(
         model_id="sface",
         display_name="SFace",
-        role="face_embedder",
+        role=DetectorRole.FACE_EMBEDDER,
         verification=VerificationMetadata(
             spdx_id="Apache-2.0",
             commercial_use=CommercialUse.ALLOWED,
@@ -467,7 +499,8 @@ SYNTHETIC_SOURCE_ENTRIES: dict[str, SyntheticSourceEntry] = {
     "dcface": SyntheticSourceEntry(
         source_id="dcface",
         verification=VerificationMetadata(
-            spdx_id="operator-cleared",
+            # Real allowlisted SPDX; commercial admission is via clearance_decision.
+            spdx_id="Apache-2.0",
             commercial_use=CommercialUse.ALLOWED,
             source_url="https://github.com/mk-minchul/dcface",
             verified_at="2026-07-23",
@@ -491,6 +524,76 @@ SYNTHETIC_SOURCE_ENTRIES: dict[str, SyntheticSourceEntry] = {
     ),
 }
 
+# Occluder pack-build: only these sources are registered for asset provenance.
+OCCLUDER_REGISTERED_SOURCES: frozenset[str] = frozenset(
+    {
+        "self-generated",
+        "operator-photo",
+        "operator-phone",
+        "operator-render",
+    }
+)
+
+# Positive clearance statuses accepted at pack-build (module scope).
+OCCLUDER_ALLOWED_CLEARANCES: frozenset[str] = frozenset(
+    {
+        ClearanceStatus.ALLOWED.value,
+        ClearanceStatus.OPERATOR_CLEARED.value,
+        ClearanceStatus.CLEARED.value,
+        ClearanceStatus.LICENSE_CLEARED.value,
+    }
+)
+
+# Shared model-id alias map (single source of truth for ingest resolution).
+_MODEL_ALIASES: dict[str, str] = {
+    "mediapipe_blazeface": "mediapipe_blazeface",
+    "blazeface": "mediapipe_blazeface",
+    "paddle_blazeface_fpn_ssh": "paddle_blazeface_fpn_ssh",
+    "blazeface_fpn_ssh": "paddle_blazeface_fpn_ssh",
+    "rt_detr": "rt_detr",
+    "rtdetr": "rt_detr",
+    "d_fine": "d_fine",
+    "dfine": "d_fine",
+    "pp_picodet": "pp_picodet",
+    "picodet": "pp_picodet",
+    "ultralytics": "ultralytics",
+    "yolov8": "yolov8",
+    "yolo": "ultralytics",
+    "yunet": "yunet",
+    "sface": "sface",
+}
+
+
+def _derive_nc_model_ids() -> frozenset[str]:
+    """Build NC model-id set from registry tables ∪ pinned extras."""
+    ids: set[str] = set(_PINNED_NC_MODEL_IDS)
+    for key, entry in MODEL_INGEST_ENTRIES.items():
+        if entry.verification.commercial_use is not CommercialUse.ALLOWED:
+            ids.add(key)
+            ids.add(entry.model_id)
+    for key, entry in SYNTHETIC_SOURCE_ENTRIES.items():
+        if entry.verification.commercial_use is not CommercialUse.ALLOWED:
+            ids.add(key)
+            ids.add(entry.source_id)
+    for entry in PACKAGE_DENYLIST.values():
+        if entry.reason is RejectionReason.NC_MODEL_DERIVED:
+            ids.add(entry.package_id)
+    # Pattern stems so NC_MODEL_IDS stays aligned with NC_MODEL_PATTERNS.
+    for pattern in NC_MODEL_PATTERNS:
+        p = pattern.casefold()
+        if p.endswith("/*"):
+            ids.add(p[:-2])
+        elif p.endswith("*"):
+            ids.add(p[:-1])
+        else:
+            ids.add(p)
+    return frozenset(ids)
+
+
+# Derived at import time — any non-ALLOWED table entry is denylisted for
+# derived_from_model matching (plan: any model whose license_policy entry is NC).
+NC_MODEL_IDS: frozenset[str] = _derive_nc_model_ids()
+
 
 # ---------------------------------------------------------------------------
 # Pure matching helpers
@@ -501,74 +604,155 @@ def _normalize_token(value: str) -> str:
     return value.strip().lower()
 
 
-def match_nc_model_pattern(derived_from_model: str) -> str | None:
-    """Return the pinned NC pattern that matches ``derived_from_model``, or None.
+def _nfkc_lower(value: str) -> str:
+    return unicodedata.normalize("NFKC", value).strip().casefold()
 
-    Matching is case-insensitive. Patterns follow the pinned list semantics
-    documented on ``NC_MODEL_PATTERNS``. Also fails ids in ``NC_MODEL_IDS``
-    (first path segment) so NC-tagged registry entries are covered without
-    relying on the pattern list alone.
+
+def _compact_alnum(value: str) -> str:
+    """Strip all non-alphanumeric characters (research-source matching)."""
+    return re.sub(r"[^a-z0-9]+", "", _nfkc_lower(value))
+
+
+def _split_segments(value: str) -> list[str]:
+    """NFKC-normalise then split on path/sep punctuation."""
+    text = _nfkc_lower(value)
+    if not text:
+        return []
+    return [s for s in re.split(r"[/\-_\s]+", text) if s]
+
+
+def _resolve_model_key(model_id: str) -> str:
+    """Normalise a model id / alias to a registry key."""
+    key = _normalize_token(str(model_id)).replace("-", "_").replace(" ", "_")
+    return _MODEL_ALIASES.get(key, key)
+
+
+def _is_model_ingest_key(head: str) -> bool:
+    """True when ``head`` resolves to a registered model-ingest entry."""
+    resolved = _resolve_model_key(head)
+    return resolved in MODEL_INGEST_ENTRIES
+
+
+def match_nc_model_pattern(derived_from_model: str) -> str | None:
+    """Return the pinned NC pattern / id that matches ``derived_from_model``.
+
+    Matching is case-insensitive after NFKC normalisation. Every segment from
+    splitting on ``[/-_\\s]+`` is tested against ``NC_MODEL_PATTERNS`` (so
+    nested paths and underscore forms hit ``insightface/*`` / ``buffalo*``).
+
+    ``NC_MODEL_IDS`` is applied to slash-path heads and exact full tokens only
+    — not to every hyphen segment — so a synthetic successor like
+    ``vec2face-successor/v1`` is not mis-classified as the table entry
+    ``vec2face`` (that case is fail-closed via synthetic clearance instead).
     """
     if not derived_from_model or not str(derived_from_model).strip():
         return None
-    text = _normalize_token(str(derived_from_model))
-    head = text.split("/", 1)[0]
+    text = _nfkc_lower(str(derived_from_model))
+    segments = _split_segments(str(derived_from_model))
+    if not segments and not text:
+        return None
 
-    # Registered NC model ids (first path segment).
-    if head in {_normalize_token(m) for m in NC_MODEL_IDS}:
-        # Prefer a pinned pattern when one also matches, else the bare id.
-        for pattern in NC_MODEL_PATTERNS:
-            if _pattern_matches(pattern, text):
-                return pattern
-        return head
+    nc_ids = {_normalize_token(m) for m in NC_MODEL_IDS}
 
+    # Prefer a pinned pattern when one matches.
     for pattern in NC_MODEL_PATTERNS:
-        if _pattern_matches(pattern, text):
+        if _pattern_matches(pattern, text, segments):
             return pattern
+
+    # Table-derived / pinned ids: path heads (slash-separated) + exact token.
+    if text in nc_ids:
+        return text
+    for part in text.split("/"):
+        if part and part in nc_ids:
+            return part
     return None
 
 
-def _pattern_matches(pattern: str, text: str) -> bool:
+def _pattern_matches(pattern: str, text: str, segments: list[str]) -> bool:
     p = _normalize_token(pattern)
     if p.endswith("/*"):
         prefix = p[:-2]
+        if any(seg == prefix for seg in segments):
+            return True
         return text == prefix or text.startswith(prefix + "/")
     if p.endswith("*"):
         prefix = p[:-1]
+        # Segment-prefix match for buffalo* (and similar) globs.
+        if any(seg.startswith(prefix) for seg in segments):
+            return True
         return text.startswith(prefix)
+    # Bare token: exact segment or classic path prefix.
+    if any(seg == p for seg in segments):
+        return True
     return text == p or text.startswith(p + "/")
 
 
 def _looks_like_research_source(value: str) -> bool:
-    token = _normalize_token(value)
-    if not token:
+    """True when any path segment compact-matches a research-only corpus name."""
+    if not value or not str(value).strip():
         return False
-    if token in RESEARCH_ONLY_SOURCES:
-        return True
-    # Allow ``casia-webface`` style compounds already listed; also catch
-    # path-ish tags like ``dataset/ffhq``.
-    head = token.split("/", 1)[0]
-    if head in RESEARCH_ONLY_SOURCES:
-        return True
-    for src in RESEARCH_ONLY_SOURCES:
-        if token == src or token.startswith(src + "/") or token.startswith(src + "-"):
+    text = str(value).strip()
+    segments = _split_segments(text)
+    candidates = [_compact_alnum(text), *(_compact_alnum(s) for s in segments)]
+    for cand in candidates:
+        if not cand:
+            continue
+        if cand in _RESEARCH_ONLY_COMPACT:
             return True
+        for src in _RESEARCH_ONLY_COMPACT:
+            # Compound dir names: vggface2_train → vggface2train startswith vggface2
+            if cand == src or cand.startswith(src):
+                return True
     return False
+
+
+def _require_string_field(
+    row: Mapping[str, Any],
+    key: str,
+    *,
+    required: bool,
+    category: PolicyCategory,
+) -> tuple[str | None, LicenseAuditResult | None]:
+    """Validate optional/required string fields. Returns (value, error)."""
+    if key not in row:
+        if required:
+            return None, _fail(
+                RejectionReason.INVALID_ROW,
+                detail=f"provenance row missing required field {key!r}",
+                category=category,
+            )
+        return None, None
+    raw = row[key]
+    if raw is None:
+        return None, _fail(
+            RejectionReason.INVALID_ROW,
+            detail=f"provenance row field {key!r} must be a string, got None",
+            category=category,
+        )
+    if not isinstance(raw, str):
+        return None, _fail(
+            RejectionReason.INVALID_ROW,
+            detail=(
+                f"provenance row field {key!r} must be a string, "
+                f"got {type(raw).__name__}"
+            ),
+            category=category,
+        )
+    return raw, None
 
 
 def _spdx_of(row: Mapping[str, Any]) -> str:
     raw = row.get("license") or row.get("spdx_id") or row.get("license_id") or ""
-    return str(raw).strip()
+    if not isinstance(raw, str):
+        return ""
+    return raw.strip()
 
 
 def _source_of(row: Mapping[str, Any]) -> str:
     raw = row.get("source") or ""
-    return str(raw).strip()
-
-
-def _derived_of(row: Mapping[str, Any]) -> str:
-    raw = row.get("derived_from_model") or ""
-    return str(raw).strip()
+    if not isinstance(raw, str):
+        return ""
+    return raw.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -579,14 +763,25 @@ def _derived_of(row: Mapping[str, Any]) -> str:
 def audit_derived_from_model(derived_from_model: str | None) -> LicenseAuditResult:
     """Audit a ``derived_from_model`` provenance tag (buffalo OUTPUT ban).
 
-    Empty / missing is allowed (not every row is model-derived). Any match
+    Empty string is allowed (not every row is model-derived). Any match
     against the pinned NC pattern list or NC model ids FAILS with
     ``RejectionReason.NC_MODEL_DERIVED``.
     """
-    if derived_from_model is None or not str(derived_from_model).strip():
+    if derived_from_model is None:
+        return _pass(detail="no derived_from_model tag")
+    if not isinstance(derived_from_model, str):
+        return _fail(
+            RejectionReason.INVALID_ROW,
+            detail=(
+                "derived_from_model must be a string, "
+                f"got {type(derived_from_model).__name__}"
+            ),
+            category=PolicyCategory.TRAINING_DATA,
+        )
+    if not derived_from_model.strip():
         return _pass(detail="no derived_from_model tag")
 
-    text = str(derived_from_model).strip()
+    text = derived_from_model.strip()
     matched = match_nc_model_pattern(text)
     if matched is not None:
         return _fail(
@@ -598,9 +793,6 @@ def audit_derived_from_model(derived_from_model: str | None) -> LicenseAuditResu
             category=PolicyCategory.TRAINING_DATA,
         )
 
-    # Operator-cleared synthetic generators (dcface/*) pass this gate; other
-    # synthetic first-segments are checked via synthetic-source clearance on
-    # the full provenance row.
     return _pass(
         detail=f"derived_from_model={text!r} is not on the NC pattern list",
         category=PolicyCategory.TRAINING_DATA,
@@ -608,46 +800,37 @@ def audit_derived_from_model(derived_from_model: str | None) -> LicenseAuditResu
 
 
 def audit_spdx(spdx_id: str | None) -> LicenseAuditResult:
-    """Audit a bare SPDX / license tag."""
+    """Audit a bare SPDX / license tag (case-insensitive)."""
     if spdx_id is None or not str(spdx_id).strip():
         return _fail(
             RejectionReason.MISSING_LICENSE_FIELD,
             detail="license / spdx_id field is required",
         )
-    tag = str(spdx_id).strip()
-    if tag in DENYLISTED_SPDX_IDS:
-        reason = (
-            RejectionReason.RESEARCH_ONLY_LICENSE
-            if tag in {"research-only", "Non-Commercial", "non-commercial", "NC", "proprietary-nc"}
-            or "NC" in tag.upper().replace("NON-COMMERCIAL", "NC")
-            else RejectionReason.DENYLISTED_LICENSE
+    if not isinstance(spdx_id, str):
+        return _fail(
+            RejectionReason.INVALID_ROW,
+            detail=f"license must be a string, got {type(spdx_id).__name__}",
         )
-        # Normalize NC-family to research/NC reason for clearer fixtures.
-        if tag.lower() in {
-            "research-only",
-            "non-commercial",
-            "nc",
-            "proprietary-nc",
-            "cc-by-nc-4.0",
-            "cc-by-nc-sa-4.0",
-            "cc-by-nc-nd-4.0",
-        }:
+    tag = spdx_id.strip()
+    tag_cf = tag.casefold()
+
+    if tag_cf in DENYLISTED_SPDX_IDS_CF:
+        if tag_cf in _RESEARCH_ONLY_LICENSE_CF:
             reason = RejectionReason.RESEARCH_ONLY_LICENSE
+        else:
+            reason = RejectionReason.DENYLISTED_LICENSE
         return _fail(
             reason,
             detail=f"license {tag!r} is denylisted for commercial training use",
         )
-    if tag in ALLOWED_SPDX_IDS:
+    if tag_cf in ALLOWED_SPDX_IDS_CF:
         return _pass(detail=f"license {tag!r} is allowlisted")
-    # operator-cleared is accepted only when paired with a clearance decision
-    # on a synthetic source row — bare tag alone is unknown.
-    if tag == "operator-cleared":
-        return _pass(detail="operator-cleared license tag (requires clearance ref on row)")
-    if tag == "PENDING-LEGAL-CLEARANCE":
+    if tag_cf == "pending-legal-clearance":
         return _fail(
             RejectionReason.PENDING_LEGAL_CLEARANCE,
             detail="license is PENDING-LEGAL-CLEARANCE",
         )
+    # operator-cleared is NOT an SPDX value and is never an unconditional pass.
     return _fail(
         RejectionReason.UNKNOWN_SPDX,
         detail=f"license {tag!r} is not on the allowlist",
@@ -665,7 +848,13 @@ def audit_source(source: str | None) -> LicenseAuditResult:
             detail="source field is required for training-data rows",
             category=PolicyCategory.TRAINING_DATA,
         )
-    text = str(source).strip()
+    if not isinstance(source, str):
+        return _fail(
+            RejectionReason.INVALID_ROW,
+            detail=f"source must be a string, got {type(source).__name__}",
+            category=PolicyCategory.TRAINING_DATA,
+        )
+    text = source.strip()
     if _looks_like_research_source(text):
         return _fail(
             RejectionReason.RESEARCH_ONLY_SOURCE,
@@ -691,26 +880,7 @@ def audit_model_ingest(model_id: str) -> LicenseAuditResult:
             detail="model_id is required for ingest",
             category=PolicyCategory.MODEL_INGEST,
         )
-    key = _normalize_token(str(model_id)).replace("-", "_").replace(" ", "_")
-    # Normalize common display-name aliases to registry keys.
-    aliases = {
-        "mediapipe_blazeface": "mediapipe_blazeface",
-        "blazeface": "mediapipe_blazeface",
-        "paddle_blazeface_fpn_ssh": "paddle_blazeface_fpn_ssh",
-        "blazeface_fpn_ssh": "paddle_blazeface_fpn_ssh",
-        "rt_detr": "rt_detr",
-        "rtdetr": "rt_detr",
-        "d_fine": "d_fine",
-        "dfine": "d_fine",
-        "pp_picodet": "pp_picodet",
-        "picodet": "pp_picodet",
-        "ultralytics": "ultralytics",
-        "yolov8": "yolov8",
-        "yolo": "ultralytics",
-        "yunet": "yunet",
-        "sface": "sface",
-    }
-    resolved = aliases.get(key, key)
+    resolved = _resolve_model_key(str(model_id))
 
     deny = PACKAGE_DENYLIST.get(resolved)
     if deny is not None:
@@ -758,23 +928,10 @@ def get_model_ingest_entry(model_id: str) -> ModelIngestEntry:
     result = audit_model_ingest(model_id)
     if not result.ok:
         raise LicensePolicyError(result)
-    key = _normalize_token(model_id).replace("-", "_").replace(" ", "_")
-    aliases = {
-        "blazeface": "mediapipe_blazeface",
-        "blazeface_fpn_ssh": "paddle_blazeface_fpn_ssh",
-        "rtdetr": "rt_detr",
-        "dfine": "d_fine",
-        "picodet": "pp_picodet",
-    }
-    resolved = aliases.get(key, key)
+    resolved = _resolve_model_key(model_id)
     entry = MODEL_INGEST_ENTRIES.get(resolved)
     if entry is None:
-        # audit passed via alias path that maps into MODEL_INGEST_ENTRIES
-        for candidate in MODEL_INGEST_ENTRIES.values():
-            if _normalize_token(candidate.model_id) == resolved:
-                return candidate
-            if _normalize_token(candidate.display_name).replace(" ", "_").replace("-", "_") == key:
-                return candidate
+        # audit_model_ingest already returned non-ok on a miss; unreachable.
         raise LicensePolicyError(result)
     return entry
 
@@ -797,7 +954,6 @@ def audit_tooling_dependency(package_name: str) -> LicenseAuditResult:
         )
     entry = TOOLING_ALLOWLIST.get(key)
     if entry is None:
-        # Also accept hyphen/underscore variants.
         entry = TOOLING_ALLOWLIST.get(key.replace("_", "-"))
     if entry is None:
         entry = TOOLING_ALLOWLIST.get(key.replace("-", "_"))
@@ -824,8 +980,8 @@ def is_tooling_allowlisted(package_name: str) -> bool:
 def audit_occluder_asset(asset: Mapping[str, Any]) -> LicenseAuditResult:
     """Gate an occluder-asset row at pack-build.
 
-    Required: a license field on the allowlist, and a clearance status that is
-    not uncleared / pending. Uncleared source photos FAIL pack-build.
+    Required: allowlisted license, positive clearance, and a non-empty
+    **registered** source. Unknown sources FAIL (not only research names).
     """
     if not isinstance(asset, Mapping):
         raise LicensePolicyError(
@@ -845,18 +1001,17 @@ def audit_occluder_asset(asset: Mapping[str, Any]) -> LicenseAuditResult:
         )
 
     clearance_raw = asset.get("clearance") or asset.get("clearance_status") or ""
+    if clearance_raw is not None and not isinstance(clearance_raw, str):
+        return _fail(
+            RejectionReason.INVALID_ROW,
+            detail=(
+                "occluder asset clearance must be a string, "
+                f"got {type(clearance_raw).__name__}"
+            ),
+            category=PolicyCategory.OCCLUDER_ASSET,
+        )
     clearance = _normalize_token(str(clearance_raw)) if clearance_raw else ""
-    # Pack-build requires an explicit positive clearance. Missing, uncleared,
-    # pending, or denied status FAILS even when SPDX looks commercially clean.
-    _OCCLUDER_ALLOWED_CLEARANCES = frozenset(
-        {
-            ClearanceStatus.ALLOWED.value,
-            ClearanceStatus.OPERATOR_CLEARED.value,
-            "cleared",
-            "license_cleared",
-        }
-    )
-    if clearance not in _OCCLUDER_ALLOWED_CLEARANCES:
+    if clearance not in OCCLUDER_ALLOWED_CLEARANCES:
         return _fail(
             RejectionReason.UNCLEARED_OCCLUDER_ASSET,
             detail=(
@@ -876,10 +1031,26 @@ def audit_occluder_asset(asset: Mapping[str, Any]) -> LicenseAuditResult:
         )
 
     source = _source_of(asset)
-    if source and _looks_like_research_source(source):
+    if not source:
         return _fail(
-            RejectionReason.RESEARCH_ONLY_SOURCE,
-            detail=f"occluder asset source {source!r} is research-only",
+            RejectionReason.UNKNOWN_SOURCE,
+            detail="occluder asset requires a non-empty registered source",
+            category=PolicyCategory.OCCLUDER_ASSET,
+        )
+    source_key = _normalize_token(source)
+    if source_key not in {_normalize_token(s) for s in OCCLUDER_REGISTERED_SOURCES}:
+        if _looks_like_research_source(source):
+            return _fail(
+                RejectionReason.RESEARCH_ONLY_SOURCE,
+                detail=f"occluder asset source {source!r} is research-only",
+                category=PolicyCategory.OCCLUDER_ASSET,
+            )
+        return _fail(
+            RejectionReason.UNKNOWN_SOURCE,
+            detail=(
+                f"occluder asset source {source!r} is not a registered "
+                "occluder provenance source"
+            ),
             category=PolicyCategory.OCCLUDER_ASSET,
         )
 
@@ -889,8 +1060,16 @@ def audit_occluder_asset(asset: Mapping[str, Any]) -> LicenseAuditResult:
     )
 
 
-def audit_synthetic_source(source_id: str) -> LicenseAuditResult:
-    """Audit a synthetic-identity source clearance entry."""
+def audit_synthetic_source(
+    source_id: str,
+    *,
+    row_clearance: str | None = None,
+) -> LicenseAuditResult:
+    """Audit a synthetic-identity source clearance entry.
+
+    When the registered entry carries a ``clearance_decision``, the caller must
+    supply a matching ``row_clearance`` value (PROV-04).
+    """
     if not source_id or not str(source_id).strip():
         return _fail(
             RejectionReason.UNKNOWN_SOURCE,
@@ -900,6 +1079,7 @@ def audit_synthetic_source(source_id: str) -> LicenseAuditResult:
     key = _normalize_token(source_id)
     # derived_from_model style: dcface/<generator-id> → dcface
     head = key.split("/", 1)[0]
+    # Also accept underscore-separated heads (synthface3_g1 → try full then head).
     entry = SYNTHETIC_SOURCE_ENTRIES.get(head)
     if entry is None:
         # Unknown synthetic sources default to pending (fail-closed).
@@ -921,6 +1101,18 @@ def audit_synthetic_source(source_id: str) -> LicenseAuditResult:
             ),
             category=PolicyCategory.SYNTHETIC_SOURCE,
         )
+    decision = entry.verification.clearance_decision
+    if decision:
+        if not row_clearance or str(row_clearance).strip() != decision:
+            return _fail(
+                RejectionReason.PENDING_LEGAL_CLEARANCE,
+                detail=(
+                    f"synthetic source {entry.source_id!r} requires "
+                    f"clearance={decision!r}; "
+                    f"got {row_clearance!r}"
+                ),
+                category=PolicyCategory.SYNTHETIC_SOURCE,
+            )
     return _pass(
         detail=(
             f"synthetic source {entry.source_id!r} commercial-allowed "
@@ -930,15 +1122,78 @@ def audit_synthetic_source(source_id: str) -> LicenseAuditResult:
     )
 
 
-def audit_provenance_row(row: Mapping[str, Any]) -> LicenseAuditResult:
+def _synthetic_audit_targets(
+    *,
+    source: str,
+    derived: str,
+    category: PolicyCategory,
+    has_generator_lineage: bool,
+) -> list[str]:
+    """Collect synthetic source ids that must be fail-closed audited.
+
+    Routes to ``audit_synthetic_source`` when:
+      - caller category is SYNTHETIC_SOURCE, or
+      - generator_lineage is present (and source is not pure self-generated), or
+      - derived_from_model head is non-empty and absent from the ingest registry, or
+      - source/derived head is a known SYNTHETIC_SOURCE_ENTRIES key.
+    """
+    targets: list[str] = []
+    seen: set[str] = set()
+
+    def _add(token: str) -> None:
+        t = token.strip()
+        if not t:
+            return
+        key = _normalize_token(t)
+        if key in seen:
+            return
+        seen.add(key)
+        targets.append(t)
+
+    if category is PolicyCategory.SYNTHETIC_SOURCE and source:
+        _add(source)
+
+    if has_generator_lineage and source:
+        # self-generated + lineage disclosure is informational (exemption path);
+        # do not treat pure self-generated rows as synthetic generators.
+        if _normalize_token(source) != "self-generated":
+            _add(source)
+
+    if derived:
+        head = _normalize_token(derived).split("/", 1)[0]
+        head = head.replace("-", "_")
+        # Also try first underscore segment of bare tokens.
+        if head and not _is_model_ingest_key(head):
+            # derived_from_model absent from ingest registry → synthetic path.
+            _add(derived)
+
+    for token in (source, derived):
+        if not token:
+            continue
+        head = _normalize_token(token).split("/", 1)[0]
+        if head in SYNTHETIC_SOURCE_ENTRIES:
+            _add(token)
+
+    return targets
+
+
+def audit_provenance_row(
+    row: Mapping[str, Any],
+    *,
+    category: PolicyCategory | None = None,
+) -> LicenseAuditResult:
     """Full provenance-row audit for a training-data (or synthetic) manifest row.
 
+    ``category`` is supplied by the **caller**, never trusted from the row body
+    for gate selection. A row-declared ``category`` is parsed through
+    ``PolicyCategory`` and rejected when unknown; it does not waive ``source``.
+
     Checks, in order:
+      0. structural field validation (types + required keys)
       1. ``derived_from_model`` against the pinned NC pattern list
       2. ``source`` against research-only sources (NOT ``generator_lineage``)
       3. ``license`` / SPDX allow-deny
-      4. synthetic-source clearance when ``source`` is a known synthetic id
-         or when ``derived_from_model`` starts with a synthetic generator id
+      4. synthetic-source clearance (fail-closed for unknown synthetic claims)
 
     ``generator_lineage`` is informational and never causes research-source
     rejection by itself.
@@ -952,50 +1207,138 @@ def audit_provenance_row(row: Mapping[str, Any]) -> LicenseAuditResult:
             )
         )
 
-    derived = _derived_of(row)
-    derived_result = audit_derived_from_model(derived or None)
+    # Caller-owned category (default training_data). Row body cannot pick its gate.
+    audit_category = category if category is not None else PolicyCategory.TRAINING_DATA
+    if not isinstance(audit_category, PolicyCategory):
+        return _fail(
+            RejectionReason.INVALID_ROW,
+            detail=f"category parameter must be PolicyCategory, got {audit_category!r}",
+            category=PolicyCategory.TRAINING_DATA,
+        )
+
+    # If the row declares a category, it must be a valid PolicyCategory value.
+    if "category" in row:
+        raw_cat = row["category"]
+        if raw_cat is not None and not isinstance(raw_cat, str):
+            return _fail(
+                RejectionReason.INVALID_ROW,
+                detail=(
+                    "row category must be a string, "
+                    f"got {type(raw_cat).__name__}"
+                ),
+                category=audit_category,
+            )
+        if isinstance(raw_cat, str) and raw_cat.strip():
+            try:
+                PolicyCategory(raw_cat.strip())
+            except ValueError:
+                return _fail(
+                    RejectionReason.INVALID_ROW,
+                    detail=f"unknown policy category {raw_cat!r}",
+                    category=audit_category,
+                )
+
+    # Structural validation — require derived_from_model KEY ('' is valid opt-out).
+    if "derived_from_model" not in row:
+        return _fail(
+            RejectionReason.INVALID_ROW,
+            detail="provenance row missing required field 'derived_from_model'",
+            category=audit_category,
+        )
+
+    for key in (
+        "source",
+        "license",
+        "derived_from_model",
+        "clearance",
+        "generator_lineage",
+    ):
+        if key not in row:
+            continue
+        raw = row[key]
+        if raw is None:
+            return _fail(
+                RejectionReason.INVALID_ROW,
+                detail=f"provenance row field {key!r} must be a string, got None",
+                category=audit_category,
+            )
+        if not isinstance(raw, str):
+            return _fail(
+                RejectionReason.INVALID_ROW,
+                detail=(
+                    f"provenance row field {key!r} must be a string, "
+                    f"got {type(raw).__name__}"
+                ),
+                category=audit_category,
+            )
+
+    derived = str(row["derived_from_model"]).strip()
+    derived_result = audit_derived_from_model(derived)
     if not derived_result.ok:
         return derived_result
 
-    source = _source_of(row)
-    if source:
-        source_result = audit_source(source)
-        if not source_result.ok:
-            return source_result
-    else:
-        # Training rows need a source; allow rows that are pure model-ingest
-        # checks to omit it only when category says so.
-        category = str(row.get("category") or PolicyCategory.TRAINING_DATA.value)
-        if category == PolicyCategory.TRAINING_DATA.value:
+    source = ""
+    if "source" in row and isinstance(row["source"], str):
+        source = row["source"].strip()
+
+    # Training-data audits always require source (row cannot waive via category).
+    if audit_category is PolicyCategory.TRAINING_DATA:
+        if not source:
             return _fail(
                 RejectionReason.UNKNOWN_SOURCE,
                 detail="training-data provenance row requires a source field",
                 category=PolicyCategory.TRAINING_DATA,
             )
+        source_result = audit_source(source)
+        if not source_result.ok:
+            return source_result
+    elif source:
+        source_result = audit_source(source)
+        if not source_result.ok:
+            return source_result
 
     spdx = _spdx_of(row)
     spdx_result = audit_spdx(spdx)
     if not spdx_result.ok:
         return spdx_result
 
-    # Synthetic-source clearance: when source or derived head is a synthetic id.
-    synthetic_keys = set(SYNTHETIC_SOURCE_ENTRIES)
-    candidates: list[str] = []
-    if source and _normalize_token(source).split("/", 1)[0] in synthetic_keys:
-        candidates.append(source)
-    if derived and _normalize_token(derived).split("/", 1)[0] in synthetic_keys:
-        candidates.append(derived)
-    for cand in candidates:
-        synth_result = audit_synthetic_source(cand)
+    has_lineage = bool(str(row.get("generator_lineage") or "").strip())
+    # When caller marks synthetic, or row declares synthetic_source category value.
+    effective_synth_category = audit_category
+    if "category" in row and isinstance(row["category"], str):
+        try:
+            declared = PolicyCategory(row["category"].strip())
+            if declared is PolicyCategory.SYNTHETIC_SOURCE:
+                effective_synth_category = PolicyCategory.SYNTHETIC_SOURCE
+        except ValueError:
+            pass
+
+    row_clearance_raw = row.get("clearance")
+    row_clearance = (
+        row_clearance_raw.strip()
+        if isinstance(row_clearance_raw, str)
+        else None
+    )
+
+    for cand in _synthetic_audit_targets(
+        source=source,
+        derived=derived,
+        category=effective_synth_category,
+        has_generator_lineage=has_lineage,
+    ):
+        synth_result = audit_synthetic_source(cand, row_clearance=row_clearance)
         if not synth_result.ok:
             return synth_result
 
-    # generator_lineage is intentionally unread for rejection purposes.
-    # Presence of FFHQ/CASIA there does not fail the row.
     return _pass(
         detail="provenance row passes license policy",
-        category=PolicyCategory.TRAINING_DATA,
+        category=audit_category,
     )
+
+
+def audit_tooling_row(row: Mapping[str, Any]) -> LicenseAuditResult:
+    """Audit a tooling dependency row (caller-owned TOOLING category)."""
+    return audit_provenance_row(row, category=PolicyCategory.TOOLING)
 
 
 def require_pass(result: LicenseAuditResult) -> LicenseAuditResult:

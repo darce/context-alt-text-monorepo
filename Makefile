@@ -445,6 +445,7 @@ test-scripts:
 		scripts/test_vlm3_decision_memo.py \
 		scripts/test_check_overrides_lock_digest.py scripts/test_consumer_setup_doc.py \
 		scripts/test_remote_gate_guards.py \
+		scripts/train/occlusion/test_license_policy.py \
 		-q --tb=short --durations=25
 	@bash scripts/deploy/tests/test-smoke-gate.sh
 

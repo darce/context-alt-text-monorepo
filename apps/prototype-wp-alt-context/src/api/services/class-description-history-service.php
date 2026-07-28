@@ -134,12 +134,14 @@ class DescriptionHistoryService {
 		$human_written = update_post_meta( $media_id, self::HUMAN_EDIT_META, $human_edit_payload );
 		if ( false === $human_written ) {
 			$current_human = get_post_meta( $media_id, self::HUMAN_EDIT_META, true );
-			// Accept only when storage already holds this correction's alt_text
-			// (byte-identical no-op). A missing or mismatched marker is a real fail.
-			$human_ok = is_array( $current_human )
-				&& isset( $current_human['alt_text'] )
-				&& is_string( $current_human['alt_text'] )
-				&& $normalized_alt_text === $current_human['alt_text'];
+			// Accept only a full-payload no-op: update_post_meta returns false when
+			// the stored value equals the value being written (the whole array).
+			// Comparing only alt_text would treat a stale prior marker (same text,
+			// older edited_at / different user_id) as success — forging 200 while
+			// telemetry attributes the correction to the wrong time/operator.
+			// Same-second re-save still passes: edited_at is second-granularity and
+			// the duplicate payload is identical. [BR-48a]
+			$human_ok = is_array( $current_human ) && $human_edit_payload === $current_human;
 			if ( ! $human_ok ) {
 				return new WP_Error(
 					'description_correction_failed',

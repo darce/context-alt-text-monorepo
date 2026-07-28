@@ -23,6 +23,7 @@ import {
   type ReviewQueueBandParam,
   type ReviewQueueKindParam,
 } from '../../../hooks/workbenchQueueUrl';
+import { UserFacingErrorNotice } from '../../../components/ui/UserFacingErrorNotice';
 import { EmptyStateWarning } from './EmptyStateWarning';
 import { MergeSuggestionCard } from './MergeSuggestionCard';
 import { PersonCommitControl } from './PersonCommitControl';
@@ -444,7 +445,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     // Lightweight open-target guard on the head card's cluster (when present).
     // Announce retirement; do NOT fight projection-driven index advance (removal ≠ retirement).
     const headClusterId = currentItem ? itemClusterId(currentItem) : null;
-    const { status: headLiveStatus } = useLiveReviewTarget(headClusterId, {
+    const { status: headLiveStatus, error: headLiveError } = useLiveReviewTarget(headClusterId, {
       resolveSurvivor: (retiredId) => resolveSurvivor(retiredId),
       onAnnounce: (message) => setLiveMessage(message),
       // Queue does not own a bound review pane — projection re-derivation advances the card.
@@ -835,6 +836,13 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
 
     return (
       <div className="acx-review-queue" data-live-target-status={headLiveStatus}>
+        {headLiveStatus === 'auth_expired' ? (
+          <UserFacingErrorNotice
+            className="acx-review-queue__auth-expired"
+            error={headLiveError}
+            fallback={__('Unable to verify this review target.', 'alt-context')}
+          />
+        ) : null}
         <header className="acx-review-queue__header">
           <h3 className="acx-review-queue__title">{__('Review Suggestions', 'alt-context')}</h3>
           {length > 0 ? (

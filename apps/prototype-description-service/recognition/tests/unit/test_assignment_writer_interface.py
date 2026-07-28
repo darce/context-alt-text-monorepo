@@ -221,11 +221,12 @@ async def test_persist_assignments_chunk_returns_zero_for_empty_input() -> None:
     member_repo = BulkTrackingMemberRepo()
     writer = AssignmentWriter(ClusteringSettings(), NullClusterRepository(), member_repo)
 
-    persisted, skipped, reps_added = await writer.persist_assignments_chunk([])
+    persisted, skipped, reps_added, guard_rejected = await writer.persist_assignments_chunk([])
 
     assert persisted == 0
     assert skipped == 0
     assert reps_added == 0
+    assert guard_rejected == set()
     assert member_repo.bulk_calls == []
 
 
@@ -240,11 +241,12 @@ async def test_persist_assignments_chunk_groups_by_cluster_and_calls_bulk_once_p
         _make_accept_decision(identity_id="id-1", cluster_id="cluster-1"),
         _make_accept_decision(identity_id="id-2", cluster_id="cluster-1"),
     ]
-    persisted, skipped, reps_added = await writer.persist_assignments_chunk(decisions)
+    persisted, skipped, reps_added, guard_rejected = await writer.persist_assignments_chunk(decisions)
 
     # Both members should be persisted; exactly one bulk call for the cluster.
     assert persisted == 2
     assert skipped == 0
+    assert guard_rejected == set()
     assert len(member_repo.bulk_calls) == 1
     cluster_id_used, members_passed = member_repo.bulk_calls[0]
     assert cluster_id_used == "cluster-1"
@@ -268,10 +270,11 @@ async def test_persist_assignments_chunk_uses_separate_bulk_call_per_cluster() -
         _make_accept_decision(identity_id="id-1", cluster_id="cluster-1"),
         _make_accept_decision(identity_id="id-2", cluster_id="cluster-2"),
     ]
-    persisted, skipped, reps_added = await writer.persist_assignments_chunk(decisions)
+    persisted, skipped, reps_added, guard_rejected = await writer.persist_assignments_chunk(decisions)
 
     assert persisted == 2
     assert skipped == 0
+    assert guard_rejected == set()
     assert len(member_repo.bulk_calls) == 2
     used_clusters = {call[0] for call in member_repo.bulk_calls}
     assert used_clusters == {"cluster-1", "cluster-2"}
@@ -296,6 +299,7 @@ async def test_persist_assignments_chunk_counts_skipped_duplicates() -> None:
         _make_accept_decision(identity_id="id-1", cluster_id="cluster-1"),
         _make_accept_decision(identity_id="id-2", cluster_id="cluster-1"),
     ]
-    persisted, skipped, reps_added = await writer.persist_assignments_chunk(decisions)
+    persisted, skipped, reps_added, guard_rejected = await writer.persist_assignments_chunk(decisions)
 
     assert skipped == 1
+    assert guard_rejected == set()

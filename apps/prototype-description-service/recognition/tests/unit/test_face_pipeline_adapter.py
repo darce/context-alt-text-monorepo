@@ -33,6 +33,7 @@ from recognition.application.embedding.detector import (
 from recognition.application.embedding.generator import UnavailableEmbeddingGenerator
 from recognition.application.embedding.manifest import EmbeddingModelManifest
 from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
+from recognition.infrastructure.face_pipeline._common import EmbedBatchResult
 from recognition.infrastructure.face_pipeline._common import RawDetection, ZeroNormEmbeddingError
 from recognition.infrastructure.face_pipeline.aligner import AlignmentError
 from recognition.infrastructure.face_pipeline.provenance import (
@@ -398,7 +399,7 @@ async def test_detect_populates_phash_and_quality(monkeypatch: pytest.MonkeyPatc
     runtime.aligner.align.return_value = aligned  # type: ignore[attr-defined]
     emb = np.ones(SFACE_EMBEDDING_DIM, dtype=np.float32)
     emb /= float(np.linalg.norm(emb))
-    runtime.embedder.embed.return_value = [emb]  # type: ignore[attr-defined]
+    runtime.embedder.embed.return_value = EmbedBatchResult(vectors=np.stack([emb], axis=0), norms=np.array([2.5], dtype=np.float32))  # type: ignore[attr-defined]
 
     det = fpa.FacePipelineFaceDetector(runtime, timeout=5.0)
     img = Image.new("RGB", (64, 64), color=(12, 34, 56))
@@ -1396,7 +1397,7 @@ async def test_per_face_align_failure_keeps_sibling(monkeypatch: pytest.MonkeyPa
     runtime.aligner.align.side_effect = _align  # type: ignore[attr-defined]
     emb = np.ones(SFACE_EMBEDDING_DIM, dtype=np.float32)
     emb /= float(np.linalg.norm(emb))
-    runtime.embedder.embed.return_value = [emb]  # type: ignore[attr-defined]
+    runtime.embedder.embed.return_value = EmbedBatchResult(vectors=np.stack([emb], axis=0), norms=np.array([2.5], dtype=np.float32))  # type: ignore[attr-defined]
 
     det = fpa.FacePipelineFaceDetector(runtime, timeout=5.0)
     faces = await det.detect([_png_bytes(Image.new("RGB", (128, 128), color=(10, 20, 30)))])

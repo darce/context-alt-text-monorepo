@@ -43,7 +43,7 @@ export function mountAttachmentEdit(
     return false;
   }
 
-  if (!payload?.nonce || !payload.endpoints) {
+  if (!payload?.nonce || !payload.ajaxUrl || !payload.endpoints) {
     return false;
   }
 
@@ -55,6 +55,7 @@ export function mountAttachmentEdit(
 
   registerConfig({
     nonce: payload.nonce,
+    ajaxUrl: payload.ajaxUrl,
     endpoints: payload.endpoints,
   });
 

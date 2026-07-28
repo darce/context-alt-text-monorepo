@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { JobProgress } from '../api/recognition/types/scan';
-import { getConfig, getEndpoint } from '../api/config';
+import { getEndpoint, getNonce } from '../api/config';
 import { useJobCoordination } from './useJobCoordination';
 import { broadcastJobProgress, parseDoneEvent, parseProgressEvent } from './useJobProgressStreamHelpers';
 
@@ -144,7 +144,8 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
     }
 
     const streamUrl = new URL(`${getEndpoint('recognitionJobs')}/${jobId}/stream`, window.location.origin);
-    const nonce = getConfig().nonce;
+    // Live nonce at every (re)connect so post-refresh reconnects carry the new value.
+    const nonce = getNonce();
     if (nonce) {
       streamUrl.searchParams.set('_wpnonce', nonce);
     }

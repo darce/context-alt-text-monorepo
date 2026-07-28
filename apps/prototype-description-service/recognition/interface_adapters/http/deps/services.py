@@ -108,8 +108,43 @@ class AuditRepositoryProtocol(Protocol):
 
 @lru_cache
 def get_settings() -> ClusteringSettings:
-    """Provide clustering settings from the recognition config."""
-    return get_recognition_settings().clustering
+    """Profile-resolved clustering settings: S2 threshold rebinding + S1 OACT bridge.
+
+    Under face_pipeline the FacePipelineSettings threshold overrides apply and the
+    profile-gated oact_coefficient is bridged into .quality; under insightface the
+    shared buffalo-era anchors are returned unchanged (coefficient already 0.0).
+    """
+    from recognition.config.settings import (
+        apply_oact_bridge_to_clustering,
+        resolve_effective_clustering_settings,
+        resolve_face_pipeline_knobs,
+    )
+
+    recog = get_recognition_settings()
+    resolved = resolve_effective_clustering_settings(recognition=recog)
+    knobs = resolve_face_pipeline_knobs(
+        face_pipeline=recog.face_pipeline,
+        clustering=recog.clustering,
+        clustering_limits=recog.clustering_limits,
+        identity_detection=recog.identity_detection,
+    )
+    return apply_oact_bridge_to_clustering(resolved, knobs)
+
+
+@lru_cache
+def get_clustering_limits_settings():
+    """Profile-resolved ClusteringLimitsSettings (S2 limits-threshold rebinding)."""
+    from recognition.config.settings import resolve_effective_limits_settings
+
+    return resolve_effective_limits_settings(recognition=get_recognition_settings())
+
+
+@lru_cache
+def get_identity_detection_settings():
+    """Profile-resolved IdentityDetectionSettings (S2 detection-threshold rebinding)."""
+    from recognition.config.settings import resolve_effective_detection_settings
+
+    return resolve_effective_detection_settings(recognition=get_recognition_settings())
 
 
 async def get_suggestion_service(
@@ -263,6 +298,7 @@ async def build_cluster_service(
     settings: ClusteringSettings | None = None,
 ) -> ClusterService:
     """Construct a ClusterService wired with SQLAlchemy repositories."""
+    # Profile-resolved thresholds for gate + discovery (S2 rebinding surface).
     settings = settings or get_settings()
 
     # Require an existing tenant record before clustering work proceeds.
@@ -279,6 +315,7 @@ async def build_cluster_service(
     assignment_writer = AssignmentWriter(settings, cluster_repo, member_repo, session=session)
     constraint_repo = SqlAlchemyConstraintRepository(session)
 
+    # Gate construction sites (services.py:153,282) consume resolved thresholds.
     gate = AssignmentGate(
         settings=settings,
         cluster_repository=cluster_repo,
@@ -593,6 +630,8 @@ async def get_persisted_cluster_job_service_clustering(
 
 __all__ = [
     "get_settings",
+    "get_clustering_limits_settings",
+    "get_identity_detection_settings",
     "get_shared_insightface_adapter",
     "get_suggestion_service",
     "get_cluster_repository",

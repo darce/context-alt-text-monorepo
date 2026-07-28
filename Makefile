@@ -451,10 +451,14 @@ test-scripts:
 
 # Permanent [TEST-15] discrimination guard for the licence/provenance gate.
 # test-scripts above proves test_license_policy.py is green; this proves that
-# green can go red. Applies 10 known-bad mutations to a copy of
-# license_policy.py plus one semantically inert CONTROL, and fails unless every
-# defect mutant is killed by its own named victim tests and the CONTROL
-# survives. Without it a suite that stops discriminating stays green in CI.
+# green can go red. Applies 12 known-bad mutations to license_policy.py in
+# place (restored under finally) plus one semantically inert CONTROL, and fails
+# unless every required mutant is killed by its own named victim tests and the
+# CONTROL survives. M12 is a declared known gap (no victim test yet; owned by
+# lane B4c) and is reported, not counted as a kill. Child pytest runs get a
+# scrubbed allowlist env and verdicts come from junitxml on disk plus a
+# baseline-executed-count invariant, so an injected plugin cannot forge kills.
+# Without it a suite that stops discriminating stays green in CI.
 mutation-guard-license-policy:
 	@python3 scripts/train/occlusion/mutation_guard.py --mutation all
 

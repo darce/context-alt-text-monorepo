@@ -261,8 +261,9 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
               className="button button-primary acx-media-selection__media-alt-suggest-accept"
               onClick={accept}
               disabled={isAccepting || !canAcceptDraft}
+              aria-describedby={isAcceptError ? errorId : undefined}
             >
-              {isAccepting ? __('Saving…', 'alt-context') : __('Accept', 'alt-context')}
+              {isAccepting ? __('Accepting draft…', 'alt-context') : __('Accept', 'alt-context')}
             </button>
             <button
               type="button"

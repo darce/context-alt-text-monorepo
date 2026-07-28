@@ -95,6 +95,10 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
             Table("identity_constraints", Base.metadata),
             Table("tenants", Base.metadata),
             Table("worker_capabilities", Base.metadata),
+            # FIR-9 atlas tables (purge_service delete_plan head entries)
+            Table("identity_atlas_runs", Base.metadata),
+            Table("identity_atlas_points", Base.metadata),
+            Table("identity_atlas_queue_dispositions", Base.metadata),
         ]
         await conn.run_sync(Base.metadata.create_all, tables=tables)
         # Create mv_identity_cluster_centroids as a regular table for SQLite

@@ -18,6 +18,9 @@ from db.models import (
     ClusteringJobReport,
     ClusterMergeSuggestion,
     CurationReplayRecord,
+    IdentityAtlasPoint,
+    IdentityAtlasQueueDisposition,
+    IdentityAtlasRun,
     IdentityCluster,
     IdentityClusterBlock,
     IdentityClusteringJob,
@@ -200,6 +203,24 @@ class TenantPurgeService:
     ) -> dict[str, int]:
         delete_plan = [
             (
+                "identity_atlas_queue_dispositions",
+                IdentityAtlasQueueDisposition,
+                IdentityAtlasQueueDisposition.tenant_id == tenant_id,
+                self._atlas_disposition_predicate(scope),
+            ),
+            (
+                "identity_atlas_points",
+                IdentityAtlasPoint,
+                IdentityAtlasPoint.tenant_id == tenant_id,
+                self._atlas_point_predicate(scope_ids, scope),
+            ),
+            (
+                "identity_atlas_runs",
+                IdentityAtlasRun,
+                IdentityAtlasRun.tenant_id == tenant_id,
+                self._atlas_run_predicate(scope),
+            ),
+            (
                 "identity_constraints",
                 IdentityConstraint,
                 IdentityConstraint.tenant_id == tenant_id,
@@ -259,6 +280,28 @@ class TenantPurgeService:
         for label, model, tenant_predicate, predicate in delete_plan:
             deleted_counts[label] = await self._delete_rows(model, tenant_predicate, predicate)
         return deleted_counts
+
+    def _atlas_disposition_predicate(self, scope: str) -> Any:
+        # Dispositions have no identity/cluster columns; full-tenant purge only.
+        if scope != "disposed":
+            return None
+        return False
+
+    def _atlas_point_predicate(self, scope_ids: PurgeScopeIds, scope: str) -> Any:
+        if scope != "disposed":
+            return None
+        if not scope_ids.identity_ids and not scope_ids.cluster_ids:
+            return False
+        return or_(
+            IdentityAtlasPoint.identity_id.in_(scope_ids.identity_ids),
+            IdentityAtlasPoint.cluster_id.in_(scope_ids.cluster_ids),
+        )
+
+    def _atlas_run_predicate(self, scope: str) -> Any:
+        # Runs have no identity/cluster columns; full-tenant purge only.
+        if scope != "disposed":
+            return None
+        return False
 
     def _identity_constraint_predicate(self, identity_ids: list[UUID]) -> Any:
         if not identity_ids:

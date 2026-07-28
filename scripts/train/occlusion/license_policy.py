@@ -208,6 +208,11 @@ _RESEARCH_ONLY_LICENSE_CF: frozenset[str] = frozenset(
 # Training-data / corpus sources that taint commercial use when present in
 # the row ``source`` (or ``license`` tag) field. ``generator_lineage`` is NOT
 # checked against this set — it is informational only.
+#
+# Matching is exact membership against the import-time expanded frozenset
+# ``RESEARCH_SOURCE_IDS_EXPANDED`` (B4b / WEB-24 / SECD-05). Shape-inference
+# (progressive prefixes, startswith, version-segment regexes) is intentionally
+# absent: expand the trusted registry, never the untrusted input.
 RESEARCH_ONLY_SOURCES: frozenset[str] = frozenset(
     {
         "widerface",
@@ -228,25 +233,14 @@ RESEARCH_ONLY_SOURCES: frozenset[str] = frozenset(
     }
 )
 
-# Compact (separator-stripped) forms of research-only sources for matching.
-_RESEARCH_ONLY_COMPACT: frozenset[str] = frozenset(
-    re.sub(r"[^a-z0-9]+", "", s.casefold()) for s in RESEARCH_ONLY_SOURCES
-)
-
 
 # ---------------------------------------------------------------------------
-# PINNED non-commercial model pattern list (buffalo OUTPUT ban wall 1)
+# PINNED non-commercial model id seeds (buffalo OUTPUT ban wall 1)
 # ---------------------------------------------------------------------------
 
-# Patterns are matched case-insensitively against ``derived_from_model``
-# after shared normalisation (NFKC → strip Cf → casefold). Glob semantics
-# (slash-components; see ``_pattern_matches``):
-#   - ``prefix/*``  → slash-component equals prefix (or insightface+buffalo*)
-#   - ``prefix*``   → component == prefix or ^prefix[_-]?[a-z]{0,3}\d*$
-#   - bare token    → same as path-head / constrained exact
-#
-# ``dcface/*`` is intentionally ABSENT — operator clearance
-# ``dcface_operator_clearance_20260723`` keeps it off this list.
+# Patterns retained as declarative seeds for documentation + M2 discrimination.
+# Matching no longer walks glob/prefix shape on untrusted input (B4b); seeds
+# feed ``NC_MODEL_IDS`` / ``NC_MODEL_IDS_EXPANDED`` at import time.
 NC_MODEL_PATTERNS: tuple[str, ...] = (
     "insightface/*",
     "insightface",
@@ -256,13 +250,37 @@ NC_MODEL_PATTERNS: tuple[str, ...] = (
 
 # Extra pinned NC model ids beyond table-derived entries (ArcFace ecosystem
 # weights that are non-commercial but not always present as registry rows).
+# Explicit multi-segment variants live in ``_NC_EXPLICIT_VARIANTS`` so the
+# matcher never infers them from spelling shape.
 _PINNED_NC_MODEL_IDS: frozenset[str] = frozenset(
     {
         "buffalo",
         "buffalo_s",
         "buffalo_sc",
+        "buffalo_l",
+        "buffalo_l2",
         "retinaface",
         "arcface",
+        "antelopev2",
+        "insightface",
+    }
+)
+
+# Explicit NC forms that must fail but are not a single common-suffix hop from
+# a seed (multi-segment InsightFace pack / backbone tags).
+_NC_EXPLICIT_VARIANTS: frozenset[str] = frozenset(
+    {
+        "insightface_buffalo_l",
+        "insightface_buffalo_s",
+        "insightface_buffalo_sc",
+        "insightface_buffalo_l2",
+        "retinaface_r50",
+        "retinaface_mnet025",
+        "retinaface_mnet025_v2",
+        "arcface_r100",
+        "arcface_glint360k_r100",
+        "vec2face_g1",
+        "antelope_v2",
     }
 )
 
@@ -438,6 +456,13 @@ PACKAGE_DENYLIST: dict[str, PackageDenylistEntry] = {
         reason=RejectionReason.DENYLISTED_PACKAGE,
         notes="Ultralytics AGPL family; banned for cascade person-detection.",
     ),
+    "yolo": PackageDenylistEntry(
+        package_id="yolo",
+        display_name="YOLO (Ultralytics family)",
+        spdx_id="AGPL-3.0",
+        reason=RejectionReason.DENYLISTED_PACKAGE,
+        notes="Ultralytics AGPL family alias; banned for cascade person-detection.",
+    ),
     "insightface": PackageDenylistEntry(
         package_id="insightface",
         display_name="InsightFace / buffalo",
@@ -570,10 +595,171 @@ _MODEL_ALIASES: dict[str, str] = {
     "picodet": "pp_picodet",
     "ultralytics": "ultralytics",
     "yolov8": "yolov8",
-    "yolo": "ultralytics",
+    "yolo": "yolo",
     "yunet": "yunet",
     "sface": "sface",
 }
+
+
+# ---------------------------------------------------------------------------
+# Import-time registry expansion (B4b inversion)
+# ---------------------------------------------------------------------------
+
+# Bounded variant suffixes cross-producted with registry base ids at import.
+# Applied to the *registry*, never walked as a grammar over untrusted input.
+_COMMON_VARIANT_SUFFIXES: tuple[str, ...] = (
+    "train",
+    "val",
+    "test",
+    "aligned",
+    "hq",
+    "extra",
+    "hd",
+    "dev",
+    "full",
+    "crop",
+    "raw",
+    "orig",
+    "r50",
+    "r100",
+    "l",
+    "s",
+    "sc",
+    "l2",
+    "g1",
+    "mnet025",
+    "v1",
+    "v2",
+    "v3",
+    "v4",
+    "256",
+    "512",
+    "1024",
+)
+
+# Research sources that must stay exact-only after expansion (BR-58).
+_RESEARCH_EXACT_ONLY: frozenset[str] = frozenset({"mfr"})
+
+# Known model-file extensions stripped before canonicalisation (BR-54).
+_MODEL_FILE_EXTENSIONS: tuple[str, ...] = (
+    ".onnx",
+    ".pt",
+    ".pth",
+    ".bin",
+    ".safetensors",
+    ".pkl",
+    ".pb",
+    ".tflite",
+    ".params",
+)
+
+
+def canonical(value: str) -> str | None:
+    """NFKC → strip Cf/format chars → casefold → unify separators → collapse.
+
+    Separators unified to ``_``: runs of ``[-_.\\s]+``. Slash (``/``) and
+    backslash are preserved as path separators so slash-components can be
+    exact-matched independently. Returns ``None`` when any non-ASCII residue
+    survives (untrusted / undecidable — callers treat as ``invalid_row``).
+    """
+    if value is None:
+        return None
+    text = unicodedata.normalize("NFKC", str(value))
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
+    text = text.strip().casefold()
+    if not text:
+        return ""
+    # Preserve path separators; normalise backslash to slash.
+    text = text.replace("\\", "/")
+    # Strip known model-file extensions on each slash component (BR-54).
+    parts = text.split("/")
+    stripped_parts: list[str] = []
+    for part in parts:
+        p = part
+        for ext in _MODEL_FILE_EXTENSIONS:
+            if p.endswith(ext):
+                p = p[: -len(ext)]
+                break
+        stripped_parts.append(p)
+    text = "/".join(stripped_parts)
+    # Unify non-slash separators to underscore; collapse runs; trim.
+    text = re.sub(r"[-_.\s]+", "_", text)
+    text = re.sub(r"_+", "_", text)
+    text = "/".join(seg.strip("_") for seg in text.split("/"))
+    text = text.strip("_")
+    if any(ord(ch) > 127 for ch in text):
+        return None
+    return text
+
+
+def _compact_canonical(value: str) -> str:
+    """Drop underscores from a canonical id (``casia_webface`` → ``casiawebface``)."""
+    return value.replace("_", "")
+
+
+def _expand_id_forms(
+    base: str,
+    *,
+    exact_only: bool = False,
+    extra_variants: tuple[str, ...] | frozenset[str] = (),
+    suffixes: tuple[str, ...] = _COMMON_VARIANT_SUFFIXES,
+) -> set[str]:
+    """Expand one registry base id into exact membership forms.
+
+    Produces the canonical form, its compact form, optional explicit variants,
+    and (unless ``exact_only``) a cross-product with ``suffixes`` as both
+    ``base_suf`` and unsplit ``basesuf`` (plus compact equivalents).
+    """
+    out: set[str] = set()
+    c = canonical(base)
+    if c is None or c == "":
+        return out
+    out.add(c)
+    out.add(_compact_canonical(c))
+    for raw in extra_variants:
+        vc = canonical(raw)
+        if vc is None or vc == "":
+            continue
+        out.add(vc)
+        out.add(_compact_canonical(vc))
+    if exact_only:
+        return out
+    # Separated and unsplit suffix forms (registry-side expansion only).
+    for suf in suffixes:
+        # Separated form (vggface2_train, ffhq_aligned, casia_webface_extra).
+        separated = f"{c}_{suf}"
+        out.add(separated)
+        # M8 discrimination anchor: unsplit compound (ffhq256, widerfacehd,
+        # casiawebfaceextra). Built from compact base so it is NOT a duplicate
+        # of compact(separated) for multi-segment bases.
+        unsplit = f"{_compact_canonical(c)}{suf}"  # unsplit compound startswith-equivalent
+        out.add(unsplit)
+    return out
+
+
+def _expand_ids(
+    ids: frozenset[str] | set[str] | tuple[str, ...],
+    *,
+    exact_only_ids: frozenset[str] = frozenset(),
+    extra_variants: frozenset[str] = frozenset(),
+) -> frozenset[str]:
+    """Expand a set of base ids with common suffixes + compact forms."""
+    out: set[str] = set()
+    for raw in ids:
+        c = canonical(raw)
+        if c is None or not c:
+            continue
+        exact = c in exact_only_ids or raw in exact_only_ids
+        out |= _expand_id_forms(c, exact_only=exact)
+    for raw in extra_variants:
+        vc = canonical(raw)
+        if vc is None or not vc:
+            continue
+        out.add(vc)
+        out.add(_compact_canonical(vc))
+        # Also expand explicit variants with one suffix hop (retinaface_mnet025 + v2).
+        out |= _expand_id_forms(vc, exact_only=False)
+    return frozenset(out)
 
 
 def _derive_nc_model_ids() -> frozenset[str]:
@@ -587,8 +773,10 @@ def _derive_nc_model_ids() -> frozenset[str]:
       * ``SYNTHETIC_SOURCE_ENTRIES`` whose commercial_use is not ALLOWED
       * ``PACKAGE_DENYLIST`` entries tagged ``NC_MODEL_DERIVED``
       * stems extracted from ``NC_MODEL_PATTERNS``
+      * ``_NC_EXPLICIT_VARIANTS`` multi-segment pack ids
     """
     ids: set[str] = set(_PINNED_NC_MODEL_IDS)
+    ids.update(_NC_EXPLICIT_VARIANTS)
     for key, entry in MODEL_INGEST_ENTRIES.items():
         if entry.verification.commercial_use is not CommercialUse.ALLOWED:
             ids.add(key)
@@ -609,72 +797,130 @@ def _derive_nc_model_ids() -> frozenset[str]:
             ids.add(p[:-1])
         else:
             ids.add(p)
-    return frozenset(ids)
+    # Canonicalise seed forms.
+    out: set[str] = set()
+    for i in ids:
+        c = canonical(i)
+        if c:
+            out.add(c)
+    return frozenset(out)
 
 
 # Derived at import time — any non-ALLOWED table entry is denylisted for
 # derived_from_model matching (plan: any model whose license_policy entry is NC).
 NC_MODEL_IDS: frozenset[str] = _derive_nc_model_ids()
 
+# Expanded denial sets — exact membership only (B4b / WEB-24).
+# Built solely from NC_MODEL_IDS so M3 (empty NC_MODEL_IDS) is discrimination-complete.
+NC_MODEL_IDS_EXPANDED: frozenset[str] = _expand_ids(NC_MODEL_IDS)
 
-# ---------------------------------------------------------------------------
-# Pure matching helpers
-# ---------------------------------------------------------------------------
-
-
-# Version-ish slash-component suffix admitted after an NC id head
-# (retinaface_r50, buffalo_l, mnet025, g1, …) — rejects free-form product words.
-_NC_VERSION_SEG_RE = re.compile(r"^(?:[a-z]{1,3}|[a-z]*\d+[a-z0-9]*)$")
-
-# Constrained buffalo* (and similar) glob: buffalo_l / buffalo_sc / buffalo_l2
-# but not buffalo_bill_detector or buffalo-wings-detector.
-_PREFIX_GLOB_VERSION_RE = re.compile(r"[_-]?[a-z]{0,3}\d*$")
-
-# Research-corpus variant suffixes for unsplit compounds (ffhq256, widerfacehd).
-_RESEARCH_UNSPLIT_SUFFIXES: tuple[str, ...] = (
-    "train",
-    "val",
-    "test",
-    "aligned",
-    "hq",
-    "extra",
-    "hd",
-    "dev",
-    "full",
-    "crop",
-    "raw",
-    "orig",
-    "clean",
+RESEARCH_SOURCE_IDS_EXPANDED: frozenset[str] = _expand_ids(
+    RESEARCH_ONLY_SOURCES,
+    exact_only_ids=_RESEARCH_EXACT_ONLY,
 )
-_RESEARCH_VERSION_SEGS: frozenset[str] = frozenset(
+
+# Synthetic registry: base ids + bounded version suffixes (dcface_v2, …).
+_SYNTHETIC_BASE_IDS: frozenset[str] = frozenset(SYNTHETIC_SOURCE_ENTRIES.keys())
+SYNTHETIC_SOURCE_IDS_EXPANDED: frozenset[str] = _expand_ids(_SYNTHETIC_BASE_IDS)
+
+# Map every expanded synthetic id back to its registry entry key (exact only).
+_SYNTHETIC_EXPANDED_TO_HEAD: dict[str, str] = {}
+for _sk, _sentry in SYNTHETIC_SOURCE_ENTRIES.items():
+    _sc = canonical(_sk)
+    if _sc is None:
+        continue
+    for _form in _expand_id_forms(_sc, exact_only=False):
+        _SYNTHETIC_EXPANDED_TO_HEAD.setdefault(_form, _sc)
+
+
+# Clean-name corpus that must never land in denial sets (import-time safety).
+_MUST_PASS_CORPUS: frozenset[str] = frozenset(
     {
-        "train",
-        "val",
-        "test",
-        "aligned",
-        "hq",
-        "extra",
-        "hd",
-        "dev",
-        "full",
-        "crop",
-        "raw",
-        "orig",
-        "clean",
+        "buffalo-wings-detector",
+        "buffalo_bill_detector",
+        "insightface-free",
+        "not-insightface",
+        "ffhq-tools",
+        "celebase",
+        "webfaces-r-us",
+        "our_widerface_replacement",
+        "arcface_alternative_v2",
+        "not-retinaface",
+        "mfr_train",
+        "mfr/tools",
+        "buffalos-eye/v1",
+        "my-buffalo-free",
+        "retinaface-free-reimpl",
+        "insightfaces-r-us/model",
+        "casiaset-detector",
+        "mfrx-vendor",
+        "ffhq_free_internal",
+        "glint360k_free",
+        "commercial-ffhq-alternative",
+        "dataset_not_ffhq",
+        "notffhq",
+        "casia-device",
+        "casiadevice",
+        "deepglint-clean",
+        "casia-clean",
+        "ms1m-clean",
+        "arcface_mit",
+        "arcface_bsd",
     }
 )
 
 
-@dataclass(frozen=True, slots=True)
-class _MatchNorm:
-    """Shared normalisation result for NC + research matchers (BR-21)."""
+def _assert_no_must_pass_collisions() -> None:
+    """Import-time guard: expanded denial sets must not contain clean names."""
+    denial_nc = NC_MODEL_IDS_EXPANDED
+    denial_rs = RESEARCH_SOURCE_IDS_EXPANDED
+    exact_only = frozenset(
+        x
+        for raw in _RESEARCH_EXACT_ONLY
+        for x in filter(
+            None,
+            (
+                canonical(raw),
+                _compact_canonical(canonical(raw) or ""),
+            ),
+        )
+    )
+    collisions: set[str] = set()
+    for name in _MUST_PASS_CORPUS:
+        c = canonical(name)
+        if c is None:
+            continue
+        # whole-string
+        if c in denial_nc or _compact_canonical(c) in denial_nc:
+            collisions.add(name)
+            continue
+        if c in denial_rs or _compact_canonical(c) in denial_rs:
+            collisions.add(name)
+            continue
+        if "/" in c:
+            for part in c.split("/"):
+                if not part:
+                    continue
+                if part in denial_nc or _compact_canonical(part) in denial_nc:
+                    collisions.add(name)
+                    break
+                if part in exact_only or _compact_canonical(part) in exact_only:
+                    continue
+                if part in denial_rs or _compact_canonical(part) in denial_rs:
+                    collisions.add(name)
+                    break
+    if collisions:
+        raise AssertionError(
+            f"registry expansion over-rejects clean names: {sorted(collisions)}"
+        )
 
-    text: str
-    slash_parts: tuple[str, ...]
-    segments: tuple[str, ...]
-    compact: str
-    has_non_ascii: bool
-    has_separators: bool
+
+_assert_no_must_pass_collisions()
+
+
+# ---------------------------------------------------------------------------
+# Pure matching helpers — exact set membership only (B4b / WEB-24 / SECD-05)
+# ---------------------------------------------------------------------------
 
 
 def _normalize_token(value: str) -> str:
@@ -682,9 +928,9 @@ def _normalize_token(value: str) -> str:
 
 
 def _nfkc_lower(value: str) -> str:
-    """Legacy helper — prefers :func:`_normalize_for_match` for new call sites."""
-    text, _ = _prepare_match_text(value)
-    return text
+    """Legacy helper — prefers :func:`canonical` for new call sites."""
+    c = canonical(value)
+    return c if c is not None else ""
 
 
 def _prepare_match_text(value: str) -> tuple[str, bool]:
@@ -701,55 +947,34 @@ def _prepare_match_text(value: str) -> tuple[str, bool]:
     return text, has_non_ascii
 
 
-def _normalize_for_match(value: str) -> _MatchNorm:
-    """Single shared normalisation used by both NC and research matchers."""
-    text, has_non_ascii = _prepare_match_text(value)
-    if not text:
-        return _MatchNorm(
-            text="",
-            slash_parts=(),
-            segments=(),
-            compact="",
-            has_non_ascii=has_non_ascii,
-            has_separators=False,
-        )
-    # Normalise any residual path separators to ``/`` (NFKC already folds
-    # fullwidth solidus); split slash components independently of ``_``/``-``.
-    slash_text = text.replace("\\", "/")
-    slash_parts = tuple(p for p in re.split(r"/+", slash_text) if p)
-    segments = tuple(s for s in re.split(r"[^a-z0-9]+", text) if s)
-    # Only build compact when pure ASCII — otherwise confusables would drop out.
-    compact = "" if has_non_ascii else re.sub(r"[^a-z0-9]+", "", text)
-    has_separators = bool(re.search(r"[^a-z0-9]", text))
-    return _MatchNorm(
-        text=text,
-        slash_parts=slash_parts,
-        segments=segments,
-        compact=compact,
-        has_non_ascii=has_non_ascii,
-        has_separators=has_separators,
-    )
-
-
 def _compact_alnum(value: str) -> str:
-    """Strip all non-alphanumeric characters (research-source matching)."""
-    return _normalize_for_match(value).compact
+    """Strip all non-alphanumeric characters (legacy helper)."""
+    c = canonical(value)
+    if c is None:
+        return ""
+    return _compact_canonical(c)
 
 
 def _split_segments(value: str) -> list[str]:
-    """NFKC-normalise then split on non-alphanumeric runs."""
-    return list(_normalize_for_match(value).segments)
-
-
-def _part_segments(part: str) -> list[str]:
-    """Split a single slash-component on non-alphanumeric runs."""
-    return [s for s in re.split(r"[^a-z0-9]+", part) if s]
+    """Canonicalise then split on ``_`` / ``/``."""
+    c = canonical(value)
+    if not c:
+        return []
+    parts: list[str] = []
+    for slash in c.split("/"):
+        parts.extend(s for s in slash.split("_") if s)
+    return parts
 
 
 def _resolve_model_key(model_id: str) -> str:
-    """Normalise a model id / alias to a registry key."""
-    key = _normalize_token(str(model_id)).replace("-", "_").replace(" ", "_")
-    return _MODEL_ALIASES.get(key, key)
+    """Normalise a model id / alias to a registry key (exact, no prefix walk)."""
+    c = canonical(str(model_id))
+    if c is None or not c:
+        key = _normalize_token(str(model_id)).replace("-", "_").replace(" ", "_")
+        return _MODEL_ALIASES.get(key, key)
+    # Use final slash component for path-shaped ids.
+    head = c.split("/")[-1] if "/" in c else c
+    return _MODEL_ALIASES.get(head, head)
 
 
 def _is_model_ingest_key(head: str) -> bool:
@@ -758,290 +983,133 @@ def _is_model_ingest_key(head: str) -> bool:
     return resolved in MODEL_INGEST_ENTRIES
 
 
-def _is_nc_version_seg(seg: str) -> bool:
-    return bool(_NC_VERSION_SEG_RE.fullmatch(seg))
+# Whole-string-only ids (BR-58): never match as a mere slash component.
+_EXACT_ONLY_MEMBERSHIP: frozenset[str] = frozenset(
+    {
+        x
+        for raw in _RESEARCH_EXACT_ONLY
+        for x in (
+            {canonical(raw) or "", _compact_canonical(canonical(raw) or "")}
+        )
+        if x
+    }
+)
 
 
-def _glob_prefix_component_match(prefix: str, component: str) -> bool:
-    """``prefix*`` against one slash-component (not micro-segments).
+def _membership_hit(
+    c: str,
+    expanded: frozenset[str],
+    *,
+    exact_only: frozenset[str] = frozenset(),
+) -> str | None:
+    """Exact membership of canonical form or any slash component (WEB-24).
 
-    Admits ``buffalo``, ``buffalo_l``, ``buffalo-sc``, ``buffalo_l2``;
-    rejects ``buffalo-wings-detector`` and ``buffalo_bill_detector``.
+    ``exact_only`` ids match the whole string only — never as a path component
+    of a longer token (BR-58: ``mfr/tools`` must not trip on bare ``mfr``).
     """
-    if component == prefix:
-        return True
-    if not component.startswith(prefix):
-        return False
-    return bool(_PREFIX_GLOB_VERSION_RE.fullmatch(component[len(prefix) :]))
-
-
-def _match_insightface_style(prefix: str, norm: _MatchNorm) -> bool:
-    """Match ``insightface`` as a slash-component head / whole token only.
-
-    Mid-token hyphen segments (``not-insightface``) and free suffixes
-    (``insightface-free``) do not match. Underscore model forms such as
-    ``insightface_buffalo_l`` still match when the continuation is buffalo*.
-    Compact equality (``insight face`` → ``insightface``) also matches.
-    """
-    if norm.text == prefix or norm.text.startswith(prefix + "/"):
-        return True
-    if norm.compact == prefix:
-        return True
-    for part in norm.slash_parts:
-        if part == prefix:
-            return True
-        part_segs = _part_segments(part)
-        if not part_segs or part_segs[0] != prefix:
-            continue
-        rest = part_segs[1:]
-        if not rest:
-            return True
-        # Continuation must look like an NC sub-model (buffalo family), not
-        # an unrelated product suffix such as ``free``.
-        if rest[0] == "buffalo" or _glob_prefix_component_match(
-            "buffalo", "_".join(rest)
-        ):
-            return True
-        if rest[0] == "buffalo" or _glob_prefix_component_match("buffalo", rest[0]):
-            return True
-    return False
-
-
-def _match_prefix_glob(prefix: str, norm: _MatchNorm) -> bool:
-    """Constrained ``prefix*`` glob over slash-components and the full token."""
-    if _glob_prefix_component_match(prefix, norm.text):
-        return True
-    for part in norm.slash_parts:
-        if _glob_prefix_component_match(prefix, part):
-            return True
-    return False
-
-
-def _match_nc_ids(norm: _MatchNorm, nc_ids: set[str]) -> str | None:
-    """Match ``NC_MODEL_IDS`` via slash parts + progressive ``_``-joined prefixes.
-
-    A progressive head matches only when the remaining segments are all
-    version-ish (``r50``, ``g1``, ``mnet025``, ``l`` …), so
-    ``arcface_alternative_v2`` and ``not-retinaface`` stay clean while
-    ``retinaface_r50`` / ``vec2face_g1`` fail.
-    """
-    if norm.text in nc_ids:
-        return norm.text
-    # Also accept hyphen form of full text normalised to underscores.
-    text_us = norm.text.replace("-", "_")
-    if text_us in nc_ids:
-        return text_us
-
-    for part in norm.slash_parts:
-        part_us = part.replace("-", "_")
-        if part in nc_ids:
-            return part
-        if part_us in nc_ids:
-            return part_us
-        part_segs = _part_segments(part)
-        for k in range(1, len(part_segs) + 1):
-            joined = "_".join(part_segs[:k])
-            if joined not in nc_ids:
+    if not c:
+        return None
+    if c in expanded:
+        return c
+    compact = _compact_canonical(c)
+    if compact and compact in expanded:
+        return compact
+    # Slash components only — never progressive underscore prefixes (BR-50/52).
+    if "/" in c:
+        for part in c.split("/"):
+            if not part:
                 continue
-            rest = part_segs[k:]
-            if not rest or all(_is_nc_version_seg(s) for s in rest):
-                return joined
+            if part in exact_only or _compact_canonical(part) in exact_only:
+                continue
+            if part in expanded:
+                return part
+            pc = _compact_canonical(part)
+            if pc and pc in expanded:
+                return pc
     return None
+
+
+def _live_nc_expanded() -> frozenset[str]:
+    """NC expanded set, honouring monkeypatched ``NC_MODEL_IDS`` (BR-38)."""
+    return _expand_ids(NC_MODEL_IDS)
 
 
 def match_nc_model_pattern(derived_from_model: str) -> str | None:
-    """Return the pinned NC pattern / id that matches ``derived_from_model``.
+    """Return the pinned NC id that matches ``derived_from_model``, or None.
 
-    Matching uses the shared :func:`_normalize_for_match` pipeline (NFKC,
-    strip Cf, casefold). ``NC_MODEL_PATTERNS`` and ``NC_MODEL_IDS`` share
-    slash-component + progressive-prefix semantics so versioned forms like
-    ``retinaface_r50`` hit while free-form names like ``buffalo-wings-detector``
-    do not.
-
-    Compact alnum form is also checked so ``insight face`` / ``insight.face``
-    collapse to the pinned ``insightface`` id (BR-21).
-
-    ``vec2face-successor/v1`` is not classified as the table entry ``vec2face``
-    (rest segment is not version-ish); that case is fail-closed via synthetic
-    clearance instead.
+    Exact set membership against ``NC_MODEL_IDS_EXPANDED`` after
+    :func:`canonical` (B4b / WEB-24). Non-ASCII residue yields ``None``;
+    callers must treat that as ``invalid_row`` via their own canonical check.
     """
     if not derived_from_model or not str(derived_from_model).strip():
         return None
-    norm = _normalize_for_match(str(derived_from_model))
-    if norm.has_non_ascii or (not norm.segments and not norm.text):
+    c = canonical(str(derived_from_model))
+    if c is None:
         return None
-
-    nc_ids = {_normalize_token(m) for m in NC_MODEL_IDS}
-
-    for pattern in NC_MODEL_PATTERNS:
-        if _pattern_matches(pattern, norm):
-            return pattern
-
-    hit = _match_nc_ids(norm, nc_ids)
-    if hit is not None:
-        return hit
-
-    # Compact form: "insight face" / "insight.face" → insightface (BR-21).
-    if norm.compact and norm.compact in nc_ids:
-        return norm.compact
-    if norm.compact and _glob_prefix_component_match("buffalo", norm.compact):
-        return "buffalo*"
-    return None
-
-
-def _pattern_matches(pattern: str, norm: _MatchNorm) -> bool:
-    p = _normalize_token(pattern)
-    if p.endswith("/*"):
-        return _match_insightface_style(p[:-2], norm)
-    if p.endswith("*"):
-        return _match_prefix_glob(p[:-1], norm)
-    # Bare token: treat like path-head (insightface) and constrained exact.
-    if _match_insightface_style(p, norm):
-        return True
-    return _match_prefix_glob(p, norm)
-
-
-def _is_research_version_seg(seg: str) -> bool:
-    if seg in _RESEARCH_VERSION_SEGS:
-        return True
-    if re.fullmatch(r"v\d+[a-z0-9]*", seg):
-        return True
-    if re.fullmatch(r"r\d+[a-z0-9]*", seg):
-        return True
-    if re.fullmatch(r"\d+[a-z0-9]*", seg):
-        return True
-    return False
-
-
-def _research_unsplit_remainder_ok(remainder: str) -> bool:
-    """True when unsplit compact remainder is a version/variant suffix (BR-31)."""
-    if not remainder:
-        return True
-    if remainder[0].isdigit():
-        return True
-    for suf in _RESEARCH_UNSPLIT_SUFFIXES:
-        if remainder == suf or remainder.startswith(suf):
-            return True
-    if re.match(r"^(?:v|r)\d+", remainder):
-        return True
-    return False
-
-
-def _research_segments_match(segs: list[str] | tuple[str, ...]) -> bool:
-    """Prefix-match progressive joins from the start; rest must be version-ish.
-
-    Mid-token stems (``our_widerface_replacement``) do not match. Bare ``mfr``
-    is exact-only.
-    """
-    if not segs:
-        return False
-    # Longer stems first when comparing joined forms.
-    stems = sorted(_RESEARCH_ONLY_COMPACT, key=len, reverse=True)
-    for k in range(1, len(segs) + 1):
-        joined = "".join(segs[:k])
-        for src in stems:
-            if src == "mfr":
-                if joined != "mfr":
-                    continue
-            elif joined != src:
-                continue
-            rest = list(segs[k:])
-            if not rest or all(_is_research_version_seg(s) for s in rest):
-                return True
-    return False
+    return _membership_hit(c, _live_nc_expanded())
 
 
 def _looks_like_research_source(value: str) -> bool:
-    """True when value identifies a research-only corpus (segment-precise).
+    """True when value identifies a research-only corpus (exact membership).
 
-    Separated forms match progressive segment joins terminated by version-ish
-    tails (``vggface2_train``) or exact compact equality (``casia_webface`` →
-    ``casiawebface``). Unsplit compounds keep a constrained startswith for
-    version suffixes (``ffhq256``) without sweeping ``celebase`` / ``ffhq-tools``.
+    Uses ``RESEARCH_SOURCE_IDS_EXPANDED`` only — no startswith / progressive
+    prefix / version-segment grammar over the input (B4b / WEB-24 / BR-47).
+    Non-ASCII residue is treated as tainted so callers fail closed.
     """
     if not value or not str(value).strip():
         return False
-    norm = _normalize_for_match(str(value))
-    if norm.has_non_ascii:
+    c = canonical(str(value))
+    if c is None:
         # Caller audits as invalid_row; treat as tainted if asked raw.
         return True
-    if not norm.compact and not norm.segments:
+    if not c:
         return False
-
-    # Exact compact equality (covers casia_webface → casiawebface, wider_face).
-    if norm.compact in _RESEARCH_ONLY_COMPACT:
-        return True
-
-    if not norm.has_separators:
-        for src in sorted(_RESEARCH_ONLY_COMPACT, key=len, reverse=True):
-            if src == "mfr":
-                if norm.compact == "mfr":
-                    return True
-                continue
-            if norm.compact == src:
-                return True
-            if norm.compact.startswith(src) and _research_unsplit_remainder_ok(
-                norm.compact[len(src) :]
-            ):
-                return True
-        return False
-
-    # Slash components: exact compact or progressive head + version rest.
-    for part in norm.slash_parts:
-        part_compact = re.sub(r"[^a-z0-9]+", "", part)
-        if part_compact in _RESEARCH_ONLY_COMPACT:
-            return True
-        part_segs = _part_segments(part)
-        if _research_segments_match(part_segs):
-            return True
-        # Unsplit-style on a single slash component (dataset/ffhq256).
-        if not re.search(r"[^a-z0-9]", part):
-            for src in sorted(_RESEARCH_ONLY_COMPACT, key=len, reverse=True):
-                if src == "mfr":
-                    continue
-                if part_compact.startswith(src) and _research_unsplit_remainder_ok(
-                    part_compact[len(src) :]
-                ):
-                    return True
-
-    return _research_segments_match(norm.segments)
+    return _membership_hit(
+        c, RESEARCH_SOURCE_IDS_EXPANDED, exact_only=_EXACT_ONLY_MEMBERSHIP
+    ) is not None
 
 
 def _resolve_registry_head(
     token: str,
     registry: Mapping[str, Any],
 ) -> str | None:
-    """Longest registry key matching slash parts / progressive segment prefixes.
+    """Exact registry-head resolve (B4b / BR-50 / BR-52 / BR-36).
 
-    Resolves ``dcface_v2`` → ``dcface``, ``myorg/dcface`` → ``dcface``,
-    ``dcface/v2`` → ``dcface`` (BR-36).
+    A token matches when its canonical form (or a slash component) is an
+    expanded form of a registry key. Progressive underscore-prefix resolution
+    is intentionally absent — ``dcface_evil`` / ``not_dcface`` / ``yunet_evil``
+    do not inherit clearance or ingest registration from a substring head.
     """
     if not token or not str(token).strip():
         return None
-    norm = _normalize_for_match(str(token))
-    if norm.has_non_ascii or not norm.text:
+    c = canonical(str(token))
+    if c is None or not c:
         return None
 
-    best: str | None = None
-    best_len = -1
+    # Prefer the synthetic expanded→head map when auditing synthetic entries.
+    if registry is SYNTHETIC_SOURCE_ENTRIES or set(registry.keys()) <= set(
+        SYNTHETIC_SOURCE_ENTRIES.keys()
+    ):
+        hit = _membership_hit(c, SYNTHETIC_SOURCE_IDS_EXPANDED)
+        if hit is not None:
+            return _SYNTHETIC_EXPANDED_TO_HEAD.get(hit) or _SYNTHETIC_EXPANDED_TO_HEAD.get(
+                _compact_canonical(hit)
+            )
+        return None
 
-    def _consider(candidate: str) -> None:
-        nonlocal best, best_len
-        key = candidate.replace("-", "_")
-        if key in registry and len(key) > best_len:
-            best = key
-            best_len = len(key)
+    # Generic: exact key or slash-component key (no progressive prefixes).
+    keys_expanded: dict[str, str] = {}
+    for key in registry:
+        kc = canonical(key)
+        if kc is None:
+            continue
+        for form in _expand_id_forms(kc, exact_only=False):
+            keys_expanded.setdefault(form, kc)
 
-    _consider(norm.text)
-    for part in norm.slash_parts:
-        _consider(part)
-        part_segs = _part_segments(part)
-        # Progressive prefixes, longest first.
-        for k in range(len(part_segs), 0, -1):
-            _consider("_".join(part_segs[:k]))
-        for seg in part_segs:
-            _consider(seg)
-    return best
+    hit = _membership_hit(c, frozenset(keys_expanded))
+    if hit is None:
+        return None
+    return keys_expanded.get(hit) or keys_expanded.get(_compact_canonical(hit))
 
 
 # Licence-bearing keys examined together so a denylisted secondary cannot hide
@@ -1244,25 +1312,23 @@ def _is_positive_or_registered_source(source: str) -> bool:
 
 
 def _derived_ingest_key(derived: str) -> str | None:
-    """Return the MODEL_INGEST registry key for ``derived``'s head, or None.
+    """Return the MODEL_INGEST registry key for ``derived``, or None.
 
-    Uses the full first slash-component (``rt-detr`` → ``rt_detr``) and
-    progressive segment prefixes so multi-token heads resolve correctly.
+    Exact only (B4b / BR-52): the whole canonical form or a slash component
+    must resolve to a registered key / alias. Progressive underscore-prefix
+    laundering (``yunet_evil`` → ``yunet``) is intentionally absent.
     """
     if not derived or not str(derived).strip():
         return None
-    norm = _normalize_for_match(str(derived))
-    if norm.has_non_ascii or not norm.text:
+    c = canonical(str(derived))
+    if c is None or not c:
         return None
 
-    candidates: list[str] = []
-    if norm.slash_parts:
-        head = norm.slash_parts[0].replace("-", "_")
-        candidates.append(head)
-        segs = _part_segments(head)
-        for k in range(len(segs), 0, -1):
-            candidates.append("_".join(segs[:k]))
-    candidates.append(norm.text.replace("-", "_"))
+    candidates: list[str] = [c]
+    if "/" in c:
+        # First path component and each component (exact).
+        candidates.append(c.split("/")[0])
+        candidates.extend(p for p in c.split("/") if p)
 
     seen: set[str] = set()
     for cand in candidates:
@@ -1321,13 +1387,34 @@ def _common_provenance_checks(
 # ---------------------------------------------------------------------------
 
 
+def _package_denylist_hit(value: str) -> PackageDenylistEntry | None:
+    """Exact PACKAGE_DENYLIST lookup on canonical form / slash components (BR-51)."""
+    c = canonical(value)
+    if c is None or not c:
+        return None
+    candidates = [c]
+    if "/" in c:
+        candidates.extend(p for p in c.split("/") if p)
+    seen: set[str] = set()
+    for cand in candidates:
+        if cand in seen:
+            continue
+        seen.add(cand)
+        resolved = _resolve_model_key(cand)
+        deny = PACKAGE_DENYLIST.get(resolved) or PACKAGE_DENYLIST.get(cand)
+        if deny is not None:
+            return deny
+    return None
+
+
 def audit_derived_from_model(derived_from_model: str | None) -> LicenseAuditResult:
     """Audit a ``derived_from_model`` provenance tag (buffalo OUTPUT ban).
 
     Empty string is allowed (not every row is model-derived). Any match
-    against the pinned NC pattern list or NC model ids FAILS with
-    ``RejectionReason.NC_MODEL_DERIVED``. Non-ASCII residue after shared
-    normalisation FAILS ``invalid_row`` (BR-21 fail-closed).
+    against the expanded NC id set FAILS with ``RejectionReason.NC_MODEL_DERIVED``.
+    PACKAGE_DENYLIST hits (Ultralytics family) FAIL with their denylist reason
+    (BR-51). Non-ASCII residue after :func:`canonical` FAILS ``invalid_row``
+    (BR-21 fail-closed).
     """
     if derived_from_model is None:
         return _pass(detail="no derived_from_model tag")
@@ -1344,8 +1431,8 @@ def audit_derived_from_model(derived_from_model: str | None) -> LicenseAuditResu
         return _pass(detail="no derived_from_model tag")
 
     text = derived_from_model.strip()
-    norm = _normalize_for_match(text)
-    if norm.has_non_ascii:
+    c = canonical(text)
+    if c is None:
         return _fail(
             RejectionReason.INVALID_ROW,
             detail=(
@@ -1354,6 +1441,8 @@ def audit_derived_from_model(derived_from_model: str | None) -> LicenseAuditResu
             ),
             category=PolicyCategory.TRAINING_DATA,
         )
+
+    # NC ban first (reason precedence for InsightFace family).
     matched = match_nc_model_pattern(text)
     if matched is not None:
         return _fail(
@@ -1361,6 +1450,20 @@ def audit_derived_from_model(derived_from_model: str | None) -> LicenseAuditResu
             detail=(
                 f"derived_from_model={text!r} matches non-commercial pattern "
                 f"{matched!r}; buffalo weights and output-derived data are banned"
+            ),
+            category=PolicyCategory.TRAINING_DATA,
+        )
+
+    # BR-51: PACKAGE_DENYLIST (AGPL family etc.) on derived_from_model.
+    # NC_MODEL_DERIVED package entries are enforced via NC_MODEL_IDS expansion
+    # only — keeps M2 discrimination on the NC seed set single-sourced.
+    deny = _package_denylist_hit(text)
+    if deny is not None and deny.reason is RejectionReason.DENYLISTED_PACKAGE:
+        return _fail(
+            deny.reason,
+            detail=(
+                f"derived_from_model={text!r} hits PACKAGE_DENYLIST entry "
+                f"{deny.package_id!r} ({deny.spdx_id}): {deny.notes}"
             ),
             category=PolicyCategory.TRAINING_DATA,
         )
@@ -1429,8 +1532,8 @@ def audit_source(source: str | None) -> LicenseAuditResult:
             category=PolicyCategory.TRAINING_DATA,
         )
     text = source.strip()
-    norm = _normalize_for_match(text)
-    if norm.has_non_ascii:
+    c = canonical(text)
+    if c is None:
         return _fail(
             RejectionReason.INVALID_ROW,
             detail=(
@@ -1582,12 +1685,10 @@ def audit_occluder_asset(asset: Mapping[str, Any]) -> LicenseAuditResult:
     :func:`_common_provenance_checks` before category-specific gates (BR-26).
     """
     if not isinstance(asset, Mapping):
-        raise LicensePolicyError(
-            _fail(
-                RejectionReason.UNCLEARED_OCCLUDER_ASSET,
-                detail="occluder asset must be a mapping with license fields",
-                category=PolicyCategory.OCCLUDER_ASSET,
-            )
+        return _fail(
+            RejectionReason.INVALID_ROW,
+            detail="occluder asset must be a mapping with license fields",
+            category=PolicyCategory.OCCLUDER_ASSET,
         )
 
     cat = PolicyCategory.OCCLUDER_ASSET
@@ -1671,9 +1772,10 @@ def audit_synthetic_source(
     When the registered entry carries a ``clearance_decision``, the caller must
     supply a matching ``row_clearance`` value (PROV-04).
 
-    Registry head resolution uses segment normalisation + progressive prefixes
-    (BR-36): ``dcface_v2``, ``dcface/v2``, and ``myorg/dcface`` all resolve to
-    the ``dcface`` clearance entry.
+    Registry head resolution is exact against the import-time expanded
+    synthetic id set (BR-36 / BR-50): ``dcface_v2``, ``dcface/v2``, and
+    ``myorg/dcface`` resolve to the ``dcface`` clearance entry; ``dcface_evil``
+    and ``not_dcface`` do not inherit clearance.
     """
     if not source_id or not str(source_id).strip():
         return _fail(
@@ -1740,7 +1842,7 @@ def _synthetic_audit_targets(
         operator-owned ``self-generated`` tag), or
       - generator_lineage is present (and source is not pure self-generated), or
       - source/derived resolves to a known SYNTHETIC_SOURCE_ENTRIES key
-        (segment / progressive-prefix resolve — BR-36), including the
+        (exact expanded-id resolve — BR-36 / BR-50), including the
         no-lineage path so clearance cannot be skipped by omitting lineage.
 
     Unregistered ``derived_from_model`` values that are **not** synthetic-registry

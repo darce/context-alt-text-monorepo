@@ -80,17 +80,17 @@ class TestBuffaloAndNcModelDerivedFail:
         assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
 
     def test_insightface_prefix_pattern_is_pinned(self) -> None:
-        # RED-capable: must hit the exact pinned pattern, not any id fallback.
+        # B4b / BR-19 / BR-28: exact expanded-id membership (no glob return value).
         matched = policy.match_nc_model_pattern("insightface/buffalo_l")
-        assert matched == "insightface/*"
+        assert matched == "insightface"
 
     def test_buffalo_star_pattern_drives_audit(self) -> None:
-        # Must exercise audit logic, not merely assert a constant property.
+        # B4b / BR-19 / BR-28: buffalo_sc is an enumerated NC id, not a glob hit.
         result = policy.audit_derived_from_model("buffalo_sc")
         assert result.ok is False
         assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
         matched = policy.match_nc_model_pattern("buffalo_sc")
-        assert matched == "buffalo*"
+        assert matched == "buffalo_sc"
 
     @pytest.mark.parametrize(
         "tag",

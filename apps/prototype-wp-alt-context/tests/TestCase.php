@@ -74,6 +74,10 @@ abstract class TestCase extends PHPUnitTestCase
         $GLOBALS['__ac_connection_aborted'] = false;
         $GLOBALS['__ac_connection_aborted_call_count'] = 0;
         unset($GLOBALS['__ac_site_url']);
+        // BR-50: clear the current_time freeze here, not in the test body — a
+        // failing assertion aborts before an in-body unset and would leave every
+        // later test in the process running on a frozen 2023 clock.
+        unset($GLOBALS['__ac_current_time']);
 
         // Reset wpdb stub
         if (isset($GLOBALS['wpdb']) && method_exists($GLOBALS['wpdb'], 'reset')) {

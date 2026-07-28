@@ -817,6 +817,38 @@ describe('MediaAltSuggest', () => {
     expect(screen.getByRole('button', { name: /^save alt text$/i })).toBeInTheDocument();
   });
 
+  it('clears the polite ready cue when the edited save fails so only the alert describes the row [a11y][BR-49]', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    correctMock.mockRejectedValueOnce(
+      new Error(
+        'Request to /wp-json/acx/v1/recognition/describe-history/42/correction failed (502): <html>proxy-internal-detail</html>',
+      ),
+    );
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await waitFor(() => expect(screen.getByTestId('media-alt-suggest-status')).toHaveTextContent(/ready/i));
+    fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
+    fireEvent.change(await screen.findByLabelText(/edit draft alt text/i), {
+      target: { value: editedDraft },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^save alt text$/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/could not save|couldn.?t save|unable to save/i);
+
+    // [TEST-15] discrimination: goes red if clearStatus() is removed from
+    // saveEdit()'s onError — polite "Draft ready. Review before saving." stays
+    // mounted beside the assertive save-failure alert. Single-line: delete
+    // clearStatus() from saveEdit's onError (or the whole onError option).
+    // Separate path from accept()'s onError (BR-39); mutating only this clear
+    // must not kill the accept pin.
+    const status = screen.getByTestId('media-alt-suggest-status');
+    expect(status).toHaveTextContent('');
+    expect(status).not.toHaveTextContent(/ready/i);
+    expect(status).not.toHaveTextContent(/draft ready/i);
+  });
+
   it('returns focus to Save alt text after a failed save when the browser blurred the disabled control [a11y][WBUX-5-S2C3A-BR-18]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
     correctMock.mockRejectedValueOnce(

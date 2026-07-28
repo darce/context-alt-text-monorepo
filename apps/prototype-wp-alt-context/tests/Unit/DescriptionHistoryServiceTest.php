@@ -262,12 +262,16 @@ class DescriptionHistoryServiceTest extends TestCase
             'alt_text_draft' => 'Generated draft.',
             'model_id' => 'local-v1',
         ]);
-        // Matching full marker: same alt_text, edited_at (second granularity), user_id.
+        // BR-50: freeze current_time so seed and record_correction share one
+        // edited_at by construction — not by same-second luck across a boundary.
+        $GLOBALS['__ac_current_time'] = 1_700_000_000;
+        $frozenMysql = current_time('mysql');
+        // Matching full marker: same alt_text, edited_at, user_id.
         // A genuine same-second re-save produces an identical payload; the write
         // returns false as a no-op and the read-back must still accept it.
         $matchingMarker = [
             'alt_text' => $sameAlt,
-            'edited_at' => current_time('mysql'),
+            'edited_at' => $frozenMysql,
             'user_id' => get_current_user_id(),
         ];
         $this->setPostMeta($mediaId, '_acx_description_human_edit', $matchingMarker);
@@ -286,6 +290,11 @@ class DescriptionHistoryServiceTest extends TestCase
         $this->assertIsArray($result['human_edit']);
         $this->assertSame($matchingMarker, $result['human_edit']);
         $this->assertSame($matchingMarker, get_post_meta($mediaId, '_acx_description_human_edit', true));
+        // [TEST-15] / BR-50: seed and constructed payloads share edited_at by
+        // freeze construction (fixed unix second), not wall-clock luck.
+        $this->assertSame('2023-11-14 22:13:20', $frozenMysql);
+        $this->assertSame($frozenMysql, $result['human_edit']['edited_at']);
+        unset($GLOBALS['__ac_current_time']);
     }
 
     /**
@@ -303,6 +312,9 @@ class DescriptionHistoryServiceTest extends TestCase
             'alt_text_draft' => 'Generated draft.',
             'model_id' => 'local-v1',
         ]);
+        // BR-50: freeze so the constructed request payload is deterministic while
+        // the stored marker stays intentionally stale (full-array inequality).
+        $GLOBALS['__ac_current_time'] = 1_700_000_000;
         // Prior session marker: same alt_text, older time, different operator.
         $staleMarker = [
             'alt_text' => $sameAlt,
@@ -321,6 +333,7 @@ class DescriptionHistoryServiceTest extends TestCase
         // Stale marker left untouched — must not be treated as this correction's telemetry.
         $this->assertSame($staleMarker, get_post_meta($mediaId, '_acx_description_human_edit', true));
         $this->assertSame($sameAlt, get_post_meta($mediaId, '_wp_attachment_image_alt', true));
+        unset($GLOBALS['__ac_current_time']);
     }
 
     /**

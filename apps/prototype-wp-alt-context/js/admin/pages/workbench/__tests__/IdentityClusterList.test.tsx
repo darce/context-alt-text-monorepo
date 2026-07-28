@@ -94,6 +94,7 @@ const setupMocks = () => {
   // Mock AltContextAdmin config
   (window as unknown as { AltContextAdmin: object }).AltContextAdmin = {
     nonce: 'test-nonce',
+    ajaxUrl: '/wp-admin/admin-ajax.php',
     endpoints: {
       recognitionClusters: 'http://localhost:8000/clusters',
       recognitionReassignIdentity: 'http://localhost:8000/reassign-identity',

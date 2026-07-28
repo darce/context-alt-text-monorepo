@@ -35,6 +35,7 @@ describe('registerConfig seam (UXP-5 slice 3)', () => {
   it('lets fetchMediaIdentities resolve endpoint + nonce with no AltContextAdmin global', async () => {
     registerConfig({
       nonce: 'attachment-edit-nonce',
+      ajaxUrl: '/wp-admin/admin-ajax.php',
       endpoints: {
         recognitionMediaIdentities: 'https://example.test/wp-json/acx/v1/recognition/media-identities',
       },
@@ -71,6 +72,7 @@ describe('registerConfig seam (UXP-5 slice 3)', () => {
   it('SPA path still reads window.AltContextAdmin when nothing is registered', () => {
     window.AltContextAdmin = {
       nonce: 'spa-nonce',
+      ajaxUrl: '/wp-admin/admin-ajax.php',
       endpoints: {
         recognitionMediaIdentities: 'https://example.test/spa-identities',
       },

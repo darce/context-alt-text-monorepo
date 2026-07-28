@@ -115,22 +115,39 @@ def ensure_bgr_u8(image: np.ndarray, *, label: str = "image") -> np.ndarray:
 _ensure_bgr_u8 = ensure_bgr_u8
 
 
+@dataclass(frozen=True, slots=True)
+class EmbedBatchResult:
+    """L2-normalized embedding vectors plus pre-normalization magnitudes (FIR-6 S1 / EMB-03).
+
+    ``vectors`` is (N, dim) float32 unit rows. ``norms`` is (N,) float32 raw L2
+    magnitudes captured *before* normalize — never reconstruct from unit vectors.
+    """
+
+    vectors: np.ndarray  # (N, dim) float32
+    norms: np.ndarray  # (N,) float32
+
+
 def embed_batch(
     crops: Sequence[np.ndarray],
     *,
     feature_fn: Callable[[np.ndarray], np.ndarray],
     embedding_dim: int,
-) -> np.ndarray:
+) -> EmbedBatchResult:
     """Shared SFace embed path: 112 gate, dim gate, zero/non-finite-norm, L2 stack.
 
     Both ``OpenCVSFaceEmbedder`` and ``OrtSFaceEmbedder`` must delegate here so
-    the hardened gates live once (BR-02 / REF-19).
+    the hardened gates live once (BR-02 / REF-19). Returns vectors + pre-norm
+    magnitudes (FIR-6 S1 / EMB-03).
     """
     if not crops:
-        return np.zeros((0, embedding_dim), dtype=np.float32)
+        return EmbedBatchResult(
+            vectors=np.zeros((0, embedding_dim), dtype=np.float32),
+            norms=np.zeros((0,), dtype=np.float32),
+        )
 
     expected_shape = (SFACE_CROP_SIZE, SFACE_CROP_SIZE, 3)
     vectors: list[np.ndarray] = []
+    norms: list[float] = []
     for i, crop in enumerate(crops):
         img = ensure_bgr_u8(crop, label=f"crops[{i}]")
         if img.shape != expected_shape:
@@ -146,8 +163,12 @@ def embed_batch(
             raise ZeroNormEmbeddingError(
                 f"crops[{i}]: SFace embedding has zero/non-finite L2 norm (norm={norm}); refusing silent zero-fill"
             )
+        norms.append(norm)
         vectors.append(raw / norm)
-    return np.stack(vectors, axis=0).astype(np.float32, copy=False)
+    return EmbedBatchResult(
+        vectors=np.stack(vectors, axis=0).astype(np.float32, copy=False),
+        norms=np.asarray(norms, dtype=np.float32),
+    )
 
 
 __all__ = [
@@ -155,6 +176,7 @@ __all__ = [
     "DEFAULT_NMS_THRESHOLD",
     "DEFAULT_SCORE_THRESHOLD",
     "DEFAULT_TOP_K",
+    "EmbedBatchResult",
     "FacePipelineInputError",
     "RawDetection",
     "SFACE_CROP_SIZE",

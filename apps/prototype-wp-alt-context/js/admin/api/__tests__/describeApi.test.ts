@@ -13,6 +13,7 @@ import {
 
 const mockConfig = {
   nonce: 'nonce-xyz',
+  ajaxUrl: '/wp-admin/admin-ajax.php',
   endpoints: {
     recognitionDescribe: 'https://example.com/acx/v1/recognition/describe',
     recognitionDescribeCandidates: 'https://example.com/acx/v1/recognition/describe/candidates',

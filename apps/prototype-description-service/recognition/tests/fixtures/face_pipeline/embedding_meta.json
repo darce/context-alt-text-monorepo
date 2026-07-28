@@ -9,5 +9,6 @@
   "l2_norm": 1.0,
   "model": "face_recognition_sface_2021dec.onnx",
   "model_sha256": "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
+  "pre_norm_magnitude": 3.660250425338745,
   "seed": 20260716
 }

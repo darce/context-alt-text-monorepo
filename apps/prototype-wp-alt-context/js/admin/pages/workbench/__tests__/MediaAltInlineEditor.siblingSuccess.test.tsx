@@ -7,6 +7,10 @@
  * This test mounts real MediaAltInlineEditor rows driven by the workbench cache
  * (MediaSelectionTableBody row surface), so an invalidateQueries(media.all) +
  * missing-list refetch that drops A actually unmounts the editor and fails.
+ *
+ * BR-101 companion: also mounts the missing-alt stats probe (perPage:1). Success
+ * invalidates that probe; the list page (perPage:20) must stay mounted so row A
+ * keeps its alert + draft — proving the stats refresh is key-safe.
  */
 import React, { useMemo } from 'react';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
@@ -16,6 +20,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { correctDescriptionHistoryItem } from '../../../api/describeApi';
 import { queryKeys } from '../../../api/queryKeys';
 import type { WorkbenchMediaItem, WorkbenchMediaResponse } from '../../../api/workbenchMediaApi';
+import { mediaStatsMissingQueryKey } from '../../../hooks/useMediaStats';
 import { MediaAltInlineEditor } from '../MediaAltInlineEditor';
 
 vi.mock('@wordpress/i18n', () => ({
@@ -91,16 +96,28 @@ const rowB: WorkbenchMediaItem = {
  * Minimal workbench list surface: items come from the same query key
  * MediaSelection / useWorkbenchMedia use. If success invalidates media.all and
  * the queryFn returns without A, row A unmounts — which is exactly the defect.
+ *
+ * statsQueryFn drives the perPage:1 missing probe that useCorrectMediaAlt
+ * refreshes on success (BR-101). It must be a different cache entry from the list.
  */
 const WorkbenchAltList = ({
   queryFn,
+  statsQueryFn,
 }: {
   queryFn: () => Promise<WorkbenchMediaResponse>;
+  statsQueryFn?: () => Promise<WorkbenchMediaResponse>;
 }): React.JSX.Element => {
   const { data } = useQuery({
     queryKey: missingPageKey,
     queryFn,
     staleTime: 0,
+  });
+  // Optional observer so invalidateMediaStats has an active subscriber to refetch.
+  useQuery({
+    queryKey: mediaStatsMissingQueryKey,
+    queryFn: statsQueryFn ?? (() => Promise.resolve({ items: [], total: 0, totalPages: 1 })),
+    staleTime: 5 * 60 * 1000,
+    enabled: Boolean(statsQueryFn),
   });
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
@@ -170,15 +187,26 @@ describe('MediaAltInlineEditor — sibling success must not destroy partial row 
       });
     });
 
+    // BR-101: stats probe starts at 7 missing; after B succeeds server would
+    // report 6. Success must refetch THIS key without touching the list page.
+    const statsQueryFn = vi.fn((): Promise<WorkbenchMediaResponse> => {
+      if (bSucceeded) {
+        return Promise.resolve({ items: [], total: 6, totalPages: 6 });
+      }
+      return Promise.resolve({ items: [], total: 7, totalPages: 7 });
+    });
+
     const client = buildClient();
     render(
       <QueryClientProvider client={client}>
-        <WorkbenchAltList queryFn={queryFn} />
+        <WorkbenchAltList queryFn={queryFn} statsQueryFn={statsQueryFn} />
       </QueryClientProvider>,
     );
 
     await waitFor(() => expect(screen.getByTestId('media-row-42')).toBeInTheDocument());
     expect(screen.getByTestId('media-row-99')).toBeInTheDocument();
+    await waitFor(() => expect(statsQueryFn).toHaveBeenCalled());
+    const statsFetchesBefore = statsQueryFn.mock.calls.length;
 
     // --- Row A: open editor, save → partial ---
     const rowANode = screen.getByTestId('media-row-42');
@@ -216,6 +244,10 @@ describe('MediaAltInlineEditor — sibling success must not destroy partial row 
 
     await waitFor(() => expect(within(rowBNode).queryByRole('textbox', { name: /alt text/i })).not.toBeInTheDocument());
 
+    // Stats probe must have refetched (BR-101) while list did not (BR-77).
+    await waitFor(() => expect(statsQueryFn.mock.calls.length).toBeGreaterThan(statsFetchesBefore));
+    expect(client.getQueryData<WorkbenchMediaResponse>(mediaStatsMissingQueryKey)?.total).toBe(6);
+
     // --- Invariants the pin store claimed to protect but never tested ---
     // 1. Row A still mounted (not dropped by sibling invalidate+refetch).
     expect(screen.getByTestId('media-row-42')).toBeInTheDocument();
@@ -236,6 +268,7 @@ describe('MediaAltInlineEditor — sibling success must not destroy partial row 
     // refetch and return items=[] total=0 — this test goes RED.
     expect(queryFn).toHaveBeenCalledTimes(1);
   });
+
 
   it('envelope total equals server seed and items.length <= perPage after partial then success', async () => {
     const queryFn = vi.fn((): Promise<WorkbenchMediaResponse> =>

@@ -4,8 +4,14 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useCorrectMediaAlt } from '../useCorrectMediaAlt';
+import {
+  mediaStatsMissingQueryKey,
+  mediaStatsTotalQueryKey,
+  useMediaStats,
+} from '../useMediaStats';
 import * as describeApi from '../../api/describeApi';
 import { queryKeys } from '../../api/queryKeys';
+import * as workbenchMediaApi from '../../api/workbenchMediaApi';
 import type { WorkbenchMediaResponse } from '../../api/workbenchMediaApi';
 
 vi.mock('../../api/describeApi', async () => {
@@ -16,7 +22,18 @@ vi.mock('../../api/describeApi', async () => {
   };
 });
 
+vi.mock('../../api/workbenchMediaApi', async () => {
+  const actual = await vi.importActual<typeof import('../../api/workbenchMediaApi')>(
+    '../../api/workbenchMediaApi',
+  );
+  return {
+    ...actual,
+    fetchWorkbenchMedia: vi.fn(),
+  };
+});
+
 const correctMock = vi.mocked(describeApi.correctDescriptionHistoryItem);
+const fetchWorkbenchMock = vi.mocked(workbenchMediaApi.fetchWorkbenchMedia);
 
 const PARTIAL_MESSAGE =
   'Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.';
@@ -122,9 +139,146 @@ const createWrapper = (client: QueryClient) => {
   return Wrapper;
 };
 
+const statsEnvelope = (total: number): WorkbenchMediaResponse => ({
+  items: [],
+  total,
+  totalPages: Math.max(1, total),
+});
+
 describe('useCorrectMediaAlt', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('refetches the missing-alt stats probe after a successful correction [BR-101]', async () => {
+    // Assert on observed query state / fetch count for the real stats key — not
+    // merely that invalidateQueries was called (which would pass for a wrong key).
+    correctMock.mockResolvedValue(successHistoryItem(42, 'Saved alt', 'Bridge'));
+    fetchWorkbenchMock.mockImplementation((params) => {
+      if (params.status === 'missing' && params.perPage === 1) {
+        return Promise.resolve(statsEnvelope(7));
+      }
+      if (params.status === 'all' && params.perPage === 1) {
+        return Promise.resolve(statsEnvelope(20));
+      }
+      return Promise.resolve(statsEnvelope(0));
+    });
+
+    const client = buildClient();
+    seedWorkbench(client, null);
+    const wrapper = createWrapper(client);
+    const { result: statsResult } = renderHook(() => useMediaStats(), { wrapper });
+    const { result: correctResult } = renderHook(() => useCorrectMediaAlt(), { wrapper });
+
+    await waitFor(() => expect(statsResult.current.isLoading).toBe(false));
+    expect(statsResult.current.stats.missing).toBe(7);
+    expect(statsResult.current.stats.total).toBe(20);
+    const missingFetchesBefore = fetchWorkbenchMock.mock.calls.filter(
+      (call) => call[0].status === 'missing' && call[0].perPage === 1,
+    ).length;
+    const totalFetchesBefore = fetchWorkbenchMock.mock.calls.filter(
+      (call) => call[0].status === 'all' && call[0].perPage === 1,
+    ).length;
+    expect(missingFetchesBefore).toBeGreaterThanOrEqual(1);
+
+    // Next missing probe returns a lower total — only a real refetch of the
+    // correct key can move stats.missing.
+    fetchWorkbenchMock.mockImplementation((params) => {
+      if (params.status === 'missing' && params.perPage === 1) {
+        return Promise.resolve(statsEnvelope(6));
+      }
+      if (params.status === 'all' && params.perPage === 1) {
+        return Promise.resolve(statsEnvelope(20));
+      }
+      return Promise.resolve(statsEnvelope(0));
+    });
+
+    correctResult.current.mutate({ mediaId: 42, altText: 'Saved alt' });
+    await waitFor(() => expect(correctResult.current.isSuccess).toBe(true));
+
+    await waitFor(() => expect(statsResult.current.stats.missing).toBe(6));
+    const missingFetchesAfter = fetchWorkbenchMock.mock.calls.filter(
+      (call) => call[0].status === 'missing' && call[0].perPage === 1,
+    ).length;
+    const totalFetchesAfter = fetchWorkbenchMock.mock.calls.filter(
+      (call) => call[0].status === 'all' && call[0].perPage === 1,
+    ).length;
+    expect(missingFetchesAfter).toBeGreaterThan(missingFetchesBefore);
+    // status:'all' probe is not invalidated — alt correction does not change media count.
+    expect(totalFetchesAfter).toBe(totalFetchesBefore);
+    // Cache entry under the exported key holds the new server total.
+    expect(client.getQueryData<WorkbenchMediaResponse>(mediaStatsMissingQueryKey)?.total).toBe(6);
+    // List page still has honest envelope — we did not fabricate totals [rg-015].
+    assertEnvelopeHonest(client.getQueryData<WorkbenchMediaResponse>(missingPageKey), 2);
+  });
+
+  it('does not refresh stats counters on a failed correction [BR-101]', async () => {
+    correctMock.mockRejectedValueOnce(totalFailureError());
+    fetchWorkbenchMock.mockImplementation((params) => {
+      if (params.status === 'missing' && params.perPage === 1) {
+        return Promise.resolve(statsEnvelope(7));
+      }
+      if (params.status === 'all' && params.perPage === 1) {
+        return Promise.resolve(statsEnvelope(20));
+      }
+      return Promise.resolve(statsEnvelope(0));
+    });
+
+    const client = buildClient();
+    seedWorkbench(client, null);
+    const wrapper = createWrapper(client);
+    const { result: statsResult } = renderHook(() => useMediaStats(), { wrapper });
+    const { result: correctResult } = renderHook(() => useCorrectMediaAlt(), { wrapper });
+
+    await waitFor(() => expect(statsResult.current.isLoading).toBe(false));
+    const missingFetchesBefore = fetchWorkbenchMock.mock.calls.filter(
+      (call) => call[0].status === 'missing' && call[0].perPage === 1,
+    ).length;
+
+    correctResult.current.mutate({ mediaId: 42, altText: 'Would-be alt' });
+    await waitFor(() => expect(correctResult.current.isError).toBe(true));
+
+    // Give any accidental invalidate a chance to schedule a refetch.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const missingFetchesAfter = fetchWorkbenchMock.mock.calls.filter(
+      (call) => call[0].status === 'missing' && call[0].perPage === 1,
+    ).length;
+    expect(missingFetchesAfter).toBe(missingFetchesBefore);
+    expect(statsResult.current.stats.missing).toBe(7);
+    expect(client.getQueryState(mediaStatsMissingQueryKey)?.isInvalidated).not.toBe(true);
+  });
+
+  it('does not refresh stats counters on a partial correction [BR-101]', async () => {
+    correctMock.mockRejectedValueOnce(
+      partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: 'Partial-saved alt' }),
+    );
+    fetchWorkbenchMock.mockImplementation((params) => {
+      if (params.status === 'missing' && params.perPage === 1) {
+        return Promise.resolve(statsEnvelope(7));
+      }
+      return Promise.resolve(statsEnvelope(20));
+    });
+
+    const client = buildClient();
+    seedWorkbench(client, null);
+    const wrapper = createWrapper(client);
+    const { result: statsResult } = renderHook(() => useMediaStats(), { wrapper });
+    const { result: correctResult } = renderHook(() => useCorrectMediaAlt(), { wrapper });
+
+    await waitFor(() => expect(statsResult.current.isLoading).toBe(false));
+    const missingFetchesBefore = fetchWorkbenchMock.mock.calls.filter(
+      (call) => call[0].status === 'missing' && call[0].perPage === 1,
+    ).length;
+
+    correctResult.current.mutate({ mediaId: 42, altText: 'Partial-saved alt' });
+    await waitFor(() => expect(correctResult.current.isError).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const missingFetchesAfter = fetchWorkbenchMock.mock.calls.filter(
+      (call) => call[0].status === 'missing' && call[0].perPage === 1,
+    ).length;
+    expect(missingFetchesAfter).toBe(missingFetchesBefore);
+    expect(statsResult.current.stats.missing).toBe(7);
   });
 
   it('patches the corrected row from the server response and does not invalidate media.all', async () => {
@@ -150,6 +304,13 @@ describe('useCorrectMediaAlt', () => {
     expect(
       invalidateSpy.mock.calls.some(
         (call) => JSON.stringify(call[0]) === JSON.stringify({ queryKey: queryKeys.media.all }),
+      ),
+    ).toBe(false);
+    // BR-101: only the missing stats probe (not the list page, not media.all).
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: mediaStatsMissingQueryKey });
+    expect(
+      invalidateSpy.mock.calls.some(
+        (call) => JSON.stringify(call[0]) === JSON.stringify({ queryKey: mediaStatsTotalQueryKey }),
       ),
     ).toBe(false);
   });

@@ -582,10 +582,47 @@ class SettingsControllerTest extends TestCase
     }
 
     /**
+     * BR-139: after LoopbackHost extraction, save-path rejection matrix is
+     * unchanged — private IP / docker-style names / suffix lookalikes still
+     * fail invalid_url. Complements plaintextRemoteUrlProvider.
+     *
+     * @dataProvider loopbackExtractionRejectUrlProvider
+     */
+    public function testSaveSettingsStillRejectsNonLoopbackAfterExtraction(string $url): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_recognition_url', 'https://prior.example');
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params([
+            'url' => $url,
+        ]);
+
+        $response = $this->controller->save_settings($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response, 'must reject after extraction: ' . $url);
+        $this->assertSame('invalid_url', $response->get_error_code());
+        $this->assertNotSame($url, get_option('acx_recognition_url', ''));
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function loopbackExtractionRejectUrlProvider(): array
+    {
+        return [
+            'private_ip' => ['http://10.0.0.5'],
+            'docker_service_name' => ['http://recognition'],
+            'localhost_suffix' => ['http://localhost.attacker.invalid'],
+            'loopback_dotted_suffix' => ['http://127.0.0.1.attacker.invalid'],
+        ];
+    }
+
+    /**
      * BR-131: non-loopback recognition probes must use wp_safe_remote_get so
      * unsafe redirects / private destinations are rejected by core. The harness
      * marks safe-transport calls with 'safe' => true. Goes RED if
-     * recognition_http_get always uses wp_remote_get.
+     * RecognitionTransport always uses wp_remote_get.
      */
     public function testProbeUsesSafeRemoteGetForNonLoopbackTarget(): void
     {
@@ -604,6 +641,52 @@ class SettingsControllerTest extends TestCase
             !empty($calls[0]['safe']),
             'non-loopback health probe must call wp_safe_remote_get (stub records safe=true)'
         );
+    }
+
+    /**
+     * R4G-BR-01: settings probes must force redirection => 0 via RecognitionTransport
+     * so X-API-Key cannot walk on a 302 from a compromised-but-valid service.
+     */
+    public function testProbeForcesRedirectionZeroAndDoesNotFollowRedirect(): void
+    {
+        $this->configureProbe();
+        $this->setOption('acx_recognition_api_key', 'secret-must-not-walk');
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 302, 'message' => 'Found'],
+            'headers' => ['Location' => 'https://attacker.example/collect'],
+            'body' => '',
+        ]);
+        // Sentinel: if redirection were followed, this second queue entry would
+        // be consumed and the API key would land on attacker.example.
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"stolen":true}',
+        ]);
+
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(
+            1,
+            $calls,
+            'settings probe must not follow redirect — second hop would carry X-API-Key'
+        );
+        $this->assertSame(0, $calls[0]['args']['redirection'] ?? null);
+        $this->assertSame(
+            'secret-must-not-walk',
+            $calls[0]['args']['headers']['X-API-Key'] ?? null
+        );
+        $this->assertStringNotContainsString('attacker.example', $calls[0]['url']);
+        $this->assertNotSame(
+            ProbeOutcome::CONNECTED,
+            $data['outcome'] ?? null,
+            '3xx must not classify as CONNECTED'
+        );
+        $this->assertSame(ProbeOutcome::SERVER_ERROR, $data['outcome'] ?? null);
+        $this->assertSame(302, (int) ($data['status_code'] ?? 0));
     }
 
     /**

@@ -1641,59 +1641,93 @@ if (!function_exists('wp_json_encode')) {
 }
 
 
-if (!function_exists('wp_remote_post')) {
-    function wp_remote_post($url, $args = [])
+if (!function_exists('__ac_http_dispatch')) {
+    /**
+     * Shared test-harness HTTP dispatcher for wp_remote_* / wp_safe_remote_*.
+     *
+     * Mirrors WordPress redirect behaviour closely enough for BR-137 pins:
+     * when args['redirection'] > 0 (default 5, matching WP_Http), a 3xx response
+     * with a Location header issues another recorded call to that Location,
+     * reusing the same args (including credential headers). redirection => 0
+     * returns the 3xx as-is so production never-follow policy is discriminating.
+     *
+     * @param string               $url
+     * @param array<string,mixed>  $args
+     * @param string               $method
+     * @param bool                 $safe
+     * @return array<string,mixed>|\WP_Error
+     */
+    function __ac_http_dispatch($url, $args = [], $method = 'GET', $safe = false)
     {
         if (!isset($GLOBALS['__ac_http_calls'])) {
             $GLOBALS['__ac_http_calls'] = [];
         }
 
-        $GLOBALS['__ac_http_calls'][] = [
+        $call = [
             'url' => $url,
             'args' => $args,
-            'method' => 'POST',
+            'method' => $method,
             'body' => $args['body'] ?? '',
         ];
+        if ($safe) {
+            $call['safe'] = true;
+        }
+        $GLOBALS['__ac_http_calls'][] = $call;
 
         if (!empty($GLOBALS['__ac_http_queue'])) {
-            return array_shift($GLOBALS['__ac_http_queue']);
+            $response = array_shift($GLOBALS['__ac_http_queue']);
+        } else {
+            $response = [
+                'response' => [
+                    'code' => 200,
+                    'message' => 'OK',
+                ],
+                'body' => '',
+            ];
         }
 
-        return [
-            'response' => [
-                'code' => 200,
-                'message' => 'OK',
-            ],
-            'body' => '',
-        ];
+        // WordPress default for redirection is 5 when the key is omitted.
+        $redirection = array_key_exists('redirection', $args) ? (int) $args['redirection'] : 5;
+        if ($redirection <= 0) {
+            return $response;
+        }
+
+        if ($response instanceof \WP_Error || !is_array($response)) {
+            return $response;
+        }
+
+        $code = (int) ($response['response']['code'] ?? 0);
+        if ($code < 300 || $code >= 400) {
+            return $response;
+        }
+
+        $headers = $response['headers'] ?? [];
+        if (!is_array($headers)) {
+            return $response;
+        }
+        $location = $headers['Location'] ?? $headers['location'] ?? null;
+        if (!is_string($location) || '' === $location) {
+            return $response;
+        }
+
+        $next_args = $args;
+        $next_args['redirection'] = $redirection - 1;
+
+        return __ac_http_dispatch($location, $next_args, $method, $safe);
+    }
+}
+
+if (!function_exists('wp_remote_post')) {
+    function wp_remote_post($url, $args = [])
+    {
+        return __ac_http_dispatch($url, $args, 'POST', false);
     }
 }
 
 if (!function_exists('wp_remote_get')) {
     function wp_remote_get($url, $args = [])
     {
-        if (!isset($GLOBALS['__ac_http_calls'])) {
-            $GLOBALS['__ac_http_calls'] = [];
-        }
-
-        $GLOBALS['__ac_http_calls'][] = [
-            'url' => $url,
-            'args' => $args,
-            'method' => 'GET',
-            'body' => $args['body'] ?? '',
-        ];
-
-        if (!empty($GLOBALS['__ac_http_queue'])) {
-            return array_shift($GLOBALS['__ac_http_queue']);
-        }
-
-        return [
-            'response' => [
-                'code' => 200,
-                'message' => 'OK',
-            ],
-            'body' => '',
-        ];
+        return __ac_http_dispatch($url, $args, 'GET', false);
     }
 }
 
@@ -1704,87 +1738,38 @@ if (!function_exists('wp_safe_remote_get')) {
      */
     function wp_safe_remote_get($url, $args = [])
     {
-        if (!isset($GLOBALS['__ac_http_calls'])) {
-            $GLOBALS['__ac_http_calls'] = [];
-        }
+        return __ac_http_dispatch($url, $args, 'GET', true);
+    }
+}
 
-        $GLOBALS['__ac_http_calls'][] = [
-            'url' => $url,
-            'args' => $args,
-            'method' => 'GET',
-            'body' => $args['body'] ?? '',
-            'safe' => true,
-        ];
+if (!function_exists('wp_safe_remote_request')) {
+    /**
+     * Test-harness stand-in for WP core wp_safe_remote_request. Records the
+     * call as safe (distinguishable from wp_remote_request) and reuses the
+     * same queue. Also exposes args['redirection'] so BR-137 pins can assert
+     * credentialed calls refuse redirects.
+     */
+    function wp_safe_remote_request($url, $args = [])
+    {
+        $method = isset($args['method']) ? strtoupper((string) $args['method']) : 'GET';
 
-        if (!empty($GLOBALS['__ac_http_queue'])) {
-            return array_shift($GLOBALS['__ac_http_queue']);
-        }
-
-        return [
-            'response' => [
-                'code' => 200,
-                'message' => 'OK',
-            ],
-            'body' => '',
-        ];
+        return __ac_http_dispatch($url, $args, $method, true);
     }
 }
 
 if (!function_exists('wp_remote_head')) {
     function wp_remote_head($url, $args = [])
     {
-        if (!isset($GLOBALS['__ac_http_calls'])) {
-            $GLOBALS['__ac_http_calls'] = [];
-        }
-
-        $GLOBALS['__ac_http_calls'][] = [
-            'url' => $url,
-            'args' => $args,
-            'method' => 'HEAD',
-            'body' => '',
-        ];
-
-        if (!empty($GLOBALS['__ac_http_queue'])) {
-            return array_shift($GLOBALS['__ac_http_queue']);
-        }
-
-        return [
-            'response' => [
-                'code' => 200,
-                'message' => 'OK',
-            ],
-            'body' => '',
-        ];
+        return __ac_http_dispatch($url, $args, 'HEAD', false);
     }
 }
 
 if (!function_exists('wp_remote_request')) {
     function wp_remote_request($url, $args = [])
     {
-        if (!isset($GLOBALS['__ac_http_calls'])) {
-            $GLOBALS['__ac_http_calls'] = [];
-        }
-
         $method = isset($args['method']) ? strtoupper((string) $args['method']) : 'GET';
 
-        $GLOBALS['__ac_http_calls'][] = [
-            'url' => $url,
-            'args' => $args,
-            'method' => $method,
-            'body' => $args['body'] ?? '',
-        ];
-
-        if (!empty($GLOBALS['__ac_http_queue'])) {
-            return array_shift($GLOBALS['__ac_http_queue']);
-        }
-
-        return [
-            'response' => [
-                'code' => 200,
-                'message' => 'OK',
-            ],
-            'body' => '',
-        ];
+        return __ac_http_dispatch($url, $args, $method, false);
     }
 }
 

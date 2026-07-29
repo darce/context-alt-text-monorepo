@@ -4,15 +4,16 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+require_once __DIR__ . '/../support/class-loopback-host.php';
+
+use AltContext\Support\LoopbackHost;
+
 use function apply_filters;
 use function defined;
 use function get_option;
 use function in_array;
 use function parse_url;
-use function str_ends_with;
-use function str_starts_with;
 use function strtolower;
-use function substr;
 use function trim;
 
 /**
@@ -158,15 +159,7 @@ final class RecognitionEndpointResolver {
 
 		// Explicit loopback development path — matches the existing local hatch
 		// convention (http://localhost:8000), not a new constant.
-		return 'http' === $scheme && $this->is_loopback_host( $host );
-	}
-
-	private function is_loopback_host( string $host ): bool {
-		if ( str_starts_with( $host, '[' ) && str_ends_with( $host, ']' ) ) {
-			$host = substr( $host, 1, -1 );
-		}
-
-		return in_array( $host, array( 'localhost', '127.0.0.1', '::1' ), true );
+		return 'http' === $scheme && LoopbackHost::is_loopback( $host );
 	}
 
 	private function is_valid_recognition_source( string $source ): bool {

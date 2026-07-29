@@ -128,6 +128,41 @@ class MediaIdentitiesControllerTest extends TestCase
         $this->assertEquals(new \stdClass(), $data['identities_by_media'] ?? null);
     }
 
+    /**
+     * R4G-BR-09: a refused 3xx is reachable-but-bad — ENDPOINT_ERROR, not UNAVAILABLE.
+     */
+    public function testMediaIdentitiesReturnsEndpointErrorOnUnexpectedRedirect(): void
+    {
+        $membersRepo = new class() extends NullIdentityMembersRepository {
+            public function list_for_media_ids(string $tenant_id, array $media_ids): array {
+                return [];
+            }
+        };
+        $syncRepo = new NullSyncStateRepository();
+        $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper());
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 302, 'message' => 'Found'],
+            'headers' => ['Location' => 'https://attacker.example/collect'],
+            'body' => '',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/media-identities');
+        $request->set_param('media_ids', [22]);
+
+        $response = $controller->get_media_identities($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+        $this->assertSame(
+            RecognitionDataSource::ENDPOINT_ERROR,
+            $data['data_source'] ?? null,
+            'refused 3xx must not be laundered as UNAVAILABLE'
+        );
+        $this->assertEquals(new \stdClass(), $data['identities_by_media'] ?? null);
+    }
+
     public function testMediaIdentitiesServesLocalProjectionWithoutSyncState(): void
     {
         // The E15-35 incident state: projection rows survive, sync-state row wiped.

@@ -152,7 +152,17 @@ export const SettingsForm = ({
           ) : null}
           {cardState === ServiceUrlCardState.REJECTED ? (
             <div className="acx-target-card__empty" data-testid="acx-url-rejection-notice">
-              <p>{urlRejectionStatusText(data)}</p>
+              {/*
+                R16-BR-09: full rejection sentence lives only in the always-mounted
+                effective-target live region below (announced once). Card cue is a
+                short next-step prompt so sighted operators still know what to do.
+              */}
+              <p>
+                {__(
+                  'The configured service URL was rejected. Enter a valid HTTPS URL below to restore recognition routing.',
+                  'alt-context',
+                )}
+              </p>
             </div>
           ) : null}
           <label htmlFor="acx-settings-url">{__('Service API URL', 'alt-context')}</label>

@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace AltContext\Cli;
 
+require_once __DIR__ . '/../api/class-alt-text-write-status.php';
+
+use AltContext\Api\AltTextWriteStatus;
 use AltContext\Api\DescribeController;
 use AltContext\Api\Services\DescriptionCandidateService;
 use AltContext\Api\Services\DescribeMediaService;
@@ -170,7 +173,42 @@ class DescriptionCommand extends \WP_CLI_Command {
 			);
 		}
 
-		\WP_CLI::success( sprintf( 'Description generate rows: count=%d', count( $rows ) ) );
+		// BR-05 / [HAI-13]: do not claim unqualified success when rows failed
+		// or only partially landed. Count from the same per-row status field
+		// already logged so the tally matches the honest log lines.
+		$total   = count( $rows );
+		$failed  = 0;
+		$partial = 0;
+		foreach ( $rows as $row ) {
+			$status = (string) ( $row['status'] ?? '' );
+			if ( AltTextWriteStatus::FAILED === $status ) {
+				++$failed;
+			} elseif ( AltTextWriteStatus::PARTIAL === $status ) {
+				++$partial;
+			}
+		}
+
+		$summary = sprintf(
+			'Description generate rows: count=%d failed=%d partial=%d',
+			$total,
+			$failed,
+			$partial
+		);
+
+		// Total failure (every row failed and/or partial): non-zero exit so a
+		// scripted caller can detect it. Mixed outcomes stay exit-0 via
+		// warning so partial batches remain inspectable without aborting mid-
+		// pipeline; the summary counts still surface the damage.
+		if ( $total > 0 && ( $failed + $partial ) === $total ) {
+			\WP_CLI::error( $summary );
+		}
+
+		if ( $failed > 0 || $partial > 0 ) {
+			\WP_CLI::warning( $summary );
+			return;
+		}
+
+		\WP_CLI::success( $summary );
 	}
 
 	/**
@@ -186,7 +224,7 @@ class DescriptionCommand extends \WP_CLI_Command {
 		if ( is_wp_error( $result ) ) {
 			return array(
 				'media_id'       => $media_id,
-				'status'         => 'failed',
+				'status'         => AltTextWriteStatus::FAILED,
 				'alt_text_draft' => '',
 				'error'          => $result->get_error_message(),
 			);
@@ -196,7 +234,7 @@ class DescriptionCommand extends \WP_CLI_Command {
 		if ( $result instanceof WP_REST_Response && $result->get_status() >= 400 ) {
 			return array(
 				'media_id'       => $media_id,
-				'status'         => 'failed',
+				'status'         => AltTextWriteStatus::FAILED,
 				'alt_text_draft' => '',
 				'error'          => (string) ( $data['message'] ?? $data['detail'] ?? 'Describe request failed.' ),
 			);
@@ -209,7 +247,7 @@ class DescriptionCommand extends \WP_CLI_Command {
 		if ( ! $write ) {
 			return array(
 				'media_id'       => $media_id,
-				'status'         => 'dry_run',
+				'status'         => AltTextWriteStatus::DRY_RUN,
 				'alt_text_draft' => $alt_text_draft,
 			);
 		}
@@ -218,7 +256,7 @@ class DescriptionCommand extends \WP_CLI_Command {
 		if ( '' !== $existing_alt && ! $force ) {
 			return array(
 				'media_id'       => $media_id,
-				'status'         => 'skipped_existing_alt',
+				'status'         => AltTextWriteStatus::SKIPPED_EXISTING_ALT,
 				'alt_text_draft' => $alt_text_draft,
 			);
 		}
@@ -226,7 +264,7 @@ class DescriptionCommand extends \WP_CLI_Command {
 		if ( '' === $alt_text_draft ) {
 			return array(
 				'media_id'       => $media_id,
-				'status'         => 'skipped_empty_alt_text',
+				'status'         => AltTextWriteStatus::SKIPPED_EMPTY_ALT_TEXT,
 				'alt_text_draft' => '',
 			);
 		}
@@ -238,6 +276,8 @@ class DescriptionCommand extends \WP_CLI_Command {
 		// written (full success), partial (alt ok, provenance not), failed.
 		// Compare against wp_unslash( $draft ) — update_metadata() unslashes before
 		// store/equality (BR-17). [rg-015]
+		// Deliberate path divergence: CLI force-overwrite success emits WRITTEN,
+		// not FORCED_OVERWRITE (REST-only). Leave that as-is this wave.
 		$expected_alt = wp_unslash( $alt_text_draft );
 		$alt_written  = update_post_meta( $media_id, '_wp_attachment_image_alt', $alt_text_draft );
 		if ( false === $alt_written ) {
@@ -245,7 +285,7 @@ class DescriptionCommand extends \WP_CLI_Command {
 			if ( ! is_string( $current ) || $expected_alt !== $current ) {
 				return array(
 					'media_id'       => $media_id,
-					'status'         => 'failed',
+					'status'         => AltTextWriteStatus::FAILED,
 					'alt_text_draft' => $alt_text_draft,
 				);
 			}
@@ -263,7 +303,7 @@ class DescriptionCommand extends \WP_CLI_Command {
 				// Alt landed; telemetry did not. Partial — same contract as bulk apply.
 				return array(
 					'media_id'       => $media_id,
-					'status'         => 'partial',
+					'status'         => AltTextWriteStatus::PARTIAL,
 					'alt_text_draft' => $alt_text_draft,
 				);
 			}
@@ -271,7 +311,7 @@ class DescriptionCommand extends \WP_CLI_Command {
 
 		return array(
 			'media_id'       => $media_id,
-			'status'         => 'written',
+			'status'         => AltTextWriteStatus::WRITTEN,
 			'alt_text_draft' => $alt_text_draft,
 		);
 	}

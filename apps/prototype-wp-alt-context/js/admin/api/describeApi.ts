@@ -38,11 +38,47 @@ export interface VisualFactsResponse {
   alt_text_write?: AltTextWriteResult;
 }
 
-export type AltTextWriteStatus = 'written' | 'skipped_existing_alt' | 'forced_overwrite';
+/**
+ * REST `alt_text_write.status` members — keep in lockstep with PHP
+ * `AltContext\Api\AltTextWriteStatus::REST_STATUSES` (sr-007 / BR-04).
+ * CLI-only `dry_run` is not part of this REST payload type.
+ */
+export type AltTextWriteStatus =
+  | 'written'
+  | 'skipped_existing_alt'
+  | 'skipped_empty_alt_text'
+  | 'forced_overwrite'
+  | 'partial'
+  | 'failed';
+
+/**
+ * REST `alt_text_write.reason` when status is `partial` (BR-08).
+ * Distinguishes provenance-stamp failure (history gap, retry) from optional
+ * long-description failure (history intact). Lockstep with PHP
+ * `AltTextWriteStatus::PARTIAL_REASONS`.
+ */
+export type AltTextWritePartialReason =
+  | 'provenance_write_failed'
+  | 'description_write_failed';
+
+/**
+ * Nested `description_write` when `acx_alt_style` is `alt_plus_description`.
+ * Lockstep with PHP `DescriptionWriteStatus::ALL`.
+ */
+export type DescriptionWriteStatus =
+  | 'written'
+  | 'forced_overwrite'
+  | 'skipped_no_long_text'
+  | 'skipped_existing_description'
+  | 'failed';
 
 export interface AltTextWriteResult {
   status: AltTextWriteStatus;
   existing_alt_present: boolean;
+  /** Present when status is `partial` — distinguishes the two partial meanings. */
+  reason?: AltTextWritePartialReason;
+  /** Present only under alt_plus_description; omitted for alt_only. */
+  description_write?: DescriptionWriteStatus;
 }
 
 export interface DescribeMediaWriteOptions {

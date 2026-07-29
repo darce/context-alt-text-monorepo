@@ -219,6 +219,11 @@ class DescribeMediaService {
 	 * fabricate a description envelope when the upstream shape is wrong. Upstream
 	 * 4xx/5xx errors are forwarded unchanged; a 2xx body that omits any required
 	 * provenance field is an explicit boundary violation (502).
+	 *
+	 * `alt_text_draft` must be present *and* a string. A non-string is a schema
+	 * violation (502). An empty string is allowed through validation — the model
+	 * may produce nothing useful — and write policy skips it instead of 502ing
+	 * (see {@see apply_alt_text_write_policy()} / BR-104).
 	 */
 	private function validate_description_envelope( WP_REST_Response $response, int $media_id ): WP_REST_Response|WP_Error {
 		if ( $response->get_status() >= 400 ) {
@@ -236,7 +241,29 @@ class DescribeMediaService {
 			}
 		}
 
+		// BR-116: contract field is a string; refuse non-string at the boundary
+		// rather than coerce (coercion made REST store '' while CLI stored '42').
+		if ( ! is_string( $data['alt_text_draft'] ) ) {
+			return $this->invalid_envelope_error( $media_id, "field 'alt_text_draft' must be a string" );
+		}
+
 		return $response;
+	}
+
+	/**
+	 * Single normaliser for `alt_text_draft` across REST write policy and CLI
+	 * generate-write (BR-116). Non-strings become `''` so write paths share one
+	 * empty-draft skip; the real describe path rejects non-strings earlier with
+	 * 502 in {@see validate_description_envelope()}.
+	 *
+	 * @param mixed $value Raw `alt_text_draft` from a describe envelope.
+	 */
+	public static function normalize_alt_text_draft( mixed $value ): string {
+		if ( ! is_string( $value ) ) {
+			return '';
+		}
+
+		return trim( $value );
 	}
 
 	private function should_write_alt_text( WP_REST_Request $request ): bool {
@@ -264,17 +291,32 @@ class DescribeMediaService {
 			return $response;
 		}
 
-		$draft        = is_string( $data['alt_text_draft'] ?? null ) ? trim( $data['alt_text_draft'] ) : '';
+		// Shared with CLI (BR-116). Empty drafts never touch alt or provenance.
+		$draft        = self::normalize_alt_text_draft( $data['alt_text_draft'] ?? null );
 		$existing_alt = get_post_meta( $media_id, self::ALT_TEXT_META_KEY, true );
 		$existing_alt = is_string( $existing_alt ) ? $existing_alt : '';
 		// Identity keys only for the idempotence compare; draft is measured data
-		// stamped when (and only when) the alt meta is actually written below.
+		// stamped when the alt meta is written, or healed on a force no-op (BR-108).
 		$provenance   = $this->build_generated_provenance( $data, $draft );
 
 		if ( '' !== trim( $existing_alt ) && ! $force ) {
 			$data['alt_text_write'] = array(
 				'status'               => 'skipped_existing_alt',
 				'existing_alt_present' => true,
+			);
+			$response->set_data( $data );
+			return $response;
+		}
+
+		// BR-104: agree with CLI (`skipped_empty_alt_text`) and bulk
+		// (`skipped_no_draft`) — never write '' over a human alt, never stamp
+		// provenance claiming a draft that was not applied. Check after the
+		// existing-alt guard so force=false + existing still reports
+		// skipped_existing_alt (CLI order).
+		if ( '' === $draft ) {
+			$data['alt_text_write'] = array(
+				'status'               => 'skipped_empty_alt_text',
+				'existing_alt_present' => '' !== trim( $existing_alt ),
 			);
 			$response->set_data( $data );
 			return $response;
@@ -287,7 +329,10 @@ class DescribeMediaService {
 			&& $this->matches_generated_provenance( $existing_provenance, $provenance )
 		) {
 			// No-op: alt already equals this draft under matching model identity.
-			// Provenance (including any prior alt_text_draft) is left untouched.
+			// Identity keys stay put; heal alt_text_draft when missing/stale so
+			// the audit trail matches the confirmed draft (BR-108 / RLSE-05).
+			// Do not re-stamp generated_at or rewrite the whole envelope.
+			$this->heal_provenance_alt_text_draft( $media_id, $existing_provenance, $draft );
 			$data['alt_text_write'] = array(
 				'status'               => 'forced_overwrite',
 				'existing_alt_present' => true,
@@ -312,6 +357,31 @@ class DescribeMediaService {
 		$data['alt_text_write'] = $write_result;
 		$response->set_data( $data );
 		return $response;
+	}
+
+	/**
+	 * BR-108: on a force no-op (alt already equals draft under matching model
+	 * identity), upsert `alt_text_draft` when it is missing or unequal. Pre-wave
+	 * envelopes lack the key entirely — a naive match on the draft would break
+	 * their no-op — so identity matching stays draft-free and this heal closes
+	 * the gap without rewriting generated_at or other identity fields.
+	 *
+	 * @param mixed  $existing_provenance Stored `_acx_description_provenance`.
+	 * @param string $draft               Incoming normalized draft (non-empty).
+	 */
+	private function heal_provenance_alt_text_draft( int $media_id, mixed $existing_provenance, string $draft ): void {
+		if ( ! is_array( $existing_provenance ) ) {
+			return;
+		}
+
+		$stored = $existing_provenance['alt_text_draft'] ?? null;
+		if ( is_string( $stored ) && $stored === $draft ) {
+			return;
+		}
+
+		$healed                    = $existing_provenance;
+		$healed['alt_text_draft']  = $draft;
+		update_post_meta( $media_id, self::PROVENANCE_META_KEY, $healed );
 	}
 
 	/**
@@ -380,9 +450,11 @@ class DescribeMediaService {
 	 * `$alt_text_draft` is the exact string the caller is about to persist to
 	 * `_wp_attachment_image_alt` — measured data, not re-derived here [rg-015].
 	 * History reads this key (via `resolve_generated_alt_text`) to populate the
-	 * Generated-alt column. Callers must not persist this envelope unless the
-	 * alt write actually happens (`skipped_existing_alt` / matching no-op
-	 * short-circuits never call `update_post_meta` for provenance).
+	 * Generated-alt column. Callers must not persist this full envelope unless
+	 * the alt write actually happens (`skipped_existing_alt` /
+	 * `skipped_empty_alt_text` never write). A force no-op may heal only the
+	 * `alt_text_draft` key on the *existing* envelope (BR-108) without calling
+	 * this builder for a full restamp.
 	 *
 	 * @param array<string,mixed> $data
 	 * @param string              $alt_text_draft Exact draft written (or about to be written) to alt meta.

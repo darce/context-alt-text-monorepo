@@ -13,6 +13,7 @@ import {
   type DescriptionHistoryItem,
   type DescriptionHistoryResponse,
 } from '../api/describeApi';
+import { invalidateMediaStats } from '../hooks/useMediaStats';
 import { APP_LINK_PARAMS, parseRunParam } from '../navigation/appLinks';
 import { DescribeRunApplyView } from './DescribeRunApplyView';
 
@@ -113,6 +114,10 @@ const DescriptionHistoryList = (): React.JSX.Element => {
           items: current.items.map((item) => (item.media_id === updatedItem.media_id ? updatedItem : item)),
         };
       });
+      // Dashboard coverage probes are otherwise only refreshed by the workbench
+      // inline editor. History-page corrections must also ask the server for a
+      // fresh missing-alt total — only on full success [BR-124][RLSE-04].
+      invalidateMediaStats(queryClient);
       setDrafts((current) => clearMediaIdEntry(current, updatedItem.media_id));
       setSavingIds((current) => clearMediaIdEntry(current, updatedItem.media_id));
       setCorrectionErrors((current) => clearMediaIdEntry(current, updatedItem.media_id));

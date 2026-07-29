@@ -166,6 +166,84 @@ class DescriptionCommandGenerateTest extends TestCase
 
         $command->__invoke(['generate'], ['write' => true]);
     }
+
+    /**
+     * BR-104 CLI parity pin: empty draft never writes alt or provenance.
+     */
+    public function testGenerateWriteSkipsEmptyAltTextDraft(): void
+    {
+        $service = new RecordingDescribeService([
+            801 => new WP_REST_Response([
+                'media_id' => 801,
+                'alt_text_draft' => '   ',
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+            ]),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $command->__invoke(['generate'], ['media-id' => '801', 'write' => true, 'format' => 'json']);
+
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+
+        $this->assertSame('skipped_empty_alt_text', $payload['rows'][0]['status']);
+        $this->assertSame('', get_post_meta(801, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(801, '_acx_description_provenance', true));
+    }
+
+    /**
+     * BR-116: non-string draft uses the shared normaliser (→ ''), not (string)
+     * cast. Writing is skipped; we never store '42'.
+     */
+    public function testGenerateWriteTreatsNonStringDraftAsEmptyViaSharedNormaliser(): void
+    {
+        $service = new RecordingDescribeService([
+            802 => new WP_REST_Response([
+                'media_id' => 802,
+                'alt_text_draft' => 42,
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+            ]),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $command->__invoke(['generate'], ['media-id' => '802', 'write' => true, 'format' => 'json']);
+
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+
+        $this->assertSame('skipped_empty_alt_text', $payload['rows'][0]['status']);
+        $this->assertSame('', $payload['rows'][0]['alt_text_draft']);
+        $this->assertSame('', get_post_meta(802, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(802, '_acx_description_provenance', true));
+    }
+
+    /**
+     * BR-104: force + empty draft must not clear an existing human alt (CLI).
+     */
+    public function testGenerateForceWriteDoesNotClearExistingAltOnEmptyDraft(): void
+    {
+        $this->setPostMeta(803, '_wp_attachment_image_alt', 'Existing editorial alt.');
+        $service = new RecordingDescribeService([
+            803 => new WP_REST_Response([
+                'media_id' => 803,
+                'alt_text_draft' => '',
+            ]),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $command->__invoke(['generate'], [
+            'media-id' => '803',
+            'write' => true,
+            'force' => true,
+            'format' => 'json',
+        ]);
+
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+
+        $this->assertSame('skipped_empty_alt_text', $payload['rows'][0]['status']);
+        $this->assertSame('Existing editorial alt.', get_post_meta(803, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(803, '_acx_description_provenance', true));
+    }
 }
 
 class RecordingDescribeService extends DescribeMediaService

@@ -113,10 +113,25 @@ const seedWorkbench = (
 const missingPageKey = queryKeys.media.workbenchPage({ page: 1, perPage: 20, status: 'missing' });
 const PER_PAGE = 20;
 
-const assertEnvelopeHonest = (cached: WorkbenchMediaResponse | undefined, expectedTotal: number): void => {
+/**
+ * Envelope honesty for workbench pages after targeted row patches.
+ *
+ * The pin-splice defect grew `items` while leaving `total` alone (or left
+ * total=0 with items>0). Asserting only `total === expectedTotal` and
+ * `items.length <= PER_PAGE` cannot see that growth: total:2 with three items
+ * would pass. Callers pass the seeded page length so a phantom splice fails
+ * the helper alone [BR-122][TEST-15][rg-015].
+ */
+const assertEnvelopeHonest = (
+  cached: WorkbenchMediaResponse | undefined,
+  expectedTotal: number,
+  expectedItemCount: number = expectedTotal,
+): void => {
   expect(cached).toBeDefined();
   // total is server seed — never fabricated upward to match a spliced items array.
   expect(cached!.total).toBe(expectedTotal);
+  // Exact seeded length — not an upper bound that swallows phantom growth [BR-122].
+  expect(cached!.items.length).toBe(expectedItemCount);
   expect(cached!.items.length).toBeLessThanOrEqual(PER_PAGE);
   // Pin-splice signature was items grown while total stayed (or total=0 with items>0).
   if (cached!.total === 0) {
@@ -148,6 +163,56 @@ const statsEnvelope = (total: number): WorkbenchMediaResponse => ({
 describe('useCorrectMediaAlt', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('assertEnvelopeHonest fails when items grow while total stays (phantom splice) [BR-122][TEST-15]', () => {
+    // Standalone proof that the helper alone catches growth: splice a phantom row,
+    // leave total alone, and show the helper fails without other id-list asserts.
+    const honest: WorkbenchMediaResponse = {
+      items: [
+        {
+          id: 42,
+          title: 'Bridge',
+          status: 'missing',
+          thumbnailUrl: null,
+          altText: null,
+          editUrl: null,
+          tags: [],
+        },
+        {
+          id: 99,
+          title: 'Other',
+          status: 'missing',
+          thumbnailUrl: null,
+          altText: null,
+          editUrl: null,
+          tags: [],
+        },
+      ],
+      total: 2,
+      totalPages: 1,
+    };
+    expect(() => assertEnvelopeHonest(honest, 2)).not.toThrow();
+
+    const withPhantom: WorkbenchMediaResponse = {
+      ...honest,
+      items: [
+        ...honest.items,
+        {
+          id: 777,
+          title: 'Phantom',
+          status: 'missing',
+          thumbnailUrl: null,
+          altText: 'spliced',
+          editUrl: null,
+          tags: [],
+        },
+      ],
+    };
+    // total still 2; old helper (items.length <= PER_PAGE only) would pass.
+    expect(withPhantom.total).toBe(2);
+    expect(withPhantom.items.length).toBe(3);
+    expect(() => assertEnvelopeHonest(withPhantom, 2)).toThrow();
   });
 
   it('refetches the missing-alt stats probe after a successful correction [BR-101]', async () => {

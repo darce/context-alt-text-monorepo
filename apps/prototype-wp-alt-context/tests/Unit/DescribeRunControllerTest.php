@@ -851,9 +851,9 @@ class DescribeRunControllerTest extends TestCase
     }
 
     /**
-     * BR-88a: alt===draft with provenance already an array (completed item)
+     * BR-88a / BR-126: alt===draft with provenance already this run's envelope
      * stays skipped_existing; provenance must be byte-identical after apply
-     * (no applied_at churn). Pins the `! is_array( $stored_prov )` conjunct.
+     * (no applied_at churn). BR-114: matching marker is cleared on rejection.
      */
     public function testApplyRunDraftsSkipsWhenProvenanceAlreadyComplete(): void
     {
@@ -870,8 +870,7 @@ class DescribeRunControllerTest extends TestCase
         ];
         $this->setPostMeta(71, '_wp_attachment_image_alt', $draft);
         $this->setPostMeta(71, '_acx_description_provenance', $existingProv);
-        // Even a matching marker must not reopen a completed provenance write
-        // when stored_prov is already an array (belt-and-braces conjunct).
+        // Matching marker must not reopen a completed provenance write for this run.
         $this->setPostMeta(71, '_acx_description_provenance_pending', [
             'run_id' => $runId,
             'draft_hash' => hash('sha256', $draft),
@@ -899,6 +898,8 @@ class DescribeRunControllerTest extends TestCase
         $this->assertSame($draft, get_post_meta(71, '_wp_attachment_image_alt', true));
         // Byte-identical: no applied_at churn from a re-stamp.
         $this->assertSame($existingProv, get_post_meta(71, '_acx_description_provenance', true));
+        // BR-114: orphaned marker for a completed this-run envelope is cleared.
+        $this->assertSame('', get_post_meta(71, '_acx_description_provenance_pending', true));
     }
 
     /**
@@ -1009,6 +1010,296 @@ class DescribeRunControllerTest extends TestCase
         $this->assertSame('different human alt', get_post_meta(71, '_wp_attachment_image_alt', true));
         $this->assertSame('', get_post_meta(70, '_acx_description_provenance', true));
         $this->assertSame('', get_post_meta(71, '_acx_description_provenance', true));
+    }
+
+    /**
+     * BR-119: matching pending marker + stored alt ≠ draft + no provenance must
+     * stay skipped_existing (anti-clobber). Goes RED if `$stored_alt === $draft`
+     * is deleted from the recovery predicate. BR-114: marker cleared on alt diverge.
+     */
+    public function testApplyRunDraftsGuardsWhenPendingMarkerButStoredAltDiffersFromDraft(): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $this->plantPostType(71);
+        $draft = 'a dog in a park';
+        $operatorAlt = 'operator edited after partial';
+        $this->setPostMeta(71, '_wp_attachment_image_alt', $operatorAlt);
+        // Matching marker would unlock recovery if the anti-clobber conjunct were gone.
+        $this->setPostMeta(71, '_acx_description_provenance_pending', [
+            'run_id' => $runId,
+            'draft_hash' => hash('sha256', $draft),
+        ]);
+        // No provenance — only the alt!==draft conjunct keeps this guarded.
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    ['media_id' => 71, 'status' => 'completed', 'alt_text_draft' => $draft, 'caption' => 'dog', 'provenance' => ['adapter' => 'florence', 'model_id' => 'florence-2']],
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $data = $response->get_data();
+        $this->assertSame([], $data['applied']);
+        $this->assertSame([], $data['partial']);
+        $this->assertSame([71], $data['skipped_existing']);
+        $this->assertSame([], $data['failed']);
+        // Operator edit preserved; draft not applied; no provenance invented.
+        $this->assertSame($operatorAlt, get_post_meta(71, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(71, '_acx_description_provenance', true));
+        // BR-114: this run's marker is obsolete after alt diverged.
+        $this->assertSame('', get_post_meta(71, '_acx_description_provenance_pending', true));
+    }
+
+    /**
+     * BR-119: non-string stored alt with a matching marker must stay guarded
+     * (is_string conjunct). WP stub allows planting non-string meta.
+     */
+    public function testApplyRunDraftsGuardsWhenStoredAltIsNonStringWithPendingMarker(): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $this->plantPostType(71);
+        $draft = 'a dog in a park';
+        // Corrupt / unexpected meta type — must not unlock recovery.
+        $this->setPostMeta(71, '_wp_attachment_image_alt', ['not' => 'a string']);
+        $this->setPostMeta(71, '_acx_description_provenance_pending', [
+            'run_id' => $runId,
+            'draft_hash' => hash('sha256', $draft),
+        ]);
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    ['media_id' => 71, 'status' => 'completed', 'alt_text_draft' => $draft, 'caption' => 'dog', 'provenance' => ['adapter' => 'florence', 'model_id' => 'florence-2']],
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $data = $response->get_data();
+        $this->assertSame([], $data['applied']);
+        $this->assertSame([71], $data['skipped_existing']);
+        $this->assertSame(['not' => 'a string'], get_post_meta(71, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(71, '_acx_description_provenance', true));
+        // Non-string alt is an alt-diverge rejection for this run's marker.
+        $this->assertSame('', get_post_meta(71, '_acx_description_provenance_pending', true));
+    }
+
+    /**
+     * BR-106: when the first row for a media_id has no draft and a later row has
+     * one, keep the usable draft — not first-seen-at-any-cost.
+     */
+    public function testApplyRunDraftsDedupesPreferringFirstNonEmptyDraft(): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $this->plantPostType(71);
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    // First-seen has no draft — must not force skipped_no_draft.
+                    ['media_id' => 71, 'status' => 'failed', 'alt_text_draft' => null, 'caption' => null, 'provenance' => null],
+                    // Later completed row carries the only usable draft.
+                    ['media_id' => 71, 'status' => 'completed', 'alt_text_draft' => 'good draft', 'caption' => null, 'provenance' => ['adapter' => 'florence']],
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $data = $response->get_data();
+        $this->assertSame([71], $data['applied']);
+        $this->assertSame([], $data['skipped_no_draft']);
+        $this->assertSame([], $data['partial']);
+        $this->assertSame([], $data['failed']);
+        $this->assertSame('good draft', get_post_meta(71, '_wp_attachment_image_alt', true));
+        $prov = get_post_meta(71, '_acx_description_provenance', true);
+        $this->assertIsArray($prov);
+        $this->assertSame('good draft', $prov['alt_text_draft']);
+    }
+
+    /**
+     * BR-102: when provenance fails and the recovery marker cannot be planted,
+     * the item is `failed` (not `partial`). Partial is presented as retryable;
+     * without a marker the next apply cannot recover. [RLSE-05] [INT-11]
+     */
+    public function testApplyRunDraftsBucketsFailedWhenMarkerWriteFails(): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $this->plantPostType(71);
+        // Alt write succeeds; provenance write fails; marker write also fails.
+        $GLOBALS['__ac_update_post_meta_fail'][71]['_acx_description_provenance'] = true;
+        $GLOBALS['__ac_update_post_meta_fail'][71]['_acx_description_provenance_pending'] = true;
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    ['media_id' => 71, 'status' => 'completed', 'alt_text_draft' => 'a dog in a park', 'caption' => 'dog', 'provenance' => ['adapter' => 'florence', 'model_id' => 'florence-2']],
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $data = $response->get_data();
+        // Not partial — recovery is impossible without a marker.
+        $this->assertSame([], $data['applied']);
+        $this->assertSame([], $data['partial']);
+        $this->assertSame([71], $data['failed']);
+        // Alt stayed written (no roll-back); marker absent; provenance absent.
+        $this->assertSame('a dog in a park', get_post_meta(71, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(71, '_acx_description_provenance', true));
+        $this->assertSame('', get_post_meta(71, '_acx_description_provenance_pending', true));
+    }
+
+    /**
+     * BR-107: run_id for markers and the response comes from the path, not the
+     * items body — omitting body run_id must not plant an empty-string marker.
+     */
+    public function testApplyRunDraftsUsesPathRunIdWhenItemsBodyOmitsRunId(): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $this->plantPostType(71);
+        $GLOBALS['__ac_update_post_meta_fail'][71]['_acx_description_provenance'] = true;
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            // Body deliberately omits run_id.
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'items' => [
+                    ['media_id' => 71, 'status' => 'completed', 'alt_text_draft' => 'a dog in a park', 'caption' => 'dog', 'provenance' => ['adapter' => 'florence']],
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $data = $response->get_data();
+        $this->assertSame($runId, $data['run_id']);
+        $this->assertSame([71], $data['partial']);
+        $pending = get_post_meta(71, '_acx_description_provenance_pending', true);
+        $this->assertIsArray($pending);
+        $this->assertSame($runId, $pending['run_id']);
+        $this->assertSame(hash('sha256', 'a dog in a park'), $pending['draft_hash']);
+    }
+
+    /**
+     * BR-107: items body run_id that disagrees with the path is rejected 400.
+     */
+    public function testApplyRunDraftsRejectsWhenItemsBodyRunIdDisagreesWithPath(): void
+    {
+        $pathRunId = '11111111-1111-1111-1111-111111111111';
+        $bodyRunId = '22222222-2222-2222-2222-222222222222';
+        $this->plantPostType(71);
+        $this->queueRunStatusResponse($pathRunId, 'completed');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $bodyRunId,
+                'items' => [
+                    ['media_id' => 71, 'status' => 'completed', 'alt_text_draft' => 'a dog in a park', 'caption' => 'dog', 'provenance' => ['adapter' => 'florence']],
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $pathRunId . '/apply');
+        $request->set_param('run_id', $pathRunId);
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('describe_run_id_mismatch', $response->get_error_code());
+        $this->assertSame(400, $response->get_error_data()['status'] ?? null);
+        // Nothing written.
+        $this->assertSame('', get_post_meta(71, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(71, '_acx_description_provenance', true));
+    }
+
+    /**
+     * BR-126: matching marker + alt===draft + pre-existing provenance from a
+     * *different* run must complete (replace old envelope) and clear the marker.
+     * Pins the narrow "not already this run's provenance" conjunct.
+     */
+    public function testApplyRunDraftsRecoversPartialWhenOlderProvenanceExists(): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $this->plantPostType(70);
+        $draft = 'a cat on a sofa';
+        $oldProv = [
+            'adapter' => 'florence',
+            'model_id' => 'old-model',
+            'source' => 'cli_describe',
+            'run_id' => '00000000-0000-0000-0000-000000000099',
+            'applied_at' => '2025-01-01T00:00:00+00:00',
+            'alt_text_draft' => 'An older generated draft.',
+        ];
+        // After a prior partial: alt is the new draft, marker planted, old prov remains.
+        $this->setPostMeta(70, '_wp_attachment_image_alt', $draft);
+        $this->setPostMeta(70, '_acx_description_provenance', $oldProv);
+        $this->setPostMeta(70, '_acx_description_provenance_pending', [
+            'run_id' => $runId,
+            'draft_hash' => hash('sha256', $draft),
+        ]);
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    ['media_id' => 70, 'status' => 'completed', 'alt_text_draft' => $draft, 'caption' => 'cat', 'provenance' => ['adapter' => 'florence', 'model_id' => 'florence-2']],
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+        // No overwrite — recovery must complete despite older provenance.
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $data = $response->get_data();
+        $this->assertSame([70], $data['applied']);
+        $this->assertSame([], $data['partial']);
+        $this->assertSame([], $data['skipped_existing']);
+        $this->assertSame($draft, get_post_meta(70, '_wp_attachment_image_alt', true));
+        $prov = get_post_meta(70, '_acx_description_provenance', true);
+        $this->assertIsArray($prov);
+        $this->assertSame($runId, $prov['run_id']);
+        $this->assertSame($draft, $prov['alt_text_draft']);
+        $this->assertSame('bulk_describe_run', $prov['source']);
+        $this->assertSame('', get_post_meta(70, '_acx_description_provenance_pending', true));
     }
 
     public function testApplyReturns404WhenRunNotFound(): void

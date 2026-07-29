@@ -440,8 +440,11 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			}
 
 			foreach ( $data['items'] as $index => $item ) {
-				$media_id      = isset( $item['media_id'] ) ? (int) $item['media_id'] : 0;
-				$existing_alt  = trim( (string) get_post_meta( $media_id, '_wp_attachment_image_alt', true ) );
+				$media_id     = isset( $item['media_id'] ) ? (int) $item['media_id'] : 0;
+				$alt_raw      = get_post_meta( $media_id, '_wp_attachment_image_alt', true );
+				// Only string meta is "existing alt text"; non-string values are
+				// unexpected and must not trigger array-to-string notices.
+				$existing_alt = is_string( $alt_raw ) ? trim( $alt_raw ) : '';
 				$item['existing_alt'] = '' !== $existing_alt;
 				$data['items'][ $index ] = $item;
 			}
@@ -471,25 +474,29 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	 * Response buckets (frontend contract — the History UI reports each honestly):
 	 * `applied` (alt + provenance both verified), `partial` (alt landed, provenance
 	 * write did not — do not treat as fully applied; history may omit the item),
-	 * `skipped_existing` (existing alt guarded), `skipped_no_draft` (failed describe
-	 * / empty draft), `skipped_invalid` (media_id is not an attachment post, S3-01),
-	 * and `failed` (the alt-text write returned false, S3-02). `applied` keeps its
-	 * prior meaning; `partial` is additive. Do not invent envelope fields beyond
-	 * what was measured. [rg-015]
+	 * `skipped_existing` (existing alt guarded, or pre-write CAS saw a concurrent
+	 * edit), `skipped_no_draft` (failed describe / empty draft), `skipped_invalid`
+	 * (media_id is not an attachment post, S3-01), and `failed` (the alt-text write
+	 * returned false, S3-02; or the recovery marker could not be planted after a
+	 * provenance failure — no auto-retry path exists). `applied` keeps its prior
+	 * meaning; `partial` is additive. Do not invent envelope fields beyond what
+	 * was measured. [rg-015]
 	 *
 	 * Partial recovery (non-clobber completion): when a prior apply wrote alt but
 	 * failed provenance, this path also writes durable evidence —
 	 * `_acx_description_provenance_pending` = `{ run_id, draft_hash }` — scoped to
-	 * this run and this draft. On a later apply, if `existing_alt` is set and the
+	 * this run and this draft. On a later apply, if stored alt is non-empty and the
 	 * operator did not opt into overwrite, the guard falls through **only** when
-	 * that marker exists, its `run_id` matches the current run, its `draft_hash`
-	 * matches hash(sha256, current draft), stored alt is still byte-identical to
-	 * the draft, and provenance is still not an array. Equality of alt to draft
-	 * alone is not evidence this system started the write (coincidental operator
-	 * text / partial inline correction) and must stay guarded. No marker →
-	 * `skipped_existing`, requiring explicit `overwrite_media_ids`. Marker write
-	 * failure is fail-closed: no marker means no automatic recovery. [RLSE-05]
-	 * [INT-11] [rg-015]
+	 * that marker exists, its `run_id` matches the path run id, its `draft_hash`
+	 * matches hash(sha256, current draft), stored alt is still a string and
+	 * byte-identical to the draft, and stored provenance is not already **this
+	 * run's** envelope (older provenance from a prior generation may exist and is
+	 * replaced). Equality of alt to draft alone is not evidence this system started
+	 * the write (coincidental operator text / partial inline correction) and must
+	 * stay guarded. No marker → `skipped_existing`, requiring explicit
+	 * `overwrite_media_ids`. Marker write failure is fail-closed: without a verified
+	 * marker the item is `failed` (not `partial`) so the UI does not present a
+	 * non-recoverable item as retryable. [RLSE-05] [INT-11] [rg-015]
 	 */
 	public function apply_describe_run_drafts( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		// S3-03: gate on the authoritative run status. The /items endpoint carries
@@ -532,10 +539,30 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 		$data  = $items_response->get_data();
 		$items = ( is_array( $data ) && is_array( $data['items'] ?? null ) ) ? $data['items'] : array();
 
-		// BR-92: bucket exclusivity is per media_id. The backend may (unverified)
-		// echo duplicate rows for the same id; without collapse, one occurrence can
-		// land in `applied` and a later occurrence of the same id in
-		// `skipped_existing`. Keep first-seen positive media_id only.
+		// BR-107: stamp and compare from the path run id. The items body may omit
+		// run_id (or echo a wrong one); markers and the response must use the path.
+		$run_id = $this->normalize_run_id( $request );
+		if ( '' === $run_id ) {
+			return new WP_Error( 'missing_run_id', 'Run ID is required.', array( 'status' => 400 ) );
+		}
+		if ( is_array( $data ) && array_key_exists( 'run_id', $data ) ) {
+			$body_run_id = (string) $data['run_id'];
+			if ( '' !== $body_run_id && $body_run_id !== $run_id ) {
+				return new WP_Error(
+					'describe_run_id_mismatch',
+					sprintf(
+						'Items body run_id (%s) does not match path run_id (%s).',
+						$body_run_id,
+						$run_id
+					),
+					array( 'status' => 400 )
+				);
+			}
+		}
+
+		// BR-92 / BR-106: bucket exclusivity is per media_id. Collapse duplicates,
+		// preferring the first row that carries a non-empty draft so a failed
+		// null-draft echo before a completed draft does not force skipped_no_draft.
 		$items = $this->normalize_apply_items_by_media_id( $items );
 
 		// S3-05: reject non-positive overwrite ids rather than absint()-coercing a
@@ -554,7 +581,6 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 		$skipped_no_draft = array();
 		$skipped_invalid  = array();
 		$failed           = array();
-		$run_id           = (string) ( $data['run_id'] ?? '' );
 
 		foreach ( $items as $item ) {
 			$media_id = isset( $item['media_id'] ) ? (int) $item['media_id'] : 0;
@@ -574,27 +600,66 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 				continue;
 			}
 
-			if ( ! empty( $item['existing_alt'] ) && ! isset( $overwrite[ $media_id ] ) ) {
-				// Non-clobber completion: only when durable evidence proves this
-				// system started this write for this run+draft (pending marker).
-				// Alt===draft alone is not enough — coincidental operator text must
-				// stay guarded. Belt-and-braces: alt still equals draft and
-				// provenance is still absent so a stale marker cannot rewrite alt.
-				$stored_alt  = get_post_meta( $media_id, '_wp_attachment_image_alt', true );
-				$stored_prov = get_post_meta( $media_id, '_acx_description_provenance', true );
-				$pending     = get_post_meta( $media_id, '_acx_description_provenance_pending', true );
-				$draft_hash  = hash( 'sha256', $draft );
-				$is_non_clobber_completion = is_array( $pending )
-					&& isset( $pending['run_id'], $pending['draft_hash'] )
-					&& (string) $pending['run_id'] === $run_id
-					&& (string) $pending['draft_hash'] === $draft_hash
-					&& is_string( $stored_alt )
-					&& $stored_alt === $draft
-					&& ! is_array( $stored_prov );
+			// Decision-time alt snapshot (fresh read — not the items-endpoint
+			// existing_alt boolean, which can lag an in-flight media-library edit).
+			$stored_alt_raw = get_post_meta( $media_id, '_wp_attachment_image_alt', true );
+			$decision_alt   = $stored_alt_raw;
 
-				if ( ! $is_non_clobber_completion ) {
+			// Non-string alt meta is unexpected; never treat it as empty and never
+			// unlock recovery via the string-equality conjunct (BR-119).
+			if ( ! is_string( $stored_alt_raw ) ) {
+				if ( ! isset( $overwrite[ $media_id ] ) ) {
+					$pending = get_post_meta( $media_id, '_acx_description_provenance_pending', true );
+					if ( is_array( $pending )
+						&& isset( $pending['run_id'] )
+						&& (string) $pending['run_id'] === $run_id
+					) {
+						// Alt type diverged from a string draft — drop this run's marker.
+						delete_post_meta( $media_id, '_acx_description_provenance_pending' );
+					}
 					$skipped_existing[] = $media_id;
 					continue;
+				}
+			} else {
+				$has_existing = '' !== trim( $stored_alt_raw );
+
+				if ( $has_existing && ! isset( $overwrite[ $media_id ] ) ) {
+					// Non-clobber completion: only when durable evidence proves this
+					// system started this write for this run+draft (pending marker).
+					// Alt===draft alone is not enough — coincidental operator text must
+					// stay guarded. When the marker matches run+draft and alt still
+					// equals the draft, completing provenance is not a clobber even if
+					// an older envelope from a different generation exists (BR-126).
+					$stored_prov = get_post_meta( $media_id, '_acx_description_provenance', true );
+					$pending     = get_post_meta( $media_id, '_acx_description_provenance_pending', true );
+					$draft_hash  = hash( 'sha256', $draft );
+					$prov_is_this_run = is_array( $stored_prov )
+						&& isset( $stored_prov['run_id'] )
+						&& (string) $stored_prov['run_id'] === $run_id;
+					// $stored_alt_raw is string here (non-string branch returns above).
+					$is_non_clobber_completion = is_array( $pending )
+						&& isset( $pending['run_id'], $pending['draft_hash'] )
+						&& (string) $pending['run_id'] === $run_id
+						&& (string) $pending['draft_hash'] === $draft_hash
+						&& $stored_alt_raw === $draft
+						&& ! $prov_is_this_run;
+
+					if ( ! $is_non_clobber_completion ) {
+						// BR-114: drop orphaned markers owned by this run when recovery
+						// is rejected because alt diverged or provenance is already
+						// this run's complete envelope. Markers for other runs stay.
+						if ( is_array( $pending )
+							&& isset( $pending['run_id'] )
+							&& (string) $pending['run_id'] === $run_id
+						) {
+							$alt_diverged = $stored_alt_raw !== $draft;
+							if ( $alt_diverged || $prov_is_this_run ) {
+								delete_post_meta( $media_id, '_acx_description_provenance_pending' );
+							}
+						}
+						$skipped_existing[] = $media_id;
+						continue;
+					}
 				}
 			}
 
@@ -603,6 +668,15 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			// single-image write records, then stamp the bulk-apply origin and the
 			// exact draft string written (history's generated-alt resolver).
 			$provenance = $this->build_run_apply_provenance( $item['provenance'] ?? null, $run_id, $draft );
+
+			// BR-115: compare-and-swap — re-read immediately before the write and
+			// abort if alt diverged from the decision-time snapshot. Preserves a
+			// concurrent media-library edit; does not claim a lock.
+			$pre_write_raw = get_post_meta( $media_id, '_wp_attachment_image_alt', true );
+			if ( $pre_write_raw !== $decision_alt ) {
+				$skipped_existing[] = $media_id;
+				continue;
+			}
 
 			// S3-02: honor the update_post_meta() return. It also returns false when
 			// the stored value is byte-identical to $draft (a no-op overwrite);
@@ -633,16 +707,29 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 				$prov_ok = is_array( $current_prov ) && $provenance === $current_prov;
 				if ( ! $prov_ok ) {
 					// Durable evidence this system started the write for this
-					// run+draft. Marker write failure is fail-closed: without it
-					// the next apply cannot auto-recover (operator uses overwrite).
-					update_post_meta(
+					// run+draft. Inspect marker write the same way as provenance:
+					// update_post_meta returns false on failure *and* on unchanged
+					// value — re-read and compare before claiming the marker. Without
+					// a verified marker, auto-recovery is impossible so bucket
+					// `failed` (not `partial`) — partial is presented as retryable.
+					// [BR-102] [RLSE-05] [INT-11]
+					$marker = array(
+						'run_id'     => $run_id,
+						'draft_hash' => hash( 'sha256', $draft ),
+					);
+					$marker_written = update_post_meta(
 						$media_id,
 						'_acx_description_provenance_pending',
-						array(
-							'run_id'     => $run_id,
-							'draft_hash' => hash( 'sha256', $draft ),
-						)
+						$marker
 					);
+					if ( false === $marker_written ) {
+						$current_marker = get_post_meta( $media_id, '_acx_description_provenance_pending', true );
+						$marker_ok      = is_array( $current_marker ) && $marker === $current_marker;
+						if ( ! $marker_ok ) {
+							$failed[] = $media_id;
+							continue;
+						}
+					}
 					$partial[] = $media_id;
 					continue;
 				}
@@ -668,11 +755,12 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	}
 
 	/**
-	 * Collapse apply-item rows by positive-integer media_id, keeping first-seen
-	 * order. Duplicate rows for the same id would otherwise be bucketed
-	 * independently after earlier writes mutate meta, so one id can appear in
-	 * two mutually exclusive response buckets. Non-positive ids are left as-is
-	 * (they land in skipped_no_draft / skipped_invalid via the main loop).
+	 * Collapse apply-item rows by positive-integer media_id. Prefer the first row
+	 * that carries a non-empty draft so a failed null-draft echo before a
+	 * completed draft is not the only survivor (BR-106). When both rows have
+	 * drafts, first-seen still wins (BR-92 bucket exclusivity). Non-positive ids
+	 * are left as-is (they land in skipped_no_draft / skipped_invalid via the
+	 * main loop).
 	 *
 	 * @param array<int,mixed> $items
 	 *
@@ -688,9 +776,23 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			$media_id = isset( $item['media_id'] ) ? (int) $item['media_id'] : 0;
 			if ( $media_id > 0 ) {
 				if ( isset( $seen[ $media_id ] ) ) {
+					$existing_index = $seen[ $media_id ];
+					// $normalized only stores array items (non-arrays are skipped above).
+					$existing       = $normalized[ $existing_index ];
+					$existing_draft = is_string( $existing['alt_text_draft'] ?? null )
+						? trim( $existing['alt_text_draft'] )
+						: '';
+					$new_draft      = is_string( $item['alt_text_draft'] ?? null )
+						? trim( $item['alt_text_draft'] )
+						: '';
+					// Replace only when the kept row has no usable draft and the
+					// later row does — never invent counts of dropped rows.
+					if ( '' === $existing_draft && '' !== $new_draft ) {
+						$normalized[ $existing_index ] = $item;
+					}
 					continue;
 				}
-				$seen[ $media_id ] = true;
+				$seen[ $media_id ] = count( $normalized );
 			}
 			$normalized[] = $item;
 		}

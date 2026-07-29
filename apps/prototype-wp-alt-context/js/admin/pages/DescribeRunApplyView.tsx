@@ -16,10 +16,19 @@ const itemHeading = (item: DescribeRunItem): string =>
     ? item.caption
     : sprintf(__('Media %d', 'alt-context'), item.media_id);
 
-/** Label a partial media id via the run item when present; fall back to Media N. */
+/**
+ * Label a partial media id. Always surface the media id when a non-empty caption
+ * is used as the heading so colliding captions remain distinguishable. [BR-111]
+ */
 const partialItemLabel = (mediaId: number, itemsById: Map<number, DescribeRunItem>): string => {
   const item = itemsById.get(mediaId);
-  return item ? itemHeading(item) : sprintf(__('Media %d', 'alt-context'), mediaId);
+  if (!item) {
+    return sprintf(__('Media %d', 'alt-context'), mediaId);
+  }
+  if (item.caption && item.caption.trim() !== '') {
+    return sprintf(__('%1$s (Media %2$d)', 'alt-context'), item.caption, mediaId);
+  }
+  return sprintf(__('Media %d', 'alt-context'), mediaId);
 };
 
 /**
@@ -48,6 +57,7 @@ const buildApplyResultText = (
   data: ApplyDescribeRunResponse,
   itemsById: Map<number, DescribeRunItem>,
   historyRecovered: boolean,
+  historyIncompleteIds: number[],
 ): string => {
   const parts: string[] = [];
 
@@ -69,6 +79,15 @@ const buildApplyResultText = (
   } else if (historyRecovered) {
     parts.push(
       __('History is now complete for items that needed a second apply.', 'alt-context'),
+    );
+  } else if (historyIncompleteIds.length > 0) {
+    // Prior partials left the outstanding set without landing in applied
+    // (failed / skipped_*) — never claim recovery. [BR-103][RLSE-05]
+    parts.push(
+      sprintf(
+        __('History is still incomplete for %s.', 'alt-context'),
+        formatPartialLabels(historyIncompleteIds, itemsById),
+      ),
     );
   }
 
@@ -119,25 +138,39 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
   // Last successful payload kept for the live region so a failed retry does not
   // unmount the partial summary. [RLSE-05][INT-11]
   const [lastResult, setLastResult] = useState<ApplyDescribeRunResponse | null>(null);
-  // True when the previous success had partials and the latest does not —
-  // confirms the promised history completion closed. [RLSE-05]
+  // True when every previously outstanding id landed in applied. [BR-103][RLSE-05]
   const [historyRecovered, setHistoryRecovered] = useState(false);
+  // Prior outstanding ids that left partial without landing in applied. [BR-103]
+  const [historyIncompleteIds, setHistoryIncompleteIds] = useState<number[]>([]);
   const disabledReasonId = useId();
 
   /**
    * Reconcile local recovery state from a landed write. Called from the per-
    * mutate onSuccess so a failed retry never clears outstanding partials —
    * only a later success that omits an id from `partial` does. [INT-11]
+   *
+   * Replace (do not union) with data.partial: a recovered id must leave the
+   * outstanding set on success. [BR-120]
    */
   const onApplySuccess = (data: ApplyDescribeRunResponse): void => {
     setOverwriteIds(new Set());
     const prev = outstandingPartialIdsRef.current;
     const next = data.partial;
+    const appliedSet = new Set(data.applied);
     // Clear an id only when this success reports it is no longer partial.
     outstandingPartialIdsRef.current = next;
     setOutstandingPartialIds(next);
     setLastResult(data);
-    setHistoryRecovered(prev.length > 0 && next.length === 0);
+    // History is complete only when every previously outstanding id is present
+    // in applied — not merely when the partial bucket emptied into skipped/failed.
+    // [BR-103][RLSE-05]
+    const recovered =
+      prev.length > 0 && prev.every((id) => appliedSet.has(id));
+    setHistoryRecovered(recovered);
+    const incomplete = prev.filter(
+      (id) => !appliedSet.has(id) && !next.includes(id),
+    );
+    setHistoryIncompleteIds(incomplete);
   };
 
   const toggleOverwrite = (mediaId: number): void => {
@@ -162,36 +195,32 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
     </header>
   );
 
-  if (itemsQuery.isLoading) {
-    return (
-      <section className="acx-history acx-run-apply" aria-label={__('Apply run drafts', 'alt-context')}>
-        {header}
-        <p>{__('Loading run drafts…', 'alt-context')}</p>
-      </section>
-    );
-  }
+  // Mount-then-mutate: the live region is a stable sibling of every branch so
+  // it never unmounts across loading / items-error / main. [BR-117][A11Y-21]
+  // Prefer retained items (RQ keeps prior data on error; also any in-flight
+  // placeholder) when recovery state is live so a post-apply items refetch
+  // failure cannot strip the retry affordance. [BR-127][INT-11]
+  const hasRecoveryContext = lastResult !== null || outstandingPartialIds.length > 0;
+  const retainedData = itemsQuery.data;
+  const preferRetainedOnError =
+    itemsQuery.isError && hasRecoveryContext && retainedData !== undefined;
+  const showLoading = itemsQuery.isLoading && retainedData === undefined;
+  const showItemsError = itemsQuery.isError && !preferRetainedOnError;
+  const showMain = retainedData !== undefined && !showItemsError;
 
-  if (itemsQuery.isError) {
-    return (
-      <section className="acx-history acx-run-apply" aria-label={__('Apply run drafts', 'alt-context')}>
-        {header}
-        <section className="acx-dashboard__panel acx-history__panel">
-          <h2>{__('Could not load this run’s drafts.', 'alt-context')}</h2>
-          <button type="button" className="acx-button acx-button--secondary" onClick={() => void itemsQuery.refetch()}>
-            {__('Retry', 'alt-context')}
-          </button>
-        </section>
-      </section>
-    );
-  }
-
-  const { withoutAlt, withExistingAlt, noDraft } = buckets;
-  const allItems = itemsQuery.data?.items ?? [];
+  const { withoutAlt: withoutAltRaw, withExistingAlt, noDraft } = buckets;
+  const allItems = retainedData?.items ?? [];
   const itemsById = new Map(allItems.map((item) => [item.media_id, item]));
   const outstandingPartialSet = new Set(outstandingPartialIds);
 
-  // Partials after a write sit in withExistingAlt (existing_alt flipped true).
-  // Present them as history-completion, not as overwrite candidates. [RLSE-04]
+  // Exclude outstanding partials from the safe bucket the same way overwrite
+  // candidates exclude them. While the items refetch is still in flight,
+  // existing_alt is still false so the same id would otherwise sit in both
+  // withoutAlt and historyCompletionItems. [BR-110]
+  const withoutAlt = withoutAltRaw.filter((item) => !outstandingPartialSet.has(item.media_id));
+
+  // Partials after a write sit in withExistingAlt once existing_alt flips true;
+  // until then the filter above keeps them out of withoutAlt. [RLSE-04]
   const historyCompletionItems = outstandingPartialIds
     .map((id) => itemsById.get(id))
     .filter((item): item is DescribeRunItem => item !== undefined);
@@ -199,13 +228,18 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
     (item) => !outstandingPartialSet.has(item.media_id),
   );
 
+  // Real set difference: only count outstanding ids not already in the safe
+  // write set so a stale items query cannot double-count. [BR-110]
+  const withoutAltSet = new Set(withoutAlt.map((item) => item.media_id));
+  const partialCompletionIds = outstandingPartialIds.filter((id) => !withoutAltSet.has(id));
+
   const hasApplicable =
     withoutAlt.length > 0 || overwriteCandidates.length > 0 || outstandingPartialIds.length > 0;
   const selectedOverwrites = overwriteCandidates.filter((item) => overwriteIds.has(item.media_id));
   // Explicit selections (safe + overwrite). Outstanding partials are completed
   // implicitly by the server on the same request — count them in the label. [BR-91]
   const applyCount = withoutAlt.length + selectedOverwrites.length;
-  const partialCompletionCount = outstandingPartialIds.length;
+  const partialCompletionCount = partialCompletionIds.length;
   const totalWriteCount = applyCount + partialCompletionCount;
   const canApply = totalWriteCount > 0;
   const partialRetryOnly = partialCompletionCount > 0 && applyCount === 0;
@@ -215,19 +249,23 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
       ? sprintf(__('Apply all %d without alt text', 'alt-context'), withoutAlt.length)
       : sprintf(__('Apply %d descriptions', 'alt-context'), totalWriteCount);
 
-  const applyDisabled = !canApply || apply.isPending;
-  const showDisabledReason = !canApply && !apply.isPending;
+  // Idle "nothing selected" must stay focusable with an announced reason;
+  // pending is a genuine busy state and may natively disable. Do not collapse
+  // the two into one flag. [BR-105][A11Y-24]
+  const nothingSelectedIdle = !canApply && !apply.isPending;
+  const applyBusy = apply.isPending;
 
   const onApply = (): void => {
+    if (!canApply || apply.isPending) {
+      return;
+    }
     apply.mutate(selectedOverwrites.map((item) => item.media_id), {
       onSuccess: onApplySuccess,
     });
   };
 
-  // Mount-then-mutate: always render the live region so ATs track it before the
-  // first result text arrives. Empty while quiet. [A11Y-21]
   const resultText = lastResult
-    ? buildApplyResultText(lastResult, itemsById, historyRecovered)
+    ? buildApplyResultText(lastResult, itemsById, historyRecovered, historyIncompleteIds)
     : '';
 
   const safePanelHeading =
@@ -253,132 +291,157 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
             'alt-context',
           );
 
+  const liveRegion = (
+    <div
+      className={resultText ? 'acx-dashboard__panel acx-run-apply__result' : undefined}
+      role="status"
+      aria-live="polite"
+      data-testid="acx-run-apply-status"
+    >
+      {resultText}
+    </div>
+  );
+
   return (
     <section className="acx-history acx-run-apply" aria-label={__('Apply run drafts', 'alt-context')}>
       {header}
 
-      <div
-        className={resultText ? 'acx-dashboard__panel acx-run-apply__result' : undefined}
-        role="status"
-        aria-live="polite"
-        data-testid="acx-run-apply-status"
-      >
-        {resultText}
-      </div>
+      {liveRegion}
 
-      {apply.isError ? (
-        <div className="acx-error-state" role="alert">
-          <span aria-hidden="true">⚠</span>{' '}
-          {__('Could not apply the run drafts. Try again.', 'alt-context')}
-          {outstandingPartialIds.length > 0
-            ? ` ${sprintf(
-                __('History is still incomplete for %s.', 'alt-context'),
-                formatPartialLabels(outstandingPartialIds, itemsById),
-              )}`
-            : null}
-        </div>
+      {showLoading ? <p>{__('Loading run drafts…', 'alt-context')}</p> : null}
+
+      {showItemsError ? (
+        <section className="acx-dashboard__panel acx-history__panel">
+          <h2>{__('Could not load this run’s drafts.', 'alt-context')}</h2>
+          <button type="button" className="acx-button acx-button--secondary" onClick={() => void itemsQuery.refetch()}>
+            {__('Retry', 'alt-context')}
+          </button>
+        </section>
       ) : null}
 
-      {!hasApplicable ? (
-        <section className="acx-dashboard__panel acx-history__panel">
-          <h2>{__('No drafts from this run can be applied.', 'alt-context')}</h2>
-          <p>{__('Every described item either failed or produced no draft text.', 'alt-context')}</p>
-        </section>
-      ) : (
+      {showMain ? (
         <>
-          <section className="acx-dashboard__panel acx-run-apply__safe" aria-label={__('Ready to apply', 'alt-context')}>
-            <h2>{safePanelHeading}</h2>
-            <p>{safePanelBody}</p>
-            <ul className="acx-run-apply__list">
-              {withoutAlt.map((item) => (
-                <li key={item.media_id} className="acx-run-apply__item">
-                  <span className="acx-run-apply__item-heading">{itemHeading(item)}</span>
-                  <span className="acx-run-apply__draft">{item.alt_text_draft}</span>
-                  <span className="acx-run-apply__media-id">{sprintf(__('Media %d', 'alt-context'), item.media_id)}</span>
-                </li>
-              ))}
-              {/* When safe drafts coexist with outstanding partials, list the
-                  history-completion rows under the same primary so the operator
-                  sees the full write set the button will perform. */}
-              {historyCompletionItems.map((item) => (
-                <li key={`partial-${item.media_id}`} className="acx-run-apply__item">
-                  <span className="acx-run-apply__item-heading">{itemHeading(item)}</span>
-                  <span className="acx-run-apply__draft">{item.alt_text_draft}</span>
-                  <span className="acx-run-apply__media-id">
-                    {__('needs history completion (no overwrite)', 'alt-context')}
-                  </span>
-                </li>
-              ))}
-            </ul>
-            {showDisabledReason ? (
-              <span id={disabledReasonId} className="screen-reader-text">
-                {__(
-                  'Nothing selected to apply. Check an image below to overwrite its alt text.',
-                  'alt-context',
-                )}
-              </span>
-            ) : null}
-            <button
-              type="button"
-              className="acx-button acx-button--primary"
-              disabled={applyDisabled}
-              aria-disabled={applyDisabled ? true : undefined}
-              aria-describedby={showDisabledReason ? disabledReasonId : undefined}
-              onClick={onApply}
-            >
-              {apply.isPending ? __('Applying…', 'alt-context') : primaryLabel}
-            </button>
-          </section>
+          {apply.isError ? (
+            <div className="acx-error-state" role="alert">
+              <span aria-hidden="true">⚠</span>{' '}
+              {__('Could not apply the run drafts. Try again.', 'alt-context')}
+              {outstandingPartialIds.length > 0
+                ? ` ${sprintf(
+                    __('History is still incomplete for %s.', 'alt-context'),
+                    formatPartialLabels(outstandingPartialIds, itemsById),
+                  )}`
+                : null}
+            </div>
+          ) : null}
 
-          {overwriteCandidates.length > 0 ? (
-            <section
-              className="acx-dashboard__panel acx-run-apply__existing"
-              aria-label={__('Existing alt text', 'alt-context')}
-            >
-              <h2>
-                {sprintf(__('%d images already have alt text', 'alt-context'), overwriteCandidates.length)}
-              </h2>
-              <p>{__('Check an image to overwrite its alt text with the new draft when you apply.', 'alt-context')}</p>
-              <ul className="acx-run-apply__list">
-                {overwriteCandidates.map((item) => (
-                  <li key={item.media_id} className="acx-run-apply__item acx-run-apply__item--existing">
-                    <label className="acx-run-apply__overwrite">
-                      <input
-                        type="checkbox"
-                        checked={overwriteIds.has(item.media_id)}
-                        onChange={() => toggleOverwrite(item.media_id)}
-                        aria-label={sprintf(
-                          __('Overwrite existing alt text for media %d', 'alt-context'),
+          {!hasApplicable ? (
+            <section className="acx-dashboard__panel acx-history__panel">
+              <h2>{__('No drafts from this run can be applied.', 'alt-context')}</h2>
+              <p>{__('Every described item either failed or produced no draft text.', 'alt-context')}</p>
+            </section>
+          ) : (
+            <>
+              <section className="acx-dashboard__panel acx-run-apply__safe" aria-label={__('Ready to apply', 'alt-context')}>
+                <h2>{safePanelHeading}</h2>
+                <p>{safePanelBody}</p>
+                <ul className="acx-run-apply__list">
+                  {withoutAlt.map((item) => (
+                    <li key={item.media_id} className="acx-run-apply__item">
+                      <span className="acx-run-apply__item-heading">{itemHeading(item)}</span>
+                      <span className="acx-run-apply__draft">{item.alt_text_draft}</span>
+                      <span className="acx-run-apply__media-id">{sprintf(__('Media %d', 'alt-context'), item.media_id)}</span>
+                    </li>
+                  ))}
+                  {/* When safe drafts coexist with outstanding partials, list the
+                      history-completion rows under the same primary so the operator
+                      sees the full write set the button will perform. */}
+                  {historyCompletionItems.map((item) => (
+                    <li key={`partial-${item.media_id}`} className="acx-run-apply__item">
+                      <span className="acx-run-apply__item-heading">{itemHeading(item)}</span>
+                      <span className="acx-run-apply__draft">{item.alt_text_draft}</span>
+                      <span className="acx-run-apply__media-id">
+                        {sprintf(
+                          __('Media %1$d — needs history completion (no overwrite)', 'alt-context'),
                           item.media_id,
                         )}
-                      />
-                      <span className="acx-run-apply__item-heading">{itemHeading(item)}</span>
-                    </label>
-                    <span className="acx-run-apply__draft">{item.alt_text_draft}</span>
-                    <span className="acx-run-apply__media-id">{sprintf(__('Media %d', 'alt-context'), item.media_id)}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                {nothingSelectedIdle ? (
+                  <span id={disabledReasonId} className="screen-reader-text">
+                    {__(
+                      'Nothing selected to apply. Check an image below to overwrite its alt text.',
+                      'alt-context',
+                    )}
+                  </span>
+                ) : null}
+                <button
+                  type="button"
+                  className="acx-button acx-button--primary"
+                  // Busy: native disabled is legitimate (no double-submit).
+                  // Idle nothing-selected: aria-disabled only so the reason
+                  // stays reachable. [BR-105][A11Y-24]
+                  disabled={applyBusy}
+                  aria-disabled={nothingSelectedIdle || applyBusy ? true : undefined}
+                  aria-describedby={nothingSelectedIdle ? disabledReasonId : undefined}
+                  onClick={onApply}
+                >
+                  {apply.isPending ? __('Applying…', 'alt-context') : primaryLabel}
+                </button>
+              </section>
+
+              {overwriteCandidates.length > 0 ? (
+                <section
+                  className="acx-dashboard__panel acx-run-apply__existing"
+                  aria-label={__('Existing alt text', 'alt-context')}
+                >
+                  <h2>
+                    {sprintf(__('%d images already have alt text', 'alt-context'), overwriteCandidates.length)}
+                  </h2>
+                  <p>{__('Check an image to overwrite its alt text with the new draft when you apply.', 'alt-context')}</p>
+                  <ul className="acx-run-apply__list">
+                    {overwriteCandidates.map((item) => (
+                      <li key={item.media_id} className="acx-run-apply__item acx-run-apply__item--existing">
+                        <label className="acx-run-apply__overwrite">
+                          <input
+                            type="checkbox"
+                            checked={overwriteIds.has(item.media_id)}
+                            onChange={() => toggleOverwrite(item.media_id)}
+                            aria-label={sprintf(
+                              __('Overwrite existing alt text for media %d', 'alt-context'),
+                              item.media_id,
+                            )}
+                          />
+                          <span className="acx-run-apply__item-heading">{itemHeading(item)}</span>
+                        </label>
+                        <span className="acx-run-apply__draft">{item.alt_text_draft}</span>
+                        <span className="acx-run-apply__media-id">{sprintf(__('Media %d', 'alt-context'), item.media_id)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ) : null}
+            </>
+          )}
+
+          {noDraft.length > 0 ? (
+            <section
+              className="acx-dashboard__panel acx-run-apply__no-draft"
+              data-testid="acx-run-apply-no-draft"
+              aria-label={__('Skipped items', 'alt-context')}
+            >
+              <h2>{sprintf(__('%d items produced no draft', 'alt-context'), noDraft.length)}</h2>
+              <ul className="acx-run-apply__list">
+                {noDraft.map((item) => (
+                  <li key={item.media_id} className="acx-run-apply__item">
+                    {sprintf(__('Media %1$d — %2$s', 'alt-context'), item.media_id, item.status)}
                   </li>
                 ))}
               </ul>
             </section>
           ) : null}
         </>
-      )}
-
-      {noDraft.length > 0 ? (
-        <section
-          className="acx-dashboard__panel acx-run-apply__no-draft"
-          data-testid="acx-run-apply-no-draft"
-          aria-label={__('Skipped items', 'alt-context')}
-        >
-          <h2>{sprintf(__('%d items produced no draft', 'alt-context'), noDraft.length)}</h2>
-          <ul className="acx-run-apply__list">
-            {noDraft.map((item) => (
-              <li key={item.media_id} className="acx-run-apply__item">
-                {sprintf(__('Media %1$d — %2$s', 'alt-context'), item.media_id, item.status)}
-              </li>
-            ))}
-          </ul>
-        </section>
       ) : null}
     </section>
   );

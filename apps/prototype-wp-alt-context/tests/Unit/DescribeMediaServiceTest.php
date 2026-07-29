@@ -266,15 +266,15 @@ class DescribeMediaServiceTest extends TestCase
     }
 
     /**
-     * BR-100: force no-op (same draft + matching model identity) must not
-     * overwrite existing provenance with a freshly stamped envelope, and must
-     * not invent an alt_text_draft that was never re-written.
+     * BR-108: force no-op on a pre-wave envelope (no alt_text_draft key) still
+     * fires (identity match is draft-free) and heals the draft key into place
+     * without restamping generated_at or rewriting the rest of the envelope.
      */
-    public function testForceNoOpDoesNotFabricateAltTextDraftOnUnwrittenPath(): void
+    public function testForceNoOpHealsMissingAltTextDraftOnPreWaveEnvelope(): void
     {
         $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
         $this->setPostMeta(42, '_wp_attachment_image_alt', 'A photo.');
-        // Prior envelope deliberately omits alt_text_draft (pre-BR-100 shape).
+        // Prior envelope deliberately omits alt_text_draft (pre-wave shape).
         $existingProvenance = array(
             'adapter'                => 'seeded',
             'model_id'               => 'seeded-fixtures',
@@ -298,9 +298,138 @@ class DescribeMediaServiceTest extends TestCase
 
         $this->assertInstanceOf(WP_REST_Response::class, $result);
         $this->assertSame('forced_overwrite', $result->get_data()['alt_text_write']['status'] ?? null);
-        // Unwritten path: prior provenance left byte-identical — no fabricated draft.
-        $this->assertSame($existingProvenance, get_post_meta(42, '_acx_description_provenance', true));
-        $this->assertArrayNotHasKey('alt_text_draft', get_post_meta(42, '_acx_description_provenance', true));
+        $this->assertSame('A photo.', get_post_meta(42, '_wp_attachment_image_alt', true));
+
+        $healed = get_post_meta(42, '_acx_description_provenance', true);
+        $this->assertIsArray($healed);
+        // Draft key healed; identity + generated_at preserved (not a full restamp).
+        $this->assertSame('A photo.', $healed['alt_text_draft']);
+        $this->assertSame('2026-01-01T00:00:00+00:00', $healed['generated_at']);
+        $this->assertSame('seeded', $healed['adapter']);
+        $this->assertSame(str_repeat('a', 64), $healed['image_hash']);
+    }
+
+    /**
+     * BR-108: force no-op with a stale alt_text_draft corrects the key so the
+     * audit trail matches the draft the operator actually has in alt meta.
+     */
+    public function testForceNoOpCorrectsStaleAltTextDraft(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $this->setPostMeta(42, '_wp_attachment_image_alt', 'A photo.');
+        $existingProvenance = array(
+            'adapter'                => 'seeded',
+            'model_id'               => 'seeded-fixtures',
+            'model_version'          => '1',
+            'prompt_or_task_version' => '1',
+            'image_hash'             => str_repeat('a', 64),
+            'context_hash'           => str_repeat('b', 64),
+            'generated_at'           => '2026-01-01T00:00:00+00:00',
+            'alt_text_draft'         => 'STALE DRAFT',
+        );
+        $this->setPostMeta(42, '_acx_description_provenance', $existingProvenance);
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $req->set_param('write_alt', true);
+        $req->set_param('force', true);
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame('forced_overwrite', $result->get_data()['alt_text_write']['status'] ?? null);
+        $this->assertSame('A photo.', get_post_meta(42, '_wp_attachment_image_alt', true));
+
+        $healed = get_post_meta(42, '_acx_description_provenance', true);
+        $this->assertIsArray($healed);
+        $this->assertSame('A photo.', $healed['alt_text_draft']);
+        $this->assertNotSame('STALE DRAFT', $healed['alt_text_draft']);
+        // Rest of envelope stable.
+        $this->assertSame('2026-01-01T00:00:00+00:00', $healed['generated_at']);
+        $this->assertSame('seeded-fixtures', $healed['model_id']);
+    }
+
+    /**
+     * BR-104: empty alt_text_draft must not write alt meta or provenance, and
+     * must report skipped_empty_alt_text (CLI parity).
+     */
+    public function testWriteIntentSkipsEmptyAltTextDraft(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $body = $this->validBackendBody(42);
+        $body['alt_text_draft'] = '';
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($body),
+        ));
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $req->set_param('write_alt', true);
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame(200, $result->get_status());
+        $this->assertSame('skipped_empty_alt_text', $result->get_data()['alt_text_write']['status'] ?? null);
+        $this->assertSame('', get_post_meta(42, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(42, '_acx_description_provenance', true));
+    }
+
+    /**
+     * BR-104: force=true with an empty draft must not clear a human-authored alt.
+     * Pre-fix this reported written and stored '' — irreversible data loss.
+     */
+    public function testForceWriteDoesNotClearHumanAltOnEmptyDraft(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $this->setPostMeta(42, '_wp_attachment_image_alt', 'Human-authored alt');
+        $body = $this->validBackendBody(42);
+        $body['alt_text_draft'] = '   ';
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($body),
+        ));
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $req->set_param('write_alt', true);
+        $req->set_param('force', true);
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame('skipped_empty_alt_text', $result->get_data()['alt_text_write']['status'] ?? null);
+        $this->assertTrue($result->get_data()['alt_text_write']['existing_alt_present'] ?? false);
+        $this->assertSame('Human-authored alt', get_post_meta(42, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(42, '_acx_description_provenance', true));
+    }
+
+    /**
+     * BR-116: non-string alt_text_draft is a boundary violation (502), not
+     * silently coerced to '' (REST) or '42' (CLI cast).
+     */
+    public function testNonStringAltTextDraftReturns502(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $body = $this->validBackendBody(42);
+        $body['alt_text_draft'] = 42;
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($body),
+        ));
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $req->set_param('write_alt', true);
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('invalid_description_envelope', $result->get_error_code());
+        $this->assertSame(502, $result->get_error_data()['status'] ?? null);
+        $this->assertStringContainsString('alt_text_draft', $result->get_error_message());
+        $this->assertSame('', get_post_meta(42, '_wp_attachment_image_alt', true));
     }
 
     public function testForceWriteOverwritesExistingAltTextAndStoresProvenance(): void
@@ -328,6 +457,7 @@ class DescribeMediaServiceTest extends TestCase
     {
         $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
         $this->setPostMeta(42, '_wp_attachment_image_alt', 'A photo.');
+        // Envelope already carries the correct draft — no-op must leave it byte-identical.
         $existingProvenance = array(
             'adapter'                => 'seeded',
             'model_id'               => 'seeded-fixtures',
@@ -336,6 +466,7 @@ class DescribeMediaServiceTest extends TestCase
             'image_hash'             => str_repeat('a', 64),
             'context_hash'           => str_repeat('b', 64),
             'generated_at'           => '2026-01-01T00:00:00+00:00',
+            'alt_text_draft'         => 'A photo.',
         );
         $this->setPostMeta(42, '_acx_description_provenance', $existingProvenance);
         $this->queueHttpResponse(array(
@@ -353,6 +484,19 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertSame('A photo.', get_post_meta(42, '_wp_attachment_image_alt', true));
         $this->assertSame($existingProvenance, get_post_meta(42, '_acx_description_provenance', true));
         $this->assertSame('forced_overwrite', $result->get_data()['alt_text_write']['status'] ?? null);
+    }
+
+    /**
+     * BR-116: shared normaliser is the single definition for draft coercion.
+     */
+    public function testNormalizeAltTextDraftTrimsStringsAndRejectsNonStringsAsEmpty(): void
+    {
+        $this->assertSame('A photo.', DescribeMediaService::normalize_alt_text_draft('  A photo.  '));
+        $this->assertSame('', DescribeMediaService::normalize_alt_text_draft(''));
+        $this->assertSame('', DescribeMediaService::normalize_alt_text_draft('   '));
+        $this->assertSame('', DescribeMediaService::normalize_alt_text_draft(42));
+        $this->assertSame('', DescribeMediaService::normalize_alt_text_draft(null));
+        $this->assertSame('', DescribeMediaService::normalize_alt_text_draft(array('nope')));
     }
 
     /**

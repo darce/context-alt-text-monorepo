@@ -48,9 +48,11 @@ export const assertNoBlockingIncompletes = (incomplete: AxeResultEntry[]): void 
  *   noise that operators can inspect in full axe reports).
  *
  * Implementation: run AxeBuilder, then hand results to the pure
- * {@link assertNoBlockingAxeResults} gate (violations + incompletes). The pure
- * function is what unit tests pin — so dropping the incomplete half cannot
- * leave the fast suite green [BR-88b].
+ * {@link assertNoBlockingAxeResults} gate (violations + incompletes). Unit
+ * tests pin the pure gate's filter behaviour [BR-88b] and pin this shell's
+ * wiring by mocking AxeBuilder.analyze with a serious incomplete and asserting
+ * assertNoBlockingViolations throws — so dropping the incomplete half from the
+ * shell cannot leave the fast suite green [BR-113] [TEST-15].
  */
 export const assertNoBlockingViolations = async (page: Page, scopeSelector: string): Promise<void> => {
   const results = await new AxeBuilder({ page }).include(scopeSelector).analyze();

@@ -146,6 +146,64 @@ class DescriptionHistoryServiceTest extends TestCase
         $this->assertSame('', $response['items'][0]['generated_alt_text']);
     }
 
+    /**
+     * BR-123: preference order is load-bearing. When both the current key and a
+     * legacy key are present with different strings, alt_text_draft wins.
+     * Presence-only fixtures cannot pin priority — reordering the resolver
+     * array must go RED against this test [TEST-15].
+     */
+    public function testGeneratedAltPrefersAltTextDraftOverLegacyKeys(): void
+    {
+        $mediaId = 804;
+        $GLOBALS['__ac_get_posts_results'] = [$mediaId];
+        $this->seedAttachment($mediaId, 'Priority');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', 'Current alt.');
+        $this->setPostMeta($mediaId, '_acx_description_provenance', [
+            // Distinct strings so a reordered preference cannot pass by luck.
+            'generated_alt_text' => 'LEGACY generated_alt_text value',
+            'alt_text'           => 'LEGACY alt_text value',
+            'alt_text_draft'     => 'CANONICAL alt_text_draft value',
+            'model_id'           => 'local-v1',
+        ]);
+
+        $response = (new DescriptionHistoryService())->list_history(10);
+
+        $this->assertSame(1, $response['total']);
+        $this->assertSame(
+            'CANONICAL alt_text_draft value',
+            $response['items'][0]['generated_alt_text']
+        );
+        $this->assertNotSame(
+            'LEGACY generated_alt_text value',
+            $response['items'][0]['generated_alt_text']
+        );
+        $this->assertNotSame(
+            'LEGACY alt_text value',
+            $response['items'][0]['generated_alt_text']
+        );
+    }
+
+    /**
+     * BR-118 companion: when only a legacy key is present, the resolver still
+     * surfaces it (fallbacks retained as defensive readers).
+     */
+    public function testGeneratedAltFallsBackToLegacyGeneratedAltTextKey(): void
+    {
+        $mediaId = 805;
+        $GLOBALS['__ac_get_posts_results'] = [$mediaId];
+        $this->seedAttachment($mediaId, 'Legacy-only');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', 'Current alt.');
+        $this->setPostMeta($mediaId, '_acx_description_provenance', [
+            'generated_alt_text' => 'Only legacy draft present.',
+            'model_id'           => 'local-v1',
+        ]);
+
+        $response = (new DescriptionHistoryService())->list_history(10);
+
+        $this->assertSame(1, $response['total']);
+        $this->assertSame('Only legacy draft present.', $response['items'][0]['generated_alt_text']);
+    }
+
     public function testCorrectionUpdatesAltAndRecordsHumanEditWithoutRemovingProvenance(): void
     {
         $this->seedAttachment(201, 'Attachment 201');

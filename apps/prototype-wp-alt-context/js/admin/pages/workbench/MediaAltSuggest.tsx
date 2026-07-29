@@ -40,6 +40,7 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
   const acceptButtonRef = useRef<HTMLButtonElement>(null);
   const saveButtonRef = useRef<HTMLButtonElement>(null);
   const editButtonRef = useRef<HTMLButtonElement>(null);
+  const draftSummaryRef = useRef<HTMLParagraphElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const shouldFocusSuggestRef = useRef(false);
   const shouldFocusEditButtonRef = useRef(false);
@@ -93,8 +94,18 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
         retryButtonRef.current?.focus();
       }
     } else if (data) {
+      // BR-57: land on a control that acts on the draft, not Dismiss (which
+      // destroys it). Accept when the draft is committable; otherwise Edit;
+      // otherwise the draft summary (tabIndex=-1) so the text itself is focusable.
+      // Dismiss stays in tab order — it is just not the programmatic landing target.
       if (ownsFocus) {
-        dismissButtonRef.current?.focus();
+        if (data.alt_text_draft.trim() !== '') {
+          acceptButtonRef.current?.focus();
+        } else if (editButtonRef.current) {
+          editButtonRef.current?.focus();
+        } else {
+          draftSummaryRef.current?.focus();
+        }
       }
     } else if (shouldFocusSuggestRef.current) {
       shouldFocusSuggestRef.current = false;
@@ -142,7 +153,13 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
   // assertions). Park is instance-scoped (BR-33): only strands that left *this*
   // container are reclaimed — extracted so the host stays within the useEffect
   // budget (BR-44).
-  useFocusPark(isPending, containerRef);
+  //
+  // BR-56: Accept/Save use the same native-disabled blur; park the commit-in-flight
+  // window with the same mechanism rather than inventing aria-disabled + click
+  // guards. isPending and isAccepting are mutually exclusive on real paths
+  // (accept requires data; generate clears edit and only pending is true while
+  // describing), so a single park flag is sufficient.
+  useFocusPark(isPending || isAccepting, containerRef);
 
   // BR-17: retire status once it has served its purpose — no timeout. When focus
   // leaves this surface while idle, "Alt text saved." is no longer local context.
@@ -152,7 +169,7 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
     if (next instanceof Node && containerRef.current?.contains(next)) {
       return;
     }
-    if (!data && !isPending && !isError) {
+    if (!data && !isPending && !isAccepting && !isError) {
       clearStatus();
     }
   };
@@ -227,6 +244,10 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
 
     if (data) {
       const accept = (): void => {
+        // BR-56: announce commit-in-flight immediately so the polite region does
+        // not keep reading the stale "Draft ready…" cue while the button shows
+        // "Accepting draft…".
+        announceStatus(__('Accepting draft…', 'alt-context'));
         acceptDraft(
           { mediaId, altText: data.alt_text_draft },
           {
@@ -237,10 +258,11 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
               // non-edit branch, so isEditing is already false on every path here.
               reset();
             },
-            // BR-39: clear polite "Draft ready…" so it does not co-present with
-            // the assertive save-failure alert (same product concern as generate
-            // onError clearStatus — BR-46). Empty polite region announces nothing;
-            // the role="alert" is the single source of truth for this failure.
+            // BR-39: clear polite "Draft ready…" / "Accepting draft…" so it does
+            // not co-present with the assertive save-failure alert (same product
+            // concern as generate onError clearStatus — BR-46). Empty polite
+            // region announces nothing; the role="alert" is the single source of
+            // truth for this failure.
             onError: () => {
               clearStatus();
             },
@@ -263,6 +285,8 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
       };
 
       const saveEdit = (): void => {
+        // BR-56 companion: edit-path commit-in-flight cue (mirror Accept).
+        announceStatus(__('Saving alt text…', 'alt-context'));
         acceptDraft(
           { mediaId, altText: editDraft },
           {
@@ -272,8 +296,8 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
               setIsEditing(false);
               reset();
             },
-            // BR-39 companion: edit-path save failure also must not leave
-            // "Draft ready…" beside the assertive alert.
+            // BR-39 companion: edit-path save failure also must not leave a
+            // stale polite cue beside the assertive alert.
             onError: () => {
               clearStatus();
             },
@@ -284,12 +308,17 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
       const editDescribedBy = isAcceptError ? `${disclosureId} ${errorId}` : disclosureId;
       const canSaveEdit = editDraft.trim() !== '';
       const canAcceptDraft = data.alt_text_draft.trim() !== '';
+      // BR-56: park host mirrors generate — aria-busy + explicit name while the
+      // commit control is natively disabled (focus parks on this container).
+      const acceptingLabel = isEditing ? __('Saving alt text…', 'alt-context') : __('Accepting draft…', 'alt-context');
 
       return (
         <div
           ref={containerRef}
           className="acx-media-selection__media-alt-suggest"
           tabIndex={-1}
+          aria-busy={isAccepting ? true : undefined}
+          aria-label={isAccepting ? acceptingLabel : undefined}
           onBlur={handleContainerBlur}
         >
           {isEditing ? (
@@ -309,7 +338,9 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
               />
             </>
           ) : (
-            <p className="acx-media-selection__media-alt-draft">{data.alt_text_draft}</p>
+            <p ref={draftSummaryRef} className="acx-media-selection__media-alt-draft" tabIndex={-1}>
+              {data.alt_text_draft}
+            </p>
           )}
           <p id={disclosureId} className="acx-media-selection__media-alt-disclosure">
             {__('Drafted by AI — review before saving.', 'alt-context')}

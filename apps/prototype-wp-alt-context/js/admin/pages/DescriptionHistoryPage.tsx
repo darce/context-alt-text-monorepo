@@ -6,6 +6,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import {
   correctDescriptionHistoryItem,
   fetchDescriptionHistory,
+  resolveDescribeErrorMessage,
   type DescriptionHistoryItem,
   type DescriptionHistoryResponse,
 } from '../api/describeApi';
@@ -13,6 +14,8 @@ import { APP_LINK_PARAMS, parseRunParam } from '../navigation/appLinks';
 import { DescribeRunApplyView } from './DescribeRunApplyView';
 
 const HISTORY_QUERY_KEY = ['description-history'] as const;
+
+const CORRECTION_ERROR_FALLBACK = __('Could not save the alt text. Please try again.', 'alt-context');
 
 const getModelLabel = (item: DescriptionHistoryItem): string => {
   const provenance = item.provenance;
@@ -98,10 +101,22 @@ const DescriptionHistoryList = (): React.JSX.Element => {
       });
       setSavingId(null);
     },
+    // Keep the draft: the operator's text is the only copy on a failed write.
+    // Surface the server message (or localized fallback) on the failed row so a
+    // 500 partial/total failure is never silent [RLSE-05][A11Y-21].
     onError: () => {
       setSavingId(null);
     },
   });
+
+  const failedCorrectionMediaId =
+    correctionMutation.isError && correctionMutation.variables
+      ? correctionMutation.variables.mediaId
+      : null;
+  const failedCorrectionMessage =
+    failedCorrectionMediaId !== null
+      ? resolveDescribeErrorMessage(correctionMutation.error, CORRECTION_ERROR_FALLBACK)
+      : null;
 
   const items = useMemo(() => historyQuery.data?.items ?? [], [historyQuery.data]);
   const statusOptions = useMemo(
@@ -207,6 +222,8 @@ const DescriptionHistoryList = (): React.JSX.Element => {
             {filteredItems.map((item) => {
               const draft = getDraftValue(drafts, item);
               const isSaving = savingId === item.media_id && correctionMutation.isPending;
+              const showRowError =
+                failedCorrectionMediaId === item.media_id && failedCorrectionMessage !== null;
 
               return (
                 <article key={item.media_id} className="acx-dashboard__panel acx-history__item">
@@ -252,6 +269,11 @@ const DescriptionHistoryList = (): React.JSX.Element => {
                       }
                     />
                   </label>
+                  {showRowError ? (
+                    <div className="acx-history__correction-error" role="alert">
+                      {failedCorrectionMessage}
+                    </div>
+                  ) : null}
                   <button
                     type="button"
                     className="acx-button acx-button--primary"

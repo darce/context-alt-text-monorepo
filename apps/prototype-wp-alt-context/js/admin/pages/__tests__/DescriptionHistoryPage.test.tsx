@@ -181,4 +181,58 @@ describe('DescriptionHistoryPage', () => {
     // The full-history list query must not fire in run-scoped mode.
     expect(fetchHistoryMock).not.toHaveBeenCalled();
   });
+
+  it('announces a correction failure on the failed row without clearing the draft [WBUX-5-BR-52][RLSE-05][A11Y-21]', async () => {
+    fetchHistoryMock.mockResolvedValue({ total: 2, items: [historyItem, failedHistoryItem] });
+    const partialMessage =
+      'Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.';
+    correctHistoryMock.mockRejectedValueOnce(
+      new Error(
+        `Request to /correction failed (500): ${JSON.stringify({
+          code: 'description_correction_partial',
+          message: partialMessage,
+          data: { status: 500 },
+        })}`,
+      ),
+    );
+
+    renderPage();
+
+    const bridgeTextarea = await screen.findByLabelText('Alt text correction for Bridge');
+    fireEvent.change(bridgeTextarea, { target: { value: 'Corrected bridge alt.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save correction for Bridge' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(partialMessage);
+
+    // Scoped to the row that failed: alert must live inside Bridge's article
+    // (a page-level banner would satisfy findByRole but not this pin).
+    const bridgeArticle = screen.getByText('Bridge').closest('article');
+    expect(bridgeArticle).toBeTruthy();
+    expect(bridgeArticle?.querySelector('[role="alert"]')).toBe(alert);
+
+    // Portrait row must not host an alert.
+    const portraitArticle = screen.getByText('Portrait').closest('article');
+    expect(portraitArticle).toBeTruthy();
+    expect(portraitArticle?.querySelector('[role="alert"]')).toBeNull();
+
+    // Draft is the only operator copy — keep it on failure.
+    expect(bridgeTextarea).toHaveValue('Corrected bridge alt.');
+    // Button left "Saving…" and returned to idle.
+    expect(screen.getByRole('button', { name: 'Save correction for Bridge' })).not.toBeDisabled();
+  });
+
+  it('uses the localized fallback when a correction rejection has no structured message', async () => {
+    correctHistoryMock.mockRejectedValueOnce(new Error('network down'));
+
+    renderPage();
+
+    const textarea = await screen.findByLabelText('Alt text correction for Bridge');
+    fireEvent.change(textarea, { target: { value: 'Still the draft.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save correction for Bridge' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Could not save the alt text. Please try again.');
+    expect(textarea).toHaveValue('Still the draft.');
+  });
 });

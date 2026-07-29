@@ -497,7 +497,10 @@ def test_detector_and_embedder_determinism(ort_sface_embedder) -> None:
     crop = np.load(_FIXTURE_DIR / "synthetic_112_crop.npy")
     a = ort_sface_embedder.embed([crop])
     b = ort_sface_embedder.embed([crop])
-    np.testing.assert_array_equal(a, b)
+    # EmbedBatchResult is a dataclass of ndarrays — compare fields, not the object
+    # (assert_array_equal on the dataclass raises ambiguous-truth ValueError).
+    np.testing.assert_array_equal(a.vectors, b.vectors)
+    np.testing.assert_array_equal(a.norms, b.norms)
 
     empty = np.zeros((64, 64, 3), dtype=np.uint8)
     det = OrtYuNetDetector()

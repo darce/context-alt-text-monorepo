@@ -29,7 +29,7 @@ from recognition.application.assignment.checks import (
 from recognition.application.settings import ClusteringSettings
 from recognition.application.similarity import RepresentativeCache, SimilaritySearch
 from recognition.application.suggestions.eligibility import is_eligible_cluster
-from recognition.config import get_settings as get_recognition_settings
+from recognition.config.settings import resolve_effective_clustering_settings
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import (
     ClusterRepository,
@@ -72,7 +72,7 @@ class SuggestionRefreshService:
         self._tenant_id = tenant_id
         self._cluster_repository = cluster_repository
         self._session = session
-        self._settings = settings or get_recognition_settings().clustering
+        self._settings = settings or resolve_effective_clustering_settings()
         self._search = SimilaritySearch(self._settings)
         self._gate = gate
         self._block_repository = block_repository
@@ -104,6 +104,11 @@ class SuggestionRefreshService:
             pose_yaw=float(model.pose_yaw) if model.pose_yaw is not None else None,
             pose_roll=float(model.pose_roll) if model.pose_roll is not None else None,
             image_phash=str(model.image_phash) if model.image_phash is not None else None,
+            sharpness=float(model.sharpness) if model.sharpness is not None else None,
+            embedding_norm=float(model.embedding_norm) if model.embedding_norm is not None else None,
+            occlusion_severity=(
+                float(model.occlusion_severity) if model.occlusion_severity is not None else None
+            ),
             moved_by_merge_id=str(model.moved_by_merge_id) if getattr(model, "moved_by_merge_id", None) else None,
         )
 

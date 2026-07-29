@@ -93,16 +93,20 @@ def normalize_landmarks(raw: Any) -> LandmarkSet | None:
 def _compute_detection_quality(
     confidence: float,
     bbox: tuple[int, int, int, int],
+    *,
+    occlusion_severity: float | None = None,
 ) -> float:
     """Compute quality score from detection metrics.
 
     Delegates to the canonical compute_identity_quality() to ensure consistency
     between detection-time quality and clustering-time quality. Pose is not part
-    of threshold quality (FIR2-BR-03).
+    of threshold quality (FIR2-BR-03). Occlusion feeds the OACT threshold channel
+    only (FIR-6 S1); the returned score stays confidence × size.
 
     Args:
         confidence: Detection confidence from the model (0-1).
         bbox: Bounding box (x1, y1, x2, y2) corner.
+        occlusion_severity: Optional occlusion factor for OACT threading.
 
     Returns:
         Quality score in [0.0, 1.0] from confidence and bbox size only.
@@ -118,6 +122,7 @@ def _compute_detection_quality(
         confidence=confidence,
         bbox_width=bbox_width,
         bbox_height=bbox_height,
+        occlusion_severity=occlusion_severity,
     )
     return info.score
 
@@ -129,7 +134,8 @@ class FaceDetection:
     Age/gender removed (FIR-2 S4). Pose angles remain for pose-bucket /
     diversity logic (not threshold quality). Optional five-point landmarks
     surface when the producer has them (FIR2-BR-02). ``model_id`` is stamped
-    by the producing adapter.
+    by the producing adapter. Quality factors (FIR-6 S1) are None under
+    insightface and populated only by the face_pipeline path.
     """
 
     media_id: str
@@ -144,6 +150,10 @@ class FaceDetection:
     landmark_quality: float | None = None
     model_id: str = ""
     landmarks: LandmarkSet | None = None
+    # FIR-6 S1 quality factors (nullable under insightface)
+    sharpness: float | None = None
+    embedding_norm: float | None = None
+    occlusion_severity: float | None = None
 
 
 class DetectionTimeoutError(TimeoutError):
@@ -307,7 +317,17 @@ class InsightFaceFaceDetector(FaceDetectorProtocol):
                     )
 
                 faces: list[FaceDetection] = await self._breaker.call(detect_current_image)
+                from recognition.config.settings import resolve_effective_detection_settings
+
+                detection_settings = resolve_effective_detection_settings()
+                min_confidence = float(detection_settings.default_threshold)
+                max_faces = int(detection_settings.max_identities_per_image)
+                accepted_for_image = 0
                 for face in faces:
+                    if float(face.confidence) < min_confidence:
+                        continue
+                    if accepted_for_image >= max_faces:
+                        break
                     # Canonical quality: confidence + bbox size only (FIR2-BR-03)
                     detection_quality = _compute_detection_quality(
                         confidence=face.confidence,
@@ -322,6 +342,7 @@ class InsightFaceFaceDetector(FaceDetectorProtocol):
                             landmark_quality=detection_quality,
                         )
                     )
+                    accepted_for_image += 1
             except AdapterTimeoutError as exc:
                 logger.error("Face detection timed out for %s after %.2fs", media_id[:20], self._timeout)
                 raise DetectionTimeoutError(media_id=media_id, timeout_s=self._timeout) from exc

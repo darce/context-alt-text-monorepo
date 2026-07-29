@@ -79,6 +79,8 @@ class AdminEnqueueTest extends TestCase
             $localized['endpoints']['recognitionMediaIdentities'] ?? null
         );
         $this->assertArrayHasKey('nonce', $localized);
+        $this->assertArrayHasKey('ajaxUrl', $localized);
+        $this->assertSame('/wp-admin/admin-ajax.php', $localized['ajaxUrl'] ?? null);
         $this->assertArrayNotHasKey('alt-context-admin', $GLOBALS['__ac_scripts']);
     }
 

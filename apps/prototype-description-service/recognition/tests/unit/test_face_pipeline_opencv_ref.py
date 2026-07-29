@@ -11,6 +11,7 @@ import hashlib
 import numpy as np
 import pytest
 
+from recognition.infrastructure.face_pipeline._common import EmbedBatchResult
 from recognition.infrastructure.face_pipeline.aligner import (
     ALIGNED_SIZE,
     SFACE_CANONICAL_LANDMARKS_112,
@@ -225,7 +226,8 @@ def test_embedding_golden_dim_norm_cosine() -> None:
     expected = np.load(_FIXTURE_DIR / "synthetic_112_embedding.npy")
     meta = _load_json("embedding_meta.json")
 
-    emb = OpenCVSFaceEmbedder().embed([crop])
+    batch = OpenCVSFaceEmbedder().embed([crop])
+    emb = batch.vectors
     assert emb.shape == (1, SFACE_EMBEDDING_DIM)
     assert emb.shape[1] == meta["embedding_dim"]
     norm = float(np.linalg.norm(emb[0]))
@@ -241,8 +243,8 @@ def test_embedding_determinism_two_runs() -> None:
 
     crop = np.load(_FIXTURE_DIR / "synthetic_112_crop.npy")
     emb = OpenCVSFaceEmbedder()
-    a = emb.embed([crop])
-    b = emb.embed([crop])
+    a = emb.embed([crop]).vectors
+    b = emb.embed([crop]).vectors
     np.testing.assert_array_equal(a, b)
 
 
@@ -324,8 +326,8 @@ def test_embed_float255_ok() -> None:
     crop_u8 = np.load(_FIXTURE_DIR / "synthetic_112_crop.npy")
     crop_f = crop_u8.astype(np.float64)
     emb = OpenCVSFaceEmbedder()
-    a = emb.embed([crop_u8])
-    b = emb.embed([crop_f])
+    a = emb.embed([crop_u8]).vectors
+    b = emb.embed([crop_f]).vectors
     np.testing.assert_allclose(a, b, atol=1e-6)
 
 
@@ -342,7 +344,7 @@ def test_raw_sface_feature_not_prenormalized() -> None:
     assert abs(raw_norm - 1.0) > 1e-3, (
         f"raw FaceRecognizerSF.feature appears pre-normalized (norm={raw_norm}); normalization step would be untested"
     )
-    out = emb.embed([crop])
+    out = emb.embed([crop]).vectors
     assert float(np.linalg.norm(out[0])) == pytest.approx(1.0, abs=1e-6)
 
 
@@ -350,7 +352,7 @@ def test_raw_sface_feature_not_prenormalized() -> None:
 def test_embed_empty_batch_shape() -> None:
     from recognition.infrastructure.face_pipeline.opencv_ref import OpenCVSFaceEmbedder
 
-    out = OpenCVSFaceEmbedder().embed([])
+    out = OpenCVSFaceEmbedder().embed([]).vectors
     assert out.shape == (0, SFACE_EMBEDDING_DIM)
 
 

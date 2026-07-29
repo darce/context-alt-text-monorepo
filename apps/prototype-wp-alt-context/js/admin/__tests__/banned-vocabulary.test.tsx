@@ -219,6 +219,7 @@ vi.mock('../api/config', () => ({
   getEndpoint: (key: string) => `/acx/v1/${key}`,
   getConfig: () => ({
     nonce: 'test-nonce',
+    ajaxUrl: '/wp-admin/admin-ajax.php',
     endpoints: {},
   }),
   resetConfigCache: vi.fn(),

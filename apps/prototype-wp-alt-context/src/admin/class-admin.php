@@ -36,6 +36,7 @@ use function wp_localize_script;
 use function wp_remote_head;
 use function wp_remote_retrieve_response_code;
 use function wp_script_add_data;
+use function wp_set_script_translations;
 use function wp_unslash;
 use function wp_scripts;
 use function is_wp_error;
@@ -147,6 +148,11 @@ class Admin {
 		if ( ! is_string( $handle ) || '' === $handle ) {
 			return;
 		}
+
+		// Load JS translations for __()/_x() strings in the bundle. Without this the
+		// wp-i18n dependency ships but never receives a locale JED, so every SPA
+		// string stays in the source language regardless of site locale ([RLSE-04]).
+		wp_set_script_translations( $handle, 'alt-context', ACX_PLUGIN_DIR . 'public/languages' );
 
 		$localize( $handle );
 	}
@@ -391,6 +397,7 @@ class Admin {
 			'AltContextAdmin',
 				array(
 					'nonce'     => wp_create_nonce( 'wp_rest' ),
+					'ajaxUrl'   => admin_url( 'admin-ajax.php' ),
 					'devMode'   => $is_dev_mode,
 					'tier'      => $tier,
 					'tenant_id' => TenantIdentity::resolve()['value'],
@@ -464,6 +471,7 @@ class Admin {
 			'AltContextAttachmentEdit',
 			array(
 				'nonce'         => wp_create_nonce( 'wp_rest' ),
+				'ajaxUrl'       => admin_url( 'admin-ajax.php' ),
 				'attachmentId'  => $attachment_id,
 				'imageUrl'      => $image_url,
 				'imageWidth'    => $image_width,

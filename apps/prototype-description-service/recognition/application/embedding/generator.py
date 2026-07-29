@@ -27,7 +27,6 @@ from recognition.application.integrations import (
     create_adapter_circuit_breaker,
     wait_for_adapter,
 )
-from recognition.config import get_settings
 
 if TYPE_CHECKING:
     from recognition.application.embedding.detector import FaceDetection
@@ -37,8 +36,10 @@ logger = logging.getLogger(__name__)
 
 
 def _default_embedding_dim() -> int:
-    """Single source: recognition settings identity_detection.embedding_dimension."""
-    return get_settings().identity_detection.embedding_dimension
+    """Single source: profile-resolved identity_detection.embedding_dimension (S2)."""
+    from recognition.config.settings import resolve_effective_detection_settings
+
+    return resolve_effective_detection_settings().embedding_dimension
 
 
 @dataclass

@@ -15,6 +15,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from recognition.infrastructure.face_pipeline._common import EmbedBatchResult
 from recognition.infrastructure.face_pipeline.opencv_ref import (
     FacePipelineInputError,
     RawDetection,
@@ -255,8 +256,8 @@ def test_decode_determinism_modelless() -> None:
 @pytest.mark.skipif(models_absent_allows_skip(), reason=MODELS_SKIP)
 def test_embedding_parity_synthetic_crop(ort_sface_embedder, ocv_sface_embedder) -> None:
     crop = np.load(_FIXTURE_DIR / "synthetic_112_crop.npy")
-    ocv = ocv_sface_embedder.embed([crop])
-    ort_emb = ort_sface_embedder.embed([crop])
+    ocv = ocv_sface_embedder.embed([crop]).vectors
+    ort_emb = ort_sface_embedder.embed([crop]).vectors
     assert ocv.shape == ort_emb.shape == (1, SFACE_EMBEDDING_DIM)
     assert float(np.linalg.norm(ort_emb[0])) == pytest.approx(1.0, abs=1e-5)
     cos = cosine(ocv[0], ort_emb[0])
@@ -267,8 +268,8 @@ def test_embedding_parity_synthetic_crop(ort_sface_embedder, ocv_sface_embedder)
 @pytest.mark.skipif(models_absent_allows_skip(), reason=MODELS_SKIP)
 def test_embedding_parity_aligner_golden_crop(ort_sface_embedder, ocv_sface_embedder) -> None:
     crop = np.load(_FIXTURE_DIR / "aligner_crop.npy")
-    ocv = ocv_sface_embedder.embed([crop])
-    ort_emb = ort_sface_embedder.embed([crop])
+    ocv = ocv_sface_embedder.embed([crop]).vectors
+    ort_emb = ort_sface_embedder.embed([crop]).vectors
     cos = cosine(ocv[0], ort_emb[0])
     assert cos >= _COSINE_MIN, f"aligner crop cosine={cos} < {_COSINE_MIN}"
     print(f"PARITY_COSINE_aligner={cos:.10f}")
@@ -279,7 +280,7 @@ def test_embedding_parity_vs_golden_fixture(ort_sface_embedder) -> None:
     """ORT also matches committed golden embedding (cross-check)."""
     crop = np.load(_FIXTURE_DIR / "synthetic_112_crop.npy")
     expected = np.load(_FIXTURE_DIR / "synthetic_112_embedding.npy")
-    emb = ort_sface_embedder.embed([crop])
+    emb = ort_sface_embedder.embed([crop]).vectors
     cos = cosine(emb[0], expected[0])
     assert cos >= _COSINE_MIN, f"golden cosine={cos}"
     print(f"PARITY_COSINE_golden={cos:.10f}")
@@ -332,7 +333,7 @@ def test_ort_nonfinite_norm_raises(ort_sface_embedder, monkeypatch: pytest.Monke
 
 @pytest.mark.skipif(models_absent_allows_skip(), reason=MODELS_SKIP)
 def test_ort_embed_empty_batch(ort_sface_embedder) -> None:
-    out = ort_sface_embedder.embed([])
+    out = ort_sface_embedder.embed([]).vectors
     assert out.shape == (0, MODEL_MANIFEST["sface"].embedding_dim)
     assert out.shape == (0, SFACE_EMBEDDING_DIM)
 
@@ -496,7 +497,10 @@ def test_detector_and_embedder_determinism(ort_sface_embedder) -> None:
     crop = np.load(_FIXTURE_DIR / "synthetic_112_crop.npy")
     a = ort_sface_embedder.embed([crop])
     b = ort_sface_embedder.embed([crop])
-    np.testing.assert_array_equal(a, b)
+    # EmbedBatchResult is a dataclass of ndarrays — compare fields, not the object
+    # (assert_array_equal on the dataclass raises ambiguous-truth ValueError).
+    np.testing.assert_array_equal(a.vectors, b.vectors)
+    np.testing.assert_array_equal(a.norms, b.norms)
 
     empty = np.zeros((64, 64, 3), dtype=np.uint8)
     det = OrtYuNetDetector()
@@ -529,7 +533,7 @@ def test_aligner_crop_is_valid_ort_sface_input(ort_sface_embedder) -> None:
     landmarks = np.load(_FIXTURE_DIR / "aligner_landmarks.npy")
     crop = FivePointAligner().align(img, landmarks).crop
     assert crop.shape == (ALIGNED_SIZE, ALIGNED_SIZE, 3)
-    emb = ort_sface_embedder.embed([crop])
+    emb = ort_sface_embedder.embed([crop]).vectors
     assert emb.shape == (1, SFACE_EMBEDDING_DIM)
     assert float(np.linalg.norm(emb[0])) == pytest.approx(1.0, abs=1e-5)
 

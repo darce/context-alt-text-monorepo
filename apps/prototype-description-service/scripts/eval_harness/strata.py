@@ -32,7 +32,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from scripts.eval_harness.corpus_inventory import FEATURE_EDGE_PX, ImageRecord, dedupe_by_sha256, load_records
-from scripts.eval_harness.manifest import Domain
+from scripts.eval_harness.manifest import Domain, GoldenEntry, SliceTag
 
 
 class Source(StrEnum):
@@ -146,6 +146,14 @@ class StrataReport:
 def load_inventory(path: Path, source: Source) -> list[tuple[ImageRecord, Source]]:
     """Read a checkpoint JSONL and tag every record with the root it came from."""
     return [(record, source) for record in load_records(path)]
+
+
+def entries_with_slice_tag(entries: list[GoldenEntry], tag: SliceTag) -> list[GoldenEntry]:
+    """Return GoldenEntry rows that carry ``tag`` in their FIR-5 slice tags.
+
+    Slice rollups bind to ``SliceTag``, never ``Domain.OCCLUSION`` (FIR-5 contract).
+    """
+    return [entry for entry in entries if tag in entry.tags]
 
 
 def is_eligible(record: ImageRecord) -> bool:

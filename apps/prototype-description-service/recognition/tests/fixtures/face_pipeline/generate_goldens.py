@@ -96,7 +96,8 @@ def write_embedding_goldens() -> dict:
     np.save(crop_path, crop)
 
     embedder = OpenCVSFaceEmbedder()
-    emb = embedder.embed([crop])
+    batch = embedder.embed([crop])
+    emb = batch.vectors
     emb_path = FIXTURE_DIR / "synthetic_112_embedding.npy"
     np.save(emb_path, emb)
 
@@ -107,6 +108,7 @@ def write_embedding_goldens() -> dict:
         "embedding_shape": list(emb.shape),
         "embedding_dim": int(emb.shape[1]),
         "l2_norm": float(np.linalg.norm(emb[0])),
+        "pre_norm_magnitude": float(batch.norms[0]),
         "model": MODEL_MANIFEST["sface"].file_name,
         "model_sha256": MODEL_MANIFEST["sface"].sha256,
     }

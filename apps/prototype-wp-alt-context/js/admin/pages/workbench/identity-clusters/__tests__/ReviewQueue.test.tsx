@@ -228,6 +228,7 @@ describe('ReviewQueue', () => {
   beforeEach(() => {
     window.AltContextAdmin = {
       nonce: 'test-nonce',
+      ajaxUrl: '/wp-admin/admin-ajax.php',
       endpoints: {
         recognitionSuggestions: 'http://localhost/recognition/suggestions',
         recognitionMergeSuggestions: 'http://localhost/recognition/suggestions/merge',

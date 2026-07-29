@@ -15,6 +15,7 @@ import {
 } from '../api/describeApi';
 import { invalidateMediaStats } from '../hooks/useMediaStats';
 import { APP_LINK_PARAMS, parseRunParam } from '../navigation/appLinks';
+import { decodeHtmlEntities } from '../utils/decodeHtmlEntities';
 import { DescribeRunApplyView } from './DescribeRunApplyView';
 
 const HISTORY_QUERY_KEY = ['description-history'] as const;
@@ -36,19 +37,25 @@ const getRunStatusLabel = (item: DescriptionHistoryItem): string =>
     ? item.run_status.status
     : __('Not recorded', 'alt-context');
 
+/** Stored history alts are entity-encoded; decode once at the read boundary (BR-140). */
+const decodeStoredAltText = (stored: string | null | undefined): string =>
+  stored == null || stored === '' ? (stored ?? '') : decodeHtmlEntities(stored);
+
 const getDraftValue = (drafts: Record<number, string>, item: DescriptionHistoryItem): string =>
-  drafts[item.media_id] ?? item.current_alt_text ?? '';
+  // Operator draft is already plain text; fall back to decoded stored current alt.
+  drafts[item.media_id] ?? decodeStoredAltText(item.current_alt_text);
 
 const itemMatchesSearch = (item: DescriptionHistoryItem, query: string): boolean => {
   if (query === '') {
     return true;
   }
 
+  // Search the decoded forms so an operator query for `<=` matches displayed text.
   const fields = [
     item.title,
     item.mime_type,
-    item.current_alt_text,
-    item.generated_alt_text,
+    decodeStoredAltText(item.current_alt_text),
+    decodeStoredAltText(item.generated_alt_text),
     String(item.media_id),
     getModelLabel(item),
     getRunStatusLabel(item),
@@ -287,11 +294,19 @@ const DescriptionHistoryList = (): React.JSX.Element => {
                   <div className="acx-history__columns">
                     <section>
                       <h3>{__('Generated draft', 'alt-context')}</h3>
-                      <p className="acx-history__text">{item.generated_alt_text || __('No draft recorded.', 'alt-context')}</p>
+                      <p className="acx-history__text">
+                        {item.generated_alt_text
+                          ? decodeHtmlEntities(item.generated_alt_text)
+                          : __('No draft recorded.', 'alt-context')}
+                      </p>
                     </section>
                     <section>
                       <h3>{__('Current alt text', 'alt-context')}</h3>
-                      <p className="acx-history__text">{item.current_alt_text || __('No alt text saved.', 'alt-context')}</p>
+                      <p className="acx-history__text">
+                        {item.current_alt_text
+                          ? decodeHtmlEntities(item.current_alt_text)
+                          : __('No alt text saved.', 'alt-context')}
+                      </p>
                     </section>
                   </div>
 

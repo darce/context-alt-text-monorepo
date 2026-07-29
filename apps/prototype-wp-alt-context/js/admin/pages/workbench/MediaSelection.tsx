@@ -170,7 +170,7 @@ export const MediaSelection = ({
             runId={activeDescribeRunId}
             progress={describeProgress}
             isPanelVisible={isDescribePanelVisible}
-            errorMessage={bulkDescribe.submit.error?.message ?? bulkDescribe.cancel.error?.message ?? null}
+            errorMessage={bulkDescribe.errorMessage}
             remoteActionTitle={remoteGate.title}
             remoteActionAriaDisabled={remoteGate['aria-disabled']}
             accentPrimary={footerCta.accentOwner === FOOTER_ACCENT_OWNER.DESCRIBE}
@@ -401,7 +401,12 @@ export const BulkDescribeCta = ({
         />
       </div>
       {isPanelVisible ? <BulkDescribeProgress progress={progress} onRetry={onRetryPolling} /> : null}
-      {errorMessage ? <span className="acx-media-selection__bulk-describe-error">{errorMessage}</span> : null}
+      {errorMessage ? (
+        // [A11Y-21][A11Y-24][sr-004]: error is text + role=alert, never colour alone.
+        <div className="acx-media-selection__bulk-describe-error" role="alert">
+          {errorMessage}
+        </div>
+      ) : null}
     </div>
   );
 };

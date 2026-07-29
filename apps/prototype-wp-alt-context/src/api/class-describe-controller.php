@@ -10,10 +10,12 @@ require_once __DIR__ . '/interface-describe-host.php';
 require_once __DIR__ . '/services/class-description-candidate-service.php';
 require_once __DIR__ . '/services/class-describe-media-service.php';
 require_once __DIR__ . '/services/class-description-history-service.php';
+require_once __DIR__ . '/../support/class-telemetry.php';
 
 use AltContext\Api\Services\DescriptionCandidateService;
 use AltContext\Api\Services\DescriptionHistoryService;
 use AltContext\Api\Services\DescribeMediaService;
+use AltContext\Support\Telemetry;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -21,16 +23,23 @@ use WP_REST_Response;
 use function absint;
 use function apply_filters;
 use function array_filter;
+use function array_fill_keys;
 use function array_map;
+use function array_slice;
 use function array_unique;
 use function array_values;
+use function asort;
 use function basename;
 use function count;
+use function ctype_digit;
+use function delete_option;
 use function file_get_contents;
 use function filesize;
 use function get_attached_file;
+use function get_option;
 use function is_array;
 use function is_int;
+use function is_numeric;
 use function is_readable;
 use function is_string;
 use function is_wp_error;
@@ -41,6 +50,8 @@ use function sanitize_text_field;
 use function sprintf;
 use function strlen;
 use function strtolower;
+use function time;
+use function update_option;
 use function wp_check_filetype;
 use function wp_json_encode;
 
@@ -70,6 +81,25 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	 * checked incrementally before each read).
 	 */
 	private const DESCRIBE_RUN_MULTIPART_MAX_BYTES_DEFAULT = 200 * 1024 * 1024;
+
+	/**
+	 * BR-129 / BR-134: locally recorded media_id set for a describe run, keyed by
+	 * run_id. Durable non-autoloaded option (not a transient): apply may happen
+	 * well after submit (partial-recovery second apply, long-running runs), so a
+	 * cache TTL must not gate authorization. Fail closed when absent — never
+	 * fall back to trusting the remote items response. Bounded by a pruned index.
+	 */
+	private const RUN_MEDIA_IDS_OPTION_PREFIX     = 'acx_describe_run_media_ids_';
+	private const RUN_MEDIA_IDS_INDEX_OPTION      = 'acx_describe_run_media_ids_index';
+	private const RUN_MEDIA_IDS_MAX_AGE_SECONDS   = 2592000; // 30 days.
+	private const RUN_MEDIA_IDS_INDEX_MAX_ENTRIES = 200;
+	/**
+	 * BR-142: cap eviction may only remove entries older than this floor.
+	 * A busy site can churn 200 runs inside a review window; revoking a live
+	 * membership to keep the index at 200 is worse than a bounded storage leak.
+	 * Age pruning (30d) still hard-caps lifetime.
+	 */
+	private const RUN_MEDIA_IDS_CAP_EVICTION_MIN_AGE_SECONDS = 604800; // 7 days.
 
 	private DescribeMediaService $describe_media_service;
 	private DescriptionCandidateService $description_candidate_service;
@@ -340,7 +370,7 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			$multipart_body[ 'image_' . $media_id ]  = $file_part;
 		}
 
-		return $this->proxy_recognition_request(
+		$response = $this->proxy_recognition_request(
 			'POST',
 			'/scene/describe/run',
 			$multipart_body,
@@ -349,6 +379,28 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			'multipart',
 			$max_body_bytes
 		);
+
+		// BR-129 / BR-134: record the WP-side submitted media_id set keyed by
+		// run_id so apply can refuse remote-chosen ids. Only on a successful
+		// submit that returns a run_id — without a local record, apply fails
+		// closed. The run is already accepted upstream; if the durable write
+		// fails, report that apply will be impossible rather than a false 202.
+		if ( $response instanceof WP_REST_Response && $response->get_status() < 400 ) {
+			$data = $response->get_data();
+			if ( is_array( $data ) ) {
+				$run_id = isset( $data['run_id'] ) && is_string( $data['run_id'] )
+					? sanitize_text_field( $data['run_id'] )
+					: '';
+				if ( '' !== $run_id ) {
+					$stored = $this->store_run_media_ids( $run_id, $media_ids );
+					if ( is_wp_error( $stored ) ) {
+						return $stored;
+					}
+				}
+			}
+		}
+
+		return $response;
 	}
 
 	private function describe_run_max_media_ids(): int {
@@ -424,6 +476,20 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 
 		$data = $response->get_data();
 		if ( is_array( $data ) && isset( $data['items'] ) && is_array( $data['items'] ) ) {
+			// BR-145: reject non-array items before enrichment. Enrichment does
+			// isset/assign on each item; a string item TypeError-fatals on PHP 8
+			// ("Cannot access offset of type string on string") and never reaches
+			// the apply loop's is_array guard. Same 502 contract violation as apply.
+			foreach ( $data['items'] as $item ) {
+				if ( ! is_array( $item ) ) {
+					return new WP_Error(
+						'describe_run_items_contract_violation',
+						'Describe run items response contained a non-object item.',
+						array( 'status' => 502 )
+					);
+				}
+			}
+
 			// S2-01: prime the post-meta cache in one query for every media_id
 			// instead of an uncached get_post_meta() per item (N+1). update_meta_cache
 			// is a WP-core optimization; guard so the unit-test harness (no object
@@ -560,10 +626,79 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			}
 		}
 
+		// BR-129: fail closed when the local submitted set is missing
+		// (never-submitted run_id, pruned record, or storage failure). Never
+		// trust the remote items list alone as the write target set.
+		$submitted_media_ids = $this->load_run_media_ids( $run_id );
+		if ( null === $submitted_media_ids ) {
+			return new WP_Error(
+				'describe_run_media_ids_unknown',
+				sprintf(
+					'No locally recorded media_id set for describe run %s; refusing to apply remote items.',
+					$run_id
+				),
+				array( 'status' => 502 )
+			);
+		}
+
+		// Bound returned item count to the same per-run cap used at submit.
+		$max_items = $this->describe_run_max_media_ids();
+		if ( count( $items ) > $max_items ) {
+			return new WP_Error(
+				'describe_run_items_overflow',
+				sprintf(
+					'Describe run items response exceeded the %d-item cap (received %d).',
+					$max_items,
+					count( $items )
+				),
+				array( 'status' => 502 )
+			);
+		}
+
+		// Strict media_id + membership gate before any write. Contract violations
+		// from the remote (coercible junk ids, foreign media_ids) are a 502 for
+		// the whole apply — not a silent skip bucket — so an attacker-controlled
+		// service cannot partially succeed while smuggling extra targets.
+		// Justification for 502 over a new envelope bucket: (1) no new measured
+		// fields (rg-015); (2) partial apply would mask the attack; (3) 502 is the
+		// established boundary-violation signal for untrusted upstream shape.
+		$submitted_lookup = array_fill_keys( $submitted_media_ids, true );
+		$validated_items  = array();
+		foreach ( $items as $item ) {
+			if ( ! is_array( $item ) ) {
+				return new WP_Error(
+					'describe_run_items_contract_violation',
+					'Describe run items response contained a non-object item.',
+					array( 'status' => 502 )
+				);
+			}
+			$media_id = $this->parse_strict_positive_int( $item['media_id'] ?? null );
+			if ( null === $media_id ) {
+				return new WP_Error(
+					'describe_run_items_contract_violation',
+					'Describe run items response contained a non-strict-positive-integer media_id.',
+					array( 'status' => 502 )
+				);
+			}
+			if ( ! isset( $submitted_lookup[ $media_id ] ) ) {
+				return new WP_Error(
+					'describe_run_items_contract_violation',
+					sprintf(
+						'Describe run items response referenced media_id %d which was not submitted for run %s.',
+						$media_id,
+						$run_id
+					),
+					array( 'status' => 502 )
+				);
+			}
+			$item['media_id']  = $media_id;
+			$validated_items[] = $item;
+		}
+
 		// BR-92 / BR-106: bucket exclusivity is per media_id. Collapse duplicates,
 		// preferring the first row that carries a non-empty draft so a failed
 		// null-draft echo before a completed draft does not force skipped_no_draft.
-		$items = $this->normalize_apply_items_by_media_id( $items );
+		$items = $this->normalize_apply_items_by_media_id( $validated_items );
 
 		// S3-05: reject non-positive overwrite ids rather than absint()-coercing a
 		// negative id into a positive one (-70 → 70 would opt in the wrong media).
@@ -583,8 +718,15 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 		$failed           = array();
 
 		foreach ( $items as $item ) {
-			$media_id = isset( $item['media_id'] ) ? (int) $item['media_id'] : 0;
-			$draft    = is_string( $item['alt_text_draft'] ?? null ) ? trim( $item['alt_text_draft'] ) : '';
+			// media_id already strict-validated above; cast is identity for ints.
+			$media_id = (int) ( $item['media_id'] ?? 0 );
+			// Model output is plain text at the write boundary (BR-130 / BR-133):
+			// same core alt sanitizer as the single-media write path so bare `<`
+			// in prose is entity-encoded (not truncated) and genuine markup is
+			// still removed. Hash of this sanitized draft is the recovery marker.
+			$draft = is_string( $item['alt_text_draft'] ?? null )
+				? sanitize_text_field( $item['alt_text_draft'] )
+				: '';
 
 			if ( 0 === $media_id || '' === $draft ) {
 				$skipped_no_draft[] = $media_id;
@@ -758,9 +900,8 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	 * Collapse apply-item rows by positive-integer media_id. Prefer the first row
 	 * that carries a non-empty draft so a failed null-draft echo before a
 	 * completed draft is not the only survivor (BR-106). When both rows have
-	 * drafts, first-seen still wins (BR-92 bucket exclusivity). Non-positive ids
-	 * are left as-is (they land in skipped_no_draft / skipped_invalid via the
-	 * main loop).
+	 * drafts, first-seen still wins (BR-92 bucket exclusivity). Callers must
+	 * already have strict-validated media_id (BR-129).
 	 *
 	 * @param array<int,mixed> $items
 	 *
@@ -773,7 +914,7 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			if ( ! is_array( $item ) ) {
 				continue;
 			}
-			$media_id = isset( $item['media_id'] ) ? (int) $item['media_id'] : 0;
+			$media_id = $this->parse_strict_positive_int( $item['media_id'] ?? null ) ?? 0;
 			if ( $media_id > 0 ) {
 				if ( isset( $seen[ $media_id ] ) ) {
 					$existing_index = $seen[ $media_id ];
@@ -798,6 +939,226 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 		}
 
 		return $normalized;
+	}
+
+	/**
+	 * BR-129 / BR-134 / BR-143: persist the media_id set submitted for a run as a
+	 * non-autoloaded option (membership is an authorization record, not a
+	 * cache). Honors update_option's return: if the write fails, the caller
+	 * must not report submit success. Absent on apply → fail closed.
+	 *
+	 * BR-143: retry the membership write once before giving up — the run is
+	 * already accepted upstream and burning paid compute; a transient options
+	 * failure should not strand it after a single attempt. Still fail loud on
+	 * persistent failure (never invent a 202).
+	 *
+	 * Membership is not deleted on successful apply — a legitimate second
+	 * apply (partial-recovery / complete history) still needs it. Bounded by
+	 * {@see prune_run_media_ids_index()}.
+	 *
+	 * @param int[] $media_ids
+	 * @return true|WP_Error
+	 */
+	private function store_run_media_ids( string $run_id, array $media_ids ): true|WP_Error {
+		if ( '' === $run_id || array() === $media_ids ) {
+			return true;
+		}
+
+		$created_at = time();
+		$record     = array(
+			'media_ids'  => array_values( $media_ids ),
+			'created_at' => $created_at,
+		);
+		$option_key = $this->run_media_ids_option_key( $run_id );
+
+		// Non-autoload: membership is only read on apply, not on every page load.
+		// BR-143: one retry on real failure (not on the unchanged-value no-op).
+		$written = update_option( $option_key, $record, false );
+		if ( false === $written && ! $this->run_media_ids_record_matches( $option_key, $media_ids ) ) {
+			// update_option returns false on failure *and* when the value is
+			// unchanged. Accept an already-matching durable record (BR-147);
+			// otherwise retry once before failing loud.
+			$written = update_option( $option_key, $record, false );
+			if ( false === $written && ! $this->run_media_ids_record_matches( $option_key, $media_ids ) ) {
+				return new WP_Error(
+					'describe_run_media_ids_store_failed',
+					sprintf(
+						'Describe run %s was submitted but its media_id set could not be stored; drafts cannot be applied.',
+						$run_id
+					),
+					array(
+						'status' => 500,
+						'run_id' => $run_id,
+					)
+				);
+			}
+		}
+
+		$this->remember_run_media_ids_index( $run_id, $created_at );
+
+		return true;
+	}
+
+	/**
+	 * True when the durable membership option already holds the same media_id
+	 * set (order-insensitive reindex via array_values). Used to treat
+	 * update_option's "value unchanged" false as success, not storage failure.
+	 *
+	 * Reads option storage; result can change between update_option attempts.
+	 *
+	 * @param int[] $media_ids
+	 * @phpstan-impure
+	 */
+	private function run_media_ids_record_matches( string $option_key, array $media_ids ): bool {
+		$current = get_option( $option_key, null );
+
+		return is_array( $current )
+			&& isset( $current['media_ids'] )
+			&& is_array( $current['media_ids'] )
+			&& array_values( $current['media_ids'] ) === array_values( $media_ids );
+	}
+
+	/**
+	 * @return int[]|null Null when no local record exists (fail closed). No TTL
+	 *                    gate — age pruning happens on write via the index.
+	 */
+	private function load_run_media_ids( string $run_id ): ?array {
+		if ( '' === $run_id ) {
+			return null;
+		}
+
+		$stored = get_option( $this->run_media_ids_option_key( $run_id ), null );
+		if ( ! is_array( $stored ) ) {
+			return null;
+		}
+
+		$raw_ids = $stored['media_ids'] ?? null;
+		if ( ! is_array( $raw_ids ) || array() === $raw_ids ) {
+			return null;
+		}
+
+		$media_ids = array();
+		foreach ( $raw_ids as $raw ) {
+			$parsed = $this->parse_strict_positive_int( $raw );
+			if ( null !== $parsed ) {
+				$media_ids[] = $parsed;
+			}
+		}
+
+		return array() === $media_ids ? null : array_values( array_unique( $media_ids ) );
+	}
+
+	private function run_media_ids_option_key( string $run_id ): string {
+		return self::RUN_MEDIA_IDS_OPTION_PREFIX . $run_id;
+	}
+
+	/**
+	 * Maintain a bounded index of run_id => created_at. Prune by age (30d) and
+	 * cap (200), deleting membership options for evicted runs (oldest first,
+	 * subject to the BR-142 retention floor on cap eviction).
+	 *
+	 * BR-148: the index is the only thing that can ever delete a membership
+	 * option. Check update_option's return and retry once. On persistent failure
+	 * keep the membership record (never revoke authorization to tidy an index)
+	 * but log so the condition is not swallowed.
+	 */
+	private function remember_run_media_ids_index( string $run_id, int $created_at ): void {
+		$index = get_option( self::RUN_MEDIA_IDS_INDEX_OPTION, array() );
+		if ( ! is_array( $index ) ) {
+			$index = array();
+		}
+
+		$index[ $run_id ] = $created_at;
+		$index             = $this->prune_run_media_ids_index( $index );
+
+		$written = update_option( self::RUN_MEDIA_IDS_INDEX_OPTION, $index, false );
+		if ( false !== $written ) {
+			return;
+		}
+		// update_option returns false on failure *and* when the value is
+		// unchanged — re-read before treating it as a real write failure.
+		$current = get_option( self::RUN_MEDIA_IDS_INDEX_OPTION, null );
+		if ( is_array( $current ) && $current === $index ) {
+			return;
+		}
+		// BR-148: retry once.
+		$written = update_option( self::RUN_MEDIA_IDS_INDEX_OPTION, $index, false );
+		if ( false !== $written ) {
+			return;
+		}
+		$current = get_option( self::RUN_MEDIA_IDS_INDEX_OPTION, null );
+		if ( is_array( $current ) && $current === $index ) {
+			return;
+		}
+		// Keep membership; do not delete the option just because the index
+		// could not be updated. Surface the condition for ops.
+		Telemetry::log_line(
+			sprintf(
+				'[acx] describe run media_ids index write failed after 2 attempts for run_id=%s; membership retained',
+				$run_id
+			)
+		);
+	}
+
+	/**
+	 * @param array<string,mixed> $index
+	 * @return array<string,int>
+	 */
+	private function prune_run_media_ids_index( array $index ): array {
+		$now     = time();
+		$cleaned = array();
+
+		foreach ( $index as $run_id => $created_at ) {
+			if ( ! is_string( $run_id ) || '' === $run_id || ! is_numeric( $created_at ) ) {
+				continue;
+			}
+			$created_at = (int) $created_at;
+			if ( ( $now - $created_at ) > self::RUN_MEDIA_IDS_MAX_AGE_SECONDS ) {
+				delete_option( $this->run_media_ids_option_key( $run_id ) );
+				continue;
+			}
+			$cleaned[ $run_id ] = $created_at;
+		}
+
+		// BR-142: cap eviction only removes entries older than the retention
+		// floor. If every entry is recent, let the index exceed the cap rather
+		// than revoke a still-appliable run.
+		if ( count( $cleaned ) > self::RUN_MEDIA_IDS_INDEX_MAX_ENTRIES ) {
+			asort( $cleaned, SORT_NUMERIC );
+			$excess  = count( $cleaned ) - self::RUN_MEDIA_IDS_INDEX_MAX_ENTRIES;
+			$evicted = 0;
+			foreach ( $cleaned as $run_id => $created_at ) {
+				if ( $evicted >= $excess ) {
+					break;
+				}
+				if ( ( $now - $created_at ) <= self::RUN_MEDIA_IDS_CAP_EVICTION_MIN_AGE_SECONDS ) {
+					// Remaining entries are at least as recent (asort); stop.
+					break;
+				}
+				delete_option( $this->run_media_ids_option_key( $run_id ) );
+				unset( $cleaned[ $run_id ] );
+				++$evicted;
+			}
+		}
+
+		return $cleaned;
+	}
+
+	/**
+	 * BR-129: accept only a positive int, or a pure digit string of a positive
+	 * int. Rejects coercible junk such as "71junk" (which (int) would turn into 71).
+	 */
+	private function parse_strict_positive_int( mixed $value ): ?int {
+		if ( is_int( $value ) ) {
+			return $value > 0 ? $value : null;
+		}
+		if ( is_string( $value ) && '' !== $value && ctype_digit( $value ) ) {
+			$as_int = (int) $value;
+
+			return $as_int > 0 ? $as_int : null;
+		}
+
+		return null;
 	}
 
 	/**

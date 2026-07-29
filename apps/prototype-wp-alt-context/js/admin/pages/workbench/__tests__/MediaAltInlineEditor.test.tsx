@@ -69,6 +69,21 @@ describe('MediaAltInlineEditor', () => {
     expect(screen.getByRole('button', { name: /edit alt text/i })).toBeInTheDocument();
   });
 
+  it('decodes stored entity-encoded alt for the read display and edit seed (BR-140)', () => {
+    // Storage form from sanitize_text_field("x <= y"). Build the entity string in
+    // JS (not a JSX attribute literal) so the bundler cannot HTML-decode `&lt;`
+    // at transform time and short-circuit the test.
+    const storedEncoded = 'x ' + '&lt;' + '= y';
+    renderEditor(<MediaAltInlineEditor mediaId={42} altText={storedEncoded} />);
+
+    expect(screen.getByText('x <= y')).toBeInTheDocument();
+    expect(screen.queryByText(storedEncoded)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /edit alt text/i }));
+    const field = screen.getByRole<HTMLTextAreaElement>('textbox', { name: /alt text/i });
+    expect(field.value).toBe('x <= y');
+  });
+
   it('exposes the edit control even from the empty (no-alt) zero state [rg-003]', () => {
     renderEditor(<MediaAltInlineEditor mediaId={42} altText={null} />);
 

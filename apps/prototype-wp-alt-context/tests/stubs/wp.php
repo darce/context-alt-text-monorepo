@@ -554,7 +554,8 @@ if (!function_exists('esc_attr')) {
 if (!function_exists('esc_html')) {
     function esc_html($value)
     {
-        return (string) $value;
+        // Core uses _wp_specialchars; htmlspecialchars is the closest portable stand-in.
+        return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
     }
 }
 
@@ -832,12 +833,85 @@ if (!function_exists('sanitize_title')) {
     }
 }
 
-if (!function_exists('sanitize_text_field')) {
-    function sanitize_text_field($value)
+if (!function_exists('wp_pre_kses_less_than')) {
+    /**
+     * Mirrors WP core: convert bare `<` (no closing `>`) via esc_html before
+     * strip_tags so prose like `x <= y` is not truncated.
+     */
+    function wp_pre_kses_less_than($content)
     {
-        $value = (string) $value;
+        return preg_replace_callback(
+            '%<[^>]*?((?=<)|>|$)%',
+            'wp_pre_kses_less_than_callback',
+            (string) $content
+        );
+    }
+}
 
-        return trim(strip_tags($value));
+if (!function_exists('wp_pre_kses_less_than_callback')) {
+    function wp_pre_kses_less_than_callback($matches)
+    {
+        if (!str_contains($matches[0], '>')) {
+            return esc_html($matches[0]);
+        }
+
+        return $matches[0];
+    }
+}
+
+if (!function_exists('wp_strip_all_tags')) {
+    function wp_strip_all_tags($string, $remove_breaks = false)
+    {
+        $string = preg_replace('@<(script|style)[^>]*?>.*?</\\1>@si', '', (string) $string);
+        $string = strip_tags($string);
+        if ($remove_breaks) {
+            $string = preg_replace('/[\r\n\t ]+/', ' ', $string);
+        }
+
+        return trim($string);
+    }
+}
+
+if (!function_exists('_sanitize_text_fields')) {
+    /**
+     * Simplified core `_sanitize_text_fields`: pre_kses bare `<` → strip tags →
+     * optional whitespace collapse → trim. Weaker than core (no UTF-8 check,
+     * no percent-decode strip, no filters, no `<\\n` special-case).
+     *
+     * @param string|mixed $str
+     */
+    function _sanitize_text_fields($str, $keep_newlines = false)
+    {
+        if (is_object($str) || is_array($str)) {
+            return '';
+        }
+
+        $filtered = (string) $str;
+
+        if (str_contains($filtered, '<')) {
+            $filtered = wp_pre_kses_less_than($filtered);
+            $filtered = wp_strip_all_tags($filtered, false);
+        }
+
+        if (!$keep_newlines) {
+            $filtered = preg_replace('/[\r\n\t ]+/', ' ', $filtered);
+        }
+
+        return trim($filtered);
+    }
+}
+
+if (!function_exists('sanitize_text_field')) {
+    function sanitize_text_field($str)
+    {
+        return _sanitize_text_fields($str, false);
+    }
+}
+
+if (!function_exists('sanitize_textarea_field')) {
+    function sanitize_textarea_field($str)
+    {
+        return _sanitize_text_fields($str, true);
     }
 }
 
@@ -1293,8 +1367,59 @@ if (!function_exists('as_unschedule_all_actions')) {
 }
 
 if (!function_exists('update_option')) {
-    function update_option($key, $value)
+    /**
+     * Core-faithful update_option for the harness (BR-147).
+     *
+     * Returns false both on forced failure and when the stored value is
+     * identical to the incoming value (core's no-op short-circuit). Records
+     * the $autoload flag per option so tests can assert non-autoload writes.
+     *
+     * @param string               $key
+     * @param mixed                $value
+     * @param string|bool|null     $autoload
+     */
+    function update_option($key, $value, $autoload = null)
     {
+        if (!isset($GLOBALS['__ac_update_option_calls']) || !is_array($GLOBALS['__ac_update_option_calls'])) {
+            $GLOBALS['__ac_update_option_calls'] = [];
+        }
+        $GLOBALS['__ac_update_option_calls'][$key] = ($GLOBALS['__ac_update_option_calls'][$key] ?? 0) + 1;
+
+        // Core defaults autoload to true/'yes' for new options when null.
+        // On update with null, core leaves the existing autoload flag alone;
+        // record the effective intent so tests can assert non-autoload writes.
+        if (!isset($GLOBALS['__ac_option_autoload']) || !is_array($GLOBALS['__ac_option_autoload'])) {
+            $GLOBALS['__ac_option_autoload'] = [];
+        }
+        if (null === $autoload) {
+            if (!array_key_exists($key, $GLOBALS['__ac_options'] ?? [])) {
+                $GLOBALS['__ac_option_autoload'][$key] = true;
+            }
+        } else {
+            $GLOBALS['__ac_option_autoload'][$key] = $autoload;
+        }
+
+        if (!empty($GLOBALS['__ac_update_option_fail'][$key])) {
+            return false;
+        }
+
+        // Core returns false when the value is unchanged (failure and no-op share
+        // the same return — production recovery branches must re-read).
+        if (isset($GLOBALS['__ac_options']) && array_key_exists($key, $GLOBALS['__ac_options'])) {
+            $old = $GLOBALS['__ac_options'][$key];
+            if ($old === $value) {
+                return false;
+            }
+            // Mirror core's maybe_serialize equality for array/object shapes that
+            // are value-equal but not the same zval (e.g. re-built arrays).
+            if (serialize($old) === serialize($value)) {
+                return false;
+            }
+        }
+
+        if (!isset($GLOBALS['__ac_options']) || !is_array($GLOBALS['__ac_options'])) {
+            $GLOBALS['__ac_options'] = [];
+        }
         $GLOBALS['__ac_options'][$key] = $value;
         return true;
     }
@@ -1556,6 +1681,39 @@ if (!function_exists('wp_remote_get')) {
             'args' => $args,
             'method' => 'GET',
             'body' => $args['body'] ?? '',
+        ];
+
+        if (!empty($GLOBALS['__ac_http_queue'])) {
+            return array_shift($GLOBALS['__ac_http_queue']);
+        }
+
+        return [
+            'response' => [
+                'code' => 200,
+                'message' => 'OK',
+            ],
+            'body' => '',
+        ];
+    }
+}
+
+if (!function_exists('wp_safe_remote_get')) {
+    /**
+     * Test-harness stand-in for WP core wp_safe_remote_get. Records the call as
+     * safe, then reuses the same queue as wp_remote_get.
+     */
+    function wp_safe_remote_get($url, $args = [])
+    {
+        if (!isset($GLOBALS['__ac_http_calls'])) {
+            $GLOBALS['__ac_http_calls'] = [];
+        }
+
+        $GLOBALS['__ac_http_calls'][] = [
+            'url' => $url,
+            'args' => $args,
+            'method' => 'GET',
+            'body' => $args['body'] ?? '',
+            'safe' => true,
         ];
 
         if (!empty($GLOBALS['__ac_http_queue'])) {

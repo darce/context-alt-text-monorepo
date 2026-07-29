@@ -12,6 +12,7 @@ import {
 } from '../api/settingsApi';
 import { resetConfigCache } from '../api/config';
 import { queryKeys } from '../api/queryKeys';
+import { resolveWpErrorMessage } from '../api/wpErrorMessage';
 import { SettingsForm } from './settings/SettingsForm';
 import { SettingsRoutingBanner } from './settings/SettingsRoutingBanner';
 import { TestConnectionBannerView } from './settings/TestConnectionBannerView';
@@ -54,10 +55,10 @@ export const SettingsPage = (): React.JSX.Element => {
       });
       syncLocalizedRouting(refreshed);
     },
-    onError: () => {
+    onError: (error) => {
       dispatch({
         type: 'setSaveMessage',
-        message: __('Failed to save settings.', 'alt-context'),
+        message: resolveWpErrorMessage(error, __('Failed to save settings.', 'alt-context')),
         tone: 'error',
       });
     },
@@ -71,6 +72,9 @@ export const SettingsPage = (): React.JSX.Element => {
       // refetch sync health so the offline banner clears immediately.
       void queryClient.invalidateQueries({ queryKey: queryKeys.sync.health() });
     },
+    // Outcome enum maps to fixed banner copy; it cannot carry a free-form server
+    // message without a new enum member ([sr-007]). Leave NETWORK_ERROR as the
+    // transport-failure stand-in — see REPORT.md.
     onError: () => {
       dispatch({
         type: 'setTestResult',
@@ -181,7 +185,12 @@ export const SettingsPage = (): React.JSX.Element => {
       />
 
       {state.saveMessage ? (
-        <div className={`notice inline ${TONE_CLASS[state.saveMessageTone]}`} style={{ marginTop: '12px' }}>
+        <div
+          className={`notice inline ${TONE_CLASS[state.saveMessageTone]}`}
+          role={state.saveMessageTone === 'error' ? 'alert' : 'status'}
+          style={{ marginTop: '12px' }}
+          data-testid="acx-settings-save-message"
+        >
           <p>{state.saveMessage}</p>
         </div>
       ) : null}

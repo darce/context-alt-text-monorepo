@@ -57,6 +57,38 @@ class DescriptionRefreshCommandTest extends TestCase
         $this->assertStringContainsString('changed=1', \WP_CLI::$messages['success'][0] ?? '');
     }
 
+    /**
+     * BR-141: CLI path shares the service normalizer — entity-encoded meta
+     * must still apply once and then report already_current on dry_run.
+     */
+    public function testInvokeApplyIsIdempotentWithEntityEncodedMeta(): void
+    {
+        $this->setPostMeta(42, '_wp_attachment_image_alt', 'x &lt;= y');
+        $post = (object) [
+            'ID' => 101,
+            'post_type' => 'post',
+            'post_title' => 'Entity alt post',
+            'post_content' => '<img class="wp-image-42" src="/cmp.jpg" alt="old comparison" />',
+        ];
+        $GLOBALS['__ac_posts'][101] = $post;
+        $GLOBALS['__ac_get_posts_results'] = [$post];
+
+        $command = new DescriptionRefreshCommand();
+        $command->__invoke(['42'], ['apply' => true, 'limit' => 10]);
+
+        $this->assertStringContainsString('changed=1', \WP_CLI::$messages['success'][0] ?? '');
+        $this->assertStringNotContainsString('old comparison', $GLOBALS['__ac_posts'][101]->post_content);
+        $this->assertCount(1, $GLOBALS['__ac_updated_posts']);
+
+        \WP_CLI::reset_cli_messages();
+        $command->__invoke(['42'], ['limit' => 10]);
+
+        $this->assertStringContainsString('candidates=0', \WP_CLI::$messages['success'][0] ?? '');
+        $this->assertStringContainsString('skipped=1', \WP_CLI::$messages['success'][0] ?? '');
+        // dry_run must not touch content again.
+        $this->assertCount(1, $GLOBALS['__ac_updated_posts']);
+    }
+
     private function getEmbeddedAlt(string $content): string
     {
         preg_match('/\salt="([^"]*)"/', $content, $matches);

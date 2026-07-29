@@ -357,6 +357,99 @@ class SettingsControllerTest extends TestCase
         $this->assertSame('invalid_url', $response->get_error_code());
     }
 
+    /**
+     * BR-131 / BR-135: http only for loopback — pin the *rule*, not one host.
+     * Goes RED under the weakening
+     * `return 'http' === $scheme && ( is_loopback_host( $host ) || 'attacker.invalid' !== $host )`.
+     *
+     * @dataProvider plaintextRemoteUrlProvider
+     */
+    public function testSaveSettingsRejectsPlaintextRemoteUrl(string $url): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_recognition_url', 'https://prior.example');
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params([
+            'url' => $url,
+        ]);
+
+        $response = $this->controller->save_settings($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response, 'must reject: ' . $url);
+        $this->assertSame('invalid_url', $response->get_error_code());
+        $this->assertNotSame($url, get_option('acx_recognition_url', ''));
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function plaintextRemoteUrlProvider(): array
+    {
+        return [
+            // Public / unrelated hosts (not loopback).
+            'rejects_public_attacker_invalid' => ['http://attacker.invalid'],
+            'rejects_public_evil_example' => ['http://evil.example'],
+            'rejects_public_unrelated_host' => ['http://remote.example.com/v1'],
+            // mDNS / local-looking names that are not the loopback allowlist.
+            'rejects_mdns_dot_local' => ['http://myservice.local'],
+            'rejects_mdns_dot_localdomain' => ['http://myservice.localdomain'],
+            // RFC1918 private ranges.
+            'rejects_rfc1918_10' => ['http://10.0.0.5:8000'],
+            'rejects_rfc1918_172_16' => ['http://172.16.0.1'],
+            'rejects_rfc1918_172_31' => ['http://172.31.255.254'],
+            'rejects_rfc1918_192_168' => ['http://192.168.1.10'],
+            // Link-local and cloud metadata.
+            'rejects_link_local_169_254' => ['http://169.254.1.1'],
+            'rejects_cloud_metadata_169_254_169_254' => ['http://169.254.169.254'],
+            // IPv6 non-loopback (bracketed).
+            'rejects_ipv6_link_local' => ['http://[fe80::1]'],
+            'rejects_ipv6_unique_local' => ['http://[fd00::1]'],
+            // Loopback lookalikes that are not allowlisted forms.
+            'rejects_loopback_decimal' => ['http://2130706433'],
+            'rejects_loopback_octal' => ['http://0177.0.0.1'],
+            'rejects_loopback_hex' => ['http://0x7f000001'],
+            'rejects_loopback_dotted_suffix' => ['http://127.0.0.1.evil.test'],
+            'rejects_localhost_dotted_suffix' => ['http://localhost.evil.test'],
+            'rejects_userinfo_loopback_at_remote' => ['http://127.0.0.1@evil.test/'],
+        ];
+    }
+
+    /**
+     * BR-131 / BR-135: accepted side — loopback http and any https remain saveable.
+     *
+     * @dataProvider acceptedSaveUrlProvider
+     */
+    public function testSaveSettingsAcceptsLoopbackHttpAndHttpsUrl(string $url): void
+    {
+        $this->setUserCapability('manage_options', true);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params([
+            'url' => $url,
+        ]);
+
+        $response = $this->controller->save_settings($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response, 'must accept: ' . $url);
+        $this->assertSame($url, get_option('acx_recognition_url'));
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function acceptedSaveUrlProvider(): array
+    {
+        return [
+            'localhost_port' => ['http://localhost:8000'],
+            'loopback_v4' => ['http://127.0.0.1:8000'],
+            'loopback_v6' => ['http://[::1]:8000'],
+            'localhost_case' => ['HTTP://LOCALHOST'],
+            'https_remote' => ['https://api.example.com'],
+            'https_any_host' => ['https://evil.example'],
+        ];
+    }
+
     public function testSaveSettingsAcceptsPartialUpdate(): void
     {
         $this->setUserCapability('manage_options', true);
@@ -486,6 +579,57 @@ class SettingsControllerTest extends TestCase
         $this->assertSame(200, $data['status_code']);
         $this->assertArrayNotHasKey('connected', $data);
         $this->assertArrayNotHasKey('error', $data);
+    }
+
+    /**
+     * BR-131: non-loopback recognition probes must use wp_safe_remote_get so
+     * unsafe redirects / private destinations are rejected by core. The harness
+     * marks safe-transport calls with 'safe' => true. Goes RED if
+     * recognition_http_get always uses wp_remote_get.
+     */
+    public function testProbeUsesSafeRemoteGetForNonLoopbackTarget(): void
+    {
+        $this->configureProbe();
+        $keyTenant = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+        $this->setOption('acx_recognition_tenant_id', $keyTenant);
+        $this->queueHttpResponse($this->buildOkResponse());
+        $this->queueHttpResponse($this->buildWhoamiResponse($keyTenant));
+
+        $this->controller->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'));
+
+        $calls = $this->getHttpCalls();
+        $this->assertNotEmpty($calls);
+        $this->assertStringEndsWith('/health/detailed', $calls[0]['url']);
+        $this->assertTrue(
+            !empty($calls[0]['safe']),
+            'non-loopback health probe must call wp_safe_remote_get (stub records safe=true)'
+        );
+    }
+
+    /**
+     * BR-131 sibling: loopback development probes keep wp_remote_get so
+     * localhost:8000 remains reachable without safe-URL rejection.
+     */
+    public function testProbeUsesRemoteGetForLoopbackTarget(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_recognition_url', 'http://127.0.0.1:8000');
+        $this->setOption('acx_recognition_api_key', 'test-key');
+        $keyTenant = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+        $this->setOption('acx_recognition_tenant_id', $keyTenant);
+        $this->queueHttpResponse($this->buildOkResponse());
+        $this->queueHttpResponse($this->buildWhoamiResponse($keyTenant));
+
+        $this->controller->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'));
+
+        $calls = $this->getHttpCalls();
+        $this->assertNotEmpty($calls);
+        $this->assertStringContainsString('127.0.0.1', $calls[0]['url']);
+        $this->assertArrayNotHasKey(
+            'safe',
+            $calls[0],
+            'loopback health probe must call wp_remote_get (no safe flag)'
+        );
     }
 
     public function testProbePairingAdoptsMatchingKeyTenant(): void

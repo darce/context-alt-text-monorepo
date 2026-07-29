@@ -244,6 +244,91 @@ class DescriptionCommandGenerateTest extends TestCase
         $this->assertSame('Existing editorial alt.', get_post_meta(803, '_wp_attachment_image_alt', true));
         $this->assertSame('', get_post_meta(803, '_acx_description_provenance', true));
     }
+
+    /**
+     * BR-01: when the alt write fails, status is not `written` and provenance is
+     * not stamped. Assert storage, not just the return value. [rg-015]
+     */
+    public function testGenerateWriteAltFailureDoesNotStampProvenance(): void
+    {
+        $service = new RecordingDescribeService([
+            901 => new WP_REST_Response([
+                'media_id' => 901,
+                'alt_text_draft' => 'A draft that will not land.',
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+            ]),
+        ]);
+        $GLOBALS['__ac_update_post_meta_fail'][901]['_wp_attachment_image_alt'] = true;
+        $command = new DescriptionCommand(null, $service);
+
+        $command->__invoke(['generate'], ['media-id' => '901', 'write' => true, 'format' => 'json']);
+
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+
+        $this->assertNotSame('written', $payload['rows'][0]['status']);
+        $this->assertSame('failed', $payload['rows'][0]['status']);
+        // Storage truth: alt empty, provenance absent — no fabricated Generated-alt.
+        $this->assertSame('', get_post_meta(901, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(901, '_acx_description_provenance', true));
+    }
+
+    /**
+     * BR-01: alt succeeds, provenance fails → partial. Alt stays written.
+     */
+    public function testGenerateWriteProvenanceFailureReportsPartial(): void
+    {
+        $service = new RecordingDescribeService([
+            902 => new WP_REST_Response([
+                'media_id' => 902,
+                'alt_text_draft' => 'Alt lands, provenance does not.',
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+            ]),
+        ]);
+        $GLOBALS['__ac_update_post_meta_fail'][902]['_acx_description_provenance'] = true;
+        $command = new DescriptionCommand(null, $service);
+
+        $command->__invoke(['generate'], ['media-id' => '902', 'write' => true, 'format' => 'json']);
+
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+
+        $this->assertSame('partial', $payload['rows'][0]['status']);
+        $this->assertSame('Alt lands, provenance does not.', get_post_meta(902, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(902, '_acx_description_provenance', true));
+    }
+
+    /**
+     * BR-17 / idempotence: re-writing a byte-identical alt via CLI reports
+     * written, not failed (no-op returns false from update_post_meta).
+     */
+    public function testGenerateWriteIdempotentReapplyReportsWritten(): void
+    {
+        $draft = 'Already present from a prior write.';
+        $this->setPostMeta(903, '_wp_attachment_image_alt', $draft);
+        $service = new RecordingDescribeService([
+            903 => new WP_REST_Response([
+                'media_id' => 903,
+                'alt_text_draft' => $draft,
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+            ]),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $command->__invoke(['generate'], [
+            'media-id' => '903',
+            'write' => true,
+            'force' => true,
+            'format' => 'json',
+        ]);
+
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+
+        $this->assertSame('written', $payload['rows'][0]['status']);
+        $this->assertSame($draft, get_post_meta(903, '_wp_attachment_image_alt', true));
+        $this->assertIsArray(get_post_meta(903, '_acx_description_provenance', true));
+    }
 }
 
 class RecordingDescribeService extends DescribeMediaService

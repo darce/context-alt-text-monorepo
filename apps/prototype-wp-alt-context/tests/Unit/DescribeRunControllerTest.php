@@ -2232,4 +2232,109 @@ class DescribeRunControllerTest extends TestCase
         $this->assertNotInstanceOf(\WP_Error::class, $response);
         $this->assertSame(202, $response->get_status());
     }
+
+    /**
+     * BR-17: bulk apply with a backslash-bearing draft stores alt and provenance
+     * that agree after WP's unslash, and re-apply must not report `failed`.
+     */
+    public function testApplyRunDraftsBackslashDraftAgreesAndReapplySucceeds(): void
+    {
+        $runId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+        $mediaId = 91;
+        $draft = 'Blueprint of the C:\\Users share, annotated';
+        $expectedStored = wp_unslash($draft);
+
+        $this->plantPostType($mediaId);
+        $this->plantSubmittedMediaIds($runId, [$mediaId]);
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    [
+                        'media_id' => $mediaId,
+                        'status' => 'completed',
+                        'alt_text_draft' => $draft,
+                        'caption' => 'blueprint',
+                        'provenance' => ['adapter' => 'florence', 'model_id' => 'florence-2'],
+                    ],
+                ],
+            ]),
+        ]);
+
+        $first = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $first->set_param('run_id', $runId);
+        $firstResponse = $this->controller->apply_describe_run_drafts($first);
+        $this->assertNotInstanceOf(\WP_Error::class, $firstResponse);
+        $firstData = $firstResponse->get_data();
+        $this->assertSame([$mediaId], $firstData['applied']);
+        $this->assertSame([], $firstData['failed']);
+        $this->assertSame([], $firstData['partial']);
+
+        $storedAlt = get_post_meta($mediaId, '_wp_attachment_image_alt', true);
+        $prov = get_post_meta($mediaId, '_acx_description_provenance', true);
+        $this->assertSame($expectedStored, $storedAlt);
+        $this->assertIsArray($prov);
+        // Provenance draft must agree with stored alt (both unslashed by WP).
+        $this->assertSame($storedAlt, $prov['alt_text_draft']);
+
+        // Re-apply with overwrite: byte-identical no-op must still be applied, not failed.
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    [
+                        'media_id' => $mediaId,
+                        'status' => 'completed',
+                        'alt_text_draft' => $draft,
+                        'caption' => 'blueprint',
+                        'provenance' => ['adapter' => 'florence', 'model_id' => 'florence-2'],
+                    ],
+                ],
+            ]),
+        ]);
+
+        $second = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $second->set_param('run_id', $runId);
+        $second->set_param('overwrite_media_ids', [$mediaId]);
+        $secondResponse = $this->controller->apply_describe_run_drafts($second);
+        $this->assertNotInstanceOf(\WP_Error::class, $secondResponse);
+        $secondData = $secondResponse->get_data();
+        $this->assertSame([$mediaId], $secondData['applied']);
+        $this->assertSame([], $secondData['failed']);
+        $this->assertSame($expectedStored, get_post_meta($mediaId, '_wp_attachment_image_alt', true));
+    }
+
+    /**
+     * BR-17 / idempotence: re-applying a byte-identical alt (no-op returns false)
+     * still reports applied, not failed.
+     */
+    public function testApplyRunDraftsNaturalNoOpReportsApplied(): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $this->plantPostType(70);
+        $this->plantPostType(71);
+        $this->plantPostType(72);
+        // Plant the exact draft that apply will write so the alt write is a natural no-op.
+        $this->setPostMeta(71, '_wp_attachment_image_alt', 'a dog in a park');
+        $this->setPostMeta(70, '_wp_attachment_image_alt', 'human-authored alt');
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueRunItemsResponse($runId);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+        $request->set_param('overwrite_media_ids', [71]);
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $data = $response->get_data();
+        $this->assertContains(71, $data['applied']);
+        $this->assertNotContains(71, $data['failed']);
+        $this->assertSame('a dog in a park', get_post_meta(71, '_wp_attachment_image_alt', true));
+    }
 }

@@ -16,12 +16,15 @@ use function count;
 use function get_post_meta;
 use function gmdate;
 use function in_array;
+use function is_array;
 use function is_numeric;
+use function is_string;
 use function is_wp_error;
 use function sprintf;
 use function trim;
 use function update_post_meta;
 use function wp_json_encode;
+use function wp_unslash;
 
 class DescriptionCommand extends \WP_CLI_Command {
 	private DescriptionCandidateService $candidate_service;
@@ -228,9 +231,43 @@ class DescriptionCommand extends \WP_CLI_Command {
 			);
 		}
 
-		update_post_meta( $media_id, '_wp_attachment_image_alt', $alt_text_draft );
-		// Stamp the exact string just written so history can resolve Generated-alt.
-		update_post_meta( $media_id, '_acx_description_provenance', $this->build_provenance( $media_id, $data, $alt_text_draft ) );
+		// S3-02 / BR-01: honor update_post_meta() returns. No-op (false when the
+		// stored value already equals what WP will store after unslash) is success
+		// via read-back; a real alt failure must not stamp provenance claiming a
+		// draft that never landed. Status vocabulary matches bulk apply:
+		// written (full success), partial (alt ok, provenance not), failed.
+		// Compare against wp_unslash( $draft ) — update_metadata() unslashes before
+		// store/equality (BR-17). [rg-015]
+		$expected_alt = wp_unslash( $alt_text_draft );
+		$alt_written  = update_post_meta( $media_id, '_wp_attachment_image_alt', $alt_text_draft );
+		if ( false === $alt_written ) {
+			$current = get_post_meta( $media_id, '_wp_attachment_image_alt', true );
+			if ( ! is_string( $current ) || $expected_alt !== $current ) {
+				return array(
+					'media_id'       => $media_id,
+					'status'         => 'failed',
+					'alt_text_draft' => $alt_text_draft,
+				);
+			}
+		}
+
+		// Stamp provenance only after a verified alt write so history never lists
+		// a Generated-alt for a draft that did not land [rg-015].
+		$provenance           = $this->build_provenance( $media_id, $data, $alt_text_draft );
+		$expected_provenance  = wp_unslash( $provenance );
+		$prov_written         = update_post_meta( $media_id, '_acx_description_provenance', $provenance );
+		if ( false === $prov_written ) {
+			$current_prov = get_post_meta( $media_id, '_acx_description_provenance', true );
+			$prov_ok      = is_array( $current_prov ) && $expected_provenance === $current_prov;
+			if ( ! $prov_ok ) {
+				// Alt landed; telemetry did not. Partial — same contract as bulk apply.
+				return array(
+					'media_id'       => $media_id,
+					'status'         => 'partial',
+					'alt_text_draft' => $alt_text_draft,
+				);
+			}
+		}
 
 		return array(
 			'media_id'       => $media_id,
@@ -242,13 +279,14 @@ class DescriptionCommand extends \WP_CLI_Command {
 	/**
 	 * Build the CLI provenance envelope for a generate-and-write.
 	 *
-	 * `$alt_text_draft` is the exact string just written to
-	 * `_wp_attachment_image_alt` — only called on the write path (never on
-	 * dry_run / skipped_existing_alt / skipped_empty_alt_text) so a draft that
-	 * was never persisted is never recorded as if it were [rg-015].
+	 * Called only after a verified alt write (or accepted no-op read-back). Never
+	 * on dry_run / skipped_existing_alt / skipped_empty_alt_text / alt-write
+	 * failure — a draft that was never persisted is never recorded as if it were
+	 * [rg-015]. Status of the caller is `written` only when both alt and
+	 * provenance are verified; provenance failure surfaces as `partial`.
 	 *
 	 * @param array<string,mixed> $data
-	 * @param string              $alt_text_draft Exact draft written to alt meta.
+	 * @param string              $alt_text_draft Draft written (or already stored) to alt meta.
 	 * @return array<string,mixed>
 	 */
 	private function build_provenance( int $media_id, array $data, string $alt_text_draft ): array {

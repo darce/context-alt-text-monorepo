@@ -54,6 +54,7 @@ use function time;
 use function update_option;
 use function wp_check_filetype;
 use function wp_json_encode;
+use function wp_unslash;
 
 use const PATHINFO_EXTENSION;
 
@@ -746,6 +747,11 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			// existing_alt boolean, which can lag an in-flight media-library edit).
 			$stored_alt_raw = get_post_meta( $media_id, '_wp_attachment_image_alt', true );
 			$decision_alt   = $stored_alt_raw;
+			// What update_metadata() will store for this draft (unslash before
+			// store). Stored alt and recovery comparisons must use this, not the
+			// raw draft string — a backslash-bearing draft never equals its
+			// stored form byte-for-byte (BR-17).
+			$expected_stored_alt = wp_unslash( $draft );
 
 			// Non-string alt meta is unexpected; never treat it as empty and never
 			// unlock recovery via the string-equality conjunct (BR-119).
@@ -770,8 +776,9 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 					// system started this write for this run+draft (pending marker).
 					// Alt===draft alone is not enough — coincidental operator text must
 					// stay guarded. When the marker matches run+draft and alt still
-					// equals the draft, completing provenance is not a clobber even if
-					// an older envelope from a different generation exists (BR-126).
+					// equals the (unslashed) draft WP stores, completing provenance is
+					// not a clobber even if an older envelope from a different
+					// generation exists (BR-126 / BR-17).
 					$stored_prov = get_post_meta( $media_id, '_acx_description_provenance', true );
 					$pending     = get_post_meta( $media_id, '_acx_description_provenance_pending', true );
 					$draft_hash  = hash( 'sha256', $draft );
@@ -779,11 +786,12 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 						&& isset( $stored_prov['run_id'] )
 						&& (string) $stored_prov['run_id'] === $run_id;
 					// $stored_alt_raw is string here (non-string branch returns above).
+					// Compare against the value WP stores, not the raw draft (BR-17).
 					$is_non_clobber_completion = is_array( $pending )
 						&& isset( $pending['run_id'], $pending['draft_hash'] )
 						&& (string) $pending['run_id'] === $run_id
 						&& (string) $pending['draft_hash'] === $draft_hash
-						&& $stored_alt_raw === $draft
+						&& $stored_alt_raw === $expected_stored_alt
 						&& ! $prov_is_this_run;
 
 					if ( ! $is_non_clobber_completion ) {
@@ -794,7 +802,7 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 							&& isset( $pending['run_id'] )
 							&& (string) $pending['run_id'] === $run_id
 						) {
-							$alt_diverged = $stored_alt_raw !== $draft;
+							$alt_diverged = $stored_alt_raw !== $expected_stored_alt;
 							if ( $alt_diverged || $prov_is_this_run ) {
 								delete_post_meta( $media_id, '_acx_description_provenance_pending' );
 							}
@@ -821,13 +829,16 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			}
 
 			// S3-02: honor the update_post_meta() return. It also returns false when
-			// the stored value is byte-identical to $draft (a no-op overwrite);
-			// distinguish that from a real failure via a read-back so an unchanged
-			// value still counts as applied rather than landing in `failed`.
+			// the stored value is byte-identical to what WP will store (a no-op
+			// overwrite); distinguish that from a real failure via a read-back so an
+			// unchanged value still counts as applied rather than landing in `failed`.
+			// Compare against wp_unslash( $draft ): update_metadata() unslashes before
+			// store/equality, so a backslash-bearing draft never equals storage as
+			// the raw string (BR-17).
 			$alt_written = update_post_meta( $media_id, '_wp_attachment_image_alt', $draft );
 			if ( false === $alt_written ) {
 				$current = get_post_meta( $media_id, '_wp_attachment_image_alt', true );
-				if ( ! is_string( $current ) || $draft !== $current ) {
+				if ( ! is_string( $current ) || $expected_stored_alt !== $current ) {
 					$failed[] = $media_id;
 					continue;
 				}
@@ -840,13 +851,15 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			// bulk apply report "applied" for items history never shows. [RLSE-05]
 			// Alt stays written — do not roll back; bucket as partial so the client
 			// can reconcile without treating the id as fully applied.
-			$prov_written = update_post_meta( $media_id, '_acx_description_provenance', $provenance );
+			// Compare against the unslashed envelope (BR-17), not the raw array.
+			$expected_provenance = wp_unslash( $provenance );
+			$prov_written        = update_post_meta( $media_id, '_acx_description_provenance', $provenance );
 			if ( false === $prov_written ) {
 				$current_prov = get_post_meta( $media_id, '_acx_description_provenance', true );
 				// Accept only a full-payload no-op (update_post_meta returns false
 				// when stored value equals the value being written). Partial key
 				// matches would forge applied while history still lacks provenance.
-				$prov_ok = is_array( $current_prov ) && $provenance === $current_prov;
+				$prov_ok = is_array( $current_prov ) && $expected_provenance === $current_prov;
 				if ( ! $prov_ok ) {
 					// Durable evidence this system started the write for this
 					// run+draft. Inspect marker write the same way as provenance:
@@ -855,18 +868,19 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 					// a verified marker, auto-recovery is impossible so bucket
 					// `failed` (not `partial`) — partial is presented as retryable.
 					// [BR-102] [RLSE-05] [INT-11]
-					$marker = array(
+					$marker           = array(
 						'run_id'     => $run_id,
 						'draft_hash' => hash( 'sha256', $draft ),
 					);
-					$marker_written = update_post_meta(
+					$expected_marker  = wp_unslash( $marker );
+					$marker_written   = update_post_meta(
 						$media_id,
 						'_acx_description_provenance_pending',
 						$marker
 					);
 					if ( false === $marker_written ) {
 						$current_marker = get_post_meta( $media_id, '_acx_description_provenance_pending', true );
-						$marker_ok      = is_array( $current_marker ) && $marker === $current_marker;
+						$marker_ok      = is_array( $current_marker ) && $expected_marker === $current_marker;
 						if ( ! $marker_ok ) {
 							$failed[] = $media_id;
 							continue;

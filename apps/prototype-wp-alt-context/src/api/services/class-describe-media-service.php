@@ -38,6 +38,7 @@ use function is_readable;
 use function is_string;
 use function is_wp_error;
 use function max;
+use function wp_unslash;
 use function microtime;
 use function pathinfo;
 use function preg_match;
@@ -348,17 +349,66 @@ class DescribeMediaService {
 			return $response;
 		}
 
-		update_post_meta( $media_id, self::ALT_TEXT_META_KEY, $draft );
-		update_post_meta( $media_id, self::PROVENANCE_META_KEY, $provenance );
+		// S3-02 / BR-02: honor update_post_meta() returns. No-op (false when the
+		// stored value already equals what WP will store after unslash) is success
+		// via read-back. Real alt failure → failed, no provenance stamp. Alt ok +
+		// provenance fail → partial (history would otherwise drop the item). Keep
+		// written vs forced_overwrite for full success. Compare against
+		// wp_unslash( $value ) — update_metadata() unslashes before store (BR-17).
+		$expected_alt = wp_unslash( $draft );
+		$alt_written  = update_post_meta( $media_id, self::ALT_TEXT_META_KEY, $draft );
+		if ( false === $alt_written ) {
+			$current = get_post_meta( $media_id, self::ALT_TEXT_META_KEY, true );
+			if ( ! is_string( $current ) || $expected_alt !== $current ) {
+				$data['alt_text_write'] = array(
+					'status'               => 'failed',
+					'existing_alt_present' => '' !== trim( $existing_alt ),
+				);
+				$response->set_data( $data );
+				return $response;
+			}
+		}
 
+		$expected_provenance = wp_unslash( $provenance );
+		$prov_written        = update_post_meta( $media_id, self::PROVENANCE_META_KEY, $provenance );
+		if ( false === $prov_written ) {
+			$current_prov = get_post_meta( $media_id, self::PROVENANCE_META_KEY, true );
+			$prov_ok      = is_array( $current_prov ) && $expected_provenance === $current_prov;
+			if ( ! $prov_ok ) {
+				// Alt landed; history gate (provenance array) did not. Partial —
+				// same vocabulary as bulk apply. Do not claim written.
+				$write_result = array(
+					'status'               => 'partial',
+					'existing_alt_present' => '' !== trim( $existing_alt ),
+				);
+				// Long description is independent of provenance; attempt when alt
+				// is verified so the operator still gets the body when opted in.
+				$description_write = $this->maybe_write_long_description( $data, $media_id, $force );
+				if ( null !== $description_write ) {
+					$write_result['description_write'] = $description_write;
+				}
+				$data['alt_text_write'] = $write_result;
+				$response->set_data( $data );
+				return $response;
+			}
+		}
+
+		$status = '' !== trim( $existing_alt ) ? 'forced_overwrite' : 'written';
 		$write_result = array(
-			'status'               => '' !== trim( $existing_alt ) ? 'forced_overwrite' : 'written',
+			'status'               => $status,
 			'existing_alt_present' => '' !== trim( $existing_alt ),
 		);
 
 		$description_write = $this->maybe_write_long_description( $data, $media_id, $force );
 		if ( null !== $description_write ) {
 			$write_result['description_write'] = $description_write;
+			// BR-03: fold a durable long-description write failure into the parent
+			// status so alt_text_write never looks fully successful when the body
+			// did not land. Skip/success statuses leave the parent alone.
+			// At this point parent is always written|forced_overwrite (alt+prov ok).
+			if ( 'failed' === $description_write ) {
+				$write_result['status'] = 'partial';
+			}
 		}
 
 		$data['alt_text_write'] = $write_result;
@@ -429,12 +479,20 @@ class DescribeMediaService {
 			return 'skipped_existing_description';
 		}
 
-		wp_update_post(
+		// BR-03: honor wp_update_post() — returns 0 or WP_Error on failure.
+		// Do not claim written/forced_overwrite when the body did not persist.
+		// A no-op re-write of identical content still returns the post ID in
+		// core when the post row is touched; only a hard failure is falsey here.
+		$updated = wp_update_post(
 			array(
 				'ID'           => $media_id,
 				'post_content' => $long,
-			)
+			),
+			true
 		);
+		if ( is_wp_error( $updated ) || 0 === $updated || false === $updated ) {
+			return 'failed';
+		}
 
 		return '' !== $existing_description ? 'forced_overwrite' : 'written';
 	}

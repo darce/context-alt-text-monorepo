@@ -135,4 +135,37 @@ class DescriptionContentRefreshApplyTest extends TestCase
         $this->assertSame('x <= y', $attributes['alt']);
         $this->assertStringNotContainsString('"alt":"x &lt;= y"', $content);
     }
+
+    /**
+     * BR-08: when wp_update_post fails, summary.changed is 0 and media is not in
+     * changed[]. candidates still counts the intended write; failed is honest.
+     */
+    public function testApplyDoesNotCountChangedWhenPostUpdateFails(): void
+    {
+        $this->setPostMeta(42, '_wp_attachment_image_alt', 'New bridge alt text');
+        $originalContent = '<!-- wp:image {"id":42,"alt":"Old bridge alt"} --><figure><img class="wp-image-42" src="/bridge.jpg" alt="Old bridge alt" /></figure><!-- /wp:image -->';
+        $post = (object) [
+            'ID' => 601,
+            'post_type' => 'post',
+            'post_title' => 'Unwritable post',
+            'post_content' => $originalContent,
+        ];
+        $GLOBALS['__ac_posts'][601] = $post;
+        $GLOBALS['__ac_get_posts_results'] = [$post];
+        $GLOBALS['__ac_wp_update_post_fail'][601] = true;
+
+        $result = (new DescriptionContentRefreshService())->apply([42], 10);
+
+        $this->assertSame(0, $result['summary']['changed']);
+        $this->assertSame(1, $result['summary']['candidates']);
+        $this->assertSame(1, $result['summary']['failed']);
+        $this->assertSame([], $result['changed']);
+        $this->assertCount(1, $result['failed']);
+        $this->assertSame(601, $result['failed'][0]['post_id']);
+        $this->assertSame(42, $result['failed'][0]['media_id']);
+        $this->assertSame('post_update_failed', $result['failed'][0]['reason']);
+        // Content not mutated in storage.
+        $this->assertSame($originalContent, $GLOBALS['__ac_posts'][601]->post_content);
+        $this->assertCount(0, $GLOBALS['__ac_updated_posts']);
+    }
 }

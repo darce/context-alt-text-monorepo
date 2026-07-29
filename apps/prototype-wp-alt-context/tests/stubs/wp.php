@@ -728,11 +728,23 @@ if (!function_exists('wp_get_attachment_image_src')) {
 }
 
 if (!function_exists('wp_update_post')) {
+    /**
+     * @param array<string,mixed> $postarr
+     * @param bool                $wp_error
+     * @param bool                $fire_after_hooks
+     * @return int|WP_Error
+     */
     function wp_update_post($postarr, $wp_error = false, $fire_after_hooks = true)
     {
         $postId = isset($postarr['ID']) ? (int) $postarr['ID'] : 0;
         if ($postId <= 0) {
-            return 0;
+            return $wp_error ? new WP_Error('invalid_post', 'Invalid post ID.') : 0;
+        }
+
+        // Opt-in test hook: simulate a failed post update WITHOUT persisting.
+        // Unset by default so every other test keeps the always-succeed behaviour.
+        if (!empty($GLOBALS['__ac_wp_update_post_fail'][$postId])) {
+            return $wp_error ? new WP_Error('db_update_error', 'Could not update post in the database.') : 0;
         }
 
         $GLOBALS['__ac_updated_posts'][] = $postarr;
@@ -789,12 +801,26 @@ if (!function_exists('get_post_meta')) {
 }
 
 if (!function_exists('update_post_meta')) {
+    /**
+     * Core-faithful update_post_meta for the harness (BR-17).
+     *
+     * Mirrors wp-includes/meta.php update_metadata():
+     * - unslashes the value before store / equality check
+     * - returns false when the stored value is byte-identical (no-op)
+     * - returns false without persisting when the opt-in fail hook is set
+     *
+     * Same shape as update_option in this file: failure and no-op share false.
+     *
+     * @param int    $postId
+     * @param string $metaKey
+     * @param mixed  $metaValue
+     * @return bool
+     */
     function update_post_meta($postId, $metaKey, $metaValue)
     {
         // Opt-in test hook: simulate a failed (false) meta write WITHOUT
         // persisting, so the controller's `false === $alt_written` failure and
-        // no-op read-back branches are exercisable. Unset by default, so every
-        // other test keeps the always-true behaviour.
+        // no-op read-back branches are exercisable. Unset by default.
         if (isset($GLOBALS['__ac_update_post_meta_fail'][$postId][$metaKey])) {
             return false;
         }
@@ -805,6 +831,23 @@ if (!function_exists('update_post_meta')) {
 
         if (!isset($GLOBALS['__ac_post_meta'][$postId])) {
             $GLOBALS['__ac_post_meta'][$postId] = [];
+        }
+
+        // Core: $meta_value = wp_unslash( $meta_value ); before equality/store.
+        $metaValue = wp_unslash($metaValue);
+
+        // Core returns false when the value is unchanged (failure and no-op share
+        // the same return — production recovery branches must re-read).
+        if (array_key_exists($metaKey, $GLOBALS['__ac_post_meta'][$postId])) {
+            $old = $GLOBALS['__ac_post_meta'][$postId][$metaKey];
+            if ($old === $metaValue) {
+                return false;
+            }
+            // Mirror update_option: value-equal array/object shapes that are not
+            // the same zval still count as a no-op under maybe_serialize equality.
+            if (serialize($old) === serialize($metaValue)) {
+                return false;
+            }
         }
 
         $GLOBALS['__ac_post_meta'][$postId][$metaKey] = $metaValue;
@@ -924,13 +967,32 @@ if (!function_exists('sanitize_key')) {
 }
 
 if (!function_exists('wp_unslash')) {
+    /**
+     * Core-faithful wp_unslash: stripslashes only string leaves (arrays/objects
+     * recurse; ints/bools/nulls pass through). Mirrors stripslashes_deep +
+     * stripslashes_from_strings_only so update_post_meta does not stringify
+     * non-string array meta values.
+     *
+     * @param mixed $value
+     * @return mixed
+     */
     function wp_unslash($value)
     {
         if (is_array($value)) {
             return array_map('wp_unslash', $value);
         }
 
-        return stripslashes((string) $value);
+        if (is_object($value)) {
+            // Core map_deep clones objects; for harness meta payloads we only
+            // ever receive arrays/scalars — leave objects untouched.
+            return $value;
+        }
+
+        if (!is_string($value)) {
+            return $value;
+        }
+
+        return stripslashes($value);
     }
 }
 

@@ -18,20 +18,28 @@ vi.mock('../../api/describeApi', async () => {
 
 const correctMock = vi.mocked(describeApi.correctDescriptionHistoryItem);
 
-const partialError = (message = 'Alt text was saved, but the human-edit record could not be stored.'): Error =>
+const PARTIAL_MESSAGE =
+  'Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.';
+
+const partialError = (
+  message = PARTIAL_MESSAGE,
+  data: Record<string, unknown> = { status: 500, stored_alt_text: 'Partial-saved alt' },
+): Error =>
   new Error(
     `Request to /correction failed (500): ${JSON.stringify({
       code: 'description_correction_partial',
       message,
-      data: { status: 500 },
+      data,
     })}`,
   );
 
-const totalFailureError = (): Error =>
+const totalFailureError = (
+  message = 'Could not save the alt text correction.',
+): Error =>
   new Error(
     `Request to /correction failed (500): ${JSON.stringify({
       code: 'description_correction_failed',
-      message: 'Could not save the alt text correction.',
+      message,
       data: { status: 500 },
     })}`,
   );
@@ -109,7 +117,9 @@ describe('useCorrectMediaAlt', () => {
   it('reconciles cached workbench alt text on description_correction_partial without invalidating [WBUX-5-BR-51]', async () => {
     const partialMessage =
       'Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.';
-    correctMock.mockRejectedValueOnce(partialError(partialMessage));
+    correctMock.mockRejectedValueOnce(
+      partialError(partialMessage, { status: 500, stored_alt_text: 'Partial-saved alt' }),
+    );
     const client = buildClient();
     seedWorkbench(client, null);
     const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
@@ -136,6 +146,53 @@ describe('useCorrectMediaAlt', () => {
     expect(describeApi.resolveDescribeErrorCode(result.current.error)).toBe('description_correction_partial');
   });
 
+  it('patches workbench cache with server stored_alt_text when it differs from the request [S1][rg-015]', async () => {
+    // Decisive fixture: request still has markup/whitespace; server reports the
+    // normalized value actually stored. A request-body patch would green falsely.
+    const submitted = '  <em>Sunset</em> over the bay  ';
+    const stored = 'Sunset over the bay';
+    correctMock.mockRejectedValueOnce(
+      partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: stored }),
+    );
+    const client = buildClient();
+    seedWorkbench(client, 'Prior alt');
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+
+    result.current.mutate({ mediaId: 42, altText: submitted });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    const pageKey = queryKeys.media.workbenchPage({ page: 1, perPage: 20, status: 'missing' });
+    const cached = client.getQueryData<WorkbenchMediaResponse>(pageKey);
+    expect(cached?.items.find((item) => item.id === 42)?.altText).toBe(stored);
+    expect(cached?.items.find((item) => item.id === 42)?.altText).not.toBe(submitted);
+  });
+
+  it('does not patch workbench cache when partial lacks stored_alt_text; error still surfaces [S1][RLSE-05]', async () => {
+    correctMock.mockRejectedValueOnce(
+      partialError(PARTIAL_MESSAGE, { status: 500 }),
+    );
+    const client = buildClient();
+    seedWorkbench(client, 'Prior honest alt');
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+
+    result.current.mutate({ mediaId: 42, altText: '  <em>Would fabricate</em>  ' });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    const pageKey = queryKeys.media.workbenchPage({ page: 1, perPage: 20, status: 'missing' });
+    const cached = client.getQueryData<WorkbenchMediaResponse>(pageKey);
+    // Stale-but-real: prior cache value preserved; request body never written in.
+    expect(cached?.items.find((item) => item.id === 42)?.altText).toBe('Prior honest alt');
+    expect(cached?.items.find((item) => item.id === 42)?.altText).not.toBe('  <em>Would fabricate</em>  ');
+    // Operator still informed — mutation error is present for the alert path.
+    expect(result.current.isError).toBe(true);
+    expect(describeApi.resolveDescribeErrorCode(result.current.error)).toBe(
+      describeApi.DESCRIPTION_CORRECTION_CODE.PARTIAL,
+    );
+    expect(describeApi.resolveDescribeErrorMessage(result.current.error, 'fallback')).toBe(PARTIAL_MESSAGE);
+  });
+
   it('does not reconcile cache on a total correction failure', async () => {
     correctMock.mockRejectedValueOnce(totalFailureError());
     const client = buildClient();
@@ -152,5 +209,52 @@ describe('useCorrectMediaAlt', () => {
     expect(cached?.items.find((item) => item.id === 42)?.altText).toBeNull();
     expect(invalidateSpy).not.toHaveBeenCalled();
     expect(describeApi.resolveDescribeErrorCode(result.current.error)).toBe('description_correction_failed');
+  });
+
+  it('gates partial reconcile on stable code, not message text (total fail with partial wording) [WBUX-5-BR-51]', async () => {
+    // Decisive fixture: failed code + message that still contains the partial
+    // phrase. A message-includes gate would wrongly reconcile; the code gate must not.
+    const deceptiveMessage =
+      'Could not save the alt text correction: the human-edit record could not be stored either.';
+    correctMock.mockRejectedValueOnce(totalFailureError(deceptiveMessage));
+    const client = buildClient();
+    seedWorkbench(client, null);
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+
+    result.current.mutate({ mediaId: 42, altText: 'Must-not-appear-in-cache' });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    const pageKey = queryKeys.media.workbenchPage({ page: 1, perPage: 20, status: 'missing' });
+    const cached = client.getQueryData<WorkbenchMediaResponse>(pageKey);
+    expect(cached?.items.find((item) => item.id === 42)?.altText).toBeNull();
+    expect(describeApi.resolveDescribeErrorCode(result.current.error)).toBe(
+      describeApi.DESCRIPTION_CORRECTION_CODE.FAILED,
+    );
+    expect(describeApi.resolveDescribeErrorMessage(result.current.error, 'fallback')).toContain(
+      'human-edit record could not be stored',
+    );
+  });
+
+  it('reconciles on partial code even when the message text is unrelated [WBUX-5-BR-51]', async () => {
+    const unrelatedMessage = 'Marker write failed with storage code 503.';
+    correctMock.mockRejectedValueOnce(
+      partialError(unrelatedMessage, { status: 500, stored_alt_text: 'Code-gated partial alt' }),
+    );
+    const client = buildClient();
+    seedWorkbench(client, null);
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+
+    result.current.mutate({ mediaId: 42, altText: 'Code-gated partial alt' });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    const pageKey = queryKeys.media.workbenchPage({ page: 1, perPage: 20, status: 'missing' });
+    const cached = client.getQueryData<WorkbenchMediaResponse>(pageKey);
+    expect(cached?.items.find((item) => item.id === 42)?.altText).toBe('Code-gated partial alt');
+    expect(describeApi.resolveDescribeErrorCode(result.current.error)).toBe(
+      describeApi.DESCRIPTION_CORRECTION_CODE.PARTIAL,
+    );
+    expect(describeApi.resolveDescribeErrorMessage(result.current.error, 'fallback')).toBe(unrelatedMessage);
   });
 });

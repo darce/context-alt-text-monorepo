@@ -102,6 +102,12 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
         <div className="acx-dashboard__panel acx-run-apply__result" role="status" aria-live="polite">
           <p>
             {sprintf(__('Applied %d descriptions.', 'alt-context'), apply.data.applied.length)}{' '}
+            {apply.data.partial.length > 0
+              ? sprintf(
+                  __('%d had alt text saved; apply again so they appear in history.', 'alt-context'),
+                  apply.data.partial.length,
+                )
+              : ''}{' '}
             {apply.data.skipped_existing.length > 0
               ? sprintf(__('Skipped %d with existing alt text.', 'alt-context'), apply.data.skipped_existing.length)
               : ''}{' '}

@@ -8,6 +8,7 @@ import {
   correctDescriptionHistoryItem,
   fetchDescribeRunItems,
   fetchDescriptionHistory,
+  type DescriptionHistoryItem,
 } from '../../api/describeApi';
 
 vi.mock('@wordpress/i18n', () => ({
@@ -51,7 +52,9 @@ const renderPage = (initialEntries: string[] = ['/description-history']) => {
   );
 };
 
-const historyItem = {
+// Annotated so human_edit widens to DescriptionHistoryHumanEdit | null: an
+// inferred `null` makes every derived fixture unable to supply a human edit.
+const historyItem: DescriptionHistoryItem = {
   media_id: 42,
   title: 'Bridge',
   mime_type: 'image/jpeg',
@@ -191,7 +194,7 @@ describe('DescriptionHistoryPage', () => {
         `Request to /correction failed (500): ${JSON.stringify({
           code: 'description_correction_partial',
           message: partialMessage,
-          data: { status: 500 },
+          data: { status: 500, stored_alt_text: 'Corrected bridge alt.' },
         })}`,
       ),
     );
@@ -234,5 +237,309 @@ describe('DescriptionHistoryPage', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('Could not save the alt text. Please try again.');
     expect(textarea).toHaveValue('Still the draft.');
+  });
+
+  it('keeps row A failure alert when row B starts saving [RLSE-05]', async () => {
+    fetchHistoryMock.mockResolvedValue({ total: 2, items: [historyItem, failedHistoryItem] });
+    const bridgeMessage = 'Bridge correction failed: storage rejected write.';
+    let resolvePortrait!: (value: typeof failedHistoryItem) => void;
+    const portraitPending = new Promise<typeof failedHistoryItem>((resolve) => {
+      resolvePortrait = resolve;
+    });
+
+    correctHistoryMock
+      .mockRejectedValueOnce(
+        new Error(
+          `Request to /correction failed (500): ${JSON.stringify({
+            code: 'description_correction_failed',
+            message: bridgeMessage,
+            data: { status: 500 },
+          })}`,
+        ),
+      )
+      .mockReturnValueOnce(portraitPending);
+
+    renderPage();
+
+    const bridgeTextarea = await screen.findByLabelText('Alt text correction for Bridge');
+    fireEvent.change(bridgeTextarea, { target: { value: 'Bridge draft.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save correction for Bridge' }));
+
+    const bridgeArticle = (await screen.findByText('Bridge')).closest('article');
+    await waitFor(() => {
+      expect(bridgeArticle?.querySelector('[role="alert"]')).toHaveTextContent(bridgeMessage);
+    });
+
+    const portraitTextarea = screen.getByLabelText('Alt text correction for Portrait');
+    fireEvent.change(portraitTextarea, { target: { value: 'Portrait draft.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save correction for Portrait' }));
+
+    // While Portrait is in flight, Bridge's unread failure must still be visible.
+    expect(await screen.findByRole('button', { name: 'Saving...' })).toBeInTheDocument();
+    expect(bridgeArticle?.querySelector('[role="alert"]')).toHaveTextContent(bridgeMessage);
+
+    resolvePortrait({
+      ...failedHistoryItem,
+      current_alt_text: 'Portrait draft.',
+      human_edit: {
+        alt_text: 'Portrait draft.',
+        edited_at: '2026-07-04 12:00:00',
+        user_id: 7,
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Saving...' })).not.toBeInTheDocument();
+    });
+    expect(bridgeArticle?.querySelector('[role="alert"]')).toHaveTextContent(bridgeMessage);
+  });
+
+  it('shows distinct durable alerts when two rows fail sequentially [RLSE-05]', async () => {
+    fetchHistoryMock.mockResolvedValue({ total: 2, items: [historyItem, failedHistoryItem] });
+    const bridgeMessage = 'Bridge-only failure message.';
+    const portraitMessage = 'Portrait-only failure message.';
+
+    correctHistoryMock
+      .mockRejectedValueOnce(
+        new Error(
+          `Request to /correction failed (500): ${JSON.stringify({
+            code: 'description_correction_failed',
+            message: bridgeMessage,
+            data: { status: 500 },
+          })}`,
+        ),
+      )
+      .mockRejectedValueOnce(
+        new Error(
+          `Request to /correction failed (500): ${JSON.stringify({
+            code: 'description_correction_failed',
+            message: portraitMessage,
+            data: { status: 500 },
+          })}`,
+        ),
+      );
+
+    renderPage();
+
+    fireEvent.change(await screen.findByLabelText('Alt text correction for Bridge'), {
+      target: { value: 'Bridge draft.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save correction for Bridge' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Bridge').closest('article')?.querySelector('[role="alert"]')).toHaveTextContent(
+        bridgeMessage,
+      );
+    });
+
+    fireEvent.change(screen.getByLabelText('Alt text correction for Portrait'), {
+      target: { value: 'Portrait draft.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save correction for Portrait' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Portrait').closest('article')?.querySelector('[role="alert"]')).toHaveTextContent(
+        portraitMessage,
+      );
+    });
+
+    const bridgeArticle = screen.getByText('Bridge').closest('article');
+    const portraitArticle = screen.getByText('Portrait').closest('article');
+    expect(bridgeArticle?.querySelector('[role="alert"]')).toHaveTextContent(bridgeMessage);
+    expect(portraitArticle?.querySelector('[role="alert"]')).toHaveTextContent(portraitMessage);
+    expect(bridgeArticle?.querySelector('[role="alert"]')?.textContent).not.toBe(
+      portraitArticle?.querySelector('[role="alert"]')?.textContent,
+    );
+  });
+
+  it('clears only the retried row alert on success; sibling alert stays [RLSE-05]', async () => {
+    fetchHistoryMock.mockResolvedValue({ total: 2, items: [historyItem, failedHistoryItem] });
+    const bridgeMessage = 'Bridge still failed first time.';
+    const portraitMessage = 'Portrait failed and stays failed.';
+
+    correctHistoryMock
+      .mockRejectedValueOnce(
+        new Error(
+          `Request to /correction failed (500): ${JSON.stringify({
+            code: 'description_correction_failed',
+            message: bridgeMessage,
+            data: { status: 500 },
+          })}`,
+        ),
+      )
+      .mockRejectedValueOnce(
+        new Error(
+          `Request to /correction failed (500): ${JSON.stringify({
+            code: 'description_correction_failed',
+            message: portraitMessage,
+            data: { status: 500 },
+          })}`,
+        ),
+      )
+      .mockImplementationOnce((_mediaId, altText) =>
+        Promise.resolve({
+          ...historyItem,
+          current_alt_text: altText,
+          human_edit: {
+            alt_text: altText,
+            edited_at: '2026-07-04 12:30:00',
+            user_id: 7,
+          },
+        }),
+      );
+
+    renderPage();
+
+    fireEvent.change(await screen.findByLabelText('Alt text correction for Bridge'), {
+      target: { value: 'Bridge draft.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save correction for Bridge' }));
+    await screen.findByText(bridgeMessage);
+
+    fireEvent.change(screen.getByLabelText('Alt text correction for Portrait'), {
+      target: { value: 'Portrait draft.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save correction for Portrait' }));
+    await screen.findByText(portraitMessage);
+
+    // Retry Bridge only — success must clear Bridge's alert and leave Portrait's.
+    fireEvent.click(screen.getByRole('button', { name: 'Save correction for Bridge' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Bridge').closest('article')?.querySelector('[role="alert"]')).toBeNull();
+      expect(screen.getByText('Portrait').closest('article')?.querySelector('[role="alert"]')).toHaveTextContent(
+        portraitMessage,
+      );
+    });
+  });
+
+  it('updates Current alt text on description_correction_partial while keeping the alert [RLSE-04]', async () => {
+    const partialMessage =
+      'Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.';
+    correctHistoryMock.mockRejectedValueOnce(
+      new Error(
+        `Request to /correction failed (500): ${JSON.stringify({
+          code: 'description_correction_partial',
+          message: partialMessage,
+          data: { status: 500, stored_alt_text: 'Partial-saved bridge alt.' },
+        })}`,
+      ),
+    );
+
+    renderPage();
+
+    const textarea = await screen.findByLabelText('Alt text correction for Bridge');
+    fireEvent.change(textarea, { target: { value: 'Partial-saved bridge alt.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save correction for Bridge' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(partialMessage);
+
+    // Cache patched from stored_alt_text: "Current alt text" shows server value.
+    const bridgeArticle = screen.getByText('Bridge').closest('article');
+    expect(bridgeArticle).toBeTruthy();
+    // Draft textarea + current alt column both hold the new text.
+    expect(bridgeArticle).toHaveTextContent('Partial-saved bridge alt.');
+    expect(bridgeArticle).not.toHaveTextContent('Bridge at dusk');
+    expect(textarea).toHaveValue('Partial-saved bridge alt.');
+  });
+
+  it('patches Current alt text with server stored_alt_text when it differs from the request [S1][rg-015]', async () => {
+    // Decisive fixture: submitted text differs from what storage holds.
+    const submitted = '  <em>Sunset</em> over the bay  ';
+    const stored = 'Sunset over the bay';
+    const partialMessage =
+      'Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.';
+    correctHistoryMock.mockRejectedValueOnce(
+      new Error(
+        `Request to /correction failed (500): ${JSON.stringify({
+          code: 'description_correction_partial',
+          message: partialMessage,
+          data: { status: 500, stored_alt_text: stored },
+        })}`,
+      ),
+    );
+
+    renderPage();
+
+    const textarea = await screen.findByLabelText('Alt text correction for Bridge');
+    fireEvent.change(textarea, { target: { value: submitted } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save correction for Bridge' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(partialMessage);
+
+    const bridgeArticle = screen.getByText('Bridge').closest('article');
+    expect(bridgeArticle).toBeTruthy();
+    // Scope to the "Current alt text" column — the draft textarea still holds
+    // the raw request (operator's only copy) and must not pollute this pin.
+    const currentAltHeading = Array.from(bridgeArticle?.querySelectorAll('h3') ?? []).find(
+      (h) => h.textContent === 'Current alt text',
+    );
+    const currentAltText = currentAltHeading?.parentElement?.querySelector('p');
+    expect(currentAltText).toHaveTextContent(stored);
+    expect(currentAltText?.textContent).not.toContain('<em>');
+    expect(currentAltText).not.toHaveTextContent('Bridge at dusk');
+    // Draft keeps the operator's typed value (only copy of their input).
+    expect(textarea).toHaveValue(submitted);
+  });
+
+  it('does not patch Current alt text when partial lacks stored_alt_text; alert still shows [S1][RLSE-05]', async () => {
+    const partialMessage =
+      'Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.';
+    correctHistoryMock.mockRejectedValueOnce(
+      new Error(
+        `Request to /correction failed (500): ${JSON.stringify({
+          code: 'description_correction_partial',
+          message: partialMessage,
+          data: { status: 500 },
+        })}`,
+      ),
+    );
+
+    renderPage();
+
+    const textarea = await screen.findByLabelText('Alt text correction for Bridge');
+    fireEvent.change(textarea, { target: { value: '  <em>Would fabricate</em>  ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save correction for Bridge' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(partialMessage);
+
+    const bridgeArticle = screen.getByText('Bridge').closest('article');
+    const currentAltHeading = Array.from(bridgeArticle?.querySelectorAll('h3') ?? []).find(
+      (h) => h.textContent === 'Current alt text',
+    );
+    const currentAltText = currentAltHeading?.parentElement?.querySelector('p');
+    // Stale-but-real prior value; request body never written into the column.
+    expect(currentAltText).toHaveTextContent('Bridge at dusk');
+    expect(currentAltText?.textContent).not.toContain('<em>');
+    expect(textarea).toHaveValue('  <em>Would fabricate</em>  ');
+  });
+
+  it('does not patch Current alt text on description_correction_failed', async () => {
+    correctHistoryMock.mockRejectedValueOnce(
+      new Error(
+        `Request to /correction failed (500): ${JSON.stringify({
+          code: 'description_correction_failed',
+          message: 'Could not save the alt text correction.',
+          data: { status: 500 },
+        })}`,
+      ),
+    );
+
+    renderPage();
+
+    const textarea = await screen.findByLabelText('Alt text correction for Bridge');
+    fireEvent.change(textarea, { target: { value: 'Would-be bridge alt.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save correction for Bridge' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not save the alt text correction.');
+
+    // Current alt column must still show the pre-failure value.
+    const bridgeArticle = screen.getByText('Bridge').closest('article');
+    expect(bridgeArticle).toHaveTextContent('Bridge at dusk');
+    // Draft is kept; it is not the same as the current-alt column source after a total fail.
+    expect(textarea).toHaveValue('Would-be bridge alt.');
   });
 });

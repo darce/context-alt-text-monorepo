@@ -120,6 +120,19 @@ export const DESCRIBE_RUN_STATUS = {
   CANCELLED: 'cancelled',
 } as const;
 
+/**
+ * Canonical correction rejection codes from the history correction endpoint.
+ * Gate on these via resolveDescribeErrorCode — never on localized message text
+ * (sr-007, WBUX-5-BR-51).
+ */
+export const DESCRIPTION_CORRECTION_CODE = {
+  PARTIAL: 'description_correction_partial',
+  FAILED: 'description_correction_failed',
+} as const;
+
+export type DescriptionCorrectionCode =
+  (typeof DESCRIPTION_CORRECTION_CODE)[keyof typeof DESCRIPTION_CORRECTION_CODE];
+
 export type DescribeRunStatus = (typeof DESCRIBE_RUN_STATUS)[keyof typeof DESCRIBE_RUN_STATUS];
 export type DescribeRunPhase = 'queued' | 'describing' | 'complete' | 'failed' | 'cancelled';
 
@@ -172,6 +185,9 @@ export interface DescribeRunItemsResponse {
 export interface ApplyDescribeRunResponse {
   run_id: string;
   applied: number[];
+  // Alt text landed but provenance/history record did not — not fully applied;
+  // operator should re-apply so the item appears in history. [RLSE-05]
+  partial: number[];
   skipped_existing: number[];
   skipped_no_draft: number[];
   // Media ids skipped because they are not attachment posts (untrusted upstream
@@ -384,6 +400,35 @@ export const resolveDescribeErrorCode = (error: unknown): string | null => {
   const code = payload.code;
   if (typeof code === 'string' && code.trim() !== '') {
     return code;
+  }
+  return null;
+};
+
+/**
+ * Resolve a string field from the WP_Error `data` object when present.
+ * Returns null when the error is unstructured, `data` is missing, or the named
+ * field is absent / not a string — callers must not invent a value ([rg-015]).
+ * Empty string is a legitimate stored value and is returned as-is.
+ *
+ * Sibling of resolveDescribeErrorCode: same parsePayload, same tolerance for
+ * unparseable messages. Used by partial-correction reconcile to read
+ * `stored_alt_text` rather than guessing from the request payload.
+ */
+export const resolveDescribeErrorDataField = (error: unknown, field: string): string | null => {
+  if (!(error instanceof Error)) {
+    return null;
+  }
+  const payload = parsePayload(error.message);
+  if (!payload) {
+    return null;
+  }
+  const data = payload.data;
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return null;
+  }
+  const value = (data as Record<string, unknown>)[field];
+  if (typeof value === 'string') {
+    return value;
   }
   return null;
 };

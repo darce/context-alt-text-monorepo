@@ -217,14 +217,13 @@ describe('MediaAltInlineEditor', () => {
     const status = screen.getByTestId('media-alt-inline-editor-status');
     await waitFor(() => expect(status).toHaveTextContent('Alt text saved.'));
 
-    // Re-enter; enterEditMode clears the cue (primary path). Production also
-    // clears in mutate onError so a leftover polite cue cannot sit beside the
-    // assertive alert if enter-edit clear is ever skipped (defense-in-depth,
-    // mirrors MediaAltSuggest BR-39 / BR-46). This component has no intermediate
-    // polite "Saving…" cue, so onError alone is not independently pin-able here.
+    // Re-enter; enterEditMode clears the cue. Save only exists while isEditing,
+    // and enterEditMode is the sole path into isEditing — so statusMessage is
+    // already '' before any failed save can fire. [TEST-15] goes red if
+    // enterEditMode stops clearing.
     fireEvent.click(screen.getByRole('button', { name: /edit alt text/i }));
     // Present-then-empty: cue was set above; enter-edit must retire it before the
-    // failure path. [TEST-15] goes red if enterEditMode stops clearing.
+    // failure path.
     expect(status).toBeEmptyDOMElement();
 
     correctMock.mockRejectedValueOnce(

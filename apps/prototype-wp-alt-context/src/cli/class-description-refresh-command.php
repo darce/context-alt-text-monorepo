@@ -11,6 +11,8 @@ use function array_key_exists;
 use function array_unique;
 use function array_values;
 use function class_exists;
+use function count;
+use function implode;
 use function in_array;
 use function is_array;
 use function is_numeric;
@@ -88,9 +90,11 @@ class DescriptionRefreshCommand extends \WP_CLI_Command {
 	 * @param array<string,mixed> $summary
 	 */
 	private function report_apply( array $result, array $summary ): void {
-		// apply() always includes changed/failed; read them only when present.
+		// apply() always includes changed/failed/skipped; read them only when
+		// present. Never fabricate a zero for an absent key [rg-015] [R18-BR-03].
 		$changed = array_key_exists( 'changed', $summary ) ? (int) $summary['changed'] : null;
 		$failed  = array_key_exists( 'failed', $summary ) ? (int) $summary['failed'] : null;
+		$skipped = array_key_exists( 'skipped', $summary ) ? (int) $summary['skipped'] : null;
 
 		$parts = array(
 			'dry_run=0',
@@ -102,15 +106,19 @@ class DescriptionRefreshCommand extends \WP_CLI_Command {
 		if ( null !== $failed ) {
 			$parts[] = 'failed=' . $failed;
 		}
-		$parts[] = 'skipped=' . (int) ( $summary['skipped'] ?? 0 );
+		if ( null !== $skipped ) {
+			$parts[] = 'skipped=' . $skipped;
+		}
 
-		$message = 'Description refresh complete. ' . implode( ' ', $parts );
+		$counts = implode( ' ', $parts );
 
 		$failed_rows = is_array( $result['failed'] ?? null ) ? $result['failed'] : array();
+		$failed_row_count = 0;
 		foreach ( $failed_rows as $row ) {
 			if ( ! is_array( $row ) ) {
 				continue;
 			}
+			++$failed_row_count;
 			\WP_CLI::log(
 				sprintf(
 					'failed post_id=%d media_id=%d reason=%s',
@@ -121,14 +129,25 @@ class DescriptionRefreshCommand extends \WP_CLI_Command {
 			);
 		}
 
-		// Non-zero exit so scripted callers can distinguish failure from success [HAI-13].
-		// Partial success (changed>0 && failed>0) is still a failure: some intended
-		// writes did not land.
-		if ( null !== $failed && $failed > 0 ) {
+		// Exit decision from the same evidence as the logged rows, not from a
+		// missing summary key treated as zero [R17-BR-04] [rg-015] [HAI-13].
+		// Absent `failed` key is an integrity error (absence ≠ success).
+		// Non-empty failed rows force non-zero even if the summary under-reports.
+		$has_failures = ( null !== $failed && $failed > 0 ) || $failed_row_count > 0;
+		$integrity_error = null === $failed;
+
+		if ( $has_failures || $integrity_error ) {
+			// Leading sentence matches outcome — do not claim "complete" on failure
+			// [R17-BR-11].
+			if ( $integrity_error && ! $has_failures ) {
+				$message = 'Description refresh incomplete (summary missing failed count). ' . $counts;
+			} else {
+				$message = 'Description refresh failed. ' . $counts;
+			}
 			\WP_CLI::error( $message );
 		}
 
-		\WP_CLI::success( $message );
+		\WP_CLI::success( 'Description refresh complete. ' . $counts );
 	}
 
 	/**

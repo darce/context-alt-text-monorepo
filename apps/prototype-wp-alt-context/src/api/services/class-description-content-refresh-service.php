@@ -8,6 +8,7 @@ use function absint;
 use function array_merge;
 use function array_values;
 use function count;
+use function get_post;
 use function get_post_meta;
 use function get_posts;
 use function html_entity_decode;
@@ -183,9 +184,10 @@ class DescriptionContentRefreshService {
 			if ( $updated_content !== $content ) {
 				// candidates = intended writes; changed = verified durable writes.
 				$candidates += count( $pending_changed );
+				$post_id     = absint( $post->ID );
 				$updated     = wp_update_post(
 					array(
-						'ID'           => absint( $post->ID ),
+						'ID'           => $post_id,
 						'post_content' => $updated_content,
 					),
 					true
@@ -198,8 +200,25 @@ class DescriptionContentRefreshService {
 						);
 					}
 				} else {
+					// wp_update_post → wp_insert_post returns the post ID even when
+					// wp_insert_post_data / content_save_pre / kses altered the bytes.
+					// Read back durable storage per consumer accessor; verify each
+					// intended alt actually landed (R16-BR-13 / rg-015).
+					$stored_post    = get_post( $post_id );
+					$stored_content = ( is_object( $stored_post ) && isset( $stored_post->post_content ) )
+						? (string) $stored_post->post_content
+						: '';
 					foreach ( $pending_changed as $entry ) {
-						$changed[] = $entry;
+						$media_id     = absint( $entry['media_id'] );
+						$intended_alt = (string) $entry['current_alt_text'];
+						if ( $this->stored_content_has_intended_alt( $stored_content, $media_id, $intended_alt ) ) {
+							$changed[] = $entry;
+						} else {
+							$failed[] = array_merge(
+								$entry,
+								array( 'reason' => 'post_content_not_persisted' )
+							);
+						}
 					}
 				}
 			}
@@ -311,6 +330,31 @@ class DescriptionContentRefreshService {
 		);
 
 		return is_string( $updated ) ? $updated : $content;
+	}
+
+	/**
+	 * Per-entry durability check: the intended alt for $media_id must be present
+	 * on a stored img tag after the write. Document-level !== would mis-report
+	 * when one of several replacements is filtered out.
+	 */
+	private function stored_content_has_intended_alt( string $stored_content, int $media_id, string $intended_alt ): bool {
+		if ( $media_id <= 0 || '' === $intended_alt ) {
+			return false;
+		}
+
+		$matches = $this->find_image_tags_for_media( $stored_content, $media_id );
+		if ( 0 === count( $matches ) ) {
+			return false;
+		}
+
+		foreach ( $matches as $tag ) {
+			$extracted = $this->extract_alt_text( $tag );
+			if ( null !== $extracted && $extracted === $intended_alt ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**

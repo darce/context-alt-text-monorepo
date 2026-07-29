@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace AltContext\Tests\Unit;
 
-use AltContext\Api\DescribeHostInterface;
+use AltContext\Api\AltTextWriteStatus;
+use AltContext\Api\Services\DescriptionCandidateService;
 use AltContext\Api\Services\DescribeMediaService;
 use AltContext\Cli\DescriptionCommand;
 use AltContext\Tests\TestCase;
 use RuntimeException;
+use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
 
@@ -38,6 +40,10 @@ class DescriptionCommandGenerateTest extends TestCase
         $this->assertSame('', get_post_meta(301, '_wp_attachment_image_alt', true));
         $this->assertSame('dry_run', $payload['rows'][0]['status']);
         $this->assertSame('A red barn at sunrise.', $payload['rows'][0]['alt_text_draft']);
+        $this->assertSame(0, $payload['failed'] ?? null);
+        $this->assertSame(0, $payload['partial'] ?? null);
+        $this->assertSame(1, $payload['dry_run'] ?? null);
+        $this->assertNotEmpty(\WP_CLI::$messages['success']);
     }
 
     public function testGenerateSurfacesUpstreamDetailOnErrorResponse(): void
@@ -47,12 +53,19 @@ class DescriptionCommandGenerateTest extends TestCase
         ]);
         $command = new DescriptionCommand(null, $service);
 
-        $command->__invoke(['generate'], ['media-id' => '302', 'format' => 'json']);
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '302', 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
 
+        $this->assertInstanceOf(RuntimeException::class, $caught);
         $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
 
         $this->assertSame('failed', $payload['rows'][0]['status']);
         $this->assertSame('tenant mismatch', $payload['rows'][0]['error']);
+        $this->assertSame(1, $payload['failed'] ?? null);
     }
 
     public function testGenerateWriteStoresAltTextAndProvenance(): void
@@ -87,6 +100,9 @@ class DescriptionCommandGenerateTest extends TestCase
         // history can resolve the Generated-alt column.
         $this->assertSame($writtenAlt, $provenance['alt_text_draft']);
         $this->assertSame('A black dog sitting by a window.', $provenance['alt_text_draft']);
+        $this->assertSame(1, $payload['written'] ?? null);
+        $this->assertSame(0, $payload['failed'] ?? null);
+        $this->assertNotEmpty(\WP_CLI::$messages['success']);
     }
 
     public function testGenerateWriteSkipsExistingAltUnlessForced(): void
@@ -104,6 +120,10 @@ class DescriptionCommandGenerateTest extends TestCase
         $this->assertSame('skipped_existing_alt', $firstPayload['rows'][0]['status']);
         // No alt write → no provenance, no fabricated alt_text_draft.
         $this->assertSame('', get_post_meta(501, '_acx_description_provenance', true));
+        // R17-BR-09: all-skipped is distinguishable from all-written.
+        $this->assertSame(1, $firstPayload['skipped_existing_alt'] ?? null);
+        $this->assertArrayNotHasKey('written', $firstPayload);
+        $this->assertStringContainsString('skipped_existing_alt=1', \WP_CLI::$messages['success'][0] ?? '');
 
         \WP_CLI::reset_cli_messages();
         $command->__invoke(['generate'], ['media-id' => '501', 'write' => true, 'force' => true, 'format' => 'json']);
@@ -148,8 +168,14 @@ class DescriptionCommandGenerateTest extends TestCase
         ]);
         $command = new DescriptionCommand(null, $service);
 
-        $command->__invoke(['generate'], ['media-id' => '601', 'write' => true, 'format' => 'json']);
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '601', 'write' => true, 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
 
+        $this->assertInstanceOf(RuntimeException::class, $caught);
         $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
 
         $this->assertSame('', get_post_meta(601, '_wp_attachment_image_alt', true));
@@ -189,6 +215,7 @@ class DescriptionCommandGenerateTest extends TestCase
         $this->assertSame('skipped_empty_alt_text', $payload['rows'][0]['status']);
         $this->assertSame('', get_post_meta(801, '_wp_attachment_image_alt', true));
         $this->assertSame('', get_post_meta(801, '_acx_description_provenance', true));
+        $this->assertSame(1, $payload['skipped_empty_alt_text'] ?? null);
     }
 
     /**
@@ -262,8 +289,14 @@ class DescriptionCommandGenerateTest extends TestCase
         $GLOBALS['__ac_update_post_meta_fail'][901]['_wp_attachment_image_alt'] = true;
         $command = new DescriptionCommand(null, $service);
 
-        $command->__invoke(['generate'], ['media-id' => '901', 'write' => true, 'format' => 'json']);
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '901', 'write' => true, 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
 
+        $this->assertInstanceOf(RuntimeException::class, $caught);
         $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
 
         $this->assertNotSame('written', $payload['rows'][0]['status']);
@@ -274,7 +307,8 @@ class DescriptionCommandGenerateTest extends TestCase
     }
 
     /**
-     * BR-01: alt succeeds, provenance fails → partial. Alt stays written.
+     * BR-01 / R17-BR-06: alt succeeds, provenance fails → partial with
+     * reason=provenance_write_failed. Alt stays written.
      */
     public function testGenerateWriteProvenanceFailureReportsPartial(): void
     {
@@ -289,20 +323,30 @@ class DescriptionCommandGenerateTest extends TestCase
         $GLOBALS['__ac_update_post_meta_fail'][902]['_acx_description_provenance'] = true;
         $command = new DescriptionCommand(null, $service);
 
-        $command->__invoke(['generate'], ['media-id' => '902', 'write' => true, 'format' => 'json']);
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '902', 'write' => true, 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
 
+        $this->assertInstanceOf(RuntimeException::class, $caught);
         $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
 
         $this->assertSame('partial', $payload['rows'][0]['status']);
+        $this->assertSame(
+            AltTextWriteStatus::REASON_PROVENANCE_WRITE_FAILED,
+            $payload['rows'][0]['reason'] ?? null
+        );
         $this->assertSame('Alt lands, provenance does not.', get_post_meta(902, '_wp_attachment_image_alt', true));
         $this->assertSame('', get_post_meta(902, '_acx_description_provenance', true));
+        $this->assertSame(1, $payload['partial'] ?? null);
     }
 
     /**
-     * BR-17 / plain no-op: CLI re-write of a byte-identical alt is not reported
-     * as failed. Does not pin the write-result guard itself (stays green if that
-     * branch is neutered); see sibling failure tests and the backslash-bearing
-     * save/resave pin for the unslash read-back path.
+     * R17-BR-12: plain-ASCII byte-identical rewrite is not reported as failed.
+     * Does NOT pin the wp_unslash read-back guard (ASCII is a fixed point under
+     * unslash). See *BackslashBearing* sibling for the unslash pin [TEST-15].
      */
     public function testGenerateWriteByteIdenticalRewriteIsNotReportedAsFailed(): void
     {
@@ -378,6 +422,274 @@ class DescriptionCommandGenerateTest extends TestCase
         );
         $this->assertSame($expectedStored, get_post_meta(904, '_wp_attachment_image_alt', true));
     }
+
+    // ── R18-BR-01 / R17-BR-02: tally + exit policy for table AND json ──
+
+    /**
+     * R18-BR-01 (a) table: total failure → non-zero exit with counts.
+     */
+    public function testGenerateTableTotalFailureExitsNonZero(): void
+    {
+        $service = new RecordingDescribeService([
+            910 => new WP_REST_Response(['detail' => 'upstream down'], 502),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '910', 'write' => true]);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $this->assertNotEmpty(\WP_CLI::$messages['error']);
+        $this->assertEmpty(\WP_CLI::$messages['success']);
+        $this->assertEmpty(\WP_CLI::$messages['warning']);
+        $summary = \WP_CLI::$messages['error'][0];
+        $this->assertStringContainsString('count=1', $summary);
+        $this->assertStringContainsString('failed=1', $summary);
+        $this->assertStringContainsString('partial=0', $summary);
+        $this->assertStringContainsString('status=failed', \WP_CLI::$messages['log'][0] ?? '');
+    }
+
+    /**
+     * R18-BR-01 (a) json: total failure → non-zero exit; envelope carries counts.
+     */
+    public function testGenerateJsonTotalFailureExitsNonZeroWithCounts(): void
+    {
+        $service = new RecordingDescribeService([
+            911 => new WP_REST_Response(['detail' => 'upstream down'], 502),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '911', 'write' => true, 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+        $this->assertSame(1, $payload['count'] ?? null);
+        $this->assertSame(1, $payload['failed'] ?? null);
+        $this->assertSame(0, $payload['partial'] ?? null);
+        $this->assertSame('failed', $payload['rows'][0]['status'] ?? null);
+        $this->assertNotEmpty(\WP_CLI::$messages['error']);
+        $this->assertEmpty(\WP_CLI::$messages['success']);
+    }
+
+    /**
+     * R18-BR-01 (b) / R17-BR-02 table: mixed batch → non-zero (not warning/exit-0).
+     * Exit-code expectation deliberately updated from prior warning/exit-0 policy.
+     */
+    public function testGenerateTableMixedBatchExitsNonZero(): void
+    {
+        $candidates = new FixedCandidateService([920, 921]);
+        $describe   = new RecordingDescribeService([
+            920 => new WP_REST_Response([
+                'media_id' => 920,
+                'alt_text_draft' => 'ok draft',
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+            ]),
+            921 => new WP_REST_Response(['detail' => 'boom'], 502),
+        ]);
+        $command = new DescriptionCommand($candidates, $describe);
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['limit' => '2', 'write' => true]);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $this->assertNotEmpty(\WP_CLI::$messages['error']);
+        $this->assertEmpty(\WP_CLI::$messages['success']);
+        $this->assertEmpty(\WP_CLI::$messages['warning']);
+        $summary = \WP_CLI::$messages['error'][0];
+        $this->assertStringContainsString('count=2', $summary);
+        $this->assertStringContainsString('failed=1', $summary);
+        $this->assertStringContainsString('partial=0', $summary);
+        $this->assertStringContainsString('written=1', $summary);
+    }
+
+    /**
+     * R18-BR-01 (b) / R17-BR-02 json: mixed batch → non-zero with envelope counts.
+     */
+    public function testGenerateJsonMixedBatchExitsNonZeroWithCounts(): void
+    {
+        $candidates = new FixedCandidateService([922, 923]);
+        $describe   = new RecordingDescribeService([
+            922 => new WP_REST_Response([
+                'media_id' => 922,
+                'alt_text_draft' => 'ok draft',
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+            ]),
+            923 => new WP_REST_Response(['detail' => 'boom'], 502),
+        ]);
+        $command = new DescriptionCommand($candidates, $describe);
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['limit' => '2', 'write' => true, 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+        $this->assertSame(2, $payload['count'] ?? null);
+        $this->assertSame(1, $payload['failed'] ?? null);
+        $this->assertSame(0, $payload['partial'] ?? null);
+        $this->assertSame(1, $payload['written'] ?? null);
+        $this->assertNotEmpty(\WP_CLI::$messages['error']);
+        $this->assertEmpty(\WP_CLI::$messages['success']);
+    }
+
+    /**
+     * R18-BR-01 (c) table: empty batch stays exit-0 (nothing-to-do ≠ failure).
+     */
+    public function testGenerateTableEmptyBatchExitsZero(): void
+    {
+        $candidates = new FixedCandidateService([]);
+        $command    = new DescriptionCommand($candidates, new RecordingDescribeService([]));
+
+        $command->__invoke(['generate'], ['limit' => '10', 'write' => true]);
+
+        $this->assertEmpty(\WP_CLI::$messages['error']);
+        $this->assertEmpty(\WP_CLI::$messages['warning']);
+        $this->assertNotEmpty(\WP_CLI::$messages['success']);
+        $summary = \WP_CLI::$messages['success'][0];
+        $this->assertStringContainsString('count=0', $summary);
+        $this->assertStringContainsString('failed=0', $summary);
+        $this->assertStringContainsString('partial=0', $summary);
+    }
+
+    /**
+     * R18-BR-01 (c) json: empty batch stays exit-0 with count/failed/partial keys.
+     */
+    public function testGenerateJsonEmptyBatchExitsZeroWithCounts(): void
+    {
+        $candidates = new FixedCandidateService([]);
+        $command    = new DescriptionCommand($candidates, new RecordingDescribeService([]));
+
+        $command->__invoke(['generate'], ['limit' => '10', 'write' => true, 'format' => 'json']);
+
+        $this->assertEmpty(\WP_CLI::$messages['error']);
+        $this->assertNotEmpty(\WP_CLI::$messages['success']);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+        $this->assertSame(0, $payload['count'] ?? null);
+        $this->assertSame(0, $payload['failed'] ?? null);
+        $this->assertSame(0, $payload['partial'] ?? null);
+        $this->assertSame([], $payload['rows'] ?? null);
+    }
+
+    /**
+     * R17-BR-09 table: all-skipped reports skipped_existing_alt, not bare success.
+     */
+    public function testGenerateTableAllSkippedReportsStatusCounts(): void
+    {
+        $this->setPostMeta(930, '_wp_attachment_image_alt', 'Already here.');
+        $service = new RecordingDescribeService([
+            930 => new WP_REST_Response(['media_id' => 930, 'alt_text_draft' => 'new draft']),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $command->__invoke(['generate'], ['media-id' => '930', 'write' => true]);
+
+        $this->assertNotEmpty(\WP_CLI::$messages['success']);
+        $summary = \WP_CLI::$messages['success'][0];
+        $this->assertStringContainsString('count=1', $summary);
+        $this->assertStringContainsString('failed=0', $summary);
+        $this->assertStringContainsString('partial=0', $summary);
+        $this->assertStringContainsString('skipped_existing_alt=1', $summary);
+        $this->assertStringNotContainsString('written=', $summary);
+    }
+
+    /**
+     * R17-BR-06 table: partial row log carries reason=provenance_write_failed.
+     */
+    public function testGenerateTablePartialLogCarriesReason(): void
+    {
+        $service = new RecordingDescribeService([
+            931 => new WP_REST_Response([
+                'media_id' => 931,
+                'alt_text_draft' => 'Alt lands, provenance does not.',
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+            ]),
+        ]);
+        $GLOBALS['__ac_update_post_meta_fail'][931]['_acx_description_provenance'] = true;
+        $command = new DescriptionCommand(null, $service);
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '931', 'write' => true]);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $log = \WP_CLI::$messages['log'][0] ?? '';
+        $this->assertStringContainsString('status=partial', $log);
+        $this->assertStringContainsString(
+            'reason=' . AltTextWriteStatus::REASON_PROVENANCE_WRITE_FAILED,
+            $log
+        );
+    }
+
+    /**
+     * R18-BR-02: describe_media() WP_Error maps to FAILED, surfaces message,
+     * batch exits non-zero.
+     */
+    public function testGenerateWpErrorMapsToFailedAndExitsNonZero(): void
+    {
+        $service = new RecordingDescribeService([
+            940 => new WP_Error('acx_describe_unreachable', 'Recognition service unreachable.'),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '940', 'write' => true, 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+        $this->assertSame(AltTextWriteStatus::FAILED, $payload['rows'][0]['status'] ?? null);
+        $this->assertSame('Recognition service unreachable.', $payload['rows'][0]['error'] ?? null);
+        $this->assertSame(1, $payload['failed'] ?? null);
+        $this->assertNotEmpty(\WP_CLI::$messages['error']);
+        $this->assertEmpty(\WP_CLI::$messages['success']);
+    }
+
+    /**
+     * R18-BR-02 table variant: WP_Error → failed row log + non-zero exit.
+     */
+    public function testGenerateTableWpErrorMapsToFailedAndExitsNonZero(): void
+    {
+        $service = new RecordingDescribeService([
+            941 => new WP_Error('acx_not_found', 'Attachment not found.'),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '941', 'write' => true]);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $this->assertStringContainsString('status=failed', \WP_CLI::$messages['log'][0] ?? '');
+        $this->assertStringContainsString('failed=1', \WP_CLI::$messages['error'][0] ?? '');
+    }
 }
 
 class RecordingDescribeService extends DescribeMediaService
@@ -385,7 +697,7 @@ class RecordingDescribeService extends DescribeMediaService
     /** @var int[] */
     public array $requestedMediaIds = [];
 
-    /** @param array<int,WP_REST_Response> $responses */
+    /** @param array<int,WP_REST_Response|WP_Error> $responses */
     public function __construct(private array $responses)
     {
     }
@@ -397,6 +709,41 @@ class RecordingDescribeService extends DescribeMediaService
 
         return $this->responses[$mediaId] ?? new WP_REST_Response(
             ['media_id' => $mediaId, 'alt_text_draft' => 'Generated alt text.']
+        );
+    }
+}
+
+/**
+ * Candidate service that returns a fixed media_id list so multi-row / empty
+ * CLI generate can exercise the real tally path without planting get_posts.
+ */
+class FixedCandidateService extends DescriptionCandidateService
+{
+    /** @param list<int> $mediaIds */
+    public function __construct(private array $mediaIds)
+    {
+    }
+
+    public function list_missing_alt_candidates(int $limit = 50, int $offset = 0): array
+    {
+        $candidates = array();
+        foreach ($this->mediaIds as $id) {
+            $candidates[] = array(
+                'media_id' => $id,
+                'title' => "Photo {$id}",
+                'candidate_reason' => 'missing_alt',
+                'has_alt_text' => false,
+                'provenance' => null,
+            );
+        }
+
+        return array(
+            'candidates' => array_slice($candidates, $offset, $limit),
+            'exclusions' => array(),
+            'limit' => $limit,
+            'offset' => $offset,
+            'total_candidates' => count($candidates),
+            'total_exclusions' => 0,
         );
     }
 }

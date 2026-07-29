@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Tests\Unit;
 
+use AltContext\Api\Services\DescriptionContentRefreshService;
 use AltContext\Cli\DescriptionRefreshCommand;
 use AltContext\Tests\TestCase;
 use RuntimeException;
@@ -60,11 +61,15 @@ class DescriptionRefreshCommandTest extends TestCase
         $this->assertStringContainsString('dry_run=0', \WP_CLI::$messages['success'][0] ?? '');
         $this->assertStringContainsString('changed=1', \WP_CLI::$messages['success'][0] ?? '');
         $this->assertStringContainsString('failed=0', \WP_CLI::$messages['success'][0] ?? '');
+        // R18-BR-03 normal path: skipped key present in real apply() summary.
+        $this->assertStringContainsString('skipped=', \WP_CLI::$messages['success'][0] ?? '');
+        $this->assertStringContainsString('Description refresh complete.', \WP_CLI::$messages['success'][0] ?? '');
     }
 
     /**
      * R16-BR-03 / [HAI-13] [rg-015]: post-update failure must surface on the
      * CLI as failed=N (not success with silent zero), with actionable rows.
+     * R17-BR-11: leading sentence must not claim "complete" on failure.
      */
     public function testInvokeApplyReportsPostUpdateFailures(): void
     {
@@ -86,6 +91,8 @@ class DescriptionRefreshCommandTest extends TestCase
         } catch (RuntimeException $e) {
             $threw = true;
             $this->assertStringContainsString('failed=1', $e->getMessage());
+            $this->assertStringContainsString('Description refresh failed.', $e->getMessage());
+            $this->assertStringNotContainsString('Description refresh complete.', $e->getMessage());
         }
 
         $this->assertTrue($threw, 'WP_CLI::error must throw for non-zero exit on failures');
@@ -95,6 +102,8 @@ class DescriptionRefreshCommandTest extends TestCase
         $this->assertStringContainsString('failed=1', $error);
         $this->assertStringContainsString('changed=0', $error);
         $this->assertStringContainsString('candidates=1', $error);
+        $this->assertStringContainsString('Description refresh failed.', $error);
+        $this->assertStringNotContainsString('Description refresh complete.', $error);
 
         $logs = implode("\n", \WP_CLI::$messages['log']);
         $this->assertStringContainsString('post_id=601', $logs);
@@ -137,9 +146,161 @@ class DescriptionRefreshCommandTest extends TestCase
         $this->assertCount(1, $GLOBALS['__ac_updated_posts']);
     }
 
+    /**
+     * R17-BR-04: summary omits `failed` while result['failed'] is non-empty →
+     * non-zero exit. Absence of the key is never treated as zero failures.
+     */
+    public function testApplyMissingFailedKeyWithFailedRowsExitsNonZero(): void
+    {
+        $service = new FixedRefreshService([
+            'summary' => [
+                'dry_run' => false,
+                'candidates' => 1,
+                'changed' => 0,
+                // deliberately omit 'failed'
+                'skipped' => 0,
+            ],
+            'failed' => [
+                [
+                    'post_id' => 701,
+                    'media_id' => 42,
+                    'reason' => 'post_update_failed',
+                ],
+            ],
+            'changed' => [],
+            'skipped' => [],
+        ]);
+
+        $threw = false;
+        try {
+            (new DescriptionRefreshCommand($service))->__invoke(['42'], ['apply' => true, 'limit' => 10]);
+        } catch (RuntimeException $e) {
+            $threw = true;
+            $this->assertStringContainsString('Description refresh failed.', $e->getMessage());
+            // Do not invent failed=0 in the printed summary.
+            $this->assertStringNotContainsString('failed=0', $e->getMessage());
+            $this->assertStringNotContainsString('Description refresh complete.', $e->getMessage());
+        }
+
+        $this->assertTrue($threw, 'missing failed key + failed rows must exit non-zero');
+        $this->assertSame([], \WP_CLI::$messages['success']);
+        $this->assertNotEmpty(\WP_CLI::$messages['error']);
+        $logs = implode("\n", \WP_CLI::$messages['log']);
+        $this->assertStringContainsString('post_id=701', $logs);
+        $this->assertStringContainsString('post_update_failed', $logs);
+    }
+
+    /**
+     * R17-BR-04 integrity: absent failed key with empty failed rows is still
+     * non-zero — absence of evidence is not success.
+     */
+    public function testApplyMissingFailedKeyAloneExitsNonZero(): void
+    {
+        $service = new FixedRefreshService([
+            'summary' => [
+                'dry_run' => false,
+                'candidates' => 0,
+                'changed' => 0,
+                'skipped' => 0,
+            ],
+            'failed' => [],
+            'changed' => [],
+            'skipped' => [],
+        ]);
+
+        $threw = false;
+        try {
+            (new DescriptionRefreshCommand($service))->__invoke(['42'], ['apply' => true, 'limit' => 10]);
+        } catch (RuntimeException $e) {
+            $threw = true;
+            $this->assertStringContainsString('incomplete', $e->getMessage());
+            $this->assertStringContainsString('missing failed', $e->getMessage());
+        }
+
+        $this->assertTrue($threw);
+        $this->assertSame([], \WP_CLI::$messages['success']);
+    }
+
+    /**
+     * R18-BR-03: apply-path omits skipped= when the summary key is absent.
+     * Must not fabricate skipped=0.
+     */
+    public function testApplyMissingSkippedKeyDoesNotFabricateZero(): void
+    {
+        $service = new FixedRefreshService([
+            'summary' => [
+                'dry_run' => false,
+                'candidates' => 1,
+                'changed' => 1,
+                'failed' => 0,
+                // deliberately omit 'skipped'
+            ],
+            'failed' => [],
+            'changed' => [
+                ['post_id' => 801, 'media_id' => 42],
+            ],
+            'skipped' => [],
+        ]);
+
+        (new DescriptionRefreshCommand($service))->__invoke(['42'], ['apply' => true, 'limit' => 10]);
+
+        $success = \WP_CLI::$messages['success'][0] ?? '';
+        $this->assertStringContainsString('changed=1', $success);
+        $this->assertStringContainsString('failed=0', $success);
+        $this->assertStringNotContainsString('skipped=', $success);
+        $this->assertStringContainsString('Description refresh complete.', $success);
+    }
+
+    /**
+     * R18-BR-03 normal path: when skipped is present it is printed.
+     */
+    public function testApplyPresentSkippedKeyIsPrinted(): void
+    {
+        $service = new FixedRefreshService([
+            'summary' => [
+                'dry_run' => false,
+                'candidates' => 0,
+                'changed' => 0,
+                'failed' => 0,
+                'skipped' => 3,
+            ],
+            'failed' => [],
+            'changed' => [],
+            'skipped' => [],
+        ]);
+
+        (new DescriptionRefreshCommand($service))->__invoke(['42'], ['apply' => true, 'limit' => 10]);
+
+        $success = \WP_CLI::$messages['success'][0] ?? '';
+        $this->assertStringContainsString('skipped=3', $success);
+        $this->assertStringContainsString('Description refresh complete.', $success);
+    }
+
     private function getEmbeddedAlt(string $content): string
     {
         preg_match('/\salt="([^"]*)"/', $content, $matches);
         return (string) ($matches[1] ?? '');
+    }
+}
+
+/**
+ * Inject a fixed apply/dry_run result so CLI reporting can be exercised without
+ * the real refresh service shape constraints.
+ */
+class FixedRefreshService extends DescriptionContentRefreshService
+{
+    /** @param array<string,mixed> $result */
+    public function __construct(private array $result)
+    {
+    }
+
+    public function apply(array $media_ids, int $limit = 50): array
+    {
+        return $this->result;
+    }
+
+    public function dry_run(array $media_ids, int $limit = 50): array
+    {
+        return $this->result;
     }
 }

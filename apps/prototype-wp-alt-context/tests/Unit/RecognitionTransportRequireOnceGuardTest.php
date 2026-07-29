@@ -10,10 +10,13 @@ use RecursiveIteratorIterator;
 use SplFileInfo;
 
 /**
- * R5G-BR-05 / [rg-016]: production consumers of RecognitionTransport and
- * LoopbackHost must carry an explicit require_once. The PHPUnit kebab-case
- * fallback autoloader masks a missing require (suite stays green while
- * WordPress fatals on a stale classmap).
+ * R5G-BR-05 / [rg-016]: production consumers of RecognitionTransport,
+ * LoopbackHost, AltTextWriteStatus, and DescriptionWriteStatus must carry an
+ * explicit require_once. The PHPUnit kebab-case fallback autoloader masks a
+ * missing require for single-class files (suite stays green while WordPress
+ * fatals on a stale classmap). DescriptionWriteStatus is the second class in
+ * class-alt-text-write-status.php and matches neither PSR-4 nor kebab-case
+ * fallback — a missing require is a hard fatal outside this suite.
  *
  * Self-exemption compares the src-relative path for exact equality so a
  * spoofed filename ending in class-recognition-transport.php cannot opt out.
@@ -22,9 +25,11 @@ use SplFileInfo;
  *
  * Reference detection is token-scoped (R16-BR-01): comments, docblocks, and
  * substring class names (NotRecognitionTransport) do not count. Forms
- * detected (R19-BR-10 / R16-BR-12):
+ * detected (R19-BR-10 / R16-BR-12 / R18-BR-04):
  *   - Static call / ::class: T_STRING short name followed by T_DOUBLE_COLON
  *   - FQCN identifier / use import: T_NAME_QUALIFIED / T_NAME_FULLY_QUALIFIED
+ *   - Group-use import: use Ns\{Short, Other} (short name inside braces whose
+ *     Ns\Short equals the FQCN)
  *   - Class-name string (callable-array / string class ref):
  *     T_CONSTANT_ENCAPSED_STRING whose unquoted value equals the FQCN
  *   - Heredoc / nowdoc body: T_ENCAPSED_AND_WHITESPACE containing the FQCN
@@ -32,19 +37,36 @@ use SplFileInfo;
  * Not detected (accepted boundary): dynamically assembled FQCNs
  * (`'AltContext\\Support\\' . 'RecognitionTransport'`), variable class names
  * with no literal FQCN in the file, and reflection-only indirection. Those
- * still need a human review path; the `::` / FQCN / string forms cover every
- * call site in src/ today and the forms that hide a missing require_once.
+ * still need a human review path; the `::` / FQCN / group-use / string forms
+ * cover every call site in src/ today and the forms that hide a missing
+ * require_once.
+ *
+ * Pin fixtures are staged under an injectable temp scan root — never under
+ * the shipped src/ tree (R17-BR-07).
  *
  * @coversNothing
  */
 class RecognitionTransportRequireOnceGuardTest extends TestCase
 {
     /**
-     * Temp fixtures written under src/ for pin tests; unlinked in tearDown.
+     * Temp fixtures written under the pin scan root; unlinked in tearDown.
      *
      * @var list<string>
      */
     private array $tempFixtures = [];
+
+    /**
+     * Isolated directory used by pin tests. Null for the baseline scan of real src/.
+     */
+    private ?string $pinScanRoot = null;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // Self-heal residue from interrupted prior runs (legacy src/ staging
+        // path + any leftover pin-scan temp roots we can still reach).
+        $this->purgeLegacySrcFixtures();
+    }
 
     protected function tearDown(): void
     {
@@ -55,13 +77,22 @@ class RecognitionTransportRequireOnceGuardTest extends TestCase
             }
         }
         $this->tempFixtures = [];
+
+        if (is_string($this->pinScanRoot) && is_dir($this->pinScanRoot)) {
+            $this->removeDirectory($this->pinScanRoot);
+        }
+        $this->pinScanRoot = null;
+
+        // Belt-and-braces: never leave residue in the shipped tree.
+        $this->purgeLegacySrcFixtures();
+
         parent::tearDown();
     }
 
     /**
-     * Every src/ file that references RecognitionTransport or LoopbackHost
-     * (static `::`, FQCN identifier, or class-name string / callable array)
-     * must also require the defining file.
+     * Every src/ file that references a guarded class (static `::`, FQCN
+     * identifier, group-use, or class-name string / callable array) must also
+     * require the defining file.
      *
      * @return array<string, array{require: string, short: string, fqcn: string}>
      */
@@ -78,6 +109,18 @@ class RecognitionTransportRequireOnceGuardTest extends TestCase
                 'short' => 'LoopbackHost',
                 'fqcn' => 'AltContext\\Support\\LoopbackHost',
             ],
+            // R17-BR-08: both classes live in the same WordPress-style file.
+            // DescriptionWriteStatus cannot be rescued by kebab-case fallback.
+            'AltTextWriteStatus' => [
+                'require' => 'api/class-alt-text-write-status.php',
+                'short' => 'AltTextWriteStatus',
+                'fqcn' => 'AltContext\\Api\\AltTextWriteStatus',
+            ],
+            'DescriptionWriteStatus' => [
+                'require' => 'api/class-alt-text-write-status.php',
+                'short' => 'DescriptionWriteStatus',
+                'fqcn' => 'AltContext\\Api\\DescriptionWriteStatus',
+            ],
         ];
     }
 
@@ -87,7 +130,7 @@ class RecognitionTransportRequireOnceGuardTest extends TestCase
         $this->assertSame(
             [],
             $offenders,
-            "src/ consumers must explicitly require_once transport/loopback hosts:\n"
+            "src/ consumers must explicitly require_once guarded class files:\n"
             . implode("\n", $offenders)
         );
     }
@@ -99,13 +142,13 @@ class RecognitionTransportRequireOnceGuardTest extends TestCase
     public function testCommentOnlyShortNameDoesNotTriggerGuard(): void
     {
         $relative = 'api/_acx_guard_fixture_comment_short.php';
-        $this->writeSrcFixture(
+        $this->writePinFixture(
             $relative,
             "<?php\n// RecognitionTransport:: is mentioned only in a comment here.\n"
             . "namespace AltContext\\Api;\nclass ProbeCommentOnlyShort {}\n"
         );
 
-        $offenders = $this->collectOffenders();
+        $offenders = $this->collectOffenders($this->pinScanRoot());
         $this->assertNotContains(
             sprintf(
                 '%s references RecognitionTransport but has no require_once for class-recognition-transport.php',
@@ -123,13 +166,13 @@ class RecognitionTransportRequireOnceGuardTest extends TestCase
     public function testCommentOnlyFqcnDoesNotTriggerGuard(): void
     {
         $relative = 'api/_acx_guard_fixture_comment_fqcn.php';
-        $this->writeSrcFixture(
+        $this->writePinFixture(
             $relative,
             "<?php\n// AltContext\\Support\\RecognitionTransport mentioned only in a comment.\n"
             . "namespace AltContext\\Api;\nclass ProbeCommentOnlyFqcn {}\n"
         );
 
-        $offenders = $this->collectOffenders();
+        $offenders = $this->collectOffenders($this->pinScanRoot());
         $this->assertNotContains(
             sprintf(
                 '%s references RecognitionTransport but has no require_once for class-recognition-transport.php',
@@ -147,14 +190,14 @@ class RecognitionTransportRequireOnceGuardTest extends TestCase
     public function testSubstringClassNameDoesNotTriggerGuard(): void
     {
         $relative = 'api/_acx_guard_fixture_substring.php';
-        $this->writeSrcFixture(
+        $this->writePinFixture(
             $relative,
             "<?php\nnamespace AltContext\\Api;\n"
             . "class NotRecognitionTransport { public static function x(): void {} }\n"
             . "NotRecognitionTransport::x();\n"
         );
 
-        $offenders = $this->collectOffenders();
+        $offenders = $this->collectOffenders($this->pinScanRoot());
         $this->assertNotContains(
             sprintf(
                 '%s references RecognitionTransport but has no require_once for class-recognition-transport.php',
@@ -172,7 +215,7 @@ class RecognitionTransportRequireOnceGuardTest extends TestCase
     public function testRealStaticCallWithoutRequireOnceIsDetected(): void
     {
         $relative = 'api/_acx_guard_fixture_real_call.php';
-        $this->writeSrcFixture(
+        $this->writePinFixture(
             $relative,
             "<?php\nnamespace AltContext\\Api;\n"
             . "class ProbeRealCall {\n"
@@ -186,7 +229,7 @@ class RecognitionTransportRequireOnceGuardTest extends TestCase
         );
         $this->assertContains(
             $expected,
-            $this->collectOffenders(),
+            $this->collectOffenders($this->pinScanRoot()),
             'Real RecognitionTransport::get() without require_once must fail the guard'
         );
     }
@@ -197,7 +240,7 @@ class RecognitionTransportRequireOnceGuardTest extends TestCase
     public function testRealUseWithRequireOnceIsGreen(): void
     {
         $relative = 'api/_acx_guard_fixture_use_ok.php';
-        $this->writeSrcFixture(
+        $this->writePinFixture(
             $relative,
             "<?php\nnamespace AltContext\\Api;\n"
             . "require_once __DIR__ . '/../support/class-recognition-transport.php';\n"
@@ -207,7 +250,7 @@ class RecognitionTransportRequireOnceGuardTest extends TestCase
             . "}\n"
         );
 
-        $offenders = $this->collectOffenders();
+        $offenders = $this->collectOffenders($this->pinScanRoot());
         $this->assertNotContains(
             sprintf(
                 '%s references RecognitionTransport but has no require_once for class-recognition-transport.php',
@@ -224,7 +267,7 @@ class RecognitionTransportRequireOnceGuardTest extends TestCase
     public function testHeredocFqcnWithoutRequireOnceIsDetected(): void
     {
         $relative = 'api/_acx_guard_fixture_heredoc.php';
-        $this->writeSrcFixture(
+        $this->writePinFixture(
             $relative,
             "<?php\nnamespace AltContext\\Api;\n"
             . "class ProbeHeredoc {\n"
@@ -240,7 +283,7 @@ class RecognitionTransportRequireOnceGuardTest extends TestCase
             '%s references RecognitionTransport but has no require_once for class-recognition-transport.php',
             $relative
         );
-        $this->assertContains($expected, $this->collectOffenders());
+        $this->assertContains($expected, $this->collectOffenders($this->pinScanRoot()));
     }
 
     /**
@@ -258,7 +301,7 @@ class RecognitionTransportRequireOnceGuardTest extends TestCase
             . '        return "AltContext\\Support\\RecognitionTransport";' . "\n"
             . '    }' . "\n"
             . '}' . "\n";
-        $this->writeSrcFixture($relative, $php);
+        $this->writePinFixture($relative, $php);
 
         // Pin unquote semantics deliberately: both single- and double-bs source
         // forms unquote to the FQCN (PHP double-quote rules).
@@ -282,21 +325,141 @@ class RecognitionTransportRequireOnceGuardTest extends TestCase
             '%s references RecognitionTransport but has no require_once for class-recognition-transport.php',
             $relative
         );
-        $this->assertContains($expected, $this->collectOffenders());
+        $this->assertContains($expected, $this->collectOffenders($this->pinScanRoot()));
     }
 
     /**
+     * R18-BR-04: group-use imports (use Ns\{A, B}) without require_once must fail.
+     */
+    public function testGroupUseWithoutRequireOnceIsDetected(): void
+    {
+        $relative = 'api/_acx_guard_fixture_group_use.php';
+        $this->writePinFixture(
+            $relative,
+            "<?php\nnamespace AltContext\\Api;\n"
+            . "use AltContext\\Support\\{LoopbackHost, RecognitionTransport};\n"
+            . "class ProbeGroupUse {}\n"
+        );
+
+        $offenders = $this->collectOffenders($this->pinScanRoot());
+        $this->assertContains(
+            sprintf(
+                '%s references RecognitionTransport but has no require_once for class-recognition-transport.php',
+                $relative
+            ),
+            $offenders,
+            'Group-use RecognitionTransport without require_once must fail the guard'
+        );
+        $this->assertContains(
+            sprintf(
+                '%s references LoopbackHost but has no require_once for class-loopback-host.php',
+                $relative
+            ),
+            $offenders,
+            'Group-use LoopbackHost without require_once must fail the guard'
+        );
+    }
+
+    /**
+     * R17-BR-08: AltTextWriteStatus consumer without require_once is detected.
+     */
+    public function testAltTextWriteStatusWithoutRequireOnceIsDetected(): void
+    {
+        $relative = 'api/_acx_guard_fixture_alt_status.php';
+        $this->writePinFixture(
+            $relative,
+            "<?php\nnamespace AltContext\\Cli;\n"
+            . "use AltContext\\Api\\AltTextWriteStatus;\n"
+            . "class ProbeAltStatus {\n"
+            . "    public function s(): string { return AltTextWriteStatus::FAILED; }\n"
+            . "}\n"
+        );
+
+        $expected = sprintf(
+            '%s references AltTextWriteStatus but has no require_once for class-alt-text-write-status.php',
+            $relative
+        );
+        $this->assertContains(
+            $expected,
+            $this->collectOffenders($this->pinScanRoot()),
+            'AltTextWriteStatus:: without require_once must fail the guard'
+        );
+    }
+
+    /**
+     * R17-BR-08: DescriptionWriteStatus (second class in the same file) is guarded.
+     */
+    public function testDescriptionWriteStatusWithoutRequireOnceIsDetected(): void
+    {
+        $relative = 'api/_acx_guard_fixture_desc_status.php';
+        $this->writePinFixture(
+            $relative,
+            "<?php\nnamespace AltContext\\Api\\Services;\n"
+            . "use AltContext\\Api\\DescriptionWriteStatus;\n"
+            . "class ProbeDescStatus {\n"
+            . "    public function s(): string { return DescriptionWriteStatus::FAILED; }\n"
+            . "}\n"
+        );
+
+        $expected = sprintf(
+            '%s references DescriptionWriteStatus but has no require_once for class-alt-text-write-status.php',
+            $relative
+        );
+        $this->assertContains(
+            $expected,
+            $this->collectOffenders($this->pinScanRoot()),
+            'DescriptionWriteStatus:: without require_once must fail the guard'
+        );
+    }
+
+    /**
+     * R17-BR-07: pin fixtures must never land in the shipped src/ tree.
+     */
+    public function testPinFixturesAreNotWrittenIntoShippedSrcTree(): void
+    {
+        $relative = 'api/_acx_guard_fixture_isolation.php';
+        $this->writePinFixture(
+            $relative,
+            "<?php\n// isolation probe — must not appear under shipped src/\n"
+        );
+
+        $shipped = dirname(__DIR__, 2) . '/src/' . $relative;
+        $this->assertFileDoesNotExist(
+            $shipped,
+            'Pin fixtures must not be written into the shipped src/ tree'
+        );
+        $this->assertFileExists(
+            $this->pinScanRoot() . '/' . $relative,
+            'Pin fixture must exist under the isolated scan root'
+        );
+
+        $legacy = $this->listLegacySrcFixtures();
+        $this->assertSame(
+            [],
+            $legacy,
+            'No _acx_guard_fixture_* residue under shipped src/: ' . implode(', ', $legacy)
+        );
+    }
+
+    /**
+     * @param string|null $scanRoot When null, scan real src/. Pin tests pass the
+     *                              isolated temp root so fixtures never touch shipped tree.
      * @return list<string>
      */
-    private function collectOffenders(): array
+    private function collectOffenders(?string $scanRoot = null): array
     {
-        $srcRoot = realpath(dirname(__DIR__, 2) . '/src');
-        $this->assertIsString($srcRoot, 'src/ must exist');
+        if (null === $scanRoot) {
+            $resolved = realpath(dirname(__DIR__, 2) . '/src');
+            $this->assertIsString($resolved, 'src/ must exist');
+        } else {
+            $resolved = realpath($scanRoot);
+            $this->assertIsString($resolved, 'pin scan root must exist');
+        }
 
         $offenders = [];
 
         $iterator = new RecursiveIteratorIterator(
-            new RecursiveDirectoryIterator($srcRoot, RecursiveDirectoryIterator::SKIP_DOTS)
+            new RecursiveDirectoryIterator($resolved, RecursiveDirectoryIterator::SKIP_DOTS)
         );
 
         /** @var SplFileInfo $file */
@@ -307,7 +470,7 @@ class RecognitionTransportRequireOnceGuardTest extends TestCase
 
             $path = $file->getPathname();
             $contents = (string) file_get_contents($path);
-            $relative = str_replace('\\', '/', substr($path, strlen($srcRoot) + 1));
+            $relative = str_replace('\\', '/', substr($path, strlen($resolved) + 1));
 
             foreach (self::classChecks() as $label => $check) {
                 if (!$this->fileReferencesClass($contents, $check['short'], $check['fqcn'])) {
@@ -338,20 +501,101 @@ class RecognitionTransportRequireOnceGuardTest extends TestCase
         return $offenders;
     }
 
-    private function writeSrcFixture(string $relative, string $contents): void
+    /**
+     * Isolated temp root for pin fixtures (R17-BR-07). Outside the repo so
+     * residue is unstageable by git and never packaged with the plugin.
+     */
+    private function pinScanRoot(): string
     {
-        $srcRoot = realpath(dirname(__DIR__, 2) . '/src');
-        $this->assertIsString($srcRoot, 'src/ must exist');
-        $path = $srcRoot . '/' . $relative;
+        if (null === $this->pinScanRoot) {
+            $dir = sys_get_temp_dir() . '/acx_require_once_guard_' . str_replace('.', '', uniqid('', true));
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_mkdir -- test fixture root
+            mkdir($dir, 0700, true);
+            $this->pinScanRoot = $dir;
+        }
+
+        return $this->pinScanRoot;
+    }
+
+    private function writePinFixture(string $relative, string $contents): void
+    {
+        $root = $this->pinScanRoot();
+        $path = $root . '/' . $relative;
+        $dir = dirname($path);
+        if (!is_dir($dir)) {
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_mkdir -- test fixture dir
+            mkdir($dir, 0700, true);
+        }
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- test fixture
         file_put_contents($path, $contents);
         $this->tempFixtures[] = $path;
     }
 
     /**
+     * Remove any leftover _acx_guard_fixture_* under shipped src/ (legacy path).
+     */
+    private function purgeLegacySrcFixtures(): void
+    {
+        foreach ($this->listLegacySrcFixtures() as $path) {
+            if (is_file($path)) {
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- legacy residue cleanup
+                unlink($path);
+            }
+        }
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function listLegacySrcFixtures(): array
+    {
+        $srcRoot = realpath(dirname(__DIR__, 2) . '/src');
+        if (!is_string($srcRoot)) {
+            return [];
+        }
+
+        $found = [];
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($srcRoot, RecursiveDirectoryIterator::SKIP_DOTS)
+        );
+        /** @var SplFileInfo $file */
+        foreach ($iterator as $file) {
+            if ($file->isFile() && str_starts_with($file->getFilename(), '_acx_guard_fixture_')) {
+                $found[] = $file->getPathname();
+            }
+        }
+
+        return $found;
+    }
+
+    private function removeDirectory(string $dir): void
+    {
+        if (!is_dir($dir)) {
+            return;
+        }
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($dir, RecursiveDirectoryIterator::SKIP_DOTS),
+            RecursiveIteratorIterator::CHILD_FIRST
+        );
+        /** @var SplFileInfo $file */
+        foreach ($iterator as $file) {
+            if ($file->isDir()) {
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_rmdir -- test fixture cleanup
+                rmdir($file->getPathname());
+            } elseif ($file->isFile()) {
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- test fixture cleanup
+                unlink($file->getPathname());
+            }
+        }
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_rmdir -- test fixture cleanup
+        rmdir($dir);
+    }
+
+    /**
      * True when $contents references the class via token-scoped static `::`,
-     * FQCN name token / use-import, class-name string, or heredoc/nowdoc body.
-     * Comments and substring identifiers are ignored (R16-BR-01).
+     * FQCN name token / use-import, group-use short name, class-name string,
+     * or heredoc/nowdoc body. Comments and substring identifiers are ignored
+     * (R16-BR-01).
      */
     private function fileReferencesClass(string $contents, string $short, string $fqcn): bool
     {
@@ -369,6 +613,14 @@ class RecognitionTransportRequireOnceGuardTest extends TestCase
 
             // Skip comments entirely — they must never count as references.
             if (T_COMMENT === $id || T_DOC_COMMENT === $id) {
+                continue;
+            }
+
+            // Group-use: use Ns\{Short, Other} (R18-BR-04).
+            if (T_USE === $id) {
+                if ($this->groupUseReferencesClass($tokens, $i, $short, $fqcn)) {
+                    return true;
+                }
                 continue;
             }
 
@@ -408,6 +660,127 @@ class RecognitionTransportRequireOnceGuardTest extends TestCase
         }
 
         return false;
+    }
+
+    /**
+     * Detect group-use imports: use Namespace\{Short, Other}.
+     * Tokens: T_USE, T_NAME_QUALIFIED ns, T_NS_SEPARATOR, '{', T_STRING names...
+     *
+     * @param array<int, string|array{0:int,1:string,2:int}> $tokens
+     */
+    private function groupUseReferencesClass(array $tokens, int $useIndex, string $short, string $fqcn): bool
+    {
+        $count = count($tokens);
+        $j = $useIndex + 1;
+
+        while ($j < $count && is_array($tokens[$j])
+            && in_array($tokens[$j][0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)
+        ) {
+            $j++;
+        }
+
+        // use function / use const — not a class import.
+        if (
+            $j < $count && is_array($tokens[$j])
+            && in_array($tokens[$j][0], [T_FUNCTION, T_CONST], true)
+        ) {
+            return false;
+        }
+
+        // Collect namespace prefix until '{' (group) or ';' / ',' (not group).
+        $ns = '';
+        $foundBrace = false;
+        for (; $j < $count; $j++) {
+            $t = $tokens[$j];
+            if ('{' === $t) {
+                $foundBrace = true;
+                $j++;
+                break;
+            }
+            if (';' === $t || ',' === $t) {
+                return false;
+            }
+            if (is_array($t)) {
+                if (in_array($t[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
+                    continue;
+                }
+                if (
+                    in_array(
+                        $t[0],
+                        [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED, T_NS_SEPARATOR],
+                        true
+                    )
+                ) {
+                    $ns .= $t[1];
+                    continue;
+                }
+
+                return false;
+            }
+
+            return false;
+        }
+
+        if (!$foundBrace) {
+            return false;
+        }
+
+        $ns = rtrim($ns, '\\');
+
+        // Parse imported names inside braces until '}'.
+        $current = '';
+        $sawAs = false;
+        for (; $j < $count; $j++) {
+            $t = $tokens[$j];
+            if ('}' === $t) {
+                return $this->groupUseNameMatches($ns, $current, $fqcn);
+            }
+            if (',' === $t) {
+                if ($this->groupUseNameMatches($ns, $current, $fqcn)) {
+                    return true;
+                }
+                $current = '';
+                $sawAs = false;
+                continue;
+            }
+            if (is_array($t)) {
+                if (in_array($t[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
+                    continue;
+                }
+                if (T_AS === $t[0]) {
+                    // use Ns\{Foo as Bar} — Foo is the referenced class; stop appending.
+                    $sawAs = true;
+                    continue;
+                }
+                if ($sawAs) {
+                    // Skip alias identifier.
+                    continue;
+                }
+                if (
+                    in_array(
+                        $t[0],
+                        [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED, T_NS_SEPARATOR],
+                        true
+                    )
+                ) {
+                    $current .= $t[1];
+                    continue;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private function groupUseNameMatches(string $ns, string $name, string $fqcn): bool
+    {
+        $name = trim($name);
+        if ('' === $name) {
+            return false;
+        }
+        $name = ltrim($name, '\\');
+
+        return ($ns . '\\' . $name) === $fqcn;
     }
 
     /**

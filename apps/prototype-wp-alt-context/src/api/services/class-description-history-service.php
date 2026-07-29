@@ -7,9 +7,11 @@ namespace AltContext\Api\Services;
 use WP_Error;
 
 use function absint;
+use function apply_filters;
 use function array_slice;
 use function array_values;
 use function current_time;
+use function function_exists;
 use function get_current_user_id;
 use function get_post;
 use function get_post_meta;
@@ -18,6 +20,7 @@ use function get_posts;
 use function is_array;
 use function is_object;
 use function is_string;
+use function sanitize_meta;
 use function sanitize_text_field;
 use function trim;
 use function update_post_meta;
@@ -114,13 +117,18 @@ class DescriptionHistoryService {
 		// overwrite); distinguish that from a real failure via a read-back so an
 		// unchanged value still counts as success rather than a false error.
 		//
-		// Compare against wp_unslash( $value ), not $value: update_metadata()
-		// unslashes before store/equality (wp-includes/meta.php). A backslash-
-		// bearing alt therefore stores without the slash; comparing the raw
-		// request string would treat every re-save as permanent failure (BR-17).
+		// Expected value must mirror update_metadata() (wp-includes/meta.php):
+		//   $meta_value = wp_unslash( $meta_value );
+		//   $meta_value = sanitize_meta( $meta_key, $meta_value, $meta_type );
+		// Unslash alone is necessary but not sufficient: a sanitize_{type}_meta_{key}
+		// filter (or register_meta sanitize_callback) alters the stored form, so a
+		// successful write / no-op re-save would fail the read-back and 500 a
+		// write that landed (R16-BR-15). Ask sanitize_meta() what core will store
+		// (see expected_meta_after_core_transforms). BR-17 (backslash re-save)
+		// remains load-bearing via the unslash half.
 		// [INT-11] a failed write must leave the operator path and data intact —
 		// do not stamp human-edit meta unless the alt write is verified.
-		$expected_alt = wp_unslash( $normalized_alt_text );
+		$expected_alt = $this->expected_meta_after_core_transforms( self::ALT_META, $normalized_alt_text );
 		$alt_written  = update_post_meta( $media_id, self::ALT_META, $normalized_alt_text );
 		if ( false === $alt_written ) {
 			$current = get_post_meta( $media_id, self::ALT_META, true );
@@ -149,8 +157,9 @@ class DescriptionHistoryService {
 			'edited_at' => current_time( 'mysql' ),
 			'user_id'   => get_current_user_id(),
 		);
-		// What WP will actually store after update_metadata()'s unslash.
-		$expected_human = wp_unslash( $human_edit_payload );
+		// What WP will actually store: unslash then sanitize_meta (same order as
+		// update_metadata). Full-payload equality still required (BR-48a).
+		$expected_human = $this->expected_meta_after_core_transforms( self::HUMAN_EDIT_META, $human_edit_payload );
 		$human_written  = update_post_meta( $media_id, self::HUMAN_EDIT_META, $human_edit_payload );
 		if ( false === $human_written ) {
 			$current_human = get_post_meta( $media_id, self::HUMAN_EDIT_META, true );
@@ -161,14 +170,14 @@ class DescriptionHistoryService {
 			// telemetry attributes the correction to the wrong time/operator.
 			// Same-second re-save still passes: edited_at is second-granularity and
 			// the duplicate payload is identical. [BR-48a]
-			// Compare against the unslashed payload (BR-17), not the raw array.
+			// Compare against the unslash+sanitize_meta payload (BR-17 / R16-BR-15).
 			$human_ok = is_array( $current_human ) && $expected_human === $current_human;
 			if ( ! $human_ok ) {
 				// stored_alt_text reports what storage actually holds after
-				// sanitize_text_field() + WP's unslash. Clients reconcile their
-				// cache from this field; without it they can only guess from the
-				// request body. Only this path carries it — the 404/400/alt-write-
-				// failure paths stored nothing new. [rg-015]
+				// sanitize_text_field() + WP's unslash + sanitize_meta. Clients
+				// reconcile cache from this field; without it they can only guess
+				// from the request body. Only this path carries it — the
+				// 404/400/alt-write-failure paths stored nothing new. [rg-015]
 				return new WP_Error(
 					'description_correction_partial',
 					'Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.',
@@ -229,6 +238,26 @@ class DescriptionHistoryService {
 			'human_edit'          => is_array( $human_edit ) ? $human_edit : null,
 			'run_status'          => is_array( $run_status ) ? $run_status : null,
 		);
+	}
+
+	/**
+	 * Value update_metadata() will compare/store: wp_unslash then sanitize_meta.
+	 *
+	 * Prefer sanitize_meta() when present (production WP). The unit harness
+	 * stubs do not define it; fall back to the same sanitize_{type}_meta_{key}
+	 * filter chain sanitize_meta dispatches for post meta without a subtype
+	 * filter. Do not invent a second sanitizer. [R16-BR-15] [rg-015]
+	 *
+	 * @param mixed $value Pre-transform value passed to update_post_meta.
+	 * @return mixed
+	 */
+	private function expected_meta_after_core_transforms( string $meta_key, $value ) {
+		$value = wp_unslash( $value );
+		if ( function_exists( 'sanitize_meta' ) ) {
+			return sanitize_meta( $meta_key, $value, 'post' );
+		}
+
+		return apply_filters( 'sanitize_post_meta_' . $meta_key, $value, $meta_key, 'post' );
 	}
 
 	/**

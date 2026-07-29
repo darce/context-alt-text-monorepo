@@ -14,10 +14,12 @@ use WP_REST_Request;
 use WP_REST_Response;
 
 use function absint;
+use function array_key_exists;
 use function class_exists;
 use function count;
 use function get_post_meta;
 use function gmdate;
+use function implode;
 use function in_array;
 use function is_array;
 use function is_numeric;
@@ -147,68 +149,95 @@ class DescriptionCommand extends \WP_CLI_Command {
 			$rows[] = $this->generate_one( $id, $write, $force );
 		}
 
-		if ( 'json' === $format ) {
-			\WP_CLI::log(
-				(string) wp_json_encode(
-					array(
-						'command' => 'generate',
-						'write'   => $write,
-						'force'   => $force,
-						'count'   => count( $rows ),
-						'rows'    => $rows,
-					)
-				)
-			);
-			return;
+		// Tally before any format branch so JSON and table share one exit policy
+		// and one set of counts [R18-BR-01] [R17-BR-02] [R17-BR-09].
+		$total         = count( $rows );
+		$status_counts = array();
+		foreach ( AltTextWriteStatus::CLI_STATUSES as $status_key ) {
+			$status_counts[ $status_key ] = 0;
 		}
-
-		foreach ( $rows as $row ) {
-			\WP_CLI::log(
-				sprintf(
-					'media_id=%d status=%s alt_text_draft=%s',
-					(int) $row['media_id'],
-					(string) $row['status'],
-					(string) $row['alt_text_draft']
-				)
-			);
-		}
-
-		// BR-05 / [HAI-13]: do not claim unqualified success when rows failed
-		// or only partially landed. Count from the same per-row status field
-		// already logged so the tally matches the honest log lines.
-		$total   = count( $rows );
-		$failed  = 0;
-		$partial = 0;
 		foreach ( $rows as $row ) {
 			$status = (string) ( $row['status'] ?? '' );
-			if ( AltTextWriteStatus::FAILED === $status ) {
-				++$failed;
-			} elseif ( AltTextWriteStatus::PARTIAL === $status ) {
-				++$partial;
+			if ( array_key_exists( $status, $status_counts ) ) {
+				++$status_counts[ $status ];
+			}
+		}
+		$failed  = $status_counts[ AltTextWriteStatus::FAILED ];
+		$partial = $status_counts[ AltTextWriteStatus::PARTIAL ];
+
+		$summary = $this->build_generate_summary( $total, $status_counts );
+
+		if ( 'json' === $format ) {
+			$envelope = array(
+				'command' => 'generate',
+				'write'   => $write,
+				'force'   => $force,
+				'count'   => $total,
+				'failed'  => $failed,
+				'partial' => $partial,
+			);
+			foreach ( AltTextWriteStatus::CLI_STATUSES as $status_key ) {
+				// failed/partial already present as top-level keys; still emit
+				// every CLI status that actually occurred for operator clarity.
+				if ( AltTextWriteStatus::FAILED === $status_key || AltTextWriteStatus::PARTIAL === $status_key ) {
+					continue;
+				}
+				if ( $status_counts[ $status_key ] > 0 ) {
+					$envelope[ $status_key ] = $status_counts[ $status_key ];
+				}
+			}
+			$envelope['rows'] = $rows;
+			\WP_CLI::log( (string) wp_json_encode( $envelope ) );
+		} else {
+			foreach ( $rows as $row ) {
+				$reason      = isset( $row['reason'] ) && is_string( $row['reason'] ) && '' !== $row['reason']
+					? (string) $row['reason']
+					: '';
+				$reason_part = '' !== $reason ? sprintf( ' reason=%s', $reason ) : '';
+				\WP_CLI::log(
+					sprintf(
+						'media_id=%d status=%s%s alt_text_draft=%s',
+						(int) $row['media_id'],
+						(string) $row['status'],
+						$reason_part,
+						(string) $row['alt_text_draft']
+					)
+				);
 			}
 		}
 
-		$summary = sprintf(
-			'Description generate rows: count=%d failed=%d partial=%d',
-			$total,
-			$failed,
-			$partial
-		);
-
-		// Total failure (every row failed and/or partial): non-zero exit so a
-		// scripted caller can detect it. Mixed outcomes stay exit-0 via
-		// warning so partial batches remain inspectable without aborting mid-
-		// pipeline; the summary counts still surface the damage.
-		if ( $total > 0 && ( $failed + $partial ) === $total ) {
+		// Non-zero whenever anything did not fully land. Empty batch (count=0)
+		// stays exit-0 — nothing-to-do is not failure [R18-BR-01] [R17-BR-02].
+		if ( $total > 0 && ( $failed > 0 || $partial > 0 ) ) {
 			\WP_CLI::error( $summary );
 		}
 
-		if ( $failed > 0 || $partial > 0 ) {
-			\WP_CLI::warning( $summary );
-			return;
+		\WP_CLI::success( $summary );
+	}
+
+	/**
+	 * Operator-facing summary: always count/failed/partial, plus every other
+	 * CLI status that actually occurred [R17-BR-09] [rg-015].
+	 *
+	 * @param array<string,int> $status_counts
+	 */
+	private function build_generate_summary( int $total, array $status_counts ): string {
+		$parts = array(
+			sprintf( 'count=%d', $total ),
+			sprintf( 'failed=%d', $status_counts[ AltTextWriteStatus::FAILED ] ?? 0 ),
+			sprintf( 'partial=%d', $status_counts[ AltTextWriteStatus::PARTIAL ] ?? 0 ),
+		);
+		foreach ( AltTextWriteStatus::CLI_STATUSES as $status_key ) {
+			if ( AltTextWriteStatus::FAILED === $status_key || AltTextWriteStatus::PARTIAL === $status_key ) {
+				continue;
+			}
+			$count = $status_counts[ $status_key ] ?? 0;
+			if ( $count > 0 ) {
+				$parts[] = sprintf( '%s=%d', $status_key, $count );
+			}
 		}
 
-		\WP_CLI::success( $summary );
+		return 'Description generate rows: ' . implode( ' ', $parts );
 	}
 
 	/**
@@ -300,10 +329,13 @@ class DescriptionCommand extends \WP_CLI_Command {
 			$current_prov = get_post_meta( $media_id, '_acx_description_provenance', true );
 			$prov_ok      = is_array( $current_prov ) && $expected_provenance === $current_prov;
 			if ( ! $prov_ok ) {
-				// Alt landed; telemetry did not. Partial — same contract as bulk apply.
+				// Alt landed; provenance did not. CLI generate does not write
+				// long description, so the only partial cause is provenance
+				// stamp failure — carry the same REASON_* as REST [R17-BR-06].
 				return array(
 					'media_id'       => $media_id,
 					'status'         => AltTextWriteStatus::PARTIAL,
+					'reason'         => AltTextWriteStatus::REASON_PROVENANCE_WRITE_FAILED,
 					'alt_text_draft' => $alt_text_draft,
 				);
 			}

@@ -123,13 +123,22 @@ class ProxyRequestTest extends TestCase
         $this->assertArrayNotHasKey('content-length', $result->get_headers());
     }
 
+    /**
+     * [rg-016] / R19-BR-11: the abstract proxy's runtime require_once of
+     * RecognitionProxyPolicy is load-bearing under WordPress (no Composer
+     * classmap). class_exists(..., false) refuses the autoloader so this
+     * probe fails when the production require_once is removed — the previous
+     * class_exists(default true) was satisfied by Composer's classmap alone.
+     */
     public function testAbstractProxyControllerLoadsPolicyUnderRuntimeAutoloadRules(): void
     {
         $script = <<<'PHP'
 require 'vendor/autoload.php';
 require_once 'src/api/interface-recognition-route-controller.php';
 require_once 'src/api/class-abstract-recognition-proxy-controller.php';
-var_export(class_exists('AltContext\\Api\\RecognitionProxyPolicy'));
+// Second arg false: do not consult the autoloader. The production require_once
+// must have defined the class already.
+var_export(class_exists('AltContext\\Api\\RecognitionProxyPolicy', false));
 PHP;
 
         $command = sprintf(
@@ -142,6 +151,21 @@ PHP;
         $output = shell_exec($command);
 
         $this->assertSame('true', trim((string) $output));
+    }
+
+    /**
+     * R19-BR-12: permission gate must deny when manage_options is absent.
+     * Mirrors SettingsControllerTest::testCanManageSettingsRequiresManageOptions.
+     * RecognitionController is a concrete proxy facade; its callback delegates
+     * to AnalysisJobsController which inherits the abstract's gate.
+     */
+    public function testCanManageRecognitionRequiresManageOptions(): void
+    {
+        $this->setUserCapability('manage_options', false);
+        $this->assertFalse($this->controller->can_manage_recognition());
+
+        $this->setUserCapability('manage_options', true);
+        $this->assertTrue($this->controller->can_manage_recognition());
     }
 
     /**

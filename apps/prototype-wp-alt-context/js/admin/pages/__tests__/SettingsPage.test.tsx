@@ -455,6 +455,106 @@ describe('SettingsPage', () => {
     expect(screen.getByTestId('acx-effective-routing')).not.toHaveTextContent('not configured');
   });
 
+  // R19-BR-04 / R19-BR-05: rejected URL must not masquerade as "not configured".
+  it('hides the empty-state CTA and reports rejected tier when a URL was rejected (R19-BR-04)', () => {
+    mockUseQuery.mockReturnValue(
+      createMockQuery({
+        data: {
+          ...defaultSettings,
+          url: '',
+          url_source: 'default',
+          url_rejection_reason: UrlRejectionReason.NON_LOOPBACK_HTTP,
+          url_rejection_source: 'option',
+          url_rejection_value: 'http://10.0.0.5:8000',
+          effective_target_url: '',
+          effective_target_mode: 'service',
+          recognition_source: 'service',
+        },
+      }),
+    );
+    render(<SettingsPage />);
+
+    expect(screen.queryByRole('button', { name: 'Configure service URL' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/No service URL configured yet/),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId('acx-url-rejection')).toHaveTextContent('http://10.0.0.5:8000');
+    expect(screen.getByTestId('acx-url-rejection')).toHaveTextContent(
+      'HTTP is only allowed for loopback development hosts',
+    );
+    // Source chip reports the rejected tier, not "Not configured".
+    expect(screen.getByTestId('acx-url-source')).toHaveTextContent('Saved in database');
+    expect(screen.getByTestId('acx-url-source')).not.toHaveTextContent('Not configured');
+    // Live region always mounted (A11Y-21).
+    const routing = screen.getByTestId('acx-effective-routing');
+    expect(routing).toHaveAttribute('role', 'status');
+    expect(routing).toHaveAttribute('aria-live', 'polite');
+    // Nothing to probe — Check health stays disabled.
+    expect(screen.getByRole('button', { name: 'Check health' })).toBeDisabled();
+  });
+
+  it('shows effective target and enables Check health when hatch + rejection coexist (R19-BR-05)', () => {
+    mockUseQuery.mockReturnValue(
+      createMockQuery({
+        data: {
+          ...defaultSettings,
+          url: '',
+          url_source: 'default',
+          url_rejection_reason: UrlRejectionReason.NON_LOOPBACK_HTTP,
+          url_rejection_source: 'option',
+          url_rejection_value: 'http://10.0.0.5:8000',
+          effective_target_url: 'http://localhost:8000',
+          effective_target_mode: 'local',
+          recognition_source: 'local',
+          recognition_source_source: 'constant',
+        },
+      }),
+    );
+    render(<SettingsPage />);
+
+    const routing = screen.getByTestId('acx-effective-routing');
+    expect(routing).toHaveTextContent('http://localhost:8000');
+    expect(screen.getByTestId('acx-url-rejection')).toHaveTextContent(
+      'Rejected http://10.0.0.5:8000 (Saved in database)',
+    );
+    // Both present — rejection is additional info, not a replacement.
+    expect(routing.querySelector('code')).toHaveTextContent('http://localhost:8000');
+    expect(screen.getByRole('button', { name: 'Check health' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Configure service URL' })).not.toBeInTheDocument();
+    // Live region always mounted (A11Y-21).
+    expect(routing).toHaveAttribute('role', 'status');
+    expect(routing).toHaveAttribute('aria-live', 'polite');
+  });
+
+  it('shows empty CTA and disables Check health when genuinely unconfigured (R19-BR-04 regression)', () => {
+    mockUseQuery.mockReturnValue(
+      createMockQuery({
+        data: {
+          ...defaultSettings,
+          url: '',
+          url_source: 'default',
+          url_rejection_reason: null,
+          url_rejection_source: null,
+          url_rejection_value: null,
+          effective_target_url: '',
+          effective_target_mode: 'service',
+          recognition_source: 'service',
+        },
+      }),
+    );
+    render(<SettingsPage />);
+
+    expect(screen.getByRole('button', { name: 'Configure service URL' })).toBeInTheDocument();
+    expect(screen.getByText(/No service URL configured yet/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Check health' })).toBeDisabled();
+    expect(screen.queryByTestId('acx-url-rejection')).not.toBeInTheDocument();
+    // Live region always mounted even when target is empty (A11Y-21).
+    const routing = screen.getByTestId('acx-effective-routing');
+    expect(routing).toHaveAttribute('role', 'status');
+    expect(routing).toHaveAttribute('aria-live', 'polite');
+    expect(routing).toHaveTextContent('not configured');
+  });
+
   it('disables Check health when routing edits are unsaved', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
     render(<SettingsPage />);

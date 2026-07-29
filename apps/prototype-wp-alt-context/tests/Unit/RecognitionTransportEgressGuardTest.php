@@ -34,6 +34,28 @@ use SplFileInfo;
  * uncredentialed; only `wp_remote_head` is permitted there, with the reason
  * in the comment.
  *
+ * Forms detected (token scan):
+ *   - bare / fully-qualified call: `wp_remote_post(`, `\wp_remote_post(`
+ *   - exact string literal equal to a banned name (variable-function /
+ *     `call_user_func` family when the full name is a single literal)
+ *   - `use function wp_remote_post` imports
+ *   - concatenated name construction where a string literal is a proper prefix
+ *     of a banned name and the next significant token is `.` (e.g.
+ *     `'wp_remote_' . 'post'`), including when that expression is the first
+ *     arg of `call_user_func` / `call_user_func_array`
+ *
+ * Forms NOT detected (accepted boundary — R19-BR-09):
+ *   - names assembled without a banned-prefix string fragment in source
+ *     (e.g. `chr()` / `sprintf` / fully-variable construction with no
+ *     `wp_remote_*` prefix literal)
+ *   - indirect callables that never spell a banned name or prefix in a
+ *     string or identifier token
+ *
+ * This guard is defence-in-depth only. The real control for credentialed
+ * redirect-walk is RecognitionTransport's `redirection => 0` pin (and the
+ * loopback/safe chooser), which is tested separately and thoroughly. No
+ * dynamic-construction call site exists in src/ today (independent sweep).
+ *
  * @coversNothing
  */
 class RecognitionTransportEgressGuardTest extends TestCase
@@ -173,9 +195,9 @@ class RecognitionTransportEgressGuardTest extends TestCase
     }
 
     /**
-     * Token-based scan: function-call position, exact string names, and
-     * `use function` imports. Comments and non-exact string mentions are
-     * invisible by construction.
+     * Token-based scan: function-call position, exact string names,
+     * banned-prefix string concatenation, and `use function` imports.
+     * Comments and non-exact string mentions are invisible by construction.
      *
      * @param array<string, string> $banned lowercased name => canonical name
      * @return list<array{name: string, line: int}>
@@ -200,12 +222,20 @@ class RecognitionTransportEgressGuardTest extends TestCase
             [$id, $text, $line] = $token;
 
             // Exact string literal equal to a banned name (call_user_func /
-            // array_map / variable-function family).
+            // array_map / variable-function family). Also: a string that is a
+            // proper prefix of a banned name followed by `.` (dynamic
+            // construction: 'wp_remote_' . 'post').
             if (T_CONSTANT_ENCAPSED_STRING === $id) {
                 $value = $this->unquoteString($text);
                 $lower = strtolower($value);
                 if (isset($banned[$lower])) {
                     $hits[] = ['name' => $banned[$lower], 'line' => $line];
+                    continue;
+                }
+
+                $concatName = $this->bannedNameForPrefixConcat($lower, $banned, $tokens, $i);
+                if (null !== $concatName) {
+                    $hits[] = ['name' => $concatName, 'line' => $line];
                 }
                 continue;
             }
@@ -286,6 +316,90 @@ class RecognitionTransportEgressGuardTest extends TestCase
         }
 
         return $hits;
+    }
+
+    /**
+     * If the token at $stringIndex starts a pure string-literal concatenation
+     * that reconstructs a banned name (e.g. `'wp_remote_' . 'post'`), return
+     * that name. Requires the left-most fragment to be a `wp_remote_` /
+     * `wp_safe_remote_` stem so short fragments do not false-positive.
+     *
+     * Only walks when this string is the left-most fragment of the concat
+     * chain (previous significant token is not `.`) so each expression yields
+     * one hit rather than one per fragment.
+     *
+     * @param array<string, string> $banned
+     * @param list<string|array{0:int,1:string,2:int}> $tokens
+     */
+    private function bannedNameForPrefixConcat(
+        string $prefix,
+        array $banned,
+        array $tokens,
+        int $stringIndex
+    ): ?string {
+        if ('' === $prefix) {
+            return null;
+        }
+
+        // Only flag stems that already identify the WP HTTP wrapper family.
+        $isWrapperStem = str_starts_with($prefix, 'wp_remote_')
+            || str_starts_with($prefix, 'wp_safe_remote_');
+        if (!$isWrapperStem) {
+            return null;
+        }
+
+        // Skip mid-chain fragments ('post' in 'wp_remote_' . 'post').
+        $prevIdx = $this->prevSignificantIndex($tokens, $stringIndex);
+        if (null !== $prevIdx && '.' === $tokens[$prevIdx]) {
+            return null;
+        }
+
+        $nextIdx = $this->nextSignificantIndex($tokens, $stringIndex);
+        if (null === $nextIdx || '.' !== $tokens[$nextIdx]) {
+            return null;
+        }
+
+        // Reconstruct pure string-literal concatenation: 'a' . 'b' . 'c'
+        $assembled = $prefix;
+        $cursor = $stringIndex;
+        while (true) {
+            $dotIdx = $this->nextSignificantIndex($tokens, $cursor);
+            if (null === $dotIdx || '.' !== $tokens[$dotIdx]) {
+                break;
+            }
+            $rhsIdx = $this->nextSignificantIndex($tokens, $dotIdx);
+            if (null === $rhsIdx) {
+                break;
+            }
+            $rhs = $tokens[$rhsIdx];
+            if (!is_array($rhs) || T_CONSTANT_ENCAPSED_STRING !== $rhs[0]) {
+                // Non-literal RHS (variable / call) — still flag if the stem
+                // alone is a proper prefix of a banned name.
+                foreach ($banned as $lower => $canonical) {
+                    if ($lower !== $assembled && str_starts_with($lower, $assembled)) {
+                        return $canonical;
+                    }
+                }
+
+                return null;
+            }
+            $assembled .= strtolower($this->unquoteString($rhs[1]));
+            $cursor = $rhsIdx;
+        }
+
+        if (isset($banned[$assembled])) {
+            return $banned[$assembled];
+        }
+
+        // Incomplete but clearly aiming at a banned wrapper (e.g. 'wp_remote_'
+        // . $method). Flag the first matching banned name for the message.
+        foreach ($banned as $lower => $canonical) {
+            if ($lower !== $assembled && str_starts_with($lower, $assembled)) {
+                return $canonical;
+            }
+        }
+
+        return null;
     }
 
     /**

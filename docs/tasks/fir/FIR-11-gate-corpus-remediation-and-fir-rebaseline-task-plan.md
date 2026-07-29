@@ -44,6 +44,8 @@ Two products, deliberately separated because one is achievable on existing pixel
 
 **Population (v3, re-derived).** 646 images · **137** distinct identities · **558** identity appearances · **538** images carrying ≥1 identity · **108** carrying none. Multi-identity images: **14 carry two, 3 carry three** (17 total, 20 surplus memberships — `558 − 538 = 20`, not 17; rev 2 and QA v7/v8 both said "17 carrying two", which double-counts the triples into the pair bucket). Images per identity: mean 4.073, median 2, max 50. Size-weighted mean cluster **M̃ = 12.925** (`Σ s_i² / Σ s_i` over identity clusters, = 7,212 / 558).
 
+> **Two units, one paragraph — do not cross them.** `538 / 108` counts **images by identity roster** (`named_identities` non-empty); the `584` in the next block counts **named boxes** (`Σ named_face_count`). Neither is a headcount of the other. Measured on v3: **530** images carry ≥1 named *box*, so **8 images list a named identity and carry zero named boxes**. That 8 is not a rounding artifact and not merely a legibility defect — those roster members are inside the identification estimand while contributing no localisable probe, so they are unscoreable under an `exhaustive` manifest and would fail the Slice 2 coverage invariant on the spot. **Disposition them in Slice 1 alongside the provenance cases**: either box the faces during the Slice 3 pass, or drop the identity claim as unsubstantiated. Do not let them ride into Slice 2 unresolved.
+
 > **Naming, because these two nearly collided.** Call `M̃ = 12.925` and the expression `1 + 11.925·ICC` **`C_identity`** — an *identity-membership concentration index*, **descriptive only**. It is **not a design effect and must never be used as this plan's `DEFF`**, for the reason the block itself establishes below: identity clusters overlap (17 images sit in two or three) and exclude 108 images, so a Kish correction over them is not a valid corpus-wide deff — it is a statement about how concentrated identity membership is, nothing more. The **bare token `DEFF` everywhere else in this plan means exactly one thing**: the Measurement Contract's occasion-level `1 + (m − 1)·ρ` at m ≈ 3.3, over named probes, on non-overlapping occasion PSUs. Different corpus, different observation unit, different cluster definition, different correlation parameter. Slice 4 recomputes `DEFF`; it does not touch `C_identity`.
 
 **Defect 2 is confirmed and larger than stated.** v3 records `named_face_count` and `detected_face_count` separately for the first time: **584 named**, **1,763 detected**. The gap is not a single subtraction — it runs in both directions:
@@ -86,7 +88,7 @@ Declared before any labeling or scoring work begins. Changes to this block requi
 | **α** | 0.05 two-sided, **per test, not split**. The gate is intersection-union: every stratum must pass, so per-test α stays 0.05 and per-stratum *power* is raised instead. Bonferroni is the wrong correction here. Holm/BH applies only to the exploratory "which strata differ" question. |
 | **k (strata in the IU gate)** | **7** — clean, profile, blur, low_res, occlusion_other, sunglasses, masked. `similar_people` has **zero** members and is excluded from the gate until populated. *(Rev 1 used k=9; the measured corpus has 7 populated strata and one empty.)* |
 | **Per-test power** | `0.80^(1/7) = 0.969`. Normal-theory N inflation vs 80%: **1.86×**. |
-| **Ship rule** | Candidate ships only if **every** one of the 7 strata clears δ=10pp non-inferiority at 96.9% power **and** the bias bound from Slice 3 is smaller than the observed margin. Locked here; not renegotiable after seeing results. |
+| **Ship rule** | Candidate ships only if **every** one of the 7 strata clears δ=10pp non-inferiority at 96.9% power **and** the bias bound from Slice 3 is smaller than the observed margin. Locked here; not renegotiable after seeing results. **The second clause requires an *upper* bound on circularity, and Slice 3 does not always produce one.** Under the single-labeler fallback (Slice 3, GF-02 mitigation 2) the bound is explicitly a **lower** bound, and "a lower bound is smaller than the margin" is vacuous — it is satisfiable by a bias of any size. So: with two independent labelers Slice 3 yields the upper bound this rule needs and the rule is live; with one labeler the rule is **not satisfiable on this evidence** and the candidate does **not** ship, regardless of the observed margin. Recruiting the second labeler is therefore a ship precondition, not a preference ordering. |
 | **Human-labeling error rate** | A measured input, not an assumption. Per **[HITL-09]**, a stage credited with catching model error carries its own measured rate or the gate does not credit it. Measured in Slice 3 via gold items **[HITL-03]**. |
 
 ## Constraints
@@ -140,7 +142,11 @@ Declared before any labeling or scoring work begins. Changes to this block requi
 ## Target Outcome
 
 **Product A (this task, Slices 0–5).**
-A `benchmarks/manifests/golden-v2-<YYYYMMDD>.json` over the golden150 pixels, `annotation_mode: exhaustive`, provenance-required, with label lineage, produced under blinding. A **bias bound** on ground-truth circularity, estimated from a VoI-sized double-labeled stratified subsample rather than assumed. A re-run buffalo_l baseline scored subject-level, published with a 4-arm decomposition that separates *labeling-procedure* change from *scoring-code* change, and carrying an explicit "**under-powered for δ=10pp; not a ship gate**" banner on every stratum table.
+A `benchmarks/manifests/golden-v2-<YYYYMMDD>.json` over the **audited** golden150 pixels — `annotation_mode: exhaustive`, provenance-required, label lineage on every box, produced under blinding. A **bias bound** on ground-truth circularity, estimated from a VoI-sized double-labeled stratified subsample rather than assumed.
+
+> **Scope of golden-v2, stated because the slices could not otherwise deliver it.** Blind labels are produced by Slice 3, and Slice 3 labels the **audit subsample** — not the pool. Meanwhile Slice 2 makes `LabelLineage` mandatory ("a box without `LabelLineage` fails validation"), so a hybrid manifest of blind-labeled boxes plus un-relabeled legacy boxes is **unloadable by construction**: it is neither `exhaustive`-under-blinding nor a valid v3 artifact. Rev 2 promised a whole-pool blind exhaustive golden-v2 and scheduled no slice that could produce one. Resolution, and it follows from this plan's own arithmetic rather than from preference: after Slice 1's dispositions the surviving pool is **137 / 104**, against which Slice 4's derived n is already a census (Slice 3), **so the audit subsample and the pool converge** and one blind pass produces a genuinely pool-wide golden-v2. Therefore: golden-v2 covers exactly the set Slice 3 blind-labels, its `entry_count` is asserted equal to the post-Slice-1 pool, and **if Slice 4 derives an n strictly below the surviving pool, golden-v2 ships as `golden-v2-audit-<YYYYMMDD>.json` scoped to the labeled subset** and the un-audited remainder stays in the frozen legacy manifest, reachable only through `load_legacy_manifest`. What never ships is a manifest that claims `exhaustive` over boxes no blind pass touched.
+
+A re-run buffalo_l baseline scored subject-level, published with the **6-arm decomposition** that separates *toolchain*, *pool composition*, *labeling-procedure* and *scoring-code* change, and carrying an explicit "**under-powered for δ=10pp; not a ship gate**" banner on every stratum table.
 
 **Product B (Slice 6 spec, executed after).**
 An occasion-structured successor corpus sized from measured ρ: the only path to the δ=10pp IU gate. Slice 6 delivers the spec and the capture budget, not the corpus.
@@ -187,7 +193,7 @@ Enumerated before the bump lands; any consumer not on this list that breaks is a
 
 **Which plan's slice lands first (required by the rule above).** **FIR-11 Slices 1–2 land before FIR-7 Slice 0a seals anything.** The reverse order would have FIR-7 freeze a baseline, an identity split and seven per-floor base values on labels this plan has already established are outcome-dependent — and FIR-7's sealed K-budget is burn-after-use, so a baseline sealed on contaminated labels cannot be re-sealed. Two consequences bind FIR-7 and are mirrored in its plan:
 
-1. **No golden150-derived figure may carry a CONFIRMATORY evidence tier** while Problem Statement §1 stands. DIRECTIONAL is the ceiling until Slice 3 publishes the bias bound and the bound is smaller than the observed margin.
+1. **No golden150-derived figure may carry a CONFIRMATORY evidence tier** while Problem Statement §1 stands. DIRECTIONAL is the ceiling until Slice 3 publishes an **upper** bound on circularity and that bound is smaller than the observed margin. Same direction constraint as the Ship rule: a single-labeler lower bound never lifts the ceiling, so under that fallback DIRECTIONAL is not a stage but a terminus.
 2. **FIR-7's Slice 0a baseline is re-drawn on the post-Slice-2 manifest**, not on `golden150-draft-20260723.json`. FIR-7 is already blocked on CVUP-1 for an unrelated reason (OpenCV 4.x/5.x embedding incomparability), so this ordering costs it no additional wall-clock.
 
 If FIR-7 needs any pre-remediation number for internal comparison, it reads it from the committed QA report, exactly as arm A1 does — never by re-loading the manifest through a gate command.
@@ -200,7 +206,7 @@ Sequence, with the ordering constraint made explicit:
 2. **Slices 1–2** are **contract hygiene**. They make the measured defects unrepresentable. They buy **zero** statistical power and must not be described as if they do.
 3. **Slice 4 runs before Slice 3's bulk work**, inverting rev 1. ρ and σ come from the *existing* embedding store, need no new labels, and determine whether any labeling is worth doing at what size.
 4. **Slice 3** is a VoI-sized double-labeled **bias audit**, not a full-pool re-label. Its product is a bound on circularity, which is what Product A actually needs.
-5. **Slice 5** re-baselines and publishes the 4-arm decomposition with the under-powered banner.
+5. **Slice 5** re-baselines and publishes the 6-arm decomposition with the under-powered banner.
 6. **Slice 6** specifies Product B.
 
 ## Files and Surfaces to Change
@@ -218,7 +224,7 @@ Functions named. **(new)** marks a symbol that does not exist yet — verified a
 | tests | `scripts/eval_harness/tests/test_manifest_invariants.py` **(new)** | provenance-required, annotation-mode, coverage, lineage — each with a paired failing case **[TEST-15]** |
 | tests | `scripts/eval_harness/tests/test_blind_queue.py` **(new)** | queue payload carries no detection/cluster/name field; gold items indistinguishable from real items |
 | tests | `scripts/eval_harness/tests/test_power_sizing.py` **(new)** | `derive_stratum_floor` and `wilson_half_width` against hand-computed values |
-| tests | `scripts/eval_harness/tests/test_bias_audit.py` **(new)** | 4-arm decomposition arithmetic; arms cannot be silently merged |
+| tests | `scripts/eval_harness/tests/test_bias_audit.py` **(new)** | 6-arm decomposition arithmetic; the five deltas cannot be silently merged, and each is asserted to differ from its comparator in exactly one factor |
 | docs | `benchmarks/plans/fir-11-sizing-note.md` **(new)** | measured ρ, σ, m, declared δ, derived per-stratum n, ceiling arithmetic |
 | manifests | `benchmarks/manifests/golden-v2-<YYYYMMDD>.json` **(new)** | the re-labeled gate manifest |
 | manifests | `benchmarks/manifests/corpus-manifest-v3.json` | schema disposition recorded before Slice 2: legacy-loader input, or v3-schema with `GoldenEntry.named_face_count` / `detected_face_count` **(new)** added to `manifest.py` and defined in Terminology |
@@ -231,7 +237,7 @@ Functions named. **(new)** marks a symbol that does not exist yet — verified a
 | `benchmarks/manifests/golden150-draft-20260723.json` | **frozen read-only** at Slice 2. Never loaded by the gate CLI again. Old numbers come from the committed QA report; audit arms use `load_legacy_manifest`. |
 | `benchmarks/manifests/corpus646-interleave-manifest-20260716.json` | description-eval fields stay valid; FR fields superseded; retagged `roster_only` |
 | `docs/tasks/fir/FIR-9-workbench-curation-atlas-task-plan.md` | owns the curation UI; blind mode is a hard dependency for Slice 3 |
-| `benchmarks/manifests/corpus-manifest-v3.json` | **superseding input**, 2026-07-28. Sole source of this plan's population, strata and probe counts. Carries `named_face_count` / `detected_face_count`, which `manifest.py` does not model. Schema disposition decided before Slice 2 — see Consumer Inventory. |
+| `benchmarks/manifests/corpus-manifest-v3.json` | **superseding input**, 2026-07-28. Sole source of this plan's population, strata and probe counts. Carries `named_face_count` / `detected_face_count`, which `manifest.py` does not model. Schema disposition decided before Slice 2 — see Consumer Inventory. **Freeze it by hash as a Slice 1 precondition.** It is "sole source" for every figure in Problem Statement §3, the Measurement Contract's `m`, and the Slice 0 ceiling — yet it is produced by an unsequenced manifest-rebuild umbrella outside this plan's slices and is not pinned anywhere. An unpinned sole source means a rebuild silently re-derives the population under a plan already reviewed against the old one. Record the sha256 in the sizing note next to each figure it supplies; a hash change forces a re-derivation pass, not a merge. |
 | `docs/tasks/fir/FIR-7-occlusion-adapters-task-plan.md` | downstream gate consumer of `golden150-draft-20260723.json`. Ordering and evidence-tier ceiling fixed in the Consumer Inventory. |
 
 ## Verification Strategy
@@ -319,7 +325,8 @@ Changes:
 - Add `LabelLineage` per box: `labeler_id`, `pass_index`, `labeled_at`, `tool_version`, `saw_machine_proposals: bool`, `decision: named|stranger|inconclusive`, `arbitration_of: list[label_id] | None`. Per **[AUDIT-11]** / **[PROV-05]**, a label without lineage cannot be audited.
 - `detection_pr` (`face_metrics.py:151`) raises against a `roster_only` manifest rather than silently reporting inflated false positives.
 - Retag `corpus646-interleave-manifest-20260716.json` as `roster_only`, **after** grepping and fixing the description-eval consumers listed in the Consumer Inventory.
-- **Draw and freeze the sealed eval split (QA v8 T-08).** Emit `benchmarks/manifests/golden-v2-eval-split-<YYYYMMDD>.json` — an identity-disjoint held-out split over the post-remediation corpus, committed by hash, drawn **before any stratum curation or selection decision runs** [EVAL-07] [MLDATA-09] [EVAL-10]. **"Sealed eval split" is a distinct term** from this plan's five other uses of "sealed", which all mean the proposal-reveal sense (machine proposals revealed only after the audit subsample is sealed). The two must not be conflated. VLM-6 is the live downstream consumer and is currently curating with no split frozen; its plan now carries a blocking pointer back here.
+- **Draw and freeze the sealed eval split (QA v8 T-08).** Emit `benchmarks/manifests/golden-v2-eval-split-<YYYYMMDD>.json` — an identity-disjoint held-out split over the post-remediation corpus, committed by hash, drawn **before any stratum curation or selection decision runs** [EVAL-07] [MLDATA-09] [EVAL-10].
+- **The split's identity-disjointness is provisional, and the artifact says so.** Drawing it here means drawing it on the *pre-audit* identity partition — the buffalo-derived merge-only partition this plan exists because it distrusts. If Slice 3's blind pass splits a merged identity or merges two, the disjointness guarantee is void: the same person can land on both sides under two ids. Timing is nonetheless forced — VLM-6 is curating live at `:10018` with no split frozen, and drawing after Slice 3 leaves it unprotected for the whole audit. So: draw now, and (a) stamp the artifact `partition_provenance: "pre-audit, buffalo-derived merge-only"` with `disjointness: provisional`; (b) make **re-validation against the Slice 3 arbitration output a Slice 5 precondition** — any identity whose membership changed forces a re-draw and voids every selection made against the old split; (c) VLM-6 consumes it knowing it may be re-drawn once. A provisional split that is labeled provisional is usable; one that is silently trusted is the circularity defect again, one level up. **"Sealed eval split" is a distinct term** from this plan's five other uses of "sealed", which all mean the proposal-reveal sense (machine proposals revealed only after the audit subsample is sealed). The two must not be conflated. VLM-6 is the live downstream consumer and is currently curating with no split frozen; its plan now carries a blocking pointer back here.
 - **Resolve the version-bump contradiction (GF-10):** golden150 is frozen read-only. The v3 gate loader rejects it by design. A separate `load_legacy_manifest` reads v2 for the Slice 3 bias-audit arms only; it is not reachable from `cli.py` gate commands, and a test asserts that.
 
 Proof:
@@ -337,7 +344,9 @@ Proof:
 
 Changes:
 
-- Query the existing embedding store for (a) within-occasion correlation ρ and (b) HARD genuine/impostor score σ. Use the spherical/vMF estimator `σ̂ = √(d / (N·R̄²))` for unit vectors, not bare Euclidean `σ/√n`; uniform cosine SD on S¹²⁷ is `1/√128 ≈ 0.0884`.
+- Query the existing embedding store for (a) within-occasion correlation ρ and (b) HARD genuine/impostor score σ. Use the spherical/vMF estimator `σ̂ = √(d / (N·R̄²))` for unit vectors, not bare Euclidean `σ/√n`.
+- **Read `d` from the store; never write it into the plan.** `PGVECTOR_DIM` is the sole dimension root (`db/settings.py:213 _resolve_pgvector_dimension`, default **512**; `recognition/config/settings.py:80` binds the recognition setting to it and deliberately ignores `RECOGNITION_EMBEDDING_DIMENSION` so no second root exists). At the current default the null reference is uniform cosine SD on S⁵¹¹ = `1/√512 ≈ 0.0442`. *(Rev 2 wrote `1/√128 ≈ 0.0884` — an SFace-era 128-D figure. It is **2× too large** against a buffalo_l/512-D store, and since this null scale sets what counts as a detectable ρ it propagates straight into Slice 3's sample size. Corrected here.)* A 128-D store is legal — the knob is configurable — so the deliverable records the value it read rather than either literal.
+- **Stamp the store before trusting it [PROV-05].** The sizing note records, for the queried store: `PGVECTOR_DIM`, embedder model + weights id, OpenCV major, and the align/preprocess path that produced the vectors. Vectors written **before CVUP-1** (OpenCV 4.x) are not interchangeable with 5.x vectors — that incomparability is exactly why FIR-7 is blocked (Consumer Inventory §2) — so a mixed-toolchain store is re-embedded or the arms it feeds are declared pre-CVUP-1. An unstamped ρ is not a measured ρ.
 - Measure **m** (mean named probes per occasion) directly, since DEFF depends on it and the occasion key now exists from Slice 2's lineage.
 - Recompute DEFF = `1 + (m − 1)·ρ` and re-derive the Slice 0 ceiling table with measured values.
 - Sizing references, all cross-checked: exact-binomial McNemar discordant pairs at α=.05 two-sided, 80% power — p₁=0.60 → 199; 0.65 → 90; 0.67 → 67; 0.70 → 49; 0.75 → 30; 0.80 → 20. Connor normal approximation `N = 7.849·p_d/δ²` — δ=5pp at p_d=.15 → 471; δ=10pp at .20 → 157; δ=15pp at .25 → 88. The two tables cross-walk via `p₁ = (p_d + δ) / (2·p_d)`.
@@ -357,7 +366,9 @@ Proof:
 
 Design:
 
-- **Sample, don't sweep.** Stratified subsample of the golden150 pool sized to estimate the per-image label-disagreement rate to ±10pp at p≈0.2 — roughly 70 images unstratified, ~120–150 stratified across the 7 strata. Slice 4 fixes the exact n. Effort ≈ 1–2 h, versus 6–12 h for the full pool.
+- **Sample, don't sweep — but check that there is anything left to sample.** Stratified subsample of the golden150 pool sized to estimate the per-image label-disagreement rate to ±10pp at p≈0.2 — roughly 70 images unstratified, ~120–150 stratified across the 7 strata. Slice 4 fixes the exact n.
+- **The pool this draws from is not 150.** Slice 1's dispositions run first: post-celeb-drop the pool is **137**; if the 36 scrape-pattern entries also go it is **104**. Against either, the stratified figure above is `n ≥ N` — the "subsample" is a **census** of the surviving pool, or larger than it. Two consequences the plan must own rather than paper over: (a) the sampling design collapses, so the ±10pp precision claim is replaced by a finite-population statement over the whole pool and the FPC is applied, not omitted; (b) whichever of 137 / 104 Slice 1 lands on becomes the labeling workload, and Slice 4 sizes *strata within it*, not a draw from it. If Slice 4's derived n still exceeds the surviving pool, that is the answer — label the pool, and record that the audit is pool-limited, not precision-limited.
+- **The effort comparison was against the wrong denominator.** Rev 2 billed this as "≈ 1–2 h, versus 6–12 h for the full pool". The 6–12 h figure is the Cost Model's *rejected* full-**732** blind re-label (golden150 ∪ corpus646) — a pool Slice 3 never touches under any sizing. The honest comparison is against the surviving golden150 pool: at 30–60 s/image × 2 passes + ~15% arbitration, **104 images ≈ 2–4 h** and **137 ≈ 2.5–5 h**, which is what the Cost Model already books. The saving over rev 1 is real but it comes from *dropping corpus646 from scope*, not from sampling — do not sell a scope reduction as a sampling efficiency.
 - **Blind means blind (GF-02).** The operator who performed the original merge-only adjudication has already seen buffalo's partition; UI suppression does not undo that. Mitigations, in preference order: (1) a **second labeler** who never saw the original adjudication does the de-novo pass; (2) if only one labeler is available, that is a declared limitation printed in the report, and the bias bound is reported as a **lower** bound. Machine proposals are revealed **only after the whole audit subsample is sealed**, never per-image.
 - **Gold QC [HITL-03].** `inject_gold_items` seeds independently arbitrated known-answer items, unannounced, at ~10% of the queue. Per-labeler accuracy on gold is the **measured human error rate** the Measurement Contract requires **[HITL-09]**. Agreement between labelers alone does not certify correctness.
 - **Second pass + arbitration.** Every audit image is labeled twice, independently. Disagreements go to an arbitration pass recorded with `arbitration_of`. Inter-labeler agreement is reported, not assumed.
@@ -373,20 +384,30 @@ Proof:
 - Measured per-labeler gold accuracy and inter-labeler agreement are recorded in the sizing note.
 - The bias bound is stated with its direction (lower bound if single-labeler) and its interval.
 
-### Slice 5: Re-baseline with 4-arm decomposition and an under-powered banner
+### Slice 5: Re-baseline with 6-arm decomposition and an under-powered banner
 
 **Goal**: A buffalo_l baseline on non-circular labels, with the confound decomposed rather than papered over.
 
 The rev-1 plan proposed publishing a single old-vs-new `Δfalse_split` as "the measurement of prior circularity". That delta simultaneously absorbs a labeling-procedure change, a manifest-schema change, a scoring-code change (subject-level + DEFF), a corpus-size change from the fail-closed drop, and a metric-definition change. It measures none of them. Replaced by:
 
-| Arm | Pixels | Labels | Scoring code | Isolates |
-| --- | --- | --- | --- | --- |
-| **A1** | golden150 | original (merge-only) | original | published baseline — read from the committed QA report, **not** recomputed |
-| **A2** | golden150 audit subsample | new blind labels | original | **labeling procedure** |
-| **A3** | golden150 audit subsample | original | new (subject-level, DEFF, exact McNemar) | **scoring change** |
-| **A4** | golden150 audit subsample | new blind labels | new | the new baseline |
+| Arm | Pixels | Labels | Scoring code | Toolchain | Isolates |
+| --- | --- | --- | --- | --- | --- |
+| **A1** | golden150 (full) | original (merge-only) | original | **OpenCV 4.x (pre-CVUP-1)** | published baseline — read from the committed QA report, **not** recomputed |
+| **A1″** | golden150 (full) | original | original | 5.x | **toolchain change** (everything else held against A1) |
+| **A1′** | golden150 audit subsample | original | original | 5.x | **pool composition** (everything else held against A1″) |
+| **A2** | golden150 audit subsample | new blind labels | original | 5.x | **labeling procedure** |
+| **A3** | golden150 audit subsample | original | new (subject-level, DEFF, exact McNemar) | 5.x | **scoring change** |
+| **A4** | golden150 audit subsample | new blind labels | new | 5.x | the new baseline |
 
-`A2 − A1` is the circularity estimate. `A3 − A1` is the accounting change. `A4` is the number to carry forward. Arms A1/A3 read old labels through `load_legacy_manifest`.
+Deltas, each taken against the arm that differs in exactly one factor:
+
+- `A1″ − A1` = **toolchain**. *(Rev 2 had no such arm. A1 is a pre-CVUP-1 measurement and every other arm runs post-CVUP-1, so without A1″ the OpenCV 4→5 embedding shift is silently absorbed into whichever delta is taken against A1. That is precisely the incomparability this plan invokes to block FIR-7's baseline — Consumer Inventory §2 — and it cannot be an argument there and an oversight here.)*
+- `A1′ − A1″` = **pool composition**. *(Rev 2 read `A2 − A1` as the circularity estimate, but A1's pixels are the full pool and A2's are the audit subsample, so that difference confounds the label-procedure change with the change of frame — and after Slice 1's dispositions the two frames differ by construction, not by rounding.)*
+- **`A2 − A1′` is the circularity estimate** — the only delta in this table with labels as its sole moving part.
+- `A3 − A1′` is the accounting change.
+- `A4` is the number to carry forward.
+
+Arms A1′, A1″ and A3 read old labels through `load_legacy_manifest`. Adding two arms costs essentially nothing: Slice 5 compute is buffalo_l on CPU at **< $1 total** (Cost Model), and A1″/A1′ add no labeling. `test_bias_audit.py` asserts the five deltas cannot be collapsed, not just that A2−A1 is reported separately.
 
 Changes:
 
@@ -398,8 +419,8 @@ Changes:
 
 Proof:
 
-- New report supersedes `fir-embeddings-dims-detectors-qa-20260723.html`, carrying the 4-arm table.
-- `test_bias_audit.py` asserts the arms cannot be silently collapsed into one delta.
+- New report supersedes `fir-embeddings-dims-detectors-qa-20260723.html`, carrying the 6-arm table and all five deltas.
+- `test_bias_audit.py` asserts the arms cannot be silently collapsed into one delta, and that no delta is taken between two arms differing in more than one factor.
 - `score-face --check-determinism` passes as a CI gate.
 - `make check-remote` green at the merge SHA.
 
@@ -428,11 +449,11 @@ Recorded before execution, per **[COST-04]** and the standing reporting rule.
 
 | Item | Basis | Estimate |
 | --- | --- | --- |
-| Slice 3 labeling (audit subsample, double-labeled + arbitration) | ~140 images × 2 passes × 30–60 s + ~15% arbitration | **2.5–5 operator-hours** |
+| Slice 3 labeling (double-labeled + arbitration) | post-Slice-1 surviving pool — **104–137** images × 2 passes × 30–60 s + ~15% arbitration. Not a draw from 150: Slice 4's derived n meets or exceeds the surviving pool, so this is a census | **2–5 operator-hours** |
 | Slice 3 gold-item preparation | ~15 items, independently arbitrated | **0.5–1 h** |
 | Slice 5 compute (buffalo_l, CPU only) | A1.Flex ~$0.152/hr, prior full-corpus CPU runs | **< $1 total** |
 | Slice 5 per-image compute cost | total ÷ images scored | reported in the artifact |
-| *Rejected alternative*: full-732 blind re-label | 732 images × 30–60 s, single pass | **6–12 operator-hours for a corpus that still cannot gate** |
+| *Rejected alternative*: full-732 blind re-label | 732 images × 30–60 s, single pass. **This is the only thing the 6–12 h figure ever costed** — it is not the comparator for Slice 3's sizing, which never touches corpus646 | **6–12 operator-hours for a corpus that still cannot gate** |
 | Slice 6 capture (Product B, not executed here) | ~70 identities × ~10 occasions | scoped in Slice 6 |
 
 ---
@@ -461,6 +482,8 @@ Recorded before execution, per **[COST-04]** and the standing reporting rule.
 - [ ] Loader emits a filename-heuristic warning so the scrape pattern cannot silently re-enter.
 - [ ] Slice 0 ceiling table re-derived from post-adjudication counts.
 - [ ] 7 celeb/fixture entries dispositioned explicitly.
+- [ ] The **8 v3 images carrying a named identity with zero named boxes** dispositioned — boxed in the Slice 3 pass, or the identity claim dropped. None ride into Slice 2 unresolved.
+- [ ] `corpus-manifest-v3.json` frozen by sha256, and the hash recorded in the sizing note beside every figure it supplies.
 - [ ] Negative test proves an unprovenanced entry fails to load.
 
 ### Checklist for Slice 2: Mode, coverage, lineage
@@ -473,12 +496,15 @@ Recorded before execution, per **[COST-04]** and the standing reporting rule.
 - [ ] Description-eval consumers of corpus646 enumerated and verified before the retag.
 - [ ] golden150 frozen read-only; `load_legacy_manifest` unreachable from gate commands (asserted).
 - [ ] **Sealed eval split (QA v8 T-08) drawn, identity-disjoint, committed by hash, timestamped before any curation-selection artifact.**
+- [ ] Split artifact stamped `partition_provenance: "pre-audit, buffalo-derived merge-only"` / `disjointness: provisional`; re-validation against Slice 3 arbitration registered as a Slice 5 precondition; VLM-6 notified it may be re-drawn once.
 - [ ] `corpus-manifest-v3.json` schema disposition recorded (legacy loader vs v3-schema + two new count fields).
 - [ ] FIR-7 gate surfaces confirmed on the Consumer Inventory and the FIR-11-before-FIR-7-Slice-0a ordering acknowledged in both plans.
 
 ### Checklist for Slice 4: Power derivation *(precedes Slice 3 bulk work)*
 
 - [ ] ρ, σ, and m measured from the existing embedding store and recorded.
+- [ ] Embedding dimension **read from `PGVECTOR_DIM`** (not written into the plan) and the null cosine SD `1/√d` derived from it — 512-D ⇒ ≈ 0.0442, never the retired 128-D ≈ 0.0884.
+- [ ] Store stamped: `PGVECTOR_DIM`, embedder model + weights id, OpenCV major, align/preprocess path. Pre-CVUP-1 vectors re-embedded or the arms they feed declared pre-CVUP-1.
 - [ ] DEFF recomputed; Slice 0 ceiling table re-derived with measured values.
 - [ ] δ=10pp, α=0.05 per test, k=7, per-test power 0.969 confirmed in the sizing note.
 - [ ] `MIN_STRATUM_POOL` replaced by `derive_stratum_floor`; Wilson half-widths surfaced and labeled conditional.
@@ -487,7 +513,8 @@ Recorded before execution, per **[COST-04]** and the standing reporting rule.
 ### Checklist for Slice 3: Bias audit
 
 - [ ] Blind-queue export carries no detection, cluster, name, or count field (schema-asserted).
-- [ ] Second independent labeler used, or the single-labeler limitation printed and the bound declared as a lower bound.
+- [ ] Second independent labeler used, or the single-labeler limitation printed and the bound declared as a lower bound — **and, in that case, the Ship rule recorded as unsatisfiable, since it requires an upper bound.**
+- [ ] Sample size reconciled against the post-Slice-1 surviving pool (137 / 104); where n ≥ N, the audit is recorded as a pool-limited census with the FPC applied, not as a ±10pp precision claim.
 - [ ] Gold items injected; per-labeler accuracy measured and recorded.
 - [ ] Every audit image double-labeled; disagreements arbitrated with `arbitration_of` recorded.
 - [ ] Inconclusive channel available and its rate reported.
@@ -496,7 +523,8 @@ Recorded before execution, per **[COST-04]** and the standing reporting rule.
 
 ### Checklist for Slice 5: Re-baseline
 
-- [ ] All four arms computed; A1 read from the committed QA report, never recomputed.
+- [ ] All six arms computed; A1 read from the committed QA report, never recomputed; A1″ and A1′ recomputed under 5.x through `load_legacy_manifest`.
+- [ ] Sealed eval split re-validated against Slice 3 arbitration before scoring; a changed identity membership forces a re-draw.
 - [ ] Report carries subject-level rollups, DEFF-corrected conditional intervals, exact McNemar, non-mated rates, per-stratum FMR/FNMR, and the measured human error rate.
 - [ ] Under-powered banner present on every stratum table with a link to the sizing note.
 - [ ] End-to-end metrics computed on detector inputs, not GT crops.
@@ -522,6 +550,6 @@ Recorded before execution, per **[COST-04]** and the standing reporting rule.
 - [ ] No manifest in `benchmarks/manifests/` can load with a missing provenance, an undeclared annotation mode, or a box without lineage.
 - [ ] The power ceiling is published, and no artifact from Slices 1–5 is presented as a ship gate.
 - [ ] A bias bound on ground-truth circularity exists, with its direction and interval stated, derived from double-labeled data with a measured human error rate.
-- [ ] The old-vs-new comparison is published as a 4-arm decomposition, not a single confounded delta.
+- [ ] The old-vs-new comparison is published as a 6-arm decomposition, not a single confounded delta; toolchain (A1″−A1) and composition (A1′−A1″) are reported separately from circularity (A2−A1′).
 - [ ] Every reported per-stratum figure carries its Wilson half-width, labeled conditional on this pool; no stratum is rolled up while under-powered.
 - [ ] Slice 6 specifies, with costed per-stratum targets, the corpus that would actually clear δ=10pp.

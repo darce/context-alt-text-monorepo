@@ -1814,6 +1814,25 @@ if (!function_exists('wp_localize_script')) {
     }
 }
 
+if (!function_exists('wp_set_script_translations')) {
+    /**
+     * Stub for WordPress wp_set_script_translations().
+     *
+     * Records the call so tests can assert translations were wired to the
+     * expected handle/domain/path (see Admin::enqueue_entry).
+     *
+     * @param string      $handle Script handle the translations apply to.
+     * @param string      $domain Text domain. Default 'default'.
+     * @param string|null $path   Directory containing translation files.
+     */
+    function wp_set_script_translations($handle, $domain = 'default', $path = null): bool
+    {
+        $GLOBALS['__ac_script_translations'][$handle] = compact('domain', 'path');
+
+        return true;
+    }
+}
+
 if (!function_exists('wp_get_environment_type')) {
     function wp_get_environment_type(): string
     {

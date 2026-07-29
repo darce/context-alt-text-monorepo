@@ -267,7 +267,9 @@ class DescribeMediaService {
 		$draft        = is_string( $data['alt_text_draft'] ?? null ) ? trim( $data['alt_text_draft'] ) : '';
 		$existing_alt = get_post_meta( $media_id, self::ALT_TEXT_META_KEY, true );
 		$existing_alt = is_string( $existing_alt ) ? $existing_alt : '';
-		$provenance   = $this->build_generated_provenance( $data );
+		// Identity keys only for the idempotence compare; draft is measured data
+		// stamped when (and only when) the alt meta is actually written below.
+		$provenance   = $this->build_generated_provenance( $data, $draft );
 
 		if ( '' !== trim( $existing_alt ) && ! $force ) {
 			$data['alt_text_write'] = array(
@@ -284,6 +286,8 @@ class DescribeMediaService {
 			&& $draft === $existing_alt
 			&& $this->matches_generated_provenance( $existing_provenance, $provenance )
 		) {
+			// No-op: alt already equals this draft under matching model identity.
+			// Provenance (including any prior alt_text_draft) is left untouched.
 			$data['alt_text_write'] = array(
 				'status'               => 'forced_overwrite',
 				'existing_alt_present' => true,
@@ -371,11 +375,21 @@ class DescribeMediaService {
 	}
 
 	/**
+	 * Build the provenance envelope for a generated alt write.
+	 *
+	 * `$alt_text_draft` is the exact string the caller is about to persist to
+	 * `_wp_attachment_image_alt` — measured data, not re-derived here [rg-015].
+	 * History reads this key (via `resolve_generated_alt_text`) to populate the
+	 * Generated-alt column. Callers must not persist this envelope unless the
+	 * alt write actually happens (`skipped_existing_alt` / matching no-op
+	 * short-circuits never call `update_post_meta` for provenance).
+	 *
 	 * @param array<string,mixed> $data
+	 * @param string              $alt_text_draft Exact draft written (or about to be written) to alt meta.
 	 *
 	 * @return array<string,mixed>
 	 */
-	private function build_generated_provenance( array $data ): array {
+	private function build_generated_provenance( array $data, string $alt_text_draft ): array {
 		$provenance = array(
 			'adapter'                => $data['adapter'],
 			'model_id'               => $data['model_id'],
@@ -384,6 +398,8 @@ class DescribeMediaService {
 			'image_hash'             => $data['image_hash'],
 			'context_hash'           => $data['context_hash'],
 			'generated_at'           => gmdate( 'c' ),
+			// Exact string written to alt — history's Generated-alt column source.
+			'alt_text_draft'         => $alt_text_draft,
 		);
 
 		if ( array_key_exists( 'backend_result_id', $data ) ) {

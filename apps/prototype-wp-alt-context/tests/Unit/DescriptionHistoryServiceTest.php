@@ -46,6 +46,106 @@ class DescriptionHistoryServiceTest extends TestCase
         $this->assertSame(['run_id' => 'run-1', 'status' => 'succeeded'], $response['items'][0]['run_status']);
     }
 
+    /**
+     * BR-100 end-to-end pin: plant a provenance envelope exactly as the single-
+     * image REST writer (DescribeMediaService::build_generated_provenance) now
+     * produces it, run it through DescriptionHistoryService, and assert
+     * generated_alt_text is the draft — not ''. This is the assertion that
+     * actually pins the History page's empty Generated-alt column bug.
+     */
+    public function testHistoryResolvesGeneratedAltFromRestWriterProvenanceShape(): void
+    {
+        $mediaId = 801;
+        $draft = 'A photo of a red kayak on still water.';
+        $GLOBALS['__ac_get_posts_results'] = [$mediaId];
+        $this->seedAttachment($mediaId, 'Kayak');
+        // Current alt may have been human-corrected after generation.
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', 'Human-corrected kayak alt.');
+        // Envelope shape matches DescribeMediaService::build_generated_provenance
+        // after BR-100 (identity keys + measured alt_text_draft).
+        $this->setPostMeta($mediaId, '_acx_description_provenance', [
+            'adapter'                => 'seeded',
+            'model_id'               => 'seeded-fixtures',
+            'model_version'          => '1',
+            'prompt_or_task_version' => '1',
+            'image_hash'             => str_repeat('a', 64),
+            'context_hash'           => str_repeat('b', 64),
+            'generated_at'           => '2026-07-04T12:00:00+00:00',
+            'alt_text_draft'         => $draft,
+        ]);
+
+        $response = (new DescriptionHistoryService())->list_history(10);
+
+        $this->assertSame(1, $response['total']);
+        $item = $response['items'][0];
+        $this->assertSame($mediaId, $item['media_id']);
+        $this->assertSame('Human-corrected kayak alt.', $item['current_alt_text']);
+        // The bug: without alt_text_draft on the envelope this was ''.
+        $this->assertSame($draft, $item['generated_alt_text']);
+        $this->assertNotSame('', $item['generated_alt_text']);
+    }
+
+    /**
+     * BR-100 end-to-end pin for the CLI writer envelope shape (source => cli).
+     */
+    public function testHistoryResolvesGeneratedAltFromCliWriterProvenanceShape(): void
+    {
+        $mediaId = 802;
+        $draft = 'A black dog sitting by a window.';
+        $GLOBALS['__ac_get_posts_results'] = [$mediaId];
+        $this->seedAttachment($mediaId, 'Dog');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', $draft);
+        // Envelope shape matches DescriptionCommand::build_provenance after BR-100.
+        $this->setPostMeta($mediaId, '_acx_description_provenance', [
+            'source'                 => 'cli',
+            'media_id'               => $mediaId,
+            'generated_at'           => '2026-07-04T12:00:00+00:00',
+            'adapter'                => 'seeded',
+            'model_id'               => 'local-v1',
+            'model_version'          => '2026-07-04',
+            'prompt_or_task_version' => 'describe-v1',
+            'alt_text_draft'         => $draft,
+        ]);
+
+        $response = (new DescriptionHistoryService())->list_history(10);
+
+        $this->assertSame(1, $response['total']);
+        $item = $response['items'][0];
+        $this->assertSame($mediaId, $item['media_id']);
+        $this->assertSame($draft, $item['current_alt_text']);
+        $this->assertSame($draft, $item['generated_alt_text']);
+        $this->assertNotSame('', $item['generated_alt_text']);
+        $this->assertSame('cli', $item['provenance']['source']);
+    }
+
+    /**
+     * BR-100 regression: pre-fix provenance without any draft key still yields
+     * empty generated_alt_text — history must not invent a draft from current alt.
+     */
+    public function testHistoryReturnsEmptyGeneratedAltWhenProvenanceLacksDraftKeys(): void
+    {
+        $mediaId = 803;
+        $GLOBALS['__ac_get_posts_results'] = [$mediaId];
+        $this->seedAttachment($mediaId, 'Legacy');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', 'Some current alt.');
+        // Pre-BR-100 single-image write shape: identity keys only, no draft.
+        $this->setPostMeta($mediaId, '_acx_description_provenance', [
+            'adapter'                => 'seeded',
+            'model_id'               => 'seeded-fixtures',
+            'model_version'          => '1',
+            'prompt_or_task_version' => '1',
+            'image_hash'             => str_repeat('a', 64),
+            'context_hash'           => str_repeat('b', 64),
+            'generated_at'           => '2026-01-01T00:00:00+00:00',
+        ]);
+
+        $response = (new DescriptionHistoryService())->list_history(10);
+
+        $this->assertSame(1, $response['total']);
+        $this->assertSame('Some current alt.', $response['items'][0]['current_alt_text']);
+        $this->assertSame('', $response['items'][0]['generated_alt_text']);
+    }
+
     public function testCorrectionUpdatesAltAndRecordsHumanEditWithoutRemovingProvenance(): void
     {
         $this->seedAttachment(201, 'Attachment 201');

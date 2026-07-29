@@ -1,43 +1,34 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, type Page } from '@playwright/test';
 
-type BlockingImpact = 'serious' | 'critical';
+import {
+  assertNoBlockingAxeResults,
+  assertNoBlockingIncompletes as assertNoBlockingIncompletesPure,
+  isBlockingImpact,
+  type AssertEmptyEntries,
+} from './axe-impact';
+
 /** Axe violation/incomplete row from analyze(); exported for unit fixtures. */
 export type AxeResultEntry = Awaited<ReturnType<AxeBuilder['analyze']>>['violations'][number];
 
+export { isBlockingImpact, assertNoBlockingAxeResults };
+export type { AxeImpactEntry, AxeAnalyzeResultsLike, AssertEmptyEntries, BlockingImpact } from './axe-impact';
+
 /**
- * Serious/critical axe impacts are blocking; minor/moderate are not.
- * Exported so the filter can be unit-pinned without a Playwright page [TEST-15].
+ * Playwright-bound empty-assert: preserves the existing expect(…).toHaveLength(0)
+ * failure surface for e2e runs [REF-26].
  */
-export const isBlockingImpact = (impact: string | null): impact is BlockingImpact => {
-  return impact === 'serious' || impact === 'critical';
-};
-
-const formatViolationSummary = (entries: AxeResultEntry[]): string => {
-  return entries
-    .map((entry) => {
-      const nodes = entry.nodes.map((node) => node.target.join(' ')).join(', ');
-
-      return `${entry.id} [${entry.impact ?? 'unknown'}] ${entry.help} :: ${nodes}`;
-    })
-    .join('\n');
+const playwrightAssertEmpty: AssertEmptyEntries = (entries, message) => {
+  expect(entries, message).toHaveLength(0);
 };
 
 /**
  * Fail when axe left serious/critical findings in `results.incomplete`.
  *
- * Pure over the incomplete list so vitest can pin the gate without a browser.
- * Behaviour matches the incomplete half of {@link assertNoBlockingViolations}.
+ * Thin Playwright wrapper over the pure gate in {@link ./axe-impact}.
  */
 export const assertNoBlockingIncompletes = (incomplete: AxeResultEntry[]): void => {
-  const blockingIncompletes = incomplete.filter((entry) => isBlockingImpact(entry.impact ?? null));
-
-  expect(
-    blockingIncompletes,
-    blockingIncompletes.length === 0
-      ? 'Expected no serious or critical axe incompletes.'
-      : `Expected no serious or critical axe incompletes:\n${formatViolationSummary(blockingIncompletes)}`,
-  ).toHaveLength(0);
+  assertNoBlockingIncompletesPure(incomplete, playwrightAssertEmpty);
 };
 
 /**
@@ -55,19 +46,15 @@ export const assertNoBlockingIncompletes = (incomplete: AxeResultEntry[]): void 
  *   for real `results.violations` is unchanged [REF-26].
  * - Minor/moderate incompletes stay non-blocking (still "could not decide"
  *   noise that operators can inspect in full axe reports).
+ *
+ * Implementation: run AxeBuilder, then hand results to the pure
+ * {@link assertNoBlockingAxeResults} gate (violations + incompletes). The pure
+ * function is what unit tests pin — so dropping the incomplete half cannot
+ * leave the fast suite green [BR-88b].
  */
 export const assertNoBlockingViolations = async (page: Page, scopeSelector: string): Promise<void> => {
   const results = await new AxeBuilder({ page }).include(scopeSelector).analyze();
-  const blockingViolations = results.violations.filter((violation) => isBlockingImpact(violation.impact ?? null));
-
-  expect(
-    blockingViolations,
-    blockingViolations.length === 0
-      ? 'Expected no serious or critical axe violations.'
-      : `Expected no serious or critical axe violations:\n${formatViolationSummary(blockingViolations)}`,
-  ).toHaveLength(0);
-
-  assertNoBlockingIncompletes(results.incomplete);
+  assertNoBlockingAxeResults(results, playwrightAssertEmpty);
 };
 
 export const requireBaseUrl = (baseURL: string | undefined): string => {

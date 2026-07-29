@@ -76,12 +76,17 @@ class DescriptionCommandGenerateTest extends TestCase
         $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
         $provenance = get_post_meta(401, '_acx_description_provenance', true);
 
-        $this->assertSame('A black dog sitting by a window.', get_post_meta(401, '_wp_attachment_image_alt', true));
+        $writtenAlt = get_post_meta(401, '_wp_attachment_image_alt', true);
+        $this->assertSame('A black dog sitting by a window.', $writtenAlt);
         $this->assertSame('written', $payload['rows'][0]['status']);
         $this->assertIsArray($provenance);
         $this->assertSame('cli', $provenance['source']);
         $this->assertSame('local-v1', $provenance['model_id']);
         $this->assertSame('describe-v1', $provenance['prompt_or_task_version']);
+        // BR-100: CLI write stamps the exact alt string under alt_text_draft so
+        // history can resolve the Generated-alt column.
+        $this->assertSame($writtenAlt, $provenance['alt_text_draft']);
+        $this->assertSame('A black dog sitting by a window.', $provenance['alt_text_draft']);
     }
 
     public function testGenerateWriteSkipsExistingAltUnlessForced(): void
@@ -97,6 +102,8 @@ class DescriptionCommandGenerateTest extends TestCase
 
         $this->assertSame('Existing editorial alt.', get_post_meta(501, '_wp_attachment_image_alt', true));
         $this->assertSame('skipped_existing_alt', $firstPayload['rows'][0]['status']);
+        // No alt write → no provenance, no fabricated alt_text_draft.
+        $this->assertSame('', get_post_meta(501, '_acx_description_provenance', true));
 
         \WP_CLI::reset_cli_messages();
         $command->__invoke(['generate'], ['media-id' => '501', 'write' => true, 'force' => true, 'format' => 'json']);
@@ -104,6 +111,34 @@ class DescriptionCommandGenerateTest extends TestCase
 
         $this->assertSame('Generated replacement alt.', get_post_meta(501, '_wp_attachment_image_alt', true));
         $this->assertSame('written', $secondPayload['rows'][0]['status']);
+        $forcedProvenance = get_post_meta(501, '_acx_description_provenance', true);
+        $this->assertIsArray($forcedProvenance);
+        $this->assertSame('Generated replacement alt.', $forcedProvenance['alt_text_draft']);
+    }
+
+    /**
+     * BR-100: dry-run (no --write) must not stamp provenance with a fabricated
+     * alt_text_draft for a draft that was never written to alt meta.
+     */
+    public function testGenerateDryRunDoesNotFabricateAltTextDraftInProvenance(): void
+    {
+        $service = new RecordingDescribeService([
+            701 => new WP_REST_Response([
+                'media_id' => 701,
+                'alt_text_draft' => 'Would-be draft never written.',
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+            ]),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $command->__invoke(['generate'], ['media-id' => '701', 'format' => 'json']);
+
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+        $this->assertSame('dry_run', $payload['rows'][0]['status']);
+        $this->assertSame('Would-be draft never written.', $payload['rows'][0]['alt_text_draft']);
+        $this->assertSame('', get_post_meta(701, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(701, '_acx_description_provenance', true));
     }
 
     public function testGenerateReportsNonSuccessRestResponseAsFailed(): void

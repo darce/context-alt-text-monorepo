@@ -226,6 +226,9 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertSame('A photo.', get_post_meta(42, '_wp_attachment_image_alt', true));
         $this->assertSame('written', $result->get_data()['alt_text_write']['status'] ?? null);
 
+        $writtenAlt = get_post_meta(42, '_wp_attachment_image_alt', true);
+        $this->assertSame('A photo.', $writtenAlt);
+
         $provenance = get_post_meta(42, '_acx_description_provenance', true);
         $this->assertIsArray($provenance);
         $this->assertSame('seeded', $provenance['adapter']);
@@ -235,6 +238,10 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertSame(str_repeat('a', 64), $provenance['image_hash']);
         $this->assertSame(str_repeat('b', 64), $provenance['context_hash']);
         $this->assertArrayHasKey('generated_at', $provenance);
+        // BR-100: history resolves Generated-alt from this key — must equal the
+        // exact string written to _wp_attachment_image_alt, not a re-derivation.
+        $this->assertSame($writtenAlt, $provenance['alt_text_draft']);
+        $this->assertSame('A photo.', $provenance['alt_text_draft']);
     }
 
     public function testWriteIntentSkipsExistingAltTextByDefault(): void
@@ -253,8 +260,47 @@ class DescribeMediaServiceTest extends TestCase
 
         $this->assertInstanceOf(WP_REST_Response::class, $result);
         $this->assertSame('Human-authored alt', get_post_meta(42, '_wp_attachment_image_alt', true));
+        // No alt write → no provenance envelope at all (no fabricated alt_text_draft).
         $this->assertSame('', get_post_meta(42, '_acx_description_provenance', true));
         $this->assertSame('skipped_existing_alt', $result->get_data()['alt_text_write']['status'] ?? null);
+    }
+
+    /**
+     * BR-100: force no-op (same draft + matching model identity) must not
+     * overwrite existing provenance with a freshly stamped envelope, and must
+     * not invent an alt_text_draft that was never re-written.
+     */
+    public function testForceNoOpDoesNotFabricateAltTextDraftOnUnwrittenPath(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $this->setPostMeta(42, '_wp_attachment_image_alt', 'A photo.');
+        // Prior envelope deliberately omits alt_text_draft (pre-BR-100 shape).
+        $existingProvenance = array(
+            'adapter'                => 'seeded',
+            'model_id'               => 'seeded-fixtures',
+            'model_version'          => '1',
+            'prompt_or_task_version' => '1',
+            'image_hash'             => str_repeat('a', 64),
+            'context_hash'           => str_repeat('b', 64),
+            'generated_at'           => '2026-01-01T00:00:00+00:00',
+        );
+        $this->setPostMeta(42, '_acx_description_provenance', $existingProvenance);
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $req->set_param('write_alt', true);
+        $req->set_param('force', true);
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame('forced_overwrite', $result->get_data()['alt_text_write']['status'] ?? null);
+        // Unwritten path: prior provenance left byte-identical — no fabricated draft.
+        $this->assertSame($existingProvenance, get_post_meta(42, '_acx_description_provenance', true));
+        $this->assertArrayNotHasKey('alt_text_draft', get_post_meta(42, '_acx_description_provenance', true));
     }
 
     public function testForceWriteOverwritesExistingAltTextAndStoresProvenance(): void

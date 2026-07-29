@@ -227,7 +227,8 @@ class DescriptionCommand extends \WP_CLI_Command {
 		}
 
 		update_post_meta( $media_id, '_wp_attachment_image_alt', $alt_text_draft );
-		update_post_meta( $media_id, '_acx_description_provenance', $this->build_provenance( $media_id, $data ) );
+		// Stamp the exact string just written so history can resolve Generated-alt.
+		update_post_meta( $media_id, '_acx_description_provenance', $this->build_provenance( $media_id, $data, $alt_text_draft ) );
 
 		return array(
 			'media_id'       => $media_id,
@@ -237,10 +238,18 @@ class DescriptionCommand extends \WP_CLI_Command {
 	}
 
 	/**
+	 * Build the CLI provenance envelope for a generate-and-write.
+	 *
+	 * `$alt_text_draft` is the exact string just written to
+	 * `_wp_attachment_image_alt` — only called on the write path (never on
+	 * dry_run / skipped_existing_alt / skipped_empty_alt_text) so a draft that
+	 * was never persisted is never recorded as if it were [rg-015].
+	 *
 	 * @param array<string,mixed> $data
+	 * @param string              $alt_text_draft Exact draft written to alt meta.
 	 * @return array<string,mixed>
 	 */
-	private function build_provenance( int $media_id, array $data ): array {
+	private function build_provenance( int $media_id, array $data, string $alt_text_draft ): array {
 		return array(
 			'source'                 => 'cli',
 			'media_id'               => $media_id,
@@ -249,6 +258,8 @@ class DescriptionCommand extends \WP_CLI_Command {
 			'model_id'               => (string) ( $data['model_id'] ?? '' ),
 			'model_version'          => (string) ( $data['model_version'] ?? '' ),
 			'prompt_or_task_version' => (string) ( $data['prompt_or_task_version'] ?? '' ),
+			// Exact string written to alt — history's Generated-alt column source.
+			'alt_text_draft'         => $alt_text_draft,
 		);
 	}
 

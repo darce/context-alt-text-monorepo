@@ -454,9 +454,10 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	/**
 	 * WBUX-4 INT-01c: apply a completed run's drafts to attachment alt text with
 	 * a guarded smart default — items with no existing alt are written; items
-	 * that already have operator alt text are NEVER clobbered unless their
+	 * that already have existing alt text are NEVER clobbered unless their
 	 * media_id is in `overwrite_media_ids` (an explicit per-item opt-in mirroring
-	 * the single-image `write_alt`+`force` policy). Items without a draft (failed
+	 * the single-image `write_alt`+`force` policy), or a verified bulk-partial
+	 * recovery marker is present (see below). Items without a draft (failed
 	 * describes) are skipped. A run is applyable only once terminal-with-drafts
 	 * (status `completed` / `completed_with_errors`); a pending / running / failed /
 	 * cancelled run is rejected with a 409 so drafts are never written mid-flight
@@ -470,18 +471,25 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	 * Response buckets (frontend contract — the History UI reports each honestly):
 	 * `applied` (alt + provenance both verified), `partial` (alt landed, provenance
 	 * write did not — do not treat as fully applied; history may omit the item),
-	 * `skipped_existing` (operator alt guarded), `skipped_no_draft` (failed describe
+	 * `skipped_existing` (existing alt guarded), `skipped_no_draft` (failed describe
 	 * / empty draft), `skipped_invalid` (media_id is not an attachment post, S3-01),
 	 * and `failed` (the alt-text write returned false, S3-02). `applied` keeps its
 	 * prior meaning; `partial` is additive. Do not invent envelope fields beyond
 	 * what was measured. [rg-015]
 	 *
 	 * Partial recovery (non-clobber completion): when a prior apply wrote alt but
-	 * failed provenance, the next /items fetch reports `existing_alt: true` and a
-	 * naive guard would bucket the id as `skipped_existing` forever. If stored alt
-	 * is byte-identical to the draft and provenance is not an array, proceed so
-	 * provenance can land — nothing is overwritten. Operator-authored alt that
-	 * differs from the draft still requires explicit `overwrite_media_ids`. [RLSE-05]
+	 * failed provenance, this path also writes durable evidence —
+	 * `_acx_description_provenance_pending` = `{ run_id, draft_hash }` — scoped to
+	 * this run and this draft. On a later apply, if `existing_alt` is set and the
+	 * operator did not opt into overwrite, the guard falls through **only** when
+	 * that marker exists, its `run_id` matches the current run, its `draft_hash`
+	 * matches hash(sha256, current draft), stored alt is still byte-identical to
+	 * the draft, and provenance is still not an array. Equality of alt to draft
+	 * alone is not evidence this system started the write (coincidental operator
+	 * text / partial inline correction) and must stay guarded. No marker →
+	 * `skipped_existing`, requiring explicit `overwrite_media_ids`. Marker write
+	 * failure is fail-closed: no marker means no automatic recovery. [RLSE-05]
+	 * [INT-11] [rg-015]
 	 */
 	public function apply_describe_run_drafts( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		// S3-03: gate on the authoritative run status. The /items endpoint carries
@@ -524,6 +532,12 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 		$data  = $items_response->get_data();
 		$items = ( is_array( $data ) && is_array( $data['items'] ?? null ) ) ? $data['items'] : array();
 
+		// BR-92: bucket exclusivity is per media_id. The backend may (unverified)
+		// echo duplicate rows for the same id; without collapse, one occurrence can
+		// land in `applied` and a later occurrence of the same id in
+		// `skipped_existing`. Keep first-seen positive media_id only.
+		$items = $this->normalize_apply_items_by_media_id( $items );
+
 		// S3-05: reject non-positive overwrite ids rather than absint()-coercing a
 		// negative id into a positive one (-70 → 70 would opt in the wrong media).
 		$overwrite = array();
@@ -561,13 +575,20 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			}
 
 			if ( ! empty( $item['existing_alt'] ) && ! isset( $overwrite[ $media_id ] ) ) {
-				// Non-clobber completion: stored alt already equals the draft and
-				// provenance never landed (prior bulk partial). Proceed so the
-				// provenance write is retried — alt is not changed. Any other
-				// existing_alt case stays guarded unless the operator opted in.
+				// Non-clobber completion: only when durable evidence proves this
+				// system started this write for this run+draft (pending marker).
+				// Alt===draft alone is not enough — coincidental operator text must
+				// stay guarded. Belt-and-braces: alt still equals draft and
+				// provenance is still absent so a stale marker cannot rewrite alt.
 				$stored_alt  = get_post_meta( $media_id, '_wp_attachment_image_alt', true );
 				$stored_prov = get_post_meta( $media_id, '_acx_description_provenance', true );
-				$is_non_clobber_completion = is_string( $stored_alt )
+				$pending     = get_post_meta( $media_id, '_acx_description_provenance_pending', true );
+				$draft_hash  = hash( 'sha256', $draft );
+				$is_non_clobber_completion = is_array( $pending )
+					&& isset( $pending['run_id'], $pending['draft_hash'] )
+					&& (string) $pending['run_id'] === $run_id
+					&& (string) $pending['draft_hash'] === $draft_hash
+					&& is_string( $stored_alt )
 					&& $stored_alt === $draft
 					&& ! is_array( $stored_prov );
 
@@ -579,8 +600,9 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 
 			// S3-04: persist a WP-controlled provenance envelope, not the backend
 			// blob verbatim — whitelist the same generated-provenance fields the
-			// single-image write records, then stamp the bulk-apply origin.
-			$provenance = $this->build_run_apply_provenance( $item['provenance'] ?? null, $run_id );
+			// single-image write records, then stamp the bulk-apply origin and the
+			// exact draft string written (history's generated-alt resolver).
+			$provenance = $this->build_run_apply_provenance( $item['provenance'] ?? null, $run_id, $draft );
 
 			// S3-02: honor the update_post_meta() return. It also returns false when
 			// the stored value is byte-identical to $draft (a no-op overwrite);
@@ -610,11 +632,24 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 				// matches would forge applied while history still lacks provenance.
 				$prov_ok = is_array( $current_prov ) && $provenance === $current_prov;
 				if ( ! $prov_ok ) {
+					// Durable evidence this system started the write for this
+					// run+draft. Marker write failure is fail-closed: without it
+					// the next apply cannot auto-recover (operator uses overwrite).
+					update_post_meta(
+						$media_id,
+						'_acx_description_provenance_pending',
+						array(
+							'run_id'     => $run_id,
+							'draft_hash' => hash( 'sha256', $draft ),
+						)
+					);
 					$partial[] = $media_id;
 					continue;
 				}
 			}
 
+			// Provenance verified — drop any pending recovery marker.
+			delete_post_meta( $media_id, '_acx_description_provenance_pending' );
 			$applied[] = $media_id;
 		}
 
@@ -633,29 +668,66 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	}
 
 	/**
-	 * S3-04: build the provenance envelope persisted alongside a bulk-applied
-	 * draft. Whitelists the same fields the single-image write records
-	 * (DescribeMediaService::build_generated_provenance) from the backend item
-	 * provenance so no arbitrary upstream keys are stored verbatim, then stamps the
-	 * bulk-apply origin. `generated_at` is carried through only when the backend
-	 * supplied it — never fabricated at apply time.
+	 * Collapse apply-item rows by positive-integer media_id, keeping first-seen
+	 * order. Duplicate rows for the same id would otherwise be bucketed
+	 * independently after earlier writes mutate meta, so one id can appear in
+	 * two mutually exclusive response buckets. Non-positive ids are left as-is
+	 * (they land in skipped_no_draft / skipped_invalid via the main loop).
 	 *
-	 * @param mixed $incoming Backend-supplied item provenance (may be null/scalar).
+	 * @param array<int,mixed> $items
+	 *
+	 * @return array<int,mixed>
+	 */
+	private function normalize_apply_items_by_media_id( array $items ): array {
+		$normalized = array();
+		$seen       = array();
+		foreach ( $items as $item ) {
+			if ( ! is_array( $item ) ) {
+				continue;
+			}
+			$media_id = isset( $item['media_id'] ) ? (int) $item['media_id'] : 0;
+			if ( $media_id > 0 ) {
+				if ( isset( $seen[ $media_id ] ) ) {
+					continue;
+				}
+				$seen[ $media_id ] = true;
+			}
+			$normalized[] = $item;
+		}
+
+		return $normalized;
+	}
+
+	/**
+	 * S3-04: build the provenance envelope persisted alongside a bulk-applied
+	 * draft. Whitelists generated-provenance fields from the backend item
+	 * provenance so no arbitrary upstream keys are stored verbatim, stamps the
+	 * bulk-apply origin, and records `alt_text_draft` as the exact draft string
+	 * written (measured data for history's generated-alt resolver — never left
+	 * empty when a draft was applied). `generated_at` is carried through only
+	 * when the backend supplied it — never fabricated at apply time.
+	 *
+	 * @param mixed  $incoming Backend-supplied item provenance (may be null/scalar).
+	 * @param string $run_id   Describe-run id stamped onto the envelope.
+	 * @param string $draft    Exact alt draft string being written.
 	 *
 	 * @return array<string,mixed>
 	 */
-	private function build_run_apply_provenance( mixed $incoming, string $run_id ): array {
+	private function build_run_apply_provenance( mixed $incoming, string $run_id, string $draft ): array {
 		$incoming   = is_array( $incoming ) ? $incoming : array();
 		$provenance = array();
-		foreach ( array( 'adapter', 'model_id', 'model_version', 'prompt_or_task_version', 'image_hash', 'context_hash', 'generated_at', 'backend_result_id' ) as $key ) {
+		foreach ( array( 'adapter', 'model_id', 'model_version', 'prompt_or_task_version', 'image_hash', 'context_hash', 'generated_at', 'backend_result_id', 'alt_text_draft' ) as $key ) {
 			if ( array_key_exists( $key, $incoming ) ) {
 				$provenance[ $key ] = $incoming[ $key ];
 			}
 		}
 
-		$provenance['source']     = 'bulk_describe_run';
-		$provenance['run_id']     = $run_id;
-		$provenance['applied_at'] = gmdate( 'c' );
+		// Prefer the measured draft we are writing over any backend-supplied key
+		// so history's generated-alt resolver sees the same string as the alt.
+		$provenance['alt_text_draft'] = $draft;
+		$provenance['source']         = 'bulk_describe_run';
+		$provenance['run_id']         = $run_id;
+		$provenance['applied_at']     = gmdate( 'c' );
 
 		return $provenance;
 	}

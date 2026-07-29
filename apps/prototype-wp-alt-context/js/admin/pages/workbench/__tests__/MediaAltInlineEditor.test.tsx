@@ -99,7 +99,11 @@ describe('MediaAltInlineEditor', () => {
     expect(correctMock).toHaveBeenCalledWith(42, 'A stone bridge over a calm river at dusk.');
   });
 
-  it('invalidates the media query tree on save so every projection refetches', async () => {
+  it('does not invalidate media.all on save — targeted patch only [BR-77]', async () => {
+    // Old contract invalidated media.all so every projection refetched; that is
+    // the BR-77 root cause (sibling success drops partial rows). Success now
+    // patches the workbench row from the server response and leaves the list
+    // mounted. media.details / identities carry no alt field — no invalidation.
     const { client } = renderEditor(<MediaAltInlineEditor mediaId={42} altText="Bridge at dusk" />);
     const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
 
@@ -109,9 +113,13 @@ describe('MediaAltInlineEditor', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: /^save/i }));
 
-    await waitFor(() =>
-      expect(invalidateSpy).toHaveBeenCalledWith(expect.objectContaining({ queryKey: queryKeys.media.all })),
-    );
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: /alt text/i })).not.toBeInTheDocument());
+    expect(invalidateSpy).not.toHaveBeenCalledWith(expect.objectContaining({ queryKey: queryKeys.media.all }));
+    expect(
+      invalidateSpy.mock.calls.some(
+        (call) => JSON.stringify(call[0]) === JSON.stringify({ queryKey: queryKeys.media.all }),
+      ),
+    ).toBe(false);
   });
 
   it('returns to the read affordance showing the saved value after a successful save', async () => {

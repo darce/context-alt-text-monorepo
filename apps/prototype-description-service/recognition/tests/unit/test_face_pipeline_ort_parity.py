@@ -50,7 +50,9 @@ from recognition.tests.unit.face_pipeline_support import (
 #   ORT↔OpenCV cosine (synthetic + aligner crops): ≥ 0.999999999997 (1-cos ≤ 5e-12)
 #   ORT vs synthetic_112_embedding golden: ≥ 0.999999999997
 # Noise floor ≈ 0 for unit cosine. Floor 0.99999999 is 10× above a 1e-9 slack
-# band; prior decorative floors were 0.999 / 0.9999.
+# band; prior decorative floors were 0.999 / 0.9999. This supersedes the FIR-3
+# S3 assigned budget (cosine ≥ 0.999) — see the S3 parity-budget amendment in
+# docs/tasks/fir/FIR-3-yunet-sface-adapters-task-plan.md for the evidence.
 _COSINE_MIN = 0.99999999
 _GOLDEN_COSINE_MIN = 0.99999999
 _IOU_MIN = 0.99

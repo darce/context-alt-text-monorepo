@@ -86,7 +86,7 @@
   "status": "recorded",
   "tolerances": {
     "bbox_px": 0.0005,
-    "derivation": "N=50 identical-input OpenCVYuNetDetector runs (OpenCV 5.0.0): max run-to-run and vs-golden abs were 0.0 for bbox/landmarks/score. Noise floor=0; tolerances are 10\u00d7 float32 ULP at coordinate scale (5e-4 px, 1e-5 score). Prior decorative budgets were 2.0 px / 0.02.",
+    "derivation": "N=50 identical-input OpenCVYuNetDetector runs (OpenCV 5.0.0, 2026-07-29): max run-to-run and vs-golden abs were 0.0 for bbox_px, landmarks_px, and score (bit-exact). Noise floor = 0. Tolerance = 10 \u00d7 float32 ULP at coordinate scale ~300 px \u2248 10*(300*2^-23) \u2248 3.6e-4, rounded to 5e-4 px for bbox/landmarks; score = 10 \u00d7 float32 ULP at ~1.0 \u2248 1.2e-6, rounded to 1e-5. ~4000\u00d7 tighter than the prior decorative 2.0 px / 0.02; a 1.9 px landmark shift fails.",
     "landmark_nearest_px": 50.0,
     "landmarks_px": 0.0005,
     "score": 1e-05

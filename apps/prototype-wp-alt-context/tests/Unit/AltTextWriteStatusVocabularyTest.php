@@ -359,11 +359,15 @@ class AltTextWriteStatusVocabularyTest extends TestCase
     }
 
     /**
-     * BR-05: mixed outcomes (one written, one failed) → warning with counts,
-     * no unqualified success. Exit stays 0 (warning only) so partial batches
-     * remain inspectable; total-failure is the non-zero path above.
+     * R17-BR-02: a mixed batch (one written, one failed) exits non-zero via
+     * error, not warning. Supersedes the BR-05 exit-0 mixed policy this test
+     * previously encoded: WP_CLI::error fires only after every row has been
+     * processed and logged, so a non-zero exit aborts nothing mid-pipeline,
+     * and `generate` must not report a different exit contract than `refresh`
+     * for the same degree of damage. The summary still carries per-status
+     * counts so a caller can discriminate mixed from total failure [R17-BR-09].
      */
-    public function testGenerateTableFormatMixedEmitsWarningWithCounts(): void
+    public function testGenerateTableFormatMixedExitsNonZeroWithCounts(): void
     {
         $candidates = new StatusVocabFixedCandidateService([501, 502]);
         $describe   = new StatusVocabRecordingDescribeService([
@@ -377,15 +381,26 @@ class AltTextWriteStatusVocabularyTest extends TestCase
         ]);
         $command = new DescriptionCommand($candidates, $describe);
 
-        $command->__invoke(['generate'], ['limit' => '2', 'write' => true]);
+        $thrown = null;
+        try {
+            $command->__invoke(['generate'], ['limit' => '2', 'write' => true]);
+        } catch (RuntimeException $e) {
+            $thrown = $e;
+        }
 
+        $this->assertInstanceOf(
+            RuntimeException::class,
+            $thrown,
+            'mixed batch must exit non-zero (WP_CLI::error throws in the stub)'
+        );
         $this->assertEmpty(\WP_CLI::$messages['success']);
-        $this->assertEmpty(\WP_CLI::$messages['error']);
-        $this->assertNotEmpty(\WP_CLI::$messages['warning']);
-        $summary = \WP_CLI::$messages['warning'][0];
+        $this->assertEmpty(\WP_CLI::$messages['warning']);
+        $this->assertNotEmpty(\WP_CLI::$messages['error']);
+        $summary = \WP_CLI::$messages['error'][0];
         $this->assertStringContainsString('count=2', $summary);
         $this->assertStringContainsString('failed=1', $summary);
         $this->assertStringContainsString('partial=0', $summary);
+        $this->assertStringContainsString('written=1', $summary);
     }
 
     // ── helpers ──

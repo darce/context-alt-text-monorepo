@@ -1292,12 +1292,12 @@ class DescribeMediaServiceTest extends TestCase
     }
 
     /**
-     * BR-17 / plain no-op: REST re-write of a byte-identical alt is not reported
-     * as failed. Does not pin the write-result guard itself (stays green if that
-     * branch is neutered); see sibling failure tests and the backslash-bearing
-     * save/resave pin for the unslash read-back path.
+     * BR-17 / plain-ASCII no-op: force re-write when the stored alt already equals
+     * the draft is not reported as failed. Plain ASCII is a fixed point under
+     * wp_unslash, so this does NOT pin the unslash read-back guard — see the
+     * backslash-bearing sibling for that [TEST-15 / R17-BR-12].
      */
-    public function testWriteAltByteIdenticalRewriteIsNotReportedAsFailed(): void
+    public function testWriteAltPlainAsciiForceRewriteOfMatchingAltIsNotReportedAsFailed(): void
     {
         $this->plantWritableAttachment(42);
         $this->setPostMeta(42, '_wp_attachment_image_alt', 'A photo.');
@@ -1386,6 +1386,207 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertSame('partial', $write['status']);
         $this->assertSame('A photo.', get_post_meta(42, '_wp_attachment_image_alt', true));
         $this->assertSame('', $GLOBALS['__ac_posts'][42]->post_content);
+    }
+
+    /**
+     * R16-BR-14 [rg-015]: wp_update_post can return the post ID while filters
+     * (wp_insert_post_data / content_save_pre / KSES) alter post_content before
+     * the row is written. The harness stub has no filter chain, so this test
+     * plants a post object whose property write path stores a different body
+     * than submitted — the same observable outcome as a core filter rewrite.
+     * The service must report description_write=failed, not written.
+     */
+    public function testLongDescriptionWriteReportsFailedWhenStoredBodyDiffersFromSubmitted(): void
+    {
+        $this->plantWritableAttachment(42);
+        // Replace the stdClass post with a store that mutates post_content on
+        // assignment, emulating wp_insert_post_data stripping/rewriting the body
+        // while still returning the post ID from wp_update_post.
+        $GLOBALS['__ac_posts'][42] = new DescribeMediaFilteredPostContent(42, '');
+        $this->setOption('acx_alt_style', 'alt_plus_description');
+        $submitted = 'A tabby cat lounging on a woven mat in warm afternoon light.';
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBodyWithLong(42, $submitted)),
+        ));
+
+        $result = $this->controller->describe_media($this->writeRequest(42));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $write = $result->get_data()['alt_text_write'];
+        $this->assertSame('failed', $write['description_write'] ?? null);
+        $this->assertNotSame('written', $write['description_write'] ?? null);
+        $this->assertNotSame('forced_overwrite', $write['description_write'] ?? null);
+        // Parent folds long-body failure to partial when alt+provenance landed.
+        $this->assertSame('partial', $write['status']);
+        $this->assertSame('description_write_failed', $write['reason'] ?? null);
+        // Stored body is the filter-mutated value, not the submitted long text.
+        $this->assertSame(
+            DescribeMediaFilteredPostContent::FILTERED_BODY,
+            $GLOBALS['__ac_posts'][42]->post_content
+        );
+        $this->assertNotSame($submitted, $GLOBALS['__ac_posts'][42]->post_content);
+    }
+
+    /**
+     * R17-BR-05 [HAI-13][INT-11]: a provenance-gap partial must be retryable
+     * without --force. First pass: alt lands, provenance fails → partial.
+     * Second pass without force: provenance is stamped; status is not
+     * skipped_existing_alt.
+     */
+    public function testProvenanceGapPartialIsRetryableWithoutForce(): void
+    {
+        $this->plantWritableAttachment(42);
+        $body = $this->validBackendBody(42);
+
+        // Pass 1: provenance write fails after alt lands.
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($body),
+        ));
+        $GLOBALS['__ac_update_post_meta_fail'][42]['_acx_description_provenance'] = true;
+
+        $first = $this->controller->describe_media($this->writeRequest(42));
+        $this->assertInstanceOf(WP_REST_Response::class, $first);
+        $this->assertSame('partial', $first->get_data()['alt_text_write']['status'] ?? null);
+        $this->assertSame(
+            'provenance_write_failed',
+            $first->get_data()['alt_text_write']['reason'] ?? null
+        );
+        $this->assertSame('A photo.', get_post_meta(42, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(42, '_acx_description_provenance', true));
+
+        // Pass 2: clear the fail hook; retry WITHOUT force. Must heal provenance.
+        unset($GLOBALS['__ac_update_post_meta_fail'][42]['_acx_description_provenance']);
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($body),
+        ));
+
+        $second = $this->controller->describe_media($this->writeRequest(42, false));
+        $this->assertInstanceOf(WP_REST_Response::class, $second);
+        $secondStatus = $second->get_data()['alt_text_write']['status'] ?? null;
+        $this->assertNotSame(
+            'skipped_existing_alt',
+            $secondStatus,
+            'Provenance-gap retry without force must not be trapped as skipped_existing_alt'
+        );
+        $this->assertContains($secondStatus, array('written', 'forced_overwrite'));
+        $this->assertSame('A photo.', get_post_meta(42, '_wp_attachment_image_alt', true));
+        $prov = get_post_meta(42, '_acx_description_provenance', true);
+        $this->assertIsArray($prov);
+        $this->assertSame('A photo.', $prov['alt_text_draft'] ?? null);
+        $this->assertSame('seeded', $prov['adapter'] ?? null);
+    }
+
+    /**
+     * R17-BR-05 companion: a genuinely different human alt still skips without
+     * force — the heal path must not weaken that guard.
+     */
+    public function testHumanAuthoredAltStillSkipsWithoutForceWhenDifferentFromDraft(): void
+    {
+        $this->plantWritableAttachment(42);
+        $this->setPostMeta(42, '_wp_attachment_image_alt', 'Human-authored alt');
+        // Provenance deliberately missing — must NOT re-enter just because of that
+        // when the alt differs from the draft.
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+
+        $result = $this->controller->describe_media($this->writeRequest(42, false));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame('skipped_existing_alt', $result->get_data()['alt_text_write']['status'] ?? null);
+        $this->assertSame('Human-authored alt', get_post_meta(42, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(42, '_acx_description_provenance', true));
+    }
+
+    /**
+     * R17-BR-03: heal_provenance_alt_text_draft must not claim success when the
+     * meta write fails. Force no-op path surfaces partial + provenance reason.
+     */
+    public function testForceNoOpHealFailureReportsPartialNotSuccess(): void
+    {
+        $this->plantWritableAttachment(42);
+        $this->setPostMeta(42, '_wp_attachment_image_alt', 'A photo.');
+        // Pre-wave envelope: identity matches, draft key missing → heal path.
+        $existingProvenance = array(
+            'adapter'                => 'seeded',
+            'model_id'               => 'seeded-fixtures',
+            'model_version'          => '1',
+            'prompt_or_task_version' => '1',
+            'image_hash'             => str_repeat('a', 64),
+            'context_hash'           => str_repeat('b', 64),
+            'generated_at'           => '2026-01-01T00:00:00+00:00',
+        );
+        $this->setPostMeta(42, '_acx_description_provenance', $existingProvenance);
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+        // Heal's update_post_meta fails and does not persist.
+        $GLOBALS['__ac_update_post_meta_fail'][42]['_acx_description_provenance'] = true;
+
+        $result = $this->controller->describe_media($this->writeRequest(42, true));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $write = $result->get_data()['alt_text_write'];
+        $this->assertSame('partial', $write['status'] ?? null);
+        $this->assertSame('provenance_write_failed', $write['reason'] ?? null);
+        $this->assertNotSame('forced_overwrite', $write['status'] ?? null);
+        // Alt unchanged; provenance still lacks alt_text_draft.
+        $this->assertSame('A photo.', get_post_meta(42, '_wp_attachment_image_alt', true));
+        $stored = get_post_meta(42, '_acx_description_provenance', true);
+        $this->assertIsArray($stored);
+        $this->assertArrayNotHasKey('alt_text_draft', $stored);
+    }
+}
+
+/**
+ * Test double: a post object whose post_content assignment path stores a
+ * different value than the one written. Emulates wp_insert_post_data (or KSES)
+ * rewriting the body while wp_update_post still returns the post ID.
+ *
+ * Uses magic properties so the harness stub's
+ * `$post->{$key} = $value` assignment goes through __set.
+ */
+final class DescribeMediaFilteredPostContent
+{
+    public const FILTERED_BODY = 'FILTERED_BY_INSERT_POST_DATA';
+
+    /** @var array<string,mixed> */
+    private array $props;
+
+    public function __construct(int $id, string $initialContent = '')
+    {
+        $this->props = array(
+            'ID'           => $id,
+            'post_content' => $initialContent,
+            'post_title'   => "Photo {$id}",
+            'post_excerpt' => 'A caption.',
+            'post_type'    => 'attachment',
+        );
+    }
+
+    public function __isset(string $name): bool
+    {
+        return array_key_exists($name, $this->props);
+    }
+
+    public function __get(string $name): mixed
+    {
+        return $this->props[$name] ?? null;
+    }
+
+    public function __set(string $name, mixed $value): void
+    {
+        if ('post_content' === $name) {
+            // Core-faithful observable: filters may replace the submitted body.
+            $this->props['post_content'] = self::FILTERED_BODY;
+            return;
+        }
+        $this->props[$name] = $value;
     }
 }
 

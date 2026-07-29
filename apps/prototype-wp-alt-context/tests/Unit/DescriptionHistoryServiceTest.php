@@ -731,6 +731,132 @@ class DescriptionHistoryServiceTest extends TestCase
     }
 
     /**
+     * R16-BR-15: when a sanitize_post_meta_{key} filter alters the stored alt,
+     * the no-op read-back must still succeed. Core update_metadata unslashes then
+     * sanitize_meta before store/equality; comparing only wp_unslash() false-500s
+     * a write that landed.
+     *
+     * Stub fidelity: tests/stubs/wp.php update_post_meta unslashes but does NOT
+     * call sanitize_meta. This test therefore plants the post-sanitize form and
+     * forces update_post_meta false (core no-op after a prior successful write),
+     * rather than relying on the stub to round-trip the filter. The filter is
+     * still registered so the service's expected-value path exercises it.
+     */
+    public function testSanitizeMetaAlteredAltReportsSuccessOnNoOpReadBack(): void
+    {
+        $mediaId = 901;
+        $submitted = 'Operator alt before meta sanitize';
+        $normalized = sanitize_text_field(trim($submitted));
+
+        // Filter that actually changes the value — identity would not pin R16-BR-15.
+        add_filter(
+            'sanitize_post_meta__wp_attachment_image_alt',
+            static function ($value) {
+                return is_string($value) ? $value . ' [meta-sanitized]' : $value;
+            },
+            10,
+            1
+        );
+
+        // What core stores after unslash + sanitize_meta (and what the service
+        // must expect). Plant it: the stub write path would not. Harness has no
+        // sanitize_meta; apply the same filter chain sanitize_meta dispatches.
+        $storedForm = apply_filters(
+            'sanitize_post_meta__wp_attachment_image_alt',
+            wp_unslash($normalized),
+            '_wp_attachment_image_alt',
+            'post'
+        );
+        $this->assertSame($normalized . ' [meta-sanitized]', $storedForm);
+        $this->assertNotSame($normalized, $storedForm);
+
+        $this->seedAttachment($mediaId, 'Attachment 901');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', $storedForm);
+        $this->setPostMeta($mediaId, '_acx_description_provenance', [
+            'alt_text_draft' => 'Generated draft.',
+            'model_id' => 'local-v1',
+        ]);
+        // Simulate no-op return after core would have stored the sanitized form.
+        $GLOBALS['__ac_update_post_meta_fail'][$mediaId]['_wp_attachment_image_alt'] = true;
+
+        $result = (new DescriptionHistoryService())->record_correction($mediaId, $submitted);
+
+        $this->assertNotInstanceOf(
+            WP_Error::class,
+            $result,
+            'sanitize_meta-altered stored alt must not false-500 on no-op read-back'
+        );
+        $this->assertIsArray($result);
+        // Storage still holds the sanitized form; history reports it.
+        $this->assertSame($storedForm, get_post_meta($mediaId, '_wp_attachment_image_alt', true));
+        $this->assertSame($storedForm, $result['current_alt_text']);
+        $this->assertIsArray($result['human_edit']);
+    }
+
+    /**
+     * R16-BR-15 companion: HUMAN_EDIT_META guard must also apply sanitize_meta
+     * before full-payload no-op comparison. A filter that mutates the array
+     * shape must not forge description_correction_partial when storage already
+     * holds the sanitized payload. Full-array equality remains (BR-48a).
+     *
+     * Same stub limitation as the alt test: plant sanitized form + fail hook.
+     */
+    public function testSanitizeMetaAlteredHumanEditReportsSuccessOnNoOpReadBack(): void
+    {
+        $mediaId = 902;
+        $sameAlt = 'Human-edit sanitize no-op alt.';
+        $this->seedAttachment($mediaId, 'Attachment 902');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', $sameAlt);
+        $this->setPostMeta($mediaId, '_acx_description_provenance', [
+            'alt_text_draft' => 'Generated draft.',
+            'model_id' => 'local-v1',
+        ]);
+
+        add_filter(
+            'sanitize_post_meta__acx_description_human_edit',
+            static function ($value) {
+                if (!is_array($value)) {
+                    return $value;
+                }
+                // Distinct key so bare unslash equality fails while full sanitize matches.
+                $value['sanitized_by'] = 'meta-filter';
+                return $value;
+            },
+            10,
+            1
+        );
+
+        $GLOBALS['__ac_current_time'] = 1_700_000_000;
+        $frozenMysql = current_time('mysql');
+        $rawPayload = [
+            'alt_text' => $sameAlt,
+            'edited_at' => $frozenMysql,
+            'user_id' => get_current_user_id(),
+        ];
+        // Harness has no sanitize_meta; same filter chain core/sanitize_meta uses.
+        $storedForm = apply_filters(
+            'sanitize_post_meta__acx_description_human_edit',
+            wp_unslash($rawPayload),
+            '_acx_description_human_edit',
+            'post'
+        );
+        $this->assertIsArray($storedForm);
+        $this->assertSame('meta-filter', $storedForm['sanitized_by']);
+        $this->assertNotSame($rawPayload, $storedForm);
+
+        $this->setPostMeta($mediaId, '_acx_description_human_edit', $storedForm);
+        $GLOBALS['__ac_update_post_meta_fail'][$mediaId]['_acx_description_human_edit'] = true;
+
+        $result = (new DescriptionHistoryService())->record_correction($mediaId, $sameAlt);
+
+        $this->assertNotInstanceOf(WP_Error::class, $result);
+        $this->assertIsArray($result);
+        $this->assertSame($storedForm, get_post_meta($mediaId, '_acx_description_human_edit', true));
+        $this->assertSame($storedForm, $result['human_edit']);
+        unset($GLOBALS['__ac_current_time']);
+    }
+
+    /**
      * @param int    $mediaId
      * @param string $title
      * @param string $mime

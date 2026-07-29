@@ -308,15 +308,49 @@ class DescribeMediaService {
 		$existing_alt = is_string( $existing_alt ) ? $existing_alt : '';
 		// Identity keys only for the idempotence compare; draft is measured data
 		// stamped when the alt meta is written, or healed on a force no-op (BR-108).
-		$provenance   = $this->build_generated_provenance( $data, $draft );
+		$provenance          = $this->build_generated_provenance( $data, $draft );
+		$existing_provenance = get_post_meta( $media_id, self::PROVENANCE_META_KEY, true );
 
 		if ( '' !== trim( $existing_alt ) && ! $force ) {
-			$data['alt_text_write'] = array(
-				'status'               => AltTextWriteStatus::SKIPPED_EXISTING_ALT,
-				'existing_alt_present' => true,
-			);
-			$response->set_data( $data );
-			return $response;
+			// R17-BR-05: do not trap partial(provenance_write_failed) retries.
+			// When the stored alt already equals the draft we would write, re-entry
+			// is a provenance heal — not an overwrite of human alt text. Only a
+			// genuinely different existing alt stays behind the skip guard.
+			// Empty draft still reports skipped_existing_alt (CLI order / BR-104).
+			$same_alt_as_draft = ( '' !== $draft && $draft === $existing_alt );
+			if ( ! $same_alt_as_draft ) {
+				$data['alt_text_write'] = array(
+					'status'               => AltTextWriteStatus::SKIPPED_EXISTING_ALT,
+					'existing_alt_present' => true,
+				);
+				$response->set_data( $data );
+				return $response;
+			}
+
+			// Alt already matches draft. If provenance identity is complete, heal
+			// only the draft key (BR-108) and report skip — no force, nothing to
+			// overwrite. If provenance is missing or identity-mismatched, fall
+			// through so the write path can (re)stamp it without --force.
+			if ( $this->matches_generated_provenance( $existing_provenance, $provenance ) ) {
+				if ( ! $this->heal_provenance_alt_text_draft( $media_id, $existing_provenance, $draft ) ) {
+					// Heal is load-bearing for history's Generated-alt column.
+					// Surface the gap so the operator can retry (HAI-13 / INT-11).
+					$data['alt_text_write'] = array(
+						'status'               => AltTextWriteStatus::PARTIAL,
+						'reason'               => AltTextWriteStatus::REASON_PROVENANCE_WRITE_FAILED,
+						'existing_alt_present' => true,
+					);
+					$response->set_data( $data );
+					return $response;
+				}
+				$data['alt_text_write'] = array(
+					'status'               => AltTextWriteStatus::SKIPPED_EXISTING_ALT,
+					'existing_alt_present' => true,
+				);
+				$response->set_data( $data );
+				return $response;
+			}
+			// Fall through: provenance gap heal (partial retry without --force).
 		}
 
 		// BR-104: agree with CLI (`skipped_empty_alt_text`) and bulk
@@ -333,7 +367,6 @@ class DescribeMediaService {
 			return $response;
 		}
 
-		$existing_provenance = get_post_meta( $media_id, self::PROVENANCE_META_KEY, true );
 		if (
 			$force
 			&& $draft === $existing_alt
@@ -343,7 +376,18 @@ class DescribeMediaService {
 			// Identity keys stay put; heal alt_text_draft when missing/stale so
 			// the audit trail matches the confirmed draft (BR-108 / RLSE-05).
 			// Do not re-stamp generated_at or rewrite the whole envelope.
-			$this->heal_provenance_alt_text_draft( $media_id, $existing_provenance, $draft );
+			if ( ! $this->heal_provenance_alt_text_draft( $media_id, $existing_provenance, $draft ) ) {
+				// R17-BR-03: a silent heal failure leaves history wrong while the
+				// caller claims success. Partial + provenance reason is the honest
+				// wire status (alt intact; audit trail not).
+				$data['alt_text_write'] = array(
+					'status'               => AltTextWriteStatus::PARTIAL,
+					'reason'               => AltTextWriteStatus::REASON_PROVENANCE_WRITE_FAILED,
+					'existing_alt_present' => true,
+				);
+				$response->set_data( $data );
+				return $response;
+			}
 			$data['alt_text_write'] = array(
 				'status'               => AltTextWriteStatus::FORCED_OVERWRITE,
 				'existing_alt_present' => true,
@@ -434,22 +478,44 @@ class DescribeMediaService {
 	 * their no-op — so identity matching stays draft-free and this heal closes
 	 * the gap without rewriting generated_at or other identity fields.
 	 *
+	 * R17-BR-03: verify the heal landed (read-back). Callers on a success path
+	 * must treat false as a provenance gap — typically
+	 * {@see AltTextWriteStatus::PARTIAL} +
+	 * {@see AltTextWriteStatus::REASON_PROVENANCE_WRITE_FAILED} — not silent
+	 * success. Non-array provenance is a no-op success here; the full write
+	 * path stamps a new envelope instead.
+	 *
 	 * @param mixed  $existing_provenance Stored `_acx_description_provenance`.
 	 * @param string $draft               Incoming normalized draft (non-empty).
+	 * @return bool True when the stored envelope already had the draft or the
+	 *              heal persisted as submitted; false when the write did not.
 	 */
-	private function heal_provenance_alt_text_draft( int $media_id, mixed $existing_provenance, string $draft ): void {
+	private function heal_provenance_alt_text_draft( int $media_id, mixed $existing_provenance, string $draft ): bool {
 		if ( ! is_array( $existing_provenance ) ) {
-			return;
+			return true;
 		}
 
 		$stored = $existing_provenance['alt_text_draft'] ?? null;
 		if ( is_string( $stored ) && $stored === $draft ) {
-			return;
+			return true;
 		}
 
-		$healed                    = $existing_provenance;
-		$healed['alt_text_draft']  = $draft;
-		update_post_meta( $media_id, self::PROVENANCE_META_KEY, $healed );
+		$healed                   = $existing_provenance;
+		$healed['alt_text_draft'] = $draft;
+		// update_metadata unslashes before store — compare the post-unslash form.
+		$expected     = wp_unslash( $healed );
+		$prov_written = update_post_meta( $media_id, self::PROVENANCE_META_KEY, $healed );
+		if ( false === $prov_written ) {
+			$current = get_post_meta( $media_id, self::PROVENANCE_META_KEY, true );
+			if ( is_array( $current ) && $expected === $current ) {
+				return true;
+			}
+			return false;
+		}
+
+		// Write returned non-false — still confirm the audit trail matches.
+		$current = get_post_meta( $media_id, self::PROVENANCE_META_KEY, true );
+		return is_array( $current ) && $expected === $current;
 	}
 
 	/**
@@ -490,10 +556,13 @@ class DescribeMediaService {
 			return DescriptionWriteStatus::SKIPPED_EXISTING_DESCRIPTION;
 		}
 
-		// BR-03: honor wp_update_post() — returns 0 or WP_Error on failure.
-		// Do not claim written/forced_overwrite when the body did not persist.
-		// A no-op re-write of identical content still returns the post ID in
-		// core when the post row is touched; only a hard failure is falsey here.
+		// BR-03 / R16-BR-14: honor wp_update_post() — returns 0 or WP_Error on
+		// hard failure, but a non-falsey return is not proof the body persisted
+		// as submitted. wp_insert_post applies wp_insert_post_data (and KSES /
+		// content_save_pre for users without unfiltered_html) before the row is
+		// written, then returns the post ID even when filters emptied or altered
+		// post_content. Read back and refuse written/forced_overwrite unless the
+		// stored body matches what we submitted (after the unslash core applies).
 		$updated = wp_update_post(
 			array(
 				'ID'           => $media_id,
@@ -502,6 +571,15 @@ class DescribeMediaService {
 			true
 		);
 		if ( is_wp_error( $updated ) || 0 === $updated || false === $updated ) {
+			return DescriptionWriteStatus::FAILED;
+		}
+
+		$after            = get_post( $media_id );
+		$stored_content   = is_object( $after ) && is_string( $after->post_content ?? null )
+			? $after->post_content
+			: '';
+		$expected_content = wp_unslash( $long );
+		if ( $expected_content !== $stored_content ) {
 			return DescriptionWriteStatus::FAILED;
 		}
 

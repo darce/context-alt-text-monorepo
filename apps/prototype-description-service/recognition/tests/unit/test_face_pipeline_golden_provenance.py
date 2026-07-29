@@ -15,15 +15,12 @@ import sys
 from pathlib import Path
 
 import cv2
-import pytest
 
 from recognition.config import settings as settings_mod
 
 _SERVICE_ROOT = Path(__file__).resolve().parents[3]
 _FIXTURE_DIR = _SERVICE_ROOT / "recognition" / "tests" / "fixtures" / "face_pipeline"
-_REGENERATE_CMD = (
-    "uv run python recognition/tests/fixtures/face_pipeline/generate_goldens.py"
-)
+_REGENERATE_CMD = "uv run python recognition/tests/fixtures/face_pipeline/generate_goldens.py"
 
 _PROVENANCE_KEYS = ("opencv_version", "numpy_version", "generator")
 _GOLDEN_METAS = (
@@ -54,9 +51,7 @@ def test_golden_metas_carry_toolchain_provenance() -> None:
         for key in _PROVENANCE_KEYS:
             assert key in meta, f"{name} missing provenance key {key!r}"
             value = meta[key]
-            assert isinstance(value, str) and value.strip(), (
-                f"{name}.{key} must be a non-empty string, got {value!r}"
-            )
+            assert isinstance(value, str) and value.strip(), f"{name}.{key} must be a non-empty string, got {value!r}"
 
 
 def test_golden_opencv_major_matches_runtime() -> None:
@@ -103,8 +98,15 @@ def test_no_conflicting_cv2_distributions() -> None:
     ``--extra bench`` when both are present at different versions.
     """
     dists = _opencv_python_distributions()
-    if not dists:
-        pytest.skip("no opencv-python* distribution installed")
+    # Not a skip. opencv-python is a hard dependency; finding zero of them means
+    # cv2 arrived from somewhere this guard cannot see, which is the failure mode,
+    # not an excuse to stand down. A skip here would reproduce the remote-gate
+    # greenwash exactly: green output, nothing checked.
+    assert dists, (
+        "no opencv-python* distribution found via importlib.metadata, yet "
+        f"cv2 imports as {cv2.__version__!r} — the pin in pyproject.toml is not "
+        "what this environment is running"
+    )
     versions = {version for _name, version in dists}
     assert len(versions) == 1, (
         "conflicting opencv-python* distributions share top-level cv2/ and "

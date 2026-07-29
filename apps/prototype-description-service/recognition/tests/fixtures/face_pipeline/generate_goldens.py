@@ -398,10 +398,13 @@ def write_detector_goldens() -> dict:
             # Absolute distance to drawn feature center (YuNet offset on soft blob).
             "landmark_nearest_px": 50.0,
             "derivation": (
-                "N=50 identical-input OpenCVYuNetDetector runs (OpenCV 5.0.0): "
-                "max run-to-run and vs-golden abs were 0.0 for bbox/landmarks/score. "
-                "Noise floor=0; tolerances are 10× float32 ULP at coordinate scale "
-                "(5e-4 px, 1e-5 score). Prior decorative budgets were 2.0 px / 0.02."
+                "N=50 identical-input OpenCVYuNetDetector runs (OpenCV 5.0.0, 2026-07-29): "
+                "max run-to-run and vs-golden abs were 0.0 for bbox_px, landmarks_px, and "
+                "score (bit-exact). Noise floor = 0. Tolerance = 10 × float32 ULP at "
+                "coordinate scale ~300 px ≈ 10*(300*2^-23) ≈ 3.6e-4, rounded to 5e-4 px "
+                "for bbox/landmarks; score = 10 × float32 ULP at ~1.0 ≈ 1.2e-6, rounded "
+                "to 1e-5. ~4000× tighter than the prior decorative 2.0 px / 0.02; a "
+                "1.9 px landmark shift fails."
             ),
         },
         "procedure": procedure,

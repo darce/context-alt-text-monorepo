@@ -115,11 +115,12 @@ class MediaIdentitiesController extends AbstractRecognitionProxyController {
 		if ( $this->is_backend_overloaded( $response ) ) {
 			return parent::backend_overloaded_response( $response );
 		}
+		// Refused 3xx: backend is reachable; report ENDPOINT_ERROR not UNAVAILABLE.
+		if ( $this->is_proxy_redirect_refused( $response ) || $this->is_proxy_endpoint_error( $response ) ) {
+			return $this->degraded_media_identities_response( self::DATA_SOURCE_ENDPOINT_ERROR );
+		}
 		if ( $this->is_proxy_transport_unreachable( $response ) ) {
 			return $this->degraded_media_identities_response( self::DATA_SOURCE_UNAVAILABLE );
-		}
-		if ( $this->is_proxy_endpoint_error( $response ) ) {
-			return $this->degraded_media_identities_response( self::DATA_SOURCE_ENDPOINT_ERROR );
 		}
 
 		if ( $response instanceof WP_REST_Response && 200 === $response->get_status() ) {

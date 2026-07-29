@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Api\RecognitionEndpointResolver;
+use AltContext\Support\LoopbackHost;
 use AltContext\Tests\TestCase;
 
 /**
@@ -28,6 +29,51 @@ class RecognitionEndpointResolverTest extends TestCase
         $this->assertSame('default', $snapshot['recognition_source_source']);
         $this->assertSame('service', $snapshot['effective_target_mode']);
         $this->assertSame('', $snapshot['effective_target_url']);
+    }
+
+    /**
+     * BR-139: shared LoopbackHost predicate — pin the full matrix, not one host.
+     * Goes RED if the allowlist is widened (private IP / docker name / suffix)
+     * or if bracket stripping for [::1] regresses.
+     *
+     * @dataProvider loopbackHostMatrixProvider
+     */
+    public function testLoopbackHostMatrix(string $host, bool $expected): void
+    {
+        require_once dirname(__DIR__, 2) . '/src/support/class-loopback-host.php';
+
+        $this->assertSame(
+            $expected,
+            LoopbackHost::is_loopback($host),
+            'LoopbackHost::is_loopback mismatch for host: ' . $host
+        );
+    }
+
+    /**
+     * @return array<string, array{0: string, 1: bool}>
+     */
+    public static function loopbackHostMatrixProvider(): array
+    {
+        return [
+            'accepts_localhost' => ['localhost', true],
+            'accepts_127_0_0_1' => ['127.0.0.1', true],
+            'accepts_ipv6_loopback' => ['::1', true],
+            'accepts_bracketed_ipv6_loopback' => ['[::1]', true],
+            'rejects_private_ip' => ['10.0.0.5', false],
+            'rejects_docker_service_name' => ['recognition', false],
+            'rejects_localhost_suffix' => ['localhost.attacker.invalid', false],
+            'rejects_loopback_dotted_suffix' => ['127.0.0.1.attacker.invalid', false],
+            // Adversarial near-loopback forms from the oracle corpus — hardcoded
+            // reject expectations so widening LoopbackHost::is_loopback goes red
+            // even when the transport consistency pin moves with the predicate.
+            'rejects_unspecified_ipv4' => ['0.0.0.0', false],
+            'rejects_short_loopback_form' => ['127.1', false],
+            'rejects_ipv4_mapped_loopback' => ['[::ffff:127.0.0.1]', false],
+            'rejects_dword_loopback' => ['2130706433', false],
+            'rejects_localhost_trailing_dot' => ['localhost.', false],
+            'rejects_loopback_trailing_dot' => ['127.0.0.1.', false],
+            'rejects_localhost_evil_suffix' => ['localhost.evil.test', false],
+        ];
     }
 
     public function testServiceModeUsesStoredServiceUrl(): void

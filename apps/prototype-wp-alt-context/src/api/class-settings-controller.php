@@ -10,9 +10,13 @@ require_once __DIR__ . '/class-recognition-endpoint-resolver.php';
 require_once __DIR__ . '/class-tenant-identity.php';
 require_once __DIR__ . '/services/class-description-budget-service.php';
 require_once __DIR__ . '/services/class-tenant-local-rekey-service.php';
+require_once __DIR__ . '/../support/class-loopback-host.php';
+require_once __DIR__ . '/../support/class-recognition-transport.php';
 
 use AltContext\Api\Services\DescriptionBudgetService;
 use AltContext\Api\Services\TenantLocalRekeyService;
+use AltContext\Support\LoopbackHost;
+use AltContext\Support\RecognitionTransport;
 
 use WP_Error;
 use WP_REST_Request;
@@ -32,19 +36,15 @@ use function json_decode;
 use function parse_url;
 use function register_rest_route;
 use function rtrim;
-use function str_ends_with;
-use function str_starts_with;
 use function stripos;
 use function strtolower;
 use function substr;
 use function trim;
 use function update_option;
 use function wp_is_uuid;
-use function wp_remote_get;
 use function wp_remote_retrieve_body;
 use function wp_remote_retrieve_headers;
 use function wp_remote_retrieve_response_code;
-use function wp_safe_remote_get;
 
 /**
  * REST controller for recognition API configuration.
@@ -240,10 +240,9 @@ class SettingsController {
 		}
 
 		$health_url = rtrim( $url, '/' ) . '/health/detailed';
-		// BR-131: prefer wp_safe_remote_get (rejects unsafe redirects / private
-		// destinations) for non-loopback targets. Loopback keeps wp_remote_get so
-		// LocalWP → localhost:8000 health probes still work.
-		$response = $this->recognition_http_get(
+		// BR-131/BR-137: RecognitionTransport chooses safe vs loopback transport
+		// and forces redirection => 0 so X-API-Key cannot walk on 3xx.
+		$response = RecognitionTransport::get(
 			$health_url,
 			array(
 				'headers' => $headers,
@@ -294,7 +293,7 @@ class SettingsController {
 		if ( $adopted && ProbeOutcome::TENANT_MISMATCH === $probe_outcome ) {
 			$reprobe_headers                = $headers;
 			$reprobe_headers['X-Tenant-ID'] = TenantIdentity::resolve()['value'];
-			$reprobe_response = $this->recognition_http_get(
+			$reprobe_response = RecognitionTransport::get(
 				$health_url,
 				array(
 					'headers' => $reprobe_headers,
@@ -317,7 +316,7 @@ class SettingsController {
 	 */
 	private function attempt_tenant_pairing( string $base_url, array $headers, bool $confirm_pairing ): array {
 		$whoami_url = rtrim( $base_url, '/' ) . '/recognition/tenant/whoami';
-		$response   = $this->recognition_http_get(
+		$response   = RecognitionTransport::get(
 			$whoami_url,
 			array(
 				'headers' => $headers,
@@ -615,31 +614,6 @@ class SettingsController {
 			return true;
 		}
 
-		return 'http' === $scheme && $this->is_loopback_host( $host );
-	}
-
-	private function is_loopback_host( string $host ): bool {
-		if ( str_starts_with( $host, '[' ) && str_ends_with( $host, ']' ) ) {
-			$host = substr( $host, 1, -1 );
-		}
-
-		return in_array( $host, array( 'localhost', '127.0.0.1', '::1' ), true );
-	}
-
-	/**
-	 * BR-131: outbound recognition probe transport. Non-loopback targets use
-	 * wp_safe_remote_get (reject unsafe URLs/redirects). Loopback development
-	 * paths keep wp_remote_get so localhost:8000 remains reachable.
-	 *
-	 * @param array<string,mixed> $args
-	 * @return array<string,mixed>|WP_Error
-	 */
-	private function recognition_http_get( string $url, array $args ) {
-		$host = strtolower( (string) ( parse_url( $url, PHP_URL_HOST ) ?? '' ) );
-		if ( $this->is_loopback_host( $host ) ) {
-			return wp_remote_get( $url, $args );
-		}
-
-		return wp_safe_remote_get( $url, $args );
+		return 'http' === $scheme && LoopbackHost::is_loopback( $host );
 	}
 }

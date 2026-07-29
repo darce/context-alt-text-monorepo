@@ -158,6 +158,65 @@ class SuggestionsControllerTest extends TestCase
         $this->assertSame('unavailable', $data['data_source'] ?? null);
     }
 
+    /**
+     * R4G-BR-09: refused 3xx is endpoint_error, not unavailable.
+     */
+    public function testGetIdentitiesSuggestionsReturnsEndpointErrorOnUnexpectedRedirect(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 302, 'message' => 'Found'],
+            'headers' => ['Location' => 'https://attacker.example/collect'],
+            'body' => '',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/identities/suggestions');
+        $request->set_param('identity_ids', 'aaaaaaaa-bbbb-cccc-dddd-000000000001');
+
+        $response = $this->controller->get_identities_suggestions($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+        $this->assertEquals(new \stdClass(), $data['matches'] ?? null);
+        $this->assertSame(
+            'endpoint_error',
+            $data['data_source'] ?? null,
+            'refused 3xx must not be laundered as unavailable'
+        );
+    }
+
+    /**
+     * R6L-BR-01: singular get_identity_suggestions must classify refused 3xx as
+     * endpoint_error. List envelope — matches is [], not {}. Mirrors the plural
+     * pin above. Goes red if is_proxy_redirect_refused is dropped from the
+     * singular branch (~:240): the WP_Error then matches no branch and falls
+     * through as a raw 502 recognition_unexpected_redirect.
+     */
+    public function testGetIdentitySuggestionsReturnsEndpointErrorOnUnexpectedRedirect(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 302, 'message' => 'Found'],
+            'headers' => ['Location' => 'https://attacker.example/collect'],
+            'body' => '',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/identities/abc123/suggestions');
+        $request->set_param('identity_id', 'abc123');
+
+        $response = $this->controller->get_identity_suggestions($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+        // List envelope for a single identity: empty matches is [], not {}.
+        $this->assertSame([], $data['matches'] ?? null);
+        $this->assertSame(
+            'endpoint_error',
+            $data['data_source'] ?? null,
+            'refused 3xx on singular identity suggestions must not fall through to raw 502'
+        );
+    }
+
     public function testGetIdentitiesSuggestionsReturnsEndpointErrorWhenBackendReturns5xx(): void
     {
         $this->queueHttpResponse([
@@ -255,6 +314,35 @@ class SuggestionsControllerTest extends TestCase
         $this->assertSame('unavailable', $data['data_source'] ?? null);
     }
 
+    /**
+     * R5G-BR-01 / R4G-BR-09: refused 3xx on pending is endpoint_error, not unavailable.
+     * Pins the is_proxy_redirect_refused branch so a reorder that drops it goes red.
+     */
+    public function testGetPendingSuggestionsReturnsEndpointErrorOnUnexpectedRedirect(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 302, 'message' => 'Found'],
+            'headers' => ['Location' => 'https://attacker.example/collect'],
+            'body' => '',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/suggestions');
+        $request->set_param('limit', 25);
+        $request->set_param('offset', 0);
+
+        $response = $this->controller->get_pending_suggestions($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+        $this->assertSame([], $data['suggestions'] ?? null);
+        $this->assertSame(
+            'endpoint_error',
+            $data['data_source'] ?? null,
+            'refused 3xx on pending must not be laundered as unavailable'
+        );
+    }
+
     public function testGetPendingSuggestionsReturnsEndpointErrorPayloadWhenBackendFails(): void
     {
         $this->queueHttpResponse([
@@ -332,6 +420,34 @@ class SuggestionsControllerTest extends TestCase
         $this->assertSame(10, $data['limit'] ?? null);
         $this->assertSame(0, $data['offset'] ?? null);
         $this->assertSame('unavailable', $data['data_source'] ?? null);
+    }
+
+    /**
+     * R5G-BR-01 / R4G-BR-09: refused 3xx on merge-pending is endpoint_error, not unavailable.
+     */
+    public function testGetPendingMergeSuggestionsReturnsEndpointErrorOnUnexpectedRedirect(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 302, 'message' => 'Found'],
+            'headers' => ['Location' => 'https://attacker.example/collect'],
+            'body' => '',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/suggestions/merge');
+        $request->set_param('limit', 10);
+        $request->set_param('offset', 0);
+
+        $response = $this->controller->get_pending_merge_suggestions($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+        $this->assertSame([], $data['suggestions'] ?? null);
+        $this->assertSame(
+            'endpoint_error',
+            $data['data_source'] ?? null,
+            'refused 3xx on merge-pending must not be laundered as unavailable'
+        );
     }
 
     public function testGetPendingSuggestionsAnnotatesBackendProxyEnvelope(): void
@@ -566,6 +682,36 @@ class SuggestionsControllerTest extends TestCase
         $this->assertSame('unavailable', $data['data_source'] ?? null);
     }
 
+    /**
+     * R5G-BR-01: refused 3xx on name path is endpoint_error, not unavailable.
+     * Production previously used coarse is_proxy_unavailable() which laundered
+     * recognition_unexpected_redirect as DATA_SOURCE_UNAVAILABLE.
+     */
+    public function testListNameSuggestionsReturnsEndpointErrorOnUnexpectedRedirect(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 302, 'message' => 'Found'],
+            'headers' => ['Location' => 'https://attacker.example/collect'],
+            'body' => '',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/suggestions/name');
+        $request->set_param('limit', 25);
+        $request->set_param('offset', 0);
+
+        $response = $this->controller->list_name_suggestions($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+        $this->assertSame([], $data['suggestions'] ?? null);
+        $this->assertSame(
+            'endpoint_error',
+            $data['data_source'] ?? null,
+            'refused 3xx on name path must not be laundered as unavailable'
+        );
+    }
+
     public function testListNameSuggestionsAnnotatesBackendProxyArrayResponse(): void
     {
         $this->queueHttpResponse([
@@ -693,5 +839,34 @@ class SuggestionsControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertSame(0, $data['accepted_count'] ?? null);
         $this->assertSame(0, $data['skipped_count'] ?? null);
+    }
+
+    /**
+     * R5G-BR-01 / R4G-BR-09: refused 3xx on bulk-accept is endpoint_error, not unavailable.
+     */
+    public function testBulkAcceptSuggestionsReturnsEndpointErrorOnUnexpectedRedirect(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 302, 'message' => 'Found'],
+            'headers' => ['Location' => 'https://attacker.example/collect'],
+            'body' => '',
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/suggestions/bulk-accept');
+        $request->set_param('suggestion_type', 'name');
+        $request->set_param('min_confidence', 0.6);
+
+        $response = $this->controller->bulk_accept_suggestions($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+        $this->assertSame(0, $data['accepted_count'] ?? null);
+        $this->assertSame(0, $data['skipped_count'] ?? null);
+        $this->assertSame(
+            'endpoint_error',
+            $data['data_source'] ?? null,
+            'refused 3xx on bulk-accept must not be laundered as unavailable'
+        );
     }
 }

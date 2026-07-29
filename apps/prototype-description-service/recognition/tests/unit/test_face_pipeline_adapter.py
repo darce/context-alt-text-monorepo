@@ -246,13 +246,18 @@ def test_xywh_to_corner_conversion() -> None:
 
 
 def test_sface_manifest_model_id_exact() -> None:
+    from recognition.infrastructure.face_pipeline.provenance import numeric_runtime_fingerprint
+
     manifest = fpa.sface_embedding_model_manifest()
     assert isinstance(manifest, EmbeddingModelManifest)
-    assert manifest.model_id == "opencv-sface@128d/l2/cosine"
+    space = numeric_runtime_fingerprint().space_token
+    assert manifest.model_id == f"opencv-sface+{space}@128d/l2/cosine"
     assert manifest.dimensions == 128
     assert manifest.framework == MODEL_MANIFEST["sface"].framework
     assert manifest.normalization == "l2"
     assert manifest.metric == "cosine"
+    # Space token folds OpenCV major + onnxruntime (CVUP1-LC-02 / HARM-02).
+    assert "cv" in space and "ort" in space
 
 
 def test_three_way_dim_guard_raises_on_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:

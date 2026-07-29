@@ -287,6 +287,98 @@ def verify_face_pipeline_models(*, models_dir: Path | None = None) -> dict[str, 
     }
 
 
+# ---------------------------------------------------------------------------
+# Numeric-relevant runtime fingerprint (CVUP-1 / HARM-01 / HARM-02)
+#
+# Canonical symbol for consumers (fir-7, fir-8, fir-9, fir23-stack):
+#   ``numeric_runtime_fingerprint``  →  NumericRuntimeFingerprint
+#
+# Not named cv_runtime_version: the stamp covers OpenCV + onnxruntime + numpy
+# (all three move embedding / clustering comparability on this upgrade).
+# OpenCV major + onnxruntime version are also folded into the SFace model_id
+# space identity so 4.x/5.x and ORT 1.22/1.28 cannot share a space string.
+# ---------------------------------------------------------------------------
+
+
+def _opencv_version() -> str:
+    """Live OpenCV version string (lazy import; never hardcode)."""
+    import cv2
+
+    return str(cv2.__version__)
+
+
+def _onnxruntime_version() -> str:
+    """Live onnxruntime version string (lazy import; never hardcode)."""
+    import onnxruntime
+
+    return str(onnxruntime.__version__)
+
+
+def _numpy_version() -> str:
+    """Live numpy version string (lazy import; never hardcode)."""
+    import numpy
+
+    return str(numpy.__version__)
+
+
+@dataclass(frozen=True, slots=True)
+class NumericRuntimeFingerprint:
+    """Installed-package fingerprint for numeric-relevant face-pipeline runtimes.
+
+    Field coverage (minimum HARM-01/HARM-02 surface):
+    - opencv_version / opencv_major — warpAffine + cv2 surface
+    - onnxruntime_version — YuNet + SFace inference runtime
+    - numpy_version — array math under both adapters and clustering
+    """
+
+    opencv_version: str
+    opencv_major: int
+    onnxruntime_version: str
+    numpy_version: str
+
+    @property
+    def space_token(self) -> str:
+        """Compact embedding-space token: OpenCV major + onnxruntime version.
+
+        Folded into SFace ``model_id`` so either component alone changes the
+        space identity. Numpy is recorded on the fingerprint for consumers but
+        is not part of the space token (array ABI drift is rarer and noisier
+        as a space key than the two inference runtimes).
+        """
+        return f"cv{self.opencv_major}/ort{self.onnxruntime_version}"
+
+    @property
+    def compact(self) -> str:
+        """Single-line form for logs / operator surfaces (all fields)."""
+        return (
+            f"opencv={self.opencv_version};"
+            f"opencv_major={self.opencv_major};"
+            f"onnxruntime={self.onnxruntime_version};"
+            f"numpy={self.numpy_version}"
+        )
+
+
+def numeric_runtime_fingerprint() -> NumericRuntimeFingerprint:
+    """Return the live numeric-relevant runtime fingerprint (never hardcoded).
+
+    Canonical accessor for HARM-01 consumers. Read versions from the installed
+    packages at call time so monkeypatching ``_opencv_version`` /
+    ``_onnxruntime_version`` / ``_numpy_version`` in tests is sufficient.
+    """
+    opencv_version = _opencv_version()
+    major_token = opencv_version.split(".", 1)[0]
+    try:
+        opencv_major = int(major_token)
+    except ValueError as exc:
+        raise RuntimeError(f"unparseable OpenCV major from version {opencv_version!r}") from exc
+    return NumericRuntimeFingerprint(
+        opencv_version=opencv_version,
+        opencv_major=opencv_major,
+        onnxruntime_version=_onnxruntime_version(),
+        numpy_version=_numpy_version(),
+    )
+
+
 __all__ = [
     "DEFAULT_MODELS_DIR",
     "LICENSE_SOURCE_URLS",
@@ -295,9 +387,11 @@ __all__ = [
     "ModelMissingError",
     "ModelProvenance",
     "ModelVerifyOutcome",
+    "NumericRuntimeFingerprint",
     "OPENCV_ZOO_COMMIT",
     "PENDING_OPERATOR_FETCH",
     "load_verified_model",
+    "numeric_runtime_fingerprint",
     "verify_face_pipeline_model",
     "verify_face_pipeline_models",
 ]

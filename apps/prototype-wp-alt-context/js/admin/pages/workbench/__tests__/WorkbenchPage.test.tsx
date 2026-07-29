@@ -62,6 +62,7 @@ window.HTMLElement.prototype.scrollIntoView = vi.fn();
 // Mock AltContextAdmin config
 (window as unknown as { AltContextAdmin: object }).AltContextAdmin = {
   nonce: 'test-nonce',
+  ajaxUrl: '/wp-admin/admin-ajax.php',
   endpoints: {
     recognition: 'http://localhost:8000',
     recognitionClusters: 'http://localhost:8000/clusters',
@@ -409,6 +410,7 @@ describe('WorkbenchPage', () => {
     setupScanMutation('success');
     window.AltContextAdmin = {
       nonce: 'test-nonce',
+      ajaxUrl: '/wp-admin/admin-ajax.php',
       endpoints: {
         recognition: 'http://localhost:8000',
         recognitionClusters: 'http://localhost:8000/clusters',

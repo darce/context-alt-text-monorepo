@@ -27,6 +27,10 @@ class MediaIdentity:
     pose_yaw: float | None = None
     pose_roll: float | None = None
     image_phash: str | None = None
+    # FIR-6 S1 quality factors (NULL under insightface; set by face_pipeline scan)
+    sharpness: float | None = None
+    embedding_norm: float | None = None
+    occlusion_severity: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     cluster_id: str | None = None
     moved_by_merge_id: str | None = None

@@ -5,7 +5,7 @@ import json
 import pytest
 
 from scripts.eval_harness.corpus_inventory import ImageRecord, write_records
-from scripts.eval_harness.manifest import Domain
+from scripts.eval_harness.manifest import Domain, GoldenEntry, SliceTag
 from scripts.eval_harness.strata import (
     CROWD_MIN_FACES,
     MIN_CORPUS_EDGE_PX,
@@ -18,6 +18,7 @@ from scripts.eval_harness.strata import (
     _main,
     build_report,
     celeb_label,
+    entries_with_slice_tag,
     face_count_of,
     is_eligible,
     is_public_figure_root,
@@ -480,3 +481,34 @@ def test_cli_rejects_an_unknown_source(tmp_path):
 def test_cli_rejects_a_malformed_inventory_arg(tmp_path):
     with pytest.raises(SystemExit):
         _main(["--inventory", "celebs01", "--out", str(tmp_path / "o.json")])
+
+
+# --- FIR-5 S1: SliceTag selection helper ------------------------------------
+
+
+def _golden_entry(path: str, tags: list[SliceTag] | None = None) -> GoldenEntry:
+    return GoldenEntry(
+        path=path,
+        sha256="a" * 64,
+        media_id=1,
+        face_count=0,
+        present_identities=[],
+        base_caption="",
+        must_right=[],
+        easy_wrong=[],
+        policy={"recognition_enabled": True},
+        tags=list(tags or []),
+    )
+
+
+def test_entries_with_slice_tag_returns_only_matching():
+    """Filter returns EXACTLY entries carrying the tag; untagged rows excluded."""
+    masked = _golden_entry("a.jpg", [SliceTag.MASKED])
+    multi = _golden_entry("b.jpg", [SliceTag.MASKED, SliceTag.BLUR])
+    other = _golden_entry("c.jpg", [SliceTag.SUNGLASSES])  # discrimination: not masked
+    bare = _golden_entry("d.jpg", [])  # discrimination: no tags
+    hits = entries_with_slice_tag([masked, multi, other, bare], SliceTag.MASKED)
+    assert hits == [masked, multi]
+    assert other not in hits and bare not in hits
+    # Wrong-filter red path: sunglasses must not pull masked-only entries.
+    assert entries_with_slice_tag([masked, multi, other, bare], SliceTag.SUNGLASSES) == [other]

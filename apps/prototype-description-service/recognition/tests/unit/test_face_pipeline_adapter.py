@@ -33,6 +33,7 @@ from recognition.application.embedding.detector import (
 from recognition.application.embedding.generator import UnavailableEmbeddingGenerator
 from recognition.application.embedding.manifest import EmbeddingModelManifest
 from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
+from recognition.infrastructure.face_pipeline._common import EmbedBatchResult
 from recognition.infrastructure.face_pipeline._common import RawDetection, ZeroNormEmbeddingError
 from recognition.infrastructure.face_pipeline.aligner import AlignmentError
 from recognition.infrastructure.face_pipeline.provenance import (
@@ -78,6 +79,14 @@ def _clear_settings_caches() -> None:
     get_database_settings.cache_clear()
 
 
+def _rereload_settings_modules() -> None:
+    """One more reload after the test so sibling files see a consistent final state."""
+    import recognition.config.settings as settings_module
+
+    importlib.reload(settings_module)
+    _clear_settings_caches()
+
+
 def _align_dims_to_sface(monkeypatch: pytest.MonkeyPatch) -> None:
     """Three-way guard needs manifest==pgvector==identity_detection (all 128)."""
     monkeypatch.setenv("RECOGNITION_EMBEDDING_DIMENSION", str(SFACE_EMBEDDING_DIM))
@@ -104,7 +113,7 @@ def _mock_runtime(monkeypatch: pytest.MonkeyPatch) -> fpa.FacePipelineRuntime:
 def _restore_settings_caches_after_test() -> None:
     """Avoid leaking RECOGNITION_EMBEDDING_DIMENSION / PGVECTOR_DIM into sibling modules."""
     yield
-    _clear_settings_caches()
+    _rereload_settings_modules()
     fpa.reset_shared_face_pipeline_runtime_for_tests()
 
 
@@ -390,7 +399,7 @@ async def test_detect_populates_phash_and_quality(monkeypatch: pytest.MonkeyPatc
     runtime.aligner.align.return_value = aligned  # type: ignore[attr-defined]
     emb = np.ones(SFACE_EMBEDDING_DIM, dtype=np.float32)
     emb /= float(np.linalg.norm(emb))
-    runtime.embedder.embed.return_value = [emb]  # type: ignore[attr-defined]
+    runtime.embedder.embed.return_value = EmbedBatchResult(vectors=np.stack([emb], axis=0), norms=np.array([2.5], dtype=np.float32))  # type: ignore[attr-defined]
 
     det = fpa.FacePipelineFaceDetector(runtime, timeout=5.0)
     img = Image.new("RGB", (64, 64), color=(12, 34, 56))
@@ -1388,7 +1397,7 @@ async def test_per_face_align_failure_keeps_sibling(monkeypatch: pytest.MonkeyPa
     runtime.aligner.align.side_effect = _align  # type: ignore[attr-defined]
     emb = np.ones(SFACE_EMBEDDING_DIM, dtype=np.float32)
     emb /= float(np.linalg.norm(emb))
-    runtime.embedder.embed.return_value = [emb]  # type: ignore[attr-defined]
+    runtime.embedder.embed.return_value = EmbedBatchResult(vectors=np.stack([emb], axis=0), norms=np.array([2.5], dtype=np.float32))  # type: ignore[attr-defined]
 
     det = fpa.FacePipelineFaceDetector(runtime, timeout=5.0)
     faces = await det.detect([_png_bytes(Image.new("RGB", (128, 128), color=(10, 20, 30)))])
@@ -1492,9 +1501,19 @@ async def test_bytes_to_face_detection_e2e(monkeypatch: pytest.MonkeyPatch) -> N
         assert 0 <= x1 <= x2 <= w
         assert 0 <= y1 <= y2 <= h
         assert face.model_id == "opencv-sface@128d/l2/cosine"
+        # 5-point landmarks yield no pitch; yaw/roll are landmark proxies (FIR-4).
         assert face.pose_pitch is None
-        assert face.pose_yaw is None
-        assert face.pose_roll is None
+        assert face.pose_yaw is not None
+        assert face.pose_roll is not None
+        # Bound against the FIXTURE, not the formula: degrees(atan(...)) can
+        # never leave (-90, 90) and degrees(atan2(...)) can never leave
+        # (-180, 180], so range checks on those intervals are green by
+        # construction and certify nothing (TEST-06). This canvas is a frontal,
+        # upright synthetic face — measured yaw=-0.236°, roll=+0.105° — so a
+        # landmark-index swap, a sign flip, or a radians/degrees confusion in
+        # the proxy shows up as a violation of the ±2° envelope.
+        assert abs(face.pose_yaw) <= 2.0, f"frontal fixture yaw={face.pose_yaw}"
+        assert abs(face.pose_roll) <= 2.0, f"upright fixture roll={face.pose_roll}"
         # CR-01 models-present: phash + quality populated
         assert face.image_phash is not None
         assert face.landmark_quality is not None

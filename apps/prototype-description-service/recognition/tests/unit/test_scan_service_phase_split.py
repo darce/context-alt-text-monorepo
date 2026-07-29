@@ -135,12 +135,10 @@ async def test_process_scan_job_inline_uses_shared_three_phase_helper(
         detections = await detect()
         return await persist(detections)
 
-    import recognition.config as recognition_config
-    import recognition.infrastructure.embeddings.runtime_factory as runtime_factory
-
+    # String-form targets resolve via importlib.import_module → live sys.modules
+    # (not package attributes that can drift after del/reimport isolation tests).
     monkeypatch.setattr(
-        recognition_config,
-        "get_settings",
+        "recognition.config.get_settings",
         lambda: SimpleNamespace(runtime_mode="prod", face_pipeline=SimpleNamespace(profile="insightface")),
     )
     monkeypatch.setattr(scan_tasks, "set_tenant_context", AsyncMock())
@@ -150,7 +148,10 @@ async def test_process_scan_job_inline_uses_shared_three_phase_helper(
     async def _fake_build(*, settings, http_client=None, adapter_provider=None):
         return FakeDetector(), FakeGenerator(object())
 
-    monkeypatch.setattr(runtime_factory, "build_embedding_runtime", _fake_build)
+    monkeypatch.setattr(
+        "recognition.infrastructure.embeddings.runtime_factory.build_embedding_runtime",
+        _fake_build,
+    )
 
     async def fake_adapter_provider():
         return object()

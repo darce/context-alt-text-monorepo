@@ -68,6 +68,7 @@ describe('adminUrls (E21-9 Slice 6)', () => {
   it('rosterUrl uses localized adminUrls.roster when configured', () => {
     registerConfig({
       nonce: 'n',
+      ajaxUrl: '/wp-admin/admin-ajax.php',
       endpoints: {},
       adminUrls: {
         roster: '/wp-admin/admin.php?page=alt-context-roster&person=p1',

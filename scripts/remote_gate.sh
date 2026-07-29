@@ -265,7 +265,11 @@ run)
             echo 'remote-gate: systemd-run scope unavailable — falling back to nice/ionice only' >&2
         fi
         # Fail-closed repo preflight (GATE-BR-01). A workdir may declare a
-        # `gate-preflight` make target that asserts whatever its suite silently
+        # 'gate-preflight' make target that asserts whatever its suite silently
+        # (no backticks below this line: everything here is inside a
+        # double-quoted remote-command string, so a backtick pair would run
+        # locally at expansion time — the same hazard the extra_env validator
+        # rejects)
         # SKIPS over when absent (here: the gitignored face-pipeline ONNX
         # weights). A skip is not a pass, but an exit code cannot tell them
         # apart — this gate was green for months on a face pipeline it never

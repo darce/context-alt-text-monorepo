@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Api\ProbeOutcome;
+use AltContext\Api\RecognitionEndpointResolver;
 use AltContext\Api\SettingsController;
 use AltContext\Api\Services\DescriptionBudgetService;
 use AltContext\Api\TenantIdentity;
@@ -50,6 +51,13 @@ class SettingsControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertSame('', $data['url']);
         $this->assertSame('default', $data['url_source']);
+        // BR-138: genuinely unconfigured — rejection fields are present and null.
+        $this->assertArrayHasKey('url_rejection_reason', $data);
+        $this->assertArrayHasKey('url_rejection_source', $data);
+        $this->assertArrayHasKey('url_rejection_value', $data);
+        $this->assertNull($data['url_rejection_reason']);
+        $this->assertNull($data['url_rejection_source']);
+        $this->assertNull($data['url_rejection_value']);
         $this->assertSame('service', $data['recognition_source']);
         $this->assertSame('default', $data['recognition_source_source']);
         // RECOG-1: GET no longer emits local_url / local_url_source.
@@ -63,6 +71,82 @@ class SettingsControllerTest extends TestCase
         $this->assertSame(TenantIdentity::resolve()['value'], $data['tenant_id']);
         $this->assertSame('derived', $data['tenant_id_source']);
         $this->assertFalse($data['tenant_paired']);
+    }
+
+    /**
+     * BR-138: rejected option URL is exposed on the REST response (renamed
+     * service_url_rejection_* → url_rejection_*), not collapsed to unconfigured.
+     */
+    public function testGetSettingsExposesRejectedOptionUrl(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_recognition_url', 'http://10.0.0.5:8000');
+
+        $request = new WP_REST_Request('GET', '/acx/v1/settings');
+        $response = $this->controller->get_settings($request);
+
+        $data = $response->get_data();
+        $this->assertSame('', $data['url']);
+        $this->assertSame('default', $data['url_source']);
+        $this->assertSame('', $data['effective_target_url']);
+        $this->assertSame(
+            RecognitionEndpointResolver::URL_REJECTION_NON_LOOPBACK_HTTP,
+            $data['url_rejection_reason']
+        );
+        $this->assertSame('option', $data['url_rejection_source']);
+        $this->assertSame('http://10.0.0.5:8000', $data['url_rejection_value']);
+    }
+
+    /**
+     * BR-138: rejected filter URL surfaces with source=filter.
+     */
+    public function testGetSettingsExposesRejectedFilterUrl(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        add_filter(
+            'acx_recognition_base_url',
+            static fn (): string => 'http://recognition:8000'
+        );
+
+        $request = new WP_REST_Request('GET', '/acx/v1/settings');
+        $response = $this->controller->get_settings($request);
+
+        $data = $response->get_data();
+        $this->assertSame('', $data['url']);
+        $this->assertSame(
+            RecognitionEndpointResolver::URL_REJECTION_NON_LOOPBACK_HTTP,
+            $data['url_rejection_reason']
+        );
+        $this->assertSame('filter', $data['url_rejection_source']);
+        $this->assertSame('http://recognition:8000', $data['url_rejection_value']);
+    }
+
+    /**
+     * BR-138: rejected constant URL surfaces with source=constant.
+     *
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testGetSettingsExposesRejectedConstantUrl(): void
+    {
+        require_once __DIR__ . '/../bootstrap.php';
+        $this->resetGlobalState();
+
+        define('ACX_RECOGNITION_URL', 'http://host.docker.internal:8000');
+
+        $controller = new SettingsController();
+        $this->setUserCapability('manage_options', true);
+        $request = new WP_REST_Request('GET', '/acx/v1/settings');
+        $response = $controller->get_settings($request);
+
+        $data = $response->get_data();
+        $this->assertSame('', $data['url']);
+        $this->assertSame(
+            RecognitionEndpointResolver::URL_REJECTION_NON_LOOPBACK_HTTP,
+            $data['url_rejection_reason']
+        );
+        $this->assertSame('constant', $data['url_rejection_source']);
+        $this->assertSame('http://host.docker.internal:8000', $data['url_rejection_value']);
     }
 
     public function testGetSettingsReturnsOptionSourceWhenOptionSet(): void

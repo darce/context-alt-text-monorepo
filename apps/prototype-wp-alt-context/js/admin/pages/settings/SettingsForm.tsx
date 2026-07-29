@@ -1,7 +1,13 @@
 import React from 'react';
-import { __ } from '@wordpress/i18n';
+import { __, sprintf } from '@wordpress/i18n';
 
-import { RecognitionSource, type SettingsResponse, type TestConnectionResponse } from '../../api/settingsApi';
+import {
+  RecognitionSource,
+  UrlRejectionReason,
+  type SettingsResponse,
+  type TestConnectionResponse,
+  type UrlRejectionReasonValue,
+} from '../../api/settingsApi';
 import {
   HEALTH_STATUS_ICONS,
   HEALTH_STATUS_LABELS,
@@ -11,6 +17,48 @@ import {
   TenantPairing,
 } from './settingsConstants';
 import { healthStatusForService } from './healthStatus';
+
+const URL_REJECTION_REASON_LABELS: Record<UrlRejectionReasonValue, string> = {
+  [UrlRejectionReason.REJECTED_SCHEME]: __(
+    'scheme must be HTTPS (HTTP is allowed only for loopback development hosts)',
+    'alt-context',
+  ),
+  [UrlRejectionReason.NON_LOOPBACK_HTTP]: __(
+    'HTTP is only allowed for loopback development hosts (localhost, 127.0.0.1, ::1)',
+    'alt-context',
+  ),
+  [UrlRejectionReason.INVALID_URL]: __('the configured value is not a valid URL', 'alt-context'),
+};
+
+const urlRejectionStatusText = (data: SettingsResponse): string => {
+  const reason = data.url_rejection_reason;
+  const reasonLabel =
+    reason !== null
+      ? (URL_REJECTION_REASON_LABELS[reason] ?? reason)
+      : __('unknown reason', 'alt-context');
+  const sourceLabel =
+    data.url_rejection_source !== null
+      ? (SOURCE_LABELS[data.url_rejection_source] ?? data.url_rejection_source)
+      : __('unknown source', 'alt-context');
+  const rejectedValue = data.url_rejection_value ?? '';
+
+  if (rejectedValue !== '') {
+    return sprintf(
+      /* translators: %s placeholders: rejected URL, source label, rejection reason */
+      __('Rejected %s (%s): %s', 'alt-context'),
+      rejectedValue,
+      sourceLabel,
+      reasonLabel,
+    );
+  }
+
+  return sprintf(
+    /* translators: %s placeholders: source label, rejection reason */
+    __('Rejected (%s): %s', 'alt-context'),
+    sourceLabel,
+    reasonLabel,
+  );
+};
 
 interface SettingsFormProps {
   data: SettingsResponse;
@@ -144,7 +192,17 @@ export const SettingsForm = ({
           ? __('Local development service (developer hatch)', 'alt-context')
           : __('Hosted recognition service', 'alt-context')}
         {': '}
-        <code>{data.effective_target_url || __('not configured', 'alt-context')}</code>
+        {data.url_rejection_reason !== null ? (
+          <span
+            className="acx-settings__url-rejection"
+            data-testid="acx-url-rejection"
+            style={{ color: 'var(--acx-color-danger)' }}
+          >
+            {urlRejectionStatusText(data)}
+          </span>
+        ) : (
+          <code>{data.effective_target_url || __('not configured', 'alt-context')}</code>
+        )}
       </p>
 
       {devHatchActive ? (

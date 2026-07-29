@@ -110,6 +110,10 @@ class SettingsController {
 			array(
 				'url'                       => $snapshot['service_url'],
 				'url_source'                => $snapshot['service_url_source'],
+				// BR-138: service_url_rejection_* → url_rejection_* (same rename as url/url_source).
+				'url_rejection_reason'      => $snapshot['service_url_rejection_reason'],
+				'url_rejection_source'      => $snapshot['service_url_rejection_source'],
+				'url_rejection_value'       => $snapshot['service_url_rejection_value'],
 				'effective_target_url'      => $snapshot['effective_target_url'],
 				'effective_target_mode'     => $snapshot['effective_target_mode'],
 				'recognition_source'        => $snapshot['recognition_source'],

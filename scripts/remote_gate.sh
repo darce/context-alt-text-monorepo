@@ -8,6 +8,9 @@
 # `EXIT=<code> (<target>)` per target, then a final `DONE-ALL`; local exit is
 # nonzero if any target failed, 75 if the clone lock is busy, 74 if host-memory
 # admission deferred the run, 73 if the workdir's `gate-preflight` target failed.
+# Those numeric codes are the SCRIPT's exit status; `make check-remote` collapses
+# every failure to make's own exit 2, so read the code off the trailing
+# `make: *** [check-remote] Error <n>` line or invoke this script directly.
 # Only committed state is gated: HEAD is what runs remotely.
 #
 # Preflight: if the workdir's Makefile declares a `gate-preflight` target, it

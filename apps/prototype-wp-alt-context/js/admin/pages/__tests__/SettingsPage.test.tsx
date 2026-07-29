@@ -3,7 +3,12 @@ import { act, render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { SettingsPage } from '../SettingsPage';
-import type { SettingsResponse, TestConnectionOutcomeValue, TestConnectionResponse } from '../../api/settingsApi';
+import {
+  UrlRejectionReason,
+  type SettingsResponse,
+  type TestConnectionOutcomeValue,
+  type TestConnectionResponse,
+} from '../../api/settingsApi';
 import { createMockMutation, createMockQuery } from '../../test-utils/mockHooks';
 
 type QueryHookResult = ReturnType<typeof createMockQuery<SettingsResponse>>;
@@ -72,6 +77,9 @@ vi.mock('@tanstack/react-query', async () => {
 const defaultSettings: SettingsResponse = {
   url: 'https://api.example.com',
   url_source: 'option',
+  url_rejection_reason: null,
+  url_rejection_source: null,
+  url_rejection_value: null,
   effective_target_url: 'https://api.example.com',
   effective_target_mode: 'service',
   recognition_source: 'service',
@@ -393,6 +401,58 @@ describe('SettingsPage', () => {
     expect(urlInput).not.toHaveAttribute('readOnly');
     fireEvent.change(urlInput, { target: { value: 'https://api.altcontext.com' } });
     expect(urlInput).toHaveValue('https://api.altcontext.com');
+    // Genuinely unconfigured still says "not configured".
+    expect(screen.getByTestId('acx-effective-routing')).toHaveTextContent('not configured');
+  });
+
+  it('renders rejection reason instead of not configured when a URL was rejected (BR-138)', () => {
+    mockUseQuery.mockReturnValue(
+      createMockQuery({
+        data: {
+          ...defaultSettings,
+          url: '',
+          url_source: 'default',
+          url_rejection_reason: UrlRejectionReason.NON_LOOPBACK_HTTP,
+          url_rejection_source: 'option',
+          url_rejection_value: 'http://10.0.0.5:8000',
+          effective_target_url: '',
+          effective_target_mode: 'service',
+          recognition_source: 'service',
+        },
+      }),
+    );
+    render(<SettingsPage />);
+
+    const routing = screen.getByTestId('acx-effective-routing');
+    const rejection = screen.getByTestId('acx-url-rejection');
+    expect(rejection).toHaveTextContent(
+      'Rejected http://10.0.0.5:8000 (Saved in database): HTTP is only allowed for loopback development hosts (localhost, 127.0.0.1, ::1)',
+    );
+    expect(routing).not.toHaveTextContent('not configured');
+    // Status is text, not decoration alone (A11Y-21).
+    expect(routing).toHaveAttribute('role', 'status');
+  });
+
+  it('renders constant-tier rejection with exact source wording (BR-138)', () => {
+    mockUseQuery.mockReturnValue(
+      createMockQuery({
+        data: {
+          ...defaultSettings,
+          url: '',
+          url_source: 'default',
+          url_rejection_reason: UrlRejectionReason.NON_LOOPBACK_HTTP,
+          url_rejection_source: 'constant',
+          url_rejection_value: 'http://host.docker.internal:8000',
+          effective_target_url: '',
+        },
+      }),
+    );
+    render(<SettingsPage />);
+
+    expect(screen.getByTestId('acx-url-rejection')).toHaveTextContent(
+      'Rejected http://host.docker.internal:8000 (Set via wp-config.php constant): HTTP is only allowed for loopback development hosts (localhost, 127.0.0.1, ::1)',
+    );
+    expect(screen.getByTestId('acx-effective-routing')).not.toHaveTextContent('not configured');
   });
 
   it('disables Check health when routing edits are unsaved', () => {

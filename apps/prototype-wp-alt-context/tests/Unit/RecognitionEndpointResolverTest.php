@@ -29,6 +29,10 @@ class RecognitionEndpointResolverTest extends TestCase
         $this->assertSame('default', $snapshot['recognition_source_source']);
         $this->assertSame('service', $snapshot['effective_target_mode']);
         $this->assertSame('', $snapshot['effective_target_url']);
+        // BR-138: genuinely unconfigured must not look like a rejected URL.
+        $this->assertNull($snapshot['service_url_rejection_reason']);
+        $this->assertNull($snapshot['service_url_rejection_source']);
+        $this->assertNull($snapshot['service_url_rejection_value']);
     }
 
     /**
@@ -102,6 +106,14 @@ class RecognitionEndpointResolverTest extends TestCase
         $this->assertSame('', $snapshot['service_url'], 'rejected url must not resolve as service_url: ' . $url);
         $this->assertSame('default', $snapshot['service_url_source']);
         $this->assertSame('', $snapshot['effective_target_url'], 'rejected url must not become effective target: ' . $url);
+        // BR-138: rejection is reported, not silently collapsed to unconfigured.
+        $this->assertSame(
+            RecognitionEndpointResolver::URL_REJECTION_NON_LOOPBACK_HTTP,
+            $snapshot['service_url_rejection_reason'],
+            'plaintext remote must report non_loopback_http: ' . $url
+        );
+        $this->assertSame('option', $snapshot['service_url_rejection_source']);
+        $this->assertSame($url, $snapshot['service_url_rejection_value']);
     }
 
     /**
@@ -152,6 +164,137 @@ class RecognitionEndpointResolverTest extends TestCase
         $this->assertSame($url, $snapshot['service_url'], 'accepted url must resolve: ' . $url);
         $this->assertSame('option', $snapshot['service_url_source']);
         $this->assertSame($url, $snapshot['effective_target_url']);
+        $this->assertNull($snapshot['service_url_rejection_reason'], 'accepted url must not carry rejection: ' . $url);
+        $this->assertNull($snapshot['service_url_rejection_source']);
+        $this->assertNull($snapshot['service_url_rejection_value']);
+    }
+
+    /**
+     * BR-138: a rejected constant / filter / option each produce a snapshot
+     * distinguishable from the genuinely-unconfigured case and from each other.
+     *
+     * @dataProvider rejectedServiceUrlTierProvider
+     */
+    public function testRejectedServiceUrlReportsTierAndReason(
+        string $tier,
+        string $url,
+        string $expectedReason
+    ): void {
+        if ('option' === $tier) {
+            $this->setOption('acx_recognition_url', $url);
+        } elseif ('filter' === $tier) {
+            add_filter('acx_recognition_base_url', static fn (): string => $url);
+        } else {
+            $this->fail('constant tier is covered by a separate-process test');
+        }
+
+        $snapshot = $this->resolver->resolve_settings_snapshot();
+
+        $this->assertSame('', $snapshot['service_url']);
+        $this->assertSame('default', $snapshot['service_url_source']);
+        $this->assertSame('', $snapshot['effective_target_url']);
+        $this->assertSame($expectedReason, $snapshot['service_url_rejection_reason']);
+        $this->assertSame($tier, $snapshot['service_url_rejection_source']);
+        $this->assertSame($url, $snapshot['service_url_rejection_value']);
+    }
+
+    /**
+     * @return array<string, array{0: string, 1: string, 2: string}>
+     */
+    public static function rejectedServiceUrlTierProvider(): array
+    {
+        return [
+            'option_non_loopback_http' => [
+                'option',
+                'http://10.0.0.5:8000',
+                RecognitionEndpointResolver::URL_REJECTION_NON_LOOPBACK_HTTP,
+            ],
+            'filter_non_loopback_http' => [
+                'filter',
+                'http://recognition:8000',
+                RecognitionEndpointResolver::URL_REJECTION_NON_LOOPBACK_HTTP,
+            ],
+            'option_rejected_scheme' => [
+                'option',
+                'ftp://files.example.com/v1',
+                RecognitionEndpointResolver::URL_REJECTION_REJECTED_SCHEME,
+            ],
+            'filter_invalid_url' => [
+                'filter',
+                'not-a-url',
+                RecognitionEndpointResolver::URL_REJECTION_INVALID_URL,
+            ],
+        ];
+    }
+
+    /**
+     * BR-138: rejected constant tier is distinguishable from filter/option.
+     *
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testRejectedConstantServiceUrlReportsConstantTier(): void
+    {
+        if (!defined('ACX_RECOGNITION_URL')) {
+            define('ACX_RECOGNITION_URL', 'http://host.docker.internal:8000');
+        }
+
+        $resolver = new RecognitionEndpointResolver();
+        $snapshot = $resolver->resolve_settings_snapshot();
+
+        $this->assertSame('', $snapshot['service_url']);
+        $this->assertSame('default', $snapshot['service_url_source']);
+        $this->assertSame(
+            RecognitionEndpointResolver::URL_REJECTION_NON_LOOPBACK_HTTP,
+            $snapshot['service_url_rejection_reason']
+        );
+        $this->assertSame('constant', $snapshot['service_url_rejection_source']);
+        $this->assertSame('http://host.docker.internal:8000', $snapshot['service_url_rejection_value']);
+    }
+
+    /**
+     * BR-138: when a higher tier is rejected but a lower tier is valid, the
+     * valid URL wins and no rejection is surfaced (reporting is for the empty
+     * effective-target case only).
+     */
+    public function testValidLowerTierWinsOverRejectedHigherTier(): void
+    {
+        add_filter(
+            'acx_recognition_base_url',
+            static fn (): string => 'http://10.0.0.5:8000'
+        );
+        $this->setOption('acx_recognition_url', 'https://api.altcontext.com');
+
+        $snapshot = $this->resolver->resolve_settings_snapshot();
+
+        $this->assertSame('https://api.altcontext.com', $snapshot['service_url']);
+        $this->assertSame('option', $snapshot['service_url_source']);
+        $this->assertNull($snapshot['service_url_rejection_reason']);
+        $this->assertNull($snapshot['service_url_rejection_source']);
+        $this->assertNull($snapshot['service_url_rejection_value']);
+    }
+
+    /**
+     * BR-138: highest-precedence rejected tier wins the diagnostic when all
+     * present values fail validation (constant > filter > option).
+     */
+    public function testHighestPrecedenceRejectionWinsWhenAllTiersFail(): void
+    {
+        add_filter(
+            'acx_recognition_base_url',
+            static fn (): string => 'http://filter.internal:8000'
+        );
+        $this->setOption('acx_recognition_url', 'http://option.internal:8000');
+
+        $snapshot = $this->resolver->resolve_settings_snapshot();
+
+        $this->assertSame('', $snapshot['service_url']);
+        $this->assertSame('filter', $snapshot['service_url_rejection_source']);
+        $this->assertSame('http://filter.internal:8000', $snapshot['service_url_rejection_value']);
+        $this->assertSame(
+            RecognitionEndpointResolver::URL_REJECTION_NON_LOOPBACK_HTTP,
+            $snapshot['service_url_rejection_reason']
+        );
     }
 
     /**

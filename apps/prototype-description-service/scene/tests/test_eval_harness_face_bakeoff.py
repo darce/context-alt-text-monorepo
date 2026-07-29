@@ -437,10 +437,12 @@ def test_embedder_only_determinism_layer3() -> None:
     emb = OrtSFaceEmbedder(models_dir=DEFAULT_MODELS_DIR)
     a = emb.embed([crop])
     b = emb.embed([crop])
-    assert a.shape == b.shape
-    assert a.shape[1] == resolve_sface_embedding_dim()
+    # embed() returns EmbedBatchResult (vectors + pre-norm magnitudes), not a bare
+    # ndarray — indexing/.shape on the dataclass raises AttributeError.
+    assert a.vectors.shape == b.vectors.shape
+    assert a.vectors.shape[1] == resolve_sface_embedding_dim()
     # Cosine of L2 vectors = dot product.
-    cos = float(np.dot(a[0], b[0]))
+    cos = float(np.dot(a.vectors[0], b.vectors[0]))
     assert cos >= EMB_DET_TAU, f"cosine {cos} < EMB_DET_TAU {EMB_DET_TAU}"
 
 

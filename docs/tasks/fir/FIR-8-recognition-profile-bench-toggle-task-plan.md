@@ -128,7 +128,7 @@ Import path used by tests and CLI:
 ```bash
 # from apps/prototype-description-service (or with that dir on PYTHONPATH)
 python -m scripts.bench.cross_stack_bench --help
-python -m pytest scripts/bench/tests/ -q
+uv run --extra dev pytest scripts/bench/tests/ -q
 ```
 
 ```text
@@ -153,9 +153,9 @@ benchmarks/results/crossbench-*/       # gitignored run outputs (run-dir layout)
 
 1. Confirm FIR23-STACK has `acx-dev-fir` healthy next to dev.
 2. `python -m scripts.bench.cross_stack_bench preflight --config stack-pair.yaml` → both sides green or abort (writes per-leg `preflight.json` under `--out` when run-dir known, or dry-check without run-dir).
-3. `… run --config … --manifest <golden-schema.json> --images-dir <corpus-root> --out benchmarks/results/crossbench-<stamp>/` → ingest+analyze+cluster+export both legs; resume via append-only `items.jsonl`.
-4. `… status --run-dir …` → per-leg progress + phase (optional operator check).
-5. `… score --run-dir …` → reads run-dir only (no credentials); dual-frame FIR-5 pure metrics + head-to-head HTML/JSON (aborts if cluster phase missing/failed).
+3. `python -m scripts.bench.cross_stack_bench run --config stack-pair.yaml --manifest <golden-schema.json> --images-dir <corpus-root> --out benchmarks/results/crossbench-<stamp>/` → ingest+analyze+cluster+export both legs; resume via append-only `items.jsonl`.
+4. `python -m scripts.bench.cross_stack_bench status --run-dir benchmarks/results/crossbench-<stamp>/` → per-leg progress + phase (optional operator check).
+5. `python -m scripts.bench.cross_stack_bench score --run-dir benchmarks/results/crossbench-<stamp>/` → reads run-dir only (no credentials); dual-frame FIR-5 pure metrics + head-to-head HTML/JSON (aborts if cluster phase missing/failed).
 6. Teardown: FIR23-STACK stack-scoped DB reset for the FIR stack (and optional dev-bench tenant wipe per runbook) — **not** a new recognition purge phase.
 
 ---
@@ -217,18 +217,23 @@ The [PROV-01 constraint](#constraints) requires an OpenCV runtime major per leg 
 
 - Read `opencv_major` (int) from the stack's stack-pair config entry. **Required** — absent or unparseable → **`opencv_major_unattested`**.
 - Never call `cv2.__version__` in the CLI process. The CLI runs on the operator laptop; its `cv2` is not the stack's `cv2`. A test asserts the bench package imports no `cv2` at all.
-- Write into `preflight.json` as `{"opencv_major": <int>, "source": "operator_attested"}`. The report renders it with the `operator_attested` qualifier visible, never as a bare version string.
-- **Forward path (upstream ask, not FIR-8 scope)**: when `/health/detailed` `model_cache.opencv_version` exists, preflight reads it, sets `source: "service_reported"`, and fails closed with **`opencv_major_drift`** if it disagrees with the attestation. Add the branch behind a presence check now so the flip is config-free.
+- Write into `preflight.json` as flat keys `opencv_major` (int) and `opencv_major_source` (string, `operator_attested`) — not a nested object with a `source` key. The report renders it with the `operator_attested` qualifier visible, never as a bare version string.
+- **Forward path (upstream ask, not FIR-8 scope)**: when `/health/detailed` `model_cache.opencv_version` exists, preflight reads it, sets `opencv_major_source: "service_reported"`, and fails closed with **`opencv_major_drift`** if it disagrees with the attestation. Add the branch behind a presence check now so the flip is config-free.
 
 ### Stable error codes (normative)
 
-| Code | When |
-| --- | --- |
-| `preflight_auth_failed` | Authenticated `/health/detailed` returns 401/403 or auth dependency rejects the key |
-| `preflight_endpoint_missing` | `/ready` or `/health/detailed` not reachable as that route (404 / connection refused treated as missing endpoint for this purpose) |
-| `profile_or_dim_drift` | Profile missing/mismatch, database check not OK, dim token absent, or dim int ≠ expected |
-| `opencv_major_unattested` | Stack-pair entry has no parseable `opencv_major`, and the service reports none |
-| `opencv_major_drift` | Service-reported `model_cache.opencv_version` major ≠ attested `opencv_major` (only reachable once the upstream ask lands) |
+| Code | When | Operator remedy |
+| --- | --- | --- |
+| `preflight_auth_failed` | Authenticated `/health/detailed` returns 401/403 or auth dependency rejects the key | Fix the stack-pair API key / auth env so the authenticated health call is accepted. |
+| `preflight_endpoint_missing` | `/ready` or `/health/detailed` not reachable as that route (404 / connection refused treated as missing endpoint for this purpose) | Bring the stack up and confirm both routes are served at the configured `base_url`. |
+| `profile_or_dim_drift` | Profile missing/mismatch, database check not OK, dim token absent, or dim int ≠ expected | Align the live stack's profile and pgvector dim with the stack-pair `expected_profile` / `expected_pgvector_dim`, or correct the config if the expectation is wrong. |
+| `opencv_major_unattested` | Stack-pair entry has no parseable `opencv_major`, and the service reports none | Set a parseable integer `opencv_major` on the stack-pair entry (operator attestation). |
+| `opencv_major_drift` | Service-reported `model_cache.opencv_version` major ≠ attested `opencv_major` (only reachable once the upstream ask lands) | **Reserved** — unreachable until the upstream `model_cache.opencv_version` ask lands, so no operator can hit it today. |
+| `gt_box_count_mismatch` | under a v3/exhaustive manifest an entry's `face_count` != `len(face_boxes)` | re-emit the corpus from FIR-11 Slice 2; the check is skipped on v2 and v3/roster_only manifests. |
+| `box_convention_unknown` | a GT or predicted box is normalized, or carries `x2`/`y2`/`cx`/`cy` instead of `width`/`height`, so IoU cannot be computed in a single pinned convention | convert the offending side to absolute top-left `x`/`y`/`width`/`height` pixels before scoring. |
+| `matched_faces_out_of_bounds` | the adapter produced a `matched_faces` violating `0 <= matched <= min(pred_faces, labeled_faces)` | this is an adapter bug, not a config error; fix the matcher — do not clamp it away. |
+| `differential_attrition_exceeded` | one-sided attrition skew exceeds `max_differential_attrition` | the surviving pool is biased toward the failing leg; repair that leg and re-run, do not score the subset. |
+| `media_unresolvable` | an ingest item's media cannot be resolved | fix or drop the manifest entry; it is counted in attrition. |
 
 Mock fixtures in tests must use these **real** payload shapes (not invented field names like top-level `pgvector_dimension` or `profile` outside `model_cache`).
 
@@ -240,7 +245,7 @@ Public exports (media identities + cluster members) carry **bbox / cluster metad
 
 **In scope for cross-stack scoring (Slice 2)**
 
-- Map exports + GT → `face_metrics.ImageDetection` (count-based detection P/R via `detection_pr`).
+- Map exports + GT → `face_metrics.ImageDetection` (**IoU-matched** detection P/R via `detection_pr` per the [localization pin](#b-constructing-metric-inputs); the count-only variant is retained as a DIAGNOSTIC companion, not as the metric).
 - Map exports + GT + label-space mapping → `face_metrics.ImageIdentities` (named identification P/R via `identification_pr`).
 - Dual sampling frames: FIR-5-native + end-to-end inclusive ([End-to-end scoring frames](#end-to-end-scoring-frames)).
 - Dual label-mapping frames: primary string-match + disclosed optimistic Hungarian ([Ground truth & label mapping](#ground-truth--label-mapping)).
@@ -273,7 +278,7 @@ Scoring is invalid if predicted cluster labels are compared to GT as if they sha
 | **Content hash pin** | At `run` start, write `manifest.sha` = sha256 of the manifest file bytes. Optional stack-pair / run config key `manifest_sha256` fails closed if it mismatches the loaded file. Score path re-reads the hash for provenance. |
 | **Image bytes root** | `--images-dir` (or config `images_dir`) is the local corpus root; when set, `load_manifest(..., images_dir=...)` verifies per-entry `sha256` against files under that root (same as harness). |
 
-CLI: `run --manifest <path> --images-dir <root> …` (both required for production head-to-head; tests may inject a synthetic `GoldenManifest` without disk images).
+CLI (illustration of required flags, not a full copy-paste invocation): `run --manifest <path> --images-dir <root>` (both required for production head-to-head; tests may inject a synthetic `GoldenManifest` without disk images).
 
 ### Manifest version seam (FIR-11 coupling)
 
@@ -584,11 +589,14 @@ Implementation note: the CLI does **not** open a raw production DB URL for arbit
 | tests (new) | `apps/prototype-description-service/scripts/bench/tests/test_e2e_mocked.py` | One mocked end-to-end (both legs → report dir) |
 | tests (new) | `apps/prototype-description-service/scripts/bench/tests/test_export_map_rg015.py` | Export normalization invents no envelope metadata (rg-015) |
 | tests (new) | `apps/prototype-description-service/scripts/bench/tests/test_detection_localization.py` | [TEST-15] count-preserving box translation: count-only cell stays perfect, matched cell collapses to `TP = 0` |
-| tests (new) | `apps/prototype-description-service/scripts/bench/tests/test_power_precondition.py` | `mde_pp > delta` → DIRECTIONAL; unmeasured ρ on a face-level cell → DIRECTIONAL; exact-binomial McNemar on paired legs |
+| tests (new) | `apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py` | `ci_half_width_pp > δ/2` → DIRECTIONAL; image-level cluster bootstrap red-proofs; Holm on declared secondaries |
 | tests (new) | `apps/prototype-description-service/scripts/bench/tests/test_manifest_version_seam.py` | v2 / v3-roster_only → `stranger_faces == 0` + DIAGNOSTIC ceiling; v3-exhaustive → boxes-derived + CONFIRMATORY-eligible; the retired subtraction is absent |
-| tests (new) | `apps/prototype-description-service/scripts/bench/tests/test_attrition_floor.py` | fractional + absolute floor forms; `floor_below_power_floor`; `differential_attrition_exceeded` aborts scoring |
-| harness (**edit**) | `apps/prototype-description-service/scripts/eval_harness/face_metrics.py` | **Only** the optional `ImageDetection.matched_faces` field + the `TP/FP/FN` branch that honours it. Default `None` → byte-identical existing behaviour. Rationale + scope: [localization pin](#b-constructing-metric-inputs) |
-| tests (**edit**) | `apps/prototype-description-service/scene/tests/test_eval_harness_face_metrics.py` | Add cases for `matched_faces` present/absent; existing cases must pass **unchanged** (that they do is the backward-compatibility proof) |
+| tests (new) | `apps/prototype-description-service/scripts/bench/tests/test_attrition_floor.py` | fractional + absolute floor forms; floor resolves to item count before compare; `differential_attrition_exceeded` aborts scoring |
+| tests (new) | `apps/prototype-description-service/scripts/bench/tests/fixtures/v3_exhaustive_face_boxes.json` | Purpose-built v3/exhaustive detection fixture with explicit `face_boxes` (`scene/tests/seed/golden.json` has zero boxes and cannot serve as a detection fixture) |
+| tooling (new) | `apps/prototype-description-service/scripts/bench/__init__.py` | Package marker required for `python -m scripts.bench.*` and documented import/test paths |
+| harness (**edit**) | `apps/prototype-description-service/scripts/eval_harness/face_metrics.py` | Scoped to the optional `ImageDetection.matched_faces` field, the **clamped** `TP/FP/FN` branch that honours it, and the `0 <= matched <= min(pred, labeled)` bounds check. Default `None` → byte-identical existing behaviour. Rationale + scope: [localization pin](#b-constructing-metric-inputs) |
+| harness (**read, not edited**) | `apps/prototype-description-service/scripts/eval_harness/report.py` | Consumer whose parity is asserted under the additive `matched_faces` field; **read, not edited** |
+| tests (**edit**) | `apps/prototype-description-service/scene/tests/test_eval_harness_face_metrics.py` | New `matched_faces` bounds-check assertions plus the `report.py` parity assertion; existing cases must pass **unchanged** (that they do is the backward-compatibility proof) |
 | docs (new) | `apps/prototype-description-service/scripts/bench/README.md` | Package README (S3) |
 | docs (new) | `docs/runbooks/fir-8-cross-stack-bench.md` | Operator runbook + teardown + license; carries the `opencv_version` upstream ask in the residual section |
 | docs (edit) | this plan | v6.4 plan grounding (this commit) |
@@ -616,7 +624,7 @@ Implementation note: the CLI does **not** open a raw production DB URL for arbit
 
 ```bash
 # from apps/prototype-description-service
-python -m pytest scripts/bench/tests/ -q
+uv run --extra dev pytest scripts/bench/tests/ -q
 ```
 
 Must cover:
@@ -630,9 +638,9 @@ Must cover:
 7. **Dual-frame cascade** — detector-miss synthetic pins e2e FN accounting vs FIR-5-native frame; frames call only `detection_pr` / `identification_pr` with pinned input types.
 8. **One mocked E2E** — fake dual clients return fixed cluster payloads → report dir contains provenance (`preflight.json`), `accepted_set.json`, both legs + both sampling frames + label-map frames + tier label + license banner; no network; `score` uses no credentials.
 9. **Detection localization ([TEST-15], `test_detection_localization.py`)** — the count-preserving translation fixture from the [localization pin](#b-constructing-metric-inputs): count-only cell perfect, matched cell `TP = 0`. Delete the IoU matching → the test fails. Also assert the *existing* `face_metrics` tests pass with `matched_faces` omitted, which is the backward-compatibility proof for the upstream edit.
-10. **Power precondition (`test_power_precondition.py`)** — a cell with `n_discordant` small enough that `mde_pp > head_to_head_delta` is stamped DIRECTIONAL even when the accepted set clears the floor (this is the case a size-only rule got wrong); a face-level cell with ρ unmeasured is DIRECTIONAL; McNemar is the exact binomial, not the normal approximation. Strip the MDE comparison → an underpowered cell reads CONFIRMATORY and the test fails.
+10. **Precision precondition (`test_precision_precondition.py`)** — a cell whose bootstrap `ci_half_width_pp > head_to_head_delta / 2` is stamped DIRECTIONAL even when the accepted set clears the floor (this is the case a size-only rule got wrong); the image-level resampling unit is load-bearing; Holm adjustment is applied across declared secondaries. Strip the half-width comparison → an under-precise cell reads CONFIRMATORY and the test fails.
 11. **Manifest version seam (`test_manifest_version_seam.py`)** — v2 and v3-`roster_only` yield `stranger_faces == 0` with a DIAGNOSTIC ceiling; v3-`exhaustive` derives from boxes and is CONFIRMATORY-eligible; `face_count != len(face_boxes)` → `gt_box_count_mismatch`; a box-less entry is excluded from detection frames with a counted exclusion. Assert no code path performs `face_count − len(present_identities)`.
-12. **Attrition and floor (`test_attrition_floor.py`)** — fractional (`0.90`) and absolute (`135`) floor forms both resolve; a floor admitting fewer than the power floor raises `floor_below_power_floor`; one-sided attrition past `max_differential_attrition` aborts with `differential_attrition_exceeded` **even when the accepted set is large**, since that is a bias check and not a size check.
+12. **Attrition and floor (`test_attrition_floor.py`)** — fractional (`0.90`) and absolute (`135`) floor forms both resolve to an item count before any comparison; one-sided attrition past `max_differential_attrition` aborts with `differential_attrition_exceeded` **even when the accepted set is large**, since that is a bias check and not a size check.
 13. **No local `cv2` (`test_preflight.py`)** — the bench package imports no `cv2`, and a stack-pair entry lacking `opencv_major` raises `opencv_major_unattested`.
 
 ### Runtime-parity / operator checks (S3 runbook)
@@ -782,7 +790,7 @@ The default is a **fraction**, not the corpus size. An earlier revision defaulte
 
 **Proof**
 
-- `python -m pytest scripts/bench/tests/test_preflight.py scripts/bench/tests/test_corpus_superset.py scripts/bench/tests/test_resume.py scripts/bench/tests/test_stack_pair_consumption.py scripts/bench/tests/test_media_pin_public_unicast.py -q` green (from package root parent).
+- `uv run --extra dev pytest scripts/bench/tests/test_preflight.py scripts/bench/tests/test_corpus_superset.py scripts/bench/tests/test_resume.py scripts/bench/tests/test_stack_pair_consumption.py scripts/bench/tests/test_media_pin_public_unicast.py -q` green (from `apps/prototype-description-service`).
 - Red-proofs:
   1. Mock `/ready` with database check `detail: "reachable; pgvector_dimension=128"` on the insightface endpoint (expected 512) → preflight raises `profile_or_dim_drift`; strip the assertion → test fails.
   2. Mock `/health/detailed` without `model_cache.profile` → `profile_or_dim_drift`; mock 401 → `preflight_auth_failed`.
@@ -811,10 +819,10 @@ The default is a **fraction**, not the corpus size. An earlier revision defaulte
 | `scripts/bench/tests/test_e2e_frame.py` | detector-miss dual-frame pin | required |
 | `scripts/bench/tests/test_e2e_mocked.py` | dual fake clients → report artifacts | one mocked E2E |
 | `scripts/bench/tests/test_detection_localization.py` | count-preserving translation fixture | **[TEST-15]** — count-only perfect, matched `TP = 0` |
-| `scripts/bench/tests/test_power_precondition.py` | MDE / McNemar / ρ gates | required |
+| `scripts/bench/tests/test_precision_precondition.py` | bootstrap half-width / Holm / resampling-unit gates | required |
 | `scripts/bench/tests/test_manifest_version_seam.py` | v2 vs v3 `stranger_faces` + eligibility ceiling | required |
-| `scripts/bench/tests/test_attrition_floor.py` | floor forms, power floor, differential attrition | required |
-| `scripts/eval_harness/face_metrics.py` | optional `ImageDetection.matched_faces` + `TP/FP/FN` branch | **only** edit outside `scripts/bench/`; default `None` preserves current behaviour |
+| `scripts/bench/tests/test_attrition_floor.py` | floor forms, resolved item-count floor, differential attrition | required |
+| `scripts/eval_harness/face_metrics.py` | optional `ImageDetection.matched_faces` + clamped `TP/FP/FN` branch + bounds check | one of **two** edits outside `scripts/bench/` (the other is `scene/tests/test_eval_harness_face_metrics.py`); default `None` preserves current behaviour |
 
 **Report must include**
 
@@ -849,10 +857,10 @@ The default is a **fraction**, not the corpus size. An earlier revision defaulte
 
 1. **Purpose + license posture** — insightface stack INTERNAL BENCH ONLY; never commercial/user-facing; outputs not for training.
 2. **Prerequisites** — FIR23-STACK `acx-dev-fir` up; dev stack up; `ACX_BENCH_*` API keys + tenant ids for both scratch/bench tenants; corpus path; package root / PYTHONPATH note.
-3. **Preflight** — exact `python -m scripts.bench.cross_stack_bench preflight --config …` (from `apps/prototype-description-service`).
-4. **Run** — `… run --config … --manifest … --images-dir … --out …` (ingest → analyze → cluster → export persist).
-5. **Status** — `… status --run-dir …` (optional; per-leg progress + phase).
-6. **Score** — `… score --run-dir …` (offline; fails if cluster phase missing; writes `score/accepted_set.json` + report).
+3. **Preflight** — exact `python -m scripts.bench.cross_stack_bench preflight --config stack-pair.yaml` (from `apps/prototype-description-service`).
+4. **Run** — `python -m scripts.bench.cross_stack_bench run --config stack-pair.yaml --manifest <manifest.json> --images-dir <corpus-root> --out benchmarks/results/crossbench-<stamp>/` (ingest → analyze → cluster → export persist).
+5. **Status** — `python -m scripts.bench.cross_stack_bench status --run-dir benchmarks/results/crossbench-<stamp>/` (optional; per-leg progress + phase).
+6. **Score** — `python -m scripts.bench.cross_stack_bench score --run-dir benchmarks/results/crossbench-<stamp>/` (offline; fails if cluster phase missing; writes `score/accepted_set.json` + report).
 7. **Teardown** — **only** FIR23-STACK's documented stack-scoped DB reset for `acx-dev-fir` (and optional dev bench-tenant cleanup). Placeholder: `See FIR23-STACK runbook §reset` until that doc's command is stable — **do not invent** `DROP DATABASE` one-liners here that disagree with FIR23-STACK.
 8. **Failure routing** — stack health / dim wrong in compose → FIR23-STACK; CLI logic / scoring → FIR-8; embedding-export needs → optional upstream task (not FIR-8).
 9. **Verification checklist** — both preflights green; report path exists; both frames present; license_notice present; stacks reset.
@@ -907,8 +915,8 @@ Single-lane work. No multi-agent lane split required.
 - [ ] Dual sampling frames + dual label-map frames side-by-side; **`frame_e2e` pinned as the sole CONFIRMATORY sampling frame**
 - [ ] `score/accepted_set.json` + attrition table ([EVAL-19]); `CrossbenchTier` cell rules applied first-match-wins
 - [ ] Detection P/R is **IoU-matched**; count-only retained as a DIAGNOSTIC companion; [TEST-15] translation red-proof observed red first
-- [ ] Power precondition implemented: declared δ, exact-binomial McNemar on paired legs, `mde_pp` stamped per cell, pool-conditional Wilson labels, ρ gate
-- [ ] Floor policy: fractional-or-absolute floor, `floor_below_power_floor`, `differential_attrition_exceeded`
+- [ ] Precision precondition implemented: declared δ, image-level cluster bootstrap, `ci_half_width_pp` stamped per cell, half-width ≤ δ/2, Holm across declared secondaries
+- [ ] Floor policy: fractional-or-absolute floor, resolved item-count floor, `differential_attrition_exceeded`
 - [ ] Manifest version seam honoured; the `face_count − len(present_identities)` subtraction is absent from the codebase
 - [ ] Report under `benchmarks/results/crossbench-*/` with preflight provenance (incl. `opencv_major` + its source), cascade honesty, license banner, tier labels, and the manifest-version eligibility ceiling
 - [ ] Mocked E2E + rg-015 + cluster gate + dual-frame + localization + power + version-seam + attrition tests green
@@ -941,11 +949,11 @@ Single-lane work. No multi-agent lane split required.
 ## Success Criteria
 
 - [ ] Operator can preflight + run + score a corpus against **both** stacks with **zero** recognition-service code changes in the FIR-8 diff.
-- [ ] Preflight fails closed on dimension or profile drift / auth failure / missing endpoints / unattested `opencv_major` with the five stable codes.
+- [ ] Preflight fails closed on dimension or profile drift / auth failure / missing endpoints / unattested `opencv_major` with the codes in the [stable error codes table](#stable-error-codes-normative).
 - [ ] Cluster phase runs per leg; export gated on success.
 - [ ] Scoring uses public bbox/cluster metadata + manifest GT + label mapping → detection P/R + identification P/R; dual sampling and label-map frames present, with `frame_e2e` + `label_map_primary` pinned as the only CONFIRMATORY combination.
 - [ ] Detection P/R is localization-aware (IoU-matched), and the [TEST-15] count-preserving translation fixture proves the metric can go red.
-- [ ] No cell reaches CONFIRMATORY without a stamped `mde_pp ≤ head_to_head_delta` from an exact-binomial McNemar on the paired legs.
+- [ ] No cell reaches CONFIRMATORY without a stamped `ci_half_width_pp ≤ head_to_head_delta / 2` from the image-level cluster bootstrap on the paired accepted set.
 - [ ] The head-to-head gate number is explicitly **withheld** until the corpus is v3/`exhaustive` (FIR-11 Slice 2); a v2 run ships as a DIRECTIONAL orchestration dry run and says so in the artifact.
 - [ ] Superset / partial-intersection blocker enforced.
 - [ ] Resume does not reprocess terminal-success items; bounded retry on failures.
@@ -964,8 +972,8 @@ Single-lane work. No multi-agent lane split required.
 | Production-shaped guard without DB counts API | Weaker than v5 marker rail | Named stack allowlist + operator attestation; escalate if FIR23-STACK adds a count diagnostic |
 | Insightface NC misuse | License | Runbook + report `license_notice`; stack must not sit on product ingress |
 | No public embeddings | Purity sweeps impossible on cross-stack path | Explicit OOS; optional upstream diagnostic ask |
-| **`opencv_major` is operator-attested, not service-reported** | A wrong attestation produces a confident-looking but false provenance stamp — the exact silent-comparability failure the field exists to prevent, now merely relocated from absent to unverified | Required field, fail closed when absent, `source: operator_attested` rendered in the report; upstream ask filed for `model_cache.opencv_version` with the drift-compare branch pre-written. **This is a declared weak link, not a solved problem.** |
-| **Golden150 cannot power a small head-to-head gap** | Even at full corpus, discordant-pair counts between two competent stacks may leave `mde_pp` well above 10pp, so the honest output is "no resolvable difference" rather than a winner | Power precondition fails such cells closed to DIRECTIONAL rather than reporting them as gate-eligible. If the operator needs a resolvable answer at δ = 10pp, the corpus must grow — that is a **corpus decision, not a scoring-code decision**, and FIR-8 must not paper over it |
+| **`opencv_major` is operator-attested, not service-reported** | A wrong attestation produces a confident-looking but false provenance stamp — the exact silent-comparability failure the field exists to prevent, now merely relocated from absent to unverified | Required field, fail closed when absent, `opencv_major_source: operator_attested` rendered in the report; upstream ask filed for `model_cache.opencv_version` with the drift-compare branch pre-written. **This is a declared weak link, not a solved problem.** |
+| **Golden150 cannot power a small head-to-head gap** | Even at full corpus, the image-level bootstrap interval on Δ may stay wider than δ, so the honest output is "no resolvable difference" rather than a winner | Precision precondition fails such cells closed to DIRECTIONAL rather than reporting them as gate-eligible. If the operator needs a resolvable answer at δ = 10pp, the corpus must grow — that is a **corpus decision, not a scoring-code decision**, and FIR-8 must not paper over it |
 | **Detection FP eligibility depends on FIR-11 Slice 2** | FIR-8 can be fully implemented and merged while its headline number stays unavailable | Manifest version seam makes the ceiling explicit and machine-checked; S1/S2 prove the orchestration on a v2 dry run. Do **not** let a v2 DIRECTIONAL number get quoted as the head-to-head result |
 | **IoU threshold is a single fixed 0.5** | A stack whose boxes are systematically tighter or looser than GT is penalised by the threshold, not by its detection quality | Reuses the constant already pinned for the optimistic label map (one threshold in the plan, not two). Report the matched-vs-count gap per leg so a threshold artifact is visible as a *both-legs* shift; a sweep over IoU is a stretch goal, not a gate input |
 

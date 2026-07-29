@@ -96,17 +96,48 @@ describe('DescribeRunApplyView', () => {
       skipped_invalid: [],
       failed: [],
     });
+    // After apply, items refetch with existing_alt true (alt landed) so the
+    // safe bucket empties — partial recovery must still enable Apply again.
+    fetchItemsMock
+      .mockResolvedValueOnce(mixedItems)
+      .mockResolvedValue({
+        run_id: 'run-abc',
+        items: [
+          { media_id: 71, status: 'completed', alt_text_draft: 'A red flower.', caption: 'A flower.', provenance: null, existing_alt: true },
+          { media_id: 90, status: 'completed', alt_text_draft: 'A blue car.', caption: 'A car.', provenance: null, existing_alt: true },
+          { media_id: 70, status: 'completed', alt_text_draft: 'A stone bridge.', caption: 'A bridge.', provenance: null, existing_alt: true },
+          { media_id: 72, status: 'failed', alt_text_draft: null, caption: null, provenance: null, existing_alt: false },
+        ],
+      });
     renderView();
     await screen.findByText('A red flower.');
 
     fireEvent.click(screen.getByRole('button', { name: /Apply all 2 without alt text/ }));
 
-    // [TEST-15] discrimination: goes red if the partial bucket line is deleted
-    // from the summary — partial ids vanish from every count (same silent
-    // failure the PHP partial bucket was introduced to remove).
+    // [TEST-15] discrimination: goes red if partial ids are dropped from the
+    // summary (count-only copy hid which rows needed a retry).
     const status = await screen.findByRole('status');
     expect(status).toHaveTextContent(/Applied 1 descriptions/);
-    expect(status).toHaveTextContent(/1 had alt text saved; apply again so they appear in history/);
+    expect(status).toHaveTextContent(
+      /1 had alt text saved \(media 90\); apply again so they appear in history/,
+    );
+
+    // Partial retry is actionable without ticking overwrite checkboxes.
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Apply again to complete history for 1/ })).toBeEnabled(),
+    );
+    applyMock.mockClear();
+    applyMock.mockResolvedValue({
+      run_id: 'run-abc',
+      applied: [90],
+      partial: [],
+      skipped_existing: [70, 71],
+      skipped_no_draft: [72],
+      skipped_invalid: [],
+      failed: [],
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Apply again to complete history for 1/ }));
+    await waitFor(() => expect(applyMock).toHaveBeenCalledWith('run-abc', []));
   });
 
   it('includes checked existing-alt items in the overwrite list', async () => {

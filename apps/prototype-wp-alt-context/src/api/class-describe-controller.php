@@ -475,6 +475,13 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	 * and `failed` (the alt-text write returned false, S3-02). `applied` keeps its
 	 * prior meaning; `partial` is additive. Do not invent envelope fields beyond
 	 * what was measured. [rg-015]
+	 *
+	 * Partial recovery (non-clobber completion): when a prior apply wrote alt but
+	 * failed provenance, the next /items fetch reports `existing_alt: true` and a
+	 * naive guard would bucket the id as `skipped_existing` forever. If stored alt
+	 * is byte-identical to the draft and provenance is not an array, proceed so
+	 * provenance can land — nothing is overwritten. Operator-authored alt that
+	 * differs from the draft still requires explicit `overwrite_media_ids`. [RLSE-05]
 	 */
 	public function apply_describe_run_drafts( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		// S3-03: gate on the authoritative run status. The /items endpoint carries
@@ -554,8 +561,20 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			}
 
 			if ( ! empty( $item['existing_alt'] ) && ! isset( $overwrite[ $media_id ] ) ) {
-				$skipped_existing[] = $media_id;
-				continue;
+				// Non-clobber completion: stored alt already equals the draft and
+				// provenance never landed (prior bulk partial). Proceed so the
+				// provenance write is retried — alt is not changed. Any other
+				// existing_alt case stays guarded unless the operator opted in.
+				$stored_alt  = get_post_meta( $media_id, '_wp_attachment_image_alt', true );
+				$stored_prov = get_post_meta( $media_id, '_acx_description_provenance', true );
+				$is_non_clobber_completion = is_string( $stored_alt )
+					&& $stored_alt === $draft
+					&& ! is_array( $stored_prov );
+
+				if ( ! $is_non_clobber_completion ) {
+					$skipped_existing[] = $media_id;
+					continue;
+				}
 			}
 
 			// S3-04: persist a WP-controlled provenance envelope, not the backend

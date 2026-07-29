@@ -294,6 +294,48 @@ describe('DescriptionHistoryPage', () => {
     expect(bridgeArticle?.querySelector('[role="alert"]')).toHaveTextContent(bridgeMessage);
   });
 
+  it('shows Saving… on both rows when two corrections stay in flight [TEST-15]', async () => {
+    // Pins the mediaId-keyed savingIds map: a scalar savingId is overwritten by
+    // the second mutate, so only one row can show "Saving…". Both stay pending
+    // so the busy state cannot collapse via resolution order.
+    fetchHistoryMock.mockResolvedValue({ total: 2, items: [historyItem, failedHistoryItem] });
+
+    const bridgePending = new Promise<DescriptionHistoryItem>(() => {
+      /* never resolves */
+    });
+    const portraitPending = new Promise<DescriptionHistoryItem>(() => {
+      /* never resolves */
+    });
+    correctHistoryMock.mockReturnValueOnce(bridgePending).mockReturnValueOnce(portraitPending);
+
+    renderPage();
+
+    fireEvent.change(await screen.findByLabelText('Alt text correction for Bridge'), {
+      target: { value: 'Bridge concurrent draft.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save correction for Bridge' }));
+
+    fireEvent.change(screen.getByLabelText('Alt text correction for Portrait'), {
+      target: { value: 'Portrait concurrent draft.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save correction for Portrait' }));
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Saving...' })).toHaveLength(2);
+    });
+
+    const bridgeArticle = screen.getByText('Bridge').closest('article');
+    const portraitArticle = screen.getByText('Portrait').closest('article');
+    const bridgeSave = bridgeArticle?.querySelector('button');
+    const portraitSave = portraitArticle?.querySelector('button');
+    expect(bridgeSave).toHaveTextContent('Saving...');
+    expect(portraitSave).toHaveTextContent('Saving...');
+    expect(bridgeSave).toBeDisabled();
+    expect(portraitSave).toBeDisabled();
+    expect(correctHistoryMock).toHaveBeenCalledWith(42, 'Bridge concurrent draft.');
+    expect(correctHistoryMock).toHaveBeenCalledWith(84, 'Portrait concurrent draft.');
+  });
+
   it('shows distinct durable alerts when two rows fail sequentially [RLSE-05]', async () => {
     fetchHistoryMock.mockResolvedValue({ total: 2, items: [historyItem, failedHistoryItem] });
     const bridgeMessage = 'Bridge-only failure message.';
@@ -515,6 +557,46 @@ describe('DescriptionHistoryPage', () => {
     expect(currentAltText).toHaveTextContent('Bridge at dusk');
     expect(currentAltText?.textContent).not.toContain('<em>');
     expect(textarea).toHaveValue('  <em>Would fabricate</em>  ');
+  });
+
+  it('patches Current alt text to empty when partial reports stored_alt_text: "" [TEST-15]', async () => {
+    // Empty string is a legitimate stored alt (sanitize_text_field of a blank
+    // correction). The guard must be `=== null`, not truthiness: `if (!storedAltText)`
+    // would skip reconciliation and leave the operator reading the prior text.
+    const submitted = '  <em></em>  ';
+    const partialMessage =
+      'Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.';
+    correctHistoryMock.mockRejectedValueOnce(
+      new Error(
+        `Request to /correction failed (500): ${JSON.stringify({
+          code: 'description_correction_partial',
+          message: partialMessage,
+          data: { status: 500, stored_alt_text: '' },
+        })}`,
+      ),
+    );
+
+    renderPage();
+
+    const textarea = await screen.findByLabelText('Alt text correction for Bridge');
+    fireEvent.change(textarea, { target: { value: submitted } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save correction for Bridge' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(partialMessage);
+
+    const bridgeArticle = screen.getByText('Bridge').closest('article');
+    const currentAltHeading = Array.from(bridgeArticle?.querySelectorAll('h3') ?? []).find(
+      (h) => h.textContent === 'Current alt text',
+    );
+    const currentAltText = currentAltHeading?.parentElement?.querySelector('p');
+    // Server holds blank alt → column must not keep the pre-correction text.
+    expect(currentAltText).not.toHaveTextContent('Bridge at dusk');
+    // Empty current_alt_text renders the empty placeholder, not leftover markup.
+    expect(currentAltText).toHaveTextContent('No alt text saved.');
+    expect(currentAltText?.textContent).not.toContain('<em>');
+    // Draft keeps the operator's only copy of the typed input.
+    expect(textarea).toHaveValue(submitted);
   });
 
   it('does not patch Current alt text on description_correction_failed', async () => {

@@ -622,6 +622,99 @@ class DescribeRunControllerTest extends TestCase
         $this->assertSame('', get_post_meta(71, '_acx_description_provenance', true));
     }
 
+    /**
+     * Partial recovery: after alt lands but provenance fails, a second apply
+     * without overwrite_media_ids must complete provenance (non-clobber). The
+     * stored alt already equals the draft; existing_alt is true but the guard
+     * must not block completing a write this system started. [RLSE-05] [TEST-15]
+     */
+    public function testApplyRunDraftsRecoversPartialWithoutOverwrite(): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $this->plantPostType(70);
+        $this->plantPostType(71);
+        $this->plantPostType(72);
+        $this->setPostMeta(70, '_wp_attachment_image_alt', 'human-authored alt');
+        // First apply: provenance write fails on 71 → partial.
+        $GLOBALS['__ac_update_post_meta_fail'][71]['_acx_description_provenance'] = true;
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueRunItemsResponse($runId);
+
+        $first = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $first->set_param('run_id', $runId);
+        $firstResponse = $this->controller->apply_describe_run_drafts($first);
+        $this->assertNotInstanceOf(\WP_Error::class, $firstResponse);
+        $firstData = $firstResponse->get_data();
+        $this->assertSame([], $firstData['applied']);
+        $this->assertSame([71], $firstData['partial']);
+        $this->assertSame('a dog in a park', get_post_meta(71, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(71, '_acx_description_provenance', true));
+
+        // Clear the forced provenance failure so the retry can succeed.
+        unset($GLOBALS['__ac_update_post_meta_fail'][71]['_acx_description_provenance']);
+        // Second apply: no overwrite list. 71 has existing_alt (from the partial)
+        // but alt === draft and provenance is missing → non-clobber completion.
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueRunItemsResponse($runId);
+
+        $second = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $second->set_param('run_id', $runId);
+        // Explicitly no overwrite_media_ids — recovery must not require opt-in.
+
+        $secondResponse = $this->controller->apply_describe_run_drafts($second);
+        $this->assertNotInstanceOf(\WP_Error::class, $secondResponse);
+        $this->assertSame(200, $secondResponse->get_status());
+
+        $data = $secondResponse->get_data();
+        $this->assertSame([71], $data['applied']);
+        $this->assertSame([], $data['partial']);
+        $this->assertSame([70], $data['skipped_existing']);
+        $this->assertSame([72], $data['skipped_no_draft']);
+        $this->assertSame([], $data['failed']);
+        // Alt unchanged; provenance now stored so history can list the item.
+        $this->assertSame('a dog in a park', get_post_meta(71, '_wp_attachment_image_alt', true));
+        $prov = get_post_meta(71, '_acx_description_provenance', true);
+        $this->assertIsArray($prov);
+        $this->assertSame('bulk_describe_run', $prov['source']);
+        $this->assertSame($runId, $prov['run_id']);
+    }
+
+    /**
+     * Guard still holds: when stored alt differs from the draft (operator-
+     * authored text), existing_alt without overwrite_media_ids stays
+     * skipped_existing — non-clobber completion must not weaken real opt-in.
+     */
+    public function testApplyRunDraftsStillGuardsWhenStoredAltDiffersFromDraft(): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $this->plantPostType(70);
+        $this->plantPostType(71);
+        $this->plantPostType(72);
+        // Operator alt differs from draft 70 ("a cat on a sofa").
+        $this->setPostMeta(70, '_wp_attachment_image_alt', 'human-authored alt');
+        // 71 also has operator alt that is not the draft — must not auto-apply.
+        $this->setPostMeta(71, '_wp_attachment_image_alt', 'different human alt');
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueRunItemsResponse($runId);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+
+        $data = $response->get_data();
+        $this->assertSame([], $data['applied']);
+        $this->assertSame([], $data['partial']);
+        // Both existing-alt items differ from their drafts → both guarded.
+        $this->assertSame([70, 71], $data['skipped_existing']);
+        $this->assertSame([72], $data['skipped_no_draft']);
+        $this->assertSame('human-authored alt', get_post_meta(70, '_wp_attachment_image_alt', true));
+        $this->assertSame('different human alt', get_post_meta(71, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(70, '_acx_description_provenance', true));
+        $this->assertSame('', get_post_meta(71, '_acx_description_provenance', true));
+    }
+
     public function testApplyReturns404WhenRunNotFound(): void
     {
         // D1-03: a status-endpoint 404 (run id does not exist) is surfaced as an

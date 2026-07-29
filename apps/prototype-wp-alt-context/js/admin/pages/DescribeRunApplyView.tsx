@@ -85,8 +85,15 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
   const hasApplicable = withoutAlt.length > 0 || withExistingAlt.length > 0;
   const selectedOverwrites = withExistingAlt.filter((item) => overwriteIds.has(item.media_id));
   const applyCount = withoutAlt.length + selectedOverwrites.length;
-  const primaryLabel =
-    withoutAlt.length > 0 && selectedOverwrites.length === 0
+  // After a partial apply, items flip to existing_alt so applyCount can drop to 0.
+  // Keep Apply available so the operator can retry provenance without overwrite —
+  // the server treats alt===draft + missing provenance as non-clobber completion.
+  const partialIds = apply.isSuccess && apply.data ? apply.data.partial : [];
+  const partialRetry = partialIds.length > 0 && applyCount === 0;
+  const canApply = applyCount > 0 || partialRetry;
+  const primaryLabel = partialRetry
+    ? sprintf(__('Apply again to complete history for %d', 'alt-context'), partialIds.length)
+    : withoutAlt.length > 0 && selectedOverwrites.length === 0
       ? sprintf(__('Apply all %d without alt text', 'alt-context'), withoutAlt.length)
       : sprintf(__('Apply %d descriptions', 'alt-context'), applyCount);
 
@@ -104,8 +111,12 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
             {sprintf(__('Applied %d descriptions.', 'alt-context'), apply.data.applied.length)}{' '}
             {apply.data.partial.length > 0
               ? sprintf(
-                  __('%d had alt text saved; apply again so they appear in history.', 'alt-context'),
+                  // Surface media ids so a multi-item run names the affected rows;
+                  // "apply again" is honest: server completes provenance when alt
+                  // already matches the draft (non-clobber). [RLSE-05]
+                  __('%1$d had alt text saved (media %2$s); apply again so they appear in history.', 'alt-context'),
                   apply.data.partial.length,
+                  apply.data.partial.join(', '),
                 )
               : ''}{' '}
             {apply.data.skipped_existing.length > 0
@@ -157,7 +168,7 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
             <button
               type="button"
               className="acx-button acx-button--primary"
-              disabled={applyCount === 0 || apply.isPending}
+              disabled={!canApply || apply.isPending}
               onClick={onApply}
             >
               {apply.isPending ? __('Applying…', 'alt-context') : primaryLabel}

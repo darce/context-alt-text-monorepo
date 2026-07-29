@@ -2,9 +2,14 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, type Page } from '@playwright/test';
 
 type BlockingImpact = 'serious' | 'critical';
-type AxeResultEntry = Awaited<ReturnType<AxeBuilder['analyze']>>['violations'][number];
+/** Axe violation/incomplete row from analyze(); exported for unit fixtures. */
+export type AxeResultEntry = Awaited<ReturnType<AxeBuilder['analyze']>>['violations'][number];
 
-const isBlockingImpact = (impact: string | null): impact is BlockingImpact => {
+/**
+ * Serious/critical axe impacts are blocking; minor/moderate are not.
+ * Exported so the filter can be unit-pinned without a Playwright page [TEST-15].
+ */
+export const isBlockingImpact = (impact: string | null): impact is BlockingImpact => {
   return impact === 'serious' || impact === 'critical';
 };
 
@@ -16,6 +21,23 @@ const formatViolationSummary = (entries: AxeResultEntry[]): string => {
       return `${entry.id} [${entry.impact ?? 'unknown'}] ${entry.help} :: ${nodes}`;
     })
     .join('\n');
+};
+
+/**
+ * Fail when axe left serious/critical findings in `results.incomplete`.
+ *
+ * Pure over the incomplete list so vitest can pin the gate without a browser.
+ * Behaviour matches the incomplete half of {@link assertNoBlockingViolations}.
+ */
+export const assertNoBlockingIncompletes = (incomplete: AxeResultEntry[]): void => {
+  const blockingIncompletes = incomplete.filter((entry) => isBlockingImpact(entry.impact ?? null));
+
+  expect(
+    blockingIncompletes,
+    blockingIncompletes.length === 0
+      ? 'Expected no serious or critical axe incompletes.'
+      : `Expected no serious or critical axe incompletes:\n${formatViolationSummary(blockingIncompletes)}`,
+  ).toHaveLength(0);
 };
 
 /**
@@ -45,14 +67,7 @@ export const assertNoBlockingViolations = async (page: Page, scopeSelector: stri
       : `Expected no serious or critical axe violations:\n${formatViolationSummary(blockingViolations)}`,
   ).toHaveLength(0);
 
-  const blockingIncompletes = results.incomplete.filter((entry) => isBlockingImpact(entry.impact ?? null));
-
-  expect(
-    blockingIncompletes,
-    blockingIncompletes.length === 0
-      ? 'Expected no serious or critical axe incompletes.'
-      : `Expected no serious or critical axe incompletes:\n${formatViolationSummary(blockingIncompletes)}`,
-  ).toHaveLength(0);
+  assertNoBlockingIncompletes(results.incomplete);
 };
 
 export const requireBaseUrl = (baseURL: string | undefined): string => {

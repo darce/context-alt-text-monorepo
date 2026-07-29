@@ -1,4 +1,4 @@
-.PHONY: help test test-integration lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready dev-setup dev-mint-key logs-tail logs-rotate logs-clean logs-archive worker-daemon db-reset reset admin-dev admin-test admin-open admin-token admin-status admin-down admin-oci-serve admin-oci admin-oci-mint provision-customer FORCE
+.PHONY: help gate-preflight test test-integration lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready dev-setup dev-mint-key logs-tail logs-rotate logs-clean logs-archive worker-daemon db-reset reset admin-dev admin-test admin-open admin-token admin-status admin-down admin-oci-serve admin-oci admin-oci-mint provision-customer FORCE
 
 PYTEST_WORKERS ?= 4
 
@@ -284,6 +284,16 @@ format:
 	@echo "Auto-fixing code..."
 	@$(UV_RUN) ruff check --fix --unsafe-fixes .
 	@$(UV_RUN) ruff format .
+
+# Gate preflight (GATE-BR-01). scripts/remote_gate.sh runs this before any gate
+# target and aborts the whole run with 73 if it fails. Its job is to make the
+# things the suite would otherwise silently SKIP into hard failures: the
+# face_pipeline ONNX weights are gitignored, so a host that never fetched them
+# skipped ~45 detector/aligner/embedder/ORT-parity tests and still reported
+# EXIT=0. --verify-only is offline (sha256 against the manifest, no download),
+# so this is safe to run on every gate invocation.
+gate-preflight:
+	@$(UV_RUN) python scripts/fetch_face_pipeline_models.py --verify-only
 
 # Fast unit tests (excludes integration/pg/timing markers; parallel when PYTEST_WORKERS>0)
 test:

@@ -39,6 +39,45 @@ def test_script_is_executable_and_parses() -> None:
     assert proc.returncode == 0, proc.stderr
 
 
+def _remote_command_string() -> str:
+    # The `run)` case builds one long double-quoted string that is handed to
+    # ssh. Everything between the preflight comment and the trailing `exit
+    # \$overall` is expanded by the LOCAL shell before it is ever sent.
+    text = SCRIPT.read_text(encoding="utf-8")
+    start = text.index("# Fail-closed repo preflight (GATE-BR-01)")
+    end = text.index("exit \\$overall", start)
+    return text[start:end]
+
+
+def test_remote_command_string_has_no_backticks() -> None:
+    # Backticks inside that double-quoted string are command substitution: they
+    # run on the OPERATOR's machine at expansion time, not on the gate host.
+    # A comment containing `gate-preflight` did exactly that (GATE1-BR-01) —
+    # harmless only because no such local command existed. This is the same
+    # hazard test_gate_env_metachars_refused rejects for operator-supplied env.
+    assert "`" not in _remote_command_string()
+
+
+def test_preflight_runs_before_any_gate_target() -> None:
+    # A preflight that runs after the targets certifies nothing: the point is
+    # that a workdir whose fixtures/weights are missing never reaches a suite
+    # that would SKIP over them and report EXIT=0 (GATE-BR-01). Pin the order
+    # and the abort, not just the presence.
+    block = _remote_command_string()
+    probe = block.index("make -n gate-preflight")
+    # Anchor on the statement, not the prose: the rationale comment above the
+    # probe also says "exit 73".
+    abort_stmt = re.search(r"(?m)^\s+exit 73$", block)
+    assert abort_stmt is not None, "no bare `exit 73` abort statement in the preflight block"
+    loop = block.index("for t in ")
+    assert probe < abort_stmt.start() < loop, (
+        "gate-preflight must probe and abort before the target loop"
+    )
+    # Undeclared is logged, never silent — otherwise a workdir that simply
+    # forgot the target looks identical to one that passed preflight.
+    assert "no gate-preflight target" in block
+
+
 def test_no_private_host_baked_in() -> None:
     # Assessment NG-5: the script must carry no concrete tailnet host — a
     # private address must never be a distributable default (fail-open leak).

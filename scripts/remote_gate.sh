@@ -7,8 +7,13 @@
 # user. Output contract for log consumers: one `=== <target> ===` header, then
 # `EXIT=<code> (<target>)` per target, then a final `DONE-ALL`; local exit is
 # nonzero if any target failed, 75 if the clone lock is busy, 74 if host-memory
-# admission deferred the run. Only committed state is gated: HEAD is what runs
-# remotely.
+# admission deferred the run, 73 if the workdir's `gate-preflight` target failed.
+# Only committed state is gated: HEAD is what runs remotely.
+#
+# Preflight: if the workdir's Makefile declares a `gate-preflight` target, it
+# runs before any gate target and a nonzero exit aborts the whole run. That is
+# where a repo asserts the fixtures/weights its suite would otherwise SKIP over
+# — a skip is not a pass, but an exit code cannot tell them apart (GATE-BR-01).
 #
 # Usage:
 #   scripts/remote_gate.sh bootstrap            # one-time clone provisioning
@@ -184,6 +189,16 @@ doctor)
             echo "workbay-hostgov: MISSING (admission hook is a no-op; uv tool install mcp-workbay-orchestrator as the gate user to enable it)"
         fi
         if [ -f "$HOME"/'"$REMOTE_DIR"'/'"$CLONE_SENTINEL"' ]; then echo "clone: present"; else echo "clone: MISSING (run bootstrap)"; fi
+        wd="$HOME"/'"$REMOTE_DIR"'/'"$WORKDIR"'
+        if [ -d "$wd" ] && (cd "$wd" && make -n gate-preflight >/dev/null 2>&1); then
+            if (cd "$wd" && PATH="$wd/.venv/bin:$HOME/.local/bin:$PATH" make gate-preflight >/dev/null 2>&1); then
+                echo "gate-preflight: declared and PASSING (fixture/weight presence verified)"
+            else
+                echo "gate-preflight: declared but FAILING — runs will abort with 73 until provisioned (cd $wd && make gate-preflight)"
+            fi
+        else
+            echo "gate-preflight: NOT declared by workdir (suite skips are indistinguishable from passes)"
+        fi
         for url in '"${probe_urls[*]:-}"'; do
             hostport="${url#*://}"; hostport="${hostport#*@}"; hostport="${hostport%%/*}"
             host="${hostport%%:*}"; port="${hostport##*:}"
@@ -248,6 +263,32 @@ run)
             runner=\"systemd-run --quiet --user --scope -p MemoryMax=${RUN_MEMORY_MAX} -p CPUQuota=${RUN_CPU_QUOTA} nice -n ${NICENESS} ionice -c3\"
         else
             echo 'remote-gate: systemd-run scope unavailable — falling back to nice/ionice only' >&2
+        fi
+        # Fail-closed repo preflight (GATE-BR-01). A workdir may declare a
+        # `gate-preflight` make target that asserts whatever its suite silently
+        # SKIPS over when absent (here: the gitignored face-pipeline ONNX
+        # weights). A skip is not a pass, but an exit code cannot tell them
+        # apart — this gate was green for months on a face pipeline it never
+        # ran. Declared-and-failing aborts before any target with exit 73
+        # (distinct from the 74 defer / 75 lock-busy codes); undeclared is
+        # logged, never silent.
+        if make -n gate-preflight >/dev/null 2>&1; then
+            echo \"=== gate-preflight ===\"
+            \$runner env \
+                ${extra_env[*]:-} \
+                TMPDIR=/tmp \
+                WORKBAY_DISABLE_INVOKING_HOOKS=1 \
+                PATH=\"\$PWD/.venv/bin:\$HOME/.local/bin:\$PATH\" \
+                make gate-preflight
+            rc=\$?
+            echo \"EXIT=\$rc (gate-preflight)\"
+            if [ \"\$rc\" -ne 0 ]; then
+                echo 'remote-gate: PREFLIGHT FAILED — refusing to run targets (the suite would skip and report green)' >&2
+                echo DONE-ALL
+                exit 73
+            fi
+        else
+            echo 'remote-gate: workdir declares no gate-preflight target — fixture/weight presence UNVERIFIED (skips are indistinguishable from passes)'
         fi
         overall=0
         for t in ${targets[*]}; do

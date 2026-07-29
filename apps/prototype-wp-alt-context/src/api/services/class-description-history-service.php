@@ -21,6 +21,7 @@ use function is_string;
 use function sanitize_text_field;
 use function trim;
 use function update_post_meta;
+use function wp_unslash;
 
 class DescriptionHistoryService {
 	private const PROVENANCE_META = '_acx_description_provenance';
@@ -109,19 +110,27 @@ class DescriptionHistoryService {
 		}
 
 		// S3-02: honor the update_post_meta() return. It also returns false when
-		// the stored value is byte-identical to $normalized_alt_text (a no-op
+		// the stored value is byte-identical to what WP will store (a no-op
 		// overwrite); distinguish that from a real failure via a read-back so an
 		// unchanged value still counts as success rather than a false error.
+		//
+		// Compare against wp_unslash( $value ), not $value: update_metadata()
+		// unslashes before store/equality (wp-includes/meta.php). A backslash-
+		// bearing alt therefore stores without the slash; comparing the raw
+		// request string would treat every re-save as permanent failure (BR-17).
 		// [INT-11] a failed write must leave the operator path and data intact —
 		// do not stamp human-edit meta unless the alt write is verified.
-		$alt_written = update_post_meta( $media_id, self::ALT_META, $normalized_alt_text );
+		$expected_alt = wp_unslash( $normalized_alt_text );
+		$alt_written  = update_post_meta( $media_id, self::ALT_META, $normalized_alt_text );
 		if ( false === $alt_written ) {
 			$current = get_post_meta( $media_id, self::ALT_META, true );
-			if ( ! is_string( $current ) || $normalized_alt_text !== $current ) {
+			if ( ! is_string( $current ) || $expected_alt !== $current ) {
 				// [HAI-13] surface a visible, operator-actionable failure.
+				// Do not advise "try again": a durable store failure or a value
+				// WP will never retain is not fixed by retrying the same write.
 				return new WP_Error(
 					'description_correction_failed',
-					'Could not save the alt text for this media item. Please try again.',
+					'Could not save the alt text for this media item.',
 					array( 'status' => 500 )
 				);
 			}
@@ -140,7 +149,9 @@ class DescriptionHistoryService {
 			'edited_at' => current_time( 'mysql' ),
 			'user_id'   => get_current_user_id(),
 		);
-		$human_written = update_post_meta( $media_id, self::HUMAN_EDIT_META, $human_edit_payload );
+		// What WP will actually store after update_metadata()'s unslash.
+		$expected_human = wp_unslash( $human_edit_payload );
+		$human_written  = update_post_meta( $media_id, self::HUMAN_EDIT_META, $human_edit_payload );
 		if ( false === $human_written ) {
 			$current_human = get_post_meta( $media_id, self::HUMAN_EDIT_META, true );
 			// Accept only a full-payload no-op: update_post_meta returns false when
@@ -150,20 +161,20 @@ class DescriptionHistoryService {
 			// telemetry attributes the correction to the wrong time/operator.
 			// Same-second re-save still passes: edited_at is second-granularity and
 			// the duplicate payload is identical. [BR-48a]
-			$human_ok = is_array( $current_human ) && $human_edit_payload === $current_human;
+			// Compare against the unslashed payload (BR-17), not the raw array.
+			$human_ok = is_array( $current_human ) && $expected_human === $current_human;
 			if ( ! $human_ok ) {
 				// stored_alt_text reports what storage actually holds after
-				// sanitize_text_field(). Clients reconcile their cache from this
-				// field; without it they can only guess from the request body and
-				// would display markup/whitespace that was stripped. Only this path
-				// carries it — the 404/400/alt-write-failure paths stored nothing
-				// new, so there is nothing honest to report. [rg-015]
+				// sanitize_text_field() + WP's unslash. Clients reconcile their
+				// cache from this field; without it they can only guess from the
+				// request body. Only this path carries it — the 404/400/alt-write-
+				// failure paths stored nothing new. [rg-015]
 				return new WP_Error(
 					'description_correction_partial',
 					'Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.',
 					array(
 						'status'          => 500,
-						'stored_alt_text' => $normalized_alt_text,
+						'stored_alt_text' => is_string( $expected_alt ) ? $expected_alt : $normalized_alt_text,
 					)
 				);
 			}

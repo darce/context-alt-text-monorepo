@@ -670,6 +670,67 @@ class DescriptionHistoryServiceTest extends TestCase
     }
 
     /**
+     * BR-17: alt text containing a Windows path backslash must save successfully,
+     * and saving it a second and third time must still succeed — not a permanent
+     * 500. Pre-fix: compare against the raw draft (not wp_unslash) treated every
+     * re-save as failure because update_metadata() stores the unslashed form.
+     */
+    public function testBackslashBearingAltSavesAndResavesSuccessfully(): void
+    {
+        $mediaId = 801;
+        // Literal backslash before U — the value operators type for Windows paths.
+        $altWithBackslash = 'Blueprint of the C:\\Users share, annotated';
+        $this->seedAttachment($mediaId, 'Attachment 801');
+        $this->setPostMeta($mediaId, '_acx_description_provenance', [
+            'alt_text_draft' => 'Generated draft.',
+            'model_id' => 'local-v1',
+        ]);
+
+        $service = new DescriptionHistoryService();
+
+        $first = $service->record_correction($mediaId, $altWithBackslash);
+        $this->assertNotInstanceOf(WP_Error::class, $first);
+        $this->assertIsArray($first);
+        // WP stores the unslashed form; history reports what storage holds.
+        $stored = get_post_meta($mediaId, '_wp_attachment_image_alt', true);
+        $this->assertSame(wp_unslash($altWithBackslash), $stored);
+        $this->assertSame($stored, $first['current_alt_text']);
+
+        $second = $service->record_correction($mediaId, $altWithBackslash);
+        $this->assertNotInstanceOf(WP_Error::class, $second, 'Second save with same backslash alt must not 500');
+        $this->assertIsArray($second);
+
+        $third = $service->record_correction($mediaId, $altWithBackslash);
+        $this->assertNotInstanceOf(WP_Error::class, $third, 'Third save with same backslash alt must not 500');
+        $this->assertIsArray($third);
+        $this->assertSame(wp_unslash($altWithBackslash), get_post_meta($mediaId, '_wp_attachment_image_alt', true));
+    }
+
+    /**
+     * BR-17 / S3-02: natural no-op (byte-identical re-save without the fail hook)
+     * must succeed once the stub returns false like core. Distinct from the
+     * forced-false testNoOpOverwriteStillSucceeds — this exercises the faithful
+     * update_post_meta short-circuit path.
+     */
+    public function testNaturalNoOpOverwriteStillSucceeds(): void
+    {
+        $mediaId = 802;
+        $sameAlt = 'Already stored alt for natural no-op.';
+        $this->seedAttachment($mediaId, 'Attachment 802');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', $sameAlt);
+        $this->setPostMeta($mediaId, '_acx_description_provenance', [
+            'alt_text_draft' => 'Generated draft.',
+            'model_id' => 'local-v1',
+        ]);
+
+        $result = (new DescriptionHistoryService())->record_correction($mediaId, $sameAlt);
+
+        $this->assertNotInstanceOf(WP_Error::class, $result);
+        $this->assertSame($sameAlt, $result['current_alt_text']);
+        $this->assertSame($sameAlt, get_post_meta($mediaId, '_wp_attachment_image_alt', true));
+    }
+
+    /**
      * @param int    $mediaId
      * @param string $title
      * @param string $mime

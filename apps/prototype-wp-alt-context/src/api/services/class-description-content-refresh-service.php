@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Api\Services;
 
 use function absint;
+use function array_merge;
 use function array_values;
 use function count;
 use function get_post_meta;
@@ -13,6 +14,7 @@ use function html_entity_decode;
 use function is_array;
 use function is_object;
 use function is_string;
+use function is_wp_error;
 use function json_decode;
 use function json_encode;
 use function preg_match;
@@ -111,8 +113,10 @@ class DescriptionContentRefreshService {
 		$media_ids = $this->normalize_media_ids( $media_ids );
 		$posts     = $this->load_candidate_posts( $limit );
 
-		$changed = array();
-		$skipped = array();
+		$changed    = array();
+		$failed     = array();
+		$skipped    = array();
+		$candidates = 0;
 
 		foreach ( $posts as $post ) {
 			if ( ! is_object( $post ) || ! isset( $post->ID, $post->post_content ) ) {
@@ -121,6 +125,9 @@ class DescriptionContentRefreshService {
 
 			$content         = (string) $post->post_content;
 			$updated_content = $content;
+			// Accumulate intended per-media changes; promote to $changed only
+			// after wp_update_post is verified (BR-08).
+			$pending_changed = array();
 
 			foreach ( $media_ids as $media_id ) {
 				$matches = $this->find_image_tags_for_media( $updated_content, $media_id );
@@ -161,9 +168,9 @@ class DescriptionContentRefreshService {
 					continue;
 				}
 
-				$updated_content = $this->replace_once( $updated_content, $matches[0], $updated_tag );
-				$updated_content = $this->replace_block_alt_attributes( $updated_content, $media_id, $current_alt_text );
-				$changed[]       = array(
+				$updated_content   = $this->replace_once( $updated_content, $matches[0], $updated_tag );
+				$updated_content   = $this->replace_block_alt_attributes( $updated_content, $media_id, $current_alt_text );
+				$pending_changed[] = array(
 					'post_id'           => absint( $post->ID ),
 					'post_type'         => isset( $post->post_type ) ? (string) $post->post_type : '',
 					'post_title'        => isset( $post->post_title ) ? (string) $post->post_title : '',
@@ -174,12 +181,27 @@ class DescriptionContentRefreshService {
 			}
 
 			if ( $updated_content !== $content ) {
-				wp_update_post(
+				// candidates = intended writes; changed = verified durable writes.
+				$candidates += count( $pending_changed );
+				$updated     = wp_update_post(
 					array(
 						'ID'           => absint( $post->ID ),
 						'post_content' => $updated_content,
-					)
+					),
+					true
 				);
+				if ( is_wp_error( $updated ) || 0 === $updated || false === $updated ) {
+					foreach ( $pending_changed as $entry ) {
+						$failed[] = array_merge(
+							$entry,
+							array( 'reason' => 'post_update_failed' )
+						);
+					}
+				} else {
+					foreach ( $pending_changed as $entry ) {
+						$changed[] = $entry;
+					}
+				}
 			}
 		}
 
@@ -188,11 +210,13 @@ class DescriptionContentRefreshService {
 				'dry_run'       => false,
 				'scanned_posts' => count( $posts ),
 				'media_ids'     => count( $media_ids ),
-				'candidates'    => count( $changed ),
+				'candidates'    => $candidates,
 				'changed'       => count( $changed ),
+				'failed'        => count( $failed ),
 				'skipped'       => count( $skipped ),
 			),
 			'changed' => $changed,
+			'failed'  => $failed,
 			'skipped' => $skipped,
 		);
 	}

@@ -1232,6 +1232,114 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertSame(1, $usage['failures']);
         $this->assertSame('upstream_http_415', $errors[0]['error_code']);
     }
+
+    /**
+     * BR-02: alt write failure → status not written/forced_overwrite, provenance
+     * not stamped. Assert storage.
+     */
+    public function testWriteAltFailureDoesNotStampProvenanceOrClaimSuccess(): void
+    {
+        $this->plantWritableAttachment(42);
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+        $GLOBALS['__ac_update_post_meta_fail'][42]['_wp_attachment_image_alt'] = true;
+
+        $result = $this->controller->describe_media($this->writeRequest(42));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $status = $result->get_data()['alt_text_write']['status'] ?? null;
+        $this->assertNotSame('written', $status);
+        $this->assertNotSame('forced_overwrite', $status);
+        $this->assertSame('failed', $status);
+        $this->assertSame('', get_post_meta(42, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(42, '_acx_description_provenance', true));
+    }
+
+    /**
+     * BR-02: provenance fails after successful alt → partial. Item must still be
+     * findable only when provenance OR human_edit is an array — without
+     * provenance it drops from history. Assert that storage state and the
+     * reported status both surface the gap.
+     */
+    public function testWriteProvenanceFailureReportsPartialAndHistoryLacksItem(): void
+    {
+        $this->plantWritableAttachment(42);
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+        $GLOBALS['__ac_update_post_meta_fail'][42]['_acx_description_provenance'] = true;
+
+        $result = $this->controller->describe_media($this->writeRequest(42));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame('partial', $result->get_data()['alt_text_write']['status'] ?? null);
+        $this->assertSame('A photo.', get_post_meta(42, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(42, '_acx_description_provenance', true));
+
+        // History requires provenance or human_edit array — without either the
+        // item disappears from list_history. Plant the attachment as a candidate
+        // so the absence is due to the history gate, not an empty get_posts set.
+        $GLOBALS['__ac_get_posts_results'] = [42];
+        $GLOBALS['__ac_posts'][42]->post_type = 'attachment';
+        $GLOBALS['__ac_posts'][42]->ID = 42;
+        $history = (new \AltContext\Api\Services\DescriptionHistoryService())->list_history(50);
+        $this->assertSame(0, $history['total']);
+        $ids = array_column($history['items'], 'media_id');
+        $this->assertNotContains(42, $ids);
+    }
+
+    /**
+     * BR-17 / idempotence: REST re-write of byte-identical alt reports success
+     * (written or forced_overwrite), not failed.
+     */
+    public function testWriteAltIdempotentReapplyReportsSuccess(): void
+    {
+        $this->plantWritableAttachment(42);
+        $this->setPostMeta(42, '_wp_attachment_image_alt', 'A photo.');
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+
+        $result = $this->controller->describe_media($this->writeRequest(42, true));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $status = $result->get_data()['alt_text_write']['status'] ?? null;
+        $this->assertContains($status, array('written', 'forced_overwrite'));
+        $this->assertNotSame('failed', $status);
+        $this->assertSame('A photo.', get_post_meta(42, '_wp_attachment_image_alt', true));
+        $this->assertIsArray(get_post_meta(42, '_acx_description_provenance', true));
+    }
+
+    /**
+     * BR-03: long-description write failure must not claim description_write
+     * success. Parent status folds to partial.
+     */
+    public function testLongDescriptionWriteFailureDoesNotClaimSuccess(): void
+    {
+        $this->plantWritableAttachment(42);
+        $this->setOption('acx_alt_style', 'alt_plus_description');
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBodyWithLong(42)),
+        ));
+        $GLOBALS['__ac_wp_update_post_fail'][42] = true;
+
+        $result = $this->controller->describe_media($this->writeRequest(42));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $write = $result->get_data()['alt_text_write'];
+        $this->assertSame('failed', $write['description_write'] ?? null);
+        $this->assertNotSame('written', $write['description_write'] ?? null);
+        $this->assertNotSame('forced_overwrite', $write['description_write'] ?? null);
+        // Alt + provenance still landed; parent folds long-body failure to partial.
+        $this->assertSame('partial', $write['status']);
+        $this->assertSame('A photo.', get_post_meta(42, '_wp_attachment_image_alt', true));
+        $this->assertSame('', $GLOBALS['__ac_posts'][42]->post_content);
+    }
 }
 
 final class DescribeMediaServiceTestHost implements DescribeHostInterface

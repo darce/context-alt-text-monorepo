@@ -101,6 +101,10 @@ def write_embedding_goldens() -> dict:
     emb_path = FIXTURE_DIR / "synthetic_112_embedding.npy"
     np.save(emb_path, emb)
 
+    # cosine_min: N=50 OpenCVSFaceEmbedder runs vs golden were bit-exact
+    # (vector maxabs=0; float64 unit-cosine ≈ 1-1e-12). Floor 0.99999999 is
+    # 10× above a 1e-9 slack band and fails the historical OpenCV 4→5 upgrade
+    # self-similarity of 0.99999994 (CVUP1-LC-03).
     meta = {
         "kind": "embedding_golden",
         "seed": EMBED_SEED,
@@ -111,8 +115,57 @@ def write_embedding_goldens() -> dict:
         "pre_norm_magnitude": float(batch.norms[0]),
         "model": MODEL_MANIFEST["sface"].file_name,
         "model_sha256": MODEL_MANIFEST["sface"].sha256,
+        "cosine_min": 0.99999999,
     }
     (FIXTURE_DIR / "embedding_meta.json").write_text(
+        json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return meta
+
+
+def write_composed_aligner_embedder_goldens() -> dict:
+    """Composed aligner→embedder golden (CVUP1-LC-03).
+
+    The synthetic_112_embedding path feeds a pre-baked crop that never passes
+    through cv2.warpAffine. This fixture starts from aligner_source_image +
+    landmarks, runs FivePointAligner.align, then embeds — the only path that
+    can catch aligner-driven embedding-space drift.
+    """
+    img, landmarks = aligner_source_image()
+    # Prefer committed source fixtures when present so regen stays consistent
+    # with the aligner goldens already on disk.
+    src_path = FIXTURE_DIR / "aligner_source_image.npy"
+    lm_path = FIXTURE_DIR / "aligner_landmarks.npy"
+    if src_path.is_file() and lm_path.is_file():
+        img = np.load(src_path)
+        landmarks = np.load(lm_path)
+
+    crop = FivePointAligner().align(img, landmarks).crop
+    batch = OpenCVSFaceEmbedder().embed([crop])
+    emb = batch.vectors
+    emb_path = FIXTURE_DIR / "aligner_composed_embedding.npy"
+    np.save(emb_path, emb)
+
+    meta = {
+        "kind": "aligner_composed_embedding_golden",
+        "description": (
+            "Embedding of FivePointAligner.align(aligner_source_image, "
+            "aligner_landmarks).crop — composed aligner→embedder path so "
+            "warpAffine drift is visible at the embedding layer (CVUP1-LC-03)."
+        ),
+        "source_image": "aligner_source_image.npy",
+        "source_landmarks": "aligner_landmarks.npy",
+        "crop_sha256": _sha256_bytes(crop.tobytes()),
+        "embedding_shape": list(emb.shape),
+        "embedding_dim": int(emb.shape[1]),
+        "l2_norm": float(np.linalg.norm(emb[0])),
+        "pre_norm_magnitude": float(batch.norms[0]),
+        "model": MODEL_MANIFEST["sface"].file_name,
+        "model_sha256": MODEL_MANIFEST["sface"].sha256,
+        # N=50 composed runs: bit-exact. Same floor as synthetic golden.
+        "cosine_min": 0.99999999,
+    }
+    (FIXTURE_DIR / "aligner_composed_embedding_meta.json").write_text(
         json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     return meta
@@ -315,12 +368,24 @@ def write_detector_goldens() -> dict:
         "image_sha256": _sha256_bytes(img.tobytes()),
         "model": MODEL_MANIFEST["yunet"].file_name,
         "model_sha256": MODEL_MANIFEST["yunet"].sha256,
+        # Version-drift budgets (CVUP1-LC-03). Regenerated only when procedure/runtime
+        # changes; do not loosen without a fresh N-run noise-floor measurement.
+        # Measurement 2026-07-29, OpenCV 5.0.0, N=50 identical cartoon inputs:
+        #   max run-to-run | vs-golden abs: bbox=0, landmarks=0, score=0 (bit-exact).
+        # Noise floor = 0. Tolerance = 10 × float32 ULP @ ~300 px
+        #   ≈ 10*(300*2^-23) ≈ 3.6e-4 → 5e-4 px; score 10×ulp@1 ≈ 1e-5.
         "tolerances": {
-            "bbox_px": 2.0,
-            "landmarks_px": 2.0,
-            "score": 0.02,
+            "bbox_px": 5e-4,
+            "landmarks_px": 5e-4,
+            "score": 1e-5,
             # Absolute distance to drawn feature center (YuNet offset on soft blob).
             "landmark_nearest_px": 50.0,
+            "derivation": (
+                "N=50 identical-input OpenCVYuNetDetector runs (OpenCV 5.0.0): "
+                "max run-to-run and vs-golden abs were 0.0 for bbox/landmarks/score. "
+                "Noise floor=0; tolerances are 10× float32 ULP at coordinate scale "
+                "(5e-4 px, 1e-5 score). Prior decorative budgets were 2.0 px / 0.02."
+            ),
         },
         "procedure": procedure,
         "drawn_feature_coords": {k: [float(v[0]), float(v[1])] for k, v in drawn.items()},
@@ -344,10 +409,12 @@ def main() -> int:
 
     emb_meta = write_embedding_goldens()
     align_meta = write_aligner_goldens()
+    composed_meta = write_composed_aligner_embedder_goldens()
     det_meta = write_detector_goldens()
 
     print("Wrote embedding goldens:", emb_meta["crop_sha256"][:12], "...")
     print("Wrote aligner goldens:", align_meta["crop_sha256"][:12], "...")
+    print("Wrote composed aligner→embedder goldens:", composed_meta["crop_sha256"][:12], "...")
     print("Detector golden:", det_meta.get("status"), det_meta.get("kind"))
     print("models_dir:", DEFAULT_MODELS_DIR)
     return 0

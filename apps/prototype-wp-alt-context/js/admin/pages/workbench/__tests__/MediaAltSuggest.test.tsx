@@ -533,9 +533,7 @@ describe('MediaAltSuggest', () => {
 
   it('clears a prior accept error when Regenerate is pressed [INT-11][a11y][WBUX-5-S2C2-BR-01][BR-36]', async () => {
     const regenerated = 'A red brick viaduct crossing a canal at midday.';
-    describeMock
-      .mockResolvedValueOnce(sampleResponse(draft))
-      .mockResolvedValueOnce(sampleResponse(regenerated));
+    describeMock.mockResolvedValueOnce(sampleResponse(draft)).mockResolvedValueOnce(sampleResponse(regenerated));
     correctMock.mockRejectedValueOnce(
       new Error(
         'Request to /wp-json/acx/v1/recognition/describe-history/42/correction failed (502): <html>proxy-internal-detail</html>',

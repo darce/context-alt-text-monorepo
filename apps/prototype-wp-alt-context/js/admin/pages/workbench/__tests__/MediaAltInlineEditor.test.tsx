@@ -127,9 +127,7 @@ describe('MediaAltInlineEditor', () => {
     // same draft text during the pending save, so asserting the text before the
     // editor closes would race onto the (about-to-detach) textarea instead of the
     // settled read paragraph.
-    await waitFor(() =>
-      expect(screen.queryByRole('textbox', { name: /alt text/i })).not.toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: /alt text/i })).not.toBeInTheDocument());
     expect(screen.getByText('A stone bridge over a calm river at dusk.')).toBeInTheDocument();
   });
 
@@ -156,9 +154,7 @@ describe('MediaAltInlineEditor', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: /^save/i }));
 
-    await waitFor(() =>
-      expect(screen.queryByRole('textbox', { name: /alt text/i })).not.toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: /alt text/i })).not.toBeInTheDocument());
     // Save must return focus to the Edit control like Cancel does, otherwise focus
     // falls to document.body when the (disabled) Save button detaches.
     expect(screen.getByRole('button', { name: /edit alt text/i })).toHaveFocus();
@@ -198,9 +194,7 @@ describe('MediaAltInlineEditor', () => {
 
   it('shows a user-safe error, not the raw HTTP body, when the save fails [error-ux][WBUX-5-S2A-BR-04]', async () => {
     correctMock.mockRejectedValueOnce(
-      new Error(
-        'Request to /wp-json/acx/v1/media/42/alt failed (502): <html>proxy-internal-detail</html>',
-      ),
+      new Error('Request to /wp-json/acx/v1/media/42/alt failed (502): <html>proxy-internal-detail</html>'),
     );
     renderEditor(<MediaAltInlineEditor mediaId={42} altText="Bridge at dusk" />);
 

@@ -4,7 +4,7 @@
 >
 > - **Date**: 2026-07-23
 > - **Author**: Grok (docs-only plan authoring)
-> - **Plan version**: v6.2 — supersedes in-service bench supervisor (v5); re-scopes to cross-stack orchestration aligned with FIR23-STACK + QA v2; **changelog (v6→v6.1)**: real preflight contracts, explicit cluster phase, feasible public-export scoring scope, dual scoring frames, crossbench tier enum, ingest→analyze→cluster→export flow, pinned FIR23-STACK consumption table, single package root; **changelog (v6.1→v6.2)**: ground-truth wiring + label mapping, S1 executable granularity (run-dir/resume/credentials/status/PROV-01), concrete CrossbenchTier assignment rules, EVAL-19 accepted-set operationalization, proof-suite + dual-frame FIR-5 signature pins
+> - **Plan version**: v6.3 — supersedes in-service bench supervisor (v5); re-scopes to cross-stack orchestration aligned with FIR23-STACK + QA v2; **changelog (v6→v6.1)**: real preflight contracts, explicit cluster phase, feasible public-export scoring scope, dual scoring frames, crossbench tier enum, ingest→analyze→cluster→export flow, pinned FIR23-STACK consumption table, single package root; **changelog (v6.1→v6.2)**: ground-truth wiring + label mapping, S1 executable granularity (run-dir/resume/credentials/status/PROV-01), concrete CrossbenchTier assignment rules, EVAL-19 accepted-set operationalization, proof-suite + dual-frame FIR-5 signature pins; **changelog (v6.2→v6.3, planning-review corrections)**: `opencv_major` given a real source (operator attestation + upstream ask, local `cv2` forbidden); CONFIRMATORY gains a power precondition (declared δ, exact-binomial McNemar on the paired legs, per-cell MDE, pool-conditional Wilson, ρ gate) and the previously-unassignable underpowered row; detection P/R made localization-aware via IoU matching + one scoped additive `face_metrics` change, with a [TEST-15] count-preserving red-proof; manifest v2/v3 seam reconciled against FIR-11 Slice 2 and the `stranger_faces` subtraction retired; `accepted_set_floor` re-defaulted to a fraction with a power floor and a differential-attrition bias check; `frame_e2e` pinned as the sole CONFIRMATORY sampling frame; `labeled_faces` denominator pinned to `len(face_boxes)`
 > - **Projects**: `apps/prototype-description-service/scripts/bench/` (primary, new — single package root); consumes `apps/prototype-description-service/scripts/eval_harness/` (FIR-5, merged); **no** recognition-service code changes
 > - **Task ID**: `FIR-8`
 > - **Target Branch**: `feature/fir-8`
@@ -46,6 +46,7 @@ Operators need a head-to-head score of insightface (512-D) vs face_pipeline (128
 - **Cascade honesty** ([EVAL-16]): a face a stack's detector missed counts as an identification error end-to-end in the head-to-head report — enforced by the adapter dual-frame construction (see [End-to-end scoring frames](#end-to-end-scoring-frames)).
 - **Fixed denominators** ([EVAL-19]): the scoring denominator is the **accepted set** — manifest items successfully ingested+analyzed on **both** legs — computed once, written to `score/accepted_set.json`, asserted identical across legs before any metric; attrition of one-sided failures is reported, not silently dropped (see [EVAL-19 operationalized](#eval-19-operationalized-accepted-set)).
 - **Per-run provenance** ([PROV-01]): every report stamps stack identity (base URL / compose project name), model ids, `PGVECTOR_DIM`, **the OpenCV runtime major version**, corpus hash, CLI + harness code SHAs; per-leg `preflight.json` is the primary provenance artifact written in S1 and consumed by the report. <span>The `cv2` version was added 2026-07-28 (QA v8 re-gate): CVUP-1 moves the stack 4.x → 5.x and changes embeddings without changing any model id, so without it a pre- and a post-upgrade crossbench run are indistinguishable in the artifact and silently comparable in the report.</span>
+  > **This field has no source yet, so the plan names its source rather than assuming one.** No service surface reports it: the preflight contract below reads `model_cache.profile` and the `/ready` database detail only, and neither `api/main.py` `register_health_probes` nor `recognition/application/health.py` returns an OpenCV version (a `cv2` search across both files returns zero hits). **A locally-read `cv2.__version__` is forbidden** — the CLI runs on the operator laptop, so it would stamp the laptop's toolchain onto a remote stack's run and produce a provenance field that is worse than absent because it looks authoritative. Resolution routes through the [consumption-table rule](#fir23-stack-consumption-table-pinned) verbatim — *a needed field absent from the table is a FIR23-STACK deliverable or an operator attestation, never a silent FIR-8 invention*: S1 takes it as a **required per-stack operator attestation** (`opencv_major` in the stack-pair config), fails closed when absent, and stamps it into `preflight.json` marked `source: operator_attested`. The **upstream ask** — add `opencv_version` to the `/health/detailed` `model_cache` block so the value is service-reported and unfalsifiable — is filed against the recognition service and recorded in the runbook residual section; when it lands, preflight reads it, compares it to the attestation, and fails closed on disagreement. Until then the attestation is a declared weak link, not a verified stamp.
 - **Canon**: heuristics v0.12.3; distilled refs `~/Development/heuristics-canon-research/distilled/ml-systems/janus-benchmark-c.md` (pooling-unit / cascade eval), `handbook-face-recognition.md`.
 
 ## Workflow Principles
@@ -210,6 +211,15 @@ CLI config **validates against this table at load** ([rg-008]) and **refuses unk
 
 - Compare `model_cache.profile` to `expected_profile`; mismatch → **`profile_or_dim_drift`**.
 
+### OpenCV major source (attested, not probed)
+
+The [PROV-01 constraint](#constraints) requires an OpenCV runtime major per leg and **no endpoint reports one**. Preflight therefore does not probe it:
+
+- Read `opencv_major` (int) from the stack's stack-pair config entry. **Required** — absent or unparseable → **`opencv_major_unattested`**.
+- Never call `cv2.__version__` in the CLI process. The CLI runs on the operator laptop; its `cv2` is not the stack's `cv2`. A test asserts the bench package imports no `cv2` at all.
+- Write into `preflight.json` as `{"opencv_major": <int>, "source": "operator_attested"}`. The report renders it with the `operator_attested` qualifier visible, never as a bare version string.
+- **Forward path (upstream ask, not FIR-8 scope)**: when `/health/detailed` `model_cache.opencv_version` exists, preflight reads it, sets `source: "service_reported"`, and fails closed with **`opencv_major_drift`** if it disagrees with the attestation. Add the branch behind a presence check now so the flip is config-free.
+
 ### Stable error codes (normative)
 
 | Code | When |
@@ -217,6 +227,8 @@ CLI config **validates against this table at load** ([rg-008]) and **refuses unk
 | `preflight_auth_failed` | Authenticated `/health/detailed` returns 401/403 or auth dependency rejects the key |
 | `preflight_endpoint_missing` | `/ready` or `/health/detailed` not reachable as that route (404 / connection refused treated as missing endpoint for this purpose) |
 | `profile_or_dim_drift` | Profile missing/mismatch, database check not OK, dim token absent, or dim int ≠ expected |
+| `opencv_major_unattested` | Stack-pair entry has no parseable `opencv_major`, and the service reports none |
+| `opencv_major_drift` | Service-reported `model_cache.opencv_version` major ≠ attested `opencv_major` (only reachable once the upstream ask lands) |
 
 Mock fixtures in tests must use these **real** payload shapes (not invented field names like top-level `pgvector_dimension` or `profile` outside `model_cache`).
 
@@ -252,7 +264,7 @@ Scoring is invalid if predicted cluster labels are compared to GT as if they sha
 
 | Pin | Value |
 | --- | --- |
-| **Schema** | Golden manifest v2 (`manifest_version == 2`) — same schema as FIR-5 eval |
+| **Schema** | **v2 or v3 — accepted by version, with different scoring rules per version.** See [Manifest version seam](#manifest-version-seam-fir-11-coupling) immediately below; do **not** pin `manifest_version == 2`. |
 | **Loader** | `scripts.eval_harness.manifest.load_manifest(path: str, images_dir: str \| None = None) -> GoldenManifest` |
 | **Types** | `GoldenManifest` (`roster`, `entries`); `GoldenEntry` (`path`, `sha256`, `media_id`, `face_count`, `present_identities`, `face_boxes`, `policy`, …); `FaceBox` (`x`, `y`, `w`, `h`, `name: str \| None`, `source`) |
 | **Errors** | `ManifestError` on structural/hash/label failures (fail-closed, [rg-008]) |
@@ -263,17 +275,43 @@ Scoring is invalid if predicted cluster labels are compared to GT as if they sha
 
 CLI: `run --manifest <path> --images-dir <root> …` (both required for production head-to-head; tests may inject a synthetic `GoldenManifest` without disk images).
 
+### Manifest version seam (FIR-11 coupling)
+
+**This plan and FIR-11 collide on the manifest, and neither previously cross-referenced the other.** FIR-11 Slice 2 makes `annotation_mode` a **required** `GoldenManifest` field and bumps `SUPPORTED_MANIFEST_VERSION` 2 → 3 (FIR-11 plan §Files-to-Change, `manifest.py` row), retaining a read-only `load_legacy_manifest` for bias-audit arms. Pinning `manifest_version == 2` here meant a v3 manifest would fail FIR-8's loader contract outright, while a v2 manifest scored under FIR-8's own `stranger_faces` arithmetic silently inflates detection FP. Both halves are now resolved by version, not by assumption:
+
+| Loaded manifest | Loader | `stranger_faces` | Detection FP claims |
+| --- | --- | --- | --- |
+| **v3, `annotation_mode: exhaustive`** | `load_manifest` | derived: count of `face_boxes` with `name is None` | **CONFIRMATORY-eligible** — every face in frame is annotated, so an unmatched predicted box is a real FP |
+| **v3, `annotation_mode: roster_only`** | `load_manifest` | **not derived — `0`, and the cell is DIAGNOSTIC** | not eligible: unannotated bystanders are indistinguishable from detector FPs |
+| **v2 (no `annotation_mode`)** | `load_legacy_manifest` (read-only) | **not derived — `0`, and the cell is DIAGNOSTIC** | not eligible, same reason |
+
+The retired arithmetic was `stranger_faces ← max(0, face_count − len(present_identities))`. It is only sound under exhaustive annotation: on a roster-only manifest, `face_count` does not claim to count every face, so the subtraction manufactures a stranger count out of a roster gap and every correctly-detected bystander is charged to the detector as a false positive. **Deriving `stranger_faces` by subtraction is removed from this plan entirely** — under v3/exhaustive it comes from the boxes, and otherwise it does not come at all.
+
+**Sequencing consequence, stated plainly:** FIR-8's detection-FP and identification-precision claims are **not gate-eligible until FIR-11 Slice 2 lands** and the corpus is re-emitted as v3/exhaustive. A FIR-8 run against today's v2 corpus is a valid DIRECTIONAL/DIAGNOSTIC dry run of the orchestration path — which is real value, and is how S1/S2 should be proven — but it cannot produce the head-to-head gate number. `score` prints the manifest version, `annotation_mode`, and the resulting eligibility ceiling in the provenance block so this is legible in the artifact rather than inferred from two plans.
+
 ### (b) Constructing metric inputs
 
 Frame construction happens **entirely in `scripts/bench`** (`export_map.py` / `score_report.py`). FIR-5 `detection_pr` / `identification_pr` are pure consumers of the rows the adapter builds — **unmodified**.
 
 | Side | Source | Fields used for FIR-5 rows |
 | --- | --- | --- |
-| **GT (labeled)** | Manifest entry | `ImageDetection.labeled_faces` ← `entry.face_count` (or `len(entry.face_boxes)` when boxes are complete and preferred); `ImageIdentities.labeled` ← `entry.present_identities` (roster names); `recognition_enabled` ← `entry.policy.recognition_enabled`; `stranger_faces` ← max(0, `face_count - len(present_identities)`) or count of `face_boxes` with `name is None` when boxes present |
-| **Predicted** | Per-leg public exports under `legs/<stack_id>/exports/` | `ImageDetection.pred_faces` ← count of exported face rows for that media; `ImageIdentities.predicted` ← **mapped** identity names (never raw unmapped cluster ids as if they were GT names) |
+| **GT (labeled)** | Manifest entry | `ImageDetection.labeled_faces` ← **`len(entry.face_boxes)`** (single pinned rule — see the denominator pin below); `ImageIdentities.labeled` ← `entry.present_identities` (roster names); `recognition_enabled` ← `entry.policy.recognition_enabled`; `stranger_faces` ← per the [manifest version seam](#manifest-version-seam-fir-11-coupling) (boxes with `name is None` under v3/exhaustive; otherwise `0` + DIAGNOSTIC) |
+| **Predicted** | Per-leg public exports under `legs/<stack_id>/exports/` | `ImageDetection.pred_faces` ← count of exported face rows for that media; **`ImageDetection.matched_faces` ← count of IoU-matched pairs** (see localization pin below); `ImageIdentities.predicted` ← **mapped** identity names (never raw unmapped cluster ids as if they were GT names) |
 | **Image key** | Join key | Stable string: manifest `path` or `str(entry.media_id)` — same `image` field on both `ImageDetection` and `ImageIdentities` for a media unit |
 
-Detection P/R does not require identity name mapping (counts only). Identification P/R **requires** [label-space mapping](#c-label-space-mapping) before filling `predicted`.
+Detection P/R does not require identity name mapping. Identification P/R **requires** [label-space mapping](#c-label-space-mapping) before filling `predicted`.
+
+**Denominator pin (one rule, not two).** An earlier revision wrote `labeled_faces ← entry.face_count` *"or `len(entry.face_boxes)` when boxes are complete and preferred"* — inside a table this plan labels **normative**. Two denominators yield two different detection P/R values for the same run with no rule selecting between them, which is the same post-hoc-selection defect as the unpinned sampling frame above. `len(entry.face_boxes)` is the pin, for one reason: the localization pin below requires per-box GT geometry anyway, so a `face_count` that disagrees with the box list would mean the metric's denominator and its matching evidence disagree. Consequences are explicit rather than tolerated:
+
+- `face_count != len(face_boxes)` on an entry → **fail closed** (`gt_box_count_mismatch`), not silent preference for one field. Under a v3/exhaustive manifest FIR-11's coverage invariant makes the two agree by construction, so this fires only on a corpus that should not have loaded.
+- An entry with **zero** `face_boxes` cannot be scored for detection at all and is excluded from the detection frames with a counted, printed exclusion — the same treatment the optimistic label rule already gives box-less entries. It stays in the identification frames.
+
+**Localization pin ([TEST-15]).** Detection P/R was cardinality-only: `labeled_faces` from a count and `pred_faces` from `len(exported rows)`, fed to `detection_pr`, whose per-image arithmetic is `TP = min(pred, labeled)`. A detector emitting the **right number of boxes in entirely the wrong places scores perfect detection P/R** — precisely the plausible-wrong-implementation-still-passes pattern, and it is the metric the whole head-to-head rests on. The signal was available and discarded: exports carry `bbox` `x/y/width/height`, GT carries `face_boxes`, and this plan already uses IoU matching at `BOX_IOU_MATCH=0.5` for the optimistic label map.
+
+- The adapter computes a **one-to-one IoU matching** (greedy by descending IoU is sufficient and deterministic at these counts; ties broken by GT box order) at the existing `BOX_IOU_MATCH=0.5`, and reports `matched_faces` per image.
+- `detection_pr` as it stands **cannot express this** — `ImageDetection` has no TP slot, so a single mislocalized box (1 pred, 1 GT, 0 matched) is scored `TP = min(1,1) = 1`. This is a real expressiveness gap in the shared metric, not a FIR-8 inconvenience, so it is fixed **upstream once**: add `matched_faces: int | None = None` to `ImageDetection`, and in `detection_pr` use `TP = matched_faces`, `FP = pred − matched`, `FN = labeled − matched` when it is present. Omitted → byte-identical current behaviour, so every existing FIR-5 consumer and its tests are untouched. This is the "documented gap fixed upstream with rationale" the [Contract and Boundary Impact](#contract-and-boundary-impact) table already permits, and it supersedes the blanket *do not modify* note in the [dual-frame contract](#dual-frame-adapter-contract-fir-5-signatures-pinned).
+- **Count-only detection P/R is retained as a DIAGNOSTIC cell**, printed beside the matched cell. The gap between them *is* the localization-quality signal, and on a cross-stack comparison between two different detectors it is one of the more interesting numbers in the report.
+- **Discrimination red-proof (mandatory, [TEST-15])**: a fixture where every predicted box is translated off its GT box while the per-image **count** is preserved. The count-only cell must still read perfect P/R and the matched cell must collapse to `TP = 0`. Deleting the IoU matching makes the matched cell read perfect and the test fail. A green run that cannot go red here certifies nothing.
 
 ### (c) Label-space mapping
 
@@ -324,6 +362,7 @@ class ImageDetection:
     image: str
     pred_faces: int
     labeled_faces: int
+    matched_faces: int | None = None   # ADDED by this task — see localization pin
 
 @dataclass(frozen=True)
 class ImageIdentities:
@@ -339,7 +378,8 @@ def identification_pr(items: Sequence[ImageIdentities]) -> PrResult: ...
 
 - **Construction site**: `export_map.to_face_metric_inputs(...)` / `score_report.build_dual_frames(...)` only.
 - **Call sites**: `detection_pr(seq_of_ImageDetection)`, `identification_pr(seq_of_ImageIdentities)` — no other FIR-5 face scorer on the cross-stack path.
-- **Do not modify** `face_metrics.py` in this task.
+- **One scoped exception to "do not modify `face_metrics.py`"**: the optional `ImageDetection.matched_faces` field plus its three-line branch in `detection_pr`, per the [localization pin](#b-constructing-metric-inputs). Nothing else in `face_metrics.py` is touched, no existing signature changes, and the field defaults to `None` so every current consumer is byte-identical. Rationale: the alternative — a bench-local localization scorer — is exactly the "parallel scorer" the [Constraints](#constraints) forbid, and it would leave the shared metric blind to localization for every other consumer. Extend the shared metric once; do not fork it and do not shadow it.
+- Everything else in this task remains a pure consumer.
 
 **Adapter construction (normative)**
 
@@ -365,23 +405,44 @@ Separately: FIR-5 / eval harness surfaces carry **per-metric DIRECTIONAL disclos
 
 | Tier | Meaning |
 | --- | --- |
-| **CONFIRMATORY** | Full-corpus fixed-denominator metric over the pinned **accepted set**, both legs' clustering complete (`cluster_job.json` success), **primary** label-mapping only, accepted-set size ≥ configured floor (`accepted_set_floor`, **default = manifest entry count** — zero tolerated attrition unless the operator lowers it; tests use an explicit small floor). Eligible for gate-style claims. |
-| **DIRECTIONAL** | Any cell whose denominator lost items below the pre-stated floor (ingest/analyze failures shrank the accepted set), **or** any cell using the **optimistic** label-mapping frame, **or** underpowered slice cells the report still shows for trend. Not gate-eligible. |
+| **CONFIRMATORY** | Full-corpus fixed-denominator metric over the pinned **accepted set**, both legs' clustering complete (`cluster_job.json` success), **primary** label-mapping only, accepted-set size ≥ the [floor](#floor-policy-normative--the-default-is-a-fraction-not-the-corpus-size), **and the [power precondition](#power-precondition-normative) satisfied for the cell's own δ**. Eligible for gate-style claims. |
+| **DIRECTIONAL** | Any cell whose denominator lost items below the pre-stated floor (ingest/analyze failures shrank the accepted set), **or** any cell using the **optimistic** label-mapping frame, **or** any cell that fails the power precondition, **or** any cell not on the pinned primary sampling frame. Not gate-eligible. |
 | **DIAGNOSTIC** | Context cells: per-stack raw face/cluster counts, unmapped-cluster stats, attrition-by-phase tables, join failures, license banner echo. Never used as a quality gate. |
+
+### Power precondition (normative)
+
+Size is not power. An earlier revision made a cell CONFIRMATORY on accepted-set **size** alone and declared it gate-eligible, while the plan contained no variance, interval, MDE, or repeat-run concept anywhere — so a two-point P/R gap between legs on ~150 images would have been stamped gate-eligible. That contradicts the sibling discipline this programme already accepted (FIR-11 plan: cells under-powered for δ = 10pp are *"not a ship gate"*), and it is the failure mode [EVAL-17] names.
+
+A cell is CONFIRMATORY only when **all** of the following hold, each computed and printed next to the cell:
+
+1. **The comparison is analysed as paired.** Both legs score the *same* accepted set, so the head-to-head is a paired design and must not be read as two independent P/R intervals — that discards the pairing and inflates the variance. The head-to-head claim is an **exact-binomial McNemar** test on discordant media (leg A correct / B wrong vs B correct / A wrong). The normal approximation is not used at these counts.
+2. **δ is declared before the run**, in the stack-pair config as `head_to_head_delta` (default **0.10** — same 10pp the sibling FIR plans use, so a FIR-8 result and a FIR-11 result are comparable claims). A δ chosen after seeing the split is a post-hoc threshold, not a gate.
+3. **The observed discordant-pair count supports δ.** `score` computes the exact-binomial MDE at the observed `n_discordant` and α = 0.05, and stamps `mde_pp` on the cell. `mde_pp > δ` → **DIRECTIONAL**, no exception. Note the binding denominator is *discordant pairs*, not accepted-set size: two stacks that agree on almost everything can clear a 135-image floor and still have `n_discordant ≈ 8`, which resolves nothing. This is the common case, not the edge case.
+4. **The interval is labeled for what it covers.** Every P/R cell carries a Wilson interval labeled **conditional on this pool** — golden150 is a convenience corpus, not a probability sample of deployment traffic, so the interval bounds sampling noise within the pool and says nothing about generalisation.
+5. **Within-occasion clustering is not ignored** where the pooling unit is a face rather than an image. Media from one occasion are correlated; the effective N for face-level cells is `N / (1 + (m − 1)·ρ)`. When ρ is unmeasured for this corpus the cell is **DIRECTIONAL** — an unmeasured ρ is not ρ = 0.
+
+None of these requires new statistics infrastructure: items 1–4 are ~40 lines over `scipy.stats.binomtest` plus a Wilson helper, and item 5 is a gate that fails closed until FIR-11 Slice 4 publishes ρ for this corpus.
 
 ### Cell → tier assignment (normative)
 
+Rules are evaluated **top to bottom; first match wins**. A cell reaches CONFIRMATORY only by falling through every downgrade above it.
+
 | Report cell | Tier rule |
 | --- | --- |
-| Detection P/R (`frame_e2e` or `frame_fir5_native`) on accepted set, both clusters OK, size ≥ floor | **CONFIRMATORY** |
-| Identification P/R with `label_map_primary`, same conditions | **CONFIRMATORY** |
-| Identification P/R with `label_map_optimistic` | **DIRECTIONAL** (always) |
-| Any P/R cell when `\|accepted_set\| < accepted_set_floor` | **DIRECTIONAL** |
 | Any P/R cell when either leg cluster phase missing/failed | **not scored** (score aborts; no silent tier downgrade that invents a metric) |
-| Per-stack raw detection counts, export row counts | **DIAGNOSTIC** |
+| Any P/R cell when `differential_attrition_exceeded` | **not scored** (score aborts — the surviving pool is biased toward the failing leg, so no tier is honest) |
+| Any P/R cell when `\|accepted_set\| < accepted_set_floor` | **DIRECTIONAL** |
+| Any P/R cell failing the [power precondition](#power-precondition-normative) — `mde_pp > head_to_head_delta`, or a face-level cell with ρ unmeasured | **DIRECTIONAL** (this is the row that was missing; without it "underpowered" was named as a DIRECTIONAL trigger in the prose but was unassignable in the table, so nothing could ever receive it) |
+| Detection P/R on `frame_fir5_native` | **DIRECTIONAL** (always — secondary frame, see the frame pin below) |
+| Identification P/R with `label_map_optimistic` | **DIRECTIONAL** (always) |
+| Detection P/R on **`frame_e2e`** (pinned primary), IoU-matched, accepted set, clusters OK, floor and power satisfied | **CONFIRMATORY** |
+| Identification P/R on **`frame_e2e`** with `label_map_primary`, same conditions | **CONFIRMATORY** |
+| Per-stack raw detection counts, export row counts, count-only detection P/R | **DIAGNOSTIC** |
 | Unmapped-cluster counts / residual after mapping | **DIAGNOSTIC** |
 | Attrition table (per-leg failure counts by phase) | **DIAGNOSTIC** |
 | Provenance / license banner fields | **DIAGNOSTIC** (metadata, not a quality claim) |
+
+**Primary sampling frame is pinned to `frame_e2e`.** An earlier revision marked *"Detection P/R (`frame_e2e` **or** `frame_fir5_native`)"* CONFIRMATORY, which produced **two** gate-eligible detection numbers per leg with no rule for which one the head-to-head claim uses — so whichever frame flattered the preferred stack could be selected after the fact. The label-map frames were already pinned one line earlier (`label_map_primary` is "**default** for CONFIRMATORY identification cells"); the sampling frames were not, and that asymmetry was the defect. `frame_e2e` is the primary because cascade honesty ([EVAL-16], already a locked constraint) says a face the detector missed is an end-to-end error — a frame that excludes detector misses cannot carry the headline claim. `frame_fir5_native` stays in the report as the always-DIRECTIONAL companion that isolates *post-detection* quality; both print side by side, and neither may be substituted for the other.
 
 ---
 
@@ -499,18 +560,24 @@ Implementation note: the CLI does **not** open a raw production DB URL for arbit
 | tests (new) | `apps/prototype-description-service/scripts/bench/tests/test_e2e_frame.py` | Detector-miss → ID-miss accounting (dual frames) |
 | tests (new) | `apps/prototype-description-service/scripts/bench/tests/test_e2e_mocked.py` | One mocked end-to-end (both legs → report dir) |
 | tests (new) | `apps/prototype-description-service/scripts/bench/tests/test_export_map_rg015.py` | Export normalization invents no envelope metadata (rg-015) |
+| tests (new) | `apps/prototype-description-service/scripts/bench/tests/test_detection_localization.py` | [TEST-15] count-preserving box translation: count-only cell stays perfect, matched cell collapses to `TP = 0` |
+| tests (new) | `apps/prototype-description-service/scripts/bench/tests/test_power_precondition.py` | `mde_pp > delta` → DIRECTIONAL; unmeasured ρ on a face-level cell → DIRECTIONAL; exact-binomial McNemar on paired legs |
+| tests (new) | `apps/prototype-description-service/scripts/bench/tests/test_manifest_version_seam.py` | v2 / v3-roster_only → `stranger_faces == 0` + DIAGNOSTIC ceiling; v3-exhaustive → boxes-derived + CONFIRMATORY-eligible; the retired subtraction is absent |
+| tests (new) | `apps/prototype-description-service/scripts/bench/tests/test_attrition_floor.py` | fractional + absolute floor forms; `floor_below_power_floor`; `differential_attrition_exceeded` aborts scoring |
+| harness (**edit**) | `apps/prototype-description-service/scripts/eval_harness/face_metrics.py` | **Only** the optional `ImageDetection.matched_faces` field + the `TP/FP/FN` branch that honours it. Default `None` → byte-identical existing behaviour. Rationale + scope: [localization pin](#b-constructing-metric-inputs) |
+| tests (**edit**) | `apps/prototype-description-service/scene/tests/test_eval_harness_face_metrics.py` | Add cases for `matched_faces` present/absent; existing cases must pass **unchanged** (that they do is the backward-compatibility proof) |
 | docs (new) | `apps/prototype-description-service/scripts/bench/README.md` | Package README (S3) |
-| docs (new) | `docs/runbooks/fir-8-cross-stack-bench.md` | Operator runbook + teardown + license |
-| docs (edit) | this plan | v6.2 plan grounding (this commit) |
+| docs (new) | `docs/runbooks/fir-8-cross-stack-bench.md` | Operator runbook + teardown + license; carries the `opencv_version` upstream ask in the residual section |
+| docs (edit) | this plan | v6.3 plan grounding (this commit) |
 
-**Explicitly untouched:** `apps/prototype-description-service/recognition/**`, `db/migrations/**`, WP plugin, FIR23-STACK compose/deploy files.
+**Explicitly untouched:** `apps/prototype-description-service/recognition/**`, `db/migrations/**`, WP plugin, FIR23-STACK compose/deploy files. The `face_metrics.py` row above is the single edit outside `scripts/bench/` and is **not** a recognition-service change — `scripts/eval_harness/` is offline harness code, so the "no recognition-service code changes" constraint is intact.
 
 ## Related Files
 
 | File | Note |
 | --- | --- |
 | `apps/prototype-description-service/scripts/eval_harness/remote_client.py` | Prefer reuse / thin wrap for analyze/cluster/export HTTP; **no health methods** |
-| `apps/prototype-description-service/scripts/eval_harness/face_metrics.py` | Face P/R pure functions (`ImageDetection`, `ImageIdentities`, `detection_pr`, `identification_pr`) — **unmodified** consumers |
+| `apps/prototype-description-service/scripts/eval_harness/face_metrics.py` | Face P/R pure functions (`ImageDetection`, `ImageIdentities`, `detection_pr`, `identification_pr`). Consumed as-is except for **one scoped additive change** — optional `matched_faces` — listed in [Files and Surfaces to Change](#files-and-surfaces-to-change) |
 | `apps/prototype-description-service/scripts/eval_harness/manifest.py` | `load_manifest` / `GoldenManifest` / `GoldenEntry` / `FaceBox` — GT schema |
 | `apps/prototype-description-service/api/main.py` `register_health_probes` | `/ready` + `/health/detailed` payload shapes |
 | `apps/prototype-description-service/recognition/application/health.py` | Database detail string with `pgvector_dimension=` |
@@ -537,6 +604,11 @@ Must cover:
 6. **Cluster gate** — export/score aborts when `cluster_job.json` missing or non-success.
 7. **Dual-frame cascade** — detector-miss synthetic pins e2e FN accounting vs FIR-5-native frame; frames call only `detection_pr` / `identification_pr` with pinned input types.
 8. **One mocked E2E** — fake dual clients return fixed cluster payloads → report dir contains provenance (`preflight.json`), `accepted_set.json`, both legs + both sampling frames + label-map frames + tier label + license banner; no network; `score` uses no credentials.
+9. **Detection localization ([TEST-15], `test_detection_localization.py`)** — the count-preserving translation fixture from the [localization pin](#b-constructing-metric-inputs): count-only cell perfect, matched cell `TP = 0`. Delete the IoU matching → the test fails. Also assert the *existing* `face_metrics` tests pass with `matched_faces` omitted, which is the backward-compatibility proof for the upstream edit.
+10. **Power precondition (`test_power_precondition.py`)** — a cell with `n_discordant` small enough that `mde_pp > head_to_head_delta` is stamped DIRECTIONAL even when the accepted set clears the floor (this is the case a size-only rule got wrong); a face-level cell with ρ unmeasured is DIRECTIONAL; McNemar is the exact binomial, not the normal approximation. Strip the MDE comparison → an underpowered cell reads CONFIRMATORY and the test fails.
+11. **Manifest version seam (`test_manifest_version_seam.py`)** — v2 and v3-`roster_only` yield `stranger_faces == 0` with a DIAGNOSTIC ceiling; v3-`exhaustive` derives from boxes and is CONFIRMATORY-eligible; `face_count != len(face_boxes)` → `gt_box_count_mismatch`; a box-less entry is excluded from detection frames with a counted exclusion. Assert no code path performs `face_count − len(present_identities)`.
+12. **Attrition and floor (`test_attrition_floor.py`)** — fractional (`0.90`) and absolute (`135`) floor forms both resolve; a floor admitting fewer than the power floor raises `floor_below_power_floor`; one-sided attrition past `max_differential_attrition` aborts with `differential_attrition_exceeded` **even when the accepted set is large**, since that is a bias check and not a size check.
+13. **No local `cv2` (`test_preflight.py`)** — the bench package imports no `cv2`, and a stack-pair entry lacking `opencv_major` raises `opencv_major_unattested`.
 
 ### Runtime-parity / operator checks (S3 runbook)
 
@@ -631,7 +703,8 @@ Locked by [CF-7](#cf-7-score-credential-flow-pinned): `run` persists exports; `s
 **(f) PROV-01 via `preflight.json`**
 
 - Written per leg in S1 at preflight (and refreshed if preflight re-run into the same run-dir).
-- Required fields: `stack_id`, `base_url`, `expected_profile`, `expected_pgvector_dim`, `resolved_profile`, `resolved_pgvector_dim`, `checked_at`, `ready_excerpt`, `health_detailed_excerpt` (redact secrets).
+- Required fields: `stack_id`, `base_url`, `expected_profile`, `expected_pgvector_dim`, `resolved_profile`, `resolved_pgvector_dim`, `opencv_major`, `opencv_major_source` (`operator_attested` \| `service_reported`), `checked_at`, `ready_excerpt`, `health_detailed_excerpt` (redact secrets).
+- `opencv_major` is **required** and satisfies the [PROV-01 constraint](#constraints) via the [attested source](#opencv-major-source-attested-not-probed). Writing `preflight.json` without it is a preflight failure, not a partial write: a run whose provenance cannot distinguish a 4.x from a 5.x stack is exactly the silent-comparability failure the field exists to prevent.
 - Report (S2) **consumes** these files; does not re-call health endpoints.
 
 **Stack-pair config shape (normative)**
@@ -641,7 +714,8 @@ Locked by [CF-7](#cf-7-score-credential-flow-pinned): `run` persists exports; `s
 wall_clock_timeout_sec: 3600
 job_poll_timeout_sec: 600
 item_max_attempts: 2
-accepted_set_floor: 150        # default = manifest entry count (zero tolerated attrition); operator may lower explicitly
+accepted_set_floor: 0.90       # fraction of manifest entries; see the floor policy below
+max_differential_attrition: 0.05
 allow_private_source: false
 # optional: fail closed if --manifest bytes disagree
 # manifest_sha256: "<64 hex>"
@@ -651,6 +725,7 @@ stacks:
     base_url: https://dev.api.altcontext.com   # operator-local value
     expected_profile: insightface
     expected_pgvector_dim: 512
+    opencv_major: 5            # REQUIRED operator attestation; no endpoint reports it
     api_key_env: ACX_BENCH_DEV_API_KEY
     tenant_id_env: ACX_BENCH_DEV_TENANT_ID
   - stack_id: acx-dev-fir
@@ -658,9 +733,18 @@ stacks:
     base_url: https://fir.api.altcontext.com
     expected_profile: face_pipeline
     expected_pgvector_dim: 128
+    opencv_major: 5
     api_key_env: ACX_BENCH_FIR_API_KEY
     tenant_id_env: ACX_BENCH_FIR_TENANT_ID
 ```
+
+**Floor policy (normative — the default is a fraction, not the corpus size)**
+
+An earlier revision defaulted `accepted_set_floor` to the manifest entry count, i.e. **zero tolerated attrition**. That made the plan's headline deliverable unreachable: on a live 150-image run against two independent HTTP stacks, one transient ingest or analyze failure on **either** leg downgrades **every** P/R cell to DIRECTIONAL, so no gate-eligible head-to-head number is obtainable and the deliverable in [Target Outcome](#target-outcome) item 4 cannot be produced. The floor's job is not to detect that a run was imperfect — the attrition table already does that, in full, per phase.
+
+- `accepted_set_floor` accepts a **float in (0, 1]** read as a fraction of manifest entries, or an **int > 1** read as an absolute count. Default **0.90**.
+- The floor's real constraint is statistical, not cosmetic: it must not fall below the N the [power precondition](#crossbenchtier-semantics-normative) requires. `score` computes both and fails closed with `floor_below_power_floor` if the configured floor admits an accepted set too small to support the pinned δ. **The power floor dominates**; the fraction is an operator convenience above it.
+- **Differential attrition is a separate and stricter check.** Size loss shared by both legs shrinks precision; loss concentrated on **one** leg is a *bias* — the surviving accepted set is enriched for media the weaker stack happens to handle, which flatters exactly the leg that failed. `score` fails closed with `differential_attrition_exceeded` when |one-sided-A − one-sided-B| / |manifest| exceeds `max_differential_attrition` (default **0.05**), regardless of accepted-set size. A run can clear the floor and still be unscoreable on this ground.
 
 **Proof**
 
@@ -692,6 +776,11 @@ stacks:
 | `scripts/bench/tests/test_cluster_gate.py` | export aborts when clustering was not run | required |
 | `scripts/bench/tests/test_e2e_frame.py` | detector-miss dual-frame pin | required |
 | `scripts/bench/tests/test_e2e_mocked.py` | dual fake clients → report artifacts | one mocked E2E |
+| `scripts/bench/tests/test_detection_localization.py` | count-preserving translation fixture | **[TEST-15]** — count-only perfect, matched `TP = 0` |
+| `scripts/bench/tests/test_power_precondition.py` | MDE / McNemar / ρ gates | required |
+| `scripts/bench/tests/test_manifest_version_seam.py` | v2 vs v3 `stranger_faces` + eligibility ceiling | required |
+| `scripts/bench/tests/test_attrition_floor.py` | floor forms, power floor, differential attrition | required |
+| `scripts/eval_harness/face_metrics.py` | optional `ImageDetection.matched_faces` + `TP/FP/FN` branch | **only** edit outside `scripts/bench/`; default `None` preserves current behaviour |
 
 **Report must include**
 
@@ -780,11 +869,15 @@ Single-lane work. No multi-agent lane split required.
 - [ ] Score offline on run-dir only (exports already persisted; no credentials)
 - [ ] GT + export join via items.jsonl; primary + optimistic label-space mapping
 - [ ] Mapper preserves upstream envelope fields ([rg-015]); no embedding/landmark requirement
-- [ ] FIR-5 pure `detection_pr` / `identification_pr` only on constructed `ImageDetection` / `ImageIdentities` (FIR-5 unmodified)
-- [ ] Dual sampling frames + dual label-map frames side-by-side
-- [ ] `score/accepted_set.json` + attrition table ([EVAL-19]); `CrossbenchTier` cell rules
-- [ ] Report under `benchmarks/results/crossbench-*/` with preflight provenance, cascade honesty, license banner, tier labels
-- [ ] Mocked E2E + rg-015 + cluster gate + dual-frame unit tests green
+- [ ] FIR-5 pure `detection_pr` / `identification_pr` only on constructed `ImageDetection` / `ImageIdentities`; the only harness edit is the optional `matched_faces` field
+- [ ] Dual sampling frames + dual label-map frames side-by-side; **`frame_e2e` pinned as the sole CONFIRMATORY sampling frame**
+- [ ] `score/accepted_set.json` + attrition table ([EVAL-19]); `CrossbenchTier` cell rules applied first-match-wins
+- [ ] Detection P/R is **IoU-matched**; count-only retained as a DIAGNOSTIC companion; [TEST-15] translation red-proof observed red first
+- [ ] Power precondition implemented: declared δ, exact-binomial McNemar on paired legs, `mde_pp` stamped per cell, pool-conditional Wilson labels, ρ gate
+- [ ] Floor policy: fractional-or-absolute floor, `floor_below_power_floor`, `differential_attrition_exceeded`
+- [ ] Manifest version seam honoured; the `face_count − len(present_identities)` subtraction is absent from the codebase
+- [ ] Report under `benchmarks/results/crossbench-*/` with preflight provenance (incl. `opencv_major` + its source), cascade honesty, license banner, tier labels, and the manifest-version eligibility ceiling
+- [ ] Mocked E2E + rg-015 + cluster gate + dual-frame + localization + power + version-seam + attrition tests green
 - [ ] Handoff decision for S2
 
 ### Checklist for Slice 3: Runbook + teardown
@@ -814,9 +907,12 @@ Single-lane work. No multi-agent lane split required.
 ## Success Criteria
 
 - [ ] Operator can preflight + run + score a corpus against **both** stacks with **zero** recognition-service code changes in the FIR-8 diff.
-- [ ] Preflight fails closed on dimension or profile drift / auth failure / missing endpoints with the three stable codes.
+- [ ] Preflight fails closed on dimension or profile drift / auth failure / missing endpoints / unattested `opencv_major` with the five stable codes.
 - [ ] Cluster phase runs per leg; export gated on success.
-- [ ] Scoring uses public bbox/cluster metadata + manifest GT + label mapping → detection P/R + identification P/R; dual sampling and label-map frames present.
+- [ ] Scoring uses public bbox/cluster metadata + manifest GT + label mapping → detection P/R + identification P/R; dual sampling and label-map frames present, with `frame_e2e` + `label_map_primary` pinned as the only CONFIRMATORY combination.
+- [ ] Detection P/R is localization-aware (IoU-matched), and the [TEST-15] count-preserving translation fixture proves the metric can go red.
+- [ ] No cell reaches CONFIRMATORY without a stamped `mde_pp ≤ head_to_head_delta` from an exact-binomial McNemar on the paired legs.
+- [ ] The head-to-head gate number is explicitly **withheld** until the corpus is v3/`exhaustive` (FIR-11 Slice 2); a v2 run ships as a DIRECTIONAL orchestration dry run and says so in the artifact.
 - [ ] Superset / partial-intersection blocker enforced.
 - [ ] Resume does not reprocess terminal-success items; bounded retry on failures.
 - [ ] Head-to-head report exists under `benchmarks/results/crossbench-*/` with EVAL-16 / EVAL-19 (`accepted_set.json`) / PROV-01 (`preflight.json`) discipline and insightface license banner.
@@ -834,6 +930,10 @@ Single-lane work. No multi-agent lane split required.
 | Production-shaped guard without DB counts API | Weaker than v5 marker rail | Named stack allowlist + operator attestation; escalate if FIR23-STACK adds a count diagnostic |
 | Insightface NC misuse | License | Runbook + report `license_notice`; stack must not sit on product ingress |
 | No public embeddings | Purity sweeps impossible on cross-stack path | Explicit OOS; optional upstream diagnostic ask |
+| **`opencv_major` is operator-attested, not service-reported** | A wrong attestation produces a confident-looking but false provenance stamp — the exact silent-comparability failure the field exists to prevent, now merely relocated from absent to unverified | Required field, fail closed when absent, `source: operator_attested` rendered in the report; upstream ask filed for `model_cache.opencv_version` with the drift-compare branch pre-written. **This is a declared weak link, not a solved problem.** |
+| **Golden150 cannot power a small head-to-head gap** | Even at full corpus, discordant-pair counts between two competent stacks may leave `mde_pp` well above 10pp, so the honest output is "no resolvable difference" rather than a winner | Power precondition fails such cells closed to DIRECTIONAL rather than reporting them as gate-eligible. If the operator needs a resolvable answer at δ = 10pp, the corpus must grow — that is a **corpus decision, not a scoring-code decision**, and FIR-8 must not paper over it |
+| **Detection FP eligibility depends on FIR-11 Slice 2** | FIR-8 can be fully implemented and merged while its headline number stays unavailable | Manifest version seam makes the ceiling explicit and machine-checked; S1/S2 prove the orchestration on a v2 dry run. Do **not** let a v2 DIRECTIONAL number get quoted as the head-to-head result |
+| **IoU threshold is a single fixed 0.5** | A stack whose boxes are systematically tighter or looser than GT is penalised by the threshold, not by its detection quality | Reuses the constant already pinned for the optimistic label map (one threshold in the plan, not two). Report the matched-vs-count gap per leg so a threshold artifact is visible as a *both-legs* shift; a sweep over IoU is a stretch goal, not a gate input |
 
 ---
 

@@ -85,7 +85,7 @@ Golden tests are the heart of this task (guide checklist: landmark order, affine
 
 - [x] S1 models pinned (sha256 + license hashes + source URLs), loader fail-closed test
 - [x] S2 OpenCV reference + golden fixtures committed
-- [x] S3 ORT parity: embeddings cosine ≥ 0.999 vs reference, boxes IoU ≥ 0.99, zero-norm raises
+- [x] S3 ORT parity: embeddings cosine ≥ 0.99999999 vs reference (see [§ S3 parity-budget amendment](#s3-parity-budget-amendment-2026-07-29-cvup-1)), boxes IoU ≥ 0.99, zero-norm raises
 - [x] S4 OpenCV pin ADR recorded; chosen pin lands with both suites green
 - [x] Import-purity test: `face_pipeline` imports nothing from worker/HTTP layers
 - [x] Real-corpus smoke run + distribution eyeballed, result recorded

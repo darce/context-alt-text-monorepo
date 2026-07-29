@@ -45,10 +45,24 @@ from recognition.infrastructure.face_pipeline.provenance import (  # noqa: E402
 FIXTURE_DIR = Path(__file__).resolve().parent
 SEED = 20260715
 EMBED_SEED = 20260716
+GENERATOR_RELPATH = "recognition/tests/fixtures/face_pipeline/generate_goldens.py"
 
 
 def _sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def toolchain_provenance() -> dict[str, str]:
+    """Record which OpenCV/numpy produced the goldens (CVU-02V).
+
+    OpenCV 5 changed warpAffine output; without a stamp the fixtures cannot
+    declare which toolchain they pin. Majors are what unit tests compare.
+    """
+    return {
+        "opencv_version": cv2.__version__,
+        "numpy_version": np.__version__,
+        "generator": GENERATOR_RELPATH,
+    }
 
 
 def synthetic_112_crop(seed: int = EMBED_SEED) -> np.ndarray:
@@ -116,6 +130,7 @@ def write_embedding_goldens() -> dict:
         "model": MODEL_MANIFEST["sface"].file_name,
         "model_sha256": MODEL_MANIFEST["sface"].sha256,
         "cosine_min": 0.99999999,
+        **toolchain_provenance(),
     }
     (FIXTURE_DIR / "embedding_meta.json").write_text(
         json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -164,6 +179,7 @@ def write_composed_aligner_embedder_goldens() -> dict:
         "model_sha256": MODEL_MANIFEST["sface"].sha256,
         # N=50 composed runs: bit-exact. Same floor as synthetic golden.
         "cosine_min": 0.99999999,
+        **toolchain_provenance(),
     }
     (FIXTURE_DIR / "aligner_composed_embedding_meta.json").write_text(
         json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -221,6 +237,7 @@ def write_aligner_goldens() -> dict:
         "output_size": 112,
         "oracle": "cv2.FaceRecognizerSF.alignCrop",
         "oracle_model": MODEL_MANIFEST["sface"].file_name,
+        **toolchain_provenance(),
     }
     (FIXTURE_DIR / "aligner_meta.json").write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return meta
@@ -395,6 +412,7 @@ def write_detector_goldens() -> dict:
             "landmarks_xy": d0.landmarks.astype(float).tolist(),
             "score": float(d0.score),
         },
+        **toolchain_provenance(),
     }
     skip_path.unlink(missing_ok=True)
     faces_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")

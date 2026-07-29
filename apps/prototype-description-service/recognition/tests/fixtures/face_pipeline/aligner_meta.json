@@ -9,6 +9,7 @@
     112,
     3
   ],
+  "generator": "recognition/tests/fixtures/face_pipeline/generate_goldens.py",
   "kind": "aligner_golden",
   "landmark_order": [
     "right_eye",
@@ -17,6 +18,8 @@
     "right_mouth_corner",
     "left_mouth_corner"
   ],
+  "numpy_version": "2.5.1",
+  "opencv_version": "5.0.0",
   "oracle": "cv2.FaceRecognizerSF.alignCrop",
   "oracle_model": "face_recognition_sface_2021dec.onnx",
   "output_size": 112,

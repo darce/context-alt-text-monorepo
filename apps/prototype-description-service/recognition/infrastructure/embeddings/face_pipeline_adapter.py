@@ -288,13 +288,21 @@ class FacePipelineRuntime:
 
 
 def sface_embedding_model_manifest() -> EmbeddingModelManifest:
-    """Map MODEL_MANIFEST['sface'] provenance → EmbeddingModelManifest (rg-015)."""
+    """Map MODEL_MANIFEST['sface'] provenance → EmbeddingModelManifest (rg-015).
+
+    Embedding-space identity includes the numeric-relevant runtime token
+    (OpenCV major + onnxruntime version) so 4.x/5.x-era and ORT-minor-bump
+    vectors cannot share a ``model_id`` string (CVUP1-LC-02 / HARM-02).
+    """
+    from recognition.infrastructure.face_pipeline.provenance import numeric_runtime_fingerprint
+
     entry = MODEL_MANIFEST["sface"]
     if entry.embedding_dim is None or entry.normalization is None or entry.metric is None:
         raise ValueError("MODEL_MANIFEST['sface'] missing embedding contract fields")
+    space = numeric_runtime_fingerprint().space_token
     return EmbeddingModelManifest(
         framework=entry.framework,
-        name="sface",
+        name=f"sface+{space}",
         dimensions=int(entry.embedding_dim),
         normalization=entry.normalization,
         metric=entry.metric,

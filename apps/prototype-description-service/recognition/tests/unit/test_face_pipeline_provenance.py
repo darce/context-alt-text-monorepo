@@ -622,3 +622,90 @@ def test_verify_only_license_mismatch_raises_no_network(
 
     rc = fetch.main(["--dest", str(tmp_path), "--models", "yunet", "--verify-only"])
     assert rc == 1
+
+
+# ---------------------------------------------------------------------------
+# numeric_runtime_fingerprint (CVUP1-LC-02 / HARM-01 / HARM-02)
+# ---------------------------------------------------------------------------
+
+
+def test_numeric_runtime_fingerprint_reads_live_versions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fingerprint is a pure function of installed package version sources."""
+    from recognition.infrastructure.face_pipeline import provenance as prov
+
+    monkeypatch.setattr(prov, "_opencv_version", lambda: "5.0.0")
+    monkeypatch.setattr(prov, "_onnxruntime_version", lambda: "1.28.0")
+    monkeypatch.setattr(prov, "_numpy_version", lambda: "2.5.1")
+
+    fp = prov.numeric_runtime_fingerprint()
+    assert fp.opencv_version == "5.0.0"
+    assert fp.opencv_major == 5
+    assert fp.onnxruntime_version == "1.28.0"
+    assert fp.numpy_version == "2.5.1"
+    assert fp.space_token == "cv5/ort1.28.0"
+    assert "opencv=5.0.0" in fp.compact
+    assert "onnxruntime=1.28.0" in fp.compact
+    assert "numpy=2.5.1" in fp.compact
+
+    # Monkeypatch change must re-read (no process-global cache of literals).
+    monkeypatch.setattr(prov, "_opencv_version", lambda: "4.13.0.92")
+    monkeypatch.setattr(prov, "_onnxruntime_version", lambda: "1.22.0")
+    monkeypatch.setattr(prov, "_numpy_version", lambda: "2.0.0")
+    fp2 = prov.numeric_runtime_fingerprint()
+    assert fp2.opencv_major == 4
+    assert fp2.space_token == "cv4/ort1.22.0"
+    assert fp2.compact != fp.compact
+
+
+def test_numeric_runtime_fingerprint_exported_from_package() -> None:
+    """Canonical symbol is importable from the face_pipeline package root."""
+    from recognition.infrastructure.face_pipeline import (
+        NumericRuntimeFingerprint,
+        numeric_runtime_fingerprint,
+    )
+
+    fp = numeric_runtime_fingerprint()
+    assert isinstance(fp, NumericRuntimeFingerprint)
+    assert fp.opencv_major >= 1
+    assert fp.onnxruntime_version
+    assert fp.numpy_version
+
+
+def test_sface_model_id_differs_across_opencv_major(monkeypatch: pytest.MonkeyPatch) -> None:
+    """OpenCV major alone must flip the SFace embedding-space model_id."""
+    from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
+    from recognition.infrastructure.face_pipeline import provenance as prov
+
+    monkeypatch.setattr(prov, "_opencv_version", lambda: "5.0.0")
+    monkeypatch.setattr(prov, "_onnxruntime_version", lambda: "1.28.0")
+    monkeypatch.setattr(prov, "_numpy_version", lambda: "2.5.1")
+    id_cv5 = fpa.sface_embedding_model_manifest().model_id
+
+    monkeypatch.setattr(prov, "_opencv_version", lambda: "4.13.0.92")
+    id_cv4 = fpa.sface_embedding_model_manifest().model_id
+
+    assert id_cv5 != id_cv4
+    assert "cv5/" in id_cv5
+    assert "cv4/" in id_cv4
+    assert id_cv5.endswith("@128d/l2/cosine")
+    assert id_cv4.endswith("@128d/l2/cosine")
+
+
+def test_sface_model_id_differs_across_onnxruntime_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    """onnxruntime version alone must flip the SFace embedding-space model_id."""
+    from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
+    from recognition.infrastructure.face_pipeline import provenance as prov
+
+    monkeypatch.setattr(prov, "_opencv_version", lambda: "5.0.0")
+    monkeypatch.setattr(prov, "_onnxruntime_version", lambda: "1.28.0")
+    monkeypatch.setattr(prov, "_numpy_version", lambda: "2.5.1")
+    id_ort_new = fpa.sface_embedding_model_manifest().model_id
+
+    monkeypatch.setattr(prov, "_onnxruntime_version", lambda: "1.22.0")
+    id_ort_old = fpa.sface_embedding_model_manifest().model_id
+
+    assert id_ort_new != id_ort_old
+    assert "ort1.28.0" in id_ort_new
+    assert "ort1.22.0" in id_ort_old
+    # Same OpenCV major — only ORT moved.
+    assert "cv5/" in id_ort_new and "cv5/" in id_ort_old

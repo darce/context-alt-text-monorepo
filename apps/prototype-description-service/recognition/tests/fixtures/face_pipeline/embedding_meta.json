@@ -1,4 +1,5 @@
 {
+  "cosine_min": 0.99999999,
   "crop_sha256": "fe200b72f9e75a9751f37f0fb7761867dd0365fa37b7b723b7fbfbb0a48903a8",
   "embedding_dim": 128,
   "embedding_shape": [

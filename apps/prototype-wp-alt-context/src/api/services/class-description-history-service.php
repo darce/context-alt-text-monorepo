@@ -71,8 +71,10 @@ class DescriptionHistoryService {
 	 * Contract (BR-40 / BR-41 / BR-55): both the alt write and the human-edit
 	 * telemetry write are failure-worthy. A verified alt with a failed
 	 * human-edit write returns 500 with code description_correction_partial
-	 * (alt landed; telemetry did not) so clients can reconcile cache. A bare
-	 * alt-write failure keeps description_correction_failed. The alt is left
+	 * (alt landed; telemetry did not) and data.stored_alt_text carrying the
+	 * normalized value actually in storage, so clients reconcile cache from the
+	 * server's truth rather than the request body. A bare alt-write failure keeps
+	 * description_correction_failed and no stored_alt_text. The alt is left
 	 * in place on partial failure (not rolled back) — the operator can retry;
 	 * the no-op alt path already treats a re-save of the same text as success,
 	 * so a retry can complete the human-edit marker.
@@ -150,10 +152,19 @@ class DescriptionHistoryService {
 			// the duplicate payload is identical. [BR-48a]
 			$human_ok = is_array( $current_human ) && $human_edit_payload === $current_human;
 			if ( ! $human_ok ) {
+				// stored_alt_text reports what storage actually holds after
+				// sanitize_text_field(). Clients reconcile their cache from this
+				// field; without it they can only guess from the request body and
+				// would display markup/whitespace that was stripped. Only this path
+				// carries it — the 404/400/alt-write-failure paths stored nothing
+				// new, so there is nothing honest to report. [rg-015]
 				return new WP_Error(
 					'description_correction_partial',
 					'Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.',
-					array( 'status' => 500 )
+					array(
+						'status'          => 500,
+						'stored_alt_text' => $normalized_alt_text,
+					)
 				);
 			}
 		}

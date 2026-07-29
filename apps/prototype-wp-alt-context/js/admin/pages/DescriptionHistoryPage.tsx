@@ -5,7 +5,10 @@ import { __, sprintf } from '@wordpress/i18n';
 
 import {
   correctDescriptionHistoryItem,
+  DESCRIPTION_CORRECTION_CODE,
   fetchDescriptionHistory,
+  resolveDescribeErrorCode,
+  resolveDescribeErrorDataField,
   resolveDescribeErrorMessage,
   type DescriptionHistoryItem,
   type DescriptionHistoryResponse,
@@ -53,6 +56,15 @@ const itemMatchesSearch = (item: DescriptionHistoryItem, query: string): boolean
   return fields.some((field) => field.toLowerCase().includes(query));
 };
 
+const clearMediaIdEntry = <T,>(current: Record<number, T>, mediaId: number): Record<number, T> => {
+  if (!(mediaId in current)) {
+    return current;
+  }
+  const next = { ...current };
+  delete next[mediaId];
+  return next;
+};
+
 export const DescriptionHistoryPage = (): React.JSX.Element => {
   const [searchParams] = useSearchParams();
   const runId = parseRunParam(searchParams.get(APP_LINK_PARAMS.run));
@@ -71,7 +83,14 @@ export const DescriptionHistoryPage = (): React.JSX.Element => {
 const DescriptionHistoryList = (): React.JSX.Element => {
   const queryClient = useQueryClient();
   const [drafts, setDrafts] = useState<Record<number, string>>({});
-  const [savingId, setSavingId] = useState<number | null>(null);
+  // Per-mediaId pending map: a scalar savingId is overwritten when a second row
+  // starts saving, so concurrent (or sequential) saves would mis-report which
+  // row is busy. Errors use the same shape for the same reason [RLSE-05].
+  const [savingIds, setSavingIds] = useState<Record<number, true>>({});
+  // Durable per-row correction failures: the shared useMutation resets isError/
+  // variables on the next mutate, which would unmount an earlier row's alert
+  // the moment another row starts saving [RLSE-05].
+  const [correctionErrors, setCorrectionErrors] = useState<Record<number, string>>({});
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
 
@@ -94,29 +113,52 @@ const DescriptionHistoryList = (): React.JSX.Element => {
           items: current.items.map((item) => (item.media_id === updatedItem.media_id ? updatedItem : item)),
         };
       });
-      setDrafts((current) => {
-        const next = { ...current };
-        delete next[updatedItem.media_id];
-        return next;
-      });
-      setSavingId(null);
+      setDrafts((current) => clearMediaIdEntry(current, updatedItem.media_id));
+      setSavingIds((current) => clearMediaIdEntry(current, updatedItem.media_id));
+      setCorrectionErrors((current) => clearMediaIdEntry(current, updatedItem.media_id));
     },
     // Keep the draft: the operator's text is the only copy on a failed write.
     // Surface the server message (or localized fallback) on the failed row so a
     // 500 partial/total failure is never silent [RLSE-05][A11Y-21].
-    onError: () => {
-      setSavingId(null);
+    // Errors live in correctionErrors by mediaId so a later row's mutate cannot
+    // erase an earlier unread failure.
+    onError: (error, variables) => {
+      // Alert first and always — partial or total, with or without stored_alt_text.
+      // The operator is never left uninformed [RLSE-05][A11Y-21].
+      const message = resolveDescribeErrorMessage(error, CORRECTION_ERROR_FALLBACK);
+      setCorrectionErrors((current) => ({
+        ...current,
+        [variables.mediaId]: message,
+      }));
+      setSavingIds((current) => clearMediaIdEntry(current, variables.mediaId));
+
+      // Partial: alt is already in storage. Patch current_alt_text from the
+      // server-reported stored value only — never from variables.altText, which
+      // may still carry markup/whitespace sanitize_text_field stripped ([rg-015]).
+      // If stored_alt_text is absent, leave the cache alone (stale-but-real).
+      // Total failure must not touch the cache [RLSE-04]. Alert still shows either way.
+      if (resolveDescribeErrorCode(error) !== DESCRIPTION_CORRECTION_CODE.PARTIAL) {
+        return;
+      }
+      const storedAltText = resolveDescribeErrorDataField(error, 'stored_alt_text');
+      if (storedAltText === null) {
+        return;
+      }
+      queryClient.setQueryData<DescriptionHistoryResponse>(HISTORY_QUERY_KEY, (current) => {
+        if (!current) {
+          return current;
+        }
+        return {
+          ...current,
+          items: current.items.map((item) =>
+            item.media_id === variables.mediaId
+              ? { ...item, current_alt_text: storedAltText }
+              : item,
+          ),
+        };
+      });
     },
   });
-
-  const failedCorrectionMediaId =
-    correctionMutation.isError && correctionMutation.variables
-      ? correctionMutation.variables.mediaId
-      : null;
-  const failedCorrectionMessage =
-    failedCorrectionMediaId !== null
-      ? resolveDescribeErrorMessage(correctionMutation.error, CORRECTION_ERROR_FALLBACK)
-      : null;
 
   const items = useMemo(() => historyQuery.data?.items ?? [], [historyQuery.data]);
   const statusOptions = useMemo(
@@ -136,7 +178,10 @@ const DescriptionHistoryList = (): React.JSX.Element => {
 
   const saveCorrection = (item: DescriptionHistoryItem): void => {
     const altText = getDraftValue(drafts, item).trim();
-    setSavingId(item.media_id);
+    setSavingIds((current) => ({ ...current, [item.media_id]: true }));
+    // Clear this row's prior error on re-attempt so a stale alert does not
+    // linger while the new request is in flight; other rows' errors stay.
+    setCorrectionErrors((current) => clearMediaIdEntry(current, item.media_id));
     correctionMutation.mutate({ mediaId: item.media_id, altText });
   };
 
@@ -221,9 +266,8 @@ const DescriptionHistoryList = (): React.JSX.Element => {
           <div className="acx-history__list">
             {filteredItems.map((item) => {
               const draft = getDraftValue(drafts, item);
-              const isSaving = savingId === item.media_id && correctionMutation.isPending;
-              const showRowError =
-                failedCorrectionMediaId === item.media_id && failedCorrectionMessage !== null;
+              const isSaving = Boolean(savingIds[item.media_id]);
+              const rowErrorMessage = correctionErrors[item.media_id] ?? null;
 
               return (
                 <article key={item.media_id} className="acx-dashboard__panel acx-history__item">
@@ -269,9 +313,9 @@ const DescriptionHistoryList = (): React.JSX.Element => {
                       }
                     />
                   </label>
-                  {showRowError ? (
+                  {rowErrorMessage !== null ? (
                     <div className="acx-history__correction-error" role="alert">
-                      {failedCorrectionMessage}
+                      {rowErrorMessage}
                     </div>
                   ) : null}
                   <button

@@ -60,7 +60,15 @@ describe('useDescribeRunApply', () => {
 
   it('applies drafts with the operator overwrite list and exposes the result', async () => {
     fetchItemsMock.mockResolvedValue(itemsResponse);
-    applyMock.mockResolvedValue({ run_id: 'run-abc', applied: [71, 70], skipped_existing: [], skipped_no_draft: [72], skipped_invalid: [], failed: [] });
+    applyMock.mockResolvedValue({
+      run_id: 'run-abc',
+      applied: [71, 70],
+      partial: [],
+      skipped_existing: [],
+      skipped_no_draft: [72],
+      skipped_invalid: [],
+      failed: [],
+    });
 
     const { result } = renderHook(() => useDescribeRunApply('run-abc'), { wrapper });
     await waitFor(() => expect(result.current.itemsQuery.isSuccess).toBe(true));

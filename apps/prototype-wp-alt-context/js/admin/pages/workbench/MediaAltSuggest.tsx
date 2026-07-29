@@ -40,7 +40,6 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
   const acceptButtonRef = useRef<HTMLButtonElement>(null);
   const saveButtonRef = useRef<HTMLButtonElement>(null);
   const editButtonRef = useRef<HTMLButtonElement>(null);
-  const draftSummaryRef = useRef<HTMLParagraphElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const shouldFocusSuggestRef = useRef(false);
   const shouldFocusEditButtonRef = useRef(false);
@@ -95,16 +94,15 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
       }
     } else if (data) {
       // BR-57: land on a control that acts on the draft, not Dismiss (which
-      // destroys it). Accept when the draft is committable; otherwise Edit;
-      // otherwise the draft summary (tabIndex=-1) so the text itself is focusable.
+      // destroys it). Accept when the draft is committable; otherwise Edit.
       // Dismiss stays in tab order — it is just not the programmatic landing target.
+      // No draft-summary fallback: while data is set the non-edit branch always
+      // mounts Edit, so editButtonRef is reachable whenever Accept is not.
       if (ownsFocus) {
         if (data.alt_text_draft.trim() !== '') {
           acceptButtonRef.current?.focus();
-        } else if (editButtonRef.current) {
-          editButtonRef.current?.focus();
         } else {
-          draftSummaryRef.current?.focus();
+          editButtonRef.current?.focus();
         }
       }
     } else if (shouldFocusSuggestRef.current) {
@@ -202,11 +200,15 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
       // unnamed div derives its name from the disabled button text (and, before
       // the live-region hoist, also from the status region) — SR users parked
       // here heard a stuttered or empty label with no in-progress signal.
+      // role="group": a role-less div maps to generic, and ARIA 1.2 prohibits
+      // an author-supplied name on generic (axe aria-prohibited-attr). group
+      // is the in-repo precedent for a labelled composite host (ReviewQueue).
       // Keep native `disabled` on the button (toBeDisabled() / BR-13).
       return (
         <div
           ref={containerRef}
           className="acx-media-selection__media-alt-suggest"
+          role="group"
           tabIndex={-1}
           aria-label={__('Generating…', 'alt-context')}
           aria-busy="true"
@@ -308,14 +310,19 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
       const editDescribedBy = isAcceptError ? `${disclosureId} ${errorId}` : disclosureId;
       const canSaveEdit = editDraft.trim() !== '';
       const canAcceptDraft = data.alt_text_draft.trim() !== '';
-      // BR-56: park host mirrors generate — aria-busy + explicit name while the
-      // commit control is natively disabled (focus parks on this container).
+      // BR-56: park host mirrors generate. role="group" is constant — not only
+      // while accepting — because this node holds programmatically parked focus
+      // and a role mutation on park release can destroy/recreate the a11y node
+      // (focus-loss). aria-label / aria-busy stay conditional: the idle draft
+      // surface has no busy name, and name is already gated so the role need
+      // not be. (axe accepts unnamed group; generate host is also unconditional.)
       const acceptingLabel = isEditing ? __('Saving alt text…', 'alt-context') : __('Accepting draft…', 'alt-context');
 
       return (
         <div
           ref={containerRef}
           className="acx-media-selection__media-alt-suggest"
+          role="group"
           tabIndex={-1}
           aria-busy={isAccepting ? true : undefined}
           aria-label={isAccepting ? acceptingLabel : undefined}
@@ -338,9 +345,7 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
               />
             </>
           ) : (
-            <p ref={draftSummaryRef} className="acx-media-selection__media-alt-draft" tabIndex={-1}>
-              {data.alt_text_draft}
-            </p>
+            <p className="acx-media-selection__media-alt-draft">{data.alt_text_draft}</p>
           )}
           <p id={disclosureId} className="acx-media-selection__media-alt-disclosure">
             {__('Drafted by AI — review before saving.', 'alt-context')}

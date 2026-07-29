@@ -51,7 +51,15 @@ describe('DescribeRunApplyView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     fetchItemsMock.mockResolvedValue(mixedItems);
-    applyMock.mockResolvedValue({ run_id: 'run-abc', applied: [71, 90], skipped_existing: [70], skipped_no_draft: [72], skipped_invalid: [], failed: [] });
+    applyMock.mockResolvedValue({
+      run_id: 'run-abc',
+      applied: [71, 90],
+      partial: [],
+      skipped_existing: [70],
+      skipped_no_draft: [72],
+      skipped_invalid: [],
+      failed: [],
+    });
   });
 
   it('buckets drafts and offers a primary apply for the no-existing-alt group', async () => {
@@ -73,7 +81,32 @@ describe('DescribeRunApplyView', () => {
     fireEvent.click(screen.getByRole('button', { name: /Apply all 2 without alt text/ }));
 
     await waitFor(() => expect(applyMock).toHaveBeenCalledWith('run-abc', []));
+    // Happy path: applied count is honest; empty partial must not invent a line.
     expect(await screen.findByText(/Applied 2/)).toBeInTheDocument();
+    expect(screen.queryByText(/had alt text saved; apply again/)).not.toBeInTheDocument();
+  });
+
+  it('surfaces partial apply ids so operators know alt is live but history is missing [RLSE-05]', async () => {
+    applyMock.mockResolvedValue({
+      run_id: 'run-abc',
+      applied: [71],
+      partial: [90],
+      skipped_existing: [70],
+      skipped_no_draft: [72],
+      skipped_invalid: [],
+      failed: [],
+    });
+    renderView();
+    await screen.findByText('A red flower.');
+
+    fireEvent.click(screen.getByRole('button', { name: /Apply all 2 without alt text/ }));
+
+    // [TEST-15] discrimination: goes red if the partial bucket line is deleted
+    // from the summary — partial ids vanish from every count (same silent
+    // failure the PHP partial bucket was introduced to remove).
+    const status = await screen.findByRole('status');
+    expect(status).toHaveTextContent(/Applied 1 descriptions/);
+    expect(status).toHaveTextContent(/1 had alt text saved; apply again so they appear in history/);
   });
 
   it('includes checked existing-alt items in the overwrite list', async () => {

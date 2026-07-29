@@ -2,7 +2,9 @@ import { type QueryClient, useMutation, useQueryClient } from '@tanstack/react-q
 
 import {
   correctDescriptionHistoryItem,
+  DESCRIPTION_CORRECTION_CODE,
   resolveDescribeErrorCode,
+  resolveDescribeErrorDataField,
   type DescriptionHistoryItem,
 } from '../api/describeApi';
 import { queryKeys } from '../api/queryKeys';
@@ -13,13 +15,13 @@ interface CorrectMediaAltVariables {
   altText: string;
 }
 
-/** Server code for alt-written / human-edit-marker-failed (BR-40 partial). */
-const DESCRIPTION_CORRECTION_PARTIAL = 'description_correction_partial';
-
 /**
  * Patch cached workbench pages so the operator sees the alt that storage already
  * holds, without invalidateQueries (which would refetch the missing-status list
  * and unmount the row before the alert can be read — WBUX-5-BR-51).
+ *
+ * `altText` must be the server-reported stored value (`stored_alt_text`), never
+ * the raw request payload — sanitize_text_field may have stripped markup/whitespace.
  */
 const reconcilePartialAltInMediaCache = (queryClient: QueryClient, mediaId: number, altText: string): void => {
   const workbenchQueries = queryClient.getQueriesData<WorkbenchMediaResponse>({
@@ -50,14 +52,21 @@ export const useCorrectMediaAlt = () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.media.all });
     },
     // Partial success (alt written, human-edit marker failed): reconcile the
-    // specific cached row in place. Gate on the stable error code — never on
-    // message text. Do not invalidate: a refetch on missing-status lists drops
-    // the row and destroys the role=alert the operator still needs [RLSE-04].
+    // specific cached row in place from server-reported stored_alt_text only.
+    // If that field is absent, leave the cache alone — stale-but-real beats a
+    // fabricated request-body guess ([rg-015]). Gate on the stable error code —
+    // never on message text. Do not invalidate: a refetch on missing-status
+    // lists drops the row and destroys the role=alert the operator still needs
+    // [RLSE-04][RLSE-05].
     onError: (error, variables) => {
-      if (resolveDescribeErrorCode(error) !== DESCRIPTION_CORRECTION_PARTIAL) {
+      if (resolveDescribeErrorCode(error) !== DESCRIPTION_CORRECTION_CODE.PARTIAL) {
         return;
       }
-      reconcilePartialAltInMediaCache(queryClient, variables.mediaId, variables.altText);
+      const storedAltText = resolveDescribeErrorDataField(error, 'stored_alt_text');
+      if (storedAltText === null) {
+        return;
+      }
+      reconcilePartialAltInMediaCache(queryClient, variables.mediaId, storedAltText);
     },
   });
 };

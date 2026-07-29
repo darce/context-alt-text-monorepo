@@ -5,10 +5,12 @@ import {
   applyDescribeRunDrafts,
   correctDescriptionHistoryItem,
   describeMedia,
+  DESCRIPTION_CORRECTION_CODE,
   fetchDescribeRunItems,
   fetchDescriptionCandidates,
   fetchDescriptionHistory,
   resolveDescribeErrorCode,
+  resolveDescribeErrorDataField,
   resolveDescribeErrorMessage,
 } from '../describeApi';
 
@@ -198,6 +200,7 @@ describe('describeApi', () => {
     const applyResponse = {
       run_id: 'run-abc',
       applied: [71, 70],
+      partial: [],
       skipped_existing: [],
       skipped_no_draft: [72],
       skipped_invalid: [],
@@ -222,6 +225,7 @@ describe('describeApi', () => {
     fetchApiMock.mockResolvedValue({
       run_id: 'run-abc',
       applied: [71],
+      partial: [],
       skipped_existing: [70],
       skipped_no_draft: [],
       skipped_invalid: [],
@@ -307,5 +311,51 @@ describe('resolveDescribeErrorCode', () => {
   it('returns null when the payload has a blank code', () => {
     const err = new Error('Request failed (500): {"code":"  ","message":"something"}');
     expect(resolveDescribeErrorCode(err)).toBeNull();
+  });
+});
+
+describe('DESCRIPTION_CORRECTION_CODE', () => {
+  it('exports the stable correction rejection codes [sr-007]', () => {
+    expect(DESCRIPTION_CORRECTION_CODE.PARTIAL).toBe('description_correction_partial');
+    expect(DESCRIPTION_CORRECTION_CODE.FAILED).toBe('description_correction_failed');
+  });
+});
+
+describe('resolveDescribeErrorDataField', () => {
+  it('extracts stored_alt_text from a partial correction rejection body', () => {
+    const err = new Error(
+      'Request to .../correction failed (500): {"code":"description_correction_partial","message":"Alt text was saved, but the human-edit record could not be stored.","data":{"status":500,"stored_alt_text":"Sunset over the bay"}}',
+    );
+    expect(resolveDescribeErrorDataField(err, 'stored_alt_text')).toBe('Sunset over the bay');
+  });
+
+  it('returns null when the named field is absent from data', () => {
+    const err = new Error(
+      'Request to .../correction failed (500): {"code":"description_correction_partial","message":"Alt text was saved.","data":{"status":500}}',
+    );
+    expect(resolveDescribeErrorDataField(err, 'stored_alt_text')).toBeNull();
+  });
+
+  it('returns null when the error carries no structured payload', () => {
+    expect(resolveDescribeErrorDataField(new Error('network down'), 'stored_alt_text')).toBeNull();
+  });
+
+  it('returns null for non-Error values', () => {
+    expect(resolveDescribeErrorDataField('not-an-error', 'stored_alt_text')).toBeNull();
+    expect(resolveDescribeErrorDataField(null, 'stored_alt_text')).toBeNull();
+  });
+
+  it('returns empty string when that is the stored value (legitimate alt)', () => {
+    const err = new Error(
+      'Request failed (500): {"code":"description_correction_partial","message":"x","data":{"status":500,"stored_alt_text":""}}',
+    );
+    expect(resolveDescribeErrorDataField(err, 'stored_alt_text')).toBe('');
+  });
+
+  it('returns null when the field is present but not a string', () => {
+    const err = new Error(
+      'Request failed (500): {"code":"description_correction_partial","message":"x","data":{"status":500,"stored_alt_text":42}}',
+    );
+    expect(resolveDescribeErrorDataField(err, 'stored_alt_text')).toBeNull();
   });
 });

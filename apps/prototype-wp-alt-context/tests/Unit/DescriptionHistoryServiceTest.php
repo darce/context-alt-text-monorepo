@@ -193,10 +193,46 @@ class DescriptionHistoryServiceTest extends TestCase
         $this->assertInstanceOf(WP_Error::class, $result);
         $this->assertSame('description_correction_partial', $result->get_error_code());
         $this->assertSame(500, $result->get_error_data()['status']);
+        $this->assertSame($newAlt, $result->get_error_data()['stored_alt_text']);
         $this->assertStringContainsString('Alt text was saved', $result->get_error_message());
         // Partial success: alt persisted, human-edit did not. [INT-11] does not undo alt.
         $this->assertSame($newAlt, get_post_meta($mediaId, '_wp_attachment_image_alt', true));
         $this->assertSame('', get_post_meta($mediaId, '_acx_description_human_edit', true));
+    }
+
+    /**
+     * The partial WP_Error must report the *normalized* stored value, never echo
+     * the raw request body. Client reconcile patches from this field; inventing
+     * from the request would show markup/whitespace storage does not hold.
+     * [rg-015]
+     */
+    public function testPartialErrorCarriesNormalizedStoredAltTextNotRawRequest(): void
+    {
+        $mediaId = 408;
+        $rawRequest = '  <em>Sunset</em> over the bay  ';
+        $normalized = 'Sunset over the bay';
+        $this->seedAttachment($mediaId, 'Attachment 408');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', 'Old alt.');
+        $this->setPostMeta($mediaId, '_acx_description_provenance', [
+            'alt_text_draft' => 'Generated draft.',
+            'model_id' => 'local-v1',
+        ]);
+        $GLOBALS['__ac_update_post_meta_fail'][$mediaId]['_acx_description_human_edit'] = true;
+
+        $result = (new DescriptionHistoryService())->record_correction($mediaId, $rawRequest);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('description_correction_partial', $result->get_error_code());
+        $errorData = $result->get_error_data();
+        $this->assertIsArray($errorData);
+        $this->assertSame(500, $errorData['status']);
+        $this->assertArrayHasKey('stored_alt_text', $errorData);
+        $this->assertSame($normalized, $errorData['stored_alt_text']);
+        // Must not echo the unsanitized request body back in error data.
+        $this->assertNotSame($rawRequest, $errorData['stored_alt_text']);
+        $this->assertStringNotContainsString('<em>', (string) $errorData['stored_alt_text']);
+        // Storage holds the same normalized value the error reports.
+        $this->assertSame($normalized, get_post_meta($mediaId, '_wp_attachment_image_alt', true));
     }
 
     /**
@@ -335,6 +371,8 @@ class DescriptionHistoryServiceTest extends TestCase
         // (no-op read-back), human-edit marker is not. [WBUX-5-BR-55 task 2]
         $this->assertSame('description_correction_partial', $result->get_error_code());
         $this->assertSame(500, $result->get_error_data()['status']);
+        // No-op alt write still stored the value; the partial must report it.
+        $this->assertSame($sameAlt, $result->get_error_data()['stored_alt_text']);
         $this->assertStringContainsString('Alt text was saved', $result->get_error_message());
         // Stale marker left untouched — must not be treated as this correction's telemetry.
         $this->assertSame($staleMarker, get_post_meta($mediaId, '_acx_description_human_edit', true));
@@ -432,7 +470,7 @@ class DescriptionHistoryServiceTest extends TestCase
         $this->seedAttachment($mediaId, 'Force-null photo', 'image/jpeg');
         $this->setPostMeta($mediaId, '_wp_attachment_image_alt', 'Prior alt.');
 
-        $service = new class extends DescriptionHistoryService {
+        $service = new class() extends DescriptionHistoryService {
             protected function build_item(int $media_id): ?array
             {
                 return null;

@@ -351,6 +351,7 @@ class DescribeRunControllerTest extends TestCase
 
         $data = $response->get_data();
         $this->assertSame([71], $data['applied']);
+        $this->assertSame([], $data['partial']);
         $this->assertSame([70], $data['skipped_existing']);
         $this->assertSame([72], $data['skipped_no_draft']);
         $this->assertSame([], $data['skipped_invalid']);
@@ -386,8 +387,9 @@ class DescribeRunControllerTest extends TestCase
         $this->assertNotInstanceOf(\WP_Error::class, $response);
 
         $data = $response->get_data();
-        $this->assertContains(70, $data['applied']);
-        $this->assertContains(71, $data['applied']);
+        // Happy path: every fully written id is in applied (not partial).
+        $this->assertSame([70, 71], $data['applied']);
+        $this->assertSame([], $data['partial']);
         $this->assertSame([], $data['skipped_existing']);
 
         // 70 overwritten because it was explicitly listed.
@@ -474,6 +476,7 @@ class DescribeRunControllerTest extends TestCase
         $data = $response->get_data();
 
         $this->assertSame([70], $data['applied']);
+        $this->assertSame([], $data['partial']);
         $this->assertSame([71], $data['skipped_existing']);
         $this->assertSame('draft 70', get_post_meta(70, '_wp_attachment_image_alt', true));
         $this->assertSame('human 71', get_post_meta(71, '_wp_attachment_image_alt', true));
@@ -511,6 +514,7 @@ class DescribeRunControllerTest extends TestCase
         $data = $response->get_data();
         // Drafts are written despite the partial-failure run status.
         $this->assertSame([71], $data['applied']);
+        $this->assertSame([], $data['partial']);
         $this->assertSame([70], $data['skipped_existing']);
         $this->assertSame([72], $data['skipped_no_draft']);
         $this->assertSame('a dog in a park', get_post_meta(71, '_wp_attachment_image_alt', true));
@@ -541,6 +545,7 @@ class DescribeRunControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertSame([71], $data['failed']);
         $this->assertSame([], $data['applied']);
+        $this->assertSame([], $data['partial']);
         $this->assertSame([70], $data['skipped_existing']);
         $this->assertSame([72], $data['skipped_no_draft']);
         // No provenance stamped on a failed item.
@@ -572,11 +577,49 @@ class DescribeRunControllerTest extends TestCase
 
         $data = $response->get_data();
         $this->assertContains(70, $data['applied']);
+        $this->assertSame([], $data['partial']);
         $this->assertSame([], $data['failed']);
         // Provenance is still stamped for a no-op-but-applied item.
         $prov = get_post_meta(70, '_acx_description_provenance', true);
         $this->assertIsArray($prov);
         $this->assertSame('bulk_describe_run', $prov['source']);
+    }
+
+    /**
+     * Provenance write failure after a verified alt must not report the id as
+     * fully applied. Mirrors DescriptionHistoryService::record_correction's
+     * description_correction_partial contract in multi-item form: alt stays
+     * written; telemetry lag is explicit via `partial`. [RLSE-05] [TEST-15]
+     */
+    public function testApplyRunDraftsBucketsPartialWhenProvenanceWriteFails(): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $this->plantPostType(70);
+        $this->plantPostType(71);
+        $this->plantPostType(72);
+        $this->setPostMeta(70, '_wp_attachment_image_alt', 'human-authored alt');
+        // 71: alt write succeeds, provenance write returns false and stores nothing.
+        $GLOBALS['__ac_update_post_meta_fail'][71]['_acx_description_provenance'] = true;
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueRunItemsResponse($runId);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $this->assertSame(200, $response->get_status());
+
+        $data = $response->get_data();
+        // Not fully applied — history would skip this id without provenance.
+        $this->assertSame([], $data['applied']);
+        $this->assertSame([71], $data['partial']);
+        $this->assertSame([70], $data['skipped_existing']);
+        $this->assertSame([72], $data['skipped_no_draft']);
+        $this->assertSame([], $data['failed']);
+        // Alt landed; provenance did not. Do not imply a total failure.
+        $this->assertSame('a dog in a park', get_post_meta(71, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(71, '_acx_description_provenance', true));
     }
 
     public function testApplyReturns404WhenRunNotFound(): void

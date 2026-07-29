@@ -462,13 +462,19 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	 * cancelled run is rejected with a 409 so drafts are never written mid-flight
 	 * (S3-03).
 	 *
+	 * Two-write honesty matches DescriptionHistoryService::record_correction: a
+	 * verified alt plus a failed telemetry write is not full success. Bulk cannot
+	 * fail the whole response for one item, so partial outcomes land in `partial`
+	 * rather than a 500 WP_Error — same contract, multi-item shape. [RLSE-05]
+	 *
 	 * Response buckets (frontend contract — the History UI reports each honestly):
-	 * `applied`, `skipped_existing` (operator alt guarded), `skipped_no_draft`
-	 * (failed describe / empty draft), `skipped_invalid` (media_id is not an
-	 * attachment post, S3-01), and `failed` (the alt-text write returned false,
-	 * S3-02). `skipped_invalid` and `failed` extend the prior three-bucket shape;
-	 * the TS contract (describeApi.ts `ApplyDescribeRunResponse`) and the apply UI
-	 * (DescribeRunApplyView.tsx) both surface them.
+	 * `applied` (alt + provenance both verified), `partial` (alt landed, provenance
+	 * write did not — do not treat as fully applied; history may omit the item),
+	 * `skipped_existing` (operator alt guarded), `skipped_no_draft` (failed describe
+	 * / empty draft), `skipped_invalid` (media_id is not an attachment post, S3-01),
+	 * and `failed` (the alt-text write returned false, S3-02). `applied` keeps its
+	 * prior meaning; `partial` is additive. Do not invent envelope fields beyond
+	 * what was measured. [rg-015]
 	 */
 	public function apply_describe_run_drafts( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		// S3-03: gate on the authoritative run status. The /items endpoint carries
@@ -522,6 +528,7 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 		}
 
 		$applied          = array();
+		$partial          = array();
 		$skipped_existing = array();
 		$skipped_no_draft = array();
 		$skipped_invalid  = array();
@@ -569,7 +576,26 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 				}
 			}
 
-			update_post_meta( $media_id, '_acx_description_provenance', $provenance );
+			// Provenance is the history-list gate (build_item returns null when
+			// neither provenance nor human-edit is an array). Same return-value +
+			// full-payload read-back as DescriptionHistoryService::record_correction
+			// for human-edit: silent success after a failed telemetry write made
+			// bulk apply report "applied" for items history never shows. [RLSE-05]
+			// Alt stays written — do not roll back; bucket as partial so the client
+			// can reconcile without treating the id as fully applied.
+			$prov_written = update_post_meta( $media_id, '_acx_description_provenance', $provenance );
+			if ( false === $prov_written ) {
+				$current_prov = get_post_meta( $media_id, '_acx_description_provenance', true );
+				// Accept only a full-payload no-op (update_post_meta returns false
+				// when stored value equals the value being written). Partial key
+				// matches would forge applied while history still lacks provenance.
+				$prov_ok = is_array( $current_prov ) && $provenance === $current_prov;
+				if ( ! $prov_ok ) {
+					$partial[] = $media_id;
+					continue;
+				}
+			}
+
 			$applied[] = $media_id;
 		}
 
@@ -577,6 +603,7 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			array(
 				'run_id'           => $run_id,
 				'applied'          => $applied,
+				'partial'          => $partial,
 				'skipped_existing' => $skipped_existing,
 				'skipped_no_draft' => $skipped_no_draft,
 				'skipped_invalid'  => $skipped_invalid,

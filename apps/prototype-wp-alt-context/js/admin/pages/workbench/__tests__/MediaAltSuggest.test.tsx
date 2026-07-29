@@ -1322,10 +1322,65 @@ describe('MediaAltSuggest', () => {
     // container (name falls back to empty ACCNAME for a generic div, or to a
     // name-from-contents stutter of button + live-region text when the region
     // is nested). Single-line: delete aria-label={…} from the isPending branch.
+    // role="group" is required so aria-label is a permitted name (ARIA 1.2
+    // prohibits author names on role=generic); jsdom ACCNAME still resolves
+    // without it, so the role pin is the browser-truth guard.
+    expect(park).toHaveAttribute('role', 'group');
     expect(park).toHaveAccessibleName('Generating…');
     expect(park).toHaveAttribute('aria-busy', 'true');
     // Park target must remain focusable for BR-13.
     expect(park).toHaveAttribute('tabindex', '-1');
+  });
+
+  it('keeps role=group on the draft host while idle (not only while accepting) [a11y][BR-56]', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    // Idle draft-ready: Accept is available, not "Accepting draft…".
+    const accept = await screen.findByRole('button', { name: /^accept$/i });
+    expect(accept).not.toBeDisabled();
+
+    const host = accept.closest('.acx-media-selection__media-alt-suggest');
+    expect(host).toBeTruthy();
+    if (!(host instanceof HTMLElement)) {
+      throw new Error('expected idle draft host container');
+    }
+
+    // role is constant so park release cannot mutate the a11y tree. aria-label
+    // stays accepting-only — idle has no busy name.
+    // [TEST-15] discrimination: goes red if role reverts to isAccepting-only
+    // (`role={isAccepting ? 'group' : undefined}`) — idle state loses the role.
+    expect(host).toHaveAttribute('role', 'group');
+    expect(host).not.toHaveAttribute('aria-busy');
+    expect(host).not.toHaveAttribute('aria-label');
+  });
+
+  it('names the accepting park target with a permitted role [a11y][BR-56]', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    correctMock.mockReturnValue(new Promise<DescriptionHistoryItem>(() => undefined));
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /accept/i }));
+    expect(await screen.findByRole('button', { name: /accepting draft/i })).toBeDisabled();
+
+    const host = screen
+      .getByRole('button', { name: /accepting draft/i })
+      .closest('.acx-media-selection__media-alt-suggest');
+    expect(host).toBeTruthy();
+    if (!(host instanceof HTMLElement)) {
+      throw new Error('expected accepting host container');
+    }
+
+    // Companion to the BR-38 generate pin: accepting host also carries aria-label
+    // on a focus-park div and needs role="group" so the name is ARIA-legal.
+    // [TEST-15] discrimination: goes red if role="group" is omitted while
+    // isAccepting (or if aria-label is dropped). Single-line: delete role=…
+    // from the data-branch host.
+    expect(host).toHaveAttribute('role', 'group');
+    expect(host).toHaveAccessibleName('Accepting draft…');
+    expect(host).toHaveAttribute('aria-busy', 'true');
   });
 
   it('does not let a pending row reclaim body focus stranded by a sibling [a11y][BR-33]', async () => {
@@ -1379,6 +1434,67 @@ describe('MediaAltSuggest', () => {
     // [TEST-15] discrimination: goes red if useFocusPark parks on any body-strand
     // without checking that the focusout target was inside this container —
     // single-line: drop the `node.contains(target)` origin guard in useFocusPark.
+    expect(rowA.contains(document.activeElement)).toBe(false);
+  });
+
+  it('does not let an accepting row reclaim body focus stranded by a sibling [a11y][BR-33]', async () => {
+    // Flipped aggressor: row A is accepting (park live via isAccepting), not
+    // generating. The widened useFocusPark(isPending || isAccepting) surface is
+    // unpinned by the generating-side BR-33 cases alone — if the origin guard
+    // broke only for the accepting park, those stay green.
+    //
+    // Row A: draft ready → Accept (never settles). Row B: also draft → Accept
+    // disable-blurs to body. A's park must refuse the foreign strand.
+    describeMock.mockImplementation((mediaId: number) => {
+      return Promise.resolve(sampleResponse(`draft-for-${mediaId}`));
+    });
+    // Both accepts never settle so row A stays in the accepting park for the
+    // whole assertion window (mirrors the generating never-settle pattern).
+    correctMock.mockReturnValue(new Promise<DescriptionHistoryItem>(() => undefined));
+    renderSuggest(
+      <>
+        <div data-testid="row-a">
+          <MediaAltSuggest mediaId={1} />
+        </div>
+        <div data-testid="row-b">
+          <MediaAltSuggest mediaId={2} />
+        </div>
+      </>,
+    );
+
+    const rowA = screen.getByTestId('row-a');
+    const rowB = screen.getByTestId('row-b');
+
+    const suggestA = within(rowA).getByRole('button', { name: /suggest alt text/i });
+    suggestA.focus();
+    fireEvent.click(suggestA);
+    expect(await within(rowA).findByText('draft-for-1')).toBeInTheDocument();
+    const acceptA = within(rowA).getByRole('button', { name: /accept/i });
+    acceptA.focus();
+    fireEvent.click(acceptA);
+    expect(await within(rowA).findByRole('button', { name: /accepting draft/i })).toBeDisabled();
+
+    const suggestB = within(rowB).getByRole('button', { name: /suggest alt text/i });
+    suggestB.focus();
+    fireEvent.click(suggestB);
+    expect(await within(rowB).findByText('draft-for-2')).toBeInTheDocument();
+    const acceptB = within(rowB).getByRole('button', { name: /accept/i });
+    acceptB.focus();
+    fireEvent.click(acceptB);
+    expect(await within(rowB).findByRole('button', { name: /accepting draft/i })).toBeDisabled();
+    // Sibling Accept disable-blurs to body (jsdom stand-in). focusout target is
+    // B's Accept — accepting row A's origin guard must refuse to park.
+    parkFocusOnBody();
+
+    await new Promise<void>((resolve) => {
+      queueMicrotask(() => resolve());
+    });
+
+    // [TEST-15] discrimination: goes red if useFocusPark parks on any body-strand
+    // without checking that the focusout target was inside this container —
+    // single-line: drop the `node.contains(target)` origin guard in useFocusPark.
+    // Same mutation the generating BR-33 cases pin; this one puts the accepting
+    // park in the aggressor role.
     expect(rowA.contains(document.activeElement)).toBe(false);
   });
 

@@ -88,13 +88,6 @@ export const MediaAltInlineEditor = ({ mediaId, altText }: MediaAltInlineEditorP
           shouldFocusEditButtonRef.current = true;
           setIsEditing(false);
         },
-        // BR-58: after the live-region hoist the region is always mounted, so this
-        // clear is load-bearing whenever a polite cue could still be present —
-        // without it a stale "Alt text saved." polite cue sits beside the
-        // assertive save-failure alert (mirrors MediaAltSuggest BR-39 / BR-46).
-        onError: () => {
-          setStatusMessage('');
-        },
       },
     );
   };

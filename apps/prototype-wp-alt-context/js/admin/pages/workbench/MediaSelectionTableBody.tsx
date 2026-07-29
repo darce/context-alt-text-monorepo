@@ -3,6 +3,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
 import type { DataSource } from '../../api/recognition/types';
 import { Checkbox } from '../../../components/ui/checkbox';
+import { decodeHtmlEntities } from '../../utils/decodeHtmlEntities';
 import { IdentityClusterList } from './identity-clusters';
 import { MediaAltInlineEditor } from './MediaAltInlineEditor';
 import { MediaAltSuggest } from './MediaAltSuggest';
@@ -101,7 +102,7 @@ const MediaSelectionRow = ({
               src={item.thumbnailUrl}
               srcSet={item.thumbnailSrcset ?? undefined}
               sizes={item.thumbnailSizes ?? undefined}
-              alt={item.altText ?? item.title}
+              alt={item.altText != null ? decodeHtmlEntities(item.altText) : item.title}
               className="acx-media-selection__thumb acx-media-selection__thumb--thumb"
               loading={eagerLoad ? 'eager' : 'lazy'}
               fetchPriority={eagerLoad ? 'high' : 'auto'}

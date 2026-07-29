@@ -9,7 +9,10 @@ use function defined;
 use function get_option;
 use function in_array;
 use function parse_url;
+use function str_ends_with;
+use function str_starts_with;
 use function strtolower;
+use function substr;
 use function trim;
 
 /**
@@ -130,6 +133,13 @@ final class RecognitionEndpointResolver {
 		return '';
 	}
 
+	/**
+	 * BR-131: require https for remote recognition endpoints. Permit http only
+	 * for loopback hosts used by the local dev hatch (DEFAULT_LOCAL_URL /
+	 * ACX_RECOGNITION_LOCAL_URL → localhost:8000) so LocalWP and the local
+	 * description-service backend keep working without allowing
+	 * http://attacker.invalid.
+	 */
 	private function is_valid_base_url( string $url ): bool {
 		$parts = parse_url( $url );
 		if ( false === $parts || ! is_array( $parts ) ) {
@@ -137,9 +147,26 @@ final class RecognitionEndpointResolver {
 		}
 
 		$scheme = strtolower( (string) ( $parts['scheme'] ?? '' ) );
-		$host   = (string) ( $parts['host'] ?? '' );
+		$host   = strtolower( (string) ( $parts['host'] ?? '' ) );
+		if ( '' === $host ) {
+			return false;
+		}
 
-		return in_array( $scheme, array( 'http', 'https' ), true ) && '' !== $host;
+		if ( 'https' === $scheme ) {
+			return true;
+		}
+
+		// Explicit loopback development path — matches the existing local hatch
+		// convention (http://localhost:8000), not a new constant.
+		return 'http' === $scheme && $this->is_loopback_host( $host );
+	}
+
+	private function is_loopback_host( string $host ): bool {
+		if ( str_starts_with( $host, '[' ) && str_ends_with( $host, ']' ) ) {
+			$host = substr( $host, 1, -1 );
+		}
+
+		return in_array( $host, array( 'localhost', '127.0.0.1', '::1' ), true );
 	}
 
 	private function is_valid_recognition_source( string $source ): bool {

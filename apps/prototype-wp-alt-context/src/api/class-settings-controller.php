@@ -21,6 +21,7 @@ use function apply_filters;
 use function current_user_can;
 use function defined;
 use function get_option;
+use function in_array;
 use function intval;
 use function is_array;
 use function is_int;
@@ -28,9 +29,13 @@ use function is_numeric;
 use function is_string;
 use function is_wp_error;
 use function json_decode;
+use function parse_url;
 use function register_rest_route;
 use function rtrim;
+use function str_ends_with;
+use function str_starts_with;
 use function stripos;
+use function strtolower;
 use function substr;
 use function trim;
 use function update_option;
@@ -39,6 +44,7 @@ use function wp_remote_get;
 use function wp_remote_retrieve_body;
 use function wp_remote_retrieve_headers;
 use function wp_remote_retrieve_response_code;
+use function wp_safe_remote_get;
 
 /**
  * REST controller for recognition API configuration.
@@ -130,7 +136,7 @@ class SettingsController {
 			if ( '' !== $url && ! $this->is_valid_url( $url ) ) {
 				return new WP_Error(
 					'invalid_url',
-					'The recognition API URL must be a valid HTTP or HTTPS URL.',
+					'The recognition API URL must be HTTPS (HTTP is allowed only for loopback development hosts).',
 					array( 'status' => 400 )
 				);
 			}
@@ -234,7 +240,10 @@ class SettingsController {
 		}
 
 		$health_url = rtrim( $url, '/' ) . '/health/detailed';
-		$response   = wp_remote_get(
+		// BR-131: prefer wp_safe_remote_get (rejects unsafe redirects / private
+		// destinations) for non-loopback targets. Loopback keeps wp_remote_get so
+		// LocalWP → localhost:8000 health probes still work.
+		$response = $this->recognition_http_get(
 			$health_url,
 			array(
 				'headers' => $headers,
@@ -285,7 +294,7 @@ class SettingsController {
 		if ( $adopted && ProbeOutcome::TENANT_MISMATCH === $probe_outcome ) {
 			$reprobe_headers                = $headers;
 			$reprobe_headers['X-Tenant-ID'] = TenantIdentity::resolve()['value'];
-			$reprobe_response               = wp_remote_get(
+			$reprobe_response = $this->recognition_http_get(
 				$health_url,
 				array(
 					'headers' => $reprobe_headers,
@@ -308,7 +317,7 @@ class SettingsController {
 	 */
 	private function attempt_tenant_pairing( string $base_url, array $headers, bool $confirm_pairing ): array {
 		$whoami_url = rtrim( $base_url, '/' ) . '/recognition/tenant/whoami';
-		$response   = wp_remote_get(
+		$response   = $this->recognition_http_get(
 			$whoami_url,
 			array(
 				'headers' => $headers,
@@ -582,11 +591,55 @@ class SettingsController {
 		return '****' . substr( $key, -4 );
 	}
 
+	/**
+	 * BR-131: require https for saved service URLs. Permit http only for
+	 * loopback hosts (LocalWP / local description-service hatch). Rejects
+	 * http://attacker.invalid while keeping http://localhost:8000.
+	 */
 	private function is_valid_url( string $url ): bool {
 		$parts = parse_url( $url );
 		if ( false === $parts || ! is_array( $parts ) ) {
 			return false;
 		}
-		return isset( $parts['scheme'], $parts['host'] ) && in_array( $parts['scheme'], array( 'http', 'https' ), true );
+		if ( ! isset( $parts['scheme'], $parts['host'] ) ) {
+			return false;
+		}
+
+		$scheme = strtolower( (string) $parts['scheme'] );
+		$host   = strtolower( (string) $parts['host'] );
+		if ( '' === $host ) {
+			return false;
+		}
+
+		if ( 'https' === $scheme ) {
+			return true;
+		}
+
+		return 'http' === $scheme && $this->is_loopback_host( $host );
+	}
+
+	private function is_loopback_host( string $host ): bool {
+		if ( str_starts_with( $host, '[' ) && str_ends_with( $host, ']' ) ) {
+			$host = substr( $host, 1, -1 );
+		}
+
+		return in_array( $host, array( 'localhost', '127.0.0.1', '::1' ), true );
+	}
+
+	/**
+	 * BR-131: outbound recognition probe transport. Non-loopback targets use
+	 * wp_safe_remote_get (reject unsafe URLs/redirects). Loopback development
+	 * paths keep wp_remote_get so localhost:8000 remains reachable.
+	 *
+	 * @param array<string,mixed> $args
+	 * @return array<string,mixed>|WP_Error
+	 */
+	private function recognition_http_get( string $url, array $args ) {
+		$host = strtolower( (string) ( parse_url( $url, PHP_URL_HOST ) ?? '' ) );
+		if ( $this->is_loopback_host( $host ) ) {
+			return wp_remote_get( $url, $args );
+		}
+
+		return wp_safe_remote_get( $url, $args );
 	}
 }

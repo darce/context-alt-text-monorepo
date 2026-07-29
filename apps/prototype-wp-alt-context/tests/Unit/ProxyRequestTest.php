@@ -696,7 +696,8 @@ PHP;
 
     public function testProxyRequestReadsLatestUrlWithoutControllerReconstruction(): void
     {
-        $this->setOption('acx_recognition_url', 'http://example.internal:9000');
+        // BR-131: remote recognition URLs must be https.
+        $this->setOption('acx_recognition_url', 'https://example.internal:9000');
         $this->setOption('acx_recognition_source', 'service');
 
         $this->queueHttpResponse([
@@ -713,7 +714,7 @@ PHP;
 
         $calls = $this->getHttpCalls();
         $this->assertCount(1, $calls);
-        $this->assertStringContainsString('http://example.internal:9000/recognition/jobs/test-123', $calls[0]['url']);
+        $this->assertStringContainsString('https://example.internal:9000/recognition/jobs/test-123', $calls[0]['url']);
     }
 
     /**

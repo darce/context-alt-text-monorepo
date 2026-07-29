@@ -47,6 +47,8 @@ use function strlen;
 use function strtolower;
 use function trim;
 use function update_post_meta;
+use function sanitize_text_field;
+use function sanitize_textarea_field;
 use function wp_get_object_terms;
 use function wp_json_encode;
 use function wp_update_post;
@@ -263,7 +265,12 @@ class DescribeMediaService {
 			return '';
 		}
 
-		return trim( $value );
+		// Model output is plain text at the write boundary (BR-130 / BR-133):
+		// use core's alt-text sanitizer (same as wp_ajax_save_attachment). It
+		// runs wp_pre_kses_less_than before strip_tags so bare `<` in prose is
+		// entity-encoded instead of truncating the draft. update_post_meta does
+		// not apply KSES on its own.
+		return sanitize_text_field( $value );
 	}
 
 	private function should_write_alt_text( WP_REST_Request $request ): bool {
@@ -402,7 +409,13 @@ class DescribeMediaService {
 			return null;
 		}
 
-		$long = is_string( $data['alt_text_long'] ?? null ) ? trim( $data['alt_text_long'] ) : '';
+		// BR-130 / BR-133: treat model output as plain text. Administrators have
+		// unfiltered_html and WP skips KSES for them — without sanitizing, a
+		// hostile alt_text_long is stored verbatim in post_content. Use the
+		// multi-line core sanitizer so bare `<` in prose is not truncated.
+		$long = is_string( $data['alt_text_long'] ?? null )
+			? sanitize_textarea_field( $data['alt_text_long'] )
+			: '';
 		if ( '' === $long ) {
 			return 'skipped_no_long_text';
 		}

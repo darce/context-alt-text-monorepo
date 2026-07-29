@@ -274,6 +274,46 @@ describe('SettingsPage', () => {
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ['sync', 'health'] });
   });
 
+  it('surfaces the server invalid_url message when save is rejected (BR-136)', () => {
+    // After the loopback-only HTTP rule, non-loopback http:// URLs return 400
+    // invalid_url with an actionable message — the operator must see that text,
+    // not a generic "Failed to save settings." ([RLSE-05]).
+    const loopbackRuleMessage =
+      'The recognition API URL must be HTTPS (HTTP is allowed only for loopback development hosts).';
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    expect(capturedSaveOptions?.onError).toBeDefined();
+    act(() => {
+      capturedSaveOptions!.onError!(
+        new Error(
+          `Request to /acx/v1/settings failed (400): {"code":"invalid_url","message":"${loopbackRuleMessage}","data":{"status":400}}`,
+        ),
+      );
+    });
+
+    const banner = screen.getByTestId('acx-settings-save-message');
+    // BR-150: exact text — a regression that wraps the resolved message in raw
+    // transport text must go red. toHaveTextContent is a substring match.
+    expect(banner.textContent).toBe(loopbackRuleMessage);
+    expect(banner.getAttribute('role')).toBe('alert');
+  });
+
+  it('falls back to the generic save failure when the rejection is unstructured', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    expect(capturedSaveOptions?.onError).toBeDefined();
+    act(() => {
+      capturedSaveOptions!.onError!(new Error('network down'));
+    });
+
+    const banner = screen.getByTestId('acx-settings-save-message');
+    // BR-150: exact text for the fallback path too.
+    expect(banner.textContent).toBe('Failed to save settings.');
+    expect(banner.getAttribute('role')).toBe('alert');
+  });
+
   it('refetches sync health after a successful probe so the offline banner clears', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
     render(<SettingsPage />);

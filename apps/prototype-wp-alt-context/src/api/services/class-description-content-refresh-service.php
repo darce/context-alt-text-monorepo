@@ -54,7 +54,10 @@ class DescriptionContentRefreshService {
 					continue;
 				}
 
-				$current_alt_text = trim( (string) get_post_meta( $media_id, self::ALT_META, true ) );
+				// Meta is entity-encoded (sanitize_text_field); compare decoded.
+				$current_alt_text = trim(
+					html_entity_decode( (string) get_post_meta( $media_id, self::ALT_META, true ), ENT_QUOTES )
+				);
 				if ( '' === $current_alt_text ) {
 					$skipped[] = $this->build_skip( $post, $media_id, 'missing_current_alt_text' );
 					continue;
@@ -125,7 +128,10 @@ class DescriptionContentRefreshService {
 					continue;
 				}
 
-				$current_alt_text = trim( (string) get_post_meta( $media_id, self::ALT_META, true ) );
+				// Meta is entity-encoded (sanitize_text_field); compare and write decoded.
+				$current_alt_text = trim(
+					html_entity_decode( (string) get_post_meta( $media_id, self::ALT_META, true ), ENT_QUOTES )
+				);
 				if ( '' === $current_alt_text ) {
 					$skipped[] = $this->build_skip( $post, $media_id, 'missing_current_alt_text' );
 					continue;
@@ -147,6 +153,8 @@ class DescriptionContentRefreshService {
 					continue;
 				}
 
+				// $current_alt_text is decoded; esc_attr re-encodes for HTML alt,
+				// and replace_block_alt_attributes needs real characters for JSON.
 				$updated_tag = $this->replace_alt_text( $matches[0], $current_alt_text );
 				if ( $updated_tag === $matches[0] ) {
 					$skipped[] = $this->build_skip( $post, $media_id, 'replacement_failed' );

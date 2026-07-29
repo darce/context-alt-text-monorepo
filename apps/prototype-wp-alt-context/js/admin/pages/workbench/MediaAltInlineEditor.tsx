@@ -3,22 +3,29 @@ import { useEffect, useId, useRef, useState } from 'react';
 
 import { resolveDescribeErrorMessage } from '../../api/describeApi';
 import { useCorrectMediaAlt } from '../../hooks/useCorrectMediaAlt';
+import { decodeHtmlEntities } from '../../utils/decodeHtmlEntities';
 
 export interface MediaAltInlineEditorProps {
   mediaId: number;
   altText: string | null;
 }
 
+/** Stored meta arrives entity-encoded; decode once at the read boundary (BR-140). */
+const decodeStoredAlt = (stored: string | null): string | null =>
+  stored === null ? null : decodeHtmlEntities(stored);
+
 export const MediaAltInlineEditor = ({ mediaId, altText }: MediaAltInlineEditorProps): React.JSX.Element => {
   const [isEditing, setIsEditing] = useState(false);
-  const [draft, setDraft] = useState(altText ?? '');
-  const [displayAlt, setDisplayAlt] = useState<string | null>(altText);
+  const [draft, setDraft] = useState(() => decodeStoredAlt(altText) ?? '');
+  const [displayAlt, setDisplayAlt] = useState<string | null>(() => decodeStoredAlt(altText));
   const [statusMessage, setStatusMessage] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const editButtonRef = useRef<HTMLButtonElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const shouldFocusEditButtonRef = useRef(false);
   const textareaId = useId();
+  // Track the raw prop (pre-decode) so a genuine parent refetch is detected even
+  // when two distinct stored forms would decode to the same display string.
   const previousAltTextRef = useRef(altText);
   const { mutate, isPending, error, reset } = useCorrectMediaAlt();
 
@@ -37,8 +44,9 @@ export const MediaAltInlineEditor = ({ mediaId, altText }: MediaAltInlineEditorP
       return;
     }
     previousAltTextRef.current = altText;
-    setDisplayAlt(altText);
-    setDraft(altText ?? '');
+    const decoded = decodeStoredAlt(altText);
+    setDisplayAlt(decoded);
+    setDraft(decoded ?? '');
   }, [altText, isEditing]);
 
   useEffect(() => {
@@ -73,7 +81,12 @@ export const MediaAltInlineEditor = ({ mediaId, altText }: MediaAltInlineEditorP
       { mediaId, altText: draft },
       {
         onSuccess: (data) => {
-          const nextAlt = data && typeof data.current_alt_text === 'string' ? data.current_alt_text : draft;
+          // current_alt_text is stored meta (entity-encoded); decode for display.
+          // Fallback to the operator draft (already plain text) when absent.
+          const nextAlt =
+            data && typeof data.current_alt_text === 'string'
+              ? decodeHtmlEntities(data.current_alt_text)
+              : draft;
           // Acknowledge whatever prop value is current at save time so the
           // exit-edit sync effect won't re-apply a mid-edit prop change over the
           // just-saved value (WBUX-5-S2A-BR-03 companion). useCorrectMediaAlt

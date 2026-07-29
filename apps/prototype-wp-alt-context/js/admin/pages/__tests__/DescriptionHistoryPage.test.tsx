@@ -135,6 +135,36 @@ describe('DescriptionHistoryPage', () => {
     expect(screen.getAllByText('completed')).toHaveLength(2);
   });
 
+  it('decodes entity-encoded stored alts for display and the correction editor (BR-140)', async () => {
+    // Build entity strings via concatenation so JSX/bundler HTML decoding cannot
+    // turn `&lt;` into `<` before the test exercises decode-on-read.
+    const storedCurrent = 'x ' + '&lt;' + '= y';
+    const storedGenerated = 'chart where a ' + '&lt;' + ' b';
+    fetchHistoryMock.mockResolvedValue({
+      total: 1,
+      items: [
+        {
+          ...historyItem,
+          current_alt_text: storedCurrent,
+          generated_alt_text: storedGenerated,
+        },
+      ],
+    });
+
+    renderPage();
+
+    // Current alt appears in the read column and seeds the correction textarea.
+    expect(await screen.findByText('chart where a < b')).toBeInTheDocument();
+    const currentColumn = screen.getByRole('heading', { name: 'Current alt text' }).closest('section');
+    expect(currentColumn).toHaveTextContent('x <= y');
+    // Storage form must not appear as literal entity text in the document.
+    expect(currentColumn?.textContent).not.toContain('&lt;');
+
+    const textarea = screen.getByLabelText<HTMLTextAreaElement>('Alt text correction for Bridge');
+    // Correction editor seeds from decoded current alt, not the storage form.
+    expect(textarea.value).toBe('x <= y');
+  });
+
   it('saves human alt text corrections inline', async () => {
     renderPage();
 

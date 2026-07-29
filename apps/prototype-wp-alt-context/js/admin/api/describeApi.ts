@@ -11,6 +11,7 @@
 import { fetchRequiredApi } from '../utils/http';
 import { getEndpoint, getConfig } from './config';
 import { createRecognitionTimeoutSignal } from './recognition/requestTimeout';
+import { parseWpErrorPayload, resolveWpErrorMessage } from './wpErrorMessage';
 
 export interface VisualFacts {
   caption: string;
@@ -331,60 +332,25 @@ export const applyDescribeRunDrafts = async (
     },
   );
 
-const parsePayload = (raw: string): Record<string, unknown> | null => {
-  const start = raw.indexOf('{');
-  if (start < 0) {
-    return null;
-  }
-  try {
-    const payload: unknown = JSON.parse(raw.slice(start));
-    return payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
-};
-
 /**
  * Resolve a user-safe describe error message: the FastAPI `detail` (503 stub /
  * unavailable) or the WP_Error `message` (502 invalid envelope) when present,
  * otherwise the caller's localized fallback. Never returns raw proxy body text.
  *
- * Intentionally separate from recognition/scanApiError.ts (E19-1-REV-C-4): that
- * resolver special-cases `embedding_runtime_unavailable` and only reads `detail`;
- * describe instead needs the WP_Error `message` branch (502 invalid_description_
- * envelope) and a nested-`detail` branch. Kept as a small dedicated parser rather
- * than coupling describe to the scan-specific resolver.
+ * Shared parse lives in wpErrorMessage.ts so settings and describe do not drift
+ * ([REF-26]). Intentionally still separate from recognition/scanApiError.ts
+ * (E19-1-REV-C-4): that resolver special-cases `embedding_runtime_unavailable`
+ * and only reads `detail`.
  */
-export const resolveDescribeErrorMessage = (error: unknown, fallback: string): string => {
-  if (!(error instanceof Error)) {
-    return fallback;
-  }
-  const payload = parsePayload(error.message);
-  if (payload) {
-    const detail = payload.detail;
-    if (typeof detail === 'string' && detail.trim() !== '') {
-      return detail;
-    }
-    if (detail && typeof detail === 'object') {
-      const nested = (detail as { detail?: unknown }).detail;
-      if (typeof nested === 'string' && nested.trim() !== '') {
-        return nested;
-      }
-    }
-    const message = payload.message;
-    if (typeof message === 'string' && message.trim() !== '') {
-      return message;
-    }
-  }
-  return fallback;
-};
+export const resolveDescribeErrorMessage = (error: unknown, fallback: string): string =>
+  resolveWpErrorMessage(error, fallback);
 
 /**
  * Resolve the WP_Error `code` from a describe/correction rejection when present.
  * Returns null when the error is not structured or carries no code — callers must
  * handle that honestly rather than inventing a sentinel ([rg-015]).
  *
- * Sibling of resolveDescribeErrorMessage: same parsePayload, same deliberate
+ * Sibling of resolveDescribeErrorMessage: same parseWpErrorPayload, same deliberate
  * separation from recognition/scanApiError.ts. Code and message resolve
  * independently so a partial-correction path can gate on the stable code without
  * matching localized message text.
@@ -393,7 +359,7 @@ export const resolveDescribeErrorCode = (error: unknown): string | null => {
   if (!(error instanceof Error)) {
     return null;
   }
-  const payload = parsePayload(error.message);
+  const payload = parseWpErrorPayload(error.message);
   if (!payload) {
     return null;
   }
@@ -410,7 +376,7 @@ export const resolveDescribeErrorCode = (error: unknown): string | null => {
  * field is absent / not a string — callers must not invent a value ([rg-015]).
  * Empty string is a legitimate stored value and is returned as-is.
  *
- * Sibling of resolveDescribeErrorCode: same parsePayload, same tolerance for
+ * Sibling of resolveDescribeErrorCode: same parseWpErrorPayload, same tolerance for
  * unparseable messages. Used by partial-correction reconcile to read
  * `stored_alt_text` rather than guessing from the request payload.
  */
@@ -418,7 +384,7 @@ export const resolveDescribeErrorDataField = (error: unknown, field: string): st
   if (!(error instanceof Error)) {
     return null;
   }
-  const payload = parsePayload(error.message);
+  const payload = parseWpErrorPayload(error.message);
   if (!payload) {
     return null;
   }

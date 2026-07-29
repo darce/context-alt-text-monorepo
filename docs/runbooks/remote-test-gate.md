@@ -14,8 +14,11 @@ Security baseline: `docs/assessments/current/remote-gate-oci-tailscale-security-
 
 - Only **committed HEAD** is gated — dirty paths are warned about and NOT pushed.
 - Exit codes: nonzero = a target failed · `75` = clone lock busy (another run) ·
-  `74` = host memory admission deferred (retryable) · `78` = host not configured ·
-  `2` = local validation refusal (nothing touched the network).
+  `74` = host memory admission deferred (retryable) · `73` = `gate-preflight`
+  failed (see below) · `78` = host not configured · `2` = local validation
+  refusal (nothing touched the network). These are the **script's** codes; `make
+  check-remote` collapses every failure to make's own exit `2`, so read the code
+  off the trailing `make: *** [check-remote] Error <n>` line.
 - Output per target: `=== <target> ===` … `EXIT=<code> (<target>)`, then `DONE-ALL`.
 - The gate `make` runs in `REMOTE_GATE_WORKDIR`; `uv sync` runs there first when a
   `pyproject.toml` exists.
@@ -89,6 +92,37 @@ Known gap (2026-07-13): the hostgov CLI ships in `mcp-workbay-orchestrator`
 ≥0.2.8, which is git+ssh-only — PyPI stops at 0.2.0 (no hostgov), and the gate
 user deliberately has no GitHub access. Until the package is published,
 admission stays SKIPPED and the systemd caps are the backstop.
+
+## Preflight: `gate-preflight` (fail-closed fixture presence)
+
+A skip is not a pass, but an exit code cannot tell them apart. This gate was
+green for months on a face pipeline it never ran: the `face_pipeline` ONNX
+weights are gitignored, so a host that never fetched them skipped ~45
+detector/aligner/embedder/ORT-parity tests and still reported `EXIT=0`.
+
+The runner stays generic; the **repo** declares what must be present. If the
+workdir's Makefile declares a `gate-preflight` target, `remote_gate.sh` runs it
+before any gate target and a nonzero exit aborts the whole run with `73` —
+**no target executes**. A workdir that declares no such target is logged, not
+silently accepted.
+
+`apps/prototype-description-service` declares:
+
+```make
+gate-preflight:
+	@$(UV_RUN) python scripts/fetch_face_pipeline_models.py --verify-only
+```
+
+`--verify-only` is offline (sha256 against the pinned manifest, no download), so
+it is safe on every invocation. Operator checks:
+
+- `scripts/remote_gate.sh doctor` reports `gate-preflight: declared and
+  PASSING` / `declared but FAILING` / `NOT declared`.
+- When a run aborts with `73`, provision the host and re-run:
+  `cd <workdir> && make gate-preflight` names exactly what is missing.
+
+Add a `gate-preflight` target to any workdir whose suite skips on absent
+fixtures, weights, or corpora — otherwise those skips read as passes.
 
 ## Guards
 

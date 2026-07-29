@@ -171,6 +171,9 @@ class DescriptionHistoryServiceTest extends TestCase
      * failure-worthy. Alt stays written (no rollback); response is 500 so the
      * client never treats missing stored telemetry as a successful correction.
      * Message tells the operator the alt landed and to retry for history accuracy.
+     *
+     * Code is description_correction_partial (not description_correction_failed):
+     * the alt text IS in storage — material to client cache reconciliation. [WBUX-5-BR-55 task 2]
      */
     public function testHumanEditWriteFailureReturnsErrorAfterAltSaved(): void
     {
@@ -188,7 +191,7 @@ class DescriptionHistoryServiceTest extends TestCase
         $result = (new DescriptionHistoryService())->record_correction($mediaId, $newAlt);
 
         $this->assertInstanceOf(WP_Error::class, $result);
-        $this->assertSame('description_correction_failed', $result->get_error_code());
+        $this->assertSame('description_correction_partial', $result->get_error_code());
         $this->assertSame(500, $result->get_error_data()['status']);
         $this->assertStringContainsString('Alt text was saved', $result->get_error_message());
         // Partial success: alt persisted, human-edit did not. [INT-11] does not undo alt.
@@ -241,6 +244,7 @@ class DescriptionHistoryServiceTest extends TestCase
         $result = (new DescriptionHistoryService())->record_correction($mediaId, $newAlt);
 
         $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('description_correction_partial', $result->get_error_code());
         $this->assertSame(500, $result->get_error_data()['status']);
         $this->assertSame($newAlt, get_post_meta($mediaId, '_wp_attachment_image_alt', true));
         $this->assertSame('', get_post_meta($mediaId, '_acx_description_human_edit', true));
@@ -327,7 +331,9 @@ class DescriptionHistoryServiceTest extends TestCase
         $result = (new DescriptionHistoryService())->record_correction($mediaId, $sameAlt);
 
         $this->assertInstanceOf(WP_Error::class, $result);
-        $this->assertSame('description_correction_failed', $result->get_error_code());
+        // Same third-case code as a fresh human-edit write failure: alt is verified
+        // (no-op read-back), human-edit marker is not. [WBUX-5-BR-55 task 2]
+        $this->assertSame('description_correction_partial', $result->get_error_code());
         $this->assertSame(500, $result->get_error_data()['status']);
         $this->assertStringContainsString('Alt text was saved', $result->get_error_message());
         // Stale marker left untouched — must not be treated as this correction's telemetry.
@@ -408,6 +414,63 @@ class DescriptionHistoryServiceTest extends TestCase
         $this->assertIsArray($result['human_edit']);
         $this->assertSame('Corrected harbor alt.', $result['human_edit']['alt_text']);
         $this->assertSame('Corrected harbor alt.', get_post_meta($mediaId, '_wp_attachment_image_alt', true));
+    }
+
+    /**
+     * BR-55: the post-write build_item-null path is unreachable under normal
+     * control flow (verified human-edit write implies an array is in storage,
+     * so build_item is total). A silent success envelope on that state is the
+     * [RLSE-05] shape BR-40 removed. Production must return WP_Error 500, not
+     * a hand-built eight-key (or any) success array.
+     *
+     * Forced via protected override — no legitimate input reaches null after
+     * verified writes under the stubs (or real WP storage).
+     */
+    public function testBuildItemNullAfterVerifiedWritesReturnsErrorNotSuccessEnvelope(): void
+    {
+        $mediaId = 701;
+        $this->seedAttachment($mediaId, 'Force-null photo', 'image/jpeg');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', 'Prior alt.');
+
+        $service = new class extends DescriptionHistoryService {
+            protected function build_item(int $media_id): ?array
+            {
+                return null;
+            }
+        };
+
+        $result = $service->record_correction($mediaId, 'Corrected despite null build.');
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('description_correction_failed', $result->get_error_code());
+        $this->assertSame(500, $result->get_error_data()['status']);
+        $this->assertStringContainsString('could not be loaded', $result->get_error_message());
+        // Writes still landed — this is assembly failure, not a rolled-back correction.
+        $this->assertSame('Corrected despite null build.', get_post_meta($mediaId, '_wp_attachment_image_alt', true));
+        $this->assertIsArray(get_post_meta($mediaId, '_acx_description_human_edit', true));
+    }
+
+    /**
+     * Task 2 discrimination: bare alt-write failure (nothing persisted) keeps
+     * description_correction_failed — must not be conflated with the partial code.
+     * Companion to testHumanEditWriteFailureReturnsErrorAfterAltSaved.
+     */
+    public function testAltWriteFailureKeepsFailedCodeNotPartial(): void
+    {
+        $mediaId = 702;
+        $existingAlt = 'Still the only alt.';
+        $requestedAlt = 'Never lands.';
+        $this->seedAttachment($mediaId, 'Attachment 702');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', $existingAlt);
+        $GLOBALS['__ac_update_post_meta_fail'][$mediaId]['_wp_attachment_image_alt'] = true;
+
+        $result = (new DescriptionHistoryService())->record_correction($mediaId, $requestedAlt);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('description_correction_failed', $result->get_error_code());
+        $this->assertNotSame('description_correction_partial', $result->get_error_code());
+        $this->assertSame(500, $result->get_error_data()['status']);
+        $this->assertSame($existingAlt, get_post_meta($mediaId, '_wp_attachment_image_alt', true));
     }
 
     /**

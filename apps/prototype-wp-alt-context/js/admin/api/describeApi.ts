@@ -362,3 +362,28 @@ export const resolveDescribeErrorMessage = (error: unknown, fallback: string): s
   }
   return fallback;
 };
+
+/**
+ * Resolve the WP_Error `code` from a describe/correction rejection when present.
+ * Returns null when the error is not structured or carries no code — callers must
+ * handle that honestly rather than inventing a sentinel ([rg-015]).
+ *
+ * Sibling of resolveDescribeErrorMessage: same parsePayload, same deliberate
+ * separation from recognition/scanApiError.ts. Code and message resolve
+ * independently so a partial-correction path can gate on the stable code without
+ * matching localized message text.
+ */
+export const resolveDescribeErrorCode = (error: unknown): string | null => {
+  if (!(error instanceof Error)) {
+    return null;
+  }
+  const payload = parsePayload(error.message);
+  if (!payload) {
+    return null;
+  }
+  const code = payload.code;
+  if (typeof code === 'string' && code.trim() !== '') {
+    return code;
+  }
+  return null;
+};

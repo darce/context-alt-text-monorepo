@@ -173,6 +173,14 @@ describe('MediaAltSuggest', () => {
     renderSuggest(<MediaAltSuggest mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+
+    // [TEST-15][BR-53]: pin that the generating cue was actually announced while
+    // pending — without this, the post-failure emptiness pins only "not sitting
+    // on Generating… now", which is also true if announceStatus never ran.
+    // Goes red if announceStatus('Generating…') is removed from generate().
+    const status = screen.getByTestId('media-alt-suggest-status');
+    expect(status).toHaveTextContent(/generating/i);
+
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(/could not generate|couldn.?t generate|unable to generate/i);
 
@@ -180,8 +188,9 @@ describe('MediaAltSuggest', () => {
     // generate()'s onError — the always-mounted polite region keeps the stale
     // "Generating…" cue beside the assertive failure alert. Single-line: delete
     // clearStatus() from the onError callback (or the whole onError option).
-    const status = screen.getByTestId('media-alt-suggest-status');
-    expect(status).toHaveTextContent('');
+    // toBeEmptyDOMElement (not toHaveTextContent('')): jest-dom's recommended
+    // empty check — readability only; the prior form already failed on non-empty.
+    expect(status).toBeEmptyDOMElement();
     expect(status).not.toHaveTextContent(/generating/i);
   });
 
@@ -226,15 +235,35 @@ describe('MediaAltSuggest', () => {
     expect(screen.getByRole('button', { name: /suggest alt text/i })).toHaveFocus();
   });
 
-  it('moves focus to a stable control after a draft lands, not document.body [a11y][WBUX-5-S2C-BR-01]', async () => {
+  it('moves focus to Accept after a draft lands, not Dismiss or document.body [a11y][WBUX-5-S2C-BR-01][BR-57]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
     renderSuggest(<MediaAltSuggest mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
 
-    // The focused trigger is replaced when the draft lands; focus must move to an
-    // actionable control in the new state so a keyboard user is not stranded on body.
-    await waitFor(() => expect(screen.getByRole('button', { name: /dismiss/i })).toHaveFocus());
+    // BR-57 design revision: previously landed on Dismiss ("stable control") so
+    // Enter discarded the draft the polite cue just asked the operator to review.
+    // Land on Accept — the primary act-on-draft control — instead. Dismiss stays
+    // in tab order; it is no longer the programmatic landing target.
+    // [TEST-15] discrimination: goes red if the data-landing leg still focuses
+    // dismissButtonRef (pre-BR-57), or if it stops focusing any control (body).
+    await waitFor(() => expect(screen.getByRole('button', { name: /accept/i })).toHaveFocus());
+    expect(screen.getByRole('button', { name: /dismiss/i })).not.toHaveFocus();
+  });
+
+  it('moves focus to Edit draft when a whitespace-only draft lands [a11y][BR-57]', async () => {
+    describeMock.mockResolvedValue(sampleResponse('   '));
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+
+    // Accept is disabled for empty/whitespace drafts — land on Edit so the
+    // operator can act on the draft rather than discard it.
+    // [TEST-15] discrimination: goes red if the landing always focuses Accept
+    // (disabled) or still focuses Dismiss for non-committable drafts.
+    await waitFor(() => expect(screen.getByRole('button', { name: /^edit draft$/i })).toHaveFocus());
+    expect(screen.getByRole('button', { name: /accept/i })).not.toHaveFocus();
+    expect(screen.getByRole('button', { name: /dismiss/i })).not.toHaveFocus();
   });
 
   it('moves focus to the retry control on failure so keyboard users are not stranded [a11y][WBUX-5-S2C-BR-01]', async () => {
@@ -271,9 +300,11 @@ describe('MediaAltSuggest', () => {
     await screen.findByText(draft);
 
     // [TEST-15] discrimination: goes red if the draft-landing focus effect always
-    // focuses Dismiss without checking containerRef.contains(activeElement) —
-    // generation is slow (fixture duration_ms 13800) and a per-row control must
-    // not yank focus mid-keystroke on another control.
+    // focuses Accept (or any landing target) without checking
+    // containerRef.contains(activeElement) — generation is slow (fixture
+    // duration_ms 13800) and a per-row control must not yank focus mid-keystroke
+    // on another control. The ownsFocus gate is preserved across the BR-57
+    // landing-target change.
     expect(screen.getByRole('button', { name: /^elsewhere$/i })).toHaveFocus();
   });
 
@@ -320,6 +351,79 @@ describe('MediaAltSuggest', () => {
     // correction endpoint.
     expect(correctMock).toHaveBeenCalledTimes(1);
     expect(correctMock).toHaveBeenCalledWith(42, draft);
+  });
+
+  it('announces accepting into the polite region while the commit is in flight [a11y][BR-56]', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    correctMock.mockReturnValue(new Promise<DescriptionHistoryItem>(() => undefined));
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await waitFor(() => expect(screen.getByTestId('media-alt-suggest-status')).toHaveTextContent(/ready/i));
+    fireEvent.click(await screen.findByRole('button', { name: /accept/i }));
+    expect(await screen.findByRole('button', { name: /accepting draft/i })).toBeDisabled();
+
+    // [TEST-15] discrimination: goes red if accept() omits announceStatus at
+    // mutate start — polite region keeps the stale "Draft ready. Review before
+    // saving." while the visible button already reads "Accepting draft…".
+    // Single-line: delete announceStatus(__('Accepting draft…', …)) from accept().
+    const status = screen.getByTestId('media-alt-suggest-status');
+    expect(status).toHaveTextContent(/accepting draft/i);
+    expect(status).not.toHaveTextContent(/ready/i);
+  });
+
+  it('marks the draft host busy and parks focus while accepting [a11y][BR-56]', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    correctMock.mockReturnValue(new Promise<DescriptionHistoryItem>(() => undefined));
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    const accept = await screen.findByRole('button', { name: /accept/i });
+    accept.focus();
+    fireEvent.click(accept);
+    expect(await screen.findByRole('button', { name: /accepting draft/i })).toBeDisabled();
+    // Stands in for the browser blurring the control native `disabled` just applied.
+    parkFocusOnBody();
+
+    const host = screen
+      .getByRole('button', { name: /accepting draft/i })
+      .closest('.acx-media-selection__media-alt-suggest');
+    expect(host).toBeTruthy();
+    if (!(host instanceof HTMLElement)) {
+      throw new Error('expected accepting host container');
+    }
+
+    // [TEST-15] discrimination: goes red if aria-busy is omitted from the data
+    // branch host while isAccepting, or if useFocusPark is still gated on
+    // isPending alone (not isAccepting) — focus stays on document.body for the
+    // whole commit. Mirror of the generate BR-13 / BR-38 pins.
+    expect(host).toHaveAttribute('aria-busy', 'true');
+    expect(host).toHaveAccessibleName('Accepting draft…');
+    await waitFor(() => {
+      expect(document.activeElement).not.toBe(document.body);
+      expect(document.activeElement).toHaveClass('acx-media-selection__media-alt-suggest');
+    });
+  });
+
+  it('announces saving into the polite region while an edited save is in flight [a11y][BR-56]', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    correctMock.mockReturnValue(new Promise<DescriptionHistoryItem>(() => undefined));
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
+    fireEvent.change(await screen.findByLabelText(/edit draft alt text/i), {
+      target: { value: editedDraft },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^save alt text$/i }));
+    expect(await screen.findByRole('button', { name: /saving alt text/i })).toBeDisabled();
+
+    // [TEST-15] discrimination: goes red if saveEdit() omits announceStatus at
+    // mutate start — polite region keeps "Draft ready…" while Save shows
+    // "Saving alt text…". Single-line: delete announceStatus from saveEdit().
+    const status = screen.getByTestId('media-alt-suggest-status');
+    expect(status).toHaveTextContent(/saving alt text/i);
+    expect(status).not.toHaveTextContent(/ready/i);
   });
 
   it('announces the saved state and returns to the Suggest control after accept [S2c-2]', async () => {
@@ -993,7 +1097,8 @@ describe('MediaAltSuggest', () => {
     expect(screen.queryByLabelText(/edit draft alt text/i)).not.toBeInTheDocument();
     expect(screen.queryByDisplayValue(editedDraft)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /accept/i })).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByRole('button', { name: /dismiss/i })).toHaveFocus());
+    // BR-57: later draft lands on Accept (act-on-draft), not Dismiss.
+    await waitFor(() => expect(screen.getByRole('button', { name: /accept/i })).toHaveFocus());
   });
 
   it('clears a failed-save alert and focuses Edit draft after Cancel edit [a11y][WBUX-5-S2C3A-BR-27]', async () => {

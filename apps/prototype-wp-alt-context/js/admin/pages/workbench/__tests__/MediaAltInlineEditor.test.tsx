@@ -160,11 +160,16 @@ describe('MediaAltInlineEditor', () => {
     expect(screen.getByRole('button', { name: /edit alt text/i })).toHaveFocus();
   });
 
-  it('announces the saved state via a live region [a11y][WBUX-5-S2A-BR-02]', async () => {
+  it('announces the saved state via a live region [a11y][WBUX-5-S2A-BR-02][WBUX-5-BR-58]', async () => {
     renderEditor(<MediaAltInlineEditor mediaId={42} altText="Bridge at dusk" />);
-    // No live region before a save (conditional render avoids colliding with other
-    // single-status-region consumers); it appears WITH the announcement on success.
-    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    // Always-mounted empty region (BR-32 / BR-58): present before save, no cue yet.
+    // Mount-then-mutate is required so aria-live observes a text change; a region
+    // that appears with its text is frequently not announced.
+    // data-testid disambiguates from MediaAltSuggest's sibling role=status.
+    const status = screen.getByTestId('media-alt-inline-editor-status');
+    expect(status).toHaveAttribute('role', 'status');
+    expect(status).toHaveAttribute('aria-live', 'polite');
+    expect(status).toBeEmptyDOMElement();
 
     fireEvent.click(screen.getByRole('button', { name: /edit alt text/i }));
     fireEvent.change(screen.getByRole('textbox', { name: /alt text/i }), {
@@ -172,7 +177,102 @@ describe('MediaAltInlineEditor', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: /^save/i }));
 
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/saved/i));
+    // Same stable node receives the cue text (not a remount-with-text).
+    await waitFor(() => expect(status).toHaveTextContent('Alt text saved.'));
+    expect(screen.getByTestId('media-alt-inline-editor-status')).toBe(status);
+  });
+
+  it('clears the polite saved cue when re-entering edit [a11y][WBUX-5-BR-58]', async () => {
+    renderEditor(<MediaAltInlineEditor mediaId={42} altText="Bridge at dusk" />);
+
+    fireEvent.click(screen.getByRole('button', { name: /edit alt text/i }));
+    fireEvent.change(screen.getByRole('textbox', { name: /alt text/i }), {
+      target: { value: 'A stone bridge over a calm river at dusk.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^save/i }));
+
+    const status = screen.getByTestId('media-alt-inline-editor-status');
+    await waitFor(() => expect(status).toHaveTextContent('Alt text saved.'));
+
+    // Re-enter edit: the saved cue must retire so it does not sit beside a later
+    // Suggest announcement on the same row (asymmetric with Suggest's own retirement).
+    fireEvent.click(screen.getByRole('button', { name: /edit alt text/i }));
+
+    // [TEST-15] discrimination: goes red if enterEditMode stops clearing
+    // statusMessage. Assert present-then-empty (not merely absent) so "cleared"
+    // is distinguished from "never set". toBeEmptyDOMElement — not toHaveTextContent('').
+    expect(status).toBeEmptyDOMElement();
+    expect(status).not.toHaveTextContent(/saved/i);
+  });
+
+  it('keeps the polite region empty beside a save-failure alert [a11y][WBUX-5-BR-58]', async () => {
+    renderEditor(<MediaAltInlineEditor mediaId={42} altText="Bridge at dusk" />);
+
+    fireEvent.click(screen.getByRole('button', { name: /edit alt text/i }));
+    fireEvent.change(screen.getByRole('textbox', { name: /alt text/i }), {
+      target: { value: 'First save that succeeds.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^save/i }));
+
+    const status = screen.getByTestId('media-alt-inline-editor-status');
+    await waitFor(() => expect(status).toHaveTextContent('Alt text saved.'));
+
+    // Re-enter; enterEditMode clears the cue (primary path). Production also
+    // clears in mutate onError so a leftover polite cue cannot sit beside the
+    // assertive alert if enter-edit clear is ever skipped (defense-in-depth,
+    // mirrors MediaAltSuggest BR-39 / BR-46). This component has no intermediate
+    // polite "Saving…" cue, so onError alone is not independently pin-able here.
+    fireEvent.click(screen.getByRole('button', { name: /edit alt text/i }));
+    // Present-then-empty: cue was set above; enter-edit must retire it before the
+    // failure path. [TEST-15] goes red if enterEditMode stops clearing.
+    expect(status).toBeEmptyDOMElement();
+
+    correctMock.mockRejectedValueOnce(
+      new Error('Request to /wp-json/acx/v1/media/42/alt failed (502): <html>proxy-internal-detail</html>'),
+    );
+    fireEvent.click(screen.getByRole('button', { name: /^save/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/could not save/i);
+
+    // Invariant after failure: polite region stays empty (does not re-announce
+    // "saved" and does not compete with the assertive alert).
+    expect(status).toBeEmptyDOMElement();
+    expect(status).not.toHaveTextContent(/saved/i);
+  });
+
+  it('retires a saved status message when focus leaves the idle surface [a11y][WBUX-5-BR-58]', async () => {
+    renderEditor(
+      <>
+        <MediaAltInlineEditor mediaId={42} altText="Bridge at dusk" />
+        <button type="button">Elsewhere</button>
+      </>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /edit alt text/i }));
+    fireEvent.change(screen.getByRole('textbox', { name: /alt text/i }), {
+      target: { value: 'A stone bridge over a calm river at dusk.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^save/i }));
+
+    const status = screen.getByTestId('media-alt-inline-editor-status');
+    await waitFor(() => expect(status).toHaveTextContent('Alt text saved.'));
+    await waitFor(() => expect(screen.getByRole('button', { name: /edit alt text/i })).toHaveFocus());
+
+    // Leave the surface — the message has been announced; keeping "Alt text saved."
+    // forever collides with a later Suggest status on the same row. Blur with
+    // relatedTarget so the container's onBlur sees focus exiting (native .focus()
+    // on Elsewhere does not reliably populate relatedTarget under jsdom).
+    const elsewhere = screen.getByRole('button', { name: /^elsewhere$/i });
+    fireEvent.blur(screen.getByRole('button', { name: /edit alt text/i }), {
+      relatedTarget: elsewhere,
+    });
+
+    // [TEST-15] discrimination: goes red if handleContainerBlur stops clearing
+    // status on idle focus-leave, or if the idle surface omits onBlur.
+    // Region stays mounted; cue text clears. Present-then-empty, not merely absent.
+    await waitFor(() => expect(status).toBeEmptyDOMElement());
+    expect(status).not.toHaveTextContent(/saved/i);
   });
 
   it('resyncs the read view to a prop change that arrived mid-edit, after cancel [WBUX-5-S2A-BR-03]', () => {

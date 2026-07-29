@@ -16,6 +16,7 @@ export const MediaAltInlineEditor = ({ mediaId, altText }: MediaAltInlineEditorP
   const [statusMessage, setStatusMessage] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const editButtonRef = useRef<HTMLButtonElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const shouldFocusEditButtonRef = useRef(false);
   const textareaId = useId();
   const previousAltTextRef = useRef(altText);
@@ -87,75 +88,101 @@ export const MediaAltInlineEditor = ({ mediaId, altText }: MediaAltInlineEditorP
           shouldFocusEditButtonRef.current = true;
           setIsEditing(false);
         },
+        // BR-58: after the live-region hoist the region is always mounted, so this
+        // clear is load-bearing whenever a polite cue could still be present —
+        // without it a stale "Alt text saved." polite cue sits beside the
+        // assertive save-failure alert (mirrors MediaAltSuggest BR-39 / BR-46).
+        onError: () => {
+          setStatusMessage('');
+        },
       },
     );
   };
 
-  if (isEditing) {
-    return (
-      <div className="acx-media-selection__media-alt-editor">
-        <label htmlFor={textareaId}>{__('Alt text', 'alt-context')}</label>
-        <textarea
-          id={textareaId}
-          ref={textareaRef}
-          className="acx-media-selection__media-alt-input"
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          disabled={isPending}
-        />
-        <div className="acx-media-selection__media-alt-actions">
-          <button
-            type="button"
-            className="button acx-media-selection__media-alt-save"
-            onClick={handleSave}
-            disabled={isPending}
-          >
-            {isPending ? __('Saving…', 'alt-context') : __('Save', 'alt-context')}
-          </button>
-          <button
-            type="button"
-            className="button button-link acx-media-selection__media-alt-cancel"
-            onClick={handleCancel}
-            disabled={isPending}
-          >
-            {__('Cancel', 'alt-context')}
-          </button>
-        </div>
-        {error ? (
-          <div className="acx-media-selection__media-alt-error" role="alert">
-            {resolveDescribeErrorMessage(error, __('Could not save the alt text. Please try again.', 'alt-context'))}
-          </div>
-        ) : null}
-      </div>
-    );
-  }
+  // BR-58 / Suggest BR-17: retire status once it has served its purpose — no
+  // timeout. When focus leaves this surface while idle, "Alt text saved." is no
+  // longer local context; leaving it populated collides with a later Suggest
+  // announcement on the same row.
+  const handleContainerBlur = (event: React.FocusEvent<HTMLDivElement>): void => {
+    const next = event.relatedTarget;
+    if (next instanceof Node && containerRef.current?.contains(next)) {
+      return;
+    }
+    if (!isEditing && !isPending) {
+      setStatusMessage('');
+    }
+  };
+
+  // Named polite live region [A11Y-21]. Always mounted in one stable position
+  // outside the edit/read branch body (BR-32 / BR-58) so idle → saved only
+  // mutates textContent; the AT already tracks the node. Empty while quiet —
+  // correct ARIA pattern; announces nothing until text appears.
+  //
+  // WHY (BR-37): sibling of MediaAltSuggest's role=status on the same table
+  // row (MediaSelectionTableBody). Distinct data-testid so row-level tests
+  // can disambiguate; S2c-4 owns consolidating both into one persistent
+  // row-level live region.
+  const statusRegion = (
+    <div role="status" aria-live="polite" className="screen-reader-text" data-testid="media-alt-inline-editor-status">
+      {statusMessage}
+    </div>
+  );
 
   return (
-    <div className="acx-media-selection__media-alt">
-      <p className="acx-media-selection__media-alt-text">{displayAlt ?? __('No alt text yet', 'alt-context')}</p>
-      <button
-        type="button"
-        ref={editButtonRef}
-        className="button button-link acx-media-selection__media-alt-edit"
-        onClick={enterEditMode}
-      >
-        {__('Edit alt text', 'alt-context')}
-      </button>
-      {/* WHY (BR-37): sibling of MediaAltSuggest's role=status on the same table
-          row (MediaSelectionTableBody). Distinct data-testid so row-level tests
-          can disambiguate; S2c-4 owns consolidating both into one persistent
-          row-level live region. Mount-with-text still present here — out of
-          scope for this stopgap. */}
-      {statusMessage ? (
-        <div
-          role="status"
-          aria-live="polite"
-          className="screen-reader-text"
-          data-testid="media-alt-inline-editor-status"
-        >
-          {statusMessage}
-        </div>
-      ) : null}
+    <div
+      ref={containerRef}
+      className={isEditing ? 'acx-media-selection__media-alt-editor' : 'acx-media-selection__media-alt'}
+      onBlur={handleContainerBlur}
+    >
+      {isEditing ? (
+        <>
+          <label htmlFor={textareaId}>{__('Alt text', 'alt-context')}</label>
+          <textarea
+            id={textareaId}
+            ref={textareaRef}
+            className="acx-media-selection__media-alt-input"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            disabled={isPending}
+          />
+          <div className="acx-media-selection__media-alt-actions">
+            <button
+              type="button"
+              className="button acx-media-selection__media-alt-save"
+              onClick={handleSave}
+              disabled={isPending}
+            >
+              {isPending ? __('Saving…', 'alt-context') : __('Save', 'alt-context')}
+            </button>
+            <button
+              type="button"
+              className="button button-link acx-media-selection__media-alt-cancel"
+              onClick={handleCancel}
+              disabled={isPending}
+            >
+              {__('Cancel', 'alt-context')}
+            </button>
+          </div>
+          {error ? (
+            <div className="acx-media-selection__media-alt-error" role="alert">
+              {resolveDescribeErrorMessage(error, __('Could not save the alt text. Please try again.', 'alt-context'))}
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <>
+          <p className="acx-media-selection__media-alt-text">{displayAlt ?? __('No alt text yet', 'alt-context')}</p>
+          <button
+            type="button"
+            ref={editButtonRef}
+            className="button button-link acx-media-selection__media-alt-edit"
+            onClick={enterEditMode}
+          >
+            {__('Edit alt text', 'alt-context')}
+          </button>
+        </>
+      )}
+      {statusRegion}
     </div>
   );
 };

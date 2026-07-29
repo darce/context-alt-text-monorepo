@@ -8,6 +8,7 @@ import {
   fetchDescribeRunItems,
   fetchDescriptionCandidates,
   fetchDescriptionHistory,
+  resolveDescribeErrorCode,
   resolveDescribeErrorMessage,
 } from '../describeApi';
 
@@ -274,5 +275,37 @@ describe('resolveDescribeErrorMessage', () => {
 
   it('falls back when the error carries no structured detail', () => {
     expect(resolveDescribeErrorMessage(new Error('network down'), 'Could not describe.')).toBe('Could not describe.');
+  });
+
+  it('extracts the WP_Error message from a correction rejection body', () => {
+    const err = new Error(
+      'Request to .../correction failed (500): {"code":"description_correction_partial","message":"Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.","data":{"status":500}}',
+    );
+    expect(resolveDescribeErrorMessage(err, 'Could not save.')).toBe(
+      'Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.',
+    );
+  });
+});
+
+describe('resolveDescribeErrorCode', () => {
+  it('extracts the WP_Error code from a correction rejection body', () => {
+    const err = new Error(
+      'Request to .../correction failed (500): {"code":"description_correction_partial","message":"Alt text was saved, but the human-edit record could not be stored.","data":{"status":500}}',
+    );
+    expect(resolveDescribeErrorCode(err)).toBe('description_correction_partial');
+  });
+
+  it('returns null when the error carries no structured code', () => {
+    expect(resolveDescribeErrorCode(new Error('network down'))).toBeNull();
+  });
+
+  it('returns null for non-Error values', () => {
+    expect(resolveDescribeErrorCode('not-an-error')).toBeNull();
+    expect(resolveDescribeErrorCode(null)).toBeNull();
+  });
+
+  it('returns null when the payload has a blank code', () => {
+    const err = new Error('Request failed (500): {"code":"  ","message":"something"}');
+    expect(resolveDescribeErrorCode(err)).toBeNull();
   });
 });

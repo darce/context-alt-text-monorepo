@@ -68,16 +68,19 @@ class DescriptionHistoryService {
 	/**
 	 * Persist an operator alt-text correction.
 	 *
-	 * Contract (BR-40 / BR-41): both the alt write and the human-edit telemetry
-	 * write are failure-worthy. A verified alt with a failed human-edit write
-	 * returns 500 so the response never reports success telemetry that storage
-	 * does not hold. The alt is left in place (not rolled back) — the operator
-	 * can retry; the no-op alt path already treats a re-save of the same text as
-	 * success, so a retry can complete the human-edit marker.
+	 * Contract (BR-40 / BR-41 / BR-55): both the alt write and the human-edit
+	 * telemetry write are failure-worthy. A verified alt with a failed
+	 * human-edit write returns 500 with code description_correction_partial
+	 * (alt landed; telemetry did not) so clients can reconcile cache. A bare
+	 * alt-write failure keeps description_correction_failed. The alt is left
+	 * in place on partial failure (not rolled back) — the operator can retry;
+	 * the no-op alt path already treats a re-save of the same text as success,
+	 * so a retry can complete the human-edit marker.
 	 *
-	 * Success always returns the full history-item envelope (never a partial
-	 * two-field object). Missing meta is expressed as null / empty string from
-	 * storage, not synthesised client-facing provenance. [rg-015]
+	 * Success always returns the full history-item envelope from build_item
+	 * (never a hand-built partial). After verified human-edit write, build_item
+	 * is total; a null result is treated as an invariant violation (500), not a
+	 * silent success fallback. [rg-015] [RLSE-05] [BR-55]
 	 *
 	 * @return array<string,mixed>|WP_Error
 	 */
@@ -126,6 +129,10 @@ class DescriptionHistoryService {
 		// list_history parity. Failure after a verified alt is still an error
 		// (BR-40 option a): do not claim success when stored telemetry lags.
 		// Alt text is intentionally left written — retry completes the marker.
+		//
+		// Code is description_correction_partial (literal, not derived): the alt
+		// write is verified, so the operator's text landed. Clients must be able
+		// to distinguish this from a bare alt-write failure. [rg-015]
 		$human_edit_payload = array(
 			'alt_text'  => $normalized_alt_text,
 			'edited_at' => current_time( 'mysql' ),
@@ -144,37 +151,39 @@ class DescriptionHistoryService {
 			$human_ok = is_array( $current_human ) && $human_edit_payload === $current_human;
 			if ( ! $human_ok ) {
 				return new WP_Error(
-					'description_correction_failed',
+					'description_correction_partial',
 					'Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.',
 					array( 'status' => 500 )
 				);
 			}
 		}
 
+		// After a verified human-edit write (or accepted full-payload no-op),
+		// storage holds an array under HUMAN_EDIT_META. build_item is therefore
+		// total for this media_id: it only returns null when media_id <= 0
+		// (ruled out by attachment validation above) or when neither provenance
+		// nor human_edit is an array. No legitimate input reaches null here under
+		// WP storage or the test stubs. [BR-55]
+		//
+		// A silent success envelope on that unreachable state would be [RLSE-05]
+		// (the shape BR-40 removed). Surface an explicit 500 instead of fabricating
+		// a hand-built item. [rg-015]
 		$item = $this->build_item( $media_id );
-		if ( null !== $item ) {
-			return $item;
+		if ( null === $item ) {
+			return new WP_Error(
+				'description_correction_failed',
+				'The correction was stored, but the history item could not be loaded. Please reload the page to confirm.',
+				array( 'status' => 500 )
+			);
 		}
 
-		// Verified writes but build_item still null (defensive). Return the full
-		// envelope with storage-sourced fields; null/empty = documented absence of
-		// that meta, never synthesised provenance. [rg-015] [BR-41]
-		return array(
-			'media_id'           => $media_id,
-			'title'              => is_object( $post ) && isset( $post->post_title ) ? (string) $post->post_title : '',
-			'mime_type'          => (string) get_post_mime_type( $media_id ),
-			'current_alt_text'   => (string) get_post_meta( $media_id, self::ALT_META, true ),
-			'generated_alt_text' => '',
-			'provenance'         => null,
-			'human_edit'         => null,
-			'run_status'         => null,
-		);
+		return $item;
 	}
 
 	/**
 	 * @return array<string,mixed>|null
 	 */
-	private function build_item( int $media_id ): ?array {
+	protected function build_item( int $media_id ): ?array {
 		if ( $media_id <= 0 ) {
 			return null;
 		}

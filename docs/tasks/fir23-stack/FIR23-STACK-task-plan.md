@@ -24,6 +24,8 @@ Supersedes the dropped per-request header design (decision #2947).
 - One parameterized compose `apps/prototype-description-service/docker-compose.env.yml`; per-env
   `.env`; **each stack owns its own postgres container, volume, AND network** (per-stack external
   nets on the VM: `acx-dev-net`, `acx-prod-net`, `acx-staging-net`, `acx-demo-net`).
+- **OpenCV runtime version is part of the provenance pin, not an implementation detail** <span>(QA v8 re-gate, 2026-07-28)</span>. An SFace embedding computed under OpenCV 4.x is not comparable to one computed under 5.x — CVUP-1 moves the stack — so the `cv2` major version must be recorded alongside the ONNX sha256 on every run row, and two runs that differ only in `cv2` version must **not** compare. This lane is on QA v8's critical path precisely because it is what makes the FIRTRAIN-05 re-run **under 5.x** possible as a recorded artifact; without the version pin the artifact cannot prove which stack produced it.
+- **Provision a candidate-detector lane alongside the 512d/128d embedder split.** The current design is an embedder-dimension split only. QA v8 leaves the detector-vs-embedder question **undecided** — which leg wins is not known — so building only the embedder lane presupposes the answer.
 - SFace model_id `opencv-sface@128d/l2/cosine` (`provenance.py:86-99`). ONNX fetched + sha256-verified by
   `scripts/fetch_face_pipeline_models.py`. **Not baked into the `dev` image** (Dockerfile:44-45; `*.onnx`
   gitignored; remote-build rsync excludes `face_pipeline/models/*.onnx`, `recognition-service.sh:236`).

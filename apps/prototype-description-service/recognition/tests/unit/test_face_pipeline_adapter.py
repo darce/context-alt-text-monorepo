@@ -1505,10 +1505,20 @@ async def test_bytes_to_face_detection_e2e(monkeypatch: pytest.MonkeyPatch) -> N
         x1, y1, x2, y2 = face.bbox
         assert 0 <= x1 <= x2 <= w
         assert 0 <= y1 <= y2 <= h
-        assert face.model_id == "opencv-sface@128d/l2/cosine"
+        # model_id carries the numeric-runtime fingerprint (CVUP-1). Assert the
+        # stable contract only — the mutable cv/ort segment has its own
+        # discrimination tests in test_face_pipeline_provenance.py, and pinning
+        # it here just re-creates the stale literal this replaced.
+        assert face.model_id.startswith("opencv-sface+")
+        assert face.model_id.endswith("@128d/l2/cosine")
+        # 5-point landmarks yield no pitch; yaw/roll are landmark proxies (FIR-4).
         assert face.pose_pitch is None
-        assert face.pose_yaw is None
-        assert face.pose_roll is None
+        assert face.pose_yaw is not None
+        assert face.pose_roll is not None
+        # yaw = degrees(atan(lateral)) ⇒ open interval (-90, 90).
+        assert -90.0 < face.pose_yaw < 90.0
+        # roll = degrees(atan2(dy, dx)) ⇒ half-open (-180, 180].
+        assert -180.0 < face.pose_roll <= 180.0
         # CR-01 models-present: phash + quality populated
         assert face.image_phash is not None
         assert face.landmark_quality is not None

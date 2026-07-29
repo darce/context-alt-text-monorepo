@@ -9,10 +9,7 @@ export interface MediaAltInlineEditorProps {
   altText: string | null;
 }
 
-export const MediaAltInlineEditor = ({
-  mediaId,
-  altText,
-}: MediaAltInlineEditorProps): React.JSX.Element => {
+export const MediaAltInlineEditor = ({ mediaId, altText }: MediaAltInlineEditorProps): React.JSX.Element => {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(altText ?? '');
   const [displayAlt, setDisplayAlt] = useState<string | null>(altText);
@@ -75,10 +72,7 @@ export const MediaAltInlineEditor = ({
       { mediaId, altText: draft },
       {
         onSuccess: (data) => {
-          const nextAlt =
-            data && typeof data.current_alt_text === 'string'
-              ? data.current_alt_text
-              : draft;
+          const nextAlt = data && typeof data.current_alt_text === 'string' ? data.current_alt_text : draft;
           // Acknowledge whatever prop value is current at save time so the
           // exit-edit sync effect won't re-apply a mid-edit prop change over the
           // just-saved value (WBUX-5-S2A-BR-03 companion). The mandatory media
@@ -129,10 +123,7 @@ export const MediaAltInlineEditor = ({
         </div>
         {error ? (
           <div className="acx-media-selection__media-alt-error" role="alert">
-            {resolveDescribeErrorMessage(
-              error,
-              __('Could not save the alt text. Please try again.', 'alt-context'),
-            )}
+            {resolveDescribeErrorMessage(error, __('Could not save the alt text. Please try again.', 'alt-context'))}
           </div>
         ) : null}
       </div>
@@ -141,9 +132,7 @@ export const MediaAltInlineEditor = ({
 
   return (
     <div className="acx-media-selection__media-alt">
-      <p className="acx-media-selection__media-alt-text">
-        {displayAlt ?? __('No alt text yet', 'alt-context')}
-      </p>
+      <p className="acx-media-selection__media-alt-text">{displayAlt ?? __('No alt text yet', 'alt-context')}</p>
       <button
         type="button"
         ref={editButtonRef}

@@ -9,6 +9,7 @@ require_once __DIR__ . '/../../sovereign/repositories/class-description-usage-re
 require_once __DIR__ . '/class-description-budget-service.php';
 require_once __DIR__ . '/../../sovereign/repositories/class-identity-members-repository.php';
 require_once __DIR__ . '/../class-alt-style.php';
+require_once __DIR__ . '/../class-alt-text-write-status.php';
 
 use AltContext\Api\AltStyle;
 use AltContext\Api\AltTextWriteStatus;

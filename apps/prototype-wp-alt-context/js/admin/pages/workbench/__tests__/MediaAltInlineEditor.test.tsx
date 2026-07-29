@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MediaAltInlineEditor } from '../MediaAltInlineEditor';
 import { correctDescriptionHistoryItem } from '../../../api/describeApi';
 import { queryKeys } from '../../../api/queryKeys';
+import type { WorkbenchMediaResponse } from '../../../api/workbenchMediaApi';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -99,21 +100,71 @@ describe('MediaAltInlineEditor', () => {
     expect(correctMock).toHaveBeenCalledWith(42, 'A stone bridge over a calm river at dusk.');
   });
 
-  it('does not invalidate media.all on save — targeted patch only [BR-77]', async () => {
+  it('patches the workbench row altText from the server response and does not invalidate media.all [BR-77][BR-121]', async () => {
     // Old contract invalidated media.all so every projection refetched; that is
     // the BR-77 root cause (sibling success drops partial rows). Success now
     // patches the workbench row from the server response and leaves the list
     // mounted. media.details / identities carry no alt field — no invalidation.
+    //
+    // [TEST-17] name/body must pin the patch: seed a workbench page, save, assert
+    // the cached row's altText equals the server current_alt_text. A no-op
+    // patchWorkbenchRowAlt would leave this RED while the media.all check alone
+    // would stay green [TEST-15][BR-121].
+    const savedAlt = 'A stone bridge over a calm river at dusk.';
+    const serverAlt = 'Server-normalized bridge alt';
+    correctMock.mockResolvedValueOnce({
+      media_id: 42,
+      title: 'Bridge',
+      mime_type: 'image/jpeg',
+      current_alt_text: serverAlt,
+      generated_alt_text: null,
+      provenance: null,
+      human_edit: { alt_text: serverAlt, edited_at: '2026-07-28 12:00:00', user_id: 7 },
+      run_status: null,
+    } as never);
+
+    const workbenchKey = queryKeys.media.workbenchPage({ page: 1, perPage: 20, status: 'missing' });
     const { client } = renderEditor(<MediaAltInlineEditor mediaId={42} altText="Bridge at dusk" />);
+    client.setQueryData<WorkbenchMediaResponse>(workbenchKey, {
+      items: [
+        {
+          id: 42,
+          title: 'Bridge',
+          status: 'missing',
+          thumbnailUrl: null,
+          altText: null,
+          editUrl: null,
+          tags: [],
+        },
+        {
+          id: 99,
+          title: 'Other',
+          status: 'missing',
+          thumbnailUrl: null,
+          altText: null,
+          editUrl: null,
+          tags: [],
+        },
+      ],
+      total: 2,
+      totalPages: 1,
+    });
     const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
 
     fireEvent.click(screen.getByRole('button', { name: /edit alt text/i }));
     fireEvent.change(screen.getByRole('textbox', { name: /alt text/i }), {
-      target: { value: 'A stone bridge over a calm river at dusk.' },
+      target: { value: savedAlt },
     });
     fireEvent.click(screen.getByRole('button', { name: /^save/i }));
 
     await waitFor(() => expect(screen.queryByRole('textbox', { name: /alt text/i })).not.toBeInTheDocument());
+
+    const cached = client.getQueryData<WorkbenchMediaResponse>(workbenchKey);
+    expect(cached?.items.find((item) => item.id === 42)?.altText).toBe(serverAlt);
+    // Sibling untouched — targeted row patch, not list rebuild.
+    expect(cached?.items.find((item) => item.id === 99)?.altText).toBeNull();
+    expect(cached?.items).toHaveLength(2);
+
     expect(invalidateSpy).not.toHaveBeenCalledWith(expect.objectContaining({ queryKey: queryKeys.media.all }));
     expect(
       invalidateSpy.mock.calls.some(

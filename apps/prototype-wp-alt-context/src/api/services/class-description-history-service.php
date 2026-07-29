@@ -221,9 +221,28 @@ class DescriptionHistoryService {
 	}
 
 	/**
+	 * Resolve the Generated-alt column value from a provenance envelope.
+	 *
+	 * Preference order (product claim, BR-123): `alt_text_draft` first — the
+	 * key every current writer stamps (REST single-image, CLI, bulk apply) —
+	 * then legacy fallbacks. Empty after trim is treated as absent so a later
+	 * key can still supply a value; both "no draft key" and "recorded empty
+	 * draft" therefore surface as `''` today (BR-109). Distinguishing those
+	 * would change the REST shape consumed by DescriptionHistoryPage — see
+	 * REPORT.md; write-side BR-104 prevents new empty drafts from landing.
+	 *
+	 * Legacy keys `generated_alt_text` and `alt_text` (BR-118): no writer under
+	 * `src/` currently emits either into `_acx_description_provenance` (all
+	 * three paths stamp `alt_text_draft` only; provenance is replaced, not
+	 * merged). Origin of the fallbacks is not established in-repo — retained
+	 * as defensive readers for any pre-plugin or external envelopes, not as
+	 * live product paths. Do not reorder without updating
+	 * DescriptionHistoryServiceTest preference coverage.
+	 *
 	 * @param array<string,mixed> $provenance
 	 */
 	private function resolve_generated_alt_text( array $provenance ): string {
+		// Order is load-bearing: alt_text_draft wins over legacy keys (BR-123).
 		foreach ( array( 'alt_text_draft', 'generated_alt_text', 'alt_text' ) as $key ) {
 			if ( isset( $provenance[ $key ] ) && '' !== trim( (string) $provenance[ $key ] ) ) {
 				return (string) $provenance[ $key ];

@@ -199,7 +199,9 @@ class DescriptionCommand extends \WP_CLI_Command {
 			);
 		}
 
-		$alt_text_draft = trim( (string) ( $data['alt_text_draft'] ?? '' ) );
+		// BR-116: same normaliser as REST write policy — non-string → '' (skip),
+		// not (string) cast which would turn 42 into '42' while REST stored ''.
+		$alt_text_draft = DescribeMediaService::normalize_alt_text_draft( $data['alt_text_draft'] ?? null );
 
 		if ( ! $write ) {
 			return array(

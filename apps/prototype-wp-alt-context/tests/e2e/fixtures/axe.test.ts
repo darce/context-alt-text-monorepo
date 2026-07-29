@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import type { Page } from '@playwright/test';
 
 import {
   assertNoBlockingAxeResults,
@@ -7,6 +8,34 @@ import {
   type AxeImpactEntry,
   type AssertEmptyEntries,
 } from './axe-impact';
+
+/**
+ * BR-113 shell wiring pin: mock AxeBuilder so assertNoBlockingViolations can be
+ * exercised without a browser. vi.hoisted keeps the mock factory closed over a
+ * stable ref after vitest hoists vi.mock.
+ */
+interface MockAnalyzeResults {
+  violations: AxeImpactEntry[];
+  incomplete: AxeImpactEntry[];
+}
+
+const { analyzeMock } = vi.hoisted(() => ({
+  analyzeMock: vi.fn<() => Promise<MockAnalyzeResults>>(),
+}));
+
+vi.mock('@axe-core/playwright', () => ({
+  default: class MockAxeBuilder {
+    include() {
+      return this;
+    }
+
+    analyze(): Promise<MockAnalyzeResults> {
+      return analyzeMock();
+    }
+  },
+}));
+
+import { assertNoBlockingViolations } from './axe';
 
 type AxeImpact = 'minor' | 'moderate' | 'serious' | 'critical';
 
@@ -127,5 +156,45 @@ describe('assertNoBlockingAxeResults wiring [BR-88b]', () => {
         throwIfNonEmpty,
       ),
     ).toThrow(/Expected no serious or critical axe violations/);
+  });
+});
+
+/**
+ * BR-113 shell wiring pin: assertNoBlockingViolations must hand AxeBuilder
+ * results to assertNoBlockingAxeResults (violations + incompletes). Replacing
+ * the shell with a violations-only inline filter leaves the pure-module suite
+ * green while real e2e stops gating serious results.incomplete — these tests
+ * must turn red under that mutation [TEST-15] [sr-001].
+ */
+describe('assertNoBlockingViolations shell wiring [BR-113]', () => {
+  it('throws when analyze returns empty violations + serious incomplete [TEST-15]', async () => {
+    analyzeMock.mockResolvedValue({
+      violations: [],
+      incomplete: [axeEntry('serious')],
+    });
+
+    await expect(assertNoBlockingViolations({} as Page, '#fixture')).rejects.toThrow(
+      /Expected no serious or critical axe incompletes/,
+    );
+  });
+
+  it('throws when analyze returns empty violations + critical incomplete [TEST-15]', async () => {
+    analyzeMock.mockResolvedValue({
+      violations: [],
+      incomplete: [axeEntry('critical', 'button-name')],
+    });
+
+    await expect(assertNoBlockingViolations({} as Page, '#fixture')).rejects.toThrow(
+      /Expected no serious or critical axe incompletes/,
+    );
+  });
+
+  it('does not throw when analyze returns only minor incomplete', async () => {
+    analyzeMock.mockResolvedValue({
+      violations: [],
+      incomplete: [axeEntry('minor', 'color-contrast')],
+    });
+
+    await expect(assertNoBlockingViolations({} as Page, '#fixture')).resolves.toBeUndefined();
   });
 });

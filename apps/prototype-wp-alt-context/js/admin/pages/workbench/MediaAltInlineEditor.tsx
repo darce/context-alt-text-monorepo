@@ -76,8 +76,9 @@ export const MediaAltInlineEditor = ({ mediaId, altText }: MediaAltInlineEditorP
           const nextAlt = data && typeof data.current_alt_text === 'string' ? data.current_alt_text : draft;
           // Acknowledge whatever prop value is current at save time so the
           // exit-edit sync effect won't re-apply a mid-edit prop change over the
-          // just-saved value (WBUX-5-S2A-BR-03 companion). The mandatory media
-          // query invalidation will land the server-truth prop shortly after.
+          // just-saved value (WBUX-5-S2A-BR-03 companion). useCorrectMediaAlt
+          // patches the workbench row from the server response; the parent will
+          // re-render with that server-truth prop.
           previousAltTextRef.current = altText;
           setDisplayAlt(nextAlt);
           setDraft(nextAlt);

@@ -10,6 +10,8 @@ import {
   fetchDescriptionHistory,
   type DescriptionHistoryItem,
 } from '../../api/describeApi';
+import { mediaStatsMissingQueryKey, mediaStatsTotalQueryKey } from '../../hooks/useMediaStats';
+import { queryKeys } from '../../api/queryKeys';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -35,22 +37,27 @@ vi.mock('../../api/describeApi', async () => {
   };
 });
 
-const renderPage = (initialEntries: string[] = ['/description-history']) => {
-  const queryClient = new QueryClient({
+const buildClient = () =>
+  new QueryClient({
     defaultOptions: {
       queries: { retry: false },
       mutations: { retry: false },
     },
   });
 
-  return render(
+const renderPage = (
+  initialEntries: string[] = ['/description-history'],
+  queryClient: QueryClient = buildClient(),
+) => ({
+  queryClient,
+  ...render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={initialEntries}>
         <DescriptionHistoryPage />
       </MemoryRouter>
     </QueryClientProvider>,
-  );
-};
+  ),
+});
 
 // Annotated so human_edit widens to DescriptionHistoryHumanEdit | null: an
 // inferred `null` makes every derived fixture unable to supply a human edit.
@@ -623,5 +630,59 @@ describe('DescriptionHistoryPage', () => {
     expect(bridgeArticle).toHaveTextContent('Bridge at dusk');
     // Draft is kept; it is not the same as the current-alt column source after a total fail.
     expect(textarea).toHaveValue('Would-be bridge alt.');
+  });
+
+  it('invalidates the missing-alt stats probe after a successful history correction [BR-124]', async () => {
+    // History-page corrections must refresh dashboard coverage; only the shared
+    // missing probe (not media.all, not the total probe) [BR-124][BR-77].
+    const { queryClient } = renderPage();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    const textarea = await screen.findByLabelText('Alt text correction for Bridge');
+    fireEvent.change(textarea, { target: { value: 'A corrected bridge description.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save correction for Bridge' }));
+
+    await waitFor(() => {
+      expect(correctHistoryMock).toHaveBeenCalledWith(42, 'A corrected bridge description.');
+    });
+    await waitFor(() => {
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: mediaStatsMissingQueryKey });
+    });
+    expect(
+      invalidateSpy.mock.calls.some(
+        (call) => JSON.stringify(call[0]) === JSON.stringify({ queryKey: mediaStatsTotalQueryKey }),
+      ),
+    ).toBe(false);
+    expect(
+      invalidateSpy.mock.calls.some(
+        (call) => JSON.stringify(call[0]) === JSON.stringify({ queryKey: queryKeys.media.all }),
+      ),
+    ).toBe(false);
+  });
+
+  it('does not refresh stats counters on a failed history correction [BR-124]', async () => {
+    correctHistoryMock.mockRejectedValueOnce(
+      new Error(
+        `Request to /correction failed (500): ${JSON.stringify({
+          code: 'description_correction_failed',
+          message: 'Could not save the alt text correction.',
+          data: { status: 500 },
+        })}`,
+      ),
+    );
+    const { queryClient } = renderPage();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    const textarea = await screen.findByLabelText('Alt text correction for Bridge');
+    fireEvent.change(textarea, { target: { value: 'Would-be bridge alt.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save correction for Bridge' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not save the alt text correction.');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(
+      invalidateSpy.mock.calls.some(
+        (call) => JSON.stringify(call[0]) === JSON.stringify({ queryKey: mediaStatsMissingQueryKey }),
+      ),
+    ).toBe(false);
   });
 });

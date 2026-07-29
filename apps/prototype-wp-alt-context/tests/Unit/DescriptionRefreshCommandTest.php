@@ -6,6 +6,7 @@ namespace AltContext\Tests\Unit;
 
 use AltContext\Cli\DescriptionRefreshCommand;
 use AltContext\Tests\TestCase;
+use RuntimeException;
 
 /**
  * @covers \AltContext\Cli\DescriptionRefreshCommand
@@ -36,6 +37,9 @@ class DescriptionRefreshCommandTest extends TestCase
         $this->assertSame([], $GLOBALS['__ac_updated_posts']);
         $this->assertStringContainsString('dry_run=1', \WP_CLI::$messages['success'][0] ?? '');
         $this->assertStringContainsString('candidates=1', \WP_CLI::$messages['success'][0] ?? '');
+        // dry_run summary has no changed/failed — do not fabricate [rg-015].
+        $this->assertStringNotContainsString('changed=', \WP_CLI::$messages['success'][0] ?? '');
+        $this->assertStringNotContainsString('failed=', \WP_CLI::$messages['success'][0] ?? '');
     }
 
     public function testInvokeApplyUpdatesContent(): void
@@ -55,6 +59,50 @@ class DescriptionRefreshCommandTest extends TestCase
         $this->assertSame('New bridge alt text', $this->getEmbeddedAlt($GLOBALS['__ac_posts'][101]->post_content));
         $this->assertStringContainsString('dry_run=0', \WP_CLI::$messages['success'][0] ?? '');
         $this->assertStringContainsString('changed=1', \WP_CLI::$messages['success'][0] ?? '');
+        $this->assertStringContainsString('failed=0', \WP_CLI::$messages['success'][0] ?? '');
+    }
+
+    /**
+     * R16-BR-03 / [HAI-13] [rg-015]: post-update failure must surface on the
+     * CLI as failed=N (not success with silent zero), with actionable rows.
+     */
+    public function testInvokeApplyReportsPostUpdateFailures(): void
+    {
+        $this->setPostMeta(42, '_wp_attachment_image_alt', 'New bridge alt text');
+        $originalContent = '<img class="wp-image-42" src="/bridge.jpg" alt="Old bridge alt" />';
+        $post = (object) [
+            'ID' => 601,
+            'post_type' => 'post',
+            'post_title' => 'Unwritable post',
+            'post_content' => $originalContent,
+        ];
+        $GLOBALS['__ac_posts'][601] = $post;
+        $GLOBALS['__ac_get_posts_results'] = [$post];
+        $GLOBALS['__ac_wp_update_post_fail'][601] = true;
+
+        $threw = false;
+        try {
+            (new DescriptionRefreshCommand())->__invoke(['42'], ['apply' => true, 'limit' => 10]);
+        } catch (RuntimeException $e) {
+            $threw = true;
+            $this->assertStringContainsString('failed=1', $e->getMessage());
+        }
+
+        $this->assertTrue($threw, 'WP_CLI::error must throw for non-zero exit on failures');
+        $this->assertSame([], \WP_CLI::$messages['success']);
+        $this->assertNotEmpty(\WP_CLI::$messages['error']);
+        $error = \WP_CLI::$messages['error'][0] ?? '';
+        $this->assertStringContainsString('failed=1', $error);
+        $this->assertStringContainsString('changed=0', $error);
+        $this->assertStringContainsString('candidates=1', $error);
+
+        $logs = implode("\n", \WP_CLI::$messages['log']);
+        $this->assertStringContainsString('post_id=601', $logs);
+        $this->assertStringContainsString('media_id=42', $logs);
+        $this->assertStringContainsString('post_update_failed', $logs);
+
+        // Content must remain intact on failed write.
+        $this->assertSame($originalContent, $GLOBALS['__ac_posts'][601]->post_content);
     }
 
     /**

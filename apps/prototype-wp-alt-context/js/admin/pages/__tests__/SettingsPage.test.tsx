@@ -433,6 +433,53 @@ describe('SettingsPage', () => {
     expect(routing).toHaveAttribute('role', 'status');
   });
 
+  // R16-BR-09: rejection sentence must appear exactly once (live region only).
+  it('announces the rejection sentence exactly once in the accessibility tree (R16-BR-09)', () => {
+    mockUseQuery.mockReturnValue(
+      createMockQuery({
+        data: {
+          ...defaultSettings,
+          url: '',
+          url_source: 'default',
+          url_rejection_reason: UrlRejectionReason.NON_LOOPBACK_HTTP,
+          url_rejection_source: 'option',
+          url_rejection_value: 'http://10.0.0.5:8000',
+          effective_target_url: '',
+          effective_target_mode: 'service',
+          recognition_source: 'service',
+        },
+      }),
+    );
+    render(<SettingsPage />);
+
+    const rejectionSentence =
+      'Rejected http://10.0.0.5:8000 (Saved in database): HTTP is only allowed for loopback development hosts (localhost, 127.0.0.1, ::1)';
+    // Count matched nodes — getByText throws on multiples for the wrong reason and
+    // would pass for the wrong reason if the suite only asserted presence.
+    expect(screen.getAllByText(rejectionSentence)).toHaveLength(1);
+    // Card notice is a non-duplicating next-step cue, not a second copy of the sentence.
+    expect(screen.getByTestId('acx-url-rejection-notice')).toHaveTextContent(
+      'The configured service URL was rejected. Enter a valid HTTPS URL below to restore recognition routing.',
+    );
+    expect(screen.getByTestId('acx-url-rejection-notice')).not.toHaveTextContent(rejectionSentence);
+    // Colour+text status half still lives in the live-region span ([sr-004]).
+    expect(screen.getByTestId('acx-url-rejection')).toHaveTextContent(rejectionSentence);
+  });
+
+  // A11Y-21: live region must stay mounted in CONFIGURED as well (rejected / hatch /
+  // unconfigured are already pinned above).
+  it('mounts the effective-target live region when configured (A11Y-21)', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    const routing = screen.getByTestId('acx-effective-routing');
+    expect(routing).toHaveAttribute('role', 'status');
+    expect(routing).toHaveAttribute('aria-live', 'polite');
+    expect(routing).toHaveTextContent('https://api.example.com');
+    expect(screen.queryByTestId('acx-url-rejection')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('acx-url-rejection-notice')).not.toBeInTheDocument();
+  });
+
   it('renders constant-tier rejection with exact source wording (BR-138)', () => {
     mockUseQuery.mockReturnValue(
       createMockQuery({

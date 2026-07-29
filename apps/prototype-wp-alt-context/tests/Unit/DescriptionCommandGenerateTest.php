@@ -299,10 +299,12 @@ class DescriptionCommandGenerateTest extends TestCase
     }
 
     /**
-     * BR-17 / idempotence: re-writing a byte-identical alt via CLI reports
-     * written, not failed (no-op returns false from update_post_meta).
+     * BR-17 / plain no-op: CLI re-write of a byte-identical alt is not reported
+     * as failed. Does not pin the write-result guard itself (stays green if that
+     * branch is neutered); see sibling failure tests and the backslash-bearing
+     * save/resave pin for the unslash read-back path.
      */
-    public function testGenerateWriteIdempotentReapplyReportsWritten(): void
+    public function testGenerateWriteByteIdenticalRewriteIsNotReportedAsFailed(): void
     {
         $draft = 'Already present from a prior write.';
         $this->setPostMeta(903, '_wp_attachment_image_alt', $draft);
@@ -328,6 +330,53 @@ class DescriptionCommandGenerateTest extends TestCase
         $this->assertSame('written', $payload['rows'][0]['status']);
         $this->assertSame($draft, get_post_meta(903, '_wp_attachment_image_alt', true));
         $this->assertIsArray(get_post_meta(903, '_acx_description_provenance', true));
+    }
+
+    /**
+     * BR-17 [TEST-15]: CLI generate-write with a backslash-bearing alt must save
+     * and re-save successfully. update_post_meta unslashes on the way in; the
+     * second write of the same raw string is a byte-identical no-op (false) and
+     * the read-back guard must compare against wp_unslash( $alt_text_draft ).
+     */
+    public function testGenerateWriteBackslashBearingSavesAndResavesSuccessfully(): void
+    {
+        // PHP source \\ → one backslash char; unslash changes those bytes.
+        $draft          = 'Blueprint of the C:\\Users share, annotated';
+        $expectedStored = wp_unslash($draft);
+        $this->assertNotSame($draft, $expectedStored, 'precondition: unslash must change the bytes');
+
+        $service = new RecordingDescribeService([
+            904 => new WP_REST_Response([
+                'media_id' => 904,
+                'alt_text_draft' => $draft,
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+            ]),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $command->__invoke(['generate'], ['media-id' => '904', 'write' => true, 'format' => 'json']);
+        $firstPayload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+
+        $this->assertSame('written', $firstPayload['rows'][0]['status']);
+        // WP stores the unslashed form; assert storage, not the raw draft.
+        $this->assertSame($expectedStored, get_post_meta(904, '_wp_attachment_image_alt', true));
+
+        \WP_CLI::reset_cli_messages();
+        $command->__invoke(['generate'], [
+            'media-id' => '904',
+            'write' => true,
+            'force' => true,
+            'format' => 'json',
+        ]);
+        $secondPayload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+
+        $this->assertSame(
+            'written',
+            $secondPayload['rows'][0]['status'],
+            'Second save with same backslash alt must not fail'
+        );
+        $this->assertSame($expectedStored, get_post_meta(904, '_wp_attachment_image_alt', true));
     }
 }
 

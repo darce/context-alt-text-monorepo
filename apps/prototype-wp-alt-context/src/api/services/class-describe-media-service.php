@@ -11,6 +11,8 @@ require_once __DIR__ . '/../../sovereign/repositories/class-identity-members-rep
 require_once __DIR__ . '/../class-alt-style.php';
 
 use AltContext\Api\AltStyle;
+use AltContext\Api\AltTextWriteStatus;
+use AltContext\Api\DescriptionWriteStatus;
 use AltContext\Api\DescribeHostInterface;
 use AltContext\Sovereign\Repositories\IdentityMembersRepository;
 use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
@@ -309,7 +311,7 @@ class DescribeMediaService {
 
 		if ( '' !== trim( $existing_alt ) && ! $force ) {
 			$data['alt_text_write'] = array(
-				'status'               => 'skipped_existing_alt',
+				'status'               => AltTextWriteStatus::SKIPPED_EXISTING_ALT,
 				'existing_alt_present' => true,
 			);
 			$response->set_data( $data );
@@ -323,7 +325,7 @@ class DescribeMediaService {
 		// skipped_existing_alt (CLI order).
 		if ( '' === $draft ) {
 			$data['alt_text_write'] = array(
-				'status'               => 'skipped_empty_alt_text',
+				'status'               => AltTextWriteStatus::SKIPPED_EMPTY_ALT_TEXT,
 				'existing_alt_present' => '' !== trim( $existing_alt ),
 			);
 			$response->set_data( $data );
@@ -342,7 +344,7 @@ class DescribeMediaService {
 			// Do not re-stamp generated_at or rewrite the whole envelope.
 			$this->heal_provenance_alt_text_draft( $media_id, $existing_provenance, $draft );
 			$data['alt_text_write'] = array(
-				'status'               => 'forced_overwrite',
+				'status'               => AltTextWriteStatus::FORCED_OVERWRITE,
 				'existing_alt_present' => true,
 			);
 			$response->set_data( $data );
@@ -361,7 +363,7 @@ class DescribeMediaService {
 			$current = get_post_meta( $media_id, self::ALT_TEXT_META_KEY, true );
 			if ( ! is_string( $current ) || $expected_alt !== $current ) {
 				$data['alt_text_write'] = array(
-					'status'               => 'failed',
+					'status'               => AltTextWriteStatus::FAILED,
 					'existing_alt_present' => '' !== trim( $existing_alt ),
 				);
 				$response->set_data( $data );
@@ -377,8 +379,11 @@ class DescribeMediaService {
 			if ( ! $prov_ok ) {
 				// Alt landed; history gate (provenance array) did not. Partial —
 				// same vocabulary as bulk apply. Do not claim written.
+				// BR-08: reason disambiguates provenance-gap partial from the
+				// description_write-failed partial below.
 				$write_result = array(
-					'status'               => 'partial',
+					'status'               => AltTextWriteStatus::PARTIAL,
+					'reason'               => AltTextWriteStatus::REASON_PROVENANCE_WRITE_FAILED,
 					'existing_alt_present' => '' !== trim( $existing_alt ),
 				);
 				// Long description is independent of provenance; attempt when alt
@@ -393,7 +398,9 @@ class DescribeMediaService {
 			}
 		}
 
-		$status = '' !== trim( $existing_alt ) ? 'forced_overwrite' : 'written';
+		$status = '' !== trim( $existing_alt )
+			? AltTextWriteStatus::FORCED_OVERWRITE
+			: AltTextWriteStatus::WRITTEN;
 		$write_result = array(
 			'status'               => $status,
 			'existing_alt_present' => '' !== trim( $existing_alt ),
@@ -406,8 +413,11 @@ class DescribeMediaService {
 			// status so alt_text_write never looks fully successful when the body
 			// did not land. Skip/success statuses leave the parent alone.
 			// At this point parent is always written|forced_overwrite (alt+prov ok).
-			if ( 'failed' === $description_write ) {
-				$write_result['status'] = 'partial';
+			// BR-08: reason makes this partial distinguishable without inspecting
+			// the nested description_write key.
+			if ( DescriptionWriteStatus::FAILED === $description_write ) {
+				$write_result['status'] = AltTextWriteStatus::PARTIAL;
+				$write_result['reason'] = AltTextWriteStatus::REASON_DESCRIPTION_WRITE_FAILED;
 			}
 		}
 
@@ -467,7 +477,7 @@ class DescribeMediaService {
 			? sanitize_textarea_field( $data['alt_text_long'] )
 			: '';
 		if ( '' === $long ) {
-			return 'skipped_no_long_text';
+			return DescriptionWriteStatus::SKIPPED_NO_LONG_TEXT;
 		}
 
 		$attachment           = get_post( $media_id );
@@ -476,7 +486,7 @@ class DescribeMediaService {
 			: '';
 
 		if ( '' !== $existing_description && ! $force ) {
-			return 'skipped_existing_description';
+			return DescriptionWriteStatus::SKIPPED_EXISTING_DESCRIPTION;
 		}
 
 		// BR-03: honor wp_update_post() — returns 0 or WP_Error on failure.
@@ -491,10 +501,12 @@ class DescribeMediaService {
 			true
 		);
 		if ( is_wp_error( $updated ) || 0 === $updated || false === $updated ) {
-			return 'failed';
+			return DescriptionWriteStatus::FAILED;
 		}
 
-		return '' !== $existing_description ? 'forced_overwrite' : 'written';
+		return '' !== $existing_description
+			? DescriptionWriteStatus::FORCED_OVERWRITE
+			: DescriptionWriteStatus::WRITTEN;
 	}
 
 	/**

@@ -183,7 +183,49 @@ returns an explicit `502 invalid_description_envelope` — never a fabricated
 - **Provenance meta**: `_acx_description_provenance` records `adapter`, `model_id`, `model_version`, `prompt_or_task_version`, `image_hash`, `context_hash`, `generated_at`, and `backend_result_id` when supplied by the backend payload.
 - **Idempotence**: repeated writes for the same generated tuple preserve matching existing provenance instead of refreshing `generated_at`.
 
-`alt_text_write.status` ∈ `{written, skipped_existing_alt, forced_overwrite}`.
+### Alt-write status vocabulary (R16-BR-04)
+
+Canonical single definition: `src/api/class-alt-text-write-status.php`
+(`AltContext\Api\AltTextWriteStatus`, `AltContext\Api\DescriptionWriteStatus`) per
+[sr-007]. The TS consumer `js/admin/api/describeApi.ts` and this table must agree
+member-for-member [rg-005].
+
+**REST `alt_text_write.status`** (`REST_STATUSES`):
+
+| Member | Meaning |
+| --- | --- |
+| `written` | Alt was empty; draft written and provenance stamped. |
+| `skipped_existing_alt` | Non-empty existing alt and `force=false`. Nothing touched. |
+| `skipped_empty_alt_text` | Draft normalized to empty. Never writes `''` over a human alt, never stamps provenance for an unapplied draft. |
+| `forced_overwrite` | Existing alt replaced under `force=true`. |
+| `partial` | Some but not all intended writes landed. Always paired with `reason`. |
+| `failed` | The alt write itself did not persist. |
+
+**REST `alt_text_write.reason`** — present if and only if `status=partial`
+(`PARTIAL_REASONS`):
+
+| Member | Meaning |
+| --- | --- |
+| `provenance_write_failed` | Alt landed, provenance array did not → the item is absent from history and needs retry. |
+| `description_write_failed` | Alt and provenance both landed; only the optional long description failed → nothing missing from history. |
+
+**REST `alt_text_write.description_write`** (`DescriptionWriteStatus::ALL`) — key
+present only when `acx_alt_style=alt_plus_description`: `written`,
+`forced_overwrite`, `skipped_no_long_text`, `skipped_existing_description`,
+`failed`. A `failed` here folds the parent status to `partial` with
+`reason=description_write_failed`.
+
+**CLI `generate` row `status`** (`CLI_STATUSES`): `written`,
+`skipped_existing_alt`, `skipped_empty_alt_text`, `partial`, `failed`, `dry_run`.
+
+Deliberate CLI/REST divergences:
+
+- `dry_run` is CLI-only (`generate` without `--write`); REST never emits it.
+- CLI force-overwrite success emits `written`, not `forced_overwrite`, and
+  `CLI_STATUSES` omits `forced_overwrite`. Tracked as an open contract asymmetry
+  rather than an intended contract shape — see finding `R17-BR-13`.
+- CLI rows carry no `reason` alongside `partial`, so the two partial causes are
+  not distinguishable on the CLI surface — see finding `R17-BR-06`.
 
 ## WordPress dry-run surface — `GET /acx/v1/recognition/describe/candidates`
 

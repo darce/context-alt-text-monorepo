@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 
@@ -7,6 +7,7 @@ import { useCreatePerson, useDeletePerson, useUpdatePerson } from '../../hooks/u
 import { createMockMutation } from '../../test-utils/mockHooks';
 import { RosterEntriesSection } from '../roster/RosterEntriesSection';
 import type { RosterEntriesQuery } from '../roster/RosterEntriesSection';
+import { derivePersonState, PERSON_STATES, type PersonState } from '../roster/personState';
 import { RosterEntriesTable } from '../roster/RosterEntriesTable';
 import { vi } from 'vitest';
 
@@ -21,34 +22,88 @@ vi.mock('../../hooks/useRosterHooks', () => ({
   useDeletePerson: vi.fn(),
 }));
 
+const makeEntry = (overrides: Partial<RosterEntry> = {}): RosterEntry => ({
+  id: 1,
+  person_uuid: 'person-uuid-default',
+  name: 'Default',
+  tags: [],
+  cluster_count: 0,
+  clusters: [],
+  queue_memberships: [],
+  updated_at: new Date().toISOString(),
+  source_version: 1,
+  projection_status: 'current',
+  projection_refreshed_at: new Date().toISOString(),
+  ...overrides,
+});
+
 const entries: RosterEntry[] = [
-  {
+  makeEntry({
     id: 1,
     person_uuid: 'person-uuid-alice',
     name: 'Alice',
     tags: ['tag-a'],
     cluster_count: 2,
-    clusters: [],
     queue_memberships: ['singleton-proposals'],
-    updated_at: new Date().toISOString(),
-    source_version: 1,
-    projection_status: 'current',
-    projection_refreshed_at: new Date().toISOString(),
-  },
-  {
+  }),
+  makeEntry({
     id: 2,
     person_uuid: 'person-uuid-bob',
     name: 'Bob',
     tags: [],
     cluster_count: 0,
-    clusters: [],
     queue_memberships: ['hard-examples'],
-    updated_at: new Date().toISOString(),
-    source_version: 1,
-    projection_status: 'current',
-    projection_refreshed_at: new Date().toISOString(),
-  },
+  }),
 ];
+
+/** One real fixture per MECE person state — no dead categories. */
+const needsReviewFixture = makeEntry({
+  id: 10,
+  person_uuid: 'person-uuid-needs-review',
+  name: 'Queued Person',
+  tags: ['fixture-needs-review'],
+  queue_memberships: ['needs-confirmation-after-merge'],
+});
+
+const unnamedFixture = makeEntry({
+  id: 11,
+  person_uuid: 'person-uuid-unnamed',
+  name: '',
+  tags: ['fixture-unnamed'],
+  queue_memberships: [],
+});
+
+const namedFixture = makeEntry({
+  id: 12,
+  person_uuid: 'person-uuid-named',
+  name: 'Fully Named',
+  tags: ['fixture-named'],
+  queue_memberships: [],
+});
+
+/** Blank name *and* non-empty queue — precedence pin (needs-review wins). */
+const bothConditionsFixture = makeEntry({
+  id: 13,
+  person_uuid: 'person-uuid-both',
+  name: '',
+  tags: ['fixture-both'],
+  queue_memberships: ['singleton-proposals'],
+});
+
+const STATE_LABELS: Record<PersonState, string> = {
+  [PERSON_STATES.NEEDS_REVIEW]: 'Needs review',
+  [PERSON_STATES.UNNAMED]: 'Unnamed',
+  [PERSON_STATES.NAMED]: 'Named',
+};
+
+const rowForTag = (tag: string): HTMLElement => {
+  const cell = screen.getByText(tag);
+  const row = cell.closest('tr');
+  if (!row) {
+    throw new Error(`No table row for tag ${tag}`);
+  }
+  return row;
+};
 
 interface CreateRosterMutationContext {
   previousEntries: RosterEntry[] | undefined;
@@ -95,6 +150,52 @@ beforeEach(() => {
   vi.mocked(useDeletePerson).mockReturnValue(deleteMutation);
 });
 
+describe('derivePersonState', () => {
+  it('returns needs-review when queue_memberships is non-empty', () => {
+    expect(derivePersonState(needsReviewFixture)).toBe(PERSON_STATES.NEEDS_REVIEW);
+  });
+
+  it('returns unnamed when name is blank and queue_memberships is empty', () => {
+    expect(derivePersonState(unnamedFixture)).toBe(PERSON_STATES.UNNAMED);
+  });
+
+  it('returns named when name is present and queue_memberships is empty', () => {
+    expect(derivePersonState(namedFixture)).toBe(PERSON_STATES.NAMED);
+  });
+
+  it('prefers needs-review over unnamed when both conditions apply', () => {
+    expect(derivePersonState(bothConditionsFixture)).toBe(PERSON_STATES.NEEDS_REVIEW);
+    expect(derivePersonState(bothConditionsFixture)).not.toBe(PERSON_STATES.UNNAMED);
+  });
+
+  it('treats whitespace-only names as unnamed when not queued', () => {
+    expect(derivePersonState(makeEntry({ name: '   ', queue_memberships: [] }))).toBe(PERSON_STATES.UNNAMED);
+  });
+
+  it('is total: every entry shape maps to exactly one of the three states', () => {
+    const shapes: RosterEntry[] = [
+      needsReviewFixture,
+      unnamedFixture,
+      namedFixture,
+      bothConditionsFixture,
+      makeEntry({ name: 'Stale named', queue_memberships: [], projection_status: 'stale' }),
+      makeEntry({ name: '', queue_memberships: ['hard-examples'], projection_status: 'failed' }),
+      makeEntry({ name: 'Refreshing', queue_memberships: [], projection_status: 'refreshing' }),
+      makeEntry({ name: 'Multi queue', queue_memberships: ['singleton-proposals', 'hard-examples'] }),
+    ];
+
+    const allowed = new Set<PersonState>(Object.values(PERSON_STATES));
+    for (const entry of shapes) {
+      const state = derivePersonState(entry);
+      expect(allowed.has(state)).toBe(true);
+      expect(state).toBeDefined();
+      expect(state).not.toBeNull();
+    }
+    // No fourth value exists on the union surface.
+    expect(Object.values(PERSON_STATES)).toHaveLength(3);
+  });
+});
+
 describe('RosterEntriesTable', () => {
   it('renders identity rows', () => {
     render(<RosterEntriesTable entries={entries} />);
@@ -116,6 +217,70 @@ describe('RosterEntriesTable', () => {
     await userEvent.click(screen.getAllByRole('button', { name: 'Delete' }).at(-1)!);
 
     expect(deleteMutation.mutate).toHaveBeenCalledWith(1, expect.any(Object));
+  });
+
+  it('renders a State column header', () => {
+    render(<RosterEntriesTable entries={entries} />);
+
+    expect(screen.getByRole('columnheader', { name: 'State' })).toBeInTheDocument();
+  });
+
+  it('shows needs-review with icon and text; other states absent from that row', () => {
+    render(<RosterEntriesTable entries={[needsReviewFixture]} />);
+
+    const row = rowForTag('fixture-needs-review');
+    expect(within(row).getByText(STATE_LABELS[PERSON_STATES.NEEDS_REVIEW])).toBeInTheDocument();
+    expect(within(row).queryByText(STATE_LABELS[PERSON_STATES.UNNAMED])).not.toBeInTheDocument();
+    expect(within(row).queryByText(STATE_LABELS[PERSON_STATES.NAMED])).not.toBeInTheDocument();
+    expect(row.querySelector('svg')).not.toBeNull();
+  });
+
+  it('shows unnamed with icon and text; other states absent from that row', () => {
+    render(<RosterEntriesTable entries={[unnamedFixture]} />);
+
+    const row = rowForTag('fixture-unnamed');
+    expect(within(row).getByText(STATE_LABELS[PERSON_STATES.UNNAMED])).toBeInTheDocument();
+    expect(within(row).queryByText(STATE_LABELS[PERSON_STATES.NEEDS_REVIEW])).not.toBeInTheDocument();
+    expect(within(row).queryByText(STATE_LABELS[PERSON_STATES.NAMED])).not.toBeInTheDocument();
+    expect(row.querySelector('svg')).not.toBeNull();
+  });
+
+  it('shows named with icon and text; other states absent from that row', () => {
+    render(<RosterEntriesTable entries={[namedFixture]} />);
+
+    const row = rowForTag('fixture-named');
+    expect(within(row).getByText(STATE_LABELS[PERSON_STATES.NAMED])).toBeInTheDocument();
+    expect(within(row).queryByText(STATE_LABELS[PERSON_STATES.NEEDS_REVIEW])).not.toBeInTheDocument();
+    expect(within(row).queryByText(STATE_LABELS[PERSON_STATES.UNNAMED])).not.toBeInTheDocument();
+    expect(row.querySelector('svg')).not.toBeNull();
+  });
+
+  it('renders both-conditions row as needs-review (precedence pin)', () => {
+    render(<RosterEntriesTable entries={[bothConditionsFixture]} />);
+
+    const row = rowForTag('fixture-both');
+    expect(within(row).getByText(STATE_LABELS[PERSON_STATES.NEEDS_REVIEW])).toBeInTheDocument();
+    expect(within(row).queryByText(STATE_LABELS[PERSON_STATES.UNNAMED])).not.toBeInTheDocument();
+  });
+
+  it('keeps state icons out of the accessibility tree; state text is the accessible carrier', () => {
+    render(<RosterEntriesTable entries={[needsReviewFixture, unnamedFixture, namedFixture]} />);
+
+    const labels = [
+      STATE_LABELS[PERSON_STATES.NEEDS_REVIEW],
+      STATE_LABELS[PERSON_STATES.UNNAMED],
+      STATE_LABELS[PERSON_STATES.NAMED],
+    ];
+
+    for (const label of labels) {
+      const text = screen.getByText(label);
+      expect(text).not.toHaveAttribute('aria-hidden');
+      const stateRoot = text.closest('.acx-roster-entries__state');
+      expect(stateRoot).not.toBeNull();
+      const icon = stateRoot!.querySelector('svg');
+      expect(icon).not.toBeNull();
+      expect(icon).toHaveAttribute('aria-hidden', 'true');
+    }
   });
 });
 

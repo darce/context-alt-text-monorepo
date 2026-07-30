@@ -2,8 +2,9 @@ import React, { useState } from 'react';
 import { __ } from '@wordpress/i18n';
 import type { RosterEntry } from '../../api/rosterApi';
 import { useUpdatePerson, useDeletePerson } from '../../hooks/useRosterHooks';
-import { Pencil, Trash2, Check, X } from 'lucide-react';
+import { AlertCircle, Check, CheckCircle2, Pencil, Trash2, UserRound, X } from 'lucide-react';
 import { ConfirmDialog } from './ConfirmDialog';
+import { derivePersonState, PERSON_STATES, type PersonState } from './personState';
 
 export interface RosterEntriesTableProps {
   entries: RosterEntry[];
@@ -12,6 +13,45 @@ export interface RosterEntriesTableProps {
 interface EditableRowProps {
   entry: RosterEntry;
 }
+
+const STATE_PRESENTATION: Record<
+  PersonState,
+  {
+    label: string;
+    Icon: typeof AlertCircle;
+    className: string;
+  }
+> = {
+  [PERSON_STATES.NEEDS_REVIEW]: {
+    label: __('Needs review', 'alt-context'),
+    Icon: AlertCircle,
+    className: 'acx-roster-entries__state--needs-review',
+  },
+  [PERSON_STATES.UNNAMED]: {
+    label: __('Unnamed', 'alt-context'),
+    Icon: UserRound,
+    className: 'acx-roster-entries__state--unnamed',
+  },
+  [PERSON_STATES.NAMED]: {
+    label: __('Named', 'alt-context'),
+    Icon: CheckCircle2,
+    className: 'acx-roster-entries__state--named',
+  },
+};
+
+const PersonStateCell = ({ entry }: { entry: RosterEntry }): React.JSX.Element => {
+  const state = derivePersonState(entry);
+  const { label, Icon, className } = STATE_PRESENTATION[state];
+
+  return (
+    <td>
+      <span className={`acx-roster-entries__state ${className}`}>
+        <Icon size={16} aria-hidden="true" />
+        <span className="acx-roster-entries__state-label">{label}</span>
+      </span>
+    </td>
+  );
+};
 
 const EditableRow = ({ entry }: EditableRowProps) => {
   const [isEditing, setIsEditing] = useState(false);
@@ -63,6 +103,7 @@ const EditableRow = ({ entry }: EditableRowProps) => {
             autoFocus
           />
         </td>
+        <PersonStateCell entry={entry} />
         <td>
           <input
             type="text"
@@ -104,6 +145,7 @@ const EditableRow = ({ entry }: EditableRowProps) => {
         <td>
           <strong>{entry.name}</strong>
         </td>
+        <PersonStateCell entry={entry} />
         <td>{entry.tags.length === 0 ? __('No tags', 'alt-context') : entry.tags.join(', ')}</td>
         <td>{entry.cluster_count}</td>
         <td className="acx-roster-entries__actions">
@@ -154,6 +196,7 @@ export const RosterEntriesTable = ({ entries }: RosterEntriesTableProps): React.
         <thead>
           <tr>
             <th>{__('Identity', 'alt-context')}</th>
+            <th>{__('State', 'alt-context')}</th>
             <th>{__('Tags', 'alt-context')}</th>
             <th>{__('Clusters', 'alt-context')}</th>
             <th>{__('Actions', 'alt-context')}</th>

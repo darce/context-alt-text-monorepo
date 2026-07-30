@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -460,6 +460,124 @@ describe('DescriptionHistoryPage', () => {
     expect(portraitSave).toBeDisabled();
     expect(correctHistoryMock).toHaveBeenCalledWith(42, 'Bridge concurrent draft.');
     expect(correctHistoryMock).toHaveBeenCalledWith(84, 'Portrait concurrent draft.');
+  });
+
+  /**
+   * BR-81 [TEST-06]: saveCorrection must refuse a second same-mediaId write while
+   * one is already outstanding. Latent only — the Save button's disabled={isSaving}
+   * blocks ordinary double-clicks; this models two events delivered in one tick
+   * (same-tick dispatch) so no re-render / disabled intervenes.
+   *
+   * Predicted RED against unfixed saveCorrection:
+   *   expected number of calls: 1
+   *   received number of calls: 2
+   */
+  it('refuses a second same-mediaId save while one request is already in flight [BR-81]', async () => {
+    // Hold the mutation open so a missing guard cannot be masked by settle-order.
+    correctHistoryMock.mockImplementation(() => new Promise<DescriptionHistoryItem>(() => {
+      /* never resolves during this assertion */
+    }));
+
+    renderPage();
+
+    fireEvent.change(await screen.findByLabelText('Alt text correction for Bridge'), {
+      target: { value: 'Same-tick concurrent draft.' },
+    });
+
+    const saveButton = screen.getByRole('button', { name: 'Save correction for Bridge' });
+
+    // Same-tick route: two native clicks inside one act so React batches and the
+    // disabled attribute never lands between them. fireEvent.click alone flushes
+    // a render after each click and would hit disabled — proving nothing.
+    act(() => {
+      saveButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      saveButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    });
+
+    // mutationFn is scheduled asynchronously by react-query; wait until at least
+    // one call lands, then assert no duplicate was accepted.
+    await waitFor(() => {
+      expect(correctHistoryMock.mock.calls.length).toBeGreaterThanOrEqual(1);
+    });
+    // Brief settle window so a second in-flight call has time to register if the
+    // guard is missing (unfixed code reaches 2 within this window).
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // Call count is the carrier for "exactly one request" — not button text alone.
+    expect(correctHistoryMock).toHaveBeenCalledTimes(1);
+    expect(correctHistoryMock).toHaveBeenCalledWith(42, 'Same-tick concurrent draft.');
+    expect(screen.getByRole('button', { name: 'Saving...' })).toBeDisabled();
+  });
+
+  it('still fires exactly one request for a single save [BR-81]', async () => {
+    renderPage();
+
+    fireEvent.change(await screen.findByLabelText('Alt text correction for Bridge'), {
+      target: { value: 'Single save draft.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save correction for Bridge' }));
+
+    await waitFor(() => {
+      expect(correctHistoryMock).toHaveBeenCalledTimes(1);
+    });
+    expect(correctHistoryMock).toHaveBeenCalledWith(42, 'Single save draft.');
+    expect(await screen.findAllByText('Single save draft.')).toHaveLength(2);
+  });
+
+  it('allows a second sequential save on the same row after the first settles [BR-81]', async () => {
+    // Guard must not latch: once busy clears, a later save is a new write.
+    renderPage();
+
+    fireEvent.change(await screen.findByLabelText('Alt text correction for Bridge'), {
+      target: { value: 'First sequential draft.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save correction for Bridge' }));
+
+    await waitFor(() => {
+      expect(correctHistoryMock).toHaveBeenCalledTimes(1);
+    });
+    expect(await screen.findByRole('button', { name: 'Save correction for Bridge' })).not.toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText('Alt text correction for Bridge'), {
+      target: { value: 'Second sequential draft.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save correction for Bridge' }));
+
+    await waitFor(() => {
+      expect(correctHistoryMock).toHaveBeenCalledTimes(2);
+    });
+    expect(correctHistoryMock).toHaveBeenNthCalledWith(2, 42, 'Second sequential draft.');
+  });
+
+  it('allows a retry after a failed save on the same row [BR-81]', async () => {
+    // Error path clears busy; a refused-start guard must not block legitimate retry.
+    correctHistoryMock.mockRejectedValueOnce(
+      new Error(
+        `Request to /correction failed (500): ${JSON.stringify({
+          code: 'description_correction_failed',
+          message: 'First attempt failed.',
+          data: { status: 500 },
+        })}`,
+      ),
+    );
+
+    renderPage();
+
+    fireEvent.change(await screen.findByLabelText('Alt text correction for Bridge'), {
+      target: { value: 'Retry draft.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save correction for Bridge' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('First attempt failed.');
+    expect(correctHistoryMock).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save correction for Bridge' }));
+
+    await waitFor(() => {
+      expect(correctHistoryMock).toHaveBeenCalledTimes(2);
+    });
+    expect(correctHistoryMock).toHaveBeenNthCalledWith(2, 42, 'Retry draft.');
+    expect(await screen.findAllByText('Retry draft.')).toHaveLength(2);
   });
 
   it('shows distinct durable alerts when two rows fail sequentially [RLSE-05]', async () => {

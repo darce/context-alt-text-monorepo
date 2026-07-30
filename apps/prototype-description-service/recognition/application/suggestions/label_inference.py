@@ -181,18 +181,52 @@ async def infer_suggested_label(
     # representatives drop embedding_model, so resolve same-space identity ids via
     # session when target_model is known. Fall through to the SQL path when
     # in-process finds nothing under a model predicate (do not shadow FIR23-01).
+    #
+    # CVUP1-GR-20: never materialise the tenant's full face corpus. Collect only
+    # identity_ids of the labeled representatives we actually score, then query
+    # MediaIdentity.id.in_(those_ids). Cross-space reps remain excluded.
     if cluster_repository is not None:
+        labeled_clusters = await cluster_repository.get_labeled_with_representatives(str(tenant_uuid))
+
         same_model_identity_ids: set[str] | None = None
         if target_model is not None:
-            model_ids_result = await session.execute(
-                select(MediaIdentity.id).where(
-                    MediaIdentity.tenant_id == tenant_uuid,
-                    MediaIdentity.embedding_model == target_model,
-                )
-            )
-            same_model_identity_ids = {str(row) for row in model_ids_result.scalars().all()}
+            unresolved_ids: list[uuid.UUID] = []
+            seen_unresolved: set[str] = set()
+            for _cluster, cluster_reps in labeled_clusters:
+                for rep in cluster_reps:
+                    rep_model = getattr(rep, "embedding_model", None)
+                    if rep_model is None:
+                        identity = getattr(rep, "identity", None)
+                        if identity is not None:
+                            rep_model = getattr(identity, "embedding_model", None)
+                    if rep_model is not None:
+                        continue
+                    identity_id = getattr(rep, "identity_id", None)
+                    if identity_id is None:
+                        continue
+                    id_str = str(identity_id)
+                    if id_str in seen_unresolved:
+                        continue
+                    try:
+                        unresolved_ids.append(uuid.UUID(id_str))
+                    except ValueError:
+                        continue
+                    seen_unresolved.add(id_str)
 
-        labeled_clusters = await cluster_repository.get_labeled_with_representatives(str(tenant_uuid))
+            # Empty set still means the filter is active (no same-space unresolved ids).
+            # None would mean "no model predicate" and would re-open cross-space NN.
+            if unresolved_ids:
+                model_ids_result = await session.execute(
+                    select(MediaIdentity.id).where(
+                        MediaIdentity.tenant_id == tenant_uuid,
+                        MediaIdentity.id.in_(unresolved_ids),
+                        MediaIdentity.embedding_model == target_model,
+                    )
+                )
+                same_model_identity_ids = {str(row) for row in model_ids_result.scalars().all()}
+            else:
+                same_model_identity_ids = set()
+
         best_similarity = -1.0
         best_cluster_id: str | None = None
         for labeled_cluster, cluster_reps in labeled_clusters:

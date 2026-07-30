@@ -81,6 +81,20 @@ final class TenantIdentity {
 		return (bool) get_option( self::PAIRED_OPTION_KEY, false );
 	}
 
+	/**
+	 * Persist the operator-paired tenant id and the paired flag.
+	 *
+	 * R23-BR-15: verify the tenant-id option landed (read-back) before writing
+	 * PAIRED_OPTION_KEY. update_option returns false on both failure and no-op
+	 * (re-pairing the already-stored id) — only read-back distinguishes them.
+	 * Never set the paired flag on an unverified identity write: is_paired()
+	 * true with an empty OPTION_KEY lets resolve() auto-derive and persist a
+	 * URL-derived id while advertising a paired identity.
+	 *
+	 * @throws \InvalidArgumentException When $tenant_id is not a UUID.
+	 * @throws \RuntimeException         When the tenant-id option does not hold
+	 *                                   the intended value after the write attempt.
+	 */
 	public static function adopt_paired_tenant( string $tenant_id ): void {
 		$normalized = strtolower( trim( $tenant_id ) );
 		if ( ! self::is_valid_tenant_uuid( $normalized ) ) {
@@ -88,6 +102,15 @@ final class TenantIdentity {
 		}
 
 		update_option( self::OPTION_KEY, $normalized );
+		// Custom option: sanitize_option is identity; compare the intended UUID.
+		// No-op re-pair (option already $normalized) still passes read-back.
+		$stored = get_option( self::OPTION_KEY, null );
+		if ( ! is_string( $stored ) || strtolower( trim( $stored ) ) !== $normalized ) {
+			throw new \RuntimeException(
+				'Could not persist the paired tenant id; pairing was not completed.'
+			);
+		}
+
 		update_option( self::PAIRED_OPTION_KEY, true );
 	}
 

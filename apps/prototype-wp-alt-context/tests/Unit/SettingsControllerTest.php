@@ -22,6 +22,9 @@ class SettingsControllerTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // Opt-in update_option failure map is not cleared by TestCase::resetGlobalState;
+        // drop it here so R23-BR-14 fail pins cannot leak into later tests.
+        $GLOBALS['__ac_update_option_fail'] = [];
         $this->controller = new SettingsController();
     }
 
@@ -634,6 +637,207 @@ class SettingsControllerTest extends TestCase
         $this->assertInstanceOf(\WP_Error::class, $response);
         $this->assertSame('invalid_alt_style', $response->get_error_code());
         $this->assertFalse(get_option('acx_alt_style'));
+    }
+
+    /**
+     * R23-BR-14 [TEST-15]: storage failure must not report result=ok.
+     *
+     * Pin reds under the mutation that pushes the field onto $saved[] without
+     * a read-back (the pre-fix unconditional-success path).
+     *
+     * @dataProvider saveSettingsFieldFailProvider
+     */
+    public function testSaveSettingsReportsErrorWhenOptionWriteDoesNotLand(
+        array $body,
+        string $optionKey,
+        string $savedField
+    ): void {
+        $this->setUserCapability('manage_options', true);
+        $GLOBALS['__ac_update_option_fail'] = [$optionKey => true];
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params($body);
+
+        $response = $this->controller->save_settings($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertSame(
+            SettingsController::SAVE_RESULT_ERROR,
+            $data['result'],
+            'storage failure must not report ok for field: ' . $savedField
+        );
+        $this->assertNotContains($savedField, $data['saved'] ?? []);
+        $this->assertContains($savedField, $data['failed'] ?? []);
+        // Option must not hold the intended post-write value.
+        $stored = get_option($optionKey, null);
+        if ('description_budget' === $savedField) {
+            $this->assertNotSame(50, is_numeric($stored) ? (int) $stored : $stored);
+        } elseif ('url' === $savedField) {
+            $this->assertNotSame('https://new-api.example.com', $stored);
+        } elseif ('api_key' === $savedField) {
+            $this->assertNotSame('secret-key-value', $stored);
+        } elseif ('alt_style' === $savedField) {
+            $this->assertNotSame('alt_plus_description', $stored);
+        }
+    }
+
+    /**
+     * @return array<string, array{0: array<string, mixed>, 1: string, 2: string}>
+     */
+    public static function saveSettingsFieldFailProvider(): array
+    {
+        return [
+            'url' => [
+                ['url' => 'https://new-api.example.com'],
+                'acx_recognition_url',
+                'url',
+            ],
+            'api_key' => [
+                ['api_key' => 'secret-key-value'],
+                'acx_recognition_api_key',
+                'api_key',
+            ],
+            'alt_style' => [
+                ['alt_style' => 'alt_plus_description'],
+                'acx_alt_style',
+                'alt_style',
+            ],
+            'description_budget' => [
+                ['description_budget' => ['max_attempts' => 50]],
+                'acx_description_budget_max_attempts',
+                'description_budget',
+            ],
+        ];
+    }
+
+    /**
+     * R23-BR-14: partial failure names only the fields that did not land.
+     */
+    public function testSaveSettingsReportsPartialWhenOneOfTwoWritesFails(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $GLOBALS['__ac_update_option_fail'] = ['acx_recognition_api_key' => true];
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params([
+            'url' => 'https://partial.example.com',
+            'api_key' => 'will-not-land',
+        ]);
+
+        $response = $this->controller->save_settings($request);
+        $data = $response->get_data();
+
+        $this->assertSame(SettingsController::SAVE_RESULT_PARTIAL, $data['result']);
+        $this->assertContains('url', $data['saved']);
+        $this->assertNotContains('api_key', $data['saved']);
+        $this->assertContains('api_key', $data['failed']);
+        $this->assertNotContains('url', $data['failed']);
+        $this->assertSame('https://partial.example.com', get_option('acx_recognition_url'));
+    }
+
+    /**
+     * R23-BR-14 false-failure pin: identical values saved twice still report ok.
+     * update_option returns false on the second write (no-op); read-back must
+     * still admit success. A return-value check would go red here.
+     */
+    public function testSaveSettingsReportsOkOnNoOpResaveOfIdenticalValues(): void
+    {
+        $this->setUserCapability('manage_options', true);
+
+        $payload = [
+            'url' => 'https://stable.example.com',
+            'api_key' => 'stable-key-1234',
+            'alt_style' => 'alt_only',
+            'description_budget' => ['max_attempts' => 10],
+        ];
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params($payload);
+
+        $first = $this->controller->save_settings($request);
+        $this->assertInstanceOf(\WP_REST_Response::class, $first);
+        $this->assertSame(SettingsController::SAVE_RESULT_OK, $first->get_data()['result']);
+        $this->assertContains('url', $first->get_data()['saved']);
+        $this->assertContains('api_key', $first->get_data()['saved']);
+        $this->assertContains('alt_style', $first->get_data()['saved']);
+        $this->assertContains('description_budget', $first->get_data()['saved']);
+        $this->assertArrayNotHasKey('failed', $first->get_data());
+
+        // Second save of identical values: update_option no-ops (returns false).
+        $second = $this->controller->save_settings($request);
+        $this->assertInstanceOf(\WP_REST_Response::class, $second);
+        $data = $second->get_data();
+        $this->assertSame(
+            SettingsController::SAVE_RESULT_OK,
+            $data['result'],
+            'no-op re-save must still report ok (read-back, not return-value)'
+        );
+        $this->assertContains('url', $data['saved']);
+        $this->assertContains('api_key', $data['saved']);
+        $this->assertContains('alt_style', $data['saved']);
+        $this->assertContains('description_budget', $data['saved']);
+        $this->assertArrayNotHasKey('failed', $data);
+        $this->assertSame('https://stable.example.com', get_option('acx_recognition_url'));
+        $this->assertSame('stable-key-1234', get_option('acx_recognition_api_key'));
+        $this->assertSame('alt_only', get_option('acx_alt_style'));
+        $this->assertSame(10, get_option('acx_description_budget_max_attempts'));
+    }
+
+    /**
+     * R23-BR-14 false-failure pin: first-time happy path still reports ok and
+     * keeps the happy-path envelope (saved + result only).
+     */
+    public function testSaveSettingsHappyPathEnvelopeIsByteCompatible(): void
+    {
+        $this->setUserCapability('manage_options', true);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params([
+            'url' => 'https://happy.example.com',
+            'api_key' => 'happy-key',
+        ]);
+
+        $response = $this->controller->save_settings($request);
+        $data = $response->get_data();
+
+        $this->assertSame(SettingsController::SAVE_RESULT_OK, $data['result']);
+        $this->assertSame(['url', 'api_key'], $data['saved']);
+        $this->assertSame(
+            ['saved', 'result'],
+            array_keys($data),
+            'happy path must not add failed/extra keys (byte-compatible)'
+        );
+    }
+
+    /**
+     * R23-BR-15: when adopt_paired_tenant storage fails on first-time auto-adopt,
+     * probe must not claim tenant_paired and must not leave the paired flag set.
+     * Uses the auto-adopt path (derived ≠ key) so read-back can diverge — the
+     * matching-tenant path already holds the intended id, so a failed write is
+     * indistinguishable from a no-op by read-back alone.
+     */
+    public function testProbePairingSurfacesErrorWhenTenantIdWriteFails(): void
+    {
+        $this->configureProbe();
+        // No pre-set tenant option: resolve() derives bootstrap id; key differs → auto-adopt.
+        $keyTenant = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+        $GLOBALS['__ac_update_option_fail'] = [
+            TenantIdentity::OPTION_KEY => true,
+        ];
+        $this->queueHttpResponse($this->buildOkResponse());
+        $this->queueHttpResponse($this->buildWhoamiResponse($keyTenant));
+
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome'] ?? null);
+        $this->assertArrayHasKey('pairing_error', $data);
+        $this->assertStringContainsString('paired tenant id', (string) $data['pairing_error']);
+        $this->assertArrayNotHasKey('tenant_paired', $data);
+        $this->assertFalse(TenantIdentity::is_paired());
+        $this->assertNotSame($keyTenant, get_option(TenantIdentity::OPTION_KEY, null));
     }
 
     // --- POST /settings/test (probe dispatch) ---

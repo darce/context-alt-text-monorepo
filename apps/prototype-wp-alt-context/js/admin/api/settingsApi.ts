@@ -90,9 +90,24 @@ export interface SaveSettingsPayload {
   };
 }
 
+/**
+ * Wire vocabulary for POST /settings `result` [sr-007].
+ * Mirrors SettingsController::SAVE_RESULT_* bit-for-bit.
+ */
+export const SettingsSaveResult = {
+  OK: 'ok',
+  PARTIAL: 'partial',
+  ERROR: 'error',
+} as const;
+
+export type SettingsSaveResultValue =
+  (typeof SettingsSaveResult)[keyof typeof SettingsSaveResult];
+
 export interface SaveSettingsResponse {
   saved: string[];
-  result: string;
+  result: SettingsSaveResultValue | string;
+  /** Present when result is partial/error — fields that did not persist. */
+  failed?: string[];
 }
 
 export const TestConnectionOutcome = {

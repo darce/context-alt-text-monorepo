@@ -56,6 +56,15 @@ use function wp_remote_retrieve_response_code;
  *                                  of ten canonical {@see ProbeOutcome} codes
  */
 class SettingsController {
+	/**
+	 * Wire vocabulary for POST /settings `result` [sr-007].
+	 * Mirrored by TypeScript `SettingsSaveResult` in settingsApi.ts.
+	 * Happy-path stays `{ saved, result: 'ok' }` byte-compatible with existing clients.
+	 */
+	public const SAVE_RESULT_OK      = 'ok';
+	public const SAVE_RESULT_PARTIAL = 'partial';
+	public const SAVE_RESULT_ERROR   = 'error';
+
 	private RecognitionEndpointResolver $endpoint_resolver;
 
 	private DescriptionBudgetService $description_budget_service;
@@ -132,8 +141,10 @@ class SettingsController {
 	}
 
 	public function save_settings( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		$body = $request->get_json_params();
-		$saved = array();
+		$body   = $request->get_json_params();
+		$body   = is_array( $body ) ? $body : array();
+		$saved  = array();
+		$failed = array();
 
 		if ( isset( $body['url'] ) && is_string( $body['url'] ) ) {
 			$url = trim( $body['url'] );
@@ -144,8 +155,16 @@ class SettingsController {
 					array( 'status' => 400 )
 				);
 			}
+			// R23-BR-14: do not trust update_option's return (false on no-op *and*
+			// failure). Read back and compare against the intended value. Custom
+			// option keys have identity sanitize_option (no registered transforms);
+			// the value written is already trim()'d. A no-op re-save still matches.
 			update_option( 'acx_recognition_url', $url );
-			$saved[] = 'url';
+			if ( $this->option_matches_intended( 'acx_recognition_url', $url ) ) {
+				$saved[] = 'url';
+			} else {
+				$failed[] = 'url';
+			}
 		}
 
 		// RECOG-1: the product no longer writes acx_recognition_source or
@@ -156,7 +175,11 @@ class SettingsController {
 		if ( isset( $body['api_key'] ) && is_string( $body['api_key'] ) ) {
 			$key = trim( $body['api_key'] );
 			update_option( 'acx_recognition_api_key', $key );
-			$saved[] = 'api_key';
+			if ( $this->option_matches_intended( 'acx_recognition_api_key', $key ) ) {
+				$saved[] = 'api_key';
+			} else {
+				$failed[] = 'api_key';
+			}
 		}
 
 		if ( isset( $body['alt_style'] ) ) {
@@ -169,8 +192,13 @@ class SettingsController {
 					array( 'status' => 400 )
 				);
 			}
-			update_option( AltStyle::OPTION_NAME, $body['alt_style'] );
-			$saved[] = 'alt_style';
+			$alt_style = $body['alt_style'];
+			update_option( AltStyle::OPTION_NAME, $alt_style );
+			if ( $this->option_matches_intended( AltStyle::OPTION_NAME, $alt_style ) ) {
+				$saved[] = 'alt_style';
+			} else {
+				$failed[] = 'alt_style';
+			}
 		}
 
 		if ( isset( $body['description_budget'] ) && is_array( $body['description_budget'] ) ) {
@@ -193,16 +221,56 @@ class SettingsController {
 			}
 
 			update_option( 'acx_description_budget_max_attempts', $max_attempts );
-			$saved[] = 'description_budget';
+			// Int options may reappear as numeric strings after a cold options
+			// load from the DB; option_matches_intended models that coerce.
+			if ( $this->option_matches_intended( 'acx_description_budget_max_attempts', $max_attempts ) ) {
+				$saved[] = 'description_budget';
+			} else {
+				$failed[] = 'description_budget';
+			}
 		}
 
-		return new WP_REST_Response(
-			array(
-				'saved'  => $saved,
-				'result' => 'ok',
-			),
-			200
+		// Happy path stays { saved, result: 'ok' } — no extra keys [byte-compat].
+		// Non-ok names the fields that did not land so the operator can act.
+		$result = self::SAVE_RESULT_OK;
+		if ( array() !== $failed ) {
+			$result = array() === $saved
+				? self::SAVE_RESULT_ERROR
+				: self::SAVE_RESULT_PARTIAL;
+		}
+
+		$payload = array(
+			'saved'  => $saved,
+			'result' => $result,
 		);
+		if ( array() !== $failed ) {
+			$payload['failed'] = $failed;
+		}
+
+		return new WP_REST_Response( $payload, 200 );
+	}
+
+	/**
+	 * True when storage holds the intended option value after a write attempt.
+	 *
+	 * update_option returns false for both storage failure and no-op (value
+	 * already equal). Read-back is the only honest verification. Custom acx_*
+	 * option keys are not registered with sanitize_option transforms — the
+	 * intended value is what was passed to update_option (already trim/cast).
+	 * Integer options are compared via numeric coerce so a DB-reloaded string
+	 * form does not false-fail a successful write.
+	 *
+	 * @param string $option   Option name.
+	 * @param mixed  $intended Value that should be stored.
+	 */
+	private function option_matches_intended( string $option, $intended ): bool {
+		// null default: missing option is distinguishable from stored empty string.
+		$stored = get_option( $option, null );
+		if ( is_int( $intended ) ) {
+			return is_numeric( $stored ) && (int) $stored === $intended;
+		}
+
+		return $stored === $intended;
 	}
 
 	/**
@@ -369,7 +437,17 @@ class SettingsController {
 		$current_tenant_id  = strtolower( $current_resolution['value'] );
 
 		if ( $current_tenant_id === $key_tenant_id ) {
-			TenantIdentity::adopt_paired_tenant( $key_tenant_id );
+			// R23-BR-15: adopt throws RuntimeException on storage failure (distinct
+			// from InvalidArgumentException for a malformed UUID). Surface as a
+			// pairing error — do not claim tenant_paired when the option did not land.
+			try {
+				TenantIdentity::adopt_paired_tenant( $key_tenant_id );
+			} catch ( \RuntimeException $e ) {
+				return array(
+					'outcome' => ProbeOutcome::SERVER_ERROR,
+					'detail'  => $e->getMessage(),
+				);
+			}
 			return array(
 				'tenant_paired'    => true,
 				'tenant_id'        => $key_tenant_id,
@@ -395,7 +473,14 @@ class SettingsController {
 
 		$rekey_service = new TenantLocalRekeyService();
 		$rekey_result  = $rekey_service->reconcile_identity_change( $current_tenant_id, $key_tenant_id );
-		TenantIdentity::adopt_paired_tenant( $key_tenant_id );
+		try {
+			TenantIdentity::adopt_paired_tenant( $key_tenant_id );
+		} catch ( \RuntimeException $e ) {
+			return array(
+				'outcome' => ProbeOutcome::SERVER_ERROR,
+				'detail'  => $e->getMessage(),
+			);
+		}
 
 		return array(
 			'tenant_paired'       => true,

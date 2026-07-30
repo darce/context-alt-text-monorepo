@@ -49,18 +49,25 @@ export const selectRepresentativeIdentity = (entry: RosterEntry): RosterEntryIns
 const DirectoryFace = ({ entry }: { entry: RosterEntry }): React.JSX.Element => {
   const rep = selectRepresentativeIdentity(entry);
 
+  // Decorative empty alt only when a non-blank name label sits beside the face
+  // [A11Y-21]. Unnamed rows have no adjacent text equivalent — omit alt so
+  // IdentityThumbnail's default ("Identity from media %d") names the face [S6-BR-03].
+  const decorativeAlt = entry.name.trim() !== '' ? '' : undefined;
+
   // Empty cases: no clusters / null representative / null media_url → placeholder.
   // IdentityThumbnail renders the sized placeholder when it has no resolvable src.
   // Explicit null guards keep those paths intentional [PERC-02].
   if (rep === null) {
-    return <IdentityThumbnail identity={{ media_id: 0 }} size={DIRECTORY_THUMB_SIZE} alt="" />;
+    return (
+      <IdentityThumbnail identity={{ media_id: 0 }} size={DIRECTORY_THUMB_SIZE} alt={decorativeAlt} />
+    );
   }
   if (rep.media_url === null) {
     return (
       <IdentityThumbnail
         identity={{ media_id: rep.media_id, identity_id: rep.identity_id }}
         size={DIRECTORY_THUMB_SIZE}
-        alt=""
+        alt={decorativeAlt}
       />
     );
   }
@@ -76,7 +83,7 @@ const DirectoryFace = ({ entry }: { entry: RosterEntry }): React.JSX.Element => 
         bbox: rep.bbox,
       }}
       size={DIRECTORY_THUMB_SIZE}
-      alt=""
+      alt={decorativeAlt}
     />
   );
 };

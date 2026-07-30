@@ -495,7 +495,10 @@ class RosterEntryProjectionRepository {
 
 	private function resolve_projection_status( string $tenant_id, ?string $projection_refreshed_at ): string {
 		$last_sync_result = $this->sync_state_repository->get_last_sync_result( $tenant_id );
-		if ( 'failed' === $last_sync_result || 'unreachable' === $last_sync_result ) {
+		// Use SyncStateRepository::SYNC_RESULT_* vocabulary [sr-007]. 'skipped' is
+		// not in normalize_sync_result()'s allow-list and is unreachable here.
+		if ( SyncStateRepository::SYNC_RESULT_FAILED === $last_sync_result
+			|| SyncStateRepository::SYNC_RESULT_UNREACHABLE === $last_sync_result ) {
 			return 'failed';
 		}
 
@@ -504,7 +507,10 @@ class RosterEntryProjectionRepository {
 			return 'refreshing';
 		}
 
-		if ( null === $projection_refreshed_at || 'skipped' === $last_sync_result ) {
+		// HARM-BR-03: rekey / threshold write resync_required; treat as stale so
+		// RosterPage (projectionStatus !== 'current') surfaces the invalid projection.
+		if ( null === $projection_refreshed_at
+			|| SyncStateRepository::SYNC_RESULT_RESYNC_REQUIRED === $last_sync_result ) {
 			return 'stale';
 		}
 

@@ -236,8 +236,28 @@ class DescriptionHistoryService {
 		// decorative=true plants '1'; a non-empty stored alt clears any prior
 		// marker so the two states cannot contradict on disk (self-healing).
 		// [WBUX-5-S2C3C-BR-01]
+		//
+		// S7-BR-03: read the marker back. Without acx_alt_decorative, empty alt
+		// is classified as missing_alt rather than decorative — claiming success
+		// while the marker is absent is a durable-contract lie (same pattern as
+		// ALT_META / HUMAN_EDIT_META above).
 		if ( $decorative ) {
 			update_post_meta( $media_id, self::DECORATIVE_META, '1' );
+			$decorative_current = get_post_meta( $media_id, self::DECORATIVE_META, true );
+			$decorative_ok      = is_string( $decorative_current ) && '1' === $decorative_current;
+			if ( ! $decorative_ok ) {
+				// Alt + human-edit already verified; marker did not land. Partial
+				// code (not bare failed): empty alt is in storage, only the
+				// durable decorative half of the finish is missing.
+				return new WP_Error(
+					'description_correction_partial',
+					'Alt text was saved, but the decorative marker could not be stored. Please try again so the image is treated as decorative.',
+					array(
+						'status'          => 500,
+						'stored_alt_text' => is_string( $expected_alt ) ? $expected_alt : $normalized_alt_text,
+					)
+				);
+			}
 		} elseif ( is_string( $current ) && '' !== trim( $current ) ) {
 			delete_post_meta( $media_id, self::DECORATIVE_META );
 		}

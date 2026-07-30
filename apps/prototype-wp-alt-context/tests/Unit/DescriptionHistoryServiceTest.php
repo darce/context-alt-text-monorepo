@@ -1330,6 +1330,39 @@ class DescriptionHistoryServiceTest extends TestCase
     }
 
     /**
+     * S7-BR-03: decorative marker write must be read back. If update_post_meta for
+     * acx_alt_decorative fails (same __ac_update_post_meta_fail injection as alt /
+     * human-edit), record_correction must return WP_Error — never a success
+     * envelope while the durable marker is absent. Empty alt may land; without
+     * the marker DescriptionCandidateService would misclassify as missing_alt.
+     */
+    public function testDecorativeMarkerWriteFailureReturnsErrorAndDoesNotClaimSuccess(): void
+    {
+        $mediaId = 608;
+        $this->seedAttachment($mediaId, 'Decorative marker fail');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', 'Prior alt.');
+        // Force only the decorative-marker write to fail; alt + human-edit succeed.
+        $GLOBALS['__ac_update_post_meta_fail'][$mediaId]['acx_alt_decorative'] = true;
+
+        $result = (new DescriptionHistoryService())->record_correction($mediaId, '', true);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('description_correction_partial', $result->get_error_code());
+        $this->assertSame(500, $result->get_error_data()['status']);
+        // Marker must be absent — success would lie about decorative finish.
+        $this->assertSame('', get_post_meta($mediaId, 'acx_alt_decorative', true));
+        $this->assertArrayNotHasKey(
+            'acx_alt_decorative',
+            $GLOBALS['__ac_post_meta'][$mediaId] ?? []
+        );
+        // Empty alt and human-edit did land (partial: substantive writes, marker not).
+        $this->assertSame('', get_post_meta($mediaId, '_wp_attachment_image_alt', true));
+        $this->assertIsArray(get_post_meta($mediaId, '_acx_description_human_edit', true));
+        // Not a success envelope (array item with media_id / current_alt_text).
+        $this->assertFalse(is_array($result) && isset($result['media_id']));
+    }
+
+    /**
      * Existing two-argument record_correction and correction requests that omit
      * decorative behave exactly as before (no marker planted on non-empty alt).
      */

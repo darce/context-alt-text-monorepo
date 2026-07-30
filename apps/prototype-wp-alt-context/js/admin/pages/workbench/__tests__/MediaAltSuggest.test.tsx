@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -6,11 +6,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MediaAltInlineEditor } from '../MediaAltInlineEditor';
 import {
   ALT_SUGGEST_COMMIT_CONFLICT_MESSAGE,
+  formatAltLengthAdvisory,
+  formatOverLengthReadyAnnouncement,
   MediaAltSuggest,
   RECOMMENDED_ALT_TEXT_MAX_LENGTH,
 } from '../MediaAltSuggest';
 import { correctDescriptionHistoryItem, describeMedia } from '../../../api/describeApi';
 import type { DescriptionHistoryItem, VisualFactsResponse } from '../../../api/describeApi';
+import { queryKeys } from '../../../api/queryKeys';
+import type { WorkbenchMediaItem, WorkbenchMediaResponse } from '../../../api/workbenchMediaApi';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -76,6 +80,70 @@ const buildClient = () =>
       mutations: { retry: false },
     },
   });
+
+const workbenchPageKey = queryKeys.media.workbenchPage({ page: 1, perPage: 20, status: 'missing' });
+
+const seedWorkbenchRow = (
+  client: QueryClient,
+  altText: string | null,
+  status: WorkbenchMediaItem['status'] = altText && altText.trim() !== '' ? 'complete' : 'missing',
+): WorkbenchMediaResponse => {
+  const page: WorkbenchMediaResponse = {
+    items: [
+      {
+        id: 42,
+        title: 'Bridge',
+        status,
+        thumbnailUrl: null,
+        altText,
+        editUrl: null,
+        tags: [],
+      },
+    ],
+    total: 1,
+    totalPages: 1,
+  };
+  client.setQueryData(workbenchPageKey, page);
+  return page;
+};
+
+/**
+ * Co-mounted InlineEditor + Suggest driven by the workbench cache so a successful
+ * decorative mark that patches via useCorrectMediaAlt re-renders the row surfaces
+ * with live item.altText [S7-BR-01][HARM-BR-02].
+ */
+const LiveWorkbenchAltRow = ({ initial }: { initial: WorkbenchMediaResponse }): ReactElement => {
+  // eslint-disable-next-line @tanstack/query/exhaustive-deps -- seed only; live truth is cache patches
+  const { data } = useQuery({
+    queryKey: workbenchPageKey,
+    queryFn: (): Promise<WorkbenchMediaResponse> => Promise.resolve(initial),
+    initialData: initial,
+    staleTime: Infinity,
+  });
+  const item = data?.items.find((row) => row.id === 42);
+  const altText = item?.altText ?? null;
+  return (
+    <div data-testid="live-workbench-alt-row">
+      <MediaAltInlineEditor mediaId={42} altText={altText} />
+      <MediaAltSuggest mediaId={42} committedAlt={altText} />
+      <span data-testid="live-row-status">{item?.status ?? ''}</span>
+    </div>
+  );
+};
+
+const renderLiveAltRow = (altText: string, status: WorkbenchMediaItem['status'] = 'complete') => {
+  const client = buildClient();
+  const initial = seedWorkbenchRow(client, altText, status);
+  const view = render(
+    <QueryClientProvider client={client}>
+      <LiveWorkbenchAltRow initial={initial} />
+    </QueryClientProvider>,
+  );
+  return { client, ...view };
+};
+
+const cachedRow = (client: QueryClient) =>
+  client.getQueryData<WorkbenchMediaResponse>(workbenchPageKey)?.items.find((item) => item.id === 42);
 
 const renderSuggest = (element: ReactElement, client = buildClient()) => ({
   client,
@@ -1683,9 +1751,10 @@ describe('MediaAltSuggest', () => {
     // [TEST-15] discrimination: goes red if no length check runs after generation
     // — the draft is shown with only the static "Drafted by AI" sentence, which
     // is branch (d) alone and gives the author no numbers for *this* draft.
+    // Anchored full-string pin: substring toHaveTextContent('200') stayed green
+    // under a ×10 magnitude bug ("2000 characters…") [S3-BR-02][TEST-15].
     const advisory = getVisibleLengthAdvisory();
-    expect(advisory).toHaveTextContent('200');
-    expect(advisory).toHaveTextContent(String(RECOMMENDED_ALT_TEXT_MAX_LENGTH));
+    expect(advisory.textContent).toBe(formatAltLengthAdvisory(200));
     expect(advisory).toHaveTextContent(/recommended maximum/i);
     // Honesty: must not invent a WCAG maximum that does not exist.
     expect(advisory).not.toHaveTextContent(/wcag/i);
@@ -1724,9 +1793,10 @@ describe('MediaAltSuggest', () => {
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     await screen.findByText(overThresholdDraft);
 
+    // Word-boundary / full-string pins: '126' and '125' both appear inside '1260'
+    // under a ×10 magnitude bug, so bare substring matchers stayed green [S3-BR-02].
     const advisory = getVisibleLengthAdvisory();
-    expect(advisory).toHaveTextContent(String(RECOMMENDED_ALT_TEXT_MAX_LENGTH + 1));
-    expect(advisory).toHaveTextContent(String(RECOMMENDED_ALT_TEXT_MAX_LENGTH));
+    expect(advisory.textContent).toBe(formatAltLengthAdvisory(RECOMMENDED_ALT_TEXT_MAX_LENGTH + 1));
   });
 
   it('re-evaluates the length advisory live as the author types in edit mode [A11Y-34][S2c-3c]', async () => {
@@ -1743,7 +1813,9 @@ describe('MediaAltSuggest', () => {
     // Type past the threshold: notice must appear for the string the author would commit.
     fireEvent.change(field, { target: { value: overThresholdDraft } });
     expect(getVisibleLengthAdvisory()).toBeInTheDocument();
-    expect(getVisibleLengthAdvisory()).toHaveTextContent(String(RECOMMENDED_ALT_TEXT_MAX_LENGTH + 1));
+    expect(getVisibleLengthAdvisory().textContent).toBe(
+      formatAltLengthAdvisory(RECOMMENDED_ALT_TEXT_MAX_LENGTH + 1),
+    );
 
     // Trim back under: notice must disappear (live re-evaluation, not one-shot).
     fireEvent.change(field, { target: { value: underThresholdDraft } });
@@ -1801,7 +1873,9 @@ describe('MediaAltSuggest', () => {
     // disclosure. Composition must keep the disclosure (and error when set).
     expect(descriptionText).toMatch(/drafted by ai/i);
     expect(descriptionText).toMatch(/recommended maximum/i);
-    expect(descriptionText).toMatch(/200/);
+    // Anchored digit pin — bare /200/ matches inside 2000 [S3-BR-02][TEST-15].
+    expect(descriptionText).toMatch(/\b200\b/);
+    expect(descriptionText).not.toMatch(/\b2000\b/);
   });
 
   it('keeps the save-error id in aria-describedby alongside the length advisory [a11y][S2c-3c]', async () => {
@@ -1842,10 +1916,9 @@ describe('MediaAltSuggest', () => {
     const status = screen.getByTestId('media-alt-suggest-status');
     // Composed with or following the ready cue — SR users get the numbers without
     // a second live region ([A11Y-19] / BR-32 / BR-37).
+    // Full-string pin: substring /200/ stayed green under length*10 [S3-BR-02].
     await waitFor(() => {
-      expect(status).toHaveTextContent(/ready/i);
-      expect(status).toHaveTextContent(/200/);
-      expect(status).toHaveTextContent(String(RECOMMENDED_ALT_TEXT_MAX_LENGTH));
+      expect(status.textContent).toBe(formatOverLengthReadyAnnouncement(200));
     });
     // Exactly one role="status" in this component's output on the over-length path.
     // [TEST-15] discrimination: goes red if a second live region is added for the
@@ -1871,8 +1944,7 @@ describe('MediaAltSuggest', () => {
     fireEvent.change(field, { target: { value: overThresholdDraft } });
     expect(getVisibleLengthAdvisory()).toBeInTheDocument();
     await waitFor(() => {
-      expect(status).toHaveTextContent(String(RECOMMENDED_ALT_TEXT_MAX_LENGTH + 1));
-      expect(status).toHaveTextContent(String(RECOMMENDED_ALT_TEXT_MAX_LENGTH));
+      expect(status.textContent).toBe(formatAltLengthAdvisory(RECOMMENDED_ALT_TEXT_MAX_LENGTH + 1));
     });
     const overMessage = status.textContent ?? '';
     const overSeq = status.getAttribute('data-announce-seq');
@@ -1881,7 +1953,7 @@ describe('MediaAltSuggest', () => {
     const longerStillOver = overThresholdDraft + 'Z';
     fireEvent.change(field, { target: { value: longerStillOver } });
     // Visible advisory re-evaluates live (keystroke-live UI).
-    expect(getVisibleLengthAdvisory()).toHaveTextContent(String(longerStillOver.length));
+    expect(getVisibleLengthAdvisory().textContent).toBe(formatAltLengthAdvisory(longerStillOver.length));
     // Polite region must not fire again for a same-side keystroke.
     expect(status.textContent).toBe(overMessage);
     expect(status.getAttribute('data-announce-seq')).toBe(overSeq);
@@ -2247,5 +2319,98 @@ describe('MediaAltSuggest', () => {
     await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
     expect(correctMock).toHaveBeenCalledWith(42, draft);
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  // ---------------------------------------------------------------------------
+  // S7-BR-01 / HARM-BR-02 — decorative mark must reconcile workbench cache
+  // ---------------------------------------------------------------------------
+
+  it('patches workbench cache to empty alt + missing after Mark as decorative [S7-BR-01][HARM-BR-02]', async () => {
+    // Headline defect: markDecorative awaited correctDescriptionHistoryItem then
+    // only reset/announce — patchWorkbenchRowAlt and invalidateMediaStats never
+    // ran, so the co-mounted row kept altText 'Bridge at dusk' / status complete
+    // while the server held alt='' + decorative marker.
+    //
+    // [TEST-15] discrimination: goes RED if success still bypasses the hook's
+    // reconciliation (cache stays prior alt + complete) or if only helpers are
+    // spied without observing the row re-render symptom.
+    const priorAlt = 'Bridge at dusk';
+    correctMock.mockResolvedValue(sampleHistoryItem(''));
+    const { client } = renderLiveAltRow(priorAlt, 'complete');
+
+    // Precondition: InlineEditor shows the committed prior alt (stale after defect).
+    expect(screen.getByText(priorAlt)).toBeInTheDocument();
+    expect(screen.getByTestId('live-row-status')).toHaveTextContent('complete');
+    expect(cachedRow(client)?.altText).toBe(priorAlt);
+    expect(cachedRow(client)?.status).toBe('complete');
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /decorative|screen reader|announce nothing|skip/i }),
+    );
+
+    await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
+    expect(correctMock).toHaveBeenCalledWith(42, '', { decorative: true });
+
+    // Cache contract: server returned current_alt_text ''; status derives missing.
+    await waitFor(() => {
+      expect(cachedRow(client)?.altText).toBe('');
+      expect(cachedRow(client)?.status).toBe('missing');
+    });
+
+    // Integration symptom (HARM-BR-02): row no longer renders the destroyed alt.
+    await waitFor(() => {
+      expect(screen.queryByText(priorAlt)).not.toBeInTheDocument();
+    });
+    expect(screen.getByTestId('live-row-status')).toHaveTextContent('missing');
+    // Success still announced — reconciliation must not silence the path.
+    await waitFor(() => {
+      expect(screen.getByTestId('media-alt-suggest-status')).toHaveTextContent(/marked as decorative/i);
+    });
+  });
+
+  it('reconciles cache from stored_alt_text on decorative PARTIAL failure [S7-BR-02]', async () => {
+    // Server can blank alt (verified write) then refuse the decorative marker,
+    // returning description_correction_partial + stored_alt_text ''. The
+    // decorative bypass only setConflictMessage and left the cache on 'Prior'.
+    //
+    // [TEST-15] discrimination: goes RED if PARTIAL is ignored on the decorative
+    // catch (cache stays 'Prior') or if the assertive alert is swallowed.
+    const priorAlt = 'Prior';
+    const partialMessage =
+      'Alt text was saved, but the decorative marker could not be stored. Please try again.';
+    correctMock.mockRejectedValueOnce(
+      new Error(
+        `Request to /correction failed (500): ${JSON.stringify({
+          code: 'description_correction_partial',
+          message: partialMessage,
+          data: { status: 500, stored_alt_text: '' },
+        })}`,
+      ),
+    );
+    const { client } = renderLiveAltRow(priorAlt, 'complete');
+
+    expect(cachedRow(client)?.altText).toBe(priorAlt);
+    expect(screen.getByText(priorAlt)).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /decorative|screen reader|announce nothing|skip/i }),
+    );
+
+    await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
+    expect(correctMock).toHaveBeenCalledWith(42, '', { decorative: true });
+
+    // Cache must reflect the verified blank write even though the mark failed.
+    await waitFor(() => {
+      expect(cachedRow(client)?.altText).toBe('');
+      expect(cachedRow(client)?.status).toBe('missing');
+    });
+
+    // Assertive alert still surfaces — operator must not believe storage is unchanged.
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/decorative marker could not be stored|could not mark as decorative/i);
+    // Live row no longer advertises the destroyed prior alt.
+    await waitFor(() => {
+      expect(screen.queryByText(priorAlt)).not.toBeInTheDocument();
+    });
   });
 });

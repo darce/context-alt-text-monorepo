@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Api\Services;
 
+use AltContext\Sovereign\Repositories\SyncStateRepository;
 use Throwable;
 
 /**
@@ -14,10 +15,10 @@ class TenantLocalRekeyService {
 
 	/**
 	 * Durable marker written to acx_sync_state.last_sync_result when a rekey
-	 * (or threshold resync) completes. Centralised vocabulary [sr-007]; mirrors
-	 * SyncStateRepository::SYNC_RESULT_RESYNC_REQUIRED / SPA LAST_SYNC_RESULT.
+	 * (or threshold resync) completes. Alias of the canonical vocabulary
+	 * SyncStateRepository::SYNC_RESULT_RESYNC_REQUIRED [sr-007] / SPA LAST_SYNC_RESULT.
 	 */
-	public const RESYNC_REQUIRED_RESULT = 'resync_required';
+	public const RESYNC_REQUIRED_RESULT = SyncStateRepository::SYNC_RESULT_RESYNC_REQUIRED;
 
 	/** @var list<string> */
 	private const TENANT_TABLE_SUFFIXES = array(

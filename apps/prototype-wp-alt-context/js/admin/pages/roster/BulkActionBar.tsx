@@ -1,5 +1,6 @@
 import React from 'react';
-import { __, sprintf } from '@wordpress/i18n';
+import { __, _n, sprintf } from '@wordpress/i18n';
+
 import { Gavel, Trash, X } from 'lucide-react';
 
 import type { BulkMergeFailure, BulkMergeProgress } from './hooks/useClusterActions';
@@ -22,61 +23,49 @@ interface BulkActionBarProps {
 
 /**
  * Accessible name for a bulk cluster action.
- * sprintf + two explicit strings (not _n): lower risk for existing i18n test mocks
- * that only implement __ / sprintf; _n is established elsewhere in the app but not
- * required for this two-branch case.
+ * Uses sprintf(_n(...)) so translators with >2 plural forms can select correctly.
  */
 const mergeIdleLabel = (count: number): string =>
-  count === 1
-    ? sprintf(
-        // translators: %d: number of selected clusters (always 1 here)
-        __('Merge %d cluster', 'alt-context'),
-        count,
-      )
-    : sprintf(
-        // translators: %d: number of selected clusters
-        __('Merge %d clusters', 'alt-context'),
-        count,
-      );
+  sprintf(
+    // translators: %d: number of selected clusters
+    _n('Merge %d cluster', 'Merge %d clusters', count, 'alt-context'),
+    count,
+  );
 
 const dismissIdleLabel = (count: number): string =>
-  count === 1
-    ? sprintf(
-        // translators: %d: number of selected clusters (always 1 here)
-        __('Dismiss %d cluster', 'alt-context'),
-        count,
-      )
-    : sprintf(
-        // translators: %d: number of selected clusters
-        __('Dismiss %d clusters', 'alt-context'),
-        count,
-      );
+  sprintf(
+    // translators: %d: number of selected clusters
+    _n('Dismiss %d cluster', 'Dismiss %d clusters', count, 'alt-context'),
+    count,
+  );
 
 const mergingSimpleLabel = (count: number): string =>
-  count === 1
-    ? sprintf(
-        // translators: %d: number of selected clusters (always 1 here)
-        __('Merging %d cluster…', 'alt-context'),
-        count,
-      )
-    : sprintf(
-        // translators: %d: number of selected clusters
-        __('Merging %d clusters…', 'alt-context'),
-        count,
-      );
+  sprintf(
+    // translators: %d: number of selected clusters
+    _n('Merging %d cluster…', 'Merging %d clusters…', count, 'alt-context'),
+    count,
+  );
 
 const dismissingLabel = (count: number): string =>
-  count === 1
-    ? sprintf(
-        // translators: %d: number of selected clusters (always 1 here)
-        __('Dismissing %d cluster…', 'alt-context'),
-        count,
-      )
-    : sprintf(
-        // translators: %d: number of selected clusters
-        __('Dismissing %d clusters…', 'alt-context'),
-        count,
-      );
+  sprintf(
+    // translators: %d: number of selected clusters
+    _n('Dismissing %d cluster…', 'Dismissing %d clusters…', count, 'alt-context'),
+    count,
+  );
+
+/**
+ * Progress labels name the unit they count: sequential *source* merges
+ * (sourceIds.length from useClusterActions), not the selection size.
+ * So a 3-cluster merge reports "Merging source 1 of 2…" rather than
+ * contradicting the idle "Merge 3 clusters" label with "Merging 1 of 2…".
+ */
+const mergingProgressLabel = (current: number, total: number): string =>
+  sprintf(
+    // translators: %1$d: current source merge step (1-based); %2$d: total source merges
+    __('Merging source %1$d of %2$d…', 'alt-context'),
+    current,
+    total,
+  );
 
 export const BulkActionBar = ({
   count,
@@ -94,7 +83,7 @@ export const BulkActionBar = ({
 }: BulkActionBarProps): React.JSX.Element => {
   const mergeLabel =
     isMerging && mergeProgress
-      ? sprintf(__('Merging %1$d of %2$d…', 'alt-context'), mergeProgress.current, mergeProgress.total)
+      ? mergingProgressLabel(mergeProgress.current, mergeProgress.total)
       : isMerging
         ? mergingSimpleLabel(count)
         : mergeIdleLabel(count);
@@ -103,7 +92,7 @@ export const BulkActionBar = ({
 
   const progressAnnouncement =
     isMerging && mergeProgress
-      ? sprintf(__('Merging %1$d of %2$d…', 'alt-context'), mergeProgress.current, mergeProgress.total)
+      ? mergingProgressLabel(mergeProgress.current, mergeProgress.total)
       : '';
 
   const actionsDisabled = controlsDisabled || isMerging || isDismissing;

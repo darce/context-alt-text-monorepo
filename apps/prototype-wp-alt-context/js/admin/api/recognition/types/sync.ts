@@ -36,12 +36,6 @@ export interface SyncStatusResponse {
   last_curation_conflict_at?: string | null;
   last_curation_failed_at?: string | null;
   topology_commands?: TopologyCommandStatus;
-  /**
-   * Present only on non-success durable-write paths (R23-BR-23).
-   * Names the fields whose writes did not land. Omitted on the all-success
-   * envelope so happy-path consumers stay byte-compatible.
-   */
-  failed?: string[];
 }
 
 export interface SyncTriggerResponse extends SyncStatusResponse {

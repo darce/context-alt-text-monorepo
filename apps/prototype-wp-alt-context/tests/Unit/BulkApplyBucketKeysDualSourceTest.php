@@ -23,9 +23,22 @@ use AltContext\Tests\TestCase;
  *
  * Scrape uses PHP's own lexer (`token_get_all`) so braces and subscripts inside
  * string literals, heredocs and comments cannot hide writes or truncate the
- * method body (R23-BR-03 / R23-BR-04). Non-literal `$buckets[…]` writes
- * (variable subscripts, concatenated keys) remain fail-closed rather than
- * reporting green when the pin cannot see the subject [rg-016].
+ * method body (R23-BR-03 / R23-BR-04).
+ *
+ * Resolved write forms (R23-BR-13 / R23-BR-27):
+ *   - `$buckets['lit'] = …` / `$buckets['lit'][] = …`  (plain + []= append)
+ *   - `array_push( $buckets['lit'], … )`
+ *   - `$buckets += array( 'lit' => … )` / `$buckets += [ 'lit' => … ]`
+ *     (top-level keys; nested array *values* are allowed and skipped)
+ *   - `$buckets = array( 'lit' => … )` / `$buckets = [ 'lit' => … ]`
+ *     (literal reassignment; nested values allowed)
+ *
+ * Fail-closed (R23-BR-12) — never silent skip — for any key-introducing form
+ * whose keys cannot be resolved to string literals (variable / concat / spread /
+ * function-call / conditional / non-literal `+=` RHS / non-literal `array_push`
+ * target). Messages name file:line. Recognised safe init
+ * `$buckets = array_fill_keys( AltTextWriteStatus::BULK_APPLY_BUCKETS, … )`
+ * contributes no loop-written keys and is not a failure.
  *
  * Routing the loop through the const members is a production fix owned by the
  * controller lane; this test only closes the detection gap.
@@ -34,6 +47,8 @@ use AltContext\Tests\TestCase;
  */
 class BulkApplyBucketKeysDualSourceTest extends TestCase
 {
+    private const CONTROLLER_REL = 'src/api/class-describe-controller.php';
+
     /**
      * Apply-loop `$buckets['…']` write keys must equal BULK_APPLY_BUCKETS in
      * both directions. A rename of a const member without updating the literal,
@@ -42,7 +57,250 @@ class BulkApplyBucketKeysDualSourceTest extends TestCase
      */
     public function testApplyLoopBucketKeysMatchBulkApplyBucketsBothDirections(): void
     {
-        $controllerPath = realpath(__DIR__ . '/../../src/api/class-describe-controller.php');
+        $scrape = $this->scrapeControllerApplyLoopBucketKeys();
+
+        self::assertGreaterThan(
+            1,
+            $scrape['resolved_call_sites'],
+            'walker must resolve more than one apply-loop bucket write site; '
+                . '0 or 1 means the scrape is not seeing the corpus'
+        );
+        self::assertSame(
+            0,
+            $scrape['failed_closed_call_sites'],
+            'unmutated controller must not hit fail-closed paths'
+        );
+        self::assertNotEmpty($scrape['keys'], 'Derived apply-loop bucket keys must be non-empty');
+
+        // Both directions: loop keys ⊆ const AND const ⊆ loop keys.
+        // (assertEqualsCanonicalizing is set-equality on the unique lists.)
+        self::assertEqualsCanonicalizing(
+            AltTextWriteStatus::BULK_APPLY_BUCKETS,
+            $scrape['keys'],
+            'Apply-loop $buckets[\'…\'] write keys must equal BULK_APPLY_BUCKETS both ways — '
+                . 'a rename without updating the loop, or a const member the loop never '
+                . 'writes, orphans media ids from the wire envelope'
+        );
+    }
+
+    /**
+     * False-failure / scrape-health pin: unmutated tree stays GREEN and the
+     * walker resolves multiple real call sites (a count of 0–1 is meaningless).
+     */
+    public function testBucketKeyScrapeResolvesMultipleCallSitesWithoutFalseFailure(): void
+    {
+        $scrape = $this->scrapeControllerApplyLoopBucketKeys();
+
+        self::assertGreaterThan(
+            1,
+            $scrape['resolved_call_sites'],
+            'resolved call-site count must be > 1 on the unmutated controller'
+        );
+        self::assertSame(
+            0,
+            $scrape['failed_closed_call_sites'],
+            'fail-closed count must be 0 on the unmutated controller'
+        );
+        self::assertEqualsCanonicalizing(
+            AltTextWriteStatus::BULK_APPLY_BUCKETS,
+            $scrape['keys'],
+            'success path: unmutated apply-loop keys still match BULK_APPLY_BUCKETS'
+        );
+        // No-op re-check: same scrape still reports success.
+        self::assertEqualsCanonicalizing(
+            AltTextWriteStatus::BULK_APPLY_BUCKETS,
+            $scrape['keys'],
+            'no-op path: re-checking the same key set still reports success'
+        );
+    }
+
+    /**
+     * Plain `$buckets['lit'] = …` form (no empty-append) still surfaces a
+     * fabricated key [TEST-15]. Distinct from the `$buckets['lit'][] =` pin.
+     */
+    public function testPlainLiteralWriteFormSurfacesFabricatedKey(): void
+    {
+        $php = <<<'PHP'
+<?php
+function apply_describe_run_drafts() {
+    $buckets['applied'] = array( $media_id );
+    $buckets['fabricated_plain_literal_xyz'] = array( $media_id );
+}
+PHP;
+        $keys = $this->extractKeysFromSnippet($php, 'plain-literal-fixture.php');
+        self::assertContains('fabricated_plain_literal_xyz', $keys);
+        self::assertContains('applied', $keys);
+    }
+
+    /**
+     * `array_push( $buckets['lit'], … )` is a resolved write form [TEST-15].
+     */
+    public function testArrayPushWriteFormSurfacesFabricatedKey(): void
+    {
+        $php = <<<'PHP'
+<?php
+function apply_describe_run_drafts() {
+    array_push( $buckets['applied'], $media_id );
+    array_push( $buckets['fabricated_array_push_xyz'], $media_id );
+}
+PHP;
+        $keys = $this->extractKeysFromSnippet($php, 'array-push-fixture.php');
+        self::assertContains('fabricated_array_push_xyz', $keys);
+        self::assertContains('applied', $keys);
+    }
+
+    /**
+     * `$buckets['lit'][] =` empty-append form is a resolved write form [TEST-15].
+     */
+    public function testAppendWriteFormSurfacesFabricatedKey(): void
+    {
+        $php = <<<'PHP'
+<?php
+function apply_describe_run_drafts() {
+    $buckets['applied'][] = $media_id;
+    $buckets['fabricated_append_form_xyz'][] = $media_id;
+}
+PHP;
+        $keys = $this->extractKeysFromSnippet($php, 'append-form-fixture.php');
+        self::assertContains('fabricated_append_form_xyz', $keys);
+    }
+
+    /**
+     * `$buckets += array( 'lit' => … )` is a resolved write form [TEST-15].
+     */
+    public function testPlusEqualWriteFormSurfacesFabricatedKey(): void
+    {
+        $php = <<<'PHP'
+<?php
+function apply_describe_run_drafts() {
+    $buckets += array(
+        'applied' => array( $media_id ),
+        'fabricated_plus_equal_xyz' => array( $media_id ),
+    );
+}
+PHP;
+        $keys = $this->extractKeysFromSnippet($php, 'plus-equal-fixture.php');
+        self::assertContains('fabricated_plus_equal_xyz', $keys);
+        self::assertContains('applied', $keys);
+    }
+
+    /**
+     * Nested array *values* under a literal key still resolve the top-level key
+     * [TEST-15] (R23-BR-13 nested form).
+     */
+    public function testNestedLiteralValueFormSurfacesFabricatedKey(): void
+    {
+        $php = <<<'PHP'
+<?php
+function apply_describe_run_drafts() {
+    $buckets += array(
+        'fabricated_nested_form_xyz' => array(
+            'inner' => array( $media_id ),
+        ),
+    );
+}
+PHP;
+        $keys = $this->extractKeysFromSnippet($php, 'nested-literal-fixture.php');
+        self::assertContains('fabricated_nested_form_xyz', $keys);
+    }
+
+    /**
+     * Fail-closed pin: non-literal key-introducing forms name file:line [TEST-15].
+     *
+     * @throws \PHPUnit\Framework\AssertionFailedError When fail-closed does not fire.
+     */
+    public function testNonLiteralBucketWriteFailsClosedWithFileAndLine(): void
+    {
+        $php = <<<'PHP'
+<?php
+function apply_describe_run_drafts() {
+    $buckets[$dynamic][] = $media_id;
+}
+PHP;
+        try {
+            $this->extractKeysFromSnippet($php, 'non-literal-fixture.php');
+            self::fail('expected fail-closed on non-literal $buckets[$dynamic] write');
+        } catch (\PHPUnit\Framework\AssertionFailedError $e) {
+            if (str_contains($e->getMessage(), 'expected fail-closed')) {
+                throw $e;
+            }
+            self::assertStringContainsString(
+                'non-literal-fixture.php',
+                $e->getMessage(),
+                'fail-closed message must name the source file'
+            );
+            self::assertMatchesRegularExpression(
+                '/non-literal-fixture\.php:\d+/',
+                $e->getMessage(),
+                'fail-closed message must include file:line'
+            );
+        }
+    }
+
+    /**
+     * Fail-closed: unresolvable `array_push` target is not skipped [TEST-15].
+     *
+     * @throws \PHPUnit\Framework\AssertionFailedError When fail-closed does not fire.
+     */
+    public function testArrayPushNonLiteralTargetFailsClosed(): void
+    {
+        $php = <<<'PHP'
+<?php
+function apply_describe_run_drafts() {
+    array_push( $buckets[$dynamic], $media_id );
+}
+PHP;
+        try {
+            $this->extractKeysFromSnippet($php, 'array-push-nonlit-fixture.php');
+            self::fail('expected fail-closed on array_push with non-literal target');
+        } catch (\PHPUnit\Framework\AssertionFailedError $e) {
+            if (str_contains($e->getMessage(), 'expected fail-closed')) {
+                throw $e;
+            }
+            self::assertMatchesRegularExpression(
+                '/array-push-nonlit-fixture\.php:\d+/',
+                $e->getMessage()
+            );
+        }
+    }
+
+    /**
+     * Fail-closed: unresolvable `+=` RHS is not skipped [TEST-15].
+     *
+     * @throws \PHPUnit\Framework\AssertionFailedError When fail-closed does not fire.
+     */
+    public function testPlusEqualNonLiteralRhsFailsClosed(): void
+    {
+        $php = <<<'PHP'
+<?php
+function apply_describe_run_drafts() {
+    $buckets += $dynamic_row;
+}
+PHP;
+        try {
+            $this->extractKeysFromSnippet($php, 'plus-equal-nonlit-fixture.php');
+            self::fail('expected fail-closed on $buckets += $dynamic_row');
+        } catch (\PHPUnit\Framework\AssertionFailedError $e) {
+            if (str_contains($e->getMessage(), 'expected fail-closed')) {
+                throw $e;
+            }
+            self::assertMatchesRegularExpression(
+                '/plus-equal-nonlit-fixture\.php:\d+/',
+                $e->getMessage()
+            );
+        }
+    }
+
+    /**
+     * @return array{
+     *     keys: list<string>,
+     *     resolved_call_sites: int,
+     *     failed_closed_call_sites: int
+     * }
+     */
+    private function scrapeControllerApplyLoopBucketKeys(): array
+    {
+        $controllerPath = realpath(__DIR__ . '/../../' . self::CONTROLLER_REL);
         self::assertIsString($controllerPath, 'class-describe-controller.php must exist');
 
         $source = (string) file_get_contents($controllerPath);
@@ -55,25 +313,32 @@ class BulkApplyBucketKeysDualSourceTest extends TestCase
             );
         }
 
-        $loopKeys = $this->extractBucketWriteKeys($bodyTokens);
-        if (array() === $loopKeys) {
+        $scrape = $this->extractBucketWriteKeys($bodyTokens, self::CONTROLLER_REL);
+        if (array() === $scrape['keys']) {
             self::fail(
                 'Expected at least one $buckets[…] write in apply_describe_run_drafts()'
             );
         }
 
-        $loopKeys = array_values(array_unique($loopKeys));
-        self::assertNotEmpty($loopKeys, 'Derived apply-loop bucket keys must be non-empty');
+        $scrape['keys'] = array_values(array_unique($scrape['keys']));
 
-        // Both directions: loop keys ⊆ const AND const ⊆ loop keys.
-        // (assertEqualsCanonicalizing is set-equality on the unique lists.)
-        self::assertEqualsCanonicalizing(
-            AltTextWriteStatus::BULK_APPLY_BUCKETS,
-            $loopKeys,
-            'Apply-loop $buckets[\'…\'] write keys must equal BULK_APPLY_BUCKETS both ways — '
-                . 'a rename without updating the loop, or a const member the loop never '
-                . 'writes, orphans media ids from the wire envelope'
-        );
+        return $scrape;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function extractKeysFromSnippet(string $php, string $sourceLabel): array
+    {
+        $tokens = token_get_all($php);
+        $bodyTokens = $this->extractMethodBodyTokens($tokens, 'apply_describe_run_drafts');
+        if (null === $bodyTokens) {
+            self::fail("Could not locate apply_describe_run_drafts() body in {$sourceLabel}");
+        }
+
+        $scrape = $this->extractBucketWriteKeys($bodyTokens, $sourceLabel);
+
+        return array_values(array_unique($scrape['keys']));
     }
 
     /**
@@ -148,27 +413,99 @@ class BulkApplyBucketKeysDualSourceTest extends TestCase
     }
 
     /**
-     * Collect string-literal keys of every `$buckets[…]` *write* in the body.
-     * Reads (`$body[$k] = $buckets[$k]`) are ignored. Non-literal subscripts
-     * fail closed — the pin must not report green when it cannot verify [rg-016].
+     * Collect string-literal keys of every key-introducing `$buckets` write in
+     * the body. Reads (`$body[$k] = $buckets[$k]`) are ignored. Unresolvable
+     * key-introducing forms fail closed with file:line [rg-016] [R23-BR-12].
      *
      * @param list<string|array{0:int,1:string,2:int}> $bodyTokens
-     * @return list<string>
+     * @return array{
+     *     keys: list<string>,
+     *     resolved_call_sites: int,
+     *     failed_closed_call_sites: int
+     * }
      */
-    private function extractBucketWriteKeys(array $bodyTokens): array
+    private function extractBucketWriteKeys(array $bodyTokens, string $sourceLabel): array
     {
         $keys  = array();
         $count = count($bodyTokens);
+        $resolved = 0;
+        // failed_closed is always 0 on success — self::fail aborts first.
+        $failedClosed = 0;
 
         for ($i = 0; $i < $count; $i++) {
             $token = $bodyTokens[ $i ];
+
+            // --- array_push( $buckets[…], … ) ---------------------------------
+            if (is_array($token) && T_STRING === $token[0] && 'array_push' === $token[1]) {
+                $line = $token[2];
+                $result = $this->tryExtractArrayPushBucketKey($bodyTokens, $i, $sourceLabel, $line);
+                if (null === $result) {
+                    continue;
+                }
+                $keys[] = $result['key'];
+                ++$resolved;
+                continue;
+            }
+
             if (! is_array($token) || T_VARIABLE !== $token[0] || '$buckets' !== $token[1]) {
                 continue;
             }
 
-            // Must be followed by `[` (subscript access).
+            $line = $token[2];
             $j = $this->skipInsignificant($bodyTokens, $i + 1);
-            if ($j >= $count || '[' !== $bodyTokens[ $j ]) {
+            if ($j >= $count) {
+                continue;
+            }
+
+            // --- $buckets += array(…)|[…] ------------------------------------
+            if (is_array($bodyTokens[ $j ]) && T_PLUS_EQUAL === $bodyTokens[ $j ][0]) {
+                $rhsKeys = $this->extractKeysFromArrayAssignmentRhs(
+                    $bodyTokens,
+                    $j + 1,
+                    $sourceLabel,
+                    $line,
+                    '+='
+                );
+                foreach ($rhsKeys as $k) {
+                    $keys[] = $k;
+                }
+                ++$resolved;
+                continue;
+            }
+
+            // --- $buckets = … (full assignment) ------------------------------
+            if ('=' === $bodyTokens[ $j ]) {
+                $next = $this->skipInsignificant($bodyTokens, $j + 1);
+                if ($next < $count && $this->isArrayFillKeysOfBulkApplyBuckets($bodyTokens, $next)) {
+                    // Safe init from the dual-source const — not a loop write.
+                    continue;
+                }
+                if ($next < $count && $this->isLiteralArrayOpen($bodyTokens, $next)) {
+                    $rhsKeys = $this->extractKeysFromArrayAssignmentRhs(
+                        $bodyTokens,
+                        $j + 1,
+                        $sourceLabel,
+                        $line,
+                        '='
+                    );
+                    foreach ($rhsKeys as $k) {
+                        $keys[] = $k;
+                    }
+                    ++$resolved;
+                    continue;
+                }
+                // Unresolvable full assignment of $buckets (variable, call, …).
+                self::fail(
+                    $this->unresolvableMessage(
+                        $sourceLabel,
+                        $line,
+                        'full $buckets assignment is not a literal array(…)/[…] or array_fill_keys(BULK_APPLY_BUCKETS)'
+                    )
+                );
+            }
+
+            // Must be followed by `[` (subscript access) for the plain / []= forms.
+            if ('[' !== $bodyTokens[ $j ]) {
                 continue;
             }
 
@@ -177,35 +514,44 @@ class BulkApplyBucketKeysDualSourceTest extends TestCase
             $subEnd   = $this->findMatchingBracket($bodyTokens, $j);
             if (null === $subEnd) {
                 self::fail(
-                    'Dual-source check cannot verify $buckets[…] write with unclosed subscript — '
-                        . 'bucket routing must use a single string-literal key so the '
-                        . 'pin can assert set equality with BULK_APPLY_BUCKETS'
+                    $this->unresolvableMessage(
+                        $sourceLabel,
+                        $line,
+                        'unclosed $buckets[…] subscript'
+                    )
                 );
             }
 
             // After the first `]`, allow optional empty `[]` then require `=` for a write.
             $after = $this->skipInsignificant($bodyTokens, $subEnd + 1);
+            $isAppendForm = false;
             if ($after < $count && '[' === $bodyTokens[ $after ]) {
                 $innerClose = $this->skipInsignificant($bodyTokens, $after + 1);
                 if ($innerClose < $count && ']' === $bodyTokens[ $innerClose ]) {
                     // Empty append form: `$buckets['k'][] = …`
+                    $isAppendForm = true;
                     $after = $this->skipInsignificant($bodyTokens, $innerClose + 1);
                 }
             }
 
             // Not a write (e.g. `$body[$k] = $buckets[$k]` read) — skip.
+            // Only `=` after the subscript chain counts as a key-introducing write.
             if ($after >= $count || '=' !== $bodyTokens[ $after ]) {
                 continue;
             }
 
             // Fail closed: subscript must be exactly one T_CONSTANT_ENCAPSED_STRING.
-            $significant = array();
-            for ($s = $subStart; $s < $subEnd; $s++) {
-                $st = $bodyTokens[ $s ];
-                if (is_array($st) && (T_WHITESPACE === $st[0] || T_COMMENT === $st[0] || T_DOC_COMMENT === $st[0])) {
-                    continue;
-                }
-                $significant[] = $st;
+            // Empty `$buckets[] = …` (no key) is unresolvable [R23-BR-12].
+            $significant = $this->significantTokens(array_slice($bodyTokens, $subStart, $subEnd - $subStart));
+
+            if (array() === $significant) {
+                self::fail(
+                    $this->unresolvableMessage(
+                        $sourceLabel,
+                        $line,
+                        'unkeyed $buckets[] = write cannot name a bucket key'
+                    )
+                );
             }
 
             if (
@@ -215,19 +561,485 @@ class BulkApplyBucketKeysDualSourceTest extends TestCase
             ) {
                 $raw = $this->tokensToText(array_slice($bodyTokens, $subStart, $subEnd - $subStart));
                 self::fail(
-                    sprintf(
-                        'Dual-source check cannot verify non-literal $buckets[%s] write — '
-                            . 'bucket routing must use a single string-literal key so the '
-                            . 'pin can assert set equality with BULK_APPLY_BUCKETS',
-                        trim($raw)
+                    $this->unresolvableMessage(
+                        $sourceLabel,
+                        $line,
+                        sprintf(
+                            'non-literal $buckets[%s]%s write',
+                            trim($raw),
+                            $isAppendForm ? '[]' : ''
+                        )
                     )
                 );
             }
 
             $keys[] = $this->decodeStringLiteral($significant[0][1]);
+            ++$resolved;
+            // Silence unused in static analysers if append flag only used in message.
+            unset($isAppendForm);
+        }
+
+        return array(
+            'keys' => $keys,
+            'resolved_call_sites' => $resolved,
+            'failed_closed_call_sites' => $failedClosed,
+        );
+    }
+
+    /**
+     * When $i points at `array_push`, resolve `array_push( $buckets['lit'], … )`.
+     * Returns null when the call is not a $buckets write (unrelated array_push).
+     *
+     * @param list<string|array{0:int,1:string,2:int}> $tokens
+     * @return array{key: string}|null
+     */
+    private function tryExtractArrayPushBucketKey(
+        array $tokens,
+        int $i,
+        string $sourceLabel,
+        int $line
+    ): ?array {
+        $count = count($tokens);
+        $j = $this->skipInsignificant($tokens, $i + 1);
+        if ($j >= $count || '(' !== $tokens[ $j ]) {
+            return null;
+        }
+
+        $args = $this->splitCallArguments($tokens, $j);
+        if (null === $args || array() === $args) {
+            self::fail(
+                $this->unresolvableMessage(
+                    $sourceLabel,
+                    $line,
+                    'array_push(…) argument list is unclosed or empty'
+                )
+            );
+        }
+
+        $first = $args[0];
+        $k = $this->skipInsignificant($first, 0);
+        if ($k >= count($first)
+            || ! is_array($first[ $k ])
+            || T_VARIABLE !== $first[ $k ][0]
+            || '$buckets' !== $first[ $k ][1]
+        ) {
+            // array_push on some other array — not a bucket write.
+            return null;
+        }
+
+        $k = $this->skipInsignificant($first, $k + 1);
+        if ($k >= count($first) || '[' !== $first[ $k ]) {
+            self::fail(
+                $this->unresolvableMessage(
+                    $sourceLabel,
+                    $line,
+                    'array_push( $buckets, … ) without a string-literal subscript cannot name a bucket key'
+                )
+            );
+        }
+
+        $subStart = $k + 1;
+        $subEnd = $this->findMatchingBracket($first, $k);
+        if (null === $subEnd) {
+            self::fail(
+                $this->unresolvableMessage(
+                    $sourceLabel,
+                    $line,
+                    'array_push( $buckets[…] ) has an unclosed subscript'
+                )
+            );
+        }
+
+        $significant = $this->significantTokens(array_slice($first, $subStart, $subEnd - $subStart));
+        if (
+            1 !== count($significant)
+            || ! is_array($significant[0])
+            || T_CONSTANT_ENCAPSED_STRING !== $significant[0][0]
+        ) {
+            $raw = $this->tokensToText(array_slice($first, $subStart, $subEnd - $subStart));
+            self::fail(
+                $this->unresolvableMessage(
+                    $sourceLabel,
+                    $line,
+                    sprintf('array_push( $buckets[%s], … ) target key is not a string literal', trim($raw))
+                )
+            );
+        }
+
+        return array('key' => $this->decodeStringLiteral($significant[0][1]));
+    }
+
+    /**
+     * Extract top-level string-literal keys from the array RHS of `$buckets =` /
+     * `$buckets +=`. Nested array *values* are skipped; non-literal keys fail closed.
+     *
+     * @param list<string|array{0:int,1:string,2:int}> $tokens
+     * @return list<string>
+     */
+    private function extractKeysFromArrayAssignmentRhs(
+        array $tokens,
+        int $from,
+        string $sourceLabel,
+        int $line,
+        string $op
+    ): array {
+        $count = count($tokens);
+        $i = $this->skipInsignificant($tokens, $from);
+        if ($i >= $count) {
+            self::fail(
+                $this->unresolvableMessage(
+                    $sourceLabel,
+                    $line,
+                    "\$buckets {$op} RHS is empty"
+                )
+            );
+        }
+
+        $open = $tokens[ $i ];
+        $close = null;
+        if (is_array($open) && T_ARRAY === $open[0]) {
+            $i = $this->skipInsignificant($tokens, $i + 1);
+            if ($i >= $count || '(' !== $tokens[ $i ]) {
+                self::fail(
+                    $this->unresolvableMessage(
+                        $sourceLabel,
+                        $line,
+                        "\$buckets {$op} array keyword without ("
+                    )
+                );
+            }
+            $close = ')';
+        } elseif ('[' === $open) {
+            $close = ']';
+        } else {
+            self::fail(
+                $this->unresolvableMessage(
+                    $sourceLabel,
+                    $line,
+                    "\$buckets {$op} RHS is not a literal array(…)/[…]"
+                )
+            );
+        }
+
+        $bodyStart = $i + 1;
+        $depthParen = 0;
+        $depthBracket = 0;
+        $depthBrace = 0;
+        if (')' === $close) {
+            $depthParen = 1;
+        } else {
+            $depthBracket = 1;
+        }
+
+        $bodyEnd = null;
+        for ($p = $bodyStart; $p < $count; $p++) {
+            $t = $tokens[ $p ];
+            if ('(' === $t) {
+                ++$depthParen;
+            } elseif (')' === $t) {
+                --$depthParen;
+                if (')' === $close && 0 === $depthParen && 0 === $depthBracket && 0 === $depthBrace) {
+                    $bodyEnd = $p;
+                    break;
+                }
+            } elseif ('[' === $t) {
+                ++$depthBracket;
+            } elseif (']' === $t) {
+                --$depthBracket;
+                if (']' === $close && 0 === $depthBracket && 0 === $depthParen && 0 === $depthBrace) {
+                    $bodyEnd = $p;
+                    break;
+                }
+            } elseif ('{' === $t || (is_array($t) && (T_CURLY_OPEN === $t[0] || T_DOLLAR_OPEN_CURLY_BRACES === $t[0]))) {
+                ++$depthBrace;
+            } elseif ('}' === $t) {
+                --$depthBrace;
+            }
+        }
+
+        if (null === $bodyEnd) {
+            self::fail(
+                $this->unresolvableMessage(
+                    $sourceLabel,
+                    $line,
+                    "\$buckets {$op} array RHS is unclosed"
+                )
+            );
+        }
+
+        $keys = array();
+        $k = $bodyStart;
+        while ($k < $bodyEnd) {
+            $k = $this->skipInsignificant($tokens, $k);
+            if ($k >= $bodyEnd) {
+                break;
+            }
+            if (',' === $tokens[ $k ]) {
+                ++$k;
+                continue;
+            }
+
+            // Spread — not a resolvable literal key set.
+            if (is_array($tokens[ $k ]) && T_ELLIPSIS === $tokens[ $k ][0]) {
+                self::fail(
+                    $this->unresolvableMessage(
+                        $sourceLabel,
+                        $line,
+                        "\$buckets {$op} array uses ...spread"
+                    )
+                );
+            }
+
+            // Key must be a single string literal followed by =>.
+            if (
+                ! is_array($tokens[ $k ])
+                || T_CONSTANT_ENCAPSED_STRING !== $tokens[ $k ][0]
+            ) {
+                self::fail(
+                    $this->unresolvableMessage(
+                        $sourceLabel,
+                        $line,
+                        "\$buckets {$op} array entry key is not a string literal"
+                    )
+                );
+            }
+
+            $keyToken = $tokens[ $k ][1];
+            $k = $this->skipInsignificant($tokens, $k + 1);
+            if ($k >= $bodyEnd || ! is_array($tokens[ $k ]) || T_DOUBLE_ARROW !== $tokens[ $k ][0]) {
+                self::fail(
+                    $this->unresolvableMessage(
+                        $sourceLabel,
+                        $line,
+                        "\$buckets {$op} array entry is missing => after key (list-append values are not bucket keys)"
+                    )
+                );
+            }
+
+            $keys[] = $this->decodeStringLiteral($keyToken);
+
+            // Skip the value (balanced) — nested array literals are fine here.
+            $k = $this->skipInsignificant($tokens, $k + 1);
+            $k = $this->skipArrayValue($tokens, $k, $bodyEnd);
         }
 
         return $keys;
+    }
+
+    /**
+     * True when $from points at `array_fill_keys( AltTextWriteStatus::BULK_APPLY_BUCKETS , … )`.
+     *
+     * @param list<string|array{0:int,1:string,2:int}> $tokens
+     */
+    private function isArrayFillKeysOfBulkApplyBuckets(array $tokens, int $from): bool
+    {
+        $count = count($tokens);
+        $t = $tokens[ $from ];
+        if (! is_array($t) || T_STRING !== $t[0] || 'array_fill_keys' !== $t[1]) {
+            return false;
+        }
+
+        $j = $this->skipInsignificant($tokens, $from + 1);
+        if ($j >= $count || '(' !== $tokens[ $j ]) {
+            return false;
+        }
+
+        $args = $this->splitCallArguments($tokens, $j);
+        if (null === $args || array() === $args) {
+            return false;
+        }
+
+        // First arg must be AltTextWriteStatus::BULK_APPLY_BUCKETS (optionally leading \).
+        $arg = $args[0];
+        $k = $this->skipInsignificant($arg, 0);
+        if ($k < count($arg) && is_array($arg[ $k ]) && T_NS_SEPARATOR === $arg[ $k ][0]) {
+            $k = $this->skipInsignificant($arg, $k + 1);
+        }
+        if ($k >= count($arg) || ! is_array($arg[ $k ]) || T_STRING !== $arg[ $k ][0]
+            || 'AltTextWriteStatus' !== $arg[ $k ][1]
+        ) {
+            return false;
+        }
+        $k = $this->skipInsignificant($arg, $k + 1);
+        if ($k >= count($arg) || ! is_array($arg[ $k ]) || T_DOUBLE_COLON !== $arg[ $k ][0]) {
+            return false;
+        }
+        $k = $this->skipInsignificant($arg, $k + 1);
+        if ($k >= count($arg) || ! is_array($arg[ $k ]) || T_STRING !== $arg[ $k ][0]
+            || 'BULK_APPLY_BUCKETS' !== $arg[ $k ][1]
+        ) {
+            return false;
+        }
+        // Nothing else significant in the first arg.
+        $k = $this->skipInsignificant($arg, $k + 1);
+
+        return $k >= count($arg);
+    }
+
+    /**
+     * @param list<string|array{0:int,1:string,2:int}> $tokens
+     */
+    private function isLiteralArrayOpen(array $tokens, int $from): bool
+    {
+        $t = $tokens[ $from ];
+        if ('[' === $t) {
+            return true;
+        }
+
+        return is_array($t) && T_ARRAY === $t[0];
+    }
+
+    /**
+     * Split a call's argument token slices. $openIndex points at '('.
+     *
+     * @param list<string|array{0:int,1:string,2:int}> $tokens
+     * @return list<list<string|array{0:int,1:string,2:int}>>|null
+     */
+    private function splitCallArguments(array $tokens, int $openIndex): ?array
+    {
+        $count = count($tokens);
+        $depthParen = 0;
+        $depthBracket = 0;
+        $depthBrace = 0;
+        $args = array();
+        $current = array();
+        $started = false;
+
+        for ($i = $openIndex; $i < $count; $i++) {
+            $t = $tokens[ $i ];
+
+            if ('(' === $t) {
+                ++$depthParen;
+                if (1 === $depthParen) {
+                    $started = true;
+                    continue;
+                }
+                $current[] = $t;
+                continue;
+            }
+
+            if (')' === $t) {
+                --$depthParen;
+                if (0 === $depthParen) {
+                    if ($current !== array() || $args !== array()) {
+                        $args[] = $current;
+                    }
+
+                    return $args;
+                }
+                $current[] = $t;
+                continue;
+            }
+
+            if (! $started) {
+                continue;
+            }
+
+            if ('[' === $t) {
+                ++$depthBracket;
+                $current[] = $t;
+                continue;
+            }
+            if (']' === $t) {
+                --$depthBracket;
+                $current[] = $t;
+                continue;
+            }
+            if ('{' === $t || (is_array($t) && (T_CURLY_OPEN === $t[0] || T_DOLLAR_OPEN_CURLY_BRACES === $t[0]))) {
+                ++$depthBrace;
+                $current[] = $t;
+                continue;
+            }
+            if ('}' === $t) {
+                --$depthBrace;
+                $current[] = $t;
+                continue;
+            }
+
+            if (',' === $t && 1 === $depthParen && 0 === $depthBracket && 0 === $depthBrace) {
+                $args[] = $current;
+                $current = array();
+                continue;
+            }
+
+            $current[] = $t;
+        }
+
+        return null;
+    }
+
+    /**
+     * Advance past one array value, stopping at the next top-level comma or body end.
+     *
+     * @param list<string|array{0:int,1:string,2:int}> $tokens
+     */
+    private function skipArrayValue(array $tokens, int $from, int $bodyEnd): int
+    {
+        $depthParen = 0;
+        $depthBracket = 0;
+        $depthBrace = 0;
+
+        for ($i = $from; $i < $bodyEnd; $i++) {
+            $t = $tokens[ $i ];
+            if ('(' === $t) {
+                ++$depthParen;
+                continue;
+            }
+            if (')' === $t) {
+                --$depthParen;
+                continue;
+            }
+            if ('[' === $t) {
+                ++$depthBracket;
+                continue;
+            }
+            if (']' === $t) {
+                --$depthBracket;
+                continue;
+            }
+            if ('{' === $t || (is_array($t) && (T_CURLY_OPEN === $t[0] || T_DOLLAR_OPEN_CURLY_BRACES === $t[0]))) {
+                ++$depthBrace;
+                continue;
+            }
+            if ('}' === $t) {
+                --$depthBrace;
+                continue;
+            }
+            if (',' === $t && 0 === $depthParen && 0 === $depthBracket && 0 === $depthBrace) {
+                return $i;
+            }
+        }
+
+        return $bodyEnd;
+    }
+
+    /**
+     * @param list<string|array{0:int,1:string,2:int}> $tokens
+     * @return list<string|array{0:int,1:string,2:int}>
+     */
+    private function significantTokens(array $tokens): array
+    {
+        $out = array();
+        foreach ($tokens as $st) {
+            if (is_array($st) && (T_WHITESPACE === $st[0] || T_COMMENT === $st[0] || T_DOC_COMMENT === $st[0])) {
+                continue;
+            }
+            $out[] = $st;
+        }
+
+        return $out;
+    }
+
+    private function unresolvableMessage(string $sourceLabel, int $line, string $reason): string
+    {
+        return sprintf(
+            'Dual-source check cannot resolve bucket key write at %s:%d (%s) — '
+                . 'bucket routing must use a resolvable string-literal key so the '
+                . 'pin can assert set equality with BULK_APPLY_BUCKETS',
+            $sourceLabel,
+            $line,
+            $reason
+        );
     }
 
     /**

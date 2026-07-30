@@ -313,7 +313,9 @@ class DescriptionHistoryService {
 	 * Live recovery marker for a stored alt: verified shape and draft_hash
 	 * equals sha256( stored alt ). skip_existing must not wipe these — the gap
 	 * remains real and is the only durable recovery evidence [R21-BR-01]
-	 * [R22-BR-01].
+	 * [R22-BR-01]. run_id is not compared — liveness is content-scoped.
+	 * For "is *this run's* marker dead evidence?" use
+	 * {@see self::is_stale_own_run_marker_for_alt()} [R23-BR-19].
 	 *
 	 * @param mixed $pending Raw post meta value.
 	 */
@@ -330,6 +332,67 @@ class DescriptionHistoryService {
 	}
 
 	/**
+	 * Whether `$pending` is dead recovery evidence *for a specific run*.
+	 *
+	 * Staleness is not a free-floating property of whatever the marker last
+	 * held [R23-BR-19]: both legs are required —
+	 *   1. Identity: marker.run_id === $run_id (this run owns the slot)
+	 *   2. Content:  draft_hash is not live for $stored_alt
+	 *              ({@see self::is_live_recovery_marker_for_alt()})
+	 *
+	 * A foreign marker's draft_hash must never decide whether *this* run's
+	 * marker is stale (two runs would be indistinguishable by content alone).
+	 * Returns false when the marker is foreign, unverified, or still live for
+	 * the stored alt — callers must not delete on a false result alone when
+	 * they also need the prov_is_this_run cleanup path.
+	 *
+	 * @param mixed  $pending    Raw post meta value.
+	 * @param string $stored_alt Currently stored alt (string branch).
+	 * @param string $run_id     Applying / judged run id.
+	 */
+	public static function is_stale_own_run_marker_for_alt( mixed $pending, string $stored_alt, string $run_id ): bool {
+		if ( ! self::is_verified_pending_marker( $pending ) ) {
+			return false;
+		}
+		// Identity leg: only this run's marker is eligible for own-run cleanup.
+		/** @var array{run_id: string, draft_hash: string} $pending */
+		if ( (string) $pending['run_id'] !== $run_id ) {
+			return false;
+		}
+		// Content leg: draft_hash no longer matches the stored alt.
+		return ! self::is_live_recovery_marker_for_alt( $pending, $stored_alt );
+	}
+
+	/**
+	 * Canonical attribution for non-clobber recovery [R23-BR-24] [R23-BR-08].
+	 *
+	 * When recovery completes a write started by a different run, return that
+	 * marker's owning run id so callers can stamp `recovered_from_run_id`
+	 * alongside the applying run. Returns null when:
+	 *   - pending is not a verified marker,
+	 *   - owner is empty after trim, or
+	 *   - owner === $applying_run_id (same-run recovery — no self-reference).
+	 *
+	 * One definition for every call site (bulk apply stamp, history readers
+	 * that need the originating run). Takeover (foreign owner + applying run)
+	 * must not silently re-attribute the write to the applying run alone.
+	 *
+	 * @param mixed  $pending          Raw `_acx_description_provenance_pending`.
+	 * @param string $applying_run_id  Run performing the recovery write.
+	 */
+	public static function resolve_recovered_from_run_id( mixed $pending, string $applying_run_id ): ?string {
+		if ( ! self::is_verified_pending_marker( $pending ) ) {
+			return null;
+		}
+		/** @var array{run_id: string, draft_hash: string} $pending */
+		$owner = trim( (string) $pending['run_id'] );
+		if ( '' === $owner || $owner === $applying_run_id ) {
+			return null;
+		}
+		return $owner;
+	}
+
+	/**
 	 * Usable recovery evidence for a draft about to be (or just) written:
 	 * verified shape and draft_hash matches sha256( $expected_stored_alt ),
 	 * where $expected_stored_alt is the post-transform form WP will / did
@@ -339,6 +402,8 @@ class DescriptionHistoryService {
 	 * / cross-surface marker for the same stored draft rather than demanding
 	 * strict identity with the marker this path tried to plant
 	 * [R21-BR-08] [R21-BR-17 key-order] [R22-BR-02].
+	 * Attribution of *which* run started the write is a separate question —
+	 * {@see self::resolve_recovered_from_run_id()} [R23-BR-24].
 	 *
 	 * @param mixed  $pending              Raw post meta value.
 	 * @param string $expected_stored_alt  Post-transform alt (stored domain).

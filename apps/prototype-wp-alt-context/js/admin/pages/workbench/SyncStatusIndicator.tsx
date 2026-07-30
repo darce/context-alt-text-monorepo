@@ -197,6 +197,8 @@ export const SyncStatusIndicator = ({
     syncHealthEnvelope: syncHealthEnvelope ?? null,
     lastSyncedAt: data?.last_synced_at ?? null,
     isStale: data?.is_stale ?? false,
+    lastSyncResult: data?.last_sync_result ?? null,
+    failedFields: data?.failed ?? null,
     triggerPending: syncTrigger.isPending,
     triggerSuccess: syncTrigger.isSuccess,
     triggerError: syncTrigger.isError,

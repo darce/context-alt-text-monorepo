@@ -1143,6 +1143,76 @@ class SettingsControllerTest extends TestCase
         );
     }
 
+    /**
+     * R23-BR-28 [TEST-15]: adopt (option + paired flag) must complete before rekey
+     * mutates rows. When rekey fails after adopt, pairing is still visible and
+     * rekey_failed is reported — marker/rekey must not precede the verified option.
+     */
+    public function testProbePairingAdoptBeforeRekeySurfacesRekeyFailure(): void
+    {
+        global $wpdb;
+        $this->configureProbe();
+        $persisted = '12121212-1212-4121-8121-121212121212';
+        $keyTenant = '34343434-3434-4343-8343-343434343434';
+        $this->setOption('acx_recognition_tenant_id', $persisted);
+        $this->setOption('acx_recognition_tenant_paired', false);
+        $this->queueHttpResponse($this->buildOkResponse());
+        $this->queueHttpResponse($this->buildWhoamiResponse($keyTenant));
+
+        // Force every tenant-table UPDATE to fail so rekey throws after adopt.
+        $wpdb->defaultUpdateResult = false;
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings/test');
+        $request->set_body_params(array('confirm_tenant_pairing' => true));
+
+        $data = $this->controller->test_connection($request)->get_data();
+
+        $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome'] ?? null);
+        $this->assertArrayHasKey('pairing_error', $data);
+        $this->assertTrue(
+            $data['tenant_paired'] ?? false,
+            'adopt must land before rekey; paired flag stays true when rekey fails'
+        );
+        $this->assertSame($keyTenant, get_option('acx_recognition_tenant_id'));
+        $this->assertTrue(TenantIdentity::is_paired());
+        $this->assertTrue(
+            $data['rekey_failed'] ?? false,
+            'non-success path must name rekey_failed (extra key only on failure)'
+        );
+        $this->assertArrayNotHasKey('rekey_strategy', $data);
+    }
+
+    /**
+     * R23-BR-28 false-failure pin (settings path): confirm rekey when source
+     * already empty (idempotent 0-row rekey) still reports success + strategy.
+     */
+    public function testProbePairingConfirmIdempotentRekeyStillSucceeds(): void
+    {
+        global $wpdb;
+        $this->configureProbe();
+        $persisted = '56565656-5656-4565-8565-565656565656';
+        $keyTenant = '78787878-7878-4787-8787-787878787878';
+        $this->setOption('acx_recognition_tenant_id', $persisted);
+        $this->queueHttpResponse($this->buildOkResponse());
+        $this->queueHttpResponse($this->buildWhoamiResponse($keyTenant));
+
+        // No local rows under $persisted; updates return 0 (no-op).
+        $wpdb->defaultUpdateResult = 0;
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings/test');
+        $request->set_body_params(array('confirm_tenant_pairing' => true));
+
+        $data = $this->controller->test_connection($request)->get_data();
+
+        $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome']);
+        $this->assertTrue($data['tenant_paired']);
+        $this->assertSame('rekey', $data['rekey_strategy']);
+        $this->assertSame(0, $data['rekey_updated_rows']);
+        $this->assertSame($keyTenant, get_option('acx_recognition_tenant_id'));
+        $this->assertTrue(TenantIdentity::is_paired());
+        $this->assertArrayNotHasKey('rekey_failed', $data);
+    }
+
     public function testProbePairingWhoamiFailurePreservesConnectedOutcome(): void
     {
         $this->configureProbe();

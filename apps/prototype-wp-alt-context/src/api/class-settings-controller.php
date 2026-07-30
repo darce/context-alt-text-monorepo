@@ -471,14 +471,41 @@ class SettingsController {
 			);
 		}
 
-		$rekey_service = new TenantLocalRekeyService();
-		$rekey_result  = $rekey_service->reconcile_identity_change( $current_tenant_id, $key_tenant_id );
+		// R23-BR-28: adopt+verify the tenant-id option (and only then the paired
+		// flag, inside adopt_paired_tenant) BEFORE rekeying local rows / writing
+		// the resync_required marker. Prior order rekeyed first; if adopt then
+		// failed, durable rows already advertised the new tenant while pairing
+		// was incomplete. option_matches_intended() is option-scoped (save_settings
+		// path) and does not fit table-row rekey verification — adopt_paired_tenant
+		// already performs the option read-back; rekey verifies via row count
+		// read-back before its marker [sr-007].
+		//
+		// Call sites of adopt_paired_tenant (both in this method):
+		// 1. matching-tenant path above — try/catch RuntimeException → SERVER_ERROR
+		// 2. this rekey / auto-adopt path — same catch shape
+		// Call site of reconcile_identity_change: only here. Wrapped so a rekey
+		// throw after a successful adopt surfaces as SERVER_ERROR (not a 500),
+		// with tenant_paired already true so the operator sees identity landed
+		// and rekey needs retry (extra keys only on this non-success path).
 		try {
 			TenantIdentity::adopt_paired_tenant( $key_tenant_id );
 		} catch ( \RuntimeException $e ) {
 			return array(
 				'outcome' => ProbeOutcome::SERVER_ERROR,
 				'detail'  => $e->getMessage(),
+			);
+		}
+
+		$rekey_service = new TenantLocalRekeyService();
+		try {
+			$rekey_result = $rekey_service->reconcile_identity_change( $current_tenant_id, $key_tenant_id );
+		} catch ( \RuntimeException $e ) {
+			return array(
+				'outcome'        => ProbeOutcome::SERVER_ERROR,
+				'detail'         => $e->getMessage(),
+				'tenant_paired'  => true,
+				'tenant_id'      => $key_tenant_id,
+				'rekey_failed'   => true,
 			);
 		}
 

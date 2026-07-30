@@ -23,11 +23,16 @@ export type PersonState = (typeof PERSON_STATES)[keyof typeof PERSON_STATES];
  * naming does not clear it. Blank name + non-empty queue_memberships → needs-review.
  */
 export const derivePersonState = (entry: RosterEntry): PersonState => {
-  if (entry.queue_memberships.length > 0) {
+  // Boundary read, not defensive noise: a pre-projection backend omits
+  // queue_memberships entirely (RosterPage.workspace `[PAG-M3-S2]`), so the
+  // declared type over-promises against the wire shape. Absent projection data
+  // means no membership is *known* — never claim needs-review from it [rg-015].
+  const memberships = Array.isArray(entry.queue_memberships) ? entry.queue_memberships : [];
+  if (memberships.length > 0) {
     return PERSON_STATES.NEEDS_REVIEW;
   }
 
-  if (entry.name.trim() === '') {
+  if ((entry.name ?? '').trim() === '') {
     return PERSON_STATES.UNNAMED;
   }
 

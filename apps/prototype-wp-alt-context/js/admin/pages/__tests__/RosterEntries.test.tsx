@@ -194,6 +194,23 @@ describe('derivePersonState', () => {
     // No fourth value exists on the union surface.
     expect(Object.values(PERSON_STATES)).toHaveLength(3);
   });
+
+  /**
+   * The shapes above are all well-formed projection entries, so they cannot
+   * prove totality over what the server actually sends. A pre-projection
+   * backend omits `queue_memberships` entirely — the shape RosterPage.workspace
+   * pins as `[PAG-M3-S2]`. Deriving state from it must degrade, not throw:
+   * with no projection data we cannot know of a queue membership, so claiming
+   * needs-review would be fabricated [rg-015].
+   */
+  it('degrades instead of throwing when projection fields are absent [PAG-M3-S2]', () => {
+    const legacyNamed = { id: 7, name: 'Legacy Person', tags: [], cluster_count: 0 } as unknown as RosterEntry;
+    const legacyUnnamed = { id: 8, name: '', tags: [], cluster_count: 0 } as unknown as RosterEntry;
+
+    expect(() => derivePersonState(legacyNamed)).not.toThrow();
+    expect(derivePersonState(legacyNamed)).toBe(PERSON_STATES.NAMED);
+    expect(derivePersonState(legacyUnnamed)).toBe(PERSON_STATES.UNNAMED);
+  });
 });
 
 describe('RosterEntriesTable', () => {

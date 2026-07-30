@@ -344,6 +344,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
                 MediaIdentity.bbox_y,
                 MediaIdentity.bbox_width,
                 MediaIdentity.bbox_height,
+                MediaIdentity.embedding_model,
             )
             .join(MediaIdentity, MediaIdentity.id == IdentityMemberModel.identity_id)
             .where(IdentityMemberModel.cluster_id.in_(cluster_uuids))
@@ -363,6 +364,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
                 continue
 
             assigned_at = row.assigned_at if isinstance(row.assigned_at, datetime) else now
+            embedding_model = getattr(row, "embedding_model", None)
             existing.append(
                 ClusterRepresentative(
                     id=str(row.id),
@@ -377,6 +379,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
                     bbox_y=int(row.bbox_y) if row.bbox_y is not None else None,
                     bbox_width=int(row.bbox_width) if row.bbox_width is not None else None,
                     bbox_height=int(row.bbox_height) if row.bbox_height is not None else None,
+                    embedding_model=str(embedding_model) if embedding_model else None,
                 )
             )
 
@@ -685,14 +688,19 @@ class SqlAlchemyClusterRepository(ClusterRepository):
     ) -> list[ClusterRepresentative]:
         """Get all user-selected representatives for a cluster."""
         stmt = (
-            select(IdentityClusterRepresentative, MediaIdentity.image_phash, MediaIdentity.media_id)
+            select(
+                IdentityClusterRepresentative,
+                MediaIdentity.image_phash,
+                MediaIdentity.media_id,
+                MediaIdentity.embedding_model,
+            )
             .join(MediaIdentity, MediaIdentity.id == IdentityClusterRepresentative.identity_id)
             .where(IdentityClusterRepresentative.cluster_id == _coerce_uuid(cluster_id))
             .where(IdentityClusterRepresentative.is_user_selected.is_(True))
         )
         result = await self._session.execute(stmt)
         reps = []
-        for model_rep, _phash, _media_id in result:
+        for model_rep, _phash, _media_id, emb_model in result:
             reps.append(
                 ClusterRepresentative(
                     id=str(model_rep.id),
@@ -708,6 +716,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
                     pose_pitch=float(model_rep.pose_pitch) if model_rep.pose_pitch is not None else None,
                     pose_yaw=float(model_rep.pose_yaw) if model_rep.pose_yaw is not None else None,
                     pose_roll=float(model_rep.pose_roll) if model_rep.pose_roll is not None else None,
+                    embedding_model=str(emb_model) if emb_model else None,
                 )
             )
         return reps
@@ -904,11 +913,16 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         rows = [(np.asarray(emb, dtype=np.float32), model) for emb, model in result.all()]
         return [emb for emb, _ in _filter_embedding_pairs_to_single_model(rows)]
 
-    async def get_representative_embeddings(self, cluster_id: str) -> list[np.ndarray]:
-        """Return embeddings for stored representatives of a cluster.
+    async def get_representative_embeddings_with_model(self, cluster_id: str) -> tuple[list[np.ndarray], str | None]:
+        """Return representative embeddings and the model space they were filtered to.
 
         FIR23-01: join source identity so reps from a foreign embedding_model are
         excluded when mixed provenance exists. Single-model is a no-op.
+
+        Returns:
+            ``(embeddings, chosen_embedding_model)`` where ``chosen_embedding_model``
+            is the majority/lex-stable model selected for the returned vectors, or
+            ``None`` when nothing was returned or no model could be determined.
         """
         stmt = (
             select(IdentityClusterRepresentative.embedding, MediaIdentity.embedding_model)
@@ -918,10 +932,36 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         )
         result = await self._session.execute(stmt)
         rows = [(np.asarray(emb, dtype=np.float32), model) for emb, model in result.all()]
-        return [emb for emb, _ in _filter_embedding_pairs_to_single_model(rows)]
+        filtered = _filter_embedding_pairs_to_single_model(rows)
+        if not filtered:
+            return [], None
+        embeddings = [emb for emb, _ in filtered]
+        # Chosen model is what the filter selected for the returned vectors —
+        # re-derive via the same majority/lex helper (never rows[0] alone).
+        chosen = _choose_embedding_model([model for _, model in filtered])
+        return embeddings, chosen
 
-    async def get_member_fallback_embeddings(self, cluster_id: str, limit: int = 4) -> list[np.ndarray]:
-        """Return top member embeddings as fallback representatives ordered by similarity then recency."""
+    async def get_representative_embeddings(self, cluster_id: str) -> list[np.ndarray]:
+        """Return embeddings for stored representatives of a cluster.
+
+        FIR23-01: join source identity so reps from a foreign embedding_model are
+        excluded when mixed provenance exists. Single-model is a no-op.
+        """
+        embeddings, _ = await self.get_representative_embeddings_with_model(cluster_id)
+        return embeddings
+
+    async def get_member_fallback_embeddings_with_model(
+        self, cluster_id: str, limit: int = 4
+    ) -> tuple[list[np.ndarray], str | None]:
+        """Return top member fallback embeddings and the model space they belong to.
+
+        Ordered by similarity then recency. Mixed-model sets are reduced to one
+        space via ``_filter_embedding_pairs_to_single_model`` before the limit.
+
+        Returns:
+            ``(embeddings, chosen_embedding_model)`` — same semantics as
+            ``get_representative_embeddings_with_model``.
+        """
         stmt = (
             select(MediaIdentity.embedding, MediaIdentity.embedding_model)
             .join(IdentityMemberModel, IdentityMemberModel.identity_id == MediaIdentity.id)
@@ -935,7 +975,16 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         filtered = _filter_embedding_pairs_to_single_model(rows)
         if limit is not None:
             filtered = filtered[: max(limit, 0)]
-        return [emb for emb, _ in filtered]
+        if not filtered:
+            return [], None
+        embeddings = [emb for emb, _ in filtered]
+        chosen = _choose_embedding_model([model for _, model in filtered])
+        return embeddings, chosen
+
+    async def get_member_fallback_embeddings(self, cluster_id: str, limit: int = 4) -> list[np.ndarray]:
+        """Return top member embeddings as fallback representatives ordered by similarity then recency."""
+        embeddings, _ = await self.get_member_fallback_embeddings_with_model(cluster_id, limit=limit)
+        return embeddings
 
     async def get_member_identities(self, cluster_id: str) -> list[DomainIdentity]:
         """Return identity records for all members of a cluster.
@@ -974,9 +1023,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         grouped: dict[str, list[DomainIdentity]] = {}
         for cluster_key, models in raw_grouped.items():
             kept = _filter_identity_models_to_single_embedding_model(models)
-            grouped[cluster_key] = [
-                self._to_domain_identity(model, cluster_id=cluster_key) for model in kept
-            ]
+            grouped[cluster_key] = [self._to_domain_identity(model, cluster_id=cluster_key) for model in kept]
         return grouped
 
     async def get_confirmed_labeled(self, tenant_id: str) -> list[IdentityCluster]:
@@ -1223,6 +1270,9 @@ class SqlAlchemyClusterRepository(ClusterRepository):
                 bbox_width = None
                 bbox_height = None
                 identity_loaded = "identity" in rep_state.dict and rep.identity is not None
+                # R3-G2-2: stamp embedding_model only from an already-loaded identity.
+                # Never lazy-load and never invent a default model id.
+                embedding_model: str | None = None
                 if identity_loaded:
                     identity = rep.identity
                     media_id = identity.media_id
@@ -1231,6 +1281,8 @@ class SqlAlchemyClusterRepository(ClusterRepository):
                     bbox_y = int(identity.bbox_y) if identity.bbox_y is not None else None
                     bbox_width = int(identity.bbox_width) if identity.bbox_width is not None else None
                     bbox_height = int(identity.bbox_height) if identity.bbox_height is not None else None
+                    raw_model = getattr(identity, "embedding_model", None)
+                    embedding_model = str(raw_model) if raw_model else None
                     logger.debug(
                         "Loaded representative identity pose rep_id=%s identity_id=%s pose_pitch=%s pose_yaw=%s",
                         rep.id,
@@ -1290,6 +1342,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
                         is_user_selected=bool(rep.is_user_selected),
                         is_provisional=bool(rep.is_provisional),
                         debug_metrics=debug_metrics,
+                        embedding_model=embedding_model,
                     )
                 )
 
@@ -1572,9 +1625,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             image_phash=model.image_phash,
             sharpness=float(model.sharpness) if model.sharpness is not None else None,
             embedding_norm=float(model.embedding_norm) if model.embedding_norm is not None else None,
-            occlusion_severity=(
-                float(model.occlusion_severity) if model.occlusion_severity is not None else None
-            ),
+            occlusion_severity=(float(model.occlusion_severity) if model.occlusion_severity is not None else None),
             cluster_id=cluster_id,
             moved_by_merge_id=str(model.moved_by_merge_id) if getattr(model, "moved_by_merge_id", None) else None,
         )

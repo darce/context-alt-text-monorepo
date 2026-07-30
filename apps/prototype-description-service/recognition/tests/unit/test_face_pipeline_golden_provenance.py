@@ -69,7 +69,8 @@ _GOLDEN_NPY = (
 def _load_meta(name: str) -> dict:
     path = _FIXTURE_DIR / name
     assert path.is_file(), f"missing golden meta: {path}"
-    return json.loads(path.read_text(encoding="utf-8"))
+    loaded: dict = json.loads(path.read_text(encoding="utf-8"))
+    return loaded
 
 
 def _version_components(version: str, n: int) -> tuple[int, ...]:

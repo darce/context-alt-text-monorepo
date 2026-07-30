@@ -1,4 +1,4 @@
-import { __ } from '@wordpress/i18n';
+import { __, sprintf } from '@wordpress/i18n';
 import { useEffect, useId, useRef, useState } from 'react';
 
 import { resolveDescribeErrorMessage } from '../../api/describeApi';
@@ -7,9 +7,50 @@ import { useDescribeMedia } from '../../hooks/useDescribeMedia';
 import { useAriaAnnounce } from './identity-clusters/useAriaAnnounce';
 import { useFocusPark } from './identity-clusters/useFocusPark';
 
+/**
+ * Recommended maximum length for alt text, in characters.
+ *
+ * Source: practical convention from screen-reader guidance (commonly cited ~125
+ * characters so the full description can be heard without excessive verbosity).
+ * This figure is advisory only — WCAG does not specify a maximum alt-text length,
+ * and this constant must not be described as a normative WCAG limit in UI copy.
+ *
+ * Boundary: exclusive over — length > RECOMMENDED_ALT_TEXT_MAX_LENGTH is over;
+ * length equal to the constant is still within the recommendation.
+ */
+export const RECOMMENDED_ALT_TEXT_MAX_LENGTH = 125;
+
 export interface MediaAltSuggestProps {
   mediaId: number;
 }
+
+/** True when the commit-candidate string exceeds the recommended maximum. */
+export const isOverRecommendedAltLength = (altText: string): boolean =>
+  altText.length > RECOMMENDED_ALT_TEXT_MAX_LENGTH;
+
+/** Visible advisory copy: names actual length, threshold, and what to do. */
+export const formatAltLengthAdvisory = (length: number): string =>
+  sprintf(
+    /* translators: 1: actual character count of the draft; 2: recommended maximum characters */
+    __(
+      'This draft is %1$d characters. The recommended maximum is %2$d characters so screen readers can convey the description without excessive length. Consider shortening it before saving.',
+      'alt-context',
+    ),
+    length,
+    RECOMMENDED_ALT_TEXT_MAX_LENGTH,
+  );
+
+/** Polite-status composition when a generated draft lands over the recommendation. */
+export const formatOverLengthReadyAnnouncement = (length: number): string =>
+  sprintf(
+    /* translators: 1: actual character count of the draft; 2: recommended maximum characters */
+    __(
+      'Draft ready. Review before saving. This draft is %1$d characters; recommended maximum is %2$d. Consider shortening it.',
+      'alt-context',
+    ),
+    length,
+    RECOMMENDED_ALT_TEXT_MAX_LENGTH,
+  );
 
 export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.Element => {
   // House BR-68 pattern (same hook ScanTabContent uses one directory away): seq
@@ -46,6 +87,7 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
   const textareaId = useId();
   const disclosureId = useId();
   const errorId = useId();
+  const lengthAdvisoryId = useId();
 
   // WHY: useAriaAnnounce has no clear; empty string clears the always-mounted
   // region's text without unmounting it (AT keeps tracking the node).
@@ -61,8 +103,16 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
     resetAccept();
     setIsEditing(false);
     mutate(mediaId, {
-      onSuccess: () => {
-        announceStatus(__('Draft ready. Review before saving.', 'alt-context'));
+      onSuccess: (response) => {
+        // [A11Y-34] branch (c): when the generated draft exceeds the recommended
+        // maximum, announce the length check once via the existing polite region
+        // (composed with the ready cue). Do not add a second live region [A11Y-19].
+        const draftText = response.alt_text_draft;
+        if (isOverRecommendedAltLength(draftText)) {
+          announceStatus(formatOverLengthReadyAnnouncement(draftText.length));
+        } else {
+          announceStatus(__('Draft ready. Review before saving.', 'alt-context'));
+        }
       },
       // BR-46: after the live-region hoist the region is always mounted, so this
       // clear is load-bearing — without it a stale "Generating…" polite cue sits
@@ -307,7 +357,16 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
         );
       };
 
-      const editDescribedBy = isAcceptError ? `${disclosureId} ${errorId}` : disclosureId;
+      // Assess the string the author would actually commit — re-evaluates live as
+      // they type in edit mode (editDraft) or from the generated draft otherwise.
+      const commitCandidate = isEditing ? editDraft : data.alt_text_draft;
+      const isOverLength = isOverRecommendedAltLength(commitCandidate);
+      // Extend editDescribedBy composition; do not replace. Keep error id when set.
+      const editDescribedBy = [
+        disclosureId,
+        ...(isOverLength ? [lengthAdvisoryId] : []),
+        ...(isAcceptError ? [errorId] : []),
+      ].join(' ');
       const canSaveEdit = editDraft.trim() !== '';
       const canAcceptDraft = data.alt_text_draft.trim() !== '';
       // BR-56: park host mirrors generate. role="group" is constant — not only
@@ -350,6 +409,14 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
           <p id={disclosureId} className="acx-media-selection__media-alt-disclosure">
             {__('Drafted by AI — review before saving.', 'alt-context')}
           </p>
+          {isOverLength ? (
+            // Advisory only — not role="alert" (assertive channel is for save
+            // failures) and not a second role="status" ([A11Y-19] / BR-32).
+            // Does not disable Accept/Save ([A11Y-36]).
+            <p id={lengthAdvisoryId} className="acx-media-selection__media-alt-length-advisory">
+              {formatAltLengthAdvisory(commitCandidate.length)}
+            </p>
+          ) : null}
           {isAcceptError ? (
             <div id={errorId} className="acx-media-selection__media-alt-error" role="alert">
               {resolveDescribeErrorMessage(

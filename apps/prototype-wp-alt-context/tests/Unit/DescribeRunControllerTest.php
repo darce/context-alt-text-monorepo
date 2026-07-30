@@ -1157,7 +1157,10 @@ class DescribeRunControllerTest extends TestCase
     /**
      * BR-119: matching pending marker + stored alt ≠ draft + no provenance must
      * stay skipped_existing (anti-clobber). Goes RED if `$stored_alt === $draft`
-     * is deleted from the recovery predicate. BR-114: marker cleared on alt diverge.
+     * is deleted from the recovery predicate. BR-114 / R23-BR-05: own-run marker
+     * is stale for the stored operator alt (draft_hash names the draft, not the
+     * operator text) so it is collected — not because alt_diverged alone wipes
+     * live evidence [R23-BR-18].
      */
     public function testApplyRunDraftsGuardsWhenPendingMarkerButStoredAltDiffersFromDraft(): void
     {
@@ -1167,6 +1170,7 @@ class DescribeRunControllerTest extends TestCase
         $operatorAlt = 'operator edited after partial';
         $this->setPostMeta(71, '_wp_attachment_image_alt', $operatorAlt);
         // Matching marker would unlock recovery if the anti-clobber conjunct were gone.
+        // Hash is for $draft, not $operatorAlt → stale for stored alt.
         $this->setPostMeta(71, '_acx_description_provenance_pending', [
             'run_id' => $runId,
             'draft_hash' => hash('sha256', $draft),
@@ -1198,7 +1202,7 @@ class DescribeRunControllerTest extends TestCase
         // Operator edit preserved; draft not applied; no provenance invented.
         $this->assertSame($operatorAlt, get_post_meta(71, '_wp_attachment_image_alt', true));
         $this->assertSame('', get_post_meta(71, '_acx_description_provenance', true));
-        // BR-114: this run's marker is obsolete after alt diverged.
+        // BR-114 / R23-BR-05: own-run marker stale for stored alt is collected.
         $this->assertSame('', get_post_meta(71, '_acx_description_provenance_pending', true));
     }
 
@@ -1922,6 +1926,328 @@ class DescribeRunControllerTest extends TestCase
         // R23-BR-08 discrimination: same-run marker recovery omits recovered_from_run_id.
         $this->assertArrayNotHasKey('recovered_from_run_id', $prov);
         // Marker cleared only after successful recovery, not by BR-114 stale drop.
+        $this->assertSame('', get_post_meta(71, '_acx_description_provenance_pending', true));
+    }
+
+    /**
+     * R23-BR-18 [TEST-15]: live own-run marker (true partial for stored alt S)
+     * must survive skip_existing when this run applies a *different* draft D.
+     * The alt_diverged arm previously deleted the marker while the owning run's
+     * recovery evidence was still live for S — completion could no longer match
+     * the attachment.
+     *
+     * Concrete input that reaches the arm:
+     *   stored alt = S, own-run marker draft_hash = sha256(S) (live),
+     *   applying draft D ≠ S, no overwrite, no provenance → recovery rejected
+     *   with alt_diverged=true and own_marker_stale=false.
+     *
+     * RED under: drop when `$alt_diverged || $prov_is_this_run || $stale`
+     * (alt_diverged alone wipes the live marker).
+     */
+    public function testApplyRunDraftsPreservesLiveOwnRunMarkerWhenAltDivergesFromNewDraft(): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $storedAlt = 'partial alt still owned by run';
+        $newDraft  = 'a different draft from a later apply';
+        $this->plantPostType(71);
+        $this->setPostMeta(71, '_wp_attachment_image_alt', $storedAlt);
+        $liveMarker = [
+            'run_id'     => $runId,
+            'draft_hash' => \AltContext\Api\Services\DescriptionHistoryService::hash_for_stored_alt($storedAlt),
+        ];
+        $this->setPostMeta(71, '_acx_description_provenance_pending', $liveMarker);
+        $this->assertTrue(
+            \AltContext\Api\Services\DescriptionHistoryService::is_live_recovery_marker_for_alt(
+                $liveMarker,
+                $storedAlt
+            ),
+            'precondition: marker must be live recovery evidence for stored alt'
+        );
+        $this->assertNotSame($storedAlt, $newDraft, 'precondition: drafts must diverge');
+
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->plantSubmittedMediaIds($runId, [71]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    ['media_id' => 71, 'status' => 'completed', 'alt_text_draft' => $newDraft, 'caption' => 'dog', 'provenance' => ['adapter' => 'florence', 'model_id' => 'florence-2']],
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $data = $response->get_data();
+        $this->assertSame([], $data['applied']);
+        $this->assertSame([71], $data['skipped_existing']);
+        $this->assertSame($storedAlt, get_post_meta(71, '_wp_attachment_image_alt', true));
+        // R23-BR-18: marker still names the owning run — not dropped on alt_diverged.
+        $pending = get_post_meta(71, '_acx_description_provenance_pending', true);
+        $this->assertIsArray($pending, 'live own-run marker must survive alt_diverged skip');
+        $this->assertSame($runId, $pending['run_id'] ?? null);
+        $this->assertSame($liveMarker['draft_hash'], $pending['draft_hash'] ?? null);
+    }
+
+    /**
+     * R23-BR-19 [TEST-15]: staleness is per-run. Two markers across the identity
+     * boundary — foreign run A's marker is content-stale for the stored alt,
+     * applying run B must NOT collect it (identity leg false). Own-run B with
+     * the same content-stale hash IS collected.
+     *
+     * Failure input under a content-only predicate: foreign stale marker judged
+     * by draft_hash alone and wiped, so run A's ownership is lost.
+     *
+     * RED under: identity leg removed from is_stale_own_run_marker_for_alt
+     * (content leg alone → foreign stale marker deleted on B's apply). The
+     * failing assertion is the apply-path survival check — not a helper
+     * precondition — so the RED line proves the identity leg at the call site.
+     * Mutating only the content/hash leg fails a different assertion (own-run
+     * collect) and does not prove identity.
+     */
+    public function testApplyRunDraftsStalePredicateIsIdentityScopedAcrossTwoRuns(): void
+    {
+        $runA = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+        $runB = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+        $storedAlt = 'current stored alt text';
+        $draftB    = 'run B draft that diverges';
+        $this->plantPostType(71);
+        $this->setPostMeta(71, '_wp_attachment_image_alt', $storedAlt);
+
+        // Run A owns a content-stale marker (hash does not match stored alt).
+        $staleHash = \AltContext\Api\Services\DescriptionHistoryService::hash_for_stored_alt('superseded by operator edit');
+        $foreignStaleMarker = [
+            'run_id'     => $runA,
+            'draft_hash' => $staleHash,
+        ];
+        $this->setPostMeta(71, '_acx_description_provenance_pending', $foreignStaleMarker);
+
+        // Apply run B — must leave run A's marker in place (identity leg).
+        $this->queueRunStatusResponse($runB, 'completed');
+        $this->plantSubmittedMediaIds($runB, [71]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runB,
+                'items' => [
+                    ['media_id' => 71, 'status' => 'completed', 'alt_text_draft' => $draftB, 'caption' => 'dog', 'provenance' => ['adapter' => 'florence', 'model_id' => 'florence-2']],
+                ],
+            ]),
+        ]);
+        $requestB = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runB . '/apply');
+        $requestB->set_param('run_id', $runB);
+        $responseB = $this->controller->apply_describe_run_drafts($requestB);
+        $this->assertNotInstanceOf(\WP_Error::class, $responseB);
+        $this->assertSame([71], $responseB->get_data()['skipped_existing']);
+        // Identity-leg pin assertion: foreign stale marker survives B's apply.
+        $pendingAfterB = get_post_meta(71, '_acx_description_provenance_pending', true);
+        $this->assertIsArray($pendingAfterB, 'foreign stale marker must survive run B apply');
+        $this->assertSame($runA, $pendingAfterB['run_id'] ?? null, 'marker must still name run A');
+
+        // Own-run apply with the same content-stale marker shape → collected.
+        $ownStaleMarker = [
+            'run_id'     => $runB,
+            'draft_hash' => $staleHash,
+        ];
+        $this->setPostMeta(71, '_acx_description_provenance_pending', $ownStaleMarker);
+        $this->queueRunStatusResponse($runB, 'completed');
+        $this->plantSubmittedMediaIds($runB, [71]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runB,
+                'items' => [
+                    ['media_id' => 71, 'status' => 'completed', 'alt_text_draft' => $draftB, 'caption' => 'dog', 'provenance' => ['adapter' => 'florence', 'model_id' => 'florence-2']],
+                ],
+            ]),
+        ]);
+        $requestB2 = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runB . '/apply');
+        $requestB2->set_param('run_id', $runB);
+        $responseB2 = $this->controller->apply_describe_run_drafts($requestB2);
+        $this->assertNotInstanceOf(\WP_Error::class, $responseB2);
+        // Content-leg discrimination: own-run stale still clears (not a permanent lock).
+        $this->assertSame(
+            '',
+            get_post_meta(71, '_acx_description_provenance_pending', true),
+            'own-run content-stale marker must be collected'
+        );
+    }
+
+    /**
+     * R23-BR-24 [TEST-15]: takeover attribution — one canonical definition
+     * (DescriptionHistoryService::resolve_recovered_from_run_id) used by apply
+     * when stamping. Drive foreign-marker recovery (run A marker, run B apply);
+     * assert both observables agree on recovered_from = A:
+     *   (1) stamped `_acx_description_provenance` after apply
+     *   (2) history list_history provenance for the same media
+     * Hard-expected owner is run A (not a second call into resolve — that would
+     * be tautological). RED when resolve always returns null (apply omits the
+     * key) or when apply bypasses the resolver and stamps a divergent owner.
+     */
+    public function testApplyRunDraftsTakeoverAttributionMatchesHistoryResolver(): void
+    {
+        $runA  = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+        $runB  = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+        $draft = 'a dog in a park';
+        $this->plantPostType(71);
+        $this->setPostMeta(71, '_wp_attachment_image_alt', $draft);
+        $foreignMarker = [
+            'run_id'     => $runA,
+            'draft_hash' => \AltContext\Api\Services\DescriptionHistoryService::hash_for_stored_alt($draft),
+        ];
+        $this->setPostMeta(71, '_acx_description_provenance_pending', $foreignMarker);
+
+        $this->queueRunStatusResponse($runB, 'completed');
+        $this->plantSubmittedMediaIds($runB, [71]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runB,
+                'items' => [
+                    ['media_id' => 71, 'status' => 'completed', 'alt_text_draft' => $draft, 'caption' => 'dog', 'provenance' => ['adapter' => 'florence', 'model_id' => 'florence-2']],
+                ],
+            ]),
+        ]);
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runB . '/apply');
+        $request->set_param('run_id', $runB);
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $this->assertSame([71], $response->get_data()['applied']);
+
+        // Call site 1 observable: stamped provenance after apply (uses resolver).
+        $prov = get_post_meta(71, '_acx_description_provenance', true);
+        $this->assertIsArray($prov);
+        $this->assertSame($runB, $prov['run_id'] ?? null);
+        $this->assertSame(
+            $runA,
+            $prov['recovered_from_run_id'] ?? null,
+            'apply stamp must attribute takeover origin to marker owner run A'
+        );
+
+        // Call site 2 observable: history list surfaces the same provenance map.
+        $GLOBALS['__ac_get_posts_results'] = [71];
+        $GLOBALS['__ac_posts'][71] = (object) ['ID' => 71, 'post_title' => 'Dog', 'post_type' => 'attachment'];
+        $history = (new \AltContext\Api\Services\DescriptionHistoryService())->list_history(10);
+        $this->assertSame(1, $history['total']);
+        $this->assertSame(
+            $runA,
+            $history['items'][0]['provenance']['recovered_from_run_id'] ?? null,
+            'history list must surface the same recovered_from as the apply stamp'
+        );
+        // Both surfaces agree with each other (disagreement is the defect).
+        $this->assertSame(
+            $prov['recovered_from_run_id'] ?? null,
+            $history['items'][0]['provenance']['recovered_from_run_id'] ?? null
+        );
+    }
+
+    /**
+     * R23-BR-24 [TEST-15] history-reader pin (standalone): takeover then assert
+     * only on list_history output. No apply-stamp recovered_from assertion
+     * ahead of the history read — so a resolver mutation that omits the key
+     * reddens *this* reader-visible line, not an earlier stamp check.
+     *
+     * Proves the history surface has no second divergent inline rule that
+     * would still invent recovered_from=A when the canonical resolver is
+     * forced to return null. Observable is what a reader sees via
+     * list_history, not a second call into resolve_* itself.
+     */
+    public function testApplyRunDraftsTakeoverHistoryListSurfacesResolvedOrigin(): void
+    {
+        $runA  = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+        $runB  = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+        $draft = 'a dog in a park';
+        $this->plantPostType(71);
+        $this->setPostMeta(71, '_wp_attachment_image_alt', $draft);
+        $this->setPostMeta(71, '_acx_description_provenance_pending', [
+            'run_id'     => $runA,
+            'draft_hash' => \AltContext\Api\Services\DescriptionHistoryService::hash_for_stored_alt($draft),
+        ]);
+
+        $this->queueRunStatusResponse($runB, 'completed');
+        $this->plantSubmittedMediaIds($runB, [71]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runB,
+                'items' => [
+                    ['media_id' => 71, 'status' => 'completed', 'alt_text_draft' => $draft, 'caption' => 'dog', 'provenance' => ['adapter' => 'florence', 'model_id' => 'florence-2']],
+                ],
+            ]),
+        ]);
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runB . '/apply');
+        $request->set_param('run_id', $runB);
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $this->assertSame([71], $response->get_data()['applied']);
+
+        // Reader observable only — no apply-stamp recovered_from assertion first.
+        $GLOBALS['__ac_get_posts_results'] = [71];
+        $GLOBALS['__ac_posts'][71] = (object) ['ID' => 71, 'post_title' => 'Dog', 'post_type' => 'attachment'];
+        $history = (new \AltContext\Api\Services\DescriptionHistoryService())->list_history(10);
+        $this->assertSame(1, $history['total']);
+        $this->assertSame(
+            $runA,
+            $history['items'][0]['provenance']['recovered_from_run_id'] ?? null,
+            'list_history must surface recovered_from=A after takeover (resolver-stamped)'
+        );
+    }
+
+    /**
+     * R23-BR-18 discrimination: legitimate marker clear still works when the
+     * own-run marker is dead evidence for the stored alt (stale draft_hash).
+     * Failure mode of the live-marker preserve fix is a permanent lock.
+     */
+    public function testApplyRunDraftsStillClearsStaleOwnRunMarkerOnAltDivergeSkip(): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $storedAlt = 'operator edited after partial';
+        $draft     = 'a dog in a park';
+        $this->plantPostType(71);
+        $this->setPostMeta(71, '_wp_attachment_image_alt', $storedAlt);
+        // Own-run marker for the *draft*, not the stored alt — stale / not live.
+        $this->setPostMeta(71, '_acx_description_provenance_pending', [
+            'run_id'     => $runId,
+            'draft_hash' => \AltContext\Api\Services\DescriptionHistoryService::hash_for_stored_alt($draft),
+        ]);
+        $this->assertFalse(
+            \AltContext\Api\Services\DescriptionHistoryService::is_live_recovery_marker_for_alt(
+                get_post_meta(71, '_acx_description_provenance_pending', true),
+                $storedAlt
+            ),
+            'precondition: marker must be stale for stored alt'
+        );
+
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->plantSubmittedMediaIds($runId, [71]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    ['media_id' => 71, 'status' => 'completed', 'alt_text_draft' => $draft, 'caption' => 'dog', 'provenance' => ['adapter' => 'florence', 'model_id' => 'florence-2']],
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $data = $response->get_data();
+        $this->assertSame([71], $data['skipped_existing']);
+        // Legitimate clear: stale own-run marker must not permanently lock the attachment.
         $this->assertSame('', get_post_meta(71, '_acx_description_provenance_pending', true));
     }
 

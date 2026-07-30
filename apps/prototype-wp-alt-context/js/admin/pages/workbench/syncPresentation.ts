@@ -8,7 +8,13 @@
  */
 import { __, sprintf } from '@wordpress/i18n';
 
-import type { SyncHealth, SyncHealthResponse, SyncStatusResponse } from '../../api/recognition/types/sync';
+import type {
+  LastSyncResult,
+  SyncHealth,
+  SyncHealthResponse,
+  SyncStatusResponse,
+} from '../../api/recognition/types/sync';
+import { LAST_SYNC_RESULT } from '../../api/recognition/types/sync';
 import type { PipelinePhase } from '../../hooks/jobStateMachineUtils';
 import type { ProjectionSyncState } from '../../hooks/useJobStateMachineEffects';
 import { resolveEffectiveSyncHealth } from './degradedModeBannerLogic';
@@ -28,6 +34,7 @@ export const SYNC_PRESENTATION_STATUS = {
   STALE: 'stale',
   CONFLICTS: 'conflicts',
   FAILURES: 'failures',
+  RESYNC_REQUIRED: 'resync_required',
   SYNCING: 'syncing',
   SCANNING: 'scanning',
   CLUSTERING: 'clustering',
@@ -106,6 +113,13 @@ export interface SyncPresentationInput {
   syncHealthEnvelope?: SyncHealthResponse | null;
   lastSyncedAt?: string | null;
   isStale?: boolean;
+  /**
+   * Wire last_sync_result. R23-BR-23: when resync_required (or failed write
+   * surfaces), the strip must not render healthy solely from sync_health.
+   */
+  lastSyncResult?: LastSyncResult | null;
+  /** Names fields whose durable writes did not land (non-success only). */
+  failedFields?: string[] | null;
   /** Transient sync-trigger UI state. */
   triggerPending?: boolean;
   triggerSuccess?: boolean;
@@ -196,6 +210,8 @@ export const buildSyncPresentation = (input: SyncPresentationInput): SyncPresent
     syncHealthEnvelope = null,
     lastSyncedAt = null,
     isStale = false,
+    lastSyncResult = null,
+    failedFields = null,
     triggerPending = false,
     triggerSuccess = false,
     triggerError = false,
@@ -224,6 +240,23 @@ export const buildSyncPresentation = (input: SyncPresentationInput): SyncPresent
       headline: SYNC_VOCABULARY.error,
       icon: SYNC_PRESENTATION_ICON.ERROR,
       tone: SYNC_PRESENTATION_TONE.WARNING,
+    });
+  }
+
+  // R23-BR-23: durable non-success (resync marker or named write failure) must
+  // outrank a stale "healthy" sync_health so the operator sees the real state.
+  if (
+    lastSyncResult === LAST_SYNC_RESULT.RESYNC_REQUIRED ||
+    (Array.isArray(failedFields) && failedFields.length > 0)
+  ) {
+    return presentation({
+      status: SYNC_PRESENTATION_STATUS.RESYNC_REQUIRED,
+      headline: SYNC_VOCABULARY.resyncRequiredHeadline,
+      detail: SYNC_VOCABULARY.resyncRequiredSummary,
+      badge: SYNC_VOCABULARY.resyncRequiredBadge,
+      icon: SYNC_PRESENTATION_ICON.WARNING,
+      tone: SYNC_PRESENTATION_TONE.WARNING,
+      action: { label: SYNC_VOCABULARY.syncNow, kind: 'sync_now' },
     });
   }
 
@@ -456,12 +489,24 @@ export const formatRetentionModeLabel = (mode: string): string => {
 /** Build presentation inputs from a SyncStatusResponse + UI flags. */
 export const syncPresentationInputFromStatus = (
   data: SyncStatusResponse | null | undefined,
-  extras: Omit<SyncPresentationInput, 'legacySyncHealth' | 'lastSyncedAt' | 'isStale' | 'pendingChanges' | 'failedOps' | 'conflictCount'> = {},
+  extras: Omit<
+    SyncPresentationInput,
+    | 'legacySyncHealth'
+    | 'lastSyncedAt'
+    | 'isStale'
+    | 'pendingChanges'
+    | 'failedOps'
+    | 'conflictCount'
+    | 'lastSyncResult'
+    | 'failedFields'
+  > = {},
 ): SyncPresentationInput => ({
   ...extras,
   legacySyncHealth: data?.sync_health ?? null,
   lastSyncedAt: data?.last_synced_at ?? null,
   isStale: data?.is_stale ?? false,
+  lastSyncResult: data?.last_sync_result ?? null,
+  failedFields: data?.failed ?? null,
   pendingChanges: data?.pending_curation_operations,
   failedOps: data?.failed_curation_operations,
   conflictCount: data?.conflict_count,

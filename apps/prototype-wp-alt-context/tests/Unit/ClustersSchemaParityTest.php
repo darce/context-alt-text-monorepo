@@ -24,6 +24,15 @@ use AltContext\Tests\TestCase;
  *  - raw SQL: `INSERT INTO … (cols) VALUES|SELECT` and `VALUES(col)` back-refs
  *  - array form: `$wpdb->insert|update|replace( $table, array( 'col' => … ) )`
  *    via `token_get_all`, fail-closed when keys are not string literals
+ *  - variable data args (R23-BR-29): when the data argument is a single `$var`,
+ *    resolve `$var = array(…)` / `$var = […]` and later `$var['literal'] = …`
+ *    additions inside the enclosing function body; fail closed on dynamic builds
+ *
+ * Corpus is decided by *which tables are written*, not by filename (R23-BR-29):
+ * every runtime file that issues a clusters-table write is walked, including
+ * writers outside `class-cluster*.php` (life-cycle import, label service, API).
+ * Array-form scrapes skip non-clusters `$wpdb` writes in those multi-table files;
+ * unresolvable clusters-table data arrays still fail closed [rg-005].
  *
  * @coversNothing
  */
@@ -181,6 +190,46 @@ class ClustersSchemaParityTest extends TestCase
     }
 
     /**
+     * R23-BR-29 corpus pin: non-repository clusters writers are in the walk, and
+     * the life-cycle-manager array-form `$wpdb->update( $table_clusters, … )` is
+     * visible without going through other files' fail-closed sites.
+     */
+    public function testWriteCorpusIncludesNonRepositoryClustersWriters(): void
+    {
+        $root = dirname(__DIR__, 2);
+        $files = $this->repositoryLayerFiles();
+        $bases = array_map(
+            static fn (string $path): string => basename(str_replace('\\', '/', $path)),
+            $files
+        );
+
+        $this->assertContains('class-life-cycle-manager.php', $bases);
+        $this->assertContains('class-cluster-label-service.php', $bases);
+        $this->assertContains('class-api.php', $bases);
+        $this->assertGreaterThanOrEqual(
+            9,
+            count($files),
+            'widened corpus must include class-cluster* (6) plus at least three non-repository writers'
+        );
+
+        $lifeCycle = $root . '/src/support/class-life-cycle-manager.php';
+        $columns = $this->parseSqlWriteColumns((string) file_get_contents($lifeCycle), $lifeCycle);
+        $this->assertContains(
+            'person_id',
+            $columns,
+            'life-cycle-manager $wpdb->update( $table_clusters, array( person_id => … ) ) must be visible to the array-form scrape'
+        );
+        // Per-file parity on the life-cycle writer alone (isolates the corpus
+        // widen from other multi-table files' fail-closed sites). A fabricated
+        // key at that call site must redden here naming the column [TEST-15].
+        $this->assertSame(
+            [],
+            $this->columnsMissingFrom($columns, $this->parseClustersDdlColumns()),
+            'life-cycle-manager clusters write columns must exist in the clusters DDL'
+        );
+    }
+
+    /**
      * Array-form defect pin: a fabricated key on `$wpdb->insert( …, array(…) )`
      * must be visible to the scrape and flagged missing from the DDL.
      */
@@ -189,7 +238,7 @@ class ClustersSchemaParityTest extends TestCase
         $php = <<<'PHP'
 <?php
 $wpdb->insert(
-    $table,
+    $table_clusters,
     array(
         'cluster_uuid' => $id,
         'fabricated_array_column_xyz' => $value,
@@ -225,7 +274,7 @@ PHP;
     {
         $php = <<<'PHP'
 <?php
-$wpdb->insert( $table, $dynamic_row );
+$wpdb->insert( $table_clusters, $dynamic_row );
 PHP;
 
         try {
@@ -244,6 +293,98 @@ PHP;
                 '/non-literal-fixture\.php:\d+/',
                 $e->getMessage(),
                 'fail-closed message must include file:line'
+            );
+        }
+    }
+
+    /**
+     * R23-BR-29: a single-variable data arg bound to a literal array (plus later
+     * literal-key additions) in the enclosing function must resolve to the union
+     * of those string-literal keys — the class-api.php:483 shape.
+     */
+    public function testArrayFormWriteColumnResolvesVariableLiteralArrayAndAdditions(): void
+    {
+        $php = <<<'PHP'
+<?php
+function assign_cluster_person( $person_id, $resolved_person_name, $cluster_id ) {
+    global $wpdb;
+    $table_clusters = $wpdb->prefix . 'acx_clusters';
+    $now = current_time( 'mysql' );
+
+    $update_data = array(
+        'person_id'         => $person_id,
+        'curation_state'    => 'confirmed',
+        'is_user_confirmed' => 1,
+        'updated_at'        => $now,
+    );
+
+    if ( null === $person_id ) {
+        // format path only — no data-key change
+    } elseif ( is_string( $resolved_person_name ) && '' !== trim( $resolved_person_name ) ) {
+        $update_data['label'] = trim( $resolved_person_name );
+    }
+
+    $wpdb->update(
+        $table_clusters,
+        $update_data,
+        array( 'cluster_uuid' => $cluster_id )
+    );
+}
+PHP;
+
+        $referenced = $this->parseSqlWriteColumns($php, 'variable-literal-fixture.php');
+        sort($referenced);
+
+        $this->assertSame(
+            [
+                'curation_state',
+                'is_user_confirmed',
+                'label',
+                'person_id',
+                'updated_at',
+            ],
+            $referenced,
+            'variable data arg must resolve initial literal keys plus conditional $var[\'literal\'] additions'
+        );
+    }
+
+    /**
+     * R23-BR-29 pin 3: a variable data arg built dynamically must still fail closed
+     * (fixture only — not a production edit).
+     *
+     * @throws \PHPUnit\Framework\AssertionFailedError When fail-closed does not fire.
+     */
+    public function testArrayFormWriteColumnFailsClosedOnDynamicallyBuiltVariable(): void
+    {
+        $php = <<<'PHP'
+<?php
+function write_dynamic_cluster_row( $table_clusters, $dynamic_key, $extra ) {
+    global $wpdb;
+    $update_data = array( 'person_id' => 1 );
+    $update_data = array_merge( $update_data, $extra );
+    $update_data[ $dynamic_key ] = 1;
+    $wpdb->update( $table_clusters, $update_data, array( 'cluster_uuid' => 'x' ) );
+}
+PHP;
+
+        try {
+            $this->parseSqlWriteColumns($php, 'dynamic-variable-fixture.php');
+            $this->fail('expected fail-closed on dynamically built $wpdb->update data variable');
+        } catch (\PHPUnit\Framework\AssertionFailedError $e) {
+            if (str_contains($e->getMessage(), 'expected fail-closed')) {
+                throw $e;
+            }
+            $this->assertMatchesRegularExpression(
+                '/dynamic-variable-fixture\.php:\d+/',
+                $e->getMessage(),
+                'fail-closed message must include file:line'
+            );
+            $this->assertTrue(
+                str_contains($e->getMessage(), 'array_merge')
+                    || str_contains($e->getMessage(), 'non-literal')
+                    || str_contains($e->getMessage(), 'assigned more than once')
+                    || str_contains($e->getMessage(), 'assigned from'),
+                'fail-closed message must name the dynamic-build reason: ' . $e->getMessage()
             );
         }
     }
@@ -357,10 +498,11 @@ PHP;
     }
 
     /**
-     * Collect string-literal keys of every `$wpdb->insert|update|replace`
+     * Collect string-literal keys of every clusters-table `$wpdb->insert|update|replace`
      * data array in $source. Uses PHP's own lexer so comments, strings, and
-     * nested braces cannot hide or truncate a call site. Unresolvable data
-     * arrays fail closed with file:line rather than being skipped [rg-005].
+     * nested braces cannot hide or truncate a call site. Non-clusters writes in
+     * multi-table files are skipped. Unresolvable clusters-table data arrays
+     * fail closed with file:line rather than being skipped [rg-005].
      *
      * @return array{columns: string[], call_sites: int}
      */
@@ -371,6 +513,7 @@ PHP;
         $columns = [];
         $callSites = 0;
         $methods = ['insert' => true, 'update' => true, 'replace' => true];
+        $fileIsClusterRepository = $this->sourceLabelIsClusterRepositoryFile($sourceLabel);
 
         for ($i = 0; $i < $count; $i++) {
             $token = $tokens[$i];
@@ -400,18 +543,34 @@ PHP;
 
             $args = $this->splitCallArguments($tokens, $j);
             if (null === $args || count($args) < 2) {
-                self::fail(
-                    sprintf(
-                        'Clusters write-column scrape cannot resolve $wpdb->%s() argument list at %s:%d — '
-                            . 'array-form writes must pass a literal data array so schema parity can see the keys',
-                        $method,
-                        $sourceLabel,
-                        $line
-                    )
-                );
+                // Only fail closed when the call looks like a clusters-table write;
+                // multi-table files contain unrelated $wpdb calls we do not own.
+                if ($fileIsClusterRepository) {
+                    self::fail(
+                        sprintf(
+                            'Clusters write-column scrape cannot resolve $wpdb->%s() argument list at %s:%d — '
+                                . 'array-form writes must pass a literal data array so schema parity can see the keys',
+                            $method,
+                            $sourceLabel,
+                            $line
+                        )
+                    );
+                }
+                continue;
             }
 
-            $dataKeys = $this->extractLiteralArrayKeys($args[1], $sourceLabel, $line, $method);
+            if (! $this->argumentTargetsClustersTable($args[0], $fileIsClusterRepository)) {
+                continue;
+            }
+
+            $dataKeys = $this->extractWpdbDataArgKeys(
+                $tokens,
+                $i,
+                $args[1],
+                $sourceLabel,
+                $line,
+                $method
+            );
             foreach ($dataKeys as $key) {
                 $columns[$key] = true;
             }
@@ -422,6 +581,571 @@ PHP;
             'columns' => array_keys($columns),
             'call_sites' => $callSites,
         ];
+    }
+
+    /**
+     * Resolve write-column keys from a $wpdb insert/update/replace data argument.
+     * Accepts a literal array(…)/[…] or a single variable bound to a literal
+     * array (plus later literal-key additions) inside the enclosing function.
+     *
+     * @param list<string|array{0:int,1:string,2:int}> $fileTokens
+     * @param list<string|array{0:int,1:string,2:int}> $dataArgTokens
+     * @return string[]
+     */
+    private function extractWpdbDataArgKeys(
+        array $fileTokens,
+        int $callTokenIndex,
+        array $dataArgTokens,
+        string $sourceLabel,
+        int $line,
+        string $method
+    ): array {
+        $varName = $this->singleVariableName($dataArgTokens);
+        if (null !== $varName) {
+            return $this->resolveVariableDataArrayKeys(
+                $fileTokens,
+                $callTokenIndex,
+                $varName,
+                $sourceLabel,
+                $line,
+                $method
+            );
+        }
+
+        return $this->extractLiteralArrayKeys($dataArgTokens, $sourceLabel, $line, $method);
+    }
+
+    /**
+     * @param list<string|array{0:int,1:string,2:int}> $argTokens
+     */
+    private function singleVariableName(array $argTokens): ?string
+    {
+        $i = $this->skipInsignificantTokens($argTokens, 0);
+        if ($i >= count($argTokens) || ! is_array($argTokens[$i]) || T_VARIABLE !== $argTokens[$i][0]) {
+            return null;
+        }
+        $name = $argTokens[$i][1];
+        $j = $this->skipInsignificantTokens($argTokens, $i + 1);
+        if ($j < count($argTokens)) {
+            // Not a bare variable (subscript, property, concatenation, etc.).
+            return null;
+        }
+
+        return $name;
+    }
+
+    /**
+     * Resolve `$var = array(…)` / `$var = […]` plus later `$var['key'] = …`
+     * additions inside the enclosing function body before the call site.
+     * Fail closed on dynamic construction, non-literal subscripts, multiple
+     * reassignments, or assignments that cannot be ordered [rg-005].
+     *
+     * @param list<string|array{0:int,1:string,2:int}> $tokens
+     * @return string[]
+     */
+    private function resolveVariableDataArrayKeys(
+        array $tokens,
+        int $callTokenIndex,
+        string $varName,
+        string $sourceLabel,
+        int $line,
+        string $method
+    ): array {
+        $scope = $this->findEnclosingFunctionBody($tokens, $callTokenIndex);
+        if (null === $scope) {
+            self::fail(
+                $this->unresolvableArrayMessage(
+                    $method,
+                    $sourceLabel,
+                    $line,
+                    "data argument \${$varName} has no enclosing function body to resolve against"
+                )
+            );
+        }
+
+        $keys = [];
+        $literalAssignCount = 0;
+        $literalAssignIndex = null;
+        $count = count($tokens);
+        $i = $scope['start'];
+
+        while ($i < $callTokenIndex) {
+            $t = $tokens[$i];
+            if (! is_array($t) || T_VARIABLE !== $t[0] || $t[1] !== $varName) {
+                ++$i;
+                continue;
+            }
+
+            $afterVar = $this->skipInsignificantTokens($tokens, $i + 1);
+
+            // `$var['literal'] = …` key addition.
+            if ($afterVar < $count && '[' === $tokens[$afterVar]) {
+                $keyStart = $this->skipInsignificantTokens($tokens, $afterVar + 1);
+                if (
+                    $keyStart >= $count
+                    || ! is_array($tokens[$keyStart])
+                    || T_CONSTANT_ENCAPSED_STRING !== $tokens[$keyStart][0]
+                ) {
+                    self::fail(
+                        $this->unresolvableArrayMessage(
+                            $method,
+                            $sourceLabel,
+                            $line,
+                            "data variable {$varName} uses a non-literal array subscript"
+                        )
+                    );
+                }
+                $closeBracket = $this->skipInsignificantTokens($tokens, $keyStart + 1);
+                if ($closeBracket >= $count || ']' !== $tokens[$closeBracket]) {
+                    self::fail(
+                        $this->unresolvableArrayMessage(
+                            $method,
+                            $sourceLabel,
+                            $line,
+                            "data variable {$varName} uses a non-literal array subscript"
+                        )
+                    );
+                }
+                $afterBracket = $this->skipInsignificantTokens($tokens, $closeBracket + 1);
+                if ($afterBracket >= $count || '=' !== $tokens[$afterBracket]) {
+                    // `$var['k']` read / comparison — ignore.
+                    ++$i;
+                    continue;
+                }
+                // Reject `==` / `===` / `=>` (T_IS_EQUAL etc. are array tokens; `=` is string).
+                $decoded = $this->decodeStringLiteralToken($tokens[$keyStart][1]);
+                if (! is_string($decoded) || ! preg_match('/^[a-z_][a-z0-9_]*$/', $decoded)) {
+                    self::fail(
+                        $this->unresolvableArrayMessage(
+                            $method,
+                            $sourceLabel,
+                            $line,
+                            "data variable {$varName} addition key is not a plain column identifier"
+                        )
+                    );
+                }
+                $keys[$decoded] = true;
+                $i = $afterBracket + 1;
+                continue;
+            }
+
+            // Assignment: `$var = …` or `$var += …` / `.=` etc.
+            if ($afterVar >= $count) {
+                ++$i;
+                continue;
+            }
+
+            $op = $tokens[$afterVar];
+            if (is_array($op) && T_PLUS_EQUAL === $op[0]) {
+                self::fail(
+                    $this->unresolvableArrayMessage(
+                        $method,
+                        $sourceLabel,
+                        $line,
+                        "data variable {$varName} is modified with += (not a resolvable literal array)"
+                    )
+                );
+            }
+            if (is_array($op) && (T_CONCAT_EQUAL === $op[0] || T_MUL_EQUAL === $op[0]
+                || T_DIV_EQUAL === $op[0] || T_MOD_EQUAL === $op[0]
+                || T_AND_EQUAL === $op[0] || T_OR_EQUAL === $op[0]
+                || T_XOR_EQUAL === $op[0] || T_SL_EQUAL === $op[0]
+                || T_SR_EQUAL === $op[0] || T_COALESCE_EQUAL === $op[0]
+            )) {
+                self::fail(
+                    $this->unresolvableArrayMessage(
+                        $method,
+                        $sourceLabel,
+                        $line,
+                        "data variable {$varName} is modified with a compound assignment"
+                    )
+                );
+            }
+            if ('=' !== $op) {
+                ++$i;
+                continue;
+            }
+
+            // True assignment `$var = RHS`.
+            $rhsStart = $this->skipInsignificantTokens($tokens, $afterVar + 1);
+            if ($rhsStart >= $count) {
+                self::fail(
+                    $this->unresolvableArrayMessage(
+                        $method,
+                        $sourceLabel,
+                        $line,
+                        "data variable {$varName} has an empty assignment"
+                    )
+                );
+            }
+
+            $rhs = $tokens[$rhsStart];
+            $isLiteralArray = (is_array($rhs) && T_ARRAY === $rhs[0]) || '[' === $rhs;
+            if (! $isLiteralArray) {
+                $reason = "data variable {$varName} is assigned from a non-literal value";
+                if (is_array($rhs) && T_STRING === $rhs[0] && in_array($rhs[1], ['array_merge', 'array_replace', 'array_replace_recursive', 'array_combine', 'compact'], true)) {
+                    $reason = "data variable {$varName} is assigned from {$rhs[1]}()";
+                } elseif (is_array($rhs) && T_VARIABLE === $rhs[0]) {
+                    $reason = "data variable {$varName} is assigned from another variable";
+                } elseif (is_array($rhs) && T_ELLIPSIS === $rhs[0]) {
+                    $reason = "data variable {$varName} is assigned using spread";
+                }
+                self::fail(
+                    $this->unresolvableArrayMessage($method, $sourceLabel, $line, $reason)
+                );
+            }
+
+            // Assignment inside a loop/conditional that does not also enclose the
+            // call site cannot be ordered — fail closed.
+            if ($this->tokenIsInsideUnorderedControlStructure($tokens, $scope['start'], $i, $callTokenIndex)) {
+                self::fail(
+                    $this->unresolvableArrayMessage(
+                        $method,
+                        $sourceLabel,
+                        $line,
+                        "data variable {$varName} is assigned inside a loop or conditional that does not enclose the call site"
+                    )
+                );
+            }
+
+            ++$literalAssignCount;
+            if ($literalAssignCount > 1) {
+                self::fail(
+                    $this->unresolvableArrayMessage(
+                        $method,
+                        $sourceLabel,
+                        $line,
+                        "data variable {$varName} is assigned more than once to a literal array"
+                    )
+                );
+            }
+            $literalAssignIndex = $i;
+
+            // Build a token slice for the RHS array and extract keys.
+            $arrayTokens = $this->sliceBalancedArrayTokens($tokens, $rhsStart);
+            $assignedKeys = $this->extractLiteralArrayKeys($arrayTokens, $sourceLabel, $line, $method);
+            foreach ($assignedKeys as $key) {
+                $keys[$key] = true;
+            }
+            $i = $rhsStart + count($arrayTokens);
+        }
+
+        if (0 === $literalAssignCount || null === $literalAssignIndex) {
+            self::fail(
+                $this->unresolvableArrayMessage(
+                    $method,
+                    $sourceLabel,
+                    $line,
+                    "data argument is variable {$varName} with no resolvable literal-array assignment in the enclosing function"
+                )
+            );
+        }
+
+        return array_keys($keys);
+    }
+
+    /**
+     * Innermost function/method body containing $pos, or null if none.
+     *
+     * @param list<string|array{0:int,1:string,2:int}> $tokens
+     * @return array{start:int,end:int}|null body open index (after '{') and close index (at '}')
+     */
+    private function findEnclosingFunctionBody(array $tokens, int $pos): ?array
+    {
+        $count = count($tokens);
+        $candidates = [];
+
+        for ($i = 0; $i < $count; $i++) {
+            $t = $tokens[$i];
+            if (! is_array($t) || T_FUNCTION !== $t[0]) {
+                continue;
+            }
+
+            // Skip past optional name, parameter list, use-clause, and return type
+            // until the body '{' (or ';' for abstract methods).
+            $j = $this->skipInsignificantTokens($tokens, $i + 1);
+            $sawParamList = false;
+            while ($j < $count) {
+                $cur = $tokens[$j];
+                if ('{' === $cur) {
+                    break;
+                }
+                if (';' === $cur) {
+                    // Abstract / interface method — no body.
+                    break;
+                }
+                if ('(' === $cur && ! $sawParamList) {
+                    $sawParamList = true;
+                    $depth = 0;
+                    for (; $j < $count; $j++) {
+                        if ('(' === $tokens[$j]) {
+                            ++$depth;
+                        } elseif (')' === $tokens[$j]) {
+                            --$depth;
+                            if (0 === $depth) {
+                                ++$j;
+                                break;
+                            }
+                        }
+                    }
+                    $j = $this->skipInsignificantTokens($tokens, $j);
+                    // Closures: `function (…) use (…) {`.
+                    if (
+                        $j < $count
+                        && is_array($tokens[$j])
+                        && T_USE === $tokens[$j][0]
+                    ) {
+                        $j = $this->skipInsignificantTokens($tokens, $j + 1);
+                        if ($j < $count && '(' === $tokens[$j]) {
+                            $depth = 0;
+                            for (; $j < $count; $j++) {
+                                if ('(' === $tokens[$j]) {
+                                    ++$depth;
+                                } elseif (')' === $tokens[$j]) {
+                                    --$depth;
+                                    if (0 === $depth) {
+                                        ++$j;
+                                        break;
+                                    }
+                                }
+                            }
+                            $j = $this->skipInsignificantTokens($tokens, $j);
+                        }
+                    }
+                    continue;
+                }
+                // Anything else (name, return type tokens, `&`, `?`, `|`, …).
+                ++$j;
+                $j = $this->skipInsignificantTokens($tokens, $j);
+            }
+            // Abstract / interface methods end with `;` — no body.
+            if ($j >= $count || '{' !== $tokens[$j]) {
+                continue;
+            }
+
+            $bodyStart = $j + 1;
+            $bodyEnd = $this->findMatchingBrace($tokens, $j);
+            if (null === $bodyEnd) {
+                continue;
+            }
+            if ($bodyStart <= $pos && $pos < $bodyEnd) {
+                $candidates[] = ['start' => $bodyStart, 'end' => $bodyEnd];
+            }
+        }
+
+        if ($candidates === []) {
+            return null;
+        }
+
+        // Innermost: smallest body range.
+        usort(
+            $candidates,
+            static fn (array $a, array $b): int => ($a['end'] - $a['start']) <=> ($b['end'] - $b['start'])
+        );
+
+        return $candidates[0];
+    }
+
+    /**
+     * @param list<string|array{0:int,1:string,2:int}> $tokens
+     */
+    private function findMatchingBrace(array $tokens, int $openBraceIndex): ?int
+    {
+        $count = count($tokens);
+        $depth = 0;
+        for ($i = $openBraceIndex; $i < $count; $i++) {
+            $t = $tokens[$i];
+            if ('{' === $t || (is_array($t) && (T_CURLY_OPEN === $t[0] || T_DOLLAR_OPEN_CURLY_BRACES === $t[0]))) {
+                ++$depth;
+                continue;
+            }
+            if ('}' === $t) {
+                --$depth;
+                if (0 === $depth) {
+                    return $i;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * True when $assignIndex sits inside a control-structure block that does not
+     * also contain $callIndex (assignment may not dominate the call).
+     *
+     * @param list<string|array{0:int,1:string,2:int}> $tokens
+     */
+    private function tokenIsInsideUnorderedControlStructure(
+        array $tokens,
+        int $scopeStart,
+        int $assignIndex,
+        int $callIndex
+    ): bool {
+        $controlKeywords = [
+            T_IF => true,
+            T_ELSEIF => true,
+            T_ELSE => true,
+            T_FOR => true,
+            T_FOREACH => true,
+            T_WHILE => true,
+            T_DO => true,
+            T_SWITCH => true,
+            T_TRY => true,
+            T_CATCH => true,
+            T_FINALLY => true,
+        ];
+
+        $count = count($tokens);
+        for ($i = $scopeStart; $i < $assignIndex; $i++) {
+            $t = $tokens[$i];
+            if (! is_array($t) || ! isset($controlKeywords[$t[0]])) {
+                continue;
+            }
+
+            // Find the block '{' that belongs to this control keyword.
+            $j = $this->skipInsignificantTokens($tokens, $i + 1);
+            // else / finally / do may go straight to '{'; if/for/while have '(...)'.
+            if ($j < $count && '(' === $tokens[$j]) {
+                $depth = 0;
+                for (; $j < $count; $j++) {
+                    if ('(' === $tokens[$j]) {
+                        ++$depth;
+                    } elseif (')' === $tokens[$j]) {
+                        --$depth;
+                        if (0 === $depth) {
+                            ++$j;
+                            break;
+                        }
+                    }
+                }
+                $j = $this->skipInsignificantTokens($tokens, $j);
+            }
+            // while after do: `while (...);` — no block for the while.
+            if ($j >= $count || '{' !== $tokens[$j]) {
+                continue;
+            }
+            $blockEnd = $this->findMatchingBrace($tokens, $j);
+            if (null === $blockEnd) {
+                continue;
+            }
+            $blockStart = $j + 1;
+            $assignInside = $assignIndex >= $blockStart && $assignIndex < $blockEnd;
+            $callInside = $callIndex >= $blockStart && $callIndex < $blockEnd;
+            if ($assignInside && ! $callInside) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Slice tokens for a balanced `array(…)` or `[…]` starting at $start.
+     *
+     * @param list<string|array{0:int,1:string,2:int}> $tokens
+     * @return list<string|array{0:int,1:string,2:int}>
+     */
+    private function sliceBalancedArrayTokens(array $tokens, int $start): array
+    {
+        $count = count($tokens);
+        $open = $tokens[$start];
+        $depthParen = 0;
+        $depthBracket = 0;
+        $depthBrace = 0;
+        $i = $start;
+
+        if (is_array($open) && T_ARRAY === $open[0]) {
+            // Include `array` and the following balanced `(…)`.
+            $i = $this->skipInsignificantTokens($tokens, $start + 1);
+            if ($i >= $count || '(' !== $tokens[$i]) {
+                return array_slice($tokens, $start, 1);
+            }
+            $depthParen = 1;
+            ++$i;
+            for (; $i < $count; $i++) {
+                $t = $tokens[$i];
+                if ('(' === $t) {
+                    ++$depthParen;
+                } elseif (')' === $t) {
+                    --$depthParen;
+                    if (0 === $depthParen && 0 === $depthBracket && 0 === $depthBrace) {
+                        return array_slice($tokens, $start, $i - $start + 1);
+                    }
+                } elseif ('[' === $t) {
+                    ++$depthBracket;
+                } elseif (']' === $t) {
+                    --$depthBracket;
+                } elseif ('{' === $t || (is_array($t) && (T_CURLY_OPEN === $t[0] || T_DOLLAR_OPEN_CURLY_BRACES === $t[0]))) {
+                    ++$depthBrace;
+                } elseif ('}' === $t) {
+                    --$depthBrace;
+                }
+            }
+
+            return array_slice($tokens, $start, $count - $start);
+        }
+
+        if ('[' === $open) {
+            $depthBracket = 1;
+            ++$i;
+            for (; $i < $count; $i++) {
+                $t = $tokens[$i];
+                if ('[' === $t) {
+                    ++$depthBracket;
+                } elseif (']' === $t) {
+                    --$depthBracket;
+                    if (0 === $depthBracket && 0 === $depthParen && 0 === $depthBrace) {
+                        return array_slice($tokens, $start, $i - $start + 1);
+                    }
+                } elseif ('(' === $t) {
+                    ++$depthParen;
+                } elseif (')' === $t) {
+                    --$depthParen;
+                } elseif ('{' === $t || (is_array($t) && (T_CURLY_OPEN === $t[0] || T_DOLLAR_OPEN_CURLY_BRACES === $t[0]))) {
+                    ++$depthBrace;
+                } elseif ('}' === $t) {
+                    --$depthBrace;
+                }
+            }
+        }
+
+        return array_slice($tokens, $start, 1);
+    }
+
+    /**
+     * True when the first argument of a $wpdb write names the clusters table
+     * (or is $this->table_name inside a class-cluster* repository file).
+     *
+     * @param list<string|array{0:int,1:string,2:int}> $argTokens
+     */
+    private function argumentTargetsClustersTable(array $argTokens, bool $fileIsClusterRepository): bool
+    {
+        $text = '';
+        foreach ($argTokens as $t) {
+            $text .= is_array($t) ? $t[1] : $t;
+        }
+        $text = preg_replace('/\s+/', '', $text) ?? $text;
+
+        if (preg_match('/cluster/i', $text) === 1) {
+            return true;
+        }
+        if (str_contains($text, 'acx_clusters')) {
+            return true;
+        }
+        // class-cluster* repositories bind $this->table_name to acx_clusters.
+        if ($fileIsClusterRepository && preg_match('/\$this->table_name\b/', $text) === 1) {
+            return true;
+        }
+
+        return false;
+    }
+
+    private function sourceLabelIsClusterRepositoryFile(string $sourceLabel): bool
+    {
+        $base = basename(str_replace('\\', '/', $sourceLabel));
+
+        return 1 === preg_match('/^class-cluster.*\.php$/', $base);
     }
 
     /**
@@ -800,24 +1524,51 @@ PHP;
     }
 
     /**
+     * Every runtime file that writes the clusters table — corpus by table, not
+     * by `class-cluster*` filename (R23-BR-29). class-cluster* repositories plus
+     * the known non-repository writers that issue `$wpdb` updates against
+     * `$table_clusters` / acx_clusters.
+     *
      * @return list<string>
      */
     private function repositoryLayerFiles(): array
     {
-        $dir = dirname(__DIR__, 2) . '/src/sovereign/repositories';
-        $files = glob($dir . '/class-cluster*.php');
-        if (! is_array($files)) {
-            $files = [];
+        $root = dirname(__DIR__, 2);
+        $repoDir = $root . '/src/sovereign/repositories';
+        $globbed = glob($repoDir . '/class-cluster*.php');
+        if (! is_array($globbed)) {
+            $globbed = [];
         }
-        $this->assertNotEmpty($files, 'no clusters repository-layer source files found');
+
+        // Non-repository clusters-table writers enumerated from $wpdb call sites
+        // whose first argument is $table_clusters / acx_clusters. Tenant re-key
+        // loops `$table` over a suffix list that includes acx_clusters but the
+        // table argument is not statically clusters-shaped, so it is not listed
+        // here — its only written column (`tenant_id`) is already covered by the
+        // class-cluster* insert paths.
+        $extra = [
+            $root . '/src/support/class-life-cycle-manager.php',
+            $root . '/src/api/services/class-cluster-label-service.php',
+            $root . '/src/api/class-api.php',
+        ];
+
+        $files = [];
+        foreach (array_merge($globbed, $extra) as $path) {
+            if (is_string($path) && is_readable($path)) {
+                $files[$path] = true;
+            }
+        }
+        $files = array_keys($files);
+        $this->assertNotEmpty($files, 'no clusters write-corpus source files found');
         sort($files);
 
         return $files;
     }
 
     /**
-     * Concatenated source of the whole clusters repository layer (facade +
-     * extracted collaborators), so column references survive the REFA-2 split.
+     * Concatenated source of the clusters write corpus (repository layer +
+     * non-repository clusters-table writers), so column references survive the
+     * REFA-2 split and the R23-BR-29 corpus widen.
      */
     private function repositoryLayerSource(): string
     {

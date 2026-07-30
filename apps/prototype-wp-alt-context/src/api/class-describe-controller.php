@@ -825,51 +825,58 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 						&& ! $this->provenance_already_describes_stored_alt( $stored_prov, $stored_alt_raw );
 
 					if ( ! $is_non_clobber_completion ) {
-						// BR-114 / R23-BR-05: drop orphaned markers owned by this run
-						// when recovery is rejected because alt diverged, provenance
+						// BR-114 / R23-BR-05 / R23-BR-18: drop orphaned markers owned
+						// by this run when recovery is rejected because provenance
 						// is already this run's complete envelope, or the own-run
 						// marker is not live recovery evidence for the currently
 						// stored alt (stale draft_hash). Markers for other runs stay
 						// (foreign same-draft markers recover above; foreign
-						// mismatched markers remain for their owner). Live own-run
-						// markers for the stored alt are not dropped here — they are
-						// the true-partial recovery evidence.
-						if ( is_array( $pending )
+						// mismatched markers remain for their owner).
+						//
+						// R23-BR-18: do NOT drop on alt_diverged alone. A live
+						// own-run marker for stored alt S (true partial) must
+						// survive when this apply's draft D ≠ S — the marker still
+						// names the run that owns the in-flight gap. Clearing it
+						// here made completion unmatchable. Dead evidence is still
+						// collected via the stale-for-stored-alt leg; alt_diverged
+						// with a live marker is skip_existing only (no wipe).
+						// Live own-run markers for the stored alt are the
+						// true-partial recovery evidence and are preserved.
+						//
+						// R23-BR-19: staleness is a property of a specific run —
+						// identity (marker.run_id === applying run) and content
+						// liveness (draft_hash vs stored alt) are one predicate.
+						// Judging content alone would treat a foreign marker's
+						// draft_hash as this run's clock.
+						if ( $prov_is_this_run
+							&& is_array( $pending )
 							&& isset( $pending['run_id'] )
 							&& (string) $pending['run_id'] === $run_id
 						) {
-							$alt_diverged = $stored_alt_raw !== $expected_stored_alt;
-							$own_marker_stale_for_stored_alt = ! DescriptionHistoryService::is_live_recovery_marker_for_alt(
-								$pending,
-								$stored_alt_raw
-							);
-							if ( $alt_diverged || $prov_is_this_run || $own_marker_stale_for_stored_alt ) {
-								// R21-BR-10: delete unchecked. When prov_is_this_run,
-								// history already lists via provenance so a survivor
-								// is redundant. When alt_diverged, a survivor may keep
-								// a pure-gap row that no longer matches the draft —
-								// soft miss; skip_existing is still the correct
-								// non-clobber decision for this apply. When the own
-								// marker is stale for the stored alt, it is dead
-								// evidence for this run and must not remain as a
-								// re-stamp key [R23-BR-05].
-								delete_post_meta( $media_id, '_acx_description_provenance_pending' );
-							}
+							// R21-BR-10: delete unchecked. History already lists via
+							// provenance so a survivor is redundant.
+							delete_post_meta( $media_id, '_acx_description_provenance_pending' );
+						} elseif ( DescriptionHistoryService::is_stale_own_run_marker_for_alt(
+							$pending,
+							$stored_alt_raw,
+							$run_id
+						) ) {
+							// R21-BR-10: delete unchecked. Own-run marker is dead
+							// evidence for this run and must not remain as a
+							// re-stamp key [R23-BR-05].
+							delete_post_meta( $media_id, '_acx_description_provenance_pending' );
 						}
 						$buckets['skipped_existing'][] = $media_id;
 						continue;
 					}
 
-					// Recovery unlocked. If the marker was planted by another run,
-					// record that owner so the audit trail does not silently claim
-					// this apply generated the text [R23-BR-08]. Only the run id is
-					// in the marker — do not invent foreign model metadata [rg-015].
-					if ( is_array( $pending ) && isset( $pending['run_id'] ) ) {
-						$marker_owner = (string) $pending['run_id'];
-						if ( '' !== trim( $marker_owner ) && $marker_owner !== $run_id ) {
-							$recovered_from_run_id = $marker_owner;
-						}
-					}
+					// Recovery unlocked. Attribute the originating run via the
+					// canonical resolver [R23-BR-24] [R23-BR-08] — do not invent
+					// foreign model metadata [rg-015].
+					$recovered_from_run_id = DescriptionHistoryService::resolve_recovered_from_run_id(
+						$pending,
+						$run_id
+					);
 				}
 			}
 
@@ -1323,7 +1330,10 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 		$provenance['source']         = 'bulk_describe_run';
 		$provenance['run_id']         = $run_id;
 		$provenance['applied_at']     = gmdate( 'c' );
-		if ( null !== $recovered_from_run_id && '' !== trim( $recovered_from_run_id ) && $recovered_from_run_id !== $run_id ) {
+		// Stamp only a canonical non-null recovery owner [R23-BR-24]. Callers must
+		// pass DescriptionHistoryService::resolve_recovered_from_run_id output (or
+		// null) — do not re-implement owner/same-run filtering here.
+		if ( null !== $recovered_from_run_id ) {
 			$provenance['recovered_from_run_id'] = $recovered_from_run_id;
 		}
 

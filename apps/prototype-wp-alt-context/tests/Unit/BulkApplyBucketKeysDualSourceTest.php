@@ -25,20 +25,16 @@ use AltContext\Tests\TestCase;
  * string literals, heredocs and comments cannot hide writes or truncate the
  * method body (R23-BR-03 / R23-BR-04).
  *
- * Resolved write forms (R23-BR-13 / R23-BR-27):
- *   - `$buckets['lit'] = …` / `$buckets['lit'][] = …`  (plain + []= append)
- *   - `array_push( $buckets['lit'], … )`
- *   - `$buckets += array( 'lit' => … )` / `$buckets += [ 'lit' => … ]`
- *     (top-level keys; nested array *values* are allowed and skipped)
- *   - `$buckets = array( 'lit' => … )` / `$buckets = [ 'lit' => … ]`
- *     (literal reassignment; nested values allowed)
- *
- * Fail-closed (R23-BR-12) — never silent skip — for any key-introducing form
- * whose keys cannot be resolved to string literals (variable / concat / spread /
- * function-call / conditional / non-literal `+=` RHS / non-literal `array_push`
- * target). Messages name file:line. Recognised safe init
- * `$buckets = array_fill_keys( AltTextWriteStatus::BULK_APPLY_BUCKETS, … )`
- * contributes no loop-written keys and is not a failure.
+ * Walker is a denylist, not an allowlist (R23-BR-12 / R23-BR-13 / R23-BR-27):
+ * after `$buckets` plus any full subscript chain, the next significant token is
+ * classified as write, read, or unknown. Unknown tokens `self::fail()` with
+ * file:line — never bare-`continue`. Assignment-family ops (including
+ * `T_CONCAT_EQUAL`, per-key `T_PLUS_EQUAL`, …) are writes; multi-level
+ * subscripts (`$buckets['k']['sub'][] = …`) are skipped as a chain before the
+ * op test. `array_push( $buckets['lit'], … )` is resolved. Reference-alias
+ * `=& $buckets[…]` fails closed (not analysed). Whole-`$buckets` forms
+ * (`+=` / `=` literal array / safe `array_fill_keys(BULK_APPLY_BUCKETS)`)
+ * remain resolved. Non-literal write keys also fail closed.
  *
  * Routing the loop through the const members is a production fix owned by the
  * controller lane; this test only closes the detection gap.
@@ -202,6 +198,138 @@ function apply_describe_run_drafts() {
 PHP;
         $keys = $this->extractKeysFromSnippet($php, 'nested-literal-fixture.php');
         self::assertContains('fabricated_nested_form_xyz', $keys);
+    }
+
+    /**
+     * `$buckets['lit'] .= …` concat-equal is a resolved write form [R23-BR-12].
+     */
+    public function testConcatEqualWriteFormSurfacesFabricatedKey(): void
+    {
+        $php = <<<'PHP'
+<?php
+function apply_describe_run_drafts() {
+    $buckets['applied'][] = $media_id;
+    $buckets['fabricated_concat_equal_xyz'] .= 'x';
+}
+PHP;
+        $keys = $this->extractKeysFromSnippet($php, 'concat-equal-fixture.php');
+        self::assertContains('fabricated_concat_equal_xyz', $keys);
+        self::assertContains('applied', $keys);
+    }
+
+    /**
+     * Multi-level `$buckets['lit']['sub'][] =` is a resolved write form [R23-BR-13].
+     */
+    public function testNestedSubscriptWriteFormSurfacesFabricatedKey(): void
+    {
+        $php = <<<'PHP'
+<?php
+function apply_describe_run_drafts() {
+    $buckets['applied'][] = $media_id;
+    $buckets['fabricated_nested_sub_xyz']['sub'][] = $media_id;
+}
+PHP;
+        $keys = $this->extractKeysFromSnippet($php, 'nested-sub-fixture.php');
+        self::assertContains('fabricated_nested_sub_xyz', $keys);
+        self::assertContains('applied', $keys);
+    }
+
+    /**
+     * Per-key `$buckets['lit'] += …` is a resolved write form [R23-BR-27].
+     */
+    public function testPerKeyPlusEqualWriteFormSurfacesFabricatedKey(): void
+    {
+        $php = <<<'PHP'
+<?php
+function apply_describe_run_drafts() {
+    $buckets['applied'][] = $media_id;
+    $buckets['fabricated_per_key_plus_xyz'] += array( $media_id );
+}
+PHP;
+        $keys = $this->extractKeysFromSnippet($php, 'per-key-plus-fixture.php');
+        self::assertContains('fabricated_per_key_plus_xyz', $keys);
+        self::assertContains('applied', $keys);
+    }
+
+    /**
+     * Fail-closed: reference alias `=& $buckets[…]` is refused, not analysed [R23-BR-27].
+     *
+     * @throws \PHPUnit\Framework\AssertionFailedError When fail-closed does not fire.
+     */
+    public function testReferenceAliasToBucketsFailsClosed(): void
+    {
+        $php = <<<'PHP'
+<?php
+function apply_describe_run_drafts() {
+    $buckets['applied'][] = $media_id;
+    $r =& $buckets['ghost_alias'];
+    $r[] = $media_id;
+}
+PHP;
+        try {
+            $this->extractKeysFromSnippet($php, 'ref-alias-fixture.php');
+            self::fail('expected fail-closed on reference alias to $buckets');
+        } catch (\PHPUnit\Framework\AssertionFailedError $e) {
+            if (str_contains($e->getMessage(), 'expected fail-closed')) {
+                throw $e;
+            }
+            self::assertStringContainsString(
+                'reference alias to $buckets is not statically analysable',
+                $e->getMessage()
+            );
+            self::assertMatchesRegularExpression(
+                '/ref-alias-fixture\.php:\d+/',
+                $e->getMessage()
+            );
+        }
+    }
+
+    /**
+     * Fail-closed: token after `$buckets[…]` that is neither write nor read [R23-BR-12].
+     *
+     * @throws \PHPUnit\Framework\AssertionFailedError When fail-closed does not fire.
+     */
+    public function testUnrecognisedOperatorAfterBucketChainFailsClosed(): void
+    {
+        $php = <<<'PHP'
+<?php
+function apply_describe_run_drafts() {
+    $buckets['applied'][] = $media_id;
+    $buckets['ghost_inc']++;
+}
+PHP;
+        try {
+            $this->extractKeysFromSnippet($php, 'unknown-op-fixture.php');
+            self::fail('expected fail-closed on unrecognised operator after $buckets[…]');
+        } catch (\PHPUnit\Framework\AssertionFailedError $e) {
+            if (str_contains($e->getMessage(), 'expected fail-closed')) {
+                throw $e;
+            }
+            self::assertStringContainsString(
+                'unrecognised token after $buckets[…] chain',
+                $e->getMessage()
+            );
+            self::assertMatchesRegularExpression(
+                '/unknown-op-fixture\.php:\d+/',
+                $e->getMessage()
+            );
+        }
+    }
+
+    /**
+     * Control: a pure read of `$buckets['lit']` must not fail or invent keys.
+     */
+    public function testControlReadOfBucketKeyIsSkipped(): void
+    {
+        $php = <<<'PHP'
+<?php
+function apply_describe_run_drafts() {
+    $buckets['applied'][] = $media_id;
+    $ignored = $buckets['applied'];
+}
+PHP;
+        $keys = $this->extractKeysFromSnippet($php, 'control-read-fixture.php');
+        self::assertSame(array( 'applied' ), $keys);
     }
 
     /**
@@ -414,8 +542,9 @@ PHP;
 
     /**
      * Collect string-literal keys of every key-introducing `$buckets` write in
-     * the body. Reads (`$body[$k] = $buckets[$k]`) are ignored. Unresolvable
-     * key-introducing forms fail closed with file:line [rg-016] [R23-BR-12].
+     * the body. Reads are recognised explicitly and skipped. Unrecognised
+     * followers and unresolvable key-introducing forms fail closed with
+     * file:line [rg-016] [R23-BR-12] [R23-BR-13] [R23-BR-27].
      *
      * @param list<string|array{0:int,1:string,2:int}> $bodyTokens
      * @return array{
@@ -452,6 +581,21 @@ PHP;
             }
 
             $line = $token[2];
+
+            // Reference-alias target: `$r =& $buckets[…]` is not statically
+            // analysable — fail closed rather than silently missing the write
+            // through the alias (R23-BR-27). Detected by looking *behind*
+            // `$buckets` for `=` then `&` (not T_AND_EQUAL, which is `&=`).
+            if ($this->isReferenceAliasToBuckets($bodyTokens, $i)) {
+                self::fail(
+                    $this->unresolvableMessage(
+                        $sourceLabel,
+                        $line,
+                        'reference alias to $buckets is not statically analysable — write the bucket directly'
+                    )
+                );
+            }
+
             $j = $this->skipInsignificant($bodyTokens, $i + 1);
             if ($j >= $count) {
                 continue;
@@ -504,15 +648,29 @@ PHP;
                 );
             }
 
-            // Must be followed by `[` (subscript access) for the plain / []= forms.
+            // Bare `$buckets` (no subscript): recognise reads, fail on unknown.
             if ('[' !== $bodyTokens[ $j ]) {
-                continue;
+                if ($this->isBucketReadFollower($bodyTokens[ $j ])) {
+                    continue;
+                }
+                self::fail(
+                    $this->unresolvableMessage(
+                        $sourceLabel,
+                        $line,
+                        sprintf(
+                            'unrecognised token after bare $buckets: %s',
+                            $this->describeToken($bodyTokens[ $j ])
+                        )
+                    )
+                );
             }
 
-            // Parse the first subscript: content between this `[` and its matching `]`.
-            $subStart = $j + 1;
-            $subEnd   = $this->findMatchingBracket($bodyTokens, $j);
-            if (null === $subEnd) {
+            // Skip the whole subscript chain (`['a']`, `['a']['b']`, `['a'][]`, …)
+            // before classifying the operator. Empty `[]` is just a zero-token
+            // subscript — no special branch (R23-BR-13).
+            $firstSubStart = $j + 1;
+            $firstSubEnd   = $this->findMatchingBracket($bodyTokens, $j);
+            if (null === $firstSubEnd) {
                 self::fail(
                     $this->unresolvableMessage(
                         $sourceLabel,
@@ -522,61 +680,88 @@ PHP;
                 );
             }
 
-            // After the first `]`, allow optional empty `[]` then require `=` for a write.
-            $after = $this->skipInsignificant($bodyTokens, $subEnd + 1);
-            $isAppendForm = false;
-            if ($after < $count && '[' === $bodyTokens[ $after ]) {
-                $innerClose = $this->skipInsignificant($bodyTokens, $after + 1);
-                if ($innerClose < $count && ']' === $bodyTokens[ $innerClose ]) {
-                    // Empty append form: `$buckets['k'][] = …`
-                    $isAppendForm = true;
-                    $after = $this->skipInsignificant($bodyTokens, $innerClose + 1);
+            $chainEnd = $firstSubEnd;
+            $after    = $this->skipInsignificant($bodyTokens, $firstSubEnd + 1);
+            while ($after < $count && '[' === $bodyTokens[ $after ]) {
+                $nextClose = $this->findMatchingBracket($bodyTokens, $after);
+                if (null === $nextClose) {
+                    self::fail(
+                        $this->unresolvableMessage(
+                            $sourceLabel,
+                            $line,
+                            'unclosed $buckets[…] subscript chain'
+                        )
+                    );
                 }
+                $chainEnd = $nextClose;
+                $after    = $this->skipInsignificant($bodyTokens, $nextClose + 1);
             }
+            unset($chainEnd);
 
-            // Not a write (e.g. `$body[$k] = $buckets[$k]` read) — skip.
-            // Only `=` after the subscript chain counts as a key-introducing write.
-            if ($after >= $count || '=' !== $bodyTokens[ $after ]) {
+            // End of body after a complete chain — treat as a non-write.
+            if ($after >= $count) {
                 continue;
             }
 
-            // Fail closed: subscript must be exactly one T_CONSTANT_ENCAPSED_STRING.
-            // Empty `$buckets[] = …` (no key) is unresolvable [R23-BR-12].
-            $significant = $this->significantTokens(array_slice($bodyTokens, $subStart, $subEnd - $subStart));
+            $follower = $bodyTokens[ $after ];
 
-            if (array() === $significant) {
-                self::fail(
-                    $this->unresolvableMessage(
-                        $sourceLabel,
-                        $line,
-                        'unkeyed $buckets[] = write cannot name a bucket key'
-                    )
+            // Assignment-family write on a per-key `$buckets[…]` chain.
+            if ($this->isAssignmentWriteOperator($follower)) {
+                // Fail closed: first subscript must be exactly one string literal.
+                // Empty `$buckets[]…` (no key) is unresolvable [R23-BR-12].
+                $significant = $this->significantTokens(
+                    array_slice($bodyTokens, $firstSubStart, $firstSubEnd - $firstSubStart)
                 );
-            }
 
-            if (
-                1 !== count($significant)
-                || ! is_array($significant[0])
-                || T_CONSTANT_ENCAPSED_STRING !== $significant[0][0]
-            ) {
-                $raw = $this->tokensToText(array_slice($bodyTokens, $subStart, $subEnd - $subStart));
-                self::fail(
-                    $this->unresolvableMessage(
-                        $sourceLabel,
-                        $line,
-                        sprintf(
-                            'non-literal $buckets[%s]%s write',
-                            trim($raw),
-                            $isAppendForm ? '[]' : ''
+                if (array() === $significant) {
+                    self::fail(
+                        $this->unresolvableMessage(
+                            $sourceLabel,
+                            $line,
+                            'unkeyed $buckets[] write cannot name a bucket key'
                         )
-                    )
-                );
+                    );
+                }
+
+                if (
+                    1 !== count($significant)
+                    || ! is_array($significant[0])
+                    || T_CONSTANT_ENCAPSED_STRING !== $significant[0][0]
+                ) {
+                    $raw = $this->tokensToText(
+                        array_slice($bodyTokens, $firstSubStart, $firstSubEnd - $firstSubStart)
+                    );
+                    self::fail(
+                        $this->unresolvableMessage(
+                            $sourceLabel,
+                            $line,
+                            sprintf('non-literal $buckets[%s] write', trim($raw))
+                        )
+                    );
+                }
+
+                $keys[] = $this->decodeStringLiteral($significant[0][1]);
+                ++$resolved;
+                continue;
             }
 
-            $keys[] = $this->decodeStringLiteral($significant[0][1]);
-            ++$resolved;
-            // Silence unused in static analysers if append flag only used in message.
-            unset($isAppendForm);
+            // Recognised read follower (RHS use, isset arg, foreach, …).
+            if ($this->isBucketReadFollower($follower)) {
+                continue;
+            }
+
+            // Neither write nor read — fail closed so the next unknown form
+            // reddens instead of disappearing (denylist, not allowlist).
+            self::fail(
+                $this->unresolvableMessage(
+                    $sourceLabel,
+                    $line,
+                    sprintf(
+                        'unrecognised token after $buckets[…] chain: %s',
+                        $this->describeToken($follower)
+                    )
+                )
+            );
         }
 
         return array(
@@ -584,6 +769,160 @@ PHP;
             'resolved_call_sites' => $resolved,
             'failed_closed_call_sites' => $failedClosed,
         );
+    }
+
+    /**
+     * True when `$buckets` at $index is the RHS of a reference binding `=&`.
+     * Lexes as `=` then `&` / T_AMPERSAND_* — not T_AND_EQUAL (`&=`).
+     *
+     * @param list<string|array{0:int,1:string,2:int}> $tokens
+     */
+    private function isReferenceAliasToBuckets(array $tokens, int $index): bool
+    {
+        $j = $this->skipInsignificantBackward($tokens, $index - 1);
+        if ($j < 0 || ! $this->isAmpersandToken($tokens[ $j ])) {
+            return false;
+        }
+
+        $j = $this->skipInsignificantBackward($tokens, $j - 1);
+
+        return $j >= 0 && '=' === $tokens[ $j ];
+    }
+
+    /**
+     * @param string|array{0:int,1:string,2:int} $token
+     */
+    private function isAmpersandToken(string|array $token): bool
+    {
+        if ('&' === $token) {
+            return true;
+        }
+        if (! is_array($token)) {
+            return false;
+        }
+
+        if (defined('T_AMPERSAND_FOLLOWED_BY_VAR_OR_VARARG')
+            && T_AMPERSAND_FOLLOWED_BY_VAR_OR_VARARG === $token[0]
+        ) {
+            return true;
+        }
+
+        return defined('T_AMPERSAND_NOT_FOLLOWED_BY_VAR_OR_VARARG')
+            && T_AMPERSAND_NOT_FOLLOWED_BY_VAR_OR_VARARG === $token[0];
+    }
+
+    /**
+     * Assignment-family operators that introduce / mutate a bucket key write.
+     *
+     * @param string|array{0:int,1:string,2:int} $token
+     */
+    private function isAssignmentWriteOperator(string|array $token): bool
+    {
+        if ('=' === $token) {
+            return true;
+        }
+        if (! is_array($token)) {
+            return false;
+        }
+
+        static $ops = null;
+        if (null === $ops) {
+            $ops = array(
+                T_CONCAT_EQUAL,
+                T_PLUS_EQUAL,
+                T_MINUS_EQUAL,
+                T_MUL_EQUAL,
+                T_DIV_EQUAL,
+                T_MOD_EQUAL,
+                T_POW_EQUAL,
+                T_AND_EQUAL,
+                T_OR_EQUAL,
+                T_XOR_EQUAL,
+                T_SL_EQUAL,
+                T_SR_EQUAL,
+                T_COALESCE_EQUAL,
+            );
+        }
+
+        return in_array($token[0], $ops, true);
+    }
+
+    /**
+     * Explicit read followers after a complete `$buckets` / `$buckets[…]` form.
+     * Skip only when the follower is recognised as a read — never by default.
+     *
+     * @param string|array{0:int,1:string,2:int} $token
+     */
+    private function isBucketReadFollower(string|array $token): bool
+    {
+        if (! is_array($token)) {
+            // RHS / arg / statement terminators and binary operators that read.
+            return in_array(
+                $token,
+                array( ';', ',', ')', ']', '}', ':', '?', '.', '+', '-', '*', '/', '%', '|', '^', '<', '>', '&' ),
+                true
+            );
+        }
+
+        static $readIds = null;
+        if (null === $readIds) {
+            $readIds = array(
+                T_AS,
+                T_DOUBLE_ARROW,
+                T_COALESCE,
+                T_IS_EQUAL,
+                T_IS_IDENTICAL,
+                T_IS_NOT_EQUAL,
+                T_IS_NOT_IDENTICAL,
+                T_IS_SMALLER_OR_EQUAL,
+                T_IS_GREATER_OR_EQUAL,
+                T_SPACESHIP,
+                T_BOOLEAN_AND,
+                T_BOOLEAN_OR,
+                T_LOGICAL_AND,
+                T_LOGICAL_OR,
+                T_LOGICAL_XOR,
+                T_SL,
+                T_SR,
+                T_POW,
+                T_INSTANCEOF,
+                T_ELLIPSIS,
+            );
+        }
+
+        return in_array($token[0], $readIds, true);
+    }
+
+    /**
+     * @param string|array{0:int,1:string,2:int} $token
+     */
+    private function describeToken(string|array $token): string
+    {
+        if (! is_array($token)) {
+            return "'" . $token . "'";
+        }
+
+        return token_name($token[0]) . '(' . $token[1] . ')';
+    }
+
+    /**
+     * Walk backward past whitespace/comments; return index of previous significant
+     * token, or -1 if none.
+     *
+     * @param list<string|array{0:int,1:string,2:int}> $tokens
+     */
+    private function skipInsignificantBackward(array $tokens, int $from): int
+    {
+        while ($from >= 0) {
+            $t = $tokens[ $from ];
+            if (is_array($t) && (T_WHITESPACE === $t[0] || T_COMMENT === $t[0] || T_DOC_COMMENT === $t[0])) {
+                --$from;
+                continue;
+            }
+            break;
+        }
+
+        return $from;
     }
 
     /**

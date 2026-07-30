@@ -66,15 +66,14 @@ const DirectoryFace = ({ entry }: { entry: RosterEntry }): React.JSX.Element => 
   }
 
   // Pass only fields ThumbnailIdentity reads — never a fabricated ClusterIdentity.
-  // media_url drives display; array-form roster bboxes are intentionally omitted
-  // (IdentityThumbnail crops only object-form bboxes), so directory rows do
-  // zero canvas crops when media_url is present.
+  // Object-form pixel bbox (contract parity) enables canvas crop of the face.
   return (
     <IdentityThumbnail
       identity={{
         media_id: rep.media_id,
         identity_id: rep.identity_id,
         media_url: rep.media_url,
+        bbox: rep.bbox,
       }}
       size={DIRECTORY_THUMB_SIZE}
       alt=""

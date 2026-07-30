@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { __ } from '@wordpress/i18n';
 import type { RosterEntry } from '../../api/rosterApi';
+import type { RosterEntryInstance } from '../../api/generated/roster-entry';
 import { useUpdatePerson, useDeletePerson } from '../../hooks/useRosterHooks';
 import { AlertCircle, Check, CheckCircle2, Pencil, Trash2, UserRound, X } from 'lucide-react';
 import { ConfirmDialog } from './ConfirmDialog';
+import { IdentityThumbnail } from './IdentityThumbnail';
 import { derivePersonState, PERSON_STATES, type PersonState } from './personState';
 
 export interface RosterEntriesTableProps {
@@ -13,6 +15,72 @@ export interface RosterEntriesTableProps {
 interface EditableRowProps {
   entry: RosterEntry;
 }
+
+/** Dense table-row size — not the drawer default (96/128). */
+const DIRECTORY_THUMB_SIZE = 32;
+
+/**
+ * Pick the representative face for a directory row.
+ *
+ * Rule: the cluster with the highest `identity_count` (most-confirmed face for
+ * that person). Ties broken by `cluster_id` ascending so the choice is stable
+ * across renders for the same entry.
+ */
+export const selectRepresentativeIdentity = (entry: RosterEntry): RosterEntryInstance | null => {
+  const clusters = entry.clusters;
+  if (!clusters || clusters.length === 0) {
+    return null;
+  }
+
+  let best = clusters[0];
+  for (let i = 1; i < clusters.length; i++) {
+    const candidate = clusters[i];
+    if (
+      candidate.identity_count > best.identity_count ||
+      (candidate.identity_count === best.identity_count && candidate.cluster_id < best.cluster_id)
+    ) {
+      best = candidate;
+    }
+  }
+
+  return best.representative_identity;
+};
+
+const DirectoryFace = ({ entry }: { entry: RosterEntry }): React.JSX.Element => {
+  const rep = selectRepresentativeIdentity(entry);
+
+  // Empty cases: no clusters / null representative / null media_url → placeholder.
+  // IdentityThumbnail renders the sized placeholder when it has no resolvable src.
+  // Explicit null guards keep those paths intentional [PERC-02].
+  if (rep === null) {
+    return <IdentityThumbnail identity={{ media_id: 0 }} size={DIRECTORY_THUMB_SIZE} alt="" />;
+  }
+  if (rep.media_url === null) {
+    return (
+      <IdentityThumbnail
+        identity={{ media_id: rep.media_id, identity_id: rep.identity_id }}
+        size={DIRECTORY_THUMB_SIZE}
+        alt=""
+      />
+    );
+  }
+
+  // Pass only fields ThumbnailIdentity reads — never a fabricated ClusterIdentity.
+  // media_url drives display; array-form roster bboxes are intentionally omitted
+  // (IdentityThumbnail crops only object-form bboxes), so directory rows do
+  // zero canvas crops when media_url is present.
+  return (
+    <IdentityThumbnail
+      identity={{
+        media_id: rep.media_id,
+        identity_id: rep.identity_id,
+        media_url: rep.media_url,
+      }}
+      size={DIRECTORY_THUMB_SIZE}
+      alt=""
+    />
+  );
+};
 
 const STATE_PRESENTATION: Record<
   PersonState,
@@ -94,6 +162,7 @@ const EditableRow = ({ entry }: EditableRowProps) => {
     return (
       <tr>
         <td>
+          <DirectoryFace entry={entry} />{' '}
           <input
             type="text"
             className="acx-input"
@@ -143,6 +212,7 @@ const EditableRow = ({ entry }: EditableRowProps) => {
     <>
       <tr>
         <td>
+          <DirectoryFace entry={entry} />{' '}
           <strong>{entry.name}</strong>
         </td>
         <PersonStateCell entry={entry} />

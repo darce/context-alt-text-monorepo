@@ -14,6 +14,10 @@ import { vi } from 'vitest';
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
   _n: (single: string) => single,
+  sprintf: (format: string, ...args: (string | number)[]) => {
+    let index = 0;
+    return format.replace(/%(s|d)/g, () => String(args[index++]));
+  },
 }));
 
 vi.mock('../../hooks/useRosterHooks', () => ({
@@ -298,6 +302,262 @@ describe('RosterEntriesTable', () => {
       expect(icon).not.toBeNull();
       expect(icon).toHaveAttribute('aria-hidden', 'true');
     }
+  });
+
+  /**
+   * [COG-02] Directory face column — recognition over recall.
+   * Representative rule under test: highest identity_count; ties → cluster_id ASC.
+   */
+  describe('directory face thumbnails [COG-02]', () => {
+    const sarahWithFace = makeEntry({
+      id: 20,
+      person_uuid: 'person-uuid-sarah',
+      name: 'Sarah',
+      tags: ['fixture-face-sarah'],
+      cluster_count: 2,
+      // High-count first deliberately: a "last cluster" mutation must not pass.
+      clusters: [
+        {
+          cluster_id: 'cluster-high-count',
+          identity_count: 5,
+          representative_identity: {
+            identity_id: 'identity-sarah-rep',
+            media_id: 501,
+            media_url: 'https://example.com/sarah-rep.jpg',
+            bbox: [0.1, 0.2, 0.3, 0.4],
+            similarity: 0.95,
+          },
+          instances: [],
+        },
+        {
+          cluster_id: 'cluster-low-count',
+          identity_count: 1,
+          representative_identity: {
+            identity_id: 'identity-wrong-face',
+            media_id: 900,
+            media_url: 'https://example.com/wrong-face.jpg',
+            bbox: [0.1, 0.2, 0.3, 0.4],
+            similarity: 0.5,
+          },
+          instances: [],
+        },
+      ],
+    });
+
+    it('renders the highest-identity_count cluster representative face for a person with clusters [TEST-06]', () => {
+      render(<RosterEntriesTable entries={[sarahWithFace]} />);
+
+      const row = rowForTag('fixture-face-sarah');
+      const face = row.querySelector('img[data-identity-id="identity-sarah-rep"]');
+      expect(face).not.toBeNull();
+      expect(face).toHaveAttribute('src', 'https://example.com/sarah-rep.jpg');
+      expect(face).toHaveAttribute('data-media-id', '501');
+      // Discrimination: must NOT show the lower-count cluster's face.
+      expect(row.querySelector('img[data-identity-id="identity-wrong-face"]')).toBeNull();
+      expect(row.querySelector('img[src="https://example.com/wrong-face.jpg"]')).toBeNull();
+    });
+
+    it('selects the highest-identity_count cluster when it is neither first nor last [TEST-15]', () => {
+      // Middle position kills both the naive clusters[0] shortcut and the
+      // "last cluster" shortcut: neither returns the correct face here.
+      const midHighest = makeEntry({
+        id: 22,
+        person_uuid: 'person-uuid-mid',
+        name: 'Mid',
+        tags: ['fixture-face-mid'],
+        cluster_count: 3,
+        clusters: [
+          {
+            cluster_id: 'cluster-first-low',
+            identity_count: 1,
+            representative_identity: {
+              identity_id: 'identity-first-low',
+              media_id: 601,
+              media_url: 'https://example.com/first-low.jpg',
+              bbox: null,
+              similarity: 0.4,
+            },
+            instances: [],
+          },
+          {
+            cluster_id: 'cluster-middle-high',
+            identity_count: 9,
+            representative_identity: {
+              identity_id: 'identity-middle-high',
+              media_id: 602,
+              media_url: 'https://example.com/middle-high.jpg',
+              bbox: null,
+              similarity: 0.9,
+            },
+            instances: [],
+          },
+          {
+            cluster_id: 'cluster-last-mid',
+            identity_count: 4,
+            representative_identity: {
+              identity_id: 'identity-last-mid',
+              media_id: 603,
+              media_url: 'https://example.com/last-mid.jpg',
+              bbox: null,
+              similarity: 0.6,
+            },
+            instances: [],
+          },
+        ],
+      });
+
+      render(<RosterEntriesTable entries={[midHighest]} />);
+
+      const row = rowForTag('fixture-face-mid');
+      expect(row.querySelector('img')).toHaveAttribute('data-identity-id', 'identity-middle-high');
+      expect(row.querySelector('img[data-identity-id="identity-first-low"]')).toBeNull();
+      expect(row.querySelector('img[data-identity-id="identity-last-mid"]')).toBeNull();
+    });
+
+    it('breaks identity_count ties by cluster_id ascending [TEST-15]', () => {
+      // Equal counts, array ordered cluster_id DESC: the documented tie-break
+      // must pick cluster-a, so a first-wins implementation fails here.
+      const tied = makeEntry({
+        id: 23,
+        person_uuid: 'person-uuid-tied',
+        name: 'Tied',
+        tags: ['fixture-face-tied'],
+        cluster_count: 2,
+        clusters: [
+          {
+            cluster_id: 'cluster-b',
+            identity_count: 3,
+            representative_identity: {
+              identity_id: 'identity-from-b',
+              media_id: 701,
+              media_url: 'https://example.com/from-b.jpg',
+              bbox: null,
+              similarity: 0.7,
+            },
+            instances: [],
+          },
+          {
+            cluster_id: 'cluster-a',
+            identity_count: 3,
+            representative_identity: {
+              identity_id: 'identity-from-a',
+              media_id: 702,
+              media_url: 'https://example.com/from-a.jpg',
+              bbox: null,
+              similarity: 0.7,
+            },
+            instances: [],
+          },
+        ],
+      });
+
+      render(<RosterEntriesTable entries={[tied]} />);
+
+      const row = rowForTag('fixture-face-tied');
+      expect(row.querySelector('img')).toHaveAttribute('data-identity-id', 'identity-from-a');
+      expect(row.querySelector('img[data-identity-id="identity-from-b"]')).toBeNull();
+    });
+
+    it('picks the same representative across a rerender (deterministic)', () => {
+      const { rerender } = render(<RosterEntriesTable entries={[sarahWithFace]} />);
+      const first = rowForTag('fixture-face-sarah').querySelector('img');
+      expect(first).toHaveAttribute('data-identity-id', 'identity-sarah-rep');
+      expect(first).toHaveAttribute('src', 'https://example.com/sarah-rep.jpg');
+
+      rerender(<RosterEntriesTable entries={[sarahWithFace]} />);
+      const second = rowForTag('fixture-face-sarah').querySelector('img');
+      expect(second).toHaveAttribute('data-identity-id', 'identity-sarah-rep');
+      expect(second).toHaveAttribute('src', 'https://example.com/sarah-rep.jpg');
+    });
+
+    it('renders a deliberate no-face placeholder when the person has zero clusters', () => {
+      const noClusters = makeEntry({
+        id: 21,
+        name: 'No Face Person',
+        tags: ['fixture-zero-clusters'],
+        clusters: [],
+        cluster_count: 0,
+      });
+      render(<RosterEntriesTable entries={[noClusters]} />);
+
+      const row = rowForTag('fixture-zero-clusters');
+      expect(row.querySelector('img')).toBeNull();
+      const placeholder = row.querySelector('.acx-cluster-card__face--placeholder');
+      expect(placeholder).not.toBeNull();
+      expect(placeholder).toHaveAttribute('data-face-missing', 'true');
+      // Sized so the row does not collapse [PERC-02].
+      expect(placeholder).toHaveAttribute('style');
+      expect((placeholder as HTMLElement).style.width).not.toBe('');
+      expect((placeholder as HTMLElement).style.height).not.toBe('');
+    });
+
+    it('renders the placeholder when representative_identity is null', () => {
+      const nullRep = makeEntry({
+        id: 22,
+        name: 'Null Rep',
+        tags: ['fixture-null-rep'],
+        cluster_count: 1,
+        clusters: [
+          {
+            cluster_id: 'cluster-null-rep',
+            identity_count: 3,
+            representative_identity: null,
+            instances: [],
+          },
+        ],
+      });
+      render(<RosterEntriesTable entries={[nullRep]} />);
+
+      const row = rowForTag('fixture-null-rep');
+      expect(row.querySelector('img')).toBeNull();
+      expect(row.querySelector('.acx-cluster-card__face--placeholder[data-face-missing="true"]')).not.toBeNull();
+    });
+
+    it('renders the placeholder when representative media_url is null', () => {
+      const nullUrl = makeEntry({
+        id: 23,
+        name: 'Null Url',
+        tags: ['fixture-null-url'],
+        cluster_count: 1,
+        clusters: [
+          {
+            cluster_id: 'cluster-null-url',
+            identity_count: 2,
+            representative_identity: {
+              identity_id: 'identity-no-url',
+              media_id: 777,
+              media_url: null,
+              bbox: null,
+              similarity: 0.8,
+            },
+            instances: [],
+          },
+        ],
+      });
+      render(<RosterEntriesTable entries={[nullUrl]} />);
+
+      const row = rowForTag('fixture-null-url');
+      expect(row.querySelector('img')).toBeNull();
+      expect(row.querySelector('.acx-cluster-card__face--placeholder[data-face-missing="true"]')).not.toBeNull();
+    });
+
+    it('does not announce the face as a duplicate of the person name [A11Y-21]', () => {
+      render(<RosterEntriesTable entries={[sarahWithFace]} />);
+
+      const row = rowForTag('fixture-face-sarah');
+      const face = row.querySelector('img');
+      expect(face).not.toBeNull();
+      // Decorative: empty alt so the name cell carries the row [A11Y-21].
+      expect(face).toHaveAttribute('alt', '');
+
+      // Accessible name of the row must not contain "Sarah" twice (img alt + text).
+      const nameMatches = (row.textContent ?? '').match(/Sarah/g) ?? [];
+      // textContent excludes alt; use accessible name via the name cell + img role.
+      // Empty-alt images are presentational — they must not contribute a second "Sarah".
+      expect(face!.getAttribute('alt')).not.toContain('Sarah');
+      // The visible name appears once in the identity cell text.
+      expect(nameMatches.filter((m) => m === 'Sarah')).toHaveLength(1);
+    });
   });
 });
 

@@ -19,6 +19,8 @@ from recognition.observability import ClusteringLogger
 from recognition.shared.similarity import normalize_face_embedding
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
     from recognition.application.assignment import AssignmentDecision
     from recognition.application.orchestration.clustering.decision_handler import DecisionHandler
     from recognition.application.orchestration.protocols import MergeSuggestionServiceProtocol
@@ -44,24 +46,53 @@ def _representative_embedding_model(rep: object, model_by_identity: dict[str, st
     return None
 
 
+def _resolve_assignment_session(
+    assignment_writer: AssignmentWriter,
+    session: AsyncSession | None = None,
+) -> AsyncSession | None:
+    """Resolve a DB session for representative embedding_model provenance.
+
+    Prefer an explicitly passed session (callers should thread this from the
+    request/job scope). Fall back to AssignmentWriter's bound session, then the
+    cluster repository's session. The private ``_session`` attributes are the
+    real production bindings today; this helper makes that coupling explicit
+    rather than scattering getattr probes at the call site (CVUP1-GR-21).
+    """
+    if session is not None:
+        return session
+    writer_session: AsyncSession | None = getattr(assignment_writer, "_session", None)
+    if writer_session is not None:
+        return writer_session
+    repo = getattr(assignment_writer, "cluster_repository", None)
+    if repo is not None:
+        repo_session: AsyncSession | None = getattr(repo, "_session", None)
+        return repo_session
+    return None
+
+
 async def _load_representative_embedding_models(
     assignment_writer: AssignmentWriter,
     tenant_id: str,
-) -> dict[str, str]:
+    *,
+    session: AsyncSession | None = None,
+) -> tuple[dict[str, str], bool]:
     """Map representative identity_id → embedding_model via the repository session.
 
     Domain ClusterRepresentative drops embedding_model; this recovers provenance for
-    FIR23-01 gallery filtering. Returns {} when no session is available (unit stubs).
+    FIR23-01 gallery filtering.
+
+    Returns:
+        (model_by_identity, provenance_loaded)
+        provenance_loaded is True only when a session was available and the query
+        completed without error. Unit stubs with no session get ({}, False).
     """
-    session = getattr(assignment_writer.cluster_repository, "_session", None)
-    if session is None:
-        session = getattr(assignment_writer, "_session", None)
-    if session is None:
-        return {}
+    resolved = _resolve_assignment_session(assignment_writer, session)
+    if resolved is None:
+        return {}, False
     try:
         tenant_uuid = uuid.UUID(tenant_id)
     except ValueError:
-        return {}
+        return {}, False
     try:
         from sqlalchemy import select
 
@@ -74,15 +105,19 @@ async def _load_representative_embedding_models(
             .where(IdentityCluster.tenant_id == tenant_uuid)
             .where(MediaIdentity.embedding_model.isnot(None))
         )
-        result = await session.execute(stmt)
-        return {str(identity_id): str(model) for identity_id, model in result.all() if model}
+        result = await resolved.execute(stmt)
+        return (
+            {str(identity_id): str(model) for identity_id, model in result.all() if model},
+            True,
+        )
     except Exception:
         logger.warning(
             "[clustering] failed to load representative embedding_model map; "
-            "gallery cache may include cross-space anchors (FIR23-01)",
+            "unresolvable representatives will be excluded from gallery cache "
+            "(FIR23-01 / CVUP1-GR-21 — safer than admitting cross-space anchors)",
             exc_info=True,
         )
-        return {}
+        return {}, False
 
 
 def _resolve_probe_embedding_model() -> str | None:
@@ -98,6 +133,8 @@ def _resolve_probe_embedding_model() -> str | None:
 async def prepare_cluster_caches(
     assignment_writer: AssignmentWriter,
     tenant_id: str,
+    *,
+    session: AsyncSession | None = None,
 ) -> tuple[dict[str, list[np.ndarray]], dict[str, np.ndarray], set[str]]:
     """Fetch existing clusters and build cached structures for discovery.
 
@@ -108,12 +145,39 @@ async def prepare_cluster_caches(
     FIR23-01: representatives (and centroids of foreign-space clusters) are
     restricted to the active embedding_model so discovery never cosines across
     distinct spaces at the same dimensionality.
+
+    Args:
+        assignment_writer: Writer exposing cluster_repository (and optionally a
+            bound session).
+        tenant_id: Tenant UUID string.
+        session: Optional SQLAlchemy session for embedding_model provenance.
+            Callers should pass the job/request session explicitly when available
+            so this path does not depend on private ``_session`` attributes
+            (CVUP1-GR-21). When omitted, falls back to the writer/repository
+            binding via ``_resolve_assignment_session``.
     """
     existing_clusters = await assignment_writer.cluster_repository.get_by_tenant(tenant_id, limit=1000, offset=0)
     logger.info("[clustering] Found %d existing clusters for discovery", len(existing_clusters))
 
     target_model = _resolve_probe_embedding_model()
-    model_by_identity = await _load_representative_embedding_models(assignment_writer, tenant_id)
+    model_by_identity, provenance_loaded = await _load_representative_embedding_models(
+        assignment_writer,
+        tenant_id,
+        session=session,
+    )
+
+    # CVUP1-GR-21: when the active embedding space is known but provenance cannot
+    # be loaded, fail closed for unresolvable representatives (exclude them) rather
+    # than re-admitting every rep and silently cosining across spaces. Unit stubs
+    # without a session must set embedding_model on each rep (or nested identity)
+    # directly — they do not need a session for the filter to work.
+    if target_model is not None and not provenance_loaded:
+        logger.warning(
+            "[clustering] representative embedding_model provenance unavailable while "
+            "active model is known (%s); unresolvable representatives will be excluded "
+            "from the gallery cache to avoid cross-space cosine (FIR23-01 / CVUP1-GR-21)",
+            target_model,
+        )
 
     representatives_by_cluster: dict[str, list[np.ndarray]] = {}
     labeled_cluster_ids: set[str] = set()
@@ -139,8 +203,11 @@ async def prepare_cluster_caches(
             rep_model = _representative_embedding_model(r, model_by_identity)
             if target_model is not None and rep_model is not None and rep_model != target_model:
                 continue
-            if target_model is not None and rep_model is None and model_by_identity:
-                # Provenance map loaded but this identity missing → exclude.
+            if target_model is not None and rep_model is None:
+                # Safe default (CVUP1-GR-21): exclude unresolvable reps whenever
+                # the active space is known. Including them reintroduces the GR-02
+                # cross-space cosine bug. Stubs without a session still work when
+                # they stamp embedding_model on the rep object itself.
                 continue
             foreign_only = False
             kept.append(np.array(r.embedding, dtype=np.float32))
@@ -148,7 +215,7 @@ async def prepare_cluster_caches(
         if kept:
             representatives_by_cluster[cluster.id] = kept
         elif target_model is not None and foreign_only:
-            # Had reps but all were foreign-space (or unmapped under a loaded map).
+            # Had reps but all were foreign-space or unresolvable under a known target.
             foreign_space_cluster_ids.add(cluster.id)
 
     centroids_by_cluster: dict[str, np.ndarray] = {}

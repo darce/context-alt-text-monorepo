@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -53,16 +54,19 @@ def _cluster(
     cluster_id: str,
     *,
     embedding: np.ndarray,
-    embedding_model: str,
+    embedding_model: str | None,
     label: str | None = None,
     user_confirmed: bool = False,
     centroid: np.ndarray | None = None,
 ) -> SimpleNamespace:
     rep = SimpleNamespace(
         embedding=embedding,
-        embedding_model=embedding_model,
         identity_id=str(generate_id()),
     )
+    # Domain ClusterRepresentative has no embedding_model field; only set when
+    # the test intentionally stamps provenance on the stub rep.
+    if embedding_model is not None:
+        rep.embedding_model = embedding_model
     return SimpleNamespace(
         id=cluster_id,
         label=label,
@@ -177,3 +181,99 @@ async def test_prepare_cluster_caches_single_model_is_noop() -> None:
 
     assert set(reps) == {"c1", "c2"}
     assert set(centroids) == {"c1", "c2"}
+
+
+@pytest.mark.asyncio
+async def test_prepare_cluster_caches_excludes_unresolvable_when_provenance_missing(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """CVUP1-GR-21: unresolvable reps must not silently enter the gallery.
+
+    Domain representatives drop embedding_model. When target_model is known but
+    provenance cannot be loaded (no session / empty map), the pre-fix path kept
+    every rep and discovery resumed cosining across spaces with no operator
+    signal. Fail closed: exclude the rep, drop its centroid, and warn.
+    """
+    same_space = "opencv-sface+cv5@128d/l2/cosine"
+    vec = _normalize(np.array([1.0, 0.0, 0.0]))
+
+    # Domain-like: no embedding_model on the rep (None → attribute omitted).
+    clusters = [
+        _cluster(
+            "c-unresolved",
+            embedding=vec,
+            embedding_model=None,
+            label="Mystery",
+            user_confirmed=True,
+        ),
+    ]
+    writer = _FakeWriter(clusters)
+
+    with (
+        patch(
+            "recognition.application.orchestration.clustering.discovery_pipeline._resolve_probe_embedding_model",
+            return_value=same_space,
+        ),
+        caplog.at_level(logging.WARNING),
+    ):
+        reps, centroids, labeled = await prepare_cluster_caches(writer, tenant_id=str(generate_id()))
+
+    assert "c-unresolved" not in reps
+    assert "c-unresolved" not in centroids
+    # Labeled-status tracking is independent of gallery admission.
+    assert labeled == {"c-unresolved"}
+    assert any("provenance unavailable" in record.message and "excluded" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_prepare_cluster_caches_uses_explicit_session_for_provenance() -> None:
+    """Explicit session param is preferred over private _session probing."""
+    same_space = "opencv-sface+cv5@128d/l2/cosine"
+    foreign_space = "opencv-sface@128d/l2/cosine"
+    vec_same = _normalize(np.array([1.0, 0.0, 0.0]))
+    vec_foreign = _normalize(np.array([0.0, 1.0, 0.0]))
+
+    same_id = str(generate_id())
+    foreign_id = str(generate_id())
+
+    # Domain-like reps: resolve via session-backed provenance map only.
+    rep_same = SimpleNamespace(embedding=vec_same, identity_id=same_id)
+    rep_foreign = SimpleNamespace(embedding=vec_foreign, identity_id=foreign_id)
+    clusters = [
+        SimpleNamespace(
+            id="c-same",
+            label="Alice",
+            user_confirmed=True,
+            representatives=[rep_same],
+            centroid=vec_same,
+        ),
+        SimpleNamespace(
+            id="c-foreign",
+            label="Bob",
+            user_confirmed=True,
+            representatives=[rep_foreign],
+            centroid=vec_foreign,
+        ),
+    ]
+    writer = _FakeWriter(clusters)
+
+    class _Rows:
+        def all(self):
+            return [(same_id, same_space), (foreign_id, foreign_space)]
+
+    session = SimpleNamespace(execute=AsyncMock(return_value=_Rows()))
+
+    with patch(
+        "recognition.application.orchestration.clustering.discovery_pipeline._resolve_probe_embedding_model",
+        return_value=same_space,
+    ):
+        reps, centroids, _ = await prepare_cluster_caches(
+            writer,
+            tenant_id=str(generate_id()),
+            session=session,
+        )
+
+    assert set(reps) == {"c-same"}
+    assert "c-foreign" not in reps
+    assert "c-foreign" not in centroids
+    session.execute.assert_awaited()

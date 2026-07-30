@@ -505,8 +505,11 @@ class IncrementalClusteringRunner:
         # Phase 3: prime cluster caches ONCE before the chunk loop instead of
         # re-loading the full cluster table on every chunk.  The caches are
         # updated incrementally after each batch of new clusters is persisted.
+        # CVUP1-GR-21: thread the job session explicitly. AssignmentWriter._session
+        # is optional, so leaving provenance to the private-attribute fallback would
+        # make the fail-closed default silently empty the gallery cache.
         representatives_by_cluster, centroids_by_cluster, labeled_cluster_ids = await prepare_cluster_caches(
-            self._assignment_writer, str(tenant_id)
+            self._assignment_writer, str(tenant_id), session=self._session
         )
 
         for chunk, processed_before in processor.iter_chunks():
@@ -628,9 +631,7 @@ class IncrementalClusteringRunner:
         )
         if guard_rejected_ids:
             accepted_decisions = [
-                decision
-                for decision in accepted_decisions
-                if decision.candidate.identity.id not in guard_rejected_ids
+                decision for decision in accepted_decisions if decision.candidate.identity.id not in guard_rejected_ids
             ]
             accepted_ids -= guard_rejected_ids
             accept_count = len(accepted_ids)

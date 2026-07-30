@@ -28,16 +28,19 @@ dependencies = [
     "scipy>=1.18.0,<2.0.0",
     "pillow>=12.3.0,<13.0.0",
     # v5 changes warpAffine output, so the aligner crop and every SFace embedding shift
-    # slightly. Measured 4.13.0 -> 5.0.0 over 83 corpus faces: cross-version
-    # self-similarity min 0.99952 / median 0.99993 against an impostor p95 of 0.302,
-    # and zero nearest-neighbour flips at or above the 0.55 clustering threshold (one
-    # flip between two non-matches at cosine ~0.377, which no matcher would call).
-    # Clustering and match decisions are unaffected; bit-exact fixtures are not, and
+    # slightly. Measured 4.13.0 -> 5.0.0 over 83 IoU-matched corpus faces (digest
+    # e40941210569ac8f…): cross-version self-similarity min 0.99952 / median 0.99993
+    # against an impostor p95 of 0.302; zero decisive NN flips at/above the 0.55
+    # auto-accept ceiling; one suggestion-band flip at cosine ~0.377 (inside
+    # [0.30, 0.55) — reorders a human-visible suggestion, not an auto-accept).
+    # Safe to ship under that measured contract; bit-exact fixtures are not, and
     # the aligner goldens are regenerated alongside. Re-measure before the next bump:
     # `scripts/probe_opencv_embedding_drift.py`, report in
     # docs/tasks/fir/evidence/opencv-5-embedding-drift.md (CVUP1-LC-06).
-    # Keep both arms of a bake-off on one opencv version.
-    "opencv-python>=5.0.0,<6.0.0",
+    # Exact pin so opencv-python and opencv-python-headless (bench) cannot skew
+    # onto different 5.x releases; bump both arms together. Keep bake-off arms
+    # on one opencv version.
+    "opencv-python==5.0.0.93",
     "pydantic-settings>=2.12.0,<3.0.0",
     "PyYAML>=6.0.3,<7.0",
     "httpx>=0.28.0,<0.35.0",
@@ -90,13 +93,12 @@ bench = [
     "insightface>=0.7.3,<1.0.0",
     # Not imported by us. insightface -> albumentations -> albucore pulls
     # opencv-python-headless, which unpacks into the SAME top-level cv2/ directory
-    # as opencv-python. Two cv2 distributions in one env means the one that
-    # actually imports is decided by install order, not by the pin above — so a
-    # bake-off could run one arm on cv2 4.x and the other on 5.x and read the
-    # library delta as a model delta. Constrained to the same major so whichever
-    # wins the race, the numerics are the ones the goldens were measured against.
-    # `test_no_conflicting_cv2_distributions` fails if they ever diverge.
-    "opencv-python-headless>=5.0.0,<6.0.0",
+    # as opencv-python. Install order still decides which binaries import, so both
+    # arms pin the identical exact version (see opencv-python above) — a
+    # `uv lock --upgrade` cannot resolve them onto different 5.x releases.
+    # `test_no_conflicting_cv2_distributions` remains the runtime belt for a
+    # hand-edit that bumps only one arm or a transitive pin fight.
+    "opencv-python-headless==5.0.0.93",
 ]
 gpu = [
     "onnxruntime-gpu>=1.28.0,<2.0.0 ; platform_system == \"Linux\"",

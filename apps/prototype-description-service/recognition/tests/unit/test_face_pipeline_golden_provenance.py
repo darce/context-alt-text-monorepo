@@ -1,6 +1,7 @@
 """CVU-02V / CVUP1-LC-05/06: golden toolchain stamps + cv2 distribution guards.
 
-- Golden metas must record which OpenCV/numpy produced them (majors only).
+- Golden metas must record OpenCV / onnxruntime / numpy / generator stamps.
+- Live runtime is compared to committed stamps at pin-meaningful granularity.
 - Conflicting opencv-python* distributions in one env must fail closed.
 - Probe DEFAULT_MATCH_THRESHOLD must track settings _LEGACY_SIMILARITY_THRESHOLD.
 - Committed fixtures must match what generate_goldens.py currently emits (CVUP-1-BR-03).
@@ -22,14 +23,15 @@ import numpy as np
 import pytest
 
 from recognition.config import settings as settings_mod
+from recognition.infrastructure.face_pipeline.provenance import numeric_runtime_fingerprint
 
 _SERVICE_ROOT = Path(__file__).resolve().parents[3]
 _FIXTURE_DIR = _SERVICE_ROOT / "recognition" / "tests" / "fixtures" / "face_pipeline"
 _REGENERATE_CMD = "uv run python recognition/tests/fixtures/face_pipeline/generate_goldens.py"
 
-_PROVENANCE_KEYS = ("opencv_version", "numpy_version", "generator")
-# Toolchain stamps: keep in SCHEMA compare, exclude from VALUE compare.
-_TOOLCHAIN_STAMP_KEYS = frozenset(_PROVENANCE_KEYS)
+# Keys stamped by generate_goldens.toolchain_provenance(); participate in both
+# schema and value compares (write-only stamps would greenwash toolchain drift).
+_PROVENANCE_KEYS = ("opencv_version", "onnxruntime_version", "numpy_version", "generator")
 _GOLDEN_METAS = (
     "detector_faces.json",
     "embedding_meta.json",
@@ -61,15 +63,17 @@ def _load_meta(name: str) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _major(version: str) -> str:
-    """First numeric component of a PEP 440-ish version string."""
-    match = re.match(r"(\d+)", str(version).strip())
-    assert match is not None, f"unparseable version: {version!r}"
-    return match.group(1)
+def _version_components(version: str, n: int) -> tuple[int, ...]:
+    """First ``n`` numeric components of a PEP 440-ish version string."""
+    parts = [int(p) for p in re.findall(r"\d+", str(version).strip())]
+    assert parts, f"unparseable version: {version!r}"
+    if len(parts) < n:
+        parts.extend([0] * (n - len(parts)))
+    return tuple(parts[:n])
 
 
 def test_golden_metas_carry_toolchain_provenance() -> None:
-    """Every golden meta records opencv/numpy/generator with non-empty values."""
+    """Every golden meta records opencv/onnxruntime/numpy/generator with non-empty values."""
     for name in _GOLDEN_METAS:
         meta = _load_meta(name)
         for key in _PROVENANCE_KEYS:
@@ -78,22 +82,55 @@ def test_golden_metas_carry_toolchain_provenance() -> None:
             assert isinstance(value, str) and value.strip(), f"{name}.{key} must be a non-empty string, got {value!r}"
 
 
-def test_golden_opencv_major_matches_runtime() -> None:
-    """Running cv2 major must match the major stamped into the goldens.
+def test_golden_toolchain_stamps_match_runtime() -> None:
+    """Live numeric runtimes must match golden stamps at pin-meaningful granularity.
 
-    Compare majors only — patch bumps must not fail CI. On mismatch, the
-    message names the regenerate command so the fix is copy-pasteable.
+    Pins in pyproject.toml are floor-style (``>=X,<Y``), so full-version equality
+    would fail routine resolves under the floor for no measured numeric reason.
+    Granularity is the coarsest unit that still catches the regressions this
+    branch cares about:
+
+    - OpenCV: major only. Production ``space_token`` folds OpenCV major; the pin
+      is ``>=5.0.0,<6.0.0``. Major-only is not blindness once ORT/numpy are also
+      asserted — OpenCV 4→5 is the numeric boundary for warpAffine/embedder.
+    - onnxruntime: major.minor. Floor is ``1.28.0``; ``space_token`` embeds the
+      full ORT version so 1.22 vs 1.28 must not share goldens, but patch bumps
+      within 1.28.x under the floor pin are not a golden-protocol event.
+    - numpy: major.minor. Floor is ``2.5.1``; not in ``space_token`` but stamped
+      because array ABI can move clustering. Patch bumps under 2.5.x allowed.
+    - generator: exact path equality (not a package version).
+
+    On mismatch the message names the regenerate command.
     """
-    runtime_major = _major(cv2.__version__)
+    fp = numeric_runtime_fingerprint()
     for name in _GOLDEN_METAS:
-        recorded = _load_meta(name)["opencv_version"]
-        recorded_major = _major(recorded)
-        assert recorded_major == runtime_major, (
-            f"{name} was generated under OpenCV major {recorded_major} "
-            f"(opencv_version={recorded!r}) but runtime is major "
-            f"{runtime_major} (cv2.__version__={cv2.__version__!r}). "
+        meta = _load_meta(name)
+        recorded_cv = meta["opencv_version"]
+        assert _version_components(recorded_cv, 1) == _version_components(fp.opencv_version, 1), (
+            f"{name} was generated under OpenCV major {_version_components(recorded_cv, 1)[0]} "
+            f"(opencv_version={recorded_cv!r}) but runtime is {fp.opencv_version!r}. "
             f"Regenerate goldens from apps/prototype-description-service:\n"
             f"  {_REGENERATE_CMD}"
+        )
+        recorded_ort = meta["onnxruntime_version"]
+        assert _version_components(recorded_ort, 2) == _version_components(fp.onnxruntime_version, 2), (
+            f"{name} was generated under onnxruntime major.minor "
+            f"{'.'.join(str(x) for x in _version_components(recorded_ort, 2))} "
+            f"(onnxruntime_version={recorded_ort!r}) but runtime is "
+            f"{fp.onnxruntime_version!r}. "
+            f"Regenerate goldens from apps/prototype-description-service:\n"
+            f"  {_REGENERATE_CMD}"
+        )
+        recorded_np = meta["numpy_version"]
+        assert _version_components(recorded_np, 2) == _version_components(fp.numpy_version, 2), (
+            f"{name} was generated under numpy major.minor "
+            f"{'.'.join(str(x) for x in _version_components(recorded_np, 2))} "
+            f"(numpy_version={recorded_np!r}) but runtime is {fp.numpy_version!r}. "
+            f"Regenerate goldens from apps/prototype-description-service:\n"
+            f"  {_REGENERATE_CMD}"
+        )
+        assert meta["generator"] == ("recognition/tests/fixtures/face_pipeline/generate_goldens.py"), (
+            f"{name}.generator drifted: {meta['generator']!r}"
         )
 
 
@@ -261,18 +298,18 @@ def assert_meta_values_equal(
     meta_name: str = "",
     detector_tol: dict | None = None,
 ) -> None:
-    """Compare non-stamp meta values; stamps stay in schema only.
+    """Compare meta values including toolchain stamps (same-host regen exact).
 
+    Toolchain stamps participate so a generator that records a different OpenCV /
+    ORT / numpy / generator path cannot pass while only the schema matches.
     Numeric detection fields use the committed detector tolerances when present;
-    other numbers use a tight float compare (same-host regen).
+    other numbers use a tight float compare.
     """
     label = path or meta_name or "<root>"
 
     if isinstance(committed, dict) and isinstance(generated, dict):
         # Schema already asserted equal; walk shared keys only.
         for key in sorted(set(committed) & set(generated)):
-            if key in _TOOLCHAIN_STAMP_KEYS:
-                continue
             child = f"{path}.{key}" if path else key
             assert_meta_values_equal(
                 committed[key],

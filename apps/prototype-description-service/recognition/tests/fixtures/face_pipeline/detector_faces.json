@@ -71,6 +71,7 @@
   "model_sha256": "ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0",
   "nms_threshold": 0.3,
   "numpy_version": "2.5.1",
+  "onnxruntime_version": "1.28.0",
   "opencv_version": "5.0.0",
   "procedure": {
     "description": "seeded gaussian soft face (skin disc + dark eyes + nose + mouth)",

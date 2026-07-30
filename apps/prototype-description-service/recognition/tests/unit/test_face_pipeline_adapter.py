@@ -926,11 +926,26 @@ async def test_breaker_name_and_executor_thread(monkeypatch: pytest.MonkeyPatch)
     assert seen_thread["name"].startswith("face_pipeline")
 
 
-def test_reset_hook_documents_process_lifetime_executor() -> None:
-    """CR-10: reset docstring states executor is intentionally not reset."""
-    doc = fpa.reset_shared_face_pipeline_runtime_for_tests.__doc__ or ""
-    assert "process-lifetime" in doc.lower() or "process lifetime" in doc.lower() or "not" in doc.lower()
-    assert "executor" in doc.lower()
+def test_reset_hook_preserves_process_lifetime_executor() -> None:
+    """CR-10: reset clears runtime/breaker but must leave the process executor live.
+
+    Capture executor identity before/after reset; the same usable executor must
+    survive. Docstring is checked strictly (no tautological disjuncts).
+    """
+    fpa._ensure_face_pipeline_pool()
+    before = fpa._FACE_PIPELINE_EXECUTOR
+    assert before is not None
+    assert before.submit(lambda: "pre-reset").result(timeout=5.0) == "pre-reset"
+
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+
+    after = fpa._FACE_PIPELINE_EXECUTOR
+    assert after is before, "reset must not shut down or replace the process-lifetime executor"
+    assert after.submit(lambda: "post-reset").result(timeout=5.0) == "post-reset"
+
+    doc = (fpa.reset_shared_face_pipeline_runtime_for_tests.__doc__ or "").lower()
+    assert "process-lifetime" in doc or "process lifetime" in doc
+    assert "executor" in doc
 
 
 # ---------------------------------------------------------------------------

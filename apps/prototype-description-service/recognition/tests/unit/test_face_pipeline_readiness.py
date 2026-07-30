@@ -418,17 +418,28 @@ def _standalone_ready_app(monkeypatch: pytest.MonkeyPatch):
 
     async def _session_yielder():
         # Live pgvector typmod probe (FINALA-02): return matching identity columns.
+        # Distinct embedding_model probe (CVUP1-PR-03): empty = fresh deploy, not partition.
         dim = int(get_database_settings().pgvector_dimension)
-        rows = [
+        typmod_rows = [
             ("media_identities", "embedding", dim),
             ("identity_cluster_representatives", "embedding", dim),
             ("mv_identity_cluster_centroids", "centroid", dim),
         ]
-        result = MagicMock()
-        result.all = MagicMock(return_value=rows)
-        result.fetchall = MagicMock(return_value=rows)
+        typmod_result = MagicMock()
+        typmod_result.all = MagicMock(return_value=typmod_rows)
+        typmod_result.fetchall = MagicMock(return_value=typmod_rows)
+        empty_models = MagicMock()
+        empty_models.all = MagicMock(return_value=[])
+        empty_models.fetchall = MagicMock(return_value=[])
+
+        async def _execute(stmt, *args, **kwargs):  # noqa: ANN001, ANN002
+            sql = str(getattr(stmt, "text", stmt))
+            if "DISTINCT" in sql.upper() and "embedding_model" in sql:
+                return empty_models
+            return typmod_result
+
         session = MagicMock()
-        session.execute = AsyncMock(return_value=result)
+        session.execute = AsyncMock(side_effect=_execute)
         yield session
 
     app.dependency_overrides[dependencies.get_observability_session] = _session_yielder
@@ -560,7 +571,7 @@ def test_ready_invalid_profile_returns_503(monkeypatch: pytest.MonkeyPatch, tmp_
 def test_check_face_pipeline_models_ort_construction_failure_unhealthy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """GROKHARM-04 [OBS-08, EMB-05, SERVE-01]: hashes + dims alone are insufficient.
+    """local finding GROKHARM-04 [OBS-08, EMB-05, SERVE-01]: hashes + dims alone are insufficient.
 
     For face_pipeline profile, readiness must prove ORT session / shared runtime
     construction. Valid verified files with InferenceSession construction failure
@@ -590,7 +601,7 @@ def test_check_face_pipeline_models_ort_construction_failure_unhealthy(
 def test_check_face_pipeline_models_healthy_implies_usable_shared_runtime(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """GROKHARM-04: healthy ready must correspond to a usable shared runtime.
+    """local finding GROKHARM-04: healthy ready must correspond to a usable shared runtime.
 
     Readiness and serve path must not diverge — a successful check must go
     through (or populate) get_shared_face_pipeline_runtime so serve can reuse it.
@@ -632,10 +643,50 @@ def test_check_face_pipeline_models_healthy_implies_usable_shared_runtime(
     fpa.reset_shared_face_pipeline_runtime_for_tests()
 
 
+def test_check_active_embedding_model_degrades_on_space_partition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CVUP1-PR-03: active model_id matching zero persisted rows → DEGRADED.
+
+    If the check regressed to resolve-only always-OK, this assertion goes red:
+    persisted rows carry a foreign model_id while active resolves to another.
+    """
+    from recognition.application import health as health_mod
+    from shared.health import HealthStatus
+
+    active = "opencv-sface+cv5.0.0/ort1.28@128d/l2/cosine"
+    stale = "opencv-sface+cv4.13.0.92/ort1.22@128d/l2/cosine"
+
+    monkeypatch.setattr(
+        "recognition.application.embedding.manifest.active_embedding_model_id",
+        lambda: active,
+    )
+
+    partitioned = health_mod.check_active_embedding_model(persisted_model_ids=[stale])
+    assert partitioned.status is HealthStatus.DEGRADED, partitioned.detail
+    assert partitioned.name == "embedding_model"
+    assert "partition" in partitioned.detail.lower() or "matches no persisted" in partitioned.detail
+    assert active in partitioned.detail
+    assert stale in partitioned.detail
+
+    # Matching active among persisted → OK (not a partition).
+    matched = health_mod.check_active_embedding_model(persisted_model_ids=[stale, active])
+    assert matched.status is HealthStatus.OK, matched.detail
+
+    # Empty embeddings table is a fresh deploy, not a partition.
+    fresh = health_mod.check_active_embedding_model(persisted_model_ids=[])
+    assert fresh.status is HealthStatus.OK, fresh.detail
+
+    # Probe unavailable (None) keeps prior resolve-only OK behaviour.
+    no_probe = health_mod.check_active_embedding_model(persisted_model_ids=None)
+    assert no_probe.status is HealthStatus.OK, no_probe.detail
+    assert no_probe.detail.startswith("active=")
+
+
 def test_ready_ort_construction_failure_returns_503(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """GROKHARM-04: /ready must 503 when model verify passes but ORT runtime fails."""
+    """local finding GROKHARM-04: /ready must 503 when model verify passes but ORT runtime fails."""
     from fastapi.testclient import TestClient
 
     fpa = _live_face_pipeline_adapter()

@@ -299,6 +299,45 @@ class DescribeMediaService {
 		return 1 === $value || 1.0 === $value;
 	}
 
+	/**
+	 * Shared existing-alt write gate for REST describe and CLI generate [F-01].
+	 *
+	 * Single decision so the paths cannot drift: when force is false and an
+	 * existing alt is present, only a post-transform draft match opens a
+	 * provenance heal; a genuinely different human alt stays skipped.
+	 *
+	 * @param mixed               $existing_provenance Stored `_acx_description_provenance`.
+	 * @param array<string,mixed> $incoming_provenance Built identity envelope for the attempt.
+	 * @return string One of: proceed | skip_existing | identity_complete | heal_gap.
+	 */
+	public function classify_existing_alt_write_gate(
+		string $existing_alt,
+		string $draft,
+		bool $force,
+		mixed $existing_provenance,
+		array $incoming_provenance
+	): string {
+		if ( true === $force || '' === trim( $existing_alt ) ) {
+			return 'proceed';
+		}
+
+		// Storage holds the post-transform form; compare against that, not raw draft.
+		$expected_alt      = $this->expected_meta_after_core_transforms( self::ALT_TEXT_META_KEY, $draft );
+		$same_alt_as_draft = ( '' !== $draft && $expected_alt === $existing_alt );
+		// Empty draft still reports skipped_existing_alt (CLI order / BR-104).
+		if ( ! $same_alt_as_draft ) {
+			return 'skip_existing';
+		}
+
+		// Alt matches draft. Identity-complete → draft-key heal only (no restamp).
+		// Missing or identity-mismatched provenance → gap heal fall-through.
+		if ( $this->matches_generated_provenance( $existing_provenance, $incoming_provenance ) ) {
+			return 'identity_complete';
+		}
+
+		return 'heal_gap';
+	}
+
 	private function apply_alt_text_write_policy( WP_REST_Response $response, int $media_id, bool $force ): WP_REST_Response {
 		$data = $response->get_data();
 		if ( ! is_array( $data ) ) {
@@ -323,44 +362,42 @@ class DescribeMediaService {
 		// Must not author long description and must not claim forced_overwrite.
 		$provenance_heal_only = false;
 
-		if ( '' !== trim( $existing_alt ) && ! $force ) {
-			// R17-BR-05: do not trap partial(provenance_write_failed) retries.
-			// When the stored alt already equals the draft we would write, re-entry
-			// is a provenance heal — not an overwrite of human alt text. Only a
-			// genuinely different existing alt stays behind the skip guard.
-			// Empty draft still reports skipped_existing_alt (CLI order / BR-104).
-			if ( ! $same_alt_as_draft ) {
+		// R17-BR-05 / F-01: shared gate with CLI — do not trap provenance-gap partials.
+		$gate = $this->classify_existing_alt_write_gate(
+			$existing_alt,
+			$draft,
+			$force,
+			$existing_provenance,
+			$provenance
+		);
+		if ( 'skip_existing' === $gate ) {
+			$data['alt_text_write'] = array(
+				'status'               => AltTextWriteStatus::SKIPPED_EXISTING_ALT,
+				'existing_alt_present' => true,
+			);
+			$response->set_data( $data );
+			return $response;
+		}
+		if ( 'identity_complete' === $gate ) {
+			// Heal only the draft key (BR-108) and report skip — no force, nothing to
+			// overwrite. If the heal fails, surface the gap for retry (HAI-13 / INT-11).
+			if ( ! $this->heal_provenance_alt_text_draft( $media_id, $existing_provenance, $draft ) ) {
 				$data['alt_text_write'] = array(
-					'status'               => AltTextWriteStatus::SKIPPED_EXISTING_ALT,
+					'status'               => AltTextWriteStatus::PARTIAL,
+					'reason'               => AltTextWriteStatus::REASON_PROVENANCE_WRITE_FAILED,
 					'existing_alt_present' => true,
 				);
 				$response->set_data( $data );
 				return $response;
 			}
-
-			// Alt already matches draft. If provenance identity is complete, heal
-			// only the draft key (BR-108) and report skip — no force, nothing to
-			// overwrite. If provenance is missing or identity-mismatched, fall
-			// through so the write path can (re)stamp it without --force.
-			if ( $this->matches_generated_provenance( $existing_provenance, $provenance ) ) {
-				if ( ! $this->heal_provenance_alt_text_draft( $media_id, $existing_provenance, $draft ) ) {
-					// Heal is load-bearing for history's Generated-alt column.
-					// Surface the gap so the operator can retry (HAI-13 / INT-11).
-					$data['alt_text_write'] = array(
-						'status'               => AltTextWriteStatus::PARTIAL,
-						'reason'               => AltTextWriteStatus::REASON_PROVENANCE_WRITE_FAILED,
-						'existing_alt_present' => true,
-					);
-					$response->set_data( $data );
-					return $response;
-				}
-				$data['alt_text_write'] = array(
-					'status'               => AltTextWriteStatus::SKIPPED_EXISTING_ALT,
-					'existing_alt_present' => true,
-				);
-				$response->set_data( $data );
-				return $response;
-			}
+			$data['alt_text_write'] = array(
+				'status'               => AltTextWriteStatus::SKIPPED_EXISTING_ALT,
+				'existing_alt_present' => true,
+			);
+			$response->set_data( $data );
+			return $response;
+		}
+		if ( 'heal_gap' === $gate ) {
 			// Fall through: provenance gap heal (partial retry without --force).
 			$provenance_heal_only = true;
 		}
@@ -436,6 +473,9 @@ class DescribeMediaService {
 				// same vocabulary as bulk apply. Do not claim written.
 				// BR-08: reason disambiguates provenance-gap partial from the
 				// description_write-failed partial below.
+				// F-22: parent `reason` names the first (history-gap) cause.
+				// A concurrent long-body failure is nested under description_write
+				// — operators must inspect that key; reason is not a full set union.
 				$write_result = array(
 					'status'               => AltTextWriteStatus::PARTIAL,
 					'reason'               => AltTextWriteStatus::REASON_PROVENANCE_WRITE_FAILED,
@@ -613,6 +653,14 @@ class DescribeMediaService {
 	}
 
 	/**
+	 * Content-identity predicate for generated provenance [F-10].
+	 *
+	 * Compares model + image + context identity only. `backend_result_id` is a
+	 * per-call handle (fresh id each describe), not content — requiring it made
+	 * the identity-complete skip almost never fire and restamped `generated_at`
+	 * on every cron pass. Differing call ids are a no-op for this predicate;
+	 * a true content change (hash / model / prompt) still falls through to heal.
+	 *
 	 * @param mixed               $existing
 	 * @param array<string,mixed> $incoming
 	 */
@@ -627,7 +675,7 @@ class DescribeMediaService {
 			}
 		}
 
-		return ( $existing['backend_result_id'] ?? null ) === ( $incoming['backend_result_id'] ?? null );
+		return true;
 	}
 
 	/**

@@ -10,11 +10,13 @@ require_once __DIR__ . '/interface-describe-host.php';
 require_once __DIR__ . '/services/class-description-candidate-service.php';
 require_once __DIR__ . '/services/class-describe-media-service.php';
 require_once __DIR__ . '/services/class-description-history-service.php';
+require_once __DIR__ . '/services/trait-expects-meta-after-core-transforms.php';
 require_once __DIR__ . '/../support/class-telemetry.php';
 
 use AltContext\Api\Services\DescriptionCandidateService;
 use AltContext\Api\Services\DescriptionHistoryService;
 use AltContext\Api\Services\DescribeMediaService;
+use AltContext\Api\Services\ExpectsMetaAfterCoreTransforms;
 use AltContext\Support\Telemetry;
 use WP_Error;
 use WP_REST_Request;
@@ -54,7 +56,6 @@ use function time;
 use function update_option;
 use function wp_check_filetype;
 use function wp_json_encode;
-use function wp_unslash;
 
 use const PATHINFO_EXTENSION;
 
@@ -65,6 +66,8 @@ use const PATHINFO_EXTENSION;
  * the wire-locked `/recognition/analyze` surface (PDS-26).
  */
 class DescribeController extends AbstractRecognitionProxyController implements DescribeHostInterface {
+	use ExpectsMetaAfterCoreTransforms;
+
 	/**
 	 * Default per-run media-id cap. Filterable via `acx_describe_run_max_items`.
 	 * MUST be kept aligned with the backend `ACX_DESCRIBE_RUN_MAX_ITEMS` env var
@@ -747,11 +750,11 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			// existing_alt boolean, which can lag an in-flight media-library edit).
 			$stored_alt_raw = get_post_meta( $media_id, '_wp_attachment_image_alt', true );
 			$decision_alt   = $stored_alt_raw;
-			// What update_metadata() will store for this draft (unslash before
-			// store). Stored alt and recovery comparisons must use this, not the
-			// raw draft string — a backslash-bearing draft never equals its
-			// stored form byte-for-byte (BR-17).
-			$expected_stored_alt = wp_unslash( $draft );
+			// What update_metadata() will store for this draft (unslash then
+			// sanitize_meta). Stored alt and recovery comparisons must use this,
+			// not the raw draft string — a backslash-bearing or filter-sanitized
+			// draft never equals its stored form byte-for-byte (BR-17 / F-15R).
+			$expected_stored_alt = $this->expected_meta_after_core_transforms( '_wp_attachment_image_alt', $draft );
 
 			// Non-string alt meta is unexpected; never treat it as empty and never
 			// unlock recovery via the string-equality conjunct (BR-119).
@@ -832,9 +835,7 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			// the stored value is byte-identical to what WP will store (a no-op
 			// overwrite); distinguish that from a real failure via a read-back so an
 			// unchanged value still counts as applied rather than landing in `failed`.
-			// Compare against wp_unslash( $draft ): update_metadata() unslashes before
-			// store/equality, so a backslash-bearing draft never equals storage as
-			// the raw string (BR-17).
+			// Compare against the shared post-transform expectation (F-15R / BR-17).
 			$alt_written = update_post_meta( $media_id, '_wp_attachment_image_alt', $draft );
 			if ( false === $alt_written ) {
 				$current = get_post_meta( $media_id, '_wp_attachment_image_alt', true );
@@ -851,8 +852,8 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			// bulk apply report "applied" for items history never shows. [RLSE-05]
 			// Alt stays written — do not roll back; bucket as partial so the client
 			// can reconcile without treating the id as fully applied.
-			// Compare against the unslashed envelope (BR-17), not the raw array.
-			$expected_provenance = wp_unslash( $provenance );
+			// Shared post-transform model (F-15R / BR-17), not unslash-only.
+			$expected_provenance = $this->expected_meta_after_core_transforms( '_acx_description_provenance', $provenance );
 			$prov_written        = update_post_meta( $media_id, '_acx_description_provenance', $provenance );
 			if ( false === $prov_written ) {
 				$current_prov = get_post_meta( $media_id, '_acx_description_provenance', true );
@@ -872,7 +873,10 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 						'run_id'     => $run_id,
 						'draft_hash' => hash( 'sha256', $draft ),
 					);
-					$expected_marker  = wp_unslash( $marker );
+					$expected_marker  = $this->expected_meta_after_core_transforms(
+						'_acx_description_provenance_pending',
+						$marker
+					);
 					$marker_written   = update_post_meta(
 						$media_id,
 						'_acx_description_provenance_pending',

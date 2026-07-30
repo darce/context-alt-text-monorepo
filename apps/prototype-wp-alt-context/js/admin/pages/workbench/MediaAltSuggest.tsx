@@ -1,7 +1,12 @@
 import { __, sprintf } from '@wordpress/i18n';
 import { useEffect, useId, useRef, useState } from 'react';
 
-import { resolveDescribeErrorMessage } from '../../api/describeApi';
+import {
+  DESCRIPTION_CORRECTION_CODE,
+  resolveDescribeErrorCode,
+  resolveDescribeErrorDataField,
+  resolveDescribeErrorMessage,
+} from '../../api/describeApi';
 import { useCorrectMediaAlt } from '../../hooks/useCorrectMediaAlt';
 import { useDescribeMedia } from '../../hooks/useDescribeMedia';
 import { useAriaAnnounce } from './identity-clusters/useAriaAnnounce';
@@ -197,6 +202,10 @@ export const MediaAltSuggest = ({
   // only paints after the next render; a same-tick double activation must not
   // enqueue two corrections. Mirror of DescriptionHistoryPage BR-81.
   const isAcceptingRef = useRef(false);
+  // Which surface owned the last correction — survives isMarkingDecorative
+  // clearing in onError so the isAcceptError focus-restore lands on the
+  // control that failed, not Accept [S6-A-05][A11Y-11].
+  const lastCorrectionWasDecorativeRef = useRef(false);
   const textareaId = useId();
   const disclosureId = useId();
   const errorId = useId();
@@ -314,10 +323,12 @@ export const MediaAltSuggest = ({
     }
   }, [isEditing]);
 
-  // Accept/Save disable the commit control while isAccepting; the browser blurs
-  // it and focus falls to body. On failure the control re-enables but nothing
-  // else remounts — put focus back on the button that was pressed
-  // (WBUX-5-S2C3A-BR-18). Same ownership gate as draft-landing.
+  // Accept/Save/decorative disable the commit control while in flight; the
+  // browser blurs it and focus falls to body. On failure the control re-enables
+  // but nothing else remounts — put focus back on the button that was pressed
+  // (WBUX-5-S2C3A-BR-18). Decorative shares the mutation so isAcceptError fires
+  // for it too; lastCorrectionWasDecorativeRef picks the landing target
+  // [S6-A-05]. Same ownership gate as draft-landing.
   useEffect(() => {
     if (!isAcceptError) {
       return;
@@ -329,6 +340,8 @@ export const MediaAltSuggest = ({
     }
     if (isEditing) {
       saveButtonRef.current?.focus();
+    } else if (lastCorrectionWasDecorativeRef.current) {
+      decorativeButtonRef.current?.focus();
     } else {
       acceptButtonRef.current?.focus();
     }
@@ -378,6 +391,7 @@ export const MediaAltSuggest = ({
     setConflictMessage(null);
     isAcceptingRef.current = true;
     setIsMarkingDecorative(true);
+    lastCorrectionWasDecorativeRef.current = true;
     announceStatus(__('Marking as decorative…', 'alt-context'));
     // Same correction mutation as Accept/Save — decorative flag is additive.
     // Hook onSuccess patches cache from data.current_alt_text; hook onError
@@ -400,6 +414,15 @@ export const MediaAltSuggest = ({
           setIsMarkingDecorative(false);
           onCommitEnd?.();
           clearStatus();
+          // Re-seed CAS baseline from PARTIAL reconcile so the operator's own
+          // half-failed write is not misread as a sibling conflict on retry
+          // [rg-002][S6-A-02]. Empty stored alt matches class-api.php:346 null.
+          if (resolveDescribeErrorCode(err) === DESCRIPTION_CORRECTION_CODE.PARTIAL) {
+            const stored = resolveDescribeErrorDataField(err, 'stored_alt_text');
+            if (stored !== null) {
+              committedAltBaselineRef.current = stored.trim() === '' ? null : stored;
+            }
+          }
           // Assertive channel via existing conflictMessage region — no new live region
           // [A11Y-21]. Prefer server message (400 contradiction / PARTIAL) when structured.
           setConflictMessage(
@@ -516,6 +539,7 @@ export const MediaAltSuggest = ({
         }
         setConflictMessage(null);
         isAcceptingRef.current = true;
+        lastCorrectionWasDecorativeRef.current = false;
         // BR-56: announce commit-in-flight immediately so the polite region does
         // not keep reading the stale "Draft ready…" cue while the button shows
         // "Accepting draft…".
@@ -537,10 +561,17 @@ export const MediaAltSuggest = ({
             // concern as generate onError clearStatus — BR-46). Empty polite
             // region announces nothing; the role="alert" is the single source of
             // truth for this failure.
-            onError: () => {
+            onError: (err) => {
               isAcceptingRef.current = false;
               onCommitEnd?.();
               clearStatus();
+              // Own PARTIAL write moved the cache — re-seed so Accept retry is not CAS-blocked.
+              if (resolveDescribeErrorCode(err) === DESCRIPTION_CORRECTION_CODE.PARTIAL) {
+                const stored = resolveDescribeErrorDataField(err, 'stored_alt_text');
+                if (stored !== null) {
+                  committedAltBaselineRef.current = stored.trim() === '' ? null : stored;
+                }
+              }
             },
           },
         );
@@ -583,6 +614,7 @@ export const MediaAltSuggest = ({
         }
         setConflictMessage(null);
         isAcceptingRef.current = true;
+        lastCorrectionWasDecorativeRef.current = false;
         // BR-56 companion: edit-path commit-in-flight cue (mirror Accept).
         announceStatus(__('Saving alt text…', 'alt-context'));
         acceptDraft(
@@ -598,10 +630,17 @@ export const MediaAltSuggest = ({
             },
             // BR-39 companion: edit-path save failure also must not leave a
             // stale polite cue beside the assertive alert.
-            onError: () => {
+            onError: (err) => {
               isAcceptingRef.current = false;
               onCommitEnd?.();
               clearStatus();
+              // Own PARTIAL write moved the cache — re-seed so Save retry is not CAS-blocked.
+              if (resolveDescribeErrorCode(err) === DESCRIPTION_CORRECTION_CODE.PARTIAL) {
+                const stored = resolveDescribeErrorDataField(err, 'stored_alt_text');
+                if (stored !== null) {
+                  committedAltBaselineRef.current = stored.trim() === '' ? null : stored;
+                }
+              }
             },
           },
         );
@@ -696,7 +735,9 @@ export const MediaAltSuggest = ({
                 onClick={saveEdit}
                 disabled={commitControlDisabled || !canSaveEdit}
               >
-                {isAccepting ? __('Saving alt text…', 'alt-context') : __('Save alt text', 'alt-context')}
+                {isAccepting && !isMarkingDecorative
+                  ? __('Saving alt text…', 'alt-context')
+                  : __('Save alt text', 'alt-context')}
               </button>
               <button
                 type="button"
@@ -717,7 +758,9 @@ export const MediaAltSuggest = ({
                 disabled={commitControlDisabled || !canAcceptDraft}
                 aria-describedby={showCommitError ? errorId : undefined}
               >
-                {isAccepting ? __('Accepting draft…', 'alt-context') : __('Accept', 'alt-context')}
+                {isAccepting && !isMarkingDecorative
+                  ? __('Accepting draft…', 'alt-context')
+                  : __('Accept', 'alt-context')}
               </button>
               <button
                 type="button"

@@ -1988,6 +1988,18 @@ describe('MediaAltSuggest', () => {
     expect(Number.isInteger(RECOMMENDED_ALT_TEXT_MAX_LENGTH)).toBe(true);
   });
 
+  it('pins length formatter copy with argument order (draft length first, max second) [S6-A-07][TEST-15]', () => {
+    // Literal-copy pins: comparisons against formatAltLengthAdvisory(n) itself move
+    // with an in-formatter %1$d/%2$d swap and stay green. These strings name the
+    // business order: actual draft length is 200; recommended maximum is 125.
+    expect(formatAltLengthAdvisory(200)).toBe(
+      'This draft is 200 characters. The recommended maximum is 125 characters so screen readers can convey the description without excessive length. Consider shortening it before saving.',
+    );
+    expect(formatOverLengthReadyAnnouncement(200)).toBe(
+      'Draft ready. Review before saving. This draft is 200 characters; recommended maximum is 125. Consider shortening it.',
+    );
+  });
+
   it('enqueues exactly one correction for two same-tick Accept activations [S2C3A-BR-16]', async () => {
     // disabled={isAccepting} only paints after the next render. fireEvent.click
     // alone flushes a render between clicks and hits disabled — proving nothing.
@@ -2237,9 +2249,14 @@ describe('MediaAltSuggest', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     await screen.findByText(draft);
-    fireEvent.click(
-      screen.getByRole('button', { name: /decorative|screen reader|announce nothing|skip/i }),
-    );
+    const decorativeBtn = screen.getByRole('button', {
+      name: /decorative|screen reader|announce nothing|skip/i,
+    });
+    decorativeBtn.focus();
+    fireEvent.click(decorativeBtn);
+    // Stands in for the browser blurring the control isMarkingDecorative just disabled
+    // (same pattern as Accept focus-restore [WBUX-5-S2C3A-BR-18]).
+    parkFocusOnBody();
 
     await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
     const alert = await screen.findByRole('alert');
@@ -2249,6 +2266,12 @@ describe('MediaAltSuggest', () => {
     // Draft kept — operator can recover without regenerating.
     expect(screen.getByText(draft)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /dismiss/i })).not.toBeDisabled();
+    // Focus returns to the decorative control that failed — not Accept (which
+    // would commit the AI draft the operator deliberately avoided) [S6-A-05][A11Y-11].
+    // Against baseline this fails with focus on Accept.
+    expect(
+      screen.getByRole('button', { name: /decorative|screen reader|announce nothing|skip/i }),
+    ).toHaveFocus();
   });
 
   it('gives the decorative control an accessible name and keeps it keyboard-reachable [WBUX-5-S2C3C-BR-01][A11Y-15]', async () => {
@@ -2284,6 +2307,25 @@ describe('MediaAltSuggest', () => {
     expect(
       screen.getByRole('button', { name: /decorative|screen reader|announce nothing|skip/i }),
     ).toBeDisabled();
+  });
+
+  it('keeps Accept labelled Accept (disabled) while Mark as decorative is in flight [S6-A-04][INT-08]', async () => {
+    // Shared isAccepting/isPending must not relabel Accept to "Accepting draft..."
+    // when the operator deliberately chose decorative instead.
+    describeMock.mockResolvedValue(sampleResponse());
+    correctMock.mockReturnValue(new Promise<DescriptionHistoryItem>(() => undefined));
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await screen.findByText(draft);
+    fireEvent.click(
+      screen.getByRole('button', { name: /decorative|screen reader|announce nothing|skip/i }),
+    );
+    expect(await screen.findByRole('button', { name: /marking as decorative/i })).toBeDisabled();
+
+    // Accept stays named Accept (disabled), never "Accepting draft...".
+    expect(screen.getByRole('button', { name: /^accept$/i })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /accepting draft/i })).not.toBeInTheDocument();
   });
 
   it('CAS baseline at draft arrival tracks live committedAlt, not click-time closure [S2c-4b-ii BR-02]', async () => {
@@ -2325,15 +2367,15 @@ describe('MediaAltSuggest', () => {
   // S7-BR-01 / HARM-BR-02 — decorative mark must reconcile workbench cache
   // ---------------------------------------------------------------------------
 
-  it('patches workbench cache to empty alt + missing after Mark as decorative [S7-BR-01][HARM-BR-02]', async () => {
+  it('patches workbench cache to empty alt + complete after Mark as decorative [S7-BR-01][HARM-BR-02]', async () => {
     // Headline defect: markDecorative awaited correctDescriptionHistoryItem then
     // only reset/announce — patchWorkbenchRowAlt and invalidateMediaStats never
     // ran, so the co-mounted row kept altText 'Bridge at dusk' / status complete
     // while the server held alt='' + decorative marker.
     //
     // [TEST-15] discrimination: goes RED if success still bypasses the hook's
-    // reconciliation (cache stays prior alt + complete) or if only helpers are
-    // spied without observing the row re-render symptom.
+    // reconciliation (cache stays prior alt) or if status derives from alt alone
+    // (empty → 'missing' while class-api.php:338 says decorative → 'complete').
     const priorAlt = 'Bridge at dusk';
     correctMock.mockResolvedValue(sampleHistoryItem(''));
     const { client } = renderLiveAltRow(priorAlt, 'complete');
@@ -2351,21 +2393,124 @@ describe('MediaAltSuggest', () => {
     await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
     expect(correctMock).toHaveBeenCalledWith(42, '', { decorative: true });
 
-    // Cache contract: server returned current_alt_text ''; status derives missing.
+    // Cache contract: empty alt normalizes to null (class-api.php:346 emits null,
+    // never ''); decorative:true → complete (class-api.php:338).
     await waitFor(() => {
-      expect(cachedRow(client)?.altText).toBe('');
-      expect(cachedRow(client)?.status).toBe('missing');
+      expect(cachedRow(client)?.altText).toBeNull();
+      expect(cachedRow(client)?.status).toBe('complete');
     });
 
     // Integration symptom (HARM-BR-02): row no longer renders the destroyed alt.
     await waitFor(() => {
       expect(screen.queryByText(priorAlt)).not.toBeInTheDocument();
     });
-    expect(screen.getByTestId('live-row-status')).toHaveTextContent('missing');
+    expect(screen.getByTestId('live-row-status')).toHaveTextContent('complete');
     // Success still announced — reconciliation must not silence the path.
     await waitFor(() => {
       expect(screen.getByTestId('media-alt-suggest-status')).toHaveTextContent(/marked as decorative/i);
     });
+  });
+
+  it('derives workbench status from alt OR decorative (two-fact rule) [class-api.php:338][TEST-15]', async () => {
+    // Triple: decorative empty-alt → complete; non-empty alt → complete;
+    // non-decorative empty-alt result → missing. Neither alt-only nor
+    // decorative-only rule passes all three.
+
+    // 1) Decorative success with empty alt → complete
+    correctMock.mockResolvedValueOnce(sampleHistoryItem(''));
+    const decorativeCase = renderLiveAltRow('Prior decorative', 'complete');
+    fireEvent.click(
+      screen.getByRole('button', { name: /decorative|screen reader|announce nothing|skip/i }),
+    );
+    await waitFor(() => expect(cachedRow(decorativeCase.client)?.status).toBe('complete'));
+    expect(cachedRow(decorativeCase.client)?.altText).toBeNull();
+    decorativeCase.unmount();
+
+    // 2) Ordinary Accept with non-empty alt → complete
+    describeMock.mockResolvedValueOnce(sampleResponse());
+    correctMock.mockResolvedValueOnce(sampleHistoryItem(draft));
+    const clientAlt = buildClient();
+    const initialAlt = seedWorkbenchRow(clientAlt, null, 'missing');
+    const altCase = render(
+      <QueryClientProvider client={clientAlt}>
+        <LiveWorkbenchAltRow initial={initialAlt} />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await screen.findByText(draft);
+    fireEvent.click(screen.getByRole('button', { name: /^accept$/i }));
+    await waitFor(() => {
+      expect(cachedRow(clientAlt)?.altText).toBe(draft);
+      expect(cachedRow(clientAlt)?.status).toBe('complete');
+    });
+    altCase.unmount();
+
+    // 3) PARTIAL after decorative attempt (marker not stored, empty stored alt)
+    // → missing. Discriminates against a decorative-only rule that would mark
+    // every decorative-flagged request complete even when the marker failed.
+    const partialMessage =
+      'Alt text was saved, but the decorative marker could not be stored. Please try again.';
+    correctMock.mockRejectedValueOnce(
+      new Error(
+        `Request to /correction failed (500): ${JSON.stringify({
+          code: 'description_correction_partial',
+          message: partialMessage,
+          data: { status: 500, stored_alt_text: '' },
+        })}`,
+      ),
+    );
+    const partialCase = renderLiveAltRow('Prior partial', 'complete');
+    fireEvent.click(
+      screen.getByRole('button', { name: /decorative|screen reader|announce nothing|skip/i }),
+    );
+    await waitFor(() => {
+      expect(cachedRow(partialCase.client)?.altText).toBeNull();
+      expect(cachedRow(partialCase.client)?.status).toBe('missing');
+    });
+    partialCase.unmount();
+  });
+
+  it('allows decorative retry after PARTIAL without false CAS conflict [S6-A-02][rg-002]', async () => {
+    // Suggest → draft captures CAS baseline as prior alt. PARTIAL reconciles
+    // cache to empty; without re-seeding baseline, a second Mark as decorative
+    // is refused as a sibling conflict while the server asked to retry.
+    const priorAlt = 'Prior for retry';
+    const partialMessage =
+      'Alt text was saved, but the decorative marker could not be stored. Please try again.';
+    correctMock
+      .mockRejectedValueOnce(
+        new Error(
+          `Request to /correction failed (500): ${JSON.stringify({
+            code: 'description_correction_partial',
+            message: partialMessage,
+            data: { status: 500, stored_alt_text: '' },
+          })}`,
+        ),
+      )
+      .mockResolvedValueOnce(sampleHistoryItem(''));
+    describeMock.mockResolvedValue(sampleResponse());
+    const { client } = renderLiveAltRow(priorAlt, 'complete');
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await screen.findByText(draft);
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /decorative|screen reader|announce nothing|skip/i }),
+    );
+    await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/decorative marker could not be stored/i);
+    // PARTIAL rewrote the cache; committedAlt prop is now null/empty.
+    await waitFor(() => {
+      expect(cachedRow(client)?.altText).toBeNull();
+    });
+
+    // Second attempt must reach the wire — not the false sibling-conflict branch.
+    fireEvent.click(
+      screen.getByRole('button', { name: /decorative|screen reader|announce nothing|skip/i }),
+    );
+    await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText(ALT_SUGGEST_COMMIT_CONFLICT_MESSAGE)).not.toBeInTheDocument();
   });
 
   it('reconciles cache from stored_alt_text on decorative PARTIAL failure [S7-BR-02]', async () => {
@@ -2400,14 +2545,18 @@ describe('MediaAltSuggest', () => {
     expect(correctMock).toHaveBeenCalledWith(42, '', { decorative: true });
 
     // Cache must reflect the verified blank write even though the mark failed.
+    // Empty stored_alt_text normalizes to null (class-api.php:346 contract).
     await waitFor(() => {
-      expect(cachedRow(client)?.altText).toBe('');
+      expect(cachedRow(client)?.altText).toBeNull();
       expect(cachedRow(client)?.status).toBe('missing');
     });
 
-    // Assertive alert still surfaces — operator must not believe storage is unchanged.
+    // Assertive alert must surface the server PARTIAL message exclusively —
+    // only it tells the operator the alt WAS written and destroyed. Alternation
+    // with the generic fallback accepted the failure mode [S6-A-06][TEST-15].
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent(/decorative marker could not be stored|could not mark as decorative/i);
+    expect(alert).toHaveTextContent(partialMessage);
+    expect(alert).not.toHaveTextContent(/could not mark as decorative/i);
     // Live row no longer advertises the destroyed prior alt.
     await waitFor(() => {
       expect(screen.queryByText(priorAlt)).not.toBeInTheDocument();

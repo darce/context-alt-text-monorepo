@@ -1,19 +1,28 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import React, { useMemo, useState } from 'react';
 
+import type { BulkMergeFailure } from '../hooks/useClusterActions';
 import { BulkActionBar } from '../BulkActionBar';
+import { ConfirmDialog } from '../ConfirmDialog';
+import { useRosterBulkConfirmation } from '../useRosterBulkConfirmation';
 
 // Controllable _n mock: default English binary; S2-BR-02 forces plural for count===1.
+// Spy so tests can assert the real count is passed (not collapsed to 1-or-2).
 const nMock = vi.hoisted(() => ({ forcePlural: false }));
 
-vi.mock('@wordpress/i18n', () => ({
-  __: (text: string) => text,
-  _n: (single: string, plural: string, count: number) => {
+const i18nMocks = vi.hoisted(() => ({
+  _n: vi.fn((single: string, plural: string, count: number) => {
     if (nMock.forcePlural) {
       return plural;
     }
     return count === 1 ? single : plural;
-  },
+  }),
+}));
+
+vi.mock('@wordpress/i18n', () => ({
+  __: (text: string) => text,
+  _n: i18nMocks._n,
   sprintf: (format: string, ...args: (string | number)[]) => {
     let index = 0;
     return format
@@ -28,7 +37,95 @@ const defaultProps = {
   onClear: vi.fn(),
 };
 
+/** Wires BulkActionBar + ConfirmDialog through useRosterBulkConfirmation (NeedsAssignment shape). */
+const BulkConfirmHarness = ({
+  mergeAsync,
+}: {
+  mergeAsync: (payload: { clusterIds: string[] }) => Promise<unknown>;
+}): React.JSX.Element => {
+  const [mergeFailure, setMergeFailure] = useState<BulkMergeFailure | null>(null);
+  const selection = useMemo(
+    () => ({
+      selectedIds: new Set(['cluster-a', 'cluster-b', 'cluster-c']),
+      count: 3,
+    }),
+    [],
+  );
+
+  const bulkMergeMutation = useMemo(
+    () => ({
+      isPending: false,
+      mutateAsync: async (payload: { clusterIds: string[] }) => {
+        try {
+          return await mergeAsync(payload);
+        } catch (err) {
+          // Mirror useClusterActions mid-sequence failure: surface alert while mutation rejects.
+          setMergeFailure({
+            failedClusterId: 'cluster-b',
+            message: 'Merge failed for cluster cluster-b.',
+            remainingClusterIds: ['cluster-a', 'cluster-b', 'cluster-c'],
+          });
+          throw err;
+        }
+      },
+    }),
+    [mergeAsync],
+  );
+
+  const bulkDismissMutation = useMemo(
+    () => ({
+      isPending: false,
+      mutateAsync: vi.fn().mockResolvedValue(undefined),
+    }),
+    [],
+  );
+
+  const {
+    confirmAction,
+    setConfirmAction,
+    handleBulkMerge,
+    handleBulkDismiss,
+    handleConfirm,
+    handleConfirmOpenChange,
+    confirmDialogCopy,
+  } = useRosterBulkConfirmation({
+    selection,
+    bulkMergeMutation,
+    bulkDismissMutation,
+  });
+
+  return (
+    <>
+      <BulkActionBar
+        count={selection.count}
+        onMerge={handleBulkMerge}
+        onDismiss={handleBulkDismiss}
+        onClear={vi.fn()}
+        mergeFailure={mergeFailure}
+        onRetryMerge={vi.fn()}
+        onDismissFailure={() => setMergeFailure(null)}
+      />
+      {confirmDialogCopy ? (
+        <ConfirmDialog
+          open={confirmAction !== null}
+          onOpenChange={handleConfirmOpenChange}
+          onConfirm={handleConfirm}
+          onCancel={() => setConfirmAction(null)}
+          title={confirmDialogCopy.title}
+          description={confirmDialogCopy.description}
+          confirmLabel={confirmDialogCopy.confirmLabel}
+        />
+      ) : null}
+    </>
+  );
+};
+
 describe('BulkActionBar', () => {
+  beforeEach(() => {
+    i18nMocks._n.mockClear();
+    nMock.forcePlural = false;
+  });
+
   it('shows loading and disables merge action while merging', () => {
     render(
       <BulkActionBar
@@ -48,7 +145,7 @@ describe('BulkActionBar', () => {
 
   it('exposes per-step progress via role=status live region', () => {
     // Production: 3 selected clusters → total = sourceIds.length = 2
-    render(
+    const { rerender } = render(
       <BulkActionBar
         count={3}
         onMerge={vi.fn()}
@@ -60,10 +157,22 @@ describe('BulkActionBar', () => {
     );
 
     const status = screen.getByRole('status');
-    // Progress counts source merge steps, not selected clusters.
-    expect(status).toHaveTextContent(/Merging source 1 of 2/i);
-    expect(status).not.toHaveTextContent(/Merging 1 of 3/i);
+    // Exact unit noun + source-step denominator (not selection size).
+    expect(status).toHaveTextContent('Merging source 1 of 2…');
     expect(screen.getByTestId('bulk-merge-status')).toBe(status);
+
+    // Second pair: a wrong denominator or dropped unit noun cannot match both.
+    rerender(
+      <BulkActionBar
+        count={4}
+        onMerge={vi.fn()}
+        onDismiss={vi.fn()}
+        onClear={vi.fn()}
+        isMerging
+        mergeProgress={{ current: 2, total: 3 }}
+      />,
+    );
+    expect(screen.getByRole('status')).toHaveTextContent('Merging source 2 of 3…');
   });
 
   it('renders persistent role=alert failure with named cluster and retry', async () => {
@@ -178,9 +287,9 @@ describe('BulkActionBar', () => {
 
     it('progress Merging source N of M… uses source-step totals (S2-BR-01 / S2-BR-03)', () => {
       // Production progress for 3 selected clusters: total = sourceIds.length = 2.
-      // Must not reuse idle cluster-count phrasing ("Merge 3 clusters") or claim
-      // "Merging 1 of 3…" (selection size as step total).
-      render(
+      // Exact accessible name must include the unit noun and the source-step total.
+      // Two distinct pairs catch a dropped unit ("Merging 1 of 2…") and a wrong denominator.
+      const { rerender } = render(
         <BulkActionBar
           count={3}
           {...defaultProps}
@@ -189,13 +298,19 @@ describe('BulkActionBar', () => {
         />,
       );
 
-      const merge = screen.getByRole('button', { name: 'Merging source 1 of 2…' });
-      expect(merge).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Merging source 1 of 2…' })).toBeDisabled();
       expect(screen.getByRole('status')).toHaveTextContent('Merging source 1 of 2…');
-      // Not the idle cluster-count phrasing, and not selection size as denominator.
-      expect(screen.queryByRole('button', { name: 'Merging 1 of 3…' })).not.toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: 'Merging 3 clusters…' })).not.toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: 'Merge 3 clusters' })).not.toBeInTheDocument();
+
+      rerender(
+        <BulkActionBar
+          count={4}
+          {...defaultProps}
+          isMerging
+          mergeProgress={{ current: 2, total: 3 }}
+        />,
+      );
+      expect(screen.getByRole('button', { name: 'Merging source 2 of 3…' })).toBeDisabled();
+      expect(screen.getByRole('status')).toHaveTextContent('Merging source 2 of 3…');
     });
 
     it('Dismissing… state includes count and cluster object', () => {
@@ -234,6 +349,113 @@ describe('BulkActionBar', () => {
       rerender(<BulkActionBar count={1} {...defaultProps} isDismissing />);
       expect(screen.getByRole('button', { name: 'Dismissing 1 clusters…' })).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: 'Dismissing 1 cluster…' })).not.toBeInTheDocument();
+    });
+
+    it('passes the real selection count into _n (not collapsed to 1-or-2)', () => {
+      // Collapse mutation `_n(..., count === 1 ? 1 : 2, ...)` yields correct English labels
+      // for 0/2/3/5 and still satisfies forcePlural at count===1; only the argument proves
+      // locales with a third plural form get the right msgid.
+      const { rerender } = render(<BulkActionBar count={5} {...defaultProps} />);
+      expect(i18nMocks._n).toHaveBeenCalledWith(
+        'Merge %d cluster',
+        'Merge %d clusters',
+        5,
+        'alt-context',
+      );
+      expect(i18nMocks._n).toHaveBeenCalledWith(
+        'Dismiss %d cluster',
+        'Dismiss %d clusters',
+        5,
+        'alt-context',
+      );
+
+      i18nMocks._n.mockClear();
+      rerender(<BulkActionBar count={3} {...defaultProps} isMerging />);
+      expect(i18nMocks._n).toHaveBeenCalledWith(
+        'Merging %d cluster…',
+        'Merging %d clusters…',
+        3,
+        'alt-context',
+      );
+
+      i18nMocks._n.mockClear();
+      rerender(<BulkActionBar count={0} {...defaultProps} isDismissing />);
+      expect(i18nMocks._n).toHaveBeenCalledWith(
+        'Dismissing %d cluster…',
+        'Dismissing %d clusters…',
+        0,
+        'alt-context',
+      );
+    });
+  });
+
+  describe('selection summary uses _n (S5-BR-04)', () => {
+    it('renders singular at count 1 and plural at count 2 via _n with the real count', () => {
+      const { rerender } = render(<BulkActionBar count={1} {...defaultProps} />);
+      expect(screen.getByText('1 selected')).toBeInTheDocument();
+      expect(i18nMocks._n).toHaveBeenCalledWith(
+        '%d selected',
+        '%d selected',
+        1,
+        'alt-context',
+      );
+
+      i18nMocks._n.mockClear();
+      rerender(<BulkActionBar count={2} {...defaultProps} />);
+      expect(screen.getByText('2 selected')).toBeInTheDocument();
+      expect(i18nMocks._n).toHaveBeenCalledWith(
+        '%d selected',
+        '%d selected',
+        2,
+        'alt-context',
+      );
+
+      // Count above 2: collapse mutation (count === 1 ? 1 : 2) cannot pass this.
+      i18nMocks._n.mockClear();
+      rerender(<BulkActionBar count={5} {...defaultProps} />);
+      expect(screen.getByText('5 selected')).toBeInTheDocument();
+      expect(i18nMocks._n).toHaveBeenCalledWith(
+        '%d selected',
+        '%d selected',
+        5,
+        'alt-context',
+      );
+    });
+  });
+
+  describe('bulk merge confirmation (S5-BR-02)', () => {
+    it('confirmation description names sequential merge, stop-on-failure, and partial commit', async () => {
+      render(
+        <BulkConfirmHarness mergeAsync={vi.fn().mockResolvedValue(undefined)} />,
+      );
+
+      await userEvent.click(screen.getByRole('button', { name: 'Merge 3 clusters' }));
+
+      const dialog = screen.getByRole('dialog');
+      const description = dialog.textContent ?? '';
+      // Must state the real operation: one-by-one, stops on first failure, keeps earlier merges.
+      expect(description).toMatch(/one (at a time|by one)/i);
+      expect(description).toMatch(/fail/i);
+      expect(description).toMatch(/(already[- ]merged|stay merged|kept)/i);
+      // Baseline single-act "cannot be undone" sentence alone is not enough.
+      expect(description).not.toMatch(/^Are you sure you want to merge 3 clusters\? This action cannot be undone\.$/);
+    });
+
+    it('closes the dialog on merge failure so the role=alert Retry UI is reachable', async () => {
+      const mergeAsync = vi.fn().mockRejectedValue(new Error('mid-sequence merge failed'));
+      render(<BulkConfirmHarness mergeAsync={mergeAsync} />);
+
+      await userEvent.click(screen.getByRole('button', { name: 'Merge 3 clusters' }));
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole('button', { name: /^Merge$/i }));
+
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      });
+      // Failure alert + Retry must be visible, not masked by DialogOverlay.
+      expect(screen.getByRole('alert')).toBeVisible();
+      expect(screen.getByRole('button', { name: /^Retry$/i })).toBeVisible();
     });
   });
 });

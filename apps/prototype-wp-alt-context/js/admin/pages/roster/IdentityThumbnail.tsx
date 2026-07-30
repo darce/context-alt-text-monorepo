@@ -218,8 +218,41 @@ export const IdentityThumbnail = ({
     // the sole content of wrapping links (e.g. ClusterDrawerPanel), so it must
     // expose role=img + aria-label. Decorative alt="" stays aria-hidden.
     // Genuinely-missing media keeps aria-hidden + data-face-missing unchanged.
+    //
+    // When onClick is provided, use a native <button> so the crop-pending window
+    // honours the same click/keyboard contract as the resolved <img> path
+    // [S3-BR-04] [A11Y-11] [A11Y-12].
     const pendingCrop = needsCanvasCrop && !croppedSrc;
     const namedPending = pendingCrop && resolvedAlt !== '';
+    const boxStyle: React.CSSProperties = {
+      width: size,
+      height: size,
+      display: 'inline-block',
+      verticalAlign: 'middle',
+      flexShrink: 0,
+    };
+    if (onClick) {
+      return (
+        <span ref={hostRef} style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}>
+          <button
+            type="button"
+            className="acx-cluster-card__face--placeholder"
+            onClick={onClick}
+            aria-label={resolvedAlt !== '' ? resolvedAlt : undefined}
+            data-face-missing={pendingCrop ? undefined : 'true'}
+            data-face-pending={pendingCrop ? 'true' : undefined}
+            style={{
+              ...boxStyle,
+              border: 'none',
+              padding: 0,
+              margin: 0,
+              background: 'transparent',
+              cursor: 'pointer',
+            }}
+          />
+        </span>
+      );
+    }
     return (
       <span ref={hostRef} style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}>
         <div
@@ -229,7 +262,7 @@ export const IdentityThumbnail = ({
           aria-hidden={namedPending ? undefined : 'true'}
           data-face-missing={pendingCrop ? undefined : 'true'}
           data-face-pending={pendingCrop ? 'true' : undefined}
-          style={{ width: size, height: size, display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}
+          style={boxStyle}
         />
       </span>
     );

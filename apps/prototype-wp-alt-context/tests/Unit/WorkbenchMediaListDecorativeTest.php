@@ -47,6 +47,8 @@ class WorkbenchMediaListDecorativeTest extends TestCase
     {
         $this->plantAttachment(100, 'Decorative spacer', '');
         $GLOBALS['__ac_post_meta'][100]['acx_alt_decorative'] = '1';
+        // Control peer: same empty alt, no decorative marker.
+        $this->plantAttachment(101, 'Genuinely missing', '');
 
         $request = new WP_REST_Request('GET', '/acx/v1/workbench/media');
         $request->set_param('page', 1);
@@ -72,7 +74,15 @@ class WorkbenchMediaListDecorativeTest extends TestCase
             $byId[100]['status'],
             'Empty alt + acx_alt_decorative=1 must map to complete (not missing)'
         );
-        $this->assertNull($byId[100]['altText']);
+        // Control peer: empty alt without marker stays missing. Isolates $is_decorative
+        // as the sole input difference (altText null is entailed by empty fixture either way
+        // and cannot observe the decorative branch).
+        $this->assertArrayHasKey(101, $byId, 'Control empty-alt peer must appear in unfiltered listing');
+        $this->assertSame(
+            ['complete', 'missing'],
+            [$byId[100]['status'], $byId[101]['status']],
+            'Decorative marker is the sole differentiator between complete and missing for empty alt'
+        );
     }
 
     /**
@@ -117,13 +127,26 @@ class WorkbenchMediaListDecorativeTest extends TestCase
     }
 
     /**
-     * Stale-marker precedence: non-empty alt wins over a leftover decorative
-     * marker (same order as DescriptionCandidateService::build_row).
+     * Complete-bucket mapping for both arms of ($has_alt || $is_decorative).
+     *
+     * Workbench status collapses has_alt and decorative into the same 'complete'
+     * value — unlike DescriptionCandidateService's reason field — so has_alt-vs-
+     * decorative "stale-marker precedence" is not observable through status alone.
+     * What is observable:
+     * - empty alt + marker → complete (load-bearing $is_decorative arm; the only
+     *   input where removing the decorative branch changes the answer)
+     * - non-empty alt + leftover marker → complete with altText set (has_alt arm;
+     *   leftover marker must not suppress the description on the wire)
      */
-    public function testNonEmptyAltWithStaleDecorativeMarkerReportsComplete(): void
+    public function testCompleteBucketMapsDecorativeAndHasAltArms(): void
     {
-        $this->plantAttachment(300, 'Described with stale flag', 'A real description.');
+        // Disagreeing facts: empty alt + marker — decorative branch is load-bearing.
+        $this->plantAttachment(300, 'Decorative only', '');
         $GLOBALS['__ac_post_meta'][300]['acx_alt_decorative'] = '1';
+
+        // Non-empty alt + leftover decorative marker: has_alt arm surfaces altText.
+        $this->plantAttachment(301, 'Described with stale flag', 'A real description.');
+        $GLOBALS['__ac_post_meta'][301]['acx_alt_decorative'] = '1';
 
         $request = new WP_REST_Request('GET', '/acx/v1/workbench/media');
         $request->set_param('page', 1);
@@ -138,8 +161,17 @@ class WorkbenchMediaListDecorativeTest extends TestCase
             $byId[(int) $item['id']] = $item;
         }
 
-        $this->assertSame('complete', $byId[300]['status']);
-        $this->assertSame('A real description.', $byId[300]['altText']);
+        $this->assertSame(
+            'complete',
+            $byId[300]['status'],
+            'Empty alt + decorative marker must map to complete via $is_decorative'
+        );
+        $this->assertSame('complete', $byId[301]['status']);
+        $this->assertSame(
+            'A real description.',
+            $byId[301]['altText'],
+            'Non-empty alt surfaces as altText even with leftover decorative marker'
+        );
     }
 
     private function plantAttachment(int $id, string $title, string $altText): void

@@ -23,35 +23,55 @@ interface CorrectMediaAltVariables {
 }
 
 /**
- * Derive workbench row status from server-returned alt text.
+ * Derive workbench row status from the same two facts the list producer uses.
  *
- * Mirrors class-description-candidate-service.php:153 —
- *   `$has_alt = '' !== trim( $alt_text );`
- * Non-empty after trim → 'complete'; empty/whitespace-only → 'missing'.
- * This is a documented derivation from authoritative per-row server data
- * (same response body that supplies altText), not fabricated contract
- * metadata [rg-015][WBUX-5-BR-112].
+ * Authoritative rule is class-api.php:338 —
+ *   `'status' => ( $has_alt || $is_decorative ) ? 'complete' : 'missing'`
+ * Empty alt with decorative marker is 'complete' on a real refetch; deriving
+ * from alt alone would mis-classify decorative success as 'missing'
+ * [rg-015][DATA-14][WBUX-5-BR-112].
  */
-const statusFromServerAlt = (altText: string): WorkbenchMediaItem['status'] =>
-  '' !== altText.trim() ? 'complete' : 'missing';
+const statusFromServerFacts = (
+  altText: string,
+  decorative: boolean,
+): WorkbenchMediaItem['status'] =>
+  '' !== altText.trim() || decorative ? 'complete' : 'missing';
+
+interface PatchWorkbenchRowAltOptions {
+  /**
+   * True when this write planted (or reaffirmed) the durable decorative marker.
+   * PARTIAL failures must omit / pass false — the marker was not stored.
+   */
+  decorative?: boolean;
+}
 
 /**
  * Patch one media row's altText and status across every cached workbench page,
  * without touching total / totalPages. Envelope counts stay server truth
  * [rg-015]; the row stays mounted until a natural refetch (no list invalidate).
  *
- * status is derived from the server-returned alt via statusFromServerAlt (PHP
- * line 153 rule above) so a successful correction no longer leaves
- * status:'missing' forever on the Status=missing workbench [WBUX-5-BR-112].
+ * status is derived via statusFromServerFacts (class-api.php:338) so a
+ * successful correction no longer leaves status:'missing' forever on the
+ * Status=missing workbench [WBUX-5-BR-112], including decorative marks.
  *
  * Used by both full success (from DescriptionHistoryItem.current_alt_text) and
  * partial failure (from server-reported stored_alt_text). Sibling traffic must
  * never blow away an unread partial role=alert by refetching media.all [RLSE-05].
  */
-const patchWorkbenchRowAlt = (queryClient: QueryClient, mediaId: number, altText: string): void => {
+const patchWorkbenchRowAlt = (
+  queryClient: QueryClient,
+  mediaId: number,
+  altText: string,
+  options?: PatchWorkbenchRowAltOptions,
+): void => {
   const workbenchQueries = queryClient.getQueriesData<WorkbenchMediaResponse>({
     queryKey: queryKeys.media.workbench(),
   });
+  const decorative = options?.decorative === true;
+  // class-api.php:346 emits null when !has_alt — never ''. Consumers
+  // distinguish '' (blank paragraph / alt="") from null ("No alt text yet" /
+  // title fallback). Normalize at the patch boundary [API-11][A11Y-04].
+  const nextAlt = altText.trim() === '' ? null : altText;
 
   for (const [queryKey, data] of workbenchQueries) {
     if (!data?.items) {
@@ -61,11 +81,11 @@ const patchWorkbenchRowAlt = (queryClient: QueryClient, mediaId: number, altText
     if (index < 0) {
       continue;
     }
-    const status = statusFromServerAlt(altText);
+    const status = statusFromServerFacts(altText, decorative);
     queryClient.setQueryData<WorkbenchMediaResponse>(queryKey, {
       ...data,
       items: data.items.map((item) =>
-        item.id === mediaId ? { ...item, altText, status } : item,
+        item.id === mediaId ? { ...item, altText: nextAlt, status } : item,
       ),
     });
   }
@@ -98,12 +118,17 @@ export const useCorrectMediaAlt = () => {
     // has no alt field, and identities are face-recognition projections. Alt
     // lives on the workbench list, which we patch from the server response.
     onSuccess: (data, variables) => {
-      patchWorkbenchRowAlt(queryClient, variables.mediaId, data.current_alt_text);
+      // Thread decorative intent so status mirrors class-api.php:338 (has_alt
+      // OR is_decorative). PARTIAL onError omits decorative — marker not stored.
+      patchWorkbenchRowAlt(queryClient, variables.mediaId, data.current_alt_text, {
+        decorative: variables.decorative === true,
+      });
       invalidateMediaStats(queryClient);
     },
 
-    // Partial success (alt written, human-edit marker failed): reconcile the
-    // specific cached row in place from server-reported stored_alt_text only.
+    // Partial success (alt written, human-edit / decorative marker failed):
+    // reconcile the specific cached row in place from server-reported
+    // stored_alt_text only. Marker was NOT stored, so do not pass decorative.
     // If that field is absent, leave the cache alone — stale-but-real beats a
     // fabricated request-body guess ([rg-015]). Gate on the stable error code —
     // never on message text. Do not invalidate: a refetch on missing-status

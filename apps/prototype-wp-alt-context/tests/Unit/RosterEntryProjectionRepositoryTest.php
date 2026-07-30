@@ -83,11 +83,43 @@ class RosterEntryProjectionRepositoryTest extends TestCase
 	 * as projection_status 'stale', not 'current'. RosterPage gates workspace entry
 	 * and staleness notice on projectionStatus !== 'current'; reporting current while
 	 * the sync strip says "Re-sync required" hides an invalid projection.
+	 *
+	 * Exhaustive mapping (closed SyncStateRepository::SYNC_RESULT_* set): every
+	 * durable last_sync_result maps to its expected projection_status, including
+	 * inputs that must NOT map to 'stale'. assertNotSame('current') is entailed by
+	 * assertSame('stale') and does not catch resync_required → failed/refreshing.
 	 */
 	public function testListEntriesReportsStaleProjectionWhenResyncRequired(): void
 	{
 		$this->seedRosterRows();
 
+		// Closed-set mapping with lastUpdated set (so null-refresh is not the stale cause).
+		$expectedBySyncResult = [
+			'resync_required' => 'stale',
+			'ok' => 'current',
+			'failed' => 'failed',
+			'unreachable' => 'failed',
+		];
+
+		foreach ($expectedBySyncResult as $syncResult => $expectedProjection) {
+			$repository = new RosterEntryProjectionRepository(
+				new RosterEntryProjectionSyncStateSpy(
+					snapshotVersion: 42,
+					lastUpdated: '2026-05-07 16:00:00',
+					lastSyncResult: $syncResult
+				)
+			);
+
+			$data = $repository->list_entries(self::currentTenantId());
+
+			$this->assertSame(
+				$expectedProjection,
+				$data[0]['projection_status'],
+				"last_sync_result '{$syncResult}' must map to projection_status '{$expectedProjection}'"
+			);
+		}
+
+		// Fixture metadata for the resync_required arm (load-bearing stale contract).
 		$repository = new RosterEntryProjectionRepository(
 			new RosterEntryProjectionSyncStateSpy(
 				snapshotVersion: 42,
@@ -95,14 +127,9 @@ class RosterEntryProjectionRepositoryTest extends TestCase
 				lastSyncResult: 'resync_required'
 			)
 		);
-
 		$data = $repository->list_entries(self::currentTenantId());
-
-		$this->assertSame('stale', $data[0]['projection_status']);
 		$this->assertSame('2026-05-07 16:00:00', $data[0]['projection_refreshed_at']);
 		$this->assertSame(42, $data[0]['source_version']);
-		// Discrimination: must not report current while durable result is resync_required.
-		$this->assertNotSame('current', $data[0]['projection_status']);
 	}
 
 	public function testListEntriesIncludesProjectedClustersAndInstances(): void

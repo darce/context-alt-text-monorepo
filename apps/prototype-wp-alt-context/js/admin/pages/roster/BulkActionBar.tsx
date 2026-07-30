@@ -106,7 +106,7 @@ export const BulkActionBar = ({
         <span className="acx-bulk-action-bar__count">
           {sprintf(
             // translators: %d: number of selected clusters
-            __('%d selected', 'alt-context'),
+            _n('%d selected', '%d selected', count, 'alt-context'),
             count,
           )}
         </span>

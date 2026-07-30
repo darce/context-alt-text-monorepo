@@ -723,6 +723,8 @@ class DescribeRunControllerTest extends TestCase
         $this->assertIsArray($prov);
         $this->assertSame('bulk_describe_run', $prov['source']);
         $this->assertSame($runId, $prov['run_id']);
+        // R23-BR-08 discrimination: own-run recovery must not self-reference.
+        $this->assertArrayNotHasKey('recovered_from_run_id', $prov);
         // Marker deleted once provenance verifies.
         $this->assertSame('', get_post_meta(71, '_acx_description_provenance_pending', true));
     }
@@ -818,6 +820,8 @@ class DescribeRunControllerTest extends TestCase
         $prov = get_post_meta(71, '_acx_description_provenance', true);
         $this->assertIsArray($prov);
         $this->assertSame($runId, $prov['run_id'] ?? null);
+        // R23-BR-08: foreign-owned marker recovery stamps marker owner alongside applying run.
+        $this->assertSame('22222222-2222-2222-2222-222222222222', $prov['recovered_from_run_id'] ?? null);
         // OLD: marker left in place for the foreign run.
         // NEW: marker cleared once provenance verifies.
         $this->assertSame('', get_post_meta(71, '_acx_description_provenance_pending', true));
@@ -831,6 +835,9 @@ class DescribeRunControllerTest extends TestCase
      *
      * RED under: reintroduce run_id equality on the is_non_clobber_completion
      * marker leg.
+     *
+     * R23-BR-08: recovered envelope carries applying run_id AND marker owner as
+     * recovered_from_run_id (honest attribution; no fabricated model metadata).
      */
     public function testApplyRunDraftsSecondApplyRecoversForeignRunSameDraftMarker(): void
     {
@@ -891,6 +898,8 @@ class DescribeRunControllerTest extends TestCase
         $this->assertIsArray($prov);
         $this->assertNotSame('', $prov);
         $this->assertSame($secondRunId, $prov['run_id'] ?? null);
+        // R23-BR-08: "run B completed provenance for a write started by run A".
+        $this->assertSame($firstRunId, $prov['recovered_from_run_id'] ?? null);
         $this->assertSame('', get_post_meta(71, '_acx_description_provenance_pending', true));
     }
 
@@ -1910,6 +1919,8 @@ class DescribeRunControllerTest extends TestCase
         $prov = get_post_meta(71, '_acx_description_provenance', true);
         $this->assertIsArray($prov);
         $this->assertSame($runId, $prov['run_id'] ?? null);
+        // R23-BR-08 discrimination: same-run marker recovery omits recovered_from_run_id.
+        $this->assertArrayNotHasKey('recovered_from_run_id', $prov);
         // Marker cleared only after successful recovery, not by BR-114 stale drop.
         $this->assertSame('', get_post_meta(71, '_acx_description_provenance_pending', true));
     }
@@ -2793,6 +2804,106 @@ class DescribeRunControllerTest extends TestCase
 
         $this->assertNotInstanceOf(\WP_Error::class, $response);
         $this->assertSame(202, $response->get_status());
+    }
+
+    /**
+     * R23-BR-10 / R22-BR-01 [TEST-15]: bulk partial plant with a backslash-bearing
+     * draft must hash the **stored** alt form (post wp_unslash), not the raw draft.
+     * Combines both conditions the prior suite lacked on bulk: backslash draft AND
+     * forced provenance-write failure so the marker is planted through the production
+     * partial path. Second apply recovers (applied, provenance non-empty, marker cleared).
+     *
+     * RED under: mutate bulk plant draft_hash to hash( 'sha256', $draft ) (raw domain).
+     */
+    public function testApplyRunDraftsBulkPartialBackslashPlantsStoredDomainHashAndRecovers(): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $mediaId = 71;
+        // Same backslash draft as the R22-BR-01 single/CLI pins and the reviewer probe.
+        $rawDraft = 'AC\\DC concert poster';
+        $expectedStored = wp_unslash($rawDraft);
+        $this->assertNotSame($rawDraft, $expectedStored, 'fixture must diverge raw vs stored domain');
+
+        $this->plantPostType($mediaId);
+        $this->plantSubmittedMediaIds($runId, [$mediaId]);
+        // Force provenance write to fail → production partial path plants the marker.
+        $GLOBALS['__ac_update_post_meta_fail'][$mediaId]['_acx_description_provenance'] = true;
+
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    [
+                        'media_id' => $mediaId,
+                        'status' => 'completed',
+                        'alt_text_draft' => $rawDraft,
+                        'caption' => 'poster',
+                        'provenance' => ['adapter' => 'florence', 'model_id' => 'florence-2'],
+                    ],
+                ],
+            ]),
+        ]);
+
+        $first = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $first->set_param('run_id', $runId);
+        $firstResponse = $this->controller->apply_describe_run_drafts($first);
+        $this->assertNotInstanceOf(\WP_Error::class, $firstResponse);
+        $firstData = $firstResponse->get_data();
+        $this->assertSame([$mediaId], $firstData['partial']);
+        $this->assertSame([], $firstData['applied']);
+        $this->assertSame([], $firstData['failed']);
+
+        $storedAlt = get_post_meta($mediaId, '_wp_attachment_image_alt', true);
+        $this->assertSame($expectedStored, $storedAlt);
+        $this->assertSame('', get_post_meta($mediaId, '_acx_description_provenance', true));
+
+        $pending = get_post_meta($mediaId, '_acx_description_provenance_pending', true);
+        $this->assertIsArray($pending);
+        $this->assertSame($runId, $pending['run_id'] ?? null);
+        // Planted hash must be stored-domain, not raw-draft domain [R22-BR-01].
+        $storedDomainHash = \AltContext\Api\Services\DescriptionHistoryService::hash_for_stored_alt(
+            is_string($storedAlt) ? $storedAlt : (string) $storedAlt
+        );
+        $rawDomainHash = hash('sha256', $rawDraft);
+        $this->assertNotSame($rawDomainHash, $storedDomainHash, 'domains must differ for this fixture');
+        $this->assertSame($storedDomainHash, $pending['draft_hash'] ?? null);
+        $this->assertNotSame($rawDomainHash, $pending['draft_hash'] ?? null);
+
+        // Second apply: clear forced failure; recovery must complete without overwrite.
+        unset($GLOBALS['__ac_update_post_meta_fail'][$mediaId]['_acx_description_provenance']);
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    [
+                        'media_id' => $mediaId,
+                        'status' => 'completed',
+                        'alt_text_draft' => $rawDraft,
+                        'caption' => 'poster',
+                        'provenance' => ['adapter' => 'florence', 'model_id' => 'florence-2'],
+                    ],
+                ],
+            ]),
+        ]);
+
+        $second = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $second->set_param('run_id', $runId);
+        $secondResponse = $this->controller->apply_describe_run_drafts($second);
+        $this->assertNotInstanceOf(\WP_Error::class, $secondResponse);
+        $secondData = $secondResponse->get_data();
+        $this->assertSame([$mediaId], $secondData['applied']);
+        $this->assertSame([], $secondData['partial']);
+        $this->assertSame([], $secondData['skipped_existing']);
+        $prov = get_post_meta($mediaId, '_acx_description_provenance', true);
+        $this->assertIsArray($prov);
+        $this->assertNotSame('', $prov);
+        $this->assertSame('', get_post_meta($mediaId, '_acx_description_provenance_pending', true));
     }
 
     /**

@@ -1094,6 +1094,63 @@ class DescriptionHistoryServiceTest extends TestCase
     }
 
     /**
+     * R23-BR-01 [TEST-15]: alt write returns non-false but storage diverges →
+     * description_correction_failed (not success). Pins unconditional alt
+     * read-back. RED under: restore `if ( false === $alt_written )` around the
+     * alt read-back so a non-false mutate-on-write is trusted.
+     */
+    public function testAltWriteDivergentNonFalseStoreReportsCorrectionFailed(): void
+    {
+        $mediaId = 903;
+        $this->seedAttachment($mediaId, 'Attachment 903');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', 'Prior alt.');
+        $this->setPostMeta($mediaId, '_acx_description_provenance', [
+            'alt_text_draft' => 'Generated draft.',
+            'model_id' => 'local-v1',
+        ]);
+        $GLOBALS['__ac_update_post_meta_mutate'][$mediaId]['_wp_attachment_image_alt'] = 'MUTATED HISTORY ALT';
+
+        $result = (new DescriptionHistoryService())->record_correction($mediaId, 'Operator corrected alt.');
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('description_correction_failed', $result->get_error_code());
+        $this->assertSame(500, $result->get_error_data()['status']);
+        $this->assertSame('MUTATED HISTORY ALT', get_post_meta($mediaId, '_wp_attachment_image_alt', true));
+        // [INT-11] failed alt must not stamp human-edit meta.
+        $this->assertSame('', get_post_meta($mediaId, '_acx_description_human_edit', true));
+    }
+
+    /**
+     * R23-BR-01 [TEST-15]: human-edit write returns non-false but storage
+     * diverges → description_correction_partial. Pins unconditional human-edit
+     * full-payload read-back [BR-48a]. RED under: restore
+     * `if ( false === $human_written )` only (alt leg stays fixed so this pin
+     * cannot vouch for both).
+     */
+    public function testHumanEditWriteDivergentNonFalseStoreReportsPartial(): void
+    {
+        $mediaId = 904;
+        $newAlt = 'Operator corrected alt for partial pin.';
+        $this->seedAttachment($mediaId, 'Attachment 904');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', 'Prior alt.');
+        $this->setPostMeta($mediaId, '_acx_description_provenance', [
+            'alt_text_draft' => 'Generated draft.',
+            'model_id' => 'local-v1',
+        ]);
+        $GLOBALS['__ac_update_post_meta_mutate'][$mediaId]['_acx_description_human_edit'] = ['garbage' => true];
+
+        $result = (new DescriptionHistoryService())->record_correction($mediaId, $newAlt);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('description_correction_partial', $result->get_error_code());
+        $this->assertSame(500, $result->get_error_data()['status']);
+        $this->assertSame($newAlt, $result->get_error_data()['stored_alt_text']);
+        // Alt verified and left in place; human-edit holds the divergent garbage.
+        $this->assertSame($newAlt, get_post_meta($mediaId, '_wp_attachment_image_alt', true));
+        $this->assertSame(['garbage' => true], get_post_meta($mediaId, '_acx_description_human_edit', true));
+    }
+
+    /**
      * R20-BR-25: successful record_correction must delete a zombie pending marker.
      */
     public function testRecordCorrectionDeletesStaleProvenancePendingMarker(): void

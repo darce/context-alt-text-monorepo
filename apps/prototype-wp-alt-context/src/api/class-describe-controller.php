@@ -729,7 +729,11 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			// Model output is plain text at the write boundary (BR-130 / BR-133):
 			// same core alt sanitizer as the single-media write path so bare `<`
 			// in prose is entity-encoded (not truncated) and genuine markup is
-			// still removed. Hash of this sanitized draft is the recovery marker.
+			// still removed. Recovery marker draft_hash is sha256 of the post
+			// wp_unslash+sanitize_meta stored form (hash_for_stored_alt of
+			// expected_meta_after_core_transforms), not of this sanitized draft
+			// string — backslash-bearing text differs between the two [R22-BR-01]
+			// [R23-BR-06].
 			$draft = is_string( $item['alt_text_draft'] ?? null )
 				? sanitize_text_field( $item['alt_text_draft'] )
 				: '';
@@ -788,6 +792,11 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 					// bulk / single-image / CLI marker for the same stored draft is
 					// recovery evidence; re-apply must complete provenance [R22-BR-02].
 					// draft_hash domain is the stored form [R22-BR-01] (BR-126 / BR-17).
+					// Completeness leg [R23-BR-02]: a stored provenance envelope that
+					// already describes the stored alt is finished work — do not
+					// re-stamp run_id/applied_at. Empty/non-array provenance (true
+					// partial) and provenance naming a different draft (stale
+					// envelope) still unlock recovery.
 					$stored_prov = get_post_meta( $media_id, '_acx_description_provenance', true );
 					$pending     = get_post_meta( $media_id, '_acx_description_provenance_pending', true );
 					$expected_stored_alt_str = is_string( $expected_stored_alt )
@@ -803,26 +812,38 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 						$expected_stored_alt_str
 					)
 						&& $stored_alt_raw === $expected_stored_alt
-						&& ! $prov_is_this_run;
+						&& ! $prov_is_this_run
+						&& ! $this->provenance_already_describes_stored_alt( $stored_prov, $stored_alt_raw );
 
 					if ( ! $is_non_clobber_completion ) {
-						// BR-114: drop orphaned markers owned by this run when recovery
-						// is rejected because alt diverged or provenance is already
-						// this run's complete envelope. Markers for other runs stay
+						// BR-114 / R23-BR-05: drop orphaned markers owned by this run
+						// when recovery is rejected because alt diverged, provenance
+						// is already this run's complete envelope, or the own-run
+						// marker is not live recovery evidence for the currently
+						// stored alt (stale draft_hash). Markers for other runs stay
 						// (foreign same-draft markers recover above; foreign
-						// mismatched markers remain for their owner).
+						// mismatched markers remain for their owner). Live own-run
+						// markers for the stored alt are not dropped here — they are
+						// the true-partial recovery evidence.
 						if ( is_array( $pending )
 							&& isset( $pending['run_id'] )
 							&& (string) $pending['run_id'] === $run_id
 						) {
 							$alt_diverged = $stored_alt_raw !== $expected_stored_alt;
-							if ( $alt_diverged || $prov_is_this_run ) {
+							$own_marker_stale_for_stored_alt = ! DescriptionHistoryService::is_live_recovery_marker_for_alt(
+								$pending,
+								$stored_alt_raw
+							);
+							if ( $alt_diverged || $prov_is_this_run || $own_marker_stale_for_stored_alt ) {
 								// R21-BR-10: delete unchecked. When prov_is_this_run,
 								// history already lists via provenance so a survivor
 								// is redundant. When alt_diverged, a survivor may keep
 								// a pure-gap row that no longer matches the draft —
 								// soft miss; skip_existing is still the correct
-								// non-clobber decision for this apply.
+								// non-clobber decision for this apply. When the own
+								// marker is stale for the stored alt, it is dead
+								// evidence for this run and must not remain as a
+								// re-stamp key [R23-BR-05].
 								delete_post_meta( $media_id, '_acx_description_provenance_pending' );
 							}
 						}
@@ -1202,6 +1223,39 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 		}
 
 		return null;
+	}
+
+	/**
+	 * Whether stored provenance already attributes the currently stored alt.
+	 *
+	 * Writers stamp `alt_text_draft` with the exact draft string written
+	 * (build_run_apply_provenance). That key is the raw sanitize_text_field
+	 * draft, while stored alt is post wp_unslash+sanitize_meta — so comparison
+	 * is in the **stored** domain: transform the provenance draft the same way
+	 * core would and require equality with the stored alt. Direct string
+	 * compare against stored alt would miss backslash-bearing drafts [BR-17].
+	 *
+	 * Returns false (recovery still allowed) when provenance is empty/non-array,
+	 * lacks a usable alt_text_draft, or names a different draft (stale envelope
+	 * superseded by a newer alt). True only when the envelope already describes
+	 * this stored alt — non-clobber completion must not re-stamp run_id /
+	 * applied_at [R23-BR-02]. Lives on the controller (not DescriptionHistoryService)
+	 * because only this apply path gates non-clobber recovery and the transform
+	 * helper is instance-scoped via ExpectsMetaAfterCoreTransforms.
+	 *
+	 * @param mixed  $provenance Raw `_acx_description_provenance` meta.
+	 * @param string $stored_alt Currently stored alt (string branch only).
+	 */
+	private function provenance_already_describes_stored_alt( mixed $provenance, string $stored_alt ): bool {
+		if ( ! is_array( $provenance ) ) {
+			return false;
+		}
+		$draft_key = $provenance['alt_text_draft'] ?? null;
+		if ( ! is_string( $draft_key ) || '' === trim( $draft_key ) ) {
+			return false;
+		}
+		$expected_from_prov = $this->expected_meta_after_core_transforms( '_wp_attachment_image_alt', $draft_key );
+		return is_string( $expected_from_prov ) && $expected_from_prov === $stored_alt;
 	}
 
 	/**

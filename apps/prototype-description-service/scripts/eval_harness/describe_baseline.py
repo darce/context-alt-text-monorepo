@@ -13,6 +13,7 @@ Env: BASELINE_LIMIT (0=all), CHUNK (default 12), HEAD_SHA.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
@@ -22,11 +23,6 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 from statistics import mean, median
-
-from scripts.eval_harness.bakeoff import BakeoffClient
-from scripts.eval_harness.cli import BoundedStallError, fetch_run_record
-from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest
-from scripts.eval_harness.remote_client import RemoteSceneClient
 
 HERE = Path(__file__).resolve().parent
 SCRATCH = HERE / "out"  # gitignored: progressive/resumable JSONL only
@@ -47,6 +43,27 @@ HEAD_SHA = os.environ.get("HEAD_SHA", "0" * 40)
 BAKEOFF_BASE_URL = os.environ.get("BAKEOFF_BASE_URL", "")
 BAKEOFF_MODEL_ID = os.environ.get("BAKEOFF_MODEL_ID", "Qwen3-VL-30B-A3B-Instruct")
 BAKEOFF_MODEL_VERSION = os.environ.get("BAKEOFF_MODEL_VERSION", "Q4_K_M")
+
+
+def parse_cost_per_image_usd(raw: str | None) -> float | None:
+    """Parse an explicit cost-per-image rate; absent/empty => None (never invent)."""
+    if raw is None or str(raw).strip() == "":
+        return None
+    return float(raw)
+
+
+def cost_report_fields(
+    *,
+    cost_per_image_usd: float | None,
+    paid_describe_calls: int,
+) -> dict[str, float | None]:
+    """Total + per-image cost fields for the baseline report (null when no rate)."""
+    if cost_per_image_usd is None:
+        return {"cost_per_image_usd": None, "total_cost_usd": None}
+    return {
+        "cost_per_image_usd": cost_per_image_usd,
+        "total_cost_usd": round(cost_per_image_usd * paid_describe_calls, 6),
+    }
 
 
 def _sha256(path: Path) -> str:
@@ -94,7 +111,21 @@ def _caption_flags(caption: str) -> list[str]:
     return flags
 
 
-def _write_report() -> None:
+def _paid_describe_calls(ok_rows: list[dict[str, object]]) -> int:
+    """Count non-cached successful describes (mirrors cli.fetch_run_record billing)."""
+    paid = 0
+    for r in ok_rows:
+        describe = r.get("describe")
+        if isinstance(describe, dict) and describe.get("cached") is True:
+            continue
+        paid += 1
+    return paid
+
+
+def _write_report(*, cost_per_image_usd: float | None = None) -> None:
+    # Shared with report.py scoring (sr-007): one normalizer for both identity shapes.
+    from scripts.eval_harness.cli import identity_names
+
     rows = [json.loads(ln) for ln in JSONL.read_text().splitlines() if ln.strip()] if JSONL.exists() else []
     for r in rows:  # derive structured mask/sunglasses flags from each caption (report-only)
         r["caption_flags"] = _caption_flags((r.get("describe") or {}).get("alt_text_draft") or "")
@@ -104,12 +135,17 @@ def _write_report() -> None:
     completed = [r["completed_at"] for r in rows if r.get("completed_at")]
     wall = (max(completed) - min(completed)) if len(completed) >= 2 else 0.0
     models = sorted({(r.get("describe") or {}).get("model_id") for r in ok if (r.get("describe") or {}).get("model_id")})
+    paid_describe_calls = _paid_describe_calls(ok)
+    cost_fields = cost_report_fields(
+        cost_per_image_usd=cost_per_image_usd,
+        paid_describe_calls=paid_describe_calls,
+    )
     summary = {
         "total": len(rows),
         "described_ok": len(ok),
         "errors": len(rows) - len(ok),
         "images_with_faces": len(with_faces),
-        "distinct_named_identities": len({n for r in ok for n in (r.get("identities") or [])}),
+        "distinct_named_identities": len({n for r in ok for n in identity_names(r.get("identities"))}),
         "images_with_mask": sum(1 for r in ok if "mask" in r.get("caption_flags", [])),
         "images_with_sunglasses": sum(1 for r in ok if "sunglasses" in r.get("caption_flags", [])),
         "describe_latency_s": {
@@ -121,6 +157,8 @@ def _write_report() -> None:
         },
         "wall_clock_s": round(wall, 1),
         "images_per_min": round(len(rows) / (wall / 60), 1) if wall > 0 else None,
+        "cost_per_image_usd": cost_fields["cost_per_image_usd"],
+        "total_cost_usd": cost_fields["total_cost_usd"],
         "base_url": BAKEOFF_BASE_URL or os.environ.get("ACX_EVAL_BASE_URL"),
         "tenant_id": os.environ.get("ACX_EVAL_TENANT_ID"),
         "model_ids": models,
@@ -128,6 +166,17 @@ def _write_report() -> None:
     }
     REPORT_JSON.write_text(json.dumps({"summary": summary, "items": rows}, indent=2, sort_keys=True) + "\n")
 
+    if cost_fields["cost_per_image_usd"] is None:
+        cost_line = (
+            "- cost: total_cost_usd=null · cost_per_image_usd=null "
+            "(no rate supplied; pass --cost-per-image or COST_PER_IMAGE_USD — never invent)"
+        )
+    else:
+        cost_line = (
+            f"- cost: total=${summary['total_cost_usd']} · "
+            f"per-image=${summary['cost_per_image_usd']} "
+            f"({paid_describe_calls} paid describe calls)"
+        )
     lines = [
         f"# VLM-6 baseline descriptions — `{', '.join(models) or 'model'}` @ `{summary['base_url']}`",
         "",
@@ -140,6 +189,7 @@ def _write_report() -> None:
         f"p50={summary['describe_latency_s']['p50']} p95={summary['describe_latency_s']['p95']} "
         f"p99={summary['describe_latency_s']['p99']} max={summary['describe_latency_s']['max']}",
         f"- wall-clock: {summary['wall_clock_s']}s · throughput: {summary['images_per_min']} images/min",
+        cost_line,
         f"- caption-derived flags (first-pass; operator tags = ground truth): "
         f"**mask={summary['images_with_mask']}**, **sunglasses={summary['images_with_sunglasses']}**",
         "",
@@ -150,7 +200,7 @@ def _write_report() -> None:
         fname = Path(r.get("path", "")).name
         cap = (r.get("describe") or {}).get("alt_text_draft") or ""
         cell = r["error"] if r.get("error") else cap.replace("|", "\\|").replace("\n", " ")[:160]
-        ids = ", ".join(r.get("identities") or []) or "—"
+        ids = ", ".join(identity_names(r.get("identities"))) or "—"
         flags = ", ".join(r.get("caption_flags") or []) or "—"
         lines.append(
             f"| {r.get('media_id')} | {fname} | {r.get('face_count')} | {ids} | {flags} | {r.get('latency_s')} | {cell} |"
@@ -158,7 +208,26 @@ def _write_report() -> None:
     REPORT_MD.write_text("\n".join(lines) + "\n")
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    from scripts.eval_harness.bakeoff import BakeoffClient
+    from scripts.eval_harness.cli import BoundedStallError, fetch_run_record
+    from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest
+    from scripts.eval_harness.remote_client import RemoteSceneClient
+
+    env = os.environ
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument(
+        "--cost-per-image",
+        type=float,
+        default=None,
+        help="provider per-request price (USD); stamps total_cost_usd / cost_per_image_usd "
+        "(or set COST_PER_IMAGE_USD). Omit to emit null cost fields.",
+    )
+    args = parser.parse_args(argv)
+    cost_per_image_usd = args.cost_per_image
+    if cost_per_image_usd is None:
+        cost_per_image_usd = parse_cost_per_image_usd(env.get("COST_PER_IMAGE_USD"))
+
     RESULTS.mkdir(parents=True, exist_ok=True)
     SCRATCH.mkdir(parents=True, exist_ok=True)
     rows: list[tuple[int, Path]] = []
@@ -209,7 +278,14 @@ def main() -> int:
             manifest = GoldenManifest(manifest_version=2, roster=[], entries=entries)
             partial = False
             try:
-                rec = fetch_run_record(manifest, str(UPLOADS), client, head_sha=HEAD_SHA, started_at=started)
+                rec = fetch_run_record(
+                    manifest,
+                    str(UPLOADS),
+                    client,
+                    head_sha=HEAD_SHA,
+                    started_at=started,
+                    cost_per_image_usd=cost_per_image_usd,
+                )
                 items = rec["items"]
             except BoundedStallError as exc:
                 items = exc.partial_record["items"]
@@ -219,14 +295,14 @@ def main() -> int:
                 for it in items:
                     it["completed_at"] = now
                     f.write(json.dumps(it) + "\n")
-            _write_report()
+            _write_report(cost_per_image_usd=cost_per_image_usd)
             print(f"  chunk {i // CHUNK + 1}: +{len(items)} items ({i + len(chunk)}/{len(todo)})", flush=True)
             if partial:
                 print("  bounded-stall abort (endpoint likely down); stopping — rerun to resume.", flush=True)
                 break
     finally:
         client.close()
-        _write_report()
+        _write_report(cost_per_image_usd=cost_per_image_usd)
     print("done.")
     return 0
 

@@ -14,9 +14,10 @@ benchmarked commit; large-ft is unpinned upstream, so the resolved commit is
 logged at load time for provenance.
 
 Durability semantics mirror ``scripts/eval_harness/describe_baseline.py``:
-resumable JSONL append (already-done attachment ids skipped on restart, torn last
-line tolerated), per-item error isolation, and a bounded consecutive-failure
-abort (rg-007) with a distinct exit code so a rerun resumes cleanly.
+resumable JSONL append (complete rows keyed by attachment+model+task skipped on
+restart; error rows and incomplete keys are retried; torn last line tolerated),
+per-item error isolation, and a bounded consecutive-failure abort (rg-007) with
+a distinct exit code so a rerun resumes cleanly.
 
 Usage (on-box):
     python3 florence_describe.py \
@@ -126,16 +127,53 @@ def parse_tsv(text: str, images_dir: Path) -> list[tuple[int, Path]]:
     return rows
 
 
-def done_ids(jsonl_path: Path) -> set[int]:
-    """Attachment ids already recorded (mirrors describe_baseline._done_ids)."""
+# Resume key: attachment alone is not enough — a base-ft row must not skip large-ft.
+DoneKey = tuple[int, str, str, str | None, str]
+
+
+def done_ids(jsonl_path: Path) -> set[DoneKey]:
+    """Complete (attachment, model, version, revision, task) keys already recorded.
+
+    A row counts as done only when ``error`` is unset/null; error rows are retried.
+    Rows missing any resume-key field are not matches and must be retried (never
+    assumed compatible across models).
+    """
     if not jsonl_path.exists():
         return set()
-    ids: set[int] = set()
+    keys: set[DoneKey] = set()
     for line in jsonl_path.read_text().splitlines():
-        if line.strip():
-            with contextlib.suppress(Exception):  # tolerate a torn last line
-                ids.add(int(json.loads(line)["attachment_id"]))
-    return ids
+        if not line.strip():
+            continue
+        with contextlib.suppress(Exception):  # tolerate a torn last line
+            row = json.loads(line)
+            if row.get("error"):
+                continue
+            if not all(
+                k in row
+                for k in ("attachment_id", "model_id", "model_version", "model_revision", "task")
+            ):
+                continue
+            keys.add(
+                (
+                    int(row["attachment_id"]),
+                    str(row["model_id"]),
+                    str(row["model_version"]),
+                    row["model_revision"],
+                    str(row["task"]),
+                )
+            )
+    return keys
+
+
+def _resume_key(
+    attachment_id: int,
+    *,
+    model_id: str,
+    model_version: str,
+    model_revision: str | None,
+    task: str,
+) -> DoneKey:
+    return (attachment_id, model_id, model_version, model_revision, task)
 
 
 # ---------------------------------------------------------------------- model
@@ -207,12 +245,26 @@ def run(
 ) -> dict[str, object]:
     """Caption ``rows`` into ``out_jsonl`` (append, per-item flush, resumable)."""
     done = done_ids(out_jsonl)
-    missing = [(mid, p) for (mid, p) in rows if mid not in done and not p.exists()]
-    todo = [(mid, p) for (mid, p) in rows if mid not in done and p.exists()]
+
+    def _is_done(mid: int) -> bool:
+        return (
+            _resume_key(
+                mid,
+                model_id=spec.model_id,
+                model_version=spec.model_version,
+                model_revision=resolved_revision,
+                task=CAPTION_TASK,
+            )
+            in done
+        )
+
+    already_done = sum(1 for mid, _ in rows if _is_done(mid))
+    missing = [(mid, p) for (mid, p) in rows if not _is_done(mid) and not p.exists()]
+    todo = [(mid, p) for (mid, p) in rows if not _is_done(mid) and p.exists()]
     if limit:
         todo = todo[:limit]
     print(
-        f"florence_describe: {len(rows)} attachments, {len(done)} already done, "
+        f"florence_describe: {len(rows)} attachments, {already_done} already done, "
         f"{len(missing)} missing on disk, {len(todo)} to caption (chunk={chunk})",
         flush=True,
     )
@@ -222,8 +274,9 @@ def run(
     latencies: list[float] = []
     consecutive_failures = 0
     with out_jsonl.open("a") as f:
-        for i, (mid, path) in enumerate(todo):
-            row: dict[str, object] = {
+
+        def _base_row(mid: int, path: Path) -> dict[str, object]:
+            return {
                 "attachment_id": mid,
                 "path": str(path),
                 "model_id": spec.model_id,
@@ -234,6 +287,17 @@ def run(
                 "latency_s": None,
                 "error": None,
             }
+
+        # Fail closed: record missing-on-disk outcomes rather than inferring from absence.
+        for mid, path in missing:
+            row = _base_row(mid, path)
+            row["error"] = f"FileNotFoundError: image missing on disk: {path}"
+            row["completed_at"] = time.time()
+            f.write(json.dumps(row) + "\n")
+            f.flush()
+
+        for i, (mid, path) in enumerate(todo):
+            row = _base_row(mid, path)
             started = time.monotonic()
             try:
                 caption = captioner(path)
@@ -266,7 +330,7 @@ def run(
 
     return {
         "total": len(rows),
-        "already_done": len(done),
+        "already_done": already_done,
         "missing": len(missing),
         "captioned_ok": ok,
         "errors": errors,

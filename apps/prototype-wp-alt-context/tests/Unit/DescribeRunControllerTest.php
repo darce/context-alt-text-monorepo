@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Tests\Unit;
 
+use AltContext\Api\AltTextWriteStatus;
 use AltContext\Api\DescribeController;
 use AltContext\Tests\TestCase;
 use WP_REST_Request;
@@ -1184,6 +1185,86 @@ class DescribeRunControllerTest extends TestCase
         $prov = get_post_meta(71, '_acx_description_provenance', true);
         $this->assertIsArray($prov);
         $this->assertSame('good draft', $prov['alt_text_draft']);
+    }
+
+    /**
+     * R19-BR-21: bulk apply envelope keys come from BULK_APPLY_BUCKETS (ordered),
+     * and each per-item outcome the apply loop can produce lands in its bucket.
+     * Mis-routing a media_id must turn this RED. Wire keys are not renamed.
+     */
+    public function testBulkApplyBucketKeysAndOutcomeRouting(): void
+    {
+        $this->assertSame(
+            array(
+                'applied',
+                'partial',
+                'skipped_existing',
+                'skipped_no_draft',
+                'skipped_invalid',
+                'failed',
+            ),
+            AltTextWriteStatus::BULK_APPLY_BUCKETS
+        );
+
+        $runId = '22222222-2222-2222-2222-222222222222';
+        // 70: existing alt → skipped_existing
+        // 71: empty draft → skipped_no_draft
+        // 72: non-attachment → skipped_invalid
+        // 73: alt write fails → failed
+        // 74: provenance fails, marker lands → partial
+        // 75: clean write → applied
+        $this->plantPostType(70);
+        $this->plantPostType(71);
+        $this->plantPostType(72, 'post');
+        $this->plantPostType(73);
+        $this->plantPostType(74);
+        $this->plantPostType(75);
+        $this->setPostMeta(70, '_wp_attachment_image_alt', 'human-authored alt');
+        $GLOBALS['__ac_update_post_meta_fail'][73]['_wp_attachment_image_alt'] = true;
+        $GLOBALS['__ac_update_post_meta_fail'][74]['_acx_description_provenance'] = true;
+
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->plantSubmittedMediaIds($runId, [70, 71, 72, 73, 74, 75]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    ['media_id' => 70, 'status' => 'completed', 'alt_text_draft' => 'would clobber', 'caption' => null, 'provenance' => ['adapter' => 'florence']],
+                    ['media_id' => 71, 'status' => 'failed', 'alt_text_draft' => '', 'caption' => null, 'provenance' => null],
+                    ['media_id' => 72, 'status' => 'completed', 'alt_text_draft' => 'not attachment', 'caption' => null, 'provenance' => ['adapter' => 'florence']],
+                    ['media_id' => 73, 'status' => 'completed', 'alt_text_draft' => 'alt write fails', 'caption' => null, 'provenance' => ['adapter' => 'florence']],
+                    ['media_id' => 74, 'status' => 'completed', 'alt_text_draft' => 'partial draft', 'caption' => null, 'provenance' => ['adapter' => 'florence']],
+                    ['media_id' => 75, 'status' => 'completed', 'alt_text_draft' => 'applied draft', 'caption' => null, 'provenance' => ['adapter' => 'florence']],
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $data = $response->get_data();
+
+        // Key set + order match the centralised surface (run_id first, then buckets).
+        $this->assertSame(
+            array_merge(array('run_id'), AltTextWriteStatus::BULK_APPLY_BUCKETS),
+            array_keys($data)
+        );
+
+        // Outcome → bucket pins (AltTextWriteStatus correspondence documented on BULK_APPLY_BUCKETS).
+        $this->assertSame([75], $data['applied']); // WRITTEN analogue
+        $this->assertSame([74], $data['partial']); // PARTIAL
+        $this->assertSame([70], $data['skipped_existing']); // SKIPPED_EXISTING_ALT
+        $this->assertSame([71], $data['skipped_no_draft']); // SKIPPED_EMPTY_ALT_TEXT analogue
+        $this->assertSame([72], $data['skipped_invalid']); // bulk-only
+        $this->assertSame([73], $data['failed']); // FAILED
+
+        $pending = get_post_meta(74, '_acx_description_provenance_pending', true);
+        $this->assertIsArray($pending);
+        $this->assertSame($runId, $pending['run_id']);
+        $this->assertSame(hash('sha256', 'partial draft'), $pending['draft_hash']);
     }
 
     /**

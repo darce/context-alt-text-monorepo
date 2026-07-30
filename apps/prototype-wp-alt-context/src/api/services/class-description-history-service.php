@@ -29,6 +29,7 @@ class DescriptionHistoryService {
 
 	private const PROVENANCE_META = '_acx_description_provenance';
 	private const HUMAN_EDIT_META = '_acx_description_human_edit';
+	private const PROVENANCE_PENDING_META = '_acx_description_provenance_pending';
 	private const RUN_STATUS_META = '_acx_description_run_status';
 	private const ALT_META = '_wp_attachment_image_alt';
 
@@ -192,9 +193,9 @@ class DescriptionHistoryService {
 		// After a verified human-edit write (or accepted full-payload no-op),
 		// storage holds an array under HUMAN_EDIT_META. build_item is therefore
 		// total for this media_id: it only returns null when media_id <= 0
-		// (ruled out by attachment validation above) or when neither provenance
-		// nor human_edit is an array. No legitimate input reaches null here under
-		// WP storage or the test stubs. [BR-55]
+		// (ruled out by attachment validation above) or when none of provenance,
+		// human_edit, or (pending marker + non-empty alt) qualifies. No legitimate
+		// input reaches null here under WP storage or the test stubs. [BR-55]
 		//
 		// A silent success envelope on that unreachable state would be [RLSE-05]
 		// (the shape BR-40 removed). Surface an explicit 500 instead of fabricating
@@ -212,6 +213,19 @@ class DescriptionHistoryService {
 	}
 
 	/**
+	 * Build one history row, or null when this attachment is outside history.
+	 *
+	 * Inclusion is narrow and evidence-based (WBUX-5-R16-BR-06):
+	 * - provenance array (this system stamped an audit trail), or
+	 * - human_edit array (operator correction path), or
+	 * - durable `_acx_description_provenance_pending` array **and** non-empty
+	 *   current alt (alt landed; provenance write failed — bulk apply and
+	 *   single-image write plant this marker only after verified write).
+	 *
+	 * Do not widen to "any non-empty alt": that lists every human-authored media
+	 * library row this plugin never touched. Gap rows keep an honest envelope
+	 * (`provenance`/`human_edit` null, `generated_alt_text` '') — fabricate nothing.
+	 *
 	 * @return array<string,mixed>|null
 	 */
 	protected function build_item( int $media_id ): ?array {
@@ -219,24 +233,29 @@ class DescriptionHistoryService {
 			return null;
 		}
 
-		$provenance = get_post_meta( $media_id, self::PROVENANCE_META, true );
-		$human_edit = get_post_meta( $media_id, self::HUMAN_EDIT_META, true );
-		if ( ! is_array( $provenance ) && ! is_array( $human_edit ) ) {
+		$provenance   = get_post_meta( $media_id, self::PROVENANCE_META, true );
+		$human_edit   = get_post_meta( $media_id, self::HUMAN_EDIT_META, true );
+		$pending      = get_post_meta( $media_id, self::PROVENANCE_PENDING_META, true );
+		$current_alt  = (string) get_post_meta( $media_id, self::ALT_META, true );
+		// Provenance-gap partial: durable marker + alt present, no stamped trail yet.
+		$provenance_gap = is_array( $pending ) && '' !== trim( $current_alt );
+
+		if ( ! is_array( $provenance ) && ! is_array( $human_edit ) && ! $provenance_gap ) {
 			return null;
 		}
 
-		$post = get_post( $media_id );
+		$post       = get_post( $media_id );
 		$run_status = get_post_meta( $media_id, self::RUN_STATUS_META, true );
 
 		return array(
-			'media_id'            => $media_id,
-			'title'               => is_object( $post ) && isset( $post->post_title ) ? (string) $post->post_title : '',
-			'mime_type'           => (string) get_post_mime_type( $media_id ),
-			'current_alt_text'    => (string) get_post_meta( $media_id, self::ALT_META, true ),
-			'generated_alt_text'  => $this->resolve_generated_alt_text( is_array( $provenance ) ? $provenance : array() ),
-			'provenance'          => is_array( $provenance ) ? $provenance : null,
-			'human_edit'          => is_array( $human_edit ) ? $human_edit : null,
-			'run_status'          => is_array( $run_status ) ? $run_status : null,
+			'media_id'           => $media_id,
+			'title'              => is_object( $post ) && isset( $post->post_title ) ? (string) $post->post_title : '',
+			'mime_type'          => (string) get_post_mime_type( $media_id ),
+			'current_alt_text'   => $current_alt,
+			'generated_alt_text' => $this->resolve_generated_alt_text( is_array( $provenance ) ? $provenance : array() ),
+			'provenance'         => is_array( $provenance ) ? $provenance : null,
+			'human_edit'         => is_array( $human_edit ) ? $human_edit : null,
+			'run_status'         => is_array( $run_status ) ? $run_status : null,
 		);
 	}
 

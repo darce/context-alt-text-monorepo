@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+require_once __DIR__ . '/interface-recognition-route-controller.php';
 require_once __DIR__ . '/class-recognition-circuit-keys.php';
 require_once __DIR__ . '/class-recognition-endpoint-resolver.php';
 require_once __DIR__ . '/class-recognition-proxy-policy.php';

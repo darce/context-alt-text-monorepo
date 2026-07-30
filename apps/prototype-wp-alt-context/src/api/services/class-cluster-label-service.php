@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Api\Services;
 
+require_once __DIR__ . '/../../support/trait-runs-transactional.php';
 require_once __DIR__ . '/class-person-resolution-service.php';
 
 use AltContext\Api\ClusterMutationHostInterface;

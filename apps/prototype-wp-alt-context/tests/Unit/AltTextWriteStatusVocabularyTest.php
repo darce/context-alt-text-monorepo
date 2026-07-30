@@ -88,6 +88,7 @@ class AltTextWriteStatusVocabularyTest extends TestCase
                 'written',
                 'skipped_existing_alt',
                 'skipped_empty_alt_text',
+                'forced_overwrite',
                 'provenance_healed',
                 'partial',
                 'failed',
@@ -112,6 +113,95 @@ class AltTextWriteStatusVocabularyTest extends TestCase
             ),
             DescriptionWriteStatus::ALL
         );
+        // Bulk apply bucket keys — SPA wire contract, ordered (R19-BR-21).
+        $this->assertSame(
+            array(
+                'applied',
+                'partial',
+                'skipped_existing',
+                'skipped_no_draft',
+                'skipped_invalid',
+                'failed',
+            ),
+            AltTextWriteStatus::BULK_APPLY_BUCKETS
+        );
+    }
+
+    /**
+     * R20-BR-06: every status-valued public const must appear in ALL; ALL equals
+     * REST ∪ CLI; neither surface introduces members absent from ALL. REASON_*
+     * consts are excluded by prefix (reasons, not statuses). A new status const
+     * absent from the lists must turn this suite RED.
+     */
+    public function testStatusConstantsAreReflectedIntoListSurfaces(): void
+    {
+        $reflection = new \ReflectionClass(AltTextWriteStatus::class);
+        $status_values = array();
+        foreach ($reflection->getConstants() as $name => $value) {
+            if (!is_string($value)) {
+                continue;
+            }
+            // Reasons are not statuses — exclude by explicit named prefix rule.
+            if (str_starts_with((string) $name, 'REASON_')) {
+                continue;
+            }
+            // List surfaces themselves are array constants, not status values.
+            if (is_array($reflection->getConstant($name))) {
+                continue;
+            }
+            $status_values[$name] = $value;
+        }
+
+        foreach ($status_values as $name => $value) {
+            $this->assertContains(
+                $value,
+                AltTextWriteStatus::ALL,
+                "Status const {$name}={$value} must be a member of ALL"
+            );
+        }
+
+        $rest_cli_union = array_values(
+            array_unique(
+                array_merge(AltTextWriteStatus::REST_STATUSES, AltTextWriteStatus::CLI_STATUSES)
+            )
+        );
+        sort($rest_cli_union);
+        $all_sorted = AltTextWriteStatus::ALL;
+        sort($all_sorted);
+        $this->assertSame(
+            $all_sorted,
+            $rest_cli_union,
+            'ALL must equal the union of REST_STATUSES and CLI_STATUSES'
+        );
+
+        foreach (AltTextWriteStatus::REST_STATUSES as $status) {
+            $this->assertContains($status, AltTextWriteStatus::ALL);
+        }
+        foreach (AltTextWriteStatus::CLI_STATUSES as $status) {
+            $this->assertContains($status, AltTextWriteStatus::ALL);
+        }
+    }
+
+    /**
+     * R20-BR-06: DescriptionWriteStatus list surface must include every
+     * status-valued public const (no reason prefix on this class).
+     */
+    public function testDescriptionWriteStatusConstantsAreReflectedIntoAll(): void
+    {
+        $reflection = new \ReflectionClass(DescriptionWriteStatus::class);
+        foreach ($reflection->getConstants() as $name => $value) {
+            if (!is_string($value)) {
+                continue;
+            }
+            if (is_array($reflection->getConstant($name))) {
+                continue;
+            }
+            $this->assertContains(
+                $value,
+                DescriptionWriteStatus::ALL,
+                "DescriptionWriteStatus::{$name} must be a member of ALL"
+            );
+        }
     }
 
     /**

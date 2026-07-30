@@ -29,12 +29,14 @@ use function array_key_exists;
 use function array_slice;
 use function array_values;
 use function basename;
+use function delete_post_meta;
 use function get_attached_file;
 use function get_option;
 use function get_post_meta;
 use function get_post;
 use function get_site_url;
 use function gmdate;
+use function hash;
 use function is_array;
 use function is_numeric;
 use function is_object;
@@ -79,6 +81,16 @@ class DescribeMediaService {
 	private const MULTIPART_MAX_BYTES = 25 * 1024 * 1024;
 	private const ALT_TEXT_META_KEY = '_wp_attachment_image_alt';
 	private const PROVENANCE_META_KEY = '_acx_description_provenance';
+	private const PROVENANCE_PENDING_META_KEY = '_acx_description_provenance_pending';
+
+	/**
+	 * Stable owner for single-image provenance-pending markers.
+	 *
+	 * Bulk apply scopes markers by path `run_id`. The single-image write path
+	 * has no bulk run / invocation uuid — do not fabricate one. Use this fixed
+	 * owner so recovery and history can still key the durable gap evidence.
+	 */
+	private const SINGLE_IMAGE_MARKER_OWNER = 'single_image';
 
 	/**
 	 * The 17 provenance-bearing fields the backend contract guarantees
@@ -474,13 +486,40 @@ class DescribeMediaService {
 			$prov_ok      = is_array( $current_prov ) && $expected_provenance === $current_prov;
 		}
 		if ( ! $prov_ok ) {
-			// Alt landed; history gate (provenance array) did not. Partial —
-			// same vocabulary as bulk apply. Do not claim written.
-			// BR-08: reason disambiguates provenance-gap partial from the
-			// description_write-failed partial below.
-			// F-22: parent `reason` names the first (history-gap) cause.
-			// A concurrent long-body failure is nested under description_write
-			// — operators must inspect that key; reason is not a full set union.
+			// Alt landed; provenance did not. Mirror bulk apply (controller
+			// apply_describe_run_drafts): plant a durable pending marker so
+			// history can surface the gap and auto-recovery has evidence.
+			// update_post_meta returns false on failure *and* on unchanged
+			// value — re-read and compare before claiming the marker.
+			// Without a verified marker, auto-recovery is impossible so
+			// report FAILED (not PARTIAL) — partial is presented as retryable.
+			// [WBUX-5-R16-BR-06] [BR-102] [RLSE-05] [INT-11]
+			// No bulk run_id on this path: owner is SINGLE_IMAGE_MARKER_OWNER.
+			$marker          = array(
+				'run_id'     => self::SINGLE_IMAGE_MARKER_OWNER,
+				'draft_hash' => hash( 'sha256', $draft ),
+			);
+			$expected_marker = $this->expected_meta_after_core_transforms(
+				self::PROVENANCE_PENDING_META_KEY,
+				$marker
+			);
+			$marker_written  = update_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY, $marker );
+			$marker_ok       = false !== $marker_written;
+			if ( false === $marker_written ) {
+				$current_marker = get_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY, true );
+				$marker_ok      = is_array( $current_marker ) && $expected_marker === $current_marker;
+			}
+			if ( ! $marker_ok ) {
+				$data['alt_text_write'] = array(
+					'status'               => AltTextWriteStatus::FAILED,
+					'existing_alt_present' => '' !== trim( $existing_alt ),
+				);
+				$response->set_data( $data );
+				return $response;
+			}
+
+			// Marker verified → PARTIAL + provenance reason (as before).
+			// BR-08 / F-22: reason names the first (history-gap) cause.
 			$write_result = array(
 				'status'               => AltTextWriteStatus::PARTIAL,
 				'reason'               => AltTextWriteStatus::REASON_PROVENANCE_WRITE_FAILED,
@@ -498,6 +537,9 @@ class DescribeMediaService {
 			$response->set_data( $data );
 			return $response;
 		}
+
+		// Provenance verified — drop any pending recovery marker (bulk parity).
+		delete_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY );
 
 		// FORCED_OVERWRITE only when force=true. Non-force heal of matching alt
 		// reports provenance_healed so operators do not think human alt was clobbered.

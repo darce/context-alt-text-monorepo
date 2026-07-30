@@ -1852,6 +1852,59 @@ describe('MediaAltSuggest', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
+  it('announces length advisory once on threshold crossing while typing — not every keystroke [WBUX-5-S2C4A-BR-01]', async () => {
+    // Visible advisory stays keystroke-live; only the polite announcement is
+    // crossing-gated. A region that fires per character is worse than silence.
+    describeMock.mockResolvedValue(sampleResponse(underThresholdDraft));
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
+    const field = await screen.findByLabelText(/edit draft alt text/i);
+    const status = screen.getByTestId('media-alt-suggest-status');
+
+    // Cross under → over: one announcement with actual length + threshold.
+    fireEvent.change(field, { target: { value: overThresholdDraft } });
+    expect(getVisibleLengthAdvisory()).toBeInTheDocument();
+    await waitFor(() => {
+      expect(status).toHaveTextContent(String(RECOMMENDED_ALT_TEXT_MAX_LENGTH + 1));
+      expect(status).toHaveTextContent(String(RECOMMENDED_ALT_TEXT_MAX_LENGTH));
+    });
+    const overMessage = status.textContent ?? '';
+    const overSeq = status.getAttribute('data-announce-seq');
+
+    // Still over, longer: must NOT re-announce (one-shot on crossing only).
+    const longerStillOver = overThresholdDraft + 'Z';
+    fireEvent.change(field, { target: { value: longerStillOver } });
+    // Visible advisory re-evaluates live (keystroke-live UI).
+    expect(getVisibleLengthAdvisory()).toHaveTextContent(String(longerStillOver.length));
+    // Polite region must not fire again for a same-side keystroke.
+    expect(status.textContent).toBe(overMessage);
+    expect(status.getAttribute('data-announce-seq')).toBe(overSeq);
+
+    // Cross over → under: announce once that we are within bounds.
+    fireEvent.change(field, { target: { value: underThresholdDraft } });
+    expect(queryVisibleLengthAdvisory()).toBeNull();
+    await waitFor(() => {
+      expect(status).toHaveTextContent(/within|recommended maximum/i);
+      expect(status).not.toHaveTextContent(String(RECOMMENDED_ALT_TEXT_MAX_LENGTH + 1));
+    });
+    const underMessage = status.textContent ?? '';
+    const underSeq = status.getAttribute('data-announce-seq');
+
+    // Still under, shorter: must NOT re-announce.
+    fireEvent.change(field, { target: { value: underThresholdDraft.slice(0, 10) } });
+    expect(status.textContent).toBe(underMessage);
+    expect(status.getAttribute('data-announce-seq')).toBe(underSeq);
+
+    // Visible advisory element must not itself be a second live region.
+    fireEvent.change(field, { target: { value: overThresholdDraft } });
+    const advisory = getVisibleLengthAdvisory();
+    expect(advisory).not.toHaveAttribute('role', 'status');
+    expect(advisory).not.toHaveAttribute('aria-live');
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+  });
+
   it('exports a single named recommended-max constant used as the threshold [S2c-3c]', () => {
     // [TEST-15] discrimination: goes red if the literal is scattered / the export
     // is dropped — callers and tests share one named source of truth.

@@ -1,3 +1,4 @@
+import { useCallback, useState } from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
 import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
@@ -74,6 +75,14 @@ interface MediaSelectionRowProps {
   onRetryIdentities?: () => void;
 }
 
+/** Who last wrote the row's polite live region — used for compare-and-clear. */
+type RowPoliteOwner = 'editor' | 'suggest';
+
+interface RowPoliteState {
+  owner: RowPoliteOwner | null;
+  message: string;
+}
+
 const MediaSelectionRow = ({
   item,
   eagerLoad,
@@ -85,6 +94,30 @@ const MediaSelectionRow = ({
 }: MediaSelectionRowProps): React.JSX.Element => {
   const thumbDimensions = item.thumbnailDimensions;
   const detailReady = [item.mimeType, item.updatedAt, item.dimensions].some((value) => value != null && value !== '');
+
+  // One persistent polite region per row (S2c-4a). Announce is last-writer-wins;
+  // clear is compare-and-clear so a sibling's blur-retirement cannot wipe a
+  // message it does not own (same principle as DescriptionHistoryPage's
+  // per-row correctionErrors map [RLSE-05]).
+  const [polite, setPolite] = useState<RowPoliteState>({ owner: null, message: '' });
+
+  const announcePolite = useCallback((owner: RowPoliteOwner, message: string): void => {
+    setPolite({ owner, message });
+  }, []);
+
+  const clearPolite = useCallback((owner: RowPoliteOwner): void => {
+    setPolite((current) => {
+      if (current.owner !== owner) {
+        return current;
+      }
+      return { owner: null, message: '' };
+    });
+  }, []);
+
+  const editorAnnounce = useCallback((message: string): void => announcePolite('editor', message), [announcePolite]);
+  const editorClear = useCallback((): void => clearPolite('editor'), [clearPolite]);
+  const suggestAnnounce = useCallback((message: string): void => announcePolite('suggest', message), [announcePolite]);
+  const suggestClear = useCallback((): void => clearPolite('suggest'), [clearPolite]);
 
   return (
     <tr>
@@ -122,9 +155,28 @@ const MediaSelectionRow = ({
             <span className="acx-media-selection__media-id"> (#{item.id})</span>
           </p>
         </a>
-        <MediaAltInlineEditor mediaId={item.id} altText={item.altText ?? null} />
-        <MediaAltSuggest mediaId={item.id} />
-        <div className="acx-media-selection__detail-meta" aria-live="polite">
+        {/*
+          Row-owned polite region [S2c-4a / A11Y-08 / BR-32]. Always mounted in a
+          stable position, empty while quiet. Editor and Suggest announce through
+          props — no context provider for a two-consumer one-level hop.
+        */}
+        <div
+          role="status"
+          aria-live="polite"
+          className="screen-reader-text"
+          data-testid="media-selection-row-status"
+        >
+          {polite.message}
+        </div>
+        <MediaAltInlineEditor
+          mediaId={item.id}
+          altText={item.altText ?? null}
+          onPoliteAnnounce={editorAnnounce}
+          onPoliteClear={editorClear}
+        />
+        <MediaAltSuggest mediaId={item.id} onPoliteAnnounce={suggestAnnounce} onPoliteClear={suggestClear} />
+        {/* detail-meta is metadata loading, not an operator result — not a live region. */}
+        <div className="acx-media-selection__detail-meta">
           {detailReady ? (
             <>
               {item.mimeType ? <span className="acx-media-selection__detail-chip">{item.mimeType}</span> : null}

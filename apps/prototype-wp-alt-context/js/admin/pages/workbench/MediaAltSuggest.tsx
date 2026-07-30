@@ -22,6 +22,14 @@ export const RECOMMENDED_ALT_TEXT_MAX_LENGTH = 125;
 
 export interface MediaAltSuggestProps {
   mediaId: number;
+  /**
+   * When provided (row co-mount via MediaSelectionTableBody), polite cues go
+   * through the row's single live region and the local status node is omitted.
+   * Isolated renders keep a local always-mounted region for component tests.
+   */
+  onPoliteAnnounce?: (message: string) => void;
+  /** Compare-and-clear is enforced by the row owner; this just requests clear. */
+  onPoliteClear?: () => void;
 }
 
 /** True when the commit-candidate string exceeds the recommended maximum. */
@@ -52,7 +60,15 @@ export const formatOverLengthReadyAnnouncement = (length: number): string =>
     RECOMMENDED_ALT_TEXT_MAX_LENGTH,
   );
 
-export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.Element => {
+/** Polite cue when a draft crosses back under the recommended maximum while editing. */
+export const formatWithinLengthAnnouncement = (): string =>
+  __('Draft is within the recommended maximum length.', 'alt-context');
+
+export const MediaAltSuggest = ({
+  mediaId,
+  onPoliteAnnounce,
+  onPoliteClear,
+}: MediaAltSuggestProps): React.JSX.Element => {
   // House BR-68 pattern (same hook ScanTabContent uses one directory away): seq
   // bumps on every announce so a repeated string (regenerate → same "Draft
   // ready…") still remounts the live region. Plain useState<string> bails out
@@ -63,7 +79,22 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
   // messages do not occur on any real path here — generate() always inserts
   // "Generating…" between two "Draft ready…" cues — so seq-keyed remount is
   // not load-bearing for MediaAltSuggest. The stable region is.
-  const { message: statusMessage, seq: statusSeq, announce: announceStatus } = useAriaAnnounce();
+  //
+  // When co-mounted under MediaSelectionTableBody (S2c-4a), polite cues go
+  // through onPoliteAnnounce / onPoliteClear and the local region is omitted.
+  const {
+    message: localStatusMessage,
+    seq: statusSeq,
+    announce: localAnnounceStatus,
+  } = useAriaAnnounce();
+  const usesRowPolite = onPoliteAnnounce != null;
+  const announceStatus = (message: string): void => {
+    if (onPoliteAnnounce) {
+      onPoliteAnnounce(message);
+    } else {
+      localAnnounceStatus(message);
+    }
+  };
   const [isEditing, setIsEditing] = useState(false);
   const [editDraft, setEditDraft] = useState('');
   const { mutate, isPending, isError, error, data, reset } = useDescribeMedia();
@@ -84,6 +115,9 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const shouldFocusSuggestRef = useRef(false);
   const shouldFocusEditButtonRef = useRef(false);
+  // Previous over/under side for one-shot length-crossing announcements
+  // [WBUX-5-S2C4A-BR-01]. Seeded on generate success and when entering edit.
+  const wasOverLengthRef = useRef(false);
   const textareaId = useId();
   const disclosureId = useId();
   const errorId = useId();
@@ -92,8 +126,13 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
   // WHY: useAriaAnnounce has no clear; empty string clears the always-mounted
   // region's text without unmounting it (AT keeps tracking the node).
   // Note: this bumps seq on clear (local clear did not).
+  // Row co-mount: clear requests go through ownership check at the row.
   const clearStatus = (): void => {
-    announceStatus('');
+    if (onPoliteClear) {
+      onPoliteClear();
+    } else {
+      announceStatus('');
+    }
   };
 
   const generate = (): void => {
@@ -108,7 +147,9 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
         // maximum, announce the length check once via the existing polite region
         // (composed with the ready cue). Do not add a second live region [A11Y-19].
         const draftText = response.alt_text_draft;
-        if (isOverRecommendedAltLength(draftText)) {
+        const isOver = isOverRecommendedAltLength(draftText);
+        wasOverLengthRef.current = isOver;
+        if (isOver) {
           announceStatus(formatOverLengthReadyAnnouncement(draftText.length));
         } else {
           announceStatus(__('Draft ready. Review before saving.', 'alt-context'));
@@ -122,6 +163,22 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
         clearStatus();
       },
     });
+  };
+
+  /**
+   * One-shot length-crossing announcement while editing [WBUX-5-S2C4A-BR-01].
+   * Visible advisory stays keystroke-live; only the polite cue is crossing-gated.
+   */
+  const handleEditDraftChange = (next: string): void => {
+    const wasOver = wasOverLengthRef.current;
+    const isOver = isOverRecommendedAltLength(next);
+    setEditDraft(next);
+    if (isOver && !wasOver) {
+      announceStatus(formatAltLengthAdvisory(next.length));
+    } else if (!isOver && wasOver) {
+      announceStatus(formatWithinLengthAnnouncement());
+    }
+    wasOverLengthRef.current = isOver;
   };
 
   // When a terminal mutation state mounts (error / draft / idle-after-accept/dismiss),
@@ -222,17 +279,10 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
     }
   };
 
-  // Named polite live region [A11Y-08]. Always mounted in one stable position
-  // outside the branch body (BR-32) so pending → ready → pending only mutates
-  // textContent; the AT already tracks the node. Empty while quiet — correct
-  // ARIA pattern; announces nothing until text appears.
-  //
-  // WHY (BR-37): sibling of MediaAltInlineEditor's role=status on the same
-  // table row (MediaSelectionTableBody). Distinct data-testid so row-level
-  // tests can disambiguate; S2c-4 owns consolidating both into one persistent
-  // row-level live region. No key={statusSeq}: a remount on every announce
-  // would defeat the stable node.
-  const statusRegion = (
+  // Local polite region only when not co-mounted under the row [S2c-4a].
+  // Always mounted in one stable position outside the branch body (BR-32).
+  // No key={statusSeq}: a remount on every announce would defeat the stable node.
+  const statusRegion = usesRowPolite ? null : (
     <div
       role="status"
       aria-live="polite"
@@ -240,7 +290,7 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
       data-testid="media-alt-suggest-status"
       data-announce-seq={statusSeq}
     >
-      {statusMessage ?? ''}
+      {localStatusMessage ?? ''}
     </div>
   );
 
@@ -327,6 +377,9 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
         // re-fire as a false alert on a fresh edit attempt (WBUX-5-S2C3A-BR-01).
         resetAccept();
         setEditDraft(data.alt_text_draft);
+        // Seed crossing side so entering edit on an already-over draft does not
+        // re-announce; only a true under→over or over→under edge fires.
+        wasOverLengthRef.current = isOverRecommendedAltLength(data.alt_text_draft);
         setIsEditing(true);
       };
 
@@ -397,7 +450,7 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
                 ref={textareaRef}
                 className="acx-media-selection__media-alt-suggest-edit-input"
                 value={editDraft}
-                onChange={(event) => setEditDraft(event.target.value)}
+                onChange={(event) => handleEditDraftChange(event.target.value)}
                 disabled={isAccepting}
                 aria-describedby={editDescribedBy}
                 aria-invalid={isAcceptError || undefined}
@@ -484,6 +537,7 @@ export const MediaAltSuggest = ({ mediaId }: MediaAltSuggestProps): React.JSX.El
                   resetAccept();
                   clearStatus();
                   setIsEditing(false);
+                  wasOverLengthRef.current = false;
                 }}
                 disabled={isAccepting}
               >

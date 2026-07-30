@@ -8,13 +8,26 @@ import { decodeHtmlEntities } from '../../utils/decodeHtmlEntities';
 export interface MediaAltInlineEditorProps {
   mediaId: number;
   altText: string | null;
+  /**
+   * When provided (row co-mount via MediaSelectionTableBody), polite cues go
+   * through the row's single live region and the local status node is omitted.
+   * Isolated renders keep a local always-mounted region for component tests.
+   */
+  onPoliteAnnounce?: (message: string) => void;
+  /** Compare-and-clear is enforced by the row owner; this just requests clear. */
+  onPoliteClear?: () => void;
 }
 
 /** Stored meta arrives entity-encoded; decode once at the read boundary (BR-140). */
 const decodeStoredAlt = (stored: string | null): string | null =>
   stored === null ? null : decodeHtmlEntities(stored);
 
-export const MediaAltInlineEditor = ({ mediaId, altText }: MediaAltInlineEditorProps): React.JSX.Element => {
+export const MediaAltInlineEditor = ({
+  mediaId,
+  altText,
+  onPoliteAnnounce,
+  onPoliteClear,
+}: MediaAltInlineEditorProps): React.JSX.Element => {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(() => decodeStoredAlt(altText) ?? '');
   const [displayAlt, setDisplayAlt] = useState<string | null>(() => decodeStoredAlt(altText));
@@ -28,6 +41,24 @@ export const MediaAltInlineEditor = ({ mediaId, altText }: MediaAltInlineEditorP
   // when two distinct stored forms would decode to the same display string.
   const previousAltTextRef = useRef(altText);
   const { mutate, isPending, error, reset } = useCorrectMediaAlt();
+
+  const usesRowPolite = onPoliteAnnounce != null;
+
+  const announceStatus = (message: string): void => {
+    if (onPoliteAnnounce) {
+      onPoliteAnnounce(message);
+    } else {
+      setStatusMessage(message);
+    }
+  };
+
+  const clearStatus = (): void => {
+    if (onPoliteClear) {
+      onPoliteClear();
+    } else {
+      setStatusMessage('');
+    }
+  };
 
   // Sync the read display to a genuine prop change (a parent refetch), never
   // merely because edit mode toggled. While editing, the draft is authoritative:
@@ -64,7 +95,7 @@ export const MediaAltInlineEditor = ({ mediaId, altText }: MediaAltInlineEditorP
 
   const enterEditMode = (): void => {
     reset();
-    setStatusMessage('');
+    clearStatus();
     setDraft(displayAlt ?? '');
     setIsEditing(true);
   };
@@ -95,7 +126,7 @@ export const MediaAltInlineEditor = ({ mediaId, altText }: MediaAltInlineEditorP
           previousAltTextRef.current = altText;
           setDisplayAlt(nextAlt);
           setDraft(nextAlt);
-          setStatusMessage(__('Alt text saved.', 'alt-context'));
+          announceStatus(__('Alt text saved.', 'alt-context'));
           // Return focus to the Edit control like Cancel does; without this the
           // disabled Save button detaches and focus falls to document.body
           // (WBUX-5-S2A-BR-01).
@@ -108,28 +139,21 @@ export const MediaAltInlineEditor = ({ mediaId, altText }: MediaAltInlineEditorP
 
   // BR-58 / Suggest BR-17: retire status once it has served its purpose — no
   // timeout. When focus leaves this surface while idle, "Alt text saved." is no
-  // longer local context; leaving it populated collides with a later Suggest
-  // announcement on the same row.
+  // longer local context. Clear goes through ownership when the row owns the
+  // region — a stale sibling cannot wipe a Suggest-owned cue.
   const handleContainerBlur = (event: React.FocusEvent<HTMLDivElement>): void => {
     const next = event.relatedTarget;
     if (next instanceof Node && containerRef.current?.contains(next)) {
       return;
     }
     if (!isEditing && !isPending) {
-      setStatusMessage('');
+      clearStatus();
     }
   };
 
-  // Named polite live region [A11Y-21]. Always mounted in one stable position
-  // outside the edit/read branch body (BR-32 / BR-58) so idle → saved only
-  // mutates textContent; the AT already tracks the node. Empty while quiet —
-  // correct ARIA pattern; announces nothing until text appears.
-  //
-  // WHY (BR-37): sibling of MediaAltSuggest's role=status on the same table
-  // row (MediaSelectionTableBody). Distinct data-testid so row-level tests
-  // can disambiguate; S2c-4 owns consolidating both into one persistent
-  // row-level live region.
-  const statusRegion = (
+  // Local polite region only when not co-mounted under the row [S2c-4a].
+  // Always-mounted, empty while quiet (BR-32 / BR-58).
+  const statusRegion = usesRowPolite ? null : (
     <div role="status" aria-live="polite" className="screen-reader-text" data-testid="media-alt-inline-editor-status">
       {statusMessage}
     </div>

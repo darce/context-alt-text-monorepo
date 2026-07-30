@@ -41,6 +41,7 @@ from recognition.infrastructure.face_pipeline.provenance import (  # noqa: E402
     DEFAULT_MODELS_DIR,
     MODEL_MANIFEST,
     load_verified_model,
+    numeric_runtime_fingerprint,
 )
 
 FIXTURE_DIR = Path(__file__).resolve().parent
@@ -54,14 +55,17 @@ def _sha256_bytes(data: bytes) -> str:
 
 
 def toolchain_provenance() -> dict[str, str]:
-    """Record which OpenCV/numpy produced the goldens (CVU-02V).
+    """Record which numeric-relevant runtimes produced the goldens (CVU-02V).
 
-    OpenCV 5 changed warpAffine output; without a stamp the fixtures cannot
-    declare which toolchain they pin. Majors are what unit tests compare.
+    Delegates to ``numeric_runtime_fingerprint`` so stamps cover OpenCV,
+    onnxruntime, and numpy — the three packages that move embedding /
+    clustering comparability on this upgrade. ``generator`` is the script path.
     """
+    fp = numeric_runtime_fingerprint()
     return {
-        "opencv_version": cv2.__version__,
-        "numpy_version": np.__version__,
+        "opencv_version": fp.opencv_version,
+        "onnxruntime_version": fp.onnxruntime_version,
+        "numpy_version": fp.numpy_version,
         "generator": GENERATOR_RELPATH,
     }
 
@@ -117,10 +121,13 @@ def write_embedding_goldens(*, output_dir: Path | None = None) -> dict:
     emb_path = out_dir / "synthetic_112_embedding.npy"
     np.save(emb_path, emb)
 
-    # cosine_min: N=50 OpenCVSFaceEmbedder runs vs golden were bit-exact
-    # (vector maxabs=0; float64 unit-cosine ≈ 1-1e-12). Floor 0.99999999 is
-    # 10× above a 1e-9 slack band and fails the historical OpenCV 4→5 upgrade
-    # self-similarity of 0.99999994 (CVUP1-LC-03).
+    # cosine_min: N=50 OpenCVSFaceEmbedder runs on this deterministic synthetic
+    # 112×112 crop were bit-exact vs golden (vector maxabs=0; float64 unit-cosine
+    # ≈ 1-1e-12). Floor 0.99999999 is 10× above a 1e-9 slack band so same-host
+    # regen noise cannot greenwash a real embedder shift (CVUP1-LC-03).
+    # Not the corpus OpenCV 4→5 upgrade self-similarity (min 0.999524 / median
+    # 0.999933 over 83 faces — docs/tasks/fir/evidence/opencv-5-embedding-drift.md);
+    # that protocol measures cross-version match-band drift, not golden noise floor.
     meta = {
         "kind": "embedding_golden",
         "seed": EMBED_SEED,

@@ -2043,6 +2043,13 @@ dependencies = [
     { name = "packaging" },
     { name = "protobuf" },
 ]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f2/18/e4e906d564af3dd84c2816118ce8e0c087d351ef69a819727b940fb01b6b/onnxruntime_gpu-1.28.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:3b3a63cecd239d72432cd44569d047de8f4d69e471cd5f60f7ac7fc8769be5ec", size = 249767362, upload-time = "2026-07-29T16:31:09.077Z" },
+    { url = "https://files.pythonhosted.org/packages/25/de/bdb23ea779e543fc771023b3b2bd687041f60be744b3e9bbce62b13dc938/onnxruntime_gpu-1.28.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:27011ca9f5f88ba09dfb3d1d83b877d61cabb9069d796136d69d83fe1018e6a4", size = 249767387, upload-time = "2026-07-29T16:31:18.513Z" },
+    { url = "https://files.pythonhosted.org/packages/76/5c/6770a33f9047f91de84267d8ec678beb780b563b4473e013e3d6b6eff006/onnxruntime_gpu-1.28.0-cp313-cp313t-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:c3717717c0c703bc7f4a35aa126737fe0dff00c49dc7a648690cf8cdcb2b667a", size = 249772900, upload-time = "2026-07-29T16:31:28.16Z" },
+    { url = "https://files.pythonhosted.org/packages/95/99/ed28c67950b42fe9911ae4bf02a4015f4e3da8a607ff91c836c31fb798e4/onnxruntime_gpu-1.28.0-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:3ad3f1660488390def834fab93a70d76a5bec6b10df75e92eee38426fef57e81", size = 249773839, upload-time = "2026-07-29T16:31:37.807Z" },
+    { url = "https://files.pythonhosted.org/packages/50/b8/1cfd3c7a7ddfede5629e48a9f6c5cce7ae3702fe607fba8cdaf7ec14ae02/onnxruntime_gpu-1.28.0-cp314-cp314t-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:00445199a517ed8216a02480a2070386ba72ff519366b319ba78af8c3911a86d", size = 249777734, upload-time = "2026-07-29T16:31:47.579Z" },
+]
 
 [[package]]
 name = "openapi-pydantic"
@@ -2354,8 +2361,8 @@ requires-dist = [
     { name = "oci", specifier = ">=2.126.0,<3.0.0" },
     { name = "onnxruntime", specifier = ">=1.28.0,<2.0.0" },
     { name = "onnxruntime-gpu", marker = "sys_platform == 'linux' and extra == 'gpu'", specifier = ">=1.28.0,<2.0.0" },
-    { name = "opencv-python", specifier = ">=5.0.0,<6.0.0" },
-    { name = "opencv-python-headless", marker = "extra == 'bench'", specifier = ">=5.0.0,<6.0.0" },
+    { name = "opencv-python", specifier = "==5.0.0.93" },
+    { name = "opencv-python-headless", marker = "extra == 'bench'", specifier = "==5.0.0.93" },
     { name = "pgvector", specifier = ">=0.5.0,<0.6.0" },
     { name = "pillow", specifier = ">=12.3.0,<13.0.0" },
     { name = "prometheus-client", specifier = ">=0.20,<1" },

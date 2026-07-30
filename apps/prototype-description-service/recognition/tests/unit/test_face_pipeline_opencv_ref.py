@@ -52,11 +52,15 @@ _ALIGN_CROP_MAX_ABS = 1.0
 _ALIGN_CROP_MAE = 0.05
 
 # Version-drift cosine floor for committed embedding goldens (CVUP1-LC-03).
-# Measurement 2026-07-29, OpenCV 5.0.0 / ORT 1.28.0 / numpy 2.5.1, N=50 runs:
+# Measurement 2026-07-29, OpenCV 5.0.0 / ORT 1.28.0 / numpy 2.5.1, N=50 runs on
+# the deterministic synthetic 112×112 crop (and composed aligner→embedder path):
 #   synthetic crop vs golden: bit-exact (vector maxabs=0; float64 cosine ≈ 1-1e-12)
 #   composed aligner→embedder: bit-exact (maxabs=0)
-# Noise floor = 0. Floor 0.99999999 sits just above a 1e-9 slack band and fails
-# the historical OpenCV 4→5 upgrade self-similarity of 0.99999994 (was 0.9999).
+# Noise floor = 0. Floor 0.99999999 is 10× above a 1e-9 slack band so same-host
+# regen noise cannot greenwash a real embedder shift (prior decorative floor was
+# 0.9999). Not the corpus OpenCV 4→5 upgrade self-similarity (min 0.999524 /
+# median 0.999933 over 83 faces — opencv-5-embedding-drift.md); that protocol
+# measures cross-version match-band drift, not golden noise floor.
 _GOLDEN_COSINE_MIN = 0.99999999
 
 

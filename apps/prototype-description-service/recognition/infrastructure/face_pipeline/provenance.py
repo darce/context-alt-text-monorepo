@@ -288,15 +288,15 @@ def verify_face_pipeline_models(*, models_dir: Path | None = None) -> dict[str, 
 
 
 # ---------------------------------------------------------------------------
-# Numeric-relevant runtime fingerprint (CVUP-1 / HARM-01 / HARM-02)
+# Numeric-relevant runtime fingerprint (CVUP-1 findings HARM-01, HARM-02)
 #
 # Canonical symbol for consumers (fir-7, fir-8, fir-9, fir23-stack):
 #   ``numeric_runtime_fingerprint``  →  NumericRuntimeFingerprint
 #
 # Not named cv_runtime_version: the stamp covers OpenCV + onnxruntime + numpy
 # (all three move embedding / clustering comparability on this upgrade).
-# OpenCV major + onnxruntime version are also folded into the SFace model_id
-# space identity so 4.x/5.x and ORT 1.22/1.28 cannot share a space string.
+# OpenCV full version + onnxruntime major.minor are folded into the SFace
+# model_id space identity (see ``space_token`` for WHY that granularity).
 # ---------------------------------------------------------------------------
 
 
@@ -321,11 +321,19 @@ def _numpy_version() -> str:
     return str(numpy.__version__)
 
 
+def _version_major_minor(version: str) -> str:
+    """Return ``major.minor`` from a dotted version, or the raw string if short."""
+    parts = str(version).split(".")
+    if len(parts) >= 2 and parts[0] and parts[1]:
+        return f"{parts[0]}.{parts[1]}"
+    return str(version)
+
+
 @dataclass(frozen=True, slots=True)
 class NumericRuntimeFingerprint:
     """Installed-package fingerprint for numeric-relevant face-pipeline runtimes.
 
-    Field coverage (minimum HARM-01/HARM-02 surface):
+    Field coverage (minimum CVUP-1 findings HARM-01/HARM-02 surface):
     - opencv_version / opencv_major — warpAffine + cv2 surface
     - onnxruntime_version — YuNet + SFace inference runtime
     - numpy_version — array math under both adapters and clustering
@@ -338,14 +346,26 @@ class NumericRuntimeFingerprint:
 
     @property
     def space_token(self) -> str:
-        """Compact embedding-space token: OpenCV major + onnxruntime version.
+        """Compact embedding-space token folded into SFace ``model_id``.
 
-        Folded into SFace ``model_id`` so either component alone changes the
-        space identity. Numpy is recorded on the fingerprint for consumers but
-        is not part of the space token (array ABI drift is rarer and noisier
-        as a space key than the two inference runtimes).
+        Granularity (WHY — which dependency bumps are space-breaking):
+        - OpenCV: **full version**. ``warpAffine`` numerics moved across the
+          4.x→5.0 cut that forced golden regeneration; pin is
+          ``opencv-python>=5.0.0,<6.0.0``, so any 5.x resolve may move
+          aligner output again. Full version is the safe space key (a 5.0.0
+          → 5.x bump that would require goldens also mints a new space).
+        - onnxruntime: **major.minor only**. Pin is ``>=1.28.0,<2.0.0``;
+          branch parity (1-cos ≤ 5e-12 between ORT and OpenCV embed paths)
+          shows the ORT path is numerically interchangeable at this floor,
+          so a routine patch bump (1.28.0→1.28.1) must not mint a new
+          embedding space and orphan persisted rows. A minor bump
+          (1.28→1.29) still partitions.
+
+        Either component alone must change the token (discrimination).
+        Numpy is recorded on the fingerprint but not in the space key.
         """
-        return f"cv{self.opencv_major}/ort{self.onnxruntime_version}"
+        ort_mm = _version_major_minor(self.onnxruntime_version)
+        return f"cv{self.opencv_version}/ort{ort_mm}"
 
     @property
     def compact(self) -> str:
@@ -361,9 +381,10 @@ class NumericRuntimeFingerprint:
 def numeric_runtime_fingerprint() -> NumericRuntimeFingerprint:
     """Return the live numeric-relevant runtime fingerprint (never hardcoded).
 
-    Canonical accessor for HARM-01 consumers. Read versions from the installed
-    packages at call time so monkeypatching ``_opencv_version`` /
-    ``_onnxruntime_version`` / ``_numpy_version`` in tests is sufficient.
+    Canonical accessor for CVUP-1 finding HARM-01 consumers. Read versions
+    from the installed packages at call time so monkeypatching
+    ``_opencv_version`` / ``_onnxruntime_version`` / ``_numpy_version`` in
+    tests is sufficient.
     """
     opencv_version = _opencv_version()
     major_token = opencv_version.split(".", 1)[0]

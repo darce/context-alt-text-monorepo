@@ -1,7 +1,9 @@
 """FIR-3 S3: ORT CPU adapters vs OpenCV reference parity + modelless decode tests.
 
-Gates (task plan / assignment):
-- embedding cosine(ORT, OpenCV) ≥ 0.999 on golden synthetic + aligner crops
+Gates (task plan / assignment, amended):
+- embedding cosine(ORT, OpenCV) ≥ 0.99999999 on golden synthetic + aligner crops
+  (S3 parity-budget amendment; supersedes the assigned 0.999 floor — see
+  docs/tasks/fir/FIR-3-yunet-sface-adapters-task-plan.md and ``_COSINE_MIN``)
 - detector boxes IoU ≥ 0.99, landmark max-dist ≤ 2px, score delta ≤ 0.02
 - zero-norm raise, empty batch, same input gates as OpenCV path
 - modelless: pure decode/NMS unit-tested without ONNX
@@ -313,7 +315,7 @@ def test_sface_preprocess_is_rgb_scale1(ort_sface_embedder, ocv_sface_embedder) 
     raw_ocv = np.asarray(ocv_sface_embedder._feature(crop), dtype=np.float32).reshape(-1)
     raw_ort = np.asarray(ort_sface_embedder._feature(crop), dtype=np.float32).reshape(-1)
     cos = cosine(raw_ocv, raw_ort)
-    assert cos >= 0.9999
+    assert cos >= _COSINE_MIN, f"raw feature cosine={cos} < {_COSINE_MIN}"
     print(f"PARITY_COSINE_raw_feature={cos:.10f}")
 
 

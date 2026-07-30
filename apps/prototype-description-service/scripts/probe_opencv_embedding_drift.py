@@ -2,12 +2,23 @@
 """Measure whether an OpenCV version bump moves SFace embeddings far enough to
 change an identity decision (CVUP1-LC-06).
 
-The ``opencv-python`` pin in ``pyproject.toml`` carries a safety claim: cross-version
-self-similarity sits far above the impostor band and no nearest neighbour flips, so
-an upgrade that perturbs every stored embedding still leaves clustering and matching
-decisions intact. This script is the instrument behind that claim. Without it the
-number can only be re-quoted from a comment, and the next pin bump merges on the
-strength of a measurement nobody can reproduce.
+The ``opencv-python`` pin in ``pyproject.toml`` carries a measured safety claim:
+cross-version self-similarity sits far above the impostor band, and nearest-
+neighbour flips on a consented corpus are classified against production decision
+boundaries (auto-accept ceiling, suggestion band, reject). This script is the
+instrument behind that claim. Without it the numbers can only be re-quoted from
+a comment, and the next pin bump merges on the strength of a measurement nobody
+can reproduce.
+
+**Scope (aligner-path, OpenCV reference).** This probe runs
+``OpenCVYuNetDetector`` + ``FivePointAligner`` + ``OpenCVSFaceEmbedder`` — the
+same OpenCV reference path the golden generator uses. Production traffic goes
+through ``FacePipelineFaceDetector`` (``OrtYuNetDetector`` + ``OrtSFaceEmbedder``),
+sharing only ``FivePointAligner`` (``warpAffine``) with this path. ORT↔OpenCV
+embedding/detection equivalence is carried by the ORT-vs-OpenCV parity suite
+(``recognition/tests/unit/test_face_pipeline_ort_parity.py``, measured
+``1-cos ≤ 5e-12``). This probe is therefore an aligner-scoped gate over the
+OpenCV reference path, not a second production-path probe.
 
 Two passes, one per OpenCV version:
 
@@ -57,11 +68,39 @@ from recognition.infrastructure.face_pipeline.opencv_ref import (  # noqa: E402
 
 _IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 
-# Clustering's cosine floor for calling two faces the same person. Duplicated
-# rather than imported: the baseline pass runs in a bare cv2+numpy env with no
-# pydantic-settings. `test_probe_match_threshold_tracks_settings` pins the two
-# together, so a settings change cannot silently leave this behind.
-DEFAULT_MATCH_THRESHOLD = 0.55  # recognition/config/settings.py::_LEGACY_SIMILARITY_THRESHOLD
+# Decision-boundary fallbacks matching ClusteringSettings defaults. Duplicated
+# rather than always imported: the baseline pass runs in a bare cv2+numpy env
+# that may lack pydantic. `_decision_boundaries()` prefers live settings when
+# available so a retune cannot silently leave the probe behind.
+# `test_probe_match_threshold_tracks_settings` pins DEFAULT_MATCH_THRESHOLD to
+# settings._LEGACY_SIMILARITY_THRESHOLD (the auto-accept / suggestion ceiling).
+DEFAULT_MATCH_THRESHOLD = 0.55  # ClusteringSettings.suggestion_ceiling
+DEFAULT_SUGGESTION_FLOOR = 0.35  # ClusteringSettings.suggestion_floor
+DEFAULT_LOW_CONFIDENCE_BAND_WIDTH = 0.05  # ClusteringSettings.low_confidence_band_width
+
+
+def _decision_boundaries() -> tuple[float, float, float]:
+    """Return (effective_low_confidence_floor, suggestion_floor, suggestion_ceiling).
+
+    Live ``ClusteringSettings`` when importable; otherwise the three fallbacks
+    above (effective floor = suggestion_floor - band_width = 0.30). The
+    fallback must reproduce all three production boundaries — never collapse
+    to a single threshold.
+    """
+    try:
+        from recognition.application.settings.clustering import ClusteringSettings
+
+        s = ClusteringSettings()
+        return (
+            s.effective_low_confidence_suggestion_floor,
+            s.suggestion_floor,
+            s.suggestion_ceiling,
+        )
+    except Exception:
+        floor = DEFAULT_SUGGESTION_FLOOR
+        width = DEFAULT_LOW_CONFIDENCE_BAND_WIDTH
+        ceiling = DEFAULT_MATCH_THRESHOLD
+        return max(0.0, floor - width), floor, ceiling
 
 
 @dataclass(frozen=True)
@@ -216,7 +255,15 @@ def redact(key: str) -> str:
     return f"{hashlib.sha256(rel.encode('utf-8')).hexdigest()[:8]}#{idx}"
 
 
-def analyse(base: Pass, cur: Pass, *, min_iou: float, match_threshold: float) -> dict:
+def analyse(
+    base: Pass,
+    cur: Pass,
+    *,
+    min_iou: float,
+    suggestion_ceiling: float,
+    suggestion_floor: float,
+    suggestion_band_floor: float,
+) -> dict:
     pairs, unmatched_base, unmatched_cur = match_faces(base, cur, min_iou=min_iou)
     bi = np.asarray([i for i, _ in pairs])
     ci = np.asarray([j for _, j in pairs])
@@ -237,18 +284,21 @@ def analyse(base: Pass, cur: Pass, *, min_iou: float, match_threshold: float) ->
     off_diag = ~np.eye(len(bi), dtype=bool)
     impostor = sim_base[off_diag & ~same_image]
 
-    # Nearest-neighbour flips, split by whether the neighbour was ever close
-    # enough to be *called* a match. A flip between two faces sitting at cosine
-    # ~0.37 in a 0.55-threshold matcher reorders two non-matches — no decision
-    # changes. Counting those as failures would make the gate cry wolf on every
-    # corpus containing a face with no true mate; counting only them would hide
-    # the real thing. Report both, fail on the decisive ones.
+    # Nearest-neighbour flips, split by production decision region:
+    #   decisive        top ≥ suggestion_ceiling  → auto-accept (fail the gate)
+    #   suggestion_band top ≥ effective low-conf floor → human-visible suggestion
+    #   subthreshold    below that → matcher rejects either neighbour
+    # A flip at cosine ~0.37 sits in the suggestion band: it reorders which face
+    # a reviewer is shown as the top suggestion. That is not "no decision
+    # affected"; report it as a suggestion-band event, not a sub-threshold
+    # non-match.
     np.fill_diagonal(sim_base, -np.inf)
     np.fill_diagonal(sim_cur, -np.inf)
     nn_base = np.argmax(sim_base, axis=1)
     nn_cur = np.argmax(sim_cur, axis=1)
 
     decisive: list[dict] = []
+    suggestion_band: list[dict] = []
     subthreshold: list[dict] = []
     for i in np.where(nn_base != nn_cur)[0]:
         b_nn, c_nn = int(nn_base[i]), int(nn_cur[i])
@@ -260,7 +310,12 @@ def analyse(base: Pass, cur: Pass, *, min_iou: float, match_threshold: float) ->
             "current_nn_cosine": float(sim_cur[i, c_nn]),
         }
         top = max(detail["baseline_nn_cosine"], detail["current_nn_cosine"])
-        (decisive if top >= match_threshold else subthreshold).append(detail)
+        if top >= suggestion_ceiling:
+            decisive.append(detail)
+        elif top >= suggestion_band_floor:
+            suggestion_band.append(detail)
+        else:
+            subthreshold.append(detail)
 
     return {
         "faces_matched": int(len(bi)),
@@ -280,8 +335,13 @@ def analyse(base: Pass, cur: Pass, *, min_iou: float, match_threshold: float) ->
             "max": float(np.max(impostor)) if impostor.size else None,
             "definition": "cross-image pairs within the baseline pass; repeat subjects inflate the tail",
         },
-        "match_threshold": match_threshold,
+        # match_threshold retained as the auto-accept ceiling for older report readers.
+        "match_threshold": suggestion_ceiling,
+        "suggestion_ceiling": suggestion_ceiling,
+        "suggestion_floor": suggestion_floor,
+        "suggestion_band_floor": suggestion_band_floor,
         "decisive_nn_flips": decisive,
+        "suggestion_band_nn_flips": suggestion_band,
         "subthreshold_nn_flips": subthreshold,
         "baseline": {
             "opencv_version": base.opencv_version,
@@ -298,7 +358,7 @@ def analyse(base: Pass, cur: Pass, *, min_iou: float, match_threshold: float) ->
 
 
 def verdict(stats: dict) -> tuple[bool, str]:
-    """Decision-safety verdict: identity decisions survive the version bump."""
+    """Decision-safety verdict against production match / suggestion boundaries."""
     reasons: list[str] = []
     if not stats["corpus_digest_match"]:
         reasons.append("baseline and current ran over different corpora")
@@ -310,7 +370,7 @@ def verdict(stats: dict) -> tuple[bool, str]:
     if stats["decisive_nn_flips"]:
         reasons.append(
             f"{len(stats['decisive_nn_flips'])} nearest-neighbour flip(s) at or above the "
-            f"{stats['match_threshold']} match threshold"
+            f"{stats['suggestion_ceiling']} auto-accept ceiling"
         )
     p95 = stats["impostor"]["p95"]
     lo = stats["self_similarity"]["min"]
@@ -318,13 +378,31 @@ def verdict(stats: dict) -> tuple[bool, str]:
         reasons.append(f"worst self-similarity {lo:.6f} is not above impostor p95 {p95:.6f}")
     if reasons:
         return False, "; ".join(reasons)
+
+    # Suggestion-band flips are user-visible (reordered top suggestions) but not
+    # auto-accepts. Fail only on decisive flips; surface suggestion-band events
+    # as a non-fatal warning so the gate cannot read as "no decision affected".
+    parts = ["self-similarity clears the impostor band"]
+    sug = len(stats["suggestion_band_nn_flips"])
+    if sug:
+        band_lo = stats["suggestion_band_floor"]
+        ceiling = stats["suggestion_ceiling"]
+        parts.append(
+            f"{sug} suggestion-band flip(s) in [{band_lo}, {ceiling}) — "
+            "reordered human-visible suggestions, not auto-accepts (non-fatal)"
+        )
     sub = len(stats["subthreshold_nn_flips"])
-    tail = f"; {sub} sub-threshold flip(s) among non-matches, no decision affected" if sub else ""
-    return True, f"self-similarity clears the impostor band{tail}"
+    if sub:
+        parts.append(
+            f"{sub} sub-threshold flip(s) below {stats['suggestion_band_floor']} (matcher rejects either neighbour)"
+        )
+    return True, "; ".join(parts)
 
 
 def render_report(stats: dict, ok: bool, why: str) -> str:
     ss, im = stats["self_similarity"], stats["impostor"]
+    ceiling = stats["suggestion_ceiling"]
+    band_lo = stats["suggestion_band_floor"]
     return "\n".join(
         [
             "# OpenCV version bump — embedding drift probe",
@@ -340,14 +418,21 @@ def render_report(stats: dict, ok: bool, why: str) -> str:
             f"| unmatched | {len(stats['unmatched_baseline'])} baseline, {len(stats['unmatched_current'])} current (IoU floor {stats['match_iou_floor']}) |",
             f"| cross-version self-similarity | min {ss['min']:.9f}, p05 {ss['p05']:.9f}, median {ss['median']:.9f} |",
             f"| impostor cosine | p95 {im['p95']:.4f}, max {im['max']:.4f} over {im['pairs']} pairs |",
-            f"| NN flips at or above match threshold {stats['match_threshold']} | {len(stats['decisive_nn_flips'])} |",
-            f"| NN flips among sub-threshold non-matches | {len(stats['subthreshold_nn_flips'])} |",
+            f"| NN flips at or above auto-accept ceiling {ceiling} | {len(stats['decisive_nn_flips'])} |",
+            f"| NN flips in suggestion band [{band_lo}, {ceiling}) | {len(stats['suggestion_band_nn_flips'])} |",
+            f"| NN flips below suggestion band ({band_lo}) | {len(stats['subthreshold_nn_flips'])} |",
             "",
             f"Impostor band definition: {im['definition']}.",
             "",
-            "A nearest-neighbour flip only matters if the neighbour was close enough to be",
-            f"called a match. Flips below the {stats['match_threshold']} clustering threshold reorder two faces",
-            "that the matcher rejects either way; they are reported, not counted as failures.",
+            "Decision boundaries match production ClusteringSettings: auto-accept at/above",
+            f"suggestion_ceiling ({ceiling}), human-visible suggestions in",
+            f"[{band_lo}, {ceiling}), reject below {band_lo}. Decisive flips fail the",
+            "gate. Suggestion-band flips reorder which neighbour a reviewer sees and are",
+            'reported as a non-fatal warning — not as "no decision affected".',
+            "",
+            "Measurement scope: OpenCV reference path (YuNet + SFace via cv2) sharing",
+            "FivePointAligner with production; ORT-path equivalence is the",
+            "ORT-vs-OpenCV parity suite (`test_face_pipeline_ort_parity.py`).",
             "",
             "Re-run before changing the `opencv-python` pin. The raw embeddings are biometric",
             "templates derived from consented imagery and are deliberately not committed;",
@@ -379,8 +464,8 @@ def main(argv: list[str] | None = None) -> int:
     p_cmp.add_argument(
         "--match-threshold",
         type=float,
-        default=DEFAULT_MATCH_THRESHOLD,
-        help="cosine at which the matcher would call two faces the same person",
+        default=None,
+        help="override suggestion_ceiling (auto-accept); default from ClusteringSettings",
     )
     p_cmp.add_argument(
         "--reveal-keys",
@@ -396,9 +481,20 @@ def main(argv: list[str] | None = None) -> int:
         print(f"probe: {len(result.keys)} faces under OpenCV {result.opencv_version} -> {args.out}")
         return 0
 
+    band_floor, sug_floor, ceiling = _decision_boundaries()
+    if args.match_threshold is not None:
+        ceiling = args.match_threshold
+
     cur = run_pass(args.corpus, score_threshold=args.score_threshold)
     base = load_pass(args.baseline)
-    stats = analyse(base, cur, min_iou=args.match_iou, match_threshold=args.match_threshold)
+    stats = analyse(
+        base,
+        cur,
+        min_iou=args.match_iou,
+        suggestion_ceiling=ceiling,
+        suggestion_floor=sug_floor,
+        suggestion_band_floor=band_floor,
+    )
     ok, why = verdict(stats)
     if args.reveal_keys:
         # Console only, never the report: maps redacted digests back to filenames.

@@ -71,7 +71,7 @@ under [sr-001], never a relaxation. Evidence:
   absolute spread 0.0, minimum pairwise cosine 1.0000000000000002.
 - Holds cross-architecture: the same tightened assertions pass on the aarch64
   remote gate, so this is not an x86-local budget.
-- 0.999 admitted a 1−cos slack band nine orders of magnitude above the measured
+- 0.999 admitted a 1−cos slack band ~2e8× the measured
   spread — a bound that wide cannot discriminate a real regression ([TEST-06]).
   The new floor still sits ~10× above a 1e-9 slack band.
 

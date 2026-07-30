@@ -19,6 +19,7 @@
     "left_mouth_corner"
   ],
   "numpy_version": "2.5.1",
+  "onnxruntime_version": "1.28.0",
   "opencv_version": "5.0.0",
   "oracle": "cv2.FaceRecognizerSF.alignCrop",
   "oracle_model": "face_recognition_sface_2021dec.onnx",

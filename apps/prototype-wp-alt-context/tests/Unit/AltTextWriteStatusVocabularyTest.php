@@ -50,6 +50,39 @@ class AltTextWriteStatusVocabularyTest extends TestCase
         parent::tearDown();
     }
 
+    // ── R17-BR-10: DescriptionWriteStatus is independently file-addressable ──
+
+    /**
+     * Cold-process probe: requiring only class-description-write-status.php must
+     * declare DescriptionWriteStatus (no freeride on class-alt-text-write-status
+     * or Composer classmap). Modeled on DescribeControllerAutoloadTest.
+     */
+    public function testDescriptionWriteStatusIsIndependentlyAddressable(): void
+    {
+        $entrypoint = realpath(__DIR__ . '/../../src/api/class-description-write-status.php');
+        self::assertIsString($entrypoint, 'class-description-write-status.php must exist');
+
+        $script = sprintf(
+            'require %s; var_export(%s);',
+            var_export($entrypoint, true),
+            "class_exists('AltContext\\\\Api\\\\DescriptionWriteStatus', false)"
+            . " && !class_exists('AltContext\\\\Api\\\\AltTextWriteStatus', false)"
+            . " && \\AltContext\\Api\\DescriptionWriteStatus::FAILED === 'failed'"
+            . " && \\AltContext\\Api\\DescriptionWriteStatus::ALL === array("
+            . "'written','forced_overwrite','skipped_no_long_text',"
+            . "'skipped_existing_description','failed')"
+        );
+        $output = shell_exec(sprintf('php -r %s 2>&1', escapeshellarg($script)));
+        $this->assertSame(
+            'true',
+            trim((string) $output),
+            sprintf(
+                'DescriptionWriteStatus must load from its own file alone; got: %s',
+                var_export($output, true)
+            )
+        );
+    }
+
     // ── BR-04 / BR-07: pin the PHP member set (TS parity is review-only) ──
 
     /**

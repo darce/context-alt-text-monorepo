@@ -301,6 +301,15 @@ if (!class_exists('CaseInsensitiveDictionary')) {
 }
 
 if (!class_exists('WP_CLI')) {
+    /**
+     * Test double for WP-CLI output. Mirrors real channel routing from
+     * wp-cli/wp-cli php/class-wp-cli.php + Loggers\Regular (v2.11.0):
+     *   log / success → STDOUT
+     *   warning / error → STDERR
+     * Stream lines carry the same human prefixes real WP-CLI emits
+     * ("Success: ", "Warning: ", "Error: "). Level buckets in $messages
+     * stay unprefixed so existing suite accessors keep working.
+     */
     class WP_CLI
     {
         /** @var array<string,mixed> */
@@ -314,6 +323,20 @@ if (!class_exists('WP_CLI')) {
             'error' => [],
         ];
 
+        /**
+         * Wire-format lines written to STDOUT (log body; "Success: " + body).
+         *
+         * @var array<int,string>
+         */
+        public static $stdout = [];
+
+        /**
+         * Wire-format lines written to STDERR ("Warning: "/"Error: " + body).
+         *
+         * @var array<int,string>
+         */
+        public static $stderr = [];
+
         public static function add_command($name, $callable): void
         {
             self::$commands[$name] = $callable;
@@ -321,23 +344,31 @@ if (!class_exists('WP_CLI')) {
 
         public static function log($message): void
         {
-            self::$messages['log'][] = (string) $message;
+            $msg = (string) $message;
+            self::$messages['log'][] = $msg;
+            self::$stdout[] = $msg;
         }
 
         public static function success($message): void
         {
-            self::$messages['success'][] = (string) $message;
+            $msg = (string) $message;
+            self::$messages['success'][] = $msg;
+            self::$stdout[] = 'Success: ' . $msg;
         }
 
         public static function warning($message): void
         {
-            self::$messages['warning'][] = (string) $message;
+            $msg = (string) $message;
+            self::$messages['warning'][] = $msg;
+            self::$stderr[] = 'Warning: ' . $msg;
         }
 
         public static function error($message): void
         {
-            self::$messages['error'][] = (string) $message;
-            throw new RuntimeException((string) $message);
+            $msg = (string) $message;
+            self::$messages['error'][] = $msg;
+            self::$stderr[] = 'Error: ' . $msg;
+            throw new RuntimeException($msg);
         }
 
         public static function reset_cli_messages(): void
@@ -348,6 +379,24 @@ if (!class_exists('WP_CLI')) {
                 'warning' => [],
                 'error' => [],
             ];
+            self::$stdout = [];
+            self::$stderr = [];
+        }
+
+        /**
+         * Full STDOUT stream as real WP-CLI would emit it (newline-joined lines).
+         */
+        public static function get_stdout(): string
+        {
+            return implode("\n", self::$stdout);
+        }
+
+        /**
+         * Full STDERR stream as real WP-CLI would emit it (newline-joined lines).
+         */
+        public static function get_stderr(): string
+        {
+            return implode("\n", self::$stderr);
         }
     }
 }

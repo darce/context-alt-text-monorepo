@@ -829,18 +829,21 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 				continue;
 			}
 
-			// S3-02: honor the update_post_meta() return. It also returns false when
-			// the stored value is byte-identical to what WP will store (a no-op
-			// overwrite); distinguish that from a real failure via a read-back so an
-			// unchanged value still counts as applied rather than landing in `failed`.
-			// Compare against the shared post-transform expectation (F-15R / BR-17).
+			// S3-02 / WBUX-5-R16-BR-10: honor the update_post_meta() return. It
+			// also returns false when the stored value is byte-identical to what
+			// WP will store (a no-op overwrite); distinguish that from a real
+			// failure via read-back. Start alt_ok false on false returns so
+			// skipping this block cannot claim applied. Shared post-transform
+			// expectation (F-15R / BR-17).
 			$alt_written = update_post_meta( $media_id, '_wp_attachment_image_alt', $draft );
+			$alt_ok      = false !== $alt_written;
 			if ( false === $alt_written ) {
 				$current = get_post_meta( $media_id, '_wp_attachment_image_alt', true );
-				if ( ! is_string( $current ) || $expected_stored_alt !== $current ) {
-					$buckets['failed'][] = $media_id;
-					continue;
-				}
+				$alt_ok  = is_string( $current ) && $expected_stored_alt === $current;
+			}
+			if ( ! $alt_ok ) {
+				$buckets['failed'][] = $media_id;
+				continue;
 			}
 
 			// Provenance is the history-list gate (build_item returns null when
@@ -851,46 +854,49 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			// Alt stays written — do not roll back; bucket as partial so the client
 			// can reconcile without treating the id as fully applied.
 			// Shared post-transform model (F-15R / BR-17), not unslash-only.
+			// WBUX-5-R16-BR-10: start prov_ok false on false returns.
 			$expected_provenance = $this->expected_meta_after_core_transforms( '_acx_description_provenance', $provenance );
 			$prov_written        = update_post_meta( $media_id, '_acx_description_provenance', $provenance );
+			$prov_ok             = false !== $prov_written;
 			if ( false === $prov_written ) {
 				$current_prov = get_post_meta( $media_id, '_acx_description_provenance', true );
 				// Accept only a full-payload no-op (update_post_meta returns false
 				// when stored value equals the value being written). Partial key
 				// matches would forge applied while history still lacks provenance.
 				$prov_ok = is_array( $current_prov ) && $expected_provenance === $current_prov;
-				if ( ! $prov_ok ) {
-					// Durable evidence this system started the write for this
-					// run+draft. Inspect marker write the same way as provenance:
-					// update_post_meta returns false on failure *and* on unchanged
-					// value — re-read and compare before claiming the marker. Without
-					// a verified marker, auto-recovery is impossible so bucket
-					// `failed` (not `partial`) — partial is presented as retryable.
-					// [BR-102] [RLSE-05] [INT-11]
-					$marker           = array(
-						'run_id'     => $run_id,
-						'draft_hash' => hash( 'sha256', $draft ),
-					);
-					$expected_marker  = $this->expected_meta_after_core_transforms(
-						'_acx_description_provenance_pending',
-						$marker
-					);
-					$marker_written   = update_post_meta(
-						$media_id,
-						'_acx_description_provenance_pending',
-						$marker
-					);
-					if ( false === $marker_written ) {
-						$current_marker = get_post_meta( $media_id, '_acx_description_provenance_pending', true );
-						$marker_ok      = is_array( $current_marker ) && $expected_marker === $current_marker;
-						if ( ! $marker_ok ) {
-							$buckets['failed'][] = $media_id;
-							continue;
-						}
-					}
-					$buckets['partial'][] = $media_id;
+			}
+			if ( ! $prov_ok ) {
+				// Durable evidence this system started the write for this
+				// run+draft. Inspect marker write the same way as provenance:
+				// update_post_meta returns false on failure *and* on unchanged
+				// value — re-read and compare before claiming the marker. Without
+				// a verified marker, auto-recovery is impossible so bucket
+				// `failed` (not `partial`) — partial is presented as retryable.
+				// [BR-102] [RLSE-05] [INT-11]
+				$marker          = array(
+					'run_id'     => $run_id,
+					'draft_hash' => hash( 'sha256', $draft ),
+				);
+				$expected_marker = $this->expected_meta_after_core_transforms(
+					'_acx_description_provenance_pending',
+					$marker
+				);
+				$marker_written  = update_post_meta(
+					$media_id,
+					'_acx_description_provenance_pending',
+					$marker
+				);
+				$marker_ok       = false !== $marker_written;
+				if ( false === $marker_written ) {
+					$current_marker = get_post_meta( $media_id, '_acx_description_provenance_pending', true );
+					$marker_ok      = is_array( $current_marker ) && $expected_marker === $current_marker;
+				}
+				if ( ! $marker_ok ) {
+					$buckets['failed'][] = $media_id;
 					continue;
 				}
+				$buckets['partial'][] = $media_id;
+				continue;
 			}
 
 			// Provenance verified — drop any pending recovery marker.

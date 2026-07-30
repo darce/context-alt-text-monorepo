@@ -10,6 +10,7 @@ require_once __DIR__ . '/class-description-budget-service.php';
 require_once __DIR__ . '/../../sovereign/repositories/class-identity-members-repository.php';
 require_once __DIR__ . '/../class-alt-style.php';
 require_once __DIR__ . '/../class-alt-text-write-status.php';
+require_once __DIR__ . '/../class-description-write-status.php';
 require_once __DIR__ . '/trait-expects-meta-after-core-transforms.php';
 
 use AltContext\Api\AltStyle;

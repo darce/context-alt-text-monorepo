@@ -1,11 +1,10 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { __, sprintf } from '@wordpress/i18n';
 import { RotateCcw } from 'lucide-react';
 
 import {
-  correctDescriptionHistoryItem,
   DESCRIPTION_CORRECTION_CODE,
   fetchDescriptionHistory,
   RECOVERY_KIND,
@@ -17,7 +16,7 @@ import {
   type DescriptionHistoryResponse,
   type ProvenanceRecoveredFrom,
 } from '../api/describeApi';
-import { invalidateMediaStats } from '../hooks/useMediaStats';
+import { useCorrectMediaAlt } from '../hooks/useCorrectMediaAlt';
 import { APP_LINK_PARAMS, parseRunParam } from '../navigation/appLinks';
 import { decodeHtmlEntities } from '../utils/decodeHtmlEntities';
 import { DescribeRunApplyView } from './DescribeRunApplyView';
@@ -170,70 +169,12 @@ const DescriptionHistoryList = (): React.JSX.Element => {
     queryFn: () => fetchDescriptionHistory({ limit: 50, offset: 0 }),
   });
 
-  const correctionMutation = useMutation({
-    mutationFn: ({ mediaId, altText }: { mediaId: number; altText: string }) =>
-      correctDescriptionHistoryItem(mediaId, altText),
-    onSuccess: (updatedItem) => {
-      queryClient.setQueryData<DescriptionHistoryResponse>(HISTORY_QUERY_KEY, (current) => {
-        if (!current) {
-          return { total: 1, items: [updatedItem] };
-        }
-
-        return {
-          ...current,
-          items: current.items.map((item) => (item.media_id === updatedItem.media_id ? updatedItem : item)),
-        };
-      });
-      // Dashboard coverage probes are otherwise only refreshed by the workbench
-      // inline editor. History-page corrections must also ask the server for a
-      // fresh missing-alt total — only on full success [BR-124][RLSE-04].
-      invalidateMediaStats(queryClient);
-      setDrafts((current) => clearMediaIdEntry(current, updatedItem.media_id));
-      clearSavingId(updatedItem.media_id);
-      setCorrectionErrors((current) => clearMediaIdEntry(current, updatedItem.media_id));
-    },
-    // Keep the draft: the operator's text is the only copy on a failed write.
-    // Surface the server message (or localized fallback) on the failed row so a
-    // 500 partial/total failure is never silent [RLSE-05][A11Y-21].
-    // Errors live in correctionErrors by mediaId so a later row's mutate cannot
-    // erase an earlier unread failure.
-    onError: (error, variables) => {
-      // Alert first and always — partial or total, with or without stored_alt_text.
-      // The operator is never left uninformed [RLSE-05][A11Y-21].
-      const message = resolveDescribeErrorMessage(error, CORRECTION_ERROR_FALLBACK);
-      setCorrectionErrors((current) => ({
-        ...current,
-        [variables.mediaId]: message,
-      }));
-      clearSavingId(variables.mediaId);
-
-      // Partial: alt is already in storage. Patch current_alt_text from the
-      // server-reported stored value only — never from variables.altText, which
-      // may still carry markup/whitespace sanitize_text_field stripped ([rg-015]).
-      // If stored_alt_text is absent, leave the cache alone (stale-but-real).
-      // Total failure must not touch the cache [RLSE-04]. Alert still shows either way.
-      if (resolveDescribeErrorCode(error) !== DESCRIPTION_CORRECTION_CODE.PARTIAL) {
-        return;
-      }
-      const storedAltText = resolveDescribeErrorDataField(error, 'stored_alt_text');
-      if (storedAltText === null) {
-        return;
-      }
-      queryClient.setQueryData<DescriptionHistoryResponse>(HISTORY_QUERY_KEY, (current) => {
-        if (!current) {
-          return current;
-        }
-        return {
-          ...current,
-          items: current.items.map((item) =>
-            item.media_id === variables.mediaId
-              ? { ...item, current_alt_text: storedAltText }
-              : item,
-          ),
-        };
-      });
-    },
-  });
+  // Shared correction contract: endpoint call, workbench row patch (altText +
+  // status), full-success stats refresh, and partial workbench reconcile from
+  // server-reported stored_alt_text [WBUX-5-BR-75]. Page-specific history cache
+  // patch and per-row state ride on per-call mutate callbacks — RQ runs both
+  // the hook-level and the call-level handlers (verified against v5.100.5).
+  const correctionMutation = useCorrectMediaAlt();
 
   const items = useMemo(() => historyQuery.data?.items ?? [], [historyQuery.data]);
   const statusOptions = useMemo(
@@ -266,7 +207,71 @@ const DescriptionHistoryList = (): React.JSX.Element => {
     // linger while the new request is in flight; other rows' errors stay.
     // Refused starts never reach here — they must not clear correctionErrors.
     setCorrectionErrors((current) => clearMediaIdEntry(current, mediaId));
-    correctionMutation.mutate({ mediaId, altText });
+    correctionMutation.mutate(
+      { mediaId, altText },
+      {
+        // History-only side effects. Workbench patch + invalidateMediaStats are
+        // already handled by useCorrectMediaAlt — do not double-invalidate.
+        onSuccess: (updatedItem) => {
+          queryClient.setQueryData<DescriptionHistoryResponse>(HISTORY_QUERY_KEY, (current) => {
+            if (!current) {
+              return { total: 1, items: [updatedItem] };
+            }
+
+            return {
+              ...current,
+              items: current.items.map((row) => (row.media_id === updatedItem.media_id ? updatedItem : row)),
+            };
+          });
+          setDrafts((current) => clearMediaIdEntry(current, updatedItem.media_id));
+          clearSavingId(updatedItem.media_id);
+          setCorrectionErrors((current) => clearMediaIdEntry(current, updatedItem.media_id));
+        },
+        // Keep the draft: the operator's text is the only copy on a failed write.
+        // Surface the server message (or localized fallback) on the failed row so a
+        // 500 partial/total failure is never silent [RLSE-05][A11Y-21].
+        // Errors live in correctionErrors by mediaId so a later row's mutate cannot
+        // erase an earlier unread failure. Shared useMutation would reset isError
+        // on the next mutate — that is why this map stays page-local [RLSE-05].
+        onError: (error, variables) => {
+          // Alert first and always — partial or total, with or without stored_alt_text.
+          // The operator is never left uninformed [RLSE-05][A11Y-21].
+          const message = resolveDescribeErrorMessage(error, CORRECTION_ERROR_FALLBACK);
+          setCorrectionErrors((current) => ({
+            ...current,
+            [variables.mediaId]: message,
+          }));
+          clearSavingId(variables.mediaId);
+
+          // Partial: alt is already in storage. Patch history current_alt_text from
+          // the server-reported stored value only — never from variables.altText,
+          // which may still carry markup/whitespace sanitize_text_field stripped
+          // ([rg-015]). Workbench reconcile is the hook's onError. If
+          // stored_alt_text is absent, leave history cache alone (stale-but-real).
+          // Total failure must not touch any cache [RLSE-04]. Alert still shows either way.
+          if (resolveDescribeErrorCode(error) !== DESCRIPTION_CORRECTION_CODE.PARTIAL) {
+            return;
+          }
+          const storedAltText = resolveDescribeErrorDataField(error, 'stored_alt_text');
+          if (storedAltText === null) {
+            return;
+          }
+          queryClient.setQueryData<DescriptionHistoryResponse>(HISTORY_QUERY_KEY, (current) => {
+            if (!current) {
+              return current;
+            }
+            return {
+              ...current,
+              items: current.items.map((row) =>
+                row.media_id === variables.mediaId
+                  ? { ...row, current_alt_text: storedAltText }
+                  : row,
+              ),
+            };
+          });
+        },
+      },
+    );
   };
 
   if (historyQuery.isLoading) {

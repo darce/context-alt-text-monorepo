@@ -974,6 +974,71 @@ class DescriptionHistoryServiceTest extends TestCase
     }
 
     /**
+     * R20-BR-21: empty-array pending meta is not a recovery marker.
+     */
+    public function testListHistoryExcludesEmptyArrayPendingMarker(): void
+    {
+        $mediaId = 510;
+        $GLOBALS['__ac_get_posts_results'] = [$mediaId];
+        $this->seedAttachment($mediaId, 'Empty marker');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', 'Human-authored alt');
+        $this->setPostMeta($mediaId, '_acx_description_provenance_pending', []);
+
+        $response = (new DescriptionHistoryService())->list_history(10);
+
+        $this->assertSame(0, $response['total']);
+        $this->assertSame([], $response['items']);
+    }
+
+    /**
+     * R20-BR-21: partial-shape pending (missing draft_hash) is not recovery evidence.
+     */
+    public function testListHistoryExcludesPartialShapePendingMarker(): void
+    {
+        $mediaId = 511;
+        $GLOBALS['__ac_get_posts_results'] = [$mediaId];
+        $this->seedAttachment($mediaId, 'Partial marker');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', 'Human-authored alt');
+        $this->setPostMeta($mediaId, '_acx_description_provenance_pending', [
+            'run_id' => 'single_image',
+            // draft_hash absent
+        ]);
+
+        $response = (new DescriptionHistoryService())->list_history(10);
+
+        $this->assertSame(0, $response['total']);
+        $this->assertSame([], $response['items']);
+    }
+
+    /**
+     * R20-BR-25: successful record_correction must delete a zombie pending marker.
+     */
+    public function testRecordCorrectionDeletesStaleProvenancePendingMarker(): void
+    {
+        $mediaId = 512;
+        $this->seedAttachment($mediaId, 'Correction clears marker');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', 'Prior alt with gap.');
+        $this->setPostMeta($mediaId, '_acx_description_provenance_pending', [
+            'run_id'     => 'single_image',
+            'draft_hash' => hash('sha256', 'Prior alt with gap.'),
+        ]);
+
+        $result = (new DescriptionHistoryService())->record_correction($mediaId, 'Operator fixed alt.');
+
+        $this->assertNotInstanceOf(WP_Error::class, $result);
+        $this->assertSame('', get_post_meta($mediaId, '_acx_description_provenance_pending', true));
+        $this->assertIsArray(get_post_meta($mediaId, '_acx_description_human_edit', true));
+
+        $GLOBALS['__ac_get_posts_results'] = [$mediaId];
+        $history = (new DescriptionHistoryService())->list_history(10);
+        $this->assertSame(1, $history['total']);
+        $this->assertIsArray($history['items'][0]['human_edit']);
+        $this->assertNull($history['items'][0]['provenance']);
+        // Not a pure gap: human_edit present, marker gone.
+        $this->assertSame('', get_post_meta($mediaId, '_acx_description_provenance_pending', true));
+    }
+
+    /**
      * @param int    $mediaId
      * @param string $title
      * @param string $mime

@@ -446,22 +446,76 @@ class AltTextWriteStatusVocabularyTest extends TestCase
     }
 
     /**
-     * BR-08: the two partial reasons are distinct members of the pin set.
+     * BR-08 / R20-BR-28: pin the partial-reason wire set as literals so a
+     * rewritten REASON_* value (even if still distinct and still listed via
+     * self::) turns this test RED. Vacuous self::-to-list membership is not
+     * enough — the wire contract is the string bytes.
      */
     public function testPartialReasonsAreDistinct(): void
     {
+        $this->assertSame('provenance_write_failed', AltTextWriteStatus::REASON_PROVENANCE_WRITE_FAILED);
+        $this->assertSame('description_write_failed', AltTextWriteStatus::REASON_DESCRIPTION_WRITE_FAILED);
         $this->assertNotSame(
             AltTextWriteStatus::REASON_PROVENANCE_WRITE_FAILED,
             AltTextWriteStatus::REASON_DESCRIPTION_WRITE_FAILED
         );
-        $this->assertContains(
-            AltTextWriteStatus::REASON_PROVENANCE_WRITE_FAILED,
+        $this->assertSame(
+            array(
+                'provenance_write_failed',
+                'description_write_failed',
+            ),
             AltTextWriteStatus::PARTIAL_REASONS
         );
-        $this->assertContains(
-            AltTextWriteStatus::REASON_DESCRIPTION_WRITE_FAILED,
-            AltTextWriteStatus::PARTIAL_REASONS
+    }
+
+    /**
+     * R20-BR-19: every REASON_* const must appear in PARTIAL_REASONS, and
+     * PARTIAL_REASONS must contain only those consts. Modeled on
+     * testMarkerOwnerConstantsAreReflectedIntoMarkerOwners — a new reason
+     * const that is never registered, or a list entry without a matching
+     * const, turns RED. (testStatusConstantsAreReflectedIntoListSurfaces
+     * deliberately excludes REASON_* from ALL; this is the reciprocal pin.)
+     */
+    public function testReasonConstantsAreReflectedIntoPartialReasons(): void
+    {
+        $reflection = new \ReflectionClass(AltTextWriteStatus::class);
+        $reason_values = array();
+        foreach ($reflection->getConstants() as $name => $value) {
+            if (!is_string($value)) {
+                continue;
+            }
+            if (!str_starts_with((string) $name, 'REASON_')) {
+                continue;
+            }
+            $reason_values[$name] = $value;
+        }
+
+        $this->assertNotEmpty(
+            $reason_values,
+            'At least one REASON_* const must be declared'
         );
+
+        foreach ($reason_values as $name => $value) {
+            $this->assertContains(
+                $value,
+                AltTextWriteStatus::PARTIAL_REASONS,
+                "Reason const {$name}={$value} must be a member of PARTIAL_REASONS"
+            );
+        }
+
+        $this->assertSame(
+            count($reason_values),
+            count(AltTextWriteStatus::PARTIAL_REASONS),
+            'PARTIAL_REASONS must not contain entries beyond declared REASON_* consts'
+        );
+
+        foreach (AltTextWriteStatus::PARTIAL_REASONS as $reason) {
+            $this->assertContains(
+                $reason,
+                array_values($reason_values),
+                "PARTIAL_REASONS entry {$reason} must match a declared REASON_* const"
+            );
+        }
     }
 
     // ── BR-05: CLI generate tally honesty ──

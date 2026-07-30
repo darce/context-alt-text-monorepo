@@ -375,6 +375,9 @@ class DescribeMediaService {
 			$provenance
 		);
 		if ( 'skip_existing' === $gate ) {
+			// Benign skip: existing alt is the operator's choice. Any stale
+			// recovery marker is no longer an unrecorded gap [R20-BR-18].
+			delete_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY );
 			$data['alt_text_write'] = array(
 				'status'               => AltTextWriteStatus::SKIPPED_EXISTING_ALT,
 				'existing_alt_present' => true,
@@ -385,6 +388,9 @@ class DescribeMediaService {
 		if ( 'identity_complete' === $gate ) {
 			// Heal only the draft key (BR-108) and report skip — no force, nothing to
 			// overwrite. If the heal fails, surface the gap for retry (HAI-13 / INT-11).
+			// R20-BR-30: REASON_PROVENANCE_WRITE_FAILED here is a draft-key heal
+			// failure — existing provenance is already an array, so history lists
+			// the row via is_array($provenance). No marker is planted on this arm.
 			if ( ! $this->heal_provenance_alt_text_draft( $media_id, $existing_provenance, $draft ) ) {
 				$data['alt_text_write'] = array(
 					'status'               => AltTextWriteStatus::PARTIAL,
@@ -394,6 +400,8 @@ class DescribeMediaService {
 				$response->set_data( $data );
 				return $response;
 			}
+			// Identity complete + heal ok: item is good — drop any stale marker [R20-BR-18].
+			delete_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY );
 			$data['alt_text_write'] = array(
 				'status'               => AltTextWriteStatus::SKIPPED_EXISTING_ALT,
 				'existing_alt_present' => true,
@@ -433,6 +441,8 @@ class DescribeMediaService {
 				// R17-BR-03: a silent heal failure leaves history wrong while the
 				// caller claims success. Partial + provenance reason is the honest
 				// wire status (alt intact; audit trail not).
+				// R20-BR-30: draft-key heal failure — marker not planted; history
+				// already includes the row via existing array provenance.
 				$data['alt_text_write'] = array(
 					'status'               => AltTextWriteStatus::PARTIAL,
 					'reason'               => AltTextWriteStatus::REASON_PROVENANCE_WRITE_FAILED,
@@ -441,6 +451,8 @@ class DescribeMediaService {
 				$response->set_data( $data );
 				return $response;
 			}
+			// Force no-op success: alt + identity already match — clear stale marker [R20-BR-18].
+			delete_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY );
 			$data['alt_text_write'] = array(
 				'status'               => AltTextWriteStatus::FORCED_OVERWRITE,
 				'existing_alt_present' => true,
@@ -495,12 +507,12 @@ class DescribeMediaService {
 				self::PROVENANCE_PENDING_META_KEY,
 				$marker
 			);
-			$marker_written  = update_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY, $marker );
-			$marker_ok       = false !== $marker_written;
-			if ( false === $marker_written ) {
-				$current_marker = get_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY, true );
-				$marker_ok      = is_array( $current_marker ) && $expected_marker === $current_marker;
-			}
+			// Return value is not authoritative: false is both failure and no-op,
+			// and a non-false accept may still persist a divergent value.
+			update_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY, $marker );
+			// R20-BR-20: always verify storage. Partial requires a VERIFIED marker.
+			$current_marker = get_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY, true );
+			$marker_ok      = is_array( $current_marker ) && $expected_marker === $current_marker;
 			if ( ! $marker_ok ) {
 				$data['alt_text_write'] = array(
 					'status'               => AltTextWriteStatus::FAILED,

@@ -2156,6 +2156,171 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertSame($draft, get_post_meta(42, '_wp_attachment_image_alt', true));
         $this->assertIsArray(get_post_meta(42, '_acx_description_provenance', true));
     }
+
+    /**
+     * R20-BR-18: skip_existing (force=false, different existing alt) must clear
+     * a stale provenance-pending marker so history no longer reports a pure gap.
+     */
+    public function testSkipExistingClearsStaleProvenancePendingMarker(): void
+    {
+        $this->plantWritableAttachment(42);
+        $this->setPostMeta(42, '_wp_attachment_image_alt', 'Human-authored alt');
+        $this->setPostMeta(42, '_acx_description_provenance_pending', array(
+            'run_id'     => 'single_image',
+            'draft_hash' => hash('sha256', 'stale-gap'),
+        ));
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+
+        $result = $this->controller->describe_media($this->writeRequest(42, false));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame('skipped_existing_alt', $result->get_data()['alt_text_write']['status'] ?? null);
+        $this->assertSame('', get_post_meta(42, '_acx_description_provenance_pending', true));
+
+        $GLOBALS['__ac_get_posts_results'] = [42];
+        $history = (new \AltContext\Api\Services\DescriptionHistoryService())->list_history(50);
+        $this->assertSame(0, $history['total'], 'pure gap must leave history after marker clear');
+    }
+
+    /**
+     * R20-BR-18: identity_complete heal SUCCESS must clear a stale pending marker.
+     */
+    public function testIdentityCompleteSuccessClearsStaleProvenancePendingMarker(): void
+    {
+        $this->plantWritableAttachment(42);
+        $this->setPostMeta(42, '_wp_attachment_image_alt', 'A photo.');
+        $existingProvenance = array(
+            'adapter'                => 'seeded',
+            'model_id'               => 'seeded-fixtures',
+            'model_version'          => '1',
+            'prompt_or_task_version' => '1',
+            'image_hash'             => str_repeat('a', 64),
+            'context_hash'           => str_repeat('b', 64),
+            'generated_at'           => '2026-01-01T00:00:00+00:00',
+            'alt_text_draft'         => 'A photo.',
+        );
+        $this->setPostMeta(42, '_acx_description_provenance', $existingProvenance);
+        $this->setPostMeta(42, '_acx_description_provenance_pending', array(
+            'run_id'     => 'single_image',
+            'draft_hash' => hash('sha256', 'stale-gap'),
+        ));
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+
+        $result = $this->controller->describe_media($this->writeRequest(42, false));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame('skipped_existing_alt', $result->get_data()['alt_text_write']['status'] ?? null);
+        $this->assertSame('', get_post_meta(42, '_acx_description_provenance_pending', true));
+
+        $GLOBALS['__ac_get_posts_results'] = [42];
+        $history = (new \AltContext\Api\Services\DescriptionHistoryService())->list_history(50);
+        $this->assertSame(1, $history['total']);
+        $this->assertIsArray($history['items'][0]['provenance']);
+        $this->assertNull($history['items'][0]['human_edit']);
+        // Not a pure gap: provenance present, marker gone.
+        $this->assertNotNull($history['items'][0]['provenance']);
+    }
+
+    /**
+     * R20-BR-18: force no-op FORCED_OVERWRITE success must clear a stale marker.
+     */
+    public function testForceNoOpSuccessClearsStaleProvenancePendingMarker(): void
+    {
+        $this->plantWritableAttachment(42);
+        $this->setPostMeta(42, '_wp_attachment_image_alt', 'A photo.');
+        $existingProvenance = array(
+            'adapter'                => 'seeded',
+            'model_id'               => 'seeded-fixtures',
+            'model_version'          => '1',
+            'prompt_or_task_version' => '1',
+            'image_hash'             => str_repeat('a', 64),
+            'context_hash'           => str_repeat('b', 64),
+            'generated_at'           => '2026-01-01T00:00:00+00:00',
+            'alt_text_draft'         => 'A photo.',
+        );
+        $this->setPostMeta(42, '_acx_description_provenance', $existingProvenance);
+        $this->setPostMeta(42, '_acx_description_provenance_pending', array(
+            'run_id'     => 'single_image',
+            'draft_hash' => hash('sha256', 'stale-gap'),
+        ));
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+
+        $result = $this->controller->describe_media($this->writeRequest(42, true));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame('forced_overwrite', $result->get_data()['alt_text_write']['status'] ?? null);
+        $this->assertSame('', get_post_meta(42, '_acx_description_provenance_pending', true));
+
+        $GLOBALS['__ac_get_posts_results'] = [42];
+        $history = (new \AltContext\Api\Services\DescriptionHistoryService())->list_history(50);
+        $this->assertSame(1, $history['total']);
+        $this->assertIsArray($history['items'][0]['provenance']);
+    }
+
+    /**
+     * R20-BR-20: store accepts marker write but persists a divergent value →
+     * failed, not partial (verified-marker invariant).
+     */
+    public function testMarkerWriteDivergentStoreReportsFailedNotPartial(): void
+    {
+        $this->plantWritableAttachment(42);
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+        $GLOBALS['__ac_update_post_meta_fail'][42]['_acx_description_provenance'] = true;
+        $GLOBALS['__ac_update_post_meta_mutate'][42]['_acx_description_provenance_pending'] = 'GARBAGE';
+
+        $result = $this->controller->describe_media($this->writeRequest(42));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $write = $result->get_data()['alt_text_write'] ?? array();
+        $this->assertSame('failed', $write['status'] ?? null);
+        $this->assertNotSame('partial', $write['status'] ?? null);
+        $this->assertSame('A photo.', get_post_meta(42, '_wp_attachment_image_alt', true));
+        // Divergent garbage must not be treated as a verified recovery marker.
+        $this->assertSame('GARBAGE', get_post_meta(42, '_acx_description_provenance_pending', true));
+    }
+
+    /**
+     * R20-BR-20: pre-plant identical marker so update_post_meta returns false
+     * (no-op). Read-back comparison must still admit partial.
+     */
+    public function testMarkerWriteNoOpFalseReturnAcceptedWhenReadBackMatches(): void
+    {
+        $this->plantWritableAttachment(42);
+        $draft  = 'A photo.';
+        $marker = array(
+            'run_id'     => 'single_image',
+            'draft_hash' => hash('sha256', $draft),
+        );
+        // Identical payload first → subsequent plant is a false-return no-op.
+        $this->setPostMeta(42, '_acx_description_provenance_pending', $marker);
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+        $GLOBALS['__ac_update_post_meta_fail'][42]['_acx_description_provenance'] = true;
+
+        $result = $this->controller->describe_media($this->writeRequest(42));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $write = $result->get_data()['alt_text_write'] ?? array();
+        $this->assertSame('partial', $write['status'] ?? null);
+        $this->assertSame('provenance_write_failed', $write['reason'] ?? null);
+        $stored = get_post_meta(42, '_acx_description_provenance_pending', true);
+        $this->assertIsArray($stored);
+        $this->assertSame($marker, $stored);
+    }
 }
 
 /**

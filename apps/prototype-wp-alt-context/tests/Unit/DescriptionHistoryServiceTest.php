@@ -818,10 +818,11 @@ class DescriptionHistoryServiceTest extends TestCase
     }
 
     /**
-     * BR-17 / S3-02: natural no-op (byte-identical re-save without the fail hook)
-     * must succeed once the stub returns false like core. Distinct from the
-     * forced-false testNoOpOverwriteStillSucceeds — this exercises the faithful
-     * update_post_meta short-circuit path.
+     * WBUX-5-R16-BR-10 / BR-17 / S3-02: natural no-op (byte-identical re-save;
+     * update_post_meta returns false like core) succeeds because read-back
+     * confirmed the stored value — not because a false write return was ignored.
+     * Skipping the false-branch leaves alt_ok false → error. Distinct from the
+     * forced-false testNoOpOverwriteStillSucceeds.
      */
     public function testNaturalNoOpOverwriteStillSucceeds(): void
     {
@@ -837,8 +838,13 @@ class DescriptionHistoryServiceTest extends TestCase
         $result = (new DescriptionHistoryService())->record_correction($mediaId, $sameAlt);
 
         $this->assertNotInstanceOf(WP_Error::class, $result);
+        $this->assertIsArray($result);
         $this->assertSame($sameAlt, $result['current_alt_text']);
+        // Post-write stored value — pins that read-back accepted the no-op.
         $this->assertSame($sameAlt, get_post_meta($mediaId, '_wp_attachment_image_alt', true));
+        $humanEdit = get_post_meta($mediaId, '_acx_description_human_edit', true);
+        $this->assertIsArray($humanEdit);
+        $this->assertSame($sameAlt, $humanEdit['alt_text'] ?? null);
     }
 
     /**

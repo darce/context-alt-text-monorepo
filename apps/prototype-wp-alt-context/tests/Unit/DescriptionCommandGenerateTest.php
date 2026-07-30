@@ -359,11 +359,17 @@ class DescriptionCommandGenerateTest extends TestCase
     }
 
     /**
-     * R17-BR-12: plain-ASCII byte-identical rewrite is not reported as failed.
-     * Does NOT pin the wp_unslash read-back guard (ASCII is a fixed point under
-     * unslash). See *BackslashBearing* sibling for the unslash pin [TEST-15].
+     * WBUX-5-R16-BR-10 / R17-BR-12: natural no-op reapply (byte-identical alt,
+     * update_post_meta returns false) reports forced_overwrite because read-back
+     * confirmed the stored value — not because a false write return was ignored.
+     * Skipping the false-branch leaves alt_ok false → failed. Does NOT pin
+     * wp_unslash (ASCII is a fixed point); see *BackslashBearing* [TEST-15].
+     *
+     * Renamed from testGenerateWriteByteIdenticalRewriteIsNotReportedAsFailed /
+     * the overclaiming testGenerateWriteIdempotentReapplyReportsWritten: status
+     * is forced_overwrite (force + existing alt), not bare written.
      */
-    public function testGenerateWriteByteIdenticalRewriteIsNotReportedAsFailed(): void
+    public function testGenerateWriteIdempotentReapplyReportsForcedOverwrite(): void
     {
         $draft = 'Already present from a prior write.';
         $this->setPostMeta(903, '_wp_attachment_image_alt', $draft);
@@ -385,9 +391,12 @@ class DescriptionCommandGenerateTest extends TestCase
         ]);
 
         $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+        $status  = $payload['rows'][0]['status'] ?? null;
 
         // Force + existing non-empty alt → forced_overwrite (R17-BR-13).
-        $this->assertSame('forced_overwrite', $payload['rows'][0]['status']);
+        $this->assertSame('forced_overwrite', $status);
+        $this->assertNotSame('failed', $status);
+        // Post-write stored value — pins that read-back accepted the no-op.
         $this->assertSame($draft, get_post_meta(903, '_wp_attachment_image_alt', true));
         $this->assertIsArray(get_post_meta(903, '_acx_description_provenance', true));
     }
@@ -606,9 +615,10 @@ class DescriptionCommandGenerateTest extends TestCase
     }
 
     /**
-     * F-07: successful --format=json must leave stdout as one JSON document.
-     * Real WP-CLI writes both log() and success() to stdout; a Success: trailer
-     * after the envelope breaks jq / json.loads of the whole stream.
+     * F-07 / R20-BR-13: successful --format=json must leave stdout as one JSON
+     * document. Asserts the stub's real stdout channel (log → stdout; success
+     * would also land there with a "Success: " prefix) — not a hand-joined
+     * reconstruction from level buckets.
      */
     public function testGenerateJsonSuccessStdoutIsEntirelyOneJsonDocument(): void
     {
@@ -619,13 +629,7 @@ class DescriptionCommandGenerateTest extends TestCase
 
         $command->__invoke(['generate'], ['media-id' => '950', 'format' => 'json']);
 
-        // Model real WP-CLI stdout: log lines then any success trailers.
-        $stdout_parts = \WP_CLI::$messages['log'];
-        foreach (\WP_CLI::$messages['success'] as $success_line) {
-            $stdout_parts[] = 'Success: ' . $success_line;
-        }
-        $stdout = implode("\n", $stdout_parts);
-
+        $stdout = \WP_CLI::get_stdout();
         $decoded = json_decode($stdout, true);
         $this->assertSame(
             JSON_ERROR_NONE,
@@ -636,6 +640,91 @@ class DescriptionCommandGenerateTest extends TestCase
         $this->assertSame('generate', $decoded['command'] ?? null);
         $this->assertSame(1, $decoded['count'] ?? null);
         $this->assertEmpty(\WP_CLI::$messages['success']);
+        $this->assertSame('', \WP_CLI::get_stderr());
+    }
+
+    /**
+     * R20-BR-13: failure-path --format=json keeps stdout as exactly one JSON
+     * document; human-readable Error: text is on stderr only.
+     */
+    public function testGenerateJsonFailureStdoutIsOneJsonDocumentErrorOnStderr(): void
+    {
+        $service = new RecordingDescribeService([
+            951 => new WP_REST_Response(['detail' => 'upstream down'], 502),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '951', 'write' => true, 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+
+        $stdout = \WP_CLI::get_stdout();
+        $decoded = json_decode($stdout, true);
+        $this->assertSame(
+            JSON_ERROR_NONE,
+            json_last_error(),
+            'Failure-path stdout must be one JSON document; got: ' . $stdout
+        );
+        $this->assertIsArray($decoded);
+        $this->assertSame('generate', $decoded['command'] ?? null);
+        $this->assertSame(1, $decoded['failed'] ?? null);
+        $this->assertSame('failed', $decoded['rows'][0]['status'] ?? null);
+
+        $stderr = \WP_CLI::get_stderr();
+        $this->assertStringContainsString('Error:', $stderr);
+        $this->assertStringContainsString('failed=1', $stderr);
+        $this->assertStringNotContainsString('Error:', $stdout);
+        $this->assertStringNotContainsString('Success:', $stdout);
+    }
+
+    /**
+     * R20-BR-13: partial-path --format=json keeps stdout as exactly one JSON
+     * document; human-readable Error: text is on stderr only.
+     */
+    public function testGenerateJsonPartialStdoutIsOneJsonDocumentErrorOnStderr(): void
+    {
+        $service = new RecordingDescribeService([
+            952 => new WP_REST_Response([
+                'media_id' => 952,
+                'alt_text_draft' => 'Alt lands, provenance does not.',
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+            ]),
+        ]);
+        $GLOBALS['__ac_update_post_meta_fail'][952]['_acx_description_provenance'] = true;
+        $command = new DescriptionCommand(null, $service);
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '952', 'write' => true, 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+
+        $stdout = \WP_CLI::get_stdout();
+        $decoded = json_decode($stdout, true);
+        $this->assertSame(
+            JSON_ERROR_NONE,
+            json_last_error(),
+            'Partial-path stdout must be one JSON document; got: ' . $stdout
+        );
+        $this->assertIsArray($decoded);
+        $this->assertSame('generate', $decoded['command'] ?? null);
+        $this->assertSame(1, $decoded['partial'] ?? null);
+        $this->assertSame(AltTextWriteStatus::PARTIAL, $decoded['rows'][0]['status'] ?? null);
+
+        $stderr = \WP_CLI::get_stderr();
+        $this->assertStringContainsString('Error:', $stderr);
+        $this->assertStringContainsString('partial=1', $stderr);
+        $this->assertStringNotContainsString('Error:', $stdout);
+        $this->assertStringNotContainsString('Success:', $stdout);
     }
 
     /**

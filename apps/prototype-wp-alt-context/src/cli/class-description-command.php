@@ -363,25 +363,30 @@ class DescriptionCommand extends \WP_CLI_Command {
 
 		$provenance_heal_only = ( 'heal_gap' === $gate );
 
-		// S3-02 / BR-01: honor update_post_meta() returns. No-op (false when the
-		// stored value already equals what WP will store after unslash+sanitize)
-		// is success via read-back; a real alt failure must not stamp provenance
-		// claiming a draft that never landed. Shared post-transform model [F-15R].
+		// S3-02 / BR-01 / WBUX-5-R16-BR-10: honor update_post_meta() returns.
+		// No-op (false when the stored value already equals what WP will store
+		// after unslash+sanitize) is success only via read-back: start alt_ok
+		// false on false returns so skipping this block cannot claim success.
+		// Real alt failure must not stamp provenance. Shared post-transform [F-15R].
 		$expected_alt = $this->expected_meta_after_core_transforms( self::ALT_TEXT_META_KEY, $alt_text_draft );
 		$alt_written  = update_post_meta( $media_id, self::ALT_TEXT_META_KEY, $alt_text_draft );
+		$alt_ok       = false !== $alt_written;
 		if ( false === $alt_written ) {
 			$current = get_post_meta( $media_id, self::ALT_TEXT_META_KEY, true );
-			if ( ! is_string( $current ) || $expected_alt !== $current ) {
-				// R20-BR-05: write returned false and storage does not match expected.
-				return array(
-					'media_id'       => $media_id,
-					'status'         => AltTextWriteStatus::FAILED,
-					'alt_text_draft' => $alt_text_draft,
-					'error'          => 'Alt meta write returned false.',
-				);
-			}
-		} else {
-			// Write accepted — still confirm storage (mutate / divergent store).
+			$alt_ok  = is_string( $current ) && $expected_alt === $current;
+		}
+		if ( ! $alt_ok ) {
+			// R20-BR-05: write returned false and storage does not match expected.
+			return array(
+				'media_id'       => $media_id,
+				'status'         => AltTextWriteStatus::FAILED,
+				'alt_text_draft' => $alt_text_draft,
+				'error'          => 'Alt meta write returned false.',
+			);
+		}
+		// Write accepted or no-op confirmed — still confirm storage (mutate /
+		// divergent store path where write returned non-false).
+		if ( false !== $alt_written ) {
 			$current = get_post_meta( $media_id, self::ALT_TEXT_META_KEY, true );
 			if ( ! is_string( $current ) || $expected_alt !== $current ) {
 				return array(
@@ -398,15 +403,16 @@ class DescriptionCommand extends \WP_CLI_Command {
 		$provenance          = $provenance_for_gate;
 		$expected_provenance = $this->expected_meta_after_core_transforms( self::PROVENANCE_META_KEY, $provenance );
 		$prov_written        = update_post_meta( $media_id, self::PROVENANCE_META_KEY, $provenance );
+		$prov_ok             = false !== $prov_written;
 		if ( false === $prov_written ) {
 			$current_prov = get_post_meta( $media_id, self::PROVENANCE_META_KEY, true );
 			$prov_ok      = is_array( $current_prov ) && $expected_provenance === $current_prov;
-			if ( ! $prov_ok ) {
-				// Alt landed; provenance did not. Plant the same recovery marker
-				// shape as bulk apply; partial only when the marker is verified
-				// (otherwise auto-recovery is impossible) [R16-BR-06].
-				return $this->provenance_failure_with_marker( $media_id, $alt_text_draft );
-			}
+		}
+		if ( ! $prov_ok ) {
+			// Alt landed; provenance did not. Plant the same recovery marker
+			// shape as bulk apply; partial only when the marker is verified
+			// (otherwise auto-recovery is impossible) [R16-BR-06].
+			return $this->provenance_failure_with_marker( $media_id, $alt_text_draft );
 		}
 
 		// Provenance verified — drop any pending recovery marker.
@@ -452,17 +458,18 @@ class DescriptionCommand extends \WP_CLI_Command {
 			self::PROVENANCE_PENDING_META_KEY,
 			$marker
 		);
+		$marker_ok      = false !== $marker_written;
 		if ( false === $marker_written ) {
 			$current_marker = get_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY, true );
 			$marker_ok      = is_array( $current_marker ) && $expected_marker === $current_marker;
-			if ( ! $marker_ok ) {
-				return array(
-					'media_id'       => $media_id,
-					'status'         => AltTextWriteStatus::FAILED,
-					'alt_text_draft' => $alt_text_draft,
-					'error'          => 'Provenance write failed and recovery marker could not be verified.',
-				);
-			}
+		}
+		if ( ! $marker_ok ) {
+			return array(
+				'media_id'       => $media_id,
+				'status'         => AltTextWriteStatus::FAILED,
+				'alt_text_draft' => $alt_text_draft,
+				'error'          => 'Provenance write failed and recovery marker could not be verified.',
+			);
 		}
 
 		return array(

@@ -113,10 +113,11 @@ class DescriptionHistoryService {
 			);
 		}
 
-		// S3-02: honor the update_post_meta() return. It also returns false when
-		// the stored value is byte-identical to what WP will store (a no-op
-		// overwrite); distinguish that from a real failure via a read-back so an
-		// unchanged value still counts as success rather than a false error.
+		// S3-02 / WBUX-5-R16-BR-10: honor the update_post_meta() return. It also
+		// returns false when the stored value is byte-identical to what WP will
+		// store (a no-op overwrite); distinguish that from a real failure via
+		// read-back. Start alt_ok false on false returns so skipping this block
+		// cannot claim success.
 		//
 		// Expected value must mirror update_metadata() (wp-includes/meta.php):
 		//   $meta_value = wp_unslash( $meta_value );
@@ -131,18 +132,20 @@ class DescriptionHistoryService {
 		// do not stamp human-edit meta unless the alt write is verified.
 		$expected_alt = $this->expected_meta_after_core_transforms( self::ALT_META, $normalized_alt_text );
 		$alt_written  = update_post_meta( $media_id, self::ALT_META, $normalized_alt_text );
+		$alt_ok       = false !== $alt_written;
 		if ( false === $alt_written ) {
 			$current = get_post_meta( $media_id, self::ALT_META, true );
-			if ( ! is_string( $current ) || $expected_alt !== $current ) {
-				// [HAI-13] surface a visible, operator-actionable failure.
-				// Do not advise "try again": a durable store failure or a value
-				// WP will never retain is not fixed by retrying the same write.
-				return new WP_Error(
-					'description_correction_failed',
-					'Could not save the alt text for this media item.',
-					array( 'status' => 500 )
-				);
-			}
+			$alt_ok  = is_string( $current ) && $expected_alt === $current;
+		}
+		if ( ! $alt_ok ) {
+			// [HAI-13] surface a visible, operator-actionable failure.
+			// Do not advise "try again": a durable store failure or a value
+			// WP will never retain is not fixed by retrying the same write.
+			return new WP_Error(
+				'description_correction_failed',
+				'Could not save the alt text for this media item.',
+				array( 'status' => 500 )
+			);
 		}
 
 		// Human-edit meta is required for an honest correction response and for
@@ -160,8 +163,11 @@ class DescriptionHistoryService {
 		);
 		// What WP will actually store: unslash then sanitize_meta (same order as
 		// update_metadata). Full-payload equality still required (BR-48a).
+		// WBUX-5-R16-BR-10: start human_ok false on false returns so skipping
+		// the read-back block cannot claim success.
 		$expected_human = $this->expected_meta_after_core_transforms( self::HUMAN_EDIT_META, $human_edit_payload );
 		$human_written  = update_post_meta( $media_id, self::HUMAN_EDIT_META, $human_edit_payload );
+		$human_ok       = false !== $human_written;
 		if ( false === $human_written ) {
 			$current_human = get_post_meta( $media_id, self::HUMAN_EDIT_META, true );
 			// Accept only a full-payload no-op: update_post_meta returns false when
@@ -173,21 +179,21 @@ class DescriptionHistoryService {
 			// the duplicate payload is identical. [BR-48a]
 			// Compare against the unslash+sanitize_meta payload (BR-17 / R16-BR-15).
 			$human_ok = is_array( $current_human ) && $expected_human === $current_human;
-			if ( ! $human_ok ) {
-				// stored_alt_text reports what storage actually holds after
-				// sanitize_text_field() + WP's unslash + sanitize_meta. Clients
-				// reconcile cache from this field; without it they can only guess
-				// from the request body. Only this path carries it — the
-				// 404/400/alt-write-failure paths stored nothing new. [rg-015]
-				return new WP_Error(
-					'description_correction_partial',
-					'Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.',
-					array(
-						'status'          => 500,
-						'stored_alt_text' => is_string( $expected_alt ) ? $expected_alt : $normalized_alt_text,
-					)
-				);
-			}
+		}
+		if ( ! $human_ok ) {
+			// stored_alt_text reports what storage actually holds after
+			// sanitize_text_field() + WP's unslash + sanitize_meta. Clients
+			// reconcile cache from this field; without it they can only guess
+			// from the request body. Only this path carries it — the
+			// 404/400/alt-write-failure paths stored nothing new. [rg-015]
+			return new WP_Error(
+				'description_correction_partial',
+				'Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.',
+				array(
+					'status'          => 500,
+					'stored_alt_text' => is_string( $expected_alt ) ? $expected_alt : $normalized_alt_text,
+				)
+			);
 		}
 
 		// After a verified human-edit write (or accepted full-payload no-op),

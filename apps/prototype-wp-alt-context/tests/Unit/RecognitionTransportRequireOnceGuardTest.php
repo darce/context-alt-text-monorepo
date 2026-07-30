@@ -14,9 +14,9 @@ use SplFileInfo;
  * classes (living in class-*.php / interface-*.php files) must carry an
  * explicit require_once. The PHPUnit kebab-case fallback autoloader masks a
  * missing require for single-class files (suite stays green while WordPress
- * fatals on a stale classmap). DescriptionWriteStatus is the second class in
- * class-alt-text-write-status.php and matches neither PSR-4 nor kebab-case
- * fallback — a missing require is a hard fatal outside this suite.
+ * fatals on a stale classmap). DescriptionWriteStatus lives in its own
+ * class-description-write-status.php (R17-BR-10) so consumers can address it
+ * without freeriding the AltTextWriteStatus file.
  *
  * ## R19-BR-24 — predicate settlement (do not "fix" by auto-expanding)
  *
@@ -147,15 +147,14 @@ class RecognitionTransportRequireOnceGuardTest extends TestCase
                 'short' => 'LoopbackHost',
                 'fqcn' => 'AltContext\\Support\\LoopbackHost',
             ],
-            // R17-BR-08: both classes live in the same WordPress-style file.
-            // DescriptionWriteStatus cannot be rescued by kebab-case fallback.
+            // R17-BR-08 / R17-BR-10: independently file-addressable status surfaces.
             'AltTextWriteStatus' => [
                 'require' => 'api/class-alt-text-write-status.php',
                 'short' => 'AltTextWriteStatus',
                 'fqcn' => 'AltContext\\Api\\AltTextWriteStatus',
             ],
             'DescriptionWriteStatus' => [
-                'require' => 'api/class-alt-text-write-status.php',
+                'require' => 'api/class-description-write-status.php',
                 'short' => 'DescriptionWriteStatus',
                 'fqcn' => 'AltContext\\Api\\DescriptionWriteStatus',
             ],
@@ -525,7 +524,7 @@ class RecognitionTransportRequireOnceGuardTest extends TestCase
     }
 
     /**
-     * R17-BR-08: DescriptionWriteStatus (second class in the same file) is guarded.
+     * R17-BR-08 / R17-BR-10: DescriptionWriteStatus is guarded at its own file.
      */
     public function testDescriptionWriteStatusWithoutRequireOnceIsDetected(): void
     {
@@ -540,7 +539,7 @@ class RecognitionTransportRequireOnceGuardTest extends TestCase
         );
 
         $expected = sprintf(
-            '%s references DescriptionWriteStatus but has no require_once for class-alt-text-write-status.php',
+            '%s references DescriptionWriteStatus but has no require_once for class-description-write-status.php',
             $relative
         );
         $this->assertContains(

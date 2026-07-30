@@ -2392,8 +2392,10 @@ class DescribeRunControllerTest extends TestCase
     }
 
     /**
-     * BR-17 / idempotence: re-applying a byte-identical alt (no-op returns false)
-     * still reports applied, not failed.
+     * WBUX-5-R16-BR-10 / BR-17: re-applying a byte-identical alt (update_post_meta
+     * no-op returns false) reports applied because read-back confirmed the stored
+     * value — not because a false write return was ignored. Skipping the
+     * false-branch leaves alt_ok false → failed.
      */
     public function testApplyRunDraftsNaturalNoOpReportsApplied(): void
     {
@@ -2402,7 +2404,8 @@ class DescribeRunControllerTest extends TestCase
         $this->plantPostType(71);
         $this->plantPostType(72);
         // Plant the exact draft that apply will write so the alt write is a natural no-op.
-        $this->setPostMeta(71, '_wp_attachment_image_alt', 'a dog in a park');
+        $draft = 'a dog in a park';
+        $this->setPostMeta(71, '_wp_attachment_image_alt', $draft);
         $this->setPostMeta(70, '_wp_attachment_image_alt', 'human-authored alt');
         $this->queueRunStatusResponse($runId, 'completed');
         $this->queueRunItemsResponse($runId);
@@ -2416,6 +2419,8 @@ class DescribeRunControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertContains(71, $data['applied']);
         $this->assertNotContains(71, $data['failed']);
-        $this->assertSame('a dog in a park', get_post_meta(71, '_wp_attachment_image_alt', true));
+        // Post-write stored value — pins that read-back accepted the no-op.
+        $this->assertSame($draft, get_post_meta(71, '_wp_attachment_image_alt', true));
+        $this->assertIsArray(get_post_meta(71, '_acx_description_provenance', true));
     }
 }

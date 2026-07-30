@@ -222,6 +222,80 @@ class DescriptionRefreshCommandTest extends TestCase
     }
 
     /**
+     * F-11: printed failed= must not under-report logged failed rows when the
+     * summary count is lower (or zero) than the actual rows.
+     */
+    public function testApplyUnderReportedFailedCountPrintsMaxOfRows(): void
+    {
+        $service = new FixedRefreshService([
+            'summary' => [
+                'dry_run' => false,
+                'candidates' => 2,
+                'changed' => 0,
+                'failed' => 0, // under-reports the two logged rows
+                'skipped' => 0,
+            ],
+            'failed' => [
+                [
+                    'post_id' => 901,
+                    'media_id' => 42,
+                    'reason' => 'post_update_failed',
+                ],
+                [
+                    'post_id' => 902,
+                    'media_id' => 43,
+                    'reason' => 'post_update_failed',
+                ],
+            ],
+            'changed' => [],
+            'skipped' => [],
+        ]);
+
+        $threw = false;
+        try {
+            (new DescriptionRefreshCommand($service))->__invoke(['42'], ['apply' => true, 'limit' => 10]);
+        } catch (RuntimeException $e) {
+            $threw = true;
+            $this->assertStringContainsString('failed=2', $e->getMessage());
+            $this->assertStringNotContainsString('failed=0', $e->getMessage());
+            $this->assertStringContainsString('Description refresh failed.', $e->getMessage());
+        }
+
+        $this->assertTrue($threw, 'failed rows must force non-zero exit');
+        $error = \WP_CLI::$messages['error'][0] ?? '';
+        $this->assertStringContainsString('failed=2', $error);
+        $this->assertStringNotContainsString('failed=0', $error);
+        $logs = implode("\n", \WP_CLI::$messages['log']);
+        $this->assertStringContainsString('post_id=901', $logs);
+        $this->assertStringContainsString('post_id=902', $logs);
+    }
+
+    /**
+     * F-20: dry-run path must not fabricate candidates=0 / skipped=0 when the
+     * summary keys are absent (same array_key_exists discipline as apply).
+     */
+    public function testDryRunMissingCandidatesKeyDoesNotFabricateZero(): void
+    {
+        $service = new FixedRefreshService([
+            'summary' => [
+                'dry_run' => true,
+                // deliberately omit candidates and skipped
+            ],
+            'failed' => [],
+            'changed' => [],
+            'skipped' => [],
+        ]);
+
+        (new DescriptionRefreshCommand($service))->__invoke(['42'], ['limit' => 10]);
+
+        $success = \WP_CLI::$messages['success'][0] ?? '';
+        $this->assertStringContainsString('dry_run=1', $success);
+        $this->assertStringNotContainsString('candidates=', $success);
+        $this->assertStringNotContainsString('skipped=', $success);
+        $this->assertStringContainsString('Description refresh complete.', $success);
+    }
+
+    /**
      * R18-BR-03: apply-path omits skipped= when the summary key is absent.
      * Must not fabricate skipped=0.
      */

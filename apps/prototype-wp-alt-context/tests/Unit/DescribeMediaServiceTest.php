@@ -1310,7 +1310,8 @@ class DescribeMediaServiceTest extends TestCase
 
         $this->assertInstanceOf(WP_REST_Response::class, $result);
         $status = $result->get_data()['alt_text_write']['status'] ?? null;
-        $this->assertContains($status, array('written', 'forced_overwrite'));
+        // force=true + existing alt → forced_overwrite (not the vacuous dual pin).
+        $this->assertSame('forced_overwrite', $status);
         $this->assertNotSame('failed', $status);
         $this->assertSame('A photo.', get_post_meta(42, '_wp_attachment_image_alt', true));
         $this->assertIsArray(get_post_meta(42, '_acx_description_provenance', true));
@@ -1345,9 +1346,9 @@ class DescribeMediaServiceTest extends TestCase
         // WP stores the unslashed form; assert storage, not the raw draft.
         $this->assertSame($expectedStored, get_post_meta(42, '_wp_attachment_image_alt', true));
 
-        // Re-save same raw draft with force (alt already present). draft !==
-        // existing_alt (unslashed), so the force early-path does not short-circuit;
-        // update_post_meta returns false and the unslash read-back must accept it.
+        // Re-save same raw draft with force (alt already present). Without unslash
+        // on the same_alt gate the force no-op would miss; with it (or full write
+        // read-back) success is forced_overwrite.
         $this->queueHttpResponse(array(
             'response' => array('code' => 200, 'message' => 'OK'),
             'body'     => $encoded,
@@ -1357,7 +1358,7 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertInstanceOf(WP_REST_Response::class, $second);
         $secondStatus = $second->get_data()['alt_text_write']['status'] ?? null;
         $this->assertNotSame('failed', $secondStatus, 'Second save with same backslash alt must not fail');
-        $this->assertContains($secondStatus, array('written', 'forced_overwrite'));
+        $this->assertSame('forced_overwrite', $secondStatus);
         $this->assertSame($expectedStored, get_post_meta(42, '_wp_attachment_image_alt', true));
     }
 
@@ -1471,7 +1472,9 @@ class DescribeMediaServiceTest extends TestCase
             $secondStatus,
             'Provenance-gap retry without force must not be trapped as skipped_existing_alt'
         );
-        $this->assertContains($secondStatus, array('written', 'forced_overwrite'));
+        // force=false heal of matching alt → provenance_healed, never forced_overwrite.
+        $this->assertSame('provenance_healed', $secondStatus);
+        $this->assertNotSame('forced_overwrite', $secondStatus);
         $this->assertSame('A photo.', get_post_meta(42, '_wp_attachment_image_alt', true));
         $prov = get_post_meta(42, '_acx_description_provenance', true);
         $this->assertIsArray($prov);
@@ -1540,6 +1543,255 @@ class DescribeMediaServiceTest extends TestCase
         $stored = get_post_meta(42, '_acx_description_provenance', true);
         $this->assertIsArray($stored);
         $this->assertArrayNotHasKey('alt_text_draft', $stored);
+    }
+
+    /**
+     * F-02: heal gate must compare the unslashed draft to storage. A
+     * backslash-bearing draft whose stored alt is the post-unslash form must
+     * open the heal path without --force when provenance is missing.
+     * ASCII fixtures cannot discriminate this (wp_unslash fixed point).
+     */
+    public function testBackslashBearingDraftOpensHealPathWhenStoredAltIsUnslashed(): void
+    {
+        $this->plantWritableAttachment(42);
+        $draft          = 'C:\\Users\\photo';
+        $expectedStored = wp_unslash($draft);
+        $this->assertNotSame($draft, $expectedStored, 'precondition: unslash must change the bytes');
+
+        // Storage holds what update_post_meta would have written.
+        $this->setPostMeta(42, '_wp_attachment_image_alt', $expectedStored);
+        // Provenance missing → gap heal fall-through without force.
+
+        $body                   = $this->validBackendBody(42);
+        $body['alt_text_draft'] = $draft;
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($body),
+        ));
+
+        $result = $this->controller->describe_media($this->writeRequest(42, false));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $status = $result->get_data()['alt_text_write']['status'] ?? null;
+        $this->assertNotSame(
+            'skipped_existing_alt',
+            $status,
+            'Unslashed stored alt matching draft must not skip; heal must open'
+        );
+        $this->assertSame('provenance_healed', $status);
+        $this->assertSame($expectedStored, get_post_meta(42, '_wp_attachment_image_alt', true));
+        $prov = get_post_meta(42, '_acx_description_provenance', true);
+        $this->assertIsArray($prov);
+        // Provenance draft is also stored unslashed.
+        $this->assertSame($expectedStored, $prov['alt_text_draft'] ?? null);
+    }
+
+    /**
+     * F-04: provenance-heal fall-through must not author long description when
+     * force=false even if post_content is empty and acx_alt_style is
+     * alt_plus_description. Provenance-only recovery is not a first write.
+     */
+    public function testProvenanceHealDoesNotWriteLongDescriptionWithoutForce(): void
+    {
+        $this->plantWritableAttachment(42);
+        $this->setOption('acx_alt_style', 'alt_plus_description');
+        $this->setPostMeta(42, '_wp_attachment_image_alt', 'A photo.');
+        // Empty post_content — the defect path would fill it without force.
+        $GLOBALS['__ac_posts'][42]->post_content = '';
+
+        $long = 'Long body that must not land without force.';
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBodyWithLong(42, $long)),
+        ));
+
+        $result = $this->controller->describe_media($this->writeRequest(42, false));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $write = $result->get_data()['alt_text_write'];
+        $this->assertSame('provenance_healed', $write['status'] ?? null);
+        $this->assertArrayNotHasKey('description_write', $write);
+        $this->assertSame('', $GLOBALS['__ac_posts'][42]->post_content);
+        $this->assertNotSame($long, $GLOBALS['__ac_posts'][42]->post_content);
+        $this->assertIsArray(get_post_meta(42, '_acx_description_provenance', true));
+    }
+
+    /**
+     * F-06: heal read-back must fail when update_post_meta returns non-false but
+     * storage does not hold the expected envelope (write accepted, value altered).
+     * Existing heal-failure tests only exercise the false-return fail hook.
+     */
+    public function testHealReadBackFailsWhenStoredProvenanceDiffersAfterNonFalseWrite(): void
+    {
+        $this->plantWritableAttachment(42);
+        $this->setPostMeta(42, '_wp_attachment_image_alt', 'A photo.');
+        $existingProvenance = array(
+            'adapter'                => 'seeded',
+            'model_id'               => 'seeded-fixtures',
+            'model_version'          => '1',
+            'prompt_or_task_version' => '1',
+            'image_hash'             => str_repeat('a', 64),
+            'context_hash'           => str_repeat('b', 64),
+            'generated_at'           => '2026-01-01T00:00:00+00:00',
+        );
+        $this->setPostMeta(42, '_acx_description_provenance', $existingProvenance);
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+        // Simulate: write returns non-false (accepted) but drops/alters the value.
+        $GLOBALS['__ac_update_post_meta_mutate'][42]['_acx_description_provenance'] = array(
+            'adapter' => 'MUTATED_NOT_HEALED',
+        );
+
+        $result = $this->controller->describe_media($this->writeRequest(42, true));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $write = $result->get_data()['alt_text_write'];
+        $this->assertSame('partial', $write['status'] ?? null);
+        $this->assertSame('provenance_write_failed', $write['reason'] ?? null);
+        $this->assertNotSame('forced_overwrite', $write['status'] ?? null);
+    }
+
+    /**
+     * F-13: non-force path when alt equals draft, identity matches, and the
+     * draft-key heal write fails must report partial + provenance_write_failed
+     * (not silent skipped_existing_alt).
+     */
+    public function testNonForceHealFailureReportsPartialNotSkipped(): void
+    {
+        $this->plantWritableAttachment(42);
+        $this->setPostMeta(42, '_wp_attachment_image_alt', 'A photo.');
+        $existingProvenance = array(
+            'adapter'                => 'seeded',
+            'model_id'               => 'seeded-fixtures',
+            'model_version'          => '1',
+            'prompt_or_task_version' => '1',
+            'image_hash'             => str_repeat('a', 64),
+            'context_hash'           => str_repeat('b', 64),
+            'generated_at'           => '2026-01-01T00:00:00+00:00',
+        );
+        $this->setPostMeta(42, '_acx_description_provenance', $existingProvenance);
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+        $GLOBALS['__ac_update_post_meta_fail'][42]['_acx_description_provenance'] = true;
+
+        $result = $this->controller->describe_media($this->writeRequest(42, false));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $write = $result->get_data()['alt_text_write'];
+        $this->assertSame('partial', $write['status'] ?? null);
+        $this->assertSame('provenance_write_failed', $write['reason'] ?? null);
+        $this->assertNotSame('skipped_existing_alt', $write['status'] ?? null);
+        $stored = get_post_meta(42, '_acx_description_provenance', true);
+        $this->assertIsArray($stored);
+        $this->assertArrayNotHasKey('alt_text_draft', $stored);
+    }
+
+    /**
+     * F-14: non-force identity-match heal must actually persist alt_text_draft
+     * into storage. Asserting status alone cannot catch a no-op heal.
+     */
+    public function testNonForceHealSuccessPersistsAltTextDraftInProvenance(): void
+    {
+        $this->plantWritableAttachment(42);
+        $this->setPostMeta(42, '_wp_attachment_image_alt', 'A photo.');
+        $existingProvenance = array(
+            'adapter'                => 'seeded',
+            'model_id'               => 'seeded-fixtures',
+            'model_version'          => '1',
+            'prompt_or_task_version' => '1',
+            'image_hash'             => str_repeat('a', 64),
+            'context_hash'           => str_repeat('b', 64),
+            'generated_at'           => '2026-01-01T00:00:00+00:00',
+        );
+        $this->setPostMeta(42, '_acx_description_provenance', $existingProvenance);
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+
+        $result = $this->controller->describe_media($this->writeRequest(42, false));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        // Identity-complete heal reports skipped_existing_alt (not gap restamp).
+        $this->assertSame(
+            'skipped_existing_alt',
+            $result->get_data()['alt_text_write']['status'] ?? null
+        );
+        $healed = get_post_meta(42, '_acx_description_provenance', true);
+        $this->assertIsArray($healed);
+        $this->assertSame('A photo.', $healed['alt_text_draft'] ?? null);
+        $this->assertSame('2026-01-01T00:00:00+00:00', $healed['generated_at'] ?? null);
+    }
+
+    /**
+     * F-15: long-description read-back must unslash. A backslash-bearing body
+     * that lands correctly must report written, not failed (ASCII is a fixed
+     * point under wp_unslash and cannot pin this axis).
+     */
+    public function testLongDescriptionBackslashBearingWriteSucceeds(): void
+    {
+        $this->plantWritableAttachment(42);
+        $this->setOption('acx_alt_style', 'alt_plus_description');
+        $long           = 'Diagram of the C:\\Users share layout.';
+        $expectedStored = wp_unslash($long);
+        $this->assertNotSame($long, $expectedStored, 'precondition: unslash must change the bytes');
+
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBodyWithLong(42, $long)),
+        ));
+
+        $result = $this->controller->describe_media($this->writeRequest(42));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $write = $result->get_data()['alt_text_write'];
+        $this->assertSame('written', $write['status'] ?? null);
+        $this->assertSame('written', $write['description_write'] ?? null);
+        $this->assertSame($expectedStored, $GLOBALS['__ac_posts'][42]->post_content);
+    }
+
+    /**
+     * F-16: heal envelope read-back must unslash. Backslash-bearing draft on a
+     * force no-op heal must land and report success (ASCII cannot pin unslash).
+     */
+    public function testForceNoOpHealBackslashBearingDraftSucceeds(): void
+    {
+        $this->plantWritableAttachment(42);
+        $draft          = 'C:\\Users\\photo';
+        $expectedStored = wp_unslash($draft);
+        $this->assertNotSame($draft, $expectedStored, 'precondition: unslash must change the bytes');
+
+        $this->setPostMeta(42, '_wp_attachment_image_alt', $expectedStored);
+        $existingProvenance = array(
+            'adapter'                => 'seeded',
+            'model_id'               => 'seeded-fixtures',
+            'model_version'          => '1',
+            'prompt_or_task_version' => '1',
+            'image_hash'             => str_repeat('a', 64),
+            'context_hash'           => str_repeat('b', 64),
+            'generated_at'           => '2026-01-01T00:00:00+00:00',
+        );
+        $this->setPostMeta(42, '_acx_description_provenance', $existingProvenance);
+
+        $body                   = $this->validBackendBody(42);
+        $body['alt_text_draft'] = $draft;
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($body),
+        ));
+
+        $result = $this->controller->describe_media($this->writeRequest(42, true));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame('forced_overwrite', $result->get_data()['alt_text_write']['status'] ?? null);
+        $healed = get_post_meta(42, '_acx_description_provenance', true);
+        $this->assertIsArray($healed);
+        $this->assertSame($expectedStored, $healed['alt_text_draft'] ?? null);
+        $this->assertSame('2026-01-01T00:00:00+00:00', $healed['generated_at'] ?? null);
     }
 }
 

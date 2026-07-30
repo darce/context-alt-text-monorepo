@@ -10,18 +10,26 @@ use RecursiveIteratorIterator;
 use SplFileInfo;
 
 /**
- * R5G-BR-05 / [rg-016]: production consumers of RecognitionTransport,
- * LoopbackHost, AltTextWriteStatus, and DescriptionWriteStatus must carry an
+ * R5G-BR-05 / [rg-016]: production consumers of WordPress-style non-PSR-4
+ * classes (living in class-*.php / interface-*.php files) must carry an
  * explicit require_once. The PHPUnit kebab-case fallback autoloader masks a
  * missing require for single-class files (suite stays green while WordPress
  * fatals on a stale classmap). DescriptionWriteStatus is the second class in
  * class-alt-text-write-status.php and matches neither PSR-4 nor kebab-case
  * fallback — a missing require is a hard fatal outside this suite.
  *
+ * Class list: hand-maintained allowlist in classChecks() of four types
+ * (RecognitionTransport, LoopbackHost, AltTextWriteStatus,
+ * DescriptionWriteStatus). New class-*.php types added under src/ are NOT
+ * auto-discovered — extend classChecks() when adding one.
+ *
  * Self-exemption compares the src-relative path for exact equality so a
  * spoofed filename ending in class-recognition-transport.php cannot opt out.
- * Satisfaction is token-based (T_REQUIRE_ONCE) so a comment mentioning the
- * require_once path cannot satisfy the guard.
+ *
+ * Satisfaction: only a real T_REQUIRE_ONCE statement whose expression names
+ * the defining basename counts. A plain `require` (T_REQUIRE), a comment
+ * mentioning require_once, or a string-only mention of the path do NOT
+ * satisfy the guard.
  *
  * Reference detection is token-scoped (R16-BR-01): comments, docblocks, and
  * substring class names (NotRecognitionTransport) do not count. Forms
@@ -34,12 +42,14 @@ use SplFileInfo;
  *     T_CONSTANT_ENCAPSED_STRING whose unquoted value equals the FQCN
  *   - Heredoc / nowdoc body: T_ENCAPSED_AND_WHITESPACE containing the FQCN
  *
- * Not detected (accepted boundary): dynamically assembled FQCNs
- * (`'AltContext\\Support\\' . 'RecognitionTransport'`), variable class names
- * with no literal FQCN in the file, and reflection-only indirection. Those
- * still need a human review path; the `::` / FQCN / group-use / string forms
- * cover every call site in src/ today and the forms that hide a missing
- * require_once.
+ * Not detected (accepted boundaries — do not rely on this guard for them):
+ *   - `new Short(...)`, `instanceof Short`, `extends Short`, `implements Short`
+ *   - Same-namespace / imported parameter, property, return, or catch typehints
+ *   - Dynamically assembled FQCNs (`'AltContext\\Support\\' . 'RecognitionTransport'`)
+ *   - Variable class names with no literal FQCN in the file
+ *   - Reflection-only indirection
+ * Those still need a human review path; the `::` / FQCN / group-use / string
+ * forms cover every call site in src/ today for the allowlisted classes.
  *
  * Pin fixtures are staged under an injectable temp scan root — never under
  * the shipped src/ tree (R17-BR-07).

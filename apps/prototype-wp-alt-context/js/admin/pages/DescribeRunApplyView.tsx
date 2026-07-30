@@ -118,15 +118,16 @@ const buildApplyResultText = (
  * an explicit per-item overwrite opt-in and never applied by default. Items with
  * no usable draft (failed/skipped) are listed as informational only.
  *
- * Write policy vs single-image path: this bulk view is intentionally more
- * permissive than the guarded single-image write policy
- * (`apply_alt_text_write_policy`). The single-image path has no prior-attempt
- * concept — existing alt without `force` is always `skipped_existing_alt`. The
- * bulk path can complete a provenance write that an earlier apply in the same
- * run left half-done (alt landed, history/provenance did not): the server
- * treats matching alt + missing provenance as a non-clobber recovery, not as a
- * destructive overwrite. That recovery fall-through has no single-image
- * equivalent; do not treat the two paths as policy-equivalent.
+ * Write policy vs single-image path: both bulk apply and single-image describe
+ * (`apply_alt_text_write_policy`) treat matching alt + missing/incomplete
+ * provenance as a non-clobber recovery. Single-image without `force`: a
+ * genuinely different existing alt is still `skipped_existing_alt`; when the
+ * stored alt already equals the draft and only provenance needs repair, the
+ * write path restamps provenance and reports `provenance_healed` (success, not
+ * an overwrite). With identity-complete provenance, only the draft key is
+ * healed and the status remains `skipped_existing_alt`. `forced_overwrite` is
+ * reserved for `force=true` success. Bulk apply uses the same recovery idea for
+ * half-done prior attempts in a run (alt landed, history did not).
  */
 export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): React.JSX.Element => {
   const { itemsQuery, buckets, apply } = useDescribeRunApply(runId);

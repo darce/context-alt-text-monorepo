@@ -4,14 +4,14 @@ declare(strict_types=1);
 
 namespace AltContext\Api\Services;
 
+require_once __DIR__ . '/trait-expects-meta-after-core-transforms.php';
+
 use WP_Error;
 
 use function absint;
-use function apply_filters;
 use function array_slice;
 use function array_values;
 use function current_time;
-use function function_exists;
 use function get_current_user_id;
 use function get_post;
 use function get_post_meta;
@@ -20,13 +20,13 @@ use function get_posts;
 use function is_array;
 use function is_object;
 use function is_string;
-use function sanitize_meta;
 use function sanitize_text_field;
 use function trim;
 use function update_post_meta;
-use function wp_unslash;
 
 class DescriptionHistoryService {
+	use ExpectsMetaAfterCoreTransforms;
+
 	private const PROVENANCE_META = '_acx_description_provenance';
 	private const HUMAN_EDIT_META = '_acx_description_human_edit';
 	private const RUN_STATUS_META = '_acx_description_run_status';
@@ -238,26 +238,6 @@ class DescriptionHistoryService {
 			'human_edit'          => is_array( $human_edit ) ? $human_edit : null,
 			'run_status'          => is_array( $run_status ) ? $run_status : null,
 		);
-	}
-
-	/**
-	 * Value update_metadata() will compare/store: wp_unslash then sanitize_meta.
-	 *
-	 * Prefer sanitize_meta() when present (production WP). The unit harness
-	 * stubs do not define it; fall back to the same sanitize_{type}_meta_{key}
-	 * filter chain sanitize_meta dispatches for post meta without a subtype
-	 * filter. Do not invent a second sanitizer. [R16-BR-15] [rg-015]
-	 *
-	 * @param mixed $value Pre-transform value passed to update_post_meta.
-	 * @return mixed
-	 */
-	private function expected_meta_after_core_transforms( string $meta_key, $value ) {
-		$value = wp_unslash( $value );
-		if ( function_exists( 'sanitize_meta' ) ) {
-			return sanitize_meta( $meta_key, $value, 'post' );
-		}
-
-		return apply_filters( 'sanitize_post_meta_' . $meta_key, $value, $meta_key, 'post' );
 	}
 
 	/**

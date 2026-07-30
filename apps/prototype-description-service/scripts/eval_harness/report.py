@@ -334,6 +334,9 @@ def score_run_record(
     manifest_roster: list[str] | None = None,
 ) -> dict[str, Any]:
     """Pure scoring: run record + manifest labels -> metrics dict."""
+    # Lazy: cli imports report at module load; avoid circular import at import time.
+    from .cli import identity_names
+
     _validate_record_kind(run_record)
     eval_mode = str(run_record["provenance"].get("eval_mode", "standard"))
     if eval_mode not in EVAL_MODES:
@@ -468,10 +471,13 @@ def score_run_record(
                 labeled_faces=face_count,
             )
         )
+        # item["identities"] may be dict rows ({name,bbox,unpositioned}) from
+        # _extract_identities or legacy plain name strings — normalize to str
+        # names so ImageIdentities.predicted (Sequence[str]) stays hashable.
         identifications.append(
             ImageIdentities(
                 image=path,
-                predicted=list(item.get("identities", [])),
+                predicted=identity_names(item.get("identities", [])),
                 labeled=list(entry["present_identities"]),
                 recognition_enabled=recognition_enabled,
                 stranger_faces=stranger_faces,

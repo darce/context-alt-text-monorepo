@@ -357,9 +357,84 @@ def test_extract_identities_uses_is_auto_label_wire_shape():  # S8-01
             "media_url": None,
         },
     ]
-    names, face_count = _extract_identities(payload, media_id=7)
+    identities, face_count = _extract_identities(payload, media_id=7)
     assert face_count == 2
-    assert names == ["Alice Example"]
+    assert identities == [
+        {
+            "name": "Alice Example",
+            "bbox": {"x": 0.1, "y": 0.1, "width": 0.2, "height": 0.2},
+            "unpositioned": False,
+        }
+    ]
+
+
+def test_extract_identities_orders_left_to_right_not_alphabetically():
+    """Group-shot names bind by face-box x, not sorted(set(names)) alphabetical order."""
+    from scripts.eval_harness.cli import _extract_identities
+
+    # Alphabetical: Amy, Zoe. Left-to-right by bbox x: Zoe (x=10), Amy (x=200).
+    payload = [
+        {
+            "identity_id": "id-amy",
+            "media_id": 1,
+            "cluster_label": "Amy Right",
+            "is_auto_label": False,
+            "bbox": {"x": 200, "y": 40, "width": 50, "height": 60},
+        },
+        {
+            "identity_id": "id-zoe",
+            "media_id": 1,
+            "cluster_label": "Zoe Left",
+            "is_auto_label": False,
+            "bbox": {"x": 10, "y": 40, "width": 50, "height": 60},
+        },
+    ]
+    identities, face_count = _extract_identities(payload, media_id=1)
+    assert face_count == 2
+    assert [row["name"] for row in identities] == ["Zoe Left", "Amy Right"]
+    assert identities[0]["bbox"] == {"x": 10, "y": 40, "width": 50, "height": 60}
+    assert identities[1]["bbox"] == {"x": 200, "y": 40, "width": 50, "height": 60}
+    assert all(row["unpositioned"] is False for row in identities)
+
+
+def test_extract_identities_unpositioned_after_positioned_no_fabricated_bbox():
+    """Missing/malformed bbox rows stay, mark unpositioned, sort after positioned (rg-015)."""
+    from scripts.eval_harness.cli import _extract_identities
+
+    payload = [
+        {
+            "identity_id": "id-bad",
+            "media_id": 1,
+            "cluster_label": "Charlie Missing",
+            "is_auto_label": False,
+            "bbox": {"x": 5, "y": 5, "w": 10, "h": 10},  # w/h never accepted
+        },
+        {
+            "identity_id": "id-ok",
+            "media_id": 1,
+            "cluster_label": "Bob Placed",
+            "is_auto_label": False,
+            "bbox": {"x": 80, "y": 10, "width": 40, "height": 40},
+        },
+        {
+            "identity_id": "id-none",
+            "media_id": 1,
+            "cluster_label": "Alice NoBox",
+            "is_auto_label": False,
+            # bbox absent
+        },
+    ]
+    identities, face_count = _extract_identities(payload, media_id=1)
+    assert face_count == 3
+    assert [row["name"] for row in identities] == [
+        "Bob Placed",
+        "Alice NoBox",
+        "Charlie Missing",
+    ]
+    assert identities[0]["unpositioned"] is False
+    assert identities[0]["bbox"] == {"x": 80, "y": 10, "width": 40, "height": 40}
+    assert identities[1]["unpositioned"] is True and identities[1]["bbox"] is None
+    assert identities[2]["unpositioned"] is True and identities[2]["bbox"] is None
 
 
 def test_fetch_resolves_nfd_image_path(tmp_path):  # S6-03 / S7-01

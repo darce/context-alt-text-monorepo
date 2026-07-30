@@ -1505,3 +1505,144 @@ def test_latency_section_and_markdown_line_render_when_timed():
     }
     assert "- latency: per-image wall-clock p50 1.1s p95 3.2s (2 timed)" in md
     assert build_reports(record, entries) == build_reports(record, entries)  # determinism holds
+
+
+# --- Identity shape normalizer (dict rows vs legacy name strings) ------------
+
+
+def _dict_identity(name: str, *, x: float = 10.0) -> dict:
+    """Positional identity row written by cli._extract_identities after A1."""
+    return {
+        "name": name,
+        "bbox": {"x": x, "y": 40.0, "width": 50.0, "height": 60.0},
+        "unpositioned": False,
+    }
+
+
+def _identity_scoring_pair() -> tuple[dict, list[dict]]:
+    """Alice correctly named + Bob misnamed as Alice — same labels as _run_record."""
+    record = {
+        "schema": "acx-eval/v1",
+        "kind": "run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "base_url": "https://api.example.com",
+            "head_sha": "0" * 40,
+            "started_at": "2026-07-06T00:00:00Z",
+        },
+        "items": [
+            {
+                "media_id": 1,
+                "path": "mock_images/alice-pool.jpg",
+                "describe": {
+                    "alt_text_draft": "Alice Example relaxes by a pool.",
+                    "visual_facts": {"caption": "a person by a pool", "objects": ["pool", "person"]},
+                    "adapter": "seeded",
+                    "model_id": "seeded-fixtures",
+                    "model_version": "1",
+                    "cached": False,
+                },
+                "identities": [_dict_identity("Alice Example", x=10.0)],
+                "face_count": 1,
+                "error": None,
+            },
+            {
+                "media_id": 2,
+                "path": "mock_images/bob-beach.jpg",
+                "describe": {
+                    "alt_text_draft": "A man on a beach.",
+                    "visual_facts": {"caption": "a man on a beach", "objects": ["beach"]},
+                    "adapter": "seeded",
+                    "model_id": "seeded-fixtures",
+                    "model_version": "1",
+                    "cached": True,
+                },
+                "identities": [_dict_identity("Alice Example", x=80.0)],  # wrong name: Bob labeled
+                "face_count": 1,
+                "error": None,
+            },
+        ],
+    }
+    entries = [
+        {
+            "path": "mock_images/alice-pool.jpg",
+            "media_id": 1,
+            "face_count": 1,
+            "present_identities": ["Alice Example"],
+            "must_right": ["Alice Example"],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+        },
+        {
+            "path": "mock_images/bob-beach.jpg",
+            "media_id": 2,
+            "face_count": 1,
+            "present_identities": ["Bob Builder"],
+            "must_right": [],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+        },
+    ]
+    return record, entries
+
+
+def test_score_run_record_identity_metrics_with_dict_shape():  # TEST-15
+    """New _extract_identities dict rows must score as name strings (not TypeError).
+
+    report.py used to pass raw dicts into ImageIdentities.predicted (Sequence[str]);
+    face_metrics then does set(predicted) and dies with unhashable dict.
+    """
+    record, entries = _identity_scoring_pair()
+    scored = score_run_record(record, entries)
+    ident = scored["faces"]["identification"]
+    assert ident["wrong_names"] == [["mock_images/bob-beach.jpg", "Alice Example"]]
+    # Alice: TP on image 1, FP on image 2 (wrong-name hit). Bob: FN (never named).
+    alice = ident["per_identity"]["Alice Example"]
+    assert alice["tp"] == 1 and alice["fp"] == 1 and alice["fn"] == 0
+    bob = ident["per_identity"]["Bob Builder"]
+    assert bob["tp"] == 0 and bob["fp"] == 0 and bob["fn"] == 1
+
+
+def test_score_run_record_identity_metrics_legacy_string_shape():
+    """Committed benchmarks/ older JSONL rows hold plain name strings — still score."""
+    record, entries = _identity_scoring_pair()
+    for item in record["items"]:
+        item["identities"] = [row["name"] for row in item["identities"]]
+    scored = score_run_record(record, entries)
+    ident = scored["faces"]["identification"]
+    assert ident["wrong_names"] == [["mock_images/bob-beach.jpg", "Alice Example"]]
+    alice = ident["per_identity"]["Alice Example"]
+    assert alice["tp"] == 1 and alice["fp"] == 1 and alice["fn"] == 0
+    bob = ident["per_identity"]["Bob Builder"]
+    assert bob["tp"] == 0 and bob["fp"] == 0 and bob["fn"] == 1
+
+    # Byte-identical identification block for dict vs string shapes on same labels.
+    dict_record, dict_entries = _identity_scoring_pair()
+    scored_dict = score_run_record(dict_record, dict_entries)
+    assert scored["faces"]["identification"] == scored_dict["faces"]["identification"]
+
+
+def test_identity_names_preserves_left_to_right_not_alphabetical():
+    """Normalizer keeps stored L→R order even when it disagrees with alphabetical."""
+    from scripts.eval_harness.cli import identity_names
+
+    # Alphabetical: Amy Right, Zoe Left. Stored left-to-right: Zoe then Amy.
+    raw = [
+        _dict_identity("Zoe Left", x=10.0),
+        _dict_identity("Amy Right", x=200.0),
+    ]
+    assert identity_names(raw) == ["Zoe Left", "Amy Right"]
+    assert identity_names(raw) != sorted(identity_names(raw))
+    # Legacy strings keep order too.
+    assert identity_names(["Zoe Left", "Amy Right"]) == ["Zoe Left", "Amy Right"]
+    # Skip junk; never coerce.
+    assert identity_names(
+        [
+            _dict_identity("Keep Me"),
+            {"name": "", "bbox": None, "unpositioned": True},
+            {"bbox": None, "unpositioned": True},  # no name
+            None,
+            42,
+            "Also Keep",
+        ]
+    ) == ["Keep Me", "Also Keep"]

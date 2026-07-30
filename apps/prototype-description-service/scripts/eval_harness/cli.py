@@ -250,8 +250,8 @@ def fetch_run_record(
             job_id = client.analyze([(entry.media_id, image_path.name, image_bytes)])
             client.wait_job(job_id)
             identities_payload = client.media_identities([entry.media_id])
-            names, face_count = _extract_identities(identities_payload, entry.media_id)
-            item["identities"] = names
+            identities, face_count = _extract_identities(identities_payload, entry.media_id)
+            item["identities"] = identities
             item["face_count"] = face_count
         except Exception as exc:  # noqa: BLE001 — per-item isolation is the contract (rg-007)
             item["error"] = f"{type(exc).__name__}: {exc}"
@@ -291,32 +291,97 @@ def fetch_run_record(
     return _record()
 
 
-def _extract_identities(payload: Any, media_id: int) -> tuple[list[str], int]:
-    """Normalize /media/identities rows for one media_id -> (names, face_count).
+def _parse_identity_bbox(raw: Any) -> dict[str, int | float] | None:
+    """Validate wire bbox {x, y, width, height}; never invent or accept w/h aliases (rg-015)."""
+    if not isinstance(raw, dict):
+        return None
+    try:
+        x, y, width, height = raw["x"], raw["y"], raw["width"], raw["height"]
+    except KeyError:
+        return None
+    if not all(
+        isinstance(v, (int, float)) and not isinstance(v, bool) for v in (x, y, width, height)
+    ):
+        return None
+    return {"x": x, "y": y, "width": width, "height": height}
+
+
+def identity_names(identities: object) -> list[str]:
+    """Turn stored ``identities`` into an ordered list of name strings.
+
+    Accepts both shapes written into run records / JSONL:
+
+    * New positional dict rows from ``_extract_identities``:
+      ``{"name", "bbox", "unpositioned"}``.
+    * Legacy plain name strings (committed ``benchmarks/`` results and older
+      JSONL rows) so historical records still score.
+
+    Left-to-right order is preserved — never re-sorted alphabetically. Entries
+    that are neither a string nor a dict with a truthy ``name`` are skipped,
+    never coerced.
+    """
+    if not isinstance(identities, list):
+        return []
+    names: list[str] = []
+    for entry in identities:
+        if isinstance(entry, str):
+            names.append(entry)
+        elif isinstance(entry, dict):
+            name = entry.get("name")
+            if name:
+                names.append(str(name))
+    return names
+
+
+def _extract_identities(payload: Any, media_id: int) -> tuple[list[dict[str, Any]], int]:
+    """Normalize /media/identities rows for one media_id -> (identities, face_count).
 
     Wire shape (MediaIdentityService.list_by_media_ids): each row carries
     ``cluster_label`` and ``is_auto_label`` (inverted ``user_confirmed``). There
     is no ``user_confirmed`` key on this route — filter confirmed labels via
     ``is_auto_label is not True`` (S8-01 / rg-005).
+
+    Confirmed names are bound to faces by left-to-right bbox position (ascending x,
+    then y, then name). Each entry carries its bbox; rows with missing/malformed
+    bbox are kept, marked unpositioned, and sorted after positioned rows — never
+    dropped and never given a fabricated bbox (rg-015).
     """
     if not isinstance(payload, list):
         raise RemoteClientError(
             f"media_identities returned {type(payload).__name__}, expected a list of "
             "identity rows (rg-015) — per-item isolation records this as an item error"
         )
-    rows = payload
-    names: list[str] = []
+    positioned: list[tuple[int | float, int | float, str, dict[str, Any]]] = []
+    unpositioned: list[tuple[str, dict[str, Any]]] = []
     face_count = 0
-    for row in rows:
+    for row in payload:
         if not isinstance(row, dict) or int(row.get("media_id", -1)) != media_id:
             continue
         face_count += 1
         label = row.get("cluster_label") or row.get("label") or row.get("name")
         # Confirmed labels only: is_auto_label True => auto-propagated, skip.
         # Missing key treated as confirmed (legacy/test fixtures without the field).
-        if label and row.get("is_auto_label") is not True:
-            names.append(str(label))
-    return sorted(set(names)), face_count
+        if not label or row.get("is_auto_label") is True:
+            continue
+        name = str(label)
+        bbox = _parse_identity_bbox(row.get("bbox"))
+        if bbox is None:
+            unpositioned.append(
+                (name, {"name": name, "bbox": None, "unpositioned": True})
+            )
+        else:
+            positioned.append(
+                (
+                    bbox["x"],
+                    bbox["y"],
+                    name,
+                    {"name": name, "bbox": bbox, "unpositioned": False},
+                )
+            )
+    positioned.sort(key=lambda t: (t[0], t[1], t[2]))
+    unpositioned.sort(key=lambda t: t[0])
+    identities = [t[-1] for t in positioned] + [t[1] for t in unpositioned]
+    return identities, face_count
 
 
 def _manifest_sha(manifest: GoldenManifest) -> str:

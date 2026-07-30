@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 
@@ -324,7 +324,7 @@ describe('RosterEntriesTable', () => {
             identity_id: 'identity-sarah-rep',
             media_id: 501,
             media_url: 'https://example.com/sarah-rep.jpg',
-            bbox: [0.1, 0.2, 0.3, 0.4],
+            bbox: { x: 10, y: 20, width: 30, height: 40 },
             similarity: 0.95,
           },
           instances: [],
@@ -336,7 +336,7 @@ describe('RosterEntriesTable', () => {
             identity_id: 'identity-wrong-face',
             media_id: 900,
             media_url: 'https://example.com/wrong-face.jpg',
-            bbox: [0.1, 0.2, 0.3, 0.4],
+            bbox: { x: 10, y: 20, width: 30, height: 40 },
             similarity: 0.5,
           },
           instances: [],
@@ -344,17 +344,81 @@ describe('RosterEntriesTable', () => {
       ],
     });
 
-    it('renders the highest-identity_count cluster representative face for a person with clusters [TEST-06]', () => {
+    it('renders the highest-identity_count cluster representative face for a person with clusters [TEST-06]', async () => {
       render(<RosterEntriesTable entries={[sarahWithFace]} />);
 
       const row = rowForTag('fixture-face-sarah');
-      const face = row.querySelector('img[data-identity-id="identity-sarah-rep"]');
-      expect(face).not.toBeNull();
-      expect(face).toHaveAttribute('src', 'https://example.com/sarah-rep.jpg');
+      // Default IntersectionObserver auto-intersects; without a canvas mock the
+      // Image onerror path falls back to the raw media_url — still the selected rep.
+      const face = await waitFor(() => {
+        const el = row.querySelector('img[data-identity-id="identity-sarah-rep"]');
+        expect(el).not.toBeNull();
+        return el as HTMLImageElement;
+      });
       expect(face).toHaveAttribute('data-media-id', '501');
       // Discrimination: must NOT show the lower-count cluster's face.
       expect(row.querySelector('img[data-identity-id="identity-wrong-face"]')).toBeNull();
       expect(row.querySelector('img[src="https://example.com/wrong-face.jpg"]')).toBeNull();
+    });
+
+    it('renders a cropped data: src when the representative has a pixel bbox [COG-02]', async () => {
+      // Same canvas/Image harness as IdentityThumbnail lazy-crop tests — DirectoryFace
+      // must pass bbox through so the crop path produces a data: URL, not media_url.
+      const OriginalImage = globalThis.Image;
+      /* Prototype method refs restored after the test; not invoked unbound. */
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- restore only
+      const originalGetContext = HTMLCanvasElement.prototype.getContext;
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- restore only
+      const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+
+      class MockImage {
+        onload: ((this: GlobalEventHandlers, ev: Event) => unknown) | null = null;
+        onerror: ((this: GlobalEventHandlers, ev: Event) => unknown) | null = null;
+        crossOrigin = '';
+        naturalWidth = 200;
+        naturalHeight = 200;
+        width = 200;
+        height = 200;
+        private _src = '';
+        get src(): string {
+          return this._src;
+        }
+        set src(value: string) {
+          this._src = value;
+          queueMicrotask(() => {
+            const handler = this.onload;
+            if (handler) {
+              handler.call(this as unknown as GlobalEventHandlers, new Event('load'));
+            }
+          });
+        }
+      }
+      globalThis.Image = MockImage as unknown as typeof Image;
+      HTMLCanvasElement.prototype.getContext = vi.fn(() => ({
+        clearRect: vi.fn(),
+        drawImage: vi.fn(),
+      })) as unknown as typeof HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.toDataURL = vi.fn(() => 'data:image/jpeg;base64,directory-face-crop');
+
+      try {
+        render(<RosterEntriesTable entries={[sarahWithFace]} />);
+        // Flush MockImage onload microtask + React state (waitFor alone can miss it).
+        await act(async () => {
+          await Promise.resolve();
+          await Promise.resolve();
+          await new Promise((r) => setTimeout(r, 0));
+        });
+        const row = rowForTag('fixture-face-sarah');
+        const face = row.querySelector('img[data-identity-id="identity-sarah-rep"]');
+        expect(face).not.toBeNull();
+        // Must not paint the raw full-scene media_url when a crop is available.
+        expect(face).toHaveAttribute('src', 'data:image/jpeg;base64,directory-face-crop');
+        expect(face!.getAttribute('src')?.startsWith('data:')).toBe(true);
+      } finally {
+        globalThis.Image = OriginalImage;
+        HTMLCanvasElement.prototype.getContext = originalGetContext;
+        HTMLCanvasElement.prototype.toDataURL = originalToDataURL;
+      }
     });
 
     it('selects the highest-identity_count cluster when it is neither first nor last [TEST-15]', () => {
@@ -458,16 +522,21 @@ describe('RosterEntriesTable', () => {
       expect(row.querySelector('img[data-identity-id="identity-from-b"]')).toBeNull();
     });
 
-    it('picks the same representative across a rerender (deterministic)', () => {
+    it('picks the same representative across a rerender (deterministic)', async () => {
       const { rerender } = render(<RosterEntriesTable entries={[sarahWithFace]} />);
-      const first = rowForTag('fixture-face-sarah').querySelector('img');
-      expect(first).toHaveAttribute('data-identity-id', 'identity-sarah-rep');
-      expect(first).toHaveAttribute('src', 'https://example.com/sarah-rep.jpg');
+      const first = await waitFor(() => {
+        const el = rowForTag('fixture-face-sarah').querySelector('img');
+        expect(el).toHaveAttribute('data-identity-id', 'identity-sarah-rep');
+        return el!;
+      });
 
       rerender(<RosterEntriesTable entries={[sarahWithFace]} />);
-      const second = rowForTag('fixture-face-sarah').querySelector('img');
-      expect(second).toHaveAttribute('data-identity-id', 'identity-sarah-rep');
-      expect(second).toHaveAttribute('src', 'https://example.com/sarah-rep.jpg');
+      const second = await waitFor(() => {
+        const el = rowForTag('fixture-face-sarah').querySelector('img');
+        expect(el).toHaveAttribute('data-identity-id', 'identity-sarah-rep');
+        return el!;
+      });
+      expect(second.getAttribute('data-identity-id')).toBe(first.getAttribute('data-identity-id'));
     });
 
     it('renders a deliberate no-face placeholder when the person has zero clusters', () => {
@@ -541,12 +610,15 @@ describe('RosterEntriesTable', () => {
       expect(row.querySelector('.acx-cluster-card__face--placeholder[data-face-missing="true"]')).not.toBeNull();
     });
 
-    it('does not announce the face as a duplicate of the person name [A11Y-21]', () => {
+    it('does not announce the face as a duplicate of the person name [A11Y-21]', async () => {
       render(<RosterEntriesTable entries={[sarahWithFace]} />);
 
       const row = rowForTag('fixture-face-sarah');
-      const face = row.querySelector('img');
-      expect(face).not.toBeNull();
+      const face = await waitFor(() => {
+        const el = row.querySelector('img');
+        expect(el).not.toBeNull();
+        return el!;
+      });
       // Decorative: empty alt so the name cell carries the row [A11Y-21].
       expect(face).toHaveAttribute('alt', '');
 
@@ -554,7 +626,7 @@ describe('RosterEntriesTable', () => {
       const nameMatches = (row.textContent ?? '').match(/Sarah/g) ?? [];
       // textContent excludes alt; use accessible name via the name cell + img role.
       // Empty-alt images are presentational — they must not contribute a second "Sarah".
-      expect(face!.getAttribute('alt')).not.toContain('Sarah');
+      expect(face.getAttribute('alt')).not.toContain('Sarah');
       // The visible name appears once in the identity cell text.
       expect(nameMatches.filter((m) => m === 'Sarah')).toHaveLength(1);
     });

@@ -15,7 +15,7 @@ export interface ThumbnailIdentity {
   thumb_url?: string | null;
   /** Full-media URL when no dedicated thumb_url (RosterEntryInstance path). */
   media_url?: string | null;
-  /** Object-form bbox only (ClusterIdentity). Array-form roster bboxes are omitted. */
+  /** Pixel-space face bbox. Null/absent → no canvas crop. */
   bbox?: { x: number; y: number; width: number; height: number } | null;
 }
 
@@ -41,7 +41,41 @@ export const IdentityThumbnail = ({
   alt,
 }: IdentityThumbnailProps): React.JSX.Element => {
   const [croppedSrc, setCroppedSrc] = React.useState<string | null>(null);
+  const [isIntersecting, setIsIntersecting] = React.useState(false);
+  const hostRef = React.useRef<HTMLSpanElement | null>(null);
   const sourceUrl = mediaMeta?.url ?? identity.media_url ?? null;
+
+  // Canvas crop path only (no thumb_url). thumb_url / bare media_url skip the
+  // observer and do not construct Image().
+  const needsCanvasCrop = !identity.thumb_url && Boolean(sourceUrl) && Boolean(identity.bbox);
+
+  React.useEffect(() => {
+    if (!needsCanvasCrop) {
+      setIsIntersecting(false);
+      return;
+    }
+
+    const host = hostRef.current;
+    if (!host) {
+      return;
+    }
+
+    if (typeof IntersectionObserver === 'undefined') {
+      setIsIntersecting(true);
+      return;
+    }
+
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setIsIntersecting(true);
+        observer.disconnect();
+      }
+    });
+    observer.observe(host);
+    return () => {
+      observer.disconnect();
+    };
+  }, [needsCanvasCrop]);
 
   React.useEffect(() => {
     if (identity.thumb_url) {
@@ -56,11 +90,16 @@ export const IdentityThumbnail = ({
       setCroppedSrc(sourceUrl);
       return;
     }
+    // Defer full-res Image construction until the thumb is on-screen.
+    if (!isIntersecting) {
+      setCroppedSrc(null);
+      return;
+    }
+
     let cancelled = false;
     const bbox = identity.bbox;
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    img.src = sourceUrl;
 
     const draw = () => {
       if (cancelled) {
@@ -81,8 +120,8 @@ export const IdentityThumbnail = ({
       const naturalHeight = img.naturalHeight || img.height;
       const originalWidth = mediaMeta?.width ?? naturalWidth;
       const originalHeight = mediaMeta?.height ?? naturalHeight;
-      const scaleX = naturalWidth / originalWidth;
-      const scaleY = naturalHeight / originalHeight;
+      const scaleX = naturalWidth / originalWidth || 1;
+      const scaleY = naturalHeight / originalHeight || 1;
 
       const scaledX = bbox.x * scaleX;
       const scaledY = bbox.y * scaleY;
@@ -121,43 +160,78 @@ export const IdentityThumbnail = ({
       setCroppedSrc(canvas.toDataURL('image/jpeg', 0.92));
     };
 
+    // Assign handlers before src so load/error cannot race past the bindings.
     img.onload = draw;
-    img.onerror = () => setCroppedSrc(sourceUrl);
+    img.onerror = () => {
+      if (!cancelled) {
+        setCroppedSrc(sourceUrl);
+      }
+    };
+    img.src = sourceUrl;
 
     return () => {
       cancelled = true;
     };
-  }, [identity.thumb_url, identity.bbox, identity.media_url, mediaMeta?.height, mediaMeta?.url, mediaMeta?.width, size, sourceUrl]);
+  }, [
+    identity.thumb_url,
+    identity.bbox,
+    identity.media_url,
+    isIntersecting,
+    mediaMeta?.height,
+    mediaMeta?.url,
+    mediaMeta?.width,
+    size,
+    sourceUrl,
+  ]);
 
-  const resolvedSrc = identity.thumb_url ?? croppedSrc ?? sourceUrl;
+  // Before the canvas-crop host intersects, keep a sized placeholder so rows
+  // do not eagerly download full-res photos and do not shift height [PERC-02].
+  const resolvedSrc =
+    identity.thumb_url ?? croppedSrc ?? (needsCanvasCrop && !isIntersecting ? null : sourceUrl);
   const resolvedAlt = alt ?? sprintf(__('Identity from media %d', 'alt-context'), identity.media_id);
 
   if (!resolvedSrc) {
     // Sized via the size prop (inline, no CSS file) so rows with/without faces
     // share height [PERC-02]. data-face-missing distinguishes "no face on file"
-    // from a real photo an operator does not recognise.
+    // from a real photo an operator does not recognise — only when there is
+    // genuinely no media; pending intersection reuses the same box without
+    // the missing flag so layout stays stable while the crop waits.
+    //
+    // Pending crop [A11Y-02]: when resolvedAlt is non-empty the placeholder is
+    // the sole content of wrapping links (e.g. ClusterDrawerPanel), so it must
+    // expose role=img + aria-label. Decorative alt="" stays aria-hidden.
+    // Genuinely-missing media keeps aria-hidden + data-face-missing unchanged.
+    const pendingCrop = needsCanvasCrop && !isIntersecting;
+    const namedPending = pendingCrop && resolvedAlt !== '';
     return (
-      <div
-        className="acx-cluster-card__face--placeholder"
-        aria-hidden="true"
-        data-face-missing="true"
-        style={{ width: size, height: size, display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}
-      />
+      <span ref={hostRef} style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}>
+        <div
+          className="acx-cluster-card__face--placeholder"
+          role={namedPending ? 'img' : undefined}
+          aria-label={namedPending ? resolvedAlt : undefined}
+          aria-hidden={namedPending ? undefined : 'true'}
+          data-face-missing={pendingCrop ? undefined : 'true'}
+          data-face-pending={pendingCrop ? 'true' : undefined}
+          style={{ width: size, height: size, display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}
+        />
+      </span>
     );
   }
 
   return (
-    <img
-      src={resolvedSrc}
-      alt={resolvedAlt}
-      width={size}
-      height={size}
-      className="acx-cluster-card__thumb"
-      data-identity-id={identity.identity_id}
-      data-media-id={identity.media_id}
-      onClick={onClick}
-      loading="lazy"
-    />
+    <span ref={hostRef} style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}>
+      <img
+        src={resolvedSrc}
+        alt={resolvedAlt}
+        width={size}
+        height={size}
+        className="acx-cluster-card__thumb"
+        data-identity-id={identity.identity_id}
+        data-media-id={identity.media_id}
+        onClick={onClick}
+        loading="lazy"
+      />
+    </span>
   );
 };
 

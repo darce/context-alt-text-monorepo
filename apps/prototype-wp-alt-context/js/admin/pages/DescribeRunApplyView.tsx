@@ -100,7 +100,14 @@ const buildApplyResultText = (
     parts.push(sprintf(__('%d had no draft.', 'alt-context'), data.skipped_no_draft.length));
   }
   if (data.failed.length > 0) {
-    parts.push(sprintf(__('%d failed to write.', 'alt-context'), data.failed.length));
+    // R21-BR-09: bulk `failed` after an alt-landed provenance/marker miss is
+    // not "nothing written" — alt may already be stored. Keep copy honest.
+    parts.push(
+      sprintf(
+        __('%d could not finish (alt may already be saved; provenance incomplete).', 'alt-context'),
+        data.failed.length,
+      ),
+    );
   }
   if (data.skipped_invalid.length > 0) {
     parts.push(

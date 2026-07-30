@@ -38,8 +38,9 @@ final class AltTextWriteStatus {
 	public const DRY_RUN = 'dry_run';
 
 	/**
-	 * Partial reason: alt written, provenance stamp failed → item is absent
-	 * from history and needs retry (BR-08 / class-describe-media-service).
+	 * Partial reason: provenance stamp or draft-key heal failed.
+	 * Covers two shapes — see the two-shapes note on {@see self::PARTIAL_REASONS};
+	 * does not by itself imply the item is absent from history.
 	 * Emitted by both REST describe and CLI generate when provenance fails.
 	 */
 	public const REASON_PROVENANCE_WRITE_FAILED = 'provenance_write_failed';
@@ -135,9 +136,12 @@ final class AltTextWriteStatus {
 	 *
 	 * Correspondence to per-item {@see self} outcomes the apply loop produces:
 	 * - applied          ← full success (alt + provenance verified); single-item
-	 *                      analogues: WRITTEN / FORCED_OVERWRITE
+	 *                      analogues: WRITTEN / FORCED_OVERWRITE / PROVENANCE_HEALED
+	 *                      (non-clobber completion path buckets applied)
 	 * - partial          ← PARTIAL (alt landed, provenance did not; marker verified)
-	 * - skipped_existing ← SKIPPED_EXISTING_ALT (guard / CAS abort)
+	 * - skipped_existing ← SKIPPED_EXISTING_ALT (guard / CAS abort); also bulk-only
+	 *                      BR-119 non-string alt meta (no single-item analogue —
+	 *                      REST single casts a non-string alt to '' and proceeds)
 	 * - skipped_no_draft ← empty draft (single-item: SKIPPED_EMPTY_ALT_TEXT)
 	 * - skipped_invalid  ← non-attachment media_id (bulk-only; no single-item status)
 	 * - failed           ← FAILED (alt write fail, or marker plant unverified)

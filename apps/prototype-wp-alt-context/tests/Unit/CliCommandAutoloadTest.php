@@ -7,13 +7,24 @@ namespace AltContext\Tests\Unit;
 use AltContext\Tests\TestCase;
 
 /**
- * R20-BR-26: all six WP-CLI command entry files must be require_once'd in the
- * alt-context.php WP_CLI block so a stale Composer classmap cannot fatal
- * `acx_register_cli_commands()` with "Class not found".
+ * R20-BR-26 / R21-BR-11: all six WP-CLI command entry files must be require_once'd
+ * in the alt-context.php WP_CLI block so a stale Composer classmap cannot leave
+ * the command classes undeclared when `acx_register_cli_commands()` runs.
  *
- * Discovery-only probe: stub WP_CLI_Command, require only the paths listed in
- * the production WP_CLI block (no Composer autoloader), assert every registered
- * command class declares.
+ * Defence model:
+ * - Composer classmap (`classmap: ['src/']`) is the PRIMARY defence for
+ *   constructor-time dependency chains (e.g. DescriptionRefreshCommand →
+ *   DescriptionContentRefreshService). The shipped plugin resolves those via
+ *   vendor/composer/autoload_classmap.php.
+ * - The WP_CLI require_once block is defence in depth for the six command entry
+ *   classes so a stale classmap cannot leave them undeclared before registration.
+ *
+ * Cold probe:
+ * 1. Require only the paths listed in the production WP_CLI block (no freeride).
+ * 2. Assert every registered command class is declared with autoload=false.
+ * 3. Load the Composer classmap (primary defence) and instantiate each command
+ *    class — the same work `acx_register_cli_commands()` performs — so a missing
+ *    constructor-time dependency reddens this suite.
  *
  * @coversNothing
  */
@@ -94,6 +105,9 @@ class CliCommandAutoloadTest extends TestCase
         $paths = $pathMatches[1];
         self::assertNotEmpty($paths, 'WP_CLI block must contain require_once lines');
 
+        $autoload = realpath($pluginDir . '/vendor/autoload.php');
+        self::assertIsString($autoload, 'vendor/autoload.php must exist for constructor-chain coverage');
+
         $requires = '';
         foreach ($paths as $path) {
             $requires .= sprintf("require_once %s;\n", var_export($pluginDir . '/' . $path, true));
@@ -108,12 +122,24 @@ class CliCommandAutoloadTest extends TestCase
             );
         }
 
+        // R21-BR-11: mirror acx_register_cli_commands() instantiation after the
+        // require block has declared the entry classes. Composer classmap is the
+        // primary defence for constructor-time deps; require block is defence in depth.
+        $instantiations = "require_once " . var_export($autoload, true) . ";\n";
+        foreach (self::CLI_COMMAND_CLASSES as $fqcn) {
+            $instantiations .= sprintf(
+                "new %s();\n",
+                $fqcn
+            );
+        }
+
         $script = "<?php\n"
             . "if (!class_exists('WP_CLI_Command', false)) {\n"
             . "    class WP_CLI_Command {}\n"
             . "}\n"
             . $requires
             . $checks
+            . $instantiations
             . "echo 'ok';\n";
 
         $tmp = tempnam(sys_get_temp_dir(), 'acx_cli_autoload_');
@@ -125,8 +151,9 @@ class CliCommandAutoloadTest extends TestCase
         $this->assertSame(
             'ok',
             $output,
-            'The WP_CLI require block must declare all six command classes with no Composer '
-                . 'autoloader present; got: ' . var_export($output, true)
+            'The WP_CLI require block must declare all six command classes and their '
+                . 'constructors must be instantiable (classmap primary for ctor deps); got: '
+                . var_export($output, true)
         );
     }
 }

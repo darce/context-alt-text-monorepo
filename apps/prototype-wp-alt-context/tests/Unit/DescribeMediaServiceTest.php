@@ -2186,6 +2186,45 @@ class DescribeMediaServiceTest extends TestCase
     }
 
     /**
+     * R21-BR-01: skip_existing must NOT wipe a LIVE recovery marker
+     * (verified shape + draft_hash === sha256(stored alt)). Scenario: prior run
+     * landed the alt, provenance failed, marker planted; re-describe without
+     * force returns a different draft → skip_existing. Marker + history gap must
+     * survive so recovery remains possible.
+     */
+    public function testSkipExistingPreservesLiveProvenancePendingMarker(): void
+    {
+        $this->plantWritableAttachment(42);
+        $storedAlt = 'Machine-written alt with gap';
+        $liveMarker = array(
+            'run_id'     => 'single_image',
+            'draft_hash' => hash('sha256', $storedAlt),
+        );
+        $this->setPostMeta(42, '_wp_attachment_image_alt', $storedAlt);
+        $this->setPostMeta(42, '_acx_description_provenance_pending', $liveMarker);
+        // Backend returns a DIFFERENT draft so the gate is skip_existing.
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+
+        $result = $this->controller->describe_media($this->writeRequest(42, false));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame('skipped_existing_alt', $result->get_data()['alt_text_write']['status'] ?? null);
+        $this->assertSame($liveMarker, get_post_meta(42, '_acx_description_provenance_pending', true));
+
+        $GLOBALS['__ac_get_posts_results'] = [42];
+        $history = (new \AltContext\Api\Services\DescriptionHistoryService())->list_history(50);
+        $this->assertSame(1, $history['total'], 'live gap row must remain in history');
+        $this->assertArrayHasKey('provenance', $history['items'][0]);
+        $this->assertNull($history['items'][0]['provenance']);
+        $this->assertArrayHasKey('human_edit', $history['items'][0]);
+        $this->assertNull($history['items'][0]['human_edit']);
+        $this->assertSame($storedAlt, $history['items'][0]['current_alt_text'] ?? null);
+    }
+
+    /**
      * R20-BR-18: identity_complete heal SUCCESS must clear a stale pending marker.
      */
     public function testIdentityCompleteSuccessClearsStaleProvenancePendingMarker(): void
@@ -2267,10 +2306,39 @@ class DescribeMediaServiceTest extends TestCase
     }
 
     /**
-     * R20-BR-20: store accepts marker write but persists a divergent value →
-     * failed, not partial (verified-marker invariant).
+     * R20-BR-20 / R21-BR-03: store accepts marker write but persists a
+     * verified-SHAPE array with a WRONG draft_hash → failed. Pins the
+     * draft_hash match leg (not merely is_array / shape).
      */
     public function testMarkerWriteDivergentStoreReportsFailedNotPartial(): void
+    {
+        $this->plantWritableAttachment(42);
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+        $GLOBALS['__ac_update_post_meta_fail'][42]['_acx_description_provenance'] = true;
+        $divergent = array(
+            'run_id'     => 'wrong',
+            'draft_hash' => 'deadbeef',
+        );
+        $GLOBALS['__ac_update_post_meta_mutate'][42]['_acx_description_provenance_pending'] = $divergent;
+
+        $result = $this->controller->describe_media($this->writeRequest(42));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $write = $result->get_data()['alt_text_write'] ?? array();
+        $this->assertSame('failed', $write['status'] ?? null);
+        $this->assertNotSame('partial', $write['status'] ?? null);
+        $this->assertSame('A photo.', get_post_meta(42, '_wp_attachment_image_alt', true));
+        $this->assertSame($divergent, get_post_meta(42, '_acx_description_provenance_pending', true));
+    }
+
+    /**
+     * R21-BR-03: non-array divergent store fails the shape/is_array leg alone.
+     * Kept separate so both legs of marker acceptance redden independently.
+     */
+    public function testMarkerWriteNonArrayStoreReportsFailedNotPartial(): void
     {
         $this->plantWritableAttachment(42);
         $this->queueHttpResponse(array(
@@ -2286,9 +2354,92 @@ class DescribeMediaServiceTest extends TestCase
         $write = $result->get_data()['alt_text_write'] ?? array();
         $this->assertSame('failed', $write['status'] ?? null);
         $this->assertNotSame('partial', $write['status'] ?? null);
-        $this->assertSame('A photo.', get_post_meta(42, '_wp_attachment_image_alt', true));
-        // Divergent garbage must not be treated as a verified recovery marker.
         $this->assertSame('GARBAGE', get_post_meta(42, '_acx_description_provenance_pending', true));
+    }
+
+    /**
+     * R21-BR-04: provenance write returns non-false but stores a divergent
+     * ARRAY → not success. Must plant marker / report partial (not written).
+     * Fixture is array-shaped so the equality leg is what reddens.
+     */
+    public function testProvenanceWriteDivergentArrayStoreReportsPartialNotWritten(): void
+    {
+        $this->plantWritableAttachment(42);
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+        $GLOBALS['__ac_update_post_meta_mutate'][42]['_acx_description_provenance'] = array(
+            'adapter' => 'MUTATED_NOT_THIS_RUN',
+            'model_id' => 'wrong',
+        );
+
+        $result = $this->controller->describe_media($this->writeRequest(42));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $write = $result->get_data()['alt_text_write'] ?? array();
+        $this->assertSame('partial', $write['status'] ?? null);
+        $this->assertSame('provenance_write_failed', $write['reason'] ?? null);
+        $this->assertNotSame('written', $write['status'] ?? null);
+        $this->assertSame('A photo.', get_post_meta(42, '_wp_attachment_image_alt', true));
+        $pending = get_post_meta(42, '_acx_description_provenance_pending', true);
+        $this->assertIsArray($pending);
+        $this->assertSame(hash('sha256', 'A photo.'), $pending['draft_hash'] ?? null);
+    }
+
+    /**
+     * R21-BR-04 / R21-BR-03: non-array provenance store fails the is_array leg.
+     */
+    public function testProvenanceWriteNonArrayStoreReportsPartialNotWritten(): void
+    {
+        $this->plantWritableAttachment(42);
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+        $GLOBALS['__ac_update_post_meta_mutate'][42]['_acx_description_provenance'] = 'GARBAGE_PROV';
+
+        $result = $this->controller->describe_media($this->writeRequest(42));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $write = $result->get_data()['alt_text_write'] ?? array();
+        $this->assertSame('partial', $write['status'] ?? null);
+        $this->assertSame('provenance_write_failed', $write['reason'] ?? null);
+        $this->assertSame('GARBAGE_PROV', get_post_meta(42, '_acx_description_provenance', true));
+        $pending = get_post_meta(42, '_acx_description_provenance_pending', true);
+        $this->assertIsArray($pending);
+    }
+
+    /**
+     * R21-BR-08: pre-existing bulk marker with matching draft_hash is usable
+     * even when this path's plant fails (strict identity with single_image
+     * plant would spuriously report failed).
+     */
+    public function testMarkerAcceptsPreExistingSameDraftBulkMarkerWhenPlantFails(): void
+    {
+        $this->plantWritableAttachment(42);
+        $draft = 'A photo.';
+        $bulkMarker = array(
+            'run_id'     => '11111111-1111-1111-1111-111111111111',
+            'draft_hash' => hash('sha256', $draft),
+        );
+        $this->setPostMeta(42, '_acx_description_provenance_pending', $bulkMarker);
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+        $GLOBALS['__ac_update_post_meta_fail'][42]['_acx_description_provenance'] = true;
+        // Plant fails without clobbering the pre-existing bulk marker.
+        $GLOBALS['__ac_update_post_meta_fail'][42]['_acx_description_provenance_pending'] = true;
+
+        $result = $this->controller->describe_media($this->writeRequest(42, true));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $write = $result->get_data()['alt_text_write'] ?? array();
+        $this->assertSame('partial', $write['status'] ?? null);
+        $this->assertSame('provenance_write_failed', $write['reason'] ?? null);
+        $this->assertNotSame('failed', $write['status'] ?? null);
+        $this->assertSame($bulkMarker, get_post_meta(42, '_acx_description_provenance_pending', true));
     }
 
     /**

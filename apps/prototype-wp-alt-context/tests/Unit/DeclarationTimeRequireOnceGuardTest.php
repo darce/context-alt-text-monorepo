@@ -9,8 +9,6 @@ use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 use SplFileInfo;
 
-use function array_keys;
-use function array_merge;
 use function array_values;
 use function basename;
 use function class_exists;
@@ -24,7 +22,6 @@ use function in_array;
 use function interface_exists;
 use function is_array;
 use function is_dir;
-use function is_file;
 use function is_string;
 use function ltrim;
 use function preg_match;
@@ -32,7 +29,9 @@ use function preg_match_all;
 use function realpath;
 use function shell_exec;
 use function sprintf;
+use function str_contains;
 use function str_starts_with;
+use function substr;
 use function sys_get_temp_dir;
 use function token_get_all;
 use function trait_exists;
@@ -47,7 +46,9 @@ use function var_export;
  * type it names." Bootstrap-ordered freerides (admin SPA pages after
  * AbstractSpaPage, Admin after BatchLimits) are exempt when alt-context.php
  * loads the parent/trait before the child. File-scope `use` imports are not
- * declaration-time loads — only in-class-body trait `use` counts.
+ * themselves declaration-time loads — only in-class-body trait `use` counts —
+ * but file-scope aliases must still resolve header short names (extends /
+ * implements / trait use) to the imported symbol.
  *
  * @coversNothing
  */
@@ -505,6 +506,305 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
     }
 
     /**
+     * R21-BR-05: T_NAME_RELATIVE (`namespace\Foo`) is a real declaration-time
+     * dependency form for extends, implements, and in-body trait use.
+     */
+    public function testRelativeNameFormExtendsImplementsTraitUseAreFlagged(): void
+    {
+        $fixtureRoot = $this->makeFixtureRoot();
+        $this->writeFixture(
+            $fixtureRoot,
+            'class-parent-cls.php',
+            "<?php\nnamespace AltContext\\Support;\nclass ParentCls {}\n"
+        );
+        $this->writeFixture(
+            $fixtureRoot,
+            'interface-iface.php',
+            "<?php\nnamespace AltContext\\Support;\ninterface IFace {}\n"
+        );
+        $this->writeFixture(
+            $fixtureRoot,
+            'trait-t.php',
+            "<?php\nnamespace AltContext\\Support;\ntrait T {}\n"
+        );
+        $this->writeFixture(
+            $fixtureRoot,
+            'class-child.php',
+            "<?php\nnamespace AltContext\\Support;\n"
+            . "class Child extends namespace\\ParentCls implements namespace\\IFace {\n"
+            . "    use namespace\\T;\n"
+            . "}\n"
+        );
+
+        $gaps = $this->collectDeclarationTimeGaps($fixtureRoot);
+        $hasExtends = false;
+        $hasImplements = false;
+        $hasTrait = false;
+        foreach ($gaps as $gap) {
+            if (
+                str_contains($gap, 'class-child.php')
+                && str_contains($gap, 'extends')
+                && str_contains($gap, 'ParentCls')
+                && str_contains($gap, 'class-parent-cls.php')
+            ) {
+                $hasExtends = true;
+            }
+            if (
+                str_contains($gap, 'class-child.php')
+                && str_contains($gap, 'implements')
+                && str_contains($gap, 'IFace')
+                && str_contains($gap, 'interface-iface.php')
+            ) {
+                $hasImplements = true;
+            }
+            if (
+                str_contains($gap, 'class-child.php')
+                && str_contains($gap, 'use-trait')
+                && str_contains($gap, 'T')
+                && str_contains($gap, 'trait-t.php')
+            ) {
+                $hasTrait = true;
+            }
+        }
+        $this->assertTrue(
+            $hasExtends,
+            "Expected relative-form extends ParentCls gap; got:\n" . implode("\n", $gaps)
+        );
+        $this->assertTrue(
+            $hasImplements,
+            "Expected relative-form implements IFace gap; got:\n" . implode("\n", $gaps)
+        );
+        $this->assertTrue(
+            $hasTrait,
+            "Expected relative-form use-trait T gap; got:\n" . implode("\n", $gaps)
+        );
+    }
+
+    /**
+     * R21-BR-06 leg A: extends + implements sharing a short name must both
+     * survive collection — short-name map overwrite masks the first.
+     */
+    public function testShortNameCollisionExtendsImplementsIsNotMasked(): void
+    {
+        $fixtureRoot = $this->makeFixtureRoot();
+        $this->writeFixture(
+            $fixtureRoot,
+            'class-helper.php',
+            "<?php\nnamespace AltContext\\Ns1;\nclass Helper {}\n"
+        );
+        $this->writeFixture(
+            $fixtureRoot,
+            'interface-helper.php',
+            "<?php\nnamespace AltContext\\Ns2;\ninterface Helper {}\n"
+        );
+        // Only the interface is required — the class parent must still gap.
+        $this->writeFixture(
+            $fixtureRoot,
+            'class-collision-consumer.php',
+            "<?php\nnamespace AltContext\\App;\n"
+            . "require_once __DIR__ . '/interface-helper.php';\n"
+            . "class CollisionConsumer extends \\AltContext\\Ns1\\Helper implements \\AltContext\\Ns2\\Helper {}\n"
+        );
+
+        $gaps = $this->collectDeclarationTimeGaps($fixtureRoot);
+        $classParentReported = false;
+        foreach ($gaps as $gap) {
+            if (
+                str_contains($gap, 'class-collision-consumer.php')
+                && str_contains($gap, 'extends')
+                && str_contains($gap, 'Helper')
+                && str_contains($gap, 'class-helper.php')
+            ) {
+                $classParentReported = true;
+            }
+        }
+        $this->assertTrue(
+            $classParentReported,
+            "Short-name collision must not mask extends Helper (class) when implements Helper is required; gaps:\n"
+            . implode("\n", $gaps)
+        );
+    }
+
+    /**
+     * R21-BR-06 leg B: extends + in-body trait use sharing a short name must
+     * both survive — same overwrite bug, second write path.
+     */
+    public function testShortNameCollisionExtendsTraitUseIsNotMasked(): void
+    {
+        $fixtureRoot = $this->makeFixtureRoot();
+        $this->writeFixture(
+            $fixtureRoot,
+            'class-shared.php',
+            "<?php\nnamespace AltContext\\Support;\nclass Shared {}\n"
+        );
+        $this->writeFixture(
+            $fixtureRoot,
+            'trait-shared.php',
+            "<?php\nnamespace AltContext\\Support;\ntrait Shared {}\n"
+        );
+        $this->writeFixture(
+            $fixtureRoot,
+            'class-extends-and-trait.php',
+            "<?php\nnamespace AltContext\\Support;\n"
+            . "require_once __DIR__ . '/trait-shared.php';\n"
+            . "class ExtendsAndTrait extends Shared {\n"
+            . "    use Shared;\n"
+            . "}\n"
+        );
+
+        $gaps = $this->collectDeclarationTimeGaps($fixtureRoot);
+        $extendsReported = false;
+        foreach ($gaps as $gap) {
+            if (
+                str_contains($gap, 'class-extends-and-trait.php')
+                && str_contains($gap, 'extends')
+                && str_contains($gap, 'Shared')
+                && str_contains($gap, 'class-shared.php')
+            ) {
+                $extendsReported = true;
+            }
+        }
+        $this->assertTrue(
+            $extendsReported,
+            "Short-name collision must not mask extends Shared when trait use Shared is required; gaps:\n"
+            . implode("\n", $gaps)
+        );
+    }
+
+    /**
+     * R21-BR-07: file-scope import aliases must resolve header dep names.
+     * Covers plain, aliased, grouped, and grouped-aliased forms.
+     */
+    public function testFileScopeAliasResolvesHeaderDepNames(): void
+    {
+        $fixtureRoot = $this->makeFixtureRoot();
+        $this->writeFixture(
+            $fixtureRoot,
+            'class-base-class.php',
+            "<?php\nnamespace AltContext\\Support;\nclass BaseClass {}\n"
+        );
+        $this->writeFixture(
+            $fixtureRoot,
+            'interface-base-iface.php',
+            "<?php\nnamespace AltContext\\Support;\ninterface BaseIface {}\n"
+        );
+        $this->writeFixture(
+            $fixtureRoot,
+            'trait-base-trait.php',
+            "<?php\nnamespace AltContext\\Support;\ntrait BaseTrait {}\n"
+        );
+        $this->writeFixture(
+            $fixtureRoot,
+            'class-other-helper.php',
+            "<?php\nnamespace AltContext\\Support;\nclass OtherHelper {}\n"
+        );
+
+        // Grouped-aliased extends + plain-aliased implements + plain use-as for trait.
+        $this->writeFixture(
+            $fixtureRoot,
+            'class-aliased-child.php',
+            "<?php\nnamespace AltContext\\App;\n"
+            . "use AltContext\\Support\\{BaseClass as ParentAlias, OtherHelper};\n"
+            . "use AltContext\\Support\\BaseIface as IFaceAlias;\n"
+            . "use AltContext\\Support\\BaseTrait as TraitAlias;\n"
+            . "class AliasedChild extends ParentAlias implements IFaceAlias {\n"
+            . "    use TraitAlias;\n"
+            . "}\n"
+        );
+
+        $gaps = $this->collectDeclarationTimeGaps($fixtureRoot);
+        $hasExtends = false;
+        $hasImplements = false;
+        $hasTrait = false;
+        foreach ($gaps as $gap) {
+            if (
+                str_contains($gap, 'class-aliased-child.php')
+                && str_contains($gap, 'extends')
+                && str_contains($gap, 'BaseClass')
+                && str_contains($gap, 'class-base-class.php')
+            ) {
+                $hasExtends = true;
+            }
+            if (
+                str_contains($gap, 'class-aliased-child.php')
+                && str_contains($gap, 'implements')
+                && str_contains($gap, 'BaseIface')
+                && str_contains($gap, 'interface-base-iface.php')
+            ) {
+                $hasImplements = true;
+            }
+            if (
+                str_contains($gap, 'class-aliased-child.php')
+                && str_contains($gap, 'use-trait')
+                && str_contains($gap, 'BaseTrait')
+                && str_contains($gap, 'trait-base-trait.php')
+            ) {
+                $hasTrait = true;
+            }
+        }
+        $this->assertTrue(
+            $hasExtends,
+            "Aliased extends ParentAlias→BaseClass must gap; got:\n" . implode("\n", $gaps)
+        );
+        $this->assertTrue(
+            $hasImplements,
+            "Aliased implements IFaceAlias→BaseIface must gap; got:\n" . implode("\n", $gaps)
+        );
+        $this->assertTrue(
+            $hasTrait,
+            "Aliased use-trait TraitAlias→BaseTrait must gap; got:\n" . implode("\n", $gaps)
+        );
+
+        // OtherHelper is imported but not a declaration-time dep — must not appear.
+        foreach ($gaps as $gap) {
+            $this->assertStringNotContainsString(
+                'OtherHelper',
+                $gap,
+                'File-scope import without header use must not create a gap'
+            );
+        }
+    }
+
+    /**
+     * R21-BR-16: enum-*.php consumers with declaration-time implements must be scanned.
+     */
+    public function testEnumConsumerImplementsWithoutRequireOnceIsFlagged(): void
+    {
+        $fixtureRoot = $this->makeFixtureRoot();
+        $this->writeFixture(
+            $fixtureRoot,
+            'interface-has-label.php',
+            "<?php\nnamespace AltContext\\Support;\ninterface HasLabel {}\n"
+        );
+        $this->writeFixture(
+            $fixtureRoot,
+            'enum-status.php',
+            "<?php\nnamespace AltContext\\Support;\n"
+            . "enum Status implements HasLabel {\n"
+            . "    case Ready;\n"
+            . "}\n"
+        );
+
+        $gaps = $this->collectDeclarationTimeGaps($fixtureRoot);
+        $matched = false;
+        foreach ($gaps as $gap) {
+            if (
+                str_contains($gap, 'enum-status.php')
+                && str_contains($gap, 'implements')
+                && str_contains($gap, 'HasLabel')
+                && str_contains($gap, 'interface-has-label.php')
+            ) {
+                $matched = true;
+                break;
+            }
+        }
+        $this->assertTrue(
+            $matched,
+            "Expected enum-status.php implements HasLabel gap; got:\n" . implode("\n", $gaps)
+        );
+    }
+
+    /**
      * @return list<string>
      */
     private function collectDeclarationTimeGaps(string $scanRoot): array
@@ -534,7 +834,9 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
             $deps = $this->collectDeclarationTimeDeps($code);
             $rel = ltrim(str_replace($scanRoot, '', $path), '/');
 
-            foreach ($deps as $short => $context) {
+            foreach ($deps as $dep) {
+                $short = $dep['short'];
+                $context = $dep['context'];
                 if ($this->isExternalName($short)) {
                     continue;
                 }
@@ -661,12 +963,27 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
     }
 
     /**
-     * @return array<string, string> short name => context
+     * Name tokens accepted for declaration-time type references. Includes
+     * T_NAME_RELATIVE (`namespace\Foo`) which resolves against the file namespace.
+     *
+     * @var list<int>
+     */
+    private const NAME_TOKEN_IDS = [
+        T_STRING,
+        T_NAME_QUALIFIED,
+        T_NAME_FULLY_QUALIFIED,
+        T_NAME_RELATIVE,
+    ];
+
+    /**
+     * @return list<array{short: string, context: string}>
      */
     private function collectDeclarationTimeDeps(string $code): array
     {
         $tokens = token_get_all($code);
-        $deps = [];
+        // Keyed by "context\0short" so two relationships sharing a short name
+        // (extends Helper + implements Helper) cannot overwrite each other.
+        $depsByKey = [];
         $n = count($tokens);
         $brace_depth = 0;
         $class_brace = null;
@@ -675,6 +992,8 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
         $expect_ext = false;
         $expect_impl = false;
         $in_header = false;
+        $fileNamespace = '';
+        $aliases = [];
 
         for ($i = 0; $i < $n; $i++) {
             $t = $tokens[ $i ];
@@ -700,6 +1019,17 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
             }
 
             [ $id, $text ] = [ $t[0], $t[1] ];
+
+            if (T_NAMESPACE === $id) {
+                $fileNamespace = $this->parseNamespaceName($tokens, $i + 1, $n);
+                continue;
+            }
+
+            // File-scope imports: build alias map; not declaration-time loads.
+            if ( ! $in_class && T_USE === $id) {
+                $this->absorbFileScopeUse($tokens, $i, $n, $aliases);
+                continue;
+            }
 
             if (in_array($id, [ T_CLASS, T_INTERFACE, T_TRAIT, T_ENUM ], true)) {
                 $anon = false;
@@ -741,20 +1071,22 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
                 continue;
             }
 
-            if ($after_kw && in_array($id, [ T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED ], true)) {
+            if ($after_kw && in_array($id, self::NAME_TOKEN_IDS, true)) {
                 $after_kw = false;
                 continue;
             }
 
-            if ($in_header && ( $expect_ext || $expect_impl ) && in_array($id, [ T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED ], true)) {
-                $name = ltrim($text, '\\');
-                $parts = explode('\\', $name);
-                $short = end($parts);
-                $deps[ $short ] = $expect_ext ? 'extends' : 'implements';
+            if ($in_header && ( $expect_ext || $expect_impl ) && in_array($id, self::NAME_TOKEN_IDS, true)) {
+                $short = $this->resolveDepShortName($text, $fileNamespace, $aliases);
+                $context = $expect_ext ? 'extends' : 'implements';
+                $depsByKey[ $context . "\0" . $short ] = [
+                    'short' => $short,
+                    'context' => $context,
+                ];
             }
 
             // Trait use only inside class body at class brace depth.
-            // File-scope `use Foo\Bar;` has in_class=false.
+            // File-scope `use Foo\Bar;` has in_class=false (handled above).
             if ($in_class && $brace_depth === $class_brace && T_USE === $id) {
                 $expect_name = true;
                 $skip = false;
@@ -795,18 +1127,151 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
                     if ($skip) {
                         continue;
                     }
-                    if ($expect_name && in_array($tj[0], [ T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED ], true)) {
-                        $name = ltrim($tj[1], '\\');
-                        $parts = explode('\\', $name);
-                        $short = end($parts);
-                        $deps[ $short ] = 'use-trait';
+                    if ($expect_name && in_array($tj[0], self::NAME_TOKEN_IDS, true)) {
+                        $short = $this->resolveDepShortName($tj[1], $fileNamespace, $aliases);
+                        $depsByKey[ 'use-trait' . "\0" . $short ] = [
+                            'short' => $short,
+                            'context' => 'use-trait',
+                        ];
                         $expect_name = false;
                     }
                 }
             }
         }
 
-        return $deps;
+        return array_values($depsByKey);
+    }
+
+    /**
+     * @param array<int, string|array{0:int,1:string,2?:int}> $tokens
+     */
+    private function parseNamespaceName(array $tokens, int $from, int $n): string
+    {
+        for ($k = $from; $k < $n; $k++) {
+            $tk = $tokens[ $k ];
+            if (is_array($tk) && in_array($tk[0], [ T_WHITESPACE, T_COMMENT, T_DOC_COMMENT ], true)) {
+                continue;
+            }
+            if (is_array($tk) && in_array($tk[0], [ T_STRING, T_NAME_QUALIFIED ], true)) {
+                return $tk[1];
+            }
+            // `namespace {` / empty name
+            return '';
+        }
+        return '';
+    }
+
+    /**
+     * Absorb one file-scope `use` into the alias map (plain, aliased, grouped,
+     * grouped-aliased). Skips `use function` / `use const`.
+     *
+     * @param array<int, string|array{0:int,1:string,2?:int}> $tokens
+     * @param array<string, string>                           $aliases alias short => real short
+     */
+    private function absorbFileScopeUse(array $tokens, int $useIndex, int $n, array &$aliases): void
+    {
+        $i = $useIndex + 1;
+        while ($i < $n && is_array($tokens[ $i ]) && in_array($tokens[ $i ][0], [ T_WHITESPACE, T_COMMENT, T_DOC_COMMENT ], true)) {
+            $i++;
+        }
+        if ($i >= $n) {
+            return;
+        }
+        if (is_array($tokens[ $i ]) && in_array($tokens[ $i ][0], [ T_FUNCTION, T_CONST ], true)) {
+            return;
+        }
+
+        $prefix = '';
+        $currentName = null;
+        $inGroup = false;
+
+        for (; $i < $n; $i++) {
+            $t = $tokens[ $i ];
+            if (';' === $t) {
+                if (null !== $currentName) {
+                    $short = $this->lastNameSegment($currentName);
+                    $aliases[ $short ] = $short;
+                }
+                break;
+            }
+            if (is_array($t) && in_array($t[0], [ T_WHITESPACE, T_COMMENT, T_DOC_COMMENT ], true)) {
+                continue;
+            }
+            if ('{' === $t) {
+                $prefix = (string) $currentName;
+                $currentName = null;
+                $inGroup = true;
+                continue;
+            }
+            if ('}' === $t) {
+                $inGroup = false;
+                continue;
+            }
+            if (',' === $t) {
+                if (null !== $currentName) {
+                    $short = $this->lastNameSegment($currentName);
+                    $aliases[ $short ] = $short;
+                    $currentName = null;
+                }
+                continue;
+            }
+            if (is_array($t) && T_AS === $t[0]) {
+                $j = $i + 1;
+                while ($j < $n && is_array($tokens[ $j ]) && in_array($tokens[ $j ][0], [ T_WHITESPACE, T_COMMENT, T_DOC_COMMENT ], true)) {
+                    $j++;
+                }
+                if ($j < $n && is_array($tokens[ $j ]) && T_STRING === $tokens[ $j ][0] && null !== $currentName) {
+                    $aliases[ $tokens[ $j ][1] ] = $this->lastNameSegment($currentName);
+                    $currentName = null;
+                    $i = $j;
+                }
+                continue;
+            }
+            if (is_array($t) && in_array($t[0], self::NAME_TOKEN_IDS, true)) {
+                $piece = ltrim($t[1], '\\');
+                if ($inGroup) {
+                    $currentName = '' === $prefix ? $piece : $prefix . '\\' . $piece;
+                } elseif (null === $currentName) {
+                    $currentName = $piece;
+                } else {
+                    $currentName .= '\\' . $piece;
+                }
+                continue;
+            }
+            if (is_array($t) && T_NS_SEPARATOR === $t[0]) {
+                // Separator between group prefix and `{` (e.g. Support\{).
+                continue;
+            }
+        }
+    }
+
+    /**
+     * @param array<string, string> $aliases
+     */
+    private function resolveDepShortName(string $tokenText, string $fileNamespace, array $aliases): string
+    {
+        $short = $this->shortNameFromNameToken($tokenText, $fileNamespace);
+        if (isset($aliases[ $short ])) {
+            return $aliases[ $short ];
+        }
+        return $short;
+    }
+
+    private function shortNameFromNameToken(string $text, string $fileNamespace): string
+    {
+        // T_NAME_RELATIVE: `namespace\Foo` → current-namespace\Foo
+        if (str_starts_with($text, 'namespace\\')) {
+            $rest = substr($text, strlen('namespace\\'));
+            $fqcn = '' === $fileNamespace ? $rest : $fileNamespace . '\\' . $rest;
+            return $this->lastNameSegment($fqcn);
+        }
+        return $this->lastNameSegment(ltrim($text, '\\'));
+    }
+
+    private function lastNameSegment(string $name): string
+    {
+        $parts = explode('\\', $name);
+        return (string) end($parts);
     }
 
     /**

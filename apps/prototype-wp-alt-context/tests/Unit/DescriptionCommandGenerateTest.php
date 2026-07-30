@@ -1516,7 +1516,87 @@ class DescriptionCommandGenerateTest extends TestCase
     }
 
     /**
-     * R20-BR-20: CLI marker plant that stores a divergent value reports failed.
+     * R21-BR-02: CLI skip_existing clears a STALE pending marker (hash ≠ stored alt).
+     */
+    public function testGenerateSkipExistingClearsStaleProvenancePendingMarker(): void
+    {
+        $this->setPostMeta(988, '_wp_attachment_image_alt', 'Human-authored CLI alt');
+        $this->setPostMeta(988, '_acx_description_provenance_pending', [
+            'run_id' => 'cli',
+            'draft_hash' => hash('sha256', 'stale-gap'),
+        ]);
+        $service = new RecordingDescribeService([
+            988 => new WP_REST_Response([
+                'media_id' => 988,
+                'alt_text_draft' => 'Different model draft',
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+            ]),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $command->__invoke(['generate'], ['media-id' => '988', 'write' => true, 'format' => 'json']);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+
+        $this->assertSame(AltTextWriteStatus::SKIPPED_EXISTING_ALT, $payload['rows'][0]['status'] ?? null);
+        $this->assertSame('', get_post_meta(988, '_acx_description_provenance_pending', true));
+
+        $GLOBALS['__ac_get_posts_results'] = [988];
+        $GLOBALS['__ac_posts'][988] = (object) [
+            'ID' => 988,
+            'post_type' => 'attachment',
+            'post_title' => 'CLI skip stale',
+        ];
+        $GLOBALS['__ac_attachment_mimes'][988] = 'image/jpeg';
+        $history = (new \AltContext\Api\Services\DescriptionHistoryService())->list_history(10);
+        $this->assertSame(0, $history['total'], 'stale pure gap must leave history after marker clear');
+    }
+
+    /**
+     * R21-BR-02: CLI skip_existing must preserve a LIVE recovery marker.
+     */
+    public function testGenerateSkipExistingPreservesLiveProvenancePendingMarker(): void
+    {
+        $storedAlt = 'Machine-written CLI alt with gap';
+        $liveMarker = [
+            'run_id' => 'cli',
+            'draft_hash' => hash('sha256', $storedAlt),
+        ];
+        $this->setPostMeta(989, '_wp_attachment_image_alt', $storedAlt);
+        $this->setPostMeta(989, '_acx_description_provenance_pending', $liveMarker);
+        $service = new RecordingDescribeService([
+            989 => new WP_REST_Response([
+                'media_id' => 989,
+                'alt_text_draft' => 'A different draft from the model',
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+            ]),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $command->__invoke(['generate'], ['media-id' => '989', 'write' => true, 'format' => 'json']);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+
+        $this->assertSame(AltTextWriteStatus::SKIPPED_EXISTING_ALT, $payload['rows'][0]['status'] ?? null);
+        $this->assertSame($liveMarker, get_post_meta(989, '_acx_description_provenance_pending', true));
+
+        $GLOBALS['__ac_get_posts_results'] = [989];
+        $GLOBALS['__ac_posts'][989] = (object) [
+            'ID' => 989,
+            'post_type' => 'attachment',
+            'post_title' => 'CLI skip live',
+        ];
+        $GLOBALS['__ac_attachment_mimes'][989] = 'image/jpeg';
+        $history = (new \AltContext\Api\Services\DescriptionHistoryService())->list_history(10);
+        $this->assertSame(1, $history['total'], 'live gap row must remain in history');
+        $this->assertArrayHasKey('provenance', $history['items'][0]);
+        $this->assertNull($history['items'][0]['provenance']);
+        $this->assertSame($storedAlt, $history['items'][0]['current_alt_text'] ?? null);
+    }
+
+    /**
+     * R20-BR-20 / R21-BR-03: CLI marker plant stores verified-SHAPE array with
+     * wrong draft_hash → failed (draft_hash match leg).
      */
     public function testGenerateMarkerWriteDivergentStoreReportsFailedNotPartial(): void
     {
@@ -1529,7 +1609,11 @@ class DescriptionCommandGenerateTest extends TestCase
             ]),
         ]);
         $GLOBALS['__ac_update_post_meta_fail'][986]['_acx_description_provenance'] = true;
-        $GLOBALS['__ac_update_post_meta_mutate'][986]['_acx_description_provenance_pending'] = 'GARBAGE';
+        $divergent = [
+            'run_id' => 'wrong',
+            'draft_hash' => 'deadbeef',
+        ];
+        $GLOBALS['__ac_update_post_meta_mutate'][986]['_acx_description_provenance_pending'] = $divergent;
         $command = new DescriptionCommand(null, $service);
 
         $caught = null;
@@ -1543,7 +1627,113 @@ class DescriptionCommandGenerateTest extends TestCase
         $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
         $this->assertSame(AltTextWriteStatus::FAILED, $payload['rows'][0]['status'] ?? null);
         $this->assertNotSame(AltTextWriteStatus::PARTIAL, $payload['rows'][0]['status'] ?? null);
-        $this->assertSame('GARBAGE', get_post_meta(986, '_acx_description_provenance_pending', true));
+        $this->assertSame($divergent, get_post_meta(986, '_acx_description_provenance_pending', true));
+    }
+
+    /**
+     * R21-BR-03: CLI non-array marker store fails the shape leg alone.
+     */
+    public function testGenerateMarkerWriteNonArrayStoreReportsFailedNotPartial(): void
+    {
+        $service = new RecordingDescribeService([
+            990 => new WP_REST_Response([
+                'media_id' => 990,
+                'alt_text_draft' => 'Alt lands; marker non-array.',
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+            ]),
+        ]);
+        $GLOBALS['__ac_update_post_meta_fail'][990]['_acx_description_provenance'] = true;
+        $GLOBALS['__ac_update_post_meta_mutate'][990]['_acx_description_provenance_pending'] = 'GARBAGE';
+        $command = new DescriptionCommand(null, $service);
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '990', 'write' => true, 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+        $this->assertSame(AltTextWriteStatus::FAILED, $payload['rows'][0]['status'] ?? null);
+        $this->assertSame('GARBAGE', get_post_meta(990, '_acx_description_provenance_pending', true));
+    }
+
+    /**
+     * R21-BR-04: CLI provenance write accepts but stores divergent ARRAY → partial.
+     */
+    public function testGenerateProvenanceWriteDivergentArrayStoreReportsPartial(): void
+    {
+        $service = new RecordingDescribeService([
+            991 => new WP_REST_Response([
+                'media_id' => 991,
+                'alt_text_draft' => 'Alt lands; provenance mutated.',
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+            ]),
+        ]);
+        $GLOBALS['__ac_update_post_meta_mutate'][991]['_acx_description_provenance'] = [
+            'adapter' => 'MUTATED_NOT_THIS_RUN',
+            'model_id' => 'wrong',
+        ];
+        $command = new DescriptionCommand(null, $service);
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '991', 'write' => true, 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+        $this->assertSame(AltTextWriteStatus::PARTIAL, $payload['rows'][0]['status'] ?? null);
+        $this->assertSame(
+            AltTextWriteStatus::REASON_PROVENANCE_WRITE_FAILED,
+            $payload['rows'][0]['reason'] ?? null
+        );
+        $this->assertNotSame(AltTextWriteStatus::WRITTEN, $payload['rows'][0]['status'] ?? null);
+        $pending = get_post_meta(991, '_acx_description_provenance_pending', true);
+        $this->assertIsArray($pending);
+        $this->assertSame(hash('sha256', 'Alt lands; provenance mutated.'), $pending['draft_hash'] ?? null);
+    }
+
+    /**
+     * R21-BR-08: CLI accepts pre-existing same-draft bulk marker when plant fails.
+     */
+    public function testGenerateAcceptsPreExistingSameDraftBulkMarkerWhenPlantFails(): void
+    {
+        $draft = 'CLI alt with pre-existing bulk marker.';
+        $bulkMarker = [
+            'run_id' => '11111111-1111-1111-1111-111111111111',
+            'draft_hash' => hash('sha256', $draft),
+        ];
+        $this->setPostMeta(992, '_acx_description_provenance_pending', $bulkMarker);
+        $service = new RecordingDescribeService([
+            992 => new WP_REST_Response([
+                'media_id' => 992,
+                'alt_text_draft' => $draft,
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+            ]),
+        ]);
+        $GLOBALS['__ac_update_post_meta_fail'][992]['_acx_description_provenance'] = true;
+        $GLOBALS['__ac_update_post_meta_fail'][992]['_acx_description_provenance_pending'] = true;
+        $command = new DescriptionCommand(null, $service);
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '992', 'write' => true, 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+        $this->assertSame(AltTextWriteStatus::PARTIAL, $payload['rows'][0]['status'] ?? null);
+        $this->assertNotSame(AltTextWriteStatus::FAILED, $payload['rows'][0]['status'] ?? null);
+        $this->assertSame($bulkMarker, get_post_meta(992, '_acx_description_provenance_pending', true));
     }
 
     /**

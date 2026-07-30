@@ -18,6 +18,7 @@ use function get_post;
 use function get_post_meta;
 use function get_post_mime_type;
 use function get_posts;
+use function hash;
 use function is_array;
 use function is_object;
 use function is_string;
@@ -199,6 +200,13 @@ class DescriptionHistoryService {
 
 		// Both writes verified: a prior provenance-gap marker is no longer an
 		// unrecorded gap — the human-edit trail covers the item [R20-BR-25].
+		//
+		// R21-BR-10: delete is unchecked (no return / no read-back). A surviving
+		// marker is tolerable here because human_edit is a verified array, so
+		// build_item includes the row via human_edit regardless of the marker.
+		// The zombie does not invent a pure-gap lie (provenance/human_edit null);
+		// at worst it is redundant until a later successful write clears it.
+		// Escalating to 500 would falsely claim the correction itself failed.
 		delete_post_meta( $media_id, self::PROVENANCE_PENDING_META );
 
 		// After a verified human-edit write (or accepted full-payload no-op),
@@ -252,7 +260,7 @@ class DescriptionHistoryService {
 		$current_alt = (string) get_post_meta( $media_id, self::ALT_META, true );
 		// Provenance-gap partial: durable marker shape (run_id + draft_hash) + alt
 		// present. Empty / partial arrays carry no recovery info [R20-BR-21].
-		$provenance_gap = $this->is_verified_pending_marker( $pending ) && '' !== trim( $current_alt );
+		$provenance_gap = self::is_verified_pending_marker( $pending ) && '' !== trim( $current_alt );
 
 		if ( ! is_array( $provenance ) && ! is_array( $human_edit ) && ! $provenance_gap ) {
 			return null;
@@ -280,9 +288,13 @@ class DescriptionHistoryService {
 	 * string }`. Array-ness alone is not enough — `[]` and partial shapes carry
 	 * no recovery information [R20-BR-21].
 	 *
+	 * Public + static so writers (single-image, CLI, bulk apply) share this
+	 * exact shape predicate with the history reader — no writer/reader drift
+	 * [R21-BR-08]. Empty / whitespace-only strings are rejected (trim).
+	 *
 	 * @param mixed $pending Raw post meta value.
 	 */
-	private function is_verified_pending_marker( mixed $pending ): bool {
+	public static function is_verified_pending_marker( mixed $pending ): bool {
 		if ( ! is_array( $pending ) ) {
 			return false;
 		}
@@ -292,6 +304,42 @@ class DescriptionHistoryService {
 			&& '' !== trim( $run_id )
 			&& is_string( $draft_hash )
 			&& '' !== trim( $draft_hash );
+	}
+
+	/**
+	 * Live recovery marker for a stored alt: verified shape and draft_hash
+	 * equals sha256( stored alt ). skip_existing must not wipe these — the gap
+	 * remains real and is the only durable recovery evidence [R21-BR-01].
+	 *
+	 * @param mixed $pending Raw post meta value.
+	 */
+	public static function is_live_recovery_marker_for_alt( mixed $pending, string $stored_alt ): bool {
+		if ( ! self::is_verified_pending_marker( $pending ) ) {
+			return false;
+		}
+		if ( '' === trim( $stored_alt ) ) {
+			return false;
+		}
+		// $pending is verified-shape array here; draft_hash is a non-empty string.
+		/** @var array{run_id: string, draft_hash: string} $pending */
+		return hash( 'sha256', $stored_alt ) === (string) $pending['draft_hash'];
+	}
+
+	/**
+	 * Usable recovery evidence for a draft about to be (or just) written:
+	 * verified shape and draft_hash matches sha256( draft ), regardless of
+	 * run_id. Writers accept a pre-existing bulk / cross-surface marker with
+	 * the same draft rather than demanding strict identity with the marker
+	 * this path tried to plant [R21-BR-08] [R21-BR-17 key-order].
+	 *
+	 * @param mixed $pending Raw post meta value.
+	 */
+	public static function is_usable_pending_marker_for_draft( mixed $pending, string $draft ): bool {
+		if ( ! self::is_verified_pending_marker( $pending ) ) {
+			return false;
+		}
+		/** @var array{run_id: string, draft_hash: string} $pending */
+		return hash( 'sha256', $draft ) === (string) $pending['draft_hash'];
 	}
 
 	/**

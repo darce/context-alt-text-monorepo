@@ -236,18 +236,65 @@ describe('HARM-BR-04 phantom failed field deleted from sync contract', () => {
     'utf8',
   );
 
+  /**
+   * Static pin: SyncStatusResponse must not re-declare the deleted settings-graft
+   * `failed` string-array field under any common TypeScript spelling
+   * (optional / readonly / Array<> / union-with-undefined). TopologyCommandStatus.failed
+   * (number) and LAST_SYNC_RESULT.FAILED remain valid outside this interface body.
+   */
   it('SyncStatusResponse does not declare a top-level failed string[] (settings graft)', () => {
-    // TopologyCommandStatus.failed: number and LAST_SYNC_RESULT.FAILED remain valid.
-    // The deleted phantom is specifically `failed?: string[]` on SyncStatusResponse.
-    expect(syncTypesSource).not.toMatch(/failed\?:\s*string\s*\[\s*\]/);
+    const bodyMatch = /export interface SyncStatusResponse \{([\s\S]*?)\n\}/.exec(
+      syncTypesSource,
+    );
+    expect(bodyMatch).not.toBeNull();
+    const body = bodyMatch?.[1] ?? '';
+    // Property name is exactly `failed` (not failed_curation_* / last_curation_failed_at).
+    const failedProp = /(?:^|\n)\s*failed\s*(\?)?\s*:\s*([^;\n]+)/g;
+    const hits: string[] = [];
+    let m: RegExpExecArray | null;
+    while ((m = failedProp.exec(body)) !== null) {
+      hits.push(m[2].trim());
+    }
+    // No property named `failed` may exist on SyncStatusResponse at all.
+    expect(hits).toEqual([]);
     expect(syncTypesSource).not.toMatch(
       /Names the fields whose writes did not land/,
     );
   });
 
+  /**
+   * Behavioural: a wire payload carrying a phantom `failed: string[]` must not
+   * change presentation. Holds regardless of how the field is spelled on the type.
+   */
+  it('ignores a phantom failed string[] on the status payload when building presentation', () => {
+    const baseStatus = {
+      last_snapshot_version: 1,
+      last_synced_at: '2026-02-14T12:00:00Z',
+      is_stale: false,
+      sync_health: 'healthy' as const,
+      last_sync_result: LAST_SYNC_RESULT.OK,
+    };
+    const withPhantomFailed = {
+      ...baseStatus,
+      failed: ['title', 'slug'],
+    };
+    const without = buildSyncPresentation({
+      ...syncPresentationInputFromStatus(baseStatus),
+      syncHealthEnvelope: onlineEnvelope(),
+    });
+    const withFailed = buildSyncPresentation({
+      ...syncPresentationInputFromStatus(withPhantomFailed),
+      syncHealthEnvelope: onlineEnvelope(),
+    });
+    expect(withFailed).toEqual(without);
+    expect(withFailed.status).toBe(SYNC_PRESENTATION_STATUS.HEALTHY);
+    expect(withFailed.status).not.toBe(SYNC_PRESENTATION_STATUS.RESYNC_REQUIRED);
+  });
+
   it('buildSyncPresentation has no failedFields input or escalation arm', () => {
+    // Historical defect escalated via `failedFields` on the presentation input —
+    // never via data?.failed (that lived only on the indicator/mapper seam).
     expect(presentationSource).not.toMatch(/\bfailedFields\b/);
-    expect(presentationSource).not.toMatch(/data\?\.failed\b/);
     expect(presentationSource).not.toMatch(
       /Array\.isArray\(\s*failedFields\s*\)\s*&&\s*failedFields\.length\s*>\s*0/,
     );
@@ -255,6 +302,28 @@ describe('HARM-BR-04 phantom failed field deleted from sync contract', () => {
     expect(presentationSource).toMatch(
       /lastSyncResult\s*===\s*LAST_SYNC_RESULT\.RESYNC_REQUIRED/,
     );
+  });
+
+  /**
+   * Behavioural replacement for the dead data?.failed source pin: reintroducing
+   * failedFields escalation on the presentation input must change status. Today
+   * a grafted failedFields array is ignored.
+   */
+  it('does not escalate to resync_required from failedFields on the presentation input', () => {
+    const base = {
+      legacySyncHealth: 'healthy' as const,
+      lastSyncedAt: '2026-02-14T12:00:00Z',
+      lastSyncResult: LAST_SYNC_RESULT.OK,
+      syncHealthEnvelope: onlineEnvelope(),
+    };
+    const without = buildSyncPresentation(base);
+    const withFailedFields = buildSyncPresentation({
+      ...base,
+      ...{ failedFields: ['title', 'slug'] },
+    });
+    expect(withFailedFields).toEqual(without);
+    expect(withFailedFields.status).toBe(SYNC_PRESENTATION_STATUS.HEALTHY);
+    expect(withFailedFields.status).not.toBe(SYNC_PRESENTATION_STATUS.RESYNC_REQUIRED);
   });
 
   it('SyncStatusIndicator does not pass data?.failed into presentation', () => {
@@ -272,6 +341,19 @@ describe('HARM-BR-04 phantom failed field deleted from sync contract', () => {
     });
     expect(input).not.toHaveProperty('failedFields');
     expect(Object.keys(input)).not.toContain('failedFields');
+
+    // Grafted wire `failed` array must not surface as failedFields either.
+    const grafted = syncPresentationInputFromStatus({
+      last_snapshot_version: 1,
+      last_synced_at: '2026-02-14T12:00:00Z',
+      is_stale: false,
+      sync_health: 'healthy',
+      last_sync_result: LAST_SYNC_RESULT.OK,
+      failed: ['title', 'slug'],
+    } as Parameters<typeof syncPresentationInputFromStatus>[0]);
+    expect(grafted).not.toHaveProperty('failedFields');
+    expect(grafted).not.toHaveProperty('failed');
+    expect(Object.keys(grafted)).not.toContain('failedFields');
   });
 });
 

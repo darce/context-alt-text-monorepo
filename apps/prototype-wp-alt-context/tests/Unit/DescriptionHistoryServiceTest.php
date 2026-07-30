@@ -1358,8 +1358,21 @@ class DescriptionHistoryServiceTest extends TestCase
         // Empty alt and human-edit did land (partial: substantive writes, marker not).
         $this->assertSame('', get_post_meta($mediaId, '_wp_attachment_image_alt', true));
         $this->assertIsArray(get_post_meta($mediaId, '_acx_description_human_edit', true));
-        // Not a success envelope (array item with media_id / current_alt_text).
-        $this->assertFalse(is_array($result) && isset($result['media_id']));
+        // Partial wire contract: client reconciles workbench cache from stored_alt_text
+        // (useCorrectMediaAlt onError). Omitting it leaves the UI on the prior alt while
+        // the server already holds '' — pin presence and reconciled value. [rg-015]
+        $errorData = $result->get_error_data();
+        $this->assertIsArray($errorData);
+        $this->assertArrayHasKey(
+            'stored_alt_text',
+            $errorData,
+            'Decorative partial error must carry stored_alt_text for client cache reconcile'
+        );
+        $this->assertSame(
+            '',
+            $errorData['stored_alt_text'],
+            'Decorative partial stored_alt_text must be the reconciled empty alt, not the prior value'
+        );
     }
 
     /**

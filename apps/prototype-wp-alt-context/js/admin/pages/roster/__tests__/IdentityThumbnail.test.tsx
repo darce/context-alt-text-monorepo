@@ -39,6 +39,31 @@ describe('IdentityThumbnail', () => {
     expect(onClick).toHaveBeenCalled();
   });
 
+  it('calls onClick on the canvas-crop pending placeholder [S3-BR-04]', async () => {
+    const onClick = vi.fn();
+    // No thumb_url → needsCanvasCrop; pending window has no real <img> yet.
+    render(
+      <IdentityThumbnail
+        identity={{
+          media_id: 100,
+          identity_id: 'identity-crop-click',
+          media_url: 'https://example.com/full-res.jpg',
+          bbox: { x: 10, y: 20, width: 30, height: 40 },
+        }}
+        onClick={onClick}
+      />,
+    );
+
+    const pending = document.querySelector('[data-face-pending="true"]');
+    expect(pending).not.toBeNull();
+    expect(document.querySelector('img')).toBeNull();
+
+    // Native control (not a bare div) so the prop contract is keyboard-reachable.
+    const control = screen.getByRole('button', { name: /Identity from media 100/ });
+    await userEvent.click(control);
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
   describe('lazy canvas crop [page-load]', () => {
     const OriginalImage = globalThis.Image;
     const OriginalIO = globalThis.IntersectionObserver;
@@ -251,15 +276,44 @@ describe('IdentityThumbnail', () => {
      * [S6-BR-01] When the representative identity changes on the same component
      * instance (EditableRow is keyed only by entry.id), the previous crop's
      * data: URL must not remain painted under the new identity's data attributes.
+     *
+     * Controllable Image onload so we can observe the intermediate clear before
+     * B resolves, and exercise the cancelled-flag race (slow A after B).
      */
     it('clears the previous data: crop when identity media/bbox changes [S6-BR-01]', async () => {
       const firstCrop = 'data:image/jpeg;base64,FIRST-PERSON-CROP';
       const secondCrop = 'data:image/jpeg;base64,SECOND-PERSON-CROP';
-      let cropSequence = 0;
-      HTMLCanvasElement.prototype.toDataURL = vi.fn(() => {
-        cropSequence += 1;
-        return cropSequence === 1 ? firstCrop : secondCrop;
-      });
+      let cropResult = firstCrop;
+      HTMLCanvasElement.prototype.toDataURL = vi.fn(() => cropResult);
+
+      // Hold onload until the test fires it — no queueMicrotask auto-resolve.
+      const pendingLoads: (() => void)[] = [];
+      class ControllableImage {
+        onload: ((this: GlobalEventHandlers, ev: Event) => unknown) | null = null;
+        onerror: ((this: GlobalEventHandlers, ev: Event) => unknown) | null = null;
+        crossOrigin = '';
+        naturalWidth = 100;
+        naturalHeight = 100;
+        width = 100;
+        height = 100;
+        private _src = '';
+        constructor() {
+          imageConstructCount += 1;
+        }
+        get src(): string {
+          return this._src;
+        }
+        set src(value: string) {
+          this._src = value;
+          pendingLoads.push(() => {
+            const handler = this.onload;
+            if (handler) {
+              handler.call(this as unknown as GlobalEventHandlers, new Event('load'));
+            }
+          });
+        }
+      }
+      globalThis.Image = ControllableImage as unknown as typeof Image;
 
       const firstIdentity = {
         media_id: 100,
@@ -302,32 +356,166 @@ describe('IdentityThumbnail', () => {
       });
 
       await waitFor(() => {
+        expect(imageConstructCount).toBe(1);
+        expect(pendingLoads.length).toBe(1);
+      });
+
+      cropResult = firstCrop;
+      await act(async () => {
+        pendingLoads.shift()?.();
+        await Promise.resolve();
+      });
+
+      await waitFor(() => {
         const img = screen.getByRole('img');
         expect(img).toHaveAttribute('src', firstCrop);
         expect(img).toHaveAttribute('data-identity-id', 'identity-first');
       });
 
-      // Same instance, new representative (media_url + bbox + identity ids change).
+      // Same instance, new representative — hold B's onload so the intermediate
+      // clear is observable (not merely eventual consistency once B lands).
+      const loadsBeforeB = pendingLoads.length;
       rerender(<IdentityThumbnail identity={secondIdentity} size={32} />);
 
-      // Immediately after the prop change — and on every subsequent paint until
-      // the new crop is ready — the previous person's data: URL must not appear.
-      await waitFor(() => {
-        const stale = document.querySelector(`img[src="${firstCrop}"]`);
-        expect(stale).toBeNull();
+      await act(async () => {
+        await Promise.resolve();
       });
 
-      // data attributes already describe the new identity (or pending placeholder).
-      const pendingOrImg =
-        document.querySelector('[data-face-pending="true"]') ??
-        document.querySelector('img[data-identity-id="identity-second"]');
-      expect(pendingOrImg).not.toBeNull();
+      // (a) Synchronously after the identity change, before B resolves:
+      // previous face must be gone and pending placeholder must be painted.
+      expect(document.querySelector(`img[src="${firstCrop}"]`)).toBeNull();
+      expect(document.querySelector('[data-face-pending="true"]')).not.toBeNull();
+      expect(document.querySelector('img[data-identity-id="identity-second"]')).toBeNull();
+      expect(pendingLoads.length).toBeGreaterThan(loadsBeforeB);
+
+      cropResult = secondCrop;
+      await act(async () => {
+        pendingLoads.shift()?.();
+        await Promise.resolve();
+      });
 
       await waitFor(() => {
         const img = screen.getByRole('img');
         expect(img).toHaveAttribute('src', secondCrop);
         expect(img).toHaveAttribute('data-identity-id', 'identity-second');
         expect(img).toHaveAttribute('data-media-id', '200');
+        expect(img.getAttribute('src')).not.toBe(firstCrop);
+      });
+    });
+
+    it('ignores a late crop from a superseded identity [S6-BR-01 cancelled]', async () => {
+      const firstCrop = 'data:image/jpeg;base64,LATE-A-CROP';
+      const secondCrop = 'data:image/jpeg;base64,B-WINS-CROP';
+      let cropResult = firstCrop;
+      HTMLCanvasElement.prototype.toDataURL = vi.fn(() => cropResult);
+
+      const pendingLoads: (() => void)[] = [];
+      class ControllableImage {
+        onload: ((this: GlobalEventHandlers, ev: Event) => unknown) | null = null;
+        onerror: ((this: GlobalEventHandlers, ev: Event) => unknown) | null = null;
+        crossOrigin = '';
+        naturalWidth = 100;
+        naturalHeight = 100;
+        width = 100;
+        height = 100;
+        private _src = '';
+        constructor() {
+          imageConstructCount += 1;
+        }
+        get src(): string {
+          return this._src;
+        }
+        set src(value: string) {
+          this._src = value;
+          pendingLoads.push(() => {
+            const handler = this.onload;
+            if (handler) {
+              handler.call(this as unknown as GlobalEventHandlers, new Event('load'));
+            }
+          });
+        }
+      }
+      globalThis.Image = ControllableImage as unknown as typeof Image;
+
+      const firstIdentity = {
+        media_id: 100,
+        identity_id: 'identity-first',
+        media_url: 'https://example.com/person-a.jpg',
+        bbox: { x: 10, y: 20, width: 30, height: 40 },
+      };
+      const secondIdentity = {
+        media_id: 200,
+        identity_id: 'identity-second',
+        media_url: 'https://example.com/person-b.jpg',
+        bbox: { x: 5, y: 5, width: 50, height: 50 },
+      };
+
+      const fireIntersect = () => {
+        const host =
+          document.querySelector('[data-face-pending="true"]')?.parentElement ??
+          document.querySelector('.acx-cluster-card__thumb')?.parentElement;
+        expect(host).toBeTruthy();
+        if (!host) {
+          return;
+        }
+        const entry: IntersectionObserverEntry = {
+          isIntersecting: true,
+          target: host,
+          intersectionRatio: 1,
+          time: 0,
+          boundingClientRect: host.getBoundingClientRect(),
+          intersectionRect: host.getBoundingClientRect(),
+          rootBounds: null,
+        };
+        observerCallback?.([entry], {} as IntersectionObserver);
+      };
+
+      const { rerender } = render(<IdentityThumbnail identity={firstIdentity} size={32} />);
+
+      await act(async () => {
+        await Promise.resolve();
+        fireIntersect();
+      });
+
+      await waitFor(() => {
+        expect(pendingLoads.length).toBe(1);
+      });
+
+      // Do not resolve A — switch to B while A's Image is still in flight.
+      const fireLateA = pendingLoads.shift();
+      expect(fireLateA).toBeTypeOf('function');
+
+      rerender(<IdentityThumbnail identity={secondIdentity} size={32} />);
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      // B constructed and held; A is superseded.
+      expect(pendingLoads.length).toBeGreaterThanOrEqual(1);
+      const fireB = pendingLoads.shift();
+      expect(fireB).toBeTypeOf('function');
+
+      // (b) A's late onload must not paint firstCrop after the switch.
+      cropResult = firstCrop;
+      await act(async () => {
+        fireLateA?.();
+        await Promise.resolve();
+      });
+
+      expect(document.querySelector(`img[src="${firstCrop}"]`)).toBeNull();
+      expect(document.querySelector('[data-face-pending="true"]')).not.toBeNull();
+
+      cropResult = secondCrop;
+      await act(async () => {
+        fireB?.();
+        await Promise.resolve();
+      });
+
+      await waitFor(() => {
+        const img = screen.getByRole('img');
+        expect(img).toHaveAttribute('src', secondCrop);
+        expect(img).toHaveAttribute('data-identity-id', 'identity-second');
         expect(img.getAttribute('src')).not.toBe(firstCrop);
       });
     });

@@ -881,16 +881,16 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 					'_acx_description_provenance_pending',
 					$marker
 				);
-				$marker_written  = update_post_meta(
+				// Return value is not authoritative (false = failure or no-op;
+				// non-false may still persist a divergent value). Always verify
+				// storage — partial requires a VERIFIED marker [R20-BR-20].
+				update_post_meta(
 					$media_id,
 					'_acx_description_provenance_pending',
 					$marker
 				);
-				$marker_ok       = false !== $marker_written;
-				if ( false === $marker_written ) {
-					$current_marker = get_post_meta( $media_id, '_acx_description_provenance_pending', true );
-					$marker_ok      = is_array( $current_marker ) && $expected_marker === $current_marker;
-				}
+				$current_marker = get_post_meta( $media_id, '_acx_description_provenance_pending', true );
+				$marker_ok      = is_array( $current_marker ) && $expected_marker === $current_marker;
 				if ( ! $marker_ok ) {
 					$buckets['failed'][] = $media_id;
 					continue;

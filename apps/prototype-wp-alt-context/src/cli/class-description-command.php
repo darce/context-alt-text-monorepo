@@ -319,6 +319,9 @@ class DescriptionCommand extends \WP_CLI_Command {
 		);
 
 		if ( 'skip_existing' === $gate ) {
+			// Benign skip: existing alt stands. Clear any stale recovery marker
+			// so presence means a real unrecorded gap [R20-BR-18].
+			delete_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY );
 			return array(
 				'media_id'       => $media_id,
 				'status'         => AltTextWriteStatus::SKIPPED_EXISTING_ALT,
@@ -330,6 +333,8 @@ class DescriptionCommand extends \WP_CLI_Command {
 			// Alt + model identity match — no restamp. Heal stale/missing
 			// alt_text_draft only (REST parity / R20-BR-01). Still a skip when
 			// the heal lands; heal failure matches heal_gap provenance fail.
+			// R20-BR-30: heal-failure REASON_PROVENANCE_WRITE_FAILED is marker-less;
+			// history already lists via is_array($provenance).
 			if ( ! $this->describe_service->heal_provenance_alt_text_draft( $media_id, $existing_provenance, $alt_text_draft ) ) {
 				return array(
 					'media_id'       => $media_id,
@@ -339,6 +344,8 @@ class DescriptionCommand extends \WP_CLI_Command {
 				);
 			}
 
+			// Identity complete + heal ok: drop any stale recovery marker [R20-BR-18].
+			delete_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY );
 			return array(
 				'media_id'       => $media_id,
 				'status'         => AltTextWriteStatus::SKIPPED_EXISTING_ALT,
@@ -447,16 +454,15 @@ class DescriptionCommand extends \WP_CLI_Command {
 			self::PROVENANCE_PENDING_META_KEY,
 			$marker
 		);
-		$marker_written = update_post_meta(
+		// Return value is not authoritative (false = failure or no-op; non-false
+		// may still persist a divergent value). Always verify storage [R20-BR-20].
+		update_post_meta(
 			$media_id,
 			self::PROVENANCE_PENDING_META_KEY,
 			$marker
 		);
-		$marker_ok      = false !== $marker_written;
-		if ( false === $marker_written ) {
-			$current_marker = get_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY, true );
-			$marker_ok      = is_array( $current_marker ) && $expected_marker === $current_marker;
-		}
+		$current_marker = get_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY, true );
+		$marker_ok      = is_array( $current_marker ) && $expected_marker === $current_marker;
 		if ( ! $marker_ok ) {
 			return array(
 				'media_id'       => $media_id,

@@ -229,9 +229,8 @@ export interface ApplyDescribeRunResponse {
   partial: number[];
   skipped_existing: number[];
   skipped_no_draft: number[];
-  // Media ids skipped because they are not attachment posts (untrusted upstream
-  // media_id guard) and ids whose alt-text write failed — both reported so the
-  // History UI never over-reports `applied`.
+  // Non-attachment / invalid targets only (untrusted upstream media_id guard).
+  // Alt-write failures and unverified-marker outcomes land in `failed`, not here.
   skipped_invalid: number[];
   failed: number[];
 }

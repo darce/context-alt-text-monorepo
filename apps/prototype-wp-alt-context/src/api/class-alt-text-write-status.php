@@ -107,6 +107,16 @@ final class AltTextWriteStatus {
 	 * - {@see self::REASON_PROVENANCE_WRITE_FAILED}: REST describe + CLI generate.
 	 * - {@see self::REASON_DESCRIPTION_WRITE_FAILED}: REST-only (long description).
 	 *
+	 * REASON_PROVENANCE_WRITE_FAILED covers two shapes and does NOT imply a
+	 * recovery marker [R20-BR-30]:
+	 * 1. Full provenance write failed after the alt landed — a verified
+	 *    `_acx_description_provenance_pending` marker was planted (retryable gap).
+	 * 2. Draft-key heal failure on already-present array provenance
+	 *    (identity_complete / force no-op arms) — no marker planted; history
+	 *    already lists the row via its provenance array.
+	 * Consumers distinguish by reading the pending key and/or whether provenance
+	 * is already an array.
+	 *
 	 * @var list<string>
 	 */
 	public const PARTIAL_REASONS = array(
@@ -118,7 +128,12 @@ final class AltTextWriteStatus {
 	 * Bulk apply response bucket keys (ordered). Wire names are a stable SPA
 	 * contract — values are media_id lists, not status strings. Do not rename.
 	 *
-	 * Correspondence to per-item {@see self} outcomes the apply loop can produce:
+	 * Governs `array_fill_keys` initialisation and envelope key order only.
+	 * Outcome routing in the apply loop still uses hardcoded string literals
+	 * that must stay byte-identical to these members; this const is not the
+	 * single source for that routing.
+	 *
+	 * Correspondence to per-item {@see self} outcomes the apply loop produces:
 	 * - applied          ← full success (alt + provenance verified); single-item
 	 *                      analogues: WRITTEN / FORCED_OVERWRITE
 	 * - partial          ← PARTIAL (alt landed, provenance did not; marker verified)

@@ -1309,6 +1309,79 @@ class DescribeRunControllerTest extends TestCase
     }
 
     /**
+     * R20-BR-20: marker write accepts but persists a divergent value → failed.
+     */
+    public function testApplyRunDraftsBucketsFailedWhenMarkerStoreDiverges(): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $this->plantPostType(71);
+        $GLOBALS['__ac_update_post_meta_fail'][71]['_acx_description_provenance'] = true;
+        $GLOBALS['__ac_update_post_meta_mutate'][71]['_acx_description_provenance_pending'] = 'GARBAGE';
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->plantSubmittedMediaIds($runId, [71]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    ['media_id' => 71, 'status' => 'completed', 'alt_text_draft' => 'a dog in a park', 'caption' => 'dog', 'provenance' => ['adapter' => 'florence', 'model_id' => 'florence-2']],
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $data = $response->get_data();
+        $this->assertSame([], $data['partial']);
+        $this->assertSame([71], $data['failed']);
+        $this->assertSame('GARBAGE', get_post_meta(71, '_acx_description_provenance_pending', true));
+    }
+
+    /**
+     * R20-BR-20: pre-plant identical marker so update returns false; read-back admits partial.
+     */
+    public function testApplyRunDraftsMarkerNoOpFalseReturnAcceptedWhenReadBackMatches(): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $draft = 'a dog in a park';
+        $this->plantPostType(71);
+        $this->setPostMeta(71, '_acx_description_provenance_pending', [
+            'run_id' => $runId,
+            'draft_hash' => hash('sha256', $draft),
+        ]);
+        $GLOBALS['__ac_update_post_meta_fail'][71]['_acx_description_provenance'] = true;
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->plantSubmittedMediaIds($runId, [71]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    ['media_id' => 71, 'status' => 'completed', 'alt_text_draft' => $draft, 'caption' => 'dog', 'provenance' => ['adapter' => 'florence', 'model_id' => 'florence-2']],
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $data = $response->get_data();
+        $this->assertSame([71], $data['partial']);
+        $this->assertSame([], $data['failed']);
+        $pending = get_post_meta(71, '_acx_description_provenance_pending', true);
+        $this->assertIsArray($pending);
+        $this->assertSame($runId, $pending['run_id']);
+        $this->assertSame(hash('sha256', $draft), $pending['draft_hash']);
+    }
+
+    /**
      * BR-107: run_id for markers and the response comes from the path, not the
      * items body — omitting body run_id must not plant an empty-string marker.
      */

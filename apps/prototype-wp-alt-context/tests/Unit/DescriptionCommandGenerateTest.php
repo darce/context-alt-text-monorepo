@@ -637,6 +637,12 @@ class DescriptionCommandGenerateTest extends TestCase
             'Entire stdout must parse as one JSON document; got: ' . $stdout
         );
         $this->assertIsArray($decoded);
+        // R20-BR-24: json_decode accepts trailing whitespace; require exact one document.
+        $this->assertSame(
+            (string) wp_json_encode($decoded),
+            $stdout,
+            'stdout must equal the encoded envelope with no trailing blank line'
+        );
         $this->assertSame('generate', $decoded['command'] ?? null);
         $this->assertSame(1, $decoded['count'] ?? null);
         $this->assertEmpty(\WP_CLI::$messages['success']);
@@ -671,6 +677,12 @@ class DescriptionCommandGenerateTest extends TestCase
             'Failure-path stdout must be one JSON document; got: ' . $stdout
         );
         $this->assertIsArray($decoded);
+        // R20-BR-24: reject trailing blank lines json_decode would still accept.
+        $this->assertSame(
+            (string) wp_json_encode($decoded),
+            $stdout,
+            'stdout must equal the encoded envelope with no trailing blank line'
+        );
         $this->assertSame('generate', $decoded['command'] ?? null);
         $this->assertSame(1, $decoded['failed'] ?? null);
         $this->assertSame('failed', $decoded['rows'][0]['status'] ?? null);
@@ -716,6 +728,12 @@ class DescriptionCommandGenerateTest extends TestCase
             'Partial-path stdout must be one JSON document; got: ' . $stdout
         );
         $this->assertIsArray($decoded);
+        // R20-BR-24: reject trailing blank lines json_decode would still accept.
+        $this->assertSame(
+            (string) wp_json_encode($decoded),
+            $stdout,
+            'stdout must equal the encoded envelope with no trailing blank line'
+        );
         $this->assertSame('generate', $decoded['command'] ?? null);
         $this->assertSame(1, $decoded['partial'] ?? null);
         $this->assertSame(AltTextWriteStatus::PARTIAL, $decoded['rows'][0]['status'] ?? null);
@@ -1446,6 +1464,125 @@ class DescriptionCommandGenerateTest extends TestCase
         $this->assertSame(AltTextWriteStatus::WRITTEN, $payload['rows'][0]['status'] ?? null);
         $this->assertSame('', get_post_meta(984, '_acx_description_provenance_pending', true));
         $this->assertIsArray(get_post_meta(984, '_acx_description_provenance', true));
+    }
+
+    /**
+     * R20-BR-18: CLI identity_complete success must clear a stale pending marker.
+     */
+    public function testGenerateIdentityCompleteSuccessClearsStaleMarker(): void
+    {
+        $draft = 'Matching stored alt for clear.';
+        $this->setPostMeta(985, '_wp_attachment_image_alt', $draft);
+        $this->setPostMeta(985, '_acx_description_provenance', [
+            'adapter' => 'seeded',
+            'model_id' => 'local-v1',
+            'model_version' => '2026-07-04',
+            'prompt_or_task_version' => 'describe-v1',
+            'generated_at' => '2026-01-01T00:00:00+00:00',
+            'alt_text_draft' => $draft,
+        ]);
+        $this->setPostMeta(985, '_acx_description_provenance_pending', [
+            'run_id' => 'cli',
+            'draft_hash' => hash('sha256', 'stale-gap'),
+        ]);
+        $service = new RecordingDescribeService([
+            985 => new WP_REST_Response([
+                'media_id' => 985,
+                'alt_text_draft' => $draft,
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+                'model_version' => '2026-07-04',
+                'prompt_or_task_version' => 'describe-v1',
+            ]),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $command->__invoke(['generate'], ['media-id' => '985', 'write' => true, 'format' => 'json']);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+
+        $this->assertSame(AltTextWriteStatus::SKIPPED_EXISTING_ALT, $payload['rows'][0]['status'] ?? null);
+        $this->assertSame('', get_post_meta(985, '_acx_description_provenance_pending', true));
+
+        $GLOBALS['__ac_get_posts_results'] = [985];
+        $GLOBALS['__ac_posts'][985] = (object) [
+            'ID' => 985,
+            'post_type' => 'attachment',
+            'post_title' => 'CLI clear',
+        ];
+        $GLOBALS['__ac_attachment_mimes'][985] = 'image/jpeg';
+        $history = (new \AltContext\Api\Services\DescriptionHistoryService())->list_history(10);
+        $this->assertSame(1, $history['total']);
+        $this->assertIsArray($history['items'][0]['provenance']);
+    }
+
+    /**
+     * R20-BR-20: CLI marker plant that stores a divergent value reports failed.
+     */
+    public function testGenerateMarkerWriteDivergentStoreReportsFailedNotPartial(): void
+    {
+        $service = new RecordingDescribeService([
+            986 => new WP_REST_Response([
+                'media_id' => 986,
+                'alt_text_draft' => 'Alt lands; marker garbled.',
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+            ]),
+        ]);
+        $GLOBALS['__ac_update_post_meta_fail'][986]['_acx_description_provenance'] = true;
+        $GLOBALS['__ac_update_post_meta_mutate'][986]['_acx_description_provenance_pending'] = 'GARBAGE';
+        $command = new DescriptionCommand(null, $service);
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '986', 'write' => true, 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+        $this->assertSame(AltTextWriteStatus::FAILED, $payload['rows'][0]['status'] ?? null);
+        $this->assertNotSame(AltTextWriteStatus::PARTIAL, $payload['rows'][0]['status'] ?? null);
+        $this->assertSame('GARBAGE', get_post_meta(986, '_acx_description_provenance_pending', true));
+    }
+
+    /**
+     * R20-BR-20: pre-plant identical CLI marker so update returns false; read-back admits partial.
+     */
+    public function testGenerateMarkerWriteNoOpFalseReturnAcceptedWhenReadBackMatches(): void
+    {
+        $draft  = 'Alt lands; marker already identical.';
+        $marker = [
+            'run_id' => 'cli',
+            'draft_hash' => hash('sha256', $draft),
+        ];
+        $this->setPostMeta(987, '_acx_description_provenance_pending', $marker);
+        $service = new RecordingDescribeService([
+            987 => new WP_REST_Response([
+                'media_id' => 987,
+                'alt_text_draft' => $draft,
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+            ]),
+        ]);
+        $GLOBALS['__ac_update_post_meta_fail'][987]['_acx_description_provenance'] = true;
+        $command = new DescriptionCommand(null, $service);
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '987', 'write' => true, 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+        $this->assertSame(AltTextWriteStatus::PARTIAL, $payload['rows'][0]['status'] ?? null);
+        $this->assertSame(
+            AltTextWriteStatus::REASON_PROVENANCE_WRITE_FAILED,
+            $payload['rows'][0]['reason'] ?? null
+        );
+        $this->assertSame($marker, get_post_meta(987, '_acx_description_provenance_pending', true));
     }
 }
 

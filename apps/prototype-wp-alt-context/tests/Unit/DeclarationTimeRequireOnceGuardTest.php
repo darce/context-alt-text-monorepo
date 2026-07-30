@@ -55,18 +55,34 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
 {
     /**
      * Bootstrap-ordered freerides documented against alt-context.php lines.
-     * Keyed by src-relative path of the defining file.
+     * Keyed by src-relative path of the defining file, then by the short name
+     * of the single declaration-time dependency that freerides on bootstrap
+     * order. File-blanket keys would hide new undeclared deps on the same file.
      *
-     * @var array<string, string>
+     * @var array<string, array<string, string>>
      */
     private const BOOTSTRAP_ORDERED_EXEMPTIONS = [
-        'admin/class-admin.php' => 'alt-context.php:139 after trait-batch-limits.php:136',
-        'admin/class-dashboard-page.php' => 'alt-context.php:142 after class-abstract-spa-page.php:141',
-        'admin/class-workbench-page.php' => 'alt-context.php:143 after class-abstract-spa-page.php:141',
-        'admin/class-roster-page.php' => 'alt-context.php:144 after class-abstract-spa-page.php:141',
-        'admin/class-settings-page.php' => 'alt-context.php:145 after class-abstract-spa-page.php:141',
-        'admin/class-description-history-page.php' => 'alt-context.php:146 after class-abstract-spa-page.php:141',
-        'admin/class-retention-page.php' => 'alt-context.php:147 after class-abstract-spa-page.php:141',
+        'admin/class-admin.php' => [
+            'BatchLimits' => 'alt-context.php:139 after trait-batch-limits.php:136',
+        ],
+        'admin/class-dashboard-page.php' => [
+            'AbstractSpaPage' => 'alt-context.php:142 after class-abstract-spa-page.php:141',
+        ],
+        'admin/class-workbench-page.php' => [
+            'AbstractSpaPage' => 'alt-context.php:143 after class-abstract-spa-page.php:141',
+        ],
+        'admin/class-roster-page.php' => [
+            'AbstractSpaPage' => 'alt-context.php:144 after class-abstract-spa-page.php:141',
+        ],
+        'admin/class-settings-page.php' => [
+            'AbstractSpaPage' => 'alt-context.php:145 after class-abstract-spa-page.php:141',
+        ],
+        'admin/class-description-history-page.php' => [
+            'AbstractSpaPage' => 'alt-context.php:146 after class-abstract-spa-page.php:141',
+        ],
+        'admin/class-retention-page.php' => [
+            'AbstractSpaPage' => 'alt-context.php:147 after class-abstract-spa-page.php:141',
+        ],
     ];
 
     /**
@@ -214,6 +230,11 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
             self::BOOTSTRAP_ORDERED_EXEMPTIONS,
             'DashboardPage must be on the bootstrap-ordered exemption list'
         );
+        $this->assertArrayHasKey(
+            'AbstractSpaPage',
+            self::BOOTSTRAP_ORDERED_EXEMPTIONS[ $dashboardRel ],
+            'DashboardPage exemption must be scoped to AbstractSpaPage only'
+        );
 
         $gaps = $this->collectDeclarationTimeGaps($srcRoot);
         foreach ($gaps as $gap) {
@@ -223,6 +244,63 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
                 'Bootstrap-ordered DashboardPage must not appear in residual gaps'
             );
         }
+    }
+
+    /**
+     * R20-BR-17: bootstrap exemption must be (file, dependency) pair-scoped, not
+     * file-blanket. An exempted file with a second non-exempted declaration-time
+     * dep must still report that dep.
+     */
+    public function testBootstrapExemptionIsRelationshipScopedNotFileBlanket(): void
+    {
+        $fixtureRoot = $this->makeFixtureRoot();
+        $this->writeFixture(
+            $fixtureRoot,
+            'support/trait-batch-limits.php',
+            "<?php\nnamespace AltContext\\Support;\ntrait BatchLimits {}\n"
+        );
+        $this->writeFixture(
+            $fixtureRoot,
+            'support/trait-other-limits.php',
+            "<?php\nnamespace AltContext\\Support;\ntrait OtherLimits {}\n"
+        );
+        // Same relative path as the real freeride; exempts BatchLimits only.
+        $this->writeFixture(
+            $fixtureRoot,
+            'admin/class-admin.php',
+            "<?php\nnamespace AltContext\\Admin;\n"
+            . "class Admin {\n"
+            . "    use \\AltContext\\Support\\BatchLimits;\n"
+            . "    use \\AltContext\\Support\\OtherLimits;\n"
+            . "}\n"
+        );
+
+        $gaps = $this->collectDeclarationTimeGaps($fixtureRoot);
+
+        $batchExempted = true;
+        $otherReported = false;
+        foreach ($gaps as $gap) {
+            if (str_contains($gap, 'admin/class-admin.php') && str_contains($gap, 'BatchLimits')) {
+                $batchExempted = false;
+            }
+            if (
+                str_contains($gap, 'admin/class-admin.php')
+                && str_contains($gap, 'OtherLimits')
+                && str_contains($gap, 'trait-other-limits.php')
+            ) {
+                $otherReported = true;
+            }
+        }
+
+        $this->assertTrue(
+            $batchExempted,
+            "BatchLimits freeride must remain exempt; gaps:\n" . implode("\n", $gaps)
+        );
+        $this->assertTrue(
+            $otherReported,
+            "Second non-exempted declaration-time dep on an exempted file must be reported; gaps:\n"
+            . implode("\n", $gaps)
+        );
     }
 
     /**
@@ -297,6 +375,85 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
     }
 
     /**
+     * Argument-less anonymous classes resolve parent/implements at `new` time,
+     * not when the enclosing type is declared — must not attribute those deps
+     * to the enclosing defining file.
+     */
+    public function testArgumentLessAnonymousClassExtendsIsNotDeclarationTimeDep(): void
+    {
+        $fixtureRoot = $this->makeFixtureRoot();
+        $this->writeFixture(
+            $fixtureRoot,
+            'class-adapt-user.php',
+            "<?php\nnamespace AltContext\\Support;\nclass AdaptUser {}\n"
+        );
+        $this->writeFixture(
+            $fixtureRoot,
+            'class-returns-anon.php',
+            "<?php\nnamespace AltContext\\Support;\n"
+            . "class ReturnsAnon {\n"
+            . "    public function make(): object {\n"
+            . "        return new class extends AdaptUser {};\n"
+            . "    }\n"
+            . "}\n"
+        );
+
+        $gaps = $this->collectDeclarationTimeGaps($fixtureRoot);
+        foreach ($gaps as $gap) {
+            $this->assertStringNotContainsString(
+                'class-returns-anon.php',
+                $gap,
+                'Argument-less anonymous class extends must not be a declaration-time gap; got: '
+                . implode("\n", $gaps)
+            );
+        }
+        $this->assertSame(
+            [],
+            $gaps,
+            'Expected no gaps for argument-less anonymous class; got: ' . implode("\n", $gaps)
+        );
+    }
+
+    /**
+     * Traits are declaration-time consumers: in-body use of another plugin trait
+     * without require_once is a residual gap (not exempt by filename alone).
+     */
+    public function testTraitConsumerInBodyUseWithoutRequireOnceIsFlagged(): void
+    {
+        $fixtureRoot = $this->makeFixtureRoot();
+        $this->writeFixture(
+            $fixtureRoot,
+            'trait-inner.php',
+            "<?php\nnamespace AltContext\\Support;\ntrait Inner {}\n"
+        );
+        $this->writeFixture(
+            $fixtureRoot,
+            'trait-outer.php',
+            "<?php\nnamespace AltContext\\Support;\n"
+            . "trait Outer {\n"
+            . "    use Inner;\n"
+            . "}\n"
+        );
+
+        $gaps = $this->collectDeclarationTimeGaps($fixtureRoot);
+        $matched = false;
+        foreach ($gaps as $gap) {
+            if (
+                str_contains($gap, 'trait-outer.php')
+                && str_contains($gap, 'Inner')
+                && str_contains($gap, 'trait-inner.php')
+            ) {
+                $matched = true;
+                break;
+            }
+        }
+        $this->assertTrue(
+            $matched,
+            "Expected gap naming trait-outer.php + Inner; got:\n" . implode("\n", $gaps)
+        );
+    }
+
+    /**
      * Cold classmap: repaired ClusterResponseMapper declares when required first
      * with no Composer autoloader (style of DescribeControllerAutoloadTest).
      */
@@ -365,7 +522,9 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
                 continue;
             }
             $basename = $file->getFilename();
-            if ( ! preg_match('/^(class|interface)-.+\.php$/', $basename)) {
+            // Consumers: class/interface/trait/enum defining files. Traits and
+            // enums can carry declaration-time deps (use Trait / implements).
+            if ( ! preg_match('/^(class|interface|trait|enum)-.+\.php$/', $basename)) {
                 continue;
             }
 
@@ -390,7 +549,9 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
                 if (in_array($need, $requires, true)) {
                     continue;
                 }
-                if (isset(self::BOOTSTRAP_ORDERED_EXEMPTIONS[ $rel ])) {
+                // Relationship-scoped: only the documented (file, dep) freeride
+                // is excused — a second undeclared dep on the same file is not.
+                if (isset(self::BOOTSTRAP_ORDERED_EXEMPTIONS[ $rel ][ $short ])) {
                     continue;
                 }
                 $gaps[] = sprintf(
@@ -543,12 +704,14 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
             if (in_array($id, [ T_CLASS, T_INTERFACE, T_TRAIT, T_ENUM ], true)) {
                 $anon = false;
                 if (T_CLASS === $id) {
+                    // Anonymous: `new class`, `new class (...)`, `new class extends`,
+                    // `new class implements`. Named: `class Identifier`.
                     for ($k = $i + 1; $k < $n; $k++) {
                         $tk = $tokens[ $k ];
-                        if (is_array($tk) && T_WHITESPACE === $tk[0]) {
+                        if (is_array($tk) && in_array($tk[0], [ T_WHITESPACE, T_COMMENT, T_DOC_COMMENT ], true)) {
                             continue;
                         }
-                        if ('(' === $tk) {
+                        if ( ! is_array($tk) || T_STRING !== $tk[0]) {
                             $anon = true;
                         }
                         break;
@@ -563,13 +726,15 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
                 continue;
             }
 
-            if (T_EXTENDS === $id) {
+            // Only named-type headers own extends/implements as declaration-time
+            // deps. Anonymous `new class extends X` resolves at `new` execution.
+            if ($in_header && T_EXTENDS === $id) {
                 $expect_ext = true;
                 $expect_impl = false;
                 $after_kw = false;
                 continue;
             }
-            if (T_IMPLEMENTS === $id) {
+            if ($in_header && T_IMPLEMENTS === $id) {
                 $expect_impl = true;
                 $expect_ext = false;
                 $after_kw = false;
@@ -581,7 +746,7 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
                 continue;
             }
 
-            if (( $expect_ext || $expect_impl ) && in_array($id, [ T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED ], true)) {
+            if ($in_header && ( $expect_ext || $expect_impl ) && in_array($id, [ T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED ], true)) {
                 $name = ltrim($text, '\\');
                 $parts = explode('\\', $name);
                 $short = end($parts);

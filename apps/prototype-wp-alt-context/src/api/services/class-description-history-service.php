@@ -12,6 +12,7 @@ use function absint;
 use function array_slice;
 use function array_values;
 use function current_time;
+use function delete_post_meta;
 use function get_current_user_id;
 use function get_post;
 use function get_post_meta;
@@ -196,6 +197,10 @@ class DescriptionHistoryService {
 			);
 		}
 
+		// Both writes verified: a prior provenance-gap marker is no longer an
+		// unrecorded gap — the human-edit trail covers the item [R20-BR-25].
+		delete_post_meta( $media_id, self::PROVENANCE_PENDING_META );
+
 		// After a verified human-edit write (or accepted full-payload no-op),
 		// storage holds an array under HUMAN_EDIT_META. build_item is therefore
 		// total for this media_id: it only returns null when media_id <= 0
@@ -224,9 +229,11 @@ class DescriptionHistoryService {
 	 * Inclusion is narrow and evidence-based (WBUX-5-R16-BR-06):
 	 * - provenance array (this system stamped an audit trail), or
 	 * - human_edit array (operator correction path), or
-	 * - durable `_acx_description_provenance_pending` array **and** non-empty
-	 *   current alt (alt landed; provenance write failed — bulk apply and
-	 *   single-image write plant this marker only after verified write).
+	 * - durable `_acx_description_provenance_pending` with non-empty string
+	 *   `run_id` + `draft_hash` **and** non-empty current alt (alt landed;
+	 *   provenance write failed — bulk apply and single-image write plant this
+	 *   marker only after verified write). Empty / partial-shape arrays are
+	 *   not recovery evidence [R20-BR-21].
 	 *
 	 * Do not widen to "any non-empty alt": that lists every human-authored media
 	 * library row this plugin never touched. Gap rows keep an honest envelope
@@ -239,12 +246,13 @@ class DescriptionHistoryService {
 			return null;
 		}
 
-		$provenance   = get_post_meta( $media_id, self::PROVENANCE_META, true );
-		$human_edit   = get_post_meta( $media_id, self::HUMAN_EDIT_META, true );
-		$pending      = get_post_meta( $media_id, self::PROVENANCE_PENDING_META, true );
-		$current_alt  = (string) get_post_meta( $media_id, self::ALT_META, true );
-		// Provenance-gap partial: durable marker + alt present, no stamped trail yet.
-		$provenance_gap = is_array( $pending ) && '' !== trim( $current_alt );
+		$provenance  = get_post_meta( $media_id, self::PROVENANCE_META, true );
+		$human_edit  = get_post_meta( $media_id, self::HUMAN_EDIT_META, true );
+		$pending     = get_post_meta( $media_id, self::PROVENANCE_PENDING_META, true );
+		$current_alt = (string) get_post_meta( $media_id, self::ALT_META, true );
+		// Provenance-gap partial: durable marker shape (run_id + draft_hash) + alt
+		// present. Empty / partial arrays carry no recovery info [R20-BR-21].
+		$provenance_gap = $this->is_verified_pending_marker( $pending ) && '' !== trim( $current_alt );
 
 		if ( ! is_array( $provenance ) && ! is_array( $human_edit ) && ! $provenance_gap ) {
 			return null;
@@ -263,6 +271,27 @@ class DescriptionHistoryService {
 			'human_edit'         => is_array( $human_edit ) ? $human_edit : null,
 			'run_status'         => is_array( $run_status ) ? $run_status : null,
 		);
+	}
+
+	/**
+	 * Whether stored pending meta is a usable recovery marker.
+	 *
+	 * Writers always plant `{ run_id: non-empty string, draft_hash: non-empty
+	 * string }`. Array-ness alone is not enough — `[]` and partial shapes carry
+	 * no recovery information [R20-BR-21].
+	 *
+	 * @param mixed $pending Raw post meta value.
+	 */
+	private function is_verified_pending_marker( mixed $pending ): bool {
+		if ( ! is_array( $pending ) ) {
+			return false;
+		}
+		$run_id     = $pending['run_id'] ?? null;
+		$draft_hash = $pending['draft_hash'] ?? null;
+		return is_string( $run_id )
+			&& '' !== trim( $run_id )
+			&& is_string( $draft_hash )
+			&& '' !== trim( $draft_hash );
 	}
 
 	/**

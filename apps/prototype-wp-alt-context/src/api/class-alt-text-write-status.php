@@ -8,12 +8,11 @@ namespace AltContext\Api;
  * Canonical alt-write outcome statuses for REST describe and CLI generate.
  *
  * Single definition per [sr-007]. Values are byte-identical to the pre-wave
- * wire strings — do not "normalize" CLI/REST divergence in this wave.
+ * wire strings.
  *
  * Path notes:
- * - {@see self::FORCED_OVERWRITE} is emitted by REST force-overwrite success
- *   only when `force` is true. The CLI force path deliberately still emits
- *   {@see self::WRITTEN}; that divergence is intentional and out of scope.
+ * - {@see self::FORCED_OVERWRITE} is emitted by REST and CLI force-overwrite
+ *   success when `force` is true and an existing non-empty alt was present.
  * - {@see self::PROVENANCE_HEALED} is success when force=false and the stored
  *   alt already matched the draft; only provenance was (re)stamped. Emitted by
  *   both REST describe and CLI generate (shared write gate) [F-01].
@@ -21,7 +20,8 @@ namespace AltContext\Api;
  *   emits it.
  * - {@see self::PARTIAL} alone is ambiguous (BR-08): REST always pairs it with
  *   a {@see self::REASON_*} `reason` field so provenance-stamp failure is
- *   distinguishable from optional long-description failure.
+ *   distinguishable from optional long-description failure. CLI generate pairs
+ *   partial with {@see self::REASON_PROVENANCE_WRITE_FAILED} only.
  */
 final class AltTextWriteStatus {
 	public const WRITTEN                = 'written';
@@ -84,10 +84,10 @@ final class AltTextWriteStatus {
 
 	/**
 	 * Statuses CLI generate may put on each row's `status`.
-	 * CLI force-overwrite success is {@see self::WRITTEN}, not FORCED_OVERWRITE.
-	 * {@see self::PROVENANCE_HEALED} is emitted by CLI generate when force=false
-	 * and the stored alt already matched the draft (provenance gap heal) — same
-	 * outcome as REST so cron retries without --force converge [F-01].
+	 * Force-overwrite success emits {@see self::FORCED_OVERWRITE} (aligned with
+	 * REST). {@see self::PROVENANCE_HEALED} is emitted when force=false and the
+	 * stored alt already matched the draft (provenance gap heal). {@see self::DRY_RUN}
+	 * is CLI-only.
 	 *
 	 * @var list<string>
 	 */
@@ -95,6 +95,7 @@ final class AltTextWriteStatus {
 		self::WRITTEN,
 		self::SKIPPED_EXISTING_ALT,
 		self::SKIPPED_EMPTY_ALT_TEXT,
+		self::FORCED_OVERWRITE,
 		self::PROVENANCE_HEALED,
 		self::PARTIAL,
 		self::FAILED,
@@ -111,6 +112,30 @@ final class AltTextWriteStatus {
 	public const PARTIAL_REASONS = array(
 		self::REASON_PROVENANCE_WRITE_FAILED,
 		self::REASON_DESCRIPTION_WRITE_FAILED,
+	);
+
+	/**
+	 * Bulk apply response bucket keys (ordered). Wire names are a stable SPA
+	 * contract — values are media_id lists, not status strings. Do not rename.
+	 *
+	 * Correspondence to per-item {@see self} outcomes the apply loop can produce:
+	 * - applied          ← full success (alt + provenance verified); single-item
+	 *                      analogues: WRITTEN / FORCED_OVERWRITE
+	 * - partial          ← PARTIAL (alt landed, provenance did not; marker verified)
+	 * - skipped_existing ← SKIPPED_EXISTING_ALT (guard / CAS abort)
+	 * - skipped_no_draft ← empty draft (single-item: SKIPPED_EMPTY_ALT_TEXT)
+	 * - skipped_invalid  ← non-attachment media_id (bulk-only; no single-item status)
+	 * - failed           ← FAILED (alt write fail, or marker plant unverified)
+	 *
+	 * @var list<string>
+	 */
+	public const BULK_APPLY_BUCKETS = array(
+		'applied',
+		'partial',
+		'skipped_existing',
+		'skipped_no_draft',
+		'skipped_invalid',
+		'failed',
 	);
 
 	private function __construct() {}

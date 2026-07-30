@@ -19,8 +19,10 @@ use function absint;
 use function array_key_exists;
 use function class_exists;
 use function count;
+use function delete_post_meta;
 use function get_post_meta;
 use function gmdate;
+use function hash;
 use function implode;
 use function in_array;
 use function is_array;
@@ -35,8 +37,16 @@ use function wp_json_encode;
 class DescriptionCommand extends \WP_CLI_Command {
 	use ExpectsMetaAfterCoreTransforms;
 
-	private const ALT_TEXT_META_KEY    = '_wp_attachment_image_alt';
-	private const PROVENANCE_META_KEY  = '_acx_description_provenance';
+	private const ALT_TEXT_META_KEY           = '_wp_attachment_image_alt';
+	private const PROVENANCE_META_KEY         = '_acx_description_provenance';
+	private const PROVENANCE_PENDING_META_KEY = '_acx_description_provenance_pending';
+
+	/**
+	 * Marker owner for CLI provenance-failure recovery. CLI generate has no
+	 * bulk run_id; this stable token scopes the pending marker without
+	 * impersonating a bulk describe run [R16-BR-06].
+	 */
+	private const CLI_MARKER_OWNER = 'cli';
 
 	private DescriptionCandidateService $candidate_service;
 	private DescribeMediaService $describe_service;
@@ -316,7 +326,6 @@ class DescriptionCommand extends \WP_CLI_Command {
 		);
 
 		if ( 'skip_existing' === $gate ) {
-			// CLI force-path divergence still uses WRITTEN (not FORCED_OVERWRITE).
 			return array(
 				'media_id'       => $media_id,
 				'status'         => AltTextWriteStatus::SKIPPED_EXISTING_ALT,
@@ -358,8 +367,6 @@ class DescriptionCommand extends \WP_CLI_Command {
 		// stored value already equals what WP will store after unslash+sanitize)
 		// is success via read-back; a real alt failure must not stamp provenance
 		// claiming a draft that never landed. Shared post-transform model [F-15R].
-		// Deliberate path divergence: CLI force-overwrite success emits WRITTEN,
-		// not FORCED_OVERWRITE (REST-only). Leave that as-is this wave.
 		$expected_alt = $this->expected_meta_after_core_transforms( self::ALT_TEXT_META_KEY, $alt_text_draft );
 		$alt_written  = update_post_meta( $media_id, self::ALT_TEXT_META_KEY, $alt_text_draft );
 		if ( false === $alt_written ) {
@@ -395,27 +402,73 @@ class DescriptionCommand extends \WP_CLI_Command {
 			$current_prov = get_post_meta( $media_id, self::PROVENANCE_META_KEY, true );
 			$prov_ok      = is_array( $current_prov ) && $expected_provenance === $current_prov;
 			if ( ! $prov_ok ) {
-				// Alt landed; provenance did not. CLI generate does not write
-				// long description, so the only partial cause is provenance
-				// stamp failure — carry the same REASON_* as REST [R17-BR-06].
-				return array(
-					'media_id'       => $media_id,
-					'status'         => AltTextWriteStatus::PARTIAL,
-					'reason'         => AltTextWriteStatus::REASON_PROVENANCE_WRITE_FAILED,
-					'alt_text_draft' => $alt_text_draft,
-				);
+				// Alt landed; provenance did not. Plant the same recovery marker
+				// shape as bulk apply; partial only when the marker is verified
+				// (otherwise auto-recovery is impossible) [R16-BR-06].
+				return $this->provenance_failure_with_marker( $media_id, $alt_text_draft );
 			}
 		}
 
-		// Non-force heal of matching alt → provenance_healed (same wire as REST).
-		// Force success stays WRITTEN (CLI does not emit FORCED_OVERWRITE).
-		$status = $provenance_heal_only
-			? AltTextWriteStatus::PROVENANCE_HEALED
-			: AltTextWriteStatus::WRITTEN;
+		// Provenance verified — drop any pending recovery marker.
+		delete_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY );
+
+		// REST-aligned: FORCED_OVERWRITE when force=true and existing non-empty
+		// alt; provenance_healed for non-force gap heal; otherwise written.
+		if ( true === $force && '' !== trim( $existing_alt ) ) {
+			$status = AltTextWriteStatus::FORCED_OVERWRITE;
+		} elseif ( $provenance_heal_only ) {
+			$status = AltTextWriteStatus::PROVENANCE_HEALED;
+		} else {
+			$status = AltTextWriteStatus::WRITTEN;
+		}
 
 		return array(
 			'media_id'       => $media_id,
 			'status'         => $status,
+			'alt_text_draft' => $alt_text_draft,
+		);
+	}
+
+	/**
+	 * Plant `_acx_description_provenance_pending` after alt landed but provenance
+	 * did not. Mirrors bulk-apply marker discipline: update_post_meta returns
+	 * false on failure *and* on unchanged value — re-read and compare against
+	 * expected_meta_after_core_transforms before claiming the marker. Without a
+	 * verified marker, report FAILED (not PARTIAL) [R16-BR-06].
+	 *
+	 * @return array<string,mixed>
+	 */
+	private function provenance_failure_with_marker( int $media_id, string $alt_text_draft ): array {
+		$marker = array(
+			'run_id'     => self::CLI_MARKER_OWNER,
+			'draft_hash' => hash( 'sha256', $alt_text_draft ),
+		);
+		$expected_marker = $this->expected_meta_after_core_transforms(
+			self::PROVENANCE_PENDING_META_KEY,
+			$marker
+		);
+		$marker_written = update_post_meta(
+			$media_id,
+			self::PROVENANCE_PENDING_META_KEY,
+			$marker
+		);
+		if ( false === $marker_written ) {
+			$current_marker = get_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY, true );
+			$marker_ok      = is_array( $current_marker ) && $expected_marker === $current_marker;
+			if ( ! $marker_ok ) {
+				return array(
+					'media_id'       => $media_id,
+					'status'         => AltTextWriteStatus::FAILED,
+					'alt_text_draft' => $alt_text_draft,
+					'error'          => 'Provenance write failed and recovery marker could not be verified.',
+				);
+			}
+		}
+
+		return array(
+			'media_id'       => $media_id,
+			'status'         => AltTextWriteStatus::PARTIAL,
+			'reason'         => AltTextWriteStatus::REASON_PROVENANCE_WRITE_FAILED,
 			'alt_text_draft' => $alt_text_draft,
 		);
 	}
@@ -426,8 +479,9 @@ class DescriptionCommand extends \WP_CLI_Command {
 	 * Called only after a verified alt write (or accepted no-op read-back). Never
 	 * on dry_run / skipped_existing_alt / skipped_empty_alt_text / alt-write
 	 * failure — a draft that was never persisted is never recorded as if it were
-	 * [rg-015]. Status of the caller is `written` only when both alt and
-	 * provenance are verified; provenance failure surfaces as `partial`.
+	 * [rg-015]. Caller status is written / forced_overwrite / provenance_healed
+	 * only when both alt and provenance are verified; provenance failure
+	 * surfaces as partial (with verified recovery marker) or failed.
 	 *
 	 * @param array<string,mixed> $data
 	 * @param string              $alt_text_draft Draft written (or already stored) to alt meta.

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Sovereign\Repositories;
 
+require_once __DIR__ . '/interface-sync-state-repository.php';
 require_once __DIR__ . '/trait-prepares-sql-queries.php';
 require_once __DIR__ . '/../sync/class-sync-pull-result.php';
 

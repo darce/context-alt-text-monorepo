@@ -47,6 +47,117 @@ class DescriptionHistoryServiceTest extends TestCase
     }
 
     /**
+     * WBUX-5-R16-BR-06 pin 1: provenance-gap (alt present, provenance null,
+     * durable pending marker array) appears in history with honest null envelope.
+     */
+    public function testListHistoryIncludesProvenanceGapWhenPendingMarkerAndAltPresent(): void
+    {
+        $mediaId = 501;
+        $GLOBALS['__ac_get_posts_results'] = [$mediaId];
+        $this->seedAttachment($mediaId, 'Gap photo');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', 'Alt landed without provenance.');
+        $this->setPostMeta($mediaId, '_acx_description_provenance_pending', [
+            'run_id'     => 'single_image',
+            'draft_hash' => hash('sha256', 'Alt landed without provenance.'),
+        ]);
+
+        $response = (new DescriptionHistoryService())->list_history(10);
+
+        $this->assertSame(1, $response['total']);
+        $item = $response['items'][0];
+        $this->assertSame($mediaId, $item['media_id']);
+        $this->assertSame('Alt landed without provenance.', $item['current_alt_text']);
+        $this->assertNull($item['provenance']);
+        $this->assertNull($item['human_edit']);
+        $this->assertSame('', $item['generated_alt_text']);
+    }
+
+    /**
+     * WBUX-5-R16-BR-06 pin 3: human-authored alt with no `_acx_*` trail and no
+     * pending marker must stay out of history (anti-regression for the rejected
+     * "any non-empty alt" inclusion gate).
+     */
+    public function testListHistoryExcludesHumanAuthoredAltWithNoAcxTrail(): void
+    {
+        $mediaId = 502;
+        $GLOBALS['__ac_get_posts_results'] = [$mediaId];
+        $this->seedAttachment($mediaId, 'Library photo');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', 'A human wrote this in the media library.');
+        // No provenance, human_edit, or pending marker.
+
+        $response = (new DescriptionHistoryService())->list_history(10);
+
+        $this->assertSame(0, $response['total']);
+        $this->assertSame([], $response['items']);
+    }
+
+    /**
+     * WBUX-5-R16-BR-06 pin 4: fully stamped item still appears exactly once.
+     */
+    public function testListHistoryIncludesFullyStampedItemExactlyOnce(): void
+    {
+        $mediaId = 503;
+        $GLOBALS['__ac_get_posts_results'] = [$mediaId];
+        $this->seedAttachment($mediaId, 'Stamped');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', 'Generated stamp.');
+        $this->setPostMeta($mediaId, '_acx_description_provenance', [
+            'alt_text_draft' => 'Generated stamp.',
+            'model_id'       => 'local-v1',
+        ]);
+
+        $response = (new DescriptionHistoryService())->list_history(10);
+
+        $this->assertSame(1, $response['total']);
+        $this->assertCount(1, $response['items']);
+        $this->assertSame($mediaId, $response['items'][0]['media_id']);
+        $this->assertIsArray($response['items'][0]['provenance']);
+    }
+
+    /**
+     * WBUX-5-R16-BR-06 pin 5: human_edit-only row (no provenance) still appears.
+     */
+    public function testListHistoryIncludesHumanEditOnlyRow(): void
+    {
+        $mediaId = 504;
+        $GLOBALS['__ac_get_posts_results'] = [$mediaId];
+        $this->seedAttachment($mediaId, 'Edited only');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', 'Operator correction only.');
+        $this->setPostMeta($mediaId, '_acx_description_human_edit', [
+            'alt_text'  => 'Operator correction only.',
+            'edited_at' => '2026-07-04 12:00:00',
+            'user_id'   => 1,
+        ]);
+
+        $response = (new DescriptionHistoryService())->list_history(10);
+
+        $this->assertSame(1, $response['total']);
+        $item = $response['items'][0];
+        $this->assertSame($mediaId, $item['media_id']);
+        $this->assertNull($item['provenance']);
+        $this->assertIsArray($item['human_edit']);
+        $this->assertSame('Operator correction only.', $item['human_edit']['alt_text']);
+    }
+
+    /**
+     * Pending marker without alt must not invent a history row (narrow gate).
+     */
+    public function testListHistoryExcludesPendingMarkerWhenAltEmpty(): void
+    {
+        $mediaId = 505;
+        $GLOBALS['__ac_get_posts_results'] = [$mediaId];
+        $this->seedAttachment($mediaId, 'Marker only');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', '');
+        $this->setPostMeta($mediaId, '_acx_description_provenance_pending', [
+            'run_id'     => 'single_image',
+            'draft_hash' => hash('sha256', 'unused'),
+        ]);
+
+        $response = (new DescriptionHistoryService())->list_history(10);
+
+        $this->assertSame(0, $response['total']);
+    }
+
+    /**
      * BR-100 end-to-end pin: plant a provenance envelope exactly as the single-
      * image REST writer (DescribeMediaService::build_generated_provenance) now
      * produces it, run it through DescriptionHistoryService, and assert

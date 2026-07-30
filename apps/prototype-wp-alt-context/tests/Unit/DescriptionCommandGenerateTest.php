@@ -134,7 +134,10 @@ class DescriptionCommandGenerateTest extends TestCase
         $secondPayload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
 
         $this->assertSame('Generated replacement alt.', get_post_meta(501, '_wp_attachment_image_alt', true));
-        $this->assertSame('written', $secondPayload['rows'][0]['status']);
+        // R17-BR-13: CLI force success aligns with REST → forced_overwrite.
+        $this->assertSame('forced_overwrite', $secondPayload['rows'][0]['status']);
+        $this->assertSame(AltTextWriteStatus::FORCED_OVERWRITE, $secondPayload['rows'][0]['status']);
+        $this->assertSame(1, $secondPayload['forced_overwrite'] ?? null);
         $forcedProvenance = get_post_meta(501, '_acx_description_provenance', true);
         $this->assertIsArray($forcedProvenance);
         $this->assertSame('Generated replacement alt.', $forcedProvenance['alt_text_draft']);
@@ -345,6 +348,14 @@ class DescriptionCommandGenerateTest extends TestCase
         $this->assertSame('Alt lands, provenance does not.', get_post_meta(902, '_wp_attachment_image_alt', true));
         $this->assertSame('', get_post_meta(902, '_acx_description_provenance', true));
         $this->assertSame(1, $payload['partial'] ?? null);
+        // R16-BR-06: partial only when recovery marker verified.
+        $pending = get_post_meta(902, '_acx_description_provenance_pending', true);
+        $this->assertIsArray($pending);
+        $this->assertSame('cli', $pending['run_id'] ?? null);
+        $this->assertSame(
+            hash('sha256', 'Alt lands, provenance does not.'),
+            $pending['draft_hash'] ?? null
+        );
     }
 
     /**
@@ -375,7 +386,8 @@ class DescriptionCommandGenerateTest extends TestCase
 
         $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
 
-        $this->assertSame('written', $payload['rows'][0]['status']);
+        // Force + existing non-empty alt → forced_overwrite (R17-BR-13).
+        $this->assertSame('forced_overwrite', $payload['rows'][0]['status']);
         $this->assertSame($draft, get_post_meta(903, '_wp_attachment_image_alt', true));
         $this->assertIsArray(get_post_meta(903, '_acx_description_provenance', true));
     }
@@ -420,9 +432,9 @@ class DescriptionCommandGenerateTest extends TestCase
         $secondPayload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
 
         $this->assertSame(
-            'written',
+            'forced_overwrite',
             $secondPayload['rows'][0]['status'],
-            'Second save with same backslash alt must not fail'
+            'Second force save with same backslash alt must not fail'
         );
         $this->assertSame($expectedStored, get_post_meta(904, '_wp_attachment_image_alt', true));
     }
@@ -925,7 +937,7 @@ class DescriptionCommandGenerateTest extends TestCase
         $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
 
         $this->assertSame(
-            'written',
+            'forced_overwrite',
             $payload['rows'][0]['status'] ?? null,
             'Filter-altered stored alt must not false-fail the no-op read-back'
         );
@@ -1205,6 +1217,146 @@ class DescriptionCommandGenerateTest extends TestCase
         $log = \WP_CLI::$messages['log'][0] ?? '';
         $this->assertStringContainsString('status=skipped_existing_alt', $log);
         $this->assertStringNotContainsString('error=', $log);
+    }
+
+    /**
+     * R17-BR-13: force success reports forced_overwrite on table log and is a
+     * CLI_STATUSES member (tally key).
+     */
+    public function testGenerateForceSuccessEmitsForcedOverwriteOnTableAndJson(): void
+    {
+        $this->setPostMeta(980, '_wp_attachment_image_alt', 'Prior human alt.');
+        $service = new RecordingDescribeService([
+            980 => new WP_REST_Response([
+                'media_id' => 980,
+                'alt_text_draft' => 'Forced replacement draft.',
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+            ]),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $command->__invoke([
+            'generate',
+        ], [
+            'media-id' => '980',
+            'write' => true,
+            'force' => true,
+            'format' => 'json',
+        ]);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+        $this->assertSame(AltTextWriteStatus::FORCED_OVERWRITE, $payload['rows'][0]['status'] ?? null);
+        $this->assertSame('forced_overwrite', $payload['rows'][0]['status'] ?? null);
+        $this->assertSame(1, $payload['forced_overwrite'] ?? null);
+        $this->assertContains(AltTextWriteStatus::FORCED_OVERWRITE, AltTextWriteStatus::CLI_STATUSES);
+
+        \WP_CLI::reset_cli_messages();
+        $this->setPostMeta(981, '_wp_attachment_image_alt', 'Prior human alt.');
+        $command->__invoke([
+            'generate',
+        ], [
+            'media-id' => '981',
+            'write' => true,
+            'force' => true,
+        ]);
+        $this->assertStringContainsString('status=forced_overwrite', \WP_CLI::$messages['log'][0] ?? '');
+        $this->assertStringContainsString('forced_overwrite=1', \WP_CLI::$messages['success'][0] ?? '');
+    }
+
+    /**
+     * R16-BR-06: provenance fails + marker lands → partial + reason, marker readable.
+     */
+    public function testGenerateProvenanceFailurePlantsVerifiedRecoveryMarker(): void
+    {
+        $draft = 'Alt lands, provenance does not — marker stays.';
+        $service = new RecordingDescribeService([
+            982 => new WP_REST_Response([
+                'media_id' => 982,
+                'alt_text_draft' => $draft,
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+            ]),
+        ]);
+        $GLOBALS['__ac_update_post_meta_fail'][982]['_acx_description_provenance'] = true;
+        $command = new DescriptionCommand(null, $service);
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '982', 'write' => true, 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+        $this->assertSame(AltTextWriteStatus::PARTIAL, $payload['rows'][0]['status'] ?? null);
+        $this->assertSame(
+            AltTextWriteStatus::REASON_PROVENANCE_WRITE_FAILED,
+            $payload['rows'][0]['reason'] ?? null
+        );
+        $pending = get_post_meta(982, '_acx_description_provenance_pending', true);
+        $this->assertIsArray($pending);
+        $this->assertSame('cli', $pending['run_id']);
+        $this->assertSame(hash('sha256', $draft), $pending['draft_hash']);
+        $this->assertSame($draft, get_post_meta(982, '_wp_attachment_image_alt', true));
+    }
+
+    /**
+     * R16-BR-06: provenance fails + marker write also fails → failed, not partial.
+     */
+    public function testGenerateProvenanceAndMarkerFailureReportsFailedNotPartial(): void
+    {
+        $service = new RecordingDescribeService([
+            983 => new WP_REST_Response([
+                'media_id' => 983,
+                'alt_text_draft' => 'Alt lands; marker does not.',
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+            ]),
+        ]);
+        $GLOBALS['__ac_update_post_meta_fail'][983]['_acx_description_provenance'] = true;
+        $GLOBALS['__ac_update_post_meta_fail'][983]['_acx_description_provenance_pending'] = true;
+        $command = new DescriptionCommand(null, $service);
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '983', 'write' => true, 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+        $this->assertSame(AltTextWriteStatus::FAILED, $payload['rows'][0]['status'] ?? null);
+        $this->assertNotSame(AltTextWriteStatus::PARTIAL, $payload['rows'][0]['status'] ?? null);
+        $this->assertSame(1, $payload['failed'] ?? null);
+        $this->assertSame(0, $payload['partial'] ?? null);
+        $this->assertSame('Alt lands; marker does not.', get_post_meta(983, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(983, '_acx_description_provenance', true));
+        $this->assertSame('', get_post_meta(983, '_acx_description_provenance_pending', true));
+    }
+
+    /**
+     * R16-BR-06: success path leaves no recovery marker behind.
+     */
+    public function testGenerateSuccessLeavesNoRecoveryMarker(): void
+    {
+        $service = new RecordingDescribeService([
+            984 => new WP_REST_Response([
+                'media_id' => 984,
+                'alt_text_draft' => 'Full success draft.',
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+            ]),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $command->__invoke(['generate'], ['media-id' => '984', 'write' => true, 'format' => 'json']);
+
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+        $this->assertSame(AltTextWriteStatus::WRITTEN, $payload['rows'][0]['status'] ?? null);
+        $this->assertSame('', get_post_meta(984, '_acx_description_provenance_pending', true));
+        $this->assertIsArray(get_post_meta(984, '_acx_description_provenance', true));
     }
 }
 

@@ -7,6 +7,7 @@ namespace AltContext\Api;
 require_once __DIR__ . '/interface-recognition-route-controller.php';
 require_once __DIR__ . '/class-abstract-recognition-proxy-controller.php';
 require_once __DIR__ . '/interface-describe-host.php';
+require_once __DIR__ . '/class-alt-text-write-status.php';
 require_once __DIR__ . '/services/class-description-candidate-service.php';
 require_once __DIR__ . '/services/class-describe-media-service.php';
 require_once __DIR__ . '/services/class-description-history-service.php';
@@ -714,12 +715,9 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			}
 		}
 
-		$applied          = array();
-		$partial          = array();
-		$skipped_existing = array();
-		$skipped_no_draft = array();
-		$skipped_invalid  = array();
-		$failed           = array();
+		// Bucket key names live on AltTextWriteStatus::BULK_APPLY_BUCKETS (SPA
+		// contract — do not rename). Collect media_ids into that ordered surface.
+		$buckets = array_fill_keys( AltTextWriteStatus::BULK_APPLY_BUCKETS, array() );
 
 		foreach ( $items as $item ) {
 			// media_id already strict-validated above; cast is identity for ints.
@@ -733,7 +731,7 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 				: '';
 
 			if ( 0 === $media_id || '' === $draft ) {
-				$skipped_no_draft[] = $media_id;
+				$buckets['skipped_no_draft'][] = $media_id;
 				continue;
 			}
 
@@ -742,7 +740,7 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			// attachment post.
 			$post = get_post( $media_id );
 			if ( ! is_object( $post ) || 'attachment' !== (string) ( $post->post_type ?? '' ) ) {
-				$skipped_invalid[] = $media_id;
+				$buckets['skipped_invalid'][] = $media_id;
 				continue;
 			}
 
@@ -768,7 +766,7 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 						// Alt type diverged from a string draft — drop this run's marker.
 						delete_post_meta( $media_id, '_acx_description_provenance_pending' );
 					}
-					$skipped_existing[] = $media_id;
+					$buckets['skipped_existing'][] = $media_id;
 					continue;
 				}
 			} else {
@@ -810,7 +808,7 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 								delete_post_meta( $media_id, '_acx_description_provenance_pending' );
 							}
 						}
-						$skipped_existing[] = $media_id;
+						$buckets['skipped_existing'][] = $media_id;
 						continue;
 					}
 				}
@@ -827,7 +825,7 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			// concurrent media-library edit; does not claim a lock.
 			$pre_write_raw = get_post_meta( $media_id, '_wp_attachment_image_alt', true );
 			if ( $pre_write_raw !== $decision_alt ) {
-				$skipped_existing[] = $media_id;
+				$buckets['skipped_existing'][] = $media_id;
 				continue;
 			}
 
@@ -840,7 +838,7 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			if ( false === $alt_written ) {
 				$current = get_post_meta( $media_id, '_wp_attachment_image_alt', true );
 				if ( ! is_string( $current ) || $expected_stored_alt !== $current ) {
-					$failed[] = $media_id;
+					$buckets['failed'][] = $media_id;
 					continue;
 				}
 			}
@@ -886,32 +884,27 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 						$current_marker = get_post_meta( $media_id, '_acx_description_provenance_pending', true );
 						$marker_ok      = is_array( $current_marker ) && $expected_marker === $current_marker;
 						if ( ! $marker_ok ) {
-							$failed[] = $media_id;
+							$buckets['failed'][] = $media_id;
 							continue;
 						}
 					}
-					$partial[] = $media_id;
+					$buckets['partial'][] = $media_id;
 					continue;
 				}
 			}
 
 			// Provenance verified — drop any pending recovery marker.
 			delete_post_meta( $media_id, '_acx_description_provenance_pending' );
-			$applied[] = $media_id;
+			$buckets['applied'][] = $media_id;
 		}
 
-		return new WP_REST_Response(
-			array(
-				'run_id'           => $run_id,
-				'applied'          => $applied,
-				'partial'          => $partial,
-				'skipped_existing' => $skipped_existing,
-				'skipped_no_draft' => $skipped_no_draft,
-				'skipped_invalid'  => $skipped_invalid,
-				'failed'           => $failed,
-			),
-			200
-		);
+		// Envelope from the centralised bucket surface — same six keys, same order.
+		$body = array( 'run_id' => $run_id );
+		foreach ( AltTextWriteStatus::BULK_APPLY_BUCKETS as $bucket_key ) {
+			$body[ $bucket_key ] = $buckets[ $bucket_key ];
+		}
+
+		return new WP_REST_Response( $body, 200 );
 	}
 
 	/**

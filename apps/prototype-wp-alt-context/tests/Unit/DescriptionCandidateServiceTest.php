@@ -86,6 +86,48 @@ class DescriptionCandidateServiceTest extends TestCase
         $this->assertSame(0, $result['offset']);
     }
 
+    /**
+     * WBUX-5-R16-BR-06 pin 2: provenance-gap item (alt present + pending marker)
+     * is not a missing-alt candidate — reason stays has_alt_text.
+     */
+    public function testProvenanceGapItemIsHasAltTextExclusionNotMissingAltCandidate(): void
+    {
+        $this->plantAttachment(60, 'Gap with alt', 'image/jpeg', 'Alt present after partial write.');
+        $GLOBALS['__ac_post_meta'][60]['_acx_description_provenance_pending'] = array(
+            'run_id'     => 'single_image',
+            'draft_hash' => hash('sha256', 'Alt present after partial write.'),
+        );
+
+        $service = new DescriptionCandidateService();
+        $result  = $service->list_missing_alt_candidates(limit: 10, offset: 0);
+
+        $this->assertSame(0, $result['total_candidates']);
+        $this->assertSame(array(), $result['candidates']);
+        $this->assertSame(1, $result['total_exclusions']);
+        $this->assertSame(60, $result['exclusions'][0]['media_id']);
+        $this->assertSame('has_alt_text', $result['exclusions'][0]['reason']);
+        $this->assertTrue($result['exclusions'][0]['has_alt_text']);
+    }
+
+    /**
+     * WBUX-5-R16-BR-06 pin 4: fully stamped item remains a has_alt_text exclusion.
+     */
+    public function testFullyStampedItemIsHasAltTextExclusion(): void
+    {
+        $this->plantAttachment(70, 'Stamped', 'image/jpeg', 'Generated stamp.');
+        $GLOBALS['__ac_post_meta'][70]['_acx_description_provenance'] = array(
+            'alt_text_draft' => 'Generated stamp.',
+            'model_id'       => 'local-v1',
+        );
+
+        $service = new DescriptionCandidateService();
+        $result  = $service->list_missing_alt_candidates(limit: 10, offset: 0);
+
+        $this->assertSame(0, $result['total_candidates']);
+        $this->assertSame(70, $result['exclusions'][0]['media_id']);
+        $this->assertSame('has_alt_text', $result['exclusions'][0]['reason']);
+    }
+
     private function plantAttachment(int $id, string $title, string $mimeType, string $altText): void
     {
         $slug = strtolower(str_replace(' ', '-', $title));

@@ -1262,12 +1262,15 @@ class DescribeMediaServiceTest extends TestCase
     }
 
     /**
-     * BR-02: provenance fails after successful alt → partial. Item must still be
-     * findable only when provenance OR human_edit is an array — without
-     * provenance it drops from history. Assert that storage state and the
-     * reported status both surface the gap.
+     * WBUX-5-R16-BR-06 / BR-02: provenance fails after successful alt → partial
+     * only when the durable pending marker lands. History must surface the gap
+     * row (provenance null, alt present) so operators have a worklist.
+     *
+     * [sr-001] Renamed from testWriteProvenanceFailureReportsPartialAndHistoryLacksItem
+     * which incorrectly asserted history total=0 (the defect). Inverted to pin
+     * the correct discoverability behaviour; partial-wire assertions kept.
      */
-    public function testWriteProvenanceFailureReportsPartialAndHistoryLacksItem(): void
+    public function testWriteProvenanceFailureReportsPartialPlantsMarkerAndHistoryIncludesItem(): void
     {
         $this->plantWritableAttachment(42);
         $this->queueHttpResponse(array(
@@ -1279,20 +1282,78 @@ class DescribeMediaServiceTest extends TestCase
         $result = $this->controller->describe_media($this->writeRequest(42));
 
         $this->assertInstanceOf(WP_REST_Response::class, $result);
-        $this->assertSame('partial', $result->get_data()['alt_text_write']['status'] ?? null);
+        $write = $result->get_data()['alt_text_write'] ?? array();
+        $this->assertSame('partial', $write['status'] ?? null);
+        $this->assertSame('provenance_write_failed', $write['reason'] ?? null);
         $this->assertSame('A photo.', get_post_meta(42, '_wp_attachment_image_alt', true));
         $this->assertSame('', get_post_meta(42, '_acx_description_provenance', true));
 
-        // History requires provenance or human_edit array — without either the
-        // item disappears from list_history. Plant the attachment as a candidate
-        // so the absence is due to the history gate, not an empty get_posts set.
+        // Durable marker: same shape as bulk apply, single-image owner (no bulk run_id).
+        $marker = get_post_meta(42, '_acx_description_provenance_pending', true);
+        $this->assertIsArray($marker);
+        $this->assertSame('single_image', $marker['run_id'] ?? null);
+        $this->assertSame(hash('sha256', 'A photo.'), $marker['draft_hash'] ?? null);
+
         $GLOBALS['__ac_get_posts_results'] = [42];
         $GLOBALS['__ac_posts'][42]->post_type = 'attachment';
         $GLOBALS['__ac_posts'][42]->ID = 42;
         $history = (new \AltContext\Api\Services\DescriptionHistoryService())->list_history(50);
-        $this->assertSame(0, $history['total']);
-        $ids = array_column($history['items'], 'media_id');
-        $this->assertNotContains(42, $ids);
+        $this->assertSame(1, $history['total']);
+        $this->assertSame(42, $history['items'][0]['media_id']);
+        $this->assertNull($history['items'][0]['provenance']);
+        $this->assertNull($history['items'][0]['human_edit']);
+        $this->assertSame('A photo.', $history['items'][0]['current_alt_text']);
+        $this->assertSame('', $history['items'][0]['generated_alt_text']);
+    }
+
+    /**
+     * WBUX-5-R16-BR-06: provenance + marker both fail → failed, not partial.
+     * Partial without a verified marker is dishonest (bulk parity).
+     */
+    public function testWriteProvenanceAndMarkerFailureReportsFailedNotPartial(): void
+    {
+        $this->plantWritableAttachment(42);
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+        $GLOBALS['__ac_update_post_meta_fail'][42]['_acx_description_provenance'] = true;
+        $GLOBALS['__ac_update_post_meta_fail'][42]['_acx_description_provenance_pending'] = true;
+
+        $result = $this->controller->describe_media($this->writeRequest(42));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $write = $result->get_data()['alt_text_write'] ?? array();
+        $this->assertSame('failed', $write['status'] ?? null);
+        $this->assertNotSame('partial', $write['status'] ?? null);
+        $this->assertSame('A photo.', get_post_meta(42, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(42, '_acx_description_provenance', true));
+        $this->assertSame('', get_post_meta(42, '_acx_description_provenance_pending', true));
+    }
+
+    /**
+     * WBUX-5-R16-BR-06: successful single-image write must not leave a pending
+     * recovery marker behind (bulk apply deletes it after verified provenance).
+     */
+    public function testWriteSuccessLeavesNoPendingProvenanceMarker(): void
+    {
+        $this->plantWritableAttachment(42);
+        // Stale marker from a prior gap must be cleared on success.
+        $this->setPostMeta(42, '_acx_description_provenance_pending', array(
+            'run_id'     => 'single_image',
+            'draft_hash' => hash('sha256', 'stale'),
+        ));
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+
+        $result = $this->controller->describe_media($this->writeRequest(42));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame('written', $result->get_data()['alt_text_write']['status'] ?? null);
+        $this->assertIsArray(get_post_meta(42, '_acx_description_provenance', true));
+        $this->assertSame('', get_post_meta(42, '_acx_description_provenance_pending', true));
     }
 
     /**

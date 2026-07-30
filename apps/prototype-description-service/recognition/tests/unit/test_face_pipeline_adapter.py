@@ -1501,9 +1501,19 @@ async def test_bytes_to_face_detection_e2e(monkeypatch: pytest.MonkeyPatch) -> N
         assert 0 <= x1 <= x2 <= w
         assert 0 <= y1 <= y2 <= h
         assert face.model_id == "opencv-sface@128d/l2/cosine"
+        # 5-point landmarks yield no pitch; yaw/roll are landmark proxies (FIR-4).
         assert face.pose_pitch is None
-        assert face.pose_yaw is None
-        assert face.pose_roll is None
+        assert face.pose_yaw is not None
+        assert face.pose_roll is not None
+        # Bound against the FIXTURE, not the formula: degrees(atan(...)) can
+        # never leave (-90, 90) and degrees(atan2(...)) can never leave
+        # (-180, 180], so range checks on those intervals are green by
+        # construction and certify nothing (TEST-06). This canvas is a frontal,
+        # upright synthetic face — measured yaw=-0.236°, roll=+0.105° — so a
+        # landmark-index swap, a sign flip, or a radians/degrees confusion in
+        # the proxy shows up as a violation of the ±2° envelope.
+        assert abs(face.pose_yaw) <= 2.0, f"frontal fixture yaw={face.pose_yaw}"
+        assert abs(face.pose_roll) <= 2.0, f"upright fixture roll={face.pose_roll}"
         # CR-01 models-present: phash + quality populated
         assert face.image_phash is not None
         assert face.landmark_quality is not None

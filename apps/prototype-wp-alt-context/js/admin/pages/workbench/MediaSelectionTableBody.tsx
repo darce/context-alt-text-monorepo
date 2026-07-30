@@ -101,6 +101,11 @@ const MediaSelectionRow = ({
   // per-row correctionErrors map [RLSE-05]).
   const [polite, setPolite] = useState<RowPoliteState>({ owner: null, message: '' });
 
+  // One correction in flight per row (S2c-4b-i). Owner-tagged like the polite
+  // region: begin is exclusive, end is compare-and-clear so a late sibling
+  // settle cannot clear another owner's lock.
+  const [commitOwner, setCommitOwner] = useState<RowPoliteOwner | null>(null);
+
   const announcePolite = useCallback((owner: RowPoliteOwner, message: string): void => {
     setPolite({ owner, message });
   }, []);
@@ -114,10 +119,22 @@ const MediaSelectionRow = ({
     });
   }, []);
 
+  const beginCommit = useCallback((owner: RowPoliteOwner): void => {
+    setCommitOwner(owner);
+  }, []);
+
+  const endCommit = useCallback((owner: RowPoliteOwner): void => {
+    setCommitOwner((current) => (current === owner ? null : current));
+  }, []);
+
   const editorAnnounce = useCallback((message: string): void => announcePolite('editor', message), [announcePolite]);
   const editorClear = useCallback((): void => clearPolite('editor'), [clearPolite]);
   const suggestAnnounce = useCallback((message: string): void => announcePolite('suggest', message), [announcePolite]);
   const suggestClear = useCallback((): void => clearPolite('suggest'), [clearPolite]);
+  const editorCommitStart = useCallback((): void => beginCommit('editor'), [beginCommit]);
+  const editorCommitEnd = useCallback((): void => endCommit('editor'), [endCommit]);
+  const suggestCommitStart = useCallback((): void => beginCommit('suggest'), [beginCommit]);
+  const suggestCommitEnd = useCallback((): void => endCommit('suggest'), [endCommit]);
 
   return (
     <tr>
@@ -173,8 +190,19 @@ const MediaSelectionRow = ({
           altText={item.altText ?? null}
           onPoliteAnnounce={editorAnnounce}
           onPoliteClear={editorClear}
+          peerCommitPending={commitOwner === 'suggest'}
+          onCommitStart={editorCommitStart}
+          onCommitEnd={editorCommitEnd}
         />
-        <MediaAltSuggest mediaId={item.id} onPoliteAnnounce={suggestAnnounce} onPoliteClear={suggestClear} />
+        <MediaAltSuggest
+          mediaId={item.id}
+          committedAlt={item.altText ?? null}
+          onPoliteAnnounce={suggestAnnounce}
+          onPoliteClear={suggestClear}
+          peerCommitPending={commitOwner === 'editor'}
+          onCommitStart={suggestCommitStart}
+          onCommitEnd={suggestCommitEnd}
+        />
         {/* detail-meta is metadata loading, not an operator result — not a live region. */}
         <div className="acx-media-selection__detail-meta">
           {detailReady ? (

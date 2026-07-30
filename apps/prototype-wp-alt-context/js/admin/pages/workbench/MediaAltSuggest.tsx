@@ -23,6 +23,13 @@ export const RECOMMENDED_ALT_TEXT_MAX_LENGTH = 125;
 export interface MediaAltSuggestProps {
   mediaId: number;
   /**
+   * The row's current committed alt text (live after any surface's successful
+   * correction). Required for compare-and-swap at Accept/Save — without it
+   * Suggest cannot observe a sibling commit (WBUX-5-S2C3A-BR-06 / BR-73).
+   * Optional only so isolated unit tests can omit it; defaults to null.
+   */
+  committedAlt?: string | null;
+  /**
    * When provided (row co-mount via MediaSelectionTableBody), polite cues go
    * through the row's single live region and the local status node is omitted.
    * Isolated renders keep a local always-mounted region for component tests.
@@ -30,7 +37,22 @@ export interface MediaAltSuggestProps {
   onPoliteAnnounce?: (message: string) => void;
   /** Compare-and-clear is enforced by the row owner; this just requests clear. */
   onPoliteClear?: () => void;
+  /**
+   * True while the sibling inline editor has a correction in flight for this
+   * mediaId. Transient — never left true from a clean settled state [rg-003].
+   */
+  peerCommitPending?: boolean;
+  /** Row-owned begin of this surface's correction (in-flight exclusivity). */
+  onCommitStart?: () => void;
+  /** Row-owned end of this surface's correction (success or failure). */
+  onCommitEnd?: () => void;
 }
+
+/** Assertive copy when a sibling committed while a Suggest draft was sticky. */
+export const ALT_SUGGEST_COMMIT_CONFLICT_MESSAGE = __(
+  'The alt text changed while you were reviewing this draft. Your draft was kept and not saved. Dismiss to clear the draft, or keep it.',
+  'alt-context',
+);
 
 /** True when the commit-candidate string exceeds the recommended maximum. */
 export const isOverRecommendedAltLength = (altText: string): boolean =>
@@ -66,8 +88,12 @@ export const formatWithinLengthAnnouncement = (): string =>
 
 export const MediaAltSuggest = ({
   mediaId,
+  committedAlt = null,
   onPoliteAnnounce,
   onPoliteClear,
+  peerCommitPending = false,
+  onCommitStart,
+  onCommitEnd,
 }: MediaAltSuggestProps): React.JSX.Element => {
   // House BR-68 pattern (same hook ScanTabContent uses one directory away): seq
   // bumps on every announce so a repeated string (regenerate → same "Draft
@@ -97,6 +123,8 @@ export const MediaAltSuggest = ({
   };
   const [isEditing, setIsEditing] = useState(false);
   const [editDraft, setEditDraft] = useState('');
+  // Local assertive conflict (CAS refusal) — not a mutation error; not polite.
+  const [conflictMessage, setConflictMessage] = useState<string | null>(null);
   const { mutate, isPending, isError, error, data, reset } = useDescribeMedia();
   const {
     mutate: acceptDraft,
@@ -118,6 +146,17 @@ export const MediaAltSuggest = ({
   // Previous over/under side for one-shot length-crossing announcements
   // [WBUX-5-S2C4A-BR-01]. Seeded on generate success and when entering edit.
   const wasOverLengthRef = useRef(false);
+  // CAS baseline: committed alt at draft-generate (and re-captured on edit-draft
+  // open). Compared at Accept/Save against the live committedAlt prop.
+  const committedAltBaselineRef = useRef<string | null>(committedAlt);
+  // Live committed prop mirror so generate onSuccess (async) captures the value
+  // at draft-arrival, not a stale closure from the click render.
+  const committedAltRef = useRef<string | null>(committedAlt);
+  committedAltRef.current = committedAlt;
+  // Synchronous in-flight guard for Accept/Save [S2C3A-BR-16]. isAccepting
+  // only paints after the next render; a same-tick double activation must not
+  // enqueue two corrections. Mirror of DescriptionHistoryPage BR-81.
+  const isAcceptingRef = useRef(false);
   const textareaId = useId();
   const disclosureId = useId();
   const errorId = useId();
@@ -140,9 +179,13 @@ export const MediaAltSuggest = ({
     // distinct text from a prior "Draft ready…" (regenerate re-announce path).
     announceStatus(__('Generating…', 'alt-context'));
     resetAccept();
+    setConflictMessage(null);
     setIsEditing(false);
     mutate(mediaId, {
       onSuccess: (response) => {
+        // Capture the committed alt we are working from at draft generation
+        // (CAS baseline). Re-captured again when edit-draft mode opens.
+        committedAltBaselineRef.current = committedAltRef.current;
         // [A11Y-34] branch (c): when the generated draft exceeds the recommended
         // maximum, announce the length check once via the existing polite region
         // (composed with the ready cue). Do not add a second live region [A11Y-19].
@@ -346,6 +389,20 @@ export const MediaAltSuggest = ({
 
     if (data) {
       const accept = (): void => {
+        // Ref guard first — isAccepting only disables after the next paint
+        // [S2C3A-BR-16]. Same defect class as DescriptionHistoryPage BR-81.
+        if (isAcceptingRef.current || isAccepting || peerCommitPending) {
+          return;
+        }
+        // Compare-and-swap against the committed alt captured at generate
+        // (or edit-draft open). If a sibling committed, refuse and keep draft.
+        if (committedAltBaselineRef.current !== committedAlt) {
+          setConflictMessage(ALT_SUGGEST_COMMIT_CONFLICT_MESSAGE);
+          return;
+        }
+        setConflictMessage(null);
+        isAcceptingRef.current = true;
+        onCommitStart?.();
         // BR-56: announce commit-in-flight immediately so the polite region does
         // not keep reading the stale "Draft ready…" cue while the button shows
         // "Accepting draft…".
@@ -354,6 +411,8 @@ export const MediaAltSuggest = ({
           { mediaId, altText: data.alt_text_draft },
           {
             onSuccess: () => {
+              isAcceptingRef.current = false;
+              onCommitEnd?.();
               shouldFocusSuggestRef.current = true;
               announceStatus(__('Alt text saved.', 'alt-context'));
               // BR-30: setIsEditing(false) removed — Accept only renders in the
@@ -366,6 +425,8 @@ export const MediaAltSuggest = ({
             // region announces nothing; the role="alert" is the single source of
             // truth for this failure.
             onError: () => {
+              isAcceptingRef.current = false;
+              onCommitEnd?.();
               clearStatus();
             },
           },
@@ -376,6 +437,9 @@ export const MediaAltSuggest = ({
         // Clear sticky correction error so a prior Accept/Save failure does not
         // re-fire as a false alert on a fresh edit attempt (WBUX-5-S2C3A-BR-01).
         resetAccept();
+        setConflictMessage(null);
+        // Re-capture CAS baseline when edit-draft mode opens.
+        committedAltBaselineRef.current = committedAlt;
         setEditDraft(data.alt_text_draft);
         // Seed crossing side so entering edit on an already-over draft does not
         // re-announce; only a true under→over or over→under edge fires.
@@ -385,17 +449,30 @@ export const MediaAltSuggest = ({
 
       const cancelEdit = (): void => {
         resetAccept();
+        setConflictMessage(null);
         shouldFocusEditButtonRef.current = true;
         setIsEditing(false);
       };
 
       const saveEdit = (): void => {
+        if (isAcceptingRef.current || isAccepting || peerCommitPending) {
+          return;
+        }
+        if (committedAltBaselineRef.current !== committedAlt) {
+          setConflictMessage(ALT_SUGGEST_COMMIT_CONFLICT_MESSAGE);
+          return;
+        }
+        setConflictMessage(null);
+        isAcceptingRef.current = true;
+        onCommitStart?.();
         // BR-56 companion: edit-path commit-in-flight cue (mirror Accept).
         announceStatus(__('Saving alt text…', 'alt-context'));
         acceptDraft(
           { mediaId, altText: editDraft },
           {
             onSuccess: () => {
+              isAcceptingRef.current = false;
+              onCommitEnd?.();
               shouldFocusSuggestRef.current = true;
               announceStatus(__('Alt text saved.', 'alt-context'));
               setIsEditing(false);
@@ -404,6 +481,8 @@ export const MediaAltSuggest = ({
             // BR-39 companion: edit-path save failure also must not leave a
             // stale polite cue beside the assertive alert.
             onError: () => {
+              isAcceptingRef.current = false;
+              onCommitEnd?.();
               clearStatus();
             },
           },
@@ -414,14 +493,16 @@ export const MediaAltSuggest = ({
       // they type in edit mode (editDraft) or from the generated draft otherwise.
       const commitCandidate = isEditing ? editDraft : data.alt_text_draft;
       const isOverLength = isOverRecommendedAltLength(commitCandidate);
+      const showCommitError = conflictMessage != null || isAcceptError;
       // Extend editDescribedBy composition; do not replace. Keep error id when set.
       const editDescribedBy = [
         disclosureId,
         ...(isOverLength ? [lengthAdvisoryId] : []),
-        ...(isAcceptError ? [errorId] : []),
+        ...(showCommitError ? [errorId] : []),
       ].join(' ');
       const canSaveEdit = editDraft.trim() !== '';
       const canAcceptDraft = data.alt_text_draft.trim() !== '';
+      const commitControlDisabled = isAccepting || peerCommitPending;
       // BR-56: park host mirrors generate. role="group" is constant — not only
       // while accepting — because this node holds programmatically parked focus
       // and a role mutation on park release can destroy/recreate the a11y node
@@ -453,7 +534,7 @@ export const MediaAltSuggest = ({
                 onChange={(event) => handleEditDraftChange(event.target.value)}
                 disabled={isAccepting}
                 aria-describedby={editDescribedBy}
-                aria-invalid={isAcceptError || undefined}
+                aria-invalid={showCommitError || undefined}
               />
             </>
           ) : (
@@ -470,7 +551,11 @@ export const MediaAltSuggest = ({
               {formatAltLengthAdvisory(commitCandidate.length)}
             </p>
           ) : null}
-          {isAcceptError ? (
+          {conflictMessage ? (
+            <div id={errorId} className="acx-media-selection__media-alt-error" role="alert">
+              {conflictMessage}
+            </div>
+          ) : isAcceptError ? (
             <div id={errorId} className="acx-media-selection__media-alt-error" role="alert">
               {resolveDescribeErrorMessage(
                 acceptError,
@@ -485,7 +570,7 @@ export const MediaAltSuggest = ({
                 ref={saveButtonRef}
                 className="button button-primary acx-media-selection__media-alt-suggest-save"
                 onClick={saveEdit}
-                disabled={isAccepting || !canSaveEdit}
+                disabled={commitControlDisabled || !canSaveEdit}
               >
                 {isAccepting ? __('Saving alt text…', 'alt-context') : __('Save alt text', 'alt-context')}
               </button>
@@ -505,8 +590,8 @@ export const MediaAltSuggest = ({
                 ref={acceptButtonRef}
                 className="button button-primary acx-media-selection__media-alt-suggest-accept"
                 onClick={accept}
-                disabled={isAccepting || !canAcceptDraft}
-                aria-describedby={isAcceptError ? errorId : undefined}
+                disabled={commitControlDisabled || !canAcceptDraft}
+                aria-describedby={showCommitError ? errorId : undefined}
               >
                 {isAccepting ? __('Accepting draft…', 'alt-context') : __('Accept', 'alt-context')}
               </button>
@@ -535,6 +620,7 @@ export const MediaAltSuggest = ({
                   shouldFocusSuggestRef.current = true;
                   reset();
                   resetAccept();
+                  setConflictMessage(null);
                   clearStatus();
                   setIsEditing(false);
                   wasOverLengthRef.current = false;

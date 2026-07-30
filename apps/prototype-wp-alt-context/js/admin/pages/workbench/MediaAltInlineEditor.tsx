@@ -16,7 +16,22 @@ export interface MediaAltInlineEditorProps {
   onPoliteAnnounce?: (message: string) => void;
   /** Compare-and-clear is enforced by the row owner; this just requests clear. */
   onPoliteClear?: () => void;
+  /**
+   * True while the sibling Suggest surface has a correction in flight for this
+   * mediaId. Transient — never left true from a clean settled state [rg-003].
+   */
+  peerCommitPending?: boolean;
+  /** Row-owned begin of this surface's correction (in-flight exclusivity). */
+  onCommitStart?: () => void;
+  /** Row-owned end of this surface's correction (success or failure). */
+  onCommitEnd?: () => void;
 }
+
+/** Assertive copy when a sibling committed while the editor buffer was open. */
+export const ALT_COMMIT_CONFLICT_MESSAGE = __(
+  'The alt text changed while you were editing. Your draft was kept and not saved. Cancel to review the current text.',
+  'alt-context',
+);
 
 /** Stored meta arrives entity-encoded; decode once at the read boundary (BR-140). */
 const decodeStoredAlt = (stored: string | null): string | null =>
@@ -27,11 +42,16 @@ export const MediaAltInlineEditor = ({
   altText,
   onPoliteAnnounce,
   onPoliteClear,
+  peerCommitPending = false,
+  onCommitStart,
+  onCommitEnd,
 }: MediaAltInlineEditorProps): React.JSX.Element => {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(() => decodeStoredAlt(altText) ?? '');
   const [displayAlt, setDisplayAlt] = useState<string | null>(() => decodeStoredAlt(altText));
   const [statusMessage, setStatusMessage] = useState('');
+  // Local assertive conflict (CAS refusal) — not a mutation error; not polite.
+  const [conflictMessage, setConflictMessage] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const editButtonRef = useRef<HTMLButtonElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -39,6 +59,8 @@ export const MediaAltInlineEditor = ({
   const textareaId = useId();
   // Track the raw prop (pre-decode) so a genuine parent refetch is detected even
   // when two distinct stored forms would decode to the same display string.
+  // Also the CAS baseline: captured when edit mode opens; compared at save
+  // against the live committed prop (WBUX-5-S2C3A-BR-06 / BR-73).
   const previousAltTextRef = useRef(altText);
   const { mutate, isPending, error, reset } = useCorrectMediaAlt();
 
@@ -96,22 +118,42 @@ export const MediaAltInlineEditor = ({
   const enterEditMode = (): void => {
     reset();
     clearStatus();
+    setConflictMessage(null);
+    // Capture the committed value we are editing from — CAS baseline at open
+    // (S2c-4b-i). previousAltTextRef already tracks prop for display sync; reuse
+    // it rather than inventing a second baseline.
+    previousAltTextRef.current = altText;
     setDraft(displayAlt ?? '');
     setIsEditing(true);
   };
 
   const handleCancel = (): void => {
     reset();
+    setConflictMessage(null);
     setDraft(displayAlt ?? '');
     shouldFocusEditButtonRef.current = true;
     setIsEditing(false);
   };
 
   const handleSave = (): void => {
+    // Peer Suggest has a correction in flight — UI disables Save, but refuse
+    // here too so a same-tick race cannot dual-write.
+    if (peerCommitPending || isPending) {
+      return;
+    }
+    // Compare-and-swap: if the row's committed alt moved since edit opened,
+    // refuse the write and keep the operator's buffer (BR-06 / BR-73).
+    if (previousAltTextRef.current !== altText) {
+      setConflictMessage(ALT_COMMIT_CONFLICT_MESSAGE);
+      return;
+    }
+    setConflictMessage(null);
+    onCommitStart?.();
     mutate(
       { mediaId, altText: draft },
       {
         onSuccess: (data) => {
+          onCommitEnd?.();
           // current_alt_text is stored meta (entity-encoded); decode for display.
           // Fallback to the operator draft (already plain text) when absent.
           const nextAlt =
@@ -132,6 +174,9 @@ export const MediaAltInlineEditor = ({
           // (WBUX-5-S2A-BR-01).
           shouldFocusEditButtonRef.current = true;
           setIsEditing(false);
+        },
+        onError: () => {
+          onCommitEnd?.();
         },
       },
     );
@@ -181,7 +226,7 @@ export const MediaAltInlineEditor = ({
               type="button"
               className="button acx-media-selection__media-alt-save"
               onClick={handleSave}
-              disabled={isPending}
+              disabled={isPending || peerCommitPending}
             >
               {isPending ? __('Saving…', 'alt-context') : __('Save', 'alt-context')}
             </button>
@@ -194,7 +239,11 @@ export const MediaAltInlineEditor = ({
               {__('Cancel', 'alt-context')}
             </button>
           </div>
-          {error ? (
+          {conflictMessage ? (
+            <div className="acx-media-selection__media-alt-error" role="alert">
+              {conflictMessage}
+            </div>
+          ) : error ? (
             <div className="acx-media-selection__media-alt-error" role="alert">
               {resolveDescribeErrorMessage(error, __('Could not save the alt text. Please try again.', 'alt-context'))}
             </div>

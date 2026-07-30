@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -1910,5 +1910,80 @@ describe('MediaAltSuggest', () => {
     // is dropped — callers and tests share one named source of truth.
     expect(RECOMMENDED_ALT_TEXT_MAX_LENGTH).toBe(125);
     expect(Number.isInteger(RECOMMENDED_ALT_TEXT_MAX_LENGTH)).toBe(true);
+  });
+
+  it('enqueues exactly one correction for two same-tick Accept activations [S2C3A-BR-16]', async () => {
+    // disabled={isAccepting} only paints after the next render. fireEvent.click
+    // alone flushes a render between clicks and hits disabled — proving nothing.
+    // Same-tick route (BR-81 pattern): two native clicks inside one act so React
+    // batches and the disabled attribute never lands between them.
+    describeMock.mockResolvedValue(sampleResponse());
+    correctMock.mockReturnValue(new Promise<DescriptionHistoryItem>(() => undefined));
+    renderSuggest(<MediaAltSuggest mediaId={42} committedAlt={null} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    const accept = await screen.findByRole('button', { name: /accept/i });
+
+    act(() => {
+      accept.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      accept.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    });
+
+    await waitFor(() => expect(correctMock.mock.calls.length).toBeGreaterThanOrEqual(1));
+    // Brief settle so a second in-flight call can register if the guard is missing.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    // [TEST-15] discrimination: goes red if the acceptingRef guard is removed
+    // from accept() — both activations enqueue a correction before isAccepting paints.
+    expect(correctMock).toHaveBeenCalledTimes(1);
+    expect(correctMock).toHaveBeenCalledWith(42, draft);
+  });
+
+  it('enqueues exactly one correction for two same-tick Save activations [S2C3A-BR-16]', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    correctMock.mockReturnValue(new Promise<DescriptionHistoryItem>(() => undefined));
+    renderSuggest(<MediaAltSuggest mediaId={42} committedAlt={null} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
+    fireEvent.change(await screen.findByLabelText(/edit draft alt text/i), {
+      target: { value: editedDraft },
+    });
+    const save = screen.getByRole('button', { name: /^save alt text$/i });
+
+    act(() => {
+      save.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      save.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    });
+
+    await waitFor(() => expect(correctMock.mock.calls.length).toBeGreaterThanOrEqual(1));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(correctMock).toHaveBeenCalledTimes(1);
+    expect(correctMock).toHaveBeenCalledWith(42, editedDraft);
+  });
+
+  it('refuses Accept when committedAlt moved under a sticky draft [S2c-4b-i]', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    const { client, rerender } = renderSuggest(
+      <MediaAltSuggest mediaId={42} committedAlt="Existing alt" />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await screen.findByText(draft);
+
+    // Sibling committed while draft was sticky — prop updates to the new truth.
+    rerender(
+      <QueryClientProvider client={client}>
+        <MediaAltSuggest mediaId={42} committedAlt="Sibling committed this." />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /^accept$/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/changed/i);
+    expect(correctMock).not.toHaveBeenCalled();
+    // Draft kept; Dismiss remains reachable.
+    expect(screen.getByText(draft)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /dismiss/i })).not.toBeDisabled();
   });
 });

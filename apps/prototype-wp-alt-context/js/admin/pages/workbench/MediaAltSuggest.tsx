@@ -1,7 +1,10 @@
 import { __, sprintf } from '@wordpress/i18n';
 import { useEffect, useId, useRef, useState } from 'react';
 
-import { resolveDescribeErrorMessage } from '../../api/describeApi';
+import {
+  correctDescriptionHistoryItem,
+  resolveDescribeErrorMessage,
+} from '../../api/describeApi';
 import { useCorrectMediaAlt } from '../../hooks/useCorrectMediaAlt';
 import { useDescribeMedia } from '../../hooks/useDescribeMedia';
 import { useAriaAnnounce } from './identity-clusters/useAriaAnnounce';
@@ -54,6 +57,33 @@ export interface MediaAltSuggestProps {
 /** Assertive copy when a sibling committed while a Suggest draft was sticky. */
 export const ALT_SUGGEST_COMMIT_CONFLICT_MESSAGE = __(
   'The alt text changed while you were reviewing this draft. Your draft was kept and not saved. Dismiss to clear the draft, or keep it.',
+  'alt-context',
+);
+
+/**
+ * Assertive copy when the row lock claim is refused (peer commit in flight).
+ * Distinct from ALT_SUGGEST_COMMIT_CONFLICT_MESSAGE — that one means the alt
+ * moved underneath the operator; this one means a brief busy peer and a retry
+ * will work [WBUX-5-S2C4B-BR-05].
+ */
+export const ALT_SUGGEST_COMMIT_CLAIM_REFUSED_MESSAGE = __(
+  'Another save is already in progress for this image. Wait a moment, then try again.',
+  'alt-context',
+);
+
+/**
+ * Explicit control to mark the image decorative (empty alt + durable marker).
+ * Label states the screen-reader outcome — "decorative" alone is jargon [INT-06]
+ * [A11Y-02]. Recoverable: a later description clears the marker server-side.
+ */
+export const MARK_DECORATIVE_LABEL = __(
+  'Mark as decorative — screen readers will announce nothing',
+  'alt-context',
+);
+
+/** Polite success after a deliberate decorative mark. Mentions undo path. */
+export const MARK_DECORATIVE_SUCCESS_MESSAGE = __(
+  'Marked as decorative. Screen readers will skip this image. You can describe it later to undo.',
   'alt-context',
 );
 
@@ -127,7 +157,12 @@ export const MediaAltSuggest = ({
   const [isEditing, setIsEditing] = useState(false);
   const [editDraft, setEditDraft] = useState('');
   // Local assertive conflict (CAS refusal) — not a mutation error; not polite.
+  // Also used for decorative-mark failures (same assertive channel; no new region).
   const [conflictMessage, setConflictMessage] = useState<string | null>(null);
+  // Decorative commit bypasses useCorrectMediaAlt (optional decorative flag is
+  // not on that hook's frozen public signature) — track in-flight locally so
+  // disabled + useFocusPark match Accept/Save discipline [BR-13][BR-56].
+  const [isMarkingDecorative, setIsMarkingDecorative] = useState(false);
   const { mutate, isPending, isError, error, data, reset } = useDescribeMedia();
   const {
     mutate: acceptDraft,
@@ -143,6 +178,7 @@ export const MediaAltSuggest = ({
   const acceptButtonRef = useRef<HTMLButtonElement>(null);
   const saveButtonRef = useRef<HTMLButtonElement>(null);
   const editButtonRef = useRef<HTMLButtonElement>(null);
+  const decorativeButtonRef = useRef<HTMLButtonElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const shouldFocusSuggestRef = useRef(false);
   const shouldFocusEditButtonRef = useRef(false);
@@ -312,8 +348,66 @@ export const MediaAltSuggest = ({
   // window with the same mechanism rather than inventing aria-disabled + click
   // guards. isPending and isAccepting are mutually exclusive on real paths
   // (accept requires data; generate clears edit and only pending is true while
-  // describing), so a single park flag is sufficient.
-  useFocusPark(isPending || isAccepting, containerRef);
+  // describing), so a single park flag is sufficient. isMarkingDecorative is a
+  // third exclusive commit path (direct correction with decorative:true) and
+  // joins the same park window for the same blur reason.
+  const isCommitInFlight = isAccepting || isMarkingDecorative;
+  useFocusPark(isPending || isCommitInFlight, containerRef);
+
+  /**
+   * Deliberate decorative mark: empty alt + decorative:true on the wire.
+   * Separate from Accept/Save so clearing the box cannot silently mark
+   * decorative [WBUX-5-S2C3C-BR-01]. Does not go through useCorrectMediaAlt
+   * (that hook's public variables stay { mediaId, altText } for concurrent
+   * consumers) — calls correctDescriptionHistoryItem directly.
+   */
+  const markDecorative = (): void => {
+    if (isAcceptingRef.current || isAccepting || isMarkingDecorative || peerCommitPending) {
+      return;
+    }
+    // CAS when a draft session captured a baseline (draft / edit surfaces).
+    if (data && committedAltBaselineRef.current !== committedAlt) {
+      setConflictMessage(ALT_SUGGEST_COMMIT_CONFLICT_MESSAGE);
+      return;
+    }
+    // Claim before clear — same RLSE-05 discipline as Accept/Save [WBUX-5-S2C4B-BR-05].
+    const claimed = onCommitStart?.() ?? true;
+    if (!claimed) {
+      setConflictMessage((prev) => prev ?? ALT_SUGGEST_COMMIT_CLAIM_REFUSED_MESSAGE);
+      return;
+    }
+    setConflictMessage(null);
+    isAcceptingRef.current = true;
+    setIsMarkingDecorative(true);
+    announceStatus(__('Marking as decorative…', 'alt-context'));
+    void (async () => {
+      try {
+        await correctDescriptionHistoryItem(mediaId, '', { decorative: true });
+        isAcceptingRef.current = false;
+        setIsMarkingDecorative(false);
+        onCommitEnd?.();
+        shouldFocusSuggestRef.current = true;
+        announceStatus(MARK_DECORATIVE_SUCCESS_MESSAGE);
+        setIsEditing(false);
+        setConflictMessage(null);
+        resetAccept();
+        reset();
+      } catch (err: unknown) {
+        isAcceptingRef.current = false;
+        setIsMarkingDecorative(false);
+        onCommitEnd?.();
+        clearStatus();
+        // Assertive channel via existing conflictMessage region — no new live region
+        // [A11Y-21]. Prefer server message (400 contradiction) when structured.
+        setConflictMessage(
+          resolveDescribeErrorMessage(
+            err,
+            __('Could not mark as decorative. Please try again.', 'alt-context'),
+          ),
+        );
+      }
+    })();
+  };
 
   // BR-17: retire status once it has served its purpose — no timeout. When focus
   // leaves this surface while idle, "Alt text saved." is no longer local context.
@@ -323,7 +417,7 @@ export const MediaAltSuggest = ({
     if (next instanceof Node && containerRef.current?.contains(next)) {
       return;
     }
-    if (!data && !isPending && !isAccepting && !isError) {
+    if (!data && !isPending && !isAccepting && !isMarkingDecorative && !isError) {
       clearStatus();
     }
   };
@@ -406,13 +500,17 @@ export const MediaAltSuggest = ({
           setConflictMessage(ALT_SUGGEST_COMMIT_CONFLICT_MESSAGE);
           return;
         }
-        setConflictMessage(null);
         // beginCommit is compare-and-set [S2c-4b-ii BR-01]: a refused claim must
         // not proceed to write. Isolated renders omit onCommitStart (proceed).
+        // Clear conflict only AFTER a successful claim — a refusal must not wipe
+        // an unread warning [WBUX-5-S2C4B-BR-05][RLSE-05].
         const claimed = onCommitStart?.() ?? true;
         if (!claimed) {
+          // Keep a pre-existing message; otherwise surface the distinct busy cue.
+          setConflictMessage((prev) => prev ?? ALT_SUGGEST_COMMIT_CLAIM_REFUSED_MESSAGE);
           return;
         }
+        setConflictMessage(null);
         isAcceptingRef.current = true;
         // BR-56: announce commit-in-flight immediately so the polite region does
         // not keep reading the stale "Draft ready…" cue while the button shows
@@ -473,13 +571,13 @@ export const MediaAltSuggest = ({
           setConflictMessage(ALT_SUGGEST_COMMIT_CONFLICT_MESSAGE);
           return;
         }
-        setConflictMessage(null);
-        // beginCommit is compare-and-set [S2c-4b-ii BR-01]: a refused claim must
-        // not proceed to write. Isolated renders omit onCommitStart (proceed).
+        // Claim before clear — same RLSE-05 discipline as Accept [WBUX-5-S2C4B-BR-05].
         const claimed = onCommitStart?.() ?? true;
         if (!claimed) {
+          setConflictMessage((prev) => prev ?? ALT_SUGGEST_COMMIT_CLAIM_REFUSED_MESSAGE);
           return;
         }
+        setConflictMessage(null);
         isAcceptingRef.current = true;
         // BR-56 companion: edit-path commit-in-flight cue (mirror Accept).
         announceStatus(__('Saving alt text…', 'alt-context'));
@@ -518,14 +616,20 @@ export const MediaAltSuggest = ({
       ].join(' ');
       const canSaveEdit = editDraft.trim() !== '';
       const canAcceptDraft = data.alt_text_draft.trim() !== '';
-      const commitControlDisabled = isAccepting || peerCommitPending;
+      // Non-empty gates stay on Accept/Save only — decorative is a separate
+      // deliberate action and must not ride those gates [WBUX-5-S2C3C-BR-01].
+      const commitControlDisabled = isCommitInFlight || peerCommitPending;
       // BR-56: park host mirrors generate. role="group" is constant — not only
       // while accepting — because this node holds programmatically parked focus
       // and a role mutation on park release can destroy/recreate the a11y node
       // (focus-loss). aria-label / aria-busy stay conditional: the idle draft
       // surface has no busy name, and name is already gated so the role need
       // not be. (axe accepts unnamed group; generate host is also unconditional.)
-      const acceptingLabel = isEditing ? __('Saving alt text…', 'alt-context') : __('Accepting draft…', 'alt-context');
+      const acceptingLabel = isMarkingDecorative
+        ? __('Marking as decorative…', 'alt-context')
+        : isEditing
+          ? __('Saving alt text…', 'alt-context')
+          : __('Accepting draft…', 'alt-context');
 
       return (
         <div
@@ -533,8 +637,8 @@ export const MediaAltSuggest = ({
           className="acx-media-selection__media-alt-suggest"
           role="group"
           tabIndex={-1}
-          aria-busy={isAccepting ? true : undefined}
-          aria-label={isAccepting ? acceptingLabel : undefined}
+          aria-busy={isCommitInFlight ? true : undefined}
+          aria-label={isCommitInFlight ? acceptingLabel : undefined}
           onBlur={handleContainerBlur}
         >
           {isEditing ? (
@@ -548,7 +652,7 @@ export const MediaAltSuggest = ({
                 className="acx-media-selection__media-alt-suggest-edit-input"
                 value={editDraft}
                 onChange={(event) => handleEditDraftChange(event.target.value)}
-                disabled={isAccepting}
+                disabled={isCommitInFlight}
                 aria-describedby={editDescribedBy}
                 aria-invalid={showCommitError || undefined}
               />
@@ -594,7 +698,7 @@ export const MediaAltSuggest = ({
                 type="button"
                 className="button button-link acx-media-selection__media-alt-suggest-cancel"
                 onClick={cancelEdit}
-                disabled={isAccepting}
+                disabled={isCommitInFlight}
               >
                 {__('Cancel edit', 'alt-context')}
               </button>
@@ -616,7 +720,7 @@ export const MediaAltSuggest = ({
                 ref={editButtonRef}
                 className="button acx-media-selection__media-alt-suggest-edit"
                 onClick={enterEditMode}
-                disabled={isAccepting}
+                disabled={isCommitInFlight}
               >
                 {__('Edit draft', 'alt-context')}
               </button>
@@ -624,9 +728,20 @@ export const MediaAltSuggest = ({
                 type="button"
                 className="button acx-media-selection__media-alt-suggest-regenerate"
                 onClick={generate}
-                disabled={isAccepting}
+                disabled={isCommitInFlight}
               >
                 {__('Regenerate', 'alt-context')}
+              </button>
+              <button
+                type="button"
+                ref={decorativeButtonRef}
+                className="button acx-media-selection__media-alt-suggest-decorative"
+                onClick={markDecorative}
+                disabled={commitControlDisabled}
+              >
+                {isMarkingDecorative
+                  ? __('Marking as decorative…', 'alt-context')
+                  : MARK_DECORATIVE_LABEL}
               </button>
               <button
                 type="button"
@@ -641,7 +756,7 @@ export const MediaAltSuggest = ({
                   setIsEditing(false);
                   wasOverLengthRef.current = false;
                 }}
-                disabled={isAccepting}
+                disabled={isCommitInFlight}
               >
                 {__('Dismiss', 'alt-context')}
               </button>
@@ -655,7 +770,10 @@ export const MediaAltSuggest = ({
       <div
         ref={containerRef}
         className="acx-media-selection__media-alt-suggest"
+        role="group"
         tabIndex={-1}
+        aria-busy={isMarkingDecorative ? true : undefined}
+        aria-label={isMarkingDecorative ? __('Marking as decorative…', 'alt-context') : undefined}
         onBlur={handleContainerBlur}
       >
         <button
@@ -663,9 +781,26 @@ export const MediaAltSuggest = ({
           ref={suggestButtonRef}
           className="button acx-media-selection__media-alt-suggest-trigger"
           onClick={generate}
+          disabled={isMarkingDecorative}
         >
           {__('Suggest alt text', 'alt-context')}
         </button>
+        <button
+          type="button"
+          ref={decorativeButtonRef}
+          className="button acx-media-selection__media-alt-suggest-decorative"
+          onClick={markDecorative}
+          disabled={isMarkingDecorative || peerCommitPending}
+        >
+          {isMarkingDecorative
+            ? __('Marking as decorative…', 'alt-context')
+            : MARK_DECORATIVE_LABEL}
+        </button>
+        {conflictMessage ? (
+          <div className="acx-media-selection__media-alt-error" role="alert">
+            {conflictMessage}
+          </div>
+        ) : null}
       </div>
     );
   })();

@@ -233,6 +233,12 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 						'required'    => true,
 						'description' => 'Human-corrected alt text.',
 					),
+					'decorative' => array(
+						'type'        => 'boolean',
+						'required'    => false,
+						'default'     => false,
+						'description' => 'Mark the image as deliberately decorative (empty alt).',
+					),
 				),
 			)
 		);
@@ -328,9 +334,12 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	}
 
 	public function correct_description_history_item( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		// decorative defaults false when omitted so every existing caller is
+		// unchanged. Cast: REST may hand back null when the param is absent.
 		$result = $this->description_history_service->record_correction(
 			absint( $request->get_param( 'media_id' ) ),
-			(string) $request->get_param( 'alt_text' )
+			(string) $request->get_param( 'alt_text' ),
+			(bool) ( $request->get_param( 'decorative' ) ?? false )
 		);
 		if ( is_wp_error( $result ) ) {
 			return $result;

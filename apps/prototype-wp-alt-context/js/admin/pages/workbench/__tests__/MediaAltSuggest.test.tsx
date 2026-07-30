@@ -4,7 +4,11 @@ import type { ReactElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MediaAltInlineEditor } from '../MediaAltInlineEditor';
-import { MediaAltSuggest, RECOMMENDED_ALT_TEXT_MAX_LENGTH } from '../MediaAltSuggest';
+import {
+  ALT_SUGGEST_COMMIT_CONFLICT_MESSAGE,
+  MediaAltSuggest,
+  RECOMMENDED_ALT_TEXT_MAX_LENGTH,
+} from '../MediaAltSuggest';
 import { correctDescriptionHistoryItem, describeMedia } from '../../../api/describeApi';
 import type { DescriptionHistoryItem, VisualFactsResponse } from '../../../api/describeApi';
 
@@ -1988,6 +1992,9 @@ describe('MediaAltSuggest', () => {
   });
 
   it('does not write when onCommitStart refuses the lock claim [S2c-4b-ii BR-01]', async () => {
+    // WBUX-5-S2C4B-BR-05: a refused claim must raise a distinct assertive message
+    // (not silent, not ALT_SUGGEST_COMMIT_CONFLICT_MESSAGE). Headline [TEST-06].
+    // Predict RED: no role=alert, or alert text equals the CAS conflict copy.
     describeMock.mockResolvedValue(sampleResponse());
     const onCommitStart = vi.fn((): boolean => false);
     renderSuggest(
@@ -2003,6 +2010,208 @@ describe('MediaAltSuggest', () => {
     // Draft kept; Dismiss remains reachable [rg-003].
     expect(screen.getByText(draft)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /dismiss/i })).not.toBeDisabled();
+
+    // [TEST-15] discrimination: passes only after a claim-refusal alert exists
+    // with copy distinct from the CAS "changed while you were reviewing" message.
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent ?? '').not.toBe(ALT_SUGGEST_COMMIT_CONFLICT_MESSAGE);
+    expect(alert).toHaveTextContent(/try again|busy|in progress|wait/i);
+    expect(alert).not.toHaveTextContent(/changed while you were reviewing/i);
+  });
+
+  it('does not write when onCommitStart refuses the lock claim on Save edit [S2c-4b-ii BR-01][WBUX-5-S2C4B-BR-05]', async () => {
+    // Third call site (saveEdit). Same assertion contract as Accept refusal.
+    describeMock.mockResolvedValue(sampleResponse());
+    const onCommitStart = vi.fn((): boolean => false);
+    renderSuggest(
+      <MediaAltSuggest mediaId={42} committedAlt="Existing alt" onCommitStart={onCommitStart} />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
+    fireEvent.change(await screen.findByLabelText(/edit draft alt text/i), {
+      target: { value: editedDraft },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^save alt text$/i }));
+
+    expect(onCommitStart).toHaveBeenCalledTimes(1);
+    expect(correctMock).not.toHaveBeenCalled();
+    // Buffer kept; Cancel remains reachable [rg-003].
+    expect(screen.getByRole('textbox', { name: /edit draft alt text/i })).toHaveValue(editedDraft);
+    expect(screen.getByRole('button', { name: /cancel edit/i })).not.toBeDisabled();
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent ?? '').not.toBe(ALT_SUGGEST_COMMIT_CONFLICT_MESSAGE);
+    expect(alert).toHaveTextContent(/try again|busy|in progress|wait/i);
+    expect(alert).not.toHaveTextContent(/changed while you were reviewing/i);
+  });
+
+  it('does not clear a pre-existing conflict message when onCommitStart refuses [WBUX-5-S2C4B-BR-05][RLSE-05]', async () => {
+    // setConflictMessage(null) must run only after a successful claim — a refusal
+    // must not wipe a warning the operator has not read yet.
+    // [TEST-15] discrimination: goes RED if clear is still above the claim.
+    describeMock.mockResolvedValue(sampleResponse());
+    const onCommitStart = vi.fn((): boolean => false);
+    const { client, rerender } = renderSuggest(
+      <MediaAltSuggest mediaId={42} committedAlt="Existing alt" onCommitStart={onCommitStart} />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await screen.findByText(draft);
+
+    // Trigger a genuine CAS conflict first so a conflict message is on screen.
+    rerender(
+      <QueryClientProvider client={client}>
+        <MediaAltSuggest
+          mediaId={42}
+          committedAlt="Sibling committed this."
+          onCommitStart={onCommitStart}
+        />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /^accept$/i }));
+    const casAlert = await screen.findByRole('alert');
+    expect(casAlert).toHaveTextContent(ALT_SUGGEST_COMMIT_CONFLICT_MESSAGE);
+
+    // Restore committedAlt so CAS would pass, then refuse the lock claim.
+    // The CAS message must survive the refused claim (clear only after claim succeeds).
+    rerender(
+      <QueryClientProvider client={client}>
+        <MediaAltSuggest mediaId={42} committedAlt="Existing alt" onCommitStart={onCommitStart} />
+      </QueryClientProvider>,
+    );
+    // Baseline was captured at generate as "Existing alt"; prop is again "Existing alt"
+    // so CAS passes and we reach the claim — which refuses.
+    // Note: after the CAS refusal, baseline is still "Existing alt". Good.
+    fireEvent.click(screen.getByRole('button', { name: /^accept$/i }));
+
+    expect(onCommitStart).toHaveBeenCalled();
+    expect(correctMock).not.toHaveBeenCalled();
+    // Pre-existing CAS warning still on screen — must not be wiped by the refusal.
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent(ALT_SUGGEST_COMMIT_CONFLICT_MESSAGE);
+  });
+
+  // ---------------------------------------------------------------------------
+  // WBUX-5-S2C3C-BR-01 — mark decorative (front-end half, slice S2c-3c)
+  // ---------------------------------------------------------------------------
+
+  it('marks an image decorative with empty alt_text and decorative:true [WBUX-5-S2C3C-BR-01][TEST-06]', async () => {
+    // Headline: the deliberate decorative control must issue both wire signals.
+    // Predict RED: no control matching /decorative|screen reader/i, or control
+    // present but correctMock never called with ('', { decorative: true }).
+    describeMock.mockResolvedValue(sampleResponse());
+    correctMock.mockResolvedValue(sampleHistoryItem(''));
+    renderSuggest(<MediaAltSuggest mediaId={42} committedAlt={null} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await screen.findByText(draft);
+
+    const decorativeControl = screen.getByRole('button', {
+      name: /decorative|screen reader|announce nothing|skip/i,
+    });
+    fireEvent.click(decorativeControl);
+
+    await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
+    // [TEST-15] discrimination: goes RED if decorative is omitted, if alt_text
+    // is non-empty, or if the ordinary Accept path is reused without the flag.
+    expect(correctMock).toHaveBeenCalledWith(42, '', { decorative: true });
+  });
+
+  it('does not send decorative:true when an ordinary empty Save is attempted [WBUX-5-S2C3C-BR-01]', async () => {
+    // The :311-312 non-empty gates protect Accept/Save. Clearing the box and
+    // hitting Save must not become an ambiguous "mark decorative" wire signal.
+    // [TEST-15] discrimination: goes RED if saveEdit (or Accept) sends
+    // decorative:true for an empty ordinary commit.
+    describeMock.mockResolvedValue(sampleResponse());
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
+    const field = await screen.findByLabelText(/edit draft alt text/i);
+    fireEvent.change(field, { target: { value: '' } });
+
+    const save = screen.getByRole('button', { name: /^save alt text$/i });
+    expect(save).toBeDisabled();
+    // fireEvent still synthesises click on disabled controls in jsdom — assert
+    // the handler does not issue a decorative correction either way.
+    fireEvent.click(save);
+
+    expect(correctMock).not.toHaveBeenCalled();
+    // If a future regression re-enables empty Save and somehow writes, it must not
+    // be a decorative mark — no call may carry decorative:true.
+    const decorativeCalls = correctMock.mock.calls.filter((call) => {
+      const options = call[2];
+      return (
+        options != null &&
+        typeof options === 'object' &&
+        Object.prototype.hasOwnProperty.call(options, 'decorative') &&
+        Reflect.get(options, 'decorative') === true
+      );
+    });
+    expect(decorativeCalls).toHaveLength(0);
+  });
+
+  it('surfaces a 400 decorative contradiction on the assertive channel and keeps the draft [WBUX-5-S2C3C-BR-01]', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    correctMock.mockImplementation(() =>
+      Promise.reject(
+        new Error(
+          'Request to .../correction failed (400): {"code":"description_correction_failed","message":"Decorative images must have empty alt text.","data":{"status":400}}',
+        ),
+      ),
+    );
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await screen.findByText(draft);
+    fireEvent.click(
+      screen.getByRole('button', { name: /decorative|screen reader|announce nothing|skip/i }),
+    );
+
+    await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
+    const alert = await screen.findByRole('alert');
+    // Prefer server message when structured; never invent a silent success.
+    // [TEST-15] discrimination: goes RED if the failure is silent or only polite.
+    expect(alert).toHaveTextContent(/decorative images must have empty alt text/i);
+    // Draft kept — operator can recover without regenerating.
+    expect(screen.getByText(draft)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /dismiss/i })).not.toBeDisabled();
+  });
+
+  it('gives the decorative control an accessible name and keeps it keyboard-reachable [WBUX-5-S2C3C-BR-01][A11Y-15]', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await screen.findByText(draft);
+
+    const control = screen.getByRole('button', {
+      name: /decorative|screen reader|announce nothing|skip/i,
+    });
+    // Real button with a non-empty accessible name; not aria-hidden; not disabled
+    // while idle (so Tab can reach it).
+    expect(buttonAccessibleName(control).length).toBeGreaterThan(0);
+    expect(control).not.toHaveAttribute('aria-hidden', 'true');
+    expect(control).not.toBeDisabled();
+    control.focus();
+    expect(control).toHaveFocus();
+  });
+
+  it('disables the decorative control while a commit is in flight [WBUX-5-S2C3C-BR-01]', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    correctMock.mockReturnValue(new Promise<DescriptionHistoryItem>(() => undefined));
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await screen.findByText(draft);
+    fireEvent.click(screen.getByRole('button', { name: /^accept$/i }));
+    expect(await screen.findByRole('button', { name: /accepting draft/i })).toBeDisabled();
+
+    // Same native-disabled discipline as Accept/Save (useFocusPark / BR-13/56).
+    expect(
+      screen.getByRole('button', { name: /decorative|screen reader|announce nothing|skip/i }),
+    ).toBeDisabled();
   });
 
   it('CAS baseline at draft arrival tracks live committedAlt, not click-time closure [S2c-4b-ii BR-02]', async () => {

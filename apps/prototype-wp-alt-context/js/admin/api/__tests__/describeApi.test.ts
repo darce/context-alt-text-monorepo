@@ -12,6 +12,7 @@ import {
   resolveDescribeErrorCode,
   resolveDescribeErrorDataField,
   resolveDescribeErrorMessage,
+  type DescriptionCandidateRow,
 } from '../describeApi';
 
 const mockConfig = {
@@ -266,6 +267,102 @@ describe('describeApi', () => {
         restNonce: 'nonce-xyz',
       },
     );
+  });
+
+  it('omits decorative from the correction body when the flag is not requested [WBUX-5-S2C3C-BR-01]', async () => {
+    // Existing callers pass only (mediaId, altText). The wire body must stay
+    // identical to today's { alt_text } — server defaults decorative to false.
+    // [TEST-15] discrimination: goes RED if decorative:false is always sent, or
+    // if decorative:true is sent when the caller omits the option.
+    fetchApiMock.mockResolvedValue({
+      media_id: 42,
+      title: 'Bridge',
+      mime_type: 'image/jpeg',
+      current_alt_text: 'Corrected bridge alt text',
+      generated_alt_text: 'A bridge over water.',
+      provenance: sampleResponse,
+      human_edit: { alt_text: 'Corrected bridge alt text', edited_at: null, user_id: 7 },
+      run_status: null,
+    });
+
+    await correctDescriptionHistoryItem(42, 'Corrected bridge alt text');
+
+    expect(fetchApiMock).toHaveBeenCalledTimes(1);
+    const [, options] = fetchApiMock.mock.calls[0];
+    expect(options).toMatchObject({
+      method: 'POST',
+      body: { alt_text: 'Corrected bridge alt text' },
+      restNonce: 'nonce-xyz',
+    });
+    expect(options?.body).not.toHaveProperty('decorative');
+  });
+
+  it('posts decorative:true with empty alt_text when marking an image decorative [WBUX-5-S2C3C-BR-01][TEST-06]', async () => {
+    // Headline: the deliberate decorative path must send both signals on the wire.
+    // [TEST-15] discrimination: goes RED if decorative is dropped from the body,
+    // if alt_text is non-empty, or if the flag is only true when alt is non-empty.
+    fetchApiMock.mockResolvedValue({
+      media_id: 42,
+      title: 'Spacer',
+      mime_type: 'image/png',
+      current_alt_text: '',
+      generated_alt_text: '',
+      provenance: null,
+      human_edit: { alt_text: '', edited_at: null, user_id: 7 },
+      run_status: null,
+    });
+
+    await correctDescriptionHistoryItem(42, '', { decorative: true });
+
+    expect(fetchApiMock).toHaveBeenCalledTimes(1);
+    const [, options] = fetchApiMock.mock.calls[0];
+    expect(options).toMatchObject({
+      method: 'POST',
+      body: { alt_text: '', decorative: true },
+      restNonce: 'nonce-xyz',
+    });
+  });
+
+  it('does not send decorative when options.decorative is false or omitted [WBUX-5-S2C3C-BR-01]', async () => {
+    fetchApiMock.mockResolvedValue({
+      media_id: 42,
+      title: 'Bridge',
+      mime_type: 'image/jpeg',
+      current_alt_text: 'x',
+      generated_alt_text: 'x',
+      provenance: null,
+      human_edit: { alt_text: 'x', edited_at: null, user_id: 7 },
+      run_status: null,
+    });
+
+    await correctDescriptionHistoryItem(42, 'x', { decorative: false });
+    const [, options] = fetchApiMock.mock.calls[0];
+    expect(options?.body).toEqual({ alt_text: 'x' });
+    expect(options?.body).not.toHaveProperty('decorative');
+  });
+
+  it('accepts reason decorative on a DescriptionCandidateRow without a cast [WBUX-5-S2C3C-BR-01]', async () => {
+    // Type-level pin: assigning reason:'decorative' must compile without `as`.
+    // Runtime: the candidates envelope carries the same value.
+    const decorativeRow: DescriptionCandidateRow = {
+      media_id: 99,
+      filename: 'ornament.png',
+      title: 'Flourish',
+      mime_type: 'image/png',
+      current_alt_text: '',
+      reason: 'decorative',
+    };
+    fetchApiMock.mockResolvedValue({
+      candidates: [],
+      exclusions: [decorativeRow],
+      limit: 10,
+      offset: 0,
+      total_candidates: 0,
+      total_exclusions: 1,
+    });
+
+    const result = await fetchDescriptionCandidates({ limit: 10, offset: 0 });
+    expect(result.exclusions[0]?.reason).toBe('decorative');
   });
 });
 

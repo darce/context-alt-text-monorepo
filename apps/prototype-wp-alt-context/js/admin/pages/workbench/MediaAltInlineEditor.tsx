@@ -36,6 +36,17 @@ export const ALT_COMMIT_CONFLICT_MESSAGE = __(
   'alt-context',
 );
 
+/**
+ * Assertive copy when the row lock claim is refused (peer commit in flight).
+ * Distinct from ALT_COMMIT_CONFLICT_MESSAGE — that one means the alt moved
+ * underneath the operator; this one means a brief busy peer and a retry will
+ * work [WBUX-5-S2C4B-BR-05].
+ */
+export const ALT_COMMIT_CLAIM_REFUSED_MESSAGE = __(
+  'Another save is already in progress for this image. Wait a moment, then try again.',
+  'alt-context',
+);
+
 /** Stored meta arrives entity-encoded; decode once at the read boundary (BR-140). */
 const decodeStoredAlt = (stored: string | null): string | null =>
   stored === null ? null : decodeHtmlEntities(stored);
@@ -150,13 +161,17 @@ export const MediaAltInlineEditor = ({
       setConflictMessage(ALT_COMMIT_CONFLICT_MESSAGE);
       return;
     }
-    setConflictMessage(null);
     // beginCommit is compare-and-set [S2c-4b-ii BR-01]: a refused claim must not
     // proceed to write. Isolated renders omit onCommitStart (always proceed).
+    // Clear conflict only AFTER a successful claim — a refusal must not wipe an
+    // unread warning [WBUX-5-S2C4B-BR-05][RLSE-05].
     const claimed = onCommitStart?.() ?? true;
     if (!claimed) {
+      // Keep a pre-existing message; otherwise surface the distinct busy cue.
+      setConflictMessage((prev) => prev ?? ALT_COMMIT_CLAIM_REFUSED_MESSAGE);
       return;
     }
+    setConflictMessage(null);
     mutate(
       { mediaId, altText: draft },
       {

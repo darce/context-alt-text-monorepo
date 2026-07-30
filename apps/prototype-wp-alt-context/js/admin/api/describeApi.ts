@@ -88,7 +88,11 @@ export interface DescribeMediaWriteOptions {
   force?: boolean;
 }
 
-export type DescriptionCandidateReason = 'missing_alt' | 'has_alt_text' | 'unsupported_mime';
+export type DescriptionCandidateReason =
+  | 'missing_alt'
+  | 'has_alt_text'
+  | 'unsupported_mime'
+  | 'decorative';
 
 export interface DescriptionCandidateRow {
   media_id: number;
@@ -332,18 +336,35 @@ export const fetchDescriptionHistory = async ({
   });
 };
 
+/**
+ * Optional flags for history correction. `decorative: true` stores the durable
+ * decorative marker with empty alt; the server rejects decorative + non-empty
+ * alt with description_correction_failed (400). Omitted / false keeps today's
+ * wire body so existing callers need no edit (server defaults decorative false).
+ */
+export interface DescriptionCorrectionOptions {
+  decorative?: boolean;
+}
+
 export const correctDescriptionHistoryItem = async (
   mediaId: number,
   altText: string,
-): Promise<DescriptionHistoryItem> =>
-  fetchRequiredApi<DescriptionHistoryItem>(
+  options?: DescriptionCorrectionOptions,
+): Promise<DescriptionHistoryItem> => {
+  const body: { alt_text: string; decorative?: boolean } = { alt_text: altText };
+  // Send the flag only when true — identical body for all existing two-arg callers.
+  if (options?.decorative === true) {
+    body.decorative = true;
+  }
+  return fetchRequiredApi<DescriptionHistoryItem>(
     `${getEndpoint('recognitionDescribeHistory')}/${encodeURIComponent(String(mediaId))}/correction`,
     {
       method: 'POST',
-      body: { alt_text: altText },
+      body,
       restNonce: getConfig().nonce,
     },
   );
+};
 
 export const submitBulkDescribeRun = async (mediaIds: number[]): Promise<DescribeRunResponse> =>
   fetchRequiredApi<DescribeRunResponse>(getEndpoint('recognitionDescribeRuns'), {

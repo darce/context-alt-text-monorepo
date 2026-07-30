@@ -128,6 +128,108 @@ class DescriptionCandidateServiceTest extends TestCase
         $this->assertSame('has_alt_text', $result['exclusions'][0]['reason']);
     }
 
+    /**
+     * WBUX-5-S2C3C-BR-01 [TEST-06] headline: empty alt + acx_alt_decorative
+     * marker classifies as decorative; empty alt without the marker stays
+     * missing_alt. These two states must not share a bucket (MECE / [NAV-05]).
+     *
+     * Discriminates against today's broken code, which maps every empty alt to
+     * missing_alt regardless of the marker.
+     */
+    public function testEmptyAltWithDecorativeMarkerClassifiesAsDecorativeNotMissingAlt(): void
+    {
+        // Decorative: empty alt + durable marker.
+        $this->plantAttachment(80, 'Spacer', 'image/jpeg', '');
+        $GLOBALS['__ac_post_meta'][80]['acx_alt_decorative'] = '1';
+
+        // Genuinely missing: empty alt, no marker.
+        $this->plantAttachment(81, 'Undescribed', 'image/png', '');
+
+        $service = new DescriptionCandidateService();
+        $result  = $service->list_missing_alt_candidates(limit: 10, offset: 0);
+
+        // Only the undescribed image is a candidate.
+        $this->assertSame(1, $result['total_candidates']);
+        $this->assertSame(array(81), array_column($result['candidates'], 'media_id'));
+        $this->assertSame('missing_alt', $result['candidates'][0]['reason']);
+        $this->assertSame('missing_alt', $result['candidates'][0]['candidate_reason']);
+        $this->assertFalse($result['candidates'][0]['has_alt_text']);
+
+        // Decorative lands in exclusions with reason decorative (not missing_alt).
+        $this->assertSame(1, $result['total_exclusions']);
+        $this->assertSame(80, $result['exclusions'][0]['media_id']);
+        $this->assertSame('decorative', $result['exclusions'][0]['reason']);
+        $this->assertSame('decorative', $result['exclusions'][0]['candidate_reason']);
+        $this->assertFalse($result['exclusions'][0]['has_alt_text']);
+        $this->assertSame('', $result['exclusions'][0]['current_alt_text']);
+
+        // CLI status path shares build_row — same classification for both ids.
+        $status = $service->get_status_for_media_ids(array(80, 81));
+        $this->assertCount(2, $status);
+        $byId = array();
+        foreach ($status as $row) {
+            $byId[(int) $row['media_id']] = $row;
+        }
+        $this->assertSame('decorative', $byId[80]['reason']);
+        $this->assertSame('decorative', $byId[80]['candidate_reason']);
+        $this->assertSame('missing_alt', $byId[81]['reason']);
+        $this->assertSame('missing_alt', $byId[81]['candidate_reason']);
+    }
+
+    /**
+     * Stale-marker precedence: non-empty alt wins over a leftover decorative
+     * marker. has_alt is checked before the marker so a real description is
+     * never hidden behind bookkeeping.
+     */
+    public function testNonEmptyAltWithStaleDecorativeMarkerClassifiesAsHasAltText(): void
+    {
+        $this->plantAttachment(82, 'Described with stale flag', 'image/jpeg', 'A real description.');
+        $GLOBALS['__ac_post_meta'][82]['acx_alt_decorative'] = '1';
+
+        $service = new DescriptionCandidateService();
+        $result  = $service->list_missing_alt_candidates(limit: 10, offset: 0);
+
+        $this->assertSame(0, $result['total_candidates']);
+        $this->assertSame(1, $result['total_exclusions']);
+        $this->assertSame(82, $result['exclusions'][0]['media_id']);
+        $this->assertSame('has_alt_text', $result['exclusions'][0]['reason']);
+        $this->assertSame('has_alt_text', $result['exclusions'][0]['candidate_reason']);
+        $this->assertTrue($result['exclusions'][0]['has_alt_text']);
+        // Must not classify as decorative when a real alt is present.
+        $this->assertNotSame('decorative', $result['exclusions'][0]['reason']);
+
+        $status = $service->get_status_for_media_ids(array(82));
+        $this->assertSame('has_alt_text', $status[0]['reason']);
+        $this->assertNotSame('decorative', $status[0]['reason']);
+    }
+
+    /**
+     * Unsupported mime and not_found still win over a decorative marker.
+     */
+    public function testUnsupportedMimeAndNotFoundWinOverDecorativeMarker(): void
+    {
+        $this->plantAttachment(83, 'Decorative pdf', 'application/pdf', '');
+        $GLOBALS['__ac_post_meta'][83]['acx_alt_decorative'] = '1';
+
+        $service = new DescriptionCandidateService();
+        $result  = $service->list_missing_alt_candidates(limit: 10, offset: 0);
+
+        $this->assertSame(0, $result['total_candidates']);
+        $this->assertSame(1, $result['total_exclusions']);
+        $this->assertSame('unsupported_mime', $result['exclusions'][0]['reason']);
+        $this->assertSame('unsupported_mime', $result['exclusions'][0]['candidate_reason']);
+        $this->assertNotSame('decorative', $result['exclusions'][0]['reason']);
+
+        // not_found: id with no planted post, but marker present in meta.
+        $GLOBALS['__ac_post_meta'][9999]['acx_alt_decorative'] = '1';
+        $GLOBALS['__ac_post_meta'][9999]['_wp_attachment_image_alt'] = '';
+        $status = $service->get_status_for_media_ids(array(9999));
+        $this->assertCount(1, $status);
+        $this->assertSame('not_found', $status[0]['reason']);
+        $this->assertSame('not_found', $status[0]['candidate_reason']);
+        $this->assertNotSame('decorative', $status[0]['reason']);
+    }
+
     private function plantAttachment(int $id, string $title, string $mimeType, string $altText): void
     {
         $slug = strtolower(str_replace(' ', '-', $title));

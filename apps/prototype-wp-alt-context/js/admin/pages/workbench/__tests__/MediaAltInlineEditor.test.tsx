@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { MediaAltInlineEditor } from '../MediaAltInlineEditor';
+import { ALT_COMMIT_CONFLICT_MESSAGE, MediaAltInlineEditor } from '../MediaAltInlineEditor';
 import { correctDescriptionHistoryItem } from '../../../api/describeApi';
 import { queryKeys } from '../../../api/queryKeys';
 import type { WorkbenchMediaResponse } from '../../../api/workbenchMediaApi';
@@ -380,8 +380,9 @@ describe('MediaAltInlineEditor', () => {
     expect(alert).not.toHaveTextContent(/proxy-internal-detail/i);
   });
 
-  it('does not write when onCommitStart refuses the lock claim [S2c-4b-ii BR-01]', () => {
-    // beginCommit can now no-op; callers must honour a false claim and not mutate.
+  it('does not write when onCommitStart refuses the lock claim [S2c-4b-ii BR-01]', async () => {
+    // WBUX-5-S2C4B-BR-05: refused claim must raise a distinct assertive message.
+    // Predict RED: no role=alert, or alert reuses ALT_COMMIT_CONFLICT_MESSAGE.
     const onCommitStart = vi.fn((): boolean => false);
     renderEditor(
       <MediaAltInlineEditor mediaId={42} altText="Bridge at dusk" onCommitStart={onCommitStart} />,
@@ -400,6 +401,66 @@ describe('MediaAltInlineEditor', () => {
       'Must not be persisted after refused claim.',
     );
     expect(screen.getByRole('button', { name: /cancel/i })).not.toBeDisabled();
+
+    // [TEST-15] discrimination: alert must exist and must not be the CAS copy.
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent ?? '').not.toBe(ALT_COMMIT_CONFLICT_MESSAGE);
+    expect(alert).toHaveTextContent(/try again|busy|in progress|wait/i);
+    expect(alert).not.toHaveTextContent(/changed while you were editing/i);
+  });
+
+  it('does not clear a pre-existing conflict message when onCommitStart refuses [WBUX-5-S2C4B-BR-05][RLSE-05]', async () => {
+    // [TEST-15] discrimination: goes RED if setConflictMessage(null) is still
+    // above the claim — the CAS warning would vanish on refusal.
+    const onCommitStart = vi.fn((): boolean => false);
+    const { client, rerender } = renderEditor(
+      <MediaAltInlineEditor mediaId={42} altText="Bridge at dusk" onCommitStart={onCommitStart} />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /edit alt text/i }));
+    fireEvent.change(screen.getByRole('textbox', { name: /alt text/i }), {
+      target: { value: 'Operator buffer that must survive.' },
+    });
+
+    // Sibling commit moves the prop → CAS conflict message on screen.
+    // Baseline (previousAltTextRef) stays "Bridge at dusk" while editing [S2A-BR-03].
+    rerender(
+      <QueryClientProvider client={client}>
+        <MediaAltInlineEditor
+          mediaId={42}
+          altText="Sibling committed this."
+          onCommitStart={onCommitStart}
+        />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /^save/i }));
+    const casAlert = await screen.findByRole('alert');
+    expect(casAlert).toHaveTextContent(ALT_COMMIT_CONFLICT_MESSAGE);
+    // CAS returns before claim — lock was not consulted on that click.
+    expect(onCommitStart).not.toHaveBeenCalled();
+
+    // Restore prop so CAS passes; claim still refuses. The CAS warning must remain
+    // (setConflictMessage(null) must not run above a refused claim).
+    rerender(
+      <QueryClientProvider client={client}>
+        <MediaAltInlineEditor
+          mediaId={42}
+          altText="Bridge at dusk"
+          onCommitStart={onCommitStart}
+        />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /^save/i }));
+
+    expect(onCommitStart).toHaveBeenCalledTimes(1);
+    expect(correctMock).not.toHaveBeenCalled();
+    expect(screen.getByRole('textbox', { name: /alt text/i })).toHaveValue(
+      'Operator buffer that must survive.',
+    );
+    expect(screen.getByRole('button', { name: /cancel/i })).not.toBeDisabled();
+
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent(ALT_COMMIT_CONFLICT_MESSAGE);
   });
 
   it('refuses Save when committed alt moves under an open buffer [S2c-4b-ii BR-03]', async () => {

@@ -13,6 +13,7 @@ import {
 } from '../../api/describeApi';
 import { mediaStatsMissingQueryKey, mediaStatsTotalQueryKey } from '../../hooks/useMediaStats';
 import { queryKeys } from '../../api/queryKeys';
+import type { WorkbenchMediaResponse } from '../../api/workbenchMediaApi';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -102,6 +103,46 @@ const failedHistoryItem = {
     status: 'failed',
     updated_at: '2026-07-04 11:05:00',
   },
+};
+
+/** Seed a workbench missing-status page so history corrections can be checked for row reconcile. */
+const workbenchMissingPageKey = queryKeys.media.workbenchPage({
+  page: 1,
+  perPage: 20,
+  status: 'missing',
+});
+
+const seedWorkbenchCache = (
+  client: QueryClient,
+  altText: string | null = 'Bridge at dusk',
+  status: 'missing' | 'complete' = 'missing',
+): WorkbenchMediaResponse => {
+  const page: WorkbenchMediaResponse = {
+    items: [
+      {
+        id: 42,
+        title: 'Bridge',
+        status,
+        thumbnailUrl: null,
+        altText,
+        editUrl: null,
+        tags: [],
+      },
+      {
+        id: 99,
+        title: 'Other',
+        status: 'missing',
+        thumbnailUrl: null,
+        altText: null,
+        editUrl: null,
+        tags: [],
+      },
+    ],
+    total: 2,
+    totalPages: 1,
+  };
+  client.setQueryData(workbenchMissingPageKey, page);
+  return page;
 };
 
 describe('DescriptionHistoryPage', () => {
@@ -266,6 +307,55 @@ describe('DescriptionHistoryPage', () => {
     });
     expect(await screen.findAllByText('A corrected bridge description.')).toHaveLength(2);
     expect(screen.getByText('Human edited')).toBeInTheDocument();
+  });
+
+  /**
+   * Headline [TEST-06][WBUX-5-BR-75]: a successful correction from the history page
+   * must patch the workbench media cache row (altText + status), not only HISTORY_QUERY_KEY.
+   *
+   * Discrimination: before the fix only the history list was patched; a seeded
+   * workbench row would keep prior altText and status:'missing'.
+   *
+   * Predicted RED against unfixed DescriptionHistoryPage (own useMutation, no
+   * workbench patch):
+   *   expect(row?.altText).toBe('History-page corrected bridge.')
+   *   → expected 'History-page corrected bridge.' / received 'Bridge at dusk'
+   *   (or status expected 'complete' / received 'missing')
+   */
+  it('patches workbench media cache altText and status on successful history correction [TEST-06][WBUX-5-BR-75]', async () => {
+    const queryClient = buildClient();
+    seedWorkbenchCache(queryClient, 'Bridge at dusk', 'missing');
+    const before = queryClient.getQueryData<WorkbenchMediaResponse>(workbenchMissingPageKey);
+    expect(before?.items.find((item) => item.id === 42)?.altText).toBe('Bridge at dusk');
+    expect(before?.items.find((item) => item.id === 42)?.status).toBe('missing');
+
+    renderPage(['/description-history'], queryClient);
+
+    const textarea = await screen.findByLabelText('Alt text correction for Bridge');
+    fireEvent.change(textarea, { target: { value: 'History-page corrected bridge.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save correction for Bridge' }));
+
+    await waitFor(() => {
+      expect(correctHistoryMock).toHaveBeenCalledWith(42, 'History-page corrected bridge.');
+    });
+
+    // History cache still patches (operator sees updated current alt + human edit).
+    expect(await screen.findAllByText('History-page corrected bridge.')).toHaveLength(2);
+    expect(screen.getByText('Human edited')).toBeInTheDocument();
+
+    // Behavioural gap: workbench row must also reconcile from server response.
+    await waitFor(() => {
+      const cached = queryClient.getQueryData<WorkbenchMediaResponse>(workbenchMissingPageKey);
+      const row = cached?.items.find((item) => item.id === 42);
+      expect(row?.altText).toBe('History-page corrected bridge.');
+      expect(row?.status).toBe('complete');
+    });
+
+    const after = queryClient.getQueryData<WorkbenchMediaResponse>(workbenchMissingPageKey);
+    // Sibling untouched; envelope stays server seed (no list invalidate).
+    expect(after?.items.find((item) => item.id === 99)?.altText).toBeNull();
+    expect(after?.items).toHaveLength(2);
+    expect(after?.total).toBe(2);
   });
 
   it('shows an empty state when no generated descriptions exist', async () => {
@@ -872,6 +962,8 @@ describe('DescriptionHistoryPage', () => {
   it('invalidates the missing-alt stats probe after a successful history correction [BR-124]', async () => {
     // History-page corrections must refresh dashboard coverage; only the shared
     // missing probe (not media.all, not the total probe) [BR-124][BR-77].
+    // Exactly once: invalidateMediaStats lives in the hook — page must not
+    // double-fire after consuming useCorrectMediaAlt [WBUX-5-BR-75].
     const { queryClient } = renderPage();
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
@@ -885,6 +977,10 @@ describe('DescriptionHistoryPage', () => {
     await waitFor(() => {
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: mediaStatsMissingQueryKey });
     });
+    const missingProbeCalls = invalidateSpy.mock.calls.filter(
+      (call) => JSON.stringify(call[0]) === JSON.stringify({ queryKey: mediaStatsMissingQueryKey }),
+    );
+    expect(missingProbeCalls).toHaveLength(1);
     expect(
       invalidateSpy.mock.calls.some(
         (call) => JSON.stringify(call[0]) === JSON.stringify({ queryKey: mediaStatsTotalQueryKey }),
@@ -921,5 +1017,182 @@ describe('DescriptionHistoryPage', () => {
         (call) => JSON.stringify(call[0]) === JSON.stringify({ queryKey: mediaStatsMissingQueryKey }),
       ),
     ).toBe(false);
+  });
+
+  /**
+   * Partial from the history page must reconcile BOTH caches from stored_alt_text
+   * and still raise the per-row durable alert [WBUX-5-BR-75][RLSE-04][RLSE-05].
+   * Discrimination: before the shared hook, only HISTORY_QUERY_KEY was patched.
+   */
+  it('partial failure from history reconciles history and workbench caches from stored_alt_text [WBUX-5-BR-75]', async () => {
+    const partialMessage =
+      'Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.';
+    const stored = 'Partial-from-history stored alt.';
+    correctHistoryMock.mockRejectedValueOnce(
+      new Error(
+        `Request to /correction failed (500): ${JSON.stringify({
+          code: 'description_correction_partial',
+          message: partialMessage,
+          data: { status: 500, stored_alt_text: stored },
+        })}`,
+      ),
+    );
+
+    const queryClient = buildClient();
+    seedWorkbenchCache(queryClient, 'Bridge at dusk', 'missing');
+    renderPage(['/description-history'], queryClient);
+
+    const textarea = await screen.findByLabelText('Alt text correction for Bridge');
+    fireEvent.change(textarea, { target: { value: 'Partial-from-history stored alt.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save correction for Bridge' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(partialMessage);
+
+    const bridgeArticle = screen.getByText('Bridge').closest('article');
+    expect(bridgeArticle?.querySelector('[role="alert"]')).toBe(alert);
+    // History current-alt column reflects server stored value.
+    const currentAltHeading = Array.from(bridgeArticle?.querySelectorAll('h3') ?? []).find(
+      (h) => h.textContent === 'Current alt text',
+    );
+    expect(currentAltHeading?.parentElement?.querySelector('p')).toHaveTextContent(stored);
+    expect(textarea).toHaveValue('Partial-from-history stored alt.');
+
+    // Workbench row also reconciles (the pre-fix gap).
+    await waitFor(() => {
+      const cached = queryClient.getQueryData<WorkbenchMediaResponse>(workbenchMissingPageKey);
+      const row = cached?.items.find((item) => item.id === 42);
+      expect(row?.altText).toBe(stored);
+      expect(row?.status).toBe('complete');
+    });
+    const after = queryClient.getQueryData<WorkbenchMediaResponse>(workbenchMissingPageKey);
+    expect(after?.items.find((item) => item.id === 99)?.altText).toBeNull();
+    expect(after?.total).toBe(2);
+  });
+
+  it('partial without stored_alt_text leaves history and workbench caches untouched; alert still shows [WBUX-5-BR-75]', async () => {
+    const partialMessage =
+      'Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.';
+    correctHistoryMock.mockRejectedValueOnce(
+      new Error(
+        `Request to /correction failed (500): ${JSON.stringify({
+          code: 'description_correction_partial',
+          message: partialMessage,
+          data: { status: 500 },
+        })}`,
+      ),
+    );
+
+    const queryClient = buildClient();
+    seedWorkbenchCache(queryClient, 'Bridge at dusk', 'missing');
+    const workbenchBefore = queryClient.getQueryData<WorkbenchMediaResponse>(workbenchMissingPageKey);
+    renderPage(['/description-history'], queryClient);
+
+    const textarea = await screen.findByLabelText('Alt text correction for Bridge');
+    fireEvent.change(textarea, { target: { value: '  <em>Would fabricate</em>  ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save correction for Bridge' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(partialMessage);
+
+    const bridgeArticle = screen.getByText('Bridge').closest('article');
+    const currentAltHeading = Array.from(bridgeArticle?.querySelectorAll('h3') ?? []).find(
+      (h) => h.textContent === 'Current alt text',
+    );
+    expect(currentAltHeading?.parentElement?.querySelector('p')).toHaveTextContent('Bridge at dusk');
+    expect(textarea).toHaveValue('  <em>Would fabricate</em>  ');
+
+    const workbenchAfter = queryClient.getQueryData<WorkbenchMediaResponse>(workbenchMissingPageKey);
+    expect(workbenchAfter).toBe(workbenchBefore);
+    expect(workbenchAfter?.items.find((item) => item.id === 42)?.altText).toBe('Bridge at dusk');
+    expect(workbenchAfter?.items.find((item) => item.id === 42)?.status).toBe('missing');
+  });
+
+  it('total failure from history touches neither cache and still raises the alert [WBUX-5-BR-75]', async () => {
+    correctHistoryMock.mockRejectedValueOnce(
+      new Error(
+        `Request to /correction failed (500): ${JSON.stringify({
+          code: 'description_correction_failed',
+          message: 'Could not save the alt text correction.',
+          data: { status: 500 },
+        })}`,
+      ),
+    );
+
+    const queryClient = buildClient();
+    seedWorkbenchCache(queryClient, 'Bridge at dusk', 'missing');
+    const workbenchBefore = queryClient.getQueryData<WorkbenchMediaResponse>(workbenchMissingPageKey);
+    renderPage(['/description-history'], queryClient);
+
+    const textarea = await screen.findByLabelText('Alt text correction for Bridge');
+    fireEvent.change(textarea, { target: { value: 'Would-be bridge alt.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save correction for Bridge' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not save the alt text correction.');
+
+    const bridgeArticle = screen.getByText('Bridge').closest('article');
+    expect(bridgeArticle).toHaveTextContent('Bridge at dusk');
+    expect(textarea).toHaveValue('Would-be bridge alt.');
+
+    const workbenchAfter = queryClient.getQueryData<WorkbenchMediaResponse>(workbenchMissingPageKey);
+    expect(workbenchAfter).toBe(workbenchBefore);
+    expect(workbenchAfter?.items.find((item) => item.id === 42)?.altText).toBe('Bridge at dusk');
+    expect(workbenchAfter?.items.find((item) => item.id === 42)?.status).toBe('missing');
+  });
+
+  /**
+   * [BR-81] item 7: a refused start must not clear correctionErrors.
+   *
+   * Production never holds busy+error for the same mediaId at once (accepted
+   * start clears the row error; failure clears busy). The observable pin is:
+   * after a durable failure, a same-tick double-click enqueues exactly one
+   * retry request — the second start returns before any state writes, so it
+   * cannot re-enter the clear-error path or fire a second network call.
+   * Discrimination: missing ref guard → 2 retry calls (3 total with the fail).
+   */
+  it('refused start does not clear correctionErrors and enqueues no extra request [BR-81]', async () => {
+    const durableMessage = 'Prior failure still unread.';
+    correctHistoryMock.mockRejectedValueOnce(
+      new Error(
+        `Request to /correction failed (500): ${JSON.stringify({
+          code: 'description_correction_failed',
+          message: durableMessage,
+          data: { status: 500 },
+        })}`,
+      ),
+    );
+
+    renderPage();
+
+    fireEvent.change(await screen.findByLabelText('Alt text correction for Bridge'), {
+      target: { value: 'Retry then refuse draft.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save correction for Bridge' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(durableMessage);
+    expect(correctHistoryMock).toHaveBeenCalledTimes(1);
+
+    // Next request hangs so busy stays set after the accepted half of the pair.
+    correctHistoryMock.mockImplementationOnce(
+      () => new Promise<DescriptionHistoryItem>(() => {
+        /* never resolves */
+      }),
+    );
+
+    const saveButton = screen.getByRole('button', { name: 'Save correction for Bridge' });
+    // Same-tick: first accepted (clears this row's error, sets busy, mutates);
+    // second refused at the ref guard — no third request, no further state write.
+    act(() => {
+      saveButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      saveButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    });
+
+    await waitFor(() => {
+      expect(correctHistoryMock).toHaveBeenCalledTimes(2);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(correctHistoryMock).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('button', { name: 'Saving...' })).toBeDisabled();
   });
 });

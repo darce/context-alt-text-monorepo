@@ -480,18 +480,15 @@ class DescribeMediaService {
 			return $response;
 		}
 
-		// S3-02 / BR-02: honor update_post_meta() returns. No-op (false when the
-		// stored value already equals what WP will store after unslash+sanitize)
-		// is success only via read-back (WBUX-5-R16-BR-10): start alt_ok false on
-		// false returns so skipping this block cannot claim success. Real alt
-		// failure → failed, no provenance stamp. Alt ok + provenance fail → partial.
-		// Compare against the shared post-transform expectation (F-08 / BR-17).
-		$alt_written = update_post_meta( $media_id, self::ALT_TEXT_META_KEY, $draft );
-		$alt_ok      = false !== $alt_written;
-		if ( false === $alt_written ) {
-			$current = get_post_meta( $media_id, self::ALT_TEXT_META_KEY, true );
-			$alt_ok  = is_string( $current ) && $expected_alt === $current;
-		}
+		// S3-02 / BR-02 / R22-BR-03: always read alt back and compare against the
+		// shared post-transform expectation (F-08 / BR-17). update_post_meta may
+		// return non-false yet persist a divergent value — trusting the return
+		// alone would report written with the wrong alt. No-op false returns
+		// still succeed when storage already equals the expectation
+		// (WBUX-5-R16-BR-10). Real alt failure → failed, no provenance stamp.
+		update_post_meta( $media_id, self::ALT_TEXT_META_KEY, $draft );
+		$current = get_post_meta( $media_id, self::ALT_TEXT_META_KEY, true );
+		$alt_ok  = is_string( $current ) && $expected_alt === $current;
 		if ( ! $alt_ok ) {
 			$data['alt_text_write'] = array(
 				'status'               => AltTextWriteStatus::FAILED,
@@ -518,21 +515,23 @@ class DescribeMediaService {
 			// report FAILED (not PARTIAL) — partial is presented as retryable.
 			// [WBUX-5-R16-BR-06] [BR-102] [RLSE-05] [INT-11]
 			// No bulk run_id on this path: non-bulk sentinel [R20-BR-16].
-			$marker = array(
+			// draft_hash domain = stored form ($expected_alt), not raw $draft [R22-BR-01].
+			$expected_stored_alt = is_string( $expected_alt ) ? $expected_alt : (string) $expected_alt;
+			$marker              = array(
 				'run_id'     => AltTextWriteStatus::MARKER_OWNER_SINGLE_IMAGE,
-				'draft_hash' => hash( 'sha256', $draft ),
+				'draft_hash' => DescriptionHistoryService::hash_for_stored_alt( $expected_stored_alt ),
 			);
 			// Return value is not authoritative: false is both failure and no-op,
 			// and a non-false accept may still persist a divergent value.
 			update_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY, $marker );
 			// R20-BR-20 / R21-BR-08: partial requires a usable same-draft marker
-			// (verified shape + draft_hash match), not strict identity with the
-			// marker this path tried to plant — a pre-existing bulk marker for
-			// the same draft is durable recovery evidence.
+			// (verified shape + draft_hash match on stored domain), not strict
+			// identity with the marker this path tried to plant — a pre-existing
+			// bulk marker for the same stored draft is durable recovery evidence.
 			$current_marker = get_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY, true );
 			$marker_ok      = DescriptionHistoryService::is_usable_pending_marker_for_draft(
 				$current_marker,
-				$draft
+				$expected_stored_alt
 			);
 			if ( ! $marker_ok ) {
 				// Alt remains written — not rolled back. Status is failed because

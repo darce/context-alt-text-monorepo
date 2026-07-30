@@ -378,39 +378,25 @@ class DescriptionCommand extends \WP_CLI_Command {
 
 		$provenance_heal_only = ( 'heal_gap' === $gate );
 
-		// S3-02 / BR-01 / WBUX-5-R16-BR-10: honor update_post_meta() returns.
-		// No-op (false when the stored value already equals what WP will store
-		// after unslash+sanitize) is success only via read-back: start alt_ok
-		// false on false returns so skipping this block cannot claim success.
-		// Real alt failure must not stamp provenance. Shared post-transform [F-15R].
+		// S3-02 / BR-01 / WBUX-5-R16-BR-10 / R22-BR-03: always read alt back and
+		// compare against the shared post-transform expectation [F-15R]. Matches
+		// REST-single and bulk — a non-false accept that persists a divergent
+		// value is failed, not written. No-op false returns still succeed when
+		// storage already equals the expectation. Error text still distinguishes
+		// false-return vs non-false-diverge for operator diagnostics.
 		$expected_alt = $this->expected_meta_after_core_transforms( self::ALT_TEXT_META_KEY, $alt_text_draft );
 		$alt_written  = update_post_meta( $media_id, self::ALT_TEXT_META_KEY, $alt_text_draft );
-		$alt_ok       = false !== $alt_written;
-		if ( false === $alt_written ) {
-			$current = get_post_meta( $media_id, self::ALT_TEXT_META_KEY, true );
-			$alt_ok  = is_string( $current ) && $expected_alt === $current;
-		}
+		$current      = get_post_meta( $media_id, self::ALT_TEXT_META_KEY, true );
+		$alt_ok       = is_string( $current ) && $expected_alt === $current;
 		if ( ! $alt_ok ) {
-			// R20-BR-05: write returned false and storage does not match expected.
 			return array(
 				'media_id'       => $media_id,
 				'status'         => AltTextWriteStatus::FAILED,
 				'alt_text_draft' => $alt_text_draft,
-				'error'          => 'Alt meta write returned false.',
+				'error'          => ( false === $alt_written )
+					? 'Alt meta write returned false.'
+					: 'Alt meta write read-back mismatch.',
 			);
-		}
-		// Write accepted or no-op confirmed — still confirm storage (mutate /
-		// divergent store path where write returned non-false).
-		if ( false !== $alt_written ) {
-			$current = get_post_meta( $media_id, self::ALT_TEXT_META_KEY, true );
-			if ( ! is_string( $current ) || $expected_alt !== $current ) {
-				return array(
-					'media_id'       => $media_id,
-					'status'         => AltTextWriteStatus::FAILED,
-					'alt_text_draft' => $alt_text_draft,
-					'error'          => 'Alt meta write read-back mismatch.',
-				);
-			}
 		}
 
 		// Stamp provenance only after a verified alt write so history never lists
@@ -453,18 +439,24 @@ class DescriptionCommand extends \WP_CLI_Command {
 
 	/**
 	 * Plant `_acx_description_provenance_pending` after alt landed but provenance
-	 * did not. Mirrors bulk-apply marker discipline: update_post_meta returns
-	 * false on failure *and* on unchanged value — re-read and compare against
-	 * expected_meta_after_core_transforms before claiming the marker. Without a
-	 * verified marker, report FAILED (not PARTIAL) [R16-BR-06].
+	 * did not. Mirrors bulk-apply / REST-single marker discipline:
+	 * - `draft_hash` is sha256 of the **stored** alt form (post wp_unslash +
+	 *   sanitize_meta), never the raw pre-transform draft [R22-BR-01].
+	 * - update_post_meta return is not authoritative; accept any verified
+	 *   same-draft marker via is_usable_pending_marker_for_draft (stored-domain
+	 *   hash match; run_id ignored) [R20-BR-20] [R21-BR-08].
+	 * Without a usable marker, report FAILED (not PARTIAL) [R16-BR-06].
 	 *
 	 * @return array<string,mixed>
 	 */
 	private function provenance_failure_with_marker( int $media_id, string $alt_text_draft ): array {
-		$marker = array(
+		// Reuse the same post-transform expectation as the alt read-back above.
+		$expected_stored_alt = $this->expected_meta_after_core_transforms( self::ALT_TEXT_META_KEY, $alt_text_draft );
+		$expected_stored_alt = is_string( $expected_stored_alt ) ? $expected_stored_alt : (string) $expected_stored_alt;
+		$marker              = array(
 			// Non-bulk sentinel — shared surface, durable wire value [R20-BR-16].
 			'run_id'     => AltTextWriteStatus::MARKER_OWNER_CLI,
-			'draft_hash' => hash( 'sha256', $alt_text_draft ),
+			'draft_hash' => DescriptionHistoryService::hash_for_stored_alt( $expected_stored_alt ),
 		);
 		// Return value is not authoritative (false = failure or no-op; non-false
 		// may still persist a divergent value). Always verify storage [R20-BR-20].
@@ -478,7 +470,7 @@ class DescriptionCommand extends \WP_CLI_Command {
 		$current_marker = get_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY, true );
 		$marker_ok      = DescriptionHistoryService::is_usable_pending_marker_for_draft(
 			$current_marker,
-			$alt_text_draft
+			$expected_stored_alt
 		);
 		if ( ! $marker_ok ) {
 			// Alt remains written — not rolled back. failed because recovery is

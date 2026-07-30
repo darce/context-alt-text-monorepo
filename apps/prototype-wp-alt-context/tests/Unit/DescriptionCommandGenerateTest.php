@@ -1553,18 +1553,50 @@ class DescriptionCommandGenerateTest extends TestCase
     }
 
     /**
-     * R21-BR-02: CLI skip_existing must preserve a LIVE recovery marker.
+     * R21-BR-02 / R22-BR-01 / R22-BR-07 [TEST-15]: CLI skip_existing must preserve
+     * a LIVE recovery marker planted by the production writer. Backslash-bearing
+     * draft so raw vs stored hash domains diverge; marker produced via partial
+     * path (not hand-shaped to the predicate).
+     *
+     * RED under: plant draft_hash = hash(raw draft) instead of stored form.
      */
     public function testGenerateSkipExistingPreservesLiveProvenancePendingMarker(): void
     {
-        $storedAlt = 'Machine-written CLI alt with gap';
-        $liveMarker = [
-            'run_id' => 'cli',
-            'draft_hash' => hash('sha256', $storedAlt),
-        ];
-        $this->setPostMeta(989, '_wp_attachment_image_alt', $storedAlt);
-        $this->setPostMeta(989, '_acx_description_provenance_pending', $liveMarker);
+        $rawDraft  = 'AC\\DC concert poster';
+        $storedAlt = wp_unslash($rawDraft);
+        $this->assertNotSame($rawDraft, $storedAlt, 'precondition: unslash must change the bytes');
+
+        // Production plant: alt lands, provenance fails → marker via writer path.
         $service = new RecordingDescribeService([
+            989 => new WP_REST_Response([
+                'media_id' => 989,
+                'alt_text_draft' => $rawDraft,
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+            ]),
+        ]);
+        $GLOBALS['__ac_update_post_meta_fail'][989]['_acx_description_provenance'] = true;
+        $command = new DescriptionCommand(null, $service);
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '989', 'write' => true, 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+        $this->assertSame(AltTextWriteStatus::PARTIAL, $payload['rows'][0]['status'] ?? null);
+        $this->assertSame($storedAlt, get_post_meta(989, '_wp_attachment_image_alt', true));
+        $liveMarker = get_post_meta(989, '_acx_description_provenance_pending', true);
+        $this->assertIsArray($liveMarker);
+
+        // Second generate: DIFFERENT draft, force=false → skip_existing. Marker survives.
+        // Load-bearing [TEST-15] claim: RED when plant hashes raw draft while
+        // is_live_recovery_marker_for_alt hashes stored form (R22-BR-01).
+        unset($GLOBALS['__ac_update_post_meta_fail'][989]['_acx_description_provenance']);
+        \WP_CLI::reset_cli_messages();
+        $service2 = new RecordingDescribeService([
             989 => new WP_REST_Response([
                 'media_id' => 989,
                 'alt_text_draft' => 'A different draft from the model',
@@ -1572,13 +1604,21 @@ class DescriptionCommandGenerateTest extends TestCase
                 'model_id' => 'local-v1',
             ]),
         ]);
-        $command = new DescriptionCommand(null, $service);
+        $command2 = new DescriptionCommand(null, $service2);
+        $command2->__invoke(['generate'], ['media-id' => '989', 'write' => true, 'format' => 'json']);
+        $payload2 = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
 
-        $command->__invoke(['generate'], ['media-id' => '989', 'write' => true, 'format' => 'json']);
-        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
-
-        $this->assertSame(AltTextWriteStatus::SKIPPED_EXISTING_ALT, $payload['rows'][0]['status'] ?? null);
-        $this->assertSame($liveMarker, get_post_meta(989, '_acx_description_provenance_pending', true));
+        $this->assertSame(AltTextWriteStatus::SKIPPED_EXISTING_ALT, $payload2['rows'][0]['status'] ?? null);
+        $this->assertSame(
+            $liveMarker,
+            get_post_meta(989, '_acx_description_provenance_pending', true),
+            'live recovery marker must survive skip_existing'
+        );
+        $this->assertSame(
+            \AltContext\Api\Services\DescriptionHistoryService::hash_for_stored_alt($storedAlt),
+            $liveMarker['draft_hash'] ?? null,
+            'production plant must hash the stored form, not the raw draft'
+        );
 
         $GLOBALS['__ac_get_posts_results'] = [989];
         $GLOBALS['__ac_posts'][989] = (object) [

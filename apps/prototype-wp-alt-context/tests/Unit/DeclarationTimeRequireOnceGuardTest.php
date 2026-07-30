@@ -1054,6 +1054,94 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
     }
 
     /**
+     * R23-BR-09 leg A: same short name, different namespaces — requiring only the
+     * wrong-namespace defining file must not mask the actual FQCN dependency.
+     * Prefer-required without namespace identity credits interface-z-wrong.php
+     * and greens the gap (cold-classmap fatal). [rg-016]
+     */
+    public function testWrongNamespaceRequiredFileDoesNotMaskActualDep(): void
+    {
+        $fixtureRoot = $this->makeFixtureRoot();
+        // Actual definition first in candidate order (a- before z-).
+        $this->writeFixture(
+            $fixtureRoot,
+            'interface-a-actual.php',
+            "<?php\nnamespace NsActual;\ninterface Label {}\n"
+        );
+        $this->writeFixture(
+            $fixtureRoot,
+            'interface-z-wrong.php',
+            "<?php\nnamespace NsOther;\ninterface Label {}\n"
+        );
+        // Only the unrelated same-short interface is required.
+        $this->writeFixture(
+            $fixtureRoot,
+            'class-namespace-wrong-require.php',
+            "<?php\nnamespace App;\n"
+            . "require_once __DIR__ . '/interface-z-wrong.php';\n"
+            . "class NamespaceWrongRequire implements \\NsActual\\Label {}\n"
+        );
+
+        $gaps = $this->collectDeclarationTimeGaps($fixtureRoot);
+        $reported = false;
+        foreach ($gaps as $gap) {
+            if (
+                str_contains($gap, 'class-namespace-wrong-require.php')
+                && str_contains($gap, 'implements')
+                && str_contains($gap, 'Label')
+                && str_contains($gap, 'interface-a-actual.php')
+            ) {
+                $reported = true;
+            }
+        }
+        $this->assertTrue(
+            $reported,
+            "implements \\NsActual\\Label with only interface-z-wrong.php (NsOther\\Label) required must gap need interface-a-actual.php; gaps:\n"
+            . implode("\n", $gaps)
+        );
+    }
+
+    /**
+     * R23-BR-09 leg B: discrimination guard — requiring the correct-namespace
+     * defining file satisfies the dep (not "always report a gap").
+     */
+    public function testCorrectNamespaceRequiredFileSatisfiesDep(): void
+    {
+        $fixtureRoot = $this->makeFixtureRoot();
+        $this->writeFixture(
+            $fixtureRoot,
+            'interface-a-actual.php',
+            "<?php\nnamespace NsActual;\ninterface Label {}\n"
+        );
+        $this->writeFixture(
+            $fixtureRoot,
+            'interface-z-wrong.php',
+            "<?php\nnamespace NsOther;\ninterface Label {}\n"
+        );
+        $this->writeFixture(
+            $fixtureRoot,
+            'class-namespace-correct-require.php',
+            "<?php\nnamespace App;\n"
+            . "require_once __DIR__ . '/interface-a-actual.php';\n"
+            . "class NamespaceCorrectRequire implements \\NsActual\\Label {}\n"
+        );
+
+        $gaps = $this->collectDeclarationTimeGaps($fixtureRoot);
+        $consumerGaps = [];
+        foreach ($gaps as $gap) {
+            if (str_contains($gap, 'class-namespace-correct-require.php')) {
+                $consumerGaps[] = $gap;
+            }
+        }
+        $this->assertSame(
+            [],
+            $consumerGaps,
+            "implements \\NsActual\\Label with interface-a-actual.php required must not gap; got:\n"
+            . implode("\n", $gaps)
+        );
+    }
+
+    /**
      * R21-BR-16: enum-*.php consumers with declaration-time implements must be scanned.
      */
     public function testEnumConsumerImplementsWithoutRequireOnceIsFlagged(): void
@@ -1129,6 +1217,10 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
             foreach ($deps as $dep) {
                 $short = $dep['short'];
                 $context = $dep['context'];
+                // Namespace is always known after resolve: FQCN/qualified names
+                // carry their own; unqualified names resolve to the file namespace
+                // (empty string = global). Never treat "unknown" as match-anything.
+                $namespace = $dep['namespace'];
                 if ($this->isExternalName($short)) {
                     continue;
                 }
@@ -1139,7 +1231,8 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
                     $index[ $short ],
                     $context,
                     $requires,
-                    $usedBasenames
+                    $usedBasenames,
+                    $namespace
                 );
                 $need = $chosen['basename'];
                 if ($basename === $need) {
@@ -1169,7 +1262,7 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
     }
 
     /**
-     * @return array<string, list<array{path: string, kind: string, basename: string}>>
+     * @return array<string, list<array{path: string, kind: string, basename: string, namespace: string}>>
      */
     private function indexPluginSymbols(string $scanRoot): array
     {
@@ -1190,9 +1283,14 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
             $code = (string) file_get_contents($path);
             $tokens = token_get_all($code);
             $n = count($tokens);
+            $fileNamespace = '';
             for ($i = 0; $i < $n; $i++) {
                 $t = $tokens[ $i ];
                 if ( ! is_array($t)) {
+                    continue;
+                }
+                if (T_NAMESPACE === $t[0]) {
+                    $fileNamespace = $this->parseNamespaceName($tokens, $i + 1, $n);
                     continue;
                 }
                 if ( ! in_array($t[0], [ T_CLASS, T_INTERFACE, T_TRAIT ], true)) {
@@ -1221,6 +1319,7 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
                             'path' => $path,
                             'kind' => $kind,
                             'basename' => $basename,
+                            'namespace' => $fileNamespace,
                         ];
                     }
                     break;
@@ -1231,21 +1330,43 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
     }
 
     /**
-     * @param list<array{path: string, kind: string, basename: string}> $candidates
-     * @param list<string>                                              $requires
-     * @param array<string, true>                                       $usedBasenames
-     * @return array{path: string, kind: string, basename: string}
+     * @param list<array{path: string, kind: string, basename: string, namespace: string}> $candidates
+     * @param list<string>                                                                  $requires
+     * @param array<string, true>                                                           $usedBasenames
+     * @return array{path: string, kind: string, basename: string, namespace?: string}
      */
     private function chooseDefiningFile(
         array $candidates,
         string $context,
         array $requires = [],
-        array $usedBasenames = []
+        array $usedBasenames = [],
+        string $namespace = ''
     ): array {
         $filtered = $this->filterCandidatesForContext($candidates, $context);
         if ([] === $filtered) {
             return $candidates[0];
         }
+
+        // Namespace identity (R23-BR-09): only candidates whose declared
+        // namespace matches the dep may be credited. Prefer-required stays
+        // load-bearing inside that narrowed set (dual implements / dual trait).
+        $nsMatched = [];
+        foreach ($filtered as $c) {
+            if (( $c['namespace'] ?? '' ) === $namespace) {
+                $nsMatched[] = $c;
+            }
+        }
+        if ([] === $nsMatched) {
+            // No same-namespace candidate — do not fall back to a wrong-namespace
+            // required file (that is the masked-gap hole). Surface a gap.
+            return [
+                'path' => '',
+                'kind' => '',
+                'basename' => 'unresolved-namespace-match.php',
+                'namespace' => $namespace,
+            ];
+        }
+        $filtered = $nsMatched;
 
         // Prefer a required, not-yet-credited candidate so dual same-short
         // occurrences (\Ns1\Label + \Ns2\Label) pair with distinct defining files.
@@ -1266,8 +1387,8 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
     }
 
     /**
-     * @param list<array{path: string, kind: string, basename: string}> $candidates
-     * @return list<array{path: string, kind: string, basename: string}>
+     * @param list<array{path: string, kind: string, basename: string, namespace: string}> $candidates
+     * @return list<array{path: string, kind: string, basename: string, namespace: string}>
      */
     private function filterCandidatesForContext(array $candidates, string $context): array
     {
@@ -1313,7 +1434,7 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
     ];
 
     /**
-     * @return list<array{short: string, context: string}>
+     * @return list<array{short: string, context: string, namespace: string}>
      */
     private function collectDeclarationTimeDeps(string $code): array
     {
@@ -1323,6 +1444,8 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
         // Cross-context collisions (extends Helper + implements Helper) also
         // stay distinct because each occurrence is appended independently.
         // Intentional non-dedup: every occurrence is independently checkable.
+        // Each entry also carries namespace identity so chooseDefiningFile can
+        // distinguish \NsActual\Label from \NsOther\Label (R23-BR-09).
         $deps = [];
         $n = count($tokens);
         $brace_depth = 0;
@@ -1420,11 +1543,12 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
             }
 
             if ($in_header && ( $expect_ext || $expect_impl ) && in_array($id, self::NAME_TOKEN_IDS, true)) {
-                $short = $this->resolveDepShortName($text, $id, $fileNamespace, $aliases);
+                $identity = $this->resolveDepIdentity($text, $id, $fileNamespace, $aliases);
                 $context = $expect_ext ? 'extends' : 'implements';
                 $deps[] = [
-                    'short' => $short,
+                    'short' => $identity['short'],
                     'context' => $context,
+                    'namespace' => $identity['namespace'],
                 ];
             }
 
@@ -1471,10 +1595,11 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
                         continue;
                     }
                     if ($expect_name && in_array($tj[0], self::NAME_TOKEN_IDS, true)) {
-                        $short = $this->resolveDepShortName($tj[1], $tj[0], $fileNamespace, $aliases);
+                        $identity = $this->resolveDepIdentity($tj[1], $tj[0], $fileNamespace, $aliases);
                         $deps[] = [
-                            'short' => $short,
+                            'short' => $identity['short'],
                             'context' => 'use-trait',
+                            'namespace' => $identity['namespace'],
                         ];
                         $expect_name = false;
                     }
@@ -1508,8 +1633,11 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
      * Absorb one file-scope `use` into the alias map (plain, aliased, grouped,
      * grouped-aliased). Skips `use function` / `use const`.
      *
+     * Values are full FQCNs (no leading `\`) so namespace identity survives
+     * alias rewrite for chooseDefiningFile (R23-BR-09).
+     *
      * @param array<int, string|array{0:int,1:string,2?:int}> $tokens
-     * @param array<string, string>                           $aliases alias short => real short
+     * @param array<string, string>                           $aliases alias short => FQCN
      */
     private function absorbFileScopeUse(array $tokens, int $useIndex, int $n, array &$aliases): void
     {
@@ -1533,7 +1661,7 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
             if (';' === $t) {
                 if (null !== $currentName) {
                     $short = $this->lastNameSegment($currentName);
-                    $aliases[ $short ] = $short;
+                    $aliases[ $short ] = $currentName;
                 }
                 break;
             }
@@ -1553,7 +1681,7 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
             if (',' === $t) {
                 if (null !== $currentName) {
                     $short = $this->lastNameSegment($currentName);
-                    $aliases[ $short ] = $short;
+                    $aliases[ $short ] = $currentName;
                     $currentName = null;
                 }
                 continue;
@@ -1564,7 +1692,7 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
                     $j++;
                 }
                 if ($j < $n && is_array($tokens[ $j ]) && T_STRING === $tokens[ $j ][0] && null !== $currentName) {
-                    $aliases[ $tokens[ $j ][1] ] = $this->lastNameSegment($currentName);
+                    $aliases[ $tokens[ $j ][1] ] = $currentName;
                     $currentName = null;
                     $i = $j;
                 }
@@ -1589,53 +1717,82 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
     }
 
     /**
-     * Resolve a declaration-time name token to the plugin short name used for
-     * symbol-index lookup. PHP only alias-resolves unqualified names (T_STRING)
-     * and the *first* segment of qualified names (T_NAME_QUALIFIED). Leading-
-     * backslash FQCNs (T_NAME_FULLY_QUALIFIED) and namespace-relative names
-     * (T_NAME_RELATIVE) are never rewritten through the file-scope use map.
+     * Resolve a declaration-time name token to short name + namespace identity
+     * for symbol-index lookup and chooseDefiningFile matching.
      *
-     * @param array<string, string> $aliases
+     * PHP only alias-resolves unqualified names (T_STRING) and the *first*
+     * segment of qualified names (T_NAME_QUALIFIED). Leading-backslash FQCNs
+     * (T_NAME_FULLY_QUALIFIED) and namespace-relative names (T_NAME_RELATIVE)
+     * are never rewritten through the file-scope use map.
+     *
+     * Unqualified names without an import resolve to the file namespace — not
+     * to "unknown / match any candidate".
+     *
+     * @param array<string, string> $aliases alias short => FQCN
+     * @return array{short: string, namespace: string}
      */
-    private function resolveDepShortName(
+    private function resolveDepIdentity(
         string $tokenText,
         int $tokenId,
         string $fileNamespace,
         array $aliases
-    ): string {
+    ): array {
         if (T_NAME_FULLY_QUALIFIED === $tokenId) {
-            return $this->lastNameSegment(ltrim($tokenText, '\\'));
+            return $this->splitFqcn(ltrim($tokenText, '\\'));
         }
 
         if (T_NAME_RELATIVE === $tokenId) {
-            return $this->shortNameFromNameToken($tokenText, $fileNamespace);
+            // `namespace\Foo` → current-namespace\Foo
+            if (str_starts_with($tokenText, 'namespace\\')) {
+                $rest = substr($tokenText, strlen('namespace\\'));
+                $fqcn = '' === $fileNamespace ? $rest : $fileNamespace . '\\' . $rest;
+                return $this->splitFqcn($fqcn);
+            }
+            return $this->splitFqcn(ltrim($tokenText, '\\'));
         }
 
         if (T_NAME_QUALIFIED === $tokenId) {
-            // Alias rewrites only the first segment; short name is the last.
+            // Alias rewrites only the first segment; remaining parts stay.
             $parts = explode('\\', $tokenText);
             if (isset($aliases[ $parts[0] ])) {
-                $parts[0] = $aliases[ $parts[0] ];
+                $aliasFqcn = $aliases[ $parts[0] ];
+                $rest = [];
+                $partCount = count($parts);
+                for ($p = 1; $p < $partCount; $p++) {
+                    $rest[] = $parts[ $p ];
+                }
+                $fqcn = [] === $rest ? $aliasFqcn : $aliasFqcn . '\\' . implode('\\', $rest);
+                return $this->splitFqcn($fqcn);
             }
-            return $this->lastNameSegment(implode('\\', $parts));
+            // No alias: relative to the current file namespace.
+            $fqcn = '' === $fileNamespace ? $tokenText : $fileNamespace . '\\' . $tokenText;
+            return $this->splitFqcn($fqcn);
         }
 
-        // T_STRING — unqualified: full alias rewrite.
+        // T_STRING — unqualified: full alias rewrite, else file namespace.
         if (isset($aliases[ $tokenText ])) {
-            return $aliases[ $tokenText ];
+            return $this->splitFqcn($aliases[ $tokenText ]);
         }
-        return $tokenText;
+        $fqcn = '' === $fileNamespace ? $tokenText : $fileNamespace . '\\' . $tokenText;
+        return $this->splitFqcn($fqcn);
     }
 
-    private function shortNameFromNameToken(string $text, string $fileNamespace): string
+    /**
+     * @return array{short: string, namespace: string}
+     */
+    private function splitFqcn(string $fqcn): array
     {
-        // T_NAME_RELATIVE: `namespace\Foo` → current-namespace\Foo
-        if (str_starts_with($text, 'namespace\\')) {
-            $rest = substr($text, strlen('namespace\\'));
-            $fqcn = '' === $fileNamespace ? $rest : $fileNamespace . '\\' . $rest;
-            return $this->lastNameSegment($fqcn);
+        $parts = explode('\\', $fqcn);
+        $short = (string) end($parts);
+        $nsParts = [];
+        $partCount = count($parts);
+        for ($p = 0; $p < $partCount - 1; $p++) {
+            $nsParts[] = $parts[ $p ];
         }
-        return $this->lastNameSegment(ltrim($text, '\\'));
+        return [
+            'short' => $short,
+            'namespace' => implode('\\', $nsParts),
+        ];
     }
 
     private function lastNameSegment(string $name): string

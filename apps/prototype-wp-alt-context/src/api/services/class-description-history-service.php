@@ -115,11 +115,12 @@ class DescriptionHistoryService {
 			);
 		}
 
-		// S3-02 / WBUX-5-R16-BR-10: honor the update_post_meta() return. It also
-		// returns false when the stored value is byte-identical to what WP will
-		// store (a no-op overwrite); distinguish that from a real failure via
-		// read-back. Start alt_ok false on false returns so skipping this block
-		// cannot claim success.
+		// S3-02 / WBUX-5-R16-BR-10 / R22-BR-03 / R23-BR-01: always read alt back
+		// and compare against the shared post-transform expectation. A non-false
+		// update_post_meta may still persist a divergent value — trusting the
+		// return alone would report success with the wrong alt. False returns
+		// (failure *and* no-op) still succeed only when storage already equals
+		// the expectation.
 		//
 		// Expected value must mirror update_metadata() (wp-includes/meta.php):
 		//   $meta_value = wp_unslash( $meta_value );
@@ -133,12 +134,9 @@ class DescriptionHistoryService {
 		// [INT-11] a failed write must leave the operator path and data intact —
 		// do not stamp human-edit meta unless the alt write is verified.
 		$expected_alt = $this->expected_meta_after_core_transforms( self::ALT_META, $normalized_alt_text );
-		$alt_written  = update_post_meta( $media_id, self::ALT_META, $normalized_alt_text );
-		$alt_ok       = false !== $alt_written;
-		if ( false === $alt_written ) {
-			$current = get_post_meta( $media_id, self::ALT_META, true );
-			$alt_ok  = is_string( $current ) && $expected_alt === $current;
-		}
+		update_post_meta( $media_id, self::ALT_META, $normalized_alt_text );
+		$current = get_post_meta( $media_id, self::ALT_META, true );
+		$alt_ok  = is_string( $current ) && $expected_alt === $current;
 		if ( ! $alt_ok ) {
 			// [HAI-13] surface a visible, operator-actionable failure.
 			// Do not advise "try again": a durable store failure or a value
@@ -165,23 +163,18 @@ class DescriptionHistoryService {
 		);
 		// What WP will actually store: unslash then sanitize_meta (same order as
 		// update_metadata). Full-payload equality still required (BR-48a).
-		// WBUX-5-R16-BR-10: start human_ok false on false returns so skipping
-		// the read-back block cannot claim success.
+		// R23-BR-01 / R22-BR-03: always read human-edit back. A non-false accept
+		// may still persist a divergent array — the return value is not verification.
+		// Accept only a full-payload match: comparing only alt_text would treat a
+		// stale prior marker (same text, older edited_at / different user_id) as
+		// success — forging 200 while telemetry attributes the correction to the
+		// wrong time/operator. Same-second re-save still passes: edited_at is
+		// second-granularity and the duplicate payload is identical. [BR-48a]
+		// Compare against the unslash+sanitize_meta payload (BR-17 / R16-BR-15).
 		$expected_human = $this->expected_meta_after_core_transforms( self::HUMAN_EDIT_META, $human_edit_payload );
-		$human_written  = update_post_meta( $media_id, self::HUMAN_EDIT_META, $human_edit_payload );
-		$human_ok       = false !== $human_written;
-		if ( false === $human_written ) {
-			$current_human = get_post_meta( $media_id, self::HUMAN_EDIT_META, true );
-			// Accept only a full-payload no-op: update_post_meta returns false when
-			// the stored value equals the value being written (the whole array).
-			// Comparing only alt_text would treat a stale prior marker (same text,
-			// older edited_at / different user_id) as success — forging 200 while
-			// telemetry attributes the correction to the wrong time/operator.
-			// Same-second re-save still passes: edited_at is second-granularity and
-			// the duplicate payload is identical. [BR-48a]
-			// Compare against the unslash+sanitize_meta payload (BR-17 / R16-BR-15).
-			$human_ok = is_array( $current_human ) && $expected_human === $current_human;
-		}
+		update_post_meta( $media_id, self::HUMAN_EDIT_META, $human_edit_payload );
+		$current_human = get_post_meta( $media_id, self::HUMAN_EDIT_META, true );
+		$human_ok      = is_array( $current_human ) && $expected_human === $current_human;
 		if ( ! $human_ok ) {
 			// stored_alt_text reports what storage actually holds after
 			// sanitize_text_field() + WP's unslash + sanitize_meta. Clients

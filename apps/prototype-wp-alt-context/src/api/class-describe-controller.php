@@ -548,10 +548,11 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	 * `skipped_existing` (existing alt guarded, or pre-write CAS saw a concurrent
 	 * edit), `skipped_no_draft` (failed describe / empty draft), `skipped_invalid`
 	 * (media_id is not an attachment post, S3-01), and `failed` (the alt-text write
-	 * returned false, S3-02; or the recovery marker could not be planted after a
-	 * provenance failure — no auto-retry path exists). `applied` keeps its prior
-	 * meaning; `partial` is additive. Do not invent envelope fields beyond what
-	 * was measured. [rg-015]
+	 * returned false, S3-02; or a non-false alt write's read-back diverged from
+	 * `expected_meta_after_core_transforms` [R22-BR-03]; or the recovery marker
+	 * could not be planted after a provenance failure — no auto-retry path
+	 * exists). `applied` keeps its prior meaning; `partial` is additive. Do not
+	 * invent envelope fields beyond what was measured. [rg-015]
 	 *
 	 * Partial recovery (non-clobber completion): when a prior apply wrote alt but
 	 * failed provenance, this path also writes durable evidence —
@@ -571,6 +572,11 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	 * `skipped_existing`, requiring explicit `overwrite_media_ids`. Marker write
 	 * failure is fail-closed: without a verified marker the item is `failed` (not
 	 * `partial`) so the UI does not present a non-recoverable item as retryable.
+	 * When recovery completes from a marker owned by a **different** run, the
+	 * stamped envelope keeps `run_id` as the applying run and adds
+	 * `recovered_from_run_id` = the marker's owner — honest attribution without
+	 * fabricating foreign model metadata [R23-BR-08] [rg-015]. Same-run recovery
+	 * omits that field (no self-reference noise).
 	 * [RLSE-05] [INT-11] [rg-015]
 	 */
 	public function apply_describe_run_drafts( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -737,6 +743,9 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			$draft = is_string( $item['alt_text_draft'] ?? null )
 				? sanitize_text_field( $item['alt_text_draft'] )
 				: '';
+			// Set only when non-clobber recovery fires from a foreign-owned marker
+			// [R23-BR-08]. Null on first write / overwrite / same-run recovery.
+			$recovered_from_run_id = null;
 
 			if ( 0 === $media_id || '' === $draft ) {
 				$buckets['skipped_no_draft'][] = $media_id;
@@ -850,6 +859,17 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 						$buckets['skipped_existing'][] = $media_id;
 						continue;
 					}
+
+					// Recovery unlocked. If the marker was planted by another run,
+					// record that owner so the audit trail does not silently claim
+					// this apply generated the text [R23-BR-08]. Only the run id is
+					// in the marker — do not invent foreign model metadata [rg-015].
+					if ( is_array( $pending ) && isset( $pending['run_id'] ) ) {
+						$marker_owner = (string) $pending['run_id'];
+						if ( '' !== trim( $marker_owner ) && $marker_owner !== $run_id ) {
+							$recovered_from_run_id = $marker_owner;
+						}
+					}
 				}
 			}
 
@@ -857,7 +877,12 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			// blob verbatim — whitelist the same generated-provenance fields the
 			// single-image write records, then stamp the bulk-apply origin and the
 			// exact draft string written (history's generated-alt resolver).
-			$provenance = $this->build_run_apply_provenance( $item['provenance'] ?? null, $run_id, $draft );
+			$provenance = $this->build_run_apply_provenance(
+				$item['provenance'] ?? null,
+				$run_id,
+				$draft,
+				$recovered_from_run_id
+			);
 
 			// BR-115: compare-and-swap — re-read immediately before the write and
 			// abort if alt diverged from the decision-time snapshot. Preserves a
@@ -1267,13 +1292,23 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	 * empty when a draft was applied). `generated_at` is carried through only
 	 * when the backend supplied it — never fabricated at apply time.
 	 *
-	 * @param mixed  $incoming Backend-supplied item provenance (may be null/scalar).
-	 * @param string $run_id   Describe-run id stamped onto the envelope.
-	 * @param string $draft    Exact alt draft string being written.
+	 * When non-clobber recovery completes a write started by a different run,
+	 * `$recovered_from_run_id` is that marker's owning run id and is stamped as
+	 * `recovered_from_run_id` alongside this apply's `run_id` [R23-BR-08]. Null
+	 * or same-run values omit the key (no self-reference; first write / overwrite
+	 * leave it absent). Only the owning run id is available from the marker —
+	 * foreign model metadata is never invented [rg-015]. Field name checked
+	 * against DescriptionHistoryService::build_item (passes provenance through
+	 * as a map) and the history page (reads model_id only) — additive key is safe.
+	 *
+	 * @param mixed       $incoming               Backend-supplied item provenance (may be null/scalar).
+	 * @param string      $run_id                 Describe-run id stamped onto the envelope.
+	 * @param string      $draft                  Exact alt draft string being written.
+	 * @param string|null $recovered_from_run_id  Marker owner when recovering a foreign-started write.
 	 *
 	 * @return array<string,mixed>
 	 */
-	private function build_run_apply_provenance( mixed $incoming, string $run_id, string $draft ): array {
+	private function build_run_apply_provenance( mixed $incoming, string $run_id, string $draft, ?string $recovered_from_run_id = null ): array {
 		$incoming   = is_array( $incoming ) ? $incoming : array();
 		$provenance = array();
 		foreach ( array( 'adapter', 'model_id', 'model_version', 'prompt_or_task_version', 'image_hash', 'context_hash', 'generated_at', 'backend_result_id', 'alt_text_draft' ) as $key ) {
@@ -1288,6 +1323,9 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 		$provenance['source']         = 'bulk_describe_run';
 		$provenance['run_id']         = $run_id;
 		$provenance['applied_at']     = gmdate( 'c' );
+		if ( null !== $recovered_from_run_id && '' !== trim( $recovered_from_run_id ) && $recovered_from_run_id !== $run_id ) {
+			$provenance['recovered_from_run_id'] = $recovered_from_run_id;
+		}
 
 		return $provenance;
 	}

@@ -309,7 +309,7 @@ def _opencv_version() -> str:
 
 def _onnxruntime_version() -> str:
     """Live onnxruntime version string (lazy import; never hardcode)."""
-    import onnxruntime
+    import onnxruntime  # type: ignore[import-untyped]
 
     return str(onnxruntime.__version__)
 

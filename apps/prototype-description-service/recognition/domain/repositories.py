@@ -146,8 +146,30 @@ class ClusterRepository(Protocol):
         """Fetch representative embeddings for a cluster."""
         ...
 
+    async def get_representative_embeddings_with_model(self, cluster_id: str) -> tuple[list[np.ndarray], str | None]:
+        """Fetch representative embeddings plus the chosen embedding_model (FIR23-01).
+
+        Returns:
+            ``(embeddings, chosen_embedding_model)`` where ``chosen_embedding_model``
+            is the model space selected by ``_filter_embedding_pairs_to_single_model``
+            for the returned vectors, or ``None`` when nothing was returned / no
+            model could be determined.
+        """
+        ...
+
     async def get_member_fallback_embeddings(self, cluster_id: str, limit: int = 4) -> Sequence[np.ndarray]:
         """Fetch top member embeddings for fallback similarity checks."""
+        ...
+
+    async def get_member_fallback_embeddings_with_model(
+        self, cluster_id: str, limit: int = 4
+    ) -> tuple[list[np.ndarray], str | None]:
+        """Fetch top member fallback embeddings plus the chosen embedding_model.
+
+        Returns:
+            ``(embeddings, chosen_embedding_model)`` — same semantics as
+            ``get_representative_embeddings_with_model``.
+        """
         ...
 
     async def get_member_identities(self, cluster_id: str) -> Sequence[MediaIdentity]:

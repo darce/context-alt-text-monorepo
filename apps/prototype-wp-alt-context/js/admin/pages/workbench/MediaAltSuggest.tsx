@@ -42,8 +42,11 @@ export interface MediaAltSuggestProps {
    * mediaId. Transient — never left true from a clean settled state [rg-003].
    */
   peerCommitPending?: boolean;
-  /** Row-owned begin of this surface's correction (in-flight exclusivity). */
-  onCommitStart?: () => void;
+  /**
+   * Row-owned begin of this surface's correction (in-flight exclusivity).
+   * Returns false when the row lock is already held — caller must not write.
+   */
+  onCommitStart?: () => boolean;
   /** Row-owned end of this surface's correction (success or failure). */
   onCommitEnd?: () => void;
 }
@@ -150,9 +153,12 @@ export const MediaAltSuggest = ({
   // open). Compared at Accept/Save against the live committedAlt prop.
   const committedAltBaselineRef = useRef<string | null>(committedAlt);
   // Live committed prop mirror so generate onSuccess (async) captures the value
-  // at draft-arrival, not a stale closure from the click render.
+  // at draft-arrival, not a stale closure from the click render. Written in an
+  // effect — never during render [S2c-4b-ii BR-02 / React ref rules].
   const committedAltRef = useRef<string | null>(committedAlt);
-  committedAltRef.current = committedAlt;
+  useEffect(() => {
+    committedAltRef.current = committedAlt;
+  }, [committedAlt]);
   // Synchronous in-flight guard for Accept/Save [S2C3A-BR-16]. isAccepting
   // only paints after the next render; a same-tick double activation must not
   // enqueue two corrections. Mirror of DescriptionHistoryPage BR-81.
@@ -401,8 +407,13 @@ export const MediaAltSuggest = ({
           return;
         }
         setConflictMessage(null);
+        // beginCommit is compare-and-set [S2c-4b-ii BR-01]: a refused claim must
+        // not proceed to write. Isolated renders omit onCommitStart (proceed).
+        const claimed = onCommitStart?.() ?? true;
+        if (!claimed) {
+          return;
+        }
         isAcceptingRef.current = true;
-        onCommitStart?.();
         // BR-56: announce commit-in-flight immediately so the polite region does
         // not keep reading the stale "Draft ready…" cue while the button shows
         // "Accepting draft…".
@@ -463,8 +474,13 @@ export const MediaAltSuggest = ({
           return;
         }
         setConflictMessage(null);
+        // beginCommit is compare-and-set [S2c-4b-ii BR-01]: a refused claim must
+        // not proceed to write. Isolated renders omit onCommitStart (proceed).
+        const claimed = onCommitStart?.() ?? true;
+        if (!claimed) {
+          return;
+        }
         isAcceptingRef.current = true;
-        onCommitStart?.();
         // BR-56 companion: edit-path commit-in-flight cue (mirror Accept).
         announceStatus(__('Saving alt text…', 'alt-context'));
         acceptDraft(

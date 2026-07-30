@@ -7,7 +7,7 @@
  * cache so useCorrectMediaAlt's row patch is live committed truth.
  */
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -16,7 +16,7 @@ import type { DescriptionHistoryItem, VisualFactsResponse } from '../../../api/d
 import { queryKeys } from '../../../api/queryKeys';
 import type { WorkbenchMediaResponse } from '../../../api/workbenchMediaApi';
 import type { WorkbenchMediaItem } from '../../../hooks/useWorkbenchMedia';
-import { MediaSelectionTableBody } from '../MediaSelectionTableBody';
+import { MediaSelectionTableBody, useRowCommitLock } from '../MediaSelectionTableBody';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -410,5 +410,53 @@ describe('MediaSelectionTableBody — commit exclusivity [S2c-4b-i]', () => {
     expect(document.querySelectorAll('[aria-live="polite"]')).toHaveLength(1);
     // Refusal must not be routed into the polite region.
     expect(screen.getByTestId('media-selection-row-status')).not.toHaveTextContent(/changed/i);
+  });
+});
+
+/**
+ * BR-01: beginCommit exclusivity lives in the state transition, not in callers.
+ * Unreachable via the two real UI surfaces (both refuse when peerCommitPending),
+ * so a third simulated claimant exercises the lock directly via useRowCommitLock.
+ *
+ * [TEST-15] discrimination: goes RED if beginCommit is restored to unconditional
+ * setCommitOwner(owner) — the second claim would return true and steal the lock.
+ */
+describe('MediaSelectionTableBody — beginCommit compare-and-set [S2c-4b-ii BR-01]', () => {
+  it('refuses a second claim while a lock is held; end is compare-and-clear', () => {
+    const { result } = renderHook(() => useRowCommitLock());
+
+    let firstClaim = false;
+    let secondClaim = false;
+    act(() => {
+      firstClaim = result.current.beginCommit('editor');
+    });
+    expect(firstClaim).toBe(true);
+    expect(result.current.commitOwner).toBe('editor');
+
+    act(() => {
+      // Third simulated claimant — not editor, not the peer guard path.
+      secondClaim = result.current.beginCommit('suggest');
+    });
+    // Unconditional beginCommit would return true and set owner to 'suggest'.
+    expect(secondClaim).toBe(false);
+    expect(result.current.commitOwner).toBe('editor');
+
+    act(() => {
+      // Wrong owner must not clear (compare-and-clear).
+      result.current.endCommit('suggest');
+    });
+    expect(result.current.commitOwner).toBe('editor');
+
+    act(() => {
+      result.current.endCommit('editor');
+    });
+    expect(result.current.commitOwner).toBeNull();
+
+    let reclaimed = false;
+    act(() => {
+      reclaimed = result.current.beginCommit('suggest');
+    });
+    expect(reclaimed).toBe(true);
+    expect(result.current.commitOwner).toBe('suggest');
   });
 });

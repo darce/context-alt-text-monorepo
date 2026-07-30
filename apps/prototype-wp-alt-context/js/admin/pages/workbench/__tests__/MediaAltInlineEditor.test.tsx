@@ -379,4 +379,66 @@ describe('MediaAltInlineEditor', () => {
     expect(alert).not.toHaveTextContent(/wp-json/i);
     expect(alert).not.toHaveTextContent(/proxy-internal-detail/i);
   });
+
+  it('does not write when onCommitStart refuses the lock claim [S2c-4b-ii BR-01]', () => {
+    // beginCommit can now no-op; callers must honour a false claim and not mutate.
+    const onCommitStart = vi.fn((): boolean => false);
+    renderEditor(
+      <MediaAltInlineEditor mediaId={42} altText="Bridge at dusk" onCommitStart={onCommitStart} />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /edit alt text/i }));
+    fireEvent.change(screen.getByRole('textbox', { name: /alt text/i }), {
+      target: { value: 'Must not be persisted after refused claim.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^save/i }));
+
+    expect(onCommitStart).toHaveBeenCalledTimes(1);
+    expect(correctMock).not.toHaveBeenCalled();
+    // Buffer kept; Cancel remains reachable [rg-003].
+    expect(screen.getByRole('textbox', { name: /alt text/i })).toHaveValue(
+      'Must not be persisted after refused claim.',
+    );
+    expect(screen.getByRole('button', { name: /cancel/i })).not.toBeDisabled();
+  });
+
+  it('refuses Save when committed alt moves under an open buffer [S2c-4b-ii BR-03]', async () => {
+    // Pins the display-sync effect's `if (isEditing) return` early-return: while
+    // editing, previousAltTextRef must NOT advance with the prop. If that guard
+    // is removed, a sibling commit updates the CAS baseline mid-edit and Save
+    // incorrectly proceeds (or clobbers the operator buffer via setDraft).
+    //
+    // [TEST-15] discrimination: goes RED if the isEditing early-return is deleted.
+    const { client, rerender } = renderEditor(
+      <MediaAltInlineEditor mediaId={42} altText="Existing alt" />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /edit alt text/i }));
+    fireEvent.change(screen.getByRole('textbox', { name: /alt text/i }), {
+      target: { value: 'Stale open buffer that must not clobber sibling.' },
+    });
+
+    // Sibling commit (or cache patch) delivers a new committed value while open.
+    rerender(
+      <QueryClientProvider client={client}>
+        <MediaAltInlineEditor mediaId={42} altText="Sibling committed this." />
+      </QueryClientProvider>,
+    );
+
+    // Buffer must survive the prop change (effect must not setDraft while editing).
+    expect(screen.getByRole('textbox', { name: /alt text/i })).toHaveValue(
+      'Stale open buffer that must not clobber sibling.',
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /^save/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/changed/i);
+    expect(correctMock).not.toHaveBeenCalled();
+    // Buffer kept; Cancel remains reachable [rg-003].
+    expect(screen.getByRole('textbox', { name: /alt text/i })).toHaveValue(
+      'Stale open buffer that must not clobber sibling.',
+    );
+    expect(screen.getByRole('button', { name: /cancel/i })).not.toBeDisabled();
+  });
 });

@@ -1986,4 +1986,57 @@ describe('MediaAltSuggest', () => {
     expect(screen.getByText(draft)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /dismiss/i })).not.toBeDisabled();
   });
+
+  it('does not write when onCommitStart refuses the lock claim [S2c-4b-ii BR-01]', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    const onCommitStart = vi.fn((): boolean => false);
+    renderSuggest(
+      <MediaAltSuggest mediaId={42} committedAlt="Existing alt" onCommitStart={onCommitStart} />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await screen.findByText(draft);
+    fireEvent.click(screen.getByRole('button', { name: /^accept$/i }));
+
+    expect(onCommitStart).toHaveBeenCalledTimes(1);
+    expect(correctMock).not.toHaveBeenCalled();
+    // Draft kept; Dismiss remains reachable [rg-003].
+    expect(screen.getByText(draft)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /dismiss/i })).not.toBeDisabled();
+  });
+
+  it('CAS baseline at draft arrival tracks live committedAlt, not click-time closure [S2c-4b-ii BR-02]', async () => {
+    // generate onSuccess must read the committed value as of draft arrival via
+    // committedAltRef (effect-mirrored). A click-time closure over the prop would
+    // pin "At click" and refuse Accept after the prop moved during generate.
+    let resolveDescribe!: (value: VisualFactsResponse) => void;
+    describeMock.mockReturnValue(
+      new Promise<VisualFactsResponse>((resolve) => {
+        resolveDescribe = resolve;
+      }),
+    );
+    correctMock.mockResolvedValue(sampleHistoryItem(draft));
+    const { client, rerender } = renderSuggest(
+      <MediaAltSuggest mediaId={42} committedAlt="At click" />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    expect(await screen.findByRole('button', { name: /generating/i })).toBeDisabled();
+
+    // Sibling (or cache) updates committed alt while generation is in flight.
+    rerender(
+      <QueryClientProvider client={client}>
+        <MediaAltSuggest mediaId={42} committedAlt="Arrived during generate" />
+      </QueryClientProvider>,
+    );
+
+    resolveDescribe(sampleResponse());
+    await screen.findByText(draft);
+
+    fireEvent.click(screen.getByRole('button', { name: /^accept$/i }));
+
+    await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
+    expect(correctMock).toHaveBeenCalledWith(42, draft);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
 });

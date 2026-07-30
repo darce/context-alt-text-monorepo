@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
 import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
@@ -9,6 +9,50 @@ import { IdentityClusterList } from './identity-clusters';
 import { MediaAltInlineEditor } from './MediaAltInlineEditor';
 import { MediaAltSuggest } from './MediaAltSuggest';
 import { mediaEditUrl } from './Panels';
+
+/** Who may hold the row's polite region or commit lock. */
+export type RowPoliteOwner = 'editor' | 'suggest';
+
+/**
+ * Row commit-lock primitives [S2c-4b-ii BR-01]. Exported so a third simulated
+ * claimant can exercise compare-and-set without driving the full UI — the defect
+ * (unconditional begin) is unreachable through the two real surfaces that already
+ * refuse when peerCommitPending is true.
+ *
+ * Claim result is decided on a ref so beginCommit can return synchronously.
+ * React may defer useState updaters; a side-effect flag inside setState is not
+ * a reliable "did I win?" signal. State still drives peerCommitPending paint.
+ */
+export const useRowCommitLock = (): {
+  commitOwner: RowPoliteOwner | null;
+  beginCommit: (owner: RowPoliteOwner) => boolean;
+  endCommit: (owner: RowPoliteOwner) => void;
+} => {
+  const [commitOwner, setCommitOwner] = useState<RowPoliteOwner | null>(null);
+  const commitOwnerRef = useRef<RowPoliteOwner | null>(null);
+
+  // Compare-and-set: claim only when free. Returns whether this caller won.
+  // Exclusivity lives here — not in each caller's peerCommitPending guard.
+  const beginCommit = useCallback((owner: RowPoliteOwner): boolean => {
+    if (commitOwnerRef.current !== null) {
+      return false;
+    }
+    commitOwnerRef.current = owner;
+    setCommitOwner(owner);
+    return true;
+  }, []);
+
+  // Compare-and-clear: only the holding owner releases the lock.
+  const endCommit = useCallback((owner: RowPoliteOwner): void => {
+    if (commitOwnerRef.current !== owner) {
+      return;
+    }
+    commitOwnerRef.current = null;
+    setCommitOwner(null);
+  }, []);
+
+  return { commitOwner, beginCommit, endCommit };
+};
 
 interface MediaSelectionTableBodyProps {
   items: WorkbenchMediaItem[];
@@ -75,9 +119,6 @@ interface MediaSelectionRowProps {
   onRetryIdentities?: () => void;
 }
 
-/** Who last wrote the row's polite live region — used for compare-and-clear. */
-type RowPoliteOwner = 'editor' | 'suggest';
-
 interface RowPoliteState {
   owner: RowPoliteOwner | null;
   message: string;
@@ -101,10 +142,10 @@ const MediaSelectionRow = ({
   // per-row correctionErrors map [RLSE-05]).
   const [polite, setPolite] = useState<RowPoliteState>({ owner: null, message: '' });
 
-  // One correction in flight per row (S2c-4b-i). Owner-tagged like the polite
-  // region: begin is exclusive, end is compare-and-clear so a late sibling
-  // settle cannot clear another owner's lock.
-  const [commitOwner, setCommitOwner] = useState<RowPoliteOwner | null>(null);
+  // One correction in flight per row (S2c-4b-i / S2c-4b-ii). Owner-tagged like
+  // the polite region: begin is exclusive compare-and-set, end is
+  // compare-and-clear so a late sibling settle cannot clear another owner's lock.
+  const { commitOwner, beginCommit, endCommit } = useRowCommitLock();
 
   const announcePolite = useCallback((owner: RowPoliteOwner, message: string): void => {
     setPolite({ owner, message });
@@ -119,21 +160,14 @@ const MediaSelectionRow = ({
     });
   }, []);
 
-  const beginCommit = useCallback((owner: RowPoliteOwner): void => {
-    setCommitOwner(owner);
-  }, []);
-
-  const endCommit = useCallback((owner: RowPoliteOwner): void => {
-    setCommitOwner((current) => (current === owner ? null : current));
-  }, []);
-
   const editorAnnounce = useCallback((message: string): void => announcePolite('editor', message), [announcePolite]);
   const editorClear = useCallback((): void => clearPolite('editor'), [clearPolite]);
   const suggestAnnounce = useCallback((message: string): void => announcePolite('suggest', message), [announcePolite]);
   const suggestClear = useCallback((): void => clearPolite('suggest'), [clearPolite]);
-  const editorCommitStart = useCallback((): void => beginCommit('editor'), [beginCommit]);
+  // beginCommit returns whether the claim won — surfaces must not write on false.
+  const editorCommitStart = useCallback((): boolean => beginCommit('editor'), [beginCommit]);
   const editorCommitEnd = useCallback((): void => endCommit('editor'), [endCommit]);
-  const suggestCommitStart = useCallback((): void => beginCommit('suggest'), [beginCommit]);
+  const suggestCommitStart = useCallback((): boolean => beginCommit('suggest'), [beginCommit]);
   const suggestCommitEnd = useCallback((): void => endCommit('suggest'), [endCommit]);
 
   return (

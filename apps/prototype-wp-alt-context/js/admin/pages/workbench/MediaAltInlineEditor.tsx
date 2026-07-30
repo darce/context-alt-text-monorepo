@@ -21,8 +21,11 @@ export interface MediaAltInlineEditorProps {
    * mediaId. Transient — never left true from a clean settled state [rg-003].
    */
   peerCommitPending?: boolean;
-  /** Row-owned begin of this surface's correction (in-flight exclusivity). */
-  onCommitStart?: () => void;
+  /**
+   * Row-owned begin of this surface's correction (in-flight exclusivity).
+   * Returns false when the row lock is already held — caller must not write.
+   */
+  onCommitStart?: () => boolean;
   /** Row-owned end of this surface's correction (success or failure). */
   onCommitEnd?: () => void;
 }
@@ -148,7 +151,12 @@ export const MediaAltInlineEditor = ({
       return;
     }
     setConflictMessage(null);
-    onCommitStart?.();
+    // beginCommit is compare-and-set [S2c-4b-ii BR-01]: a refused claim must not
+    // proceed to write. Isolated renders omit onCommitStart (always proceed).
+    const claimed = onCommitStart?.() ?? true;
+    if (!claimed) {
+      return;
+    }
     mutate(
       { mediaId, altText: draft },
       {

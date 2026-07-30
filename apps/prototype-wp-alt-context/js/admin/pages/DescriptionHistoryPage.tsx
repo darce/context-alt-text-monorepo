@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { __, sprintf } from '@wordpress/i18n';
@@ -149,12 +149,21 @@ const DescriptionHistoryList = (): React.JSX.Element => {
   // starts saving, so concurrent (or sequential) saves would mis-report which
   // row is busy. Errors use the same shape for the same reason [RLSE-05].
   const [savingIds, setSavingIds] = useState<Record<number, true>>({});
+  // Synchronous mirror of savingIds for the in-flight guard [BR-81]. React state
+  // alone is a render-time snapshot; a second same-tick call would still see the
+  // pre-update map. The ref is written before mutate and cleared with the state.
+  const savingIdsRef = useRef<Record<number, true>>({});
   // Durable per-row correction failures: the shared useMutation resets isError/
   // variables on the next mutate, which would unmount an earlier row's alert
   // the moment another row starts saving [RLSE-05].
   const [correctionErrors, setCorrectionErrors] = useState<Record<number, string>>({});
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+
+  const clearSavingId = (mediaId: number): void => {
+    savingIdsRef.current = clearMediaIdEntry(savingIdsRef.current, mediaId);
+    setSavingIds((current) => clearMediaIdEntry(current, mediaId));
+  };
 
   const historyQuery = useQuery({
     queryKey: HISTORY_QUERY_KEY,
@@ -180,7 +189,7 @@ const DescriptionHistoryList = (): React.JSX.Element => {
       // fresh missing-alt total — only on full success [BR-124][RLSE-04].
       invalidateMediaStats(queryClient);
       setDrafts((current) => clearMediaIdEntry(current, updatedItem.media_id));
-      setSavingIds((current) => clearMediaIdEntry(current, updatedItem.media_id));
+      clearSavingId(updatedItem.media_id);
       setCorrectionErrors((current) => clearMediaIdEntry(current, updatedItem.media_id));
     },
     // Keep the draft: the operator's text is the only copy on a failed write.
@@ -196,7 +205,7 @@ const DescriptionHistoryList = (): React.JSX.Element => {
         ...current,
         [variables.mediaId]: message,
       }));
-      setSavingIds((current) => clearMediaIdEntry(current, variables.mediaId));
+      clearSavingId(variables.mediaId);
 
       // Partial: alt is already in storage. Patch current_alt_text from the
       // server-reported stored value only — never from variables.altText, which
@@ -243,12 +252,21 @@ const DescriptionHistoryList = (): React.JSX.Element => {
   }, [items, searchQuery, statusFilter]);
 
   const saveCorrection = (item: DescriptionHistoryItem): void => {
+    const mediaId = item.media_id;
+    // Presence guard, not a refcount: a second concurrent write to one media id
+    // is impossible. Read from the ref (updated synchronously below) so a
+    // same-tick second call cannot miss a busy flag still queued in setState [BR-81].
+    if (savingIdsRef.current[mediaId]) {
+      return;
+    }
     const altText = getDraftValue(drafts, item).trim();
-    setSavingIds((current) => ({ ...current, [item.media_id]: true }));
+    savingIdsRef.current = { ...savingIdsRef.current, [mediaId]: true };
+    setSavingIds((current) => ({ ...current, [mediaId]: true }));
     // Clear this row's prior error on re-attempt so a stale alert does not
     // linger while the new request is in flight; other rows' errors stay.
-    setCorrectionErrors((current) => clearMediaIdEntry(current, item.media_id));
-    correctionMutation.mutate({ mediaId: item.media_id, altText });
+    // Refused starts never reach here — they must not clear correctionErrors.
+    setCorrectionErrors((current) => clearMediaIdEntry(current, mediaId));
+    correctionMutation.mutate({ mediaId, altText });
   };
 
   if (historyQuery.isLoading) {

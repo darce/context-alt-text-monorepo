@@ -150,6 +150,11 @@ async def infer_suggested_label(
             )
 
     # 3. Nearest Neighbor Search (Fallback)
+    # FIR23-01: resolve the query face's embedding_model before any NN path so
+    # both in-process and SQL candidates stay in one space.
+    rep_identity = target_cluster.representative_identity
+    target_model = getattr(rep_identity, "embedding_model", None) if rep_identity is not None else None
+
     target_embedding: np.ndarray | None = None
     embedding = (
         getattr(target_cluster.representative_identity, "embedding", None)
@@ -172,7 +177,21 @@ async def infer_suggested_label(
 
     # Prefer in-process similarity search using representative sets when available to avoid
     # vector index constraints and to honor representative table embeddings.
+    # FIR23-01: restrict candidates to the query face's embedding_model. Domain
+    # representatives drop embedding_model, so resolve same-space identity ids via
+    # session when target_model is known. Fall through to the SQL path when
+    # in-process finds nothing under a model predicate (do not shadow FIR23-01).
     if cluster_repository is not None:
+        same_model_identity_ids: set[str] | None = None
+        if target_model is not None:
+            model_ids_result = await session.execute(
+                select(MediaIdentity.id).where(
+                    MediaIdentity.tenant_id == tenant_uuid,
+                    MediaIdentity.embedding_model == target_model,
+                )
+            )
+            same_model_identity_ids = {str(row) for row in model_ids_result.scalars().all()}
+
         labeled_clusters = await cluster_repository.get_labeled_with_representatives(str(tenant_uuid))
         best_similarity = -1.0
         best_cluster_id: str | None = None
@@ -183,6 +202,19 @@ async def infer_suggested_label(
             if not label_value or label_value.startswith("cluster-"):
                 continue
             for rep in cluster_reps:
+                if same_model_identity_ids is not None:
+                    rep_model = getattr(rep, "embedding_model", None)
+                    if rep_model is None:
+                        identity = getattr(rep, "identity", None)
+                        if identity is not None:
+                            rep_model = getattr(identity, "embedding_model", None)
+                    if rep_model is not None:
+                        if str(rep_model) != str(target_model):
+                            continue
+                    else:
+                        identity_id = getattr(rep, "identity_id", None)
+                        if identity_id is None or str(identity_id) not in same_model_identity_ids:
+                            continue
                 rep_vec = np.asarray(getattr(rep, "embedding", rep), dtype=np.float32)
                 norm_a = np.linalg.norm(target_embedding)
                 norm_b = np.linalg.norm(rep_vec)
@@ -207,17 +239,21 @@ async def infer_suggested_label(
                 target_cluster_id=best_cluster_id,
             )
 
-        # In-process search was authoritative; skip the DB fallback.
-        return None
+        # In-process miss. When no embedding_model predicate applies, keep prior
+        # exclusive in-process behaviour. When a model is known, continue to SQL.
+        if target_model is None:
+            return None
 
     # Find nearest labeled cluster using embedding distance (DB fallback).
     # FIR23-01: restrict to the same embedding_model as the query face so
     # mixed-model rows cannot win nearest-neighbor. Single-model tenants are a
     # no-op (predicate matches every candidate).
-    rep_identity = target_cluster.representative_identity
-    target_model = (
-        getattr(rep_identity, "embedding_model", None) if rep_identity is not None else None
-    )
+    # pgvector cosine_distance is unavailable on SQLite unit/integration DBs.
+    from recognition.shared.db.dialect import is_sqlite
+
+    if is_sqlite(session):
+        return None
+
     stmt = (
         select(IdentityCluster)
         .join(MediaIdentity, IdentityCluster.representative_identity_id == MediaIdentity.id)

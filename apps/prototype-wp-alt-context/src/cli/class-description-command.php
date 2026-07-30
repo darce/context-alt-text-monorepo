@@ -5,11 +5,13 @@ declare(strict_types=1);
 namespace AltContext\Cli;
 
 require_once __DIR__ . '/../api/class-alt-text-write-status.php';
+require_once __DIR__ . '/../api/services/trait-expects-meta-after-core-transforms.php';
 
 use AltContext\Api\AltTextWriteStatus;
 use AltContext\Api\DescribeController;
 use AltContext\Api\Services\DescriptionCandidateService;
 use AltContext\Api\Services\DescribeMediaService;
+use AltContext\Api\Services\ExpectsMetaAfterCoreTransforms;
 use WP_REST_Request;
 use WP_REST_Response;
 
@@ -29,9 +31,13 @@ use function sprintf;
 use function trim;
 use function update_post_meta;
 use function wp_json_encode;
-use function wp_unslash;
 
 class DescriptionCommand extends \WP_CLI_Command {
+	use ExpectsMetaAfterCoreTransforms;
+
+	private const ALT_TEXT_META_KEY    = '_wp_attachment_image_alt';
+	private const PROVENANCE_META_KEY  = '_acx_description_provenance';
+
 	private DescriptionCandidateService $candidate_service;
 	private DescribeMediaService $describe_service;
 
@@ -293,8 +299,23 @@ class DescriptionCommand extends \WP_CLI_Command {
 			);
 		}
 
-		$existing_alt = trim( (string) get_post_meta( $media_id, '_wp_attachment_image_alt', true ) );
-		if ( '' !== $existing_alt && ! $force ) {
+		$existing_alt_raw = get_post_meta( $media_id, self::ALT_TEXT_META_KEY, true );
+		$existing_alt     = is_string( $existing_alt_raw ) ? $existing_alt_raw : '';
+		// Build the identity envelope before the gate so CLI and REST share one
+		// classify decision (F-01). Source=cli is still stamped on write.
+		$provenance_for_gate = $this->build_provenance( $media_id, $data, $alt_text_draft );
+		$existing_provenance = get_post_meta( $media_id, self::PROVENANCE_META_KEY, true );
+		$gate                = $this->describe_service->classify_existing_alt_write_gate(
+			$existing_alt,
+			$alt_text_draft,
+			$force,
+			$existing_provenance,
+			$provenance_for_gate
+		);
+
+		if ( 'skip_existing' === $gate || 'identity_complete' === $gate ) {
+			// identity_complete: alt + model identity already match — no restamp.
+			// CLI force-path divergence still uses WRITTEN (not FORCED_OVERWRITE).
 			return array(
 				'media_id'       => $media_id,
 				'status'         => AltTextWriteStatus::SKIPPED_EXISTING_ALT,
@@ -310,19 +331,18 @@ class DescriptionCommand extends \WP_CLI_Command {
 			);
 		}
 
+		$provenance_heal_only = ( 'heal_gap' === $gate );
+
 		// S3-02 / BR-01: honor update_post_meta() returns. No-op (false when the
-		// stored value already equals what WP will store after unslash) is success
-		// via read-back; a real alt failure must not stamp provenance claiming a
-		// draft that never landed. Status vocabulary matches bulk apply:
-		// written (full success), partial (alt ok, provenance not), failed.
-		// Compare against wp_unslash( $draft ) — update_metadata() unslashes before
-		// store/equality (BR-17). [rg-015]
+		// stored value already equals what WP will store after unslash+sanitize)
+		// is success via read-back; a real alt failure must not stamp provenance
+		// claiming a draft that never landed. Shared post-transform model [F-15R].
 		// Deliberate path divergence: CLI force-overwrite success emits WRITTEN,
 		// not FORCED_OVERWRITE (REST-only). Leave that as-is this wave.
-		$expected_alt = wp_unslash( $alt_text_draft );
-		$alt_written  = update_post_meta( $media_id, '_wp_attachment_image_alt', $alt_text_draft );
+		$expected_alt = $this->expected_meta_after_core_transforms( self::ALT_TEXT_META_KEY, $alt_text_draft );
+		$alt_written  = update_post_meta( $media_id, self::ALT_TEXT_META_KEY, $alt_text_draft );
 		if ( false === $alt_written ) {
-			$current = get_post_meta( $media_id, '_wp_attachment_image_alt', true );
+			$current = get_post_meta( $media_id, self::ALT_TEXT_META_KEY, true );
 			if ( ! is_string( $current ) || $expected_alt !== $current ) {
 				return array(
 					'media_id'       => $media_id,
@@ -334,11 +354,11 @@ class DescriptionCommand extends \WP_CLI_Command {
 
 		// Stamp provenance only after a verified alt write so history never lists
 		// a Generated-alt for a draft that did not land [rg-015].
-		$provenance           = $this->build_provenance( $media_id, $data, $alt_text_draft );
-		$expected_provenance  = wp_unslash( $provenance );
-		$prov_written         = update_post_meta( $media_id, '_acx_description_provenance', $provenance );
+		$provenance          = $provenance_for_gate;
+		$expected_provenance = $this->expected_meta_after_core_transforms( self::PROVENANCE_META_KEY, $provenance );
+		$prov_written        = update_post_meta( $media_id, self::PROVENANCE_META_KEY, $provenance );
 		if ( false === $prov_written ) {
-			$current_prov = get_post_meta( $media_id, '_acx_description_provenance', true );
+			$current_prov = get_post_meta( $media_id, self::PROVENANCE_META_KEY, true );
 			$prov_ok      = is_array( $current_prov ) && $expected_provenance === $current_prov;
 			if ( ! $prov_ok ) {
 				// Alt landed; provenance did not. CLI generate does not write
@@ -353,9 +373,15 @@ class DescriptionCommand extends \WP_CLI_Command {
 			}
 		}
 
+		// Non-force heal of matching alt → provenance_healed (same wire as REST).
+		// Force success stays WRITTEN (CLI does not emit FORCED_OVERWRITE).
+		$status = $provenance_heal_only
+			? AltTextWriteStatus::PROVENANCE_HEALED
+			: AltTextWriteStatus::WRITTEN;
+
 		return array(
 			'media_id'       => $media_id,
-			'status'         => AltTextWriteStatus::WRITTEN,
+			'status'         => $status,
 			'alt_text_draft' => $alt_text_draft,
 		);
 	}

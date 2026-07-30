@@ -1430,6 +1430,82 @@ class DescribeMediaServiceTest extends TestCase
     }
 
     /**
+     * F-10: backend_result_id is a per-call handle, not content identity.
+     * A second force write whose provenance differs only in backend_result_id
+     * must take the identity-complete no-op path and must not churn generated_at.
+     */
+    public function testBackendResultIdDifferenceDoesNotChurnGeneratedAt(): void
+    {
+        $this->plantWritableAttachment(42);
+        $this->setPostMeta(42, '_wp_attachment_image_alt', 'A photo.');
+        $fixedGeneratedAt = '2026-01-01T00:00:00+00:00';
+        $existingProvenance = array(
+            'adapter'                => 'seeded',
+            'model_id'               => 'seeded-fixtures',
+            'model_version'          => '1',
+            'prompt_or_task_version' => '1',
+            'image_hash'             => str_repeat('a', 64),
+            'context_hash'           => str_repeat('b', 64),
+            'backend_result_id'      => 'call-id-first',
+            'generated_at'           => $fixedGeneratedAt,
+            'alt_text_draft'         => 'A photo.',
+        );
+        $this->setPostMeta(42, '_acx_description_provenance', $existingProvenance);
+
+        $body = $this->validBackendBody(42);
+        $body['backend_result_id'] = 'call-id-second';
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($body),
+        ));
+
+        $result = $this->controller->describe_media($this->writeRequest(42, true));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame('forced_overwrite', $result->get_data()['alt_text_write']['status'] ?? null);
+        $stored = get_post_meta(42, '_acx_description_provenance', true);
+        $this->assertIsArray($stored);
+        $this->assertSame(
+            $fixedGeneratedAt,
+            $stored['generated_at'] ?? null,
+            'Differing backend_result_id alone must not restamp generated_at'
+        );
+        // Call id may stay at the prior value (no full restamp on identity match).
+        $this->assertSame('call-id-first', $stored['backend_result_id'] ?? null);
+        $this->assertSame('A photo.', $stored['alt_text_draft'] ?? null);
+    }
+
+    /**
+     * F-22: when provenance fails, parent reason names the first (history-gap)
+     * cause. A concurrent long-body failure is nested under description_write —
+     * reason is not a full set union.
+     */
+    public function testProvenanceFailureReasonIsFirstCauseWhenLongBodyAlsoFails(): void
+    {
+        $this->plantWritableAttachment(42);
+        $this->setOption('acx_alt_style', 'alt_plus_description');
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBodyWithLong(42)),
+        ));
+        $GLOBALS['__ac_update_post_meta_fail'][42]['_acx_description_provenance'] = true;
+        $GLOBALS['__ac_wp_update_post_fail'][42] = true;
+
+        $result = $this->controller->describe_media($this->writeRequest(42));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $write = $result->get_data()['alt_text_write'];
+        $this->assertSame('partial', $write['status'] ?? null);
+        // First cause only — history gap is the parent reason.
+        $this->assertSame('provenance_write_failed', $write['reason'] ?? null);
+        $this->assertNotSame('description_write_failed', $write['reason'] ?? null);
+        // Second failure is nested, not silent.
+        $this->assertSame('failed', $write['description_write'] ?? null);
+        $this->assertSame('A photo.', get_post_meta(42, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(42, '_acx_description_provenance', true));
+    }
+
+    /**
      * R17-BR-05 [HAI-13][INT-11]: a provenance-gap partial must be retryable
      * without --force. First pass: alt lands, provenance fails → partial.
      * Second pass without force: provenance is stamped; status is not

@@ -14,8 +14,9 @@ namespace AltContext\Api;
  * - {@see self::FORCED_OVERWRITE} is emitted by REST force-overwrite success
  *   only when `force` is true. The CLI force path deliberately still emits
  *   {@see self::WRITTEN}; that divergence is intentional and out of scope.
- * - {@see self::PROVENANCE_HEALED} is REST success when force=false and the
- *   stored alt already matched the draft; only provenance was (re)stamped.
+ * - {@see self::PROVENANCE_HEALED} is success when force=false and the stored
+ *   alt already matched the draft; only provenance was (re)stamped. Emitted by
+ *   both REST describe and CLI generate (shared write gate) [F-01].
  * - {@see self::DRY_RUN} is CLI-only (generate without --write). REST never
  *   emits it.
  * - {@see self::PARTIAL} alone is ambiguous (BR-08): REST always pairs it with
@@ -84,7 +85,9 @@ final class AltTextWriteStatus {
 	/**
 	 * Statuses CLI generate may put on each row's `status`.
 	 * CLI force-overwrite success is {@see self::WRITTEN}, not FORCED_OVERWRITE.
-	 * CLI does not emit {@see self::PROVENANCE_HEALED} (REST single-image heal).
+	 * {@see self::PROVENANCE_HEALED} is emitted by CLI generate when force=false
+	 * and the stored alt already matched the draft (provenance gap heal) — same
+	 * outcome as REST so cron retries without --force converge [F-01].
 	 *
 	 * @var list<string>
 	 */
@@ -92,6 +95,7 @@ final class AltTextWriteStatus {
 		self::WRITTEN,
 		self::SKIPPED_EXISTING_ALT,
 		self::SKIPPED_EMPTY_ALT_TEXT,
+		self::PROVENANCE_HEALED,
 		self::PARTIAL,
 		self::FAILED,
 		self::DRY_RUN,

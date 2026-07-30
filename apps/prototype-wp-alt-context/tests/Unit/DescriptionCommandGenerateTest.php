@@ -752,6 +752,185 @@ class DescriptionCommandGenerateTest extends TestCase
         $this->assertStringContainsString('status=failed', $log);
         $this->assertStringContainsString('error=tenant mismatch', $log);
     }
+
+    /**
+     * F-01 pin 1: non-force retry after a provenance-gap partial converges.
+     * Must not report skipped_existing_alt; status is exactly provenance_healed.
+     */
+    public function testGenerateProvenanceGapPartialIsRetryableWithoutForce(): void
+    {
+        $body = array(
+            'media_id' => 960,
+            'alt_text_draft' => 'Alt lands, provenance does not.',
+            'adapter' => 'seeded',
+            'model_id' => 'local-v1',
+            'model_version' => '2026-07-04',
+            'prompt_or_task_version' => 'describe-v1',
+        );
+        $service = new RecordingDescribeService([
+            960 => new WP_REST_Response($body),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        // Pass 1: provenance write fails after alt lands.
+        $GLOBALS['__ac_update_post_meta_fail'][960]['_acx_description_provenance'] = true;
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '960', 'write' => true, 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $first = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+        $this->assertSame(AltTextWriteStatus::PARTIAL, $first['rows'][0]['status'] ?? null);
+        $this->assertSame(
+            AltTextWriteStatus::REASON_PROVENANCE_WRITE_FAILED,
+            $first['rows'][0]['reason'] ?? null
+        );
+        $this->assertSame('Alt lands, provenance does not.', get_post_meta(960, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(960, '_acx_description_provenance', true));
+
+        // Pass 2: clear fail hook; retry WITHOUT force. Must heal provenance.
+        unset($GLOBALS['__ac_update_post_meta_fail'][960]['_acx_description_provenance']);
+        \WP_CLI::reset_cli_messages();
+        $command->__invoke(['generate'], ['media-id' => '960', 'write' => true, 'format' => 'json']);
+        $second = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+        $secondStatus = $second['rows'][0]['status'] ?? null;
+
+        $this->assertNotSame(
+            AltTextWriteStatus::SKIPPED_EXISTING_ALT,
+            $secondStatus,
+            'Provenance-gap retry without force must not be trapped as skipped_existing_alt'
+        );
+        // Exact wire pin — not assertContains over a set of acceptable values.
+        $this->assertSame(AltTextWriteStatus::PROVENANCE_HEALED, $secondStatus);
+        $this->assertSame('provenance_healed', $secondStatus);
+        $this->assertSame(1, $second['provenance_healed'] ?? null);
+        $this->assertSame('Alt lands, provenance does not.', get_post_meta(960, '_wp_attachment_image_alt', true));
+        $prov = get_post_meta(960, '_acx_description_provenance', true);
+        $this->assertIsArray($prov);
+        $this->assertSame('cli', $prov['source'] ?? null);
+        $this->assertSame('Alt lands, provenance does not.', $prov['alt_text_draft'] ?? null);
+    }
+
+    /**
+     * F-01 pin 2: a genuinely different human alt still reports skipped_existing_alt
+     * without force — the heal path must not become a licence to overwrite.
+     */
+    public function testGenerateHumanAuthoredAltStillSkipsWithoutForceWhenDifferentFromDraft(): void
+    {
+        $this->setPostMeta(961, '_wp_attachment_image_alt', 'Human-authored editorial alt.');
+        $service = new RecordingDescribeService([
+            961 => new WP_REST_Response([
+                'media_id' => 961,
+                'alt_text_draft' => 'Generated replacement that must not land.',
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+            ]),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $command->__invoke(['generate'], ['media-id' => '961', 'write' => true, 'format' => 'json']);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+
+        $this->assertSame(AltTextWriteStatus::SKIPPED_EXISTING_ALT, $payload['rows'][0]['status'] ?? null);
+        $this->assertSame('skipped_existing_alt', $payload['rows'][0]['status'] ?? null);
+        $this->assertSame('Human-authored editorial alt.', get_post_meta(961, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(961, '_acx_description_provenance', true));
+    }
+
+    /**
+     * F-01 pin 3 / companion: heal status is asserted exactly as provenance_healed
+     * when existing alt already equals the draft and provenance is missing.
+     */
+    public function testGenerateMatchingAltWithMissingProvenanceReportsProvenanceHealedExactly(): void
+    {
+        $draft = 'Already stored matching draft.';
+        $this->setPostMeta(962, '_wp_attachment_image_alt', $draft);
+        // Provenance deliberately absent — gap heal without force.
+        $service = new RecordingDescribeService([
+            962 => new WP_REST_Response([
+                'media_id' => 962,
+                'alt_text_draft' => $draft,
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+                'model_version' => '1',
+                'prompt_or_task_version' => 'describe-v1',
+            ]),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $command->__invoke(['generate'], ['media-id' => '962', 'write' => true, 'format' => 'json']);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+        $status  = $payload['rows'][0]['status'] ?? null;
+
+        $this->assertSame('provenance_healed', $status);
+        $this->assertSame(AltTextWriteStatus::PROVENANCE_HEALED, $status);
+        $this->assertNotSame(AltTextWriteStatus::SKIPPED_EXISTING_ALT, $status);
+        $this->assertNotSame(AltTextWriteStatus::WRITTEN, $status);
+        $this->assertSame($draft, get_post_meta(962, '_wp_attachment_image_alt', true));
+        $this->assertIsArray(get_post_meta(962, '_acx_description_provenance', true));
+    }
+
+    /**
+     * F-15R: CLI generate-write read-back uses the shared post-transform model
+     * (unslash + sanitize_post_meta_* filter). Filter leg only — harness has no
+     * sanitize_meta(). ASCII alone cannot pin this (filter must change bytes).
+     */
+    public function testGenerateWriteSanitizeMetaFilterNoOpReadBackSucceeds(): void
+    {
+        $submitted = 'CLI draft before meta sanitize';
+        add_filter(
+            'sanitize_post_meta__wp_attachment_image_alt',
+            static function ($value) {
+                return is_string($value) ? $value . ' [meta-sanitized]' : $value;
+            },
+            10,
+            1
+        );
+        // What the service expects after unslash + filter. Plant it: stub write
+        // path does not call sanitize_meta / the filter on store.
+        $storedForm = apply_filters(
+            'sanitize_post_meta__wp_attachment_image_alt',
+            wp_unslash($submitted),
+            '_wp_attachment_image_alt',
+            'post'
+        );
+        $this->assertSame($submitted . ' [meta-sanitized]', $storedForm);
+        $this->assertNotSame($submitted, $storedForm);
+        $this->setPostMeta(963, '_wp_attachment_image_alt', $storedForm);
+
+        $service = new RecordingDescribeService([
+            963 => new WP_REST_Response([
+                'media_id' => 963,
+                'alt_text_draft' => $submitted,
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+            ]),
+        ]);
+        // Force so gate does not take heal/skip; exercise the write read-back.
+        // Simulate core no-op (false) after a prior successful sanitize store.
+        $GLOBALS['__ac_update_post_meta_fail'][963]['_wp_attachment_image_alt'] = true;
+        $command = new DescriptionCommand(null, $service);
+
+        $command->__invoke([
+            'generate',
+        ], [
+            'media-id' => '963',
+            'write' => true,
+            'force' => true,
+            'format' => 'json',
+        ]);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+
+        $this->assertSame(
+            'written',
+            $payload['rows'][0]['status'] ?? null,
+            'Filter-altered stored alt must not false-fail the no-op read-back'
+        );
+        $this->assertSame($storedForm, get_post_meta(963, '_wp_attachment_image_alt', true));
+        $this->assertIsArray(get_post_meta(963, '_acx_description_provenance', true));
+    }
 }
 
 class RecordingDescribeService extends DescribeMediaService

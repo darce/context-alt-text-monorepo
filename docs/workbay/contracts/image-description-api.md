@@ -198,6 +198,7 @@ member-for-member [rg-005].
 | `skipped_existing_alt` | Non-empty existing alt and `force=false`. Nothing touched. |
 | `skipped_empty_alt_text` | Draft normalized to empty. Never writes `''` over a human alt, never stamps provenance for an unapplied draft. |
 | `forced_overwrite` | Existing alt replaced under `force=true`. |
+| `provenance_healed` | `force=false` and the stored alt already matched the draft after core's meta transforms: provenance was restamped to close a history gap. Success, not `partial`. No alt text was overwritten and no long description is authored. Emitted by REST and by CLI `generate --write`. |
 | `partial` | Some but not all intended writes landed. Always paired with `reason`. |
 | `failed` | The alt write itself did not persist. |
 
@@ -216,7 +217,8 @@ present only when `acx_alt_style=alt_plus_description`: `written`,
 `reason=description_write_failed`.
 
 **CLI `generate` row `status`** (`CLI_STATUSES`): `written`,
-`skipped_existing_alt`, `skipped_empty_alt_text`, `partial`, `failed`, `dry_run`.
+`skipped_existing_alt`, `skipped_empty_alt_text`, `provenance_healed`, `partial`,
+`failed`, `dry_run`.
 
 Deliberate CLI/REST divergences:
 
@@ -224,8 +226,12 @@ Deliberate CLI/REST divergences:
 - CLI force-overwrite success emits `written`, not `forced_overwrite`, and
   `CLI_STATUSES` omits `forced_overwrite`. Tracked as an open contract asymmetry
   rather than an intended contract shape — see finding `R17-BR-13`.
-- CLI rows carry no `reason` alongside `partial`, so the two partial causes are
-  not distinguishable on the CLI surface — see finding `R17-BR-06`.
+- CLI `partial` rows carry `reason=provenance_write_failed`. It is the only
+  partial cause the CLI can produce: `generate` does not write a long
+  description, so `description_write_failed` is REST-only.
+- On a REST `partial`, `reason` names the first cause only. A long-description
+  failure concurrent with a provenance failure is reported under the nested
+  `description_write` key, not folded into `reason`.
 
 ## WordPress dry-run surface — `GET /acx/v1/recognition/describe/candidates`
 

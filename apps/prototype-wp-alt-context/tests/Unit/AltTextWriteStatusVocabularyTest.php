@@ -88,6 +88,7 @@ class AltTextWriteStatusVocabularyTest extends TestCase
                 'written',
                 'skipped_existing_alt',
                 'skipped_empty_alt_text',
+                'provenance_healed',
                 'partial',
                 'failed',
                 'dry_run',

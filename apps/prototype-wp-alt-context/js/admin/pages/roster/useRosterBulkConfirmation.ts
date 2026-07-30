@@ -70,20 +70,32 @@ export const useRosterBulkConfirmation = ({
     }
   }, []);
 
+  // Confirm labels stay short ("Merge"/"Dismiss") so they differ from the bar's
+  // "Merge N clusters" accessible names — dialog description carries count+object.
+  // Descriptions use singular/plural to stay coherent with the bar.
   const confirmDialogCopy =
     confirmAction === 'merge'
       ? {
           title: __('Confirm merge', 'alt-context'),
-          description: sprintf(
-            __('Are you sure you want to merge %d clusters? This action cannot be undone.', 'alt-context'),
-            selection.count,
-          ),
+          description:
+            selection.count === 1
+              ? sprintf(
+                  __('Are you sure you want to merge %d cluster? This action cannot be undone.', 'alt-context'),
+                  selection.count,
+                )
+              : sprintf(
+                  __('Are you sure you want to merge %d clusters? This action cannot be undone.', 'alt-context'),
+                  selection.count,
+                ),
           confirmLabel: __('Merge', 'alt-context'),
         }
       : confirmAction === 'dismiss'
         ? {
             title: __('Confirm dismiss', 'alt-context'),
-            description: sprintf(__('Are you sure you want to dismiss %d clusters?', 'alt-context'), selection.count),
+            description:
+              selection.count === 1
+                ? sprintf(__('Are you sure you want to dismiss %d cluster?', 'alt-context'), selection.count)
+                : sprintf(__('Are you sure you want to dismiss %d clusters?', 'alt-context'), selection.count),
             confirmLabel: __('Dismiss', 'alt-context'),
           }
         : null;

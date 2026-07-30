@@ -275,11 +275,71 @@ describe('SettingsPage', () => {
 
     expect(capturedSaveOptions?.onSuccess).toBeDefined();
     // onSuccess is async at runtime but typed void; wrap so we await the real work.
+    // R23-BR-14: pass an ok envelope so the success path runs (not partial/error).
     await act(async () => {
-      await Promise.resolve(capturedSaveOptions!.onSuccess!(undefined));
+      await Promise.resolve(
+        capturedSaveOptions!.onSuccess!({ saved: ['url'], result: 'ok' }),
+      );
     });
 
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ['sync', 'health'] });
+  });
+
+  it('shows Settings saved only when result is ok (R23-BR-14)', async () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    await act(async () => {
+      await Promise.resolve(
+        capturedSaveOptions!.onSuccess!({ saved: ['url', 'api_key'], result: 'ok' }),
+      );
+    });
+
+    const banner = screen.getByTestId('acx-settings-save-message');
+    expect(banner.textContent).toBe('Settings saved.');
+    expect(banner.getAttribute('role')).toBe('status');
+  });
+
+  it('does not show Settings saved on partial storage failure (R23-BR-14)', async () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    await act(async () => {
+      await Promise.resolve(
+        capturedSaveOptions!.onSuccess!({
+          saved: ['url'],
+          failed: ['api_key'],
+          result: 'partial',
+        }),
+      );
+    });
+
+    const banner = screen.getByTestId('acx-settings-save-message');
+    expect(banner.textContent).toContain('Could not save settings.');
+    expect(banner.textContent).toContain('api_key');
+    expect(banner.getAttribute('role')).toBe('alert');
+    // Must not paint the success copy on a non-ok result.
+    expect(banner.textContent).not.toContain('Settings saved.');
+  });
+
+  it('does not show Settings saved on total storage failure (R23-BR-14)', async () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    await act(async () => {
+      await Promise.resolve(
+        capturedSaveOptions!.onSuccess!({
+          saved: [],
+          failed: ['url', 'api_key'],
+          result: 'error',
+        }),
+      );
+    });
+
+    const banner = screen.getByTestId('acx-settings-save-message');
+    expect(banner.textContent).toContain('Could not save settings.');
+    expect(banner.getAttribute('role')).toBe('alert');
+    expect(banner.textContent).not.toContain('Settings saved.');
   });
 
   it('surfaces the server invalid_url message when save is rejected (BR-136)', () => {

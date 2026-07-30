@@ -6,8 +6,10 @@ import {
   fetchSettings,
   saveSettings,
   testConnection,
+  SettingsSaveResult,
   TestConnectionOutcome,
   type SaveSettingsPayload,
+  type SaveSettingsResponse,
   type SettingsResponse,
 } from '../api/settingsApi';
 import { resetConfigCache } from '../api/config';
@@ -42,7 +44,30 @@ export const SettingsPage = (): React.JSX.Element => {
 
   const saveMutation = useMutation({
     mutationFn: saveSettings,
-    onSuccess: async () => {
+    onSuccess: async (data: SaveSettingsResponse) => {
+      // R23-BR-14: backend may return 200 with result partial/error when some
+      // options did not persist. Do not render "Settings saved." unless ok —
+      // a corrected backend that still paints success on the frontend has
+      // fixed nothing an operator can see.
+      if (data.result !== SettingsSaveResult.OK) {
+        const failedFields = Array.isArray(data.failed) && data.failed.length > 0
+          ? data.failed.join(', ')
+          : __('one or more fields', 'alt-context');
+        dispatch({
+          type: 'setSaveMessage',
+          message: `${__('Could not save settings.', 'alt-context')} (${failedFields})`,
+          tone: 'error',
+        });
+        // Refresh so the form reflects what actually landed (partial success).
+        await queryClient.invalidateQueries({ queryKey: ['settings'] });
+        const refreshedOnFail = await queryClient.fetchQuery({
+          queryKey: ['settings'],
+          queryFn: fetchSettings,
+        });
+        syncLocalizedRouting(refreshedOnFail);
+        return;
+      }
+
       dispatch({ type: 'setSaveMessage', message: __('Settings saved.', 'alt-context'), tone: 'success' });
       dispatch({ type: 'setApiKey', value: '' });
       await queryClient.invalidateQueries({ queryKey: ['settings'] });

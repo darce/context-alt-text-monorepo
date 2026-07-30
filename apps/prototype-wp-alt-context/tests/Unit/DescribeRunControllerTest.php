@@ -723,8 +723,15 @@ class DescribeRunControllerTest extends TestCase
         $this->assertIsArray($prov);
         $this->assertSame('bulk_describe_run', $prov['source']);
         $this->assertSame($runId, $prov['run_id']);
-        // R23-BR-08 discrimination: own-run recovery must not self-reference.
+        // R23-BR-08 / R23-BR-22: same-run recovery is explicit kind, not absent key.
         $this->assertArrayNotHasKey('recovered_from_run_id', $prov);
+        $this->assertIsArray($prov['recovered_from'] ?? null);
+        $this->assertArrayHasKey('origin', $prov['recovered_from']);
+        $this->assertNull($prov['recovered_from']['origin']);
+        $this->assertSame(
+            \AltContext\Api\AltTextWriteStatus::RECOVERY_KIND_SAME_RUN,
+            $prov['recovered_from']['kind'] ?? null
+        );
         // Marker deleted once provenance verifies.
         $this->assertSame('', get_post_meta(71, '_acx_description_provenance_pending', true));
     }
@@ -820,8 +827,18 @@ class DescribeRunControllerTest extends TestCase
         $prov = get_post_meta(71, '_acx_description_provenance', true);
         $this->assertIsArray($prov);
         $this->assertSame($runId, $prov['run_id'] ?? null);
-        // R23-BR-08: foreign-owned marker recovery stamps marker owner alongside applying run.
-        $this->assertSame('22222222-2222-2222-2222-222222222222', $prov['recovered_from_run_id'] ?? null);
+        // R23-BR-08 / R23-BR-20: foreign-owned marker recovery stamps descriptor.
+        $this->assertArrayNotHasKey('recovered_from_run_id', $prov);
+        $this->assertIsArray($prov['recovered_from'] ?? null);
+        $this->assertSame('22222222-2222-2222-2222-222222222222', $prov['recovered_from']['origin'] ?? null);
+        $this->assertSame(
+            \AltContext\Api\AltTextWriteStatus::RECOVERY_KIND_RUN,
+            $prov['recovered_from']['kind'] ?? null
+        );
+        $this->assertSame(
+            ['22222222-2222-2222-2222-222222222222'],
+            $prov['recovered_from']['chain'] ?? null
+        );
         // OLD: marker left in place for the foreign run.
         // NEW: marker cleared once provenance verifies.
         $this->assertSame('', get_post_meta(71, '_acx_description_provenance_pending', true));
@@ -836,8 +853,9 @@ class DescribeRunControllerTest extends TestCase
      * RED under: reintroduce run_id equality on the is_non_clobber_completion
      * marker leg.
      *
-     * R23-BR-08: recovered envelope carries applying run_id AND marker owner as
-     * recovered_from_run_id (honest attribution; no fabricated model metadata).
+     * R23-BR-08 / R23-BR-20: recovered envelope carries applying run_id AND
+     * recovered_from descriptor naming marker owner (honest attribution; no
+     * fabricated model metadata).
      */
     public function testApplyRunDraftsSecondApplyRecoversForeignRunSameDraftMarker(): void
     {
@@ -898,8 +916,15 @@ class DescribeRunControllerTest extends TestCase
         $this->assertIsArray($prov);
         $this->assertNotSame('', $prov);
         $this->assertSame($secondRunId, $prov['run_id'] ?? null);
-        // R23-BR-08: "run B completed provenance for a write started by run A".
-        $this->assertSame($firstRunId, $prov['recovered_from_run_id'] ?? null);
+        // R23-BR-08 / R23-BR-20: "run B completed provenance for a write started by run A".
+        $this->assertArrayNotHasKey('recovered_from_run_id', $prov);
+        $this->assertIsArray($prov['recovered_from'] ?? null);
+        $this->assertSame($firstRunId, $prov['recovered_from']['origin'] ?? null);
+        $this->assertSame(
+            \AltContext\Api\AltTextWriteStatus::RECOVERY_KIND_RUN,
+            $prov['recovered_from']['kind'] ?? null
+        );
+        $this->assertSame([$firstRunId], $prov['recovered_from']['chain'] ?? null);
         $this->assertSame('', get_post_meta(71, '_acx_description_provenance_pending', true));
     }
 
@@ -1923,8 +1948,15 @@ class DescribeRunControllerTest extends TestCase
         $prov = get_post_meta(71, '_acx_description_provenance', true);
         $this->assertIsArray($prov);
         $this->assertSame($runId, $prov['run_id'] ?? null);
-        // R23-BR-08 discrimination: same-run marker recovery omits recovered_from_run_id.
+        // R23-BR-08 / R23-BR-22: same-run recovery is explicit kind, not absence.
         $this->assertArrayNotHasKey('recovered_from_run_id', $prov);
+        $this->assertIsArray($prov['recovered_from'] ?? null);
+        $this->assertSame(
+            \AltContext\Api\AltTextWriteStatus::RECOVERY_KIND_SAME_RUN,
+            $prov['recovered_from']['kind'] ?? null
+        );
+        $this->assertArrayHasKey('origin', $prov['recovered_from']);
+        $this->assertNull($prov['recovered_from']['origin']);
         // Marker cleared only after successful recovery, not by BR-114 stale drop.
         $this->assertSame('', get_post_meta(71, '_acx_description_provenance_pending', true));
     }
@@ -2126,10 +2158,15 @@ class DescribeRunControllerTest extends TestCase
         $prov = get_post_meta(71, '_acx_description_provenance', true);
         $this->assertIsArray($prov);
         $this->assertSame($runB, $prov['run_id'] ?? null);
+        $this->assertArrayNotHasKey('recovered_from_run_id', $prov);
         $this->assertSame(
             $runA,
-            $prov['recovered_from_run_id'] ?? null,
+            $prov['recovered_from']['origin'] ?? null,
             'apply stamp must attribute takeover origin to marker owner run A'
+        );
+        $this->assertSame(
+            \AltContext\Api\AltTextWriteStatus::RECOVERY_KIND_RUN,
+            $prov['recovered_from']['kind'] ?? null
         );
 
         // Call site 2 observable: history list surfaces the same provenance map.
@@ -2139,13 +2176,13 @@ class DescribeRunControllerTest extends TestCase
         $this->assertSame(1, $history['total']);
         $this->assertSame(
             $runA,
-            $history['items'][0]['provenance']['recovered_from_run_id'] ?? null,
+            $history['items'][0]['provenance']['recovered_from']['origin'] ?? null,
             'history list must surface the same recovered_from as the apply stamp'
         );
         // Both surfaces agree with each other (disagreement is the defect).
         $this->assertSame(
-            $prov['recovered_from_run_id'] ?? null,
-            $history['items'][0]['provenance']['recovered_from_run_id'] ?? null
+            $prov['recovered_from'] ?? null,
+            $history['items'][0]['provenance']['recovered_from'] ?? null
         );
     }
 
@@ -2197,9 +2234,226 @@ class DescribeRunControllerTest extends TestCase
         $this->assertSame(1, $history['total']);
         $this->assertSame(
             $runA,
-            $history['items'][0]['provenance']['recovered_from_run_id'] ?? null,
-            'list_history must surface recovered_from=A after takeover (resolver-stamped)'
+            $history['items'][0]['provenance']['recovered_from']['origin'] ?? null,
+            'list_history must surface recovered_from.origin=A after takeover (resolver-stamped)'
         );
+        $this->assertSame(
+            \AltContext\Api\AltTextWriteStatus::RECOVERY_KIND_RUN,
+            $history['items'][0]['provenance']['recovered_from']['kind'] ?? null
+        );
+    }
+
+    /**
+     * R23-BR-20 [TEST-15]: two consecutive provenance-write failures must not
+     * lose the true originator. Sequence:
+     *   B generates bytes (partial + marker owned by B)
+     *   A recovers, provenance write also fails (re-plant must keep B, not A)
+     *   C completes → envelope recovered_from.origin names B, not A
+     *
+     * RED under: re-plant always writes the applying run as marker run_id
+     * (intermediate A overwrites originator B).
+     */
+    public function testApplyRunDraftsTwoConsecutiveProvenanceFailuresPreserveOriginator(): void
+    {
+        $runB  = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+        $runA  = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+        $runC  = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+        $draft = 'a dog in a park';
+        $this->plantPostType(71);
+
+        // Run B: alt lands, provenance fails → partial, marker names B.
+        $GLOBALS['__ac_update_post_meta_fail'][71]['_acx_description_provenance'] = true;
+        $this->queueRunStatusResponse($runB, 'completed');
+        $this->plantSubmittedMediaIds($runB, [71]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runB,
+                'items' => [
+                    ['media_id' => 71, 'status' => 'completed', 'alt_text_draft' => $draft, 'caption' => 'dog', 'provenance' => ['adapter' => 'florence', 'model_id' => 'florence-2']],
+                ],
+            ]),
+        ]);
+        $reqB = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runB . '/apply');
+        $reqB->set_param('run_id', $runB);
+        $resB = $this->controller->apply_describe_run_drafts($reqB);
+        $this->assertNotInstanceOf(\WP_Error::class, $resB);
+        $this->assertSame([71], $resB->get_data()['partial']);
+        $pendingAfterB = get_post_meta(71, '_acx_description_provenance_pending', true);
+        $this->assertIsArray($pendingAfterB);
+        $this->assertSame($runB, $pendingAfterB['run_id'] ?? null);
+
+        // Run A: recovers from B's marker, provenance write fails again.
+        // Re-plant must preserve originator B — not overwrite with A.
+        $this->queueRunStatusResponse($runA, 'completed');
+        $this->plantSubmittedMediaIds($runA, [71]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runA,
+                'items' => [
+                    ['media_id' => 71, 'status' => 'completed', 'alt_text_draft' => $draft, 'caption' => 'dog', 'provenance' => ['adapter' => 'florence', 'model_id' => 'florence-2']],
+                ],
+            ]),
+        ]);
+        $reqA = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runA . '/apply');
+        $reqA->set_param('run_id', $runA);
+        $resA = $this->controller->apply_describe_run_drafts($reqA);
+        $this->assertNotInstanceOf(\WP_Error::class, $resA);
+        $this->assertSame([71], $resA->get_data()['partial'], 'A recovery with failing provenance stays partial');
+        $pendingAfterA = get_post_meta(71, '_acx_description_provenance_pending', true);
+        $this->assertIsArray($pendingAfterA);
+        $this->assertSame(
+            $runB,
+            $pendingAfterA['run_id'] ?? null,
+            're-plant after A must still name originator B, not intermediate A'
+        );
+
+        // Run C: completes provenance → envelope must name B.
+        unset($GLOBALS['__ac_update_post_meta_fail'][71]['_acx_description_provenance']);
+        $this->queueRunStatusResponse($runC, 'completed');
+        $this->plantSubmittedMediaIds($runC, [71]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runC,
+                'items' => [
+                    ['media_id' => 71, 'status' => 'completed', 'alt_text_draft' => $draft, 'caption' => 'dog', 'provenance' => ['adapter' => 'florence', 'model_id' => 'florence-2']],
+                ],
+            ]),
+        ]);
+        $reqC = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runC . '/apply');
+        $reqC->set_param('run_id', $runC);
+        $resC = $this->controller->apply_describe_run_drafts($reqC);
+        $this->assertNotInstanceOf(\WP_Error::class, $resC);
+        $this->assertSame([71], $resC->get_data()['applied']);
+        $prov = get_post_meta(71, '_acx_description_provenance', true);
+        $this->assertIsArray($prov);
+        $this->assertSame($runC, $prov['run_id'] ?? null);
+        $this->assertArrayNotHasKey('recovered_from_run_id', $prov);
+        $this->assertIsArray($prov['recovered_from'] ?? null);
+        $this->assertSame(
+            $runB,
+            $prov['recovered_from']['origin'] ?? null,
+            'final envelope must name originator B after two consecutive failures'
+        );
+        $this->assertNotSame(
+            $runA,
+            $prov['recovered_from']['origin'] ?? null,
+            'final envelope must not name intermediate recoverer A'
+        );
+        $this->assertSame(
+            \AltContext\Api\AltTextWriteStatus::RECOVERY_KIND_RUN,
+            $prov['recovered_from']['kind'] ?? null
+        );
+        $this->assertContains($runB, $prov['recovered_from']['chain'] ?? []);
+    }
+
+    /**
+     * R23-BR-21 [TEST-15]: sentinel-owned marker recovered by bulk apply gets
+     * kind=surface (not run). RED under: kind always set to run without consulting
+     * MARKER_OWNERS (silent namespace collapse of cli/single_image into run uuid).
+     */
+    public function testApplyRunDraftsSentinelMarkerRecoveryUsesSurfaceKind(): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $draft = 'a dog in a park';
+        $this->plantPostType(71);
+        $this->setPostMeta(71, '_wp_attachment_image_alt', $draft);
+        $this->setPostMeta(71, '_acx_description_provenance_pending', [
+            'run_id'     => \AltContext\Api\AltTextWriteStatus::MARKER_OWNER_CLI,
+            'draft_hash' => \AltContext\Api\Services\DescriptionHistoryService::hash_for_stored_alt($draft),
+        ]);
+
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->plantSubmittedMediaIds($runId, [71]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    ['media_id' => 71, 'status' => 'completed', 'alt_text_draft' => $draft, 'caption' => 'dog', 'provenance' => ['adapter' => 'florence', 'model_id' => 'florence-2']],
+                ],
+            ]),
+        ]);
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $this->assertSame([71], $response->get_data()['applied']);
+
+        $prov = get_post_meta(71, '_acx_description_provenance', true);
+        $this->assertIsArray($prov);
+        $this->assertIsArray($prov['recovered_from'] ?? null);
+        $this->assertSame(
+            \AltContext\Api\AltTextWriteStatus::MARKER_OWNER_CLI,
+            $prov['recovered_from']['origin'] ?? null,
+            'origin must be the sentinel wire value verbatim'
+        );
+        $this->assertSame(
+            \AltContext\Api\AltTextWriteStatus::RECOVERY_KIND_SURFACE,
+            $prov['recovered_from']['kind'] ?? null,
+            'sentinel owner must resolve to surface, not run'
+        );
+        $this->assertNotSame(
+            \AltContext\Api\AltTextWriteStatus::RECOVERY_KIND_RUN,
+            $prov['recovered_from']['kind'] ?? null
+        );
+    }
+
+    /**
+     * R23-BR-22 [TEST-15]: first write (no recovery) always emits recovered_from
+     * with kind=none — distinguishable from same_run recovery. RED under: omit
+     * the key on first write, or stamp same_run for every path.
+     */
+    public function testApplyRunDraftsFirstWriteEmitsExplicitNoRecoveryDescriptor(): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $draft = 'a dog in a park';
+        $this->plantPostType(71);
+        // Fresh attachment — no alt, no marker, no provenance.
+        $this->assertSame('', get_post_meta(71, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(71, '_acx_description_provenance_pending', true));
+
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->plantSubmittedMediaIds($runId, [71]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    ['media_id' => 71, 'status' => 'completed', 'alt_text_draft' => $draft, 'caption' => 'dog', 'provenance' => ['adapter' => 'florence', 'model_id' => 'florence-2']],
+                ],
+            ]),
+        ]);
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $this->assertSame([71], $response->get_data()['applied']);
+
+        $prov = get_post_meta(71, '_acx_description_provenance', true);
+        $this->assertIsArray($prov);
+        $this->assertArrayHasKey('recovered_from', $prov, 'recovered_from must always be present');
+        $this->assertArrayNotHasKey('recovered_from_run_id', $prov);
+        $this->assertArrayHasKey('origin', $prov['recovered_from']);
+        $this->assertNull($prov['recovered_from']['origin']);
+        $this->assertSame(
+            \AltContext\Api\AltTextWriteStatus::RECOVERY_KIND_NONE,
+            $prov['recovered_from']['kind'] ?? null,
+            'first write must use explicit none kind'
+        );
+        $this->assertNotSame(
+            \AltContext\Api\AltTextWriteStatus::RECOVERY_KIND_SAME_RUN,
+            $prov['recovered_from']['kind'] ?? null,
+            'first write must be distinguishable from same-run recovery'
+        );
+        $this->assertSame([], $prov['recovered_from']['chain'] ?? null);
     }
 
     /**
@@ -3139,7 +3393,19 @@ class DescribeRunControllerTest extends TestCase
      * forced provenance-write failure so the marker is planted through the production
      * partial path. Second apply recovers (applied, provenance non-empty, marker cleared).
      *
-     * RED under: mutate bulk plant draft_hash to hash( 'sha256', $draft ) (raw domain).
+     * [R23-BR-30][TEST-15] honesty note: the production defect (raw-domain plant)
+     * is caught by the bucket side effect, not by the hash lines below. A wrong-
+     * domain plant makes `is_usable_pending_marker_for_draft` fail at plant time,
+     * so the item buckets `failed` rather than `partial` — the first RED is
+     * `assertSame([$mediaId], $firstData['partial'])` together with
+     * `assertSame([], $firstData['failed'])`. Reaching the hash comparison
+     * already requires `marker_ok` (stored-domain equality), so the hash
+     * assertions are a redundant restatement of that predicate for domain
+     * documentation — not an independent pin. They are retained so the stored-
+     * vs-raw domain divergence remains visible in the test body [TEST-15].
+     *
+     * RED under: mutate bulk plant draft_hash to hash( 'sha256', $draft ) (raw
+     * domain) → fails at partial/failed bucket assertions above the hash lines.
      */
     public function testApplyRunDraftsBulkPartialBackslashPlantsStoredDomainHashAndRecovers(): void
     {
@@ -3178,6 +3444,8 @@ class DescribeRunControllerTest extends TestCase
         $firstResponse = $this->controller->apply_describe_run_drafts($first);
         $this->assertNotInstanceOf(\WP_Error::class, $firstResponse);
         $firstData = $firstResponse->get_data();
+        // Bucket pin is the actual RED for wrong-domain plant [R23-BR-30]:
+        // raw-domain draft_hash → marker_ok fails → failed, not partial.
         $this->assertSame([$mediaId], $firstData['partial']);
         $this->assertSame([], $firstData['applied']);
         $this->assertSame([], $firstData['failed']);
@@ -3189,7 +3457,8 @@ class DescribeRunControllerTest extends TestCase
         $pending = get_post_meta($mediaId, '_acx_description_provenance_pending', true);
         $this->assertIsArray($pending);
         $this->assertSame($runId, $pending['run_id'] ?? null);
-        // Planted hash must be stored-domain, not raw-draft domain [R22-BR-01].
+        // Domain documentation (redundant once partial+failed above passed —
+        // marker_ok already required stored-domain equality) [R23-BR-30]:
         $storedDomainHash = \AltContext\Api\Services\DescriptionHistoryService::hash_for_stored_alt(
             is_string($storedAlt) ? $storedAlt : (string) $storedAlt
         );

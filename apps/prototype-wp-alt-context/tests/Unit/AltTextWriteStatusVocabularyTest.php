@@ -247,6 +247,11 @@ class AltTextWriteStatusVocabularyTest extends TestCase
             if (str_starts_with((string) $name, 'MARKER_OWNER_')) {
                 continue;
             }
+            // Recovery descriptor kinds are provenance vocabulary, not alt-write
+            // statuses [R23-BR-20/21/22].
+            if (str_starts_with((string) $name, 'RECOVERY_KIND_')) {
+                continue;
+            }
             // List surfaces themselves are array constants, not status values.
             if (is_array($reflection->getConstant($name))) {
                 continue;

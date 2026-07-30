@@ -2,16 +2,20 @@ import React, { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { __, sprintf } from '@wordpress/i18n';
+import { RotateCcw } from 'lucide-react';
 
 import {
   correctDescriptionHistoryItem,
   DESCRIPTION_CORRECTION_CODE,
   fetchDescriptionHistory,
+  RECOVERY_KIND,
   resolveDescribeErrorCode,
   resolveDescribeErrorDataField,
   resolveDescribeErrorMessage,
   type DescriptionHistoryItem,
+  type DescriptionHistoryProvenance,
   type DescriptionHistoryResponse,
+  type ProvenanceRecoveredFrom,
 } from '../api/describeApi';
 import { invalidateMediaStats } from '../hooks/useMediaStats';
 import { APP_LINK_PARAMS, parseRunParam } from '../navigation/appLinks';
@@ -21,6 +25,12 @@ import { DescribeRunApplyView } from './DescribeRunApplyView';
 const HISTORY_QUERY_KEY = ['description-history'] as const;
 
 const CORRECTION_ERROR_FALLBACK = __('Could not save the alt text. Please try again.', 'alt-context');
+
+/** Surface owner labels for recovery origin — centralised [sr-007]. */
+const RECOVERY_SURFACE_LABEL = {
+  cli: __('CLI generate', 'alt-context'),
+  single_image: __('Single-image describe', 'alt-context'),
+} as const;
 
 const getModelLabel = (item: DescriptionHistoryItem): string => {
   const provenance = item.provenance;
@@ -36,6 +46,50 @@ const getRunStatusLabel = (item: DescriptionHistoryItem): string =>
   typeof item.run_status?.status === 'string' && item.run_status.status.trim() !== ''
     ? item.run_status.status
     : __('Not recorded', 'alt-context');
+
+/**
+ * Extract the recovery descriptor when a foreign recovery occurred.
+ * none / same_run / missing → null (no operator-visible recovery line).
+ */
+const getRecoveredFrom = (item: DescriptionHistoryItem): ProvenanceRecoveredFrom | null => {
+  const provenance = item.provenance;
+  if (!provenance || typeof provenance !== 'object') {
+    return null;
+  }
+  const recovered = (provenance as DescriptionHistoryProvenance).recovered_from;
+  if (!recovered || typeof recovered !== 'object') {
+    return null;
+  }
+  if (
+    recovered.kind === RECOVERY_KIND.NONE ||
+    recovered.kind === RECOVERY_KIND.SAME_RUN ||
+    recovered.origin == null ||
+    String(recovered.origin).trim() === ''
+  ) {
+    return null;
+  }
+  return recovered;
+};
+
+/** Operator-facing origin label — never raw JSON [R23-BR-22]. */
+const getRecoveryOriginLabel = (recovered: ProvenanceRecoveredFrom): string => {
+  const origin = String(recovered.origin ?? '').trim();
+  if (recovered.kind === RECOVERY_KIND.SURFACE) {
+    if (origin === 'cli') {
+      return RECOVERY_SURFACE_LABEL.cli;
+    }
+    if (origin === 'single_image') {
+      return RECOVERY_SURFACE_LABEL.single_image;
+    }
+  }
+  if (recovered.kind === RECOVERY_KIND.RUN) {
+    return sprintf(__('Run %s', 'alt-context'), origin);
+  }
+  if (recovered.kind === RECOVERY_KIND.UNKNOWN) {
+    return sprintf(__('Unknown owner (%s)', 'alt-context'), origin);
+  }
+  return origin;
+};
 
 /** Stored history alts are entity-encoded; decode once at the read boundary (BR-140). */
 const decodeStoredAltText = (stored: string | null | undefined): string =>
@@ -280,6 +334,8 @@ const DescriptionHistoryList = (): React.JSX.Element => {
               const draft = getDraftValue(drafts, item);
               const isSaving = Boolean(savingIds[item.media_id]);
               const rowErrorMessage = correctionErrors[item.media_id] ?? null;
+              const recovered = getRecoveredFrom(item);
+              const recoveryOriginLabel = recovered ? getRecoveryOriginLabel(recovered) : null;
 
               return (
                 <article key={item.media_id} className="acx-dashboard__panel acx-history__item">
@@ -319,6 +375,23 @@ const DescriptionHistoryList = (): React.JSX.Element => {
                       <dt>{__('Run status', 'alt-context')}</dt>
                       <dd>{getRunStatusLabel(item)}</dd>
                     </div>
+                    {recovered && recoveryOriginLabel !== null ? (
+                      <div data-testid="acx-history-recovery">
+                        <dt>{__('Recovery', 'alt-context')}</dt>
+                        <dd className="acx-history__recovery">
+                          <span
+                            className="acx-history__recovery-icon"
+                            aria-hidden="true"
+                            data-testid="acx-history-recovery-icon"
+                          >
+                            <RotateCcw size={14} />
+                          </span>
+                          <span data-testid="acx-history-recovery-origin">
+                            {sprintf(__('Recovered from %s', 'alt-context'), recoveryOriginLabel)}
+                          </span>
+                        </dd>
+                      </div>
+                    ) : null}
                   </dl>
 
                   <label className="acx-history__correction">

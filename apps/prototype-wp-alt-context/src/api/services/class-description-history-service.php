@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace AltContext\Api\Services;
 
 require_once __DIR__ . '/trait-expects-meta-after-core-transforms.php';
+require_once __DIR__ . '/../class-alt-text-write-status.php';
 
+use AltContext\Api\AltTextWriteStatus;
 use WP_Error;
 
 use function absint;
@@ -364,32 +366,182 @@ class DescriptionHistoryService {
 	}
 
 	/**
-	 * Canonical attribution for non-clobber recovery [R23-BR-24] [R23-BR-08].
+	 * Empty recovery descriptor: first write / overwrite (no recovery) [R23-BR-22].
 	 *
-	 * When recovery completes a write started by a different run, return that
-	 * marker's owning run id so callers can stamp `recovered_from_run_id`
-	 * alongside the applying run. Returns null when:
-	 *   - pending is not a verified marker,
-	 *   - owner is empty after trim, or
-	 *   - owner === $applying_run_id (same-run recovery — no self-reference).
+	 * Always-present shape — never omit `recovered_from` from a bulk envelope.
 	 *
-	 * One definition for every call site (bulk apply stamp, history readers
-	 * that need the originating run). Takeover (foreign owner + applying run)
-	 * must not silently re-attribute the write to the applying run alone.
-	 *
-	 * @param mixed  $pending          Raw `_acx_description_provenance_pending`.
-	 * @param string $applying_run_id  Run performing the recovery write.
+	 * @return array{origin: null, kind: string, chain: list<string>}
 	 */
-	public static function resolve_recovered_from_run_id( mixed $pending, string $applying_run_id ): ?string {
-		if ( ! self::is_verified_pending_marker( $pending ) ) {
-			return null;
+	public static function empty_recovered_from(): array {
+		return array(
+			'origin' => null,
+			'kind'   => AltTextWriteStatus::RECOVERY_KIND_NONE,
+			'chain'  => array(),
+		);
+	}
+
+	/**
+	 * Resolve recovery `kind` for a marker owner string [R23-BR-21] [sr-007].
+	 *
+	 * Consults {@see AltTextWriteStatus::MARKER_OWNERS} first.
+	 * UUID-shaped owners are bulk runs. Anything else is unknown — never
+	 * silently typed as a run.
+	 */
+	public static function resolve_recovery_kind_for_owner( string $owner ): string {
+		if ( in_array( $owner, AltTextWriteStatus::MARKER_OWNERS, true ) ) {
+			return AltTextWriteStatus::RECOVERY_KIND_SURFACE;
 		}
+		if ( self::is_run_uuid_shaped( $owner ) ) {
+			return AltTextWriteStatus::RECOVERY_KIND_RUN;
+		}
+		return AltTextWriteStatus::RECOVERY_KIND_UNKNOWN;
+	}
+
+	/**
+	 * Whether `$value` looks like a bulk describe-run UUID (8-4-4-4-12 hex).
+	 * Used only to discriminate kind; not an existence check.
+	 */
+	public static function is_run_uuid_shaped( string $value ): bool {
+		return 1 === preg_match(
+			'/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i',
+			$value
+		);
+	}
+
+	/**
+	 * Normalize a prior `recovered_from` / marker chain to an oldest-first list
+	 * of non-empty string origins.
+	 *
+	 * @param mixed $chain Raw chain list (or null).
+	 *
+	 * @return list<string>
+	 */
+	public static function normalize_recovery_chain( mixed $chain ): array {
+		if ( ! is_array( $chain ) ) {
+			return array();
+		}
+		$out = array();
+		foreach ( $chain as $entry ) {
+			if ( ! is_string( $entry ) ) {
+				continue;
+			}
+			$trimmed = trim( $entry );
+			if ( '' === $trimmed ) {
+				continue;
+			}
+			$out[] = $trimmed;
+		}
+		return $out;
+	}
+
+	/**
+	 * Append-only chain merge: prior chain, then origin if not already last.
+	 *
+	 * @param list<string> $chain
+	 * @param string       $origin
+	 *
+	 * @return list<string>
+	 */
+	public static function append_recovery_origin( array $chain, string $origin ): array {
+		$origin = trim( $origin );
+		if ( '' === $origin ) {
+			return $chain;
+		}
+		$last = $chain === array() ? null : $chain[ count( $chain ) - 1 ];
+		if ( $last !== $origin ) {
+			$chain[] = $origin;
+		}
+		return $chain;
+	}
+
+	/**
+	 * Canonical recovery descriptor for non-clobber completion [R23-BR-24]
+	 * [R23-BR-20] [R23-BR-21] [R23-BR-22] [R23-BR-08].
+	 *
+	 * Always returns the full `{ origin, kind, chain }` shape — never null and
+	 * never omits keys. Callers stamp this as `recovered_from` on every bulk
+	 * envelope (including first write via {@see self::empty_recovered_from()}).
+	 *
+	 *   - verified foreign owner → origin = marker owner, kind resolved via
+	 *     MARKER_OWNERS / uuid shape, chain = prior ∪ marker chain ∪ origin
+	 *   - same-run owner         → origin null, kind same_run, prior chain kept
+	 *   - unverified / empty     → empty descriptor (kind none), prior chain kept
+	 *     only when a prior envelope already established one (passthrough)
+	 *
+	 * `$prior_recovered_from` is a previous envelope's `recovered_from` (or null).
+	 * Its chain is carried forward so consecutive provenance-write failures do
+	 * not drop the true originator [R23-BR-20].
+	 *
+	 * One definition for every call site (bulk apply stamp, history readers).
+	 * Takeover must not silently re-attribute the write to the applying run alone.
+	 *
+	 * @param mixed                     $pending               Raw pending marker.
+	 * @param string                    $applying_run_id       Run performing recovery.
+	 * @param array<string,mixed>|null  $prior_recovered_from  Prior envelope descriptor.
+	 *
+	 * @return array{origin: string|null, kind: string, chain: list<string>}
+	 */
+	public static function resolve_recovered_from_run_id( mixed $pending, string $applying_run_id, ?array $prior_recovered_from = null ): array {
+		$prior_chain = array();
+		if ( is_array( $prior_recovered_from ) ) {
+			$prior_chain = self::normalize_recovery_chain( $prior_recovered_from['chain'] ?? null );
+			// If prior had an origin not yet in chain, seed it (defensive).
+			$prior_origin = $prior_recovered_from['origin'] ?? null;
+			if ( is_string( $prior_origin ) && '' !== trim( $prior_origin ) ) {
+				$prior_chain = self::append_recovery_origin( $prior_chain, trim( $prior_origin ) );
+			}
+		}
+
+		// Marker may itself carry a chain from a re-plant that preserved origin.
+		$marker_chain = array();
+		if ( is_array( $pending ) && isset( $pending['chain'] ) ) {
+			$marker_chain = self::normalize_recovery_chain( $pending['chain'] );
+		}
+		$base_chain = $prior_chain;
+		foreach ( $marker_chain as $entry ) {
+			$base_chain = self::append_recovery_origin( $base_chain, $entry );
+		}
+
+		if ( ! self::is_verified_pending_marker( $pending ) ) {
+			if ( array() === $base_chain ) {
+				return self::empty_recovered_from();
+			}
+			// Prior chain without a live marker: keep chain, no new origin.
+			return array(
+				'origin' => null,
+				'kind'   => AltTextWriteStatus::RECOVERY_KIND_NONE,
+				'chain'  => $base_chain,
+			);
+		}
+
 		/** @var array{run_id: string, draft_hash: string} $pending */
 		$owner = trim( (string) $pending['run_id'] );
-		if ( '' === $owner || $owner === $applying_run_id ) {
-			return null;
+		if ( '' === $owner ) {
+			return array() === $base_chain
+				? self::empty_recovered_from()
+				: array(
+					'origin' => null,
+					'kind'   => AltTextWriteStatus::RECOVERY_KIND_NONE,
+					'chain'  => $base_chain,
+				);
 		}
-		return $owner;
+
+		if ( $owner === $applying_run_id ) {
+			return array(
+				'origin' => null,
+				'kind'   => AltTextWriteStatus::RECOVERY_KIND_SAME_RUN,
+				'chain'  => $base_chain,
+			);
+		}
+
+		$kind  = self::resolve_recovery_kind_for_owner( $owner );
+		$chain = self::append_recovery_origin( $base_chain, $owner );
+
+		return array(
+			'origin' => $owner,
+			'kind'   => $kind,
+			'chain'  => $chain,
+		);
 	}
 
 	/**

@@ -21,10 +21,10 @@ import numpy as np
 from sqlalchemy import distinct, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import ClusterCentroid, IdentityMember, MediaIdentity
+from db.models import ClusterCentroid, IdentityClusterRepresentative, IdentityMember, MediaIdentity
 from recognition.application.clustering.centroid_utils import compute_centroid
 from recognition.infrastructure.repositories._helpers import coerce_uuid as _coerce_uuid
-from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
+from recognition.infrastructure.repositories.cluster_repository import _choose_embedding_model
 from recognition.shared.db.dialect import is_sqlite
 
 
@@ -58,7 +58,6 @@ class AtlasRepository:
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
-        self._clusters = SqlAlchemyClusterRepository(session)
 
     async def list_foreign_embedding_models(
         self,
@@ -165,15 +164,20 @@ class AtlasRepository:
     async def get_tenant_cluster_centroids(
         self,
         tenant_id: str,
+        embedding_model: str,
         cluster_ids: Sequence[str | uuid.UUID] | None = None,
     ) -> tuple[list[tuple[uuid.UUID, np.ndarray]], datetime | None]:
-        """Return ``(cluster_id, centroid)`` pairs and the MV refresh timestamp.
+        """Return ``(cluster_id, centroid)`` pairs in ``embedding_model`` space only.
 
         Reads current ``mv_identity_cluster_centroids`` filtered by ``tenant_id``.
-        For clusters missing from the MV (or with NULL centroid), falls back to
-        mean-of-representatives via
-        :meth:`SqlAlchemyClusterRepository.get_representative_embeddings`, then
-        :meth:`SqlAlchemyClusterRepository.get_member_fallback_embeddings`.
+        The MV is majority-model framed (FIR23-01); a row is used only when that
+        cluster's majority model equals ``embedding_model``. Otherwise the MV
+        centroid is treated as absent — never substituted across spaces.
+
+        For clusters missing a same-model MV centroid (or with NULL centroid),
+        falls back to mean-of-representatives then member embeddings filtered
+        to ``embedding_model`` only. Clusters with no embeddings in the
+        requested space are omitted from the result.
 
         Does **not** refresh the MV. The returned timestamp is
         ``max(refreshed_at)`` from MV rows present for the tenant (None if none).
@@ -203,6 +207,18 @@ class AtlasRepository:
                 continue
             by_cluster[cid] = arr
 
+        # MV centroids are majority-model only; drop any whose majority ≠ request.
+        if by_cluster:
+            majority_ok = await self._cluster_ids_with_majority_model(
+                list(by_cluster.keys()),
+                embedding_model,
+            )
+            for cid in list(by_cluster.keys()):
+                if cid not in majority_ok:
+                    del by_cluster[cid]
+                    if cid not in null_centroid_ids:
+                        null_centroid_ids.append(cid)
+
         missing: list[uuid.UUID] = list(null_centroid_ids)
         if cluster_uuids is not None:
             missing.extend(cid for cid in cluster_uuids if cid not in by_cluster and cid not in missing)
@@ -210,7 +226,7 @@ class AtlasRepository:
         for cid in missing:
             if cid in by_cluster:
                 continue
-            fallback = await self._mean_of_representatives_centroid(str(cid))
+            fallback = await self._mean_of_model_embeddings_centroid(str(cid), embedding_model)
             if fallback is not None:
                 by_cluster[cid] = fallback
 
@@ -257,14 +273,94 @@ class AtlasRepository:
         result = await self._session.execute(mv_stmt)
         return list(result.all())
 
-    async def _mean_of_representatives_centroid(self, cluster_id: str) -> np.ndarray | None:
-        """Mean-of-representatives, then member-fallback embeddings — same sources as cluster repo."""
-        embeddings = list(await self._clusters.get_representative_embeddings(cluster_id))
+    async def _cluster_ids_with_majority_model(
+        self,
+        cluster_ids: Sequence[uuid.UUID],
+        embedding_model: str,
+    ) -> set[uuid.UUID]:
+        """Return clusters whose majority member model equals ``embedding_model``.
+
+        Mirrors MV FIR23-01 framing (majority count, lex-min tie-break) so we
+        only accept an MV centroid when it was computed in the requested space.
+        """
+        if not cluster_ids:
+            return set()
+        stmt = (
+            select(IdentityMember.cluster_id, MediaIdentity.embedding_model)
+            .join(MediaIdentity, MediaIdentity.id == IdentityMember.identity_id)
+            .where(IdentityMember.cluster_id.in_(list(cluster_ids)))
+            .where(MediaIdentity.embedding.isnot(None))
+            .where(MediaIdentity.embedding_model.isnot(None))
+        )
+        result = await self._session.execute(stmt)
+        models_by_cluster: dict[uuid.UUID, list[str]] = {}
+        for cluster_id, model in result.all():
+            cid = cluster_id if isinstance(cluster_id, uuid.UUID) else uuid.UUID(str(cluster_id))
+            models_by_cluster.setdefault(cid, []).append(str(model))
+        matched: set[uuid.UUID] = set()
+        for cid, models in models_by_cluster.items():
+            chosen = _choose_embedding_model(models)
+            if chosen == embedding_model:
+                matched.add(cid)
+        return matched
+
+    async def _mean_of_model_embeddings_centroid(
+        self,
+        cluster_id: str,
+        embedding_model: str,
+    ) -> np.ndarray | None:
+        """Mean of reps then members restricted to ``embedding_model`` — never majority-coerce."""
+        embeddings = await self._representative_embeddings_for_model(cluster_id, embedding_model)
         if not embeddings:
-            embeddings = list(await self._clusters.get_member_fallback_embeddings(cluster_id))
+            embeddings = await self._member_fallback_embeddings_for_model(cluster_id, embedding_model)
         if not embeddings:
             return None
         return compute_centroid(embeddings)
+
+    async def _representative_embeddings_for_model(
+        self,
+        cluster_id: str,
+        embedding_model: str,
+    ) -> list[np.ndarray]:
+        cluster_uuid = _coerce_cluster_id(cluster_id)
+        stmt = (
+            select(IdentityClusterRepresentative.embedding)
+            .join(MediaIdentity, MediaIdentity.id == IdentityClusterRepresentative.identity_id)
+            .where(IdentityClusterRepresentative.cluster_id == cluster_uuid)
+            .where(MediaIdentity.embedding_model == embedding_model)
+        )
+        result = await self._session.execute(stmt)
+        out: list[np.ndarray] = []
+        for emb in result.scalars().all():
+            arr = _as_embedding_array(emb)
+            if arr is not None:
+                out.append(arr)
+        return out
+
+    async def _member_fallback_embeddings_for_model(
+        self,
+        cluster_id: str,
+        embedding_model: str,
+        *,
+        limit: int = 4,
+    ) -> list[np.ndarray]:
+        cluster_uuid = _coerce_cluster_id(cluster_id)
+        stmt = (
+            select(MediaIdentity.embedding)
+            .join(IdentityMember, IdentityMember.identity_id == MediaIdentity.id)
+            .where(IdentityMember.cluster_id == cluster_uuid)
+            .where(MediaIdentity.embedding.isnot(None))
+            .where(MediaIdentity.embedding_model == embedding_model)
+            .order_by(IdentityMember.similarity.desc(), IdentityMember.assigned_at.asc())
+            .limit(max(limit, 0))
+        )
+        result = await self._session.execute(stmt)
+        out: list[np.ndarray] = []
+        for emb in result.scalars().all():
+            arr = _as_embedding_array(emb)
+            if arr is not None:
+                out.append(arr)
+        return out
 
 
 def _require_tenant_uuid(tenant_id: str | uuid.UUID) -> uuid.UUID:
@@ -276,21 +372,21 @@ def _require_tenant_uuid(tenant_id: str | uuid.UUID) -> uuid.UUID:
     return coerced
 
 
+def _coerce_cluster_id(cluster_id: str | uuid.UUID) -> uuid.UUID:
+    if isinstance(cluster_id, uuid.UUID):
+        return cluster_id
+    coerced = _coerce_uuid(cluster_id, on_failure="none")
+    if coerced is None:
+        raise ValueError(f"invalid cluster_id: {cluster_id!r}")
+    return coerced
+
+
 def _coerce_cluster_ids(
     cluster_ids: Sequence[str | uuid.UUID] | None,
 ) -> list[uuid.UUID] | None:
     if cluster_ids is None:
         return None
-    out: list[uuid.UUID] = []
-    for raw in cluster_ids:
-        if isinstance(raw, uuid.UUID):
-            out.append(raw)
-            continue
-        coerced = _coerce_uuid(raw, on_failure="none")
-        if coerced is None:
-            raise ValueError(f"invalid cluster_id: {raw!r}")
-        out.append(coerced)
-    return out
+    return [_coerce_cluster_id(raw) for raw in cluster_ids]
 
 
 def _coerce_datetime(value: object) -> datetime | None:

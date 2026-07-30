@@ -21,6 +21,7 @@ from db.models import (
     IdentityAtlasPoint,
     IdentityAtlasQueueDisposition,
     IdentityAtlasRun,
+    IdentityCluster,
     MediaIdentity,
     Tenant,
 )
@@ -384,8 +385,8 @@ async def test_atlas_purge_disposed_scope_keeps_live_points_and_runs(
     assert counts.get("identity_atlas_runs", 0) == 0, (
         f"disposed scope must not delete atlas runs; got {counts.get('identity_atlas_runs')}"
     )
-    assert counts.get("identity_atlas_queue_dispositions", 0) == 0, (
-        f"disposed scope must not explicitly delete dispositions (FK cascade only); "
+    assert counts.get("identity_atlas_queue_dispositions", 0) == 1, (
+        f"disposed scope must report the disposition removed via point CASCADE; "
         f"got {counts.get('identity_atlas_queue_dispositions')}"
     )
 
@@ -570,3 +571,307 @@ def test_atlas_tables_are_in_tenant_tables() -> None:
     assert "identity_atlas_runs" not in identity_schema.RAW_SQL_TABLES
     assert "identity_atlas_points" not in identity_schema.RAW_SQL_TABLES
     assert "identity_atlas_queue_dispositions" not in identity_schema.RAW_SQL_TABLES
+
+
+@pytest.mark.asyncio
+async def test_atlas_purge_disposed_cluster_keeps_live_identity_point_with_cluster_id(
+    atlas_db_session: AsyncSession, atlas_tenant: Tenant
+) -> None:
+    """FIR-9: denormalized point.cluster_id must not drag live-identity points into cluster purge."""
+    live_identity = await _seed_identity(atlas_db_session, atlas_tenant.id, media_id=7201)
+    disposed_cluster = IdentityCluster(
+        tenant_id=atlas_tenant.id,
+        label="Disposed denorm cluster",
+        identity_count=0,
+        disposed_at=datetime.now(tz=UTC),
+    )
+    atlas_db_session.add(disposed_cluster)
+    await atlas_db_session.flush()
+
+    run = IdentityAtlasRun(
+        tenant_id=atlas_tenant.id,
+        embedding_model=_EMBEDDING_MODEL,
+        status=AtlasRunStatus.COMPLETE.value,
+        params=_atlas_params(),
+        point_count=1,
+    )
+    atlas_db_session.add(run)
+    await atlas_db_session.flush()
+
+    live_point = IdentityAtlasPoint(
+        run_id=run.id,
+        tenant_id=atlas_tenant.id,
+        identity_id=live_identity.id,
+        media_id=live_identity.media_id,
+        cluster_id=disposed_cluster.id,
+        x=0.5,
+        y=-0.25,
+        queue_rank=0,
+        uncertainty=_uncertainty(0.11),
+    )
+    atlas_db_session.add(live_point)
+    await atlas_db_session.commit()
+
+    live_point_id = live_point.id
+    disposed_cluster_id = disposed_cluster.id
+
+    purge_result = await TenantPurgeService(atlas_db_session).purge_tenant_data(
+        str(atlas_tenant.id), "admin:cluster-denorm", scope="disposed"
+    )
+    counts = purge_result["deleted_counts"]
+    assert isinstance(counts, dict)
+
+    assert counts.get("identity_clusters", 0) == 1, (
+        f"disposed cluster must be purged; got {counts.get('identity_clusters')}"
+    )
+    assert counts.get("identity_atlas_points", 0) == 0, (
+        f"live-identity atlas point must not be purged via denormalized cluster_id; "
+        f"got {counts.get('identity_atlas_points')}"
+    )
+
+    atlas_db_session.expire_all()
+    remaining_point = await atlas_db_session.get(IdentityAtlasPoint, live_point_id)
+    remaining_cluster = await atlas_db_session.get(IdentityCluster, disposed_cluster_id)
+
+    assert remaining_point is not None, (
+        "point owned by a live identity must SURVIVE purge even when cluster_id "
+        "references a disposed cluster"
+    )
+    assert remaining_point.cluster_id == disposed_cluster_id, (
+        "surviving point must retain its denormalized cluster_id value"
+    )
+    assert remaining_cluster is None, "disposed cluster row must be removed"
+
+
+@pytest.mark.asyncio
+async def test_atlas_purge_disposed_reports_cascaded_disposition_count(
+    atlas_db_session: AsyncSession, atlas_tenant: Tenant
+) -> None:
+    """FIR-9: deleted_counts must include dispositions removed via point CASCADE."""
+    disposed_identity = await _seed_identity(atlas_db_session, atlas_tenant.id, media_id=7301)
+    disposed_identity.disposed_at = datetime.now(tz=UTC)
+    await atlas_db_session.flush()
+
+    run = IdentityAtlasRun(
+        tenant_id=atlas_tenant.id,
+        embedding_model=_EMBEDDING_MODEL,
+        status=AtlasRunStatus.COMPLETE.value,
+        params=_atlas_params(),
+        point_count=1,
+    )
+    atlas_db_session.add(run)
+    await atlas_db_session.flush()
+
+    point = IdentityAtlasPoint(
+        run_id=run.id,
+        tenant_id=atlas_tenant.id,
+        identity_id=disposed_identity.id,
+        media_id=disposed_identity.media_id,
+        cluster_id=None,
+        x=1.0,
+        y=2.0,
+        queue_rank=0,
+        uncertainty=_uncertainty(0.2),
+    )
+    atlas_db_session.add(point)
+    await atlas_db_session.flush()
+
+    disposition = IdentityAtlasQueueDisposition(
+        run_id=run.id,
+        point_id=point.id,
+        tenant_id=atlas_tenant.id,
+        action=AtlasDispositionAction.REVIEWED.value,
+        actor="admin:cascade-count",
+    )
+    atlas_db_session.add(disposition)
+    await atlas_db_session.commit()
+
+    disposition_id = disposition.id
+    point_id = point.id
+
+    purge_result = await TenantPurgeService(atlas_db_session).purge_tenant_data(
+        str(atlas_tenant.id), "admin:cascade-count", scope="disposed"
+    )
+    counts = purge_result["deleted_counts"]
+    assert isinstance(counts, dict)
+
+    assert counts.get("identity_atlas_points", 0) == 1, (
+        f"disposed identity point must be deleted; got {counts.get('identity_atlas_points')}"
+    )
+    assert counts.get("identity_atlas_queue_dispositions", 0) == 1, (
+        f"CASCADE-removed disposition must be counted; "
+        f"got {counts.get('identity_atlas_queue_dispositions')}"
+    )
+
+    atlas_db_session.expire_all()
+    assert await atlas_db_session.get(IdentityAtlasPoint, point_id) is None
+    assert await atlas_db_session.get(IdentityAtlasQueueDisposition, disposition_id) is None
+
+
+@pytest.mark.asyncio
+async def test_atlas_disposition_rejects_cross_run_point_attachment() -> None:
+    """FIR-9: composite FK forces disposition.run_id == point.run_id at the DB."""
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    run_a = str(uuid.uuid4())
+    run_b = str(uuid.uuid4())
+    point_id = str(uuid.uuid4())
+    tenant_id = str(uuid.uuid4())
+    identity_id = str(uuid.uuid4())
+    disposition_id = str(uuid.uuid4())
+
+    async with engine.begin() as conn:
+        await conn.execute(text("PRAGMA foreign_keys=ON"))
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE tenants (
+                    id TEXT PRIMARY KEY
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE media_identities (
+                    id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE identity_atlas_runs (
+                    id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE identity_atlas_points (
+                    id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    tenant_id TEXT NOT NULL,
+                    identity_id TEXT NOT NULL,
+                    media_id INTEGER NOT NULL,
+                    x REAL NOT NULL,
+                    y REAL NOT NULL,
+                    queue_rank INTEGER NOT NULL,
+                    uncertainty TEXT NOT NULL,
+                    UNIQUE (id, run_id)
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE identity_atlas_queue_dispositions (
+                    id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    point_id TEXT NOT NULL,
+                    tenant_id TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    actor TEXT NOT NULL,
+                    FOREIGN KEY (point_id, run_id)
+                        REFERENCES identity_atlas_points (id, run_id)
+                        ON DELETE CASCADE
+                )
+                """
+            )
+        )
+        await conn.execute(text("INSERT INTO tenants (id) VALUES (:id)"), {"id": tenant_id})
+        await conn.execute(
+            text("INSERT INTO media_identities (id, tenant_id) VALUES (:id, :tenant_id)"),
+            {"id": identity_id, "tenant_id": tenant_id},
+        )
+        await conn.execute(
+            text("INSERT INTO identity_atlas_runs (id, tenant_id) VALUES (:id, :tenant_id)"),
+            {"id": run_a, "tenant_id": tenant_id},
+        )
+        await conn.execute(
+            text("INSERT INTO identity_atlas_runs (id, tenant_id) VALUES (:id, :tenant_id)"),
+            {"id": run_b, "tenant_id": tenant_id},
+        )
+        await conn.execute(
+            text(
+                """
+                INSERT INTO identity_atlas_points
+                    (id, run_id, tenant_id, identity_id, media_id, x, y, queue_rank, uncertainty)
+                VALUES
+                    (:id, :run_id, :tenant_id, :identity_id, 1, 0.0, 0.0, 0, '{}')
+                """
+            ),
+            {
+                "id": point_id,
+                "run_id": run_a,
+                "tenant_id": tenant_id,
+                "identity_id": identity_id,
+            },
+        )
+
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with session_factory() as session:
+        await session.execute(text("PRAGMA foreign_keys=ON"))
+        with pytest.raises(IntegrityError) as cross_run_exc:
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO identity_atlas_queue_dispositions
+                        (id, run_id, point_id, tenant_id, action, actor)
+                    VALUES
+                        (:id, :run_id, :point_id, :tenant_id, 'reviewed', 'admin:cross-run')
+                    """
+                ),
+                {
+                    "id": disposition_id,
+                    "run_id": run_b,
+                    "point_id": point_id,
+                    "tenant_id": tenant_id,
+                },
+            )
+            await session.commit()
+        message = str(cross_run_exc.value).upper()
+        assert "FOREIGN KEY" in message or "CONSTRAINT" in message, (
+            f"cross-run disposition must be rejected by composite FK; got {cross_run_exc.value!r}"
+        )
+
+    await engine.dispose()
+
+
+def test_atlas_purge_supporting_indexes_declared_in_schema() -> None:
+    """FIR-9 B4: purge/CASCADE supporting indexes must be declared in 001."""
+    import inspect
+
+    source = inspect.getsource(identity_schema.ensure_tables)
+    assert "idx_identity_atlas_points_tenant_identity" in source, (
+        "identity_atlas_points must declare (tenant_id, identity_id) index for purge"
+    )
+    assert "idx_identity_atlas_queue_dispositions_point" in source, (
+        "identity_atlas_queue_dispositions must declare point_id index for CASCADE"
+    )
+    assert '["tenant_id", "identity_id"]' in source or "['tenant_id', 'identity_id']" in source
+    assert '"point_id"' in source or "'point_id'" in source
+
+
+def test_atlas_disposition_run_matches_point_constraint_declared() -> None:
+    """FIR-9 B3: composite unique + FK forcing disposition.run_id == point.run_id."""
+    import inspect
+
+    source = inspect.getsource(identity_schema.ensure_tables)
+    assert "uq_identity_atlas_points_id_run" in source
+    assert "fk_identity_atlas_dispositions_point_run" in source
+    assert '["point_id", "run_id"]' in source or "['point_id', 'run_id']" in source
+    assert (
+        '["identity_atlas_points.id", "identity_atlas_points.run_id"]' in source
+        or "['identity_atlas_points.id', 'identity_atlas_points.run_id']" in source
+    )

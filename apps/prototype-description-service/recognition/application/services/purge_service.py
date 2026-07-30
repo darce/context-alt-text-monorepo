@@ -9,7 +9,7 @@ from enum import Enum, auto
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, delete, inspect, or_, select
+from sqlalchemy import ColumnElement, delete, func, inspect, or_, select
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -291,7 +291,19 @@ class TenantPurgeService:
 
         deleted_counts: dict[str, int] = {}
         for label, model, tenant_predicate, predicate in delete_plan:
-            deleted_counts[label] = await self._delete_rows(model, tenant_predicate, predicate)
+            if label == "identity_atlas_points" and scope == "disposed":
+                # Dispositions have no identity/cluster columns, so disposed
+                # scope leaves them to the point-delete CASCADE. Count them
+                # before the delete so deleted_counts matches reality.
+                cascade_dispositions = await self._count_atlas_dispositions_for_points(
+                    tenant_id, scope_ids, scope
+                )
+                deleted_counts[label] = await self._delete_rows(model, tenant_predicate, predicate)
+                deleted_counts["identity_atlas_queue_dispositions"] = (
+                    deleted_counts.get("identity_atlas_queue_dispositions", 0) + cascade_dispositions
+                )
+            else:
+                deleted_counts[label] = await self._delete_rows(model, tenant_predicate, predicate)
         return deleted_counts
 
     def _atlas_disposition_predicate(self, scope: str) -> Any:
@@ -303,12 +315,40 @@ class TenantPurgeService:
     def _atlas_point_predicate(self, scope_ids: PurgeScopeIds, scope: str) -> Any:
         if scope != "disposed":
             return PurgeRowScope.ALL_TENANT_ROWS
-        if not scope_ids.identity_ids and not scope_ids.cluster_ids:
+        # cluster_id on points is denormalized (no FK). Scoping by disposed
+        # cluster_id would delete points owned by still-live identities.
+        if not scope_ids.identity_ids:
             return PurgeRowScope.NO_ROWS
-        return or_(
-            IdentityAtlasPoint.identity_id.in_(scope_ids.identity_ids),
-            IdentityAtlasPoint.cluster_id.in_(scope_ids.cluster_ids),
+        return IdentityAtlasPoint.identity_id.in_(scope_ids.identity_ids)
+
+    async def _count_atlas_dispositions_for_points(
+        self,
+        tenant_id: UUID,
+        scope_ids: PurgeScopeIds,
+        scope: str,
+    ) -> int:
+        """Count dispositions attached to points that the point predicate will delete."""
+        point_predicate = self._atlas_point_predicate(scope_ids, scope)
+        if point_predicate is PurgeRowScope.NO_ROWS:
+            return 0
+        stmt = (
+            select(func.count())
+            .select_from(IdentityAtlasQueueDisposition)
+            .join(
+                IdentityAtlasPoint,
+                IdentityAtlasPoint.id == IdentityAtlasQueueDisposition.point_id,
+            )
+            .where(IdentityAtlasPoint.tenant_id == tenant_id)
         )
+        if point_predicate is not PurgeRowScope.ALL_TENANT_ROWS:
+            if not isinstance(point_predicate, ColumnElement):
+                raise TypeError(
+                    "purge point predicate for disposition cascade count must be a SQL "
+                    f"expression or PurgeRowScope member, got {point_predicate!r}"
+                )
+            stmt = stmt.where(point_predicate)
+        result = await self._session.execute(stmt)
+        return int(result.scalar_one() or 0)
 
     def _atlas_run_predicate(self, scope: str) -> Any:
         # Runs have no identity/cluster columns; full-tenant purge only.

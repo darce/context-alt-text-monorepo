@@ -2114,7 +2114,7 @@ class DescribeRunControllerTest extends TestCase
 
     /**
      * R23-BR-24 [TEST-15]: takeover attribution — one canonical definition
-     * (DescriptionHistoryService::resolve_recovered_from_run_id) used by apply
+     * (DescriptionHistoryService::resolve_recovery_descriptor) used by apply
      * when stamping. Drive foreign-marker recovery (run A marker, run B apply);
      * assert both observables agree on recovered_from = A:
      *   (1) stamped `_acx_description_provenance` after apply

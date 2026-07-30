@@ -481,7 +481,7 @@ class DescriptionHistoryService {
 	 *
 	 * @return array{origin: string|null, kind: string, chain: list<string>}
 	 */
-	public static function resolve_recovered_from_run_id( mixed $pending, string $applying_run_id, ?array $prior_recovered_from = null ): array {
+	public static function resolve_recovery_descriptor( mixed $pending, string $applying_run_id, ?array $prior_recovered_from = null ): array {
 		$prior_chain = array();
 		if ( is_array( $prior_recovered_from ) ) {
 			$prior_chain = self::normalize_recovery_chain( $prior_recovered_from['chain'] ?? null );
@@ -555,7 +555,7 @@ class DescriptionHistoryService {
 	 * strict identity with the marker this path tried to plant
 	 * [R21-BR-08] [R21-BR-17 key-order] [R22-BR-02].
 	 * Attribution of *which* run started the write is a separate question —
-	 * {@see self::resolve_recovered_from_run_id()} [R23-BR-24].
+	 * {@see self::resolve_recovery_descriptor()} [R23-BR-24].
 	 *
 	 * @param mixed  $pending              Raw post meta value.
 	 * @param string $expected_stored_alt  Post-transform alt (stored domain).

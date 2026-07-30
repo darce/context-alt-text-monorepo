@@ -883,7 +883,7 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 					if ( is_array( $stored_prov ) && isset( $stored_prov['recovered_from'] ) && is_array( $stored_prov['recovered_from'] ) ) {
 						$prior_recovered = $stored_prov['recovered_from'];
 					}
-					$recovered_from = DescriptionHistoryService::resolve_recovered_from_run_id(
+					$recovered_from = DescriptionHistoryService::resolve_recovery_descriptor(
 						$pending,
 						$run_id,
 						$prior_recovered
@@ -1350,7 +1350,7 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	 *
 	 * Always stamps `recovered_from` = `{ origin, kind, chain }` [R23-BR-20/21/22].
 	 * Callers pass the canonical descriptor from
-	 * {@see DescriptionHistoryService::resolve_recovered_from_run_id()} or
+	 * {@see DescriptionHistoryService::resolve_recovery_descriptor()} or
 	 * {@see DescriptionHistoryService::empty_recovered_from()} — never invent
 	 * foreign model metadata [R23-BR-08] [rg-015]. A prior envelope's
 	 * `recovered_from` on `$incoming` is merged into the resolver via the

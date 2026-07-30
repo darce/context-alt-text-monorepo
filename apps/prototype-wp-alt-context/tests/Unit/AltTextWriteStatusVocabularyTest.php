@@ -158,6 +158,71 @@ class AltTextWriteStatusVocabularyTest extends TestCase
             ),
             AltTextWriteStatus::BULK_APPLY_BUCKETS
         );
+        // Non-bulk provenance-pending marker owners [R20-BR-16].
+        $this->assertSame(
+            array(
+                'cli',
+                'single_image',
+            ),
+            AltTextWriteStatus::MARKER_OWNERS
+        );
+        // Wire literals (not constant-to-constant) — durable recovery tokens.
+        $this->assertSame('cli', AltTextWriteStatus::MARKER_OWNER_CLI);
+        $this->assertSame('single_image', AltTextWriteStatus::MARKER_OWNER_SINGLE_IMAGE);
+    }
+
+    /**
+     * R20-BR-16: every MARKER_OWNER_* sentinel const must appear in MARKER_OWNERS,
+     * and MARKER_OWNERS must contain only those sentinels. A new owner const that
+     * is never registered, or a list entry without a matching const, turns RED.
+     * Bulk run UUIDs are not members — membership is the non-bulk discriminator.
+     */
+    public function testMarkerOwnerConstantsAreReflectedIntoMarkerOwners(): void
+    {
+        $reflection = new \ReflectionClass(AltTextWriteStatus::class);
+        $owner_values = array();
+        foreach ($reflection->getConstants() as $name => $value) {
+            if (!is_string($value)) {
+                continue;
+            }
+            if (!str_starts_with((string) $name, 'MARKER_OWNER_')) {
+                continue;
+            }
+            $owner_values[$name] = $value;
+        }
+
+        $this->assertNotEmpty(
+            $owner_values,
+            'At least one MARKER_OWNER_* sentinel must be declared'
+        );
+
+        foreach ($owner_values as $name => $value) {
+            $this->assertContains(
+                $value,
+                AltTextWriteStatus::MARKER_OWNERS,
+                "Marker owner const {$name}={$value} must be a member of MARKER_OWNERS"
+            );
+        }
+
+        $this->assertSame(
+            count($owner_values),
+            count(AltTextWriteStatus::MARKER_OWNERS),
+            'MARKER_OWNERS must not contain entries beyond declared MARKER_OWNER_* consts'
+        );
+
+        foreach (AltTextWriteStatus::MARKER_OWNERS as $owner) {
+            $this->assertContains(
+                $owner,
+                array_values($owner_values),
+                "MARKER_OWNERS entry {$owner} must match a declared MARKER_OWNER_* const"
+            );
+        }
+
+        // Bulk UUIDs are run ids, not sentinels — must never appear in the set.
+        $this->assertNotContains(
+            '11111111-1111-1111-1111-111111111111',
+            AltTextWriteStatus::MARKER_OWNERS
+        );
     }
 
     /**
@@ -176,6 +241,10 @@ class AltTextWriteStatusVocabularyTest extends TestCase
             }
             // Reasons are not statuses — exclude by explicit named prefix rule.
             if (str_starts_with((string) $name, 'REASON_')) {
+                continue;
+            }
+            // Marker owners are recovery sentinels, not alt-write statuses [R20-BR-16].
+            if (str_starts_with((string) $name, 'MARKER_OWNER_')) {
                 continue;
             }
             // List surfaces themselves are array constants, not status values.

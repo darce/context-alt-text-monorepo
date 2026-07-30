@@ -85,15 +85,6 @@ class DescribeMediaService {
 	private const PROVENANCE_PENDING_META_KEY = '_acx_description_provenance_pending';
 
 	/**
-	 * Stable owner for single-image provenance-pending markers.
-	 *
-	 * Bulk apply scopes markers by path `run_id`. The single-image write path
-	 * has no bulk run / invocation uuid — do not fabricate one. Use this fixed
-	 * owner so recovery and history can still key the durable gap evidence.
-	 */
-	private const SINGLE_IMAGE_MARKER_OWNER = 'single_image';
-
-	/**
 	 * The 17 provenance-bearing fields the backend contract guarantees
 	 * (packages/shared-contracts/schemas/image-description-response.schema.json).
 	 * The proxy validates the upstream payload carries every one before
@@ -495,9 +486,9 @@ class DescribeMediaService {
 			// Without a verified marker, auto-recovery is impossible so
 			// report FAILED (not PARTIAL) — partial is presented as retryable.
 			// [WBUX-5-R16-BR-06] [BR-102] [RLSE-05] [INT-11]
-			// No bulk run_id on this path: owner is SINGLE_IMAGE_MARKER_OWNER.
+			// No bulk run_id on this path: non-bulk sentinel [R20-BR-16].
 			$marker          = array(
-				'run_id'     => self::SINGLE_IMAGE_MARKER_OWNER,
+				'run_id'     => AltTextWriteStatus::MARKER_OWNER_SINGLE_IMAGE,
 				'draft_hash' => hash( 'sha256', $draft ),
 			);
 			$expected_marker = $this->expected_meta_after_core_transforms(

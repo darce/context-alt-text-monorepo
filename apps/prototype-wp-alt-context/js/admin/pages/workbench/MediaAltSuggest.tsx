@@ -1,10 +1,7 @@
 import { __, sprintf } from '@wordpress/i18n';
 import { useEffect, useId, useRef, useState } from 'react';
 
-import {
-  correctDescriptionHistoryItem,
-  resolveDescribeErrorMessage,
-} from '../../api/describeApi';
+import { resolveDescribeErrorMessage } from '../../api/describeApi';
 import { useCorrectMediaAlt } from '../../hooks/useCorrectMediaAlt';
 import { useDescribeMedia } from '../../hooks/useDescribeMedia';
 import { useAriaAnnounce } from './identity-clusters/useAriaAnnounce';
@@ -159,9 +156,10 @@ export const MediaAltSuggest = ({
   // Local assertive conflict (CAS refusal) — not a mutation error; not polite.
   // Also used for decorative-mark failures (same assertive channel; no new region).
   const [conflictMessage, setConflictMessage] = useState<string | null>(null);
-  // Decorative commit bypasses useCorrectMediaAlt (optional decorative flag is
-  // not on that hook's frozen public signature) — track in-flight locally so
-  // disabled + useFocusPark match Accept/Save discipline [BR-13][BR-56].
+  // Decorative commits go through useCorrectMediaAlt (decorative:true) so
+  // onSuccess / PARTIAL onError still patch the workbench cache [S7-BR-01]
+  // [S7-BR-02]. Local flag only drives "Marking as decorative…" labels while
+  // isAccepting covers the shared in-flight disable + focus park [BR-13][BR-56].
   const [isMarkingDecorative, setIsMarkingDecorative] = useState(false);
   const { mutate, isPending, isError, error, data, reset } = useDescribeMedia();
   const {
@@ -357,9 +355,10 @@ export const MediaAltSuggest = ({
   /**
    * Deliberate decorative mark: empty alt + decorative:true on the wire.
    * Separate from Accept/Save so clearing the box cannot silently mark
-   * decorative [WBUX-5-S2C3C-BR-01]. Does not go through useCorrectMediaAlt
-   * (that hook's public variables stay { mediaId, altText } for concurrent
-   * consumers) — calls correctDescriptionHistoryItem directly.
+   * decorative [WBUX-5-S2C3C-BR-01]. Routes through useCorrectMediaAlt so the
+   * shared onSuccess patch (patchWorkbenchRowAlt + invalidateMediaStats) and
+   * PARTIAL onError stored_alt_text reconcile still run [S7-BR-01][S7-BR-02]
+   * [HARM-BR-02].
    */
   const markDecorative = (): void => {
     if (isAcceptingRef.current || isAccepting || isMarkingDecorative || peerCommitPending) {
@@ -380,33 +379,38 @@ export const MediaAltSuggest = ({
     isAcceptingRef.current = true;
     setIsMarkingDecorative(true);
     announceStatus(__('Marking as decorative…', 'alt-context'));
-    void (async () => {
-      try {
-        await correctDescriptionHistoryItem(mediaId, '', { decorative: true });
-        isAcceptingRef.current = false;
-        setIsMarkingDecorative(false);
-        onCommitEnd?.();
-        shouldFocusSuggestRef.current = true;
-        announceStatus(MARK_DECORATIVE_SUCCESS_MESSAGE);
-        setIsEditing(false);
-        setConflictMessage(null);
-        resetAccept();
-        reset();
-      } catch (err: unknown) {
-        isAcceptingRef.current = false;
-        setIsMarkingDecorative(false);
-        onCommitEnd?.();
-        clearStatus();
-        // Assertive channel via existing conflictMessage region — no new live region
-        // [A11Y-21]. Prefer server message (400 contradiction) when structured.
-        setConflictMessage(
-          resolveDescribeErrorMessage(
-            err,
-            __('Could not mark as decorative. Please try again.', 'alt-context'),
-          ),
-        );
-      }
-    })();
+    // Same correction mutation as Accept/Save — decorative flag is additive.
+    // Hook onSuccess patches cache from data.current_alt_text; hook onError
+    // reconciles PARTIAL from stored_alt_text. Local callbacks only own UI.
+    acceptDraft(
+      { mediaId, altText: '', decorative: true },
+      {
+        onSuccess: () => {
+          isAcceptingRef.current = false;
+          setIsMarkingDecorative(false);
+          onCommitEnd?.();
+          shouldFocusSuggestRef.current = true;
+          announceStatus(MARK_DECORATIVE_SUCCESS_MESSAGE);
+          setIsEditing(false);
+          setConflictMessage(null);
+          reset();
+        },
+        onError: (err) => {
+          isAcceptingRef.current = false;
+          setIsMarkingDecorative(false);
+          onCommitEnd?.();
+          clearStatus();
+          // Assertive channel via existing conflictMessage region — no new live region
+          // [A11Y-21]. Prefer server message (400 contradiction / PARTIAL) when structured.
+          setConflictMessage(
+            resolveDescribeErrorMessage(
+              err,
+              __('Could not mark as decorative. Please try again.', 'alt-context'),
+            ),
+          );
+        },
+      },
+    );
   };
 
   // BR-17: retire status once it has served its purpose — no timeout. When focus

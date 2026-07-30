@@ -309,6 +309,11 @@ describe('RosterEntriesTable', () => {
    * Representative rule under test: highest identity_count; ties → cluster_id ASC.
    */
   describe('directory face thumbnails [COG-02]', () => {
+    /**
+     * Selection fixtures use bbox:null so media_url paints immediately without
+     * the canvas-crop Image path. Crop wiring is covered by the dedicated
+     * bbox test below (with Image/canvas mocks + act flush).
+     */
     const sarahWithFace = makeEntry({
       id: 20,
       person_uuid: 'person-uuid-sarah',
@@ -324,7 +329,7 @@ describe('RosterEntriesTable', () => {
             identity_id: 'identity-sarah-rep',
             media_id: 501,
             media_url: 'https://example.com/sarah-rep.jpg',
-            bbox: { x: 10, y: 20, width: 30, height: 40 },
+            bbox: null,
             similarity: 0.95,
           },
           instances: [],
@@ -336,8 +341,30 @@ describe('RosterEntriesTable', () => {
             identity_id: 'identity-wrong-face',
             media_id: 900,
             media_url: 'https://example.com/wrong-face.jpg',
-            bbox: { x: 10, y: 20, width: 30, height: 40 },
+            bbox: null,
             similarity: 0.5,
+          },
+          instances: [],
+        },
+      ],
+    });
+
+    const sarahWithBbox = makeEntry({
+      id: 20,
+      person_uuid: 'person-uuid-sarah',
+      name: 'Sarah',
+      tags: ['fixture-face-sarah'],
+      cluster_count: 1,
+      clusters: [
+        {
+          cluster_id: 'cluster-high-count',
+          identity_count: 5,
+          representative_identity: {
+            identity_id: 'identity-sarah-rep',
+            media_id: 501,
+            media_url: 'https://example.com/sarah-rep.jpg',
+            bbox: { x: 10, y: 20, width: 30, height: 40 },
+            similarity: 0.95,
           },
           instances: [],
         },
@@ -348,8 +375,6 @@ describe('RosterEntriesTable', () => {
       render(<RosterEntriesTable entries={[sarahWithFace]} />);
 
       const row = rowForTag('fixture-face-sarah');
-      // Default IntersectionObserver auto-intersects; without a canvas mock the
-      // Image onerror path falls back to the raw media_url — still the selected rep.
       const face = await waitFor(() => {
         const el = row.querySelector('img[data-identity-id="identity-sarah-rep"]');
         expect(el).not.toBeNull();
@@ -401,7 +426,7 @@ describe('RosterEntriesTable', () => {
       HTMLCanvasElement.prototype.toDataURL = vi.fn(() => 'data:image/jpeg;base64,directory-face-crop');
 
       try {
-        render(<RosterEntriesTable entries={[sarahWithFace]} />);
+        render(<RosterEntriesTable entries={[sarahWithBbox]} />);
         // Flush MockImage onload microtask + React state (waitFor alone can miss it).
         await act(async () => {
           await Promise.resolve();
@@ -629,6 +654,52 @@ describe('RosterEntriesTable', () => {
       expect(face.getAttribute('alt')).not.toContain('Sarah');
       // The visible name appears once in the identity cell text.
       expect(nameMatches.filter((m) => m === 'Sarah')).toHaveLength(1);
+    });
+
+    /**
+     * [S6-BR-03] Unnamed people have an empty <strong> beside the face — empty
+     * alt is only valid when equivalent text is present (WCAG 1.1.1). The face
+     * must expose a non-empty accessible name.
+     */
+    it('gives unnamed face thumbnails a non-empty accessible name [S6-BR-03]', async () => {
+      const unnamedWithFace = makeEntry({
+        id: 30,
+        person_uuid: 'person-uuid-unnamed-face',
+        name: '',
+        tags: ['fixture-unnamed-face'],
+        cluster_count: 1,
+        clusters: [
+          {
+            cluster_id: 'cluster-unnamed-face',
+            identity_count: 2,
+            representative_identity: {
+              identity_id: 'identity-unnamed-face',
+              media_id: 808,
+              media_url: 'https://example.com/unnamed-face.jpg',
+              bbox: null,
+              similarity: 0.7,
+            },
+            instances: [],
+          },
+        ],
+      });
+
+      render(<RosterEntriesTable entries={[unnamedWithFace]} />);
+
+      const row = rowForTag('fixture-unnamed-face');
+      const face = await waitFor(() => {
+        // role=img with a non-empty accessible name — not alt="".
+        const el = within(row).getByRole('img');
+        expect(el).toBeTruthy();
+        return el;
+      });
+
+      const accessibleName = face.getAttribute('alt') ?? face.getAttribute('aria-label') ?? '';
+      expect(accessibleName.trim().length).toBeGreaterThan(0);
+      // Empty alt is the bug: name cell is blank so the face IS the cue.
+      expect(face.getAttribute('alt')).not.toBe('');
+      // Default IdentityThumbnail alt includes media id when name is absent.
+      expect(accessibleName).toMatch(/808|Identity|media/i);
     });
   });
 });

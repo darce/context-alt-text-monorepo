@@ -114,12 +114,10 @@ export interface SyncPresentationInput {
   lastSyncedAt?: string | null;
   isStale?: boolean;
   /**
-   * Wire last_sync_result. R23-BR-23: when resync_required (or failed write
-   * surfaces), the strip must not render healthy solely from sync_health.
+   * Wire last_sync_result. R23-BR-23: when resync_required, the strip must not
+   * render healthy solely from sync_health.
    */
   lastSyncResult?: LastSyncResult | null;
-  /** Names fields whose durable writes did not land (non-success only). */
-  failedFields?: string[] | null;
   /** Transient sync-trigger UI state. */
   triggerPending?: boolean;
   triggerSuccess?: boolean;
@@ -211,7 +209,6 @@ export const buildSyncPresentation = (input: SyncPresentationInput): SyncPresent
     lastSyncedAt = null,
     isStale = false,
     lastSyncResult = null,
-    failedFields = null,
     triggerPending = false,
     triggerSuccess = false,
     triggerError = false,
@@ -243,12 +240,10 @@ export const buildSyncPresentation = (input: SyncPresentationInput): SyncPresent
     });
   }
 
-  // R23-BR-23: durable non-success (resync marker or named write failure) must
-  // outrank a stale "healthy" sync_health so the operator sees the real state.
-  if (
-    lastSyncResult === LAST_SYNC_RESULT.RESYNC_REQUIRED ||
-    (Array.isArray(failedFields) && failedFields.length > 0)
-  ) {
+  // R23-BR-23: durable resync marker must outrank a stale "healthy" sync_health
+  // so the operator sees the real state. last_sync_result is the sole trigger —
+  // the producer never emits a top-level failed: string[] (HARM-BR-04).
+  if (lastSyncResult === LAST_SYNC_RESULT.RESYNC_REQUIRED) {
     return presentation({
       status: SYNC_PRESENTATION_STATUS.RESYNC_REQUIRED,
       headline: SYNC_VOCABULARY.resyncRequiredHeadline,
@@ -498,7 +493,6 @@ export const syncPresentationInputFromStatus = (
     | 'failedOps'
     | 'conflictCount'
     | 'lastSyncResult'
-    | 'failedFields'
   > = {},
 ): SyncPresentationInput => ({
   ...extras,
@@ -506,7 +500,6 @@ export const syncPresentationInputFromStatus = (
   lastSyncedAt: data?.last_synced_at ?? null,
   isStale: data?.is_stale ?? false,
   lastSyncResult: data?.last_sync_result ?? null,
-  failedFields: data?.failed ?? null,
   pendingChanges: data?.pending_curation_operations,
   failedOps: data?.failed_curation_operations,
   conflictCount: data?.conflict_count,

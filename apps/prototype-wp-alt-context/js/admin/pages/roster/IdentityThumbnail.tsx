@@ -33,6 +33,18 @@ export interface IdentityThumbnailProps {
 
 const PADDING_RATIO = 0.15;
 
+/** Positive finite area required — zero-area is schema-legal but cannot crop [S8-BR-01]. */
+const isUsableBbox = (
+  bbox: ThumbnailIdentity['bbox'],
+): bbox is { x: number; y: number; width: number; height: number } =>
+  bbox != null &&
+  Number.isFinite(bbox.x) &&
+  Number.isFinite(bbox.y) &&
+  Number.isFinite(bbox.width) &&
+  Number.isFinite(bbox.height) &&
+  bbox.width > 0 &&
+  bbox.height > 0;
+
 export const IdentityThumbnail = ({
   identity,
   mediaMeta,
@@ -46,8 +58,8 @@ export const IdentityThumbnail = ({
   const sourceUrl = mediaMeta?.url ?? identity.media_url ?? null;
 
   // Canvas crop path only (no thumb_url). thumb_url / bare media_url skip the
-  // observer and do not construct Image().
-  const needsCanvasCrop = !identity.thumb_url && Boolean(sourceUrl) && Boolean(identity.bbox);
+  // observer and do not construct Image(). Zero-area bbox is not usable.
+  const needsCanvasCrop = !identity.thumb_url && Boolean(sourceUrl) && isUsableBbox(identity.bbox);
 
   React.useEffect(() => {
     if (!needsCanvasCrop) {
@@ -86,7 +98,7 @@ export const IdentityThumbnail = ({
       setCroppedSrc(null);
       return;
     }
-    if (!identity.bbox) {
+    if (!isUsableBbox(identity.bbox)) {
       setCroppedSrc(sourceUrl);
       return;
     }
@@ -95,6 +107,11 @@ export const IdentityThumbnail = ({
       setCroppedSrc(null);
       return;
     }
+
+    // [S6-BR-01] Drop any previous data: crop immediately when source/bbox
+    // changes so the old face cannot remain painted under new data attributes
+    // while the replacement Image loads.
+    setCroppedSrc(null);
 
     let cancelled = false;
     const bbox = identity.bbox;
@@ -184,24 +201,24 @@ export const IdentityThumbnail = ({
     sourceUrl,
   ]);
 
-  // Before the canvas-crop host intersects, keep a sized placeholder so rows
-  // do not eagerly download full-res photos and do not shift height [PERC-02].
-  const resolvedSrc =
-    identity.thumb_url ?? croppedSrc ?? (needsCanvasCrop && !isIntersecting ? null : sourceUrl);
+  // While canvas crop is required and not yet ready, keep a sized placeholder
+  // — both pre-intersection and during the post-intersect crop window — so
+  // rows never paint/fetch the full uncropped scene [S6-BR-02] [PERC-02].
+  const resolvedSrc = identity.thumb_url ?? croppedSrc ?? (needsCanvasCrop ? null : sourceUrl);
   const resolvedAlt = alt ?? sprintf(__('Identity from media %d', 'alt-context'), identity.media_id);
 
   if (!resolvedSrc) {
     // Sized via the size prop (inline, no CSS file) so rows with/without faces
     // share height [PERC-02]. data-face-missing distinguishes "no face on file"
     // from a real photo an operator does not recognise — only when there is
-    // genuinely no media; pending intersection reuses the same box without
-    // the missing flag so layout stays stable while the crop waits.
+    // genuinely no media; pending crop reuses the same box without the missing
+    // flag so layout stays stable while the crop waits.
     //
     // Pending crop [A11Y-02]: when resolvedAlt is non-empty the placeholder is
     // the sole content of wrapping links (e.g. ClusterDrawerPanel), so it must
     // expose role=img + aria-label. Decorative alt="" stays aria-hidden.
     // Genuinely-missing media keeps aria-hidden + data-face-missing unchanged.
-    const pendingCrop = needsCanvasCrop && !isIntersecting;
+    const pendingCrop = needsCanvasCrop && !croppedSrc;
     const namedPending = pendingCrop && resolvedAlt !== '';
     return (
       <span ref={hostRef} style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}>

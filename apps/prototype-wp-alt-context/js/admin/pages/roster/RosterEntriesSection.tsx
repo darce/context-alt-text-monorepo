@@ -134,7 +134,10 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
     if (isUnassignedFilter && entry.cluster_count !== 0) {
       return false;
     }
-    if (queueFilter !== null && !entry.queue_memberships.includes(queueFilter)) {
+    // Boundary read: create_person / update_person REST bodies omit
+    // queue_memberships; treat absent as empty (same as derivePersonState).
+    const memberships = Array.isArray(entry.queue_memberships) ? entry.queue_memberships : [];
+    if (queueFilter !== null && !memberships.includes(queueFilter)) {
       return false;
     }
     if (!entryMatchesSearch(entry, normalizedSearch)) {

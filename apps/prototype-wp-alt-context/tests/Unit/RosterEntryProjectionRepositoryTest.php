@@ -78,6 +78,33 @@ class RosterEntryProjectionRepositoryTest extends TestCase
 		$this->assertSame(34, $data[0]['source_version']);
 	}
 
+	/**
+	 * HARM-BR-03: last_sync_result resync_required (rekey / threshold) must surface
+	 * as projection_status 'stale', not 'current'. RosterPage gates workspace entry
+	 * and staleness notice on projectionStatus !== 'current'; reporting current while
+	 * the sync strip says "Re-sync required" hides an invalid projection.
+	 */
+	public function testListEntriesReportsStaleProjectionWhenResyncRequired(): void
+	{
+		$this->seedRosterRows();
+
+		$repository = new RosterEntryProjectionRepository(
+			new RosterEntryProjectionSyncStateSpy(
+				snapshotVersion: 42,
+				lastUpdated: '2026-05-07 16:00:00',
+				lastSyncResult: 'resync_required'
+			)
+		);
+
+		$data = $repository->list_entries(self::currentTenantId());
+
+		$this->assertSame('stale', $data[0]['projection_status']);
+		$this->assertSame('2026-05-07 16:00:00', $data[0]['projection_refreshed_at']);
+		$this->assertSame(42, $data[0]['source_version']);
+		// Discrimination: must not report current while durable result is resync_required.
+		$this->assertNotSame('current', $data[0]['projection_status']);
+	}
+
 	public function testListEntriesIncludesProjectedClustersAndInstances(): void
 	{
 		global $wpdb;

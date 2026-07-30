@@ -8,9 +8,12 @@ import { NeedsAssignmentSection } from '../NeedsAssignmentSection';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
+  _n: (single: string, plural: string, count: number) => (count === 1 ? single : plural),
   sprintf: (format: string, ...args: (string | number)[]) => {
     let index = 0;
-    return format.replace(/%(s|d)/g, () => String(args[index++]));
+    return format
+      .replace(/%\d+\$[sd]/g, () => String(args[index++]))
+      .replace(/%[sd]/g, () => String(args[index++]));
   },
 }));
 

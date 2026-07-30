@@ -67,6 +67,9 @@ describe('roster entry contract', () => {
   });
 
   it('matches the frontend RosterEntryInstance bbox shape', () => {
+    // Type-level boundary [S8-BR-02 / TEST-15]: object-form pixel bbox, not number[].
+    // Assigning a pixel object must typecheck; if RosterEntryBbox regresses to
+    // number[] | null, `npm run typecheck` fails on this fixture assignment.
     const instance: RosterEntryInstance = {
       identity_id: 'identity-1',
       media_id: 101,
@@ -77,6 +80,18 @@ describe('roster entry contract', () => {
 
     expectTypeOf(instance).toMatchTypeOf<RosterEntryInstance>();
     expectTypeOf(instance.bbox).toMatchTypeOf<{ x: number; y: number; width: number; height: number } | null>();
-    expect(instance.bbox).toEqual({ x: 10, y: 20, width: 30, height: 40 });
+    // Reject number[]: a tuple must not be assignable to RosterEntryInstance.bbox.
+    expectTypeOf(instance.bbox).not.toMatchTypeOf<number[] | null>();
+    // Structural runtime check against the projection shape (not a tautological
+    // literal equal of a value we just constructed).
+    expect(instance.bbox).not.toBeNull();
+    expect(instance.bbox).not.toBeInstanceOf(Array);
+    if (instance.bbox) {
+      expect(Object.keys(instance.bbox).sort()).toEqual(['height', 'width', 'x', 'y']);
+      expect(typeof instance.bbox.x).toBe('number');
+      expect(typeof instance.bbox.y).toBe('number');
+      expect(typeof instance.bbox.width).toBe('number');
+      expect(typeof instance.bbox.height).toBe('number');
+    }
   });
 });

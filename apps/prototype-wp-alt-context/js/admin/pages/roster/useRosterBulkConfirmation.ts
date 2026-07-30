@@ -1,4 +1,4 @@
-import { __, sprintf } from '@wordpress/i18n';
+import { __, _n, sprintf } from '@wordpress/i18n';
 import { useCallback, useState } from 'react';
 
 type ConfirmAction = 'merge' | 'dismiss' | null;
@@ -72,30 +72,36 @@ export const useRosterBulkConfirmation = ({
 
   // Confirm labels stay short ("Merge"/"Dismiss") so they differ from the bar's
   // "Merge N clusters" accessible names — dialog description carries count+object.
-  // Descriptions use singular/plural to stay coherent with the bar.
+  // Descriptions use _n so translators with >2 plural forms can select correctly.
   const confirmDialogCopy =
     confirmAction === 'merge'
       ? {
           title: __('Confirm merge', 'alt-context'),
-          description:
-            selection.count === 1
-              ? sprintf(
-                  __('Are you sure you want to merge %d cluster? This action cannot be undone.', 'alt-context'),
-                  selection.count,
-                )
-              : sprintf(
-                  __('Are you sure you want to merge %d clusters? This action cannot be undone.', 'alt-context'),
-                  selection.count,
-                ),
+          description: sprintf(
+            // translators: %d: number of selected clusters to merge
+            _n(
+              'Are you sure you want to merge %d cluster? This action cannot be undone.',
+              'Are you sure you want to merge %d clusters? This action cannot be undone.',
+              selection.count,
+              'alt-context',
+            ),
+            selection.count,
+          ),
           confirmLabel: __('Merge', 'alt-context'),
         }
       : confirmAction === 'dismiss'
         ? {
             title: __('Confirm dismiss', 'alt-context'),
-            description:
-              selection.count === 1
-                ? sprintf(__('Are you sure you want to dismiss %d cluster?', 'alt-context'), selection.count)
-                : sprintf(__('Are you sure you want to dismiss %d clusters?', 'alt-context'), selection.count),
+            description: sprintf(
+              // translators: %d: number of selected clusters to dismiss
+              _n(
+                'Are you sure you want to dismiss %d cluster?',
+                'Are you sure you want to dismiss %d clusters?',
+                selection.count,
+                'alt-context',
+              ),
+              selection.count,
+            ),
             confirmLabel: __('Dismiss', 'alt-context'),
           }
         : null;

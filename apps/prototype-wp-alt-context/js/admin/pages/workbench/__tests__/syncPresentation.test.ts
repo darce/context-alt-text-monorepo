@@ -1,12 +1,17 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import type { SyncHealthResponse } from '../../../api/recognition/types/sync';
+import { LAST_SYNC_RESULT } from '../../../api/recognition/types/sync';
 import {
   SYNC_PRESENTATION_STATUS,
   SYNC_VOCABULARY,
   buildSyncPresentation,
   formatSyncJobPhase,
   getSyncPresentationSummary,
+  syncPresentationInputFromStatus,
 } from '../syncPresentation';
 
 vi.mock('@wordpress/i18n', () => ({
@@ -170,6 +175,103 @@ describe('buildSyncPresentation state matrix', () => {
     });
     expect(p.status).toBe(SYNC_PRESENTATION_STATUS.CONNECTED_EMPTY);
     assertPlainLanguage(p.headline);
+  });
+
+  /**
+   * HARM-BR-04: RESYNC_REQUIRED escalation is driven solely by last_sync_result.
+   * The phantom top-level failed: string[] field is not a producer contract and
+   * must not be an alternate escalation arm.
+   */
+  it('escalates to resync_required solely from last_sync_result even when health is healthy', () => {
+    const p = buildSyncPresentation({
+      legacySyncHealth: 'healthy',
+      lastSyncedAt: '2026-02-14T12:00:00Z',
+      lastSyncResult: LAST_SYNC_RESULT.RESYNC_REQUIRED,
+      syncHealthEnvelope: onlineEnvelope(),
+    });
+    expect(p.status).toBe(SYNC_PRESENTATION_STATUS.RESYNC_REQUIRED);
+    expect(p.headline).toBe(SYNC_VOCABULARY.resyncRequiredHeadline);
+    expect(p.detail).toBe(SYNC_VOCABULARY.resyncRequiredSummary);
+    expect(p.badge).toBe(SYNC_VOCABULARY.resyncRequiredBadge);
+    expect(p.tone).toBe('warning');
+    expect(p.action).toEqual({ label: SYNC_VOCABULARY.syncNow, kind: 'sync_now' });
+    assertPlainLanguage(p.headline);
+    assertPlainLanguage(p.detail);
+    assertPlainLanguage(p.badge);
+  });
+
+  it('does not escalate to resync_required when last_sync_result is ok', () => {
+    const p = buildSyncPresentation({
+      legacySyncHealth: 'healthy',
+      lastSyncedAt: '2026-02-14T12:00:00Z',
+      lastSyncResult: LAST_SYNC_RESULT.OK,
+      syncHealthEnvelope: onlineEnvelope(),
+    });
+    expect(p.status).toBe(SYNC_PRESENTATION_STATUS.HEALTHY);
+    expect(p.status).not.toBe(SYNC_PRESENTATION_STATUS.RESYNC_REQUIRED);
+  });
+
+  it('outranks pipeline activity when last_sync_result is resync_required', () => {
+    const p = buildSyncPresentation({
+      legacySyncHealth: 'healthy',
+      lastSyncResult: LAST_SYNC_RESULT.RESYNC_REQUIRED,
+      jobActivity: 'scan',
+      pipelinePhase: 'scanning',
+      syncHealthEnvelope: onlineEnvelope(),
+    });
+    expect(p.status).toBe(SYNC_PRESENTATION_STATUS.RESYNC_REQUIRED);
+    expect(p.action?.kind).toBe('sync_now');
+  });
+});
+
+describe('HARM-BR-04 phantom failed field deleted from sync contract', () => {
+  const workbenchDir = path.dirname(fileURLToPath(import.meta.url));
+  const syncTypesSource = readFileSync(
+    path.resolve(workbenchDir, '../../../api/recognition/types/sync.ts'),
+    'utf8',
+  );
+  const presentationSource = readFileSync(path.resolve(workbenchDir, '../syncPresentation.ts'), 'utf8');
+  const indicatorSource = readFileSync(
+    path.resolve(workbenchDir, '../SyncStatusIndicator.tsx'),
+    'utf8',
+  );
+
+  it('SyncStatusResponse does not declare a top-level failed string[] (settings graft)', () => {
+    // TopologyCommandStatus.failed: number and LAST_SYNC_RESULT.FAILED remain valid.
+    // The deleted phantom is specifically `failed?: string[]` on SyncStatusResponse.
+    expect(syncTypesSource).not.toMatch(/failed\?:\s*string\s*\[\s*\]/);
+    expect(syncTypesSource).not.toMatch(
+      /Names the fields whose writes did not land/,
+    );
+  });
+
+  it('buildSyncPresentation has no failedFields input or escalation arm', () => {
+    expect(presentationSource).not.toMatch(/\bfailedFields\b/);
+    expect(presentationSource).not.toMatch(/data\?\.failed\b/);
+    expect(presentationSource).not.toMatch(
+      /Array\.isArray\(\s*failedFields\s*\)\s*&&\s*failedFields\.length\s*>\s*0/,
+    );
+    // Sole remaining escalation trigger must be last_sync_result === resync_required.
+    expect(presentationSource).toMatch(
+      /lastSyncResult\s*===\s*LAST_SYNC_RESULT\.RESYNC_REQUIRED/,
+    );
+  });
+
+  it('SyncStatusIndicator does not pass data?.failed into presentation', () => {
+    expect(indicatorSource).not.toMatch(/\bfailedFields\b/);
+    expect(indicatorSource).not.toMatch(/data\?\.failed\b/);
+  });
+
+  it('syncPresentationInputFromStatus does not surface a failedFields key', () => {
+    const input = syncPresentationInputFromStatus({
+      last_snapshot_version: 1,
+      last_synced_at: '2026-02-14T12:00:00Z',
+      is_stale: false,
+      sync_health: 'healthy',
+      last_sync_result: LAST_SYNC_RESULT.OK,
+    });
+    expect(input).not.toHaveProperty('failedFields');
+    expect(Object.keys(input)).not.toContain('failedFields');
   });
 });
 

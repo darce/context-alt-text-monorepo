@@ -14,6 +14,12 @@ import { invalidateMediaStats } from './useMediaStats';
 interface CorrectMediaAltVariables {
   mediaId: number;
   altText: string;
+  /**
+   * When true, posts decorative:true with the correction so the server plants
+   * the durable empty-alt marker. Omitted / false keeps the ordinary two-arg
+   * wire body for Accept/Save and other callers [WBUX-5-S2C3C-BR-01][S7-BR-01].
+   */
+  decorative?: boolean;
 }
 
 /**
@@ -69,7 +75,13 @@ export const useCorrectMediaAlt = () => {
   const queryClient = useQueryClient();
 
   return useMutation<DescriptionHistoryItem, Error, CorrectMediaAltVariables>({
-    mutationFn: ({ mediaId, altText }) => correctDescriptionHistoryItem(mediaId, altText),
+    // Pass decorative only when true so two-arg callers keep an identical
+    // correctDescriptionHistoryItem(mediaId, altText) call signature (tests pin
+    // toHaveBeenCalledWith without a third arg).
+    mutationFn: ({ mediaId, altText, decorative }) =>
+      decorative === true
+        ? correctDescriptionHistoryItem(mediaId, altText, { decorative: true })
+        : correctDescriptionHistoryItem(mediaId, altText),
     // Targeted patch only — never invalidateQueries(media.all). That refetch
     // drops corrected (and partial) rows from missing-status pages and destroys
     // unread role=alert / in-progress draft state [RLSE-04][RLSE-05][BR-77].

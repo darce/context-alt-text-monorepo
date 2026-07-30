@@ -29,15 +29,24 @@ _SERVICE_ROOT = Path(__file__).resolve().parents[3]
 _FIXTURE_DIR = _SERVICE_ROOT / "recognition" / "tests" / "fixtures" / "face_pipeline"
 _REGENERATE_CMD = "uv run python recognition/tests/fixtures/face_pipeline/generate_goldens.py"
 
-# Keys stamped by generate_goldens.toolchain_provenance(); participate in both
-# schema and value compares (write-only stamps would greenwash toolchain drift).
+# Keys stamped by generate_goldens.toolchain_provenance(); schema-compared always.
+# Version stamps are value-compared only by test_golden_toolchain_stamps_match_runtime
+# at pin-meaningful granularity; assert_meta_values_equal skips them so a routine
+# ORT/numpy patch resolve cannot force regenerating fixtures whose bytes cannot move.
 _PROVENANCE_KEYS = ("opencv_version", "onnxruntime_version", "numpy_version", "generator")
+_TOOLCHAIN_STAMP_KEYS = frozenset({"opencv_version", "onnxruntime_version", "numpy_version"})
 _GOLDEN_METAS = (
     "detector_faces.json",
     "embedding_meta.json",
     "aligner_meta.json",
     "aligner_composed_embedding_meta.json",
 )
+# Metas whose golden bytes are produced through an ORT inference path.
+# Empty today: all four goldens come from the OpenCV reference oracle
+# (FaceRecognizerSF.alignCrop / FaceDetectorYN / OpenCVSFaceEmbedder). When an
+# ORT-generated golden is added, name it here so the runtime ORT stamp assert
+# turns on for that meta only.
+_ORT_DERIVED_GOLDEN_METAS: frozenset[str] = frozenset()
 
 # Same floors as test_face_pipeline_opencv_ref.py golden compares — do not invent new ones.
 _GOLDEN_COSINE_MIN = 0.99999999
@@ -85,19 +94,22 @@ def test_golden_metas_carry_toolchain_provenance() -> None:
 def test_golden_toolchain_stamps_match_runtime() -> None:
     """Live numeric runtimes must match golden stamps at pin-meaningful granularity.
 
-    Pins in pyproject.toml are floor-style (``>=X,<Y``), so full-version equality
-    would fail routine resolves under the floor for no measured numeric reason.
-    Granularity is the coarsest unit that still catches the regressions this
-    branch cares about:
+    Granularity mirrors how each package participates in the golden protocol and
+    in production ``space_token`` (``cv{full opencv}/ort{major.minor}``):
 
-    - OpenCV: major only. Production ``space_token`` folds OpenCV major; the pin
-      is ``>=5.0.0,<6.0.0``. Major-only is not blindness once ORT/numpy are also
-      asserted — OpenCV 4→5 is the numeric boundary for warpAffine/embedder.
-    - onnxruntime: major.minor. Floor is ``1.28.0``; ``space_token`` embeds the
-      full ORT version so 1.22 vs 1.28 must not share goldens, but patch bumps
-      within 1.28.x under the floor pin are not a golden-protocol event.
-    - numpy: major.minor. Floor is ``2.5.1``; not in ``space_token`` but stamped
-      because array ABI can move clustering. Patch bumps under 2.5.x allowed.
+    - OpenCV: full version. Pin is exact (``opencv-python==5.0.0.93`` /
+      ``opencv-python-headless==5.0.0.93``) and ``space_token`` embeds the full
+      OpenCV version string, so a 5.0.0.x → 5.1.0.x bump must fail this guard
+      the same way it partitions the persisted corpus.
+    - onnxruntime: major.minor, and only for metas in
+      ``_ORT_DERIVED_GOLDEN_METAS``. Floor is ``>=1.28.0,<2.0.0``; ``space_token``
+      folds ORT major.minor. Patch bumps under the floor are not a golden-protocol
+      event. Today no golden crosses an ORT inference path (all four use the
+      OpenCV reference oracle), so the ORT assert is dormant until an ORT-derived
+      golden is added and listed in that set.
+    - numpy: major.minor. Floor is ``>=2.5.1,<3.0.0``; not in ``space_token`` but
+      stamped because array ABI can move clustering. Patch bumps under 2.5.x
+      allowed.
     - generator: exact path equality (not a package version).
 
     On mismatch the message names the regenerate command.
@@ -106,21 +118,22 @@ def test_golden_toolchain_stamps_match_runtime() -> None:
     for name in _GOLDEN_METAS:
         meta = _load_meta(name)
         recorded_cv = meta["opencv_version"]
-        assert _version_components(recorded_cv, 1) == _version_components(fp.opencv_version, 1), (
-            f"{name} was generated under OpenCV major {_version_components(recorded_cv, 1)[0]} "
-            f"(opencv_version={recorded_cv!r}) but runtime is {fp.opencv_version!r}. "
+        assert recorded_cv == fp.opencv_version, (
+            f"{name} was generated under OpenCV {recorded_cv!r} "
+            f"but runtime is {fp.opencv_version!r}. "
             f"Regenerate goldens from apps/prototype-description-service:\n"
             f"  {_REGENERATE_CMD}"
         )
-        recorded_ort = meta["onnxruntime_version"]
-        assert _version_components(recorded_ort, 2) == _version_components(fp.onnxruntime_version, 2), (
-            f"{name} was generated under onnxruntime major.minor "
-            f"{'.'.join(str(x) for x in _version_components(recorded_ort, 2))} "
-            f"(onnxruntime_version={recorded_ort!r}) but runtime is "
-            f"{fp.onnxruntime_version!r}. "
-            f"Regenerate goldens from apps/prototype-description-service:\n"
-            f"  {_REGENERATE_CMD}"
-        )
+        if name in _ORT_DERIVED_GOLDEN_METAS:
+            recorded_ort = meta["onnxruntime_version"]
+            assert _version_components(recorded_ort, 2) == _version_components(fp.onnxruntime_version, 2), (
+                f"{name} was generated under onnxruntime major.minor "
+                f"{'.'.join(str(x) for x in _version_components(recorded_ort, 2))} "
+                f"(onnxruntime_version={recorded_ort!r}) but runtime is "
+                f"{fp.onnxruntime_version!r}. "
+                f"Regenerate goldens from apps/prototype-description-service:\n"
+                f"  {_REGENERATE_CMD}"
+            )
         recorded_np = meta["numpy_version"]
         assert _version_components(recorded_np, 2) == _version_components(fp.numpy_version, 2), (
             f"{name} was generated under numpy major.minor "
@@ -192,18 +205,126 @@ def _load_probe_module():
 
 
 def test_probe_match_threshold_tracks_settings() -> None:
-    """Probe DEFAULT_MATCH_THRESHOLD must equal settings legacy threshold.
+    """Probe DEFAULT_* decision-boundary fallbacks must track ClusteringSettings.
 
-    The probe duplicates the constant because its baseline pass runs in a bare
+    The probe duplicates the constants because its baseline pass runs in a bare
     cv2+numpy env that cannot import pydantic-settings. This pin prevents silent
     drift between the two definitions.
     """
+    from recognition.application.settings.clustering import ClusteringSettings
+
     probe = _load_probe_module()
+    settings = ClusteringSettings()
     assert probe.DEFAULT_MATCH_THRESHOLD == settings_mod._LEGACY_SIMILARITY_THRESHOLD, (
         f"probe DEFAULT_MATCH_THRESHOLD={probe.DEFAULT_MATCH_THRESHOLD!r} drifted "
         f"from settings._LEGACY_SIMILARITY_THRESHOLD="
         f"{settings_mod._LEGACY_SIMILARITY_THRESHOLD!r}"
     )
+    assert settings.suggestion_floor == probe.DEFAULT_SUGGESTION_FLOOR, (
+        f"probe DEFAULT_SUGGESTION_FLOOR={probe.DEFAULT_SUGGESTION_FLOOR!r} drifted "
+        f"from ClusteringSettings.suggestion_floor={settings.suggestion_floor!r}"
+    )
+    assert settings.low_confidence_band_width == probe.DEFAULT_LOW_CONFIDENCE_BAND_WIDTH, (
+        f"probe DEFAULT_LOW_CONFIDENCE_BAND_WIDTH="
+        f"{probe.DEFAULT_LOW_CONFIDENCE_BAND_WIDTH!r} drifted from "
+        f"ClusteringSettings.low_confidence_band_width="
+        f"{settings.low_confidence_band_width!r}"
+    )
+
+
+def _synthetic_pass_pair(*, nn_cosine: float) -> tuple[Any, Any]:
+    """Build three-face Pass pair with a single NN flip at ``nn_cosine``.
+
+    Face 0's baseline NN is face 1; current NN is face 2. Both neighbour
+    cosines equal ``nn_cosine``. Self-similarity stays near 1 so impostor
+    separation is not the deciding factor.
+    """
+    probe = _load_probe_module()
+    dim = 128
+    ortho = float(math.sqrt(max(0.0, 1.0 - nn_cosine * nn_cosine)))
+    low = 0.20
+    ortho_low = float(math.sqrt(max(0.0, 1.0 - low * low)))
+
+    base_emb = np.zeros((3, dim), dtype=np.float64)
+    cur_emb = np.zeros((3, dim), dtype=np.float64)
+    # face 0: same unit vector across versions
+    base_emb[0, 0] = 1.0
+    cur_emb[0, 0] = 1.0
+    # baseline: face0·face1 = nn_cosine, face0·face2 = low
+    base_emb[1, 0] = nn_cosine
+    base_emb[1, 1] = ortho
+    base_emb[2, 0] = low
+    base_emb[2, 2] = ortho_low
+    # current: face0·face2 = nn_cosine, face0·face1 = low  (NN flip)
+    cur_emb[1, 0] = low
+    cur_emb[1, 1] = ortho_low
+    cur_emb[2, 0] = nn_cosine
+    cur_emb[2, 2] = ortho
+
+    boxes = np.asarray(
+        [[0.0, 0.0, 10.0, 10.0], [20.0, 0.0, 10.0, 10.0], [40.0, 0.0, 10.0, 10.0]],
+        dtype=np.float64,
+    )
+    # Distinct images so cross-face pairs count as impostors (not same-image).
+    images = ["a.jpg", "b.jpg", "c.jpg"]
+    keys = [f"{img}#0" for img in images]
+    digest = "synthetic-corpus-digest"
+    base = probe.Pass(
+        keys=keys,
+        boxes=boxes,
+        embeddings=base_emb,
+        images=images,
+        opencv_version="4.0.0",
+        numpy_version=np.__version__,
+        corpus_digest=digest,
+    )
+    cur = probe.Pass(
+        keys=keys,
+        boxes=boxes.copy(),
+        embeddings=cur_emb,
+        images=list(images),
+        opencv_version="5.0.0",
+        numpy_version=np.__version__,
+        corpus_digest=digest,
+    )
+    return base, cur
+
+
+def test_probe_analyse_suggestion_band_nn_flip_is_nonfatal() -> None:
+    """NN flip at cosine 0.38 lands in suggestion band; verdict stays PASS."""
+    probe = _load_probe_module()
+    base, cur = _synthetic_pass_pair(nn_cosine=0.38)
+    stats = probe.analyse(
+        base,
+        cur,
+        min_iou=0.5,
+        suggestion_ceiling=0.55,
+        suggestion_floor=0.35,
+        suggestion_band_floor=0.30,
+    )
+    assert len(stats["suggestion_band_nn_flips"]) >= 1
+    assert stats["decisive_nn_flips"] == []
+    assert stats["subthreshold_nn_flips"] == []
+    ok, _why = probe.verdict(stats)
+    assert ok is True
+
+
+def test_probe_analyse_decisive_nn_flip_fails_verdict() -> None:
+    """NN flip at cosine above suggestion_ceiling lands decisive; verdict FAIL."""
+    probe = _load_probe_module()
+    base, cur = _synthetic_pass_pair(nn_cosine=0.60)
+    stats = probe.analyse(
+        base,
+        cur,
+        min_iou=0.5,
+        suggestion_ceiling=0.55,
+        suggestion_floor=0.35,
+        suggestion_band_floor=0.30,
+    )
+    assert len(stats["decisive_nn_flips"]) >= 1
+    assert stats["suggestion_band_nn_flips"] == []
+    ok, _why = probe.verdict(stats)
+    assert ok is False
 
 
 # ---------------------------------------------------------------------------
@@ -298,18 +419,23 @@ def assert_meta_values_equal(
     meta_name: str = "",
     detector_tol: dict | None = None,
 ) -> None:
-    """Compare meta values including toolchain stamps (same-host regen exact).
+    """Compare meta values; version stamps deferred to the granularity guard.
 
-    Toolchain stamps participate so a generator that records a different OpenCV /
-    ORT / numpy / generator path cannot pass while only the schema matches.
+    OpenCV / ORT / numpy stamps are excluded from exact value compare — those
+    are owned by ``test_golden_toolchain_stamps_match_runtime`` at pin-meaningful
+    granularity. ``generator`` still compares exact so a path drift fails closed.
     Numeric detection fields use the committed detector tolerances when present;
     other numbers use a tight float compare.
     """
     label = path or meta_name or "<root>"
 
     if isinstance(committed, dict) and isinstance(generated, dict):
-        # Schema already asserted equal; walk shared keys only.
+        # Schema already asserted equal; walk shared keys only. Skip package
+        # version stamps at the meta root — exact-string compare would contradict
+        # the major.minor (ORT/numpy) / full-version (OpenCV) policy above.
         for key in sorted(set(committed) & set(generated)):
+            if not path and key in _TOOLCHAIN_STAMP_KEYS:
+                continue
             child = f"{path}.{key}" if path else key
             assert_meta_values_equal(
                 committed[key],

@@ -28,6 +28,73 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _representative_embedding_model(rep: object, model_by_identity: dict[str, str]) -> str | None:
+    """Resolve embedding_model for a representative (attr, nested identity, or lookup)."""
+    direct = getattr(rep, "embedding_model", None)
+    if direct:
+        return str(direct)
+    identity = getattr(rep, "identity", None)
+    if identity is not None:
+        nested = getattr(identity, "embedding_model", None)
+        if nested:
+            return str(nested)
+    identity_id = getattr(rep, "identity_id", None)
+    if identity_id is not None:
+        return model_by_identity.get(str(identity_id))
+    return None
+
+
+async def _load_representative_embedding_models(
+    assignment_writer: AssignmentWriter,
+    tenant_id: str,
+) -> dict[str, str]:
+    """Map representative identity_id → embedding_model via the repository session.
+
+    Domain ClusterRepresentative drops embedding_model; this recovers provenance for
+    FIR23-01 gallery filtering. Returns {} when no session is available (unit stubs).
+    """
+    session = getattr(assignment_writer.cluster_repository, "_session", None)
+    if session is None:
+        session = getattr(assignment_writer, "_session", None)
+    if session is None:
+        return {}
+    try:
+        tenant_uuid = uuid.UUID(tenant_id)
+    except ValueError:
+        return {}
+    try:
+        from sqlalchemy import select
+
+        from db.models import IdentityCluster, IdentityClusterRepresentative, MediaIdentity
+
+        stmt = (
+            select(IdentityClusterRepresentative.identity_id, MediaIdentity.embedding_model)
+            .join(MediaIdentity, MediaIdentity.id == IdentityClusterRepresentative.identity_id)
+            .join(IdentityCluster, IdentityCluster.id == IdentityClusterRepresentative.cluster_id)
+            .where(IdentityCluster.tenant_id == tenant_uuid)
+            .where(MediaIdentity.embedding_model.isnot(None))
+        )
+        result = await session.execute(stmt)
+        return {str(identity_id): str(model) for identity_id, model in result.all() if model}
+    except Exception:
+        logger.warning(
+            "[clustering] failed to load representative embedding_model map; "
+            "gallery cache may include cross-space anchors (FIR23-01)",
+            exc_info=True,
+        )
+        return {}
+
+
+def _resolve_probe_embedding_model() -> str | None:
+    """Active runtime embedding space for discovery probes (FIR23-01)."""
+    try:
+        from recognition.application.embedding.manifest import active_embedding_model_id
+
+        return active_embedding_model_id()
+    except Exception:
+        return None
+
+
 async def prepare_cluster_caches(
     assignment_writer: AssignmentWriter,
     tenant_id: str,
@@ -37,12 +104,20 @@ async def prepare_cluster_caches(
     Should be called ONCE per job before the chunk loop.  Use
     update_cluster_caches_from_new_cluster() to incrementally update the
     returned dicts after each chunk commits new clusters (Phase 3 efficiency).
+
+    FIR23-01: representatives (and centroids of foreign-space clusters) are
+    restricted to the active embedding_model so discovery never cosines across
+    distinct spaces at the same dimensionality.
     """
     existing_clusters = await assignment_writer.cluster_repository.get_by_tenant(tenant_id, limit=1000, offset=0)
     logger.info("[clustering] Found %d existing clusters for discovery", len(existing_clusters))
 
+    target_model = _resolve_probe_embedding_model()
+    model_by_identity = await _load_representative_embedding_models(assignment_writer, tenant_id)
+
     representatives_by_cluster: dict[str, list[np.ndarray]] = {}
     labeled_cluster_ids: set[str] = set()
+    foreign_space_cluster_ids: set[str] = set()
 
     for cluster in existing_clusters:
         if cluster.id is None:
@@ -53,14 +128,34 @@ async def prepare_cluster_caches(
             labeled_cluster_ids.add(cluster.id)
 
         reps = getattr(cluster, "representatives", []) or []
-        if reps:
-            representatives_by_cluster[cluster.id] = [
-                np.array(r.embedding, dtype=np.float32) for r in reps if r.embedding is not None
-            ]
+        if not reps:
+            continue
+
+        kept: list[np.ndarray] = []
+        foreign_only = True
+        for r in reps:
+            if getattr(r, "embedding", None) is None:
+                continue
+            rep_model = _representative_embedding_model(r, model_by_identity)
+            if target_model is not None and rep_model is not None and rep_model != target_model:
+                continue
+            if target_model is not None and rep_model is None and model_by_identity:
+                # Provenance map loaded but this identity missing → exclude.
+                continue
+            foreign_only = False
+            kept.append(np.array(r.embedding, dtype=np.float32))
+
+        if kept:
+            representatives_by_cluster[cluster.id] = kept
+        elif target_model is not None and foreign_only:
+            # Had reps but all were foreign-space (or unmapped under a loaded map).
+            foreign_space_cluster_ids.add(cluster.id)
 
     centroids_by_cluster: dict[str, np.ndarray] = {}
     for cluster in existing_clusters:
         if cluster.id is None:
+            continue
+        if cluster.id in foreign_space_cluster_ids:
             continue
         centroid = getattr(cluster, "centroid", None)
         if centroid is not None:

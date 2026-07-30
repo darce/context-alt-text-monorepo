@@ -349,11 +349,12 @@ class NumericRuntimeFingerprint:
         """Compact embedding-space token folded into SFace ``model_id``.
 
         Granularity (WHY — which dependency bumps are space-breaking):
-        - OpenCV: **full version**. ``warpAffine`` numerics moved across the
-          4.x→5.0 cut that forced golden regeneration; pin is
-          ``opencv-python>=5.0.0,<6.0.0``, so any 5.x resolve may move
-          aligner output again. Full version is the safe space key (a 5.0.0
-          → 5.x bump that would require goldens also mints a new space).
+        - OpenCV: **full version**. ``warpAffine`` numerics are not guaranteed
+          stable across any OpenCV release (the 4.x→5.0 cut already forced
+          golden regeneration). Full version is the space key independent of
+          how tightly the current pin is set — coarsening it would silently
+          merge two embedding spaces on the next bump that does move aligner
+          output.
         - onnxruntime: **major.minor only**. Pin is ``>=1.28.0,<2.0.0``;
           branch parity (1-cos ≤ 5e-12 between ORT and OpenCV embed paths)
           shows the ORT path is numerically interchangeable at this floor,

@@ -79,13 +79,13 @@ DEFAULT_SUGGESTION_FLOOR = 0.35  # ClusteringSettings.suggestion_floor
 DEFAULT_LOW_CONFIDENCE_BAND_WIDTH = 0.05  # ClusteringSettings.low_confidence_band_width
 
 
-def _decision_boundaries() -> tuple[float, float, float]:
-    """Return (effective_low_confidence_floor, suggestion_floor, suggestion_ceiling).
+def _decision_boundaries() -> tuple[float, float, float, str]:
+    """Return (effective_low_confidence_floor, suggestion_floor, suggestion_ceiling, source).
 
-    Live ``ClusteringSettings`` when importable; otherwise the three fallbacks
-    above (effective floor = suggestion_floor - band_width = 0.30). The
-    fallback must reproduce all three production boundaries — never collapse
-    to a single threshold.
+    Live ``ClusteringSettings`` when importable (source ``"settings"``); otherwise
+    the three fallbacks above (source ``"fallback"``, effective floor =
+    suggestion_floor - band_width = 0.30). The fallback must reproduce all three
+    production boundaries — never collapse to a single threshold.
     """
     try:
         from recognition.application.settings.clustering import ClusteringSettings
@@ -95,12 +95,18 @@ def _decision_boundaries() -> tuple[float, float, float]:
             s.effective_low_confidence_suggestion_floor,
             s.suggestion_floor,
             s.suggestion_ceiling,
+            "settings",
         )
-    except Exception:
+    except ImportError as exc:
         floor = DEFAULT_SUGGESTION_FLOOR
         width = DEFAULT_LOW_CONFIDENCE_BAND_WIDTH
         ceiling = DEFAULT_MATCH_THRESHOLD
-        return max(0.0, floor - width), floor, ceiling
+        print(
+            f"probe: ClusteringSettings unavailable ({exc}); "
+            f"using fallback boundaries floor={floor} width={width} ceiling={ceiling}",
+            file=sys.stderr,
+        )
+        return max(0.0, floor - width), floor, ceiling, "fallback"
 
 
 @dataclass(frozen=True)
@@ -265,8 +271,50 @@ def analyse(
     suggestion_band_floor: float,
 ) -> dict:
     pairs, unmatched_base, unmatched_cur = match_faces(base, cur, min_iou=min_iou)
-    bi = np.asarray([i for i, _ in pairs])
-    ci = np.asarray([j for _, j in pairs])
+    # Empty pairs → float64 np.asarray([]) and embeddings[bi] IndexError; return
+    # the normal stats shape so verdict can surface a corpus-mismatch FAIL.
+    if not pairs:
+        return {
+            "faces_matched": 0,
+            "faces_baseline": len(base.keys),
+            "faces_current": len(cur.keys),
+            "unmatched_baseline": [redact(k) for k in unmatched_base],
+            "unmatched_current": [redact(k) for k in unmatched_cur],
+            "match_iou_floor": min_iou,
+            "self_similarity": {"min": 0.0, "p05": 0.0, "median": 0.0},
+            "impostor": {
+                "pairs": 0,
+                "p95": None,
+                "max": None,
+                "definition": "cross-image pairs within the baseline pass; repeat subjects inflate the tail",
+            },
+            "match_threshold": suggestion_ceiling,
+            "suggestion_ceiling": suggestion_ceiling,
+            "suggestion_floor": suggestion_floor,
+            "suggestion_band_floor": suggestion_band_floor,
+            "decisive_nn_flips": [],
+            "suggestion_band_nn_flips": [],
+            "subthreshold_nn_flips": [],
+            "baseline": {
+                "opencv_version": base.opencv_version,
+                "numpy_version": base.numpy_version,
+                "corpus_digest": base.corpus_digest,
+            },
+            "current": {
+                "opencv_version": cur.opencv_version,
+                "numpy_version": cur.numpy_version,
+                "corpus_digest": cur.corpus_digest,
+            },
+            "corpus_digest_match": base.corpus_digest == cur.corpus_digest,
+            "ok": False,
+            "why": (
+                "zero faces matched across versions — corpus mismatch or detector "
+                "change moved every box below the IoU floor"
+            ),
+        }
+
+    bi = np.asarray([i for i, _ in pairs], dtype=int)
+    ci = np.asarray([j for _, j in pairs], dtype=int)
     be, ce = base.embeddings[bi], cur.embeddings[ci]
     images = [base.images[i] for i in bi]
     keys = [base.keys[i] for i in bi]
@@ -359,6 +407,8 @@ def analyse(
 
 def verdict(stats: dict) -> tuple[bool, str]:
     """Decision-safety verdict against production match / suggestion boundaries."""
+    if stats.get("ok") is False and stats.get("why"):
+        return False, str(stats["why"])
     reasons: list[str] = []
     if not stats["corpus_digest_match"]:
         reasons.append("baseline and current ran over different corpora")
@@ -399,15 +449,38 @@ def verdict(stats: dict) -> tuple[bool, str]:
     return True, "; ".join(parts)
 
 
-def render_report(stats: dict, ok: bool, why: str) -> str:
+def render_report(
+    stats: dict,
+    ok: bool,
+    why: str,
+    *,
+    boundary_source: str,
+    match_threshold_overridden: bool,
+    argv: list[str],
+) -> str:
     ss, im = stats["self_similarity"], stats["impostor"]
     ceiling = stats["suggestion_ceiling"]
     band_lo = stats["suggestion_band_floor"]
+    if match_threshold_overridden:
+        boundary_line = (
+            f"Decision boundaries: source={boundary_source}, suggestion_ceiling overridden "
+            f"via --match-threshold to {ceiling}"
+        )
+    elif boundary_source == "settings":
+        boundary_line = "Decision boundaries match production ClusteringSettings"
+    else:
+        boundary_line = (
+            f"Decision boundaries from hardcoded fallbacks (ClusteringSettings unavailable; source={boundary_source})"
+        )
+    impostor_p95 = "n/a" if im["p95"] is None else f"{im['p95']:.4f}"
+    impostor_max = "n/a" if im["max"] is None else f"{im['max']:.4f}"
     return "\n".join(
         [
             "# OpenCV version bump — embedding drift probe",
             "",
             f"Generated by `scripts/probe_opencv_embedding_drift.py compare`. Verdict: **{'PASS' if ok else 'FAIL'}** — {why}.",
+            "",
+            f"Invocation: `{' '.join(argv)}`",
             "",
             "| | |",
             "| --- | --- |",
@@ -417,14 +490,17 @@ def render_report(stats: dict, ok: bool, why: str) -> str:
             f"| faces matched | {stats['faces_matched']} of {stats['faces_baseline']} baseline / {stats['faces_current']} current |",
             f"| unmatched | {len(stats['unmatched_baseline'])} baseline, {len(stats['unmatched_current'])} current (IoU floor {stats['match_iou_floor']}) |",
             f"| cross-version self-similarity | min {ss['min']:.9f}, p05 {ss['p05']:.9f}, median {ss['median']:.9f} |",
-            f"| impostor cosine | p95 {im['p95']:.4f}, max {im['max']:.4f} over {im['pairs']} pairs |",
+            f"| impostor cosine | p95 {impostor_p95}, max {impostor_max} over {im['pairs']} pairs |",
             f"| NN flips at or above auto-accept ceiling {ceiling} | {len(stats['decisive_nn_flips'])} |",
             f"| NN flips in suggestion band [{band_lo}, {ceiling}) | {len(stats['suggestion_band_nn_flips'])} |",
             f"| NN flips below suggestion band ({band_lo}) | {len(stats['subthreshold_nn_flips'])} |",
+            f"| boundary source | {boundary_source}"
+            + (" (suggestion_ceiling CLI override)" if match_threshold_overridden else "")
+            + " |",
             "",
             f"Impostor band definition: {im['definition']}.",
             "",
-            "Decision boundaries match production ClusteringSettings: auto-accept at/above",
+            f"{boundary_line}: auto-accept at/above",
             f"suggestion_ceiling ({ceiling}), human-visible suggestions in",
             f"[{band_lo}, {ceiling}), reject below {band_lo}. Decisive flips fail the",
             "gate. Suggestion-band flips reorder which neighbour a reviewer sees and are",
@@ -481,8 +557,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"probe: {len(result.keys)} faces under OpenCV {result.opencv_version} -> {args.out}")
         return 0
 
-    band_floor, sug_floor, ceiling = _decision_boundaries()
-    if args.match_threshold is not None:
+    band_floor, sug_floor, ceiling, boundary_source = _decision_boundaries()
+    match_threshold_overridden = args.match_threshold is not None
+    if match_threshold_overridden:
         ceiling = args.match_threshold
 
     cur = run_pass(args.corpus, score_threshold=args.score_threshold)
@@ -502,7 +579,18 @@ def main(argv: list[str] | None = None) -> int:
             print(f"reveal {redact(key)} = {key}", file=sys.stderr)
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
-        args.report.write_text(render_report(stats, ok, why), encoding="utf-8")
+        report_argv = list(sys.argv if argv is None else [sys.argv[0], *argv])
+        args.report.write_text(
+            render_report(
+                stats,
+                ok,
+                why,
+                boundary_source=boundary_source,
+                match_threshold_overridden=match_threshold_overridden,
+                argv=report_argv,
+            ),
+            encoding="utf-8",
+        )
         print(f"probe: report -> {args.report}")
     print(json.dumps(stats, indent=2, sort_keys=True))
     print(f"probe: {'PASS' if ok else 'FAIL'} — {why}")

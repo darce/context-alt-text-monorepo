@@ -1,5 +1,5 @@
 import React from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -380,6 +380,225 @@ describe('useCorrectMediaAlt', () => {
     ).toBe(false);
   });
 
+  it('full success with non-empty alt patches status to complete [WBUX-5-BR-112]', async () => {
+    // Discrimination: before the fix only altText was patched; status stayed 'missing'.
+    correctMock.mockResolvedValue(successHistoryItem(42, 'Saved alt', 'Bridge'));
+    const client = buildClient();
+    seedWorkbench(client, null, { total: 5, totalPages: 3 });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+
+    result.current.mutate({ mediaId: 42, altText: 'Saved alt' });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const cached = client.getQueryData<WorkbenchMediaResponse>(missingPageKey);
+    const row = cached?.items.find((item) => item.id === 42);
+    expect(row?.altText).toBe('Saved alt');
+    expect(row?.status).toBe('complete');
+    // Envelope counts are server seed — never recomputed from one row [rg-015].
+    expect(cached?.total).toBe(5);
+    expect(cached?.totalPages).toBe(3);
+    assertEnvelopeHonest(cached, 5, 2);
+  });
+
+  it('full success with empty alt patches status back to missing [WBUX-5-BR-112]', async () => {
+    // Empty string is a legitimate stored value. A naive hard-code of
+    // status: 'complete' would pass the non-empty case and fail here.
+    correctMock.mockResolvedValue(successHistoryItem(42, '', 'Bridge'));
+    const client = buildClient();
+    // Seed complete so "back to missing" is observable (not a no-op stay).
+    const page = seedWorkbench(client, 'Prior alt', { total: 4, totalPages: 2 });
+    page.items[0] = { ...page.items[0], status: 'complete', altText: 'Prior alt' };
+    client.setQueryData(missingPageKey, page);
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+
+    result.current.mutate({ mediaId: 42, altText: '' });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const cached = client.getQueryData<WorkbenchMediaResponse>(missingPageKey);
+    const row = cached?.items.find((item) => item.id === 42);
+    expect(row?.altText).toBe('');
+    expect(row?.status).toBe('missing');
+    expect(cached?.total).toBe(4);
+    expect(cached?.totalPages).toBe(2);
+    assertEnvelopeHonest(cached, 4, 2);
+  });
+
+  it('full success with whitespace-only alt patches status to missing [WBUX-5-BR-112]', async () => {
+    // PHP: $has_alt = '' !== trim( $alt_text ). A naive altText !== '' would
+    // mark '   ' complete and pass wrongly. Seed complete so staying complete
+    // (no status patch, or hard-coded complete) fails the assertion.
+    correctMock.mockResolvedValue(successHistoryItem(42, '   ', 'Bridge'));
+    const client = buildClient();
+    const page = seedWorkbench(client, 'Prior alt', { total: 8, totalPages: 4 });
+    page.items[0] = { ...page.items[0], status: 'complete', altText: 'Prior alt' };
+    client.setQueryData(missingPageKey, page);
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+
+    result.current.mutate({ mediaId: 42, altText: '   ' });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const cached = client.getQueryData<WorkbenchMediaResponse>(missingPageKey);
+    const row = cached?.items.find((item) => item.id === 42);
+    expect(row?.altText).toBe('   ');
+    expect(row?.status).toBe('missing');
+    expect(cached?.total).toBe(8);
+    expect(cached?.totalPages).toBe(4);
+    assertEnvelopeHonest(cached, 8, 2);
+  });
+
+  it('partial failure patches status from stored_alt_text [WBUX-5-BR-112]', async () => {
+    correctMock.mockRejectedValueOnce(
+      partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: 'Partial-saved alt' }),
+    );
+    const client = buildClient();
+    seedWorkbench(client, null, { total: 6, totalPages: 2 });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+
+    result.current.mutate({ mediaId: 42, altText: 'Partial-saved alt' });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    const cached = client.getQueryData<WorkbenchMediaResponse>(missingPageKey);
+    const row = cached?.items.find((item) => item.id === 42);
+    expect(row?.altText).toBe('Partial-saved alt');
+    expect(row?.status).toBe('complete');
+    expect(cached?.total).toBe(6);
+    expect(cached?.totalPages).toBe(2);
+    assertEnvelopeHonest(cached, 6, 2);
+  });
+
+  it('partial failure with blank stored_alt_text patches status to missing [WBUX-5-BR-112]', async () => {
+    correctMock.mockRejectedValueOnce(
+      partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: '' }),
+    );
+    const client = buildClient();
+    const page = seedWorkbench(client, 'Prior honest alt', { total: 3, totalPages: 1 });
+    page.items[0] = { ...page.items[0], status: 'complete', altText: 'Prior honest alt' };
+    client.setQueryData(missingPageKey, page);
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+
+    result.current.mutate({ mediaId: 42, altText: '   ' });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    const cached = client.getQueryData<WorkbenchMediaResponse>(missingPageKey);
+    const row = cached?.items.find((item) => item.id === 42);
+    expect(row?.altText).toBe('');
+    expect(row?.status).toBe('missing');
+    expect(cached?.total).toBe(3);
+    expect(cached?.totalPages).toBe(1);
+    assertEnvelopeHonest(cached, 3, 2);
+  });
+
+  it('partial without stored_alt_text leaves cache status and alt untouched [WBUX-5-BR-112]', async () => {
+    correctMock.mockRejectedValueOnce(partialError(PARTIAL_MESSAGE, { status: 500 }));
+    const client = buildClient();
+    const page = seedWorkbench(client, 'Prior honest alt', { total: 7, totalPages: 3 });
+    page.items[0] = { ...page.items[0], status: 'complete', altText: 'Prior honest alt' };
+    client.setQueryData(missingPageKey, page);
+    const before = client.getQueryData<WorkbenchMediaResponse>(missingPageKey);
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+
+    result.current.mutate({ mediaId: 42, altText: 'Would fabricate' });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    const cached = client.getQueryData<WorkbenchMediaResponse>(missingPageKey);
+    const row = cached?.items.find((item) => item.id === 42);
+    expect(row?.altText).toBe('Prior honest alt');
+    expect(row?.status).toBe('complete');
+    // Same object reference — null-only gate skipped the write entirely.
+    expect(cached).toBe(before);
+    expect(cached?.total).toBe(7);
+    expect(cached?.totalPages).toBe(3);
+    assertEnvelopeHonest(cached, 7, 2);
+  });
+
+  it('successful correction does not invalidate or refetch the workbench list query [WBUX-5-BR-112][RLSE-04]', async () => {
+    // Regression pin: do not "fix" stale status by invalidateQueries(workbench).
+    // Observe query-client state — not a spy on an internal helper.
+    // If the list were invalidated+refetched under status=missing, the server
+    // would drop the corrected row; the trap response below encodes that.
+    correctMock.mockResolvedValue(successHistoryItem(42, 'Saved alt', 'Bridge'));
+    fetchWorkbenchMock.mockImplementation((params) => {
+      if (params.status === 'missing' && params.perPage === 20) {
+        return Promise.resolve({
+          items: [
+            {
+              id: 99,
+              title: 'Other',
+              status: 'missing' as const,
+              thumbnailUrl: null,
+              altText: null,
+              editUrl: null,
+              tags: [],
+            },
+          ],
+          total: 1,
+          totalPages: 1,
+        });
+      }
+      if (params.status === 'missing' && params.perPage === 1) {
+        return Promise.resolve(statsEnvelope(6));
+      }
+      return Promise.resolve(statsEnvelope(20));
+    });
+
+    const client = buildClient();
+    seedWorkbench(client, null);
+    const wrapper = createWrapper(client);
+
+    // Active list observer with a real queryFn so invalidateQueries would refetch.
+    // Seeded setQueryData is already in cache; do not refetch on mount — only an
+    // invalidation (or explicit refetch) should hit queryFn / fetchWorkbenchMedia.
+    const { result: listResult } = renderHook(
+      () =>
+        useQuery({
+          queryKey: missingPageKey,
+          queryFn: () =>
+            workbenchMediaApi.fetchWorkbenchMedia({ page: 1, perPage: 20, status: 'missing' }),
+          staleTime: Infinity,
+          refetchOnMount: false,
+          refetchOnWindowFocus: false,
+        }),
+      { wrapper },
+    );
+
+    // Also mount stats so invalidateMediaStats can run without affecting the list key.
+    renderHook(() => useMediaStats(), { wrapper });
+
+    const stateBefore = client.getQueryState(missingPageKey);
+    expect(stateBefore?.isInvalidated).not.toBe(true);
+    const listFetchesBefore = fetchWorkbenchMock.mock.calls.filter(
+      (call) => call[0].page === 1 && call[0].perPage === 20 && call[0].status === 'missing',
+    ).length;
+
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper });
+    result.current.mutate({ mediaId: 42, altText: 'Saved alt' });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    // Allow any accidental list refetch to schedule.
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    const stateAfter = client.getQueryState(missingPageKey);
+    // Observable query-client state: list page is not marked invalidated/stale-by-invalidation.
+    expect(stateAfter?.isInvalidated).not.toBe(true);
+    expect(stateAfter?.status).toBe('success');
+    expect(stateAfter?.fetchStatus).toBe('idle');
+    expect(listResult.current.isFetching).toBe(false);
+
+    const cached = client.getQueryData<WorkbenchMediaResponse>(missingPageKey);
+    // Corrected row object still in the cache (would be absent after a missing-list refetch).
+    const row = cached?.items.find((item) => item.id === 42);
+    expect(row).toBeDefined();
+    expect(row?.altText).toBe('Saved alt');
+    expect(row?.status).toBe('complete');
+    expect(cached?.items.map((item) => item.id).sort((a, b) => a - b)).toEqual([42, 99]);
+    expect(cached?.total).toBe(2);
+
+    const listFetchesAfter = fetchWorkbenchMock.mock.calls.filter(
+      (call) => call[0].page === 1 && call[0].perPage === 20 && call[0].status === 'missing',
+    ).length;
+    expect(listFetchesAfter).toBe(listFetchesBefore);
+    assertEnvelopeHonest(cached, 2);
+  });
+
   it('reconciles cached workbench alt text on description_correction_partial without invalidating [WBUX-5-BR-51]', async () => {
     const partialMessage =
       'Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.';
@@ -400,9 +619,10 @@ describe('useCorrectMediaAlt', () => {
     expect(cached?.items.find((item) => item.id === 42)?.altText).toBe('Partial-saved alt');
     // Sibling row untouched.
     expect(cached?.items.find((item) => item.id === 99)?.altText).toBeNull();
-    // Row still present (status not rewritten; no tree invalidation).
+    // Row still present (no tree invalidation). Status derived from stored alt
+    // (non-empty → complete) — same rule as full success [WBUX-5-BR-112].
     expect(cached?.items).toHaveLength(2);
-    expect(cached?.items.find((item) => item.id === 42)?.status).toBe('missing');
+    expect(cached?.items.find((item) => item.id === 42)?.status).toBe('complete');
     assertEnvelopeHonest(cached, 2);
     expect(invalidateSpy).not.toHaveBeenCalled();
 

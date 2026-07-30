@@ -8,7 +8,7 @@ import {
   type DescriptionHistoryItem,
 } from '../api/describeApi';
 import { queryKeys } from '../api/queryKeys';
-import type { WorkbenchMediaResponse } from '../api/workbenchMediaApi';
+import type { WorkbenchMediaItem, WorkbenchMediaResponse } from '../api/workbenchMediaApi';
 import { invalidateMediaStats } from './useMediaStats';
 
 interface CorrectMediaAltVariables {
@@ -17,9 +17,26 @@ interface CorrectMediaAltVariables {
 }
 
 /**
- * Patch one media row's altText across every cached workbench page, without
- * touching total / totalPages / status. Envelope fields stay server truth
+ * Derive workbench row status from server-returned alt text.
+ *
+ * Mirrors class-description-candidate-service.php:153 —
+ *   `$has_alt = '' !== trim( $alt_text );`
+ * Non-empty after trim → 'complete'; empty/whitespace-only → 'missing'.
+ * This is a documented derivation from authoritative per-row server data
+ * (same response body that supplies altText), not fabricated contract
+ * metadata [rg-015][WBUX-5-BR-112].
+ */
+const statusFromServerAlt = (altText: string): WorkbenchMediaItem['status'] =>
+  '' !== altText.trim() ? 'complete' : 'missing';
+
+/**
+ * Patch one media row's altText and status across every cached workbench page,
+ * without touching total / totalPages. Envelope counts stay server truth
  * [rg-015]; the row stays mounted until a natural refetch (no list invalidate).
+ *
+ * status is derived from the server-returned alt via statusFromServerAlt (PHP
+ * line 153 rule above) so a successful correction no longer leaves
+ * status:'missing' forever on the Status=missing workbench [WBUX-5-BR-112].
  *
  * Used by both full success (from DescriptionHistoryItem.current_alt_text) and
  * partial failure (from server-reported stored_alt_text). Sibling traffic must
@@ -38,9 +55,12 @@ const patchWorkbenchRowAlt = (queryClient: QueryClient, mediaId: number, altText
     if (index < 0) {
       continue;
     }
+    const status = statusFromServerAlt(altText);
     queryClient.setQueryData<WorkbenchMediaResponse>(queryKey, {
       ...data,
-      items: data.items.map((item) => (item.id === mediaId ? { ...item, altText } : item)),
+      items: data.items.map((item) =>
+        item.id === mediaId ? { ...item, altText, status } : item,
+      ),
     });
   }
 };

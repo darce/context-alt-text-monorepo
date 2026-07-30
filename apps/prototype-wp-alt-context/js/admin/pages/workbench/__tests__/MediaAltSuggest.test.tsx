@@ -4,7 +4,7 @@ import type { ReactElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MediaAltInlineEditor } from '../MediaAltInlineEditor';
-import { MediaAltSuggest } from '../MediaAltSuggest';
+import { MediaAltSuggest, RECOMMENDED_ALT_TEXT_MAX_LENGTH } from '../MediaAltSuggest';
 import { correctDescriptionHistoryItem, describeMedia } from '../../../api/describeApi';
 import type { DescriptionHistoryItem, VisualFactsResponse } from '../../../api/describeApi';
 
@@ -1634,5 +1634,228 @@ describe('MediaAltSuggest', () => {
     // Region stays mounted (BR-32); cue text clears so a later inline-editor
     // save status on the same row is not colliding with a sticky "Alt text saved."
     await waitFor(() => expect(screen.getByTestId('media-alt-suggest-status')).toHaveTextContent(''));
+  });
+
+  // --- S2c-3c (part i): automatic length advisory after generation [A11Y-34] ---
+  // Branch (c): the tool checks accessibility of the actual draft string after
+  // generation and surfaces a non-blocking advisory. WCAG does not specify a
+  // max alt length; the threshold is a recommended practical maximum.
+  // Boundary decision: exclusive of the threshold — length > RECOMMENDED is
+  // over; exactly RECOMMENDED is still within the recommendation.
+
+  /** Comfortably under the recommended maximum (the default fixture draft). */
+  const underThresholdDraft = draft;
+  /** Exactly at the recommended maximum — must NOT warn (inclusive upper bound). */
+  const atThresholdDraft = 'A'.repeat(RECOMMENDED_ALT_TEXT_MAX_LENGTH);
+  /** One character past the recommended maximum — must warn. */
+  const overThresholdDraft = 'A'.repeat(RECOMMENDED_ALT_TEXT_MAX_LENGTH + 1);
+  /** Clearly over so length figures are unambiguous in copy. */
+  const longGeneratedDraft = 'A'.repeat(200);
+
+  /**
+   * Visible length advisory only — not the polite status cue, which reuses
+   * "recommended maximum" wording for SR parity on the same over-length path.
+   */
+  const getVisibleLengthAdvisory = (): HTMLElement => {
+    const node = document.querySelector('.acx-media-selection__media-alt-length-advisory');
+    if (!(node instanceof HTMLElement)) {
+      throw new Error('expected visible length advisory element');
+    }
+    return node;
+  };
+
+  const queryVisibleLengthAdvisory = (): HTMLElement | null => {
+    const node = document.querySelector('.acx-media-selection__media-alt-length-advisory');
+    return node instanceof HTMLElement ? node : null;
+  };
+
+  it('surfaces a length advisory naming actual length and threshold on an over-length generated draft [A11Y-34][S2c-3c]', async () => {
+    describeMock.mockResolvedValue(sampleResponse(longGeneratedDraft));
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await screen.findByText(longGeneratedDraft);
+
+    // [TEST-15] discrimination: goes red if no length check runs after generation
+    // — the draft is shown with only the static "Drafted by AI" sentence, which
+    // is branch (d) alone and gives the author no numbers for *this* draft.
+    const advisory = getVisibleLengthAdvisory();
+    expect(advisory).toHaveTextContent('200');
+    expect(advisory).toHaveTextContent(String(RECOMMENDED_ALT_TEXT_MAX_LENGTH));
+    expect(advisory).toHaveTextContent(/recommended maximum/i);
+    // Honesty: must not invent a WCAG maximum that does not exist.
+    expect(advisory).not.toHaveTextContent(/wcag/i);
+    expect(advisory).not.toHaveTextContent(/violat/i);
+    expect(advisory).not.toHaveTextContent(/1\.1\.1/);
+    // Advisory tells the author what to do, not only that something is long.
+    expect(advisory).toHaveTextContent(/shorten|consider|cut/i);
+  });
+
+  it('does not show a length advisory for a draft under the recommended maximum [A11Y-34][S2c-3c]', async () => {
+    describeMock.mockResolvedValue(sampleResponse(underThresholdDraft));
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await screen.findByText(underThresholdDraft);
+
+    // [TEST-15] discrimination: goes red if the advisory always renders — a
+    // checker that always warns is not a checker.
+    expect(queryVisibleLengthAdvisory()).toBeNull();
+  });
+
+  it('treats exactly the recommended maximum as within bounds and threshold+1 as over [A11Y-34][S2c-3c][boundary]', async () => {
+    // Boundary decision (exclusive over): length > RECOMMENDED warns;
+    // length === RECOMMENDED does not. Pin both sides of the edge.
+    describeMock.mockResolvedValueOnce(sampleResponse(atThresholdDraft));
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await screen.findByText(atThresholdDraft);
+    expect(queryVisibleLengthAdvisory()).toBeNull();
+
+    // Fresh surface for the over side (reset via Dismiss → Suggest).
+    fireEvent.click(screen.getByRole('button', { name: /dismiss/i }));
+    await screen.findByRole('button', { name: /suggest alt text/i });
+    describeMock.mockResolvedValueOnce(sampleResponse(overThresholdDraft));
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await screen.findByText(overThresholdDraft);
+
+    const advisory = getVisibleLengthAdvisory();
+    expect(advisory).toHaveTextContent(String(RECOMMENDED_ALT_TEXT_MAX_LENGTH + 1));
+    expect(advisory).toHaveTextContent(String(RECOMMENDED_ALT_TEXT_MAX_LENGTH));
+  });
+
+  it('re-evaluates the length advisory live as the author types in edit mode [A11Y-34][S2c-3c]', async () => {
+    describeMock.mockResolvedValue(sampleResponse(underThresholdDraft));
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
+    const field = await screen.findByLabelText(/edit draft alt text/i);
+
+    // Starts under — no advisory on the commit candidate.
+    expect(queryVisibleLengthAdvisory()).toBeNull();
+
+    // Type past the threshold: notice must appear for the string the author would commit.
+    fireEvent.change(field, { target: { value: overThresholdDraft } });
+    expect(getVisibleLengthAdvisory()).toBeInTheDocument();
+    expect(getVisibleLengthAdvisory()).toHaveTextContent(String(RECOMMENDED_ALT_TEXT_MAX_LENGTH + 1));
+
+    // Trim back under: notice must disappear (live re-evaluation, not one-shot).
+    fireEvent.change(field, { target: { value: underThresholdDraft } });
+    expect(queryVisibleLengthAdvisory()).toBeNull();
+
+    // [TEST-15] discrimination: goes red if the check only runs on generation
+    // (editDraft ignored) or only once (no re-eval on change).
+  });
+
+  it('keeps Accept enabled while the length advisory is showing [A11Y-36][S2c-3c]', async () => {
+    describeMock.mockResolvedValue(sampleResponse(longGeneratedDraft));
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await screen.findByText(longGeneratedDraft);
+    expect(getVisibleLengthAdvisory()).toBeInTheDocument();
+
+    // [TEST-15] discrimination: goes red if Accept is gated on length — a
+    // checker that refuses to let the author proceed is worse than no check.
+    // Long alt text is sometimes right; [A11Y-36] keeps accept/modify/reject
+    // with the author.
+    expect(screen.getByRole('button', { name: /^accept$/i })).not.toBeDisabled();
+  });
+
+  it('keeps Save enabled while the length advisory is showing in edit mode [A11Y-36][S2c-3c]', async () => {
+    describeMock.mockResolvedValue(sampleResponse(underThresholdDraft));
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
+    const field = await screen.findByLabelText(/edit draft alt text/i);
+    fireEvent.change(field, { target: { value: overThresholdDraft } });
+    expect(getVisibleLengthAdvisory()).toBeInTheDocument();
+
+    // [TEST-15] discrimination: goes red if Save is gated on length.
+    expect(screen.getByRole('button', { name: /^save alt text$/i })).not.toBeDisabled();
+  });
+
+  it('references the length advisory from the edit textarea aria-describedby [a11y][A11Y-34][S2c-3c]', async () => {
+    describeMock.mockResolvedValue(sampleResponse(longGeneratedDraft));
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
+    const field = await screen.findByLabelText(/edit draft alt text/i);
+
+    const describedBy = field.getAttribute('aria-describedby');
+    expect(describedBy).toBeTruthy();
+    const descriptionText = (describedBy ?? '')
+      .split(/\s+/)
+      .map((id) => document.getElementById(id)?.textContent ?? '')
+      .join(' ');
+    // [TEST-15] discrimination: goes red if editDescribedBy is not extended with
+    // the advisory id — sighted authors see the notice; SR authors only get
+    // disclosure. Composition must keep the disclosure (and error when set).
+    expect(descriptionText).toMatch(/drafted by ai/i);
+    expect(descriptionText).toMatch(/recommended maximum/i);
+    expect(descriptionText).toMatch(/200/);
+  });
+
+  it('keeps the save-error id in aria-describedby alongside the length advisory [a11y][S2c-3c]', async () => {
+    describeMock.mockResolvedValue(sampleResponse(longGeneratedDraft));
+    correctMock.mockRejectedValueOnce(
+      new Error(
+        'Request to /wp-json/acx/v1/recognition/describe-history/42/correction failed (502): <html>proxy-internal-detail</html>',
+      ),
+    );
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^save alt text$/i }));
+    await screen.findByRole('alert');
+
+    const field = screen.getByLabelText(/edit draft alt text/i);
+    const describedBy = field.getAttribute('aria-describedby');
+    expect(describedBy).toBeTruthy();
+    const descriptionText = (describedBy ?? '')
+      .split(/\s+/)
+      .map((id) => document.getElementById(id)?.textContent ?? '')
+      .join(' ');
+    // [TEST-15] discrimination: goes red if length advisory *replaces*
+    // editDescribedBy instead of extending it — error id drops out of the list.
+    expect(descriptionText).toMatch(/drafted by ai/i);
+    expect(descriptionText).toMatch(/recommended maximum/i);
+    expect(descriptionText).toMatch(/could not save|couldn.?t save|unable to save/i);
+  });
+
+  it('announces the length advisory once via the existing polite status region when a long draft lands [a11y][A11Y-19][S2c-3c]', async () => {
+    describeMock.mockResolvedValue(sampleResponse(longGeneratedDraft));
+    renderSuggest(<MediaAltSuggest mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await screen.findByText(longGeneratedDraft);
+
+    const status = screen.getByTestId('media-alt-suggest-status');
+    // Composed with or following the ready cue — SR users get the numbers without
+    // a second live region ([A11Y-19] / BR-32 / BR-37).
+    await waitFor(() => {
+      expect(status).toHaveTextContent(/ready/i);
+      expect(status).toHaveTextContent(/200/);
+      expect(status).toHaveTextContent(String(RECOMMENDED_ALT_TEXT_MAX_LENGTH));
+    });
+    // Exactly one role="status" in this component's output on the over-length path.
+    // [TEST-15] discrimination: goes red if a second live region is added for the
+    // advisory (e.g. role="status" on the notice) or if announceStatus is skipped
+    // for long drafts.
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+    // Not an alert — assertive channel is for save failures.
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('exports a single named recommended-max constant used as the threshold [S2c-3c]', () => {
+    // [TEST-15] discrimination: goes red if the literal is scattered / the export
+    // is dropped — callers and tests share one named source of truth.
+    expect(RECOMMENDED_ALT_TEXT_MAX_LENGTH).toBe(125);
+    expect(Number.isInteger(RECOMMENDED_ALT_TEXT_MAX_LENGTH)).toBe(true);
   });
 });

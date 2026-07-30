@@ -14,12 +14,18 @@ ssh/scp on PATH so no VM is required.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
+from urllib.parse import urlparse
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "deploy" / "recognition-service.sh"
 SCRIPT_TEXT = SCRIPT.read_text()
+SERVICE_DIR = REPO_ROOT / "apps" / "prototype-description-service"
+CADDYFILE = SERVICE_DIR / "Caddyfile"
+CADDY_COMPOSE = SERVICE_DIR / "docker-compose.caddy.yml"
+ENV_FIR_EXAMPLE = SERVICE_DIR / ".env.fir.example"
 
 
 def _fake_ssh_bin(tmp_path: Path) -> Path:
@@ -94,6 +100,87 @@ def test_dev_fir_env_mappings() -> None:
     )
 
 
+def _parse_env_example_key(text: str, key: str) -> str:
+    """Return the value of KEY= from a dotenv-style file (first match)."""
+    for line in text.splitlines():
+        if line.startswith(f"{key}="):
+            return line.split("=", 1)[1].strip().strip("'\"")
+    raise AssertionError(f"{key} not found in env example")
+
+
+def _caddy_site_block_for_host(caddyfile: str, host: str) -> str:
+    """Extract the Caddy site block whose address list includes host.
+
+    Fails if no site address line names the host (vhost missing).
+    """
+    lines = caddyfile.splitlines()
+    start: int | None = None
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        # Site address lines end with "{" and list hosts (comma-separated).
+        if stripped.endswith("{"):
+            addresses = stripped[:-1].strip()
+            host_tokens = [h.strip() for h in addresses.split(",")]
+            if host in host_tokens:
+                start = i
+                break
+    assert start is not None, f"Caddyfile has no vhost for host {host!r}"
+    depth = 0
+    block_lines: list[str] = []
+    for line in lines[start:]:
+        block_lines.append(line)
+        depth += line.count("{") - line.count("}")
+        if depth == 0:
+            break
+    return "\n".join(block_lines)
+
+
+def test_dev_fir_ready_url_routable_via_caddy() -> None:
+    """Ready URL host must be a Caddy vhost whose upstream network Caddy joins.
+
+    Host is taken from env_to_ready_url (script); network from .env.fir.example
+    (ACX_NETWORK_NAME). Neither is hard-coded as a parallel expected string, so
+    a missing vhost or missing network attachment fails this test (C1+C3).
+    """
+    ready_url = _source_env_map("env_to_ready_url", "dev-fir")
+    host = urlparse(ready_url).hostname
+    assert host, f"could not parse host from ready URL {ready_url!r}"
+
+    caddyfile = CADDYFILE.read_text()
+    site_block = _caddy_site_block_for_host(caddyfile, host)
+
+    fir_env = ENV_FIR_EXAMPLE.read_text()
+    acx_env = _parse_env_example_key(fir_env, "ACX_ENV")
+    network = _parse_env_example_key(fir_env, "ACX_NETWORK_NAME")
+    expected_upstream = f"{acx_env}-api:8000"
+    assert (
+        f"reverse_proxy {expected_upstream}" in site_block
+    ), f"vhost {host} must reverse_proxy to {expected_upstream} (compose alias ${{ACX_ENV}}-api)"
+
+    compose = CADDY_COMPOSE.read_text()
+    # Caddy service must attach to the network the fir upstream lives on.
+    # Parse the services.caddy.networks list only (not a free-text greps-anywhere).
+    caddy_svc = re.search(
+        r"(?ms)^  caddy:\n(.*?)(?=^  \w|\Z)",
+        compose,
+    )
+    assert caddy_svc, "docker-compose.caddy.yml missing caddy service"
+    nets_match = re.search(r"(?ms)^\s+networks:\n((?:^\s+-\s+\S+\n)+)", caddy_svc.group(1))
+    assert nets_match, "caddy service has no networks list"
+    caddy_nets = re.findall(r"-\s+(\S+)", nets_match.group(1))
+    assert network in caddy_nets, (
+        f"caddy is not attached to {network} (fir stack network from "
+        f".env.fir.example ACX_NETWORK_NAME); attached={caddy_nets}"
+    )
+    # External network declaration must exist so compose can join it.
+    assert re.search(
+        rf"(?m)^\s*{re.escape(network)}:\n\s+external:\s+true",
+        compose,
+    ), f"{network} must be declared external: true under top-level networks"
+
+
 def test_dev_fir_remote_dir_basename_matches_env() -> None:
     # systemd template hardcodes WorkingDirectory=/opt/acx-backend/{{ENV}};
     # remote dir basename MUST equal the ENV token (not a short alias like "fir").
@@ -160,6 +247,131 @@ def test_caddy_edge_not_reshipped_by_converge() -> None:
     converge_body = SCRIPT_TEXT[start:end]
     for caddy_token in ("Caddyfile", "docker-compose.caddy.yml", "acx-caddy"):
         assert caddy_token not in converge_body, f"converge_runtime must not reship {caddy_token}"
+
+
+# ---- face_pipeline models deploy preflight (FIR stack) -----------------
+
+
+def test_defines_face_pipeline_models_preflight() -> None:
+    assert "preflight_remote_face_pipeline_models()" in SCRIPT_TEXT
+    # Weights stay excluded from rsync; preflight is the gate, not bake-in.
+    assert (
+        "--exclude='recognition/infrastructure/face_pipeline/models/*.onnx'"
+        in SCRIPT_TEXT
+    )
+    assert "face_detection_yunet_2026may.onnx" in SCRIPT_TEXT
+    assert "face_recognition_sface_2021dec.onnx" in SCRIPT_TEXT
+
+
+def test_deploy_calls_face_pipeline_preflight_before_build() -> None:
+    deploy = SCRIPT_TEXT.split("do_deploy()", 1)[1].split("do_promote()", 1)[0]
+    # Read-only --check path returns early; the mutation path must preflight models.
+    assert "preflight_remote_face_pipeline_models" in deploy
+    assert deploy.index("preflight_remote_face_pipeline_models") < deploy.index(
+        "do_build"
+    )
+
+
+def _run_face_pipeline_preflight(
+    env_arg: str, tmp_path: Path, ssh_script: str
+) -> subprocess.CompletedProcess[str]:
+    """Source the deploy script and run the models preflight with a fake ssh."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "ssh").write_text(ssh_script)
+    (bindir / "ssh").chmod(0o755)
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"}
+    return subprocess.run(
+        [
+            "/bin/bash",
+            "-c",
+            f'source "{SCRIPT}"; preflight_remote_face_pipeline_models {env_arg}',
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+
+def test_face_pipeline_preflight_skips_non_fir(tmp_path: Path) -> None:
+    # Non-fir envs must not require face_pipeline ONNX on the host.
+    proc = _run_face_pipeline_preflight(
+        "dev",
+        tmp_path,
+        "#!/bin/sh\necho 'ssh should not run for non-fir' >&2\nexit 99\n",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_face_pipeline_preflight_fails_when_models_dir_missing(tmp_path: Path) -> None:
+    # Fail closed: missing/unreadable dir is a failure (never a silent pass).
+    ssh = r"""#!/bin/sh
+if echo "$*" | grep -q "ACX_MODELS_PATH"; then
+  # Remote .env value only (preflight runs grep|cut|tr on the host).
+  echo "/opt/acx-backend/data/dev-fir-models"
+  exit 0
+fi
+# Remote bash -s body: directory missing/unreadable.
+cat >/dev/null
+echo "DIR_FAIL:/opt/acx-backend/data/dev-fir-models/face_pipeline"
+exit 1
+"""
+    proc = _run_face_pipeline_preflight("dev-fir", tmp_path, ssh)
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0, combined
+    assert "face_pipeline" in combined
+    assert "missing or unreadable" in combined.lower()
+    assert "/opt/acx-backend/data/dev-fir-models/face_pipeline" in combined
+
+
+def test_face_pipeline_preflight_fails_when_onnx_missing(tmp_path: Path) -> None:
+    ssh = r"""#!/bin/sh
+if echo "$*" | grep -q "ACX_MODELS_PATH"; then
+  echo "/opt/acx-backend/data/dev-fir-models"
+  exit 0
+fi
+cat >/dev/null
+echo "FILE_FAIL:face_recognition_sface_2021dec.onnx:/opt/acx-backend/data/dev-fir-models/face_pipeline"
+exit 1
+"""
+    proc = _run_face_pipeline_preflight("dev-fir", tmp_path, ssh)
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0, combined
+    assert "face_recognition_sface_2021dec.onnx" in combined
+    assert "/opt/acx-backend/data/dev-fir-models/face_pipeline" in combined
+
+
+def test_face_pipeline_preflight_fails_when_models_path_unset(tmp_path: Path) -> None:
+    ssh = r"""#!/bin/sh
+# Empty ACX_MODELS_PATH (missing key) must fail closed.
+if echo "$*" | grep -q "ACX_MODELS_PATH"; then
+  echo ""
+  exit 0
+fi
+exit 0
+"""
+    proc = _run_face_pipeline_preflight("dev-fir", tmp_path, ssh)
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0, combined
+    assert "ACX_MODELS_PATH" in combined
+
+
+def test_face_pipeline_preflight_passes_when_models_present(tmp_path: Path) -> None:
+    ssh = r"""#!/bin/sh
+if echo "$*" | grep -q "ACX_MODELS_PATH"; then
+  echo "/opt/acx-backend/data/dev-fir-models"
+  exit 0
+fi
+cat >/dev/null
+echo "OK"
+exit 0
+"""
+    proc = _run_face_pipeline_preflight("dev-fir", tmp_path, ssh)
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 0, combined
+    assert "face_pipeline ONNX weights present" in combined
 
 
 # ---- behavioral (hermetic) ---------------------------------------------

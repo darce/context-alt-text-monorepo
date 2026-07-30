@@ -198,6 +198,67 @@ preflight_branch_synced() {
   fi
 }
 
+# FIR stack shares the :dev image and volume-mounts YuNet+SFace ONNX (not baked
+# in; rsync excludes them). Deploy must fail closed if the host volume is empty.
+# Filenames match recognition/infrastructure/face_pipeline/provenance.py MODEL_MANIFEST.
+FACE_PIPELINE_ONNX_FILES=(
+  face_detection_yunet_2026may.onnx
+  face_recognition_sface_2021dec.onnx
+)
+
+preflight_remote_face_pipeline_models() {
+  local env="$1"
+  # Only dev-fir uses the face_pipeline profile with host-mounted weights.
+  [[ "$env" == "dev-fir" ]] || return 0
+
+  local remote_dir models_path models_dir f remote_out
+  remote_dir="$(env_to_remote_dir "$env")"
+
+  models_path="$(ssh -o BatchMode=yes -o ConnectTimeout=5 "${SSH_TARGET}" \
+    "grep -E '^ACX_MODELS_PATH=' '${remote_dir}/.env' 2>/dev/null | tail -1 | cut -d= -f2- | tr -d \"\\\"' \"" \
+    || true)"
+  if [[ -z "${models_path}" ]]; then
+    fail "ACX_MODELS_PATH missing or unreadable in ${remote_dir}/.env on ${SSH_TARGET}; cannot verify face_pipeline models"
+  fi
+
+  models_dir="${models_path}/face_pipeline"
+  # Single remote check: missing/unreadable dir or any missing ONNX is failure.
+  # Prints the first missing file and the path looked in so the operator knows
+  # what to place (scripts/fetch_face_pipeline_models.py --dest <dir>).
+  remote_out="$(ssh -o BatchMode=yes -o ConnectTimeout=5 "${SSH_TARGET}" \
+    "bash -s" <<REMOTE || true
+set -euo pipefail
+models_dir='${models_dir}'
+if [[ ! -d "\${models_dir}" ]] || [[ ! -r "\${models_dir}" ]]; then
+  echo "DIR_FAIL:\${models_dir}"
+  exit 1
+fi
+for f in ${FACE_PIPELINE_ONNX_FILES[*]}; do
+  if [[ ! -f "\${models_dir}/\${f}" ]] || [[ ! -r "\${models_dir}/\${f}" ]]; then
+    echo "FILE_FAIL:\${f}:\${models_dir}"
+    exit 1
+  fi
+done
+echo OK
+REMOTE
+)"
+
+  if [[ "${remote_out}" == "OK" ]]; then
+    log "face_pipeline ONNX weights present under ${models_dir}"
+    return 0
+  fi
+  if [[ "${remote_out}" == DIR_FAIL:* ]]; then
+    fail "face_pipeline models directory missing or unreadable: ${remote_out#DIR_FAIL:} on ${SSH_TARGET}"
+  fi
+  if [[ "${remote_out}" == FILE_FAIL:* ]]; then
+    local miss_file miss_dir
+    miss_file="$(printf '%s' "${remote_out#FILE_FAIL:}" | cut -d: -f1)"
+    miss_dir="$(printf '%s' "${remote_out#FILE_FAIL:}" | cut -d: -f2-)"
+    fail "missing face_pipeline ONNX weight ${miss_file} under ${miss_dir} on ${SSH_TARGET}"
+  fi
+  fail "face_pipeline models preflight failed for ${env} (looked under ${models_dir} on ${SSH_TARGET}): ${remote_out:-no remote response}"
+}
+
 #---------------------------------------------------------------- build
 do_build() {
   preflight_docker
@@ -479,6 +540,7 @@ do_deploy() {
   fi
 
   preflight_ssh
+  preflight_remote_face_pipeline_models "$env"
   preflight_git_clean "$env"
   preflight_branch_synced "$env"
 

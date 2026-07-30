@@ -1,14 +1,34 @@
 import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
-import type { ClusterIdentity } from '../../api/recognition';
 import type { MediaMeta } from '../../api/mediaApi';
 
+/**
+ * Structural minimum IdentityThumbnail actually reads.
+ * ClusterIdentity satisfies this (extra fields are fine).
+ * RosterEntryInstance is adapted at the call site to this shape — we do not
+ * fabricate a ClusterIdentity [rg-015].
+ */
+export interface ThumbnailIdentity {
+  media_id: number;
+  identity_id?: string;
+  thumb_url?: string | null;
+  /** Full-media URL when no dedicated thumb_url (RosterEntryInstance path). */
+  media_url?: string | null;
+  /** Object-form bbox only (ClusterIdentity). Array-form roster bboxes are omitted. */
+  bbox?: { x: number; y: number; width: number; height: number } | null;
+}
+
 export interface IdentityThumbnailProps {
-  identity: ClusterIdentity;
+  identity: ThumbnailIdentity;
   mediaMeta?: MediaMeta;
   size?: number;
   onClick?: () => void;
+  /**
+   * Override alt text. Pass "" when the thumbnail is decorative beside a name
+   * label already present in the row [A11Y-21].
+   */
+  alt?: string;
 }
 
 const PADDING_RATIO = 0.15;
@@ -18,27 +38,29 @@ export const IdentityThumbnail = ({
   mediaMeta,
   size = 96,
   onClick,
+  alt,
 }: IdentityThumbnailProps): React.JSX.Element => {
   const [croppedSrc, setCroppedSrc] = React.useState<string | null>(null);
+  const sourceUrl = mediaMeta?.url ?? identity.media_url ?? null;
 
   React.useEffect(() => {
     if (identity.thumb_url) {
       setCroppedSrc(null);
       return;
     }
-    if (!mediaMeta?.url) {
+    if (!sourceUrl) {
       setCroppedSrc(null);
       return;
     }
     if (!identity.bbox) {
-      setCroppedSrc(mediaMeta.url);
+      setCroppedSrc(sourceUrl);
       return;
     }
     let cancelled = false;
     const bbox = identity.bbox;
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    img.src = mediaMeta.url;
+    img.src = sourceUrl;
 
     const draw = () => {
       if (cancelled) {
@@ -51,14 +73,14 @@ export const IdentityThumbnail = ({
       const ctx = canvas.getContext('2d');
 
       if (!ctx) {
-        setCroppedSrc(mediaMeta.url);
+        setCroppedSrc(sourceUrl);
         return;
       }
 
       const naturalWidth = img.naturalWidth || img.width;
       const naturalHeight = img.naturalHeight || img.height;
-      const originalWidth = mediaMeta.width ?? naturalWidth;
-      const originalHeight = mediaMeta.height ?? naturalHeight;
+      const originalWidth = mediaMeta?.width ?? naturalWidth;
+      const originalHeight = mediaMeta?.height ?? naturalHeight;
       const scaleX = naturalWidth / originalWidth;
       const scaleY = naturalHeight / originalHeight;
 
@@ -100,26 +122,39 @@ export const IdentityThumbnail = ({
     };
 
     img.onload = draw;
-    img.onerror = () => setCroppedSrc(mediaMeta.url);
+    img.onerror = () => setCroppedSrc(sourceUrl);
 
     return () => {
       cancelled = true;
     };
-  }, [identity.thumb_url, identity.bbox, mediaMeta?.height, mediaMeta?.url, mediaMeta?.width, size]);
+  }, [identity.thumb_url, identity.bbox, identity.media_url, mediaMeta?.height, mediaMeta?.url, mediaMeta?.width, size, sourceUrl]);
 
-  const resolvedSrc = identity.thumb_url ?? croppedSrc ?? mediaMeta?.url ?? null;
+  const resolvedSrc = identity.thumb_url ?? croppedSrc ?? sourceUrl;
+  const resolvedAlt = alt ?? sprintf(__('Identity from media %d', 'alt-context'), identity.media_id);
 
   if (!resolvedSrc) {
-    return <div className="acx-cluster-card__face--placeholder" aria-hidden="true" />;
+    // Sized via the size prop (inline, no CSS file) so rows with/without faces
+    // share height [PERC-02]. data-face-missing distinguishes "no face on file"
+    // from a real photo an operator does not recognise.
+    return (
+      <div
+        className="acx-cluster-card__face--placeholder"
+        aria-hidden="true"
+        data-face-missing="true"
+        style={{ width: size, height: size, display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}
+      />
+    );
   }
 
   return (
     <img
       src={resolvedSrc}
-      alt={sprintf(__('Identity from media %d', 'alt-context'), identity.media_id)}
+      alt={resolvedAlt}
       width={size}
       height={size}
       className="acx-cluster-card__thumb"
+      data-identity-id={identity.identity_id}
+      data-media-id={identity.media_id}
       onClick={onClick}
       loading="lazy"
     />

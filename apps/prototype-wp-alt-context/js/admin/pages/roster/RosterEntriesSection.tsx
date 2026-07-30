@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { __ } from '@wordpress/i18n';
+import React, { useEffect, useState } from 'react';
+import { __, sprintf } from '@wordpress/i18n';
 import { useSearchParams } from 'react-router-dom';
 import type { RosterEntry } from '../../api/rosterApi';
 import { RosterEntriesTable } from './RosterEntriesTable';
@@ -21,6 +21,9 @@ interface QueueReviewRoute {
 }
 
 const WORKBENCH_SCAN_ROUTE = toWorkbench({ tab: 'scan' });
+
+/** URL key for directory text search — same short `s` convention as workbench. */
+const SEARCH_PARAM = 's';
 
 const isQueueFilterId = (value: string | null): value is QueueFilterId =>
   value === 'singleton-proposals' || value === 'hard-examples' || value === 'needs-confirmation-after-merge';
@@ -78,6 +81,21 @@ const getQueueActionNotice = (queueFilter: QueueFilterId | null): string | null 
   return null;
 };
 
+/**
+ * Case-insensitive substring match over name and tags.
+ * Unnamed people (`name === ''`) never match a non-empty name fragment; they
+ * can still match via tags.
+ */
+const entryMatchesSearch = (entry: RosterEntry, normalizedQuery: string): boolean => {
+  if (normalizedQuery === '') {
+    return true;
+  }
+  if (entry.name.toLowerCase().includes(normalizedQuery)) {
+    return true;
+  }
+  return entry.tags.some((tag) => tag.toLowerCase().includes(normalizedQuery));
+};
+
 export interface RosterEntriesQuery {
   isLoading: boolean;
   isError: boolean;
@@ -93,6 +111,7 @@ export interface RosterEntriesSectionProps {
 export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntriesSectionProps): React.JSX.Element => {
   const [isAdding, setIsAdding] = useState(false);
   const [newName, setNewName] = useState('');
+  const [createHiddenBySearchNotice, setCreateHiddenBySearchNotice] = useState<string | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const createPerson = useCreatePerson();
   const personFilter = searchParams.get('personFilter');
@@ -100,6 +119,16 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
   const queueFilter: QueueFilterId | null = isQueueFilterId(queueParam) ? queueParam : null;
   const queueFilterDetails = getQueueFilterDetails(queueFilter);
   const isUnassignedFilter = personFilter === 'unassigned';
+  // URL is the shareable source of truth; local state keeps keystrokes from racing
+  // the controlled input against async search-param writes.
+  const searchFromUrl = searchParams.get(SEARCH_PARAM) ?? '';
+  const [searchQuery, setSearchQuery] = useState(searchFromUrl);
+  useEffect(() => {
+    setSearchQuery(searchFromUrl);
+  }, [searchFromUrl]);
+  const trimmedSearch = searchQuery.trim();
+  const normalizedSearch = trimmedSearch.toLowerCase();
+  const hasActiveSearch = normalizedSearch.length > 0;
   const entries = query.data ?? [];
   const visibleEntries = entries.filter((entry) => {
     if (isUnassignedFilter && entry.cluster_count !== 0) {
@@ -108,8 +137,12 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
     if (queueFilter !== null && !entry.queue_memberships.includes(queueFilter)) {
       return false;
     }
+    if (!entryMatchesSearch(entry, normalizedSearch)) {
+      return false;
+    }
     return true;
   });
+  const hasCategoricalFilter = queueFilterDetails !== null || isUnassignedFilter;
   const activeFilterBadge =
     queueFilterDetails !== null
       ? queueFilterDetails.badge
@@ -131,6 +164,38 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
   const queueReviewRoute = getQueueReviewRoute(queueFilter);
   const queueActionNotice = getQueueActionNotice(queueFilter);
 
+  /**
+   * Extend the existing filter status surface with a search result summary so
+   * SR users hear one status region (no second live region / A11Y-21). The
+   * summary only appears when search is active and the list is non-empty —
+   * empty-search copy is a separate, distinct message below.
+   */
+  const searchStatus =
+    hasActiveSearch && visibleEntries.length > 0
+      ? sprintf(
+          /* translators: 1: match count, 2: search query */
+          __('Showing %1$d matching “%2$s”.', 'alt-context'),
+          visibleEntries.length,
+          trimmedSearch,
+        )
+      : null;
+
+  const statusLines = [activeFilterStatus, searchStatus].filter((line): line is string => line !== null);
+
+  const emptySearchMessage = hasActiveSearch
+    ? hasCategoricalFilter
+      ? sprintf(
+          /* translators: %s: search query */
+          __('No people match “%s” within the current filter.', 'alt-context'),
+          trimmedSearch,
+        )
+      : sprintf(
+          /* translators: %s: search query */
+          __('No people match “%s”.', 'alt-context'),
+          trimmedSearch,
+        )
+    : null;
+
   const clearFilter = () => {
     setSearchParams(
       (previous) => {
@@ -144,24 +209,91 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
     );
   };
 
+  const clearSearch = () => {
+    setSearchParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        next.delete(SEARCH_PARAM);
+        next.set('tab', 'entries');
+        return next;
+      },
+      { replace: true },
+    );
+    setCreateHiddenBySearchNotice(null);
+  };
+
+  const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const value = event.target.value;
+    setSearchQuery(value);
+    setCreateHiddenBySearchNotice(null);
+    setSearchParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        if (value === '') {
+          next.delete(SEARCH_PARAM);
+        } else {
+          next.set(SEARCH_PARAM, value);
+        }
+        next.set('tab', 'entries');
+        return next;
+      },
+      { replace: true },
+    );
+  };
+
   const handleAdd = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newName.trim()) {
       return;
     }
 
+    const submittedName = newName.trim();
     createPerson.mutate(
-      { name: newName.trim() },
+      { name: submittedName },
       {
         onSuccess: () => {
           setNewName('');
           setIsAdding(false);
+          // A successful create that vanishes behind an active search reads as
+          // a failed add. Surface the recovery when the new name would not match.
+          if (hasActiveSearch && !submittedName.toLowerCase().includes(normalizedSearch)) {
+            setCreateHiddenBySearchNotice(
+              sprintf(
+                /* translators: 1: person name, 2: search query */
+                __(
+                  'Created “%1$s”. They are hidden by the current search for “%2$s” — clear search to see them.',
+                  'alt-context',
+                ),
+                submittedName,
+                trimmedSearch,
+              ),
+            );
+          } else {
+            setCreateHiddenBySearchNotice(null);
+          }
         },
       },
     );
   };
 
+  // True zero: roster genuinely has no people. Search must not promote this
+  // into the search-empty copy, and search-empty must never render onboarding.
   const isTrueZeroState = !query.isLoading && !query.isError && entries.length === 0 && emptyFilterMessage === null;
+
+  const isEmptySearchResult =
+    !query.isLoading &&
+    !query.isError &&
+    !isTrueZeroState &&
+    entries.length > 0 &&
+    visibleEntries.length === 0 &&
+    hasActiveSearch;
+
+  const isEmptyFilterResult =
+    !query.isLoading &&
+    !query.isError &&
+    emptyFilterMessage !== null &&
+    visibleEntries.length === 0 &&
+    !hasActiveSearch;
 
   return (
     <div className="acx-roster-section" data-testid="roster-entries-section">
@@ -183,6 +315,20 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
         )}
       </header>
 
+      {!query.isLoading && !query.isError && !isTrueZeroState && (
+        <div className="acx-form-group">
+          <label htmlFor="acx-roster-people-search">{__('Search people', 'alt-context')}</label>
+          <input
+            id="acx-roster-people-search"
+            type="search"
+            className="acx-input"
+            value={searchQuery}
+            onChange={handleSearchChange}
+            placeholder={__('Search by name or tag…', 'alt-context')}
+          />
+        </div>
+      )}
+
       {query.isLoading && <p>{__('Loading roster entries…', 'alt-context')}</p>}
 
       {query.isError && (
@@ -194,24 +340,43 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
         </div>
       )}
 
-      {activeFilterStatus && (
+      {statusLines.length > 0 && (
         <div className="acx-roster-section__filter" role="status">
-          <p>{activeFilterStatus}</p>
+          {statusLines.map((line) => (
+            <p key={line}>{line}</p>
+          ))}
           {queueReviewRoute && (
             <a href={queueReviewRoute.href} className="acx-link-button">
               {queueReviewRoute.label}
             </a>
           )}
           {queueActionNotice && <p>{queueActionNotice}</p>}
-          <button type="button" className="acx-link-button" onClick={clearFilter}>
-            {__('Clear filter', 'alt-context')}
-          </button>
+          {/* Recovery buttons: when search is empty the empty-search panel owns them. */}
+          {!isEmptySearchResult && hasCategoricalFilter && (
+            <button type="button" className="acx-link-button" onClick={clearFilter}>
+              {__('Clear filter', 'alt-context')}
+            </button>
+          )}
+          {!isEmptySearchResult && hasActiveSearch && (
+            <button type="button" className="acx-link-button" onClick={clearSearch}>
+              {__('Clear search', 'alt-context')}
+            </button>
+          )}
         </div>
       )}
 
       {routeNotice && (
         <div className="acx-roster-section__filter" role="status">
           <p>{routeNotice}</p>
+        </div>
+      )}
+
+      {createHiddenBySearchNotice && (
+        <div className="acx-roster-section__filter" role="status">
+          <p>{createHiddenBySearchNotice}</p>
+          <button type="button" className="acx-link-button" onClick={clearSearch}>
+            {__('Clear search', 'alt-context')}
+          </button>
         </div>
       )}
 
@@ -278,7 +443,19 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
               </a>
             </div>
           </div>
-        ) : emptyFilterMessage && visibleEntries.length === 0 ? (
+        ) : isEmptySearchResult && emptySearchMessage !== null ? (
+          <div className="acx-roster-section__filter" data-testid="roster-search-empty">
+            <p>{emptySearchMessage}</p>
+            <button type="button" className="acx-link-button" onClick={clearSearch}>
+              {__('Clear search', 'alt-context')}
+            </button>
+            {hasCategoricalFilter && (
+              <button type="button" className="acx-link-button" onClick={clearFilter}>
+                {__('Clear filter', 'alt-context')}
+              </button>
+            )}
+          </div>
+        ) : isEmptyFilterResult ? (
           <p>{emptyFilterMessage}</p>
         ) : (
           <RosterEntriesTable entries={visibleEntries} />

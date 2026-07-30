@@ -222,8 +222,9 @@ class DescriptionRefreshCommandTest extends TestCase
     }
 
     /**
-     * F-11: printed failed= must not under-report logged failed rows when the
-     * summary count is lower (or zero) than the actual rows.
+     * R20-BR-07 (was F-11/max): summary.failed under-reporting row count is a
+     * data-integrity error — exit non-zero; do not paper over with max() or
+     * print the disagreeing failed= token.
      */
     public function testApplyUnderReportedFailedCountPrintsMaxOfRows(): void
     {
@@ -256,18 +257,185 @@ class DescriptionRefreshCommandTest extends TestCase
             (new DescriptionRefreshCommand($service))->__invoke(['42'], ['apply' => true, 'limit' => 10]);
         } catch (RuntimeException $e) {
             $threw = true;
-            $this->assertStringContainsString('failed=2', $e->getMessage());
+            $this->assertStringContainsString('summary count mismatch', $e->getMessage());
+            $this->assertStringContainsString('incomplete', $e->getMessage());
+            // Disagreeing token must not be printed as authoritative.
             $this->assertStringNotContainsString('failed=0', $e->getMessage());
-            $this->assertStringContainsString('Description refresh failed.', $e->getMessage());
+            $this->assertStringNotContainsString('failed=2', $e->getMessage());
+            $this->assertStringNotContainsString('Description refresh complete.', $e->getMessage());
         }
 
-        $this->assertTrue($threw, 'failed rows must force non-zero exit');
+        $this->assertTrue($threw, 'failed summary/row mismatch must force non-zero exit');
         $error = \WP_CLI::$messages['error'][0] ?? '';
-        $this->assertStringContainsString('failed=2', $error);
+        $this->assertStringContainsString('summary count mismatch', $error);
         $this->assertStringNotContainsString('failed=0', $error);
+        $this->assertStringNotContainsString('failed=2', $error);
         $logs = implode("\n", \WP_CLI::$messages['log']);
         $this->assertStringContainsString('post_id=901', $logs);
         $this->assertStringContainsString('post_id=902', $logs);
+    }
+
+    /**
+     * R20-BR-02: summary.changed disagreeing with changed rows is integrity
+     * error — not printed as changed=N on success.
+     */
+    public function testApplyChangedSummaryDisagreeingWithRowsIsIntegrityError(): void
+    {
+        $service = new FixedRefreshService([
+            'summary' => [
+                'dry_run' => false,
+                'candidates' => 3,
+                'changed' => 5, // disagrees with three changed rows
+                'failed' => 0,
+                'skipped' => 0,
+            ],
+            'failed' => [],
+            'changed' => [
+                ['post_id' => 801, 'media_id' => 42],
+                ['post_id' => 802, 'media_id' => 42],
+                ['post_id' => 803, 'media_id' => 42],
+            ],
+            'skipped' => [],
+        ]);
+
+        $threw = false;
+        try {
+            (new DescriptionRefreshCommand($service))->__invoke(['42'], ['apply' => true, 'limit' => 10]);
+        } catch (RuntimeException $e) {
+            $threw = true;
+            $this->assertStringContainsString('summary count mismatch', $e->getMessage());
+            $this->assertStringContainsString('incomplete', $e->getMessage());
+            $this->assertStringNotContainsString('changed=5', $e->getMessage());
+            $this->assertStringNotContainsString('changed=3', $e->getMessage());
+            $this->assertStringNotContainsString('Description refresh complete.', $e->getMessage());
+        }
+
+        $this->assertTrue($threw, 'changed summary/row mismatch must exit non-zero');
+        $this->assertSame([], \WP_CLI::$messages['success']);
+        $error = \WP_CLI::$messages['error'][0] ?? '';
+        $this->assertStringContainsString('summary count mismatch', $error);
+        $this->assertStringNotContainsString('changed=5', $error);
+    }
+
+    /**
+     * R20-BR-02: summary.skipped disagreeing with skipped rows is integrity
+     * error — not printed as skipped=N on success.
+     */
+    public function testApplySkippedSummaryDisagreeingWithRowsIsIntegrityError(): void
+    {
+        $service = new FixedRefreshService([
+            'summary' => [
+                'dry_run' => false,
+                'candidates' => 0,
+                'changed' => 0,
+                'failed' => 0,
+                'skipped' => 4, // disagrees with one skipped row
+            ],
+            'failed' => [],
+            'changed' => [],
+            'skipped' => [
+                ['post_id' => 851, 'media_id' => 42, 'reason' => 'already_current'],
+            ],
+        ]);
+
+        $threw = false;
+        try {
+            (new DescriptionRefreshCommand($service))->__invoke(['42'], ['apply' => true, 'limit' => 10]);
+        } catch (RuntimeException $e) {
+            $threw = true;
+            $this->assertStringContainsString('summary count mismatch', $e->getMessage());
+            $this->assertStringContainsString('incomplete', $e->getMessage());
+            $this->assertStringNotContainsString('skipped=4', $e->getMessage());
+            $this->assertStringNotContainsString('skipped=1', $e->getMessage());
+            $this->assertStringNotContainsString('Description refresh complete.', $e->getMessage());
+        }
+
+        $this->assertTrue($threw, 'skipped summary/row mismatch must exit non-zero');
+        $this->assertSame([], \WP_CLI::$messages['success']);
+        $error = \WP_CLI::$messages['error'][0] ?? '';
+        $this->assertStringContainsString('summary count mismatch', $error);
+        $this->assertStringNotContainsString('skipped=4', $error);
+    }
+
+    /**
+     * R20-BR-07: summary.failed exceeding failed rows is integrity error —
+     * not printed as failed=N (max-side over-report).
+     */
+    public function testApplyOverReportedFailedCountIsIntegrityError(): void
+    {
+        $service = new FixedRefreshService([
+            'summary' => [
+                'dry_run' => false,
+                'candidates' => 2,
+                'changed' => 0,
+                'failed' => 7, // over-reports two logged rows
+                'skipped' => 0,
+            ],
+            'failed' => [
+                [
+                    'post_id' => 911,
+                    'media_id' => 42,
+                    'reason' => 'post_update_failed',
+                ],
+                [
+                    'post_id' => 912,
+                    'media_id' => 43,
+                    'reason' => 'post_update_failed',
+                ],
+            ],
+            'changed' => [],
+            'skipped' => [],
+        ]);
+
+        $threw = false;
+        try {
+            (new DescriptionRefreshCommand($service))->__invoke(['42'], ['apply' => true, 'limit' => 10]);
+        } catch (RuntimeException $e) {
+            $threw = true;
+            $this->assertStringContainsString('summary count mismatch', $e->getMessage());
+            $this->assertStringContainsString('incomplete', $e->getMessage());
+            $this->assertStringNotContainsString('failed=7', $e->getMessage());
+            $this->assertStringNotContainsString('failed=2', $e->getMessage());
+            $this->assertStringNotContainsString('Description refresh complete.', $e->getMessage());
+        }
+
+        $this->assertTrue($threw, 'failed summary over-report must exit non-zero');
+        $this->assertSame([], \WP_CLI::$messages['success']);
+        $error = \WP_CLI::$messages['error'][0] ?? '';
+        $this->assertStringContainsString('summary count mismatch', $error);
+        $this->assertStringNotContainsString('failed=7', $error);
+        $logs = implode("\n", \WP_CLI::$messages['log']);
+        $this->assertStringContainsString('post_id=911', $logs);
+        $this->assertStringContainsString('post_id=912', $logs);
+    }
+
+    /**
+     * R20-BR-03: apply path must not fabricate candidates=0 when the key is
+     * absent (same array_key_exists discipline as report_dry_run).
+     */
+    public function testApplyMissingCandidatesKeyDoesNotFabricateZero(): void
+    {
+        $service = new FixedRefreshService([
+            'summary' => [
+                'dry_run' => false,
+                // deliberately omit candidates
+                'changed' => 0,
+                'failed' => 0,
+                'skipped' => 0,
+            ],
+            'failed' => [],
+            'changed' => [],
+            'skipped' => [],
+        ]);
+
+        (new DescriptionRefreshCommand($service))->__invoke(['42'], ['apply' => true, 'limit' => 10]);
+
+        $success = \WP_CLI::$messages['success'][0] ?? '';
+        $this->assertStringContainsString('dry_run=0', $success);
+        $this->assertStringNotContainsString('candidates=', $success);
+        $this->assertStringContainsString('changed=0', $success);
+        $this->assertStringContainsString('failed=0', $success);
+        $this->assertStringContainsString('Description refresh complete.', $success);
     }
 
     /**
@@ -326,7 +494,8 @@ class DescriptionRefreshCommandTest extends TestCase
     }
 
     /**
-     * R18-BR-03 normal path: when skipped is present it is printed.
+     * R18-BR-03 normal path: when skipped is present and matches rows it is printed.
+     * Row array must agree with the summary count [R20-BR-02].
      */
     public function testApplyPresentSkippedKeyIsPrinted(): void
     {
@@ -340,7 +509,11 @@ class DescriptionRefreshCommandTest extends TestCase
             ],
             'failed' => [],
             'changed' => [],
-            'skipped' => [],
+            'skipped' => [
+                ['post_id' => 831, 'media_id' => 42, 'reason' => 'already_current'],
+                ['post_id' => 832, 'media_id' => 42, 'reason' => 'already_current'],
+                ['post_id' => 833, 'media_id' => 42, 'reason' => 'already_current'],
+            ],
         ]);
 
         (new DescriptionRefreshCommand($service))->__invoke(['42'], ['apply' => true, 'limit' => 10]);

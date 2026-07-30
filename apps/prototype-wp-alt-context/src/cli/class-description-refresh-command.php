@@ -89,6 +89,10 @@ class DescriptionRefreshCommand extends \WP_CLI_Command {
 	/**
 	 * apply summary: dry_run, scanned_posts, media_ids, candidates, changed, failed, skipped.
 	 *
+	 * Summary counters must agree with their row arrays. A mismatch is a
+	 * producer integrity error — exit non-zero rather than paper over with
+	 * max() or either side alone [R20-BR-02] [R20-BR-07].
+	 *
 	 * @param array<string,mixed> $result
 	 * @param array<string,mixed> $summary
 	 */
@@ -99,7 +103,10 @@ class DescriptionRefreshCommand extends \WP_CLI_Command {
 		$failed  = array_key_exists( 'failed', $summary ) ? (int) $summary['failed'] : null;
 		$skipped = array_key_exists( 'skipped', $summary ) ? (int) $summary['skipped'] : null;
 
-		$failed_rows = is_array( $result['failed'] ?? null ) ? $result['failed'] : array();
+		$changed_row_count = $this->count_result_rows( $result['changed'] ?? null );
+		$skipped_row_count = $this->count_result_rows( $result['skipped'] ?? null );
+
+		$failed_rows      = is_array( $result['failed'] ?? null ) ? $result['failed'] : array();
 		$failed_row_count = 0;
 		foreach ( $failed_rows as $row ) {
 			if ( ! is_array( $row ) ) {
@@ -116,24 +123,27 @@ class DescriptionRefreshCommand extends \WP_CLI_Command {
 			);
 		}
 
-		// Printed failed= cannot under-report logged rows: take the max of the
-		// summary count and the row count so a producer that under-reports in
-		// its summary still surfaces an honest token [R17-BR-04] [HAI-13].
-		if ( null !== $failed ) {
-			$failed = max( $failed, $failed_row_count );
-		}
+		// Disagreement between a present summary counter and its row array is
+		// not resolvable at the CLI — surface integrity error [R20-BR-07].
+		$changed_mismatch = null !== $changed && $changed !== $changed_row_count;
+		$failed_mismatch  = null !== $failed && $failed !== $failed_row_count;
+		$skipped_mismatch = null !== $skipped && $skipped !== $skipped_row_count;
+		$count_mismatch   = $changed_mismatch || $failed_mismatch || $skipped_mismatch;
 
-		$parts = array(
-			'dry_run=0',
-			'candidates=' . (int) ( $summary['candidates'] ?? 0 ),
-		);
-		if ( null !== $changed ) {
+		// Never fabricate candidates=0 for an absent key [R20-BR-03] [rg-015].
+		$parts = array( 'dry_run=0' );
+		if ( array_key_exists( 'candidates', $summary ) ) {
+			$parts[] = 'candidates=' . (int) $summary['candidates'];
+		}
+		// Emit counter tokens only when present and consistent with rows —
+		// a mismatched number is not printed as authoritative [R20-BR-02].
+		if ( null !== $changed && ! $changed_mismatch ) {
 			$parts[] = 'changed=' . $changed;
 		}
-		if ( null !== $failed ) {
+		if ( null !== $failed && ! $failed_mismatch ) {
 			$parts[] = 'failed=' . $failed;
 		}
-		if ( null !== $skipped ) {
+		if ( null !== $skipped && ! $skipped_mismatch ) {
 			$parts[] = 'skipped=' . $skipped;
 		}
 
@@ -141,16 +151,18 @@ class DescriptionRefreshCommand extends \WP_CLI_Command {
 
 		// Exit ORs summary failed (when present) with logged-row evidence so a
 		// under-reporting summary still exits non-zero [R17-BR-04] [rg-015] [HAI-13].
-		// Printed failed= uses max(summary, row count) above so the token cannot
-		// understate the rows that were logged. Absent `failed` key is an
-		// integrity error (absence ≠ success) and omits the failed= token.
-		$has_failures = ( null !== $failed && $failed > 0 ) || $failed_row_count > 0;
-		$integrity_error = null === $failed;
+		// Absent `failed` key is an integrity error (absence ≠ success).
+		// Counter/row mismatch is also an integrity error [R20-BR-07].
+		$has_failures    = ( null !== $failed && $failed > 0 ) || $failed_row_count > 0;
+		$missing_failed  = null === $failed;
+		$integrity_error = $missing_failed || $count_mismatch;
 
 		if ( $has_failures || $integrity_error ) {
 			// Leading sentence matches outcome — do not claim "complete" on failure
 			// [R17-BR-11].
-			if ( $integrity_error && ! $has_failures ) {
+			if ( $count_mismatch ) {
+				$message = 'Description refresh incomplete (summary count mismatch). ' . $counts;
+			} elseif ( $integrity_error && ! $has_failures ) {
 				$message = 'Description refresh incomplete (summary missing failed count). ' . $counts;
 			} else {
 				$message = 'Description refresh failed. ' . $counts;
@@ -159,6 +171,26 @@ class DescriptionRefreshCommand extends \WP_CLI_Command {
 		}
 
 		\WP_CLI::success( 'Description refresh complete. ' . $counts );
+	}
+
+	/**
+	 * Count array-shaped rows in a result list (non-arrays ignored).
+	 *
+	 * @param mixed $rows
+	 */
+	private function count_result_rows( $rows ): int {
+		if ( ! is_array( $rows ) ) {
+			return 0;
+		}
+
+		$count = 0;
+		foreach ( $rows as $row ) {
+			if ( is_array( $row ) ) {
+				++$count;
+			}
+		}
+
+		return $count;
 	}
 
 	/**

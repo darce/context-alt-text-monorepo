@@ -18,10 +18,38 @@ use SplFileInfo;
  * class-alt-text-write-status.php and matches neither PSR-4 nor kebab-case
  * fallback — a missing require is a hard fatal outside this suite.
  *
- * Class list: hand-maintained allowlist in classChecks() of four types
- * (RecognitionTransport, LoopbackHost, AltTextWriteStatus,
- * DescriptionWriteStatus). New class-*.php types added under src/ are NOT
- * auto-discovered — extend classChecks() when adding one.
+ * ## R19-BR-24 — predicate settlement (do not "fix" by auto-expanding)
+ *
+ * A naive scan of every type declared in class-*.php / interface-*.php against
+ * every consumer that mentions it without a local require_once yields on the
+ * order of ~100+ mismatches across dozens of files. That is the wrong
+ * predicate for this project. Empirically (fresh PHP, AltContext classmap
+ * stripped):
+ *
+ *   (B) holds for the bulk of those hits. Types are reached through the
+ *   plugin bootstrap require block (alt-context.php) and entrypoint
+ *   require_once chains (Api / RecognitionController / DescribeController /
+ *   cluster-mutations-controller, etc.). Per-consumer require_once of every
+ *   referenced WP-style type is not how this tree loads.
+ *
+ * Example bootstrap freeride (must stay green under the correct predicate):
+ * DashboardPage extends AbstractSpaPage with no local require_once;
+ * alt-context.php require_once's class-abstract-spa-page.php before the page.
+ *
+ * Real residual declaration-time freerides (defining file missing its own
+ * extends/implements/use-trait require) still exist under a cold classmap
+ * (e.g. mappers vs MapsResponseFields, repositories vs their interfaces).
+ * Those are defining-file / chain-completeness bugs — not proof that every
+ * consumer must re-require every type it names. Repair is out of this lane.
+ *
+ * Class list: hand-maintained allowlist in classChecks() of four *static
+ * surface* types (RecognitionTransport, LoopbackHost, AltTextWriteStatus,
+ * DescriptionWriteStatus) whose call sites freeride dangerously on classmap.
+ * New class-*.php types are NOT auto-discovered — extend classChecks() only
+ * when a type has the same static-call / multi-class-file risk profile.
+ *
+ * Declaration-time self-sufficiency for a secondary entrypoint is pinned
+ * elsewhere (DescribeControllerAutoloadTest history-first probe, R20-BR-09).
  *
  * Self-exemption compares the src-relative path for exact equality so a
  * spoofed filename ending in class-recognition-transport.php cannot opt out.
@@ -142,6 +170,106 @@ class RecognitionTransportRequireOnceGuardTest extends TestCase
             $offenders,
             "src/ consumers must explicitly require_once guarded class files:\n"
             . implode("\n", $offenders)
+        );
+    }
+
+    /**
+     * R19-BR-24: classChecks() stays a hand-maintained static-surface allowlist.
+     * Auto-expanding it to every class-*.php type reintroduces ~100+ false
+     * positives against bootstrap/entrypoint reachability.
+     */
+    public function testClassChecksAllowlistIsNotAutoExpandedToAllWpStyleTypes(): void
+    {
+        $this->assertSame(
+            [
+                'RecognitionTransport',
+                'LoopbackHost',
+                'AltTextWriteStatus',
+                'DescriptionWriteStatus',
+            ],
+            array_keys(self::classChecks()),
+            'Do not auto-discover every class-*.php type into classChecks(); that is the wrong [rg-016] predicate (R19-BR-24)'
+        );
+    }
+
+    /**
+     * R19-BR-24: bootstrap-reachable freeride must not be a finding under the
+     * correct predicate. DashboardPage extends AbstractSpaPage without a local
+     * require_once; alt-context.php loads abstract before the page. A naive
+     * per-consumer scan would flag this; the allowlist guard must not.
+     */
+    public function testBootstrapReachableAdminSpaPageIsNotAGuardFinding(): void
+    {
+        $pluginRoot = dirname(__DIR__, 2);
+        $dashboard = (string) file_get_contents($pluginRoot . '/src/admin/class-dashboard-page.php');
+        $entrypoint = (string) file_get_contents($pluginRoot . '/alt-context.php');
+
+        $this->assertMatchesRegularExpression(
+            '/class\s+DashboardPage\s+extends\s+AbstractSpaPage\b/',
+            $dashboard,
+            'DashboardPage must still extend AbstractSpaPage for this freeride pin'
+        );
+        $this->assertFalse(
+            $this->containsRequireOnceFor($dashboard, 'class-abstract-spa-page.php'),
+            'DashboardPage deliberately freerides on the bootstrap require order'
+        );
+
+        $abstractPos = strpos($entrypoint, "src/admin/class-abstract-spa-page.php");
+        $dashboardPos = strpos($entrypoint, "src/admin/class-dashboard-page.php");
+        $this->assertNotFalse($abstractPos, 'bootstrap must require abstract spa page');
+        $this->assertNotFalse($dashboardPos, 'bootstrap must require dashboard page');
+        $this->assertLessThan(
+            $dashboardPos,
+            $abstractPos,
+            'bootstrap must load AbstractSpaPage before DashboardPage'
+        );
+
+        // Fresh process, no AltContext classmap: alone fails, bootstrap order works.
+        $alone = $this->freshLoadWithoutAltContextClassmap(
+            [$pluginRoot . '/src/admin/class-dashboard-page.php']
+        );
+        $this->assertStringContainsString(
+            'AbstractSpaPage',
+            $alone,
+            'isolation load must fail without AbstractSpaPage (proves freeride, not self-sufficiency)'
+        );
+
+        $ordered = $this->freshLoadWithoutAltContextClassmap(
+            [
+                $pluginRoot . '/src/admin/class-abstract-spa-page.php',
+                $pluginRoot . '/src/admin/class-dashboard-page.php',
+            ]
+        );
+        $this->assertSame(
+            'OK',
+            trim($ordered),
+            'bootstrap order must load DashboardPage without classmap; got: ' . var_export($ordered, true)
+        );
+
+        $this->assertSame(
+            [],
+            $this->collectOffenders(),
+            'allowlist guard must stay green on bootstrap freerides'
+        );
+    }
+
+    /**
+     * R19-BR-24: a naive full-tree per-consumer scan is large; the real guard
+     * (allowlist) produces zero findings on the same tree.
+     */
+    public function testNaivePerConsumerScanIsMassiveWhileAllowlistGuardStaysGreen(): void
+    {
+        $naiveCount = $this->countNaiveWpStylePerConsumerMismatches();
+        $this->assertGreaterThan(
+            50,
+            $naiveCount,
+            'Expected a large naive per-consumer mismatch count (bootstrap/entrypoint freerides). '
+            . 'If this collapses near zero, re-check the scan or the load model.'
+        );
+        $this->assertSame(
+            [],
+            $this->collectOffenders(),
+            "Allowlist guard must report no offenders despite naive count={$naiveCount}"
         );
     }
 
@@ -964,5 +1092,141 @@ class RecognitionTransportRequireOnceGuardTest extends TestCase
         }
 
         return false;
+    }
+
+    /**
+     * Fresh process: Composer without AltContext classmap/PSR-4, then require
+     * the given absolute paths in order. Returns "OK" or the process output.
+     *
+     * @param list<string> $absolutePaths
+     */
+    private function freshLoadWithoutAltContextClassmap(array $absolutePaths): string
+    {
+        $pluginRoot = dirname(__DIR__, 2);
+        $requires = '';
+        foreach ($absolutePaths as $path) {
+            $requires .= 'require_once ' . var_export($path, true) . ";\n";
+        }
+
+        $script = <<<'PHP'
+<?php
+$root = $argv[1];
+require_once $root . '/vendor/composer/ClassLoader.php';
+$loader = new Composer\Autoload\ClassLoader();
+$psr4 = require $root . '/vendor/composer/autoload_psr4.php';
+foreach ($psr4 as $prefix => $paths) {
+	if (str_starts_with($prefix, 'AltContext\\')) {
+		continue;
+	}
+	$loader->setPsr4($prefix, $paths);
+}
+$classmap = require $root . '/vendor/composer/autoload_classmap.php';
+$filtered = array();
+foreach ($classmap as $class => $path) {
+	if (str_starts_with($class, 'AltContext\\')) {
+		continue;
+	}
+	$filtered[$class] = $path;
+}
+$loader->addClassMap($filtered);
+$loader->register(true);
+foreach (require $root . '/vendor/composer/autoload_files.php' as $file) {
+	require $file;
+}
+try {
+REQUIRES
+	echo "OK\n";
+} catch (Throwable $e) {
+	echo $e->getMessage() . "\n";
+}
+PHP;
+        $script = str_replace('REQUIRES', $requires, $script);
+
+        $tmp = tempnam(sys_get_temp_dir(), 'acx_rg016_');
+        $this->assertIsString($tmp);
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- test probe script
+        file_put_contents($tmp, $script);
+        $output = (string) shell_exec(
+            sprintf('php %s %s 2>&1', escapeshellarg($tmp), escapeshellarg($pluginRoot))
+        );
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- test probe cleanup
+        unlink($tmp);
+
+        return $output;
+    }
+
+    /**
+     * Count naive (consumer references WP-style type without local require_once)
+     * mismatches. Used only to prove that volume is large under the wrong
+     * predicate — not as the production guard.
+     */
+    private function countNaiveWpStylePerConsumerMismatches(): int
+    {
+        $srcRoot = realpath(dirname(__DIR__, 2) . '/src');
+        $this->assertIsString($srcRoot);
+
+        $defs = [];
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($srcRoot, RecursiveDirectoryIterator::SKIP_DOTS)
+        );
+        /** @var SplFileInfo $file */
+        foreach ($iterator as $file) {
+            if (!$file->isFile() || 'php' !== $file->getExtension()) {
+                continue;
+            }
+            $base = $file->getFilename();
+            if (!preg_match('/^(class|interface|trait)-.+\.php$/', $base)) {
+                continue;
+            }
+            $contents = (string) file_get_contents($file->getPathname());
+            $relative = str_replace('\\', '/', substr($file->getPathname(), strlen($srcRoot) + 1));
+            if (!preg_match('/namespace\s+([^;]+);/', $contents, $nsMatch)) {
+                continue;
+            }
+            $ns = trim($nsMatch[1]);
+            if (
+                !preg_match_all(
+                    '/^\s*(?:abstract\s+|final\s+)?(?:class|interface|trait)\s+([A-Za-z_][A-Za-z0-9_]*)/m',
+                    $contents,
+                    $typeMatches
+                )
+            ) {
+                continue;
+            }
+            foreach ($typeMatches[1] as $short) {
+                $defs[ $ns . '\\' . $short ] = [
+                    'file' => $relative,
+                    'base' => $base,
+                    'short' => $short,
+                    'fqcn' => $ns . '\\' . $short,
+                ];
+            }
+        }
+
+        $count = 0;
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($srcRoot, RecursiveDirectoryIterator::SKIP_DOTS)
+        );
+        /** @var SplFileInfo $file */
+        foreach ($iterator as $file) {
+            if (!$file->isFile() || 'php' !== $file->getExtension()) {
+                continue;
+            }
+            $contents = (string) file_get_contents($file->getPathname());
+            $relative = str_replace('\\', '/', substr($file->getPathname(), strlen($srcRoot) + 1));
+            foreach ($defs as $check) {
+                if ($relative === $check['file']) {
+                    continue;
+                }
+                if (!$this->fileReferencesClass($contents, $check['short'], $check['fqcn'])) {
+                    continue;
+                }
+                if (!$this->containsRequireOnceFor($contents, $check['base'])) {
+                    ++$count;
+                }
+            }
+        }
+
+        return $count;
     }
 }

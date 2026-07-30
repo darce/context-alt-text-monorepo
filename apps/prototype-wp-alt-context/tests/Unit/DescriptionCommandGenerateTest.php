@@ -750,7 +750,8 @@ class DescriptionCommandGenerateTest extends TestCase
         $this->assertInstanceOf(RuntimeException::class, $caught);
         $log = \WP_CLI::$messages['log'][0] ?? '';
         $this->assertStringContainsString('status=failed', $log);
-        $this->assertStringContainsString('error=tenant mismatch', $log);
+        // R20-BR-04: free-text error values are quote-and-escaped.
+        $this->assertStringContainsString('error="tenant mismatch"', $log);
     }
 
     /**
@@ -930,6 +931,280 @@ class DescriptionCommandGenerateTest extends TestCase
         );
         $this->assertSame($storedForm, get_post_meta(963, '_wp_attachment_image_alt', true));
         $this->assertIsArray(get_post_meta(963, '_acx_description_provenance', true));
+    }
+
+    // ── R20-BR-01 / R20-BR-04 / R20-BR-05 / R20-BR-08 ──
+
+    /**
+     * R20-BR-01: identity-complete row with a stale provenance alt_text_draft is
+     * healed by generate --write without --force; status stays skipped_existing_alt.
+     */
+    public function testGenerateIdentityCompleteHealsStaleAltTextDraftAndStillSkips(): void
+    {
+        $draft = 'Matching stored alt.';
+        $this->setPostMeta(970, '_wp_attachment_image_alt', $draft);
+        $this->setPostMeta(970, '_acx_description_provenance', [
+            'adapter' => 'seeded',
+            'model_id' => 'local-v1',
+            'model_version' => '2026-07-04',
+            'prompt_or_task_version' => 'describe-v1',
+            'generated_at' => '2026-01-01T00:00:00+00:00',
+            'alt_text_draft' => 'STALE DRAFT',
+        ]);
+        $service = new RecordingDescribeService([
+            970 => new WP_REST_Response([
+                'media_id' => 970,
+                'alt_text_draft' => $draft,
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+                'model_version' => '2026-07-04',
+                'prompt_or_task_version' => 'describe-v1',
+            ]),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $command->__invoke(['generate'], ['media-id' => '970', 'write' => true, 'format' => 'json']);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+
+        $this->assertSame(AltTextWriteStatus::SKIPPED_EXISTING_ALT, $payload['rows'][0]['status'] ?? null);
+        $this->assertSame('skipped_existing_alt', $payload['rows'][0]['status'] ?? null);
+        $this->assertSame($draft, get_post_meta(970, '_wp_attachment_image_alt', true));
+        $prov = get_post_meta(970, '_acx_description_provenance', true);
+        $this->assertIsArray($prov);
+        $this->assertSame($draft, $prov['alt_text_draft'] ?? null);
+        $this->assertNotSame('STALE DRAFT', $prov['alt_text_draft'] ?? null);
+        // Draft-key heal only — identity + generated_at preserved.
+        $this->assertSame('2026-01-01T00:00:00+00:00', $prov['generated_at'] ?? null);
+        $this->assertSame('local-v1', $prov['model_id'] ?? null);
+    }
+
+    /**
+     * R20-BR-01: identity-complete heal failure reports partial + provenance
+     * reason — same wire as heal_gap / provenance stamp failure.
+     */
+    public function testGenerateIdentityCompleteHealFailureReportsPartial(): void
+    {
+        $draft = 'Matching stored alt for heal fail.';
+        $this->setPostMeta(971, '_wp_attachment_image_alt', $draft);
+        $this->setPostMeta(971, '_acx_description_provenance', [
+            'adapter' => 'seeded',
+            'model_id' => 'local-v1',
+            'model_version' => '2026-07-04',
+            'prompt_or_task_version' => 'describe-v1',
+            'generated_at' => '2026-01-01T00:00:00+00:00',
+            'alt_text_draft' => 'STALE',
+        ]);
+        $GLOBALS['__ac_update_post_meta_fail'][971]['_acx_description_provenance'] = true;
+        $service = new RecordingDescribeService([
+            971 => new WP_REST_Response([
+                'media_id' => 971,
+                'alt_text_draft' => $draft,
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+                'model_version' => '2026-07-04',
+                'prompt_or_task_version' => 'describe-v1',
+            ]),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '971', 'write' => true, 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+        $this->assertSame(AltTextWriteStatus::PARTIAL, $payload['rows'][0]['status'] ?? null);
+        $this->assertSame(
+            AltTextWriteStatus::REASON_PROVENANCE_WRITE_FAILED,
+            $payload['rows'][0]['reason'] ?? null
+        );
+        // Alt untouched; stale draft left uncorrected.
+        $this->assertSame($draft, get_post_meta(971, '_wp_attachment_image_alt', true));
+        $prov = get_post_meta(971, '_acx_description_provenance', true);
+        $this->assertIsArray($prov);
+        $this->assertSame('STALE', $prov['alt_text_draft'] ?? null);
+        $this->assertSame(1, $payload['partial'] ?? null);
+    }
+
+    /**
+     * R20-BR-04: hostile error (newline + tab + =) stays one parseable line and
+     * the value round-trips through quote-and-escape.
+     */
+    public function testGenerateTableHostileErrorValueStaysOneParseableLine(): void
+    {
+        $hostile = "upstream broke\nnext line\tkey=injected";
+        $service = new RecordingDescribeService([
+            972 => new WP_REST_Response(['detail' => $hostile], 502),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '972', 'write' => true]);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $log = \WP_CLI::$messages['log'][0] ?? '';
+        // One logical row: no raw newline/tab in the log entry.
+        $this->assertStringNotContainsString("\n", $log);
+        $this->assertStringNotContainsString("\t", $log);
+        $this->assertStringContainsString('status=failed', $log);
+        // Round-trip: extract quoted error= value and unescape.
+        $this->assertMatchesRegularExpression('/ error="([^"]*(?:\\\\.[^"]*)*)"/', $log);
+        if (!preg_match('/ error="((?:\\\\.|[^"\\\\])*)"/', $log, $m)) {
+            $this->fail('error= quoted value not found in: ' . $log);
+        }
+        $unescaped = str_replace(
+            ['\\\\', '\\"', '\\n', '\\r', '\\t'],
+            ['\\', '"', "\n", "\r", "\t"],
+            $m[1]
+        );
+        $this->assertSame($hostile, $unescaped);
+        // Unquoted form must not appear (would be ambiguous with k=v).
+        $this->assertStringNotContainsString(' error=' . $hostile, $log);
+    }
+
+    /**
+     * R20-BR-05 table: alt-write failure carries an error= cause.
+     */
+    public function testGenerateTableAltWriteFailureCarriesError(): void
+    {
+        $service = new RecordingDescribeService([
+            973 => new WP_REST_Response([
+                'media_id' => 973,
+                'alt_text_draft' => 'A draft that will not land.',
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+            ]),
+        ]);
+        $GLOBALS['__ac_update_post_meta_fail'][973]['_wp_attachment_image_alt'] = true;
+        $command = new DescriptionCommand(null, $service);
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '973', 'write' => true]);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $log = \WP_CLI::$messages['log'][0] ?? '';
+        $this->assertStringContainsString('status=failed', $log);
+        $this->assertStringContainsString('error="Alt meta write returned false."', $log);
+    }
+
+    /**
+     * R20-BR-05 JSON: alt-write failure carries an error key.
+     */
+    public function testGenerateJsonAltWriteFailureCarriesError(): void
+    {
+        $service = new RecordingDescribeService([
+            974 => new WP_REST_Response([
+                'media_id' => 974,
+                'alt_text_draft' => 'A draft that will not land.',
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+            ]),
+        ]);
+        $GLOBALS['__ac_update_post_meta_fail'][974]['_wp_attachment_image_alt'] = true;
+        $command = new DescriptionCommand(null, $service);
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '974', 'write' => true, 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+        $this->assertSame('failed', $payload['rows'][0]['status'] ?? null);
+        $this->assertSame('Alt meta write returned false.', $payload['rows'][0]['error'] ?? null);
+    }
+
+    /**
+     * R20-BR-05: write accepted but storage diverges → read-back mismatch, not
+     * the write-returned-false message.
+     */
+    public function testGenerateAltWriteReadBackMismatchIsDistinguishable(): void
+    {
+        $service = new RecordingDescribeService([
+            975 => new WP_REST_Response([
+                'media_id' => 975,
+                'alt_text_draft' => 'Expected draft text.',
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+            ]),
+        ]);
+        // Write returns non-false but stores a different value.
+        $GLOBALS['__ac_update_post_meta_mutate'][975]['_wp_attachment_image_alt'] = 'MUTATED STORE';
+        $command = new DescriptionCommand(null, $service);
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '975', 'write' => true, 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+        $this->assertSame('failed', $payload['rows'][0]['status'] ?? null);
+        $this->assertSame('Alt meta write read-back mismatch.', $payload['rows'][0]['error'] ?? null);
+        $this->assertNotSame(
+            'Alt meta write returned false.',
+            $payload['rows'][0]['error'] ?? null
+        );
+        // No provenance when alt did not verify.
+        $this->assertSame('', get_post_meta(975, '_acx_description_provenance', true));
+    }
+
+    /**
+     * R20-BR-08: successful table row must not contain a bare or empty error=.
+     */
+    public function testGenerateTableSuccessRowHasNoErrorSubstring(): void
+    {
+        $service = new RecordingDescribeService([
+            976 => new WP_REST_Response([
+                'media_id' => 976,
+                'alt_text_draft' => 'Clean success draft.',
+                'adapter' => 'seeded',
+                'model_id' => 'local-v1',
+            ]),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $command->__invoke(['generate'], ['media-id' => '976', 'write' => true]);
+
+        $log = \WP_CLI::$messages['log'][0] ?? '';
+        $this->assertStringContainsString('status=written', $log);
+        $this->assertStringNotContainsString('error=', $log);
+    }
+
+    /**
+     * R20-BR-08: skipped table row must not contain a bare or empty error=.
+     */
+    public function testGenerateTableSkipRowHasNoErrorSubstring(): void
+    {
+        $this->setPostMeta(977, '_wp_attachment_image_alt', 'Human alt stays.');
+        $service = new RecordingDescribeService([
+            977 => new WP_REST_Response([
+                'media_id' => 977,
+                'alt_text_draft' => 'Different generated draft.',
+            ]),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $command->__invoke(['generate'], ['media-id' => '977', 'write' => true]);
+
+        $log = \WP_CLI::$messages['log'][0] ?? '';
+        $this->assertStringContainsString('status=skipped_existing_alt', $log);
+        $this->assertStringNotContainsString('error=', $log);
     }
 }
 

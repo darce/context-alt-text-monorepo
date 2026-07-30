@@ -199,11 +199,13 @@ class DescriptionCommand extends \WP_CLI_Command {
 				$reason      = isset( $row['reason'] ) && is_string( $row['reason'] ) && '' !== $row['reason']
 					? (string) $row['reason']
 					: '';
+				// reason is a controlled token (REASON_*), not free text from upstream.
 				$reason_part = '' !== $reason ? sprintf( ' reason=%s', $reason ) : '';
 				$error       = isset( $row['error'] ) && is_string( $row['error'] ) && '' !== $row['error']
 					? (string) $row['error']
 					: '';
-				$error_part  = '' !== $error ? sprintf( ' error=%s', $error ) : '';
+				// Quote-and-escape free text so one row stays one parseable line [R20-BR-04].
+				$error_part  = '' !== $error ? sprintf( ' error=%s', $this->format_table_value( $error ) ) : '';
 				\WP_CLI::log(
 					sprintf(
 						'media_id=%d status=%s%s%s alt_text_draft=%s',
@@ -211,7 +213,7 @@ class DescriptionCommand extends \WP_CLI_Command {
 						(string) $row['status'],
 						$reason_part,
 						$error_part,
-						(string) $row['alt_text_draft']
+						$this->format_table_value( (string) $row['alt_text_draft'] )
 					)
 				);
 			}
@@ -313,9 +315,28 @@ class DescriptionCommand extends \WP_CLI_Command {
 			$provenance_for_gate
 		);
 
-		if ( 'skip_existing' === $gate || 'identity_complete' === $gate ) {
-			// identity_complete: alt + model identity already match — no restamp.
+		if ( 'skip_existing' === $gate ) {
 			// CLI force-path divergence still uses WRITTEN (not FORCED_OVERWRITE).
+			return array(
+				'media_id'       => $media_id,
+				'status'         => AltTextWriteStatus::SKIPPED_EXISTING_ALT,
+				'alt_text_draft' => $alt_text_draft,
+			);
+		}
+
+		if ( 'identity_complete' === $gate ) {
+			// Alt + model identity match — no restamp. Heal stale/missing
+			// alt_text_draft only (REST parity / R20-BR-01). Still a skip when
+			// the heal lands; heal failure matches heal_gap provenance fail.
+			if ( ! $this->describe_service->heal_provenance_alt_text_draft( $media_id, $existing_provenance, $alt_text_draft ) ) {
+				return array(
+					'media_id'       => $media_id,
+					'status'         => AltTextWriteStatus::PARTIAL,
+					'reason'         => AltTextWriteStatus::REASON_PROVENANCE_WRITE_FAILED,
+					'alt_text_draft' => $alt_text_draft,
+				);
+			}
+
 			return array(
 				'media_id'       => $media_id,
 				'status'         => AltTextWriteStatus::SKIPPED_EXISTING_ALT,
@@ -344,10 +365,23 @@ class DescriptionCommand extends \WP_CLI_Command {
 		if ( false === $alt_written ) {
 			$current = get_post_meta( $media_id, self::ALT_TEXT_META_KEY, true );
 			if ( ! is_string( $current ) || $expected_alt !== $current ) {
+				// R20-BR-05: write returned false and storage does not match expected.
 				return array(
 					'media_id'       => $media_id,
 					'status'         => AltTextWriteStatus::FAILED,
 					'alt_text_draft' => $alt_text_draft,
+					'error'          => 'Alt meta write returned false.',
+				);
+			}
+		} else {
+			// Write accepted — still confirm storage (mutate / divergent store).
+			$current = get_post_meta( $media_id, self::ALT_TEXT_META_KEY, true );
+			if ( ! is_string( $current ) || $expected_alt !== $current ) {
+				return array(
+					'media_id'       => $media_id,
+					'status'         => AltTextWriteStatus::FAILED,
+					'alt_text_draft' => $alt_text_draft,
+					'error'          => 'Alt meta write read-back mismatch.',
 				);
 			}
 		}
@@ -411,6 +445,23 @@ class DescriptionCommand extends \WP_CLI_Command {
 			// Exact string written to alt — history's Generated-alt column source.
 			'alt_text_draft'         => $alt_text_draft,
 		);
+	}
+
+	/**
+	 * Quote-and-escape a free-text table field so one logical row stays one
+	 * parseable line and the value cannot inject k=v tokens [R20-BR-04].
+	 *
+	 * Escapes backslash, double-quote, and whitespace that breaks a line
+	 * (newline, CR, tab). Always double-quoted so `=` and spaces are data.
+	 */
+	private function format_table_value( string $value ): string {
+		$escaped = str_replace(
+			array( '\\', '"', "\n", "\r", "\t" ),
+			array( '\\\\', '\\"', '\\n', '\\r', '\\t' ),
+			$value
+		);
+
+		return '"' . $escaped . '"';
 	}
 
 	/**

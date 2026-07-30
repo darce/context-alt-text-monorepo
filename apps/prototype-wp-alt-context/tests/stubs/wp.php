@@ -803,12 +803,107 @@ if (!function_exists('get_post_meta')) {
     }
 }
 
+if (!function_exists('has_filter')) {
+    /**
+     * Harness has_filter: true when any callback is registered on the hook.
+     * Models wp-includes/plugin.php has_filter() for the false-callback form
+     * used by sanitize_meta() subtype dispatch.
+     *
+     * @param string         $hookName
+     * @param callable|false $callback
+     * @return bool|int
+     */
+    function has_filter($hookName, $callback = false)
+    {
+        if (empty($GLOBALS['__ac_filters'][$hookName])) {
+            return false;
+        }
+
+        if (false === $callback) {
+            $priorities = array_keys($GLOBALS['__ac_filters'][$hookName]);
+
+            return empty($priorities) ? false : (int) min($priorities);
+        }
+
+        foreach ($GLOBALS['__ac_filters'][$hookName] as $priority => $callbacks) {
+            foreach ($callbacks as $data) {
+                if ($data['callback'] === $callback) {
+                    return (int) $priority;
+                }
+            }
+        }
+
+        return false;
+    }
+}
+
+if (!function_exists('get_object_subtype')) {
+    /**
+     * Models wp-includes/meta.php get_object_subtype() for the post type.
+     * Attachment posts yield subtype "attachment", which update_metadata passes
+     * to sanitize_meta.
+     *
+     * @param string $objectType
+     * @param int    $objectId
+     */
+    function get_object_subtype($objectType, $objectId): string
+    {
+        $objectId      = (int) $objectId;
+        $objectSubtype = '';
+
+        if ('post' === $objectType) {
+            $postType = get_post_type($objectId);
+            if (!empty($postType)) {
+                $objectSubtype = (string) $postType;
+            }
+        }
+
+        return (string) apply_filters("get_object_subtype_{$objectType}", $objectSubtype, $objectId);
+    }
+}
+
+if (!function_exists('sanitize_meta')) {
+    /**
+     * Models wp-includes/meta.php sanitize_meta(): subtype-scoped filter first
+     * (sanitize_{type}_meta_{key}_for_{subtype}), then type-scoped
+     * sanitize_{type}_meta_{key}. Not a no-op and not an alias of the trait
+     * fallback — same dispatch order/args as core [R20-BR-12].
+     *
+     * @param string $metaKey
+     * @param mixed  $metaValue
+     * @param string $objectType
+     * @param string $objectSubtype
+     * @return mixed
+     */
+    function sanitize_meta($metaKey, $metaValue, $objectType, $objectSubtype = '')
+    {
+        if (!empty($objectSubtype) && has_filter("sanitize_{$objectType}_meta_{$metaKey}_for_{$objectSubtype}")) {
+            return apply_filters(
+                "sanitize_{$objectType}_meta_{$metaKey}_for_{$objectSubtype}",
+                $metaValue,
+                $metaKey,
+                $objectType,
+                $objectSubtype
+            );
+        }
+
+        return apply_filters(
+            "sanitize_{$objectType}_meta_{$metaKey}",
+            $metaValue,
+            $metaKey,
+            $objectType
+        );
+    }
+}
+
 if (!function_exists('update_post_meta')) {
     /**
      * Core-faithful update_post_meta for the harness (BR-17).
      *
      * Mirrors wp-includes/meta.php update_metadata():
      * - unslashes the value before store / equality check
+     * - resolves object subtype via get_object_subtype()
+     * - runs sanitize_meta( $key, $value, 'post', $subtype )
      * - returns false when the stored value is byte-identical (no-op)
      * - returns false without persisting when the opt-in fail hook is set
      *
@@ -836,8 +931,10 @@ if (!function_exists('update_post_meta')) {
             $GLOBALS['__ac_post_meta'][$postId] = [];
         }
 
-        // Core: $meta_value = wp_unslash( $meta_value ); before equality/store.
-        $metaValue = wp_unslash($metaValue);
+        // Core update_metadata (meta.php): unslash, then sanitize_meta with subtype.
+        $metaValue     = wp_unslash($metaValue);
+        $objectSubtype = get_object_subtype('post', (int) $postId);
+        $metaValue     = sanitize_meta($metaKey, $metaValue, 'post', $objectSubtype);
 
         // Opt-in: write returns non-false but stores a different value (F-06).
         // Exercises the post-write read-back when the write is "accepted" yet

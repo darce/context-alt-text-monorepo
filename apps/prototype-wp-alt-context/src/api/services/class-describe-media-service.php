@@ -447,52 +447,56 @@ class DescribeMediaService {
 
 		// S3-02 / BR-02: honor update_post_meta() returns. No-op (false when the
 		// stored value already equals what WP will store after unslash+sanitize)
-		// is success via read-back. Real alt failure → failed, no provenance stamp.
-		// Alt ok + provenance fail → partial (history would otherwise drop the item).
+		// is success only via read-back (WBUX-5-R16-BR-10): start alt_ok false on
+		// false returns so skipping this block cannot claim success. Real alt
+		// failure → failed, no provenance stamp. Alt ok + provenance fail → partial.
 		// Compare against the shared post-transform expectation (F-08 / BR-17).
 		$alt_written = update_post_meta( $media_id, self::ALT_TEXT_META_KEY, $draft );
+		$alt_ok      = false !== $alt_written;
 		if ( false === $alt_written ) {
 			$current = get_post_meta( $media_id, self::ALT_TEXT_META_KEY, true );
-			if ( ! is_string( $current ) || $expected_alt !== $current ) {
-				$data['alt_text_write'] = array(
-					'status'               => AltTextWriteStatus::FAILED,
-					'existing_alt_present' => '' !== trim( $existing_alt ),
-				);
-				$response->set_data( $data );
-				return $response;
-			}
+			$alt_ok  = is_string( $current ) && $expected_alt === $current;
+		}
+		if ( ! $alt_ok ) {
+			$data['alt_text_write'] = array(
+				'status'               => AltTextWriteStatus::FAILED,
+				'existing_alt_present' => '' !== trim( $existing_alt ),
+			);
+			$response->set_data( $data );
+			return $response;
 		}
 
 		$expected_provenance = $this->expected_meta_after_core_transforms( self::PROVENANCE_META_KEY, $provenance );
 		$prov_written        = update_post_meta( $media_id, self::PROVENANCE_META_KEY, $provenance );
+		$prov_ok             = false !== $prov_written;
 		if ( false === $prov_written ) {
 			$current_prov = get_post_meta( $media_id, self::PROVENANCE_META_KEY, true );
 			$prov_ok      = is_array( $current_prov ) && $expected_provenance === $current_prov;
-			if ( ! $prov_ok ) {
-				// Alt landed; history gate (provenance array) did not. Partial —
-				// same vocabulary as bulk apply. Do not claim written.
-				// BR-08: reason disambiguates provenance-gap partial from the
-				// description_write-failed partial below.
-				// F-22: parent `reason` names the first (history-gap) cause.
-				// A concurrent long-body failure is nested under description_write
-				// — operators must inspect that key; reason is not a full set union.
-				$write_result = array(
-					'status'               => AltTextWriteStatus::PARTIAL,
-					'reason'               => AltTextWriteStatus::REASON_PROVENANCE_WRITE_FAILED,
-					'existing_alt_present' => '' !== trim( $existing_alt ),
-				);
-				// Long description is independent of provenance on a genuine first
-				// write; on a provenance-only heal it must not author content (F-04).
-				if ( ! $provenance_heal_only ) {
-					$description_write = $this->maybe_write_long_description( $data, $media_id, $force );
-					if ( null !== $description_write ) {
-						$write_result['description_write'] = $description_write;
-					}
+		}
+		if ( ! $prov_ok ) {
+			// Alt landed; history gate (provenance array) did not. Partial —
+			// same vocabulary as bulk apply. Do not claim written.
+			// BR-08: reason disambiguates provenance-gap partial from the
+			// description_write-failed partial below.
+			// F-22: parent `reason` names the first (history-gap) cause.
+			// A concurrent long-body failure is nested under description_write
+			// — operators must inspect that key; reason is not a full set union.
+			$write_result = array(
+				'status'               => AltTextWriteStatus::PARTIAL,
+				'reason'               => AltTextWriteStatus::REASON_PROVENANCE_WRITE_FAILED,
+				'existing_alt_present' => '' !== trim( $existing_alt ),
+			);
+			// Long description is independent of provenance on a genuine first
+			// write; on a provenance-only heal it must not author content (F-04).
+			if ( ! $provenance_heal_only ) {
+				$description_write = $this->maybe_write_long_description( $data, $media_id, $force );
+				if ( null !== $description_write ) {
+					$write_result['description_write'] = $description_write;
 				}
-				$data['alt_text_write'] = $write_result;
-				$response->set_data( $data );
-				return $response;
 			}
+			$data['alt_text_write'] = $write_result;
+			$response->set_data( $data );
+			return $response;
 		}
 
 		// FORCED_OVERWRITE only when force=true. Non-force heal of matching alt
@@ -545,12 +549,16 @@ class DescribeMediaService {
 	 * success. Non-array provenance is a no-op success here; the full write
 	 * path stamps a new envelope instead.
 	 *
+	 * R20-BR-01: public so CLI generate shares this exact heal rather than
+	 * mirroring it — a duplicated heal is the REST/CLI drift class the shared
+	 * write gate was extracted to eliminate.
+	 *
 	 * @param mixed  $existing_provenance Stored `_acx_description_provenance`.
 	 * @param string $draft               Incoming normalized draft (non-empty).
 	 * @return bool True when the stored envelope already had the draft or the
 	 *              heal persisted as submitted; false when the write did not.
 	 */
-	private function heal_provenance_alt_text_draft( int $media_id, mixed $existing_provenance, string $draft ): bool {
+	public function heal_provenance_alt_text_draft( int $media_id, mixed $existing_provenance, string $draft ): bool {
 		if ( ! is_array( $existing_provenance ) ) {
 			return true;
 		}

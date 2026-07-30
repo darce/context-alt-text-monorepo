@@ -57,10 +57,14 @@ class DescribeMediaServiceTest extends TestCase
         $path = $this->tempDir . "/{$id}.{$extension}";
         file_put_contents($path, $bytes);
         $GLOBALS['__ac_attached_file'][$id] = $path;
+        // post_type=attachment so get_object_subtype('post', $id) matches core
+        // update_metadata → sanitize_meta( …, 'attachment' ) [R20-BR-10].
         $GLOBALS['__ac_posts'][$id] = (object) array(
             'post_title'   => "Photo {$id}",
             'post_excerpt' => 'A caption.',
             'post_content' => 'A long description.',
+            'post_type'    => 'attachment',
+            'ID'           => $id,
         );
         return $path;
     }
@@ -1868,6 +1872,264 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertIsArray($healed);
         $this->assertSame($expectedStored, $healed['alt_text_draft'] ?? null);
         $this->assertSame('2026-01-01T00:00:00+00:00', $healed['generated_at'] ?? null);
+    }
+
+    /**
+     * R20-BR-10: subtype-scoped sanitize_post_meta_{key}_for_attachment must
+     * change the shared post-transform expectation. A sanitizer registered for
+     * a different subtype must not.
+     */
+    public function testExpectedMetaHonoursAttachmentSubtypeSanitizerOnly(): void
+    {
+        $key   = '_wp_attachment_image_alt';
+        $value = 'raw alt before subtype sanitize';
+
+        add_filter(
+            'sanitize_post_meta_' . $key . '_for_attachment',
+            static function ($v) {
+                return is_string($v) ? $v . ' [attachment-sanitized]' : $v;
+            },
+            10,
+            1
+        );
+        add_filter(
+            'sanitize_post_meta_' . $key . '_for_page',
+            static function ($v) {
+                return is_string($v) ? $v . ' [page-sanitized]' : $v;
+            },
+            10,
+            1
+        );
+
+        $probe    = new DescribeMediaMetaExpectationProbe();
+        $expected = $probe->probe_expected($key, $value);
+
+        $this->assertSame(
+            $value . ' [attachment-sanitized]',
+            $expected,
+            'attachment subtype sanitizer must shape the expectation'
+        );
+        $this->assertStringNotContainsString(
+            '[page-sanitized]',
+            is_string($expected) ? $expected : '',
+            'page subtype sanitizer must not affect attachment expectation'
+        );
+        // Direct core-shaped sanitize_meta agrees with the trait production leg.
+        $this->assertSame(
+            sanitize_meta($key, wp_unslash($value), 'post', 'attachment'),
+            $expected
+        );
+    }
+
+    /**
+     * R20-BR-12: production leg (sanitize_meta) and filter-fallback leg must
+     * agree for the same registered sanitizer. Fallback is invoked directly so
+     * both legs stay covered even when the harness defines sanitize_meta.
+     */
+    public function testSanitizeMetaProductionAndFallbackLegsAgree(): void
+    {
+        $this->assertTrue(
+            function_exists('sanitize_meta'),
+            'precondition: harness must define sanitize_meta so production leg is live'
+        );
+
+        $key   = '_wp_attachment_image_alt';
+        $value = 'leg agreement fixture';
+
+        add_filter(
+            'sanitize_post_meta_' . $key,
+            static function ($v) {
+                return is_string($v) ? $v . ' [type-sanitized]' : $v;
+            },
+            10,
+            1
+        );
+
+        $probe     = new DescribeMediaMetaExpectationProbe();
+        $unslashed = wp_unslash($value);
+        $viaProd   = $probe->probe_expected($key, $value);
+        $viaSm     = sanitize_meta($key, $unslashed, 'post', 'attachment');
+        $viaFb     = $probe->probe_fallback($key, $unslashed, 'attachment');
+
+        $this->assertSame($value . ' [type-sanitized]', $viaSm);
+        $this->assertSame($viaSm, $viaFb, 'fallback filter dispatch must match sanitize_meta');
+        $this->assertSame($viaSm, $viaProd, 'trait production leg must match sanitize_meta');
+    }
+
+    /**
+     * R20-BR-12 companion: subtype-scoped filter on the fallback leg alone
+     * (bypassing sanitize_meta) must still apply attachment sanitizers first.
+     */
+    public function testSanitizeMetaFallbackLegHonoursAttachmentSubtype(): void
+    {
+        $key   = '_wp_attachment_image_alt';
+        $value = 'fallback subtype fixture';
+
+        add_filter(
+            'sanitize_post_meta_' . $key . '_for_attachment',
+            static function ($v) {
+                return is_string($v) ? $v . ' [fb-attachment]' : $v;
+            },
+            10,
+            1
+        );
+        add_filter(
+            'sanitize_post_meta_' . $key,
+            static function ($v) {
+                return is_string($v) ? $v . ' [fb-type]' : $v;
+            },
+            10,
+            1
+        );
+
+        $probe  = new DescribeMediaMetaExpectationProbe();
+        $viaFb  = $probe->probe_fallback($key, $value, 'attachment');
+        $viaSm  = sanitize_meta($key, $value, 'post', 'attachment');
+
+        $this->assertSame($value . ' [fb-attachment]', $viaFb);
+        $this->assertSame($viaSm, $viaFb);
+        $this->assertStringNotContainsString('[fb-type]', $viaFb);
+    }
+
+    /**
+     * R20-BR-11: heal early-out must compare the post-transform draft form.
+     * A stored slash-escaped draft equal to the raw draft must NOT early-out —
+     * heal must rewrite storage to the unslashed form. ASCII is a fixed point
+     * under wp_unslash and cannot pin this.
+     */
+    public function testHealEarlyOutRequiresPostTransformDraftMatch(): void
+    {
+        $this->plantWritableAttachment(42);
+        $draft          = 'C:\\Users\\photo';
+        $expectedStored = wp_unslash($draft);
+        $this->assertNotSame($draft, $expectedStored, 'precondition: unslash must change the bytes');
+
+        // Alt meta already holds the post-unslash form (what update_post_meta stores).
+        $this->setPostMeta(42, '_wp_attachment_image_alt', $expectedStored);
+        // Provenance still holds the slash-escaped form — equal to raw $draft,
+        // unequal to post-transform expectation. Early-out on raw $draft would
+        // leave this stale forever.
+        $existingProvenance = array(
+            'adapter'                => 'seeded',
+            'model_id'               => 'seeded-fixtures',
+            'model_version'          => '1',
+            'prompt_or_task_version' => '1',
+            'image_hash'             => str_repeat('a', 64),
+            'context_hash'           => str_repeat('b', 64),
+            'generated_at'           => '2026-01-01T00:00:00+00:00',
+            'alt_text_draft'         => $draft,
+        );
+        $this->setPostMeta(42, '_acx_description_provenance', $existingProvenance);
+
+        $body                   = $this->validBackendBody(42);
+        $body['alt_text_draft'] = $draft;
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($body),
+        ));
+
+        $result = $this->controller->describe_media($this->writeRequest(42, true));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame('forced_overwrite', $result->get_data()['alt_text_write']['status'] ?? null);
+        $healed = get_post_meta(42, '_acx_description_provenance', true);
+        $this->assertIsArray($healed);
+        $this->assertSame(
+            $expectedStored,
+            $healed['alt_text_draft'] ?? null,
+            'heal must rewrite slash-escaped stored draft to post-transform form'
+        );
+        $this->assertNotSame($draft, $healed['alt_text_draft'] ?? null);
+        $this->assertSame('2026-01-01T00:00:00+00:00', $healed['generated_at'] ?? null);
+    }
+
+    /**
+     * WBUX-5-R16-BR-10: natural no-op reapply reports success because read-back
+     * confirmed the expected stored value — not because a false write return was
+     * ignored. Plant matching alt + force so the write path runs; update returns
+     * false (byte-identical). Skipping the false-branch leaves alt_ok false.
+     */
+    public function testWriteAltIdempotentReapplyReportsSuccess(): void
+    {
+        $this->plantWritableAttachment(42);
+        $draft = 'A photo.';
+        $this->setPostMeta(42, '_wp_attachment_image_alt', $draft);
+        // Provenance absent → not the force identity-complete early no-op; full
+        // write path exercises the alt write-result guard.
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+
+        $result = $this->controller->describe_media($this->writeRequest(42, true));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $status = $result->get_data()['alt_text_write']['status'] ?? null;
+        $this->assertSame('forced_overwrite', $status);
+        $this->assertNotSame('failed', $status);
+        $this->assertSame($draft, get_post_meta(42, '_wp_attachment_image_alt', true));
+        $this->assertIsArray(get_post_meta(42, '_acx_description_provenance', true));
+    }
+
+    /**
+     * WBUX-5-R16-BR-10 companion: forced false return with matching stored alt
+     * still succeeds via read-back (same guard as natural no-op).
+     */
+    public function testWriteAltForcedFalseNoOpReadBackReportsSuccess(): void
+    {
+        $this->plantWritableAttachment(42);
+        $draft = 'A photo.';
+        $this->setPostMeta(42, '_wp_attachment_image_alt', $draft);
+        $GLOBALS['__ac_update_post_meta_fail'][42]['_wp_attachment_image_alt'] = true;
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+
+        $result = $this->controller->describe_media($this->writeRequest(42, true));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $status = $result->get_data()['alt_text_write']['status'] ?? null;
+        $this->assertSame('forced_overwrite', $status);
+        $this->assertNotSame('failed', $status);
+        $this->assertSame($draft, get_post_meta(42, '_wp_attachment_image_alt', true));
+        $this->assertIsArray(get_post_meta(42, '_acx_description_provenance', true));
+    }
+}
+
+/**
+ * Test probe: exposes the private post-transform expectation and the filter
+ * fallback so R20-BR-10 / R20-BR-12 can pin both legs without going through HTTP.
+ */
+final class DescribeMediaMetaExpectationProbe extends DescribeMediaService
+{
+    public function __construct()
+    {
+        parent::__construct(new DescribeMediaServiceTestHost('probe-tenant', array()));
+    }
+
+    /**
+     * @param mixed $value
+     * @return mixed
+     */
+    public function probe_expected(string $meta_key, $value)
+    {
+        $ref = new \ReflectionMethod(DescribeMediaService::class, 'expected_meta_after_core_transforms');
+        $ref->setAccessible(true);
+
+        return $ref->invoke($this, $meta_key, $value);
+    }
+
+    /**
+     * @param mixed $value
+     * @return mixed
+     */
+    public function probe_fallback(string $meta_key, $value, string $object_subtype = 'attachment')
+    {
+        $ref = new \ReflectionMethod(DescribeMediaService::class, 'apply_sanitize_meta_filters');
+        $ref->setAccessible(true);
+
+        return $ref->invoke($this, $meta_key, $value, $object_subtype);
     }
 }
 

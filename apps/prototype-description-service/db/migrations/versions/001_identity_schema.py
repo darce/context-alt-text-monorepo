@@ -1631,6 +1631,9 @@ def ensure_tables(op) -> None:
         sa.Column("queue_rank", sa.Integer(), nullable=False),
         sa.Column("uncertainty", sa.dialects.postgresql.JSONB(), nullable=False),
         sa.UniqueConstraint("run_id", "identity_id", name="uq_identity_atlas_points_run_identity"),
+        # Target for composite FK from dispositions: forces disposition.run_id
+        # to match the referenced point's run_id (FIR-9 cross-run attach).
+        sa.UniqueConstraint("id", "run_id", name="uq_identity_atlas_points_id_run"),
     )
     _ensure_index(
         op,
@@ -1639,6 +1642,13 @@ def ensure_tables(op) -> None:
         ["run_id", "queue_rank"],
     )
     _ensure_index(op, "idx_identity_atlas_points_tenant", "identity_atlas_points", ["tenant_id"])
+    # Purge disposed scope filters points on (tenant_id, identity_id).
+    _ensure_index(
+        op,
+        "idx_identity_atlas_points_tenant_identity",
+        "identity_atlas_points",
+        ["tenant_id", "identity_id"],
+    )
 
     _ensure_table(
         op,
@@ -1653,7 +1663,6 @@ def ensure_tables(op) -> None:
         sa.Column(
             "point_id",
             sa.dialects.postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("identity_atlas_points.id", ondelete="CASCADE"),
             nullable=False,
         ),
         sa.Column(
@@ -1666,6 +1675,13 @@ def ensure_tables(op) -> None:
         sa.Column("actor", sa.Text(), nullable=False),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.UniqueConstraint("run_id", "point_id", name="uq_identity_atlas_dispositions_run_point"),
+        # Composite FK: disposition.run_id must equal the point's run_id.
+        sa.ForeignKeyConstraint(
+            ["point_id", "run_id"],
+            ["identity_atlas_points.id", "identity_atlas_points.run_id"],
+            ondelete="CASCADE",
+            name="fk_identity_atlas_dispositions_point_run",
+        ),
         sa.CheckConstraint(
             "action IN ('reviewed', 'skipped')",
             name="valid_atlas_disposition_action",
@@ -1676,6 +1692,13 @@ def ensure_tables(op) -> None:
         "idx_identity_atlas_queue_dispositions_tenant",
         "identity_atlas_queue_dispositions",
         ["tenant_id"],
+    )
+    # Point-delete CASCADE looks up dispositions by point_id.
+    _ensure_index(
+        op,
+        "idx_identity_atlas_queue_dispositions_point",
+        "identity_atlas_queue_dispositions",
+        ["point_id"],
     )
 
 

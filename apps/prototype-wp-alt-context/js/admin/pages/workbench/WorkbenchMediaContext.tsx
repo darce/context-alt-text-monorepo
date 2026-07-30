@@ -65,7 +65,12 @@ export const WorkbenchMediaProvider: React.FC<{ children: React.ReactNode }> = (
   });
 
   const mediaData = mediaQuery.data;
-  const mediaItems = mediaQuery.itemsWithIdentities ?? mediaData?.items ?? [];
+  // Stable identity: bare `?? []` would allocate a new array every render and
+  // thrash the statusMessage useMemo that depends on mediaItems [WBUX-5-BR-112].
+  const mediaItems = useMemo(
+    () => mediaQuery.itemsWithIdentities ?? mediaData?.items ?? [],
+    [mediaQuery.itemsWithIdentities, mediaData?.items],
+  );
   const totalCount = mediaData?.total ?? 0;
 
   useEffect(() => {
@@ -97,8 +102,36 @@ export const WorkbenchMediaProvider: React.FC<{ children: React.ReactNode }> = (
         : __('No media items match the current filters.', 'alt-context');
     }
 
-    return sprintf(_n('Showing %d media item.', 'Showing %d media items.', totalCount, 'alt-context'), totalCount);
-  }, [mediaQuery.isError, mediaQuery.isFetching, normalizedSearch, totalCount]);
+    // Envelope total stays server truth — never rewritten from listed rows [rg-015].
+    const showing = sprintf(
+      _n('Showing %d media item.', 'Showing %d media items.', totalCount, 'alt-context'),
+      totalCount,
+    );
+
+    // Status=missing only: when corrections patch listed rows to complete without
+    // invalidating the list, the filter label + envelope count + visible rows
+    // would otherwise form an undesigned composite [WBUX-5-BR-112][RLSE-04].
+    // Reconcile by labelling what we can observe on this page — never by
+    // guessing other pages or decrementing total. Status=all has no filter
+    // mismatch (complete rows belong there), so no sentence under that filter.
+    if (statusFilter === 'missing') {
+      const correctedOnPage = mediaItems.filter((item) => item.status === 'complete').length;
+      if (correctedOnPage > 0) {
+        const reconciliation = sprintf(
+          _n(
+            '%d now has alt text and will leave this view when the list next refreshes.',
+            '%d now have alt text and will leave this view when the list next refreshes.',
+            correctedOnPage,
+            'alt-context',
+          ),
+          correctedOnPage,
+        );
+        return `${showing} ${reconciliation}`;
+      }
+    }
+
+    return showing;
+  }, [mediaItems, mediaQuery.isError, mediaQuery.isFetching, normalizedSearch, statusFilter, totalCount]);
 
   const detailTruncationNotice = useMemo(() => {
     const detailData = mediaQuery.detailQuery.data;

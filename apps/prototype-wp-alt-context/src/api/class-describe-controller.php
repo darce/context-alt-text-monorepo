@@ -555,19 +555,23 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	 *
 	 * Partial recovery (non-clobber completion): when a prior apply wrote alt but
 	 * failed provenance, this path also writes durable evidence —
-	 * `_acx_description_provenance_pending` = `{ run_id, draft_hash }` — scoped to
-	 * this run and this draft. On a later apply, if stored alt is non-empty and the
-	 * operator did not opt into overwrite, the guard falls through **only** when
-	 * that marker exists, its `run_id` matches the path run id, its `draft_hash`
-	 * matches hash(sha256, current draft), stored alt is still a string and
-	 * byte-identical to the draft, and stored provenance is not already **this
-	 * run's** envelope (older provenance from a prior generation may exist and is
-	 * replaced). Equality of alt to draft alone is not evidence this system started
-	 * the write (coincidental operator text / partial inline correction) and must
-	 * stay guarded. No marker → `skipped_existing`, requiring explicit
-	 * `overwrite_media_ids`. Marker write failure is fail-closed: without a verified
-	 * marker the item is `failed` (not `partial`) so the UI does not present a
-	 * non-recoverable item as retryable. [RLSE-05] [INT-11] [rg-015]
+	 * `_acx_description_provenance_pending` = `{ run_id, draft_hash }` where
+	 * `draft_hash` is sha256 of the **stored** alt form (post wp_unslash +
+	 * sanitize_meta), not the raw draft [R22-BR-01]. On a later apply, if stored
+	 * alt is non-empty and the operator did not opt into overwrite, the guard
+	 * falls through **only** when that marker is a usable same-draft recovery
+	 * marker (verified shape + draft_hash match on stored domain — `run_id` is
+	 * intentionally not compared so a foreign-run / single-image / CLI marker for
+	 * the same draft remains recoverable [R22-BR-02]), stored alt is still a
+	 * string and byte-identical to the expected stored draft, and stored
+	 * provenance is not already **this run's** envelope (older provenance from a
+	 * prior generation may exist and is replaced). Equality of alt to draft alone
+	 * is not evidence this system started the write (coincidental operator text /
+	 * partial inline correction) and must stay guarded. No marker →
+	 * `skipped_existing`, requiring explicit `overwrite_media_ids`. Marker write
+	 * failure is fail-closed: without a verified marker the item is `failed` (not
+	 * `partial`) so the UI does not present a non-recoverable item as retryable.
+	 * [RLSE-05] [INT-11] [rg-015]
 	 */
 	public function apply_describe_run_drafts( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		// S3-03: gate on the authoritative run status. The /items endpoint carries
@@ -777,32 +781,36 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 				$has_existing = '' !== trim( $stored_alt_raw );
 
 				if ( $has_existing && ! isset( $overwrite[ $media_id ] ) ) {
-					// Non-clobber completion: only when durable evidence proves this
-					// system started this write for this run+draft (pending marker).
+					// Non-clobber completion: durable same-draft marker proves the
+					// system started this write for this draft (pending marker).
 					// Alt===draft alone is not enough — coincidental operator text must
-					// stay guarded. When the marker matches run+draft and alt still
-					// equals the (unslashed) draft WP stores, completing provenance is
-					// not a clobber even if an older envelope from a different
-					// generation exists (BR-126 / BR-17).
+					// stay guarded. Marker ownership (run_id) is irrelevant: a foreign
+					// bulk / single-image / CLI marker for the same stored draft is
+					// recovery evidence; re-apply must complete provenance [R22-BR-02].
+					// draft_hash domain is the stored form [R22-BR-01] (BR-126 / BR-17).
 					$stored_prov = get_post_meta( $media_id, '_acx_description_provenance', true );
 					$pending     = get_post_meta( $media_id, '_acx_description_provenance_pending', true );
-					$draft_hash  = hash( 'sha256', $draft );
+					$expected_stored_alt_str = is_string( $expected_stored_alt )
+						? $expected_stored_alt
+						: (string) $expected_stored_alt;
 					$prov_is_this_run = is_array( $stored_prov )
 						&& isset( $stored_prov['run_id'] )
 						&& (string) $stored_prov['run_id'] === $run_id;
 					// $stored_alt_raw is string here (non-string branch returns above).
 					// Compare against the value WP stores, not the raw draft (BR-17).
-					$is_non_clobber_completion = is_array( $pending )
-						&& isset( $pending['run_id'], $pending['draft_hash'] )
-						&& (string) $pending['run_id'] === $run_id
-						&& (string) $pending['draft_hash'] === $draft_hash
+					$is_non_clobber_completion = DescriptionHistoryService::is_usable_pending_marker_for_draft(
+						$pending,
+						$expected_stored_alt_str
+					)
 						&& $stored_alt_raw === $expected_stored_alt
 						&& ! $prov_is_this_run;
 
 					if ( ! $is_non_clobber_completion ) {
 						// BR-114: drop orphaned markers owned by this run when recovery
 						// is rejected because alt diverged or provenance is already
-						// this run's complete envelope. Markers for other runs stay.
+						// this run's complete envelope. Markers for other runs stay
+						// (foreign same-draft markers recover above; foreign
+						// mismatched markers remain for their owner).
 						if ( is_array( $pending )
 							&& isset( $pending['run_id'] )
 							&& (string) $pending['run_id'] === $run_id
@@ -839,18 +847,14 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 				continue;
 			}
 
-			// S3-02 / WBUX-5-R16-BR-10: honor the update_post_meta() return. It
-			// also returns false when the stored value is byte-identical to what
-			// WP will store (a no-op overwrite); distinguish that from a real
-			// failure via read-back. Start alt_ok false on false returns so
-			// skipping this block cannot claim applied. Shared post-transform
-			// expectation (F-15R / BR-17).
-			$alt_written = update_post_meta( $media_id, '_wp_attachment_image_alt', $draft );
-			$alt_ok      = false !== $alt_written;
-			if ( false === $alt_written ) {
-				$current = get_post_meta( $media_id, '_wp_attachment_image_alt', true );
-				$alt_ok  = is_string( $current ) && $expected_stored_alt === $current;
-			}
+			// S3-02 / WBUX-5-R16-BR-10 / R22-BR-03: always read alt back and
+			// compare against the shared post-transform expectation (F-15R /
+			// BR-17). A non-false accept that persists a divergent value must
+			// not bucket as applied. No-op false returns still succeed when
+			// storage already equals the expectation.
+			update_post_meta( $media_id, '_wp_attachment_image_alt', $draft );
+			$current = get_post_meta( $media_id, '_wp_attachment_image_alt', true );
+			$alt_ok  = is_string( $current ) && $expected_stored_alt === $current;
 			if ( ! $alt_ok ) {
 				$buckets['failed'][] = $media_id;
 				continue;
@@ -886,9 +890,13 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 				// same-draft marker, auto-recovery is impossible so bucket
 				// `failed` (not `partial`) — partial is presented as retryable.
 				// [BR-102] [RLSE-05] [INT-11] [R21-BR-08]
-				$marker = array(
+				// draft_hash domain = stored form ($expected_stored_alt), not raw $draft [R22-BR-01].
+				$expected_stored_alt_str = is_string( $expected_stored_alt )
+					? $expected_stored_alt
+					: (string) $expected_stored_alt;
+				$marker                  = array(
 					'run_id'     => $run_id,
-					'draft_hash' => hash( 'sha256', $draft ),
+					'draft_hash' => DescriptionHistoryService::hash_for_stored_alt( $expected_stored_alt_str ),
 				);
 				// Return value is not authoritative (false = failure or no-op;
 				// non-false may still persist a divergent value). Always verify
@@ -902,7 +910,7 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 				$current_marker = get_post_meta( $media_id, '_acx_description_provenance_pending', true );
 				$marker_ok      = DescriptionHistoryService::is_usable_pending_marker_for_draft(
 					$current_marker,
-					$draft
+					$expected_stored_alt_str
 				);
 				if ( ! $marker_ok ) {
 					// Alt remains written. failed = unrecoverable provenance gap,

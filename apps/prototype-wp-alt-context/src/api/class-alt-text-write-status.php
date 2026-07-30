@@ -140,8 +140,10 @@ final class AltTextWriteStatus {
 	 *                      (non-clobber completion path buckets applied)
 	 * - partial          ← PARTIAL (alt landed, provenance did not; marker verified)
 	 * - skipped_existing ← SKIPPED_EXISTING_ALT (guard / CAS abort); also bulk-only
-	 *                      BR-119 non-string alt meta (no single-item analogue —
-	 *                      REST single casts a non-string alt to '' and proceeds)
+	 *                      BR-119 non-string alt meta — REST single and CLI both
+	 *                      cast a non-string alt to '' and proceed; bulk is the
+	 *                      only surface that fails closed (skipped_existing) on
+	 *                      non-string alt meta
 	 * - skipped_no_draft ← empty draft (single-item: SKIPPED_EMPTY_ALT_TEXT)
 	 * - skipped_invalid  ← non-attachment media_id (bulk-only; no single-item status)
 	 * - failed           ← FAILED (alt write fail, or marker plant unverified)

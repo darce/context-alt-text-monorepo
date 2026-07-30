@@ -307,9 +307,20 @@ class DescriptionHistoryService {
 	}
 
 	/**
+	 * Canonical marker `draft_hash` domain: sha256 of the **stored** alt form
+	 * (what WordPress persists after wp_unslash + sanitize_meta), never the raw
+	 * pre-transform draft. All plant sites and both recovery predicates must use
+	 * this helper so a future writer cannot hash the wrong domain [R22-BR-01].
+	 */
+	public static function hash_for_stored_alt( string $stored_alt ): string {
+		return hash( 'sha256', $stored_alt );
+	}
+
+	/**
 	 * Live recovery marker for a stored alt: verified shape and draft_hash
 	 * equals sha256( stored alt ). skip_existing must not wipe these — the gap
-	 * remains real and is the only durable recovery evidence [R21-BR-01].
+	 * remains real and is the only durable recovery evidence [R21-BR-01]
+	 * [R22-BR-01].
 	 *
 	 * @param mixed $pending Raw post meta value.
 	 */
@@ -322,24 +333,29 @@ class DescriptionHistoryService {
 		}
 		// $pending is verified-shape array here; draft_hash is a non-empty string.
 		/** @var array{run_id: string, draft_hash: string} $pending */
-		return hash( 'sha256', $stored_alt ) === (string) $pending['draft_hash'];
+		return self::hash_for_stored_alt( $stored_alt ) === (string) $pending['draft_hash'];
 	}
 
 	/**
 	 * Usable recovery evidence for a draft about to be (or just) written:
-	 * verified shape and draft_hash matches sha256( draft ), regardless of
-	 * run_id. Writers accept a pre-existing bulk / cross-surface marker with
-	 * the same draft rather than demanding strict identity with the marker
-	 * this path tried to plant [R21-BR-08] [R21-BR-17 key-order].
+	 * verified shape and draft_hash matches sha256( $expected_stored_alt ),
+	 * where $expected_stored_alt is the post-transform form WP will / did
+	 * persist (wp_unslash + sanitize_meta) — never the raw pre-transform draft
+	 * [R22-BR-01]. run_id is intentionally ignored: ownership is irrelevant to
+	 * whether the alt for this draft landed; writers accept a pre-existing bulk
+	 * / cross-surface marker for the same stored draft rather than demanding
+	 * strict identity with the marker this path tried to plant
+	 * [R21-BR-08] [R21-BR-17 key-order] [R22-BR-02].
 	 *
-	 * @param mixed $pending Raw post meta value.
+	 * @param mixed  $pending              Raw post meta value.
+	 * @param string $expected_stored_alt  Post-transform alt (stored domain).
 	 */
-	public static function is_usable_pending_marker_for_draft( mixed $pending, string $draft ): bool {
+	public static function is_usable_pending_marker_for_draft( mixed $pending, string $expected_stored_alt ): bool {
 		if ( ! self::is_verified_pending_marker( $pending ) ) {
 			return false;
 		}
 		/** @var array{run_id: string, draft_hash: string} $pending */
-		return hash( 'sha256', $draft ) === (string) $pending['draft_hash'];
+		return self::hash_for_stored_alt( $expected_stored_alt ) === (string) $pending['draft_hash'];
 	}
 
 	/**

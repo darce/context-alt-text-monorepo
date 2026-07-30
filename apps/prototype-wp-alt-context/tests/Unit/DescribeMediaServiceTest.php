@@ -2186,23 +2186,44 @@ class DescribeMediaServiceTest extends TestCase
     }
 
     /**
-     * R21-BR-01: skip_existing must NOT wipe a LIVE recovery marker
-     * (verified shape + draft_hash === sha256(stored alt)). Scenario: prior run
-     * landed the alt, provenance failed, marker planted; re-describe without
-     * force returns a different draft → skip_existing. Marker + history gap must
-     * survive so recovery remains possible.
+     * R21-BR-01 / R22-BR-01 / R22-BR-07 [TEST-15]: skip_existing must NOT wipe a
+     * LIVE recovery marker planted by the production writer. Draft is
+     * backslash-bearing (`AC\DC…`) so the raw-draft hash domain and the stored
+     * form diverge under wp_unslash — a hand-shaped hash('sha256', $storedAlt)
+     * pin would green-wash the plant-site bug. Marker is produced via the real
+     * partial path (provenance fail), then a different draft triggers
+     * skip_existing. Marker + history gap must survive.
+     *
+     * RED under: plant draft_hash = hash(raw $draft) instead of stored form.
      */
     public function testSkipExistingPreservesLiveProvenancePendingMarker(): void
     {
         $this->plantWritableAttachment(42);
-        $storedAlt = 'Machine-written alt with gap';
-        $liveMarker = array(
-            'run_id'     => 'single_image',
-            'draft_hash' => hash('sha256', $storedAlt),
-        );
-        $this->setPostMeta(42, '_wp_attachment_image_alt', $storedAlt);
-        $this->setPostMeta(42, '_acx_description_provenance_pending', $liveMarker);
-        // Backend returns a DIFFERENT draft so the gate is skip_existing.
+        // PHP source \\ → one backslash; unslash changes those bytes.
+        $rawDraft   = 'AC\\DC concert poster';
+        $storedAlt  = wp_unslash($rawDraft);
+        $this->assertNotSame($rawDraft, $storedAlt, 'precondition: unslash must change the bytes');
+
+        // Production plant: alt lands, provenance fails → marker via writer path.
+        $body                   = $this->validBackendBody(42);
+        $body['alt_text_draft'] = $rawDraft;
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($body),
+        ));
+        $GLOBALS['__ac_update_post_meta_fail'][42]['_acx_description_provenance'] = true;
+
+        $first = $this->controller->describe_media($this->writeRequest(42));
+        $this->assertInstanceOf(WP_REST_Response::class, $first);
+        $this->assertSame('partial', $first->get_data()['alt_text_write']['status'] ?? null);
+        $this->assertSame($storedAlt, get_post_meta(42, '_wp_attachment_image_alt', true));
+        $liveMarker = get_post_meta(42, '_acx_description_provenance_pending', true);
+        $this->assertIsArray($liveMarker);
+
+        // Second describe: DIFFERENT draft, force=false → skip_existing. Live marker must survive.
+        // Load-bearing [TEST-15] claim: RED when plant hashes raw draft while
+        // is_live_recovery_marker_for_alt hashes stored form (R22-BR-01).
+        unset($GLOBALS['__ac_update_post_meta_fail'][42]['_acx_description_provenance']);
         $this->queueHttpResponse(array(
             'response' => array('code' => 200, 'message' => 'OK'),
             'body'     => (string) json_encode($this->validBackendBody(42)),
@@ -2212,7 +2233,18 @@ class DescribeMediaServiceTest extends TestCase
 
         $this->assertInstanceOf(WP_REST_Response::class, $result);
         $this->assertSame('skipped_existing_alt', $result->get_data()['alt_text_write']['status'] ?? null);
-        $this->assertSame($liveMarker, get_post_meta(42, '_acx_description_provenance_pending', true));
+        $this->assertSame(
+            $liveMarker,
+            get_post_meta(42, '_acx_description_provenance_pending', true),
+            'live recovery marker must survive skip_existing'
+        );
+
+        // Domain check (after survival): plant must have used the stored form.
+        $this->assertSame(
+            \AltContext\Api\Services\DescriptionHistoryService::hash_for_stored_alt($storedAlt),
+            $liveMarker['draft_hash'] ?? null,
+            'production plant must hash the stored form, not the raw draft'
+        );
 
         $GLOBALS['__ac_get_posts_results'] = [42];
         $history = (new \AltContext\Api\Services\DescriptionHistoryService())->list_history(50);
@@ -2388,7 +2420,14 @@ class DescribeMediaServiceTest extends TestCase
     }
 
     /**
-     * R21-BR-04 / R21-BR-03: non-array provenance store fails the is_array leg.
+     * R21-BR-04 / R22-BR-09: non-array provenance store reports partial (not
+     * written). Note: `$expected_provenance === $current_prov` already rejects a
+     * string store because expected is always an array — `is_array( $current_prov )`
+     * is therefore **not** an independent leg. This pin is a wire-outcome
+     * regression for a string store, not a sole-discriminator claim on is_array.
+     * Dropping only the is_array conjunct leaves this green; the load-bearing
+     * discriminator is `===` (see testProvenanceWriteDivergentArrayStoreReportsPartialNotWritten
+     * for the array-shaped equality leg).
      */
     public function testProvenanceWriteNonArrayStoreReportsPartialNotWritten(): void
     {
@@ -2408,6 +2447,32 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertSame('GARBAGE_PROV', get_post_meta(42, '_acx_description_provenance', true));
         $pending = get_post_meta(42, '_acx_description_provenance_pending', true);
         $this->assertIsArray($pending);
+    }
+
+    /**
+     * R22-BR-03 [TEST-15]: REST-single alt write returns non-false but storage
+     * diverges → failed (not written). Pins the unconditional alt read-back.
+     * RED under: restore `if ( false === $alt_written ) { … }` gate so non-false
+     * returns skip the read-back.
+     */
+    public function testWriteAltDivergentNonFalseStoreReportsFailedNotWritten(): void
+    {
+        $this->plantWritableAttachment(42);
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+        $GLOBALS['__ac_update_post_meta_mutate'][42]['_wp_attachment_image_alt'] = 'MUTATED ALT STORE';
+
+        $result = $this->controller->describe_media($this->writeRequest(42));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $write = $result->get_data()['alt_text_write'] ?? array();
+        $this->assertSame('failed', $write['status'] ?? null);
+        $this->assertNotSame('written', $write['status'] ?? null);
+        $this->assertSame('MUTATED ALT STORE', get_post_meta(42, '_wp_attachment_image_alt', true));
+        // Must not stamp provenance when alt did not verify.
+        $this->assertSame('', get_post_meta(42, '_acx_description_provenance', true));
     }
 
     /**

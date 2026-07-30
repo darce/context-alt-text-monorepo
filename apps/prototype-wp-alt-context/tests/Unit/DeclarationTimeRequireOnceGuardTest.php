@@ -766,6 +766,294 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
     }
 
     /**
+     * R22-BR-04 leg A: leading-backslash FQCN last segment must NOT be rewritten
+     * through the file-scope alias map. PHP never aliases T_NAME_FULLY_QUALIFIED.
+     *
+     * Both directions: requiring the FQCN's own file must yield no gap; requiring
+     * only the import target must still gap.
+     */
+    public function testFullyQualifiedHeaderNameIsNotAliasRewritten(): void
+    {
+        $fixtureRoot = $this->makeFixtureRoot();
+        $this->writeFixture(
+            $fixtureRoot,
+            'class-bar.php',
+            "<?php\nnamespace Foo;\nclass Bar {}\n"
+        );
+        $this->writeFixture(
+            $fixtureRoot,
+            'class-baz.php',
+            "<?php\nnamespace Other;\nclass Baz {}\n"
+        );
+
+        // Correct require: FQCN's own defining file.
+        $this->writeFixture(
+            $fixtureRoot,
+            'class-fqcn-correct-require.php',
+            "<?php\nnamespace App;\n"
+            . "use Foo\\Bar as Baz;\n"
+            . "require_once __DIR__ . '/class-baz.php';\n"
+            . "class FqcnCorrectRequire extends \\Other\\Baz {}\n"
+        );
+        // Wrong require: import target only (alias collision on last segment).
+        $this->writeFixture(
+            $fixtureRoot,
+            'class-fqcn-wrong-require.php',
+            "<?php\nnamespace App;\n"
+            . "use Foo\\Bar as Baz;\n"
+            . "require_once __DIR__ . '/class-bar.php';\n"
+            . "class FqcnWrongRequire extends \\Other\\Baz {}\n"
+        );
+
+        $gaps = $this->collectDeclarationTimeGaps($fixtureRoot);
+
+        foreach ($gaps as $gap) {
+            $this->assertStringNotContainsString(
+                'class-fqcn-correct-require.php',
+                $gap,
+                "FQCN \\Other\\Baz with its own file required must not gap; got:\n"
+                . implode("\n", $gaps)
+            );
+        }
+
+        $wrongReported = false;
+        foreach ($gaps as $gap) {
+            if (
+                str_contains($gap, 'class-fqcn-wrong-require.php')
+                && str_contains($gap, 'extends')
+                && str_contains($gap, 'Baz')
+                && str_contains($gap, 'class-baz.php')
+            ) {
+                $wrongReported = true;
+            }
+        }
+        $this->assertTrue(
+            $wrongReported,
+            "FQCN \\Other\\Baz required only via alias import target must gap need class-baz.php; got:\n"
+            . implode("\n", $gaps)
+        );
+    }
+
+    /**
+     * R22-BR-04 leg B: namespace-relative names must NOT be rewritten through the
+     * file-scope alias map. PHP never aliases T_NAME_RELATIVE.
+     *
+     * Both directions: requiring the relative target's own file must yield no
+     * gap; requiring only the import target must still gap.
+     */
+    public function testRelativeHeaderNameIsNotAliasRewritten(): void
+    {
+        $fixtureRoot = $this->makeFixtureRoot();
+        $this->writeFixture(
+            $fixtureRoot,
+            'class-bar.php',
+            "<?php\nnamespace Foo;\nclass Bar {}\n"
+        );
+        $this->writeFixture(
+            $fixtureRoot,
+            'class-parent-cls.php',
+            "<?php\nnamespace App;\nclass ParentCls {}\n"
+        );
+
+        $this->writeFixture(
+            $fixtureRoot,
+            'class-relative-correct-require.php',
+            "<?php\nnamespace App;\n"
+            . "use Foo\\Bar as ParentCls;\n"
+            . "require_once __DIR__ . '/class-parent-cls.php';\n"
+            . "class RelativeCorrectRequire extends namespace\\ParentCls {}\n"
+        );
+        $this->writeFixture(
+            $fixtureRoot,
+            'class-relative-wrong-require.php',
+            "<?php\nnamespace App;\n"
+            . "use Foo\\Bar as ParentCls;\n"
+            . "require_once __DIR__ . '/class-bar.php';\n"
+            . "class RelativeWrongRequire extends namespace\\ParentCls {}\n"
+        );
+
+        $gaps = $this->collectDeclarationTimeGaps($fixtureRoot);
+
+        foreach ($gaps as $gap) {
+            $this->assertStringNotContainsString(
+                'class-relative-correct-require.php',
+                $gap,
+                "namespace\\ParentCls with its own file required must not gap; got:\n"
+                . implode("\n", $gaps)
+            );
+        }
+
+        $wrongReported = false;
+        foreach ($gaps as $gap) {
+            if (
+                str_contains($gap, 'class-relative-wrong-require.php')
+                && str_contains($gap, 'extends')
+                && str_contains($gap, 'ParentCls')
+                && str_contains($gap, 'class-parent-cls.php')
+            ) {
+                $wrongReported = true;
+            }
+        }
+        $this->assertTrue(
+            $wrongReported,
+            "namespace\\ParentCls required only via alias import target must gap need class-parent-cls.php; got:\n"
+            . implode("\n", $gaps)
+        );
+    }
+
+    /**
+     * R22-BR-05: file-scope alias map must reset on every T_NAMESPACE transition.
+     * An import in namespace A must not rewrite names in namespace B.
+     */
+    public function testMultiNamespaceAliasMapDoesNotBleed(): void
+    {
+        $fixtureRoot = $this->makeFixtureRoot();
+        $this->writeFixture(
+            $fixtureRoot,
+            'class-foo.php',
+            "<?php\nnamespace X;\nclass Foo {}\n"
+        );
+        $this->writeFixture(
+            $fixtureRoot,
+            'class-bar.php',
+            "<?php\nnamespace B;\nclass Bar {}\n"
+        );
+        // Block A imports X\Foo as Bar and requires class-foo (satisfies C).
+        // Block B's `extends Bar` is B\Bar — needs class-bar, not the import.
+        $this->writeFixture(
+            $fixtureRoot,
+            'class-multi-ns.php',
+            "<?php\n"
+            . "namespace A;\n"
+            . "use X\\Foo as Bar;\n"
+            . "require_once __DIR__ . '/class-foo.php';\n"
+            . "class C extends Bar {}\n"
+            . "namespace B;\n"
+            . "class D extends Bar {}\n"
+        );
+
+        $gaps = $this->collectDeclarationTimeGaps($fixtureRoot);
+
+        foreach ($gaps as $gap) {
+            if (str_contains($gap, 'class-multi-ns.php') && str_contains($gap, 'extends') && str_contains($gap, 'Foo')) {
+                $this->fail(
+                    "Namespace A aliased extends must be satisfied by class-foo.php; got:\n"
+                    . implode("\n", $gaps)
+                );
+            }
+        }
+
+        $blockBReported = false;
+        foreach ($gaps as $gap) {
+            if (
+                str_contains($gap, 'class-multi-ns.php')
+                && str_contains($gap, 'extends')
+                && str_contains($gap, 'Bar')
+                && str_contains($gap, 'class-bar.php')
+            ) {
+                $blockBReported = true;
+            }
+        }
+        $this->assertTrue(
+            $blockBReported,
+            "Namespace B extends Bar must not be credited by namespace A's use X\\Foo as Bar; gaps:\n"
+            . implode("\n", $gaps)
+        );
+    }
+
+    /**
+     * R22-BR-06 leg A: same-context dual implements sharing a short name must
+     * both survive — requiring only the second must still gap the first.
+     */
+    public function testSameContextDualImplementsIsNotMasked(): void
+    {
+        $fixtureRoot = $this->makeFixtureRoot();
+        $this->writeFixture(
+            $fixtureRoot,
+            'interface-label-one.php',
+            "<?php\nnamespace Ns1;\ninterface Label {}\n"
+        );
+        $this->writeFixture(
+            $fixtureRoot,
+            'interface-label-two.php',
+            "<?php\nnamespace Ns2;\ninterface Label {}\n"
+        );
+        // Only the second interface is required — the first must still gap.
+        $this->writeFixture(
+            $fixtureRoot,
+            'class-dual-implements.php',
+            "<?php\nnamespace App;\n"
+            . "require_once __DIR__ . '/interface-label-two.php';\n"
+            . "class DualImplements implements \\Ns1\\Label, \\Ns2\\Label {}\n"
+        );
+
+        $gaps = $this->collectDeclarationTimeGaps($fixtureRoot);
+        $firstReported = false;
+        foreach ($gaps as $gap) {
+            if (
+                str_contains($gap, 'class-dual-implements.php')
+                && str_contains($gap, 'implements')
+                && str_contains($gap, 'Label')
+                && str_contains($gap, 'interface-label-one.php')
+            ) {
+                $firstReported = true;
+            }
+        }
+        $this->assertTrue(
+            $firstReported,
+            "Dual implements \\Ns1\\Label, \\Ns2\\Label with only the second required must gap the first; gaps:\n"
+            . implode("\n", $gaps)
+        );
+    }
+
+    /**
+     * R22-BR-06 leg B: same-context comma-separated dual trait use sharing a
+     * short name must both survive — requiring only the second must still gap
+     * the first.
+     */
+    public function testSameContextDualTraitUseIsNotMasked(): void
+    {
+        $fixtureRoot = $this->makeFixtureRoot();
+        $this->writeFixture(
+            $fixtureRoot,
+            'trait-shared-one.php',
+            "<?php\nnamespace Ns1;\ntrait Shared {}\n"
+        );
+        $this->writeFixture(
+            $fixtureRoot,
+            'trait-shared-two.php',
+            "<?php\nnamespace Ns2;\ntrait Shared {}\n"
+        );
+        $this->writeFixture(
+            $fixtureRoot,
+            'class-dual-trait-use.php',
+            "<?php\nnamespace App;\n"
+            . "require_once __DIR__ . '/trait-shared-two.php';\n"
+            . "class DualTraitUse {\n"
+            . "    use \\Ns1\\Shared, \\Ns2\\Shared;\n"
+            . "}\n"
+        );
+
+        $gaps = $this->collectDeclarationTimeGaps($fixtureRoot);
+        $firstReported = false;
+        foreach ($gaps as $gap) {
+            if (
+                str_contains($gap, 'class-dual-trait-use.php')
+                && str_contains($gap, 'use-trait')
+                && str_contains($gap, 'Shared')
+                && str_contains($gap, 'trait-shared-one.php')
+            ) {
+                $firstReported = true;
+            }
+        }
+        $this->assertTrue(
+            $firstReported,
+            "Dual trait use \\Ns1\\Shared, \\Ns2\\Shared with only the second required must gap the first; gaps:\n"
+            . implode("\n", $gaps)
+        );
+    }
+
+    /**
      * R21-BR-16: enum-*.php consumers with declaration-time implements must be scanned.
      */
     public function testEnumConsumerImplementsWithoutRequireOnceIsFlagged(): void
@@ -833,6 +1121,10 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
             $requires = $this->collectRequireOnceBasenames($code);
             $deps = $this->collectDeclarationTimeDeps($code);
             $rel = ltrim(str_replace($scanRoot, '', $path), '/');
+            // Basenames already credited to a prior same-file dep occurrence.
+            // Same-context same-short collisions (\Ns1\Label, \Ns2\Label) each
+            // need their own defining file; a single require must not satisfy both.
+            $usedBasenames = [];
 
             foreach ($deps as $dep) {
                 $short = $dep['short'];
@@ -843,12 +1135,18 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
                 if ( ! isset($index[ $short ])) {
                     continue;
                 }
-                $chosen = $this->chooseDefiningFile($index[ $short ], $context);
+                $chosen = $this->chooseDefiningFile(
+                    $index[ $short ],
+                    $context,
+                    $requires,
+                    $usedBasenames
+                );
                 $need = $chosen['basename'];
                 if ($basename === $need) {
                     continue;
                 }
                 if (in_array($need, $requires, true)) {
+                    $usedBasenames[ $need ] = true;
                     continue;
                 }
                 // Relationship-scoped: only the documented (file, dep) freeride
@@ -934,32 +1232,71 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
 
     /**
      * @param list<array{path: string, kind: string, basename: string}> $candidates
+     * @param list<string>                                              $requires
+     * @param array<string, true>                                       $usedBasenames
      * @return array{path: string, kind: string, basename: string}
      */
-    private function chooseDefiningFile(array $candidates, string $context): array
+    private function chooseDefiningFile(
+        array $candidates,
+        string $context,
+        array $requires = [],
+        array $usedBasenames = []
+    ): array {
+        $filtered = $this->filterCandidatesForContext($candidates, $context);
+        if ([] === $filtered) {
+            return $candidates[0];
+        }
+
+        // Prefer a required, not-yet-credited candidate so dual same-short
+        // occurrences (\Ns1\Label + \Ns2\Label) pair with distinct defining files.
+        foreach ($filtered as $c) {
+            if (isset($usedBasenames[ $c['basename'] ])) {
+                continue;
+            }
+            if (in_array($c['basename'], $requires, true)) {
+                return $c;
+            }
+        }
+        foreach ($filtered as $c) {
+            if ( ! isset($usedBasenames[ $c['basename'] ])) {
+                return $c;
+            }
+        }
+        return $filtered[0];
+    }
+
+    /**
+     * @param list<array{path: string, kind: string, basename: string}> $candidates
+     * @return list<array{path: string, kind: string, basename: string}>
+     */
+    private function filterCandidatesForContext(array $candidates, string $context): array
     {
-        $want = null;
         if ('use-trait' === $context) {
-            $want = 'trait';
-        } elseif ('implements' === $context) {
-            $want = 'interface';
+            return array_values(
+                array_filter($candidates, static fn( array $c ): bool => 'trait' === $c['kind'])
+            );
         }
-        if (null !== $want) {
-            foreach ($candidates as $c) {
-                if ($want === $c['kind']) {
-                    return $c;
-                }
-            }
+        if ('implements' === $context) {
+            return array_values(
+                array_filter($candidates, static fn( array $c ): bool => 'interface' === $c['kind'])
+            );
         }
-        // extends may be class or interface
+        // extends: classes first (class extends class), then interfaces
+        // (interface extends interface). Preferring class avoids a same-short
+        // interface freeride satisfying a class extends (R21-BR-06 fixture).
         if ('extends' === $context) {
+            $classes = [];
+            $interfaces = [];
             foreach ($candidates as $c) {
-                if ('class' === $c['kind'] || 'interface' === $c['kind']) {
-                    return $c;
+                if ('class' === $c['kind']) {
+                    $classes[] = $c;
+                } elseif ('interface' === $c['kind']) {
+                    $interfaces[] = $c;
                 }
             }
+            return [] !== $classes ? $classes : $interfaces;
         }
-        return $candidates[0];
+        return $candidates;
     }
 
     /**
@@ -981,9 +1318,12 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
     private function collectDeclarationTimeDeps(string $code): array
     {
         $tokens = token_get_all($code);
-        // Keyed by "context\0short" so two relationships sharing a short name
-        // (extends Helper + implements Helper) cannot overwrite each other.
-        $depsByKey = [];
+        // List (not context\0short map): same-context same-short collisions
+        // (implements \Ns1\Label, \Ns2\Label) must not overwrite each other.
+        // Cross-context collisions (extends Helper + implements Helper) also
+        // stay distinct because each occurrence is appended independently.
+        // Intentional non-dedup: every occurrence is independently checkable.
+        $deps = [];
         $n = count($tokens);
         $brace_depth = 0;
         $class_brace = null;
@@ -1022,6 +1362,9 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
 
             if (T_NAMESPACE === $id) {
                 $fileNamespace = $this->parseNamespaceName($tokens, $i + 1, $n);
+                // Import aliases are namespace-scoped; a new namespace block
+                // must not inherit the previous block's use-map.
+                $aliases = [];
                 continue;
             }
 
@@ -1077,9 +1420,9 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
             }
 
             if ($in_header && ( $expect_ext || $expect_impl ) && in_array($id, self::NAME_TOKEN_IDS, true)) {
-                $short = $this->resolveDepShortName($text, $fileNamespace, $aliases);
+                $short = $this->resolveDepShortName($text, $id, $fileNamespace, $aliases);
                 $context = $expect_ext ? 'extends' : 'implements';
-                $depsByKey[ $context . "\0" . $short ] = [
+                $deps[] = [
                     'short' => $short,
                     'context' => $context,
                 ];
@@ -1128,8 +1471,8 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
                         continue;
                     }
                     if ($expect_name && in_array($tj[0], self::NAME_TOKEN_IDS, true)) {
-                        $short = $this->resolveDepShortName($tj[1], $fileNamespace, $aliases);
-                        $depsByKey[ 'use-trait' . "\0" . $short ] = [
+                        $short = $this->resolveDepShortName($tj[1], $tj[0], $fileNamespace, $aliases);
+                        $deps[] = [
                             'short' => $short,
                             'context' => 'use-trait',
                         ];
@@ -1139,7 +1482,7 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
             }
         }
 
-        return array_values($depsByKey);
+        return $deps;
     }
 
     /**
@@ -1246,15 +1589,42 @@ class DeclarationTimeRequireOnceGuardTest extends TestCase
     }
 
     /**
+     * Resolve a declaration-time name token to the plugin short name used for
+     * symbol-index lookup. PHP only alias-resolves unqualified names (T_STRING)
+     * and the *first* segment of qualified names (T_NAME_QUALIFIED). Leading-
+     * backslash FQCNs (T_NAME_FULLY_QUALIFIED) and namespace-relative names
+     * (T_NAME_RELATIVE) are never rewritten through the file-scope use map.
+     *
      * @param array<string, string> $aliases
      */
-    private function resolveDepShortName(string $tokenText, string $fileNamespace, array $aliases): string
-    {
-        $short = $this->shortNameFromNameToken($tokenText, $fileNamespace);
-        if (isset($aliases[ $short ])) {
-            return $aliases[ $short ];
+    private function resolveDepShortName(
+        string $tokenText,
+        int $tokenId,
+        string $fileNamespace,
+        array $aliases
+    ): string {
+        if (T_NAME_FULLY_QUALIFIED === $tokenId) {
+            return $this->lastNameSegment(ltrim($tokenText, '\\'));
         }
-        return $short;
+
+        if (T_NAME_RELATIVE === $tokenId) {
+            return $this->shortNameFromNameToken($tokenText, $fileNamespace);
+        }
+
+        if (T_NAME_QUALIFIED === $tokenId) {
+            // Alias rewrites only the first segment; short name is the last.
+            $parts = explode('\\', $tokenText);
+            if (isset($aliases[ $parts[0] ])) {
+                $parts[0] = $aliases[ $parts[0] ];
+            }
+            return $this->lastNameSegment(implode('\\', $parts));
+        }
+
+        // T_STRING — unqualified: full alias rewrite.
+        if (isset($aliases[ $tokenText ])) {
+            return $aliases[ $tokenText ];
+        }
+        return $tokenText;
     }
 
     private function shortNameFromNameToken(string $text, string $fileNamespace): string

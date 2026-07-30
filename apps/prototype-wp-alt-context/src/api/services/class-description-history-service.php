@@ -36,6 +36,13 @@ class DescriptionHistoryService {
 	private const PROVENANCE_PENDING_META = '_acx_description_provenance_pending';
 	private const RUN_STATUS_META = '_acx_description_run_status';
 	private const ALT_META = '_wp_attachment_image_alt';
+	/**
+	 * Durable marker that empty alt is deliberate (decorative image). Value is
+	 * always the string '1' when set; deleted (never set to ''/'0') when not.
+	 * Write-path only plants after a verified alt write; build_row treats its
+	 * presence as reason `decorative` when alt is empty. [WBUX-5-S2C3C-BR-01]
+	 */
+	private const DECORATIVE_META = 'acx_alt_decorative';
 
 	/**
 	 * @return array<string,mixed>
@@ -93,10 +100,29 @@ class DescriptionHistoryService {
 	 * is total; a null result is treated as an invariant violation (500), not a
 	 * silent success fallback. [rg-015] [RLSE-05] [BR-55]
 	 *
+	 * Decorative flag (WBUX-5-S2C3C-BR-01): optional third argument, default
+	 * false so every existing two-argument caller keeps working. When true,
+	 * empty alt is the correct finished answer and plants `acx_alt_decorative`.
+	 * decorative=true with a non-empty alt is a 400 contradiction — never
+	 * coerced. Marker is written only after both alt and human-edit writes are
+	 * verified (not on alt-write failure or the partial-failure path). A
+	 * subsequent non-empty alt correction clears a prior marker (self-healing).
+	 *
 	 * @return array<string,mixed>|WP_Error
 	 */
-	public function record_correction( int $media_id, string $alt_text ): array|WP_Error {
+	public function record_correction( int $media_id, string $alt_text, bool $decorative = false ): array|WP_Error {
 		$normalized_alt_text = sanitize_text_field( trim( $alt_text ) );
+
+		// decorative === true means empty alt. Non-empty + decorative is
+		// incoherent: reject 400, write nothing. Do not blank the alt or ignore
+		// the flag — guessing which half the caller meant is [rg-015].
+		if ( $decorative && '' !== $normalized_alt_text ) {
+			return new WP_Error(
+				'description_correction_failed',
+				'Cannot mark an image as decorative when alt_text is non-empty. Decorative means empty alt; send alt_text as "" or omit decorative.',
+				array( 'status' => 400 )
+			);
+		}
 
 		// Validate attachment identity before any write. Mirrors S3-01 in
 		// DescribeController::apply_describe_run_drafts — refuse to stamp alt
@@ -203,6 +229,18 @@ class DescriptionHistoryService {
 		// at worst it is redundant until a later successful write clears it.
 		// Escalating to 500 would falsely claim the correction itself failed.
 		delete_post_meta( $media_id, self::PROVENANCE_PENDING_META );
+
+		// Decorative marker — only after both alt and human-edit are verified
+		// (not on alt-write failure, not on the partial-failure path). Reconcile
+		// from the server's own read-back ($current), never the request body.
+		// decorative=true plants '1'; a non-empty stored alt clears any prior
+		// marker so the two states cannot contradict on disk (self-healing).
+		// [WBUX-5-S2C3C-BR-01]
+		if ( $decorative ) {
+			update_post_meta( $media_id, self::DECORATIVE_META, '1' );
+		} elseif ( is_string( $current ) && '' !== trim( $current ) ) {
+			delete_post_meta( $media_id, self::DECORATIVE_META );
+		}
 
 		// After a verified human-edit write (or accepted full-payload no-op),
 		// storage holds an array under HUMAN_EDIT_META. build_item is therefore

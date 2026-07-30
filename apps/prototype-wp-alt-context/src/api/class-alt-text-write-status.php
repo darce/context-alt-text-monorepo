@@ -138,5 +138,33 @@ final class AltTextWriteStatus {
 		'failed',
 	);
 
+	/**
+	 * Non-bulk owner for `_acx_description_provenance_pending.run_id` written by
+	 * CLI generate. Wire value is durable recovery evidence — do not rename.
+	 * Bulk apply uses a real run UUID, not this sentinel [R20-BR-16].
+	 */
+	public const MARKER_OWNER_CLI = 'cli';
+
+	/**
+	 * Non-bulk owner for `_acx_description_provenance_pending.run_id` written by
+	 * REST single-image describe. Wire value is durable recovery evidence — do
+	 * not rename. Bulk apply uses a real run UUID, not this sentinel [R20-BR-16].
+	 */
+	public const MARKER_OWNER_SINGLE_IMAGE = 'single_image';
+
+	/**
+	 * All non-bulk provenance-pending marker owner sentinels.
+	 *
+	 * Membership distinguishes bulk from non-bulk: if `run_id` is in this set
+	 * it is a fixed non-bulk owner; otherwise treat it as a bulk (or other)
+	 * run id. Bulk UUIDs are intentionally absent [R20-BR-16].
+	 *
+	 * @var list<string>
+	 */
+	public const MARKER_OWNERS = array(
+		self::MARKER_OWNER_CLI,
+		self::MARKER_OWNER_SINGLE_IMAGE,
+	);
+
 	private function __construct() {}
 }

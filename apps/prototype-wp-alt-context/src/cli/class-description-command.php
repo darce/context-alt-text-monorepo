@@ -41,13 +41,6 @@ class DescriptionCommand extends \WP_CLI_Command {
 	private const PROVENANCE_META_KEY         = '_acx_description_provenance';
 	private const PROVENANCE_PENDING_META_KEY = '_acx_description_provenance_pending';
 
-	/**
-	 * Marker owner for CLI provenance-failure recovery. CLI generate has no
-	 * bulk run_id; this stable token scopes the pending marker without
-	 * impersonating a bulk describe run [R16-BR-06].
-	 */
-	private const CLI_MARKER_OWNER = 'cli';
-
 	private DescriptionCandidateService $candidate_service;
 	private DescribeMediaService $describe_service;
 
@@ -446,7 +439,8 @@ class DescriptionCommand extends \WP_CLI_Command {
 	 */
 	private function provenance_failure_with_marker( int $media_id, string $alt_text_draft ): array {
 		$marker = array(
-			'run_id'     => self::CLI_MARKER_OWNER,
+			// Non-bulk sentinel — shared surface, durable wire value [R20-BR-16].
+			'run_id'     => AltTextWriteStatus::MARKER_OWNER_CLI,
 			'draft_hash' => hash( 'sha256', $alt_text_draft ),
 		);
 		$expected_marker = $this->expected_meta_after_core_transforms(

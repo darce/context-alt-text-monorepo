@@ -5,11 +5,13 @@ declare(strict_types=1);
 namespace AltContext\Cli;
 
 require_once __DIR__ . '/../api/class-alt-text-write-status.php';
+require_once __DIR__ . '/../api/services/class-description-history-service.php';
 require_once __DIR__ . '/../api/services/trait-expects-meta-after-core-transforms.php';
 
 use AltContext\Api\AltTextWriteStatus;
 use AltContext\Api\DescribeController;
 use AltContext\Api\Services\DescriptionCandidateService;
+use AltContext\Api\Services\DescriptionHistoryService;
 use AltContext\Api\Services\DescribeMediaService;
 use AltContext\Api\Services\ExpectsMetaAfterCoreTransforms;
 use WP_REST_Request;
@@ -319,9 +321,20 @@ class DescriptionCommand extends \WP_CLI_Command {
 		);
 
 		if ( 'skip_existing' === $gate ) {
-			// Benign skip: existing alt stands. Clear any stale recovery marker
-			// so presence means a real unrecorded gap [R20-BR-18].
-			delete_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY );
+			// Benign skip: existing alt stands. Clear only a non-live recovery
+			// marker [R20-BR-18] [R21-BR-02]. A live marker (verified shape +
+			// draft_hash === sha256(stored alt)) is evidence of a prior
+			// provenance gap for THIS alt — wiping it would make the gap
+			// invisible and unrecoverable.
+			//
+			// R21-BR-10: delete unchecked. A surviving stale marker is a soft
+			// miss: skip status is still correct for the alt decision; history
+			// may keep listing a pure-gap row until a later verified write
+			// clears the zombie.
+			$pending = get_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY, true );
+			if ( ! DescriptionHistoryService::is_live_recovery_marker_for_alt( $pending, $existing_alt ) ) {
+				delete_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY );
+			}
 			return array(
 				'media_id'       => $media_id,
 				'status'         => AltTextWriteStatus::SKIPPED_EXISTING_ALT,
@@ -344,7 +357,9 @@ class DescriptionCommand extends \WP_CLI_Command {
 				);
 			}
 
-			// Identity complete + heal ok: drop any stale recovery marker [R20-BR-18].
+			// Identity complete + heal ok: drop any stale recovery marker
+			// [R20-BR-18]. R21-BR-10: delete unchecked; survivor is redundant
+			// (provenance verified → history via provenance, not pure-gap).
 			delete_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY );
 			return array(
 				'media_id'       => $media_id,
@@ -402,12 +417,11 @@ class DescriptionCommand extends \WP_CLI_Command {
 		// a Generated-alt for a draft that did not land [rg-015].
 		$provenance          = $provenance_for_gate;
 		$expected_provenance = $this->expected_meta_after_core_transforms( self::PROVENANCE_META_KEY, $provenance );
-		$prov_written        = update_post_meta( $media_id, self::PROVENANCE_META_KEY, $provenance );
-		$prov_ok             = false !== $prov_written;
-		if ( false === $prov_written ) {
-			$current_prov = get_post_meta( $media_id, self::PROVENANCE_META_KEY, true );
-			$prov_ok      = is_array( $current_prov ) && $expected_provenance === $current_prov;
-		}
+		// R21-BR-04: always read back — non-false accept may still persist a
+		// divergent provenance array (marker-path class of failure).
+		update_post_meta( $media_id, self::PROVENANCE_META_KEY, $provenance );
+		$current_prov = get_post_meta( $media_id, self::PROVENANCE_META_KEY, true );
+		$prov_ok      = is_array( $current_prov ) && $expected_provenance === $current_prov;
 		if ( ! $prov_ok ) {
 			// Alt landed; provenance did not. Plant the same recovery marker
 			// shape as bulk apply; partial only when the marker is verified
@@ -416,6 +430,8 @@ class DescriptionCommand extends \WP_CLI_Command {
 		}
 
 		// Provenance verified — drop any pending recovery marker.
+		// R21-BR-10: delete unchecked. Survivor is redundant (history lists via
+		// verified provenance array, not pure-gap).
 		delete_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY );
 
 		// REST-aligned: FORCED_OVERWRITE when force=true and existing non-empty
@@ -450,20 +466,23 @@ class DescriptionCommand extends \WP_CLI_Command {
 			'run_id'     => AltTextWriteStatus::MARKER_OWNER_CLI,
 			'draft_hash' => hash( 'sha256', $alt_text_draft ),
 		);
-		$expected_marker = $this->expected_meta_after_core_transforms(
-			self::PROVENANCE_PENDING_META_KEY,
-			$marker
-		);
 		// Return value is not authoritative (false = failure or no-op; non-false
 		// may still persist a divergent value). Always verify storage [R20-BR-20].
+		// R21-BR-08: accept any verified same-draft marker, not strict identity
+		// with the CLI-shaped plant (cross-surface bulk marker is usable).
 		update_post_meta(
 			$media_id,
 			self::PROVENANCE_PENDING_META_KEY,
 			$marker
 		);
 		$current_marker = get_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY, true );
-		$marker_ok      = is_array( $current_marker ) && $expected_marker === $current_marker;
+		$marker_ok      = DescriptionHistoryService::is_usable_pending_marker_for_draft(
+			$current_marker,
+			$alt_text_draft
+		);
 		if ( ! $marker_ok ) {
+			// Alt remains written — not rolled back. failed because recovery is
+			// impossible without a usable marker [R21-BR-09].
 			return array(
 				'media_id'       => $media_id,
 				'status'         => AltTextWriteStatus::FAILED,

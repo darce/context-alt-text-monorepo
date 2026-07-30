@@ -764,6 +764,10 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 						&& (string) $pending['run_id'] === $run_id
 					) {
 						// Alt type diverged from a string draft — drop this run's marker.
+						// R21-BR-10: delete unchecked. Survivor is soft: bucket is
+						// already skipped_existing; a zombie owned by this run may
+						// linger until a later verified write clears it. Failing the
+						// skip would clobber the non-clobber decision.
 						delete_post_meta( $media_id, '_acx_description_provenance_pending' );
 					}
 					$buckets['skipped_existing'][] = $media_id;
@@ -805,6 +809,12 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 						) {
 							$alt_diverged = $stored_alt_raw !== $expected_stored_alt;
 							if ( $alt_diverged || $prov_is_this_run ) {
+								// R21-BR-10: delete unchecked. When prov_is_this_run,
+								// history already lists via provenance so a survivor
+								// is redundant. When alt_diverged, a survivor may keep
+								// a pure-gap row that no longer matches the draft —
+								// soft miss; skip_existing is still the correct
+								// non-clobber decision for this apply.
 								delete_post_meta( $media_id, '_acx_description_provenance_pending' );
 							}
 						}
@@ -851,47 +861,52 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			// full-payload read-back as DescriptionHistoryService::record_correction
 			// for human-edit: silent success after a failed telemetry write made
 			// bulk apply report "applied" for items history never shows. [RLSE-05]
-			// Alt stays written — do not roll back; bucket as partial so the client
-			// can reconcile without treating the id as fully applied.
 			// Shared post-transform model (F-15R / BR-17), not unslash-only.
-			// WBUX-5-R16-BR-10: start prov_ok false on false returns.
+			//
+			// R21-BR-04: always read back provenance. A non-false accept may still
+			// persist a divergent array — trusting the return alone would delete
+			// the marker and hide a real gap.
+			//
+			// R21-BR-09: when provenance (or the subsequent marker plant) fails,
+			// the alt already landed above and is NOT rolled back. The id is
+			// bucketed `failed` only when no usable same-draft recovery marker
+			// is present (auto-recovery impossible); otherwise `partial`. There
+			// is no wire bucket for "alt landed, provenance unrecoverable".
 			$expected_provenance = $this->expected_meta_after_core_transforms( '_acx_description_provenance', $provenance );
-			$prov_written        = update_post_meta( $media_id, '_acx_description_provenance', $provenance );
-			$prov_ok             = false !== $prov_written;
-			if ( false === $prov_written ) {
-				$current_prov = get_post_meta( $media_id, '_acx_description_provenance', true );
-				// Accept only a full-payload no-op (update_post_meta returns false
-				// when stored value equals the value being written). Partial key
-				// matches would forge applied while history still lacks provenance.
-				$prov_ok = is_array( $current_prov ) && $expected_provenance === $current_prov;
-			}
+			update_post_meta( $media_id, '_acx_description_provenance', $provenance );
+			$current_prov = get_post_meta( $media_id, '_acx_description_provenance', true );
+			// Accept only a full-payload match. Partial key matches would forge
+			// applied while history still lacks the expected provenance.
+			$prov_ok = is_array( $current_prov ) && $expected_provenance === $current_prov;
 			if ( ! $prov_ok ) {
 				// Durable evidence this system started the write for this
 				// run+draft. Inspect marker write the same way as provenance:
 				// update_post_meta returns false on failure *and* on unchanged
-				// value — re-read and compare before claiming the marker. Without
-				// a verified marker, auto-recovery is impossible so bucket
+				// value — re-read before claiming the marker. Without a usable
+				// same-draft marker, auto-recovery is impossible so bucket
 				// `failed` (not `partial`) — partial is presented as retryable.
-				// [BR-102] [RLSE-05] [INT-11]
-				$marker          = array(
+				// [BR-102] [RLSE-05] [INT-11] [R21-BR-08]
+				$marker = array(
 					'run_id'     => $run_id,
 					'draft_hash' => hash( 'sha256', $draft ),
 				);
-				$expected_marker = $this->expected_meta_after_core_transforms(
-					'_acx_description_provenance_pending',
-					$marker
-				);
 				// Return value is not authoritative (false = failure or no-op;
 				// non-false may still persist a divergent value). Always verify
-				// storage — partial requires a VERIFIED marker [R20-BR-20].
+				// storage — partial requires a usable same-draft marker
+				// [R20-BR-20] [R21-BR-08] (not strict identity with this plant).
 				update_post_meta(
 					$media_id,
 					'_acx_description_provenance_pending',
 					$marker
 				);
 				$current_marker = get_post_meta( $media_id, '_acx_description_provenance_pending', true );
-				$marker_ok      = is_array( $current_marker ) && $expected_marker === $current_marker;
+				$marker_ok      = DescriptionHistoryService::is_usable_pending_marker_for_draft(
+					$current_marker,
+					$draft
+				);
 				if ( ! $marker_ok ) {
+					// Alt remains written. failed = unrecoverable provenance gap,
+					// not "nothing was written" [R21-BR-09].
 					$buckets['failed'][] = $media_id;
 					continue;
 				}
@@ -900,6 +915,9 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			}
 
 			// Provenance verified — drop any pending recovery marker.
+			// R21-BR-10: delete unchecked. A surviving marker is redundant:
+			// history lists via the verified provenance array (not pure-gap),
+			// and applied is still the correct bucket. Zombie cleared later.
 			delete_post_meta( $media_id, '_acx_description_provenance_pending' );
 			$buckets['applied'][] = $media_id;
 		}

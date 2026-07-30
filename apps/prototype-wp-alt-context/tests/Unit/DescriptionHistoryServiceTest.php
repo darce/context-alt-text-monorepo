@@ -1011,6 +1011,89 @@ class DescriptionHistoryServiceTest extends TestCase
     }
 
     /**
+     * R21-BR-12: empty-string draft_hash is not a verified recovery marker.
+     * Dropping the empty-string check on draft_hash must redden this pin.
+     */
+    public function testListHistoryExcludesEmptyStringDraftHashPendingMarker(): void
+    {
+        $mediaId = 513;
+        $GLOBALS['__ac_get_posts_results'] = [$mediaId];
+        $this->seedAttachment($mediaId, 'Empty draft_hash');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', 'Human-authored alt');
+        $this->setPostMeta($mediaId, '_acx_description_provenance_pending', [
+            'run_id' => 'single_image',
+            'draft_hash' => '',
+        ]);
+
+        $response = (new DescriptionHistoryService())->list_history(10);
+
+        $this->assertSame(0, $response['total']);
+        $this->assertFalse(
+            DescriptionHistoryService::is_verified_pending_marker([
+                'run_id' => 'single_image',
+                'draft_hash' => '',
+            ])
+        );
+    }
+
+    /**
+     * R21-BR-12: empty-string run_id is not a verified recovery marker.
+     */
+    public function testListHistoryExcludesEmptyStringRunIdPendingMarker(): void
+    {
+        $mediaId = 514;
+        $GLOBALS['__ac_get_posts_results'] = [$mediaId];
+        $this->seedAttachment($mediaId, 'Empty run_id');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', 'Human-authored alt');
+        $this->setPostMeta($mediaId, '_acx_description_provenance_pending', [
+            'run_id' => '',
+            'draft_hash' => hash('sha256', 'Human-authored alt'),
+        ]);
+
+        $response = (new DescriptionHistoryService())->list_history(10);
+
+        $this->assertSame(0, $response['total']);
+        $this->assertFalse(
+            DescriptionHistoryService::is_verified_pending_marker([
+                'run_id' => '',
+                'draft_hash' => hash('sha256', 'Human-authored alt'),
+            ])
+        );
+    }
+
+    /**
+     * R21-BR-12: whitespace-only fields are rejected (predicate trims).
+     */
+    public function testListHistoryExcludesWhitespaceOnlyPendingMarkerFields(): void
+    {
+        $mediaId = 515;
+        $GLOBALS['__ac_get_posts_results'] = [$mediaId];
+        $this->seedAttachment($mediaId, 'Whitespace marker');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', 'Human-authored alt');
+        $this->setPostMeta($mediaId, '_acx_description_provenance_pending', [
+            'run_id' => '   ',
+            'draft_hash' => "\t",
+        ]);
+
+        $response = (new DescriptionHistoryService())->list_history(10);
+
+        $this->assertSame(0, $response['total']);
+        $this->assertFalse(
+            DescriptionHistoryService::is_verified_pending_marker([
+                'run_id' => '   ',
+                'draft_hash' => "\t",
+            ])
+        );
+        // Integer 0 is not a string — also rejected.
+        $this->assertFalse(
+            DescriptionHistoryService::is_verified_pending_marker([
+                'run_id' => 'single_image',
+                'draft_hash' => 0,
+            ])
+        );
+    }
+
+    /**
      * R20-BR-25: successful record_correction must delete a zombie pending marker.
      */
     public function testRecordCorrectionDeletesStaleProvenancePendingMarker(): void

@@ -11,6 +11,7 @@ require_once __DIR__ . '/../../sovereign/repositories/class-identity-members-rep
 require_once __DIR__ . '/../class-alt-style.php';
 require_once __DIR__ . '/../class-alt-text-write-status.php';
 require_once __DIR__ . '/../class-description-write-status.php';
+require_once __DIR__ . '/class-description-history-service.php';
 require_once __DIR__ . '/trait-expects-meta-after-core-transforms.php';
 
 use AltContext\Api\AltStyle;
@@ -375,9 +376,22 @@ class DescribeMediaService {
 			$provenance
 		);
 		if ( 'skip_existing' === $gate ) {
-			// Benign skip: existing alt is the operator's choice. Any stale
-			// recovery marker is no longer an unrecorded gap [R20-BR-18].
-			delete_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY );
+			// Benign skip: existing alt is the operator's choice. Clear only a
+			// non-live recovery marker [R20-BR-18] [R21-BR-01]. A live marker
+			// (verified shape + draft_hash === sha256(stored alt)) is evidence
+			// of a prior provenance gap for THIS alt — wiping it would make the
+			// gap invisible and unrecoverable (history drops the pure-gap row;
+			// bulk is_non_clobber_completion can never fire again).
+			//
+			// R21-BR-10: delete is unchecked. A surviving stale marker is a
+			// soft miss only: skip_existing is still the correct alt decision;
+			// history may keep listing a pure-gap row until a later verified
+			// write path clears the zombie. No wire status expresses "skipped
+			// but marker stuck", and failing the skip would be worse.
+			$pending = get_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY, true );
+			if ( ! DescriptionHistoryService::is_live_recovery_marker_for_alt( $pending, $existing_alt ) ) {
+				delete_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY );
+			}
 			$data['alt_text_write'] = array(
 				'status'               => AltTextWriteStatus::SKIPPED_EXISTING_ALT,
 				'existing_alt_present' => true,
@@ -400,7 +414,10 @@ class DescribeMediaService {
 				$response->set_data( $data );
 				return $response;
 			}
-			// Identity complete + heal ok: item is good — drop any stale marker [R20-BR-18].
+			// Identity complete + heal ok: item is good — drop any stale marker
+			// [R20-BR-18]. R21-BR-10: delete unchecked; a survivor is redundant
+			// because provenance is a verified array so history lists via
+			// provenance, not pure-gap. Zombie cleared on a later success path.
 			delete_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY );
 			$data['alt_text_write'] = array(
 				'status'               => AltTextWriteStatus::SKIPPED_EXISTING_ALT,
@@ -451,7 +468,9 @@ class DescribeMediaService {
 				$response->set_data( $data );
 				return $response;
 			}
-			// Force no-op success: alt + identity already match — clear stale marker [R20-BR-18].
+			// Force no-op success: alt + identity already match — clear stale
+			// marker [R20-BR-18]. R21-BR-10: delete unchecked; survivor is
+			// redundant (provenance verified array → history via provenance).
 			delete_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY );
 			$data['alt_text_write'] = array(
 				'status'               => AltTextWriteStatus::FORCED_OVERWRITE,
@@ -483,12 +502,12 @@ class DescribeMediaService {
 		}
 
 		$expected_provenance = $this->expected_meta_after_core_transforms( self::PROVENANCE_META_KEY, $provenance );
-		$prov_written        = update_post_meta( $media_id, self::PROVENANCE_META_KEY, $provenance );
-		$prov_ok             = false !== $prov_written;
-		if ( false === $prov_written ) {
-			$current_prov = get_post_meta( $media_id, self::PROVENANCE_META_KEY, true );
-			$prov_ok      = is_array( $current_prov ) && $expected_provenance === $current_prov;
-		}
+		// R21-BR-04: always read back. A non-false accept may still persist a
+		// divergent provenance array (same class as the marker path below) —
+		// trusting the return alone would delete the marker and hide a real gap.
+		update_post_meta( $media_id, self::PROVENANCE_META_KEY, $provenance );
+		$current_prov = get_post_meta( $media_id, self::PROVENANCE_META_KEY, true );
+		$prov_ok      = is_array( $current_prov ) && $expected_provenance === $current_prov;
 		if ( ! $prov_ok ) {
 			// Alt landed; provenance did not. Mirror bulk apply (controller
 			// apply_describe_run_drafts): plant a durable pending marker so
@@ -499,21 +518,26 @@ class DescribeMediaService {
 			// report FAILED (not PARTIAL) — partial is presented as retryable.
 			// [WBUX-5-R16-BR-06] [BR-102] [RLSE-05] [INT-11]
 			// No bulk run_id on this path: non-bulk sentinel [R20-BR-16].
-			$marker          = array(
+			$marker = array(
 				'run_id'     => AltTextWriteStatus::MARKER_OWNER_SINGLE_IMAGE,
 				'draft_hash' => hash( 'sha256', $draft ),
-			);
-			$expected_marker = $this->expected_meta_after_core_transforms(
-				self::PROVENANCE_PENDING_META_KEY,
-				$marker
 			);
 			// Return value is not authoritative: false is both failure and no-op,
 			// and a non-false accept may still persist a divergent value.
 			update_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY, $marker );
-			// R20-BR-20: always verify storage. Partial requires a VERIFIED marker.
+			// R20-BR-20 / R21-BR-08: partial requires a usable same-draft marker
+			// (verified shape + draft_hash match), not strict identity with the
+			// marker this path tried to plant — a pre-existing bulk marker for
+			// the same draft is durable recovery evidence.
 			$current_marker = get_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY, true );
-			$marker_ok      = is_array( $current_marker ) && $expected_marker === $current_marker;
+			$marker_ok      = DescriptionHistoryService::is_usable_pending_marker_for_draft(
+				$current_marker,
+				$draft
+			);
 			if ( ! $marker_ok ) {
+				// Alt remains written — not rolled back. Status is failed because
+				// auto-recovery is impossible without a usable marker; the wire
+				// has no "alt landed, provenance unrecoverable" bucket [R21-BR-09].
 				$data['alt_text_write'] = array(
 					'status'               => AltTextWriteStatus::FAILED,
 					'existing_alt_present' => '' !== trim( $existing_alt ),
@@ -522,7 +546,7 @@ class DescribeMediaService {
 				return $response;
 			}
 
-			// Marker verified → PARTIAL + provenance reason (as before).
+			// Marker usable → PARTIAL + provenance reason (as before).
 			// BR-08 / F-22: reason names the first (history-gap) cause.
 			$write_result = array(
 				'status'               => AltTextWriteStatus::PARTIAL,
@@ -543,6 +567,9 @@ class DescribeMediaService {
 		}
 
 		// Provenance verified — drop any pending recovery marker (bulk parity).
+		// R21-BR-10: delete unchecked. A surviving marker is redundant: history
+		// lists via the verified provenance array, not pure-gap, so the zombie
+		// does not hide success or invent a gap. Cleared on a later write path.
 		delete_post_meta( $media_id, self::PROVENANCE_PENDING_META_KEY );
 
 		// FORCED_OVERWRITE only when force=true. Non-force heal of matching alt

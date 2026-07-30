@@ -221,6 +221,46 @@ class TenantIdentityTest extends TestCase
     }
 
     /**
+     * R23-BR-15 [TEST-15] leg 2: paired-flag write failure must throw, leave
+     * is_paired() false, and keep the verified tenant id in storage (safe state;
+     * do not roll back leg 1).
+     *
+     * Fail-message note: AssertionFailedError extends RuntimeException in PHPUnit,
+     * so the fail() text must not contain the production pin phrase or a missing
+     * throw is swallowed as a false green (the exact trap that burned the prior
+     * "BR-15 fixed" claim on leg 1 only). Pin against the production throw text.
+     */
+    public function testAdoptPairedTenantThrowsWhenPairedFlagWriteFails(): void
+    {
+        $tenant = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+        $GLOBALS['__ac_update_option_fail'] = [
+            TenantIdentity::PAIRED_OPTION_KEY => true,
+        ];
+
+        try {
+            TenantIdentity::adopt_paired_tenant($tenant);
+            $this->fail('Expected RuntimeException when PAIRED_OPTION_KEY write does not land');
+        } catch (\RuntimeException $e) {
+            // Pin phrase is the production throw text — must not appear in fail() above.
+            $this->assertStringContainsString(
+                'Could not persist the paired flag',
+                $e->getMessage()
+            );
+            $this->assertStringNotContainsString('paired tenant id', $e->getMessage());
+        }
+
+        $this->assertFalse(
+            TenantIdentity::is_paired(),
+            'paired flag must not be set when the paired-flag write failed'
+        );
+        $this->assertSame(
+            $tenant,
+            get_option(TenantIdentity::OPTION_KEY, null),
+            'verified tenant id must remain stored when only the paired flag fails'
+        );
+    }
+
+    /**
      * R23-BR-15 false-failure pin: re-adopting the already-stored tenant id is
      * a no-op for update_option (returns false) but must still succeed and set
      * the paired flag. A return-value check would break re-pairing.

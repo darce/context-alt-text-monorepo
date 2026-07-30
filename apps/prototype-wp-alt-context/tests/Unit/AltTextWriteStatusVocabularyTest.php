@@ -64,6 +64,7 @@ class AltTextWriteStatusVocabularyTest extends TestCase
                 'skipped_existing_alt',
                 'skipped_empty_alt_text',
                 'forced_overwrite',
+                'provenance_healed',
                 'partial',
                 'failed',
                 'dry_run',
@@ -76,6 +77,7 @@ class AltTextWriteStatusVocabularyTest extends TestCase
                 'skipped_existing_alt',
                 'skipped_empty_alt_text',
                 'forced_overwrite',
+                'provenance_healed',
                 'partial',
                 'failed',
             ),
@@ -122,6 +124,7 @@ class AltTextWriteStatusVocabularyTest extends TestCase
         $this->assertSame('skipped_existing_alt', AltTextWriteStatus::SKIPPED_EXISTING_ALT);
         $this->assertSame('skipped_empty_alt_text', AltTextWriteStatus::SKIPPED_EMPTY_ALT_TEXT);
         $this->assertSame('forced_overwrite', AltTextWriteStatus::FORCED_OVERWRITE);
+        $this->assertSame('provenance_healed', AltTextWriteStatus::PROVENANCE_HEALED);
         $this->assertSame('partial', AltTextWriteStatus::PARTIAL);
         $this->assertSame('failed', AltTextWriteStatus::FAILED);
         $this->assertSame('dry_run', AltTextWriteStatus::DRY_RUN);

@@ -11,9 +11,11 @@ namespace AltContext\Api;
  * wire strings — do not "normalize" CLI/REST divergence in this wave.
  *
  * Path notes:
- * - {@see self::FORCED_OVERWRITE} is emitted by REST force-overwrite success.
- *   The CLI force path deliberately still emits {@see self::WRITTEN}; that
- *   divergence is intentional and out of scope for this wave.
+ * - {@see self::FORCED_OVERWRITE} is emitted by REST force-overwrite success
+ *   only when `force` is true. The CLI force path deliberately still emits
+ *   {@see self::WRITTEN}; that divergence is intentional and out of scope.
+ * - {@see self::PROVENANCE_HEALED} is REST success when force=false and the
+ *   stored alt already matched the draft; only provenance was (re)stamped.
  * - {@see self::DRY_RUN} is CLI-only (generate without --write). REST never
  *   emits it.
  * - {@see self::PARTIAL} alone is ambiguous (BR-08): REST always pairs it with
@@ -25,6 +27,7 @@ final class AltTextWriteStatus {
 	public const SKIPPED_EXISTING_ALT   = 'skipped_existing_alt';
 	public const SKIPPED_EMPTY_ALT_TEXT = 'skipped_empty_alt_text';
 	public const FORCED_OVERWRITE       = 'forced_overwrite';
+	public const PROVENANCE_HEALED      = 'provenance_healed';
 	public const PARTIAL                = 'partial';
 	public const FAILED                 = 'failed';
 
@@ -36,12 +39,14 @@ final class AltTextWriteStatus {
 	/**
 	 * Partial reason: alt written, provenance stamp failed → item is absent
 	 * from history and needs retry (BR-08 / class-describe-media-service).
+	 * Emitted by both REST describe and CLI generate when provenance fails.
 	 */
 	public const REASON_PROVENANCE_WRITE_FAILED = 'provenance_write_failed';
 
 	/**
 	 * Partial reason: alt and provenance both landed; only the optional long
 	 * description failed → nothing is missing from history (BR-08).
+	 * REST-only today (CLI generate does not write long description).
 	 */
 	public const REASON_DESCRIPTION_WRITE_FAILED = 'description_write_failed';
 
@@ -55,6 +60,7 @@ final class AltTextWriteStatus {
 		self::SKIPPED_EXISTING_ALT,
 		self::SKIPPED_EMPTY_ALT_TEXT,
 		self::FORCED_OVERWRITE,
+		self::PROVENANCE_HEALED,
 		self::PARTIAL,
 		self::FAILED,
 		self::DRY_RUN,
@@ -70,6 +76,7 @@ final class AltTextWriteStatus {
 		self::SKIPPED_EXISTING_ALT,
 		self::SKIPPED_EMPTY_ALT_TEXT,
 		self::FORCED_OVERWRITE,
+		self::PROVENANCE_HEALED,
 		self::PARTIAL,
 		self::FAILED,
 	);
@@ -77,6 +84,7 @@ final class AltTextWriteStatus {
 	/**
 	 * Statuses CLI generate may put on each row's `status`.
 	 * CLI force-overwrite success is {@see self::WRITTEN}, not FORCED_OVERWRITE.
+	 * CLI does not emit {@see self::PROVENANCE_HEALED} (REST single-image heal).
 	 *
 	 * @var list<string>
 	 */
@@ -90,7 +98,9 @@ final class AltTextWriteStatus {
 	);
 
 	/**
-	 * Values for the REST-only `reason` field when status is partial.
+	 * Values for the `reason` field when status is partial.
+	 * - {@see self::REASON_PROVENANCE_WRITE_FAILED}: REST describe + CLI generate.
+	 * - {@see self::REASON_DESCRIPTION_WRITE_FAILED}: REST-only (long description).
 	 *
 	 * @var list<string>
 	 */

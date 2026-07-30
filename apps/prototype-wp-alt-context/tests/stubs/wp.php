@@ -747,6 +747,9 @@ if (!function_exists('wp_update_post')) {
             return $wp_error ? new WP_Error('db_update_error', 'Could not update post in the database.') : 0;
         }
 
+        // Core wp_insert_post unslashes the postarr before writing row fields.
+        $postarr = wp_unslash($postarr);
+
         $GLOBALS['__ac_updated_posts'][] = $postarr;
         if (!isset($GLOBALS['__ac_posts'][$postId]) || !is_object($GLOBALS['__ac_posts'][$postId])) {
             $GLOBALS['__ac_posts'][$postId] = (object) ['ID' => $postId];
@@ -835,6 +838,17 @@ if (!function_exists('update_post_meta')) {
 
         // Core: $meta_value = wp_unslash( $meta_value ); before equality/store.
         $metaValue = wp_unslash($metaValue);
+
+        // Opt-in: write returns non-false but stores a different value (F-06).
+        // Exercises the post-write read-back when the write is "accepted" yet
+        // storage diverges. Takes precedence over the normal store path.
+        if (array_key_exists($postId, $GLOBALS['__ac_update_post_meta_mutate'] ?? [])
+            && array_key_exists($metaKey, $GLOBALS['__ac_update_post_meta_mutate'][$postId])
+        ) {
+            $GLOBALS['__ac_post_meta'][$postId][$metaKey] =
+                $GLOBALS['__ac_update_post_meta_mutate'][$postId][$metaKey];
+            return true;
+        }
 
         // Core returns false when the value is unchanged (failure and no-op share
         // the same return — production recovery branches must re-read).

@@ -43,7 +43,9 @@ class DescriptionCommandGenerateTest extends TestCase
         $this->assertSame(0, $payload['failed'] ?? null);
         $this->assertSame(0, $payload['partial'] ?? null);
         $this->assertSame(1, $payload['dry_run'] ?? null);
-        $this->assertNotEmpty(\WP_CLI::$messages['success']);
+        // JSON success path must leave the human success channel empty so
+        // machine consumers can parse the entire stdout as one JSON document.
+        $this->assertEmpty(\WP_CLI::$messages['success']);
     }
 
     public function testGenerateSurfacesUpstreamDetailOnErrorResponse(): void
@@ -102,7 +104,8 @@ class DescriptionCommandGenerateTest extends TestCase
         $this->assertSame('A black dog sitting by a window.', $provenance['alt_text_draft']);
         $this->assertSame(1, $payload['written'] ?? null);
         $this->assertSame(0, $payload['failed'] ?? null);
-        $this->assertNotEmpty(\WP_CLI::$messages['success']);
+        // Clean machine channel: no Success: trailer after the JSON envelope.
+        $this->assertEmpty(\WP_CLI::$messages['success']);
     }
 
     public function testGenerateWriteSkipsExistingAltUnlessForced(): void
@@ -123,7 +126,8 @@ class DescriptionCommandGenerateTest extends TestCase
         // R17-BR-09: all-skipped is distinguishable from all-written.
         $this->assertSame(1, $firstPayload['skipped_existing_alt'] ?? null);
         $this->assertArrayNotHasKey('written', $firstPayload);
-        $this->assertStringContainsString('skipped_existing_alt=1', \WP_CLI::$messages['success'][0] ?? '');
+        // Counts live in the JSON envelope; success channel stays empty on json.
+        $this->assertEmpty(\WP_CLI::$messages['success']);
 
         \WP_CLI::reset_cli_messages();
         $command->__invoke(['generate'], ['media-id' => '501', 'write' => true, 'force' => true, 'format' => 'json']);
@@ -580,12 +584,46 @@ class DescriptionCommandGenerateTest extends TestCase
         $command->__invoke(['generate'], ['limit' => '10', 'write' => true, 'format' => 'json']);
 
         $this->assertEmpty(\WP_CLI::$messages['error']);
-        $this->assertNotEmpty(\WP_CLI::$messages['success']);
+        // Empty-batch json is still exit-0; no human Success: trailer on stdout.
+        $this->assertEmpty(\WP_CLI::$messages['success']);
         $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
         $this->assertSame(0, $payload['count'] ?? null);
         $this->assertSame(0, $payload['failed'] ?? null);
         $this->assertSame(0, $payload['partial'] ?? null);
         $this->assertSame([], $payload['rows'] ?? null);
+    }
+
+    /**
+     * F-07: successful --format=json must leave stdout as one JSON document.
+     * Real WP-CLI writes both log() and success() to stdout; a Success: trailer
+     * after the envelope breaks jq / json.loads of the whole stream.
+     */
+    public function testGenerateJsonSuccessStdoutIsEntirelyOneJsonDocument(): void
+    {
+        $service = new RecordingDescribeService([
+            950 => new WP_REST_Response(['media_id' => 950, 'alt_text_draft' => 'Clean JSON channel.']),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $command->__invoke(['generate'], ['media-id' => '950', 'format' => 'json']);
+
+        // Model real WP-CLI stdout: log lines then any success trailers.
+        $stdout_parts = \WP_CLI::$messages['log'];
+        foreach (\WP_CLI::$messages['success'] as $success_line) {
+            $stdout_parts[] = 'Success: ' . $success_line;
+        }
+        $stdout = implode("\n", $stdout_parts);
+
+        $decoded = json_decode($stdout, true);
+        $this->assertSame(
+            JSON_ERROR_NONE,
+            json_last_error(),
+            'Entire stdout must parse as one JSON document; got: ' . $stdout
+        );
+        $this->assertIsArray($decoded);
+        $this->assertSame('generate', $decoded['command'] ?? null);
+        $this->assertSame(1, $decoded['count'] ?? null);
+        $this->assertEmpty(\WP_CLI::$messages['success']);
     }
 
     /**
@@ -689,6 +727,30 @@ class DescriptionCommandGenerateTest extends TestCase
         $this->assertInstanceOf(RuntimeException::class, $caught);
         $this->assertStringContainsString('status=failed', \WP_CLI::$messages['log'][0] ?? '');
         $this->assertStringContainsString('failed=1', \WP_CLI::$messages['error'][0] ?? '');
+    }
+
+    /**
+     * F-19: table row log must surface the same error detail JSON already carries
+     * so operators need not re-run as --format=json to learn the cause.
+     */
+    public function testGenerateTableFailedRowLogCarriesError(): void
+    {
+        $service = new RecordingDescribeService([
+            942 => new WP_REST_Response(['detail' => 'tenant mismatch'], 403),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '942', 'write' => true]);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $log = \WP_CLI::$messages['log'][0] ?? '';
+        $this->assertStringContainsString('status=failed', $log);
+        $this->assertStringContainsString('error=tenant mismatch', $log);
     }
 }
 

@@ -42,12 +42,14 @@ export interface VisualFactsResponse {
  * REST `alt_text_write.status` members — keep in lockstep with PHP
  * `AltContext\Api\AltTextWriteStatus::REST_STATUSES` (sr-007 / BR-04).
  * CLI-only `dry_run` is not part of this REST payload type.
+ * `provenance_healed` is success: force=false restamp when alt already matched.
  */
 export type AltTextWriteStatus =
   | 'written'
   | 'skipped_existing_alt'
   | 'skipped_empty_alt_text'
   | 'forced_overwrite'
+  | 'provenance_healed'
   | 'partial'
   | 'failed';
 

@@ -194,12 +194,17 @@ class DescriptionCommand extends \WP_CLI_Command {
 					? (string) $row['reason']
 					: '';
 				$reason_part = '' !== $reason ? sprintf( ' reason=%s', $reason ) : '';
+				$error       = isset( $row['error'] ) && is_string( $row['error'] ) && '' !== $row['error']
+					? (string) $row['error']
+					: '';
+				$error_part  = '' !== $error ? sprintf( ' error=%s', $error ) : '';
 				\WP_CLI::log(
 					sprintf(
-						'media_id=%d status=%s%s alt_text_draft=%s',
+						'media_id=%d status=%s%s%s alt_text_draft=%s',
 						(int) $row['media_id'],
 						(string) $row['status'],
 						$reason_part,
+						$error_part,
 						(string) $row['alt_text_draft']
 					)
 				);
@@ -207,9 +212,16 @@ class DescriptionCommand extends \WP_CLI_Command {
 		}
 
 		// Non-zero whenever anything did not fully land. Empty batch (count=0)
-		// stays exit-0 — nothing-to-do is not failure [R18-BR-01] [R17-BR-02].
-		if ( $total > 0 && ( $failed > 0 || $partial > 0 ) ) {
+		// stays exit-0 — failed/partial are both zero when rows is empty
+		// [R18-BR-01] [R17-BR-02].
+		if ( $failed > 0 || $partial > 0 ) {
 			\WP_CLI::error( $summary );
+		}
+
+		// JSON already emitted a complete machine envelope on stdout; a human
+		// Success: trailer would pollute that channel for jq / json.loads.
+		if ( 'json' === $format ) {
+			return;
 		}
 
 		\WP_CLI::success( $summary );

@@ -69,18 +69,21 @@ class DescriptionRefreshCommand extends \WP_CLI_Command {
 
 	/**
 	 * dry_run summary: dry_run, scanned_posts, media_ids, candidates, skipped.
-	 * No changed/failed keys.
+	 * No changed/failed keys. Emit candidates/skipped only when present —
+	 * never fabricate a zero for an absent key [rg-015].
 	 *
 	 * @param array<string,mixed> $summary
 	 */
 	private function report_dry_run( array $summary ): void {
-		\WP_CLI::success(
-			sprintf(
-				'Description refresh complete. dry_run=1 candidates=%d skipped=%d',
-				(int) ( $summary['candidates'] ?? 0 ),
-				(int) ( $summary['skipped'] ?? 0 )
-			)
-		);
+		$parts = array( 'dry_run=1' );
+		if ( array_key_exists( 'candidates', $summary ) ) {
+			$parts[] = 'candidates=' . (int) $summary['candidates'];
+		}
+		if ( array_key_exists( 'skipped', $summary ) ) {
+			$parts[] = 'skipped=' . (int) $summary['skipped'];
+		}
+
+		\WP_CLI::success( 'Description refresh complete. ' . implode( ' ', $parts ) );
 	}
 
 	/**
@@ -95,22 +98,6 @@ class DescriptionRefreshCommand extends \WP_CLI_Command {
 		$changed = array_key_exists( 'changed', $summary ) ? (int) $summary['changed'] : null;
 		$failed  = array_key_exists( 'failed', $summary ) ? (int) $summary['failed'] : null;
 		$skipped = array_key_exists( 'skipped', $summary ) ? (int) $summary['skipped'] : null;
-
-		$parts = array(
-			'dry_run=0',
-			'candidates=' . (int) ( $summary['candidates'] ?? 0 ),
-		);
-		if ( null !== $changed ) {
-			$parts[] = 'changed=' . $changed;
-		}
-		if ( null !== $failed ) {
-			$parts[] = 'failed=' . $failed;
-		}
-		if ( null !== $skipped ) {
-			$parts[] = 'skipped=' . $skipped;
-		}
-
-		$counts = implode( ' ', $parts );
 
 		$failed_rows = is_array( $result['failed'] ?? null ) ? $result['failed'] : array();
 		$failed_row_count = 0;
@@ -129,10 +116,34 @@ class DescriptionRefreshCommand extends \WP_CLI_Command {
 			);
 		}
 
-		// Exit decision from the same evidence as the logged rows, not from a
-		// missing summary key treated as zero [R17-BR-04] [rg-015] [HAI-13].
-		// Absent `failed` key is an integrity error (absence ≠ success).
-		// Non-empty failed rows force non-zero even if the summary under-reports.
+		// Printed failed= cannot under-report logged rows: take the max of the
+		// summary count and the row count so a producer that under-reports in
+		// its summary still surfaces an honest token [R17-BR-04] [HAI-13].
+		if ( null !== $failed ) {
+			$failed = max( $failed, $failed_row_count );
+		}
+
+		$parts = array(
+			'dry_run=0',
+			'candidates=' . (int) ( $summary['candidates'] ?? 0 ),
+		);
+		if ( null !== $changed ) {
+			$parts[] = 'changed=' . $changed;
+		}
+		if ( null !== $failed ) {
+			$parts[] = 'failed=' . $failed;
+		}
+		if ( null !== $skipped ) {
+			$parts[] = 'skipped=' . $skipped;
+		}
+
+		$counts = implode( ' ', $parts );
+
+		// Exit ORs summary failed (when present) with logged-row evidence so a
+		// under-reporting summary still exits non-zero [R17-BR-04] [rg-015] [HAI-13].
+		// Printed failed= uses max(summary, row count) above so the token cannot
+		// understate the rows that were logged. Absent `failed` key is an
+		// integrity error (absence ≠ success) and omits the failed= token.
 		$has_failures = ( null !== $failed && $failed > 0 ) || $failed_row_count > 0;
 		$integrity_error = null === $failed;
 

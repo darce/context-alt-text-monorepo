@@ -10,6 +10,7 @@ require_once __DIR__ . '/class-description-budget-service.php';
 require_once __DIR__ . '/../../sovereign/repositories/class-identity-members-repository.php';
 require_once __DIR__ . '/../class-alt-style.php';
 require_once __DIR__ . '/../class-alt-text-write-status.php';
+require_once __DIR__ . '/trait-expects-meta-after-core-transforms.php';
 
 use AltContext\Api\AltStyle;
 use AltContext\Api\AltTextWriteStatus;
@@ -41,7 +42,6 @@ use function is_readable;
 use function is_string;
 use function is_wp_error;
 use function max;
-use function wp_unslash;
 use function microtime;
 use function pathinfo;
 use function preg_match;
@@ -55,6 +55,7 @@ use function sanitize_text_field;
 use function sanitize_textarea_field;
 use function wp_get_object_terms;
 use function wp_json_encode;
+use function wp_unslash;
 use function wp_update_post;
 
 use const PATHINFO_EXTENSION;
@@ -73,6 +74,8 @@ use const PATHINFO_EXTENSION;
  * backend `DescribeImageEnvelope` from E20-9 (merge E20-9 before E20-10).
  */
 class DescribeMediaService {
+	use ExpectsMetaAfterCoreTransforms;
+
 	private const MULTIPART_MAX_BYTES = 25 * 1024 * 1024;
 	private const ALT_TEXT_META_KEY = '_wp_attachment_image_alt';
 	private const PROVENANCE_META_KEY = '_acx_description_provenance';
@@ -306,10 +309,19 @@ class DescribeMediaService {
 		$draft        = self::normalize_alt_text_draft( $data['alt_text_draft'] ?? null );
 		$existing_alt = get_post_meta( $media_id, self::ALT_TEXT_META_KEY, true );
 		$existing_alt = is_string( $existing_alt ) ? $existing_alt : '';
+		// What update_metadata will store for this draft (unslash + sanitize_meta).
+		// Compute once so the heal gate and the post-write read-back cannot drift.
+		$expected_alt = $this->expected_meta_after_core_transforms( self::ALT_TEXT_META_KEY, $draft );
 		// Identity keys only for the idempotence compare; draft is measured data
 		// stamped when the alt meta is written, or healed on a force no-op (BR-108).
 		$provenance          = $this->build_generated_provenance( $data, $draft );
 		$existing_provenance = get_post_meta( $media_id, self::PROVENANCE_META_KEY, true );
+
+		// Storage holds the post-transform form; compare against that, not raw draft.
+		$same_alt_as_draft = ( '' !== $draft && $expected_alt === $existing_alt );
+		// Non-force path where alt bytes already match: only provenance is repaired.
+		// Must not author long description and must not claim forced_overwrite.
+		$provenance_heal_only = false;
 
 		if ( '' !== trim( $existing_alt ) && ! $force ) {
 			// R17-BR-05: do not trap partial(provenance_write_failed) retries.
@@ -317,7 +329,6 @@ class DescribeMediaService {
 			// is a provenance heal — not an overwrite of human alt text. Only a
 			// genuinely different existing alt stays behind the skip guard.
 			// Empty draft still reports skipped_existing_alt (CLI order / BR-104).
-			$same_alt_as_draft = ( '' !== $draft && $draft === $existing_alt );
 			if ( ! $same_alt_as_draft ) {
 				$data['alt_text_write'] = array(
 					'status'               => AltTextWriteStatus::SKIPPED_EXISTING_ALT,
@@ -351,6 +362,7 @@ class DescribeMediaService {
 				return $response;
 			}
 			// Fall through: provenance gap heal (partial retry without --force).
+			$provenance_heal_only = true;
 		}
 
 		// BR-104: agree with CLI (`skipped_empty_alt_text`) and bulk
@@ -369,7 +381,7 @@ class DescribeMediaService {
 
 		if (
 			$force
-			&& $draft === $existing_alt
+			&& $same_alt_as_draft
 			&& $this->matches_generated_provenance( $existing_provenance, $provenance )
 		) {
 			// No-op: alt already equals this draft under matching model identity.
@@ -397,13 +409,11 @@ class DescribeMediaService {
 		}
 
 		// S3-02 / BR-02: honor update_post_meta() returns. No-op (false when the
-		// stored value already equals what WP will store after unslash) is success
-		// via read-back. Real alt failure → failed, no provenance stamp. Alt ok +
-		// provenance fail → partial (history would otherwise drop the item). Keep
-		// written vs forced_overwrite for full success. Compare against
-		// wp_unslash( $value ) — update_metadata() unslashes before store (BR-17).
-		$expected_alt = wp_unslash( $draft );
-		$alt_written  = update_post_meta( $media_id, self::ALT_TEXT_META_KEY, $draft );
+		// stored value already equals what WP will store after unslash+sanitize)
+		// is success via read-back. Real alt failure → failed, no provenance stamp.
+		// Alt ok + provenance fail → partial (history would otherwise drop the item).
+		// Compare against the shared post-transform expectation (F-08 / BR-17).
+		$alt_written = update_post_meta( $media_id, self::ALT_TEXT_META_KEY, $draft );
 		if ( false === $alt_written ) {
 			$current = get_post_meta( $media_id, self::ALT_TEXT_META_KEY, true );
 			if ( ! is_string( $current ) || $expected_alt !== $current ) {
@@ -416,7 +426,7 @@ class DescribeMediaService {
 			}
 		}
 
-		$expected_provenance = wp_unslash( $provenance );
+		$expected_provenance = $this->expected_meta_after_core_transforms( self::PROVENANCE_META_KEY, $provenance );
 		$prov_written        = update_post_meta( $media_id, self::PROVENANCE_META_KEY, $provenance );
 		if ( false === $prov_written ) {
 			$current_prov = get_post_meta( $media_id, self::PROVENANCE_META_KEY, true );
@@ -431,11 +441,13 @@ class DescribeMediaService {
 					'reason'               => AltTextWriteStatus::REASON_PROVENANCE_WRITE_FAILED,
 					'existing_alt_present' => '' !== trim( $existing_alt ),
 				);
-				// Long description is independent of provenance; attempt when alt
-				// is verified so the operator still gets the body when opted in.
-				$description_write = $this->maybe_write_long_description( $data, $media_id, $force );
-				if ( null !== $description_write ) {
-					$write_result['description_write'] = $description_write;
+				// Long description is independent of provenance on a genuine first
+				// write; on a provenance-only heal it must not author content (F-04).
+				if ( ! $provenance_heal_only ) {
+					$description_write = $this->maybe_write_long_description( $data, $media_id, $force );
+					if ( null !== $description_write ) {
+						$write_result['description_write'] = $description_write;
+					}
 				}
 				$data['alt_text_write'] = $write_result;
 				$response->set_data( $data );
@@ -443,26 +455,34 @@ class DescribeMediaService {
 			}
 		}
 
-		$status = '' !== trim( $existing_alt )
-			? AltTextWriteStatus::FORCED_OVERWRITE
-			: AltTextWriteStatus::WRITTEN;
+		// FORCED_OVERWRITE only when force=true. Non-force heal of matching alt
+		// reports provenance_healed so operators do not think human alt was clobbered.
+		if ( true === $force && '' !== trim( $existing_alt ) ) {
+			$status = AltTextWriteStatus::FORCED_OVERWRITE;
+		} elseif ( $provenance_heal_only ) {
+			$status = AltTextWriteStatus::PROVENANCE_HEALED;
+		} else {
+			$status = AltTextWriteStatus::WRITTEN;
+		}
 		$write_result = array(
 			'status'               => $status,
 			'existing_alt_present' => '' !== trim( $existing_alt ),
 		);
 
-		$description_write = $this->maybe_write_long_description( $data, $media_id, $force );
-		if ( null !== $description_write ) {
-			$write_result['description_write'] = $description_write;
-			// BR-03: fold a durable long-description write failure into the parent
-			// status so alt_text_write never looks fully successful when the body
-			// did not land. Skip/success statuses leave the parent alone.
-			// At this point parent is always written|forced_overwrite (alt+prov ok).
-			// BR-08: reason makes this partial distinguishable without inspecting
-			// the nested description_write key.
-			if ( DescriptionWriteStatus::FAILED === $description_write ) {
-				$write_result['status'] = AltTextWriteStatus::PARTIAL;
-				$write_result['reason'] = AltTextWriteStatus::REASON_DESCRIPTION_WRITE_FAILED;
+		// Provenance-only heal must not author long description without force (F-04).
+		if ( ! $provenance_heal_only ) {
+			$description_write = $this->maybe_write_long_description( $data, $media_id, $force );
+			if ( null !== $description_write ) {
+				$write_result['description_write'] = $description_write;
+				// BR-03: fold a durable long-description write failure into the parent
+				// status so alt_text_write never looks fully successful when the body
+				// did not land. Skip/success statuses leave the parent alone.
+				// BR-08: reason makes this partial distinguishable without inspecting
+				// the nested description_write key.
+				if ( DescriptionWriteStatus::FAILED === $description_write ) {
+					$write_result['status'] = AltTextWriteStatus::PARTIAL;
+					$write_result['reason'] = AltTextWriteStatus::REASON_DESCRIPTION_WRITE_FAILED;
+				}
 			}
 		}
 
@@ -495,15 +515,17 @@ class DescribeMediaService {
 			return true;
 		}
 
-		$stored = $existing_provenance['alt_text_draft'] ?? null;
-		if ( is_string( $stored ) && $stored === $draft ) {
+		// Storage holds post-transform draft; compare against that form (F-02/F-16).
+		$expected_draft = $this->expected_meta_after_core_transforms( self::ALT_TEXT_META_KEY, $draft );
+		$stored         = $existing_provenance['alt_text_draft'] ?? null;
+		if ( is_string( $stored ) && $stored === $expected_draft ) {
 			return true;
 		}
 
 		$healed                   = $existing_provenance;
 		$healed['alt_text_draft'] = $draft;
-		// update_metadata unslashes before store — compare the post-unslash form.
-		$expected     = wp_unslash( $healed );
+		// update_metadata unslashes then sanitize_meta — compare post-transform form.
+		$expected     = $this->expected_meta_after_core_transforms( self::PROVENANCE_META_KEY, $healed );
 		$prov_written = update_post_meta( $media_id, self::PROVENANCE_META_KEY, $healed );
 		if ( false === $prov_written ) {
 			$current = get_post_meta( $media_id, self::PROVENANCE_META_KEY, true );
@@ -574,10 +596,12 @@ class DescribeMediaService {
 			return DescriptionWriteStatus::FAILED;
 		}
 
-		$after            = get_post( $media_id );
-		$stored_content   = is_object( $after ) && is_string( $after->post_content ?? null )
+		$after          = get_post( $media_id );
+		$stored_content = is_object( $after ) && is_string( $after->post_content ?? null )
 			? $after->post_content
 			: '';
+		// wp_insert_post unslashes post_content before store — compare that form.
+		// (post_content is not post meta; sanitize_meta does not apply here.)
 		$expected_content = wp_unslash( $long );
 		if ( $expected_content !== $stored_content ) {
 			return DescriptionWriteStatus::FAILED;

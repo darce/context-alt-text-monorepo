@@ -3,6 +3,7 @@
 - Golden metas must record which OpenCV/numpy produced them (majors only).
 - Conflicting opencv-python* distributions in one env must fail closed.
 - Probe DEFAULT_MATCH_THRESHOLD must track settings _LEGACY_SIMILARITY_THRESHOLD.
+- Committed fixtures must match what generate_goldens.py currently emits (CVUP-1-BR-03).
 """
 
 from __future__ import annotations
@@ -10,11 +11,15 @@ from __future__ import annotations
 import importlib.metadata
 import importlib.util
 import json
+import math
 import re
 import sys
 from pathlib import Path
+from typing import Any
 
 import cv2
+import numpy as np
+import pytest
 
 from recognition.config import settings as settings_mod
 
@@ -23,11 +28,30 @@ _FIXTURE_DIR = _SERVICE_ROOT / "recognition" / "tests" / "fixtures" / "face_pipe
 _REGENERATE_CMD = "uv run python recognition/tests/fixtures/face_pipeline/generate_goldens.py"
 
 _PROVENANCE_KEYS = ("opencv_version", "numpy_version", "generator")
+# Toolchain stamps: keep in SCHEMA compare, exclude from VALUE compare.
+_TOOLCHAIN_STAMP_KEYS = frozenset(_PROVENANCE_KEYS)
 _GOLDEN_METAS = (
     "detector_faces.json",
     "embedding_meta.json",
     "aligner_meta.json",
     "aligner_composed_embedding_meta.json",
+)
+
+# Same floors as test_face_pipeline_opencv_ref.py golden compares — do not invent new ones.
+_GOLDEN_COSINE_MIN = 0.99999999
+_ALIGN_AFFINE_ATOL = 1e-4
+_ALIGN_CROP_MAX_ABS = 1.0
+_ALIGN_CROP_MAE = 0.05
+
+# Generator-produced arrays under face_pipeline/ (relative names).
+_GOLDEN_NPY = (
+    "synthetic_112_crop.npy",
+    "synthetic_112_embedding.npy",
+    "aligner_source_image.npy",
+    "aligner_landmarks.npy",
+    "aligner_affine.npy",
+    "aligner_crop.npy",
+    "aligner_composed_embedding.npy",
 )
 
 
@@ -143,3 +167,305 @@ def test_probe_match_threshold_tracks_settings() -> None:
         f"from settings._LEGACY_SIMILARITY_THRESHOLD="
         f"{settings_mod._LEGACY_SIMILARITY_THRESHOLD!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# CVUP-1-BR-03: generator-vs-fixture drift guard
+# ---------------------------------------------------------------------------
+
+
+def _load_generate_goldens():
+    """Load generate_goldens.py as a module (same pattern as face_pipeline_support)."""
+    gen_path = _FIXTURE_DIR / "generate_goldens.py"
+    mod_name = "_face_pipeline_generate_goldens_under_test"
+    if mod_name in sys.modules:
+        del sys.modules[mod_name]
+    if str(_SERVICE_ROOT) not in sys.path:
+        sys.path.insert(0, str(_SERVICE_ROOT))
+    spec = importlib.util.spec_from_file_location(mod_name, gen_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[mod_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def collect_schema_key_mismatches(
+    committed: Any,
+    generated: Any,
+    *,
+    path: str = "",
+) -> list[str]:
+    """Recursive key-set diff for nested dicts. Missing and extra keys both report.
+
+    Non-dict leaves are not type-checked here — only the schema (key topology).
+    Lists are walked positionally so nested dicts inside lists still get keys.
+    """
+    mismatches: list[str] = []
+    label = path or "<root>"
+
+    if isinstance(committed, dict) and isinstance(generated, dict):
+        committed_keys = set(committed)
+        generated_keys = set(generated)
+        missing = sorted(committed_keys - generated_keys)
+        extra = sorted(generated_keys - committed_keys)
+        for key in missing:
+            mismatches.append(f"missing key {path + '.' if path else ''}{key}")
+        for key in extra:
+            mismatches.append(f"extra key {path + '.' if path else ''}{key}")
+        for key in sorted(committed_keys & generated_keys):
+            child = f"{path}.{key}" if path else key
+            mismatches.extend(collect_schema_key_mismatches(committed[key], generated[key], path=child))
+        return mismatches
+
+    if isinstance(committed, list) and isinstance(generated, list):
+        # A length change is drift in its own right (e.g. the detector starts
+        # emitting a second face); zip alone would silently ignore the tail.
+        if len(committed) != len(generated):
+            mismatches.append(
+                f"list length {label or '<root>'}: committed {len(committed)}, generated {len(generated)}"
+            )
+        for i, (c_item, g_item) in enumerate(zip(committed, generated, strict=False)):
+            mismatches.extend(collect_schema_key_mismatches(c_item, g_item, path=f"{label}[{i}]"))
+        return mismatches
+
+    return mismatches
+
+
+def assert_meta_schema_equal(
+    committed: dict,
+    generated: dict,
+    *,
+    meta_name: str,
+) -> None:
+    """HARD assertion: generator meta keys must equal committed meta keys (recursive)."""
+    mismatches = collect_schema_key_mismatches(committed, generated)
+    detail = "; ".join(mismatches)
+    assert not mismatches, (
+        f"{meta_name} schema drifted between committed fixtures and "
+        f"generate_goldens.py output ({detail}). "
+        f"Regenerate goldens from apps/prototype-description-service:\n"
+        f"  {_REGENERATE_CMD}"
+    )
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def assert_meta_values_equal(
+    committed: Any,
+    generated: Any,
+    *,
+    path: str = "",
+    meta_name: str = "",
+    detector_tol: dict | None = None,
+) -> None:
+    """Compare non-stamp meta values; stamps stay in schema only.
+
+    Numeric detection fields use the committed detector tolerances when present;
+    other numbers use a tight float compare (same-host regen).
+    """
+    label = path or meta_name or "<root>"
+
+    if isinstance(committed, dict) and isinstance(generated, dict):
+        # Schema already asserted equal; walk shared keys only.
+        for key in sorted(set(committed) & set(generated)):
+            if key in _TOOLCHAIN_STAMP_KEYS:
+                continue
+            child = f"{path}.{key}" if path else key
+            assert_meta_values_equal(
+                committed[key],
+                generated[key],
+                path=child,
+                meta_name=meta_name,
+                detector_tol=detector_tol,
+            )
+        return
+
+    if isinstance(committed, list) and isinstance(generated, list):
+        assert len(committed) == len(generated), (
+            f"{label}: list length {len(generated)} != committed {len(committed)}. Regenerate:\n  {_REGENERATE_CMD}"
+        )
+        # Homogeneous numeric lists (bbox, coords): bulk allclose.
+        if committed and all(_is_number(x) for x in committed) and all(_is_number(x) for x in generated):
+            atol = _numeric_list_atol(path, detector_tol)
+            np.testing.assert_allclose(
+                np.asarray(generated, dtype=np.float64),
+                np.asarray(committed, dtype=np.float64),
+                atol=atol,
+                rtol=0.0,
+                err_msg=f"{label} numeric list drifted. Regenerate:\n  {_REGENERATE_CMD}",
+            )
+            return
+        # Nested lists (e.g. landmarks_xy as list-of-pairs).
+        if committed and all(isinstance(x, list) for x in committed):
+            flat_c = np.asarray(committed, dtype=np.float64)
+            flat_g = np.asarray(generated, dtype=np.float64)
+            if flat_c.shape == flat_g.shape and np.issubdtype(flat_c.dtype, np.number):
+                atol = _numeric_list_atol(path, detector_tol)
+                np.testing.assert_allclose(
+                    flat_g,
+                    flat_c,
+                    atol=atol,
+                    rtol=0.0,
+                    err_msg=f"{label} nested numeric list drifted. Regenerate:\n  {_REGENERATE_CMD}",
+                )
+                return
+        for i, (c_item, g_item) in enumerate(zip(committed, generated, strict=True)):
+            assert_meta_values_equal(
+                c_item,
+                g_item,
+                path=f"{label}[{i}]",
+                meta_name=meta_name,
+                detector_tol=detector_tol,
+            )
+        return
+
+    if _is_number(committed) and _is_number(generated):
+        atol = 0.0
+        # detection.score only — not tolerances.score.
+        if detector_tol is not None and path == "detection.score":
+            atol = float(detector_tol.get("score", 0.0))
+        if atol > 0.0:
+            assert generated == pytest.approx(committed, abs=atol), (
+                f"{label}: generated {generated!r} != committed {committed!r} "
+                f"(atol={atol}). Regenerate:\n  {_REGENERATE_CMD}"
+            )
+        else:
+            assert math.isclose(float(generated), float(committed), rel_tol=0.0, abs_tol=1e-9), (
+                f"{label}: generated {generated!r} != committed {committed!r}. Regenerate:\n  {_REGENERATE_CMD}"
+            )
+        return
+
+    assert generated == committed, (
+        f"{label}: generated {generated!r} != committed {committed!r}. Regenerate:\n  {_REGENERATE_CMD}"
+    )
+
+
+def _numeric_list_atol(path: str, detector_tol: dict | None) -> float:
+    if detector_tol is None:
+        return 0.0
+    if path == "detection.bbox_xywh":
+        return float(detector_tol.get("bbox_px", 0.0))
+    if path == "detection.landmarks_xy" or path.startswith("detection.landmarks_xy"):
+        return float(detector_tol.get("landmarks_px", 0.0))
+    return 0.0
+
+
+def _embedding_cosine(a: np.ndarray, b: np.ndarray) -> float:
+    a = np.asarray(a, dtype=np.float64).reshape(-1)
+    b = np.asarray(b, dtype=np.float64).reshape(-1)
+    return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-12))
+
+
+def assert_npy_matches_golden(name: str, committed: np.ndarray, generated: np.ndarray) -> None:
+    """Compare one generator-produced .npy using existing unit-test tolerances."""
+    if name in ("synthetic_112_embedding.npy", "aligner_composed_embedding.npy"):
+        meta_name = "embedding_meta.json" if name.startswith("synthetic") else "aligner_composed_embedding_meta.json"
+        meta = _load_meta(meta_name)
+        cosine_min = float(meta.get("cosine_min", _GOLDEN_COSINE_MIN))
+        cos = _embedding_cosine(generated[0], committed[0])
+        assert cos >= cosine_min, (
+            f"{name}: cosine(generated, committed)={cos} < {cosine_min}. Regenerate:\n  {_REGENERATE_CMD}"
+        )
+        return
+
+    if name == "aligner_affine.npy":
+        np.testing.assert_allclose(
+            generated,
+            committed,
+            atol=_ALIGN_AFFINE_ATOL,
+            err_msg=f"{name} drifted. Regenerate:\n  {_REGENERATE_CMD}",
+        )
+        return
+
+    if name == "aligner_crop.npy":
+        # Cross-host crop budgets from test_aligner_affine_and_crop_match_goldens.
+        diff = np.abs(generated.astype(np.float32) - committed.astype(np.float32))
+        assert float(diff.max()) <= _ALIGN_CROP_MAX_ABS, (
+            f"{name}: max abs pixel diff {float(diff.max())} > {_ALIGN_CROP_MAX_ABS}. Regenerate:\n  {_REGENERATE_CMD}"
+        )
+        assert float(diff.mean()) <= _ALIGN_CROP_MAE, (
+            f"{name}: mean abs pixel diff {float(diff.mean())} > {_ALIGN_CROP_MAE}. Regenerate:\n  {_REGENERATE_CMD}"
+        )
+        return
+
+    # Seed-deterministic images / landmarks: exact match on same host.
+    np.testing.assert_array_equal(
+        generated,
+        committed,
+        err_msg=f"{name} drifted. Regenerate:\n  {_REGENERATE_CMD}",
+    )
+
+
+def test_meta_schema_equal_red_on_extra_and_missing_keys() -> None:
+    """TEST-15: schema helper goes red on synthetic extra + missing keys (hermetic)."""
+    committed = {
+        "kind": "synthetic",
+        "stable": 1,
+        "nested": {"keep": True, "gone": 2},
+    }
+    # One extra key (new_field) and one missing key (gone) vs committed.
+    generated = {
+        "kind": "synthetic",
+        "stable": 1,
+        "nested": {"keep": True, "new_field": 3},
+    }
+    mismatches = collect_schema_key_mismatches(committed, generated)
+    assert any("gone" in m for m in mismatches), mismatches
+    assert any("new_field" in m for m in mismatches), mismatches
+
+    with pytest.raises(AssertionError) as ei:
+        assert_meta_schema_equal(committed, generated, meta_name="synthetic_meta.json")
+    msg = str(ei.value)
+    assert "gone" in msg
+    assert "new_field" in msg
+    assert _REGENERATE_CMD in msg
+
+
+def test_committed_fixtures_match_current_generator(tmp_path: Path) -> None:
+    """Run generate_goldens into tmp_path; schema + values must match committed fixtures.
+
+    No skip: missing models fail via load_verified_model (fail closed, not greenwash).
+    """
+    from recognition.infrastructure.face_pipeline.provenance import load_verified_model
+
+    # Fail loud if ONNX bytes are absent or corrupt — never skip.
+    load_verified_model("sface")
+    load_verified_model("yunet")
+
+    gen = _load_generate_goldens()
+    out = tmp_path / "goldens"
+    out.mkdir()
+    gen.write_embedding_goldens(output_dir=out)
+    gen.write_aligner_goldens(output_dir=out)
+    gen.write_composed_aligner_embedder_goldens(output_dir=out)
+    gen.write_detector_goldens(output_dir=out)
+
+    for name in _GOLDEN_METAS:
+        committed_path = _FIXTURE_DIR / name
+        generated_path = out / name
+        assert committed_path.is_file(), f"missing committed golden meta: {committed_path}"
+        assert generated_path.is_file(), (
+            f"generator did not write {name} under {out} "
+            f"(detector may have written a skip note instead). "
+            f"Regenerate:\n  {_REGENERATE_CMD}"
+        )
+        committed = json.loads(committed_path.read_text(encoding="utf-8"))
+        generated = json.loads(generated_path.read_text(encoding="utf-8"))
+        assert_meta_schema_equal(committed, generated, meta_name=name)
+        det_tol = committed.get("tolerances") if name == "detector_faces.json" else None
+        assert_meta_values_equal(
+            committed,
+            generated,
+            meta_name=name,
+            detector_tol=det_tol if isinstance(det_tol, dict) else None,
+        )
+
+    for name in _GOLDEN_NPY:
+        committed_path = _FIXTURE_DIR / name
+        generated_path = out / name
+        assert committed_path.is_file(), f"missing committed golden array: {committed_path}"
+        assert generated_path.is_file(), f"generator did not write {name} under {out}"
+        assert_npy_matches_golden(name, np.load(committed_path), np.load(generated_path))

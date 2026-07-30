@@ -156,9 +156,9 @@ class SettingsController {
 				);
 			}
 			// R23-BR-14: do not trust update_option's return (false on no-op *and*
-			// failure). Read back and compare against the intended value. Custom
-			// option keys have identity sanitize_option (no registered transforms);
-			// the value written is already trim()'d. A no-op re-save still matches.
+			// failure). Read back and compare against the intended value; a no-op
+			// re-save still matches. option_matches_intended() verifies effect, not
+			// bytes in storage — see its docblock [R23-BR-35].
 			update_option( 'acx_recognition_url', $url );
 			if ( $this->option_matches_intended( 'acx_recognition_url', $url ) ) {
 				$saved[] = 'url';
@@ -251,17 +251,32 @@ class SettingsController {
 	}
 
 	/**
-	 * True when storage holds the intended option value after a write attempt.
+	 * True when a read of the option now yields the intended value.
 	 *
 	 * update_option returns false for both storage failure and no-op (value
-	 * already equal). Read-back is the only honest verification. Custom acx_*
-	 * option keys are not registered with sanitize_option transforms — the
-	 * intended value is what was passed to update_option (already trim/cast).
+	 * already equal), so its return cannot be trusted and a read-back is
+	 * required [R23-BR-14].
+	 *
+	 * What this verifies is effect, not bytes-in-storage [R23-BR-35]. get_option
+	 * applies pre_option_{$option} / option_{$option} / default_option_{$option},
+	 * so this compares the intended value against the *filtered* read — which is
+	 * deliberate: every consumer of these keys also reads through get_option
+	 * (see class-recognition-endpoint-resolver.php and
+	 * class-abstract-recognition-proxy-controller.php), so the filtered value is
+	 * what the site will actually use. A filter that diverges the read means the
+	 * operator's value is not in effect, and reporting it as saved would be the
+	 * false success R23-BR-14 removed. Verifying an unfiltered $wpdb read here
+	 * would reintroduce exactly that.
+	 *
+	 * Consequence to keep in mind: a false return does not distinguish "did not
+	 * persist" from "persisted but a filter overrides the read". Both are
+	 * correctly not-saved; neither is separately reported.
+	 *
 	 * Integer options are compared via numeric coerce so a DB-reloaded string
 	 * form does not false-fail a successful write.
 	 *
 	 * @param string $option   Option name.
-	 * @param mixed  $intended Value that should be stored.
+	 * @param mixed  $intended Value that should be in effect.
 	 */
 	private function option_matches_intended( string $option, $intended ): bool {
 		// null default: missing option is distinguishable from stored empty string.

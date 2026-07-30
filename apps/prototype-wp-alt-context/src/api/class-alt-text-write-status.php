@@ -146,7 +146,9 @@ final class AltTextWriteStatus {
 	 *                      non-string alt meta
 	 * - skipped_no_draft ← empty draft (single-item: SKIPPED_EMPTY_ALT_TEXT)
 	 * - skipped_invalid  ← non-attachment media_id (bulk-only; no single-item status)
-	 * - failed           ← FAILED (alt write fail, or marker plant unverified)
+	 * - failed           ← FAILED (alt write fail; or a non-false alt write's
+	 *                      read-back diverged from the post-transform expectation
+	 *                      [R22-BR-03]; or marker plant unverified)
 	 *
 	 * @var list<string>
 	 */
@@ -185,6 +187,37 @@ final class AltTextWriteStatus {
 	public const MARKER_OWNERS = array(
 		self::MARKER_OWNER_CLI,
 		self::MARKER_OWNER_SINGLE_IMAGE,
+	);
+
+	/**
+	 * Provenance recovery descriptor kinds [R23-BR-20/21/22].
+	 *
+	 * Always-present on bulk-apply envelopes as `recovered_from.kind`. Absence
+	 * of recovery is an explicit kind, never a missing key [sr-007].
+	 */
+	public const RECOVERY_KIND_NONE     = 'none';
+	public const RECOVERY_KIND_SAME_RUN = 'same_run';
+	public const RECOVERY_KIND_RUN      = 'run';
+	public const RECOVERY_KIND_SURFACE  = 'surface';
+	public const RECOVERY_KIND_UNKNOWN  = 'unknown';
+
+	/**
+	 * Full recovery-kind vocabulary for `recovered_from.kind`.
+	 *
+	 * - none     — first write / overwrite; no recovery occurred
+	 * - same_run — non-clobber completion of this applying run's own marker
+	 * - run      — recovered from another bulk-run uuid-shaped owner
+	 * - surface  — recovered from a MARKER_OWNERS sentinel (cli / single_image)
+	 * - unknown  — owner not in MARKER_OWNERS and not uuid-shaped
+	 *
+	 * @var list<string>
+	 */
+	public const RECOVERY_KINDS = array(
+		self::RECOVERY_KIND_NONE,
+		self::RECOVERY_KIND_SAME_RUN,
+		self::RECOVERY_KIND_RUN,
+		self::RECOVERY_KIND_SURFACE,
+		self::RECOVERY_KIND_UNKNOWN,
 	);
 
 	private function __construct() {}

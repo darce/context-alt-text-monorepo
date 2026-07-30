@@ -125,13 +125,59 @@ export interface DescriptionHistoryHumanEdit {
   user_id?: number | null;
 }
 
+/**
+ * Recovery descriptor kinds on bulk-apply provenance envelopes.
+ * Lockstep with PHP `AltTextWriteStatus::RECOVERY_KINDS` [sr-007] [R23-BR-20/21/22].
+ */
+export const RECOVERY_KIND = {
+  NONE: 'none',
+  SAME_RUN: 'same_run',
+  RUN: 'run',
+  SURFACE: 'surface',
+  UNKNOWN: 'unknown',
+} as const;
+
+export type RecoveryKind = (typeof RECOVERY_KIND)[keyof typeof RECOVERY_KIND];
+
+/**
+ * Always-present recovery descriptor on bulk-applied provenance.
+ * Replaces the deleted scalar `recovered_from_run_id` [R23-BR-20/21/22].
+ */
+export interface ProvenanceRecoveredFrom {
+  /** Verbatim marker owner value when foreign recovery occurred; null otherwise. */
+  origin: string | null;
+  kind: RecoveryKind;
+  /** Append-only origin chain, oldest first. */
+  chain: string[];
+}
+
+/**
+ * Stored provenance envelope on a history row (bulk apply / single / CLI writers).
+ * Not the live VisualFactsResponse shape — recovery fields live here.
+ */
+export interface DescriptionHistoryProvenance {
+  adapter?: string;
+  model_id?: string;
+  model_version?: string;
+  prompt_or_task_version?: string;
+  image_hash?: string;
+  context_hash?: string;
+  generated_at?: string;
+  backend_result_id?: string;
+  alt_text_draft?: string;
+  source?: string;
+  run_id?: string;
+  applied_at?: string;
+  recovered_from?: ProvenanceRecoveredFrom;
+}
+
 export interface DescriptionHistoryItem {
   media_id: number;
   title: string;
   mime_type: string;
   current_alt_text: string;
   generated_alt_text: string;
-  provenance: VisualFactsResponse | Record<string, unknown> | null;
+  provenance: DescriptionHistoryProvenance | VisualFactsResponse | null;
   human_edit: DescriptionHistoryHumanEdit | null;
   run_status: DescriptionHistoryRunStatus | null;
 }
@@ -209,7 +255,7 @@ export interface DescribeRunItem {
   status: string;
   alt_text_draft: string | null;
   caption: string | null;
-  provenance: VisualFactsResponse | Record<string, unknown> | null;
+  provenance: DescriptionHistoryProvenance | VisualFactsResponse | null;
   existing_alt: boolean;
 }
 

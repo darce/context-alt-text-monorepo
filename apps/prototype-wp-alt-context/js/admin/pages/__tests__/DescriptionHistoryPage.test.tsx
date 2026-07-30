@@ -8,6 +8,7 @@ import {
   correctDescriptionHistoryItem,
   fetchDescribeRunItems,
   fetchDescriptionHistory,
+  RECOVERY_KIND,
   type DescriptionHistoryItem,
 } from '../../api/describeApi';
 import { mediaStatsMissingQueryKey, mediaStatsTotalQueryKey } from '../../hooks/useMediaStats';
@@ -133,6 +134,94 @@ describe('DescriptionHistoryPage', () => {
     expect(screen.getAllByText('Bridge at dusk')).toHaveLength(2);
     expect(screen.getByText('microsoft/Florence-2-base-ft')).toBeInTheDocument();
     expect(screen.getAllByText('completed')).toHaveLength(2);
+    // No recovery line when recovered_from is absent / none.
+    expect(screen.queryByTestId('acx-history-recovery')).not.toBeInTheDocument();
+  });
+
+  /**
+   * R23-BR-22 [TEST-15]: history row must surface recovery origin when a foreign
+   * recovery occurred. RED under: drop the recovery block from the row (operator
+   * still sees only model_id).
+   */
+  it('renders recovery origin when provenance recovered_from describes a foreign recovery', async () => {
+    const originRun = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+    fetchHistoryMock.mockResolvedValue({
+      total: 1,
+      items: [
+        {
+          ...historyItem,
+          provenance: {
+            adapter: 'florence',
+            model_id: 'microsoft/Florence-2-base-ft',
+            source: 'bulk_describe_run',
+            run_id: 'cccccccc-cccc-cccc-cccc-cccccccccccc',
+            alt_text_draft: 'A bridge over water.',
+            recovered_from: {
+              origin: originRun,
+              kind: RECOVERY_KIND.RUN,
+              chain: [originRun],
+            },
+          },
+        },
+      ],
+    });
+
+    renderPage();
+
+    expect(await screen.findByTestId('acx-history-recovery')).toBeInTheDocument();
+    expect(screen.getByTestId('acx-history-recovery-icon')).toBeInTheDocument();
+    expect(screen.getByTestId('acx-history-recovery-origin')).toHaveTextContent(
+      `Recovered from Run ${originRun}`,
+    );
+  });
+
+  it('renders surface recovery origin with a human label (not raw sentinel)', async () => {
+    fetchHistoryMock.mockResolvedValue({
+      total: 1,
+      items: [
+        {
+          ...historyItem,
+          provenance: {
+            model_id: 'microsoft/Florence-2-base-ft',
+            recovered_from: {
+              origin: 'cli',
+              kind: RECOVERY_KIND.SURFACE,
+              chain: ['cli'],
+            },
+          },
+        },
+      ],
+    });
+
+    renderPage();
+
+    expect(await screen.findByTestId('acx-history-recovery-origin')).toHaveTextContent(
+      'Recovered from CLI generate',
+    );
+  });
+
+  it('does not render recovery for explicit none kind', async () => {
+    fetchHistoryMock.mockResolvedValue({
+      total: 1,
+      items: [
+        {
+          ...historyItem,
+          provenance: {
+            model_id: 'microsoft/Florence-2-base-ft',
+            recovered_from: {
+              origin: null,
+              kind: RECOVERY_KIND.NONE,
+              chain: [],
+            },
+          },
+        },
+      ],
+    });
+
+    renderPage();
+
+    expect(await screen.findByText('Bridge')).toBeInTheDocument();
+    expect(screen.queryByTestId('acx-history-recovery')).not.toBeInTheDocument();
   });
 
   it('decodes entity-encoded stored alts for display and the correction editor (BR-140)', async () => {

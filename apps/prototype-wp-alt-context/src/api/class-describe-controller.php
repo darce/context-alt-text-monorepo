@@ -564,19 +564,23 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	 * marker (verified shape + draft_hash match on stored domain — `run_id` is
 	 * intentionally not compared so a foreign-run / single-image / CLI marker for
 	 * the same draft remains recoverable [R22-BR-02]), stored alt is still a
-	 * string and byte-identical to the expected stored draft, and stored
-	 * provenance is not already **this run's** envelope (older provenance from a
-	 * prior generation may exist and is replaced). Equality of alt to draft alone
-	 * is not evidence this system started the write (coincidental operator text /
-	 * partial inline correction) and must stay guarded. No marker →
-	 * `skipped_existing`, requiring explicit `overwrite_media_ids`. Marker write
-	 * failure is fail-closed: without a verified marker the item is `failed` (not
+	 * string and byte-identical to the expected stored draft, stored provenance
+	 * is not already **this run's** envelope, **and** stored provenance does not
+	 * already describe the stored alt (`provenance_already_describes_stored_alt`
+	 * — foreign provenance that already attributes the current alt must not be
+	 * replaced [R23-BR-02]). Equality of alt to draft alone is not evidence this
+	 * system started the write (coincidental operator text / partial inline
+	 * correction) and must stay guarded. No marker → `skipped_existing`,
+	 * requiring explicit `overwrite_media_ids`. Marker write failure is
+	 * fail-closed: without a verified marker the item is `failed` (not
 	 * `partial`) so the UI does not present a non-recoverable item as retryable.
-	 * When recovery completes from a marker owned by a **different** run, the
-	 * stamped envelope keeps `run_id` as the applying run and adds
-	 * `recovered_from_run_id` = the marker's owner — honest attribution without
-	 * fabricating foreign model metadata [R23-BR-08] [rg-015]. Same-run recovery
-	 * omits that field (no self-reference noise).
+	 * Every stamped envelope carries an always-present `recovered_from`
+	 * descriptor `{ origin, kind, chain }` [R23-BR-20/21/22]: first write /
+	 * overwrite use kind `none`; same-run recovery uses kind `same_run`; foreign
+	 * marker recovery sets `origin` to the marker owner (verbatim) with `kind`
+	 * resolved against MARKER_OWNERS / uuid shape, and an append-only `chain`
+	 * so consecutive provenance-write failures still name the true originator.
+	 * Foreign model metadata is never invented [R23-BR-08] [rg-015].
 	 * [RLSE-05] [INT-11] [rg-015]
 	 */
 	public function apply_describe_run_drafts( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -743,9 +747,10 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			$draft = is_string( $item['alt_text_draft'] ?? null )
 				? sanitize_text_field( $item['alt_text_draft'] )
 				: '';
-			// Set only when non-clobber recovery fires from a foreign-owned marker
-			// [R23-BR-08]. Null on first write / overwrite / same-run recovery.
-			$recovered_from_run_id = null;
+			// Always-present recovery descriptor. Default: no recovery (first
+			// write / overwrite). Non-clobber path replaces via the canonical
+			// resolver [R23-BR-20/21/22] [R23-BR-24].
+			$recovered_from = DescriptionHistoryService::empty_recovered_from();
 
 			if ( 0 === $media_id || '' === $draft ) {
 				$buckets['skipped_no_draft'][] = $media_id;
@@ -870,12 +875,18 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 						continue;
 					}
 
-					// Recovery unlocked. Attribute the originating run via the
-					// canonical resolver [R23-BR-24] [R23-BR-08] — do not invent
-					// foreign model metadata [rg-015].
-					$recovered_from_run_id = DescriptionHistoryService::resolve_recovered_from_run_id(
+					// Recovery unlocked. Attribute the originating owner via the
+					// canonical resolver [R23-BR-24] [R23-BR-08] [R23-BR-20] —
+					// carry any prior envelope chain so consecutive failures keep
+					// the true originator [rg-015].
+					$prior_recovered = null;
+					if ( is_array( $stored_prov ) && isset( $stored_prov['recovered_from'] ) && is_array( $stored_prov['recovered_from'] ) ) {
+						$prior_recovered = $stored_prov['recovered_from'];
+					}
+					$recovered_from = DescriptionHistoryService::resolve_recovered_from_run_id(
 						$pending,
-						$run_id
+						$run_id,
+						$prior_recovered
 					);
 				}
 			}
@@ -888,7 +899,7 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 				$item['provenance'] ?? null,
 				$run_id,
 				$draft,
-				$recovered_from_run_id
+				$recovered_from
 			);
 
 			// BR-115: compare-and-swap — re-read immediately before the write and
@@ -944,13 +955,51 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 				// `failed` (not `partial`) — partial is presented as retryable.
 				// [BR-102] [RLSE-05] [INT-11] [R21-BR-08]
 				// draft_hash domain = stored form ($expected_stored_alt), not raw $draft [R22-BR-01].
+				//
+				// R23-BR-20: preserve the recovery originator on re-plant. When
+				// this apply is completing a foreign-started write and provenance
+				// fails, do not overwrite the marker owner with the applying run
+				// — that made a second consecutive failure attribute the write to
+				// the intermediate recoverer. Prefer recovered_from.origin (or an
+				// existing foreign marker owner); plant chain so later recovery
+				// still names the true originator.
 				$expected_stored_alt_str = is_string( $expected_stored_alt )
 					? $expected_stored_alt
 					: (string) $expected_stored_alt;
-				$marker                  = array(
-					'run_id'     => $run_id,
+				$marker_owner            = $run_id;
+				// $recovered_from is always the array descriptor (empty or resolved).
+				$marker_chain            = DescriptionHistoryService::normalize_recovery_chain(
+					$recovered_from['chain'] ?? null
+				);
+				$recovery_origin         = $recovered_from['origin'] ?? null;
+				if ( is_string( $recovery_origin ) && '' !== trim( $recovery_origin ) ) {
+					$marker_owner = trim( $recovery_origin );
+					$marker_chain = DescriptionHistoryService::append_recovery_origin( $marker_chain, $marker_owner );
+				} else {
+					$existing_marker = get_post_meta( $media_id, '_acx_description_provenance_pending', true );
+					if ( DescriptionHistoryService::is_verified_pending_marker( $existing_marker )
+						&& is_array( $existing_marker )
+					) {
+						$existing_owner = trim( (string) ( $existing_marker['run_id'] ?? '' ) );
+						if ( '' !== $existing_owner && $existing_owner !== $run_id ) {
+							// Preserve foreign originator across re-plant.
+							$marker_owner = $existing_owner;
+							if ( isset( $existing_marker['chain'] ) ) {
+								foreach ( DescriptionHistoryService::normalize_recovery_chain( $existing_marker['chain'] ) as $entry ) {
+									$marker_chain = DescriptionHistoryService::append_recovery_origin( $marker_chain, $entry );
+								}
+							}
+							$marker_chain = DescriptionHistoryService::append_recovery_origin( $marker_chain, $marker_owner );
+						}
+					}
+				}
+				$marker = array(
+					'run_id'     => $marker_owner,
 					'draft_hash' => DescriptionHistoryService::hash_for_stored_alt( $expected_stored_alt_str ),
 				);
+				if ( array() !== $marker_chain ) {
+					$marker['chain'] = $marker_chain;
+				}
 				// Return value is not authoritative (false = failure or no-op;
 				// non-false may still persist a divergent value). Always verify
 				// storage — partial requires a usable same-draft marker
@@ -1299,25 +1348,28 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	 * empty when a draft was applied). `generated_at` is carried through only
 	 * when the backend supplied it — never fabricated at apply time.
 	 *
-	 * When non-clobber recovery completes a write started by a different run,
-	 * `$recovered_from_run_id` is that marker's owning run id and is stamped as
-	 * `recovered_from_run_id` alongside this apply's `run_id` [R23-BR-08]. Null
-	 * or same-run values omit the key (no self-reference; first write / overwrite
-	 * leave it absent). Only the owning run id is available from the marker —
-	 * foreign model metadata is never invented [rg-015]. Field name checked
-	 * against DescriptionHistoryService::build_item (passes provenance through
-	 * as a map) and the history page (reads model_id only) — additive key is safe.
+	 * Always stamps `recovered_from` = `{ origin, kind, chain }` [R23-BR-20/21/22].
+	 * Callers pass the canonical descriptor from
+	 * {@see DescriptionHistoryService::resolve_recovered_from_run_id()} or
+	 * {@see DescriptionHistoryService::empty_recovered_from()} — never invent
+	 * foreign model metadata [R23-BR-08] [rg-015]. A prior envelope's
+	 * `recovered_from` on `$incoming` is merged into the resolver via the
+	 * controller (chain passthrough); this builder always emits the resolved
+	 * descriptor and never the deleted scalar `recovered_from_run_id`.
 	 *
-	 * @param mixed       $incoming               Backend-supplied item provenance (may be null/scalar).
-	 * @param string      $run_id                 Describe-run id stamped onto the envelope.
-	 * @param string      $draft                  Exact alt draft string being written.
-	 * @param string|null $recovered_from_run_id  Marker owner when recovering a foreign-started write.
+	 * @param mixed                    $incoming        Backend-supplied item provenance (may be null/scalar).
+	 * @param string                   $run_id          Describe-run id stamped onto the envelope.
+	 * @param string                   $draft           Exact alt draft string being written.
+	 * @param array<string,mixed>|null $recovered_from  Always-present recovery descriptor (or null → empty).
 	 *
 	 * @return array<string,mixed>
 	 */
-	private function build_run_apply_provenance( mixed $incoming, string $run_id, string $draft, ?string $recovered_from_run_id = null ): array {
+	private function build_run_apply_provenance( mixed $incoming, string $run_id, string $draft, ?array $recovered_from = null ): array {
 		$incoming   = is_array( $incoming ) ? $incoming : array();
 		$provenance = array();
+		// recovered_from is intentionally NOT copied from incoming here — the
+		// resolved descriptor below is authoritative (controller already merged
+		// any prior envelope chain into $recovered_from) [R23-BR-20].
 		foreach ( array( 'adapter', 'model_id', 'model_version', 'prompt_or_task_version', 'image_hash', 'context_hash', 'generated_at', 'backend_result_id', 'alt_text_draft' ) as $key ) {
 			if ( array_key_exists( $key, $incoming ) ) {
 				$provenance[ $key ] = $incoming[ $key ];
@@ -1330,12 +1382,11 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 		$provenance['source']         = 'bulk_describe_run';
 		$provenance['run_id']         = $run_id;
 		$provenance['applied_at']     = gmdate( 'c' );
-		// Stamp only a canonical non-null recovery owner [R23-BR-24]. Callers must
-		// pass DescriptionHistoryService::resolve_recovered_from_run_id output (or
-		// null) — do not re-implement owner/same-run filtering here.
-		if ( null !== $recovered_from_run_id ) {
-			$provenance['recovered_from_run_id'] = $recovered_from_run_id;
-		}
+		// Always emit the recovery descriptor [R23-BR-22]. Greenfield: no
+		// recovered_from_run_id dual-write [R23-BR-20].
+		$provenance['recovered_from'] = is_array( $recovered_from )
+			? $recovered_from
+			: DescriptionHistoryService::empty_recovered_from();
 
 		return $provenance;
 	}

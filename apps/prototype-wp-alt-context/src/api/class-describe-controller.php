@@ -940,6 +940,32 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 				continue;
 			}
 
+			// Invariant: non-empty alt and acx_alt_decorative must not coexist.
+			// Sibling writer: DescriptionHistoryService::record_correction self-heals
+			// the same way after a verified non-empty alt. CAS above only compares
+			// alt, so an operator can plant the marker after the run was created
+			// (alt still '') and the write still proceeds — clear here so the bulk
+			// path does not leave the self-contradictory pair on disk. [A-05]
+			// Only after $alt_ok, only when verified stored alt is non-empty.
+			if ( '' !== trim( $current ) ) {
+				delete_post_meta( $media_id, 'acx_alt_decorative' );
+				// [DATA-14] read the marker back; do not trust delete_post_meta.
+				$decorative_after_clear = get_post_meta( $media_id, 'acx_alt_decorative', true );
+				if ( is_string( $decorative_after_clear ) && '1' === $decorative_after_clear ) {
+					// Alt write verified — keep the item on the provenance path /
+					// applied bucket. Do not invent an envelope field the client
+					// does not read [rg-015] (response is only run_id + bulk
+					// buckets). Ops telemetry is the existing channel.
+					Telemetry::log_line(
+						sprintf(
+							'[acx] describe run apply: acx_alt_decorative clear failed after verified non-empty alt for media_id=%d run_id=%s; item remains on apply path',
+							$media_id,
+							$run_id
+						)
+					);
+				}
+			}
+
 			// Provenance is the history-list gate (build_item returns null when
 			// neither provenance nor human-edit is an array). Same return-value +
 			// full-payload read-back as DescriptionHistoryService::record_correction

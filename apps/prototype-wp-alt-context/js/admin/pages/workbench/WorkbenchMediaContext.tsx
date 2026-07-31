@@ -117,8 +117,9 @@ export const WorkbenchMediaProvider: React.FC<{ children: React.ReactNode }> = (
     if (statusFilter === 'missing') {
       // Split arms: ordinary corrections "have alt text"; decorative marks do
       // not — claiming alt text for them is false [INT-08]. Wording is
-      // _n()-correct per arm; mixed uses a combined two-count string so we
-      // never concatenate translated fragments.
+      // _n()-correct per arm; mixed uses a combined-count string. Showing +
+      // reconciliation are joined via a translatable sprintf format so
+      // translators control order and separator [INT-08][WBUX-5-D-04].
       const nowHasAlt = mediaItems.filter(
         (item) => item.status === 'complete' && item.isDecorative !== true,
       ).length;
@@ -130,7 +131,7 @@ export const WorkbenchMediaProvider: React.FC<{ children: React.ReactNode }> = (
         let reconciliation: string;
         if (nowHasAlt > 0 && markedDecorative > 0) {
           // Mixed arms: one _n over the combined count — wording true of both
-          // (avoids dual-count pluralisation and fragment concatenation).
+          // (avoids dual-count pluralisation).
           reconciliation = sprintf(
             _n(
               '%d now complete and will leave this view when the list next refreshes.',
@@ -161,7 +162,8 @@ export const WorkbenchMediaProvider: React.FC<{ children: React.ReactNode }> = (
             nowHasAlt,
           );
         }
-        return `${showing} ${reconciliation}`;
+        // translators: 1: "Showing N media items." sentence; 2: reconciliation sentence about corrected rows.
+        return sprintf(__('%1$s %2$s', 'alt-context'), showing, reconciliation);
       }
     }
 

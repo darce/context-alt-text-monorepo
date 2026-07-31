@@ -1279,6 +1279,53 @@ class DescriptionHistoryServiceTest extends TestCase
     }
 
     /**
+     * Empty non-decorative correction must leave a prior decorative marker intact.
+     * Blanking alt does not un-mark a decorative image; only a non-empty alt does.
+     * [WBUX-5-R1-02][WBUX-5-D-01]
+     */
+    public function testEmptyNonDecorativeCorrectionPreservesPriorDecorativeMarker(): void
+    {
+        $mediaId = 609;
+        $this->seedAttachment($mediaId, 'Stay decorative');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', '');
+        $this->setPostMeta($mediaId, 'acx_alt_decorative', '1');
+
+        $result = (new DescriptionHistoryService())->record_correction($mediaId, '');
+
+        $this->assertNotInstanceOf(WP_Error::class, $result);
+        $this->assertSame('', get_post_meta($mediaId, '_wp_attachment_image_alt', true));
+        $this->assertSame('1', get_post_meta($mediaId, 'acx_alt_decorative', true));
+    }
+
+    /**
+     * Human-edit PARTIAL after a verified non-empty alt must still clear a prior
+     * decorative marker. Clear runs as soon as alt verifies — before the human-edit
+     * write — so the early PARTIAL return leaves disk consistent. [WBUX-5-R3-01]
+     */
+    public function testPartialHumanEditFailureClearsPriorDecorativeMarkerOnNonEmptyAlt(): void
+    {
+        $mediaId = 610;
+        $newAlt = 'Partial-saved real description.';
+        $this->seedAttachment($mediaId, 'Partial self-heal');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', '');
+        $this->setPostMeta($mediaId, 'acx_alt_decorative', '1');
+        $GLOBALS['__ac_update_post_meta_fail'][$mediaId]['_acx_description_human_edit'] = true;
+
+        $result = (new DescriptionHistoryService())->record_correction($mediaId, $newAlt);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('description_correction_partial', $result->get_error_code());
+        $this->assertSame($newAlt, get_post_meta($mediaId, '_wp_attachment_image_alt', true));
+        $this->assertSame($newAlt, $result->get_error_data()['stored_alt_text']);
+        // Marker must be gone even though human-edit failed.
+        $this->assertSame('', get_post_meta($mediaId, 'acx_alt_decorative', true));
+        $this->assertArrayNotHasKey(
+            'acx_alt_decorative',
+            $GLOBALS['__ac_post_meta'][$mediaId] ?? []
+        );
+    }
+
+    /**
      * Failed alt write must not plant the decorative marker. Discriminates
      * against writing the marker before alt read-back verification.
      */

@@ -5,6 +5,7 @@
  */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor, act } from '@testing-library/react';
+import { __, sprintf } from '@wordpress/i18n';
 import React from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -16,9 +17,9 @@ import * as recognitionApi from '../../../api/recognition';
 import { WorkbenchMediaProvider, useWorkbenchMediaContext } from '../WorkbenchMediaContext';
 
 vi.mock('@wordpress/i18n', () => ({
-  __: (text: string) => text,
-  _n: (single: string, plural: string, count: number) => (count === 1 ? single : plural),
-  sprintf: (format: string, ...args: (string | number)[]) => {
+  __: vi.fn((text: string) => text),
+  _n: vi.fn((single: string, plural: string, count: number) => (count === 1 ? single : plural)),
+  sprintf: vi.fn((format: string, ...args: (string | number)[]) => {
     let sequentialIndex = 0;
     return format.replace(/%((\d+)\$)?[sd]/g, (_match, _positional, explicitIndex) => {
       if (explicitIndex) {
@@ -26,7 +27,7 @@ vi.mock('@wordpress/i18n', () => ({
       }
       return String(args[sequentialIndex++] ?? '');
     });
-  },
+  }),
 }));
 
 vi.mock('../../../api/workbenchMediaApi', async () => {
@@ -340,6 +341,37 @@ describe('WorkbenchMediaContext statusMessage [WBUX-5-BR-112]', () => {
     expect(status.textContent).toMatch(/1 marked decorative/);
     expect(status.textContent).toMatch(/will leave this view when the list next refreshes/);
     expect(status.textContent).not.toMatch(/now has alt text|now have alt text/);
+  });
+
+  it('composes showing + reconciliation through a translatable joiner [WBUX-5-D-04][INT-08]', async () => {
+    // Predicted RED: production returns `${showing} ${reconciliation}` with a
+    // hard-coded ASCII space, so translators never see a join format and
+    // sprintf is never called with '%1$s %2$s'.
+    const client = buildClient();
+    const key = missingPageKey();
+    seedPage(client, {
+      items: [makeItem(1), makeItem(2), makeItem(3)],
+      total: 3,
+      status: 'missing',
+    });
+    renderProvider(client, '/?status=missing');
+    await waitForIdleStatus();
+
+    act(() => {
+      patchRowComplete(client, key, 1);
+    });
+
+    const status = await waitForIdleStatus();
+    expect(status.textContent).toMatch(/Showing 3 media items\./);
+    expect(status.textContent).toMatch(/1 now has alt text/);
+
+    // Joiner must be a translatable format string (not string concatenation).
+    expect(vi.mocked(__)).toHaveBeenCalledWith('%1$s %2$s', 'alt-context');
+    expect(vi.mocked(sprintf)).toHaveBeenCalledWith(
+      '%1$s %2$s',
+      expect.stringMatching(/Showing 3 media items\./),
+      expect.stringMatching(/1 now has alt text/),
+    );
   });
 
   it('does not invalidate or mark the workbench list stale after a successful listed-row correction', async () => {

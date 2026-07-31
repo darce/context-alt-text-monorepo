@@ -81,37 +81,42 @@ describe('IdentityThumbnail', () => {
     ).toHaveBeenCalledTimes(2);
   });
 
-  it('onClick + decorative alt="" does not leave an unnamed focusable button [A11Y-04]', () => {
+  /**
+   * [WBUX-5-D-03] [WBUX-5-R2-01] When onClick is provided but the placeholder is
+   * decorative (alt=""), do not render a hidden interactive control. Match the
+   * non-onClick branch: aria-hidden div, not a button, not a tab stop, no click.
+   * Hard pins only — no disjunctions that a named decorative button could pass.
+   */
+  it('onClick + decorative alt="" renders non-interactive aria-hidden div [A11Y-04][A11Y-11]', () => {
     const onClick = vi.fn();
     // Documented decorative usage (alt="") with the onClick placeholder branch.
-    // media_id:0, no source → !resolvedSrc && onClick.
+    // media_id:0, no source → !resolvedSrc && onClick && !namedPending.
     render(<IdentityThumbnail identity={{ media_id: 0 }} alt="" onClick={onClick} />);
 
     const control = document.querySelector('.acx-cluster-card__face--placeholder');
-    expect(control, 'decorative onClick path still renders a placeholder control').not.toBeNull();
+    expect(control, 'decorative onClick path still renders a placeholder').not.toBeNull();
     if (!control) {
       return;
     }
 
-    const accessibleName = control.getAttribute('aria-label')?.trim() ?? '';
-    const isAriaHidden = control.getAttribute('aria-hidden') === 'true';
+    // Same hard pins as the missing-media arm (symmetric across the branch).
+    expect(control.tagName, 'must not be an interactive button when !namedPending').toBe('DIV');
+    expect(control).toHaveAttribute('aria-hidden', 'true');
+    expect(control.getAttribute('aria-label')).toBeNull();
+    expect(control.getAttribute('role')).toBeNull();
     expect(
-      isAriaHidden || accessibleName.length > 0,
-      'onClick placeholder with alt="" must be aria-hidden or carry a non-empty accessible name — unnamed focusable button is not acceptable [A11Y-04]',
-    ).toBe(true);
-
-    // If hidden from AT, it must not remain in the tab order either.
-    if (isAriaHidden) {
-      expect(
-        control.getAttribute('tabindex') === '-1' ||
-          (control as HTMLElement).tabIndex < 0 ||
-          control.getAttribute('disabled') !== null,
-        'aria-hidden onClick placeholder must not stay a tab stop',
-      ).toBe(true);
-    }
+      (control as HTMLElement).tabIndex,
+      'decorative placeholder must leave the tab order [A11Y-11]',
+    ).toBeLessThan(0);
+    expect(screen.queryByRole('button')).toBeNull();
   });
 
-  it('onClick + genuinely-missing media does not leave an unnamed focusable button [A11Y-04]', () => {
+  /**
+   * [WBUX-5-D-03] [WBUX-5-R2-03] Genuinely-missing media with onClick must use the
+   * same non-interactive contract as decorative alt="" — not a hidden button that
+   * still fires onClick. Hard pins; every assertion always runs (no nesting).
+   */
+  it('onClick + genuinely-missing media renders non-interactive aria-hidden div [A11Y-04][A11Y-11]', () => {
     const onClick = vi.fn();
     // No sourceUrl / thumb_url → data-face-missing path (not pending crop).
     render(<IdentityThumbnail identity={{ media_id: 0 }} onClick={onClick} />);
@@ -124,19 +129,48 @@ describe('IdentityThumbnail', () => {
       return;
     }
 
-    const accessibleName = control.getAttribute('aria-label')?.trim() ?? '';
-    const isAriaHidden = control.getAttribute('aria-hidden') === 'true';
+    // Symmetric hard pins with the decorative arm — no disjunction, no nested if.
+    expect(control.tagName, 'must not be an interactive button when !namedPending').toBe('DIV');
+    expect(control).toHaveAttribute('aria-hidden', 'true');
+    expect(control.getAttribute('aria-label')).toBeNull();
+    expect(control.getAttribute('role')).toBeNull();
     expect(
-      isAriaHidden || accessibleName.length > 0,
-      'onClick missing-media placeholder must be aria-hidden or carry a non-empty accessible name [A11Y-04]',
-    ).toBe(true);
+      (control as HTMLElement).tabIndex,
+      'missing-media placeholder must leave the tab order [A11Y-11]',
+    ).toBeLessThan(0);
+    expect(screen.queryByRole('button')).toBeNull();
+  });
 
-    // Regression guard: missing media used to be aria-hidden on the div branch.
-    // Prefer that over promoting a no-source face slot into an announced control.
+  it('onClick on non-interactive !namedPending placeholder does not fire the handler [WBUX-5-D-03]', async () => {
+    const decorativeClick = vi.fn();
+    const missingClick = vi.fn();
+
+    const { unmount } = render(
+      <IdentityThumbnail identity={{ media_id: 0 }} alt="" onClick={decorativeClick} />,
+    );
+    const decorative = document.querySelector('.acx-cluster-card__face--placeholder');
+    expect(decorative).not.toBeNull();
+    if (decorative) {
+      await userEvent.click(decorative);
+    }
     expect(
-      isAriaHidden,
-      'genuinely-missing media with onClick should stay aria-hidden (matches non-onClick branch) [A11Y-04]',
-    ).toBe(true);
+      decorativeClick,
+      'decorative aria-hidden placeholder must not invoke onClick [A11Y-11]',
+    ).not.toHaveBeenCalled();
+    unmount();
+
+    render(<IdentityThumbnail identity={{ media_id: 0 }} onClick={missingClick} />);
+    const missing = document.querySelector(
+      '.acx-cluster-card__face--placeholder[data-face-missing="true"]',
+    );
+    expect(missing).not.toBeNull();
+    if (missing) {
+      await userEvent.click(missing);
+    }
+    expect(
+      missingClick,
+      'missing-media aria-hidden placeholder must not invoke onClick [A11Y-11]',
+    ).not.toHaveBeenCalled();
   });
 
   describe('lazy canvas crop [page-load]', () => {

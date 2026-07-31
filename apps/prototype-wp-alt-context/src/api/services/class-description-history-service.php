@@ -104,9 +104,12 @@ class DescriptionHistoryService {
 	 * false so every existing two-argument caller keeps working. When true,
 	 * empty alt is the correct finished answer and plants `acx_alt_decorative`.
 	 * decorative=true with a non-empty alt is a 400 contradiction — never
-	 * coerced. Marker is written only after both alt and human-edit writes are
+	 * coerced. Marker is planted only after both alt and human-edit writes are
 	 * verified (not on alt-write failure or the partial-failure path). A
-	 * subsequent non-empty alt correction clears a prior marker (self-healing).
+	 * verified non-empty alt clears any prior marker immediately — before the
+	 * human-edit write — so the PARTIAL early return still leaves disk
+	 * consistent (self-healing). Empty non-decorative leaves a prior marker
+	 * untouched (blanking alt does not un-mark decorative). [WBUX-5-R3-01]
 	 *
 	 * @return array<string,mixed>|WP_Error
 	 */
@@ -176,6 +179,16 @@ class DescriptionHistoryService {
 			);
 		}
 
+		// Self-heal decorative marker as soon as a non-empty alt has verified —
+		// BEFORE human-edit — so every later return path (including PARTIAL)
+		// leaves disk consistent. Empty non-decorative does not clear: blanking
+		// alt does not un-mark a decorative image. Plant for decorative=true
+		// still waits until both writes verify below. [WBUX-5-R3-01][WBUX-5-R1-02]
+		// Reconcile from the server's own read-back ($current), never the request body.
+		if ( ! $decorative && is_string( $current ) && '' !== trim( $current ) ) {
+			delete_post_meta( $media_id, self::DECORATIVE_META );
+		}
+
 		// Human-edit meta is required for an honest correction response and for
 		// list_history parity. Failure after a verified alt is still an error
 		// (BR-40 option a): do not claim success when stored telemetry lags.
@@ -209,6 +222,7 @@ class DescriptionHistoryService {
 			// reconcile cache from this field; without it they can only guess
 			// from the request body. Only this path carries it — the
 			// 404/400/alt-write-failure paths stored nothing new. [rg-015]
+			// Decorative marker already self-healed above when alt was non-empty.
 			return new WP_Error(
 				'description_correction_partial',
 				'Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.',
@@ -230,12 +244,11 @@ class DescriptionHistoryService {
 		// Escalating to 500 would falsely claim the correction itself failed.
 		delete_post_meta( $media_id, self::PROVENANCE_PENDING_META );
 
-		// Decorative marker — only after both alt and human-edit are verified
-		// (not on alt-write failure, not on the partial-failure path). Reconcile
-		// from the server's own read-back ($current), never the request body.
-		// decorative=true plants '1'; a non-empty stored alt clears any prior
-		// marker so the two states cannot contradict on disk (self-healing).
-		// [WBUX-5-S2C3C-BR-01]
+		// Decorative plant — only after both alt and human-edit are verified
+		// (not on alt-write failure, not on the partial-failure path).
+		// decorative=true plants '1' with read-back. Non-empty clear already
+		// ran above (before human-edit). Empty non-decorative leaves any prior
+		// marker alone. [WBUX-5-S2C3C-BR-01]
 		//
 		// S7-BR-03: read the marker back. Without acx_alt_decorative, empty alt
 		// is classified as missing_alt rather than decorative — claiming success
@@ -258,8 +271,6 @@ class DescriptionHistoryService {
 					)
 				);
 			}
-		} elseif ( is_string( $current ) && '' !== trim( $current ) ) {
-			delete_post_meta( $media_id, self::DECORATIVE_META );
 		}
 
 		// After a verified human-edit write (or accepted full-payload no-op),

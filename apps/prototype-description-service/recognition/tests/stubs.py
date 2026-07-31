@@ -14,6 +14,17 @@ from recognition.domain.repositories import ClusterRepository, IdentityMember
 from recognition.domain.representative import ClusterRepresentative
 
 
+def _single_stub_model(items: Sequence[Any]) -> str | None:
+    """Resolve one embedding_model for stub rows, or None when ambiguous.
+
+    Mirrors the production contract (FIR23-01): a single agreed model is
+    returned, and mixed or unstamped rows resolve to None so callers fail
+    closed rather than cosining across spaces.
+    """
+    models = {m for m in (getattr(item, "embedding_model", None) for item in items) if m}
+    return next(iter(models)) if len(models) == 1 else None
+
+
 class NullClusterRepository(ClusterRepository):
     """Configurable no-op `ClusterRepository` for unit tests."""
 
@@ -261,14 +272,27 @@ class NullClusterRepository(ClusterRepository):
         return removed
 
     async def get_representative_embeddings(self, cluster_id: str) -> list[np.ndarray]:
+        embeddings, _ = await self.get_representative_embeddings_with_model(cluster_id)
+        return embeddings
+
+    async def get_representative_embeddings_with_model(self, cluster_id: str) -> tuple[list[np.ndarray], str | None]:
         reps = self._representatives_by_cluster.get(cluster_id, [])
-        return [np.asarray(getattr(rep, "embedding", rep), dtype=np.float32) for rep in reps]
+        embeddings = [np.asarray(getattr(rep, "embedding", rep), dtype=np.float32) for rep in reps]
+        return embeddings, _single_stub_model(reps)
 
     async def get_member_fallback_embeddings(self, cluster_id: str, limit: int = 4) -> list[np.ndarray]:
+        embeddings, _ = await self.get_member_fallback_embeddings_with_model(cluster_id, limit=limit)
+        return embeddings
+
+    async def get_member_fallback_embeddings_with_model(
+        self, cluster_id: str, limit: int = 4
+    ) -> tuple[list[np.ndarray], str | None]:
         embeddings = self._member_embeddings_by_cluster.get(cluster_id, [])
         if limit is None or limit < 0:
-            return [np.asarray(e, dtype=np.float32) for e in embeddings]
-        return [np.asarray(e, dtype=np.float32) for e in embeddings[:limit]]
+            vectors = [np.asarray(e, dtype=np.float32) for e in embeddings]
+        else:
+            vectors = [np.asarray(e, dtype=np.float32) for e in embeddings[:limit]]
+        return vectors, _single_stub_model(embeddings)
 
     async def get_confirmed_labeled(self, tenant_id: str) -> list[IdentityCluster]:
         return [

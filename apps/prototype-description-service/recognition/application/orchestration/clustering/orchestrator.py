@@ -17,6 +17,7 @@ from db.models import IdentityClusteringJob
 from db.models import IdentityMember as MemberModel
 from db.models import MediaIdentity as MediaIdentityModel
 from db.tenant_context import enable_rls_bypass, set_tenant_context
+from recognition.application.assignment.joint import group_accepted_by_media, resolve_photo_conflicts
 from recognition.application.orchestration.clustering.chunked_processor import ChunkedIdentityProcessor
 from recognition.application.orchestration.clustering.decision_handler import DecisionHandler
 from recognition.application.orchestration.clustering.dependencies import (
@@ -25,6 +26,8 @@ from recognition.application.orchestration.clustering.dependencies import (
     ClusteringRuntimeConfig,
 )
 from recognition.application.orchestration.clustering.discovery_pipeline import (
+    GalleryProvenanceStats,
+    GalleryProvenanceUnavailableError,
     evaluate_chunk_candidates,
     partition_unclustered,
     prepare_cluster_caches,
@@ -49,6 +52,21 @@ if TYPE_CHECKING:
     from recognition.application.assignment import AssignmentDecision
 
 logger = logging.getLogger(__name__)
+
+
+def _joint_assignment_active() -> bool:
+    """True when face_pipeline profile is active and joint assignment is enabled."""
+    from recognition.config import get_settings as get_recognition_settings
+    from recognition.config.settings import resolve_face_pipeline_knobs
+
+    settings = get_recognition_settings()
+    knobs = resolve_face_pipeline_knobs(
+        face_pipeline=settings.face_pipeline,
+        clustering=settings.clustering,
+        clustering_limits=settings.clustering_limits,
+        identity_detection=settings.identity_detection,
+    )
+    return knobs.profile == "face_pipeline" and bool(knobs.joint_assignment_enabled)
 
 
 @dataclass(frozen=True, slots=True)
@@ -368,6 +386,9 @@ class IncrementalClusteringRunner:
                 pose_yaw=row.pose_yaw,
                 pose_roll=row.pose_roll,
                 image_phash=row.image_phash,
+                sharpness=row.sharpness,
+                embedding_norm=row.embedding_norm,
+                occlusion_severity=row.occlusion_severity,
             )
             for row in rows
         ]
@@ -472,7 +493,10 @@ class IncrementalClusteringRunner:
         clusters_created = 0
         created_cluster_ids: list[str] = []
 
-        processor = ChunkedIdentityProcessor(identities)
+        processor = ChunkedIdentityProcessor(
+            identities,
+            photo_atomic=_joint_assignment_active(),
+        )
         total_identities = processor.total_count
 
         # For large jobs, suppress per-identity gate/decision log lines and rely
@@ -483,9 +507,21 @@ class IncrementalClusteringRunner:
         # Phase 3: prime cluster caches ONCE before the chunk loop instead of
         # re-loading the full cluster table on every chunk.  The caches are
         # updated incrementally after each batch of new clusters is persisted.
-        representatives_by_cluster, centroids_by_cluster, labeled_cluster_ids = await prepare_cluster_caches(
-            self._assignment_writer, str(tenant_id)
-        )
+        # CVUP1-GR-21: thread the job session explicitly. AssignmentWriter._session
+        # is optional, so leaving provenance to the private-attribute fallback would
+        # make the fail-closed default silently empty the gallery cache.
+        (
+            representatives_by_cluster,
+            centroids_by_cluster,
+            labeled_cluster_ids,
+            gallery_stats,
+        ) = await prepare_cluster_caches(self._assignment_writer, str(tenant_id), session=self._session)
+        # R3-G2-1: surface fail-closed gallery exclusions on the job payload so
+        # operators see a wiped gallery without grepping logs. Subsequent chunk
+        # payload merges preserve this key via **(payload or {}).
+        self._record_gallery_provenance(clustering_job, gallery_stats)
+        # R3-03: an infrastructure-caused wipe must fail the job, not complete it.
+        self._abort_on_unprovenanced_gallery(job_label, gallery_stats)
 
         for chunk, processed_before in processor.iter_chunks():
             outcome = await self._process_single_chunk(
@@ -574,15 +610,48 @@ class IncrementalClusteringRunner:
             verbose=verbose,
         )
 
-        reps_added = await self._persist_accepted_assignments(
-            gate_result.accepted_decisions, job_id=job_id, verbose=verbose
+        accepted_decisions = list(gate_result.accepted_decisions)
+        accepted_ids = set(gate_result.accepted_ids)
+        suggested_ids = set(gate_result.suggested_ids)
+        rejected_ids = set(gate_result.rejected_ids)
+        accept_count = gate_result.accept_count
+        suggest_count = gate_result.suggest_count
+        reject_count = gate_result.reject_count
+
+        joint_active = _joint_assignment_active()
+        if joint_active and accepted_decisions:
+            joint_result = resolve_photo_conflicts(group_accepted_by_media(accepted_decisions))
+            accepted_decisions = list(joint_result.accepted)
+            accepted_ids = {decision.candidate.identity.id for decision in accepted_decisions}
+            # Losers drop out of accepted/suggested/rejected so partition_unclustered
+            # routes them to the new-cluster/unknown path (GR2-01 — never orphan).
+            accept_count = len(accepted_decisions)
+            if joint_result.loser_identity_ids:
+                logger.info(
+                    "[clustering] joint_assignment job_id=%s losers=%d kept=%d",
+                    job_id,
+                    len(joint_result.loser_identity_ids),
+                    accept_count,
+                )
+
+        reps_added, guard_rejected_ids = await self._persist_accepted_assignments(
+            accepted_decisions,
+            job_id=job_id,
+            verbose=verbose,
+            joint_uniqueness_enabled=joint_active,
         )
+        if guard_rejected_ids:
+            accepted_decisions = [
+                decision for decision in accepted_decisions if decision.candidate.identity.id not in guard_rejected_ids
+            ]
+            accepted_ids -= guard_rejected_ids
+            accept_count = len(accepted_ids)
 
         partition = partition_unclustered(
             chunk=chunk,
-            accepted_ids=gate_result.accepted_ids,
-            suggested_ids=gate_result.suggested_ids,
-            rejected_ids=gate_result.rejected_ids,
+            accepted_ids=accepted_ids,
+            suggested_ids=suggested_ids,
+            rejected_ids=rejected_ids,
             new_cluster_proposals=new_cluster_proposals,
         )
         logger.info(
@@ -595,7 +664,7 @@ class IncrementalClusteringRunner:
 
         clusters_added, created_cluster_ids = await self._create_new_clusters_for_chunk(
             still_unclustered=partition.still_unclustered,
-            suggested_ids=gate_result.suggested_ids,
+            suggested_ids=suggested_ids,
             new_cluster_proposals=new_cluster_proposals,
             representatives_by_cluster=representatives_by_cluster,
             centroids_by_cluster=centroids_by_cluster,
@@ -623,9 +692,9 @@ class IncrementalClusteringRunner:
             processed,
             total_identities,
             len(chunk),
-            len(gate_result.accepted_ids),
-            len(gate_result.suggested_ids),
-            len(gate_result.rejected_ids),
+            len(accepted_ids),
+            len(suggested_ids),
+            len(rejected_ids),
             clusters_added,
             reps_added,
             _chunk_elapsed_ms,
@@ -637,36 +706,51 @@ class IncrementalClusteringRunner:
             await self._progress_callback(processed, total_identities)
 
         return _ChunkOutcome(
-            accept_count=gate_result.accept_count,
-            suggest_count=gate_result.suggest_count,
-            reject_count=gate_result.reject_count,
+            accept_count=accept_count,
+            suggest_count=suggest_count,
+            reject_count=reject_count,
             clusters_created=clusters_added,
             created_cluster_ids=created_cluster_ids,
         )
 
     async def _persist_accepted_assignments(
-        self, accepted_decisions: list[AssignmentDecision], *, job_id: str, verbose: bool
-    ) -> int:
+        self,
+        accepted_decisions: list[AssignmentDecision],
+        *,
+        job_id: str,
+        verbose: bool,
+        joint_uniqueness_enabled: bool = False,
+    ) -> tuple[int, set[str]]:
         """Bulk-persist a chunk's accepted assignments and resolve their suggestions.
 
-        Returns the number of representatives added. Uses one INSERT per cluster
+        Returns (reps_added, guard_rejected_ids). Uses one INSERT per cluster
         (batch mode) instead of N per-identity round-trips (Phase 3 bulk writes).
         """
         if not accepted_decisions:
-            return 0
+            return 0, set()
 
-        _bulk_persisted, _bulk_skipped, reps_added = await self._assignment_writer.persist_assignments_chunk(
-            accepted_decisions, batch_mode=True
+        (
+            _bulk_persisted,
+            _bulk_skipped,
+            reps_added,
+            guard_rejected_ids,
+        ) = await self._assignment_writer.persist_assignments_chunk(
+            accepted_decisions,
+            batch_mode=True,
+            joint_uniqueness_enabled=joint_uniqueness_enabled,
         )
-        if _bulk_skipped:
+        if _bulk_skipped or guard_rejected_ids:
             logger.info(
-                "[clustering] bulk_persist job_id=%s accepted=%d skipped=%d",
+                "[clustering] bulk_persist job_id=%s accepted=%d skipped=%d guard_rejected=%d",
                 job_id,
                 _bulk_persisted,
                 _bulk_skipped,
+                len(guard_rejected_ids),
             )
-        # Resolve suggestions for each accepted identity after membership is committed.
+        # Resolve suggestions only for identities that actually persisted.
         for decision in accepted_decisions:
+            if decision.candidate.identity.id in guard_rejected_ids:
+                continue
             await self._suggestion_service.resolve_for_identity_exclusive(
                 identity_id=decision.candidate.identity.id,
                 accepted_cluster_id=decision.candidate.cluster_id,
@@ -680,7 +764,7 @@ class IncrementalClusteringRunner:
                     decision.candidate.identity.media_id,
                     decision.candidate.cluster_id,
                 )
-        return reps_added
+        return reps_added, set(guard_rejected_ids)
 
     async def _create_new_clusters_for_chunk(
         self,
@@ -744,6 +828,63 @@ class IncrementalClusteringRunner:
             clusters_added += hac_created
 
         return clusters_added, created_cluster_ids
+
+    @staticmethod
+    def _record_gallery_provenance(
+        clustering_job: IdentityClusteringJob,
+        gallery_stats: GalleryProvenanceStats,
+    ) -> None:
+        """Attach gallery provenance counters to the job payload (R3-G2-1).
+
+        Does not change job status — fail-closed exclusion is still correct;
+        this only makes the consequence operator-visible when every production
+        representative was dropped and discovery will open brand-new clusters.
+        """
+        clustering_job.payload = {
+            **(clustering_job.payload or {}),
+            "gallery_provenance": gallery_stats.to_payload(),
+        }
+        if gallery_stats.gallery_wiped or gallery_stats.representatives_excluded_unresolvable > 0:
+            logger.warning(
+                "[clustering] gallery_provenance job_id=%s active=%s provenance_loaded=%s "
+                "excluded_reps=%d excluded_clusters=%d excluded_centroids=%d gallery_wiped=%s",
+                clustering_job.id,
+                gallery_stats.active_embedding_model,
+                gallery_stats.provenance_loaded,
+                gallery_stats.representatives_excluded_unresolvable,
+                gallery_stats.clusters_excluded_unresolvable,
+                gallery_stats.centroids_excluded_untrusted,
+                gallery_stats.gallery_wiped,
+            )
+
+    @staticmethod
+    def _abort_on_unprovenanced_gallery(
+        job_label: str,
+        gallery_stats: GalleryProvenanceStats,
+    ) -> None:
+        """Fail the job when the gallery was wiped for an infrastructure reason (R3-03).
+
+        Recording the counters (R3-G2-1) makes the wipe visible, but a COMPLETED
+        job with an empty gallery still fragments the tenant: every probe misses
+        and opens a brand-new cluster. Raising rolls the run back and lets the
+        worker record FAILED with the reason, which an operator can retry once
+        provenance is restored.
+
+        A legitimate space migration — every representative resolved to a real
+        model that is not the active one — is explicitly *not* an abort; see
+        ``GalleryProvenanceStats.abort_reason``.
+        """
+        reason = gallery_stats.abort_reason()
+        if reason is None:
+            return
+        message = (
+            f"clustering aborted: gallery wiped by FIR23-01 provenance filter — {reason}; "
+            f"excluded_reps={gallery_stats.representatives_excluded_unresolvable} "
+            f"excluded_clusters={gallery_stats.clusters_excluded_unresolvable} "
+            f"excluded_centroids={gallery_stats.centroids_excluded_untrusted}"
+        )
+        logger.error("[clustering] job_id=%s %s", job_label, message)
+        raise GalleryProvenanceUnavailableError(message)
 
     async def _commit_chunk_progress(
         self,
@@ -825,6 +966,7 @@ class IncrementalClusteringRunner:
         clustering_job.progress = 1.0
         clustering_job.status = JobStatus.COMPLETED
         clustering_job.completed_at = datetime.now(tz=UTC)
+        # Preserve gallery_provenance (R3-G2-1) and chunk progress keys via merge.
         clustering_job.payload = {
             **(clustering_job.payload or {}),
             "clusters_created": clusters_created,

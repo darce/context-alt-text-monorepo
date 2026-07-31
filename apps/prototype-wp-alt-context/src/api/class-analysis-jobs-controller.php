@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+require_once __DIR__ . '/class-abstract-recognition-proxy-controller.php';
+require_once __DIR__ . '/../support/trait-batch-limits.php';
 require_once __DIR__ . '/interface-analysis-jobs-host.php';
 require_once __DIR__ . '/services/class-batch-run-service.php';
 require_once __DIR__ . '/services/class-projection-sync-service.php';

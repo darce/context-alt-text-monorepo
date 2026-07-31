@@ -185,6 +185,10 @@ _ALLOWED_SEAM_FIELDS = frozenset(
         "landmark_quality",
         "model_id",
         "landmarks",
+        # FIR-6 S1 quality factors (dark; None under insightface)
+        "sharpness",
+        "embedding_norm",
+        "occlusion_severity",
     }
 )
 

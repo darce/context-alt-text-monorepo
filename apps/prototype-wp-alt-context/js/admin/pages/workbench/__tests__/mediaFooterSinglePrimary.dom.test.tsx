@@ -247,6 +247,7 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
   beforeEach(() => {
     window.AltContextAdmin = {
       nonce: 'test-nonce',
+      ajaxUrl: '/wp-admin/admin-ajax.php',
       endpoints: {
         recognitionSuggestions: 'http://localhost/recognition/suggestions',
         recognitionMergeSuggestions: 'http://localhost/recognition/suggestions/merge',
@@ -466,6 +467,7 @@ describe('§7 single-accent-primary DOM invariant — discrimination guard (BR-7
   beforeEach(() => {
     window.AltContextAdmin = {
       nonce: 'test-nonce',
+      ajaxUrl: '/wp-admin/admin-ajax.php',
       endpoints: {
         recognitionSuggestions: 'http://localhost/recognition/suggestions',
         recognitionMergeSuggestions: 'http://localhost/recognition/suggestions/merge',

@@ -1,4 +1,4 @@
-import { HTTPError, ResponseParseError } from './http';
+import { AuthExpiredError, HTTPError, ResponseParseError } from './http';
 
 export const RETRY_MAX_ATTEMPTS = 3;
 export const MAX_RETRY_DELAY_MS = 30_000;
@@ -22,9 +22,14 @@ export const isCooldownSignal = (error: unknown): error is HTTPError =>
 /**
  * Shared QueryClient retry predicate.
  * Retries 429, 503-with-Retry-After, and TypeError transport failures; never 4xx, parse, or abort-like.
+ * AuthExpiredError is an explicit non-retry pin (UXP-NET-2): session recovery is user-driven.
  */
 export const shouldRetryRequest = (failureCount: number, error: unknown): boolean => {
   if (failureCount >= RETRY_MAX_ATTEMPTS) {
+    return false;
+  }
+  // Regression pin: auth expiry is terminal for RQ retry (distinct from HTTPError 4xx).
+  if (error instanceof AuthExpiredError) {
     return false;
   }
   if (error instanceof HTTPError) {

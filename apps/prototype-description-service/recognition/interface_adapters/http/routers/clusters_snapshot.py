@@ -16,8 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from recognition.application.settings import ClusteringSettings
 from recognition.application.suggestions.label_inference import infer_suggested_label
-from recognition.config import get_settings as get_recognition_settings
 from recognition.config.security import get_security_settings
+from recognition.config.settings import resolve_effective_clustering_settings
 from recognition.domain.repositories import ClusterRepository
 from recognition.interface_adapters.http.blob_url import build_face_thumb_path
 from recognition.interface_adapters.http.deps import (
@@ -256,7 +256,7 @@ async def get_tenant_cluster_snapshot(
 
     # Build responses
     cluster_responses = _build_cluster_responses(clusters)
-    clustering_settings = get_recognition_settings().clustering
+    clustering_settings = resolve_effective_clustering_settings()
     await _enrich_with_suggested_labels(cluster_responses, tenant_id, session, repo, clustering_settings)
     member_responses = _build_member_responses(members_with_identities)
 
@@ -325,7 +325,7 @@ async def get_tenant_cluster_delta(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No clusters found for tenant")
 
     cluster_responses = _build_cluster_responses(clusters)
-    clustering_settings = get_recognition_settings().clustering
+    clustering_settings = resolve_effective_clustering_settings()
     await _enrich_with_suggested_labels(cluster_responses, tenant_id, session, repo, clustering_settings)
 
     return ClusterDeltaResponse(
@@ -358,7 +358,7 @@ async def get_top_unlabeled_clusters(
     allowed_sources = {"identity", "roster", "similar_cluster", "none"}
 
     responses: list[ClusterResponse] = []
-    clustering_settings = get_recognition_settings().clustering
+    clustering_settings = resolve_effective_clustering_settings()
     for c in clusters:
         suggested_label = getattr(c, "suggested_label", None)
 

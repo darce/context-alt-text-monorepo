@@ -11,6 +11,7 @@ import { fetchMediaIdentities } from '../admin/api/recognition/identityQueriesAp
 import { DATA_SOURCE, type DataSource } from '../admin/api/recognition/types/dataSource';
 import type { DetectedIdentity } from '../admin/api/recognition/types/identity';
 import { FaceOverlayLayer } from '../components/ui/FaceOverlayLayer';
+import { AuthExpiredError } from '../admin/utils/http';
 import { ATTACHMENT_EDIT_COPY } from './copy';
 import { UncuratedFaceList } from './UncuratedFaceList';
 
@@ -47,7 +48,7 @@ export const AttachmentFacesApp: React.FC<AttachmentFacesAppProps> = ({
 }) => {
   const [highlightedFaceId, setHighlightedFaceId] = React.useState<string | null>(null);
 
-  const { data, isPending, isError, isFetching } = useQuery({
+  const { data, isPending, isError, isFetching, error } = useQuery({
     queryKey: queryKeys.media.identitiesByIds([attachmentId]),
     queryFn: () => fetchMediaIdentities([attachmentId]),
     enabled: attachmentId > 0,
@@ -78,11 +79,27 @@ export const AttachmentFacesApp: React.FC<AttachmentFacesAppProps> = ({
   }
 
   if (isError) {
+    const sessionExpired = error instanceof AuthExpiredError;
     return (
-      <div className="acx-attachment-faces" data-testid="acx-attachment-faces-app" data-state="query-error">
+      <div
+        className="acx-attachment-faces"
+        data-testid="acx-attachment-faces-app"
+        data-state={sessionExpired ? 'session-expired' : 'query-error'}
+      >
         <div className="acx-attachment-faces__status acx-attachment-faces__status--error" role="status" aria-live="polite">
           <AlertCircle className="acx-attachment-faces__status-icon" size={16} aria-hidden="true" />
-          <span>{ATTACHMENT_EDIT_COPY.faceDataUnavailable}</span>
+          <span>
+            {sessionExpired ? ATTACHMENT_EDIT_COPY.sessionExpired : ATTACHMENT_EDIT_COPY.faceDataUnavailable}
+          </span>
+          {sessionExpired ? (
+            <button
+              type="button"
+              className="acx-attachment-faces__reload"
+              onClick={() => window.location.reload()}
+            >
+              {ATTACHMENT_EDIT_COPY.reloadPage}
+            </button>
+          ) : null}
         </div>
       </div>
     );

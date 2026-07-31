@@ -189,3 +189,28 @@ def test_enrich_entry_persists_all_face_boxes_including_anonymous():
     # each persisted box round-trips through the FaceBox schema (locks output <-> schema)
     parsed = [FaceBox(**b) for b in boxes]
     assert all(0.0 <= fb.x <= 1.0 and fb.source == "iptc" for fb in parsed)
+
+
+def test_enrich_entry_does_not_write_tags_domain_or_cohort():
+    """FIR-5 S1: enrich_entry stays identity + detection-GT only (real shape).
+
+    Must not invent tags / domain / demographic_cohort on the returned dict.
+    """
+    entry = {
+        "path": "celebs/al_pacino_3.jpg",
+        "provenance": {"source": "celeb", "license": "public_domain"},
+    }
+    out = enrich_entry(entry, b"\xff\xd8\xff\xd9")
+    # Real producer keys (identity + detection GT only for a celeb fill):
+    assert "present_identities" in out and "face_count" in out and "must_right" in out
+    assert "tags" not in out
+    assert "domain" not in out
+    assert "demographic_cohort" not in out
+    # Also not present when the input already lacked them (no silent defaults).
+    assert set(out) == {
+        "path",
+        "provenance",
+        "present_identities",
+        "face_count",
+        "must_right",
+    }

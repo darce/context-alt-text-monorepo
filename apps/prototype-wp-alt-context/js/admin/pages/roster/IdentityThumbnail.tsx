@@ -232,13 +232,18 @@ export const IdentityThumbnail = ({
       flexShrink: 0,
     };
     if (onClick) {
+      // Mirror the non-onClick branch: only a named pending-crop placeholder is
+      // announced and tabbable. Decorative alt="" and genuinely-missing media
+      // stay aria-hidden so we never ship an unnamed focusable button [A11Y-04].
       return (
         <span ref={hostRef} style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}>
           <button
             type="button"
             className="acx-cluster-card__face--placeholder"
             onClick={onClick}
-            aria-label={resolvedAlt !== '' ? resolvedAlt : undefined}
+            aria-label={namedPending ? resolvedAlt : undefined}
+            aria-hidden={namedPending ? undefined : 'true'}
+            tabIndex={namedPending ? undefined : -1}
             data-face-missing={pendingCrop ? undefined : 'true'}
             data-face-pending={pendingCrop ? 'true' : undefined}
             style={{

@@ -96,6 +96,7 @@ const seedWorkbenchRow = (
         status,
         thumbnailUrl: null,
         altText,
+        isDecorative: false,
         editUrl: null,
         tags: [],
       },
@@ -122,9 +123,10 @@ const LiveWorkbenchAltRow = ({ initial }: { initial: WorkbenchMediaResponse }): 
   });
   const item = data?.items.find((row) => row.id === 42);
   const altText = item?.altText ?? null;
+  const isDecorative = item?.isDecorative === true;
   return (
     <div data-testid="live-workbench-alt-row">
-      <MediaAltInlineEditor mediaId={42} altText={altText} />
+      <MediaAltInlineEditor mediaId={42} altText={altText} isDecorative={isDecorative} />
       <MediaAltSuggest mediaId={42} committedAlt={altText} />
       <span data-testid="live-row-status">{item?.status ?? ''}</span>
     </div>
@@ -2416,14 +2418,20 @@ describe('MediaAltSuggest', () => {
     // non-decorative empty-alt result → missing. Neither alt-only nor
     // decorative-only rule passes all three.
 
-    // 1) Decorative success with empty alt → complete
+    // 1) Decorative success with empty alt → complete.
+    // Seed status=missing so waitFor observes a real transition to complete
+    // (seeding complete made the gate true on the first synchronous check).
     correctMock.mockResolvedValueOnce(sampleHistoryItem(''));
-    const decorativeCase = renderLiveAltRow('Prior decorative', 'complete');
+    const decorativeCase = renderLiveAltRow('Prior decorative', 'missing');
+    expect(cachedRow(decorativeCase.client)?.status).toBe('missing');
     fireEvent.click(
       screen.getByRole('button', { name: /decorative|screen reader|announce nothing|skip/i }),
     );
-    await waitFor(() => expect(cachedRow(decorativeCase.client)?.status).toBe('complete'));
-    expect(cachedRow(decorativeCase.client)?.altText).toBeNull();
+    await waitFor(() => {
+      expect(cachedRow(decorativeCase.client)?.status).toBe('complete');
+      expect(cachedRow(decorativeCase.client)?.altText).toBeNull();
+      expect(cachedRow(decorativeCase.client)?.isDecorative).toBe(true);
+    });
     decorativeCase.unmount();
 
     // 2) Ordinary Accept with non-empty alt → complete

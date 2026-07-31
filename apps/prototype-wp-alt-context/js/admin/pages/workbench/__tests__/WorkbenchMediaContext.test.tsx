@@ -60,14 +60,20 @@ const missingPageKey = (search = '') =>
 const allPageKey = (search = '') =>
   queryKeys.media.workbenchPage({ page: 1, perPage: PER_PAGE, search, status: 'all' });
 
-const makeItem = (id: number, status: WorkbenchMediaItem['status'] = 'missing'): WorkbenchMediaItem => ({
+const makeItem = (
+  id: number,
+  status: WorkbenchMediaItem['status'] = 'missing',
+  overrides: Partial<WorkbenchMediaItem> = {},
+): WorkbenchMediaItem => ({
   id,
   title: `Item ${id}`,
   status,
   thumbnailUrl: null,
   altText: status === 'complete' ? `Alt for ${id}` : null,
+  isDecorative: false,
   editUrl: null,
   tags: [],
+  ...overrides,
 });
 
 const seedPage = (
@@ -148,7 +154,32 @@ const patchRowComplete = (client: QueryClient, key: readonly unknown[], mediaId:
     ...data,
     items: data.items.map((item) =>
       item.id === mediaId
-        ? { ...item, altText: `Corrected ${mediaId}`, status: 'complete' }
+        ? {
+            ...item,
+            altText: `Corrected ${mediaId}`,
+            status: 'complete',
+            isDecorative: false,
+          }
+        : item,
+    ),
+  });
+};
+
+/** Mirror a successful decorative mark: null alt + complete + isDecorative. */
+const patchRowDecorative = (
+  client: QueryClient,
+  key: readonly unknown[],
+  mediaId: number,
+): void => {
+  const data = client.getQueryData<WorkbenchMediaResponse>(key);
+  if (!data?.items) {
+    return;
+  }
+  client.setQueryData<WorkbenchMediaResponse>(key, {
+    ...data,
+    items: data.items.map((item) =>
+      item.id === mediaId
+        ? { ...item, altText: null, status: 'complete', isDecorative: true }
         : item,
     ),
   });
@@ -286,6 +317,29 @@ describe('WorkbenchMediaContext statusMessage [WBUX-5-BR-112]', () => {
     status = await waitForIdleStatus();
     expect(status.textContent).toMatch(/2 now have alt text/);
     expect(status.textContent).not.toMatch(/2 now has alt text/);
+  });
+
+  it('does not claim alt text for decorative complete rows [INT-08]', async () => {
+    // After Mark as decorative the row is complete with null alt + isDecorative.
+    // Saying "now has alt text" is false — the operator deliberately has none.
+    const client = buildClient();
+    const key = missingPageKey();
+    seedPage(client, {
+      items: [makeItem(1), makeItem(2), makeItem(3)],
+      total: 3,
+      status: 'missing',
+    });
+    renderProvider(client, '/?status=missing');
+    await waitForIdleStatus();
+
+    act(() => {
+      patchRowDecorative(client, key, 1);
+    });
+
+    const status = await waitForIdleStatus();
+    expect(status.textContent).toMatch(/1 marked decorative/);
+    expect(status.textContent).toMatch(/will leave this view when the list next refreshes/);
+    expect(status.textContent).not.toMatch(/now has alt text|now have alt text/);
   });
 
   it('does not invalidate or mark the workbench list stale after a successful listed-row correction', async () => {

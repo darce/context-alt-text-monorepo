@@ -55,6 +55,7 @@ const seedItem = (altText: string | null = existingAlt): WorkbenchMediaItem => (
   status: altText && altText.trim() !== '' ? 'complete' : 'missing',
   thumbnailUrl: null,
   altText,
+  isDecorative: false,
   editUrl: null,
   tags: [],
   mimeType: 'image/jpeg',

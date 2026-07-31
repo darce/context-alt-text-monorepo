@@ -180,13 +180,22 @@ const MediaSelectionRow = ({
         />
       </td>
       <td className="acx-media-selection__thumb-cell">
-        <a href={mediaEditUrl(item.id)}>
+        <a
+          href={mediaEditUrl(item.id)}
+          aria-label={sprintf(__('Edit %s', 'alt-context'), item.title)}
+        >
           {item.thumbnailUrl ? (
             <img
               src={item.thumbnailUrl}
               srcSet={item.thumbnailSrcset ?? undefined}
               sizes={item.thumbnailSizes ?? undefined}
-              alt={item.altText != null ? decodeHtmlEntities(item.altText) : item.title}
+              alt={
+                item.isDecorative
+                  ? ''
+                  : item.altText != null
+                    ? decodeHtmlEntities(item.altText)
+                    : item.title
+              }
               className="acx-media-selection__thumb acx-media-selection__thumb--thumb"
               loading={eagerLoad ? 'eager' : 'lazy'}
               fetchPriority={eagerLoad ? 'high' : 'auto'}
@@ -222,6 +231,7 @@ const MediaSelectionRow = ({
         <MediaAltInlineEditor
           mediaId={item.id}
           altText={item.altText ?? null}
+          isDecorative={item.isDecorative === true}
           onPoliteAnnounce={editorAnnounce}
           onPoliteClear={editorClear}
           peerCommitPending={commitOwner === 'suggest'}

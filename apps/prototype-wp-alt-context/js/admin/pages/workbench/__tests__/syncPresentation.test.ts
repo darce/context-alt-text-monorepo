@@ -249,22 +249,37 @@ describe('HARM-BR-04 phantom failed field deleted from sync contract', () => {
     expect(bodyMatch).not.toBeNull();
     const body = bodyMatch?.[1] ?? '';
     // Property name is exactly `failed` (not failed_curation_* / last_curation_failed_at).
-    const failedProp = /(?:^|\n)\s*failed\s*(\?)?\s*:\s*([^;\n]+)/g;
+    // Optional `readonly` prefix must be in scope so `readonly failed?: string[]`
+    // cannot re-enter under the pin [TEST-17].
+    const failedProp = /(?:^|\n)\s*(?:readonly\s+)?failed\s*\??\s*:/g;
     const hits: string[] = [];
     let m: RegExpExecArray | null;
     while ((m = failedProp.exec(body)) !== null) {
-      hits.push(m[2].trim());
+      hits.push(m[0].trim());
     }
     // No property named `failed` may exist on SyncStatusResponse at all.
-    expect(hits).toEqual([]);
+    expect(hits, 'SyncStatusResponse must not declare a top-level failed field').toEqual([]);
     expect(syncTypesSource).not.toMatch(
       /Names the fields whose writes did not land/,
     );
+
+    // Scratch-string proof: the pin matches the readonly spelling the old
+    // regex missed (do not mutate sync.ts to exercise this).
+    const readonlyScratch = '\n  readonly failed?: string[];';
+    expect(
+      /(?:^|\n)\s*(?:readonly\s+)?failed\s*\??\s*:/g.test(readonlyScratch),
+      'source pin must match readonly failed?: string[] under the claimed spellings',
+    ).toBe(true);
   });
 
   /**
    * Behavioural: a wire payload carrying a phantom `failed: string[]` must not
-   * change presentation. Holds regardless of how the field is spelled on the type.
+   * surface through the status→presentation mapper. Assert the mapper output
+   * directly — comparing buildSyncPresentation results is self-fulfilling
+   * because the mapper already strips unknown keys [TEST-06].
+   *
+   * Mutation that turns this red: adding `failedFields: data?.failed` (or any
+   * graft of the phantom array) to syncPresentationInputFromStatus.
    */
   it('ignores a phantom failed string[] on the status payload when building presentation', () => {
     const baseStatus = {
@@ -278,17 +293,21 @@ describe('HARM-BR-04 phantom failed field deleted from sync contract', () => {
       ...baseStatus,
       failed: ['title', 'slug'],
     };
-    const without = buildSyncPresentation({
-      ...syncPresentationInputFromStatus(baseStatus),
-      syncHealthEnvelope: onlineEnvelope(),
-    });
-    const withFailed = buildSyncPresentation({
-      ...syncPresentationInputFromStatus(withPhantomFailed),
-      syncHealthEnvelope: onlineEnvelope(),
-    });
-    expect(withFailed).toEqual(without);
-    expect(withFailed.status).toBe(SYNC_PRESENTATION_STATUS.HEALTHY);
-    expect(withFailed.status).not.toBe(SYNC_PRESENTATION_STATUS.RESYNC_REQUIRED);
+    expect(
+      syncPresentationInputFromStatus(
+        withPhantomFailed as Parameters<typeof syncPresentationInputFromStatus>[0],
+      ),
+      'mapper must not surface a phantom wire failed[] as any presentation input field',
+    ).toEqual(syncPresentationInputFromStatus(baseStatus));
+    expect(
+      buildSyncPresentation({
+        ...syncPresentationInputFromStatus(
+          withPhantomFailed as Parameters<typeof syncPresentationInputFromStatus>[0],
+        ),
+        syncHealthEnvelope: onlineEnvelope(),
+      }).status,
+      'phantom failed[] must leave presentation status healthy',
+    ).toBe(SYNC_PRESENTATION_STATUS.HEALTHY);
   });
 
   it('buildSyncPresentation has no failedFields input or escalation arm', () => {
@@ -323,7 +342,6 @@ describe('HARM-BR-04 phantom failed field deleted from sync contract', () => {
     });
     expect(withFailedFields).toEqual(without);
     expect(withFailedFields.status).toBe(SYNC_PRESENTATION_STATUS.HEALTHY);
-    expect(withFailedFields.status).not.toBe(SYNC_PRESENTATION_STATUS.RESYNC_REQUIRED);
   });
 
   it('SyncStatusIndicator does not pass data?.failed into presentation', () => {

@@ -115,17 +115,52 @@ export const WorkbenchMediaProvider: React.FC<{ children: React.ReactNode }> = (
     // guessing other pages or decrementing total. Status=all has no filter
     // mismatch (complete rows belong there), so no sentence under that filter.
     if (statusFilter === 'missing') {
-      const correctedOnPage = mediaItems.filter((item) => item.status === 'complete').length;
+      // Split arms: ordinary corrections "have alt text"; decorative marks do
+      // not — claiming alt text for them is false [INT-08]. Wording is
+      // _n()-correct per arm; mixed uses a combined two-count string so we
+      // never concatenate translated fragments.
+      const nowHasAlt = mediaItems.filter(
+        (item) => item.status === 'complete' && item.isDecorative !== true,
+      ).length;
+      const markedDecorative = mediaItems.filter(
+        (item) => item.status === 'complete' && item.isDecorative === true,
+      ).length;
+      const correctedOnPage = nowHasAlt + markedDecorative;
       if (correctedOnPage > 0) {
-        const reconciliation = sprintf(
-          _n(
-            '%d now has alt text and will leave this view when the list next refreshes.',
-            '%d now have alt text and will leave this view when the list next refreshes.',
+        let reconciliation: string;
+        if (nowHasAlt > 0 && markedDecorative > 0) {
+          // Mixed arms: one _n over the combined count — wording true of both
+          // (avoids dual-count pluralisation and fragment concatenation).
+          reconciliation = sprintf(
+            _n(
+              '%d now complete and will leave this view when the list next refreshes.',
+              '%d now complete and will leave this view when the list next refreshes.',
+              correctedOnPage,
+              'alt-context',
+            ),
             correctedOnPage,
-            'alt-context',
-          ),
-          correctedOnPage,
-        );
+          );
+        } else if (markedDecorative > 0) {
+          reconciliation = sprintf(
+            _n(
+              '%d marked decorative and will leave this view when the list next refreshes.',
+              '%d marked decorative and will leave this view when the list next refreshes.',
+              markedDecorative,
+              'alt-context',
+            ),
+            markedDecorative,
+          );
+        } else {
+          reconciliation = sprintf(
+            _n(
+              '%d now has alt text and will leave this view when the list next refreshes.',
+              '%d now have alt text and will leave this view when the list next refreshes.',
+              nowHasAlt,
+              'alt-context',
+            ),
+            nowHasAlt,
+          );
+        }
         return `${showing} ${reconciliation}`;
       }
     }

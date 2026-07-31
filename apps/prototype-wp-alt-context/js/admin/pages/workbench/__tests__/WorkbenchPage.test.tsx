@@ -166,6 +166,7 @@ describe('WorkbenchPage', () => {
     id: 11,
     title: 'Photo Name',
     altText: null,
+    isDecorative: false,
     status: 'missing' as const,
     thumbnailUrl: null,
     mimeType: 'image/jpeg',

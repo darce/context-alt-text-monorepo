@@ -1255,15 +1255,25 @@ class TestToolingRowDenylist:
         assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
 
     def test_br24_ultralytics_dep_parity(self) -> None:
+        # GATE-05: trip BOTH the package denylist and a bogus row licence so
+        # the reason channel discriminates ordering. With Apache-2.0 alone both
+        # orderings report denylisted_package; a competing unknown SPDX was
+        # masking the package reason when the floor ran first.
         row = {
             "package_name": "ultralytics",
-            "license": "Apache-2.0",
+            "license": "NOT-A-REAL-SPDX",
             "derived_from_model": "",
         }
         via_row = policy.audit_tooling_row(row)
         via_dep = policy.audit_tooling_dependency("ultralytics")
+        assert via_dep.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+        assert via_row.ok is False
+        assert via_row.reason is policy.RejectionReason.DENYLISTED_PACKAGE, (
+            f"package denylist must outrank the row-declared licence; "
+            f"got {via_row.reason} (a self-declared licence must not launder "
+            "or mask a denylisted package — BR-24 / GATE-05)"
+        )
         assert via_row.reason is via_dep.reason
-        assert via_row.reason is policy.RejectionReason.DENYLISTED_PACKAGE
 
     def test_br24_umap_learn_tooling_row_passes(self) -> None:
         row = {
@@ -1878,7 +1888,12 @@ class TestTaintOutranksLicenseFloor:
     FLOOR_REACHING_CATEGORIES = [
         c for c in policy.PolicyCategory if c is not policy.PolicyCategory.TRAINING_DATA
     ]
+    # Carries package/model_id so TOOLING (GATE-05: package before licence) and
+    # MODEL_INGEST reach the licence floor rather than dying on an unknown
+    # package identifier when the derived_from_model key is absent.
     KEY_ABSENT_DENYLISTED_ROW = {
+        "model_id": "rt-detr",
+        "package": "numba",
         "source": "self-generated",
         "license": "AGPL-3.0",
         "clearance": "cleared",
@@ -1936,3 +1951,290 @@ class TestFloorLicenceIsOptionalNotWaived:
         result = policy.audit_provenance_row(row, category=policy.PolicyCategory.MODEL_INGEST)
         assert result.ok is False
         assert result.reason is policy.RejectionReason.MISSING_INGEST_ENTRY
+
+
+# ---------------------------------------------------------------------------
+# GATE-09 — multi-fault rows report exactly one documented-precedence reason
+# ---------------------------------------------------------------------------
+
+
+class TestGate09MultiFaultPrecedencePinned:
+    """GATE-09: short-circuit is by design; precedence must be documented and
+    pinned so a future reordering is a visible test failure (CLM-03).
+
+    Floor order (see ``_common_provenance_checks`` docstring):
+      derived taint → source taint → clearance → licence
+    TOOLING additionally places the package denylist before licence (GATE-05).
+    """
+
+    @pytest.mark.parametrize(
+        ("category", "row", "expected_reason"),
+        [
+            # MODEL_INGEST: unregistered id + bad licence → licence wins over
+            # missing_ingest_entry because the floor licence axis runs before
+            # the door-specific ingest lookup.
+            (
+                policy.PolicyCategory.MODEL_INGEST,
+                {
+                    "model_id": "totally_unknown_detector_xyz",
+                    "license": "NOT-A-REAL-SPDX",
+                    "derived_from_model": "",
+                },
+                policy.RejectionReason.UNKNOWN_SPDX,
+            ),
+            # TOOLING: denylisted package + bad licence → package wins (BR-24).
+            (
+                policy.PolicyCategory.TOOLING,
+                {
+                    "package": "ultralytics",
+                    "license": "NOT-A-REAL-SPDX",
+                    "derived_from_model": "",
+                },
+                policy.RejectionReason.DENYLISTED_PACKAGE,
+            ),
+            # TRAINING_DATA: uncleared synthetic + bad licence → clearance
+            # outranks licence on the floor (GATE-11 axis placement).
+            (
+                policy.PolicyCategory.TRAINING_DATA,
+                {
+                    "source": "dcface",
+                    "license": "NOT-A-REAL-SPDX",
+                    "derived_from_model": "",
+                },
+                policy.RejectionReason.PENDING_LEGAL_CLEARANCE,
+            ),
+            # TRAINING_DATA: NC derived + uncleared synthetic + bad licence →
+            # derived taint outranks both clearance and licence.
+            (
+                policy.PolicyCategory.TRAINING_DATA,
+                {
+                    "source": "dcface",
+                    "license": "AGPL-3.0",
+                    "derived_from_model": "insightface/buffalo_l",
+                },
+                policy.RejectionReason.NC_MODEL_DERIVED,
+            ),
+            # OCCLUDER_ASSET: bad licence + uncleared photo → licence floor
+            # fires before the door's uncleared gate.
+            (
+                policy.PolicyCategory.OCCLUDER_ASSET,
+                {
+                    "license": "NOT-A-REAL-SPDX",
+                    "source": "self-generated",
+                    "derived_from_model": "",
+                },
+                policy.RejectionReason.UNKNOWN_SPDX,
+            ),
+        ],
+    )
+    def test_multi_fault_reports_documented_winner(
+        self, category, row, expected_reason
+    ) -> None:
+        result = policy.audit_provenance_row(dict(row), category=category)
+        assert result.ok is False
+        assert result.reason is expected_reason, (
+            f"category={category.value}: multi-fault row reported "
+            f"{result.reason}, documented precedence expects {expected_reason}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# GATE-08 — occluder licence detail keeps door context for both catch sites
+# ---------------------------------------------------------------------------
+
+
+class TestGate08OccluderLicenseDetailContext:
+    """GATE-08: present-but-invalid licence must carry the same door prefix as
+    a missing licence field. The floor catches present invalid values with
+    required=False; the door's required=True catch still owns the missing
+    field. Both paths must report ``occluder asset: …`` in detail.
+    """
+
+    def test_missing_license_field_detail_has_occluder_prefix(self) -> None:
+        asset = {
+            "clearance": "cleared",
+            "source": "internal_studio",
+        }
+        result = policy.audit_occluder_asset(asset)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.MISSING_LICENSE_FIELD
+        assert result.detail.startswith("occluder asset: "), (
+            f"missing-field path lost door context: {result.detail!r}"
+        )
+        assert "license" in result.detail.lower() or "spdx" in result.detail.lower()
+
+    def test_present_but_invalid_license_detail_has_occluder_prefix(self) -> None:
+        asset = {
+            "license": "NOT-A-REAL-SPDX",
+            "clearance": "cleared",
+            "source": "internal_studio",
+        }
+        result = policy.audit_occluder_asset(asset)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.UNKNOWN_SPDX
+        assert result.detail.startswith("occluder asset: "), (
+            f"present-but-invalid path lost door context: {result.detail!r}"
+        )
+        assert "NOT-A-REAL-SPDX" in result.detail
+
+    def test_missing_and_invalid_share_detail_prefix_shape(self) -> None:
+        # Pin the two catch sites against each other so they cannot silently
+        # diverge again (floor vs door required=True prefix branch).
+        missing = policy.audit_occluder_asset(
+            {"clearance": "cleared", "source": "internal_studio"}
+        )
+        invalid = policy.audit_occluder_asset(
+            {
+                "license": "NOT-A-REAL-SPDX",
+                "clearance": "cleared",
+                "source": "internal_studio",
+            }
+        )
+        assert missing.ok is False and invalid.ok is False
+        assert missing.detail.startswith("occluder asset: ")
+        assert invalid.detail.startswith("occluder asset: ")
+
+
+# ---------------------------------------------------------------------------
+# GATE-11 — clearance axis is content-triggered floor, not door-waivable
+# ---------------------------------------------------------------------------
+
+
+class TestGate11ClearanceFloorOnEveryDoor:
+    """GATE-11: an uncleared synthetic-registry source must fail on every door.
+
+    Before the floor hoist, tooling and model_ingest PASSed a dcface row with
+    no clearance token while training_data / synthetic_source rejected it —
+    a caller picking the weaker door bypassed the clearance gate entirely.
+    """
+
+    # Verified repro fixture: registered synthetic source whose registry entry
+    # carries clearance_decision, no matching token on the row.
+    UNCLEARED_DCFACE: ClassVar[dict[str, Any]] = {
+        "model_id": "rt-detr",
+        "package": "numba",
+        "source": "dcface",
+        "license": "Apache-2.0",
+        "derived_from_model": "",
+    }
+
+    # Exact reason per door (TEST-15 / TEST-17). OCCLUDER_ASSET keeps its
+    # distinct uncleared_occluder_asset reason — that door ADDs a stricter
+    # photo-clearance rule and the floor must not downgrade it.
+    EXPECTED_UNCLEARED_REASON: ClassVar[dict] = {
+        policy.PolicyCategory.TRAINING_DATA: (
+            policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+        ),
+        policy.PolicyCategory.SYNTHETIC_SOURCE: (
+            policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+        ),
+        policy.PolicyCategory.OCCLUDER_ASSET: (
+            policy.RejectionReason.UNCLEARED_OCCLUDER_ASSET
+        ),
+        policy.PolicyCategory.TOOLING: (
+            policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+        ),
+        policy.PolicyCategory.MODEL_INGEST: (
+            policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+        ),
+    }
+
+    # Doors that admit a correctly-cleared dcface row (occluder ADDs a stricter
+    # photo-clearance rule and still rejects the dcface operator token).
+    CLEARANCE_ADMITTING_DOORS: ClassVar[list] = [
+        policy.PolicyCategory.TRAINING_DATA,
+        policy.PolicyCategory.SYNTHETIC_SOURCE,
+        policy.PolicyCategory.TOOLING,
+        policy.PolicyCategory.MODEL_INGEST,
+    ]
+
+    @pytest.mark.parametrize("category", list(policy.PolicyCategory))
+    def test_uncleared_dcface_fails_every_door_with_exact_reason(
+        self, category
+    ) -> None:
+        row = dict(self.UNCLEARED_DCFACE)
+        assert "clearance" not in row
+        result = policy.audit_provenance_row(row, category=category)
+        assert result.ok is False, (
+            f"category={category.value} PASSed an uncleared dcface row; "
+            "a caller could pick this door to bypass the clearance gate"
+        )
+        expected = self.EXPECTED_UNCLEARED_REASON[category]
+        assert result.reason is expected, (
+            f"category={category.value} reported {result.reason}, "
+            f"expected {expected}"
+        )
+
+    @pytest.mark.parametrize("category", CLEARANCE_ADMITTING_DOORS)
+    def test_cleared_dcface_passes_admitting_doors(self, category) -> None:
+        # Positive control: the matching clearance token admits the row on
+        # every door that does not ADD a stricter clearance rule.
+        row = dict(self.UNCLEARED_DCFACE)
+        row["clearance"] = policy.DCFACE_CLEARANCE_DECISION
+        result = policy.audit_provenance_row(row, category=category)
+        assert result.ok is True, (
+            f"category={category.value} rejected a correctly-cleared dcface "
+            f"row: {result.reason} {result.detail}"
+        )
+
+    def test_cleared_dcface_still_fails_occluder_stricter_rule(self) -> None:
+        # Occluder photo-clearance is a distinct axis; the dcface operator
+        # token is not in OCCLUDER_ALLOWED_CLEARANCES.
+        row = dict(self.UNCLEARED_DCFACE)
+        row["clearance"] = policy.DCFACE_CLEARANCE_DECISION
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.OCCLUDER_ASSET
+        )
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.UNCLEARED_OCCLUDER_ASSET
+
+    @pytest.mark.parametrize("category", list(policy.PolicyCategory))
+    def test_source_without_clearance_decision_unaffected(
+        self, category
+    ) -> None:
+        # Negative control: a source whose registry entry (or absence) carries
+        # no clearance_decision must keep pre-hoist outcomes. The floor is
+        # content-triggered, not an unconditional token demand.
+        row = {
+            "model_id": "rt-detr",
+            "package": "numba",
+            "source": "self-generated",
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+            "clearance": "cleared",
+        }
+        result = policy.audit_provenance_row(row, category=category)
+        if category is policy.PolicyCategory.SYNTHETIC_SOURCE:
+            # self-generated is not a synthetic registry head.
+            assert result.ok is False
+            assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+        else:
+            assert result.ok is True, (
+                f"category={category.value}: a non-clearance-triggering row "
+                f"must still pass: {result.reason} {result.detail}"
+            )
+
+    @pytest.mark.parametrize(
+        "category",
+        [
+            policy.PolicyCategory.TOOLING,
+            policy.PolicyCategory.MODEL_INGEST,
+        ],
+    )
+    def test_derived_from_model_dcface_also_triggers_floor(
+        self, category
+    ) -> None:
+        # The trigger is source OR derived_from_model; tooling/model_ingest
+        # previously ignored both.
+        row = {
+            "model_id": "rt-detr",
+            "package": "numba",
+            "source": "self-generated",
+            "license": "Apache-2.0",
+            "derived_from_model": "dcface/x",
+        }
+        result = policy.audit_provenance_row(row, category=category)
+        assert result.ok is False, (
+            f"category={category.value} ignored derived_from_model=dcface/x"
+        )
+        assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE

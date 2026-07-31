@@ -553,7 +553,7 @@ describe('MediaAltInlineEditor', () => {
         `Request to /correction failed (500): ${JSON.stringify({
           code: 'description_correction_partial',
           message: partialMessage,
-          data: { status: 500, stored_alt_text: 'Hello' },
+          data: { status: 500, stored_alt_text: 'Hello' , is_decorative: false },
         })}`,
       ),
     );

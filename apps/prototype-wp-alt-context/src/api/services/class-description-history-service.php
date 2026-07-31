@@ -102,14 +102,18 @@ class DescriptionHistoryService {
 	 *
 	 * Decorative flag (WBUX-5-S2C3C-BR-01): optional third argument, default
 	 * false so every existing two-argument caller keeps working. When true,
-	 * empty alt is the correct finished answer and plants `acx_alt_decorative`.
-	 * decorative=true with a non-empty alt is a 400 contradiction — never
-	 * coerced. Marker is planted only after both alt and human-edit writes are
-	 * verified (not on alt-write failure or the partial-failure path). A
-	 * verified non-empty alt clears any prior marker immediately — before the
-	 * human-edit write — so the PARTIAL early return still leaves disk
-	 * consistent (self-healing). Empty non-decorative leaves a prior marker
-	 * untouched (blanking alt does not un-mark decorative). [WBUX-5-R3-01]
+	 * empty alt is the correct finished answer and plants `acx_alt_decorative`
+	 * only when the verified alt read-back is empty [A-01]. decorative=true
+	 * with a non-empty pre-write alt is a 400 contradiction — never coerced.
+	 * decorative=true when a sanitize filter injects a non-empty stored alt is
+	 * a post-write PARTIAL (refuse to plant) — never silent plant [DATA-14].
+	 * Marker is planted only after both alt and human-edit writes are verified
+	 * (not on alt-write failure or the partial-failure path). A verified
+	 * non-empty alt clears any prior marker immediately — before the human-edit
+	 * write — so the PARTIAL early return still leaves disk consistent
+	 * (self-healing). Empty non-decorative leaves a prior marker untouched
+	 * (blanking alt does not un-mark decorative). Success and PARTIAL envelopes
+	 * both emit is_decorative from storage read-back [A-03][rg-015].
 	 *
 	 * @return array<string,mixed>|WP_Error
 	 */
@@ -200,6 +204,8 @@ class DescriptionHistoryService {
 					array(
 						'status'          => 500,
 						'stored_alt_text' => is_string( $expected_alt ) ? $expected_alt : $normalized_alt_text,
+						// Server-owned marker truth for client cache reconcile [A-03][rg-015].
+						'is_decorative'   => true,
 					)
 				);
 			}
@@ -239,12 +245,16 @@ class DescriptionHistoryService {
 			// from the request body. Only this path carries it — the
 			// 404/400/alt-write-failure paths stored nothing new. [rg-015]
 			// Decorative marker already self-healed above when alt was non-empty.
+			// is_decorative is the post-write read-back of acx_alt_decorative —
+			// plant never ran on this path, but a prior marker may still exist
+			// (empty non-decorative) or may already be cleared (non-empty) [A-03].
 			return new WP_Error(
 				'description_correction_partial',
 				'Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.',
 				array(
 					'status'          => 500,
 					'stored_alt_text' => is_string( $expected_alt ) ? $expected_alt : $normalized_alt_text,
+					'is_decorative'   => $this->read_decorative_marker( $media_id ),
 				)
 			);
 		}
@@ -262,15 +272,42 @@ class DescriptionHistoryService {
 
 		// Decorative plant — only after both alt and human-edit are verified
 		// (not on alt-write failure, not on the partial-failure path).
-		// decorative=true plants '1' with read-back. Non-empty clear already
-		// ran above (before human-edit). Empty non-decorative leaves any prior
-		// marker alone. [WBUX-5-S2C3C-BR-01]
+		// Non-empty clear already ran above (before human-edit). Empty
+		// non-decorative leaves any prior marker alone. [WBUX-5-S2C3C-BR-01]
 		//
-		// S7-BR-03: read the marker back. Without acx_alt_decorative, empty alt
-		// is classified as missing_alt rather than decorative — claiming success
-		// while the marker is absent is a durable-contract lie (same pattern as
-		// ALT_META / HUMAN_EDIT_META above).
+		// [A-01][rg-015][DATA-14]: plant keys on the verified alt read-back
+		// ($current), not the request flag alone — symmetric with the clear
+		// path above. A sanitize_post_meta__wp_attachment_image_alt filter can
+		// map '' → non-empty after the pre-write 400 guard (which only sees
+		// $normalized_alt_text), so planting on $decorative alone can co-locate
+		// acx_alt_decorative='1' with a non-empty stored alt — the exact
+		// self-contradicting disk state the 400 exists to prevent.
+		//
+		// Decision when $decorative is true but $current is non-empty: refuse
+		// to plant and return WP_Error (partial). Do not silently treat as
+		// non-decorative success — that would invent a finished-contract
+		// outcome from a filter-injected alt the operator never authored
+		// [rg-015]. Partial (not bare failed): alt + human-edit already
+		// verified; only the decorative half of the requested finish cannot
+		// honestly hold. Invariant afterwards: this path never leaves
+		// acx_alt_decorative='1' beside a non-empty stored alt.
+		//
+		// S7-BR-03: read the marker back after plant. Without acx_alt_decorative,
+		// empty alt is classified as missing_alt rather than decorative —
+		// claiming success while the marker is absent is a durable-contract lie
+		// (same pattern as ALT_META / HUMAN_EDIT_META above).
 		if ( $decorative ) {
+			if ( '' !== trim( $current ) ) {
+				return new WP_Error(
+					'description_correction_partial',
+					'Alt text was saved, but the stored value is non-empty so the decorative marker was not planted. Decorative requires empty alt; correct the stored alt or retry without decorative.',
+					array(
+						'status'          => 500,
+						'stored_alt_text' => is_string( $current ) ? $current : ( is_string( $expected_alt ) ? $expected_alt : $normalized_alt_text ),
+						'is_decorative'   => $this->read_decorative_marker( $media_id ),
+					)
+				);
+			}
 			update_post_meta( $media_id, self::DECORATIVE_META, '1' );
 			$decorative_current = get_post_meta( $media_id, self::DECORATIVE_META, true );
 			$decorative_ok      = is_string( $decorative_current ) && '1' === $decorative_current;
@@ -284,6 +321,8 @@ class DescriptionHistoryService {
 					array(
 						'status'          => 500,
 						'stored_alt_text' => is_string( $expected_alt ) ? $expected_alt : $normalized_alt_text,
+						// Plant failed: marker is absent (or not '1') [A-03].
+						'is_decorative'   => false,
 					)
 				);
 			}
@@ -348,6 +387,10 @@ class DescriptionHistoryService {
 
 		$post       = get_post( $media_id );
 		$run_status = get_post_meta( $media_id, self::RUN_STATUS_META, true );
+		// is_decorative is server-owned storage truth (boolean, not the raw
+		// '1'/'' meta string). The correction success envelope is build_item;
+		// clients must not re-derive this from request intent [A-03][rg-015].
+		$is_decorative = $this->read_decorative_marker( $media_id );
 
 		return array(
 			'media_id'           => $media_id,
@@ -358,7 +401,19 @@ class DescriptionHistoryService {
 			'provenance'         => is_array( $provenance ) ? $provenance : null,
 			'human_edit'         => is_array( $human_edit ) ? $human_edit : null,
 			'run_status'         => is_array( $run_status ) ? $run_status : null,
+			'is_decorative'      => $is_decorative,
 		);
+	}
+
+	/**
+	 * Whether acx_alt_decorative is currently planted for this attachment.
+	 *
+	 * Casts the durable '1' string meta to a real boolean for wire envelopes.
+	 * Read-back only — never invents a value from request intent [A-03][rg-015].
+	 */
+	private function read_decorative_marker( int $media_id ): bool {
+		$raw = get_post_meta( $media_id, self::DECORATIVE_META, true );
+		return is_string( $raw ) && '1' === $raw;
 	}
 
 	/**

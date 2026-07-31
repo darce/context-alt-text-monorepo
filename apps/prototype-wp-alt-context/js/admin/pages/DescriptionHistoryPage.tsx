@@ -9,6 +9,7 @@ import {
   fetchDescriptionHistory,
   RECOVERY_KIND,
   resolveDescribeErrorCode,
+  resolveDescribeErrorDataBooleanField,
   resolveDescribeErrorDataField,
   resolveDescribeErrorMessage,
   type DescriptionHistoryItem,
@@ -256,6 +257,9 @@ const DescriptionHistoryList = (): React.JSX.Element => {
           if (storedAltText === null) {
             return;
           }
+          // is_decorative is optional on older PARTIAL payloads; when present it
+          // is server truth and must land on the cached history row [A-03][rg-015].
+          const storedIsDecorative = resolveDescribeErrorDataBooleanField(error, 'is_decorative');
           queryClient.setQueryData<DescriptionHistoryResponse>(HISTORY_QUERY_KEY, (current) => {
             if (!current) {
               return current;
@@ -264,7 +268,13 @@ const DescriptionHistoryList = (): React.JSX.Element => {
               ...current,
               items: current.items.map((row) =>
                 row.media_id === variables.mediaId
-                  ? { ...row, current_alt_text: storedAltText }
+                  ? {
+                      ...row,
+                      current_alt_text: storedAltText,
+                      ...(storedIsDecorative !== null
+                        ? { is_decorative: storedIsDecorative }
+                        : {}),
+                    }
                   : row,
               ),
             };

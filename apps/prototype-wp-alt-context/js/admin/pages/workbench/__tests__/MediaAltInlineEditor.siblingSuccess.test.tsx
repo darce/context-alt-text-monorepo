@@ -54,7 +54,7 @@ const partialError = (storedAlt: string): Error =>
     `Request to /correction failed (500): ${JSON.stringify({
       code: 'description_correction_partial',
       message: PARTIAL_MESSAGE,
-      data: { status: 500, stored_alt_text: storedAlt },
+      data: { status: 500, stored_alt_text: storedAlt , is_decorative: false },
     })}`,
   );
 

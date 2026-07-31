@@ -44,7 +44,10 @@ const correctMock = vi.mocked(correctDescriptionHistoryItem);
 const draft = 'A stone bridge over a calm river at dusk.';
 const editedDraft = 'A stone bridge over the Aire at dusk, seen from the north bank.';
 
-const sampleHistoryItem = (altTextValue = draft): DescriptionHistoryItem => ({
+const sampleHistoryItem = (
+  altTextValue = draft,
+  isDecorative = false,
+): DescriptionHistoryItem => ({
   media_id: 42,
   title: 'bridge.jpg',
   mime_type: 'image/jpeg',
@@ -53,6 +56,7 @@ const sampleHistoryItem = (altTextValue = draft): DescriptionHistoryItem => ({
   provenance: null,
   human_edit: { alt_text: altTextValue, edited_at: null, user_id: 1 },
   run_status: null,
+  is_decorative: isDecorative,
 });
 
 const sampleResponse = (altTextDraft = draft): VisualFactsResponse => ({
@@ -2379,7 +2383,7 @@ describe('MediaAltSuggest', () => {
     // reconciliation (cache stays prior alt) or if status derives from alt alone
     // (empty → 'missing' while class-api.php:338 says decorative → 'complete').
     const priorAlt = 'Bridge at dusk';
-    correctMock.mockResolvedValue(sampleHistoryItem(''));
+    correctMock.mockResolvedValue(sampleHistoryItem('', true));
     const { client } = renderLiveAltRow(priorAlt, 'complete');
 
     // Precondition: InlineEditor shows the committed prior alt (stale after defect).
@@ -2421,7 +2425,7 @@ describe('MediaAltSuggest', () => {
     // 1) Decorative success with empty alt → complete.
     // Seed status=missing so waitFor observes a real transition to complete
     // (seeding complete made the gate true on the first synchronous check).
-    correctMock.mockResolvedValueOnce(sampleHistoryItem(''));
+    correctMock.mockResolvedValueOnce(sampleHistoryItem('', true));
     const decorativeCase = renderLiveAltRow('Prior decorative', 'missing');
     expect(cachedRow(decorativeCase.client)?.status).toBe('missing');
     fireEvent.click(
@@ -2463,7 +2467,7 @@ describe('MediaAltSuggest', () => {
         `Request to /correction failed (500): ${JSON.stringify({
           code: 'description_correction_partial',
           message: partialMessage,
-          data: { status: 500, stored_alt_text: '' },
+          data: { status: 500, stored_alt_text: '' , is_decorative: false },
         })}`,
       ),
     );
@@ -2491,7 +2495,7 @@ describe('MediaAltSuggest', () => {
           `Request to /correction failed (500): ${JSON.stringify({
             code: 'description_correction_partial',
             message: partialMessage,
-            data: { status: 500, stored_alt_text: '' },
+            data: { status: 500, stored_alt_text: '' , is_decorative: false },
           })}`,
         ),
       )
@@ -2536,7 +2540,7 @@ describe('MediaAltSuggest', () => {
         `Request to /correction failed (500): ${JSON.stringify({
           code: 'description_correction_partial',
           message: partialMessage,
-          data: { status: 500, stored_alt_text: '' },
+          data: { status: 500, stored_alt_text: '' , is_decorative: false },
         })}`,
       ),
     );

@@ -10,6 +10,7 @@ import {
   fetchDescriptionCandidates,
   fetchDescriptionHistory,
   resolveDescribeErrorCode,
+  resolveDescribeErrorDataBooleanField,
   resolveDescribeErrorDataField,
   resolveDescribeErrorMessage,
   type DescriptionCandidateRow,
@@ -454,5 +455,35 @@ describe('resolveDescribeErrorDataField', () => {
       'Request failed (500): {"code":"description_correction_partial","message":"x","data":{"status":500,"stored_alt_text":42}}',
     );
     expect(resolveDescribeErrorDataField(err, 'stored_alt_text')).toBeNull();
+  });
+});
+
+describe('resolveDescribeErrorDataBooleanField', () => {
+  it('extracts is_decorative boolean from a partial correction rejection body [A-03]', () => {
+    const err = new Error(
+      'Request to .../correction failed (500): {"code":"description_correction_partial","message":"x","data":{"status":500,"stored_alt_text":"","is_decorative":true}}',
+    );
+    expect(resolveDescribeErrorDataBooleanField(err, 'is_decorative')).toBe(true);
+  });
+
+  it('returns false when is_decorative is false (not null) [A-03]', () => {
+    const err = new Error(
+      'Request failed (500): {"code":"description_correction_partial","message":"x","data":{"status":500,"stored_alt_text":"Alt","is_decorative":false}}',
+    );
+    expect(resolveDescribeErrorDataBooleanField(err, 'is_decorative')).toBe(false);
+  });
+
+  it('returns null when is_decorative is absent [A-03][rg-015]', () => {
+    const err = new Error(
+      'Request failed (500): {"code":"description_correction_partial","message":"x","data":{"status":500,"stored_alt_text":""}}',
+    );
+    expect(resolveDescribeErrorDataBooleanField(err, 'is_decorative')).toBeNull();
+  });
+
+  it('returns null when is_decorative is a string "1" rather than a boolean [A-03]', () => {
+    const err = new Error(
+      'Request failed (500): {"code":"description_correction_partial","message":"x","data":{"status":500,"is_decorative":"1"}}',
+    );
+    expect(resolveDescribeErrorDataBooleanField(err, 'is_decorative')).toBeNull();
   });
 });

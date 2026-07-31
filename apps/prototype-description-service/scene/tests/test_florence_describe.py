@@ -126,7 +126,7 @@ def test_run_skips_already_done_ids_and_records_missing_files(corpus, tmp_path, 
         (2, corpus / "2026" / "07" / "img-2.png"),
         (3, corpus / "missing.png"),  # not on disk: written with explicit error
     ]
-    # Fixed monotonic pairs so mean_latency_s is an independent literal (A5 / TEST-15).
+    # Fixed monotonic pair so mean_latency_s is an independent literal.
     ticks = iter([100.0, 101.5])  # one caption => latency 1.5s
     monkeypatch.setattr(time, "monotonic", lambda: next(ticks))
     seen: list[int] = []
@@ -136,8 +136,12 @@ def test_run_skips_already_done_ids_and_records_missing_files(corpus, tmp_path, 
         "already_done": 1,
         "missing": 1,
         "captioned_ok": 1,
-        "errors": 0,
+        "errors": 1,  # A-04: missing-on-disk increments errors
         "mean_latency_s": 1.5,
+        "min_latency_s": 1.5,
+        "max_latency_s": 1.5,
+        "p50_latency_s": 1.5,
+        "p95_latency_s": 1.5,
     }
     assert len(seen) == 1
     recorded = [json.loads(ln) for ln in out.read_text().splitlines()]
@@ -147,6 +151,34 @@ def test_run_skips_already_done_ids_and_records_missing_files(corpus, tmp_path, 
     assert "missing on disk" in missing_row["error"]
     assert missing_row["model_id"] == SPEC.model_id
     assert missing_row["caption"] is None
+
+
+def test_latency_aggregates_use_three_distinct_values(corpus, tmp_path, monkeypatch):
+    """A-12: mean/min/max/p50/p95 must be independently assertable (not a single-value tautology)."""
+    out = tmp_path / "out.jsonl"
+    rows = [
+        (1, corpus / "2026" / "07" / "img-1.png"),
+        (2, corpus / "2026" / "07" / "img-2.png"),
+        (3, corpus / "2026" / "07" / "img-3.png"),
+    ]
+    # Three captions with latencies 1.0, 2.0, 10.0 — each aggregate has a distinct expected value.
+    ticks = iter([0.0, 1.0, 10.0, 12.0, 20.0, 30.0])
+    monkeypatch.setattr(time, "monotonic", lambda: next(ticks))
+    summary = _run(rows, lambda p: "A photo.", out)
+    assert summary["captioned_ok"] == 3
+    assert summary["mean_latency_s"] == pytest.approx(4.333, abs=0.001)  # (1+2+10)/3
+    assert summary["min_latency_s"] == 1.0
+    assert summary["max_latency_s"] == 10.0
+    assert summary["p50_latency_s"] == 2.0
+    assert summary["p95_latency_s"] == 10.0
+    # Prove they are not all the same number (the old single-caption tautology).
+    values = [
+        summary["mean_latency_s"],
+        summary["min_latency_s"],
+        summary["max_latency_s"],
+        summary["p50_latency_s"],
+    ]
+    assert len(set(values)) == 4
 
 
 def test_run_retries_error_rows_on_resume(corpus, tmp_path):
@@ -160,6 +192,53 @@ def test_run_retries_error_rows_on_resume(corpus, tmp_path):
     last = json.loads(out.read_text().splitlines()[-1])
     assert last["caption"] == "recovered caption"
     assert last["error"] is None
+
+
+def test_resume_does_not_accumulate_duplicate_error_rows(corpus, tmp_path):
+    """A-03: retrying an error rewrites the prior row out — JSONL does not grow unboundedly."""
+    out = tmp_path / "out.jsonl"
+    out.write_text(json.dumps(_ok_row(1, error="RuntimeError: boom", caption=None)) + "\n")
+    rows = [(1, corpus / "2026" / "07" / "img-1.png")]
+
+    def still_broken(path):
+        raise RuntimeError("boom again")
+
+    summary = _run(rows, still_broken, out, stall_limit=5)
+    assert summary["errors"] == 1
+    lines = out.read_text().splitlines()
+    assert len(lines) == 1  # old error dropped, one new error row — not 2
+    assert json.loads(lines[0])["error"] == "RuntimeError: boom again"
+
+
+def test_missing_on_disk_increments_errors_counter(corpus, tmp_path):
+    """A-04: summary.errors must match error rows written for missing files."""
+    out = tmp_path / "out.jsonl"
+    rows = [(9, corpus / "nope.png")]
+    summary = _run(rows, lambda p: "unused", out)
+    assert summary["missing"] == 1
+    assert summary["errors"] == 1
+    assert summary["captioned_ok"] == 0
+    recorded = [json.loads(ln) for ln in out.read_text().splitlines()]
+    assert len(recorded) == 1 and recorded[0]["error"] is not None
+
+
+def test_unresolved_revision_is_hard_error(corpus, tmp_path):
+    """A-05: null model_revision makes resume keys unstable — refuse to write."""
+    out = tmp_path / "out.jsonl"
+    rows = [(1, corpus / "2026" / "07" / "img-1.png")]
+    with pytest.raises(ValueError, match="revision unresolved"):
+        _run(rows, lambda p: "x", out, resolved_revision=None)
+
+
+def test_done_ids_ignores_null_model_revision(tmp_path):
+    """A-05: a row with null revision is never treated as done."""
+    out = tmp_path / "out.jsonl"
+    out.write_text(json.dumps(_ok_row(1, revision=None if False else None)) + "\n")
+    # Force null revision explicitly (override helper default).
+    row = _ok_row(1)
+    row["model_revision"] = None
+    out.write_text(json.dumps(row) + "\n")
+    assert done_ids(out) == set()
 
 
 def test_run_does_not_skip_when_prior_row_is_different_model(corpus, tmp_path):

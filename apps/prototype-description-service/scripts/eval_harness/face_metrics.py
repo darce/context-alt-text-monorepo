@@ -208,6 +208,77 @@ def identification_pr(items: Sequence[ImageIdentities]) -> PrResult:
 
 
 # ---------------------------------------------------------------------------
+# Positional (left-to-right) identification — discriminates swaps (A-02)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PositionalIdResult:
+    """Ordered name-binding score: position i must match, not just the name set.
+
+    ``identification_pr`` reduces predictions to ``sorted(set(...))``, so a
+    left/right swap of two correctly-detected people scores identically to the
+    correct interleave. This metric keeps sequence order and therefore penalises
+    swaps: position_hits drops while the set-based P/R stays the same.
+    """
+
+    position_hits: int
+    position_total: int
+    exact_order_images: int
+    compared_images: int
+    swap_images: int  # same multiset of names, different order
+    excluded_images: list[str] = field(default_factory=list)
+
+    @property
+    def position_accuracy(self) -> float | None:
+        return _ratio(self.position_hits, self.position_total)
+
+    @property
+    def exact_order_rate(self) -> float | None:
+        return _ratio(self.exact_order_images, self.compared_images)
+
+
+def positional_identification(items: Sequence[ImageIdentities]) -> PositionalIdResult:
+    """Score predicted vs labeled name sequences left-to-right (order-sensitive).
+
+    For each recognition-enabled image, pad the shorter sequence with ``None``
+    and count position-wise equality. An image whose predicted multiset equals
+    the labeled multiset but whose order differs is counted as a ``swap_image``.
+    Empty/empty images are skipped (nothing to order).
+    """
+    hits = total = exact = compared = swaps = 0
+    excluded: list[str] = []
+    for item in items:
+        if not item.recognition_enabled:
+            excluded.append(item.image)
+            continue
+        predicted = list(item.predicted)
+        labeled = list(item.labeled)
+        if not predicted and not labeled:
+            continue
+        compared += 1
+        n = max(len(predicted), len(labeled))
+        for i in range(n):
+            total += 1
+            pred_i = predicted[i] if i < len(predicted) else None
+            lab_i = labeled[i] if i < len(labeled) else None
+            if pred_i is not None and pred_i == lab_i:
+                hits += 1
+        if predicted == labeled:
+            exact += 1
+        elif sorted(predicted) == sorted(labeled):
+            swaps += 1
+    return PositionalIdResult(
+        position_hits=hits,
+        position_total=total,
+        exact_order_images=exact,
+        compared_images=compared,
+        swap_images=swaps,
+        excluded_images=excluded,
+    )
+
+
+# ---------------------------------------------------------------------------
 # FIR-5 S3 §F — face-level identification over pooled decisions
 # ---------------------------------------------------------------------------
 

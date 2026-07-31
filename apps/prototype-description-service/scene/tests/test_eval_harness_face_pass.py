@@ -425,3 +425,60 @@ def test_summary_counts_crowds_and_errors():
         "faces_found": 4,
         "latency_ms": None,  # these rows carry no elapsed_ms (legacy shape)
     }
+
+
+# --- A-01: names element type (dict rows, not bare strings) -------------------
+
+
+def test_face_pass_row_names_type_is_list_of_dict():
+    """FacePassRow.names is list[dict], matching _extract_identities output."""
+    from typing import get_type_hints
+
+    hints = get_type_hints(FacePassRow)
+    # Annotated as list[dict[str, Any]] (or equivalent); not list[str].
+    assert "dict" in str(hints["names"]).lower()
+    assert "str" not in str(hints["names"]).replace("dict[str", "")
+
+
+def test_load_face_pass_rows_rejects_bare_string_names(tmp_path):
+    """A-01: wrong element shape fails loudly — no silent dual-shape load."""
+    out = tmp_path / "faces.jsonl"
+    out.write_text(
+        json.dumps(
+            {
+                "sha256": "s1",
+                "path": "a.jpg",
+                "source": "localwp_uploads",
+                "media_id": 900_000,
+                "face_count": 1,
+                "names": ["Amy"],  # legacy bare-string shape
+                "error": None,
+            }
+        )
+        + "\n"
+    )
+    with pytest.raises(ValueError, match="names\\[0\\] must be a dict"):
+        load_face_pass_rows(out)
+
+
+def test_load_face_pass_rows_accepts_dict_identity_names(tmp_path):
+    """A-01: positional dict rows load cleanly."""
+    out = tmp_path / "faces.jsonl"
+    names = [{"name": "Amy", "bbox": {"x": 1, "y": 2, "width": 3, "height": 4}, "unpositioned": False}]
+    out.write_text(
+        json.dumps(
+            {
+                "sha256": "s1",
+                "path": "a.jpg",
+                "source": "localwp_uploads",
+                "media_id": 900_000,
+                "face_count": 1,
+                "names": names,
+                "error": None,
+            }
+        )
+        + "\n"
+    )
+    rows = load_face_pass_rows(out)
+    assert len(rows) == 1
+    assert rows[0].names == names

@@ -52,6 +52,7 @@ from .face_metrics import (
     face_identification_pr,
     face_unknown_rejection,
     identification_pr,
+    positional_identification,
 )
 from .manifest import Provenance, ProvenanceSource, SliceTag
 from .schema import SCHEMA, DocKind
@@ -214,6 +215,36 @@ def _validate_record_kind(run_record: dict[str, Any]) -> None:
         raise ReportError("run record has no 'items' key — is this a report file passed as a run record?")
     if "provenance" not in run_record:
         raise ReportError("run record has no 'provenance' block")
+    items = run_record["items"]
+    if not isinstance(items, list):
+        raise ReportError(f"run record 'items' must be a list, got {type(items).__name__}")
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise ReportError(f"run record items[{index}] must be a dict, got {type(item).__name__}")
+        identities = item.get("identities", [])
+        _validate_identities_element_types(identities, context=f"items[{index}].identities")
+
+
+def _validate_identities_element_types(identities: Any, *, context: str) -> None:
+    """Require identities to be a list of dict rows (A-10) — never bare strings.
+
+    List-ness alone is not enough: a list of the wrong element type used to pass
+    validation and only fail later inside scoring, far from the cause.
+    """
+    if not isinstance(identities, list):
+        raise ReportError(f"{context} must be a list, got {type(identities).__name__}")
+    for index, entry in enumerate(identities):
+        if not isinstance(entry, dict):
+            raise ReportError(
+                f"{context}[{index}] must be a dict identity row "
+                f"(keys include 'name'); got {type(entry).__name__} — "
+                "greenfield rejects bare-string identity lists"
+            )
+        if "name" not in entry:
+            raise ReportError(
+                f"{context}[{index}] is missing required key 'name' "
+                f"(keys present: {sorted(entry)!r})"
+            )
 
 
 def _model_provenance(items: list[dict[str, Any]]) -> dict[str, list[str]]:
@@ -471,9 +502,9 @@ def score_run_record(
                 labeled_faces=face_count,
             )
         )
-        # item["identities"] may be dict rows ({name,bbox,unpositioned}) from
-        # _extract_identities or legacy plain name strings — normalize to str
-        # names so ImageIdentities.predicted (Sequence[str]) stays hashable.
+        # item["identities"] are positional dict rows from _extract_identities
+        # ({name,bbox,unpositioned,...}); identity_names keeps L→R order as str
+        # for ImageIdentities.predicted (Sequence[str]).
         identifications.append(
             ImageIdentities(
                 image=path,
@@ -532,10 +563,29 @@ def score_run_record(
 
     det = detection_pr(detections)
     ident = identification_pr(identifications)
+    # Order-sensitive binding score (A-02): set-based identification_pr cannot
+    # distinguish a correct left-to-right interleave from a swap of the same names.
+    positional = positional_identification(identifications)
 
     ignored_pairs = {tuple(p) for p in (ignore_list or {}).get("wrong_names", [])}
     live_wrong = [list(p) for p in ident.wrong_names if tuple(p) not in ignored_pairs]
     ignored_wrong = [list(p) for p in ident.wrong_names if tuple(p) in ignored_pairs]
+
+    # Surface fetch-time ordering degradation (A-07): missing/malformed bboxes
+    # must not silently reinstate alphabetical name order without a number.
+    ordering_positional = 0
+    ordering_degraded = 0
+    degraded_paths: list[str] = []
+    for item in run_record["items"]:
+        if item.get("error"):
+            continue
+        source = item.get("identity_ordering")
+        path = str(item.get("path", item.get("media_id", "?")))
+        if source == "degraded":
+            ordering_degraded += 1
+            degraded_paths.append(path)
+        elif source == "positional":
+            ordering_positional += 1
 
     fetch_provenance = dict(run_record["provenance"])
     provenance = {
@@ -611,6 +661,22 @@ def score_run_record(
                 "excluded_images": ident.excluded_images,
                 "wrong_names": live_wrong,
                 "ignored_wrong_names": ignored_wrong,
+                # A-02: order-sensitive score alongside set-based P/R.
+                "positional": {
+                    "position_accuracy": positional.position_accuracy,
+                    "position_hits": positional.position_hits,
+                    "position_total": positional.position_total,
+                    "exact_order_rate": positional.exact_order_rate,
+                    "exact_order_images": positional.exact_order_images,
+                    "compared_images": positional.compared_images,
+                    "swap_images": positional.swap_images,
+                },
+            },
+            # A-07: loud surface for bbox-missing ordering degradation.
+            "identity_ordering": {
+                "positional_images": ordering_positional,
+                "degraded_images": ordering_degraded,
+                "degraded_paths": degraded_paths,
             },
         },
         "per_image": per_image,
@@ -837,6 +903,25 @@ def _markdown(scored: dict[str, Any]) -> str:
         f"- micro precision: {_fmt(ident['precision'])} recall: {_fmt(ident['recall'])}",
         f"- macro precision: {_fmt(ident['macro_precision'])} recall: {_fmt(ident['macro_recall'])}",
         f"- true rejections (strangers): {ident['true_rejections']}",
+    ]
+    positional_block = ident.get("positional") or {}
+    if positional_block:
+        lines += [
+            f"- positional accuracy (L→R order): {_fmt(positional_block.get('position_accuracy'))} "
+            f"(hits={positional_block.get('position_hits')} / "
+            f"{positional_block.get('position_total')}; "
+            f"exact-order images={positional_block.get('exact_order_images')}/"
+            f"{positional_block.get('compared_images')}; "
+            f"swaps={positional_block.get('swap_images')})",
+        ]
+    ordering = scored["faces"].get("identity_ordering") or {}
+    if ordering.get("degraded_images"):
+        lines += [
+            f"- ⚠ identity ordering degraded on {ordering['degraded_images']} image(s) "
+            f"(missing/malformed bbox → not pure L→R): "
+            + ", ".join(f"`{p}`" for p in ordering.get("degraded_paths", [])),
+        ]
+    lines += [
         "",
         "### Wrong-name errors (top product risk — every instance listed)",
         "",

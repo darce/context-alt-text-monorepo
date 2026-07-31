@@ -93,7 +93,10 @@ class FacePassRow:
     source: str
     media_id: int
     face_count: int | None  # None iff the item errored
-    names: list[str]
+    # Positional identity rows from ``_extract_identities``: each entry is a dict
+    # ``{name, bbox, unpositioned, ...}``. Greenfield — bare-string name lists are
+    # rejected on load (A-01); old checkpoints must be discarded, not shimmmed.
+    names: list[dict[str, Any]]
     error: str | None
     elapsed_ms: float | None = None  # per-item analyze wall-clock (open-loop, PERF-03); None on legacy rows
 
@@ -189,12 +192,42 @@ _ROW_FIELDS = {f.name for f in fields(FacePassRow)}
 _REQUIRED_ROW_FIELDS = {f.name for f in fields(FacePassRow) if f.default is MISSING}
 
 
+def _validate_names_elements(names: Any, *, context: str) -> list[dict[str, Any]]:
+    """Require ``names`` to be a list of identity dicts — never bare strings (A-01).
+
+    Greenfield: a checkpoint written under the pre-positional schema is discarded
+    rather than shimmmed. Wrong element type raises so load cannot silently hand
+    dict consumers a list of strings (or vice versa).
+    """
+    if not isinstance(names, list):
+        raise ValueError(f"{context}: names must be a list, got {type(names).__name__}")
+    validated: list[dict[str, Any]] = []
+    for index, entry in enumerate(names):
+        if not isinstance(entry, dict):
+            raise ValueError(
+                f"{context}: names[{index}] must be a dict with at least 'name' "
+                f"(positional identity row); got {type(entry).__name__!r} — "
+                "greenfield rejects bare-string name lists; discard the checkpoint"
+            )
+        if "name" not in entry:
+            raise ValueError(
+                f"{context}: names[{index}] is missing required key 'name' "
+                f"(keys present: {sorted(entry)!r})"
+            )
+        validated.append(entry)
+    return validated
+
+
 def load_face_pass_rows(path: Path) -> list[FacePassRow]:
-    """Read a checkpoint back. A truncated final line (killed mid-write) is dropped."""
+    """Read a checkpoint back. A truncated final line (killed mid-write) is dropped.
+
+    Element-type errors on ``names`` raise (A-01) — wrong shape must not load
+    silently. A torn/malformed JSON line is still skipped.
+    """
     if not path.exists():
         return []
     rows: list[FacePassRow] = []
-    for line in path.read_text().splitlines():
+    for line_no, line in enumerate(path.read_text().splitlines(), start=1):
         line = line.strip()
         if not line:
             continue
@@ -205,6 +238,10 @@ def load_face_pass_rows(path: Path) -> list[FacePassRow]:
         # required fields present, no unknown keys; missing optional fields backfill from defaults
         if not isinstance(raw, dict) or not (_REQUIRED_ROW_FIELDS <= set(raw) <= _ROW_FIELDS):
             continue
+        raw = dict(raw)
+        raw["names"] = _validate_names_elements(
+            raw.get("names"), context=f"{path}:{line_no}"
+        )
         rows.append(FacePassRow(**raw))
     return rows
 
@@ -271,7 +308,9 @@ def run_face_pass(
                 image_bytes = image_path.read_bytes()
                 job_id = client.analyze([(media_id, image_path.name, image_bytes)])
                 client.wait_job(job_id)
-                names, face_count = _extract_identities(client.media_identities([media_id]), media_id)
+                names, face_count, _ordering = _extract_identities(
+                    client.media_identities([media_id]), media_id
+                )
                 row = FacePassRow(
                     sha256=record.sha256,
                     path=record.path,

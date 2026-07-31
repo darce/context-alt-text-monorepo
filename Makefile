@@ -446,12 +446,16 @@ test-scripts:
 		scripts/test_check_overrides_lock_digest.py scripts/test_consumer_setup_doc.py \
 		scripts/test_remote_gate_guards.py \
 		scripts/train/occlusion/test_license_policy.py \
+		scripts/train/occlusion/test_license_policy_hardening.py \
 		-q --tb=short --durations=25
 	@bash scripts/deploy/tests/test-smoke-gate.sh
 
 # Permanent [TEST-15] discrimination guard for the licence/provenance gate.
 # test-scripts above proves test_license_policy.py is green; this proves that
-# green can go red. Applies 12 known-bad mutations to license_policy.py in
+# green can go red. Its victim suite is test_license_policy.py only —
+# test_license_policy_hardening.py is gated by test-scripts but kills no
+# mutant, so coverage that lives only there is not discrimination evidence.
+# Applies 12 known-bad mutations to license_policy.py in
 # place (restored under finally) plus one semantically inert CONTROL, and fails
 # unless every required mutant is killed by its own named victim tests and the
 # CONTROL survives. M12 is a declared known gap (no victim test yet; owned by

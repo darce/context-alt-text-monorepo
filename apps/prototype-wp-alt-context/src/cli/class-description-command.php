@@ -399,6 +399,11 @@ class DescriptionCommand extends \WP_CLI_Command {
 			);
 		}
 
+		// Invariant: non-empty alt and acx_alt_decorative must not coexist.
+		// Decorative (empty alt + marker) always proceeds the write gate — clear
+		// only after verified non-empty read-back, never before [DATA-14].
+		DescriptionHistoryService::clear_decorative_marker_after_verified_alt( $media_id, $current );
+
 		// Stamp provenance only after a verified alt write so history never lists
 		// a Generated-alt for a draft that did not land [rg-015].
 		$provenance          = $provenance_for_gate;

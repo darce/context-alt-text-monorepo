@@ -498,6 +498,13 @@ class DescribeMediaService {
 			return $response;
 		}
 
+		// Invariant: non-empty alt and acx_alt_decorative must not coexist.
+		// Decorative images (alt '' + marker) always pass the empty-alt write
+		// gate as proceed — clear only after verified non-empty read-back
+		// [DATA-14]. Return value of clear is soft: alt already landed; a stuck
+		// marker is logged by bulk apply's sibling path, not reclassified here.
+		DescriptionHistoryService::clear_decorative_marker_after_verified_alt( $media_id, $current );
+
 		$expected_provenance = $this->expected_meta_after_core_transforms( self::PROVENANCE_META_KEY, $provenance );
 		// R21-BR-04: always read back. A non-false accept may still persist a
 		// divergent provenance array (same class as the marker path below) —

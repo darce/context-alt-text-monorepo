@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Api\Services\DescriptionCandidateService;
+use AltContext\Api\Services\DescriptionHistoryService;
 use AltContext\Tests\TestCase;
+use WP_Error;
 
 /**
  * @covers \AltContext\Api\Services\DescriptionCandidateService
@@ -177,28 +179,33 @@ class DescriptionCandidateServiceTest extends TestCase
     }
 
     /**
-     * A-02: after un-mark (empty alt, no acx_alt_decorative), classification is
+     * A-02: after un-mark via record_correction(…, false), classification is
      * missing_alt — the image returns to the describe-candidate queue.
-     * human_edit is intentionally ignored by the classifier.
+     * Disk state is produced by the real un-mark write path, not planted meta
+     * that only looks post-un-mark [TEST-15]. human_edit from the correction
+     * is intentionally ignored by the classifier.
      */
     public function testEmptyAltWithoutDecorativeMarkerAfterUnmarkIsMissingAlt(): void
     {
-        // Simulate post-un-mark disk: empty alt, no marker (human_edit may exist).
+        // Start decorative: empty alt + marker. post_type required for correction.
         $this->plantAttachment(84, 'Unmarked spacer', 'image/jpeg', '');
-        $GLOBALS['__ac_post_meta'][84]['_acx_description_human_edit'] = array(
-            'alt_text'  => '',
-            'edited_at' => '2026-01-01 00:00:00',
-            'user_id'   => 1,
-        );
-        // Ensure no decorative marker.
-        unset($GLOBALS['__ac_post_meta'][84]['acx_alt_decorative']);
+        $GLOBALS['__ac_posts'][84]->post_type = 'attachment';
+        $GLOBALS['__ac_post_meta'][84]['acx_alt_decorative'] = '1';
 
-        $service = new DescriptionCandidateService();
-        $status  = $service->get_status_for_media_ids(array(84));
+        $candidate = new DescriptionCandidateService();
+        $before    = $candidate->get_status_for_media_ids(array(84));
+        $this->assertSame('decorative', $before[0]['reason']);
+
+        $correction = (new DescriptionHistoryService())->record_correction(84, '', false);
+        $this->assertNotInstanceOf(WP_Error::class, $correction);
+        $this->assertSame('', get_post_meta(84, 'acx_alt_decorative', true));
+        $this->assertArrayNotHasKey('acx_alt_decorative', $GLOBALS['__ac_post_meta'][84] ?? []);
+
+        $status = $candidate->get_status_for_media_ids(array(84));
         $this->assertSame('missing_alt', $status[0]['reason']);
         $this->assertSame('missing_alt', $status[0]['candidate_reason']);
 
-        $result = $service->list_missing_alt_candidates(limit: 10, offset: 0);
+        $result = $candidate->list_missing_alt_candidates(limit: 10, offset: 0);
         $ids    = array_column($result['candidates'], 'media_id');
         $this->assertContains(84, $ids);
         $this->assertNotContains(

@@ -315,8 +315,9 @@ class DescriptionHistoryService {
 		// outcome from a filter-injected alt the operator never authored
 		// [rg-015]. Partial (not bare failed): alt + human-edit already
 		// verified; only the decorative half of the requested finish cannot
-		// honestly hold. Invariant afterwards: this path never leaves
-		// acx_alt_decorative='1' beside a non-empty stored alt.
+		// honestly hold. Clear any prior marker first so this path never leaves
+		// acx_alt_decorative='1' beside a non-empty stored alt [DATA-14] —
+		// the early clear block above skips when $decorative === true.
 		//
 		// S7-BR-03: read the marker back after plant. Without acx_alt_decorative,
 		// empty alt is classified as missing_alt rather than decorative —
@@ -324,12 +325,28 @@ class DescriptionHistoryService {
 		// (same pattern as ALT_META / HUMAN_EDIT_META above).
 		if ( $decorative ) {
 			if ( '' !== trim( $current ) ) {
+				// Prior marker may still be on disk (plant path skipped the early
+				// clear). Clear + read-back before returning [DATA-14].
+				$marker_clear = self::clear_decorative_marker_after_verified_alt( $media_id, $current );
+				if ( ! $marker_clear ) {
+					return new WP_Error(
+						'description_correction_partial',
+						'Alt text was saved, but the decorative marker could not be cleared. Please try again so the image is treated as described.',
+						array(
+							'status'          => 500,
+							'stored_alt_text' => is_string( $current ) ? $current : ( is_string( $expected_alt ) ? $expected_alt : $normalized_alt_text ),
+							// Clear failed: marker still '1' on disk [A-03][DATA-14].
+							'is_decorative'   => true,
+						)
+					);
+				}
 				return new WP_Error(
 					'description_correction_partial',
 					'Alt text was saved, but the stored value is non-empty so the decorative marker was not planted. Decorative requires empty alt; correct the stored alt or retry without decorative.',
 					array(
 						'status'          => 500,
 						'stored_alt_text' => is_string( $current ) ? $current : ( is_string( $expected_alt ) ? $expected_alt : $normalized_alt_text ),
+						// Marker clear verified; is_decorative from storage read-back [A-03].
 						'is_decorative'   => $this->read_decorative_marker( $media_id ),
 					)
 				);
@@ -440,6 +457,30 @@ class DescriptionHistoryService {
 	private function read_decorative_marker( int $media_id ): bool {
 		$raw = get_post_meta( $media_id, self::DECORATIVE_META, true );
 		return is_string( $raw ) && '1' === $raw;
+	}
+
+	/**
+	 * Clear acx_alt_decorative after a verified non-empty alt write.
+	 *
+	 * Shared by alt writers that are not the correction plant path (REST
+	 * single-image describe, CLI generate, and adoptable by bulk apply). Call
+	 * only after alt write read-back succeeded — never on an unverified write.
+	 * Empty verified alt is a no-op (marker may legitimately remain). Returns
+	 * whether the marker is clear afterwards: true when absent / not '1', or
+	 * when alt was empty; false only when delete ran and the marker still
+	 * reads '1' [DATA-14].
+	 *
+	 * @param int    $media_id      Attachment ID.
+	 * @param string $verified_alt  Post-write alt read-back (already verified).
+	 */
+	public static function clear_decorative_marker_after_verified_alt( int $media_id, string $verified_alt ): bool {
+		if ( '' === trim( $verified_alt ) ) {
+			return true;
+		}
+		delete_post_meta( $media_id, self::DECORATIVE_META );
+		// [DATA-14] delete_post_meta return is not verification.
+		$after = get_post_meta( $media_id, self::DECORATIVE_META, true );
+		return ! ( is_string( $after ) && '1' === $after );
 	}
 
 	/**

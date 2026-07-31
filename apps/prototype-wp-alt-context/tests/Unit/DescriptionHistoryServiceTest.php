@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Api\DescribeController;
+use AltContext\Api\Services\DescribeMediaService;
 use AltContext\Api\Services\DescriptionHistoryService;
+use AltContext\Cli\DescriptionCommand;
 use AltContext\Tests\TestCase;
 use WP_Error;
 use WP_REST_Request;
@@ -1551,6 +1553,56 @@ class DescriptionHistoryServiceTest extends TestCase
     }
 
     /**
+     * A-01 prior-marker variant: refuse-to-plant when a sanitize filter injects
+     * a non-empty alt must still clear a pre-existing acx_alt_decorative marker.
+     * Without the clear, disk holds non-empty alt + marker='1' — the invariant
+     * the refuse path claims to uphold. Sibling of
+     * testDecorativePlantRefusesWhenSanitizeFilterInjectsNonEmptyAlt (no prior
+     * marker) [DATA-14][TEST-15].
+     */
+    public function testDecorativePlantRefuseClearsPriorMarkerWhenSanitizeFilterInjectsNonEmptyAlt(): void
+    {
+        $mediaId = 629;
+        $injected = 'Injected default alt';
+        $this->seedAttachment($mediaId, 'Prior-marker sanitize inject refuse');
+        // Decorative disk state: empty alt + marker planted.
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', '');
+        $this->setPostMeta($mediaId, 'acx_alt_decorative', '1');
+
+        add_filter(
+            'sanitize_post_meta__wp_attachment_image_alt',
+            static function ($value) use ($injected) {
+                if (is_string($value) && '' === trim($value)) {
+                    return $injected;
+                }
+                return $value;
+            },
+            10,
+            1
+        );
+
+        $result = (new DescriptionHistoryService())->record_correction($mediaId, '', true);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('description_correction_partial', $result->get_error_code());
+        $errorData = $result->get_error_data();
+        $this->assertIsArray($errorData);
+        $this->assertSame(500, $errorData['status']);
+        $this->assertSame($injected, $errorData['stored_alt_text']);
+        // is_decorative is storage read-back after the refuse-path clear [DATA-14].
+        $this->assertArrayHasKey('is_decorative', $errorData);
+        $this->assertFalse($errorData['is_decorative']);
+
+        // Invariant: non-empty stored alt must never coexist with the marker.
+        $this->assertSame($injected, get_post_meta($mediaId, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta($mediaId, 'acx_alt_decorative', true));
+        $this->assertArrayNotHasKey(
+            'acx_alt_decorative',
+            $GLOBALS['__ac_post_meta'][$mediaId] ?? []
+        );
+    }
+
+    /**
      * A-03: success envelope from build_item emits is_decorative as a boolean
      * read from storage — true when planted, false when not [rg-015].
      */
@@ -1825,6 +1877,135 @@ class DescriptionHistoryServiceTest extends TestCase
         $this->assertSame($newAlt, $result->get_error_data()['stored_alt_text']);
         $this->assertTrue($result->get_error_data()['is_decorative']);
         $this->assertSame('1', get_post_meta($mediaId, 'acx_alt_decorative', true));
+    }
+
+    /**
+     * Single-image REST describe is decorative-blind without the post-write
+     * clear: empty existing alt always returns 'proceed', so a decorative
+     * attachment (alt '' + marker '1') accepts a non-empty draft and leaves
+     * the marker on disk. Assert the marker is gone after a verified write
+     * [DATA-14][TEST-15].
+     */
+    public function testSingleImageDescribeClearsDecorativeMarkerWhenWritingNonEmptyAlt(): void
+    {
+        $mediaId = 640;
+        $tempDir = sys_get_temp_dir() . '/acx-f5b-desc-' . uniqid();
+        mkdir($tempDir, 0o755, true);
+        $path = $tempDir . "/{$mediaId}.jpg";
+        file_put_contents($path, "\xff\xd8\xff\xe0bytes");
+        $GLOBALS['__ac_attached_file'][$mediaId] = $path;
+        $GLOBALS['__ac_posts'][$mediaId] = (object) [
+            'post_title'   => "Photo {$mediaId}",
+            'post_excerpt' => 'A caption.',
+            'post_content' => 'A long description.',
+            'post_type'    => 'attachment',
+            'ID'           => $mediaId,
+        ];
+        // Decorative: empty alt + marker. Gate treats empty alt as proceed.
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', '');
+        $this->setPostMeta($mediaId, 'acx_alt_decorative', '1');
+        $this->assertSame('1', get_post_meta($mediaId, 'acx_alt_decorative', true));
+
+        $this->setOption('acx_recognition_url', 'http://localhost:8000');
+        $this->setOption('acx_recognition_api_key', 'test-key');
+        $draft = 'A generated description for a formerly decorative image.';
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body'     => (string) json_encode([
+                'tenant_id'              => self::currentTenantId(),
+                'media_id'               => $mediaId,
+                'image_hash'             => str_repeat('a', 64),
+                'context_hash'           => str_repeat('b', 64),
+                'adapter'                => 'seeded',
+                'model_id'               => 'seeded-fixtures',
+                'model_version'          => '1',
+                'prompt_or_task_version' => '1',
+                'visual_facts'           => ['caption' => $draft, 'objects' => [], 'ocr_text' => null],
+                'alt_text_draft'         => $draft,
+                'context_used'           => ['sources' => [], 'applied' => false],
+                'provider_disclosure'    => ['provider' => 'none', 'left_service_boundary' => false],
+                'cached'                 => false,
+                'duration_ms'            => 3,
+                'retention_class'        => 'retain_all',
+                'tier'                   => 'provisional_cpu',
+                'result_generation'      => 0,
+            ]),
+        ]);
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', $mediaId);
+        $req->set_param('write_alt', true);
+        $result = (new DescribeController())->describe_media($req);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame($draft, get_post_meta($mediaId, '_wp_attachment_image_alt', true));
+        $this->assertSame('written', $result->get_data()['alt_text_write']['status'] ?? null);
+        // Invariant: non-empty alt must not coexist with the decorative marker.
+        $this->assertSame('', get_post_meta($mediaId, 'acx_alt_decorative', true));
+        $this->assertArrayNotHasKey(
+            'acx_alt_decorative',
+            $GLOBALS['__ac_post_meta'][$mediaId] ?? []
+        );
+
+        @unlink($path);
+        @rmdir($tempDir);
+    }
+
+    /**
+     * CLI generate --write is the other decorative-blind writer: same empty-alt
+     * proceed gate, then an unguarded alt write. After a verified non-empty
+     * write the marker must be gone [DATA-14][TEST-15].
+     */
+    public function testCliGenerateClearsDecorativeMarkerWhenWritingNonEmptyAlt(): void
+    {
+        $mediaId = 641;
+        $draft = 'CLI-generated description over a decorative marker.';
+        $this->seedAttachment($mediaId, 'CLI decorative clear');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', '');
+        $this->setPostMeta($mediaId, 'acx_alt_decorative', '1');
+        $this->assertSame('1', get_post_meta($mediaId, 'acx_alt_decorative', true));
+
+        \WP_CLI::reset_cli_messages();
+        $responses = [
+            $mediaId => new WP_REST_Response([
+                'media_id'               => $mediaId,
+                'alt_text_draft'         => $draft,
+                'adapter'                => 'seeded',
+                'model_id'               => 'local-v1',
+                'model_version'          => '2026-07-04',
+                'prompt_or_task_version' => 'describe-v1',
+            ]),
+        ];
+        $service = new class($responses) extends DescribeMediaService {
+            /** @param array<int,WP_REST_Response|WP_Error> $responses */
+            public function __construct(private array $responses)
+            {
+            }
+
+            public function describe_media(WP_REST_Request $request): WP_REST_Response|\WP_Error
+            {
+                $id = (int) $request->get_param('media_id');
+                return $this->responses[$id] ?? new WP_REST_Response([
+                    'media_id'       => $id,
+                    'alt_text_draft' => 'fallback',
+                ]);
+            }
+        };
+        $command = new DescriptionCommand(null, $service);
+        $command->__invoke(['generate'], [
+            'media-id' => (string) $mediaId,
+            'write' => true,
+            'format' => 'json',
+        ]);
+
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+        $this->assertSame('written', $payload['rows'][0]['status'] ?? null);
+        $this->assertSame($draft, get_post_meta($mediaId, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta($mediaId, 'acx_alt_decorative', true));
+        $this->assertArrayNotHasKey(
+            'acx_alt_decorative',
+            $GLOBALS['__ac_post_meta'][$mediaId] ?? []
+        );
     }
 
     /**

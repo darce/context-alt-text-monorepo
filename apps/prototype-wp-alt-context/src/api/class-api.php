@@ -345,7 +345,7 @@ class Api {
 					),
 					'altText'      => $has_alt ? $alt_text : null,
 					'isDecorative' => $is_decorative,
-										'editUrl'      => get_edit_post_link( $attachment_id, '' ),
+					'editUrl'      => get_edit_post_link( $attachment_id, '' ),
 					'tags'         => is_wp_error( $terms ) || ! is_array( $terms ) ? array() : array_values( $terms ),
 				);
 			},

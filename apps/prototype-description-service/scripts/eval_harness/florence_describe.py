@@ -128,15 +128,39 @@ def parse_tsv(text: str, images_dir: Path) -> list[tuple[int, Path]]:
 
 
 # Resume key: attachment alone is not enough — a base-ft row must not skip large-ft.
-DoneKey = tuple[int, str, str, str | None, str]
+# model_revision is REQUIRED (non-null): an unresolved revision is a hard error so
+# null-then-hash cannot silently break resume matching (A-05).
+DoneKey = tuple[int, str, str, str, str]
+
+
+def _row_resume_key(row: dict) -> DoneKey | None:
+    """Extract a resume key from a JSONL row, or None if incomplete/unusable."""
+    if not all(
+        k in row for k in ("attachment_id", "model_id", "model_version", "model_revision", "task")
+    ):
+        return None
+    revision = row["model_revision"]
+    if revision is None:
+        return None  # unstable key — never treat as done (A-05)
+    try:
+        return (
+            int(row["attachment_id"]),
+            str(row["model_id"]),
+            str(row["model_version"]),
+            str(revision),
+            str(row["task"]),
+        )
+    except (TypeError, ValueError):
+        return None
 
 
 def done_ids(jsonl_path: Path) -> set[DoneKey]:
     """Complete (attachment, model, version, revision, task) keys already recorded.
 
-    A row counts as done only when ``error`` is unset/null; error rows are retried.
-    Rows missing any resume-key field are not matches and must be retried (never
-    assumed compatible across models).
+    A row counts as done only when ``error`` is unset/null; error rows are retried
+    after the JSONL is rewritten to drop their prior row (A-03 — no unbounded
+    append of duplicate keys). Rows missing any resume-key field, or with a null
+    ``model_revision``, are not matches (A-05).
     """
     if not jsonl_path.exists():
         return set()
@@ -148,20 +172,9 @@ def done_ids(jsonl_path: Path) -> set[DoneKey]:
             row = json.loads(line)
             if row.get("error"):
                 continue
-            if not all(
-                k in row
-                for k in ("attachment_id", "model_id", "model_version", "model_revision", "task")
-            ):
-                continue
-            keys.add(
-                (
-                    int(row["attachment_id"]),
-                    str(row["model_id"]),
-                    str(row["model_version"]),
-                    row["model_revision"],
-                    str(row["task"]),
-                )
-            )
+            key = _row_resume_key(row)
+            if key is not None:
+                keys.add(key)
     return keys
 
 
@@ -170,10 +183,37 @@ def _resume_key(
     *,
     model_id: str,
     model_version: str,
-    model_revision: str | None,
+    model_revision: str,
     task: str,
 ) -> DoneKey:
     return (attachment_id, model_id, model_version, model_revision, task)
+
+
+def _rewrite_jsonl_dropping_retry_errors(
+    jsonl_path: Path,
+    retry_keys: set[DoneKey],
+) -> None:
+    """Drop error rows whose resume key is about to be reprocessed (A-03).
+
+    Without this, every resume re-appends a new error row for the same key and
+    the JSONL grows without bound. Successful rows for non-retry keys are kept;
+    a torn final line is dropped.
+    """
+    if not jsonl_path.exists() or not retry_keys:
+        return
+    kept: list[str] = []
+    for line in jsonl_path.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # torn line
+        key = _row_resume_key(row)
+        if key is not None and key in retry_keys and row.get("error"):
+            continue  # will be re-appended by this run
+        kept.append(json.dumps(row))
+    jsonl_path.write_text(("\n".join(kept) + ("\n" if kept else "")))
 
 
 # ---------------------------------------------------------------------- model
@@ -232,6 +272,30 @@ def load_captioner(spec: ModelSpec) -> tuple[Captioner, str | None]:
 
 
 # ------------------------------------------------------------------ run loop
+def _latency_aggregates(latencies: list[float]) -> dict[str, float | None]:
+    """mean/min/max/p50/p95 over caption latencies; all None when empty (A-12)."""
+    if not latencies:
+        return {
+            "mean_latency_s": None,
+            "min_latency_s": None,
+            "max_latency_s": None,
+            "p50_latency_s": None,
+            "p95_latency_s": None,
+        }
+    ordered = sorted(latencies)
+
+    def _pct(q: float) -> float:
+        return ordered[min(int(q * len(ordered)), len(ordered) - 1)]
+
+    return {
+        "mean_latency_s": round(sum(latencies) / len(latencies), 3),
+        "min_latency_s": round(min(latencies), 3),
+        "max_latency_s": round(max(latencies), 3),
+        "p50_latency_s": round(_pct(0.50), 3),
+        "p95_latency_s": round(_pct(0.95), 3),
+    }
+
+
 def run(
     rows: list[tuple[int, Path]],
     captioner: Captioner,
@@ -243,7 +307,20 @@ def run(
     limit: int = 0,
     stall_limit: int = DEFAULT_STALL_LIMIT,
 ) -> dict[str, object]:
-    """Caption ``rows`` into ``out_jsonl`` (append, per-item flush, resumable)."""
+    """Caption ``rows`` into ``out_jsonl`` (append, per-item flush, resumable).
+
+    ``resolved_revision`` must be a non-null commit/pin string: a null revision
+    makes the resume key unstable across a later resolve (A-05) and is rejected
+    before any write.
+    """
+    if resolved_revision is None:
+        raise ValueError(
+            f"model revision unresolved for {spec.model_id!r}: refusing to write "
+            "rows with a null model_revision (resume key would not match a later "
+            "resolved commit hash). Pin the revision or ensure the loaded config "
+            "exposes _commit_hash."
+        )
+    revision = str(resolved_revision)
     done = done_ids(out_jsonl)
 
     def _is_done(mid: int) -> bool:
@@ -252,7 +329,7 @@ def run(
                 mid,
                 model_id=spec.model_id,
                 model_version=spec.model_version,
-                model_revision=resolved_revision,
+                model_revision=revision,
                 task=CAPTION_TASK,
             )
             in done
@@ -270,6 +347,20 @@ def run(
     )
 
     out_jsonl.parent.mkdir(parents=True, exist_ok=True)
+    # A-03: drop prior error rows for keys we are about to reprocess so a resume
+    # re-appends at most one row per key rather than growing unbounded.
+    retry_keys = {
+        _resume_key(
+            mid,
+            model_id=spec.model_id,
+            model_version=spec.model_version,
+            model_revision=revision,
+            task=CAPTION_TASK,
+        )
+        for mid, _ in (*missing, *todo)
+    }
+    _rewrite_jsonl_dropping_retry_errors(out_jsonl, retry_keys)
+
     ok = errors = 0
     latencies: list[float] = []
     consecutive_failures = 0
@@ -281,7 +372,7 @@ def run(
                 "path": str(path),
                 "model_id": spec.model_id,
                 "model_version": spec.model_version,
-                "model_revision": resolved_revision,
+                "model_revision": revision,
                 "task": CAPTION_TASK,
                 "caption": None,
                 "latency_s": None,
@@ -295,6 +386,7 @@ def run(
             row["completed_at"] = time.time()
             f.write(json.dumps(row) + "\n")
             f.flush()
+            errors += 1  # A-04: summary must count missing-on-disk as errors
 
         for i, (mid, path) in enumerate(todo):
             row = _base_row(mid, path)
@@ -328,14 +420,15 @@ def run(
                 mean = round(sum(latencies) / len(latencies), 1) if latencies else None
                 print(f"  {i + 1}/{len(todo)} captioned (mean {mean}s/img, {errors} errors)", flush=True)
 
-    return {
+    summary: dict[str, object] = {
         "total": len(rows),
         "already_done": already_done,
         "missing": len(missing),
         "captioned_ok": ok,
         "errors": errors,
-        "mean_latency_s": round(sum(latencies) / len(latencies), 3) if latencies else None,
     }
+    summary.update(_latency_aggregates(latencies))
+    return summary
 
 
 # ----------------------------------------------------------------------- cli

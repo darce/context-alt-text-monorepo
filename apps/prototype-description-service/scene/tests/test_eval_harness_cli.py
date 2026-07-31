@@ -78,6 +78,47 @@ def test_fetch_produces_run_record_with_provenance(images_dir):
     assert record["provenance"]["head_sha"] == "f" * 40
     assert len(record["items"]) == 3
     assert all(item["error"] is None for item in record["items"])
+    # A-08: every item stamps image dimensions (None when bytes are not a real image).
+    assert all("image_width" in item and "image_height" in item for item in record["items"])
+    # A-07: ordering source stamped once identities extracted.
+    assert all(item.get("identity_ordering") == "positional" for item in record["items"])
+
+
+def test_fetch_persists_image_dimensions_from_pixels(tmp_path):
+    """A-08: absolute-pixel bboxes need image_width/height for positional scoring."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    from scripts.eval_harness.cli import fetch_run_record
+    from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest
+
+    images = tmp_path / "mock_images"
+    images.mkdir()
+    buf = BytesIO()
+    Image.new("RGB", (64, 48), color=(10, 20, 30)).save(buf, format="PNG")
+    (images / "img-1.jpg").write_bytes(buf.getvalue())
+    manifest = GoldenManifest(
+        manifest_version=2,
+        roster=["Alice Example"],
+        entries=[
+            GoldenEntry(
+                path="mock_images/img-1.jpg",
+                sha256="a" * 64,
+                media_id=1,
+                face_count=0,
+                present_identities=[],
+                context_pack={"title": "t"},
+                must_right=[],
+                easy_wrong=[],
+                policy={"recognition_enabled": True},
+            )
+        ],
+    )
+    record = fetch_run_record(manifest, str(tmp_path), HappyClient(), head_sha="f" * 40)
+    item = record["items"][0]
+    assert item["image_width"] == 64
+    assert item["image_height"] == 48
 
 
 def test_single_item_failure_is_isolated(images_dir):
@@ -357,48 +398,68 @@ def test_extract_identities_uses_is_auto_label_wire_shape():  # S8-01
             "media_url": None,
         },
     ]
-    identities, face_count = _extract_identities(payload, media_id=7)
+    identities, face_count, ordering = _extract_identities(payload, media_id=7)
     assert face_count == 2
+    assert ordering == "positional"
     assert identities == [
         {
             "name": "Alice Example",
             "bbox": {"x": 0.1, "y": 0.1, "width": 0.2, "height": 0.2},
             "unpositioned": False,
+            "identity_id": "id-1",  # A-09: wire identity_id preserved
         }
     ]
 
 
 def test_extract_identities_orders_left_to_right_not_alphabetically():
-    """Group-shot names bind by face-box x, not sorted(set(names)) alphabetical order."""
+    """Group-shot names bind by face-box x — order must differ from BOTH alpha sorts.
+
+    A-11 / TEST-15: with two names, L→R that is not alphabetical is always reverse-
+    alphabetical, so the fixture could not discriminate positional binding from a
+    reverse-alpha sort. Three names make alpha, reverse-alpha, and L→R all distinct.
+    """
     from scripts.eval_harness.cli import _extract_identities
 
-    # Alphabetical: Amy, Zoe. Left-to-right by bbox x: Zoe (x=10), Amy (x=200).
+    # Alpha: Amy, Cam, Zoe. Reverse: Zoe, Cam, Amy. L→R by x: Cam, Amy, Zoe.
     payload = [
         {
             "identity_id": "id-amy",
             "media_id": 1,
-            "cluster_label": "Amy Right",
+            "cluster_label": "Amy Mid",
             "is_auto_label": False,
-            "bbox": {"x": 200, "y": 40, "width": 50, "height": 60},
+            "bbox": {"x": 100, "y": 40, "width": 50, "height": 60},
         },
         {
             "identity_id": "id-zoe",
             "media_id": 1,
-            "cluster_label": "Zoe Left",
+            "cluster_label": "Zoe Right",
+            "is_auto_label": False,
+            "bbox": {"x": 200, "y": 40, "width": 50, "height": 60},
+        },
+        {
+            "identity_id": "id-cam",
+            "media_id": 1,
+            "cluster_label": "Cam Left",
             "is_auto_label": False,
             "bbox": {"x": 10, "y": 40, "width": 50, "height": 60},
         },
     ]
-    identities, face_count = _extract_identities(payload, media_id=1)
-    assert face_count == 2
-    assert [row["name"] for row in identities] == ["Zoe Left", "Amy Right"]
-    assert identities[0]["bbox"] == {"x": 10, "y": 40, "width": 50, "height": 60}
-    assert identities[1]["bbox"] == {"x": 200, "y": 40, "width": 50, "height": 60}
+    identities, face_count, ordering = _extract_identities(payload, media_id=1)
+    assert face_count == 3
+    assert ordering == "positional"
+    names = [row["name"] for row in identities]
+    assert names == ["Cam Left", "Amy Mid", "Zoe Right"]
+    assert names != sorted(names)  # not alphabetical
+    assert names != sorted(names, reverse=True)  # not reverse-alphabetical (A-11)
+    assert [row["identity_id"] for row in identities] == ["id-cam", "id-amy", "id-zoe"]
     assert all(row["unpositioned"] is False for row in identities)
 
 
 def test_extract_identities_unpositioned_after_positioned_no_fabricated_bbox():
-    """Missing/malformed bbox rows stay, mark unpositioned, sort after positioned (rg-015)."""
+    """Missing/malformed bbox rows stay, mark unpositioned, sort after positioned (rg-015).
+
+    A-07: ordering_source must be ``degraded`` (loud), not silent alpha fallback.
+    """
     from scripts.eval_harness.cli import _extract_identities
 
     payload = [
@@ -424,8 +485,9 @@ def test_extract_identities_unpositioned_after_positioned_no_fabricated_bbox():
             # bbox absent
         },
     ]
-    identities, face_count = _extract_identities(payload, media_id=1)
+    identities, face_count, ordering = _extract_identities(payload, media_id=1)
     assert face_count == 3
+    assert ordering == "degraded"  # A-07: loud, not silent
     assert [row["name"] for row in identities] == [
         "Bob Placed",
         "Alice NoBox",
@@ -433,6 +495,7 @@ def test_extract_identities_unpositioned_after_positioned_no_fabricated_bbox():
     ]
     assert identities[0]["unpositioned"] is False
     assert identities[0]["bbox"] == {"x": 80, "y": 10, "width": 40, "height": 40}
+    assert identities[0]["identity_id"] == "id-ok"
     assert identities[1]["unpositioned"] is True and identities[1]["bbox"] is None
     assert identities[2]["unpositioned"] is True and identities[2]["bbox"] is None
 
@@ -542,7 +605,7 @@ def _w1_audience_manifest_and_record(tmp_path):
                             "alt_text_draft": f"{_W1_PUBLIC_NAME} at a podium.",
                             "visual_facts": {"objects": []},
                         },
-                        "identities": [_W1_PUBLIC_NAME],
+                        "identities": [{"name": _W1_PUBLIC_NAME, "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0}, "unpositioned": False}],
                         "face_count": 1,
                         "error": None,
                     },
@@ -553,7 +616,7 @@ def _w1_audience_manifest_and_record(tmp_path):
                             "alt_text_draft": f"{_W1_LOCAL_NAME} at a party.",
                             "visual_facts": {"objects": []},
                         },
-                        "identities": ["Wrong Celebrity"],
+                        "identities": [{"name": "Wrong Celebrity", "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0}, "unpositioned": False}],
                         "face_count": 1,
                         "error": None,
                     },

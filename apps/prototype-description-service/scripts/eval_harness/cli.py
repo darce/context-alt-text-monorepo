@@ -30,6 +30,7 @@ import subprocess
 import sys
 import time
 from datetime import UTC, datetime
+from io import BytesIO
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -229,12 +230,20 @@ def fetch_run_record(
             "face_count": 0,
             "error": None,
             "latency_s": None,
+            # A-08: absolute-pixel bboxes are only well-defined with image size.
+            "image_width": None,
+            "image_height": None,
+            # A-07: "positional" | "degraded" once identities are extracted.
+            "identity_ordering": None,
         }
         describe_started: float | None = None
         try:
             if image_path is None:
                 raise FileNotFoundError(f"image file missing after NFC/NFD resolve: {entry.path}")
             image_bytes = image_path.read_bytes()
+            width, height = _image_dimensions(image_bytes)
+            item["image_width"] = width
+            item["image_height"] = height
             describe_started = time.monotonic()
             # Billed on attempt (a failed call may still charge); refunded on cache hit.
             paid_calls += 1
@@ -250,9 +259,12 @@ def fetch_run_record(
             job_id = client.analyze([(entry.media_id, image_path.name, image_bytes)])
             client.wait_job(job_id)
             identities_payload = client.media_identities([entry.media_id])
-            identities, face_count = _extract_identities(identities_payload, entry.media_id)
+            identities, face_count, ordering_source = _extract_identities(
+                identities_payload, entry.media_id
+            )
             item["identities"] = identities
             item["face_count"] = face_count
+            item["identity_ordering"] = ordering_source
         except Exception as exc:  # noqa: BLE001 — per-item isolation is the contract (rg-007)
             item["error"] = f"{type(exc).__name__}: {exc}"
             if item["latency_s"] is None and describe_started is not None:
@@ -306,35 +318,62 @@ def _parse_identity_bbox(raw: Any) -> dict[str, int | float] | None:
     return {"x": x, "y": y, "width": width, "height": height}
 
 
+def _image_dimensions(image_bytes: bytes) -> tuple[int | None, int | None]:
+    """Read (width, height) from image bytes; (None, None) when undecodable (A-08)."""
+    try:
+        from PIL import Image
+
+        with Image.open(BytesIO(image_bytes)) as im:
+            width, height = im.size
+        return int(width), int(height)
+    except Exception:  # noqa: BLE001 — non-image fixtures in unit tests; stamp None
+        return None, None
+
+
 def identity_names(identities: object) -> list[str]:
     """Turn stored ``identities`` into an ordered list of name strings.
 
-    Accepts both shapes written into run records / JSONL:
-
-    * New positional dict rows from ``_extract_identities``:
-      ``{"name", "bbox", "unpositioned"}``.
-    * Legacy plain name strings (committed ``benchmarks/`` results and older
-      JSONL rows) so historical records still score.
-
-    Left-to-right order is preserved — never re-sorted alphabetically. Entries
-    that are neither a string nor a dict with a truthy ``name`` are skipped,
-    never coerced.
+    Greenfield (A-06): only the positional dict row shape from
+    ``_extract_identities`` is accepted — ``{"name", "bbox", "unpositioned", ...}``.
+    Bare-string lists raise; dual-shape shims are forbidden. Left-to-right order
+    is preserved — never re-sorted alphabetically. Dict entries with a missing or
+    empty ``name`` raise rather than being silently skipped.
     """
     if not isinstance(identities, list):
-        return []
+        raise TypeError(
+            f"identities must be a list of dict rows, got {type(identities).__name__}"
+        )
     names: list[str] = []
-    for entry in identities:
-        if isinstance(entry, str):
-            names.append(entry)
-        elif isinstance(entry, dict):
-            name = entry.get("name")
-            if name:
-                names.append(str(name))
+    for index, entry in enumerate(identities):
+        if not isinstance(entry, dict):
+            raise TypeError(
+                f"identities[{index}] must be a dict identity row; got "
+                f"{type(entry).__name__} — greenfield rejects bare-string identity lists"
+            )
+        name = entry.get("name")
+        if not name:
+            raise ValueError(
+                f"identities[{index}] has empty/missing 'name' "
+                f"(keys present: {sorted(entry)!r})"
+            )
+        names.append(str(name))
     return names
 
 
-def _extract_identities(payload: Any, media_id: int) -> tuple[list[dict[str, Any]], int]:
-    """Normalize /media/identities rows for one media_id -> (identities, face_count).
+def _identity_row_from_wire(row: dict[str, Any], *, name: str, bbox: dict[str, int | float] | None) -> dict[str, Any]:
+    """Build a stored identity row, preserving wire ``identity_id`` when present (A-09)."""
+    stored: dict[str, Any] = {
+        "name": name,
+        "bbox": bbox,
+        "unpositioned": bbox is None,
+    }
+    if "identity_id" in row:
+        stored["identity_id"] = row["identity_id"]
+    return stored
+
+
+def _extract_identities(payload: Any, media_id: int) -> tuple[list[dict[str, Any]], int, str]:
+    """Normalize /media/identities rows for one media_id -> (identities, face_count, ordering).
 
     Wire shape (MediaIdentityService.list_by_media_ids): each row carries
     ``cluster_label`` and ``is_auto_label`` (inverted ``user_confirmed``). There
@@ -342,9 +381,12 @@ def _extract_identities(payload: Any, media_id: int) -> tuple[list[dict[str, Any
     ``is_auto_label is not True`` (S8-01 / rg-005).
 
     Confirmed names are bound to faces by left-to-right bbox position (ascending x,
-    then y, then name). Each entry carries its bbox; rows with missing/malformed
-    bbox are kept, marked unpositioned, and sorted after positioned rows — never
-    dropped and never given a fabricated bbox (rg-015).
+    then y, then name). Each entry carries its bbox and the wire ``identity_id``
+    when present (A-09). Rows with missing/malformed bbox are kept, marked
+    unpositioned, and sorted after positioned rows — never dropped and never given
+    a fabricated bbox (rg-015). When any confirmed row is unpositioned the
+    ordering_source is ``\"degraded\"`` so callers/report can surface the fall-back
+    rather than silently reinstating alphabetical order (A-07).
     """
     if not isinstance(payload, list):
         raise RemoteClientError(
@@ -365,23 +407,18 @@ def _extract_identities(payload: Any, media_id: int) -> tuple[list[dict[str, Any
             continue
         name = str(label)
         bbox = _parse_identity_bbox(row.get("bbox"))
+        stored = _identity_row_from_wire(row, name=name, bbox=bbox)
         if bbox is None:
-            unpositioned.append(
-                (name, {"name": name, "bbox": None, "unpositioned": True})
-            )
+            unpositioned.append((name, stored))
         else:
-            positioned.append(
-                (
-                    bbox["x"],
-                    bbox["y"],
-                    name,
-                    {"name": name, "bbox": bbox, "unpositioned": False},
-                )
-            )
+            positioned.append((bbox["x"], bbox["y"], name, stored))
     positioned.sort(key=lambda t: (t[0], t[1], t[2]))
+    # Unpositioned rows keep a stable secondary order (name) but the overall
+    # ordering_source is degraded so report surfaces the loss of pure L→R.
     unpositioned.sort(key=lambda t: t[0])
     identities = [t[-1] for t in positioned] + [t[1] for t in unpositioned]
-    return identities, face_count
+    ordering_source = "degraded" if unpositioned else "positional"
+    return identities, face_count, ordering_source
 
 
 def _manifest_sha(manifest: GoldenManifest) -> str:
@@ -649,7 +686,7 @@ def _build_buffalo_leg() -> _FaceLegBundle:
 
     PROV-01: buffalo run-records hold 512D embeddings of private images — they
     stay in git-ignored ``out/``; only score reports are promoted to
-    ``benchmarks/results/``.
+    ``docs/tasks/vlm/bakeoff-results/``.
     """
     if os.environ.get("ACX_EVAL_BENCH", "").strip().lower() not in _EVAL_BENCH_TRUTHY:
         sys.exit(

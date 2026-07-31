@@ -51,7 +51,7 @@ def _run_record() -> dict:
                     "model_version": "1",
                     "cached": False,
                 },
-                "identities": ["Alice Example"],
+                "identities": [{"name": "Alice Example", "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0}, "unpositioned": False}],
                 "face_count": 1,
                 "error": None,
             },
@@ -66,7 +66,7 @@ def _run_record() -> dict:
                     "model_version": "1",
                     "cached": True,
                 },
-                "identities": ["Alice Example"],  # wrong name: Bob labeled
+                "identities": [{"name": "Alice Example", "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0}, "unpositioned": False}],  # wrong name: Bob labeled
                 "face_count": 1,
                 "error": None,
             },
@@ -190,7 +190,7 @@ def test_detection_uses_face_count_and_counts_stranger_true_rejection():  # S3-0
                 "media_id": 1,
                 "path": "mock_images/group.jpg",
                 "describe": {"alt_text_draft": "Ryann and friends.", "visual_facts": {"objects": []}},
-                "identities": ["Ryann Wiseman"],
+                "identities": [{"name": "Ryann Wiseman", "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0}, "unpositioned": False}],
                 "face_count": 3,
                 "error": None,
             },
@@ -482,7 +482,7 @@ def _audience_fixtures() -> tuple[dict, list[dict]]:
                     "model_version": "1",
                     "cached": False,
                 },
-                "identities": [_PUBLIC_NAME],
+                "identities": [{"name": _PUBLIC_NAME, "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0}, "unpositioned": False}],
                 "face_count": 1,
                 "error": None,
             },
@@ -498,7 +498,7 @@ def _audience_fixtures() -> tuple[dict, list[dict]]:
                     "cached": False,
                 },
                 # Wrong name asserted — must never leak into a public report.
-                "identities": ["Wrong Celebrity"],
+                "identities": [{"name": "Wrong Celebrity", "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0}, "unpositioned": False}],
                 "face_count": 1,
                 "error": None,
             },
@@ -1603,46 +1603,86 @@ def test_score_run_record_identity_metrics_with_dict_shape():  # TEST-15
     assert bob["tp"] == 0 and bob["fp"] == 0 and bob["fn"] == 1
 
 
-def test_score_run_record_identity_metrics_legacy_string_shape():
-    """Committed benchmarks/ older JSONL rows hold plain name strings — still score."""
+def test_score_run_record_rejects_bare_string_identity_shape():  # A-06 / A-10
+    """Greenfield: bare-string identity lists fail validation loudly (no shim)."""
     record, entries = _identity_scoring_pair()
     for item in record["items"]:
         item["identities"] = [row["name"] for row in item["identities"]]
-    scored = score_run_record(record, entries)
-    ident = scored["faces"]["identification"]
-    assert ident["wrong_names"] == [["mock_images/bob-beach.jpg", "Alice Example"]]
-    alice = ident["per_identity"]["Alice Example"]
-    assert alice["tp"] == 1 and alice["fp"] == 1 and alice["fn"] == 0
-    bob = ident["per_identity"]["Bob Builder"]
-    assert bob["tp"] == 0 and bob["fp"] == 0 and bob["fn"] == 1
+    with pytest.raises(ReportError, match="dict identity row"):
+        score_run_record(record, entries)
 
-    # Byte-identical identification block for dict vs string shapes on same labels.
-    dict_record, dict_entries = _identity_scoring_pair()
-    scored_dict = score_run_record(dict_record, dict_entries)
-    assert scored["faces"]["identification"] == scored_dict["faces"]["identification"]
+
+def test_run_record_validation_rejects_wrong_identity_element_type():  # A-10
+    """List-ness alone is not enough — wrong element type must fail at validation."""
+    record, entries = _identity_scoring_pair()
+    record["items"][0]["identities"] = [42, True]
+    with pytest.raises(ReportError, match="identities\\[0\\].*dict"):
+        score_run_record(record, entries)
+
+
+def test_positional_metric_discriminates_swap_from_correct_order():  # A-02
+    """Set-based identification_pr is swap-blind; positional accuracy is not."""
+    from scripts.eval_harness.face_metrics import ImageIdentities, identification_pr, positional_identification
+
+    labeled = ["Cam Left", "Amy Mid", "Zoe Right"]
+    correct = ImageIdentities(image="group.jpg", predicted=list(labeled), labeled=list(labeled))
+    swapped = ImageIdentities(
+        image="group.jpg",
+        predicted=["Amy Mid", "Cam Left", "Zoe Right"],  # left/mid swap
+        labeled=list(labeled),
+    )
+    # Set-based PR is identical for both (A-02 premise).
+    pr_ok = identification_pr([correct])
+    pr_sw = identification_pr([swapped])
+    assert pr_ok.precision == pr_sw.precision == 1.0
+    assert pr_ok.recall == pr_sw.recall == 1.0
+    # Positional score diverges.
+    pos_ok = positional_identification([correct])
+    pos_sw = positional_identification([swapped])
+    assert pos_ok.position_accuracy == 1.0
+    assert pos_sw.position_accuracy == pytest.approx(1 / 3)
+    assert pos_ok.swap_images == 0 and pos_sw.swap_images == 1
+    assert pos_ok.position_accuracy != pos_sw.position_accuracy
+
+
+def test_score_run_record_wires_positional_into_report():  # A-02
+    """Report faces.identification.positional is populated and swap-sensitive."""
+    record, entries = _identity_scoring_pair()
+    # Single-name rows: exact order.
+    scored = score_run_record(record, entries)
+    pos = scored["faces"]["identification"]["positional"]
+    assert pos["position_hits"] == 1  # Alice correct; Bob image is wrong name (0 hits of 1)
+    assert pos["position_total"] == 2
+    assert "exact_order_rate" in pos and "swap_images" in pos
 
 
 def test_identity_names_preserves_left_to_right_not_alphabetical():
-    """Normalizer keeps stored L→R order even when it disagrees with alphabetical."""
+    """Normalizer keeps stored L→R order; three names beat reverse-alpha (A-11)."""
     from scripts.eval_harness.cli import identity_names
 
-    # Alphabetical: Amy Right, Zoe Left. Stored left-to-right: Zoe then Amy.
+    # Alpha: Amy Mid, Cam Left, Zoe Right. Reverse: Zoe, Cam, Amy. L→R: Cam, Amy, Zoe.
     raw = [
-        _dict_identity("Zoe Left", x=10.0),
-        _dict_identity("Amy Right", x=200.0),
+        _dict_identity("Cam Left", x=10.0),
+        _dict_identity("Amy Mid", x=100.0),
+        _dict_identity("Zoe Right", x=200.0),
     ]
-    assert identity_names(raw) == ["Zoe Left", "Amy Right"]
-    assert identity_names(raw) != sorted(identity_names(raw))
-    # Legacy strings keep order too.
-    assert identity_names(["Zoe Left", "Amy Right"]) == ["Zoe Left", "Amy Right"]
-    # Skip junk; never coerce.
-    assert identity_names(
-        [
-            _dict_identity("Keep Me"),
-            {"name": "", "bbox": None, "unpositioned": True},
-            {"bbox": None, "unpositioned": True},  # no name
-            None,
-            42,
-            "Also Keep",
-        ]
-    ) == ["Keep Me", "Also Keep"]
+    names = identity_names(raw)
+    assert names == ["Cam Left", "Amy Mid", "Zoe Right"]
+    assert names != sorted(names)
+    assert names != sorted(names, reverse=True)  # A-11: not reverse-alphabetical either
+
+
+def test_identity_names_rejects_bare_string_shape():  # A-06
+    from scripts.eval_harness.cli import identity_names
+
+    with pytest.raises(TypeError, match="dict identity row"):
+        identity_names(["Zoe Left", "Amy Right"])
+
+
+def test_identity_names_rejects_empty_name_and_non_dict():  # A-06
+    from scripts.eval_harness.cli import identity_names
+
+    with pytest.raises(ValueError, match="empty/missing"):
+        identity_names([{"name": "", "bbox": None, "unpositioned": True}])
+    with pytest.raises(TypeError, match="dict identity row"):
+        identity_names([_dict_identity("Keep Me"), 42])

@@ -66,3 +66,40 @@ def test_write_report_total_cost_includes_failed_describe_attempts(tmp_path, mon
     # 2 paid attempts × $0.10 — NOT $0.10 from the single non-cached ok row alone
     assert summary["total_cost_usd"] == 0.20
     assert "2 paid describe calls" in report_md.read_text()
+
+
+def test_write_report_total_cost_excludes_pre_describe_failures(tmp_path, monkeypatch):
+    """A-16: rows that fail before describe (latency_s None) must not be billed.
+
+    Runner only does paid_calls += 1 after describe_started is set; missing-file /
+    bad-dimensions paths never reach that line, so latency_s stays None.
+    """
+    jsonl = tmp_path / "baseline.jsonl"
+    report_json = tmp_path / "baseline.json"
+    report_md = tmp_path / "baseline.md"
+    monkeypatch.setattr(db, "JSONL", jsonl)
+    monkeypatch.setattr(db, "REPORT_JSON", report_json)
+    monkeypatch.setattr(db, "REPORT_MD", report_md)
+
+    rows = [
+        _row(1, cached=False),  # paid
+        _row(
+            2,
+            error="FileNotFoundError: image file missing after NFC/NFD resolve: x.jpg",
+            latency_s=None,
+        ),  # pre-describe failure — not billed
+        _row(3, error="RemoteClientError: boom", latency_s=0.4),  # paid (describe attempted)
+        _row(4, cached=True),  # refunded
+    ]
+    jsonl.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+
+    db._write_report(cost_per_image_usd=0.10)
+
+    report = json.loads(report_json.read_text())
+    summary = report["summary"]
+    assert summary["described_ok"] == 2
+    assert summary["errors"] == 2
+    assert summary["cost_per_image_usd"] == 0.10
+    # 2 paid attempts × $0.10 — pre-describe failure (latency_s None) excluded
+    assert summary["total_cost_usd"] == 0.20
+    assert "2 paid describe calls" in report_md.read_text()

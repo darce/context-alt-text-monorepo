@@ -1702,3 +1702,34 @@ class TestTaintOutranksLicenseFloor:
         result = policy.audit_provenance_row(row, category=policy.PolicyCategory.TRAINING_DATA)
         assert result.ok is False
         assert result.reason is policy.RejectionReason.INVALID_ROW
+
+
+class TestFloorLicenceIsOptionalNotWaived:
+    """GATE-03: the floor uses required=False. Pin both halves of that choice.
+
+    Flipping it to required=True leaves every other test green, so without
+    these the seam is undefended: a tightening would silently reject every
+    registry-sourced row that inherits its licence from the REGISTRY.
+    """
+
+    def test_registry_sourced_row_without_license_key_passes(self) -> None:
+        # rt-detr normalises to the registered rt_detr, which supplies Apache-2.0.
+        row = {"model_id": "rt-detr", "derived_from_model": ""}
+        assert "license" not in row
+        result = policy.audit_provenance_row(row, category=policy.PolicyCategory.MODEL_INGEST)
+        assert result.ok is True, (
+            f"floor rejected a registry-sourced row with no license field: {result.detail}"
+        )
+
+    def test_absent_license_does_not_waive_the_denylist(self) -> None:
+        # The other half: required=False must not become "licence is optional".
+        row = {"model_id": "rt-detr", "license": "AGPL-3.0", "derived_from_model": ""}
+        result = policy.audit_provenance_row(row, category=policy.PolicyCategory.MODEL_INGEST)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_LICENSE
+
+    def test_unregistered_id_without_license_still_fails_closed(self) -> None:
+        row = {"model_id": "not-registered", "derived_from_model": ""}
+        result = policy.audit_provenance_row(row, category=policy.PolicyCategory.MODEL_INGEST)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.MISSING_INGEST_ENTRY

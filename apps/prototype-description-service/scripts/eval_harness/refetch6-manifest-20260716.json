@@ -1,244 +1,244 @@
 {
- "manifest_version": 2,
- "roster": [
-  "Ellyn Heald",
-  "Hillary Sampliner",
-  "Laura Sampliner",
-  "Maria Correonero",
-  "Olivia Lee",
-  "Sarah Fairbank",
-  "Zoe Elefterin"
- ],
- "entries": [
-  {
-   "media_id": 610,
-   "path": "2026/07/hayalatirado_84878880_187473115659908_4488924185735270754_n.jpg",
-   "sha256": "7e172d0c4e8ccefae337e580bee3a4529c0e1aab5f7d5786848033d4562adad4",
-   "face_count": 1,
-   "present_identities": [
-    "Zoe Elefterin"
-   ],
-   "must_right": [
-    "Zoe Elefterin"
-   ],
-   "easy_wrong": [],
-   "policy": {
-    "recognition_enabled": true
-   },
-   "face_boxes": [
-    {
-     "x": 524.5,
-     "y": 407.5,
-     "w": 113.0,
-     "h": 143.0,
-     "name": "Zoe Elefterin",
-     "source": "workbench"
-    }
-   ],
-   "context_pack": {
-    "people": "Zoe Elefterin"
-   },
-   "provenance": {
-    "source": "localwp",
-    "license": "consented"
-   },
-   "base_caption": ""
-  },
-  {
-   "media_id": 584,
-   "path": "2026/07/sarahfairbank_90676306_152924202869158_1804058040157748005_n.jpg",
-   "sha256": "e906537e673024c69da5588dbb63e201e08d9343076b84cb2a2145f14483b293",
-   "face_count": 1,
-   "present_identities": [
-    "Sarah Fairbank"
-   ],
-   "must_right": [
-    "Sarah Fairbank"
-   ],
-   "easy_wrong": [],
-   "policy": {
-    "recognition_enabled": true
-   },
-   "face_boxes": [
-    {
-     "x": 507.5,
-     "y": 266.5,
-     "w": 135.0,
-     "h": 183.0,
-     "name": "Sarah Fairbank",
-     "source": "workbench"
-    }
-   ],
-   "context_pack": {
-    "people": "Sarah Fairbank"
-   },
-   "provenance": {
-    "source": "localwp",
-    "license": "consented"
-   },
-   "base_caption": ""
-  },
-  {
-   "media_id": 330,
-   "path": "2026/07/10401257_46151199077_2673_n.jpg",
-   "sha256": "e00a3ccd11fe1eba3d88ac09f8e807484884525d553cba6264e84d38ffc9e359",
-   "face_count": 1,
-   "present_identities": [
-    "Maria Correonero"
-   ],
-   "must_right": [
-    "Maria Correonero"
-   ],
-   "easy_wrong": [],
-   "policy": {
-    "recognition_enabled": true
-   },
-   "face_boxes": [
-    {
-     "x": 180.5,
-     "y": 211.0,
-     "w": 69.0,
-     "h": 94.0,
-     "name": "Maria Correonero",
-     "source": "workbench"
-    }
-   ],
-   "context_pack": {
-    "people": "Maria Correonero"
-   },
-   "provenance": {
-    "source": "localwp",
-    "license": "consented"
-   },
-   "base_caption": ""
-  },
-  {
-   "media_id": 212,
-   "path": "2026/07/IMG_5206-scaled-1.jpg",
-   "sha256": "7f4f7e11c879419a5d672f9ecc30d6f05fdcf210eafdd6e74cd9a8d8c10fdc41",
-   "face_count": 3,
-   "present_identities": [
-    "Olivia Lee"
-   ],
-   "must_right": [
-    "Olivia Lee"
-   ],
-   "easy_wrong": [],
-   "policy": {
-    "recognition_enabled": true
-   },
-   "face_boxes": [
-    {
-     "x": 946.5,
-     "y": 1897.5,
-     "w": 109.0,
-     "h": 157.0,
-     "name": "Olivia Lee",
-     "source": "workbench"
-    },
-    {
-     "x": 330.0,
-     "y": 1961.0,
-     "w": 452.0,
-     "h": 482.0,
-     "name": "Olivia Lee",
-     "source": "workbench"
-    },
-    {
-     "x": 1553.0,
-     "y": 1847.5,
-     "w": 340.0,
-     "h": 443.0,
-     "name": "Olivia Lee",
-     "source": "workbench"
-    }
-   ],
-   "context_pack": {
-    "people": "Olivia Lee"
-   },
-   "provenance": {
-    "source": "localwp",
-    "license": "consented"
-   },
-   "base_caption": ""
-  },
-  {
-   "media_id": 172,
-   "path": "2026/07/1930333_563893856751_1795_n.jpg",
-   "sha256": "849ddad34de8f0b5a9348a071eb3e3c3efa37a8391ee8a6cb179cc322d77a5e6",
-   "face_count": 2,
-   "present_identities": [
+  "manifest_version": 2,
+  "roster": [
+    "Ellyn Heald",
     "Hillary Sampliner",
-    "Laura Sampliner"
-   ],
-   "must_right": [
-    "Hillary Sampliner",
-    "Laura Sampliner"
-   ],
-   "easy_wrong": [],
-   "policy": {
-    "recognition_enabled": true
-   },
-   "face_boxes": [
+    "Laura Sampliner",
+    "Maria Correonero",
+    "Olivia Lee",
+    "Sarah Fairbank",
+    "Zoe Elefterin"
+  ],
+  "entries": [
     {
-     "x": 172.5,
-     "y": 375.0,
-     "w": 47.0,
-     "h": 64.0,
-     "name": "Laura Sampliner",
-     "source": "workbench"
+      "media_id": 610,
+      "path": "personal/zoe_elefterin_610.jpg",
+      "sha256": "7e172d0c4e8ccefae337e580bee3a4529c0e1aab5f7d5786848033d4562adad4",
+      "face_count": 1,
+      "present_identities": [
+        "Zoe Elefterin"
+      ],
+      "must_right": [
+        "Zoe Elefterin"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "face_boxes": [
+        {
+          "x": 524.5,
+          "y": 407.5,
+          "w": 113.0,
+          "h": 143.0,
+          "name": "Zoe Elefterin",
+          "source": "workbench"
+        }
+      ],
+      "context_pack": {
+        "people": "Zoe Elefterin"
+      },
+      "provenance": {
+        "source": "localwp",
+        "license": "consented"
+      },
+      "base_caption": ""
     },
     {
-     "x": 223.5,
-     "y": 377.5,
-     "w": 47.0,
-     "h": 59.0,
-     "name": "Hillary Sampliner",
-     "source": "workbench"
-    }
-   ],
-   "context_pack": {
-    "people": "Hillary Sampliner, Laura Sampliner"
-   },
-   "provenance": {
-    "source": "localwp",
-    "license": "consented"
-   },
-   "base_caption": ""
-  },
-  {
-   "media_id": 87,
-   "path": "2026/07/ellynheald_121498127_2686782204907317_2475106171415242644_n.jpg",
-   "sha256": "c9dd15c399458899c84d7b7c60c20437755c1c1d547541ebd5e177a3d3d046f0",
-   "face_count": 1,
-   "present_identities": [
-    "Ellyn Heald"
-   ],
-   "must_right": [
-    "Ellyn Heald"
-   ],
-   "easy_wrong": [],
-   "policy": {
-    "recognition_enabled": true
-   },
-   "face_boxes": [
+      "media_id": 584,
+      "path": "personal/sarah_fairbank_584.jpg",
+      "sha256": "e906537e673024c69da5588dbb63e201e08d9343076b84cb2a2145f14483b293",
+      "face_count": 1,
+      "present_identities": [
+        "Sarah Fairbank"
+      ],
+      "must_right": [
+        "Sarah Fairbank"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "face_boxes": [
+        {
+          "x": 507.5,
+          "y": 266.5,
+          "w": 135.0,
+          "h": 183.0,
+          "name": "Sarah Fairbank",
+          "source": "workbench"
+        }
+      ],
+      "context_pack": {
+        "people": "Sarah Fairbank"
+      },
+      "provenance": {
+        "source": "localwp",
+        "license": "consented"
+      },
+      "base_caption": ""
+    },
     {
-     "x": 682.0,
-     "y": 250.0,
-     "w": 188.0,
-     "h": 270.0,
-     "name": "Ellyn Heald",
-     "source": "workbench"
+      "media_id": 330,
+      "path": "personal/maria_correonero_330.jpg",
+      "sha256": "e00a3ccd11fe1eba3d88ac09f8e807484884525d553cba6264e84d38ffc9e359",
+      "face_count": 1,
+      "present_identities": [
+        "Maria Correonero"
+      ],
+      "must_right": [
+        "Maria Correonero"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "face_boxes": [
+        {
+          "x": 180.5,
+          "y": 211.0,
+          "w": 69.0,
+          "h": 94.0,
+          "name": "Maria Correonero",
+          "source": "workbench"
+        }
+      ],
+      "context_pack": {
+        "people": "Maria Correonero"
+      },
+      "provenance": {
+        "source": "localwp",
+        "license": "consented"
+      },
+      "base_caption": ""
+    },
+    {
+      "media_id": 212,
+      "path": "personal/olivia_lee_212.jpg",
+      "sha256": "7f4f7e11c879419a5d672f9ecc30d6f05fdcf210eafdd6e74cd9a8d8c10fdc41",
+      "face_count": 3,
+      "present_identities": [
+        "Olivia Lee"
+      ],
+      "must_right": [
+        "Olivia Lee"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "face_boxes": [
+        {
+          "x": 946.5,
+          "y": 1897.5,
+          "w": 109.0,
+          "h": 157.0,
+          "name": "Olivia Lee",
+          "source": "workbench"
+        },
+        {
+          "x": 330.0,
+          "y": 1961.0,
+          "w": 452.0,
+          "h": 482.0,
+          "name": "Olivia Lee",
+          "source": "workbench"
+        },
+        {
+          "x": 1553.0,
+          "y": 1847.5,
+          "w": 340.0,
+          "h": 443.0,
+          "name": "Olivia Lee",
+          "source": "workbench"
+        }
+      ],
+      "context_pack": {
+        "people": "Olivia Lee"
+      },
+      "provenance": {
+        "source": "localwp",
+        "license": "consented"
+      },
+      "base_caption": ""
+    },
+    {
+      "media_id": 172,
+      "path": "personal/hillary_sampliner_172.jpg",
+      "sha256": "849ddad34de8f0b5a9348a071eb3e3c3efa37a8391ee8a6cb179cc322d77a5e6",
+      "face_count": 2,
+      "present_identities": [
+        "Hillary Sampliner",
+        "Laura Sampliner"
+      ],
+      "must_right": [
+        "Hillary Sampliner",
+        "Laura Sampliner"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "face_boxes": [
+        {
+          "x": 172.5,
+          "y": 375.0,
+          "w": 47.0,
+          "h": 64.0,
+          "name": "Laura Sampliner",
+          "source": "workbench"
+        },
+        {
+          "x": 223.5,
+          "y": 377.5,
+          "w": 47.0,
+          "h": 59.0,
+          "name": "Hillary Sampliner",
+          "source": "workbench"
+        }
+      ],
+      "context_pack": {
+        "people": "Hillary Sampliner, Laura Sampliner"
+      },
+      "provenance": {
+        "source": "localwp",
+        "license": "consented"
+      },
+      "base_caption": ""
+    },
+    {
+      "media_id": 87,
+      "path": "personal/ellyn_heald_87.jpg",
+      "sha256": "c9dd15c399458899c84d7b7c60c20437755c1c1d547541ebd5e177a3d3d046f0",
+      "face_count": 1,
+      "present_identities": [
+        "Ellyn Heald"
+      ],
+      "must_right": [
+        "Ellyn Heald"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "face_boxes": [
+        {
+          "x": 682.0,
+          "y": 250.0,
+          "w": 188.0,
+          "h": 270.0,
+          "name": "Ellyn Heald",
+          "source": "workbench"
+        }
+      ],
+      "context_pack": {
+        "people": "Ellyn Heald"
+      },
+      "provenance": {
+        "source": "localwp",
+        "license": "consented"
+      },
+      "base_caption": ""
     }
-   ],
-   "context_pack": {
-    "people": "Ellyn Heald"
-   },
-   "provenance": {
-    "source": "localwp",
-    "license": "consented"
-   },
-   "base_caption": ""
-  }
- ]
+  ]
 }

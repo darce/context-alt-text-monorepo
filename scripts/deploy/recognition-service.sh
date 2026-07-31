@@ -199,52 +199,107 @@ preflight_branch_synced() {
 }
 
 # FIR stack shares the :dev image and volume-mounts YuNet+SFace ONNX (not baked
-# in; rsync excludes them). Deploy must fail closed if the host volume is empty.
-# Filenames match recognition/infrastructure/face_pipeline/provenance.py MODEL_MANIFEST.
-FACE_PIPELINE_ONNX_FILES=(
-  face_detection_yunet_2026may.onnx
-  face_recognition_sface_2021dec.onnx
+# in; rsync excludes them). Deploy/promote/reset must fail closed if the host
+# volume is empty or the bytes do not match the sha256 pins in
+# recognition/infrastructure/face_pipeline/provenance.py MODEL_MANIFEST.
+# Format: filename:sha256 (hex). Keep in lockstep with MODEL_MANIFEST.
+FACE_PIPELINE_ONNX_SHA256=(
+  "face_detection_yunet_2026may.onnx:ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0"
+  "face_recognition_sface_2021dec.onnx:0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"
 )
+
+# Host-local integrity check for face_pipeline ONNX weights (C-07 extractable body).
+# Args: models_dir. Prints OK on success; DIR_FAIL:/FILE_FAIL:/HASH_FAIL: + exit 1 otherwise.
+# Sourced by tests and shipped to the remote via declare -f for preflight.
+verify_face_pipeline_models_dir() {
+  local models_dir="${1:?models_dir required}"
+  local entry f expected actual
+  if [[ ! -d "${models_dir}" ]] || [[ ! -r "${models_dir}" ]]; then
+    echo "DIR_FAIL:${models_dir}"
+    return 1
+  fi
+  for entry in "${FACE_PIPELINE_ONNX_SHA256[@]}"; do
+    f="${entry%%:*}"
+    expected="${entry#*:}"
+    if [[ ! -f "${models_dir}/${f}" ]] || [[ ! -r "${models_dir}/${f}" ]]; then
+      echo "FILE_FAIL:${f}:${models_dir}"
+      return 1
+    fi
+    # Prefer sha256sum (Linux); fall back to shasum -a 256 (macOS).
+    if command -v sha256sum >/dev/null 2>&1; then
+      actual="$(sha256sum "${models_dir}/${f}" | awk '{print $1}')"
+    else
+      actual="$(shasum -a 256 "${models_dir}/${f}" | awk '{print $1}')"
+    fi
+    if [[ "${actual}" != "${expected}" ]]; then
+      echo "HASH_FAIL:${f}:${models_dir}:expected=${expected}:actual=${actual}"
+      return 1
+    fi
+  done
+  echo OK
+  return 0
+}
+
+# Read KEY=VALUE from remote_dir/.env. Value is taken verbatim to end-of-line
+# after the first '=' (C-05); one matching pair of surrounding quotes is stripped.
+# Missing key → empty string (exit 0). SSH failure → fail closed (C-06).
+_remote_dotenv_value() {
+  local remote_dir="$1" key="$2" raw rc=0
+  # Remote `|| true` only covers a missing key / missing file (grep exit 1).
+  # Local ssh failure is NOT swallowed.
+  raw="$(ssh -o BatchMode=yes -o ConnectTimeout=5 "${SSH_TARGET}" \
+    "grep -E '^${key}=' '${remote_dir}/.env' 2>/dev/null | tail -1 | cut -d= -f2- || true")" || rc=$?
+  if (( rc != 0 )); then
+    fail "ssh failed reading ${key} from ${remote_dir}/.env on ${SSH_TARGET} (exit ${rc})"
+  fi
+  # Strip one layer of surrounding double or single quotes only.
+  if [[ ${#raw} -ge 2 && "${raw}" == \"*\" ]]; then
+    raw="${raw:1:${#raw}-2}"
+  elif [[ ${#raw} -ge 2 && "${raw}" == \'*\' ]]; then
+    raw="${raw:1:${#raw}-2}"
+  fi
+  printf '%s' "$raw"
+}
 
 preflight_remote_face_pipeline_models() {
   local env="$1"
   # Only dev-fir uses the face_pipeline profile with host-mounted weights.
   [[ "$env" == "dev-fir" ]] || return 0
 
-  local remote_dir models_path models_dir f remote_out
+  local remote_dir models_dir_cfg models_path models_dir remote_out remote_rc=0
   remote_dir="$(env_to_remote_dir "$env")"
 
-  models_path="$(ssh -o BatchMode=yes -o ConnectTimeout=5 "${SSH_TARGET}" \
-    "grep -E '^ACX_MODELS_PATH=' '${remote_dir}/.env' 2>/dev/null | tail -1 | cut -d= -f2- | tr -d \"\\\"' \"" \
-    || true)"
-  if [[ -z "${models_path}" ]]; then
-    fail "ACX_MODELS_PATH missing or unreadable in ${remote_dir}/.env on ${SSH_TARGET}; cannot verify face_pipeline models"
+  # Authoritative models dir is RECOGNITION_FACE_PIPELINE_MODELS_DIR [sr-007] (C-10).
+  # When it is the in-container path under the compose mount
+  # (${ACX_MODELS_PATH}:/data/cache), map to the host volume root for the check.
+  models_dir_cfg="$(_remote_dotenv_value "$remote_dir" RECOGNITION_FACE_PIPELINE_MODELS_DIR)"
+  if [[ -z "${models_dir_cfg}" ]]; then
+    fail "RECOGNITION_FACE_PIPELINE_MODELS_DIR missing or unreadable in ${remote_dir}/.env on ${SSH_TARGET}; cannot verify face_pipeline models"
+  fi
+  if [[ "${models_dir_cfg}" == /data/cache || "${models_dir_cfg}" == /data/cache/* ]]; then
+    models_path="$(_remote_dotenv_value "$remote_dir" ACX_MODELS_PATH)"
+    if [[ -z "${models_path}" ]]; then
+      fail "ACX_MODELS_PATH missing or unreadable in ${remote_dir}/.env on ${SSH_TARGET}; cannot map RECOGNITION_FACE_PIPELINE_MODELS_DIR=${models_dir_cfg} to host path"
+    fi
+    models_dir="${models_path}${models_dir_cfg#/data/cache}"
+  else
+    models_dir="${models_dir_cfg}"
   fi
 
-  models_dir="${models_path}/face_pipeline"
-  # Single remote check: missing/unreadable dir or any missing ONNX is failure.
-  # Prints the first missing file and the path looked in so the operator knows
-  # what to place (scripts/fetch_face_pipeline_models.py --dest <dir>).
+  # Ship the extractable verify body to the remote and execute it (C-07/C-11).
+  # Capture stdout even when the remote check exits non-zero; do not swallow
+  # unrelated ssh failures with `|| true` (C-06).
   remote_out="$(ssh -o BatchMode=yes -o ConnectTimeout=5 "${SSH_TARGET}" \
-    "bash -s" <<REMOTE || true
+    "bash -s" <<REMOTE
 set -euo pipefail
-models_dir='${models_dir}'
-if [[ ! -d "\${models_dir}" ]] || [[ ! -r "\${models_dir}" ]]; then
-  echo "DIR_FAIL:\${models_dir}"
-  exit 1
-fi
-for f in ${FACE_PIPELINE_ONNX_FILES[*]}; do
-  if [[ ! -f "\${models_dir}/\${f}" ]] || [[ ! -r "\${models_dir}/\${f}" ]]; then
-    echo "FILE_FAIL:\${f}:\${models_dir}"
-    exit 1
-  fi
-done
-echo OK
+$(declare -p FACE_PIPELINE_ONNX_SHA256)
+$(declare -f verify_face_pipeline_models_dir)
+verify_face_pipeline_models_dir $(printf '%q' "${models_dir}")
 REMOTE
-)"
+)" || remote_rc=$?
 
-  if [[ "${remote_out}" == "OK" ]]; then
-    log "face_pipeline ONNX weights present under ${models_dir}"
+  if [[ "${remote_out}" == "OK" && "${remote_rc}" -eq 0 ]]; then
+    log "face_pipeline ONNX weights present and sha256-verified under ${models_dir}"
     return 0
   fi
   if [[ "${remote_out}" == DIR_FAIL:* ]]; then
@@ -255,6 +310,12 @@ REMOTE
     miss_file="$(printf '%s' "${remote_out#FILE_FAIL:}" | cut -d: -f1)"
     miss_dir="$(printf '%s' "${remote_out#FILE_FAIL:}" | cut -d: -f2-)"
     fail "missing face_pipeline ONNX weight ${miss_file} under ${miss_dir} on ${SSH_TARGET}"
+  fi
+  if [[ "${remote_out}" == HASH_FAIL:* ]]; then
+    fail "face_pipeline ONNX integrity check failed (${remote_out}) on ${SSH_TARGET}"
+  fi
+  if (( remote_rc != 0 )); then
+    fail "face_pipeline models preflight ssh/remote failed for ${env} (exit ${remote_rc}, looked under ${models_dir} on ${SSH_TARGET}): ${remote_out:-no remote response}"
   fi
   fail "face_pipeline models preflight failed for ${env} (looked under ${models_dir} on ${SSH_TARGET}): ${remote_out:-no remote response}"
 }
@@ -382,16 +443,19 @@ render_unit() {
     "${SERVICE_DIR}/systemd/acx-env.service.template"
 }
 
-# Converge the deployed compose file(s) + systemd unit with the repo *before*
-# the image restart, so drift (missing volume/env/overlay) cannot reach a live
-# prod. Backs up the prior compose/unit on the VM first. The Caddy edge is
-# deliberately not reshipped here (E15-29 hazard: a Caddy restart can drop it
-# off acx-demo-net); it stays owned by sync-compose.sh / sync-demo.sh.
+# Converge the deployed compose file(s) + systemd unit + shared Caddy edge with
+# the repo *before* the image restart, so drift (missing volume/env/overlay or a
+# stale Caddyfile) cannot reach a live env. Backs up the prior compose/unit/
+# edge on the VM first. Edge ship+reload is required so Caddyfile changes take
+# effect on fir/dev deploys (C-08/C-12); validate before promote, then
+# `docker compose up -d` so new network joins apply (reload alone does not
+# attach networks — same reason as sync-demo.sh).
 converge_runtime() {
-  local env="$1" remote_dir unit
+  local env="$1" remote_dir unit edge_dir
   remote_dir="$(env_to_remote_dir "$env")"
   unit="$(env_to_unit "$env")"
-  log "Converging compose + unit for ${env} on ${SSH_TARGET} (edge proxy not reshipped)"
+  edge_dir="/opt/acx-backend"
+  log "Converging compose + unit + caddy edge for ${env} on ${SSH_TARGET}"
   ssh "${SSH_TARGET}" "cp -f '${remote_dir}/docker-compose.env.yml' '${remote_dir}/docker-compose.env.yml.bak' 2>/dev/null || true; sudo cp -f '/etc/systemd/system/${unit}.service' '/etc/systemd/system/${unit}.service.bak' 2>/dev/null || true"
   # Ship via /tmp + sudo cp (same pattern as the unit file): the deployed
   # files can be root-owned (the E15-29 admin overlay was installed via sudo),
@@ -407,7 +471,23 @@ converge_runtime() {
     _ship_file "${SERVICE_DIR}/docker-compose.admin.yml" "${remote_dir}/docker-compose.admin.yml"
   fi
   render_unit "$env" | ssh "${SSH_TARGET}" "cat > '/tmp/${unit}.service' && sudo cp '/tmp/${unit}.service' '/etc/systemd/system/${unit}.service' && rm -f '/tmp/${unit}.service' && sudo systemctl daemon-reload"
-  log "Runtime converged for ${env} (compose + unit match repo)"
+
+  # Shared multi-env Caddy edge lives at /opt/acx-backend (not env-scoped).
+  ssh "${SSH_TARGET}" "cp -f '${edge_dir}/Caddyfile' '${edge_dir}/Caddyfile.bak' 2>/dev/null || true; cp -f '${edge_dir}/docker-compose.caddy.yml' '${edge_dir}/docker-compose.caddy.yml.bak' 2>/dev/null || true"
+  _ship_file "${SERVICE_DIR}/Caddyfile" "${edge_dir}/Caddyfile"
+  _ship_file "${SERVICE_DIR}/docker-compose.caddy.yml" "${edge_dir}/docker-compose.caddy.yml"
+  ssh "${SSH_TARGET}" "bash -s" <<'EDGE'
+set -euo pipefail
+cd /opt/acx-backend
+# Validate the live Caddyfile we just shipped before recreating the container.
+docker run --rm \
+  -v /opt/acx-backend/Caddyfile:/etc/caddy/Caddyfile:ro \
+  caddy:2-alpine \
+  caddy validate --config /etc/caddy/Caddyfile
+# Recreate (not reload-only) so network membership matches docker-compose.caddy.yml.
+docker compose -f docker-compose.caddy.yml up -d
+EDGE
+  log "Runtime converged for ${env} (compose + unit + caddy edge match repo)"
 }
 
 # Read-only drift gate: diff the deployed compose/unit against the repo and exit
@@ -578,6 +658,8 @@ do_promote() {
   to_tag="$(env_to_tag "$to_env")"
 
   preflight_ssh
+  # Face-pipeline weights must exist before we re-point the to_env runtime (C-02).
+  preflight_remote_face_pipeline_models "$to_env"
 
   if [[ "$to_env" == "prod" && "${CONFIRM:-}" != "PROMOTE" ]]; then
     fail "Production promotion requires CONFIRM=PROMOTE. Re-run: CONFIRM=PROMOTE $0 promote $from_env $to_env"
@@ -805,6 +887,8 @@ do_reset() {
   fi
 
   preflight_ssh
+  # Face-pipeline weights must exist before reset restarts the runtime (C-02).
+  preflight_remote_face_pipeline_models "$env"
   log "Executing reset on ${SSH_TARGET}"
   ssh "${SSH_TARGET}" "bash -s" <<<"${remote_cmd}"
 

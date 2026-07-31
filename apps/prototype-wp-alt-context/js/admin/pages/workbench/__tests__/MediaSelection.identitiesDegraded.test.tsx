@@ -30,6 +30,7 @@ const baseItem: WorkbenchMediaItem = {
   id: 11,
   title: 'Photo',
   altText: null,
+  isDecorative: false,
   status: 'missing',
   thumbnailUrl: null,
   mimeType: 'image/jpeg',
@@ -102,6 +103,7 @@ vi.mock('../WorkbenchMediaContext', () => ({
         identitiesQuery: identitiesSurface,
       },
       statusMessage: 'Showing 1 media item.',
+      isStatusPending: false,
       detailTruncationNotice: null,
       hasIdentities: false,
     },
@@ -195,8 +197,16 @@ describe('MediaSelection Slice 3 — honest degraded identity state', () => {
     expect(screen.queryByText(/No identities synced for this item yet/i)).not.toBeInTheDocument();
 
     const user = userEvent.setup();
-    // Prefer the row-level EmptyStateWarning Retry (status live region), not the footer status bar.
-    const affordance = screen.getByRole('status');
+    // Prefer the row-level EmptyStateWarning Retry (status live region), not the footer
+    // status bar and not MediaAltSuggest's always-mounted empty polite region (BR-32).
+    // role=status has no accessible name from text content in testing-library, so bare
+    // getByRole('status') is ambiguous once MediaAltSuggest always-mounts its region.
+    const affordance = screen
+      .getAllByRole('status')
+      .find((el) => /Identity data unavailable/i.test(el.textContent ?? ''));
+    if (!affordance) {
+      throw new Error('expected EmptyStateWarning status region');
+    }
     const retry = within(affordance).getByRole('button', { name: 'Retry' });
     await user.click(retry);
     expect(refetchIdentities).toHaveBeenCalled();
@@ -267,7 +277,12 @@ describe('MediaSelection Slice 3 — honest degraded identity state', () => {
   it('S3-T6: unavailable affordance has role=status aria-live=polite and keyboard-reachable Retry', async () => {
     renderSelection();
 
-    const status = screen.getByRole('status');
+    // MediaAltSuggest always-mounts an empty role=status on the same row (BR-32).
+    // Bare getByRole('status') is ambiguous (observed: multiple matches).
+    const status = screen.getAllByRole('status').find((el) => /Identity data unavailable/i.test(el.textContent ?? ''));
+    if (!status) {
+      throw new Error('expected EmptyStateWarning status region');
+    }
     expect(status).toHaveAttribute('aria-live', 'polite');
     expect(status).toHaveTextContent(/Identity data unavailable/i);
 

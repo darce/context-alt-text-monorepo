@@ -5,10 +5,15 @@ import {
   applyDescribeRunDrafts,
   correctDescriptionHistoryItem,
   describeMedia,
+  DESCRIPTION_CORRECTION_CODE,
   fetchDescribeRunItems,
   fetchDescriptionCandidates,
   fetchDescriptionHistory,
+  resolveDescribeErrorCode,
+  resolveDescribeErrorDataBooleanField,
+  resolveDescribeErrorDataField,
   resolveDescribeErrorMessage,
+  type DescriptionCandidateRow,
 } from '../describeApi';
 
 const mockConfig = {
@@ -197,6 +202,7 @@ describe('describeApi', () => {
     const applyResponse = {
       run_id: 'run-abc',
       applied: [71, 70],
+      partial: [],
       skipped_existing: [],
       skipped_no_draft: [72],
       skipped_invalid: [],
@@ -221,6 +227,7 @@ describe('describeApi', () => {
     fetchApiMock.mockResolvedValue({
       run_id: 'run-abc',
       applied: [71],
+      partial: [],
       skipped_existing: [70],
       skipped_no_draft: [],
       skipped_invalid: [],
@@ -262,6 +269,124 @@ describe('describeApi', () => {
       },
     );
   });
+
+  it('omits decorative from the correction body when the flag is not requested [WBUX-5-S2C3C-BR-01]', async () => {
+    // Existing callers pass only (mediaId, altText). The wire body must stay
+    // identical to today's { alt_text } — server defaults decorative to false.
+    // [TEST-15] discrimination: goes RED if decorative:false is always sent, or
+    // if decorative:true is sent when the caller omits the option.
+    fetchApiMock.mockResolvedValue({
+      media_id: 42,
+      title: 'Bridge',
+      mime_type: 'image/jpeg',
+      current_alt_text: 'Corrected bridge alt text',
+      generated_alt_text: 'A bridge over water.',
+      provenance: sampleResponse,
+      human_edit: { alt_text: 'Corrected bridge alt text', edited_at: null, user_id: 7 },
+      run_status: null,
+    });
+
+    await correctDescriptionHistoryItem(42, 'Corrected bridge alt text');
+
+    expect(fetchApiMock).toHaveBeenCalledTimes(1);
+    const [, options] = fetchApiMock.mock.calls[0];
+    expect(options).toMatchObject({
+      method: 'POST',
+      body: { alt_text: 'Corrected bridge alt text' },
+      restNonce: 'nonce-xyz',
+    });
+    expect(options?.body).not.toHaveProperty('decorative');
+  });
+
+  it('posts decorative:true with empty alt_text when marking an image decorative [WBUX-5-S2C3C-BR-01][TEST-06]', async () => {
+    // Headline: the deliberate decorative path must send both signals on the wire.
+    // [TEST-15] discrimination: goes RED if decorative is dropped from the body,
+    // if alt_text is non-empty, or if the flag is only true when alt is non-empty.
+    fetchApiMock.mockResolvedValue({
+      media_id: 42,
+      title: 'Spacer',
+      mime_type: 'image/png',
+      current_alt_text: '',
+      generated_alt_text: '',
+      provenance: null,
+      human_edit: { alt_text: '', edited_at: null, user_id: 7 },
+      run_status: null,
+    });
+
+    await correctDescriptionHistoryItem(42, '', { decorative: true });
+
+    expect(fetchApiMock).toHaveBeenCalledTimes(1);
+    const [, options] = fetchApiMock.mock.calls[0];
+    expect(options).toMatchObject({
+      method: 'POST',
+      body: { alt_text: '', decorative: true },
+      restNonce: 'nonce-xyz',
+    });
+  });
+
+  it('posts decorative:false when options.decorative is explicit false [A-02][INT-09]', async () => {
+    // Un-mark path: explicit false must appear on the wire. Pre-fix only sent
+    // decorative when true, so this goes RED without the tri-state body change.
+    // [TEST-15] discrimination: fails if decorative is dropped for false.
+    fetchApiMock.mockResolvedValue({
+      media_id: 42,
+      title: 'Bridge',
+      mime_type: 'image/jpeg',
+      current_alt_text: '',
+      generated_alt_text: '',
+      provenance: null,
+      human_edit: { alt_text: '', edited_at: null, user_id: 7 },
+      run_status: null,
+      is_decorative: false,
+    });
+
+    await correctDescriptionHistoryItem(42, '', { decorative: false });
+    const [, options] = fetchApiMock.mock.calls[0];
+    expect(options?.body).toEqual({ alt_text: '', decorative: false });
+  });
+
+  it('still omits decorative when options is undefined [A-02]', async () => {
+    fetchApiMock.mockResolvedValue({
+      media_id: 42,
+      title: 'Bridge',
+      mime_type: 'image/jpeg',
+      current_alt_text: 'x',
+      generated_alt_text: 'x',
+      provenance: null,
+      human_edit: { alt_text: 'x', edited_at: null, user_id: 7 },
+      run_status: null,
+      is_decorative: false,
+    });
+
+    await correctDescriptionHistoryItem(42, 'x', undefined);
+    const [, options] = fetchApiMock.mock.calls[0];
+    expect(options?.body).toEqual({ alt_text: 'x' });
+    expect(options?.body).not.toHaveProperty('decorative');
+  });
+
+  it('accepts reason decorative on a DescriptionCandidateRow without a cast [WBUX-5-S2C3C-BR-01]', async () => {
+    // Type-level pin: assigning reason:'decorative' must compile without `as`.
+    // Runtime: the candidates envelope carries the same value.
+    const decorativeRow: DescriptionCandidateRow = {
+      media_id: 99,
+      filename: 'ornament.png',
+      title: 'Flourish',
+      mime_type: 'image/png',
+      current_alt_text: '',
+      reason: 'decorative',
+    };
+    fetchApiMock.mockResolvedValue({
+      candidates: [],
+      exclusions: [decorativeRow],
+      limit: 10,
+      offset: 0,
+      total_candidates: 0,
+      total_exclusions: 1,
+    });
+
+    const result = await fetchDescriptionCandidates({ limit: 10, offset: 0 });
+    expect(result.exclusions[0]?.reason).toBe('decorative');
+  });
 });
 
 describe('resolveDescribeErrorMessage', () => {
@@ -274,5 +399,113 @@ describe('resolveDescribeErrorMessage', () => {
 
   it('falls back when the error carries no structured detail', () => {
     expect(resolveDescribeErrorMessage(new Error('network down'), 'Could not describe.')).toBe('Could not describe.');
+  });
+
+  it('extracts the WP_Error message from a correction rejection body', () => {
+    const err = new Error(
+      'Request to .../correction failed (500): {"code":"description_correction_partial","message":"Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.","data":{"status":500}}',
+    );
+    expect(resolveDescribeErrorMessage(err, 'Could not save.')).toBe(
+      'Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.',
+    );
+  });
+});
+
+describe('resolveDescribeErrorCode', () => {
+  it('extracts the WP_Error code from a correction rejection body', () => {
+    const err = new Error(
+      'Request to .../correction failed (500): {"code":"description_correction_partial","message":"Alt text was saved, but the human-edit record could not be stored.","data":{"status":500}}',
+    );
+    expect(resolveDescribeErrorCode(err)).toBe('description_correction_partial');
+  });
+
+  it('returns null when the error carries no structured code', () => {
+    expect(resolveDescribeErrorCode(new Error('network down'))).toBeNull();
+  });
+
+  it('returns null for non-Error values', () => {
+    expect(resolveDescribeErrorCode('not-an-error')).toBeNull();
+    expect(resolveDescribeErrorCode(null)).toBeNull();
+  });
+
+  it('returns null when the payload has a blank code', () => {
+    const err = new Error('Request failed (500): {"code":"  ","message":"something"}');
+    expect(resolveDescribeErrorCode(err)).toBeNull();
+  });
+});
+
+describe('DESCRIPTION_CORRECTION_CODE', () => {
+  it('exports the stable correction rejection codes [sr-007]', () => {
+    expect(DESCRIPTION_CORRECTION_CODE.PARTIAL).toBe('description_correction_partial');
+    expect(DESCRIPTION_CORRECTION_CODE.FAILED).toBe('description_correction_failed');
+  });
+});
+
+describe('resolveDescribeErrorDataField', () => {
+  it('extracts stored_alt_text from a partial correction rejection body', () => {
+    const err = new Error(
+      'Request to .../correction failed (500): {"code":"description_correction_partial","message":"Alt text was saved, but the human-edit record could not be stored.","data":{"status":500,"stored_alt_text":"Sunset over the bay"}}',
+    );
+    expect(resolveDescribeErrorDataField(err, 'stored_alt_text')).toBe('Sunset over the bay');
+  });
+
+  it('returns null when the named field is absent from data', () => {
+    const err = new Error(
+      'Request to .../correction failed (500): {"code":"description_correction_partial","message":"Alt text was saved.","data":{"status":500}}',
+    );
+    expect(resolveDescribeErrorDataField(err, 'stored_alt_text')).toBeNull();
+  });
+
+  it('returns null when the error carries no structured payload', () => {
+    expect(resolveDescribeErrorDataField(new Error('network down'), 'stored_alt_text')).toBeNull();
+  });
+
+  it('returns null for non-Error values', () => {
+    expect(resolveDescribeErrorDataField('not-an-error', 'stored_alt_text')).toBeNull();
+    expect(resolveDescribeErrorDataField(null, 'stored_alt_text')).toBeNull();
+  });
+
+  it('returns empty string when that is the stored value (legitimate alt)', () => {
+    const err = new Error(
+      'Request failed (500): {"code":"description_correction_partial","message":"x","data":{"status":500,"stored_alt_text":""}}',
+    );
+    expect(resolveDescribeErrorDataField(err, 'stored_alt_text')).toBe('');
+  });
+
+  it('returns null when the field is present but not a string', () => {
+    const err = new Error(
+      'Request failed (500): {"code":"description_correction_partial","message":"x","data":{"status":500,"stored_alt_text":42}}',
+    );
+    expect(resolveDescribeErrorDataField(err, 'stored_alt_text')).toBeNull();
+  });
+});
+
+describe('resolveDescribeErrorDataBooleanField', () => {
+  it('extracts is_decorative boolean from a partial correction rejection body [A-03]', () => {
+    const err = new Error(
+      'Request to .../correction failed (500): {"code":"description_correction_partial","message":"x","data":{"status":500,"stored_alt_text":"","is_decorative":true}}',
+    );
+    expect(resolveDescribeErrorDataBooleanField(err, 'is_decorative')).toBe(true);
+  });
+
+  it('returns false when is_decorative is false (not null) [A-03]', () => {
+    const err = new Error(
+      'Request failed (500): {"code":"description_correction_partial","message":"x","data":{"status":500,"stored_alt_text":"Alt","is_decorative":false}}',
+    );
+    expect(resolveDescribeErrorDataBooleanField(err, 'is_decorative')).toBe(false);
+  });
+
+  it('returns null when is_decorative is absent [A-03][rg-015]', () => {
+    const err = new Error(
+      'Request failed (500): {"code":"description_correction_partial","message":"x","data":{"status":500,"stored_alt_text":""}}',
+    );
+    expect(resolveDescribeErrorDataBooleanField(err, 'is_decorative')).toBeNull();
+  });
+
+  it('returns null when is_decorative is a string "1" rather than a boolean [A-03]', () => {
+    const err = new Error(
+      'Request failed (500): {"code":"description_correction_partial","message":"x","data":{"status":500,"is_decorative":"1"}}',
+    );
+    expect(resolveDescribeErrorDataBooleanField(err, 'is_decorative')).toBeNull();
   });
 });

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Api\Services;
 
+use AltContext\Sovereign\Repositories\SyncStateRepository;
 use Throwable;
 
 /**
@@ -11,6 +12,13 @@ use Throwable;
  */
 class TenantLocalRekeyService {
 	public const ROW_THRESHOLD = 50_000;
+
+	/**
+	 * Durable marker written to acx_sync_state.last_sync_result when a rekey
+	 * (or threshold resync) completes. Alias of the canonical vocabulary
+	 * SyncStateRepository::SYNC_RESULT_RESYNC_REQUIRED [sr-007] / SPA LAST_SYNC_RESULT.
+	 */
+	public const RESYNC_REQUIRED_RESULT = SyncStateRepository::SYNC_RESULT_RESYNC_REQUIRED;
 
 	/** @var list<string> */
 	private const TENANT_TABLE_SUFFIXES = array(
@@ -28,6 +36,8 @@ class TenantLocalRekeyService {
 	public function reconcile_identity_change( string $from_tenant_id, string $to_tenant_id ): array {
 		$row_count = $this->count_rows_for_tenant( $from_tenant_id );
 		if ( $row_count > self::ROW_THRESHOLD ) {
+			// Threshold path: the marker IS the substantive outcome (too large to
+			// rekey in-process). Verify it landed before reporting success.
 			$this->mark_resync_required( $to_tenant_id );
 			return array(
 				'strategy'     => 'resync',
@@ -82,10 +92,26 @@ class TenantLocalRekeyService {
 					array( '%s' ),
 					array( '%s' )
 				);
+				// false = write error. 0 = no rows for this tenant in this table
+				// (legitimate no-op, including idempotent re-key). Do not collapse.
 				if ( false === $result ) {
 					throw new \RuntimeException( sprintf( 'Could not re-key tenant rows in %s.', $table ) );
 				}
 				$updated += (int) $result;
+			}
+
+			// R23-BR-28: verify the substantive rekey by read-back before writing
+			// the resync_required marker. A return-value check alone cannot admit
+			// the idempotent case (0 rows already under from_tenant_id); count
+			// remaining source rows. Never set the marker on an unverified rekey.
+			$remaining = $this->count_rows_for_tenant( $from_tenant_id );
+			if ( $remaining > 0 ) {
+				throw new \RuntimeException(
+					sprintf(
+						'Tenant re-key read-back found %d row(s) still under source tenant; resync marker not written.',
+						$remaining
+					)
+				);
 			}
 
 			$this->migrate_sync_state_streams( $from_tenant_id, $to_tenant_id );
@@ -117,6 +143,15 @@ class TenantLocalRekeyService {
 		$this->upsert_resync_required_stream( $sync_table, $to_stream, $now );
 	}
 
+	/**
+	 * Write the resync_required marker and verify it landed via read-back.
+	 *
+	 * insert returns false on storage failure; a successful insert (or a
+	 * delete+insert that leaves the intended marker) must read back as
+	 * RESYNC_REQUIRED_RESULT before callers treat the path as complete.
+	 *
+	 * @throws \RuntimeException When the marker does not land.
+	 */
 	private function upsert_resync_required_stream( string $sync_table, string $stream, string $updated_at ): void {
 		global $wpdb;
 
@@ -126,7 +161,7 @@ class TenantLocalRekeyService {
 			array(
 				'stream_name'           => $stream,
 				'last_snapshot_version' => 0,
-				'last_sync_result'      => 'resync_required',
+				'last_sync_result'      => self::RESYNC_REQUIRED_RESULT,
 				'updated_at'            => $updated_at,
 			),
 			array( '%s', '%d', '%s', '%s' )
@@ -134,13 +169,22 @@ class TenantLocalRekeyService {
 		if ( false === $inserted ) {
 			throw new \RuntimeException( 'Could not mark tenant sync stream for re-sync.' );
 		}
+
+		// Read-back: prove the marker is durable before reporting success.
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name is plugin-owned.
+		$stored = $wpdb->get_var( $wpdb->prepare( "SELECT last_sync_result FROM {$sync_table} WHERE stream_name = %s LIMIT 1", $stream ) );
+		if ( ! is_string( $stored ) || self::RESYNC_REQUIRED_RESULT !== trim( $stored ) ) {
+			throw new \RuntimeException(
+				'Could not verify resync_required marker after write; marker not set.'
+			);
+		}
 	}
 
 	private function mark_resync_required( string $tenant_id ): void {
 		global $wpdb;
 
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! is_string( $wpdb->prefix ) ) {
-			return;
+			throw new \RuntimeException( 'Could not mark resync_required: wpdb unavailable.' );
 		}
 
 		$sync_table = $wpdb->prefix . 'acx_sync_state';

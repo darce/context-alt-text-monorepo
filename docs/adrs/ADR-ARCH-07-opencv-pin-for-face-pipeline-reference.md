@@ -1,11 +1,43 @@
 # ADR-ARCH-07: OpenCV pin for face-pipeline reference path
 
-- **Status:** Accepted
+- **Status:** Superseded
 - **Date:** 2026-07-18
+- **Superseded:** 2026-07-30 by CVUP-1 (see [Supersession note](#supersession-note-2026-07-30-cvup-1))
 - **Deciders:** FIR-3 implementers (lane fir-3-grok); product/architecture owner
 - **Context task:** FIR-3 (YuNet + SFace adapters)
 - **Related:** [commercial face-pipeline assessment §9-2 / §10.3](../assessments/current/commercial-face-pipeline-replacement-assessment-2026-07-15.md), [FIR-3 task plan](../tasks/fir/FIR-3-yunet-sface-adapters-task-plan.md), FIR-7 (GPU path, separate)
 - **Heuristics:** ARCH-07 (write the ADR), ARCH-06 (trade-offs explicit), ARCH-08 (boring stack first), AGT-02 (cite verified evidence), YAGNI / REF speculative-generality (no migration without a concrete need)
+
+## Supersession note (2026-07-30, CVUP-1)
+
+This ADR's **KEEP 4.x** decision is superseded by **CVUP-1**. The live service pin is:
+
+```text
+opencv-python==5.0.0.93
+opencv-python-headless==5.0.0.93   # bench extra
+```
+
+Both cv2 distributions unpack into the same top-level `cv2/` package, so they are pinned to one exact release rather than a shared major window — a resolver skew between them would decide which binaries import by install order. The original Decision / Alternatives / Consequences below remain the historical FIR-3 record; they no longer describe the shipped pin.
+
+### Revisit triggers under CVUP-1
+
+Evaluated against the triggers this ADR required:
+
+1. **Stable OpenCV 5.x wheel line:** Met. `opencv-python` and `opencv-python-headless` both resolve to `5.0.0.93` in `uv.lock`.
+2. **Concrete need:** Not recorded in the branch in this ADR's sense (no measured reference-path or CI-host performance gap closed only by 5.x/KleidiCV; no model/API that requires OpenCV 5 on the reference path; no documented security/support EOL of the 4.12–4.14 line). Migration performed under CVUP-1; the driving need is not recorded in the branch.
+3. **Migration gate (S2 oracle + S3 parity):** Met. The S2 oracle suite and the S3 ORT parity suite are green at branch HEAD under OpenCV 5; the S3 budget was **tightened**, not relaxed — see the S3 parity-budget amendment in the [FIR-3 task plan](../tasks/fir/FIR-3-yunet-sface-adapters-task-plan.md#s3-parity-budget-amendment-2026-07-29-cvup-1).
+
+### Migration cost (as this ADR predicted)
+
+Goldens were re-minted under the new OpenCV 5 `FaceRecognizerSF` / `warpAffine` semantics. Measured cross-version embedding drift (4.13.0 → 5.0.0) is recorded in [opencv-5-embedding-drift.md](../tasks/fir/evidence/opencv-5-embedding-drift.md); re-measure before any further pin move.
+
+### Waiver — trigger 2 not met (open item)
+
+**Waiver (deliberate deviation from this ADR's own gate):** the CVUP-1 bump proceeded without trigger 2 (a concrete need) being met. The Triggers section still requires all conditions; this supersession records the deviation rather than rewriting the gate. No operator decision is recorded in-branch — whether the deviation stands, is ratified, or is rolled back remains an **open item**. Do not treat this note as a completed waiver.
+
+### Accepted risk — incumbent InsightFace path unmeasured (CVUP1-GR-03)
+
+**Accepted risk (named):** the committed 4.13→5.0 drift evidence covers the **SFace reference path only** (YuNet detector, SFace embedder, FIR-3 goldens under `opencv-sface+…` space tokens). Production default is `RECOGNITION_FACE_PIPELINE_PROFILE=insightface`, whose deployed embedding id is `insightface-buffalo_l@512d/l2/cosine`. That id carries **no** OpenCV space token, so it is byte-identical before and after the pin bump: the embedding-space partition alarm reports a match while the deployed 512d vectors re-baseline by an **unmeasured** amount, and old and new vectors are compared as co-spatial. The InsightFace path also routes alignment through `cv2.warpAffine` (via `norm_crop`) — the same function whose numeric move forced the SFace golden regeneration. SFace evidence does **not** transfer (different detector, different alignment call sites, different model). Incumbent-path drift under OpenCV 5 is **unquantified**.
 
 ## Context
 
@@ -104,13 +136,13 @@ If oracle crops or embeddings diverge, re-golden only after an explicit decision
 
 ## Action items
 
-1. **Done by this ADR:** record KEEP decision; leave `opencv-python>=4.12.0,<4.15.0` unchanged.
-2. **On revisit:** run the migration-gate `TEST_CMD` above; update this ADR status/supersession note if the pin moves.
+1. **Done by this ADR (FIR-3):** record KEEP decision; leave `opencv-python>=4.12.0,<4.15.0` unchanged at that time.
+2. **Done by CVUP-1 (2026-07-30):** migration gate re-run green under OpenCV 5; pin moved to ==5.0.0.93 for both cv2 distributions; this ADR status flipped to Superseded with supersession note above. Goldens re-minted; drift probe recorded under `docs/tasks/fir/evidence/opencv-5-embedding-drift.md`.
 3. **FIR-7 / GPU:** do not couple GPU work to this OpenCV pin; ORT/CUDA/TensorRT paths are independent.
 
 ## Sources
 
-- Service pin: `apps/prototype-description-service/pyproject.toml` (`opencv-python>=4.12.0,<4.15.0`)
+- Service pin (FIR-3-era, superseded by CVUP-1): `apps/prototype-description-service/pyproject.toml` then `opencv-python>=4.12.0,<4.15.0`; live pin is `opencv-python==5.0.0.93` / `opencv-python-headless==5.0.0.93` (see supersession note)
 - S2 oracle: `recognition/tests/unit/test_face_pipeline_opencv_ref.py` → `test_five_point_aligner_matches_aligncrop_oracle_bitexact`
 - S3 parity: `recognition/tests/unit/test_face_pipeline_ort_parity.py`
 - Assessment §9-2, §10.3: `docs/assessments/current/commercial-face-pipeline-replacement-assessment-2026-07-15.md`

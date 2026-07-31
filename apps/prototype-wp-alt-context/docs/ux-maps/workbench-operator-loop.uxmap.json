@@ -1,0 +1,385 @@
+{
+  "map_ref": "workbench-operator-loop",
+  "product": "prototype-wp-alt-context",
+  "source_fixture": "packages/mcp-workbay-canvas/tests/fixtures/ux_maps/workbench-operator-loop.uxmap.json",
+  "goals": [
+    "Operator clears media queue via Scan and resolves identity conflicts without losing place",
+    "Decompose Workbench UI tasks from screens/zones/states/flows instead of inventing IA mid-plan"
+  ],
+  "jobs": [
+    {
+      "id": "job-clear-queue",
+      "label": "Clear media queue (scan / describe)"
+    },
+    {
+      "id": "job-resolve-conflicts",
+      "label": "Resolve identity conflicts"
+    },
+    {
+      "id": "job-recover-sync",
+      "label": "Recover from sync / dead-letter failures"
+    },
+    {
+      "id": "job-assign-people",
+      "label": "Assign people (exit to Roster)"
+    }
+  ],
+  "screens": [
+    {
+      "id": "workbench-shell",
+      "kind": "screen",
+      "title": "Workbench",
+      "purpose": "Operator surface for media queue scan, job pipeline, sync health, and review overlays",
+      "route": "#/workbench",
+      "wp_page": "alt-context-workbench",
+      "job_entry": true,
+      "deep_link": true,
+      "url_params": ["tab", "panel", "advanced", "status", "media", "rq", "queue", "face", "cluster"],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx",
+      "primary_action_id": "act-open-scan",
+      "states": ["default", "loading", "error", "degraded", "offline"],
+      "zones": [
+        {
+          "id": "z-tabs",
+          "label": "Workbench steps tabs",
+          "role": "nav",
+          "states": ["default"]
+        },
+        {
+          "id": "z-sync",
+          "label": "Sync / projection status strip",
+          "role": "status",
+          "states": ["default", "loading", "error", "degraded"]
+        },
+        {
+          "id": "z-overlay-host",
+          "label": "Overlay host (conflicts | dead-letter)",
+          "role": "other",
+          "states": ["default", "empty"]
+        },
+        {
+          "id": "z-main-tab",
+          "label": "Active tab content (Scan)",
+          "role": "content",
+          "states": ["default", "loading", "empty", "error"]
+        },
+        {
+          "id": "z-advanced",
+          "label": "Advanced drawer",
+          "role": "form",
+          "states": ["default", "empty"]
+        }
+      ]
+    },
+    {
+      "id": "workbench-scan",
+      "kind": "screen",
+      "title": "Scan media queue",
+      "purpose": "Filter and select library media; run scan faces / describe pipeline",
+      "route": "#/workbench?tab=scan",
+      "job_entry": true,
+      "deep_link": true,
+      "url_params": ["tab", "status", "media", "s", "p", "perPage"],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/ScanTabContent.tsx",
+      "primary_action_id": "act-scan-selected",
+      "states": ["default", "loading", "empty", "error", "first_time", "edge_input"],
+      "zones": [
+        {
+          "id": "z-filters",
+          "label": "Status / search filters",
+          "role": "form",
+          "states": ["default", "edge_input"]
+        },
+        {
+          "id": "z-media-queue",
+          "label": "Media selection table",
+          "role": "queue",
+          "states": ["default", "loading", "empty", "error"]
+        },
+        {
+          "id": "z-job-cta",
+          "label": "Scan / analyze CTAs + job progress",
+          "role": "job",
+          "states": ["default", "loading", "error"]
+        },
+        {
+          "id": "z-identity-preview",
+          "label": "Identity / findings preview (AI-assisted)",
+          "role": "ai_review",
+          "evidence_linked": true,
+          "states": ["default", "empty", "loading"]
+        }
+      ]
+    },
+    {
+      "id": "workbench-conflicts",
+      "kind": "overlay",
+      "title": "Conflict Inbox",
+      "purpose": "Review identity conflicts; commit human judgment with evidence",
+      "route": "#/workbench?panel=conflicts",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": ["panel"],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/ConflictInbox.tsx",
+      "primary_action_id": "act-resolve-conflict",
+      "states": ["default", "loading", "empty", "error"],
+      "zones": [
+        {
+          "id": "z-conflict-list",
+          "label": "Conflict list",
+          "role": "queue",
+          "states": ["default", "loading", "empty"]
+        },
+        {
+          "id": "z-conflict-detail",
+          "label": "Conflict detail / candidates",
+          "role": "forced_choice",
+          "evidence_linked": true,
+          "max_candidates": 5,
+          "states": ["default", "loading", "empty"]
+        },
+        {
+          "id": "z-conflict-actions",
+          "label": "Resolve / defer actions",
+          "role": "form",
+          "states": ["default"]
+        }
+      ]
+    },
+    {
+      "id": "workbench-dead-letter",
+      "kind": "overlay",
+      "title": "Failed Sync Queue (Dead Letter)",
+      "purpose": "Inspect failed sync ops; retry or discard",
+      "route": "#/workbench?panel=dead-letter",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": ["panel"],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/DeadLetterPanel.tsx",
+      "primary_action_id": "act-retry-dead-letter",
+      "states": ["default", "loading", "empty", "error"],
+      "zones": [
+        {
+          "id": "z-dl-list",
+          "label": "Dead-letter items",
+          "role": "queue",
+          "states": ["default", "loading", "empty"]
+        },
+        {
+          "id": "z-dl-actions",
+          "label": "Retry / discard",
+          "role": "form",
+          "states": ["default"]
+        }
+      ]
+    },
+    {
+      "id": "exit-roster",
+      "kind": "exit",
+      "title": "Roster (person workspace)",
+      "purpose": "Assign unassigned faces / manage identities after scan or conflict",
+      "route": "#/roster",
+      "wp_page": "alt-context-roster",
+      "job_entry": true,
+      "deep_link": true,
+      "url_params": ["personFilter", "person"],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/RosterPage.tsx",
+      "states": ["default", "loading", "empty", "error"],
+      "zones": [
+        {
+          "id": "z-roster-main",
+          "label": "Entries / clusters workspace",
+          "role": "content",
+          "states": ["default", "empty"]
+        }
+      ]
+    },
+    {
+      "id": "exit-settings",
+      "kind": "exit",
+      "title": "Settings / service health",
+      "purpose": "Configure recognition target and connection health",
+      "route": "#/settings",
+      "wp_page": "alt-context-settings",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": [],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/SettingsPage.tsx",
+      "states": ["default", "loading", "error"],
+      "zones": [
+        {
+          "id": "z-settings-form",
+          "label": "Settings form + test connection",
+          "role": "form",
+          "states": ["default", "error"]
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "act-open-scan",
+      "verb": "Open Scan",
+      "target": "workbench-scan",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-shell"
+    },
+    {
+      "id": "act-scan-selected",
+      "verb": "Scan selected media",
+      "target": "job-pipeline",
+      "hierarchy": "primary",
+      "costly": true,
+      "irreversible": false,
+      "preview_required": true,
+      "screen_id": "workbench-scan"
+    },
+    {
+      "id": "act-open-conflicts",
+      "verb": "Open Conflict Inbox",
+      "target": "workbench-conflicts",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-shell"
+    },
+    {
+      "id": "act-open-dead-letter",
+      "verb": "Open Failed Sync Queue",
+      "target": "workbench-dead-letter",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-shell"
+    },
+    {
+      "id": "act-resolve-conflict",
+      "verb": "Resolve conflict",
+      "target": "identity-store",
+      "hierarchy": "primary",
+      "costly": true,
+      "irreversible": false,
+      "preview_required": true,
+      "screen_id": "workbench-conflicts"
+    },
+    {
+      "id": "act-retry-dead-letter",
+      "verb": "Retry failed op",
+      "target": "sync",
+      "hierarchy": "primary",
+      "costly": true,
+      "irreversible": false,
+      "preview_required": true,
+      "screen_id": "workbench-dead-letter"
+    },
+    {
+      "id": "act-discard-dead-letter",
+      "verb": "Discard failed op",
+      "target": "sync",
+      "hierarchy": "destructive",
+      "costly": true,
+      "irreversible": true,
+      "preview_required": true,
+      "screen_id": "workbench-dead-letter"
+    },
+    {
+      "id": "act-goto-roster",
+      "verb": "Go to Roster",
+      "target": "exit-roster",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-scan"
+    },
+    {
+      "id": "act-retry-projection",
+      "verb": "Retry projection sync",
+      "target": "projection",
+      "hierarchy": "secondary",
+      "costly": true,
+      "irreversible": false,
+      "preview_required": true,
+      "screen_id": "workbench-shell"
+    }
+  ],
+  "flows": [
+    {
+      "id": "flow-scan-happy",
+      "job": "job-clear-queue",
+      "label": "Select media \u2192 scan \u2192 continue",
+      "steps": [
+        {
+          "screen_id": "workbench-shell",
+          "branch_label": "enter"
+        },
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "select + scan"
+        },
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "results / next"
+        }
+      ]
+    },
+    {
+      "id": "flow-scan-to-conflict",
+      "job": "job-resolve-conflicts",
+      "label": "Scan \u2192 conflict overlay \u2192 resolve \u2192 roster if needed",
+      "steps": [
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "scan produces conflicts"
+        },
+        {
+          "screen_id": "workbench-conflicts",
+          "branch_label": "open panel=conflicts"
+        },
+        {
+          "screen_id": "workbench-conflicts",
+          "branch_label": "resolve"
+        },
+        {
+          "screen_id": "exit-roster",
+          "branch_label": "optional assign"
+        }
+      ]
+    },
+    {
+      "id": "flow-dead-letter-recover",
+      "job": "job-recover-sync",
+      "label": "Sync failure \u2192 dead letter \u2192 retry/discard",
+      "steps": [
+        {
+          "screen_id": "workbench-shell",
+          "branch_label": "degraded sync strip"
+        },
+        {
+          "screen_id": "workbench-dead-letter",
+          "branch_label": "panel=dead-letter"
+        },
+        {
+          "screen_id": "workbench-shell",
+          "branch_label": "retry or discard complete"
+        }
+      ]
+    }
+  ],
+  "open_questions": [
+    "Should Scan CTAs require selection count preview on the same surface before start? ([INT-07])",
+    "Conflict shortlist max_candidates=5 \u2014 confirm product policy vs model top-k",
+    "Does empty media queue show first_time guidance or empty-only copy?"
+  ],
+  "not_doing": [
+    "Resurrect confirm tab (E21-10)",
+    "Pixel/token design in this map",
+    "Attachment-edit SPA (separate map_ref later)",
+    "REST sequence diagrams (see docs/workbench-data-flow.mmd)"
+  ]
+}

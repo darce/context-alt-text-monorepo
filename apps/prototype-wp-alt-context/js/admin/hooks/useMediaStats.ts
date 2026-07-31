@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { type QueryClient, useQuery } from '@tanstack/react-query';
 import { fetchWorkbenchMedia } from '../api/workbenchMediaApi';
 import { queryKeys } from '../api/queryKeys';
 
@@ -8,16 +8,59 @@ export interface MediaStats {
   coverage: number;
 }
 
+/**
+ * Shared probe shape for dashboard coverage counters. Single definition so
+ * invalidation from useCorrectMediaAlt (and any future writer) cannot drift
+ * from the keys useMediaStats actually observes.
+ */
+export const MEDIA_STATS_PROBE = {
+  page: 1,
+  perPage: 1,
+} as const;
+
+/** Total-media count probe — alt correction does not change this total. */
+export const mediaStatsTotalQueryKey = queryKeys.media.workbenchPage({
+  ...MEDIA_STATS_PROBE,
+  status: 'all',
+});
+
+/** Missing-alt count probe — the figure that must refresh after a successful correction. */
+export const mediaStatsMissingQueryKey = queryKeys.media.workbenchPage({
+  ...MEDIA_STATS_PROBE,
+  status: 'missing',
+});
+
+/**
+ * Ask the server for a fresh missing-alt total after a successful alt write.
+ *
+ * Only the missing probe is invalidated: coverage = f(total, missing), and
+ * correcting alt text never changes how many media exist. The total probe's
+ * response is consumed solely for `.total` in useMediaStats — invalidating it
+ * would cost a request and refresh nothing. Distinct from list pages
+ * (perPage > 1), so this cannot unmount a workbench row [BR-77].
+ */
+export const invalidateMediaStats = (queryClient: QueryClient): void => {
+  void queryClient.invalidateQueries({ queryKey: mediaStatsMissingQueryKey });
+};
+
 export const useMediaStats = () => {
   const totalMediaResult = useQuery({
-    queryKey: queryKeys.media.workbenchPage({ page: 1, perPage: 1, status: 'all' }),
-    queryFn: () => fetchWorkbenchMedia({ page: 1, perPage: 1, status: 'all' }),
+    queryKey: mediaStatsTotalQueryKey,
+    queryFn: () =>
+      fetchWorkbenchMedia({
+        ...MEDIA_STATS_PROBE,
+        status: 'all',
+      }),
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
   const missingAltResult = useQuery({
-    queryKey: queryKeys.media.workbenchPage({ page: 1, perPage: 1, status: 'missing' }),
-    queryFn: () => fetchWorkbenchMedia({ page: 1, perPage: 1, status: 'missing' }),
+    queryKey: mediaStatsMissingQueryKey,
+    queryFn: () =>
+      fetchWorkbenchMedia({
+        ...MEDIA_STATS_PROBE,
+        status: 'missing',
+      }),
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 

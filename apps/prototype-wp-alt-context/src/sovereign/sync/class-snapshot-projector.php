@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Sovereign\Sync;
 
+require_once __DIR__ . '/interface-snapshot-projector.php';
 require_once __DIR__ . '/../repositories/class-member-conflict-recorder.php';
 
 use AltContext\Sovereign\Repositories\ClustersRepositoryInterface;

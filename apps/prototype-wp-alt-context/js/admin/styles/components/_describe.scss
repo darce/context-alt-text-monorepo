@@ -226,6 +226,20 @@
   }
 }
 
+/* Recovery status: colour paired with icon — never colour alone [sr-004][A11Y]. */
+.acx-history__recovery {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--acx-space-8);
+  color: var(--acx-color-text-secondary);
+}
+
+.acx-history__recovery-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--acx-color-accent);
+}
+
 .acx-history__correction {
   display: grid;
   gap: var(--acx-space-8);

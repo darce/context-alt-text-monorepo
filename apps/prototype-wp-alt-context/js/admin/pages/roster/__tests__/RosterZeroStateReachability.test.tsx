@@ -197,7 +197,10 @@ describe('Roster zero-state reachability (rg-003)', () => {
     // rg-003: Needs-assignment rail stays reachable at zero state (disabled-with-reason).
     expect(screen.getByTestId('needs-assignment-section')).toBeInTheDocument();
     expect(screen.getByTestId('needs-assignment-zero')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^Merge$/i })).toBeDisabled();
+    // The count belongs in the accessible name: at zero selection it is the only
+    // channel that states *why* the control is dimmed (title is not reliably
+    // announced), so rg-003's "disabled with reason" is carried by the label.
+    expect(screen.getByRole('button', { name: /^Merge 0 clusters$/i })).toBeDisabled();
   });
 
   it('pairs the active filter badge with an icon second channel', () => {

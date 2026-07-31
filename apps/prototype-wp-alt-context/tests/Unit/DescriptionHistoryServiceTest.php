@@ -1286,6 +1286,9 @@ class DescriptionHistoryServiceTest extends TestCase
      * stored_alt_text shape as the plant failure) so the client onError reconcile
      * path runs. Claiming 200 while isDecorative stays true on the next fetch is
      * a durable-contract lie [rg-002][INT-09].
+     *
+     * CO-01: clear-failure PARTIAL is deferred until after human-edit write —
+     * human_edit meta must be present even when the marker clear failed.
      */
     public function testDecorativeMarkerClearFailureReturnsPartial(): void
     {
@@ -1308,6 +1311,9 @@ class DescriptionHistoryServiceTest extends TestCase
         // Alt write landed; marker still present (delete failed).
         $this->assertSame($newAlt, get_post_meta($mediaId, '_wp_attachment_image_alt', true));
         $this->assertSame('1', get_post_meta($mediaId, 'acx_alt_decorative', true));
+        // [CO-01] human_edit must land even when clear failed — deferred failure.
+        $this->assertIsArray(get_post_meta($mediaId, '_acx_description_human_edit', true));
+        $this->assertStringContainsString('decorative marker could not be cleared', strtolower($result->get_error_message()));
     }
 
     /**
@@ -1464,7 +1470,8 @@ class DescriptionHistoryServiceTest extends TestCase
         $this->seedAttachment($mediaId, 'Legacy caller');
         $this->setPostMeta($mediaId, '_wp_attachment_image_alt', 'Old.');
 
-        // Two-argument service call (existing callers) — third param defaults false.
+        // Two-argument service call (existing callers) — third param defaults null
+        // (unspecified ≡ today's prior default-false clear behaviour) [A-02].
         $result = (new DescriptionHistoryService())->record_correction($mediaId, 'Legacy corrected alt.');
         $this->assertNotInstanceOf(WP_Error::class, $result);
         $this->assertSame('Legacy corrected alt.', get_post_meta($mediaId, '_wp_attachment_image_alt', true));
@@ -1646,7 +1653,8 @@ class DescriptionHistoryServiceTest extends TestCase
     }
 
     /**
-     * Correction route args register optional decorative with default false.
+     * Correction route args register optional decorative with NO schema default
+     * so absent and explicit false remain distinguishable [A-02].
      */
     public function testCorrectionRouteRegistersOptionalDecorativeArg(): void
     {
@@ -1667,9 +1675,181 @@ class DescriptionHistoryServiceTest extends TestCase
         $this->assertArrayHasKey('decorative', $schema);
         $this->assertSame('boolean', $schema['decorative']['type']);
         $this->assertFalse($schema['decorative']['required']);
-        $this->assertFalse($schema['decorative']['default']);
+        // No default — schema default would collapse absent into false [A-02].
+        $this->assertArrayNotHasKey('default', $schema['decorative']);
         // Existing alt_text arg still required.
         $this->assertTrue($schema['alt_text']['required']);
+    }
+
+    /**
+     * A-02 tri-state matrix: true / explicit false / omitted against empty and
+     * non-empty stored alt. Omitted must be byte-for-byte today's prior false
+     * (clear only on non-empty); explicit false un-marks even when empty.
+     */
+    public function testDecorativeTriStateClearMatrix(): void
+    {
+        $service = new DescriptionHistoryService();
+
+        // true + empty: plant marker.
+        $idPlant = 620;
+        $this->seedAttachment($idPlant, 'Plant');
+        $this->setPostMeta($idPlant, '_wp_attachment_image_alt', 'Prior');
+        $r = $service->record_correction($idPlant, '', true);
+        $this->assertNotInstanceOf(WP_Error::class, $r);
+        $this->assertSame('1', get_post_meta($idPlant, 'acx_alt_decorative', true));
+        $this->assertSame('', get_post_meta($idPlant, '_wp_attachment_image_alt', true));
+
+        // omitted (null) + empty + prior marker: preserve marker.
+        $idOmitEmpty = 621;
+        $this->seedAttachment($idOmitEmpty, 'Omit empty');
+        $this->setPostMeta($idOmitEmpty, '_wp_attachment_image_alt', '');
+        $this->setPostMeta($idOmitEmpty, 'acx_alt_decorative', '1');
+        $r = $service->record_correction($idOmitEmpty, '');
+        $this->assertNotInstanceOf(WP_Error::class, $r);
+        $this->assertSame('1', get_post_meta($idOmitEmpty, 'acx_alt_decorative', true));
+
+        // omitted (null) + non-empty + prior marker: clear.
+        $idOmitNonEmpty = 622;
+        $this->seedAttachment($idOmitNonEmpty, 'Omit non-empty');
+        $this->setPostMeta($idOmitNonEmpty, '_wp_attachment_image_alt', '');
+        $this->setPostMeta($idOmitNonEmpty, 'acx_alt_decorative', '1');
+        $r = $service->record_correction($idOmitNonEmpty, 'Now described.');
+        $this->assertNotInstanceOf(WP_Error::class, $r);
+        $this->assertSame('', get_post_meta($idOmitNonEmpty, 'acx_alt_decorative', true));
+        $this->assertArrayNotHasKey('acx_alt_decorative', $GLOBALS['__ac_post_meta'][$idOmitNonEmpty] ?? []);
+
+        // explicit false + empty + prior marker: un-mark [INT-09].
+        $idFalseEmpty = 623;
+        $this->seedAttachment($idFalseEmpty, 'Unmark empty');
+        $this->setPostMeta($idFalseEmpty, '_wp_attachment_image_alt', '');
+        $this->setPostMeta($idFalseEmpty, 'acx_alt_decorative', '1');
+        $r = $service->record_correction($idFalseEmpty, '', false);
+        $this->assertNotInstanceOf(WP_Error::class, $r);
+        $this->assertSame('', get_post_meta($idFalseEmpty, 'acx_alt_decorative', true));
+        $this->assertArrayNotHasKey('acx_alt_decorative', $GLOBALS['__ac_post_meta'][$idFalseEmpty] ?? []);
+        $this->assertSame('', get_post_meta($idFalseEmpty, '_wp_attachment_image_alt', true));
+
+        // explicit false + non-empty + prior marker: clear.
+        $idFalseNonEmpty = 624;
+        $this->seedAttachment($idFalseNonEmpty, 'Unmark non-empty');
+        $this->setPostMeta($idFalseNonEmpty, '_wp_attachment_image_alt', '');
+        $this->setPostMeta($idFalseNonEmpty, 'acx_alt_decorative', '1');
+        $r = $service->record_correction($idFalseNonEmpty, 'Also described.', false);
+        $this->assertNotInstanceOf(WP_Error::class, $r);
+        $this->assertSame('', get_post_meta($idFalseNonEmpty, 'acx_alt_decorative', true));
+        $this->assertSame('Also described.', get_post_meta($idFalseNonEmpty, '_wp_attachment_image_alt', true));
+    }
+
+    /**
+     * A-02 un-mark: after explicit false with empty alt, candidate service
+     * classifies missing_alt — the row returns to the describe queue.
+     * human_edit is not considered by classification; empty + no marker is
+     * the whole signal [INT-09].
+     */
+    public function testUnmarkDecorativeReturnsRowToMissingAltQueue(): void
+    {
+        $mediaId = 625;
+        $this->seedAttachment($mediaId, 'Unmark to queue');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', '');
+        $this->setPostMeta($mediaId, 'acx_alt_decorative', '1');
+
+        // Precondition: decorative exclusion.
+        $candidate = new \AltContext\Api\Services\DescriptionCandidateService();
+        $before = $candidate->get_status_for_media_ids([$mediaId]);
+        $this->assertSame('decorative', $before[0]['reason']);
+
+        $result = (new DescriptionHistoryService())->record_correction($mediaId, '', false);
+        $this->assertNotInstanceOf(WP_Error::class, $result);
+        $this->assertFalse($result['is_decorative']);
+        $this->assertSame('', get_post_meta($mediaId, 'acx_alt_decorative', true));
+        $this->assertArrayNotHasKey('acx_alt_decorative', $GLOBALS['__ac_post_meta'][$mediaId] ?? []);
+
+        $after = $candidate->get_status_for_media_ids([$mediaId]);
+        $this->assertSame('missing_alt', $after[0]['reason']);
+        $this->assertSame('missing_alt', $after[0]['candidate_reason']);
+        // list_missing_alt_candidates uses get_posts over the full library; the
+        // dedicated DescriptionCandidateServiceTest covers that path. Here we
+        // pin classification for this media_id after the un-mark write.
+    }
+
+    /**
+     * CO-01: when decorative clear fails, do not return before human_edit.
+     * human_edit meta must be present after a forced clear failure; the
+     * returned PARTIAL is still the clear-failure message (not human-edit).
+     */
+    public function testClearFailureDefersUntilAfterHumanEditWrite(): void
+    {
+        $mediaId = 626;
+        $newAlt = 'Clear fail still stamps human edit.';
+        $this->seedAttachment($mediaId, 'CO-01 clear defer');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', '');
+        $this->setPostMeta($mediaId, 'acx_alt_decorative', '1');
+        $GLOBALS['__ac_delete_post_meta_fail'][$mediaId]['acx_alt_decorative'] = true;
+
+        $result = (new DescriptionHistoryService())->record_correction($mediaId, $newAlt);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('description_correction_partial', $result->get_error_code());
+        $this->assertStringContainsString(
+            'decorative marker could not be cleared',
+            strtolower($result->get_error_message())
+        );
+        $human = get_post_meta($mediaId, '_acx_description_human_edit', true);
+        $this->assertIsArray($human, 'human_edit must be written before clear-failure PARTIAL returns [CO-01]');
+        $this->assertSame($newAlt, $human['alt_text'] ?? null);
+        $this->assertTrue($result->get_error_data()['is_decorative']);
+    }
+
+    /**
+     * CO-01: when both clear and human_edit fail, human_edit PARTIAL wins
+     * (strictly worse: no provenance). is_decorative still read-back-derived.
+     */
+    public function testClearAndHumanEditBothFailReturnsHumanEditPartial(): void
+    {
+        $mediaId = 627;
+        $newAlt = 'Both fail alt.';
+        $this->seedAttachment($mediaId, 'CO-01 both fail');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', '');
+        $this->setPostMeta($mediaId, 'acx_alt_decorative', '1');
+        $GLOBALS['__ac_delete_post_meta_fail'][$mediaId]['acx_alt_decorative'] = true;
+        $GLOBALS['__ac_update_post_meta_fail'][$mediaId]['_acx_description_human_edit'] = true;
+
+        $result = (new DescriptionHistoryService())->record_correction($mediaId, $newAlt);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('description_correction_partial', $result->get_error_code());
+        $this->assertStringContainsString(
+            'human-edit record could not be stored',
+            strtolower($result->get_error_message())
+        );
+        $this->assertSame($newAlt, $result->get_error_data()['stored_alt_text']);
+        $this->assertTrue($result->get_error_data()['is_decorative']);
+        $this->assertSame('1', get_post_meta($mediaId, 'acx_alt_decorative', true));
+    }
+
+    /**
+     * A-02: controller passes explicit false through as un-mark (not null).
+     */
+    public function testControllerPassesExplicitFalseAsUnmark(): void
+    {
+        $mediaId = 628;
+        $this->seedAttachment($mediaId, 'Controller unmark');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', '');
+        $this->setPostMeta($mediaId, 'acx_alt_decorative', '1');
+
+        $controller = new DescribeController();
+        $request = new WP_REST_Request(
+            'POST',
+            '/acx/v1/recognition/describe/history/' . $mediaId . '/correction'
+        );
+        $request->set_param('media_id', $mediaId);
+        $request->set_param('alt_text', '');
+        $request->set_param('decorative', false);
+
+        $response = $controller->correct_description_history_item($request);
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $this->assertFalse($response->get_data()['is_decorative']);
+        $this->assertSame('', get_post_meta($mediaId, 'acx_alt_decorative', true));
     }
 
     /**

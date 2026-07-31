@@ -427,6 +427,37 @@ describe('useCorrectMediaAlt', () => {
     assertEnvelopeHonest(cached, 5, 2);
   });
 
+  it('two-arg mutation (no decorative) calls correctDescriptionHistoryItem with two args only [A-02]', async () => {
+    // Existing Accept/Save paths omit decorative. Pre-fix and post-fix both
+    // must produce a literal two-argument API call — tests pin no third arg.
+    // [TEST-15]: goes RED if mutationFn always passes a third options object.
+    correctMock.mockResolvedValue(successHistoryItem(42, 'Saved alt', 'Bridge'));
+    const client = buildClient();
+    seedWorkbench(client, null);
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+
+    result.current.mutate({ mediaId: 42, altText: 'Saved alt' });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(correctMock).toHaveBeenCalledTimes(1);
+    expect(correctMock).toHaveBeenCalledWith(42, 'Saved alt');
+    expect(correctMock.mock.calls[0]).toHaveLength(2);
+  });
+
+  it('mutation with decorative:false posts options with false [A-02][INT-09]', async () => {
+    // Un-mark: decorative must be defined so the API sends explicit false.
+    // [TEST-15]: goes RED if mutationFn only forwards when decorative === true.
+    correctMock.mockResolvedValue(successHistoryItem(42, '', 'Bridge', false));
+    const client = buildClient();
+    seedWorkbench(client, null);
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+
+    result.current.mutate({ mediaId: 42, altText: '', decorative: false });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(correctMock).toHaveBeenCalledWith(42, '', { decorative: false });
+  });
+
   it('PARTIAL path never plants isDecorative when server reports false even if request was decorative [WBUX-5][A-03]', async () => {
     // Marker was not stored this write. Server is_decorative:false is authoritative;
     // empty PARTIAL must not invent isDecorative:true from request intent [A-03][rg-015].

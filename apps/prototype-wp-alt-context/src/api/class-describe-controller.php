@@ -233,11 +233,16 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 						'required'    => true,
 						'description' => 'Human-corrected alt text.',
 					),
+					// No schema default: WP_REST_Request::get_param applies defaults,
+					// so default=>false would make absent and explicit false
+					// indistinguishable and break the un-mark tri-state [A-02].
+					// Absent still means "unspecified"; the service treats null as
+					// today's prior default-false behaviour — existing clients that
+					// omit the flag keep the same outcome.
 					'decorative' => array(
 						'type'        => 'boolean',
 						'required'    => false,
-						'default'     => false,
-						'description' => 'Mark the image as deliberately decorative (empty alt).',
+						'description' => 'Tri-state decorative flag: true marks decorative, false un-marks, omit leaves unspecified.',
 					),
 				),
 			)
@@ -334,12 +339,14 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	}
 
 	public function correct_description_history_item( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		// decorative defaults false when omitted so every existing caller is
-		// unchanged. Cast: REST may hand back null when the param is absent.
-		$result = $this->description_history_service->record_correction(
+		// Tri-state decorative [A-02]: null when absent (unspecified ≡ prior
+		// default-false behaviour), bool when the client sent an explicit value.
+		// Do not coalesce absent to false — that collapses un-mark into unspecified.
+		$raw_decorative = $request->get_param( 'decorative' );
+		$result         = $this->description_history_service->record_correction(
 			absint( $request->get_param( 'media_id' ) ),
 			(string) $request->get_param( 'alt_text' ),
-			(bool) ( $request->get_param( 'decorative' ) ?? false )
+			null === $raw_decorative ? null : (bool) $raw_decorative
 		);
 		if ( is_wp_error( $result ) ) {
 			return $result;

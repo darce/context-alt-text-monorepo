@@ -324,7 +324,28 @@ describe('describeApi', () => {
     });
   });
 
-  it('does not send decorative when options.decorative is false or omitted [WBUX-5-S2C3C-BR-01]', async () => {
+  it('posts decorative:false when options.decorative is explicit false [A-02][INT-09]', async () => {
+    // Un-mark path: explicit false must appear on the wire. Pre-fix only sent
+    // decorative when true, so this goes RED without the tri-state body change.
+    // [TEST-15] discrimination: fails if decorative is dropped for false.
+    fetchApiMock.mockResolvedValue({
+      media_id: 42,
+      title: 'Bridge',
+      mime_type: 'image/jpeg',
+      current_alt_text: '',
+      generated_alt_text: '',
+      provenance: null,
+      human_edit: { alt_text: '', edited_at: null, user_id: 7 },
+      run_status: null,
+      is_decorative: false,
+    });
+
+    await correctDescriptionHistoryItem(42, '', { decorative: false });
+    const [, options] = fetchApiMock.mock.calls[0];
+    expect(options?.body).toEqual({ alt_text: '', decorative: false });
+  });
+
+  it('still omits decorative when options is undefined [A-02]', async () => {
     fetchApiMock.mockResolvedValue({
       media_id: 42,
       title: 'Bridge',
@@ -334,9 +355,10 @@ describe('describeApi', () => {
       provenance: null,
       human_edit: { alt_text: 'x', edited_at: null, user_id: 7 },
       run_status: null,
+      is_decorative: false,
     });
 
-    await correctDescriptionHistoryItem(42, 'x', { decorative: false });
+    await correctDescriptionHistoryItem(42, 'x', undefined);
     const [, options] = fetchApiMock.mock.calls[0];
     expect(options?.body).toEqual({ alt_text: 'x' });
     expect(options?.body).not.toHaveProperty('decorative');

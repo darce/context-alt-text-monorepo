@@ -8,8 +8,11 @@ import {
   ALT_SUGGEST_COMMIT_CONFLICT_MESSAGE,
   formatAltLengthAdvisory,
   formatOverLengthReadyAnnouncement,
+  MARK_DECORATIVE_LABEL,
   MediaAltSuggest,
   RECOMMENDED_ALT_TEXT_MAX_LENGTH,
+  UNMARK_DECORATIVE_LABEL,
+  UNMARK_DECORATIVE_SUCCESS_MESSAGE,
 } from '../MediaAltSuggest';
 import { correctDescriptionHistoryItem, describeMedia } from '../../../api/describeApi';
 import type { DescriptionHistoryItem, VisualFactsResponse } from '../../../api/describeApi';
@@ -91,6 +94,7 @@ const seedWorkbenchRow = (
   client: QueryClient,
   altText: string | null,
   status: WorkbenchMediaItem['status'] = altText && altText.trim() !== '' ? 'complete' : 'missing',
+  isDecorative = false,
 ): WorkbenchMediaResponse => {
   const page: WorkbenchMediaResponse = {
     items: [
@@ -100,7 +104,7 @@ const seedWorkbenchRow = (
         status,
         thumbnailUrl: null,
         altText,
-        isDecorative: false,
+        isDecorative,
         editUrl: null,
         tags: [],
       },
@@ -131,7 +135,7 @@ const LiveWorkbenchAltRow = ({ initial }: { initial: WorkbenchMediaResponse }): 
   return (
     <div data-testid="live-workbench-alt-row">
       <MediaAltInlineEditor mediaId={42} altText={altText} isDecorative={isDecorative} />
-      <MediaAltSuggest mediaId={42} committedAlt={altText} />
+      <MediaAltSuggest isDecorative={isDecorative} mediaId={42} committedAlt={altText} />
       <span data-testid="live-row-status">{item?.status ?? ''}</span>
     </div>
   );
@@ -179,7 +183,7 @@ describe('MediaAltSuggest', () => {
   });
 
   it('renders a Suggest alt text control', () => {
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     expect(screen.getByRole('button', { name: /suggest alt text/i })).toBeInTheDocument();
   });
@@ -187,7 +191,7 @@ describe('MediaAltSuggest', () => {
   it('generates a draft for the row id and shows a pending state', async () => {
     // Never resolves: keeps the mutation pending so we can observe the generating state.
     describeMock.mockReturnValue(new Promise<VisualFactsResponse>(() => undefined));
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
 
@@ -203,7 +207,7 @@ describe('MediaAltSuggest', () => {
 
   it('shows the generated draft with a synthetic-authorship disclosure and verify cue [HAI-14][HAI-13]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
 
@@ -216,7 +220,7 @@ describe('MediaAltSuggest', () => {
 
   it('announces the ready state via a named polite live region [HAI-13]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
     // Always-mounted empty region (BR-32): present before generation, no cue text yet.
     // data-testid disambiguates from MediaAltInlineEditor's sibling role=status.
     const status = screen.getByTestId('media-alt-suggest-status');
@@ -233,7 +237,7 @@ describe('MediaAltSuggest', () => {
     describeMock.mockRejectedValueOnce(
       new Error('Request to /wp-json/acx/v1/recognition/describe failed (502): <html>proxy-internal-detail</html>'),
     );
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
 
@@ -248,7 +252,7 @@ describe('MediaAltSuggest', () => {
     describeMock.mockRejectedValueOnce(
       new Error('Request to /wp-json/acx/v1/recognition/describe failed (502): <html>proxy-internal-detail</html>'),
     );
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
 
@@ -274,7 +278,7 @@ describe('MediaAltSuggest', () => {
 
   it('re-invokes generation when retry is pressed after a failure [INT-11]', async () => {
     describeMock.mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce(sampleResponse());
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /try again|retry/i }));
@@ -287,7 +291,7 @@ describe('MediaAltSuggest', () => {
 
   it('dismisses the suggestion back to the Suggest control', async () => {
     describeMock.mockResolvedValue(sampleResponse());
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     await screen.findByText(draft);
@@ -303,7 +307,7 @@ describe('MediaAltSuggest', () => {
 
   it('restores focus to the Suggest control after dismiss [a11y][WBUX-5-S2C-BR-01]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /dismiss/i }));
@@ -315,7 +319,7 @@ describe('MediaAltSuggest', () => {
 
   it('moves focus to Accept after a draft lands, not Dismiss or document.body [a11y][WBUX-5-S2C-BR-01][BR-57]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
 
@@ -331,7 +335,7 @@ describe('MediaAltSuggest', () => {
 
   it('moves focus to Edit draft when a whitespace-only draft lands [a11y][BR-57]', async () => {
     describeMock.mockResolvedValue(sampleResponse('   '));
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
 
@@ -346,7 +350,7 @@ describe('MediaAltSuggest', () => {
 
   it('moves focus to the retry control on failure so keyboard users are not stranded [a11y][WBUX-5-S2C-BR-01]', async () => {
     describeMock.mockRejectedValueOnce(new Error('boom'));
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
 
@@ -363,7 +367,7 @@ describe('MediaAltSuggest', () => {
     renderSuggest(
       <>
         <button type="button">Elsewhere</button>
-        <MediaAltSuggest mediaId={42} />
+        <MediaAltSuggest isDecorative={false} mediaId={42} />
       </>,
     );
 
@@ -388,7 +392,7 @@ describe('MediaAltSuggest', () => {
 
   it('offers an Accept control alongside the shown draft [HAI-12][S2c-2]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     await screen.findByText(draft);
@@ -400,7 +404,7 @@ describe('MediaAltSuggest', () => {
 
   it('disables Accept when the machine draft is empty or whitespace-only [WBUX-5-S2C3A-BR-24]', async () => {
     describeMock.mockResolvedValue(sampleResponse('   '));
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     await screen.findByRole('button', { name: /accept/i });
@@ -416,7 +420,7 @@ describe('MediaAltSuggest', () => {
     // Never resolves: hold the correction pending so we can assert the call
     // landed before any state transition (mirrors the awaited-mutation pattern).
     correctMock.mockReturnValue(new Promise<DescriptionHistoryItem>(() => undefined));
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /accept/i }));
@@ -434,7 +438,7 @@ describe('MediaAltSuggest', () => {
   it('announces accepting into the polite region while the commit is in flight [a11y][BR-56]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
     correctMock.mockReturnValue(new Promise<DescriptionHistoryItem>(() => undefined));
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     await waitFor(() => expect(screen.getByTestId('media-alt-suggest-status')).toHaveTextContent(/ready/i));
@@ -453,7 +457,7 @@ describe('MediaAltSuggest', () => {
   it('marks the draft host busy and parks focus while accepting [a11y][BR-56]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
     correctMock.mockReturnValue(new Promise<DescriptionHistoryItem>(() => undefined));
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     const accept = await screen.findByRole('button', { name: /accept/i });
@@ -486,7 +490,7 @@ describe('MediaAltSuggest', () => {
   it('announces saving into the polite region while an edited save is in flight [a11y][BR-56]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
     correctMock.mockReturnValue(new Promise<DescriptionHistoryItem>(() => undefined));
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
@@ -507,7 +511,7 @@ describe('MediaAltSuggest', () => {
   it('announces the saved state and returns to the Suggest control after accept [S2c-2]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
     correctMock.mockResolvedValue(sampleHistoryItem());
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /accept/i }));
@@ -522,7 +526,7 @@ describe('MediaAltSuggest', () => {
   it('restores focus to the Suggest control after a successful accept [a11y][S2c-2]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
     correctMock.mockResolvedValue(sampleHistoryItem());
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /accept/i }));
@@ -539,7 +543,7 @@ describe('MediaAltSuggest', () => {
     // Never resolves: splits void vs await in useCorrectMediaAlt's hook-level
     // onSuccess. With await, query-core never dispatches success.
     vi.spyOn(client, 'invalidateQueries').mockReturnValue(new Promise<void>(() => undefined));
-    renderSuggest(<MediaAltSuggest mediaId={42} />, client);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />, client);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /accept/i }));
@@ -559,7 +563,7 @@ describe('MediaAltSuggest', () => {
         'Request to /wp-json/acx/v1/recognition/describe-history/42/correction failed (502): <html>proxy-internal-detail</html>',
       ),
     );
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /accept/i }));
@@ -580,7 +584,7 @@ describe('MediaAltSuggest', () => {
         'Request to /wp-json/acx/v1/recognition/describe-history/42/correction failed (502): <html>proxy-internal-detail</html>',
       ),
     );
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     await waitFor(() => expect(screen.getByTestId('media-alt-suggest-status')).toHaveTextContent(/ready/i));
@@ -608,7 +612,7 @@ describe('MediaAltSuggest', () => {
         'Request to /wp-json/acx/v1/recognition/describe-history/42/correction failed (502): <html>proxy-internal-detail</html>',
       ),
     );
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     const accept = await screen.findByRole('button', { name: /accept/i });
@@ -633,7 +637,7 @@ describe('MediaAltSuggest', () => {
     );
     renderSuggest(
       <>
-        <MediaAltSuggest mediaId={42} />
+        <MediaAltSuggest isDecorative={false} mediaId={42} />
         <button type="button">Elsewhere</button>
       </>,
     );
@@ -661,7 +665,7 @@ describe('MediaAltSuggest', () => {
     correctMock.mockResolvedValue(sampleHistoryItem());
     renderSuggest(
       <>
-        <MediaAltSuggest mediaId={42} />
+        <MediaAltSuggest isDecorative={false} mediaId={42} />
         <button type="button">Elsewhere</button>
       </>,
     );
@@ -691,7 +695,7 @@ describe('MediaAltSuggest', () => {
         'Request to /wp-json/acx/v1/recognition/describe-history/42/correction failed (502): <html>proxy-internal-detail</html>',
       ),
     );
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     // Draft A -> Accept fails -> the save-failure alert appears for this draft.
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
@@ -721,7 +725,7 @@ describe('MediaAltSuggest', () => {
         'Request to /wp-json/acx/v1/recognition/describe-history/42/correction failed (502): <html>proxy-internal-detail</html>',
       ),
     );
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     // Draft A -> Accept fails -> sticky accept error alert.
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
@@ -747,7 +751,7 @@ describe('MediaAltSuggest', () => {
 
   it('offers an Edit control alongside the shown draft [HAI-11][HAI-12][S2c-3a]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     await screen.findByText(draft);
@@ -759,7 +763,7 @@ describe('MediaAltSuggest', () => {
 
   it('seeds the edit field with the draft so the good prefix is preserved [INT-11][S2c-3a]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
@@ -771,7 +775,7 @@ describe('MediaAltSuggest', () => {
 
   it('re-seeds the edit buffer from the draft on every Edit entry [S2c-3a][WBUX-5-S2C3A-BR-10]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
@@ -790,7 +794,7 @@ describe('MediaAltSuggest', () => {
 
   it('names the edit field distinctly from the row inline editor [A11Y-03][A11Y-04][S2c-3a]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
@@ -809,7 +813,7 @@ describe('MediaAltSuggest', () => {
     renderSuggest(
       <>
         <MediaAltInlineEditor mediaId={42} altText="An existing human-authored alt text." />
-        <MediaAltSuggest mediaId={42} />
+        <MediaAltSuggest isDecorative={false} mediaId={42} />
       </>,
     );
 
@@ -860,7 +864,7 @@ describe('MediaAltSuggest', () => {
 
   it('moves focus into the edit field on Edit [a11y][S2c-3a]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
@@ -872,7 +876,7 @@ describe('MediaAltSuggest', () => {
 
   it('keeps a single commit authority while editing [S2c-3a]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
@@ -891,7 +895,7 @@ describe('MediaAltSuggest', () => {
 
   it('disables Save when the edit buffer is empty or whitespace-only [S2c-3a][WBUX-5-S2C3A-BR-04]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
@@ -914,7 +918,7 @@ describe('MediaAltSuggest', () => {
     // Never resolves: hold the correction pending so the call is asserted before
     // any state transition (mirrors the awaited-mutation pattern above).
     correctMock.mockReturnValue(new Promise<DescriptionHistoryItem>(() => undefined));
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
@@ -933,7 +937,7 @@ describe('MediaAltSuggest', () => {
 
   it('cancels back to the draft without committing [INT-09][S2c-3a]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
@@ -954,7 +958,7 @@ describe('MediaAltSuggest', () => {
   it('announces the saved state and returns to the Suggest control after an edited save [S2c-3a]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
     correctMock.mockResolvedValue(sampleHistoryItem(editedDraft));
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
@@ -978,7 +982,7 @@ describe('MediaAltSuggest', () => {
         'Request to /wp-json/acx/v1/recognition/describe-history/42/correction failed (502): <html>proxy-internal-detail</html>',
       ),
     );
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
@@ -1004,7 +1008,7 @@ describe('MediaAltSuggest', () => {
         'Request to /wp-json/acx/v1/recognition/describe-history/42/correction failed (502): <html>proxy-internal-detail</html>',
       ),
     );
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     await waitFor(() => expect(screen.getByTestId('media-alt-suggest-status')).toHaveTextContent(/ready/i));
@@ -1036,7 +1040,7 @@ describe('MediaAltSuggest', () => {
         'Request to /wp-json/acx/v1/recognition/describe-history/42/correction failed (502): <html>proxy-internal-detail</html>',
       ),
     );
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
@@ -1063,7 +1067,7 @@ describe('MediaAltSuggest', () => {
         'Request to /wp-json/acx/v1/recognition/describe-history/42/correction failed (502): <html>proxy-internal-detail</html>',
       ),
     );
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
@@ -1106,7 +1110,7 @@ describe('MediaAltSuggest', () => {
         'Request to /wp-json/acx/v1/recognition/describe-history/42/correction failed (502): <html>proxy-internal-detail</html>',
       ),
     );
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     // Edit -> Save fails -> the save-failure alert appears for this attempt.
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
@@ -1134,7 +1138,7 @@ describe('MediaAltSuggest', () => {
         'Request to /wp-json/acx/v1/recognition/describe-history/42/correction failed (502): <html>proxy-internal-detail</html>',
       ),
     );
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     // Accept fails while NOT editing — the path enterEditMode's resetAccept guards.
     // No Cancel: cancelEdit also resets, so a Cancel-based test cannot pin this line.
@@ -1153,7 +1157,7 @@ describe('MediaAltSuggest', () => {
   it('returns a later draft to the review state, not a stale edit buffer [HAI-12][WBUX-5-S2C3A-BR-02]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
     correctMock.mockResolvedValue(sampleHistoryItem(editedDraft));
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     // Edit -> Save succeeds -> surface resets to idle.
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
@@ -1186,7 +1190,7 @@ describe('MediaAltSuggest', () => {
         'Request to /wp-json/acx/v1/recognition/describe-history/42/correction failed (502): <html>proxy-internal-detail</html>',
       ),
     );
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     // Reach review via Cancel after a failed save — not enterEditMode. That path
     // is the only one that observes cancelEdit's resetAccept (enterEditMode also
@@ -1216,7 +1220,7 @@ describe('MediaAltSuggest', () => {
         'Request to /wp-json/acx/v1/recognition/describe-history/42/correction failed (502): <html>proxy-internal-detail</html>',
       ),
     );
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /accept/i }));
@@ -1244,7 +1248,7 @@ describe('MediaAltSuggest', () => {
 
   it('offers a Regenerate control that requests a fresh draft for the same media id [HAI-12][WBUX-5-S2C3B]', async () => {
     describeMock.mockResolvedValueOnce(sampleResponse(draft)).mockResolvedValueOnce(sampleResponse(regeneratedDraft));
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     await screen.findByText(draft);
@@ -1273,7 +1277,7 @@ describe('MediaAltSuggest', () => {
         resolveRegenerate = resolve;
       }),
     );
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/ready/i));
@@ -1316,7 +1320,7 @@ describe('MediaAltSuggest', () => {
   it('disables Regenerate while a commit is in flight [WBUX-5-S2C3B]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
     correctMock.mockReturnValue(new Promise<DescriptionHistoryItem>(() => undefined));
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /accept/i }));
@@ -1335,7 +1339,7 @@ describe('MediaAltSuggest', () => {
         new Error('Request to /wp-json/acx/v1/recognition/describe failed (502): <html>proxy-internal-detail</html>'),
       )
       .mockResolvedValueOnce(sampleResponse(regeneratedDraft));
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     await screen.findByText(draft);
@@ -1362,7 +1366,7 @@ describe('MediaAltSuggest', () => {
 
   it('keeps focus inside the surface while generating, not on document.body [a11y][WBUX-5-S2C3A-BR-13][WBUX-5-S2C3B]', async () => {
     describeMock.mockReturnValue(new Promise<VisualFactsResponse>(() => undefined));
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     expect(await screen.findByRole('button', { name: /generating/i })).toBeDisabled();
@@ -1384,7 +1388,7 @@ describe('MediaAltSuggest', () => {
 
   it('names the pending park target explicitly so SR users hear a single generating cue [a11y][BR-38]', async () => {
     describeMock.mockReturnValue(new Promise<VisualFactsResponse>(() => undefined));
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     const generating = await screen.findByRole('button', { name: /generating/i });
@@ -1412,7 +1416,7 @@ describe('MediaAltSuggest', () => {
 
   it('keeps role=group on the draft host while idle (not only while accepting) [a11y][BR-56]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     // Idle draft-ready: Accept is available, not "Accepting draft…".
@@ -1437,7 +1441,7 @@ describe('MediaAltSuggest', () => {
   it('names the accepting park target with a permitted role [a11y][BR-56]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
     correctMock.mockReturnValue(new Promise<DescriptionHistoryItem>(() => undefined));
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /accept/i }));
@@ -1475,10 +1479,10 @@ describe('MediaAltSuggest', () => {
     renderSuggest(
       <>
         <div data-testid="row-a">
-          <MediaAltSuggest mediaId={1} />
+          <MediaAltSuggest isDecorative={false} mediaId={1} />
         </div>
         <div data-testid="row-b">
-          <MediaAltSuggest mediaId={2} />
+          <MediaAltSuggest isDecorative={false} mediaId={2} />
         </div>
       </>,
     );
@@ -1532,10 +1536,10 @@ describe('MediaAltSuggest', () => {
     renderSuggest(
       <>
         <div data-testid="row-a">
-          <MediaAltSuggest mediaId={1} />
+          <MediaAltSuggest isDecorative={false} mediaId={1} />
         </div>
         <div data-testid="row-b">
-          <MediaAltSuggest mediaId={2} />
+          <MediaAltSuggest isDecorative={false} mediaId={2} />
         </div>
       </>,
     );
@@ -1584,10 +1588,10 @@ describe('MediaAltSuggest', () => {
     renderSuggest(
       <>
         <div data-testid="row-a">
-          <MediaAltSuggest mediaId={1} />
+          <MediaAltSuggest isDecorative={false} mediaId={1} />
         </div>
         <div data-testid="row-b">
-          <MediaAltSuggest mediaId={2} />
+          <MediaAltSuggest isDecorative={false} mediaId={2} />
         </div>
         <button type="button">Outside</button>
       </>,
@@ -1646,10 +1650,10 @@ describe('MediaAltSuggest', () => {
     renderSuggest(
       <>
         <div data-testid="row-a">
-          <MediaAltSuggest mediaId={1} />
+          <MediaAltSuggest isDecorative={false} mediaId={1} />
         </div>
         <div data-testid="row-b">
-          <MediaAltSuggest mediaId={2} />
+          <MediaAltSuggest isDecorative={false} mediaId={2} />
         </div>
       </>,
     );
@@ -1685,7 +1689,7 @@ describe('MediaAltSuggest', () => {
     correctMock.mockResolvedValue(sampleHistoryItem());
     renderSuggest(
       <>
-        <MediaAltSuggest mediaId={42} />
+        <MediaAltSuggest isDecorative={false} mediaId={42} />
         <button type="button">Elsewhere</button>
       </>,
     );
@@ -1749,7 +1753,7 @@ describe('MediaAltSuggest', () => {
 
   it('surfaces a length advisory naming actual length and threshold on an over-length generated draft [A11Y-34][S2c-3c]', async () => {
     describeMock.mockResolvedValue(sampleResponse(longGeneratedDraft));
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     await screen.findByText(longGeneratedDraft);
@@ -1772,7 +1776,7 @@ describe('MediaAltSuggest', () => {
 
   it('does not show a length advisory for a draft under the recommended maximum [A11Y-34][S2c-3c]', async () => {
     describeMock.mockResolvedValue(sampleResponse(underThresholdDraft));
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     await screen.findByText(underThresholdDraft);
@@ -1786,7 +1790,7 @@ describe('MediaAltSuggest', () => {
     // Boundary decision (exclusive over): length > RECOMMENDED warns;
     // length === RECOMMENDED does not. Pin both sides of the edge.
     describeMock.mockResolvedValueOnce(sampleResponse(atThresholdDraft));
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     await screen.findByText(atThresholdDraft);
@@ -1807,7 +1811,7 @@ describe('MediaAltSuggest', () => {
 
   it('re-evaluates the length advisory live as the author types in edit mode [A11Y-34][S2c-3c]', async () => {
     describeMock.mockResolvedValue(sampleResponse(underThresholdDraft));
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
@@ -1833,7 +1837,7 @@ describe('MediaAltSuggest', () => {
 
   it('keeps Accept enabled while the length advisory is showing [A11Y-36][S2c-3c]', async () => {
     describeMock.mockResolvedValue(sampleResponse(longGeneratedDraft));
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     await screen.findByText(longGeneratedDraft);
@@ -1848,7 +1852,7 @@ describe('MediaAltSuggest', () => {
 
   it('keeps Save enabled while the length advisory is showing in edit mode [A11Y-36][S2c-3c]', async () => {
     describeMock.mockResolvedValue(sampleResponse(underThresholdDraft));
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
@@ -1862,7 +1866,7 @@ describe('MediaAltSuggest', () => {
 
   it('references the length advisory from the edit textarea aria-describedby [a11y][A11Y-34][S2c-3c]', async () => {
     describeMock.mockResolvedValue(sampleResponse(longGeneratedDraft));
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
@@ -1891,7 +1895,7 @@ describe('MediaAltSuggest', () => {
         'Request to /wp-json/acx/v1/recognition/describe-history/42/correction failed (502): <html>proxy-internal-detail</html>',
       ),
     );
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
@@ -1914,7 +1918,7 @@ describe('MediaAltSuggest', () => {
 
   it('announces the length advisory once via the existing polite status region when a long draft lands [a11y][A11Y-19][S2c-3c]', async () => {
     describeMock.mockResolvedValue(sampleResponse(longGeneratedDraft));
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     await screen.findByText(longGeneratedDraft);
@@ -1939,7 +1943,7 @@ describe('MediaAltSuggest', () => {
     // Visible advisory stays keystroke-live; only the polite announcement is
     // crossing-gated. A region that fires per character is worse than silence.
     describeMock.mockResolvedValue(sampleResponse(underThresholdDraft));
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
@@ -2013,7 +2017,7 @@ describe('MediaAltSuggest', () => {
     // batches and the disabled attribute never lands between them.
     describeMock.mockResolvedValue(sampleResponse());
     correctMock.mockReturnValue(new Promise<DescriptionHistoryItem>(() => undefined));
-    renderSuggest(<MediaAltSuggest mediaId={42} committedAlt={null} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} committedAlt={null} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     const accept = await screen.findByRole('button', { name: /accept/i });
@@ -2035,7 +2039,7 @@ describe('MediaAltSuggest', () => {
   it('enqueues exactly one correction for two same-tick Save activations [S2C3A-BR-16]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
     correctMock.mockReturnValue(new Promise<DescriptionHistoryItem>(() => undefined));
-    renderSuggest(<MediaAltSuggest mediaId={42} committedAlt={null} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} committedAlt={null} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
@@ -2058,7 +2062,7 @@ describe('MediaAltSuggest', () => {
   it('refuses Accept when committedAlt moved under a sticky draft [S2c-4b-i]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
     const { client, rerender } = renderSuggest(
-      <MediaAltSuggest mediaId={42} committedAlt="Existing alt" />,
+      <MediaAltSuggest isDecorative={false} mediaId={42} committedAlt="Existing alt" />,
     );
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
@@ -2067,7 +2071,7 @@ describe('MediaAltSuggest', () => {
     // Sibling committed while draft was sticky — prop updates to the new truth.
     rerender(
       <QueryClientProvider client={client}>
-        <MediaAltSuggest mediaId={42} committedAlt="Sibling committed this." />
+        <MediaAltSuggest isDecorative={false} mediaId={42} committedAlt="Sibling committed this." />
       </QueryClientProvider>,
     );
 
@@ -2088,7 +2092,7 @@ describe('MediaAltSuggest', () => {
     describeMock.mockResolvedValue(sampleResponse());
     const onCommitStart = vi.fn((): boolean => false);
     renderSuggest(
-      <MediaAltSuggest mediaId={42} committedAlt="Existing alt" onCommitStart={onCommitStart} />,
+      <MediaAltSuggest isDecorative={false} mediaId={42} committedAlt="Existing alt" onCommitStart={onCommitStart} />,
     );
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
@@ -2114,7 +2118,7 @@ describe('MediaAltSuggest', () => {
     describeMock.mockResolvedValue(sampleResponse());
     const onCommitStart = vi.fn((): boolean => false);
     renderSuggest(
-      <MediaAltSuggest mediaId={42} committedAlt="Existing alt" onCommitStart={onCommitStart} />,
+      <MediaAltSuggest isDecorative={false} mediaId={42} committedAlt="Existing alt" onCommitStart={onCommitStart} />,
     );
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
@@ -2143,7 +2147,7 @@ describe('MediaAltSuggest', () => {
     describeMock.mockResolvedValue(sampleResponse());
     const onCommitStart = vi.fn((): boolean => false);
     const { client, rerender } = renderSuggest(
-      <MediaAltSuggest mediaId={42} committedAlt="Existing alt" onCommitStart={onCommitStart} />,
+      <MediaAltSuggest isDecorative={false} mediaId={42} committedAlt="Existing alt" onCommitStart={onCommitStart} />,
     );
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
@@ -2152,7 +2156,7 @@ describe('MediaAltSuggest', () => {
     // Trigger a genuine CAS conflict first so a conflict message is on screen.
     rerender(
       <QueryClientProvider client={client}>
-        <MediaAltSuggest
+        <MediaAltSuggest isDecorative={false}
           mediaId={42}
           committedAlt="Sibling committed this."
           onCommitStart={onCommitStart}
@@ -2167,7 +2171,7 @@ describe('MediaAltSuggest', () => {
     // The CAS message must survive the refused claim (clear only after claim succeeds).
     rerender(
       <QueryClientProvider client={client}>
-        <MediaAltSuggest mediaId={42} committedAlt="Existing alt" onCommitStart={onCommitStart} />
+        <MediaAltSuggest isDecorative={false} mediaId={42} committedAlt="Existing alt" onCommitStart={onCommitStart} />
       </QueryClientProvider>,
     );
     // Baseline was captured at generate as "Existing alt"; prop is again "Existing alt"
@@ -2192,7 +2196,7 @@ describe('MediaAltSuggest', () => {
     // present but correctMock never called with ('', { decorative: true }).
     describeMock.mockResolvedValue(sampleResponse());
     correctMock.mockResolvedValue(sampleHistoryItem(''));
-    renderSuggest(<MediaAltSuggest mediaId={42} committedAlt={null} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} committedAlt={null} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     await screen.findByText(draft);
@@ -2214,7 +2218,7 @@ describe('MediaAltSuggest', () => {
     // [TEST-15] discrimination: goes RED if saveEdit (or Accept) sends
     // decorative:true for an empty ordinary commit.
     describeMock.mockResolvedValue(sampleResponse());
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     fireEvent.click(await screen.findByRole('button', { name: /^edit draft$/i }));
@@ -2251,7 +2255,7 @@ describe('MediaAltSuggest', () => {
         ),
       ),
     );
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     await screen.findByText(draft);
@@ -2282,7 +2286,7 @@ describe('MediaAltSuggest', () => {
 
   it('gives the decorative control an accessible name and keeps it keyboard-reachable [WBUX-5-S2C3C-BR-01][A11Y-15]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     await screen.findByText(draft);
@@ -2302,7 +2306,7 @@ describe('MediaAltSuggest', () => {
   it('disables the decorative control while a commit is in flight [WBUX-5-S2C3C-BR-01]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
     correctMock.mockReturnValue(new Promise<DescriptionHistoryItem>(() => undefined));
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     await screen.findByText(draft);
@@ -2320,7 +2324,7 @@ describe('MediaAltSuggest', () => {
     // when the operator deliberately chose decorative instead.
     describeMock.mockResolvedValue(sampleResponse());
     correctMock.mockReturnValue(new Promise<DescriptionHistoryItem>(() => undefined));
-    renderSuggest(<MediaAltSuggest mediaId={42} />);
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     await screen.findByText(draft);
@@ -2346,7 +2350,7 @@ describe('MediaAltSuggest', () => {
     );
     correctMock.mockResolvedValue(sampleHistoryItem(draft));
     const { client, rerender } = renderSuggest(
-      <MediaAltSuggest mediaId={42} committedAlt="At click" />,
+      <MediaAltSuggest isDecorative={false} mediaId={42} committedAlt="At click" />,
     );
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
@@ -2355,7 +2359,7 @@ describe('MediaAltSuggest', () => {
     // Sibling (or cache) updates committed alt while generation is in flight.
     rerender(
       <QueryClientProvider client={client}>
-        <MediaAltSuggest mediaId={42} committedAlt="Arrived during generate" />
+        <MediaAltSuggest isDecorative={false} mediaId={42} committedAlt="Arrived during generate" />
       </QueryClientProvider>,
     );
 
@@ -2573,5 +2577,77 @@ describe('MediaAltSuggest', () => {
     await waitFor(() => {
       expect(screen.queryByText(priorAlt)).not.toBeInTheDocument();
     });
+  });
+
+  // ---------------------------------------------------------------------------
+  // A-02 — un-mark decorative (inverse control at both render sites)
+  // ---------------------------------------------------------------------------
+
+  it('shows un-mark control only when isDecorative at the idle (no-draft) site [A-02][INT-06]', () => {
+    // Idle branch is the second render site (Suggest + decorative, no draft).
+    // [TEST-15]: goes RED if MARK_DECORATIVE_LABEL is shown when isDecorative,
+    // or if UNMARK_DECORATIVE_LABEL appears when not marked.
+    const { unmount } = renderSuggest(
+      <MediaAltSuggest isDecorative={true} mediaId={42} committedAlt={null} />,
+    );
+    expect(screen.getByRole('button', { name: UNMARK_DECORATIVE_LABEL })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: MARK_DECORATIVE_LABEL })).not.toBeInTheDocument();
+    unmount();
+
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} committedAlt={null} />);
+    expect(screen.getByRole('button', { name: MARK_DECORATIVE_LABEL })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: UNMARK_DECORATIVE_LABEL })).not.toBeInTheDocument();
+  });
+
+  it('shows un-mark control at the draft review site when isDecorative [A-02][INT-06]', async () => {
+    // Draft branch is the first render site (Accept / Edit / decorative / Dismiss).
+    describeMock.mockResolvedValue(sampleResponse());
+    renderSuggest(<MediaAltSuggest isDecorative={true} mediaId={42} committedAlt={null} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await screen.findByText(draft);
+
+    expect(screen.getByRole('button', { name: UNMARK_DECORATIVE_LABEL })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: MARK_DECORATIVE_LABEL })).not.toBeInTheDocument();
+  });
+
+  it('un-mark posts decorative:false with empty alt from the idle site [A-02][INT-09]', async () => {
+    // [TEST-15]: goes RED if un-mark still posts decorative:true, omits the
+    // flag, or sends a non-empty alt.
+    correctMock.mockResolvedValue(sampleHistoryItem('', false));
+    renderSuggest(<MediaAltSuggest isDecorative={true} mediaId={42} committedAlt={null} />);
+
+    fireEvent.click(screen.getByRole('button', { name: UNMARK_DECORATIVE_LABEL }));
+
+    await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
+    expect(correctMock).toHaveBeenCalledWith(42, '', { decorative: false });
+  });
+
+  it('un-mark posts decorative:false with empty alt from the draft review site [A-02]', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    correctMock.mockResolvedValue(sampleHistoryItem('', false));
+    renderSuggest(<MediaAltSuggest isDecorative={true} mediaId={42} committedAlt={null} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await screen.findByText(draft);
+
+    fireEvent.click(screen.getByRole('button', { name: UNMARK_DECORATIVE_LABEL }));
+
+    await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
+    expect(correctMock).toHaveBeenCalledWith(42, '', { decorative: false });
+  });
+
+  it('announces un-mark success pointing at the missing-alt to-do list [A-02][INT-06]', async () => {
+    correctMock.mockResolvedValue(sampleHistoryItem('', false));
+    renderSuggest(<MediaAltSuggest isDecorative={true} mediaId={42} committedAlt={null} />);
+
+    fireEvent.click(screen.getByRole('button', { name: UNMARK_DECORATIVE_LABEL }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('media-alt-suggest-status')).toHaveTextContent(
+        UNMARK_DECORATIVE_SUCCESS_MESSAGE,
+      );
+    });
+    expect(screen.getByTestId('media-alt-suggest-status')).toHaveTextContent(/to-do list|missing/i);
   });
 });

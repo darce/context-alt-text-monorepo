@@ -1,10 +1,17 @@
 // This file is generated from packages/shared-contracts/schemas/roster-entry.schema.json.
 
+export interface RosterEntryBbox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface RosterEntryInstance {
   identity_id: string;
   media_id: number;
   media_url: string | null;
-  bbox: number[] | null;
+  bbox: RosterEntryBbox | null;
   similarity: number | null;
   similarity_threshold?: number | null;
 }

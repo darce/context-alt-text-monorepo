@@ -1,7 +1,7 @@
 """FIR-3 S1: face_pipeline model provenance loader (fail-closed, no network).
 
 Synthetic hashes only in unit paths — never touches real ONNX model bytes.
-Committed LICENSE.* files are hashed offline against production pins (BR-04).
+Committed LICENSE.* files are hashed offline against production pins (local finding BR-04).
 See docs/tasks/fir/FIR-3-yunet-sface-adapters-task-plan.md (S1).
 Heuristics: rg-008 (config validate-at-load), AGT-02 (no unresolved anchors),
 TEST-06/TEST-08, rg-015.
@@ -181,7 +181,7 @@ def test_load_verified_model_unknown_name_raises(tmp_path: Path) -> None:
 
 
 def test_load_verified_model_missing_license_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Load-time license presence is fail-closed (BR-04)."""
+    """Load-time license presence is fail-closed (local finding BR-04)."""
     payload = b"model-ok-bytes"
     file_name = "face_detection_yunet_2026may.onnx"
     _write_model(tmp_path, file_name, payload)
@@ -199,7 +199,7 @@ def test_load_verified_model_missing_license_raises(tmp_path: Path, monkeypatch:
 
 
 def test_load_verified_model_license_hash_mismatch_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Load-time license hash mismatch is fail-closed (BR-04)."""
+    """Load-time license hash mismatch is fail-closed (local finding BR-04)."""
     payload = b"model-ok-bytes"
     file_name = "face_detection_yunet_2026may.onnx"
     license_file = "LICENSE.yunet"
@@ -251,7 +251,7 @@ def test_module_manifest_covers_yunet_and_sface() -> None:
 
 
 def test_committed_license_files_match_manifest() -> None:
-    """Offline: committed LICENSE.* sha256 must match production pins (BR-04, no network)."""
+    """Offline: committed LICENSE.* sha256 must match production pins (local finding BR-04, no network)."""
     for name, entry in MODEL_MANIFEST.items():
         if entry.license_sha256 == PENDING_OPERATOR_FETCH:
             pytest.skip(f"{name} license still PENDING_OPERATOR_FETCH")
@@ -264,7 +264,7 @@ def test_committed_license_files_match_manifest() -> None:
 
 
 def test_face_pipeline_import_purity() -> None:
-    """Fresh subprocess import must not load cv2/onnxruntime/fastapi/worker/api (BR-06)."""
+    """Fresh subprocess import must not load cv2/onnxruntime/fastapi/worker/api (local finding BR-06)."""
     code = """
 import sys
 import recognition.infrastructure.face_pipeline  # noqa: F401
@@ -341,7 +341,7 @@ def test_fetch_script_verifies_against_manifest(tmp_path: Path, monkeypatch: pyt
 
 
 def test_fetch_script_size_ok_sha256_mismatch_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Correct size_bytes + wrong sha256 hits the hash-mismatch branch (BR-08 mutant guard)."""
+    """Correct size_bytes + wrong sha256 hits the hash-mismatch branch (local finding BR-08 mutant guard)."""
     fetch = _load_fetch_script()
     yunet = MODEL_MANIFEST["yunet"]
     if yunet.sha256 == PENDING_OPERATOR_FETCH:
@@ -378,7 +378,7 @@ def test_fetch_script_size_ok_sha256_mismatch_raises(tmp_path: Path, monkeypatch
 
 
 def test_fetch_script_license_hash_mismatch_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """License hash-verify path in fetch refuses bad license bytes (BR-08)."""
+    """License hash-verify path in fetch refuses bad license bytes (local finding BR-08)."""
     fetch = _load_fetch_script()
     yunet = MODEL_MANIFEST["yunet"]
     if yunet.sha256 == PENDING_OPERATOR_FETCH:
@@ -433,7 +433,7 @@ def test_fetch_script_license_hash_mismatch_raises(tmp_path: Path, monkeypatch: 
 
 
 def test_fetch_failure_preserves_preexisting_license(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Mid-run model verify failure never unlinks pre-existing license files (BR-01)."""
+    """Mid-run model verify failure never unlinks pre-existing license files (local finding BR-01)."""
     fetch = _load_fetch_script()
     yunet = MODEL_MANIFEST["yunet"]
     if yunet.sha256 == PENDING_OPERATOR_FETCH:
@@ -461,7 +461,7 @@ def test_fetch_failure_preserves_preexisting_license(tmp_path: Path, monkeypatch
 
 
 def test_download_verified_over_cap_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Stream byte cap aborts with ModelFetchError (BR-09)."""
+    """Stream byte cap aborts with ModelFetchError (local finding BR-09)."""
     fetch = _load_fetch_script()
     dest = tmp_path / "cap.onnx"
 
@@ -622,3 +622,102 @@ def test_verify_only_license_mismatch_raises_no_network(
 
     rc = fetch.main(["--dest", str(tmp_path), "--models", "yunet", "--verify-only"])
     assert rc == 1
+
+
+# ---------------------------------------------------------------------------
+# numeric_runtime_fingerprint (CVUP-1 findings LC-02 / HARM-01 / HARM-02)
+# ---------------------------------------------------------------------------
+
+
+def test_numeric_runtime_fingerprint_reads_live_versions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fingerprint is a pure function of installed package version sources."""
+    from recognition.infrastructure.face_pipeline import provenance as prov
+
+    monkeypatch.setattr(prov, "_opencv_version", lambda: "5.0.0")
+    monkeypatch.setattr(prov, "_onnxruntime_version", lambda: "1.28.0")
+    monkeypatch.setattr(prov, "_numpy_version", lambda: "2.5.1")
+
+    fp = prov.numeric_runtime_fingerprint()
+    assert fp.opencv_version == "5.0.0"
+    assert fp.opencv_major == 5
+    assert fp.onnxruntime_version == "1.28.0"
+    assert fp.numpy_version == "2.5.1"
+    # OpenCV full version + ORT major.minor (patch omitted — see space_token WHY).
+    assert fp.space_token == "cv5.0.0/ort1.28"
+    assert "opencv=5.0.0" in fp.compact
+    assert "onnxruntime=1.28.0" in fp.compact
+    assert "numpy=2.5.1" in fp.compact
+
+    # Monkeypatch change must re-read (no process-global cache of literals).
+    monkeypatch.setattr(prov, "_opencv_version", lambda: "4.13.0.92")
+    monkeypatch.setattr(prov, "_onnxruntime_version", lambda: "1.22.0")
+    monkeypatch.setattr(prov, "_numpy_version", lambda: "2.0.0")
+    fp2 = prov.numeric_runtime_fingerprint()
+    assert fp2.opencv_major == 4
+    assert fp2.space_token == "cv4.13.0.92/ort1.22"
+    assert fp2.compact != fp.compact
+
+
+def test_numeric_runtime_fingerprint_exported_from_package() -> None:
+    """Canonical symbol is importable from the face_pipeline package root."""
+    from recognition.infrastructure.face_pipeline import (
+        NumericRuntimeFingerprint,
+        numeric_runtime_fingerprint,
+    )
+
+    fp = numeric_runtime_fingerprint()
+    assert isinstance(fp, NumericRuntimeFingerprint)
+    assert fp.opencv_major >= 1
+    assert fp.onnxruntime_version
+    assert fp.numpy_version
+
+
+def test_sface_model_id_differs_across_opencv_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    """OpenCV full version alone must flip the SFace embedding-space model_id."""
+    from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
+    from recognition.infrastructure.face_pipeline import provenance as prov
+
+    monkeypatch.setattr(prov, "_opencv_version", lambda: "5.0.0")
+    monkeypatch.setattr(prov, "_onnxruntime_version", lambda: "1.28.0")
+    monkeypatch.setattr(prov, "_numpy_version", lambda: "2.5.1")
+    id_cv5 = fpa.sface_embedding_model_manifest().model_id
+
+    monkeypatch.setattr(prov, "_opencv_version", lambda: "4.13.0.92")
+    id_cv4 = fpa.sface_embedding_model_manifest().model_id
+
+    assert id_cv5 != id_cv4
+    assert "cv5.0.0/" in id_cv5
+    assert "cv4.13.0.92/" in id_cv4
+    assert id_cv5.endswith("@128d/l2/cosine")
+    assert id_cv4.endswith("@128d/l2/cosine")
+
+    # Intra-major OpenCV bump must also partition (full-version space key).
+    monkeypatch.setattr(prov, "_opencv_version", lambda: "5.1.0")
+    id_cv51 = fpa.sface_embedding_model_manifest().model_id
+    assert id_cv51 != id_cv5
+    assert "cv5.1.0/" in id_cv51
+
+
+def test_sface_model_id_differs_across_onnxruntime_minor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """onnxruntime major.minor alone must flip the SFace embedding-space model_id."""
+    from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
+    from recognition.infrastructure.face_pipeline import provenance as prov
+
+    monkeypatch.setattr(prov, "_opencv_version", lambda: "5.0.0")
+    monkeypatch.setattr(prov, "_onnxruntime_version", lambda: "1.28.0")
+    monkeypatch.setattr(prov, "_numpy_version", lambda: "2.5.1")
+    id_ort_new = fpa.sface_embedding_model_manifest().model_id
+
+    monkeypatch.setattr(prov, "_onnxruntime_version", lambda: "1.22.0")
+    id_ort_old = fpa.sface_embedding_model_manifest().model_id
+
+    assert id_ort_new != id_ort_old
+    assert "ort1.28" in id_ort_new
+    assert "ort1.22" in id_ort_old
+    # Same OpenCV full version — only ORT minor moved.
+    assert "cv5.0.0/" in id_ort_new and "cv5.0.0/" in id_ort_old
+
+    # ORT patch alone must NOT partition (same major.minor → same space).
+    monkeypatch.setattr(prov, "_onnxruntime_version", lambda: "1.28.1")
+    id_ort_patch = fpa.sface_embedding_model_manifest().model_id
+    assert id_ort_patch == id_ort_new

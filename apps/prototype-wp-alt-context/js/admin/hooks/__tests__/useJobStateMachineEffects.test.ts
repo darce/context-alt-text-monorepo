@@ -12,6 +12,7 @@ describe('useJobStateMachineEffects', () => {
   beforeEach(() => {
     window.AltContextAdmin = {
       nonce: 'test-nonce',
+      ajaxUrl: '/wp-admin/admin-ajax.php',
       endpoints: {},
       tenant_id: 'test-tenant-id',
     };

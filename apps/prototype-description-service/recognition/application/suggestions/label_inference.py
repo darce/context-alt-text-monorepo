@@ -4,6 +4,7 @@ Label inference service for proactive suggestions.
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 import numpy as np
@@ -16,6 +17,13 @@ from recognition.application.settings import ClusteringSettings
 from recognition.config.settings import resolve_effective_clustering_settings
 from recognition.domain.repositories import ClusterRepository
 from recognition.domain.suggestion import SuggestedLabel, SuggestedLabelSource
+
+logger = logging.getLogger(__name__)
+
+# Bind-parameter ceiling for the FIR23-01 provenance lookup (CVUP1-R3-09).
+# asyncpg rejects statements above 32,767 arguments; stay well clear so the
+# tenant_id / embedding_model binds and driver overhead always fit.
+_MODEL_LOOKUP_CHUNK_SIZE = 10_000
 
 
 async def infer_suggested_label(
@@ -150,30 +158,102 @@ async def infer_suggested_label(
             )
 
     # 3. Nearest Neighbor Search (Fallback)
+    # FIR23-01: resolve the query face's embedding_model before any NN path so
+    # both in-process and SQL candidates stay in one space.
+    rep_identity = target_cluster.representative_identity
+    target_model = getattr(rep_identity, "embedding_model", None) if rep_identity is not None else None
+
     target_embedding: np.ndarray | None = None
-    embedding = (
-        getattr(target_cluster.representative_identity, "embedding", None)
-        if target_cluster.representative_identity is not None
-        else None
-    )
+    embedding = getattr(rep_identity, "embedding", None) if rep_identity is not None else None
     if embedding is not None:
         target_embedding = np.asarray(embedding, dtype=np.float32)
     else:
         if cluster_repository is None:
             return None
-        reps = await cluster_repository.get_representative_embeddings(cluster_id)
+        # Prefer shared-contract with_model loaders so the model belonging to the
+        # vectors we average is recovered when representative_identity is missing
+        # (R3-G1-1 / production shape covered by the representative-table integration test).
+        reps, chosen_model = await cluster_repository.get_representative_embeddings_with_model(cluster_id)
         if not reps:
-            reps = await cluster_repository.get_member_fallback_embeddings(cluster_id, limit=4)
+            reps, chosen_model = await cluster_repository.get_member_fallback_embeddings_with_model(cluster_id, limit=4)
         if reps:
             rep_stack = np.asarray(reps, dtype=np.float32)
             target_embedding = rep_stack.mean(axis=0)
+            # Only fill model from the loader when representative_identity did not
+            # already supply one — keep the present-identity path unchanged.
+            if target_model is None:
+                target_model = chosen_model
         else:
             return None
 
+    # FIR23-01 fail-closed: never run unguarded NN when the query face's space is
+    # unknown. Same dimensionality does not mean same space; a foreign labeled
+    # rep must never win SIMILAR_CLUSTER via cross-space cosine.
+    if target_model is None:
+        logger.warning(
+            "[label_inference] FIR23-01: refusing nearest-label inference without "
+            "resolvable embedding_model (would allow cross-space cosine); "
+            "cluster_id=%s",
+            cluster_id,
+        )
+        return None
+
     # Prefer in-process similarity search using representative sets when available to avoid
     # vector index constraints and to honor representative table embeddings.
+    # FIR23-01: restrict candidates to the query face's embedding_model. Domain
+    # representatives drop embedding_model, so resolve same-space identity ids via
+    # session when target_model is known. Fall through to the SQL path when
+    # in-process finds nothing under a model predicate (do not shadow FIR23-01).
+    #
+    # CVUP1-GR-20: never materialise the tenant's full face corpus. Collect only
+    # identity_ids of the labeled representatives we actually score, then query
+    # MediaIdentity.id.in_(those_ids). Cross-space reps remain excluded.
     if cluster_repository is not None:
         labeled_clusters = await cluster_repository.get_labeled_with_representatives(str(tenant_uuid))
+
+        same_model_identity_ids: set[str] | None = None
+        if target_model is not None:
+            unresolved_ids: list[uuid.UUID] = []
+            seen_unresolved: set[str] = set()
+            for _cluster, cluster_reps in labeled_clusters:
+                for rep in cluster_reps:
+                    rep_model = getattr(rep, "embedding_model", None)
+                    if rep_model is None:
+                        identity = getattr(rep, "identity", None)
+                        if identity is not None:
+                            rep_model = getattr(identity, "embedding_model", None)
+                    if rep_model is not None:
+                        continue
+                    identity_id = getattr(rep, "identity_id", None)
+                    if identity_id is None:
+                        continue
+                    id_str = str(identity_id)
+                    if id_str in seen_unresolved:
+                        continue
+                    try:
+                        unresolved_ids.append(uuid.UUID(id_str))
+                    except ValueError:
+                        continue
+                    seen_unresolved.add(id_str)
+
+            # Empty set still means the filter is active (no same-space unresolved ids).
+            # None would mean "no model predicate" and would re-open cross-space NN.
+            same_model_identity_ids = set()
+            # CVUP1-R3-09: ``in_()`` expands to one bind per element at execution.
+            # asyncpg caps a statement at 32,767 arguments, so an unbounded id list
+            # turns the suggestion endpoint into a hard 500 on large tenants.
+            # Chunk instead; the union of chunk results equals the single-query result.
+            for offset in range(0, len(unresolved_ids), _MODEL_LOOKUP_CHUNK_SIZE):
+                chunk = unresolved_ids[offset : offset + _MODEL_LOOKUP_CHUNK_SIZE]
+                model_ids_result = await session.execute(
+                    select(MediaIdentity.id).where(
+                        MediaIdentity.tenant_id == tenant_uuid,
+                        MediaIdentity.id.in_(chunk),
+                        MediaIdentity.embedding_model == target_model,
+                    )
+                )
+                same_model_identity_ids.update(str(row) for row in model_ids_result.scalars().all())
+
         best_similarity = -1.0
         best_cluster_id: str | None = None
         for labeled_cluster, cluster_reps in labeled_clusters:
@@ -183,6 +263,19 @@ async def infer_suggested_label(
             if not label_value or label_value.startswith("cluster-"):
                 continue
             for rep in cluster_reps:
+                if same_model_identity_ids is not None:
+                    rep_model = getattr(rep, "embedding_model", None)
+                    if rep_model is None:
+                        identity = getattr(rep, "identity", None)
+                        if identity is not None:
+                            rep_model = getattr(identity, "embedding_model", None)
+                    if rep_model is not None:
+                        if str(rep_model) != str(target_model):
+                            continue
+                    else:
+                        identity_id = getattr(rep, "identity_id", None)
+                        if identity_id is None or str(identity_id) not in same_model_identity_ids:
+                            continue
                 rep_vec = np.asarray(getattr(rep, "embedding", rep), dtype=np.float32)
                 norm_a = np.linalg.norm(target_embedding)
                 norm_b = np.linalg.norm(rep_vec)
@@ -207,17 +300,21 @@ async def infer_suggested_label(
                 target_cluster_id=best_cluster_id,
             )
 
-        # In-process search was authoritative; skip the DB fallback.
-        return None
+        # In-process miss. When no embedding_model predicate applies, keep prior
+        # exclusive in-process behaviour. When a model is known, continue to SQL.
+        if target_model is None:
+            return None
 
     # Find nearest labeled cluster using embedding distance (DB fallback).
     # FIR23-01: restrict to the same embedding_model as the query face so
     # mixed-model rows cannot win nearest-neighbor. Single-model tenants are a
     # no-op (predicate matches every candidate).
-    rep_identity = target_cluster.representative_identity
-    target_model = (
-        getattr(rep_identity, "embedding_model", None) if rep_identity is not None else None
-    )
+    # pgvector cosine_distance is unavailable on SQLite unit/integration DBs.
+    from recognition.shared.db.dialect import is_sqlite
+
+    if is_sqlite(session):
+        return None
+
     stmt = (
         select(IdentityCluster)
         .join(MediaIdentity, IdentityCluster.representative_identity_id == MediaIdentity.id)

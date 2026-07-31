@@ -1,0 +1,21 @@
+{
+  "cosine_min": 0.99999999,
+  "crop_sha256": "3e8e176dae0af88bd0660dff9d33687001a75e335a758fc312c1970074de4ec3",
+  "description": "Embedding of FivePointAligner.align(aligner_source_image, aligner_landmarks).crop \u2014 composed aligner\u2192embedder path so warpAffine drift is visible at the embedding layer (CVUP1-LC-03).",
+  "embedding_dim": 128,
+  "embedding_shape": [
+    1,
+    128
+  ],
+  "generator": "recognition/tests/fixtures/face_pipeline/generate_goldens.py",
+  "kind": "aligner_composed_embedding_golden",
+  "l2_norm": 1.0,
+  "model": "face_recognition_sface_2021dec.onnx",
+  "model_sha256": "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
+  "numpy_version": "2.5.1",
+  "onnxruntime_version": "1.28.0",
+  "opencv_version": "5.0.0",
+  "pre_norm_magnitude": 2.5665619373321533,
+  "source_image": "aligner_source_image.npy",
+  "source_landmarks": "aligner_landmarks.npy"
+}

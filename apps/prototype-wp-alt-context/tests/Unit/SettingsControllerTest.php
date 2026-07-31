@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Api\ProbeOutcome;
+use AltContext\Api\RecognitionEndpointResolver;
 use AltContext\Api\SettingsController;
 use AltContext\Api\Services\DescriptionBudgetService;
 use AltContext\Api\TenantIdentity;
@@ -21,6 +22,9 @@ class SettingsControllerTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // Opt-in update_option failure map is not cleared by TestCase::resetGlobalState;
+        // drop it here so R23-BR-14 fail pins cannot leak into later tests.
+        $GLOBALS['__ac_update_option_fail'] = [];
         $this->controller = new SettingsController();
     }
 
@@ -50,6 +54,13 @@ class SettingsControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertSame('', $data['url']);
         $this->assertSame('default', $data['url_source']);
+        // BR-138: genuinely unconfigured — rejection fields are present and null.
+        $this->assertArrayHasKey('url_rejection_reason', $data);
+        $this->assertArrayHasKey('url_rejection_source', $data);
+        $this->assertArrayHasKey('url_rejection_value', $data);
+        $this->assertNull($data['url_rejection_reason']);
+        $this->assertNull($data['url_rejection_source']);
+        $this->assertNull($data['url_rejection_value']);
         $this->assertSame('service', $data['recognition_source']);
         $this->assertSame('default', $data['recognition_source_source']);
         // RECOG-1: GET no longer emits local_url / local_url_source.
@@ -63,6 +74,82 @@ class SettingsControllerTest extends TestCase
         $this->assertSame(TenantIdentity::resolve()['value'], $data['tenant_id']);
         $this->assertSame('derived', $data['tenant_id_source']);
         $this->assertFalse($data['tenant_paired']);
+    }
+
+    /**
+     * BR-138: rejected option URL is exposed on the REST response (renamed
+     * service_url_rejection_* → url_rejection_*), not collapsed to unconfigured.
+     */
+    public function testGetSettingsExposesRejectedOptionUrl(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_recognition_url', 'http://10.0.0.5:8000');
+
+        $request = new WP_REST_Request('GET', '/acx/v1/settings');
+        $response = $this->controller->get_settings($request);
+
+        $data = $response->get_data();
+        $this->assertSame('', $data['url']);
+        $this->assertSame('default', $data['url_source']);
+        $this->assertSame('', $data['effective_target_url']);
+        $this->assertSame(
+            RecognitionEndpointResolver::URL_REJECTION_NON_LOOPBACK_HTTP,
+            $data['url_rejection_reason']
+        );
+        $this->assertSame('option', $data['url_rejection_source']);
+        $this->assertSame('http://10.0.0.5:8000', $data['url_rejection_value']);
+    }
+
+    /**
+     * BR-138: rejected filter URL surfaces with source=filter.
+     */
+    public function testGetSettingsExposesRejectedFilterUrl(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        add_filter(
+            'acx_recognition_base_url',
+            static fn (): string => 'http://recognition:8000'
+        );
+
+        $request = new WP_REST_Request('GET', '/acx/v1/settings');
+        $response = $this->controller->get_settings($request);
+
+        $data = $response->get_data();
+        $this->assertSame('', $data['url']);
+        $this->assertSame(
+            RecognitionEndpointResolver::URL_REJECTION_NON_LOOPBACK_HTTP,
+            $data['url_rejection_reason']
+        );
+        $this->assertSame('filter', $data['url_rejection_source']);
+        $this->assertSame('http://recognition:8000', $data['url_rejection_value']);
+    }
+
+    /**
+     * BR-138: rejected constant URL surfaces with source=constant.
+     *
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testGetSettingsExposesRejectedConstantUrl(): void
+    {
+        require_once __DIR__ . '/../bootstrap.php';
+        $this->resetGlobalState();
+
+        define('ACX_RECOGNITION_URL', 'http://host.docker.internal:8000');
+
+        $controller = new SettingsController();
+        $this->setUserCapability('manage_options', true);
+        $request = new WP_REST_Request('GET', '/acx/v1/settings');
+        $response = $controller->get_settings($request);
+
+        $data = $response->get_data();
+        $this->assertSame('', $data['url']);
+        $this->assertSame(
+            RecognitionEndpointResolver::URL_REJECTION_NON_LOOPBACK_HTTP,
+            $data['url_rejection_reason']
+        );
+        $this->assertSame('constant', $data['url_rejection_source']);
+        $this->assertSame('http://host.docker.internal:8000', $data['url_rejection_value']);
     }
 
     public function testGetSettingsReturnsOptionSourceWhenOptionSet(): void
@@ -357,6 +444,99 @@ class SettingsControllerTest extends TestCase
         $this->assertSame('invalid_url', $response->get_error_code());
     }
 
+    /**
+     * BR-131 / BR-135: http only for loopback — pin the *rule*, not one host.
+     * Goes RED under the weakening
+     * `return 'http' === $scheme && ( is_loopback_host( $host ) || 'attacker.invalid' !== $host )`.
+     *
+     * @dataProvider plaintextRemoteUrlProvider
+     */
+    public function testSaveSettingsRejectsPlaintextRemoteUrl(string $url): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_recognition_url', 'https://prior.example');
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params([
+            'url' => $url,
+        ]);
+
+        $response = $this->controller->save_settings($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response, 'must reject: ' . $url);
+        $this->assertSame('invalid_url', $response->get_error_code());
+        $this->assertNotSame($url, get_option('acx_recognition_url', ''));
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function plaintextRemoteUrlProvider(): array
+    {
+        return [
+            // Public / unrelated hosts (not loopback).
+            'rejects_public_attacker_invalid' => ['http://attacker.invalid'],
+            'rejects_public_evil_example' => ['http://evil.example'],
+            'rejects_public_unrelated_host' => ['http://remote.example.com/v1'],
+            // mDNS / local-looking names that are not the loopback allowlist.
+            'rejects_mdns_dot_local' => ['http://myservice.local'],
+            'rejects_mdns_dot_localdomain' => ['http://myservice.localdomain'],
+            // RFC1918 private ranges.
+            'rejects_rfc1918_10' => ['http://10.0.0.5:8000'],
+            'rejects_rfc1918_172_16' => ['http://172.16.0.1'],
+            'rejects_rfc1918_172_31' => ['http://172.31.255.254'],
+            'rejects_rfc1918_192_168' => ['http://192.168.1.10'],
+            // Link-local and cloud metadata.
+            'rejects_link_local_169_254' => ['http://169.254.1.1'],
+            'rejects_cloud_metadata_169_254_169_254' => ['http://169.254.169.254'],
+            // IPv6 non-loopback (bracketed).
+            'rejects_ipv6_link_local' => ['http://[fe80::1]'],
+            'rejects_ipv6_unique_local' => ['http://[fd00::1]'],
+            // Loopback lookalikes that are not allowlisted forms.
+            'rejects_loopback_decimal' => ['http://2130706433'],
+            'rejects_loopback_octal' => ['http://0177.0.0.1'],
+            'rejects_loopback_hex' => ['http://0x7f000001'],
+            'rejects_loopback_dotted_suffix' => ['http://127.0.0.1.evil.test'],
+            'rejects_localhost_dotted_suffix' => ['http://localhost.evil.test'],
+            'rejects_userinfo_loopback_at_remote' => ['http://127.0.0.1@evil.test/'],
+        ];
+    }
+
+    /**
+     * BR-131 / BR-135: accepted side — loopback http and any https remain saveable.
+     *
+     * @dataProvider acceptedSaveUrlProvider
+     */
+    public function testSaveSettingsAcceptsLoopbackHttpAndHttpsUrl(string $url): void
+    {
+        $this->setUserCapability('manage_options', true);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params([
+            'url' => $url,
+        ]);
+
+        $response = $this->controller->save_settings($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response, 'must accept: ' . $url);
+        $this->assertSame($url, get_option('acx_recognition_url'));
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function acceptedSaveUrlProvider(): array
+    {
+        return [
+            'localhost_port' => ['http://localhost:8000'],
+            'loopback_v4' => ['http://127.0.0.1:8000'],
+            'loopback_v6' => ['http://[::1]:8000'],
+            'localhost_case' => ['HTTP://LOCALHOST'],
+            'https_remote' => ['https://api.example.com'],
+            'https_any_host' => ['https://evil.example'],
+        ];
+    }
+
     public function testSaveSettingsAcceptsPartialUpdate(): void
     {
         $this->setUserCapability('manage_options', true);
@@ -459,6 +639,207 @@ class SettingsControllerTest extends TestCase
         $this->assertFalse(get_option('acx_alt_style'));
     }
 
+    /**
+     * R23-BR-14 [TEST-15]: storage failure must not report result=ok.
+     *
+     * Pin reds under the mutation that pushes the field onto $saved[] without
+     * a read-back (the pre-fix unconditional-success path).
+     *
+     * @dataProvider saveSettingsFieldFailProvider
+     */
+    public function testSaveSettingsReportsErrorWhenOptionWriteDoesNotLand(
+        array $body,
+        string $optionKey,
+        string $savedField
+    ): void {
+        $this->setUserCapability('manage_options', true);
+        $GLOBALS['__ac_update_option_fail'] = [$optionKey => true];
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params($body);
+
+        $response = $this->controller->save_settings($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertSame(
+            SettingsController::SAVE_RESULT_ERROR,
+            $data['result'],
+            'storage failure must not report ok for field: ' . $savedField
+        );
+        $this->assertNotContains($savedField, $data['saved'] ?? []);
+        $this->assertContains($savedField, $data['failed'] ?? []);
+        // Option must not hold the intended post-write value.
+        $stored = get_option($optionKey, null);
+        if ('description_budget' === $savedField) {
+            $this->assertNotSame(50, is_numeric($stored) ? (int) $stored : $stored);
+        } elseif ('url' === $savedField) {
+            $this->assertNotSame('https://new-api.example.com', $stored);
+        } elseif ('api_key' === $savedField) {
+            $this->assertNotSame('secret-key-value', $stored);
+        } elseif ('alt_style' === $savedField) {
+            $this->assertNotSame('alt_plus_description', $stored);
+        }
+    }
+
+    /**
+     * @return array<string, array{0: array<string, mixed>, 1: string, 2: string}>
+     */
+    public static function saveSettingsFieldFailProvider(): array
+    {
+        return [
+            'url' => [
+                ['url' => 'https://new-api.example.com'],
+                'acx_recognition_url',
+                'url',
+            ],
+            'api_key' => [
+                ['api_key' => 'secret-key-value'],
+                'acx_recognition_api_key',
+                'api_key',
+            ],
+            'alt_style' => [
+                ['alt_style' => 'alt_plus_description'],
+                'acx_alt_style',
+                'alt_style',
+            ],
+            'description_budget' => [
+                ['description_budget' => ['max_attempts' => 50]],
+                'acx_description_budget_max_attempts',
+                'description_budget',
+            ],
+        ];
+    }
+
+    /**
+     * R23-BR-14: partial failure names only the fields that did not land.
+     */
+    public function testSaveSettingsReportsPartialWhenOneOfTwoWritesFails(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $GLOBALS['__ac_update_option_fail'] = ['acx_recognition_api_key' => true];
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params([
+            'url' => 'https://partial.example.com',
+            'api_key' => 'will-not-land',
+        ]);
+
+        $response = $this->controller->save_settings($request);
+        $data = $response->get_data();
+
+        $this->assertSame(SettingsController::SAVE_RESULT_PARTIAL, $data['result']);
+        $this->assertContains('url', $data['saved']);
+        $this->assertNotContains('api_key', $data['saved']);
+        $this->assertContains('api_key', $data['failed']);
+        $this->assertNotContains('url', $data['failed']);
+        $this->assertSame('https://partial.example.com', get_option('acx_recognition_url'));
+    }
+
+    /**
+     * R23-BR-14 false-failure pin: identical values saved twice still report ok.
+     * update_option returns false on the second write (no-op); read-back must
+     * still admit success. A return-value check would go red here.
+     */
+    public function testSaveSettingsReportsOkOnNoOpResaveOfIdenticalValues(): void
+    {
+        $this->setUserCapability('manage_options', true);
+
+        $payload = [
+            'url' => 'https://stable.example.com',
+            'api_key' => 'stable-key-1234',
+            'alt_style' => 'alt_only',
+            'description_budget' => ['max_attempts' => 10],
+        ];
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params($payload);
+
+        $first = $this->controller->save_settings($request);
+        $this->assertInstanceOf(\WP_REST_Response::class, $first);
+        $this->assertSame(SettingsController::SAVE_RESULT_OK, $first->get_data()['result']);
+        $this->assertContains('url', $first->get_data()['saved']);
+        $this->assertContains('api_key', $first->get_data()['saved']);
+        $this->assertContains('alt_style', $first->get_data()['saved']);
+        $this->assertContains('description_budget', $first->get_data()['saved']);
+        $this->assertArrayNotHasKey('failed', $first->get_data());
+
+        // Second save of identical values: update_option no-ops (returns false).
+        $second = $this->controller->save_settings($request);
+        $this->assertInstanceOf(\WP_REST_Response::class, $second);
+        $data = $second->get_data();
+        $this->assertSame(
+            SettingsController::SAVE_RESULT_OK,
+            $data['result'],
+            'no-op re-save must still report ok (read-back, not return-value)'
+        );
+        $this->assertContains('url', $data['saved']);
+        $this->assertContains('api_key', $data['saved']);
+        $this->assertContains('alt_style', $data['saved']);
+        $this->assertContains('description_budget', $data['saved']);
+        $this->assertArrayNotHasKey('failed', $data);
+        $this->assertSame('https://stable.example.com', get_option('acx_recognition_url'));
+        $this->assertSame('stable-key-1234', get_option('acx_recognition_api_key'));
+        $this->assertSame('alt_only', get_option('acx_alt_style'));
+        $this->assertSame(10, get_option('acx_description_budget_max_attempts'));
+    }
+
+    /**
+     * R23-BR-14 false-failure pin: first-time happy path still reports ok and
+     * keeps the happy-path envelope (saved + result only).
+     */
+    public function testSaveSettingsHappyPathEnvelopeIsByteCompatible(): void
+    {
+        $this->setUserCapability('manage_options', true);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params([
+            'url' => 'https://happy.example.com',
+            'api_key' => 'happy-key',
+        ]);
+
+        $response = $this->controller->save_settings($request);
+        $data = $response->get_data();
+
+        $this->assertSame(SettingsController::SAVE_RESULT_OK, $data['result']);
+        $this->assertSame(['url', 'api_key'], $data['saved']);
+        $this->assertSame(
+            ['saved', 'result'],
+            array_keys($data),
+            'happy path must not add failed/extra keys (byte-compatible)'
+        );
+    }
+
+    /**
+     * R23-BR-15: when adopt_paired_tenant storage fails on first-time auto-adopt,
+     * probe must not claim tenant_paired and must not leave the paired flag set.
+     * Uses the auto-adopt path (derived ≠ key) so read-back can diverge — the
+     * matching-tenant path already holds the intended id, so a failed write is
+     * indistinguishable from a no-op by read-back alone.
+     */
+    public function testProbePairingSurfacesErrorWhenTenantIdWriteFails(): void
+    {
+        $this->configureProbe();
+        // No pre-set tenant option: resolve() derives bootstrap id; key differs → auto-adopt.
+        $keyTenant = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+        $GLOBALS['__ac_update_option_fail'] = [
+            TenantIdentity::OPTION_KEY => true,
+        ];
+        $this->queueHttpResponse($this->buildOkResponse());
+        $this->queueHttpResponse($this->buildWhoamiResponse($keyTenant));
+
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome'] ?? null);
+        $this->assertArrayHasKey('pairing_error', $data);
+        $this->assertStringContainsString('paired tenant id', (string) $data['pairing_error']);
+        $this->assertArrayNotHasKey('tenant_paired', $data);
+        $this->assertFalse(TenantIdentity::is_paired());
+        $this->assertNotSame($keyTenant, get_option(TenantIdentity::OPTION_KEY, null));
+    }
+
     // --- POST /settings/test (probe dispatch) ---
 
     public function testProbeDispatchHitsAuthenticatedPoolEndpoint(): void
@@ -486,6 +867,140 @@ class SettingsControllerTest extends TestCase
         $this->assertSame(200, $data['status_code']);
         $this->assertArrayNotHasKey('connected', $data);
         $this->assertArrayNotHasKey('error', $data);
+    }
+
+    /**
+     * BR-139: after LoopbackHost extraction, save-path rejection matrix is
+     * unchanged — private IP / docker-style names / suffix lookalikes still
+     * fail invalid_url. Complements plaintextRemoteUrlProvider.
+     *
+     * @dataProvider loopbackExtractionRejectUrlProvider
+     */
+    public function testSaveSettingsStillRejectsNonLoopbackAfterExtraction(string $url): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_recognition_url', 'https://prior.example');
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params([
+            'url' => $url,
+        ]);
+
+        $response = $this->controller->save_settings($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response, 'must reject after extraction: ' . $url);
+        $this->assertSame('invalid_url', $response->get_error_code());
+        $this->assertNotSame($url, get_option('acx_recognition_url', ''));
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function loopbackExtractionRejectUrlProvider(): array
+    {
+        return [
+            'private_ip' => ['http://10.0.0.5'],
+            'docker_service_name' => ['http://recognition'],
+            'localhost_suffix' => ['http://localhost.attacker.invalid'],
+            'loopback_dotted_suffix' => ['http://127.0.0.1.attacker.invalid'],
+        ];
+    }
+
+    /**
+     * BR-131: non-loopback recognition probes must use wp_safe_remote_get so
+     * unsafe redirects / private destinations are rejected by core. The harness
+     * marks safe-transport calls with 'safe' => true. Goes RED if
+     * RecognitionTransport always uses wp_remote_get.
+     */
+    public function testProbeUsesSafeRemoteGetForNonLoopbackTarget(): void
+    {
+        $this->configureProbe();
+        $keyTenant = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+        $this->setOption('acx_recognition_tenant_id', $keyTenant);
+        $this->queueHttpResponse($this->buildOkResponse());
+        $this->queueHttpResponse($this->buildWhoamiResponse($keyTenant));
+
+        $this->controller->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'));
+
+        $calls = $this->getHttpCalls();
+        $this->assertNotEmpty($calls);
+        $this->assertStringEndsWith('/health/detailed', $calls[0]['url']);
+        $this->assertTrue(
+            !empty($calls[0]['safe']),
+            'non-loopback health probe must call wp_safe_remote_get (stub records safe=true)'
+        );
+    }
+
+    /**
+     * R4G-BR-01: settings probes must force redirection => 0 via RecognitionTransport
+     * so X-API-Key cannot walk on a 302 from a compromised-but-valid service.
+     */
+    public function testProbeForcesRedirectionZeroAndDoesNotFollowRedirect(): void
+    {
+        $this->configureProbe();
+        $this->setOption('acx_recognition_api_key', 'secret-must-not-walk');
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 302, 'message' => 'Found'],
+            'headers' => ['Location' => 'https://attacker.example/collect'],
+            'body' => '',
+        ]);
+        // Sentinel: if redirection were followed, this second queue entry would
+        // be consumed and the API key would land on attacker.example.
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"stolen":true}',
+        ]);
+
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(
+            1,
+            $calls,
+            'settings probe must not follow redirect — second hop would carry X-API-Key'
+        );
+        $this->assertSame(0, $calls[0]['args']['redirection'] ?? null);
+        $this->assertSame(
+            'secret-must-not-walk',
+            $calls[0]['args']['headers']['X-API-Key'] ?? null
+        );
+        $this->assertStringNotContainsString('attacker.example', $calls[0]['url']);
+        $this->assertNotSame(
+            ProbeOutcome::CONNECTED,
+            $data['outcome'] ?? null,
+            '3xx must not classify as CONNECTED'
+        );
+        $this->assertSame(ProbeOutcome::SERVER_ERROR, $data['outcome'] ?? null);
+        $this->assertSame(302, (int) ($data['status_code'] ?? 0));
+    }
+
+    /**
+     * BR-131 sibling: loopback development probes keep wp_remote_get so
+     * localhost:8000 remains reachable without safe-URL rejection.
+     */
+    public function testProbeUsesRemoteGetForLoopbackTarget(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_recognition_url', 'http://127.0.0.1:8000');
+        $this->setOption('acx_recognition_api_key', 'test-key');
+        $keyTenant = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+        $this->setOption('acx_recognition_tenant_id', $keyTenant);
+        $this->queueHttpResponse($this->buildOkResponse());
+        $this->queueHttpResponse($this->buildWhoamiResponse($keyTenant));
+
+        $this->controller->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'));
+
+        $calls = $this->getHttpCalls();
+        $this->assertNotEmpty($calls);
+        $this->assertStringContainsString('127.0.0.1', $calls[0]['url']);
+        $this->assertArrayNotHasKey(
+            'safe',
+            $calls[0],
+            'loopback health probe must call wp_remote_get (no safe flag)'
+        );
     }
 
     public function testProbePairingAdoptsMatchingKeyTenant(): void
@@ -626,6 +1141,76 @@ class SettingsControllerTest extends TestCase
                 )
             )
         );
+    }
+
+    /**
+     * R23-BR-28 [TEST-15]: adopt (option + paired flag) must complete before rekey
+     * mutates rows. When rekey fails after adopt, pairing is still visible and
+     * rekey_failed is reported — marker/rekey must not precede the verified option.
+     */
+    public function testProbePairingAdoptBeforeRekeySurfacesRekeyFailure(): void
+    {
+        global $wpdb;
+        $this->configureProbe();
+        $persisted = '12121212-1212-4121-8121-121212121212';
+        $keyTenant = '34343434-3434-4343-8343-343434343434';
+        $this->setOption('acx_recognition_tenant_id', $persisted);
+        $this->setOption('acx_recognition_tenant_paired', false);
+        $this->queueHttpResponse($this->buildOkResponse());
+        $this->queueHttpResponse($this->buildWhoamiResponse($keyTenant));
+
+        // Force every tenant-table UPDATE to fail so rekey throws after adopt.
+        $wpdb->defaultUpdateResult = false;
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings/test');
+        $request->set_body_params(array('confirm_tenant_pairing' => true));
+
+        $data = $this->controller->test_connection($request)->get_data();
+
+        $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome'] ?? null);
+        $this->assertArrayHasKey('pairing_error', $data);
+        $this->assertTrue(
+            $data['tenant_paired'] ?? false,
+            'adopt must land before rekey; paired flag stays true when rekey fails'
+        );
+        $this->assertSame($keyTenant, get_option('acx_recognition_tenant_id'));
+        $this->assertTrue(TenantIdentity::is_paired());
+        $this->assertTrue(
+            $data['rekey_failed'] ?? false,
+            'non-success path must name rekey_failed (extra key only on failure)'
+        );
+        $this->assertArrayNotHasKey('rekey_strategy', $data);
+    }
+
+    /**
+     * R23-BR-28 false-failure pin (settings path): confirm rekey when source
+     * already empty (idempotent 0-row rekey) still reports success + strategy.
+     */
+    public function testProbePairingConfirmIdempotentRekeyStillSucceeds(): void
+    {
+        global $wpdb;
+        $this->configureProbe();
+        $persisted = '56565656-5656-4565-8565-565656565656';
+        $keyTenant = '78787878-7878-4787-8787-787878787878';
+        $this->setOption('acx_recognition_tenant_id', $persisted);
+        $this->queueHttpResponse($this->buildOkResponse());
+        $this->queueHttpResponse($this->buildWhoamiResponse($keyTenant));
+
+        // No local rows under $persisted; updates return 0 (no-op).
+        $wpdb->defaultUpdateResult = 0;
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings/test');
+        $request->set_body_params(array('confirm_tenant_pairing' => true));
+
+        $data = $this->controller->test_connection($request)->get_data();
+
+        $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome']);
+        $this->assertTrue($data['tenant_paired']);
+        $this->assertSame('rekey', $data['rekey_strategy']);
+        $this->assertSame(0, $data['rekey_updated_rows']);
+        $this->assertSame($keyTenant, get_option('acx_recognition_tenant_id'));
+        $this->assertTrue(TenantIdentity::is_paired());
+        $this->assertArrayNotHasKey('rekey_failed', $data);
     }
 
     public function testProbePairingWhoamiFailurePreservesConnectedOutcome(): void

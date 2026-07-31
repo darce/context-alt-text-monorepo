@@ -7,6 +7,7 @@ import {
   type ApplyDescribeRunResponse,
   type DescribeRunItem,
 } from '../api/describeApi';
+import { invalidateMediaStats } from './useMediaStats';
 
 export interface DescribeRunApplyBuckets {
   /** Draft present, no existing alt — safe to apply via the primary bulk action. */
@@ -79,6 +80,11 @@ export const useDescribeRunApply = (runId: string | null): UseDescribeRunApplyRe
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: describeRunItemsQueryKey(runId) });
+      // Bulk apply is the write most likely to move dashboard coverage. Ask the
+      // server for a fresh missing-alt total — do not derive counts from response
+      // buckets [rg-015]. onSuccess fires for full *and* partial applies: if any
+      // alts landed, the counters are stale [BR-125][RLSE-04].
+      invalidateMediaStats(queryClient);
     },
   });
 

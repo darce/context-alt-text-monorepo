@@ -450,8 +450,9 @@ describe('RosterPage route container (E21-9 single surface)', () => {
       </MemoryRouter>,
     );
 
-    await userEvent.click(screen.getByRole('button', { name: 'Merge' }));
-    await userEvent.click(screen.getAllByRole('button', { name: /^Merge$/i }).at(-1)!);
+    // Bar names count+object; dialog confirm stays exact "Merge" — no positional .at(-1) needed.
+    await userEvent.click(screen.getByRole('button', { name: 'Merge 3 clusters' }));
+    await userEvent.click(screen.getByRole('button', { name: /^Merge$/ }));
     expect(clusterActionState.bulkMergeMutation.mutateAsync).toHaveBeenCalledWith({
       clusterIds: ['cluster-1', 'cluster-2', 'cluster-3'],
     });
@@ -485,8 +486,9 @@ describe('RosterPage route container (E21-9 single surface)', () => {
       </MemoryRouter>,
     );
 
-    await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
-    await userEvent.click(screen.getAllByRole('button', { name: /^Dismiss$/i }).at(-1)!);
+    // Bar names count+object; dialog confirm stays exact "Dismiss" — no positional .at(-1) needed.
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss 3 clusters' }));
+    await userEvent.click(screen.getByRole('button', { name: /^Dismiss$/ }));
 
     expect(clusterActionState.bulkDismissMutation.mutateAsync).toHaveBeenCalledWith({
       clusterIds: ['cluster-1', 'cluster-2', 'cluster-3'],

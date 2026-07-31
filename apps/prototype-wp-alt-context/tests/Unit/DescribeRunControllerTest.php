@@ -3610,4 +3610,52 @@ class DescribeRunControllerTest extends TestCase
         $this->assertSame($draft, get_post_meta(71, '_wp_attachment_image_alt', true));
         $this->assertIsArray(get_post_meta(71, '_acx_description_provenance', true));
     }
+
+    /**
+     * A-05: bulk apply must self-heal acx_alt_decorative when it writes a
+     * non-empty alt. Sequence that produces the stale pair without the clear:
+     *   1. Attachment is missing_alt (stored alt '').
+     *   2. Run state is planted (apply path will consume drafts).
+     *   3. Operator marks decorative — acx_alt_decorative='1', alt still ''.
+     *   4. Apply: CAS compares alt only ('' === ''), writes non-empty draft.
+     * Without the clear, applied still contains the id but the marker survives
+     * beside a non-empty alt. Sibling of record_correction's self-heal.
+     * [TEST-15]
+     */
+    public function testApplyRunDraftsClearsDecorativeMarkerWhenWritingNonEmptyAlt(): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $this->plantPostType(70);
+        $this->plantPostType(71);
+        $this->plantPostType(72);
+        $this->setPostMeta(70, '_wp_attachment_image_alt', 'human-authored alt');
+        // 71: empty alt at decision time (missing_alt).
+        $this->setPostMeta(71, '_wp_attachment_image_alt', '');
+
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueRunItemsResponse($runId);
+
+        // After the decision-time empty-alt snapshot would hold: plant the
+        // decorative marker while alt remains ''. CAS only sees alt.
+        $this->setPostMeta(71, 'acx_alt_decorative', '1');
+        $this->assertSame('1', get_post_meta(71, 'acx_alt_decorative', true));
+        $this->assertSame('', get_post_meta(71, '_wp_attachment_image_alt', true));
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $this->assertSame(200, $response->get_status());
+
+        $data = $response->get_data();
+        // Alt write + provenance succeed → applied; marker must not survive.
+        $this->assertContains(71, $data['applied']);
+        $this->assertSame('a dog in a park', get_post_meta(71, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(71, 'acx_alt_decorative', true));
+        $this->assertArrayNotHasKey(
+            'acx_alt_decorative',
+            $GLOBALS['__ac_post_meta'][71] ?? []
+        );
+    }
 }

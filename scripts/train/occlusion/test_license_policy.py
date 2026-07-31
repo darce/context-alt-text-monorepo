@@ -1627,6 +1627,78 @@ class TestBr53CategoryIndependentFloor:
         assert result.ok is True, f"clean ingest row must still pass: {result.detail}"
 
 
+class TestGate04LicenceKeySpellingAndCasing:
+    """GATE-04: the licence collector matched its key set exactly.
+
+    A denylisted licence declared as ``License``/``licence``/``SPDX-ID`` was
+    never collected, so the floor examined nothing and the row passed. Spelling
+    and casing variants must resolve to the canonical key, and any *other*
+    licence-shaped key must fail closed rather than be silently ignored --
+    a caller who declares a licence must never have it dropped on the floor.
+    """
+
+    BASE: ClassVar[dict] = {
+        "model_id": "rt-detr",
+        "derived_from_model": "",
+        "source": "self-generated",
+    }
+
+    def _row(self, **extra) -> dict:
+        row = dict(self.BASE)
+        row.update(extra)
+        return row
+
+    @pytest.mark.parametrize(
+        "key", ["license", "License", "LICENSE", "licence", "Licence", "spdx_id", "SPDX-ID", "spdx"]
+    )
+    @pytest.mark.parametrize(
+        "category",
+        [policy.PolicyCategory.MODEL_INGEST, policy.PolicyCategory.TOOLING],
+    )
+    def test_denylisted_licence_caught_under_every_spelling(self, key, category) -> None:
+        row = self._row(package="numba", **{key: "AGPL-3.0"})
+        result = policy.audit_provenance_row(row, category=category)
+        assert result.ok is False, (
+            f"{category.value}: a denylisted licence declared as {key!r} was "
+            "not collected -- the floor examined nothing"
+        )
+        assert result.reason is policy.RejectionReason.DENYLISTED_LICENSE
+
+    @pytest.mark.parametrize("key", ["license_notes", "spdx_comment", "licence_url"])
+    def test_unrecognised_licence_shaped_key_fails_closed(self, key) -> None:
+        result = policy.audit_provenance_row(
+            self._row(**{key: "Apache-2.0"}), category=policy.PolicyCategory.MODEL_INGEST
+        )
+        assert result.ok is False, (
+            f"{key!r} is licence-shaped but not collected; ignoring it silently "
+            "launders a declared licence into a pass"
+        )
+        assert result.reason is policy.RejectionReason.INVALID_ROW
+
+    def test_non_string_under_an_alias_is_invalid(self) -> None:
+        result = policy.audit_provenance_row(
+            self._row(License=123), category=policy.PolicyCategory.MODEL_INGEST
+        )
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.INVALID_ROW
+
+    @pytest.mark.parametrize("key", ["notes", "verified_at", "model_family"])
+    def test_non_licence_keys_are_untouched(self, key) -> None:
+        # Guards against a blanket "any unknown key is invalid" over-reach that
+        # would make the fail-closed guard indiscriminate.
+        result = policy.audit_provenance_row(
+            self._row(license="Apache-2.0", **{key: "anything"}),
+            category=policy.PolicyCategory.MODEL_INGEST,
+        )
+        assert result.ok is True, f"{key!r} is not licence-shaped: {result.detail}"
+
+    def test_allowlisted_licence_under_a_variant_spelling_still_passes(self) -> None:
+        result = policy.audit_provenance_row(
+            self._row(License="Apache-2.0"), category=policy.PolicyCategory.MODEL_INGEST
+        )
+        assert result.ok is True, f"variant spelling must not reject a clean licence: {result.detail}"
+
+
 class TestBr53SourceAxisClosedOnEveryDoor:
     """BR-53 (source axis): the leaky half the licence fix did not cover.
 

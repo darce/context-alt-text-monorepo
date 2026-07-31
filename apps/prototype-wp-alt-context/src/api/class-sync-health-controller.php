@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+require_once __DIR__ . '/class-abstract-recognition-proxy-controller.php';
 require_once __DIR__ . '/class-recognition-circuit-keys.php';
 require_once __DIR__ . '/../sovereign/repositories/interface-sync-state-repository.php';
 require_once __DIR__ . '/../sovereign/repositories/class-sync-state-repository.php';

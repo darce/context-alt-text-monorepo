@@ -38,6 +38,15 @@ export const SYNC_VOCABULARY = {
   failuresHeadline: __('Some sync operations need attention.', 'alt-context'),
   failuresBadge: __('Failures', 'alt-context'),
   failuresSummary: __('Some sync operations failed and need operator attention.', 'alt-context'),
+  resyncRequiredHeadline: __(
+    'Local identity changed — a full re-sync is required before this view is current.',
+    'alt-context',
+  ),
+  resyncRequiredBadge: __('Re-sync required', 'alt-context'),
+  resyncRequiredSummary: __(
+    'Local rows were re-keyed or marked for resync; run a full sync before trusting this view.',
+    'alt-context',
+  ),
   syncingHeadline: __('Syncing…', 'alt-context'),
   syncingBadge: __('In Progress', 'alt-context'),
   scanningHeadline: __('Scanning…', 'alt-context'),

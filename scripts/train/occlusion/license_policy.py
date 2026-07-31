@@ -927,45 +927,6 @@ def _normalize_token(value: str) -> str:
     return value.strip().lower()
 
 
-def _nfkc_lower(value: str) -> str:
-    """Legacy helper — prefers :func:`canonical` for new call sites."""
-    c = canonical(value)
-    return c if c is not None else ""
-
-
-def _prepare_match_text(value: str) -> tuple[str, bool]:
-    """NFKC → strip unicode category Cf → casefold.
-
-    Returns ``(text, has_non_ascii_residue)``. Non-ASCII residue after NFKC is
-    fail-closed by audit callers (``invalid_row``) so confusable scripts cannot
-    launder banned names by compacting away non-Latin letters.
-    """
-    text = unicodedata.normalize("NFKC", str(value))
-    text = "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
-    text = text.strip().casefold()
-    has_non_ascii = any(ord(ch) > 127 for ch in text)
-    return text, has_non_ascii
-
-
-def _compact_alnum(value: str) -> str:
-    """Strip all non-alphanumeric characters (legacy helper)."""
-    c = canonical(value)
-    if c is None:
-        return ""
-    return _compact_canonical(c)
-
-
-def _split_segments(value: str) -> list[str]:
-    """Canonicalise then split on ``_`` / ``/``."""
-    c = canonical(value)
-    if not c:
-        return []
-    parts: list[str] = []
-    for slash in c.split("/"):
-        parts.extend(s for s in slash.split("_") if s)
-    return parts
-
-
 def _resolve_model_key(model_id: str) -> str:
     """Normalise a model id / alias to a registry key (exact, no prefix walk)."""
     c = canonical(str(model_id))
@@ -1055,6 +1016,17 @@ def _looks_like_research_source(value: str) -> bool:
     Uses ``RESEARCH_SOURCE_IDS_EXPANDED`` only — no startswith / progressive
     prefix / version-segment grammar over the input (B4b / WEB-24 / BR-47).
     Non-ASCII residue is treated as tainted so callers fail closed.
+
+    **The slash/underscore asymmetry is deliberate (BR-56, resolved wontfix).**
+    A slash is a hierarchical separator, so each path component is an identity
+    token in its own right and is matched as one; an underscore is not, so
+    underscore forms match whole-string only. Reconciling the two shapes is not
+    available in either direction: segment-matching underscore forms is the
+    progressive-prefix grammar that BR-50/BR-52 removed for over-matching, and
+    relaxing slash components to whole-string matching flips 637 currently
+    rejected sources to PASS (measured), including ``vendor/casia/subset`` and
+    ``acme/celeba/mirror`` — a subset or a mirror of a research corpus is still
+    that corpus. Consistency does not outrank fail-safe defaults [SECD-05].
     """
     if not value or not str(value).strip():
         return False
@@ -1183,12 +1155,6 @@ def _require_string_field(
             category=category,
         )
     return raw, None
-
-
-def _spdx_of(row: Mapping[str, Any]) -> str:
-    """First non-empty licence field (legacy helper; prefer ``_license_values_of``)."""
-    values = _license_values_of(row)
-    return values[0] if values else ""
 
 
 def _license_values_of(row: Mapping[str, Any]) -> list[str]:
@@ -1621,6 +1587,28 @@ def _common_provenance_checks(
 # ---------------------------------------------------------------------------
 
 
+def _reject_non_string(
+    value: Any,
+    *,
+    field: str,
+    category: PolicyCategory | None = None,
+) -> LicenseAuditResult | None:
+    """Shared type contract for public scalar ``audit_*`` entry points (BR-46).
+
+    ``None`` and ``str`` are not type errors — each door documents its own
+    empty/missing handling. Every other type returns ``invalid_row`` with a
+    detail that names the offending type, so callers never see a policy
+    outcome (or an exception) for a programming error.
+    """
+    if value is None or isinstance(value, str):
+        return None
+    return _fail(
+        RejectionReason.INVALID_ROW,
+        detail=f"{field} must be a string, got {type(value).__name__}",
+        category=category,
+    )
+
+
 def _package_denylist_hit(value: str) -> PackageDenylistEntry | None:
     """Exact PACKAGE_DENYLIST lookup on canonical form / slash components (BR-51)."""
     c = canonical(value)
@@ -1648,19 +1636,17 @@ def audit_derived_from_model(derived_from_model: str | None) -> LicenseAuditResu
     against the expanded NC id set FAILS with ``RejectionReason.NC_MODEL_DERIVED``.
     PACKAGE_DENYLIST hits (Ultralytics family) FAIL with their denylist reason
     (BR-51). Non-ASCII residue after :func:`canonical` FAILS ``invalid_row``
-    (BR-21 fail-closed).
+    (BR-21 fail-closed). Non-string inputs FAIL ``invalid_row`` (BR-46).
     """
+    type_err = _reject_non_string(
+        derived_from_model,
+        field="derived_from_model",
+        category=PolicyCategory.TRAINING_DATA,
+    )
+    if type_err is not None:
+        return type_err
     if derived_from_model is None:
         return _pass(detail="no derived_from_model tag")
-    if not isinstance(derived_from_model, str):
-        return _fail(
-            RejectionReason.INVALID_ROW,
-            detail=(
-                "derived_from_model must be a string, "
-                f"got {type(derived_from_model).__name__}"
-            ),
-            category=PolicyCategory.TRAINING_DATA,
-        )
     if not derived_from_model.strip():
         return _pass(detail="no derived_from_model tag")
 
@@ -1720,28 +1706,67 @@ def audit_derived_from_model(derived_from_model: str | None) -> LicenseAuditResu
     )
 
 
+# SPDX expression joiners (GATE-10). Matched as whole tokens so licence ids
+# that happen to contain those letters are not split.
+_SPDX_EXPRESSION_JOINERS = re.compile(r"\s+(?:OR|AND|WITH)\s+", re.IGNORECASE)
+
+
+def _spdx_expression_tokens(tag: str) -> list[str]:
+    """Split a compound SPDX expression into licence-id tokens (GATE-10).
+
+    Handles ``OR`` / ``AND`` / ``WITH``, strips parentheses, and drops a
+    trailing ``+`` (SPDX "or later" shorthand) from each token. Does not
+    attempt to evaluate the expression — callers check each token against
+    the denylist fail-closed.
+    """
+    text = tag.strip().replace("(", " ").replace(")", " ")
+    tokens: list[str] = []
+    for part in _SPDX_EXPRESSION_JOINERS.split(text):
+        tok = part.strip()
+        if tok.endswith("+"):
+            tok = tok[:-1].rstrip()
+        if tok:
+            tokens.append(tok)
+    return tokens
+
+
+def _denylist_reason_for_spdx_token(tag_cf: str) -> RejectionReason | None:
+    """Return the denylist rejection reason for a casefolded SPDX token, or None."""
+    if tag_cf not in DENYLISTED_SPDX_IDS_CF:
+        return None
+    if tag_cf in _RESEARCH_ONLY_LICENSE_CF:
+        return RejectionReason.RESEARCH_ONLY_LICENSE
+    return RejectionReason.DENYLISTED_LICENSE
+
+
 def audit_spdx(spdx_id: str | None) -> LicenseAuditResult:
-    """Audit a bare SPDX / license tag (case-insensitive)."""
-    if spdx_id is None or not str(spdx_id).strip():
+    """Audit a bare SPDX / license tag (case-insensitive).
+
+    Non-string inputs FAIL ``invalid_row`` (BR-46). ``None`` / blank →
+    ``missing_license_field``.
+
+    Compound SPDX expressions (``OR`` / ``AND`` / ``WITH``, trailing ``+``,
+    parentheses) are tokenised and each component is checked against the
+    denylist **before** falling back to ``unknown_spdx`` (GATE-10). A single
+    denylisted component fails the whole expression — allowlisted siblings
+    cannot launder it. An all-allowlisted compound is **not** auto-passed
+    (fail-closed; leave as ``unknown_spdx``).
+    """
+    type_err = _reject_non_string(spdx_id, field="license")
+    if type_err is not None:
+        return type_err
+    if spdx_id is None or not spdx_id.strip():
         return _fail(
             RejectionReason.MISSING_LICENSE_FIELD,
             detail="license / spdx_id field is required",
         )
-    if not isinstance(spdx_id, str):
-        return _fail(
-            RejectionReason.INVALID_ROW,
-            detail=f"license must be a string, got {type(spdx_id).__name__}",
-        )
     tag = spdx_id.strip()
     tag_cf = tag.casefold()
 
-    if tag_cf in DENYLISTED_SPDX_IDS_CF:
-        if tag_cf in _RESEARCH_ONLY_LICENSE_CF:
-            reason = RejectionReason.RESEARCH_ONLY_LICENSE
-        else:
-            reason = RejectionReason.DENYLISTED_LICENSE
+    denied = _denylist_reason_for_spdx_token(tag_cf)
+    if denied is not None:
         return _fail(
-            reason,
+            denied,
             detail=f"license {tag!r} is denylisted for commercial training use",
         )
     if tag_cf in ALLOWED_SPDX_IDS_CF:
@@ -1751,7 +1776,22 @@ def audit_spdx(spdx_id: str | None) -> LicenseAuditResult:
             RejectionReason.PENDING_LEGAL_CLEARANCE,
             detail="license is PENDING-LEGAL-CLEARANCE",
         )
+
+    # GATE-10: compound / plus forms — denylist components before unknown_spdx.
+    for tok in _spdx_expression_tokens(tag):
+        tok_cf = tok.casefold()
+        denied = _denylist_reason_for_spdx_token(tok_cf)
+        if denied is not None:
+            return _fail(
+                denied,
+                detail=(
+                    f"license {tag!r} contains denylisted component {tok!r}; "
+                    "fail-closed for commercial training use"
+                ),
+            )
+
     # operator-cleared is NOT an SPDX value and is never an unconditional pass.
+    # All-allowlisted compounds also land here (not auto-passed — SECD-05).
     return _fail(
         RejectionReason.UNKNOWN_SPDX,
         detail=f"license {tag!r} is not on the allowlist",
@@ -1764,17 +1804,18 @@ def audit_source(source: str | None) -> LicenseAuditResult:
     NC model patterns/ids take precedence over research-only (BR-20): banned
     weights named as ``source`` fail with ``nc_model_derived`` just as they
     do in ``derived_from_model``. Does **not** inspect ``generator_lineage``.
+    Non-string inputs FAIL ``invalid_row`` (BR-46). ``None`` / blank →
+    ``unknown_source``.
     """
-    if source is None or not str(source).strip():
+    type_err = _reject_non_string(
+        source, field="source", category=PolicyCategory.TRAINING_DATA
+    )
+    if type_err is not None:
+        return type_err
+    if source is None or not source.strip():
         return _fail(
             RejectionReason.UNKNOWN_SOURCE,
             detail="source field is required for training-data rows",
-            category=PolicyCategory.TRAINING_DATA,
-        )
-    if not isinstance(source, str):
-        return _fail(
-            RejectionReason.INVALID_ROW,
-            detail=f"source must be a string, got {type(source).__name__}",
             category=PolicyCategory.TRAINING_DATA,
         )
     text = source.strip()
@@ -1817,14 +1858,20 @@ def audit_model_ingest(model_id: str) -> LicenseAuditResult:
     Missing entry → FAIL ``MISSING_INGEST_ENTRY``.
     Denylisted package (Ultralytics etc.) → FAIL with that package's reason.
     NC-tagged entry → FAIL ``NC_MODEL_DERIVED``.
+    Non-string inputs FAIL ``invalid_row`` (BR-46) — not a missing registry entry.
     """
-    if not model_id or not str(model_id).strip():
+    type_err = _reject_non_string(
+        model_id, field="model_id", category=PolicyCategory.MODEL_INGEST
+    )
+    if type_err is not None:
+        return type_err
+    if model_id is None or not model_id.strip():
         return _fail(
             RejectionReason.MISSING_INGEST_ENTRY,
             detail="model_id is required for ingest",
             category=PolicyCategory.MODEL_INGEST,
         )
-    resolved = _resolve_model_key(str(model_id))
+    resolved = _resolve_model_key(model_id)
 
     deny = PACKAGE_DENYLIST.get(resolved)
     if deny is not None:
@@ -1881,8 +1928,16 @@ def get_model_ingest_entry(model_id: str) -> ModelIngestEntry:
 
 
 def audit_tooling_dependency(package_name: str) -> LicenseAuditResult:
-    """Audit a TOOLING dependency (diagnostic; not training data)."""
-    if not package_name or not str(package_name).strip():
+    """Audit a TOOLING dependency (diagnostic; not training data).
+
+    Non-string inputs FAIL ``invalid_row`` (BR-46) rather than raising.
+    """
+    type_err = _reject_non_string(
+        package_name, field="package_name", category=PolicyCategory.TOOLING
+    )
+    if type_err is not None:
+        return type_err
+    if package_name is None or not package_name.strip():
         return _fail(
             RejectionReason.UNKNOWN_SOURCE,
             detail="tooling package_name is required",
@@ -2022,8 +2077,15 @@ def audit_synthetic_source(
     synthetic id set (BR-36 / BR-50): ``dcface_v2``, ``dcface/v2``, and
     ``myorg/dcface`` resolve to the ``dcface`` clearance entry; ``dcface_evil``
     and ``not_dcface`` do not inherit clearance.
+
+    Non-string inputs FAIL ``invalid_row`` (BR-46) — not a clearance outcome.
     """
-    if not source_id or not str(source_id).strip():
+    type_err = _reject_non_string(
+        source_id, field="source_id", category=PolicyCategory.SYNTHETIC_SOURCE
+    )
+    if type_err is not None:
+        return type_err
+    if source_id is None or not source_id.strip():
         return _fail(
             RejectionReason.UNKNOWN_SOURCE,
             detail="synthetic source_id is required",

@@ -1392,9 +1392,22 @@ def _source_axis_taint(
     )
 
 
-def _row_clearance_token(row: Mapping[str, Any]) -> str | None:
-    """Return the stripped ``clearance`` string from ``row``, or ``None``."""
-    raw = row.get("clearance")
+def _row_clearance_decision_token(row: Mapping[str, Any]) -> str | None:
+    """Return the stripped synthetic-lineage ``clearance_decision`` from ``row``.
+
+    Distinct from :func:`_row_photo_clearance_token` (occluder photo-release).
+    One key must not carry both axes (BR-65 / NAME-03).
+    """
+    raw = row.get("clearance_decision")
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    return text if text else None
+
+
+def _row_photo_clearance_token(row: Mapping[str, Any]) -> str | None:
+    """Return the stripped occluder ``photo_clearance`` from ``row``, or None."""
+    raw = row.get("photo_clearance")
     if not isinstance(raw, str):
         return None
     text = raw.strip()
@@ -1408,7 +1421,7 @@ def _audit_clearance_decision(
     category: PolicyCategory,
     source_label: str | None = None,
 ) -> LicenseAuditResult | None:
-    """Compare row clearance against a registry entry's ``clearance_decision``.
+    """Compare row ``clearance_decision`` against a registry entry's token.
 
     Shared by :func:`audit_synthetic_source` and the content-triggered floor
     in :func:`_common_provenance_checks` (GATE-11 / PROV-04). Returns a FAIL
@@ -1425,7 +1438,7 @@ def _audit_clearance_decision(
         RejectionReason.PENDING_LEGAL_CLEARANCE,
         detail=(
             f"synthetic source {label!r} requires "
-            f"clearance={decision!r}; "
+            f"clearance_decision={decision!r}; "
             f"got {row_clearance!r}"
         ),
         category=category,
@@ -1437,22 +1450,26 @@ def _content_triggered_clearance_check(
     *,
     category: PolicyCategory,
 ) -> LicenseAuditResult | None:
-    """Content-triggered clearance floor (GATE-11 / SECD-03 / WEB-33).
+    """Content-triggered synthetic-lineage clearance floor (GATE-11 / SECD-03).
 
     Fires only when the row names a ``source`` or ``derived_from_model`` whose
     synthetic-registry entry carries a non-empty ``clearance_decision``, and
-    the row does not supply a matching token. Rows with no such signal are
-    unaffected — this is not an unconditional clearance demand.
+    the row does not supply a matching ``clearance_decision`` field token.
+    Rows with no such signal are unaffected — this is not an unconditional
+    clearance demand.
 
-    ``OCCLUDER_ASSET`` is skipped: that door ADDs a stricter photo-clearance
-    rule with the distinct ``uncleared_occluder_asset`` reason, and the floor
-    must not downgrade it.
+    Runs on **every** door, including ``OCCLUDER_ASSET`` (BR-65 / WEB-33 /
+    SECD-03). The occluder door ADDs a separate photo-release obligation on
+    the independent ``photo_clearance`` field (``uncleared_occluder_asset``);
+    that restriction is additive and must never waive this floor. The two
+    axes use distinct keys so a generic photo token cannot satisfy synthetic
+    lineage clearance and a lineage decision token cannot satisfy photo
+    release (NAME-03).
     """
-    if category is PolicyCategory.OCCLUDER_ASSET:
-        return None
-
-    row_clearance = _row_clearance_token(row)
+    row_clearance = _row_clearance_decision_token(row)
     # Walk source then derived_from_model; first mismatch wins (short-circuit).
+    # Non-string values are rejected by the floor type check before this runs
+    # (BR-68); blank strings are absence, not a synthetic signal.
     for key in ("source", "derived_from_model"):
         raw = row.get(key)
         if not isinstance(raw, str) or not raw.strip():
@@ -1475,56 +1492,75 @@ def _content_triggered_clearance_check(
     return None
 
 
-def _common_provenance_checks(
+def _floor_string_field(
+    row: Mapping[str, Any],
+    key: str,
+    *,
+    category: PolicyCategory,
+) -> tuple[str | None, LicenseAuditResult | None]:
+    """Floor-side optional string validation (BR-68 / SECD-05).
+
+    Absent key → ``(None, None)``. Present non-string (including ``None``) →
+    ``invalid_row``. The floor must never ``continue`` past a value it cannot
+    validate — an unparseable field is a rejection, not an absence.
+    """
+    if key not in row:
+        return None, None
+    raw = row[key]
+    if raw is None:
+        return None, _fail(
+            RejectionReason.INVALID_ROW,
+            detail=f"provenance row field {key!r} must be a string, got None",
+            category=category,
+        )
+    if not isinstance(raw, str):
+        return None, _fail(
+            RejectionReason.INVALID_ROW,
+            detail=(
+                f"provenance row field {key!r} must be a string, "
+                f"got {type(raw).__name__}"
+            ),
+            category=category,
+        )
+    return raw, None
+
+
+def _floor_taint_and_clearance(
     row: Mapping[str, Any],
     *,
     category: PolicyCategory,
-    check_licenses: bool = True,
 ) -> LicenseAuditResult | None:
-    """Category-independent floor shared by every row-shaped entry point (BR-26).
+    """Taint + clearance + registration half of the complete-mediation floor.
 
-    Complete-mediation floor: category-specific doors may only ADD
-    restrictions, never subtract (BR-53). Exactly one reason is reported per
-    call (short-circuit). Precedence order when a row trips multiple axes:
+    Precedence within this half (BR-64 / GATE-01 / GATE-11 / BR-66 / BR-68):
 
-      1. ``derived_from_model`` taint (NC, research-corpus, invalid type)
-      2. ``source`` axis taint (NC / research; SYNTHETIC_SOURCE exempt so its
-         door can report a more specific clearance reason, with a PASS
+      1. ``derived_from_model`` type + taint (NC, research-corpus, invalid type)
+      2. ``source`` type + axis taint (NC / research; SYNTHETIC_SOURCE exempt
+         so its door can report a more specific clearance reason, with a PASS
          backstop re-applying the taint)
-      3. content-triggered synthetic ``clearance_decision`` (GATE-11): fires
-         only when source/derived resolves to a registry entry that carries a
-         decision token; OCCLUDER_ASSET skipped so that door keeps
-         ``uncleared_occluder_asset``
-      4. licence values (denylist + allowlist, present values only when
-         ``check_licenses`` is True; doors that require a licence field still
-         enforce ``required=True`` later). TOOLING may pass
-         ``check_licenses=False`` so the package denylist gate runs before
-         the row-declared SPDX check (BR-24 / GATE-05).
+      3. content-triggered synthetic ``clearance_decision`` (GATE-11 / BR-65):
+         fires on every door when source/derived resolves to a registry entry
+         that carries a decision token
+      4. unregistered ``derived_from_model`` registration gate (BR-33 / BR-66):
+         content-triggered on every door — not training-data only
 
-    Returns a FAIL result when a floor rule fires; ``None`` means the caller
-    may continue with category-specific gates.
+    Callers that must interleave the licence axis with their own gates (e.g.
+    TOOLING package denylist before row SPDX — BR-24 / GATE-05) call this
+    half, then their door gate, then :func:`_floor_licenses`. They never get
+    a floor call that silently omits an axis (BR-69 / ARCH-13).
     """
     # Taint outranks licence: a row that is both NC-derived and badly licensed
     # must report the NC reason. Swapping the licence field would clear a
     # licence reason while the banned lineage survives, so reporting the
     # licence first understates the problem (BR-64 / GATE-01).
+    derived_text = ""
     if "derived_from_model" in row:
-        raw = row["derived_from_model"]
-        if raw is None:
-            return _fail(
-                RejectionReason.INVALID_ROW,
-                detail="provenance row field 'derived_from_model' must be a string, got None",
-                category=category,
-            )
-        if not isinstance(raw, str):
-            return _fail(
-                RejectionReason.INVALID_ROW,
-                detail=(
-                    "provenance row field 'derived_from_model' must be a string, "
-                    f"got {type(raw).__name__}"
-                ),
-                category=category,
-            )
+        raw, type_err = _floor_string_field(
+            row, "derived_from_model", category=category
+        )
+        if type_err is not None:
+            return type_err
+        assert raw is not None  # key present and string
         derived_result = audit_derived_from_model(raw)
         if not derived_result.ok:
             # Preserve NC / research / invalid reasons; re-tag for the calling door.
@@ -1534,6 +1570,19 @@ def _common_provenance_checks(
                 detail=derived_result.detail,
                 category=category,
             )
+        derived_text = raw.strip()
+
+    # BR-68: non-string source fails closed on every door before any axis that
+    # would otherwise skip it as "absence".
+    source_text = ""
+    if "source" in row:
+        raw_src, src_type_err = _floor_string_field(
+            row, "source", category=category
+        )
+        if src_type_err is not None:
+            return src_type_err
+        assert raw_src is not None
+        source_text = raw_src.strip()
 
     # BR-53: the `source` axis is category-independent too -- model_ingest and
     # tooling accepted an NC/research source outright while training_data has
@@ -1548,38 +1597,98 @@ def _common_provenance_checks(
         if source_taint is not None:
             return source_taint
 
-    # GATE-11: content-triggered clearance. Complete mediation on every door
-    # that does not already ADD a stricter distinct reason (OCCLUDER_ASSET).
+    # GATE-11 / BR-65: content-triggered synthetic-lineage clearance on every
+    # door. Occluder photo-release is a separate additive axis on photo_clearance.
     clearance_hit = _content_triggered_clearance_check(row, category=category)
     if clearance_hit is not None:
         return clearance_hit
 
-    # BR-53: licence floor. Runs on EVERY row-shaped door (when enabled),
-    # including rows that carry no derived_from_model key (present values only;
-    # doors that require a licence field still enforce required=True later).
-    if check_licenses:
-        license_result = _audit_row_licenses(row, category=category, required=False)
-        if not license_result.ok:
-            # GATE-08: re-tag licence failures with door context so a
-            # present-but-invalid value caught here reads the same as a
-            # missing field caught later by the door's required=True call.
-            # INVALID_ROW is left unprefixed (matches the door branch).
-            if (
-                category is PolicyCategory.OCCLUDER_ASSET
-                and license_result.reason is not RejectionReason.INVALID_ROW
-            ):
-                detail = license_result.detail
-                prefix = "occluder asset: "
-                if not detail.startswith(prefix):
-                    detail = f"{prefix}{detail}"
-                return LicenseAuditResult(
-                    verdict=license_result.verdict,
-                    reason=license_result.reason,
-                    detail=detail,
-                    category=category,
-                )
-            return license_result
+    # BR-66 / WEB-33 / ARCH-13: unregistered derived lineage is a floor
+    # obligation, not a training-data-only backstop. Same predicate as the
+    # former door-local BR-33 call.
+    unreg = _audit_derived_registration(
+        source=source_text,
+        derived=derived_text,
+        category=category,
+    )
+    if unreg is not None:
+        return unreg
+
     return None
+
+
+def _floor_licenses(
+    row: Mapping[str, Any],
+    *,
+    category: PolicyCategory,
+) -> LicenseAuditResult | None:
+    """Licence half of the complete-mediation floor (present values only).
+
+    Runs on every row-shaped door when composed via
+    :func:`_common_provenance_checks`. Doors that require a licence field
+    still enforce ``required=True`` later. TOOLING calls this half *after*
+    its package denylist gate so a self-declared licence cannot launder a
+    denylisted package (BR-24 / GATE-05).
+    """
+    license_result = _audit_row_licenses(row, category=category, required=False)
+    if not license_result.ok:
+        # GATE-08: re-tag licence failures with door context so a
+        # present-but-invalid value caught here reads the same as a
+        # missing field caught later by the door's required=True call.
+        # INVALID_ROW is left unprefixed (matches the door branch).
+        if (
+            category is PolicyCategory.OCCLUDER_ASSET
+            and license_result.reason is not RejectionReason.INVALID_ROW
+        ):
+            detail = license_result.detail
+            prefix = "occluder asset: "
+            if not detail.startswith(prefix):
+                detail = f"{prefix}{detail}"
+            return LicenseAuditResult(
+                verdict=license_result.verdict,
+                reason=license_result.reason,
+                detail=detail,
+                category=category,
+            )
+        return license_result
+    return None
+
+
+def _common_provenance_checks(
+    row: Mapping[str, Any],
+    *,
+    category: PolicyCategory,
+) -> LicenseAuditResult | None:
+    """Category-independent floor shared by every row-shaped entry point (BR-26).
+
+    Complete-mediation floor: category-specific doors may only ADD
+    restrictions, never subtract (BR-53 / BR-69). There is no parameter that
+    can disable an axis — the structure makes subtraction unrepresentable
+    (ARCH-13). Callers that legitimately need the licence axis at a different
+    point in their own precedence chain call :func:`_floor_taint_and_clearance`
+    and :func:`_floor_licenses` explicitly; they never get a floor call that
+    silently omits either half.
+
+    Exactly one reason is reported per call (short-circuit). Precedence order
+    when a row trips multiple axes:
+
+      1. ``derived_from_model`` type + taint (NC, research-corpus, invalid type)
+      2. ``source`` type + axis taint (NC / research; SYNTHETIC_SOURCE exempt so
+         its door can report a more specific clearance reason, with a PASS
+         backstop re-applying the taint)
+      3. content-triggered synthetic ``clearance_decision`` on every door
+         (GATE-11 / BR-65); occluder photo-release is a separate additive axis
+      4. unregistered ``derived_from_model`` registration (BR-33 / BR-66)
+      5. licence values (denylist + allowlist, present values only; doors that
+         require a licence field still enforce ``required=True`` later)
+
+    Returns a FAIL result when a floor rule fires; ``None`` means the caller
+    may continue with category-specific gates.
+    """
+    taint = _floor_taint_and_clearance(row, category=category)
+    if taint is not None:
+        return taint
+    return _floor_licenses(row, category=category)
 
 
 # ---------------------------------------------------------------------------
@@ -1979,8 +2088,11 @@ def is_tooling_allowlisted(package_name: str) -> bool:
 def audit_occluder_asset(asset: Mapping[str, Any]) -> LicenseAuditResult:
     """Gate an occluder-asset row at pack-build.
 
-    Required: allowlisted license, positive clearance, and a non-empty
-    **registered** source. Unknown sources FAIL (not only research names).
+    Required: allowlisted license, positive ``photo_clearance`` (photo-release
+    axis), and a non-empty **registered** source. Unknown sources FAIL (not
+    only research names). Synthetic-lineage clearance is a separate floor
+    obligation on ``clearance_decision`` (BR-65); this door ADDs photo-release
+    and never waives the floor.
 
     Unconditional NC provenance (``derived_from_model``) is applied via
     :func:`_common_provenance_checks` before category-specific gates (BR-26).
@@ -2012,23 +2124,30 @@ def audit_occluder_asset(asset: Mapping[str, Any]) -> LicenseAuditResult:
             category=cat,
         )
 
-    clearance_raw = asset.get("clearance") or asset.get("clearance_status") or ""
-    if clearance_raw is not None and not isinstance(clearance_raw, str):
-        return _fail(
-            RejectionReason.INVALID_ROW,
-            detail=(
-                "occluder asset clearance must be a string, "
-                f"got {type(clearance_raw).__name__}"
-            ),
-            category=cat,
-        )
-    clearance = _normalize_token(str(clearance_raw)) if clearance_raw else ""
-    if clearance not in OCCLUDER_ALLOWED_CLEARANCES:
+    # BR-65: photo-release axis is independent of synthetic-lineage
+    # clearance_decision. Single key ``photo_clearance`` only — no dual-shape
+    # clearance / clearance_status overload (greenfield / NAME-03).
+    if "photo_clearance" in asset:
+        photo_raw = asset["photo_clearance"]
+        if photo_raw is not None and not isinstance(photo_raw, str):
+            return _fail(
+                RejectionReason.INVALID_ROW,
+                detail=(
+                    "occluder asset photo_clearance must be a string, "
+                    f"got {type(photo_raw).__name__}"
+                ),
+                category=cat,
+            )
+    else:
+        photo_raw = None
+    photo_token = _row_photo_clearance_token(asset)
+    photo = _normalize_token(photo_token) if photo_token else ""
+    if photo not in OCCLUDER_ALLOWED_CLEARANCES:
         return _fail(
             RejectionReason.UNCLEARED_OCCLUDER_ASSET,
             detail=(
                 f"occluder asset source photo is uncleared "
-                f"(clearance={clearance_raw!r}); pack-build refused"
+                f"(photo_clearance={photo_raw!r}); pack-build refused"
             ),
             category=cat,
         )
@@ -2071,7 +2190,9 @@ def audit_synthetic_source(
     """Audit a synthetic-identity source clearance entry.
 
     When the registered entry carries a ``clearance_decision``, the caller must
-    supply a matching ``row_clearance`` value (PROV-04).
+    supply a matching ``row_clearance`` value drawn from the row's
+    ``clearance_decision`` field (PROV-04 / BR-65) — not from photo-release
+    vocabulary.
 
     Registry head resolution is exact against the import-time expanded
     synthetic id set (BR-36 / BR-50): ``dcface_v2``, ``dcface/v2``, and
@@ -2126,7 +2247,8 @@ def audit_synthetic_source(
     return _pass(
         detail=(
             f"synthetic source {entry.source_id!r} commercial-allowed "
-            f"(clearance={entry.verification.clearance_decision or 'n/a'})"
+            f"(clearance_decision="
+            f"{entry.verification.clearance_decision or 'n/a'})"
         ),
         category=PolicyCategory.SYNTHETIC_SOURCE,
     )
@@ -2253,8 +2375,9 @@ def audit_provenance_row(
     Checks on the training-data path, in order:
       0. structural field validation (types + required keys)
       1. shared floor via :func:`_common_provenance_checks`:
-         derived taint → source taint → content-triggered clearance
-         (GATE-11) → present licence values
+         derived type/taint → source type/taint → content-triggered
+         clearance_decision (GATE-11 / BR-65) → unregistered derived
+         registration (BR-66) → present licence values
       2. ``source`` against research-only / NC (NOT ``generator_lineage``)
          — redundant with floor source taint for non-empty sources; still
          enforces required-source
@@ -2262,10 +2385,10 @@ def audit_provenance_row(
       4. fail-closed unknown source → PENDING-LEGAL-CLEARANCE (BR-22 / SECD-05)
       5. synthetic-source clearance for registry heads only (BR-33) — backstop
          for heads already covered by the floor clearance axis
-      6. unregistered ``derived_from_model`` gate (BR-33)
 
     ``generator_lineage`` is informational and never causes research-source
-    rejection by itself.
+    rejection by itself. Unregistered ``derived_from_model`` is mediated on
+    the floor (BR-66), not as a training-data-only trailing gate.
     """
     if not isinstance(row, Mapping):
         raise LicensePolicyError(
@@ -2314,6 +2437,11 @@ def audit_provenance_row(
         return audit_model_ingest(model_id)
 
     if audit_category is PolicyCategory.SYNTHETIC_SOURCE:
+        # Floor first (BR-68): non-string source/derived must fail invalid_row
+        # before this door treats a non-string as a missing source.
+        common = _common_provenance_checks(row, category=PolicyCategory.SYNTHETIC_SOURCE)
+        if common is not None:
+            return common
         source_raw = row.get("source")
         if not isinstance(source_raw, str) or not source_raw.strip():
             return _fail(
@@ -2321,15 +2449,7 @@ def audit_provenance_row(
                 detail="synthetic_source category requires a non-empty source field",
                 category=PolicyCategory.SYNTHETIC_SOURCE,
             )
-        common = _common_provenance_checks(row, category=PolicyCategory.SYNTHETIC_SOURCE)
-        if common is not None:
-            return common
-        row_clearance_raw = row.get("clearance")
-        row_clearance = (
-            row_clearance_raw.strip()
-            if isinstance(row_clearance_raw, str)
-            else None
-        )
+        row_clearance = _row_clearance_decision_token(row)
         synth = audit_synthetic_source(source_raw.strip(), row_clearance=row_clearance)
         if synth.ok:
             # The floor skipped the source taint so this door could report its
@@ -2354,7 +2474,7 @@ def audit_provenance_row(
     if derived_err is not None:
         return derived_err
 
-    for key in ("source", "clearance", "generator_lineage"):
+    for key in ("source", "clearance_decision", "photo_clearance", "generator_lineage"):
         _val, field_err = _require_string_field(
             row, key, required=False, category=audit_category
         )
@@ -2364,7 +2484,8 @@ def audit_provenance_row(
 
     # Licence keys type-checked inside _audit_row_licenses.
 
-    # BR-26: shared unconditional NC (and type) checks.
+    # BR-26: shared unconditional NC (and type) checks. Registration and
+    # content-triggered clearance live on the floor (BR-65 / BR-66).
     common = _common_provenance_checks(row, category=audit_category)
     if common is not None:
         return common
@@ -2389,6 +2510,13 @@ def audit_provenance_row(
     # Licence before the fail-closed source allowlist so a pseudo-licence tag
     # (e.g. ``self-generated`` as SPDX — BR-25) is reported rather than masked
     # by the later PENDING-LEGAL-CLEARANCE default.
+    #
+    # BR-74 / GATE-11: when the floor's content-triggered clearance axis also
+    # fires (synthetic-registry source/derived without a matching
+    # clearance_decision token), that reason is reported *before* this licence
+    # check — the floor short-circuits. BR-25's "licence before allowlist"
+    # ordering still holds among the *door-local* gates below; it does not
+    # outrank the floor's clearance / registration axes.
     license_result = _audit_row_licenses(
         row, category=audit_category, required=True
     )
@@ -2412,12 +2540,7 @@ def audit_provenance_row(
     has_lineage = bool(str(row.get("generator_lineage") or "").strip())
     # BR-34: only the *caller-supplied* category participates in synthetic
     # routing — never the row-declared value.
-    row_clearance_raw = row.get("clearance")
-    row_clearance = (
-        row_clearance_raw.strip()
-        if isinstance(row_clearance_raw, str)
-        else None
-    )
+    row_clearance = _row_clearance_decision_token(row)
 
     for cand in _synthetic_audit_targets(
         source=source,
@@ -2429,12 +2552,7 @@ def audit_provenance_row(
         if not synth_result.ok:
             return synth_result
 
-    # BR-33: unregistered derived (after NC + synthetic-head routing).
-    unreg = _audit_derived_registration(
-        source=source, derived=derived, category=audit_category
-    )
-    if unreg is not None:
-        return unreg
+    # Unregistered derived is floor-mediated (BR-66); no door-local re-check.
 
     return _pass(
         detail="provenance row passes license policy",
@@ -2448,18 +2566,19 @@ def audit_tooling_row(row: Mapping[str, Any]) -> LicenseAuditResult:
     Ordering (BR-24 / GATE-05) — restored after the floor hoist inverted it:
 
       1. Floor taint + content-triggered clearance via
-         :func:`_common_provenance_checks` with ``check_licenses=False``
-         (``derived_from_model``, ``source`` taint, synthetic clearance).
-         The licence half of the floor is deferred so it cannot mask the
-         package reason.
+         :func:`_floor_taint_and_clearance` (``derived_from_model``,
+         ``source`` taint, synthetic clearance). The licence half is deferred
+         so it cannot mask the package reason.
       2. Resolve a package identifier from ``package`` / ``package_name`` /
          ``source`` and run :func:`audit_tooling_dependency` **before** any
          row-declared SPDX check so a self-declared licence cannot launder
          a denylisted package (BR-24).
-      3. Present row-declared licence values (required=False) — still
-         enforced, just after the package gate.
+      3. Present row-declared licence values via :func:`_floor_licenses`
+         (required=False) — still enforced, just after the package gate.
 
-    Missing package identifier fails closed.
+    Missing package identifier fails closed. The complete floor composition
+    :func:`_common_provenance_checks` is not used here because its licence
+    half must interleave *after* the package gate; both halves still run.
     """
     if not isinstance(row, Mapping):
         raise LicensePolicyError(
@@ -2474,7 +2593,8 @@ def audit_tooling_row(row: Mapping[str, Any]) -> LicenseAuditResult:
 
     # Taint + clearance only — licence deferred until after the package gate
     # so denylisted_package is the authoritative reason when both fire (BR-24).
-    common = _common_provenance_checks(row, category=cat, check_licenses=False)
+    # BR-69: call the split half explicitly; never a flag that drops an axis.
+    common = _floor_taint_and_clearance(row, category=cat)
     if common is not None:
         return common
 
@@ -2501,10 +2621,11 @@ def audit_tooling_row(row: Mapping[str, Any]) -> LicenseAuditResult:
         return dep_result
 
     # Row-declared licence still fails closed when present, but only after the
-    # package reason has had its chance to surface (GATE-05).
-    license_result = _audit_row_licenses(row, category=cat, required=False)
-    if not license_result.ok:
-        return license_result
+    # package reason has had its chance to surface (GATE-05). Same half as the
+    # complete floor's licence axis (BR-69).
+    license_hit = _floor_licenses(row, category=cat)
+    if license_hit is not None:
+        return license_hit
 
     return _pass(
         detail=dep_result.detail,

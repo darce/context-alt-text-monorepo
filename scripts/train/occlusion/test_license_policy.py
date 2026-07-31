@@ -1547,6 +1547,23 @@ class TestBr64ResearchCorpusDerivedFromModel:
         assert result.ok is False
         assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
 
+    @pytest.mark.parametrize(
+        "dual_tag",
+        ["insightface/ms1m", "insightface/glint360k",
+         "deepinsight/insightface/ms1m", "buffalo_l/ffhq"],
+    )
+    def test_nc_wins_when_input_matches_both_registries(self, dual_tag: str) -> None:
+        # The cases above cannot pin the ORDER: `buffalo_l` is not a research
+        # source, so the research check never competes. Only a tag matching
+        # BOTH registries discriminates -- reorder the two checks and this dies.
+        assert policy.match_nc_model_pattern(dual_tag) is not None, "fixture must match NC"
+        assert policy._looks_like_research_source(dual_tag), "fixture must match research"
+        result = policy.audit_derived_from_model(dual_tag)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED, (
+            "NC must outrank research_only_source when a tag matches both"
+        )
+
     @pytest.mark.parametrize("corpus", RESEARCH_CORPORA)
     def test_self_generated_row_cannot_launder_research_corpus(self, corpus: str) -> None:
         # The operator-owned `self-generated` exemption must not waive the

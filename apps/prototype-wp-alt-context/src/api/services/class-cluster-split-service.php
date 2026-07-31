@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace AltContext\Api\Services;
 
+require_once __DIR__ . '/../../support/trait-runs-transactional.php';
+
 use AltContext\Api\ClusterMutationHostInterface;
 use AltContext\Support\RunsTransactional;
 use AltContext\Sovereign\Repositories\SyncStateRepository;

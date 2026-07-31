@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { HTTPError } from '../../utils/http';
+import { AuthExpiredError, HTTPError } from '../../utils/http';
 import { DEFAULT_COOLDOWN_SECONDS } from '../../utils/recognitionCooldown';
 import { buildStatusText } from '../jobStateMachineProgress';
 import {
@@ -41,6 +41,13 @@ describe('clusterAutoRetry pure helpers', () => {
     expect(isRetryableClusterError(serverError())).toBe(false);
     expect(isRetryableClusterError(clientError())).toBe(false);
     expect(isRetryableClusterError(new Error('plain'))).toBe(false);
+  });
+
+  it('AuthExpiredError falls through terminal (never auto-retried) [TEST-15]', () => {
+    const authExpired = new AuthExpiredError({ endpoint: '/cluster', status: 403 });
+    expect(isRetryableClusterError(authExpired)).toBe(false);
+    expect(canAutoRetryCluster(1, authExpired)).toBe(false);
+    expect(canAutoRetryCluster(0, authExpired)).toBe(false);
   });
 
   it('honors Retry-After and falls back to DEFAULT_COOLDOWN_SECONDS', () => {
@@ -189,6 +196,23 @@ describe('createClusterAutoRetry', () => {
     expect(onTerminalError).toHaveBeenCalledWith('Request to /cluster failed (400): bad');
     expect(onExhausted).not.toHaveBeenCalled();
     expect(onQueued).toHaveBeenCalledWith(null);
+
+    vi.advanceTimersByTime(60_000);
+    expect(mutate).toHaveBeenCalledTimes(1);
+  });
+
+  it('AuthExpiredError → terminal path, zero retries (UXP-NET-2 pin)', () => {
+    const { mutate, onExhausted, onTerminalError, controller } = buildHarness();
+    const authExpired = new AuthExpiredError({
+      endpoint: '/cluster',
+      status: 403,
+      message: 'Authentication expired for /cluster (403).',
+    });
+
+    controller.start();
+    expect(controller.noteError(authExpired)).toBe(false);
+    expect(onTerminalError).toHaveBeenCalledWith(authExpired.message);
+    expect(onExhausted).not.toHaveBeenCalled();
 
     vi.advanceTimersByTime(60_000);
     expect(mutate).toHaveBeenCalledTimes(1);

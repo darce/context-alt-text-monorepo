@@ -326,6 +326,7 @@ describe('useWorkbenchFindings', () => {
   beforeEach(() => {
     window.AltContextAdmin = {
       nonce: 'test-nonce',
+      ajaxUrl: '/wp-admin/admin-ajax.php',
       endpoints: {
         recognitionSuggestions: 'http://example.test/recognition/suggestions',
         recognitionMergeSuggestions: 'http://example.test/recognition/suggestions/merge',

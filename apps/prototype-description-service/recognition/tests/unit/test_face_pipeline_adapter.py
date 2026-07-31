@@ -33,6 +33,7 @@ from recognition.application.embedding.detector import (
 from recognition.application.embedding.generator import UnavailableEmbeddingGenerator
 from recognition.application.embedding.manifest import EmbeddingModelManifest
 from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
+from recognition.infrastructure.face_pipeline._common import EmbedBatchResult
 from recognition.infrastructure.face_pipeline._common import RawDetection, ZeroNormEmbeddingError
 from recognition.infrastructure.face_pipeline.aligner import AlignmentError
 from recognition.infrastructure.face_pipeline.provenance import (
@@ -78,6 +79,14 @@ def _clear_settings_caches() -> None:
     get_database_settings.cache_clear()
 
 
+def _rereload_settings_modules() -> None:
+    """One more reload after the test so sibling files see a consistent final state."""
+    import recognition.config.settings as settings_module
+
+    importlib.reload(settings_module)
+    _clear_settings_caches()
+
+
 def _align_dims_to_sface(monkeypatch: pytest.MonkeyPatch) -> None:
     """Three-way guard needs manifest==pgvector==identity_detection (all 128)."""
     monkeypatch.setenv("RECOGNITION_EMBEDDING_DIMENSION", str(SFACE_EMBEDDING_DIM))
@@ -104,7 +113,7 @@ def _mock_runtime(monkeypatch: pytest.MonkeyPatch) -> fpa.FacePipelineRuntime:
 def _restore_settings_caches_after_test() -> None:
     """Avoid leaking RECOGNITION_EMBEDDING_DIMENSION / PGVECTOR_DIM into sibling modules."""
     yield
-    _clear_settings_caches()
+    _rereload_settings_modules()
     fpa.reset_shared_face_pipeline_runtime_for_tests()
 
 
@@ -237,13 +246,18 @@ def test_xywh_to_corner_conversion() -> None:
 
 
 def test_sface_manifest_model_id_exact() -> None:
+    from recognition.infrastructure.face_pipeline.provenance import numeric_runtime_fingerprint
+
     manifest = fpa.sface_embedding_model_manifest()
     assert isinstance(manifest, EmbeddingModelManifest)
-    assert manifest.model_id == "opencv-sface@128d/l2/cosine"
+    space = numeric_runtime_fingerprint().space_token
+    assert manifest.model_id == f"opencv-sface+{space}@128d/l2/cosine"
     assert manifest.dimensions == 128
     assert manifest.framework == MODEL_MANIFEST["sface"].framework
     assert manifest.normalization == "l2"
     assert manifest.metric == "cosine"
+    # Space token folds OpenCV major + onnxruntime (CVUP1-LC-02 / HARM-02).
+    assert "cv" in space and "ort" in space
 
 
 def test_three_way_dim_guard_raises_on_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -390,7 +404,7 @@ async def test_detect_populates_phash_and_quality(monkeypatch: pytest.MonkeyPatc
     runtime.aligner.align.return_value = aligned  # type: ignore[attr-defined]
     emb = np.ones(SFACE_EMBEDDING_DIM, dtype=np.float32)
     emb /= float(np.linalg.norm(emb))
-    runtime.embedder.embed.return_value = [emb]  # type: ignore[attr-defined]
+    runtime.embedder.embed.return_value = EmbedBatchResult(vectors=np.stack([emb], axis=0), norms=np.array([2.5], dtype=np.float32))  # type: ignore[attr-defined]
 
     det = fpa.FacePipelineFaceDetector(runtime, timeout=5.0)
     img = Image.new("RGB", (64, 64), color=(12, 34, 56))
@@ -912,11 +926,26 @@ async def test_breaker_name_and_executor_thread(monkeypatch: pytest.MonkeyPatch)
     assert seen_thread["name"].startswith("face_pipeline")
 
 
-def test_reset_hook_documents_process_lifetime_executor() -> None:
-    """CR-10: reset docstring states executor is intentionally not reset."""
-    doc = fpa.reset_shared_face_pipeline_runtime_for_tests.__doc__ or ""
-    assert "process-lifetime" in doc.lower() or "process lifetime" in doc.lower() or "not" in doc.lower()
-    assert "executor" in doc.lower()
+def test_reset_hook_preserves_process_lifetime_executor() -> None:
+    """CR-10: reset clears runtime/breaker but must leave the process executor live.
+
+    Capture executor identity before/after reset; the same usable executor must
+    survive. Docstring is checked strictly (no tautological disjuncts).
+    """
+    fpa._ensure_face_pipeline_pool()
+    before = fpa._FACE_PIPELINE_EXECUTOR
+    assert before is not None
+    assert before.submit(lambda: "pre-reset").result(timeout=5.0) == "pre-reset"
+
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+
+    after = fpa._FACE_PIPELINE_EXECUTOR
+    assert after is before, "reset must not shut down or replace the process-lifetime executor"
+    assert after.submit(lambda: "post-reset").result(timeout=5.0) == "post-reset"
+
+    doc = (fpa.reset_shared_face_pipeline_runtime_for_tests.__doc__ or "").lower()
+    assert "process-lifetime" in doc or "process lifetime" in doc
+    assert "executor" in doc
 
 
 # ---------------------------------------------------------------------------
@@ -1388,7 +1417,7 @@ async def test_per_face_align_failure_keeps_sibling(monkeypatch: pytest.MonkeyPa
     runtime.aligner.align.side_effect = _align  # type: ignore[attr-defined]
     emb = np.ones(SFACE_EMBEDDING_DIM, dtype=np.float32)
     emb /= float(np.linalg.norm(emb))
-    runtime.embedder.embed.return_value = [emb]  # type: ignore[attr-defined]
+    runtime.embedder.embed.return_value = EmbedBatchResult(vectors=np.stack([emb], axis=0), norms=np.array([2.5], dtype=np.float32))  # type: ignore[attr-defined]
 
     det = fpa.FacePipelineFaceDetector(runtime, timeout=5.0)
     faces = await det.detect([_png_bytes(Image.new("RGB", (128, 128), color=(10, 20, 30)))])
@@ -1491,10 +1520,25 @@ async def test_bytes_to_face_detection_e2e(monkeypatch: pytest.MonkeyPatch) -> N
         x1, y1, x2, y2 = face.bbox
         assert 0 <= x1 <= x2 <= w
         assert 0 <= y1 <= y2 <= h
-        assert face.model_id == "opencv-sface@128d/l2/cosine"
+        # model_id carries the numeric-runtime fingerprint (CVUP-1). Assert the
+        # stable contract only — the mutable cv/ort segment has its own
+        # discrimination tests in test_face_pipeline_provenance.py, and pinning
+        # it here just re-creates the stale literal this replaced.
+        assert face.model_id.startswith("opencv-sface+")
+        assert face.model_id.endswith("@128d/l2/cosine")
+        # 5-point landmarks yield no pitch; yaw/roll are landmark proxies (FIR-4).
         assert face.pose_pitch is None
-        assert face.pose_yaw is None
-        assert face.pose_roll is None
+        assert face.pose_yaw is not None
+        assert face.pose_roll is not None
+        # Bound against the FIXTURE, not the formula: degrees(atan(...)) can
+        # never leave (-90, 90) and degrees(atan2(...)) can never leave
+        # (-180, 180], so range checks on those intervals are green by
+        # construction and certify nothing (TEST-06). This canvas is a frontal,
+        # upright synthetic face — measured yaw=-0.236°, roll=+0.105° — so a
+        # landmark-index swap, a sign flip, or a radians/degrees confusion in
+        # the proxy shows up as a violation of the ±2° envelope.
+        assert abs(face.pose_yaw) <= 2.0, f"frontal fixture yaw={face.pose_yaw}"
+        assert abs(face.pose_roll) <= 2.0, f"upright fixture roll={face.pose_roll}"
         # CR-01 models-present: phash + quality populated
         assert face.image_phash is not None
         assert face.landmark_quality is not None

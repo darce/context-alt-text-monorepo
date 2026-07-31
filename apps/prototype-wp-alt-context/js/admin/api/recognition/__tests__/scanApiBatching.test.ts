@@ -31,6 +31,7 @@ const makeAnalyzeResponse = (mediaIds: number[]): AnalyzeResponse => ({
 
 const mockConfig = {
   nonce: 'nonce-123',
+  ajaxUrl: '/wp-admin/admin-ajax.php',
   endpoints: {
     recognitionAnalyze: 'https://example.com/analyze',
     recognitionBatchRuns: 'https://example.com/batch-runs',

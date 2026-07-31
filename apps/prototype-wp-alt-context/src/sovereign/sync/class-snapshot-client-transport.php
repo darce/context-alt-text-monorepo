@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace AltContext\Sovereign\Sync;
 
+require_once __DIR__ . '/../../api/class-abstract-recognition-proxy-controller.php';
+
 use AltContext\Api\AbstractRecognitionProxyController;
 use WP_Error;
 use WP_REST_Response;

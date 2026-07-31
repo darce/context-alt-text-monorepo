@@ -59,7 +59,7 @@ describe('ConfirmTabContent', () => {
   it('keeps the clustering explainer closed by default and recovery tools first', () => {
     const { container } = render(<ConfirmTabContent />);
 
-    const details = container.querySelector('details.acx-workbench-help-card');
+    const details = container.querySelector<HTMLDetailsElement>('details.acx-workbench-help-card');
     expect(details).not.toBeNull();
     expect(details?.open).toBe(false);
     expect(screen.getByText(CLUSTERING_DISCLOSURE_SUMMARY)).toBeTruthy();
@@ -71,7 +71,7 @@ describe('ConfirmTabContent', () => {
 
   it('reveals disclosure body without embeddings only after the summary is toggled', async () => {
     const { container } = render(<ConfirmTabContent />);
-    const details = container.querySelector('details.acx-workbench-help-card');
+    const details = container.querySelector<HTMLDetailsElement>('details.acx-workbench-help-card');
     expect(details?.open).toBe(false);
 
     await userEvent.click(screen.getByText(CLUSTERING_DISCLOSURE_SUMMARY));

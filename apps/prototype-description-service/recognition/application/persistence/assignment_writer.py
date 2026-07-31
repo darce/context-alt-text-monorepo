@@ -20,6 +20,8 @@ from recognition.application.persistence.representative_selector import (
     RepresentativeSelector,
     _compute_identity_quality,
     _select_diverse_representatives,
+    enrollment_floors_from_settings,
+    passes_enrollment_floors,
 )
 from recognition.application.settings.clustering import ClusteringSettings
 from recognition.domain.cluster import IdentityCluster
@@ -194,8 +196,31 @@ class AssignmentWriter:
         is_provisional: bool = False,
         is_user_selected: bool = False,
         existing_rep_count: int | None = None,
-    ) -> ClusterRepresentative:
-        """Create and persist a representative, emitting events."""
+        *,
+        enforce_enrollment_floors: bool = True,
+    ) -> ClusterRepresentative | None:
+        """Create and persist a representative, emitting events.
+
+        FIR-6 S3b: identities failing active enrollment floors are excluded
+        (no rep row, no quality_score write). Returns ``None`` when gated out.
+        Pass ``enforce_enrollment_floors=False`` only for the best-available
+        fallback when every member fails floors (FIR6S3B-M-01) so the cluster
+        still gets a rep+centroid for CentroidDiscovery.
+        """
+        floors = enrollment_floors_from_settings(self._settings)
+        if enforce_enrollment_floors and not passes_enrollment_floors(identity, floors):
+            logger.info(
+                "[enrollment_gate] SKIP_CREATE cluster=%s identity=%s reason=%s "
+                "sharpness=%s embedding_norm=%s occlusion_severity=%s",
+                cluster_id,
+                identity.id,
+                reason,
+                identity.sharpness,
+                identity.embedding_norm,
+                identity.occlusion_severity,
+            )
+            return None
+
         if existing_rep_count is not None:
             max_reps = self._settings.max_representatives_per_cluster
             if existing_rep_count >= max_reps and "novel_pose" in reason:
@@ -294,21 +319,24 @@ class AssignmentWriter:
                 existing_rep_count=admission.rep_count,
             )
 
-            self._emit_representative_upgraded_event(
-                is_upgrade=is_upgrade,
-                cluster_id=decision.candidate.cluster_id,
-                identity_id=decision.candidate.identity.id,
-                rep=rep,
-            )
+            # Enrollment gate may still refuse create (defensive); skip centroid
+            # and upgrade events when no representative was materialised.
+            if rep is not None:
+                self._emit_representative_upgraded_event(
+                    is_upgrade=is_upgrade,
+                    cluster_id=decision.candidate.cluster_id,
+                    identity_id=decision.candidate.identity.id,
+                    rep=rep,
+                )
 
-            # Compute centroid from the cached reps (returned by _should_add_representative)
-            # plus the newly added rep -- this avoids a redundant get_all_representatives
-            # DB round-trip (Phase 3: duplicate-read elimination).
-            all_rep_embeddings = [r.embedding for r in admission.cached_reps]
-            all_rep_embeddings.append(rep.embedding)
-            new_centroid = self._centroids.unit_normalized_mean(all_rep_embeddings)
-            if new_centroid is not None:
-                cluster.centroid = new_centroid
+                # Compute centroid from the cached reps (returned by _should_add_representative)
+                # plus the newly added rep -- this avoids a redundant get_all_representatives
+                # DB round-trip (Phase 3: duplicate-read elimination).
+                all_rep_embeddings = [r.embedding for r in admission.cached_reps]
+                all_rep_embeddings.append(rep.embedding)
+                new_centroid = self._centroids.unit_normalized_mean(all_rep_embeddings)
+                if new_centroid is not None:
+                    cluster.centroid = new_centroid
 
         cluster.identity_count += 1
         await self._clusters.update(cluster)
@@ -322,7 +350,9 @@ class AssignmentWriter:
         self,
         decisions: list[AssignmentDecision],
         batch_mode: bool = False,
-    ) -> tuple[int, int, int]:
+        *,
+        joint_uniqueness_enabled: bool = False,
+    ) -> tuple[int, int, int, set[str]]:
         """Bulk-persist accepted assignment decisions for one processing chunk.
 
         Groups decisions by cluster and issues a single bulk INSERT per cluster
@@ -330,13 +360,20 @@ class AssignmentWriter:
         newly-inserted members receive representative, centroid, and curriculum
         updates; idempotent skips are counted but not re-processed.
 
+        When ``joint_uniqueness_enabled`` is True (face_pipeline joint path), a
+        same-photo uniqueness guard rejects decisions whose media_id is already
+        represented in the target cluster (existing members or an earlier
+        higher-similarity decision in this chunk). Rejected identity ids are
+        returned so the orchestrator can rebind partition inputs (never orphan).
+
         Returns:
-            (total_persisted, total_skipped, reps_added) - persisted is newly inserted,
-            skipped is ON CONFLICT matches (already a member of this cluster),
-            reps_added is the count of new representatives created (representative churn proxy).
+            (total_persisted, total_skipped, reps_added, guard_rejected_ids) —
+            persisted is newly inserted, skipped is ON CONFLICT matches,
+            reps_added is new representatives created, guard_rejected_ids are
+            identities blocked by the joint uniqueness guard.
         """
         if not decisions:
-            return 0, 0, 0
+            return 0, 0, 0, set()
 
         from collections import defaultdict
 
@@ -347,6 +384,7 @@ class AssignmentWriter:
         total_persisted = 0
         total_skipped = 0
         _reps_added = 0
+        guard_rejected_ids: set[str] = set()
 
         for cluster_id, cluster_decisions in by_cluster.items():
             cluster = await self._clusters.get_by_id(cluster_id)
@@ -357,6 +395,14 @@ class AssignmentWriter:
                 )
                 total_skipped += len(cluster_decisions)
                 continue
+
+            if joint_uniqueness_enabled:
+                cluster_decisions, rejected = await self._apply_joint_uniqueness_guard(
+                    cluster_id, cluster_decisions
+                )
+                guard_rejected_ids.update(rejected)
+                if not cluster_decisions:
+                    continue
 
             member_data = [
                 MemberData(
@@ -390,6 +436,8 @@ class AssignmentWriter:
                         is_provisional=batch_mode,
                         existing_rep_count=len(admission.cached_reps),
                     )
+                    if rep is None:
+                        continue
                     _reps_added += 1
                     self._emit_representative_upgraded_event(
                         is_upgrade=is_upgrade,
@@ -411,7 +459,56 @@ class AssignmentWriter:
             for decision in newly_inserted:
                 await self._update_curriculum_t(cluster_id, decision.candidate.discovery_similarity)
 
-        return total_persisted, total_skipped, _reps_added
+        return total_persisted, total_skipped, _reps_added, guard_rejected_ids
+
+    async def _apply_joint_uniqueness_guard(
+        self,
+        cluster_id: str,
+        decisions: list[AssignmentDecision],
+    ) -> tuple[list[AssignmentDecision], set[str]]:
+        """Reject same-photo duplicates within a cluster (face_pipeline only).
+
+        Existing cluster members and earlier higher-similarity decisions in this
+        batch occupy a media_id; later/lower-similarity faces for that media_id
+        are rejected so the orchestrator can route them to new-cluster/unknown.
+
+        An identity already member of the target cluster does not occupy media
+        against itself (chunk re-process / ON CONFLICT skip path stays idempotent).
+        """
+        existing = await self._clusters.get_member_identities(cluster_id)
+        occupants_by_media: dict[str, set[str]] = {}
+        for identity in existing:
+            media_id = str(identity.media_id)
+            occupants_by_media.setdefault(media_id, set()).add(str(identity.id))
+        ordered = sorted(
+            decisions,
+            key=lambda decision: (
+                decision.candidate.discovery_similarity,
+                decision.candidate.identity.confidence,
+                decision.candidate.identity.id,
+            ),
+            reverse=True,
+        )
+        kept: list[AssignmentDecision] = []
+        rejected: set[str] = set()
+        batch_media: set[str] = set()
+        for decision in ordered:
+            identity_id = str(decision.candidate.identity.id)
+            media_id = str(decision.candidate.identity.media_id)
+            foreign_occupants = occupants_by_media.get(media_id, set()) - {identity_id}
+            if foreign_occupants or media_id in batch_media:
+                rejected.add(identity_id)
+                continue
+            kept.append(decision)
+            batch_media.add(media_id)
+        if rejected:
+            logger.info(
+                "[assignment_writer] joint_uniqueness cluster=%s rejected=%d kept=%d",
+                cluster_id,
+                len(rejected),
+                len(kept),
+            )
+        return kept, rejected
 
     async def _update_curriculum_t(self, cluster_id: str, similarity: float) -> None:
         """Update the cluster's curriculum bias using an atomic EMA update.
@@ -476,8 +573,35 @@ class AssignmentWriter:
         await self._clusters.clear_representatives(cluster_id)
 
         # 3. Get all member identities (excluding already preserved ones)
-        identities = list(await self._clusters.get_member_identities(cluster_id))
-        identities = [i for i in identities if i.embedding is not None and i.id not in preserved_ids]
+        floors = enrollment_floors_from_settings(self._settings)
+        all_members = list(await self._clusters.get_member_identities(cluster_id))
+        identities = [
+            i
+            for i in all_members
+            if i.embedding is not None
+            and i.id not in preserved_ids
+            and passes_enrollment_floors(i, floors)
+        ]
+        # Best-available fallback (FIR6S3B-M-01): when floors exclude every member
+        # and nothing was preserved (pose buckets are None under face_pipeline),
+        # still enroll from the full member pool so the cluster never ends with
+        # representative_identity_id=None while members exist.
+        best_available_fallback = False
+        if not identities and not preserved:
+            identities = [
+                i for i in all_members if i.embedding is not None and i.id not in preserved_ids
+            ]
+            if identities:
+                best_available_fallback = True
+                logger.info(
+                    "[enrollment_gate] BEST_AVAILABLE_FALLBACK recompute cluster=%s "
+                    "members=%d floors=(s>=%.3f,n>=%.3f,o<=%.3f)",
+                    cluster_id,
+                    len(identities),
+                    floors.floor_sharpness,
+                    floors.floor_embedding_norm,
+                    floors.ceiling_occlusion,
+                )
         # Sort by quality so FPS starts with the best one if no seeds
         identities.sort(key=lambda i: _compute_identity_quality(i, self._settings), reverse=True)
 
@@ -500,7 +624,12 @@ class AssignmentWriter:
             await self._create_and_add_representative(
                 cluster_id=cluster_id,
                 identity=identity,
-                reason="fps_recompute_diversity",
+                reason=(
+                    "fps_recompute_best_available"
+                    if best_available_fallback
+                    else "fps_recompute_diversity"
+                ),
+                enforce_enrollment_floors=not best_available_fallback,
             )
 
         # Update cluster primary representative
@@ -586,17 +715,41 @@ class AssignmentWriter:
                     )
 
         # Create initial representative(s) using diversity-aware sampling (FPS)
-        # to preserve "bridge" faces that connect different pose angles
-        if identities:
+        # to preserve "bridge" faces that connect different pose angles.
+        # FIR-6 S3b: prefer observations that clear active factor floors.
+        # Best-available fallback (FIR6S3B-M-01): when every member fails floors,
+        # still seed a rep+centroid so CentroidDiscovery can find the cluster.
+        floors = enrollment_floors_from_settings(self._settings)
+        eligible = [i for i in identities if passes_enrollment_floors(i, floors)]
+        best_available_fallback = False
+        if eligible:
+            rep_pool = eligible
+        elif identities:
+            rep_pool = list(identities)
+            best_available_fallback = True
+            logger.info(
+                "[enrollment_gate] BEST_AVAILABLE_FALLBACK persist_new_cluster "
+                "cluster=%s members=%d floors=(s>=%.3f,n>=%.3f,o<=%.3f)",
+                cluster_id_str,
+                len(identities),
+                floors.floor_sharpness,
+                floors.floor_embedding_norm,
+                floors.ceiling_occlusion,
+            )
+        else:
+            rep_pool = []
+
+        if rep_pool:
             diverse_reps = _select_diverse_representatives(
-                identities,
+                rep_pool,
                 self._settings.max_representatives_per_cluster,
             )
             for identity in diverse_reps:
                 await self._create_and_add_representative(
                     cluster_id=cluster_id_str,
                     identity=identity,
-                    reason="fps_seed",
+                    reason="fps_seed_best_available" if best_available_fallback else "fps_seed",
+                    enforce_enrollment_floors=not best_available_fallback,
                 )
 
             # Recompute and persist the centroid immediately.
@@ -698,12 +851,17 @@ class AssignmentWriter:
                         break
 
             if is_diverse:
-                await self._create_and_add_representative(
+                rep = await self._create_and_add_representative(
                     cluster_id=cluster_id,
                     identity=identity,
                     reason="diverse_addition",
                     existing_rep_count=current_count,
                 )
+                if rep is None:
+                    logger.debug(
+                        "[enrollment_gate] assign_to_existing_cluster skipped rep for %s",
+                        identity.id,
+                    )
 
         # Update member count
         cluster.identity_count += 1

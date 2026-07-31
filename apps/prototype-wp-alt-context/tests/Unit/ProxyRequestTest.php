@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Tests\Unit;
 
+use AltContext\Api\AbstractRecognitionProxyController;
 use AltContext\Api\AnalysisJobsController;
 use AltContext\Api\RecognitionController;
 use AltContext\Api\RecognitionCircuitKeys;
@@ -122,13 +123,22 @@ class ProxyRequestTest extends TestCase
         $this->assertArrayNotHasKey('content-length', $result->get_headers());
     }
 
+    /**
+     * [rg-016] / R19-BR-11: the abstract proxy's runtime require_once of
+     * RecognitionProxyPolicy is load-bearing under WordPress (no Composer
+     * classmap). class_exists(..., false) refuses the autoloader so this
+     * probe fails when the production require_once is removed — the previous
+     * class_exists(default true) was satisfied by Composer's classmap alone.
+     */
     public function testAbstractProxyControllerLoadsPolicyUnderRuntimeAutoloadRules(): void
     {
         $script = <<<'PHP'
 require 'vendor/autoload.php';
 require_once 'src/api/interface-recognition-route-controller.php';
 require_once 'src/api/class-abstract-recognition-proxy-controller.php';
-var_export(class_exists('AltContext\\Api\\RecognitionProxyPolicy'));
+// Second arg false: do not consult the autoloader. The production require_once
+// must have defined the class already.
+var_export(class_exists('AltContext\\Api\\RecognitionProxyPolicy', false));
 PHP;
 
         $command = sprintf(
@@ -141,6 +151,21 @@ PHP;
         $output = shell_exec($command);
 
         $this->assertSame('true', trim((string) $output));
+    }
+
+    /**
+     * R19-BR-12: permission gate must deny when manage_options is absent.
+     * Mirrors SettingsControllerTest::testCanManageSettingsRequiresManageOptions.
+     * RecognitionController is a concrete proxy facade; its callback delegates
+     * to AnalysisJobsController which inherits the abstract's gate.
+     */
+    public function testCanManageRecognitionRequiresManageOptions(): void
+    {
+        $this->setUserCapability('manage_options', false);
+        $this->assertFalse($this->controller->can_manage_recognition());
+
+        $this->setUserCapability('manage_options', true);
+        $this->assertTrue($this->controller->can_manage_recognition());
     }
 
     /**
@@ -696,7 +721,8 @@ PHP;
 
     public function testProxyRequestReadsLatestUrlWithoutControllerReconstruction(): void
     {
-        $this->setOption('acx_recognition_url', 'http://example.internal:9000');
+        // BR-131: remote recognition URLs must be https.
+        $this->setOption('acx_recognition_url', 'https://example.internal:9000');
         $this->setOption('acx_recognition_source', 'service');
 
         $this->queueHttpResponse([
@@ -713,7 +739,7 @@ PHP;
 
         $calls = $this->getHttpCalls();
         $this->assertCount(1, $calls);
-        $this->assertStringContainsString('http://example.internal:9000/recognition/jobs/test-123', $calls[0]['url']);
+        $this->assertStringContainsString('https://example.internal:9000/recognition/jobs/test-123', $calls[0]['url']);
     }
 
     /**
@@ -1070,6 +1096,303 @@ PHP;
             // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- Restore the test's original wpdb stub.
             $GLOBALS['wpdb'] = $savedWpdb;
         }
+    }
+
+    /**
+     * BR-137: non-loopback credentialed proxy must use wp_safe_remote_request
+     * so unsafe redirect hops are validated. Data-driven over several public
+     * hosts so a fixture-host-only chooser goes RED (R4G-BR-02).
+     *
+     * @dataProvider nonLoopbackProxyBaseProvider
+     */
+    public function testProxyUsesSafeRemoteRequestForNonLoopbackHttpsBase(string $baseUrl): void
+    {
+        $this->setOption('acx_recognition_url', $baseUrl);
+        $this->setOption('acx_recognition_source', 'service');
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"status":"completed"}',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/123');
+        $request->set_param('job_id', 'test-123');
+        $this->controller->get_job_status($request);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $parsedHost = parse_url($baseUrl, PHP_URL_HOST);
+        $host       = is_string($parsedHost) && '' !== $parsedHost ? $parsedHost : $baseUrl;
+        $this->assertStringContainsString($host, $calls[0]['url']);
+        $this->assertTrue(
+            !empty($calls[0]['safe']),
+            'non-loopback proxy must call wp_safe_remote_request for host ' . $host
+        );
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function nonLoopbackProxyBaseProvider(): array
+    {
+        return [
+            'public_dns' => ['https://api.example.test'],
+            'unrelated_tld' => ['https://cdn.other-org.example'],
+            'bare_public_ipv4' => ['https://203.0.113.10'],
+            'bracketed_ipv6' => ['https://[2001:db8::1]'],
+        ];
+    }
+
+    /**
+     * BR-137 sibling: loopback development keeps plain wp_remote_request so
+     * localhost:8000 is not rejected by wp_http_validate_url.
+     *
+     * @dataProvider loopbackProxyBaseProvider
+     */
+    public function testProxyUsesRemoteRequestForLoopbackBase(string $baseUrl, string $hostNeedle): void
+    {
+        $this->setOption('acx_recognition_url', $baseUrl);
+        $this->setOption('acx_recognition_source', 'service');
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"status":"completed"}',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/123');
+        $request->set_param('job_id', 'test-123');
+        $this->controller->get_job_status($request);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString($hostNeedle, $calls[0]['url']);
+        $this->assertArrayNotHasKey(
+            'safe',
+            $calls[0],
+            'loopback proxy must call wp_remote_request (no safe flag) for ' . $hostNeedle
+        );
+    }
+
+    /**
+     * @return array<string, array{0: string, 1: string}>
+     */
+    public static function loopbackProxyBaseProvider(): array
+    {
+        return [
+            'ipv4_loopback' => ['http://127.0.0.1:8000', '127.0.0.1'],
+            'localhost' => ['http://localhost:8000', 'localhost'],
+        ];
+    }
+
+    /**
+     * BR-137: credentialed proxy must refuse redirects (redirection => 0).
+     * Deleting the key turns this red; following a 3xx would walk X-API-Key.
+     */
+    public function testProxyPassesRedirectionZero(): void
+    {
+        $this->setOption('acx_recognition_url', 'https://api.example.test');
+        $this->setOption('acx_recognition_source', 'service');
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"status":"completed"}',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/123');
+        $request->set_param('job_id', 'test-123');
+        $this->controller->get_job_status($request);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertArrayHasKey('redirection', $calls[0]['args']);
+        $this->assertSame(
+            0,
+            $calls[0]['args']['redirection'],
+            "credentialed proxy must pass 'redirection' => 0 so X-API-Key cannot walk on 3xx"
+        );
+    }
+
+    /**
+     * BR-137: a 3xx from the service must not be treated as success and must
+     * not produce a second HTTP call to a Location target (API key walk).
+     */
+    public function testProxySurfaces3xxAsErrorWithoutFollowingRedirect(): void
+    {
+        $this->setOption('acx_recognition_url', 'https://api.example.test');
+        $this->setOption('acx_recognition_source', 'service');
+        $this->setOption('acx_recognition_api_key', 'secret-must-not-walk');
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 302, 'message' => 'Found'],
+            'headers' => ['Location' => 'https://attacker.example/collect'],
+            'body' => '',
+        ]);
+        // If redirection were followed, the harness would consume a second queue
+        // entry. Leave a sentinel that must remain unused.
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"status":"stolen"}',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/123');
+        $request->set_param('job_id', 'test-123');
+        $result = $this->controller->get_job_status($request);
+
+        // get_job_status maps proxy-unavailable into a synthetic offline payload,
+        // but the underlying error must still be a redirect refusal (only one hop).
+        $calls = $this->getHttpCalls();
+        $this->assertCount(
+            1,
+            $calls,
+            'must not follow redirect — second call would carry X-API-Key to attacker'
+        );
+        $this->assertSame(0, $calls[0]['args']['redirection'] ?? null);
+        $this->assertSame(
+            'secret-must-not-walk',
+            $calls[0]['args']['headers']['X-API-Key'] ?? null
+        );
+        $this->assertStringNotContainsString('attacker.example', $calls[0]['url']);
+
+        // Direct unit of the proxy path via a harness that returns raw proxy_request.
+        // Drop the unused sentinel so this second case only sees the 3xx.
+        $GLOBALS['__ac_http_queue'] = [];
+        $harness = new class() extends AnalysisJobsController {
+            public function callProxy()
+            {
+                return $this->proxy_request('GET', '/recognition/jobs/test-123', [], [], 'ui_read');
+            }
+        };
+        $this->queueHttpResponse([
+            'response' => ['code' => 302, 'message' => 'Found'],
+            'headers' => ['Location' => 'https://attacker.example/collect'],
+            'body' => '',
+        ]);
+        $raw = $harness->callProxy();
+        $this->assertInstanceOf(WP_Error::class, $raw);
+        $this->assertSame('recognition_unexpected_redirect', $raw->get_error_code());
+        $this->assertSame(502, (int) ($raw->get_error_data()['status'] ?? 0));
+    }
+
+    /**
+     * R4G-BR-09: a persistent 3xx must feed the circuit breaker (record failure)
+     * so a compromised-but-valid recognition host is not invisible to backoff.
+     */
+    public function testPersistentRedirectTripsCircuitBreaker(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '1'; // GET_LOCK(...) acquired.
+
+        $this->setOption('acx_recognition_url', 'https://api.example.test');
+        $this->setOption('acx_recognition_source', 'service');
+        $this->setOption('acx_recognition_api_key', 'secret-key');
+
+        $harness = $this->makeUiReadHarness();
+        $baseUrl = $harness->resolvedBaseUrl();
+        $failureKey = RecognitionCircuitKeys::failure_key_for_base_url($baseUrl);
+        $circuitKey = RecognitionCircuitKeys::for_base_url($baseUrl);
+
+        for ($i = 0; $i < 2; $i++) {
+            $this->queueHttpResponse([
+                'response' => ['code' => 302, 'message' => 'Found'],
+                'headers' => ['Location' => 'https://attacker.example/collect'],
+                'body' => '',
+            ]);
+            $result = $harness->callUiRead();
+            $this->assertInstanceOf(WP_Error::class, $result);
+            $this->assertSame('recognition_unexpected_redirect', $result->get_error_code());
+        }
+
+        $this->assertSame(
+            2,
+            (int) get_transient($failureKey),
+            'each refused 3xx must increment the shared failure counter'
+        );
+        $this->assertNotFalse(
+            get_transient($circuitKey),
+            'threshold failures on persistent 3xx must open the circuit'
+        );
+    }
+
+    /**
+     * R4G-BR-09: is_proxy_redirect_refused is distinct from transport-unreachable
+     * so degraded UIs report ENDPOINT_ERROR rather than UNAVAILABLE for 3xx.
+     */
+    public function testRedirectRefusedClassifierIsNotTransportUnreachable(): void
+    {
+        $classifier = new class() extends AnalysisJobsController {
+            public function classify(WP_Error $error): array
+            {
+                return [
+                    'redirect' => $this->is_proxy_redirect_refused($error),
+                    'transport' => $this->is_proxy_transport_unreachable($error),
+                    'endpoint' => $this->is_proxy_endpoint_error($error),
+                ];
+            }
+        };
+
+        $redirect = new WP_Error(
+            AbstractRecognitionProxyController::ERROR_CODE_REDIRECT_REFUSED,
+            'redirect',
+            ['status' => 502]
+        );
+        $transport = new WP_Error('http_request_failed', 'timeout');
+
+        $redirectClass = $classifier->classify($redirect);
+        $this->assertTrue($redirectClass['redirect']);
+        $this->assertFalse(
+            $redirectClass['transport'],
+            'redirect refusal must not be laundered as transport-unreachable'
+        );
+
+        $transportClass = $classifier->classify($transport);
+        $this->assertFalse($transportClass['redirect']);
+        $this->assertTrue($transportClass['transport']);
+    }
+
+    /**
+     * R6L-BR-04 / [sr-007]: BlobsController returns ERROR_CODE_BLOB_REDIRECT_REFUSED,
+     * which must be recognised by the shared is_proxy_redirect_refused() so any
+     * future routing of blob errors through the degradation predicates does not
+     * launder a refused 3xx as UNAVAILABLE. Goes red if the predicate reverts to
+     * matching only ERROR_CODE_REDIRECT_REFUSED.
+     */
+    public function testBlobRedirectRefusedCodeIsRecognisedByRedirectClassifier(): void
+    {
+        $classifier = new class() extends AnalysisJobsController {
+            public function classify(WP_Error $error): array
+            {
+                return [
+                    'redirect' => $this->is_proxy_redirect_refused($error),
+                    'transport' => $this->is_proxy_transport_unreachable($error),
+                ];
+            }
+        };
+
+        $blobRedirect = new WP_Error(
+            AbstractRecognitionProxyController::ERROR_CODE_BLOB_REDIRECT_REFUSED,
+            'blob redirect',
+            ['status' => 502]
+        );
+
+        $class = $classifier->classify($blobRedirect);
+        $this->assertTrue(
+            $class['redirect'],
+            'blob redirect refusal code must be recognised by is_proxy_redirect_refused'
+        );
+        $this->assertFalse(
+            $class['transport'],
+            'blob redirect refusal must not be laundered as transport-unreachable'
+        );
+
+        // Pin constant values so a rename of the wire codes is a deliberate change.
+        $this->assertSame(
+            'recognition_blob_redirect_refused',
+            AbstractRecognitionProxyController::ERROR_CODE_BLOB_REDIRECT_REFUSED
+        );
+        $this->assertSame(
+            'recognition_unexpected_redirect',
+            AbstractRecognitionProxyController::ERROR_CODE_REDIRECT_REFUSED
+        );
     }
 
     private function makeUiReadHarness(): object

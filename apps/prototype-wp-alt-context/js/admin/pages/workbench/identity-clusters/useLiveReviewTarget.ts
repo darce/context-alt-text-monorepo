@@ -23,13 +23,15 @@ import { __ } from '@wordpress/i18n';
 
 import { fetchClusterMembers } from '../../../api/recognition';
 import { queryKeys } from '../../../api/queryKeys';
-import { HTTPError } from '../../../utils/http';
+import { AuthExpiredError, HTTPError } from '../../../utils/http';
 
-export type LiveReviewTargetStatus = 'live' | 'rebound' | 'retired';
+export type LiveReviewTargetStatus = 'live' | 'rebound' | 'retired' | 'auth_expired';
 
 export interface LiveReviewTargetResult {
   status: LiveReviewTargetStatus;
   resolvedClusterId: string | null;
+  /** Existence-probe error when status is auth_expired; null otherwise. */
+  error: unknown | null;
 }
 
 export interface UseLiveReviewTargetOptions {
@@ -81,9 +83,12 @@ export const useLiveReviewTarget = (
     // invalidation still refetches, so a real retirement 404 still lands.
     staleTime: 5_000,
     gcTime: 30_000,
-    // Never retry a definitive retirement 404; other errors may retry once.
+    // Never retry a definitive retirement 404 or auth expiry; other errors may retry once.
     retry: (failureCount, error) => {
       if (isClusterNotFound(error)) {
+        return false;
+      }
+      if (error instanceof AuthExpiredError) {
         return false;
       }
       return failureCount < 1;
@@ -91,6 +96,8 @@ export const useLiveReviewTarget = (
   });
 
   const retired = openClusterId != null && existenceQuery.isError && isClusterNotFound(existenceQuery.error);
+  const authExpired =
+    openClusterId != null && existenceQuery.isError && existenceQuery.error instanceof AuthExpiredError;
 
   // S5-02: resolve survivor lazily at read time — do not memoize against
   // [retired, openClusterId] alone. recordMergeSurvivor mutates a ref-backed
@@ -105,10 +112,24 @@ export const useLiveReviewTarget = (
     }
   }
 
-  const status: LiveReviewTargetStatus = !retired ? 'live' : survivorId ? 'rebound' : 'retired';
+  // Auth expiry must not be absorbed into fail-safe 'live' (UXP-NET-2 / FORM-05).
+  // Keep resolvedClusterId so in-progress UI is not wiped ([INT-11]).
+  const status: LiveReviewTargetStatus = authExpired
+    ? 'auth_expired'
+    : !retired
+      ? 'live'
+      : survivorId
+        ? 'rebound'
+        : 'retired';
 
   const resolvedClusterId: string | null =
-    status === 'live' ? openClusterId : status === 'rebound' ? survivorId : null;
+    status === 'live' || status === 'auth_expired'
+      ? openClusterId
+      : status === 'rebound'
+        ? survivorId
+        : null;
+
+  const error: unknown | null = authExpired ? existenceQuery.error : null;
 
   // Side effects: announce + rebind/close. Prefer rebind; allow late upgrade
   // when survivor lands after a prior close for the same open id.
@@ -140,5 +161,5 @@ export const useLiveReviewTarget = (
     close?.();
   }, [retired, openClusterId, survivorId]);
 
-  return { status, resolvedClusterId };
+  return { status, resolvedClusterId, error };
 };

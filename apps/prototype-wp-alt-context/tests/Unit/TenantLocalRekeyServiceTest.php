@@ -161,6 +161,142 @@ class TenantLocalRekeyServiceTest extends TestCase
             $this->queriesInclude( $wpdb->queries, $wpdb->prefix . 'acx_clusters', $to ),
             'the first table must have been updated before the mid-loop failure rolled back'
         );
+        // R23-BR-28: marker must not be written when substantive rekey failed.
+        $this->assertFalse(
+            $this->queriesInclude( $wpdb->queries, 'resync_required', 'INSERT' ),
+            'resync_required marker must not be written after a failed rekey'
+        );
+    }
+
+    /**
+     * R23-BR-28 [TEST-15]: when the substantive rekey read-back finds remaining
+     * source-tenant rows, the resync_required marker must not be written and
+     * the failure must be visible to the caller.
+     *
+     * Captures the RuntimeException without try/catch around fail(): PHPUnit's
+     * AssertionFailedError extends RuntimeException, so a fail()-inside-try
+     * pin would swallow itself. Post-throw query assertions need the exception
+     * object, so expectException alone is insufficient.
+     */
+    public function testRekeyDoesNotWriteMarkerWhenReadBackFindsRemainingSourceRows(): void
+    {
+        global $wpdb;
+
+        $from = '77777777-7777-4777-8777-777777777777';
+        $to   = '88888888-8888-4888-8888-888888888888';
+
+        // After updates "succeed", force count_rows_for_tenant(from) > 0 so the
+        // post-update read-back fails closed without writing the marker.
+        $service = new class() extends TenantLocalRekeyService {
+            private int $countCalls = 0;
+            protected function count_rows_for_tenant( string $tenant_id ): int {
+                ++$this->countCalls;
+                // First call: threshold check (under threshold → rekey path).
+                // Second call: post-update read-back (pretend rows remain).
+                return 1 === $this->countCalls ? 1 : 5;
+            }
+        };
+
+        $thrown = null;
+        try {
+            $service->reconcile_identity_change( $from, $to );
+        } catch ( \RuntimeException $e ) {
+            $thrown = $e;
+        }
+
+        $this->assertInstanceOf( \RuntimeException::class, $thrown, 'expected RuntimeException when rekey read-back finds remaining rows' );
+        $this->assertStringContainsString( 'read-back', $thrown->getMessage() );
+        $this->assertStringContainsString( 'resync marker not written', $thrown->getMessage() );
+        $this->assertContains( 'ROLLBACK', $wpdb->queries );
+        $this->assertFalse(
+            $this->queriesInclude( $wpdb->queries, 'resync_required', 'INSERT' ),
+            'marker must not be written when substantive rekey did not verify'
+        );
+    }
+
+    /**
+     * R23-BR-28 false-failure pin: idempotent re-key (no source rows; all
+     * updates return 0) must still succeed and still set the resync_required
+     * marker. A return-value check treating 0 as failure would break this.
+     */
+    public function testIdempotentRekeyWithZeroRowsStillSetsMarker(): void
+    {
+        global $wpdb;
+
+        $from = '99999999-9999-4999-8999-999999999999';
+        $to   = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+
+        // No rows under from; every UPDATE returns 0 (defaultUpdateResult override).
+        $wpdb->defaultUpdateResult = 0;
+
+        $service = new TenantLocalRekeyService();
+        $result  = $service->reconcile_identity_change( $from, $to );
+
+        $this->assertSame( 'rekey', $result['strategy'] );
+        $this->assertSame( 0, $result['updated_rows'] );
+        $this->assertTrue(
+            $this->queriesInclude( $wpdb->queries, 'tenant:' . $to . ':clusters', 'resync_required' ),
+            'idempotent re-key must still write the resync_required marker'
+        );
+        $this->assertContains( 'COMMIT', $wpdb->queries );
+    }
+
+    /**
+     * R23-BR-28 [TEST-15]: marker insert write failure must throw and must not
+     * report success. Threshold path uses the marker as the substantive write.
+     * expectException — not bare try/catch RuntimeException.
+     */
+    public function testThresholdPathThrowsWhenMarkerInsertFails(): void
+    {
+        global $wpdb;
+
+        $from = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+        $to   = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+
+        $wpdb->defaultInsertResult = false;
+
+        $service = new class() extends TenantLocalRekeyService {
+            protected function count_rows_for_tenant( string $tenant_id ): int {
+                return TenantLocalRekeyService::ROW_THRESHOLD + 1;
+            }
+        };
+
+        $this->expectException( \RuntimeException::class );
+        $this->expectExceptionMessage( 'Could not mark tenant sync stream for re-sync.' );
+        $service->reconcile_identity_change( $from, $to );
+    }
+
+    /**
+     * R23-BR-28 [TEST-15]: marker insert may report success while durable state
+     * does not match — read-back must still throw. Distinct from the insert-false
+     * leg above (mutation of only the read-back predicate must red this pin).
+     * expectException — not bare try/catch RuntimeException.
+     */
+    public function testThresholdPathThrowsWhenMarkerReadBackDoesNotMatch(): void
+    {
+        global $wpdb;
+
+        $from = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+        $to   = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+        $stream = 'tenant:' . $to . ':clusters';
+
+        // Insert reports success, but SELECT last_sync_result returns a wrong
+        // value — proves the read-back leg independent of insert === false.
+        $select = $wpdb->prepare(
+            'SELECT last_sync_result FROM ' . $wpdb->prefix . 'acx_sync_state WHERE stream_name = %s LIMIT 1',
+            $stream
+        );
+        $wpdb->queryResults[ $select ] = 'ok';
+
+        $service = new class() extends TenantLocalRekeyService {
+            protected function count_rows_for_tenant( string $tenant_id ): int {
+                return TenantLocalRekeyService::ROW_THRESHOLD + 1;
+            }
+        };
+
+        $this->expectException( \RuntimeException::class );
+        $this->expectExceptionMessage( 'Could not verify resync_required marker after write' );
+        $service->reconcile_identity_change( $from, $to );
     }
 
     /**

@@ -12,6 +12,7 @@ from scripts.eval_harness.cli import (
     main,
     prune_out_dir,
 )
+from scripts.eval_harness.landmark_cache import LandmarkCacheProvenance
 from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest
 from scripts.eval_harness.report import build_reports
 
@@ -449,3 +450,402 @@ def test_cmd_score_exits_nonzero_when_items_failed(tmp_path, monkeypatch):  # S7
         main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
     assert excinfo.value.code != 0
     assert "not scored" in str(excinfo.value)
+
+
+# --- FIR-5 S5: face-bakeoff / score-face CLI surface ---
+
+
+def test_cli_face_bakeoff_and_score_face_subcommands_present():
+    # Re-run main's parser construction by invoking with --help on each
+    with pytest.raises(SystemExit) as exc:
+        main(["face-bakeoff", "--help"])
+    assert exc.value.code == 0
+    with pytest.raises(SystemExit) as exc2:
+        main(["score-face", "--help"])
+    assert exc2.value.code == 0
+
+
+def _valid_face_manifest_and_record(dim: int = 8) -> tuple[dict, dict]:
+    """A load_manifest-valid manifest + matching face-run-record (FIR5-S5-BR-05/06)."""
+    import numpy as np
+
+    def _unit(v):
+        a = np.asarray(v, dtype=float)
+        return (a / np.linalg.norm(a)).tolist()
+
+    def _fd(bbox, emb):
+        return {"bbox_px": bbox, "embedding": emb, "det_score": 0.95, "landmarks_px": [[0.0, 0.0]] * 5}
+
+    def _gt(name):
+        return {"x": 0.4, "y": 0.4, "w": 0.4, "h": 0.4, "name": name, "source": "iptc"}
+
+    def _ent(path, mid, name, src, pub):
+        return {
+            "path": path,
+            "sha256": "a" * 64,
+            "media_id": mid,
+            "face_count": 1,
+            "base_caption": "",
+            "present_identities": ([name] if name else []),
+            "must_right": [],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+            "face_boxes": [_gt(name)],
+            "provenance": {
+                "source": src,
+                "license": "public_domain" if pub else "consented",
+                "publishable": pub,
+            },
+        }
+
+    record = {
+        "schema": "acx-eval/v1",
+        "kind": "face_run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "head_sha": "0" * 40,
+            "started_at": "2026-07-18T00:00:00Z",
+            "leg": "candidate",
+            "model_id": "ort-yunet-sface",
+            "embedding_dim": dim,
+        },
+        "items": [
+            {"media_id": 1, "path": "celebs01/alice-a.jpg", "model_id": "ort-yunet-sface",
+             "embedding_dim": dim, "image_size": [100, 100],
+             "faces": [_fd([20.0, 20.0, 40.0, 40.0], _unit([1.0] + [0.0] * (dim - 1)))]},
+            {"media_id": 2, "path": "celebs01/alice-b.jpg", "model_id": "ort-yunet-sface",
+             "embedding_dim": dim, "image_size": [100, 100],
+             "faces": [_fd([20.0, 20.0, 40.0, 40.0], _unit([0.98, 0.1] + [0.0] * (dim - 2)))]},
+            {"media_id": 3, "path": "localwp/uploads/stranger-party.jpg", "model_id": "ort-yunet-sface",
+             "embedding_dim": dim, "image_size": [100, 100],
+             "faces": [_fd([20.0, 20.0, 40.0, 40.0], _unit([0.0, 1.0] + [0.0] * (dim - 2)))]},
+        ],
+    }
+    manifest = {
+        "manifest_version": 2,
+        "roster": ["Alice Example"],
+        "roster_cohorts": {"Alice Example": "cohort_a"},
+        "entries": [
+            _ent("celebs01/alice-a.jpg", 1, "Alice Example", "celeb", True),
+            _ent("celebs01/alice-b.jpg", 2, "Alice Example", "celeb", True),
+            _ent("localwp/uploads/stranger-party.jpg", 3, None, "localwp", False),
+        ],
+    }
+    return record, manifest
+
+
+def test_cli_score_face_check_determinism_runs_shipped_guard(tmp_path):
+    """--check-determinism drives the SHIPPED cross-process guard end-to-end
+    (FIR5-S5-BR-05/06): score-face re-scores in fresh PYTHONHASHSEED-varied
+    subprocesses via _check_face_determinism_cross_process and exits 0 iff
+    bit-identical. Reaching the write (no SystemExit) means the shipped guard ran
+    and passed — not an inline re-implementation.
+    """
+    record, manifest = _valid_face_manifest_and_record()
+    rec_path = tmp_path / "face-run.json"
+    rec_path.write_text(json.dumps(record))
+    man_path = tmp_path / "man.json"
+    man_path.write_text(json.dumps(manifest))
+    main(["score-face", "--run-record", str(rec_path), "--manifest", str(man_path), "--check-determinism"])
+    assert (tmp_path / "face-run-face-report.json").exists()
+
+    # Missing --run-record is still a parse error (flag recognized, not consumed as positional).
+    with pytest.raises(SystemExit) as missing:
+        main(["score-face", "--check-determinism"])
+    assert missing.value.code == 2
+
+
+def test_cli_score_face_determinism_guard_detects_nondeterminism(tmp_path, monkeypatch):
+    """Non-vacuity (TEST-15): the shipped guard's cross-process comparison CAN go
+    red. A subprocess whose re-score differs from the in-process baseline makes
+    _check_face_determinism_cross_process sys.exit with 'determinism check FAILED'.
+    """
+    from scripts.eval_harness import cli as cli_mod
+
+    record, manifest = _valid_face_manifest_and_record()
+    rec_path = tmp_path / "face-run.json"
+    rec_path.write_text(json.dumps(record))
+    man_path = tmp_path / "man.json"
+    man_path.write_text(json.dumps(manifest))
+
+    class _Proc:
+        returncode = 0
+        stdout = "DIFFERENT-JSON---MD---DIFFERENT-MD"
+        stderr = ""
+
+    monkeypatch.setattr(cli_mod.subprocess, "run", lambda *a, **k: _Proc())
+    with pytest.raises(SystemExit) as exc:
+        cli_mod._check_face_determinism_cross_process(rec_path, str(man_path), public=False)
+    assert "determinism check FAILED" in str(exc.value)
+
+
+def test_cli_score_face_parse_run_record_required(tmp_path, monkeypatch, capsys):
+    # Missing --run-record → parse error
+    with pytest.raises(SystemExit) as exc:
+        main(["score-face", "--manifest", "scene/tests/seed/golden.json"])
+    assert exc.value.code == 2
+
+
+def test_face_bakeoff_wires_synthetic_occlusion_twins_end_to_end(tmp_path, monkeypatch):
+    """FIR5GL-01 discriminator [TEST-15]: a manifest with twin-eligible entries
+    yields occlusion n_eligible > 0 in the score-face report, end-to-end through
+    the CLI (face-bakeoff twin pass → run-record → score-face pass-through).
+    Goes red if the bakeoff stops emitting ``occlusion_twin_pairs_by_tag`` OR
+    score-face stops passing the pairs into build_face_reports — either drop
+    reverts occlusion to the pre-fix n_eligible=0 state.
+    """
+    import cv2
+    import numpy as np
+
+    from recognition.infrastructure.face_pipeline._common import RawDetection
+    from recognition.infrastructure.face_pipeline.aligner import FivePointAligner
+    from scripts.eval_harness import cli as cli_mod
+
+    dim = 8
+    rng = np.random.default_rng(7)
+    images = tmp_path / "images" / "celebs01"
+    images.mkdir(parents=True)
+    files = [("alice-1.jpg", "Alice Q"), ("alice-2.jpg", "Alice Q"), ("bob-1.jpg", "Bob Z"), ("bob-2.jpg", "Bob Z")]
+    entries = []
+    for mid, (fname, name) in enumerate(files, start=1):
+        img = rng.integers(0, 256, size=(100, 100, 3)).astype(np.uint8)
+        assert cv2.imwrite(str(images / fname), img)
+        entries.append(
+            {
+                "path": f"celebs01/{fname}",
+                "sha256": "0" * 64,
+                "media_id": mid,
+                "face_count": 1,
+                "base_caption": "",
+                "present_identities": [name],
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "face_boxes": [{"x": 0.4, "y": 0.4, "w": 0.4, "h": 0.4, "name": name, "source": "iptc"}],
+                "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
+            }
+        )
+    man_path = tmp_path / "man.json"
+    man_path.write_text(json.dumps({"manifest_version": 2, "roster": ["Alice Q", "Bob Z"], "entries": entries}))
+
+    class _Det:
+        """Pixel-blind fake: always one detection at the GT box (IoU 1.0)."""
+
+        # rg-015: twin-pass provenance reads this from the injected cache detector.
+        landmark_cache_provenance = LandmarkCacheProvenance.pinned_yunet()
+
+        def detect(self, imgs):
+            return [
+                [
+                    RawDetection(
+                        bbox=np.asarray([20.0, 20.0, 40.0, 40.0], dtype=np.float32),
+                        landmarks=np.asarray(
+                            [[30.0, 35.0], [50.0, 35.0], [40.0, 45.0], [32.0, 55.0], [48.0, 55.0]],
+                            dtype=np.float32,
+                        ),
+                        score=0.9,
+                    )
+                ]
+                for _ in imgs
+            ]
+
+    class _Emb:
+        embedding_dim = dim
+
+        def embed(self, crops):
+            out = []
+            for crop in crops:
+                seed = int.from_bytes(
+                    np.ascontiguousarray(crop, dtype=np.uint8).tobytes()[:8].ljust(8, b"\0"), "little"
+                )
+                v = np.random.default_rng(seed).normal(size=dim)
+                out.append(v / np.linalg.norm(v))
+            return np.stack(out, axis=0)
+
+    monkeypatch.setattr(cli_mod, "build_candidate_leg", lambda: (_Det(), FivePointAligner(), _Emb()))
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(tmp_path / "images"))
+
+    cli_mod.main(["face-bakeoff", "--manifest", str(man_path)])
+    record_path = next(p for p in (tmp_path / "out").glob("face-run-*.json") if "aborted" not in p.name)
+    record = json.loads(record_path.read_text())
+
+    # Bakeoff emitted document-level twin pairs: 4 named cached faces × 3 kinds.
+    twins = record["occlusion_twin_pairs_by_tag"]
+    assert set(twins) == {"masked", "sunglasses", "occlusion_other"}
+    assert all(len(twins[tag]) == 4 for tag in twins)
+    assert record["provenance"]["occlusion_twin_pass"]["n_pairs"] == 12
+    assert record["provenance"]["occlusion_twin_pass"]["errors"] == []
+    # Headline firewall intact: twins never entered items (EVAL-16).
+    assert all(
+        not ({"occluded", "occlusion", "occlusion_kind", "twin", "twin_of"} & set(item))
+        for item in record["items"]
+    )
+
+    cli_mod.main(["score-face", "--manifest", str(man_path), "--run-record", str(record_path)])
+    report = json.loads((tmp_path / "out" / f"{record_path.stem}-face-report.json").read_text())
+    for tag in ("masked", "sunglasses", "occlusion_other"):
+        synth = report["slices"]["occlusion"][tag]["synthetic"]
+        # Pre-fix state was n_eligible=0 (no production caller): red if wiring drops.
+        assert synth["n_eligible"] == 4, tag
+        assert synth["n_eligible"] == synth["rate_denominator"]
+
+
+# --- FIR-1 head-to-head: face-bakeoff --leg dispatch (candidate vs buffalo) ---
+
+
+def test_cli_face_bakeoff_leg_rejects_unknown_value():
+    with pytest.raises(SystemExit) as exc:
+        main(["face-bakeoff", "--leg", "bogus"])
+    assert exc.value.code == 2  # argparse choices error
+
+
+def test_cli_face_bakeoff_buffalo_requires_eval_bench(monkeypatch):
+    """--leg buffalo preflights ACX_EVAL_BENCH=1 with an actionable error."""
+    monkeypatch.delenv("ACX_EVAL_BENCH", raising=False)
+    with pytest.raises(SystemExit) as exc:
+        main(["face-bakeoff", "--leg", "buffalo"])
+    msg = str(exc.value)
+    assert "ACX_EVAL_BENCH" in msg
+    assert "uv sync --extra bench" in msg
+
+
+def test_cli_face_bakeoff_buffalo_requires_insightface(monkeypatch):
+    """Env flag alone is not enough: missing insightface names the [bench] remedy."""
+    import importlib.util
+
+    if importlib.util.find_spec("insightface") is not None:
+        pytest.skip("insightface installed (bench env); missing-dep preflight not reachable")
+    monkeypatch.setenv("ACX_EVAL_BENCH", "1")
+    with pytest.raises(SystemExit) as exc:
+        main(["face-bakeoff", "--leg", "buffalo"])
+    assert "uv sync --extra bench" in str(exc.value)
+
+
+def _leg_dispatch_manifest(tmp_path):
+    """One-entry manifest (no named face_boxes → twin pass is a no-op) + images dir."""
+    import cv2
+    import numpy as np
+
+    images = tmp_path / "images" / "celebs01"
+    images.mkdir(parents=True)
+    img = np.random.default_rng(11).integers(0, 256, size=(64, 64, 3)).astype(np.uint8)
+    assert cv2.imwrite(str(images / "a.jpg"), img)
+    man_path = tmp_path / "man.json"
+    man_path.write_text(
+        json.dumps(
+            {
+                "manifest_version": 2,
+                "roster": ["Alice Q"],
+                "entries": [
+                    {
+                        "path": "celebs01/a.jpg",
+                        "sha256": "a" * 64,
+                        "media_id": 1,
+                        "face_count": 1,
+                        "base_caption": "",
+                        "present_identities": ["Alice Q"],
+                        "must_right": [],
+                        "easy_wrong": [],
+                        "policy": {"recognition_enabled": True},
+                        "context_pack": {"caption": "x"},
+                        "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
+                    }
+                ],
+            }
+        )
+    )
+    return man_path
+
+
+class _FusedFakeLeg:
+    """Fused-shape fake: detector+embedder in one object (buffalo dispatch test)."""
+
+    embedding_dim = 8
+    leg_mode = "fused"
+    # When tests pass cache_detector=None the leg doubles as cache detector (rg-015).
+    landmark_cache_provenance = LandmarkCacheProvenance.pinned_yunet()
+
+    def detect(self, imgs):
+        import numpy as np
+
+        from recognition.infrastructure.face_pipeline._common import RawDetection
+
+        self._n = len(imgs)
+        det = RawDetection(
+            bbox=np.asarray([10.0, 10.0, 30.0, 30.0], dtype=np.float32),
+            landmarks=np.asarray(
+                [[15.0, 18.0], [35.0, 18.0], [25.0, 26.0], [17.0, 34.0], [33.0, 34.0]],
+                dtype=np.float32,
+            ),
+            score=0.9,
+        )
+        return [[det] for _ in imgs]
+
+    def embed(self, crops, boxes=None):  # boxes: fused-leg optional reorder guard
+        import numpy as np
+
+        v = np.ones(self.embedding_dim, dtype=np.float32)
+        return np.stack([v / np.linalg.norm(v) for _ in crops], axis=0)
+
+
+class _NoopAligner:
+    def align(self, image, landmarks):
+        from types import SimpleNamespace
+
+        import numpy as np
+
+        return SimpleNamespace(crop=np.zeros((112, 112, 3), dtype=np.uint8))
+
+
+def test_cli_face_bakeoff_dispatches_buffalo_leg(tmp_path, monkeypatch):
+    """--leg buffalo routes through _build_buffalo_leg (never build_candidate_leg)
+    and stamps buffalo provenance (leg/model_id/embedding_dim/leg_mode)."""
+    from scripts.eval_harness import cli as cli_mod
+
+    man_path = _leg_dispatch_manifest(tmp_path)
+    leg = _FusedFakeLeg()
+    bundle = cli_mod._FaceLegBundle(
+        detector=leg,
+        aligner=_NoopAligner(),
+        embedder=leg,
+        model_id="buffalo_l",
+        leg_mode="fused",
+        cache_detector=None,
+    )
+    monkeypatch.setattr(cli_mod, "_build_buffalo_leg", lambda: bundle)
+    monkeypatch.setattr(
+        cli_mod, "build_candidate_leg", lambda: pytest.fail("candidate leg built for --leg buffalo")
+    )
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(tmp_path / "images"))
+
+    cli_mod.main(["face-bakeoff", "--manifest", str(man_path), "--leg", "buffalo"])
+    record_path = next(p for p in (tmp_path / "out").glob("face-run-*.json") if "aborted" not in p.name)
+    prov = json.loads(record_path.read_text())["provenance"]
+    assert prov["leg"] == "buffalo"
+    assert prov["model_id"] == "buffalo_l"
+    assert prov["embedding_dim"] == 8  # from the leg embedder (rg-015), not a 512 literal
+    assert prov["leg_mode"] == "fused"
+
+
+def test_cli_face_bakeoff_candidate_leg_never_touches_buffalo(tmp_path, monkeypatch):
+    """Default/explicit candidate dispatch keeps buffalo cold and stamps candidate provenance."""
+    from recognition.infrastructure.face_pipeline.aligner import FivePointAligner
+    from scripts.eval_harness import cli as cli_mod
+
+    man_path = _leg_dispatch_manifest(tmp_path)
+    leg = _FusedFakeLeg()  # shape-compatible mock; leg identity comes from dispatch args
+    monkeypatch.setattr(cli_mod, "build_candidate_leg", lambda: (leg, FivePointAligner(), leg))
+    monkeypatch.setattr(
+        cli_mod, "_build_buffalo_leg", lambda: pytest.fail("buffalo leg built for --leg candidate")
+    )
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(tmp_path / "images"))
+
+    cli_mod.main(["face-bakeoff", "--manifest", str(man_path), "--leg", "candidate"])
+    record_path = next(p for p in (tmp_path / "out").glob("face-run-*.json") if "aborted" not in p.name)
+    prov = json.loads(record_path.read_text())["provenance"]
+    assert prov["leg"] == "candidate"
+    assert prov["model_id"] == "ort-yunet-sface"
+    assert "leg_mode" not in prov

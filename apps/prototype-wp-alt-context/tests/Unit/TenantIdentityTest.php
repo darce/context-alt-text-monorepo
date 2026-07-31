@@ -12,6 +12,13 @@ use AltContext\Tests\TestCase;
  */
 class TenantIdentityTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // Opt-in update_option failure map is not cleared by TestCase::resetGlobalState.
+        $GLOBALS['__ac_update_option_fail'] = [];
+    }
+
     public function testDerivationIsDeterministic(): void
     {
         $first  = TenantIdentity::resolve();
@@ -182,6 +189,114 @@ class TenantIdentityTest extends TestCase
 
         $this->assertSame($constantTenant, $resolution['value']);
         $this->assertSame('constant', $resolution['source']);
+    }
+
+    /**
+     * R23-BR-15 [TEST-15]: tenant-id write failure must throw and must not set
+     * the paired flag. Pin reds if PAIRED_OPTION_KEY is written before read-back.
+     */
+    public function testAdoptPairedTenantThrowsAndSkipsPairedFlagWhenWriteFails(): void
+    {
+        $tenant = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+        $GLOBALS['__ac_update_option_fail'] = [
+            TenantIdentity::OPTION_KEY => true,
+        ];
+
+        try {
+            TenantIdentity::adopt_paired_tenant($tenant);
+            $this->fail('Expected RuntimeException when tenant id write does not land');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('paired tenant id', $e->getMessage());
+        }
+
+        $this->assertFalse(
+            TenantIdentity::is_paired(),
+            'paired flag must not be set when tenant id did not persist'
+        );
+        $this->assertNotSame(
+            $tenant,
+            get_option(TenantIdentity::OPTION_KEY, null),
+            'failed write must not leave the intended tenant id in storage'
+        );
+    }
+
+    /**
+     * R23-BR-15 [TEST-15] leg 2: paired-flag write failure must throw, leave
+     * is_paired() false, and keep the verified tenant id in storage (safe state;
+     * do not roll back leg 1).
+     *
+     * Fail-message note: AssertionFailedError extends RuntimeException in PHPUnit,
+     * so the fail() text must not contain the production pin phrase or a missing
+     * throw is swallowed as a false green (the exact trap that burned the prior
+     * "BR-15 fixed" claim on leg 1 only). Pin against the production throw text.
+     */
+    public function testAdoptPairedTenantThrowsWhenPairedFlagWriteFails(): void
+    {
+        $tenant = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+        $GLOBALS['__ac_update_option_fail'] = [
+            TenantIdentity::PAIRED_OPTION_KEY => true,
+        ];
+
+        try {
+            TenantIdentity::adopt_paired_tenant($tenant);
+            $this->fail('Expected RuntimeException when PAIRED_OPTION_KEY write does not land');
+        } catch (\RuntimeException $e) {
+            // Pin phrase is the production throw text — must not appear in fail() above.
+            $this->assertStringContainsString(
+                'Could not persist the paired flag',
+                $e->getMessage()
+            );
+            $this->assertStringNotContainsString('paired tenant id', $e->getMessage());
+        }
+
+        $this->assertFalse(
+            TenantIdentity::is_paired(),
+            'paired flag must not be set when the paired-flag write failed'
+        );
+        $this->assertSame(
+            $tenant,
+            get_option(TenantIdentity::OPTION_KEY, null),
+            'verified tenant id must remain stored when only the paired flag fails'
+        );
+    }
+
+    /**
+     * R23-BR-15 false-failure pin: re-adopting the already-stored tenant id is
+     * a no-op for update_option (returns false) but must still succeed and set
+     * the paired flag. A return-value check would break re-pairing.
+     */
+    public function testAdoptPairedTenantSucceedsOnNoOpWhenTenantAlreadyStored(): void
+    {
+        $tenant = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+        $this->setOption(TenantIdentity::OPTION_KEY, $tenant);
+        $this->assertFalse(TenantIdentity::is_paired());
+
+        TenantIdentity::adopt_paired_tenant($tenant);
+
+        $this->assertTrue(TenantIdentity::is_paired());
+        $this->assertSame($tenant, get_option(TenantIdentity::OPTION_KEY));
+    }
+
+    /**
+     * R23-BR-15 false-failure pin: first-time adopt of a new tenant still works.
+     */
+    public function testAdoptPairedTenantPersistsNewTenantAndSetsPairedFlag(): void
+    {
+        $tenant = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+
+        TenantIdentity::adopt_paired_tenant($tenant);
+
+        $this->assertSame($tenant, get_option(TenantIdentity::OPTION_KEY));
+        $this->assertTrue(TenantIdentity::is_paired());
+    }
+
+    /**
+     * R23-BR-15: storage failure is RuntimeException, not InvalidArgumentException.
+     */
+    public function testAdoptPairedTenantMalformedUuidStillThrowsInvalidArgument(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        TenantIdentity::adopt_paired_tenant('not-a-uuid');
     }
 
     private function errorLogContains(string $needle): bool

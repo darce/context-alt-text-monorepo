@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 
 
@@ -21,7 +23,6 @@ REQUIRED_HEADINGS = (
 )
 
 REQUIRED_SNIPPETS = (
-    "REF=workbay-v0.3.6",
     "uv tool install --no-sources",
     "workbay install --target . --remote-ref",
     "workbay update --target . --remote-ref",
@@ -51,6 +52,8 @@ REQUIRED_UPDATE_SNIPPETS = (
     "uv tool install --no-sources",
     "workbay update --target . --remote-ref",
 )
+
+WORKBAY_REF_RE = re.compile(r"workbay-v\d+\.\d+\.\d+")
 
 
 def test_consumer_setup_doc_exists_and_is_standalone() -> None:
@@ -88,20 +91,49 @@ def test_consumer_setup_doc_exists_and_is_standalone() -> None:
 
 
 def test_overlay_manifest_contract_documents_plugin_overrides_path() -> None:
-    """MAINT-FB-B-02: plugin_overrides_path must be documented in the manifest contract.
+    """MAINT-FB-B-02: plugin_overrides_path must be documented and pinned.
 
-    The field is documented in the overlay manifest contract: workbay-bootstrap
-    0.8.10+ (workstate-stack-v0.1.12) reads plugin_overrides_path when present.
+    The generated overlay contract is a bootstrap-managed ignored surface in this
+    consumer. The tracked source of truth is the install ledger plus the consumer
+    setup guide.
     """
-    contract_path = REPO_ROOT / "docs" / "workbay" / "contracts" / "overlay-manifest.yaml"
-    text = contract_path.read_text(encoding="utf-8")
-    assert "optional_fields" in text, "contract must declare an optional_fields section"
-    assert "plugin_overrides_path" in text
-    assert "APD-07" in text, "contract must name the recipe-overrides release"
-    assert "workstate-stack-v0.1.12" in text, "contract must name the stack tag that adopts the field"
-    optional_section = text.split("optional_fields", 1)[1]
-    assert "plugin_overrides_path" in optional_section, (
-        "plugin_overrides_path must be listed under optional_fields, not required_fields"
+    ledger_path = REPO_ROOT / ".workbay-bootstrap.json"
+    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    assert ledger["plugin_overrides_path"] == "workbay-overrides/workbay-system"
+
+    text = DOC_PATH.read_text(encoding="utf-8")
+    plugin_overrides_section = text.split("## Plugin Overrides", 1)[1].split(
+        "## Troubleshooting",
+        1,
+    )[0]
+    assert "plugin_overrides_path" in plugin_overrides_section
+    assert "workbay-overrides/workbay-system" in plugin_overrides_section
+    assert "APD-07" in plugin_overrides_section
+    assert "workstate-stack-v0.1.12" not in plugin_overrides_section
+
+
+def test_consumer_setup_doc_pins_one_coherent_workbay_ref() -> None:
+    """The guide must pin a workbay tag, and every live mention must agree.
+
+    Deliberately version-agnostic. Asserting one exact tag couples this gate to
+    the release cadence: the ref appears three times in the guide and nothing
+    derives it, so every upgrade needed a matching edit here and the gate went
+    red in between ([REF-26] one fact across prose and code; [DATA-04] the check
+    must accept N and N+1 during a rollout). What needs guarding is that a pin
+    still exists and that a half-finished bump cannot pass.
+
+    Retros under "## Lessons Learned" are exempt: they name the ref that was
+    current when they were written.
+    """
+    text = DOC_PATH.read_text(encoding="utf-8")
+    live = text.split("## Lessons Learned", 1)[0]
+
+    refs = set(WORKBAY_REF_RE.findall(live))
+    assert refs, "consumer-setup doc no longer pins a workbay-v<semver> tag"
+    assert len(refs) == 1, f"consumer-setup doc pins disagreeing workbay refs: {sorted(refs)}"
+
+    assert live.count("REF=workbay-v") >= 2, (
+        "both the install and update snippets must pin REF=workbay-v<semver>"
     )
-    required_section = text.split("required_fields", 1)[1].split("optional_fields", 1)[0]
-    assert "plugin_overrides_path" not in required_section
+    update_section = live.split("## Update Workflow", 1)[1].split("## Doctor and Repair", 1)[0]
+    assert "REF=workbay-v" in update_section, "update workflow lost its REF= pin"

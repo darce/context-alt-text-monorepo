@@ -158,7 +158,7 @@ Consumers that locally patch plugin-distributed components (skills, prompts) kee
 
 Digest convention: `upstream_digest` is the whole-file sha256 of the materialized upstream base copy (`SKILL.base.md`), not of the generated base surface under `.workbay/generated/` — the generator injects harness-specific sections (e.g. Global Instructions), so its hash legitimately differs. `make check-overrides-digest` (wired into `make check-all`) validates every lock entry against the materialized base copy, so digest drift fails CI instead of surfacing on the next manual bootstrap update.
 
-The `.workbay-bootstrap.json` manifest names this tree via the optional `plugin_overrides_path` field. The field is a forward-compat hook for the APD-07 durable-recipe-overrides release: workbay-bootstrap v0.1.22 does not read it, so it stays inert until the consumer updates to an APD-07-capable bootstrap. See `docs/workbay/contracts/overlay-manifest.yaml` for the contract entry.
+The `.workbay-bootstrap.json` manifest names this tree via the optional `plugin_overrides_path` field. The field is the APD-07 durable-recipe-overrides hook used by current package-mode installs, so keep the ledger path and this section in sync when the overrides tree moves.
 
 ## Troubleshooting
 

@@ -149,6 +149,13 @@ echo "==> Recreate Caddy so it joins acx-demo-net"
 $SSH bash -se <<'EOF'
 set -euo pipefail
 cd /opt/acx-backend
+# acx-dev-fir-net is external:true on docker-compose.caddy.yml; create it if the
+# fir stack has never stood it up. Labels match docker-compose.env.yml's
+# declaring key (backend) + COMPOSE_PROJECT_NAME=acx-dev-fir so fir can adopt.
+docker network inspect acx-dev-fir-net >/dev/null 2>&1 || docker network create \
+  --label com.docker.compose.network=backend \
+  --label com.docker.compose.project=acx-dev-fir \
+  acx-dev-fir-net
 docker compose -f docker-compose.caddy.yml up -d
 docker compose -f docker-compose.caddy.yml ps
 EOF

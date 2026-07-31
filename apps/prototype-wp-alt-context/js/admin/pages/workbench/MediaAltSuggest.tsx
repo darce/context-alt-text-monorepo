@@ -249,6 +249,10 @@ export const MediaAltSuggest = ({
   // clearing in onError so the isAcceptError focus-restore lands on the
   // control that failed, not Accept [S6-A-05][A11Y-11].
   const lastCorrectionWasDecorativeRef = useRef(false);
+  // Click-time mark/un-mark direction for busy labels. isDecorative can flip
+  // mid-flight (cache patch / parent re-render); live prop would invert the
+  // AT-facing busy name [A11Y-02]. Same capture discipline as announceStatus.
+  const decorativeBusyUnmarkingRef = useRef(false);
   const textareaId = useId();
   const disclosureId = useId();
   const errorId = useId();
@@ -410,7 +414,8 @@ export const MediaAltSuggest = ({
 
   /**
    * Deliberate decorative mark or un-mark [A-02][INT-09].
-   * Mark: empty alt + decorative:true. Un-mark: empty alt + decorative:false.
+   * Mark: empty alt + decorative:true. Un-mark: decorative:false with the
+   * currently committed alt preserved (clear the marker, not the description).
    * Separate from Accept/Save so clearing the box cannot silently mark
    * decorative [WBUX-5-S2C3C-BR-01]. Routes through useCorrectMediaAlt so the
    * shared onSuccess patch (patchWorkbenchRowAlt + invalidateMediaStats) and
@@ -436,6 +441,7 @@ export const MediaAltSuggest = ({
     const unmarking = isDecorative;
     setConflictMessage(null);
     isAcceptingRef.current = true;
+    decorativeBusyUnmarkingRef.current = unmarking;
     setIsMarkingDecorative(true);
     lastCorrectionWasDecorativeRef.current = true;
     announceStatus(
@@ -446,8 +452,16 @@ export const MediaAltSuggest = ({
     // Same correction mutation as Accept/Save — decorative flag is additive.
     // Hook onSuccess patches cache from data.current_alt_text; hook onError
     // reconciles PARTIAL from stored_alt_text. Local callbacks only own UI.
+    // Un-mark clears the marker only — preserve committed alt (null → '').
+    // Mark still blanks alt (decorative requires empty). Live prop, not ref:
+    // CAS above already compared against this render's committedAlt, and this
+    // arm is sync at click (ref is for async draft-arrival capture).
     acceptDraft(
-      { mediaId, altText: '', decorative: unmarking ? false : true },
+      {
+        mediaId,
+        altText: unmarking ? (committedAlt ?? '') : '',
+        decorative: unmarking ? false : true,
+      },
       {
         onSuccess: () => {
           isAcceptingRef.current = false;
@@ -723,7 +737,7 @@ export const MediaAltSuggest = ({
       // surface has no busy name, and name is already gated so the role need
       // not be. (axe accepts unnamed group; generate host is also unconditional.)
       const acceptingLabel = isMarkingDecorative
-        ? isDecorative
+        ? decorativeBusyUnmarkingRef.current
           ? __('Removing decorative mark…', 'alt-context')
           : __('Marking as decorative…', 'alt-context')
         : isEditing
@@ -848,7 +862,7 @@ export const MediaAltSuggest = ({
                 }
               >
                 {isMarkingDecorative
-                  ? isDecorative
+                  ? decorativeBusyUnmarkingRef.current
                     ? __('Removing decorative mark…', 'alt-context')
                     : __('Marking as decorative…', 'alt-context')
                   : isDecorative
@@ -887,7 +901,7 @@ export const MediaAltSuggest = ({
         aria-busy={isMarkingDecorative ? true : undefined}
         aria-label={
           isMarkingDecorative
-            ? isDecorative
+            ? decorativeBusyUnmarkingRef.current
               ? __('Removing decorative mark…', 'alt-context')
               : __('Marking as decorative…', 'alt-context')
             : undefined
@@ -917,7 +931,7 @@ export const MediaAltSuggest = ({
           }
         >
           {isMarkingDecorative
-            ? isDecorative
+            ? decorativeBusyUnmarkingRef.current
               ? __('Removing decorative mark…', 'alt-context')
               : __('Marking as decorative…', 'alt-context')
             : isDecorative

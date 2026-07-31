@@ -246,6 +246,7 @@ const MediaSelectionRow = ({
           mediaId={item.id}
           committedAlt={item.altText ?? null}
           title={item.title}
+          isDecorative={item.isDecorative === true}
           onPoliteAnnounce={suggestAnnounce}
           onPoliteClear={suggestClear}
           peerCommitPending={commitOwner === 'editor'}

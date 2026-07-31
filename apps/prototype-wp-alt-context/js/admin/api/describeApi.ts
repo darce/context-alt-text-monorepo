@@ -343,10 +343,12 @@ export const fetchDescriptionHistory = async ({
 };
 
 /**
- * Optional flags for history correction. `decorative: true` stores the durable
- * decorative marker with empty alt; the server rejects decorative + non-empty
- * alt with description_correction_failed (400). Omitted / false keeps today's
- * wire body so existing callers need no edit (server defaults decorative false).
+ * Optional flags for history correction. Tri-state decorative [A-02][INT-09]:
+ *   true  — mark decorative (empty alt + durable marker)
+ *   false — explicit un-mark (clear marker even when alt is empty)
+ *   undefined — omit from the body; server treats as unspecified (today's
+ *               prior default-false behaviour for two-arg callers)
+ * The server rejects decorative + non-empty alt with description_correction_failed (400).
  */
 export interface DescriptionCorrectionOptions {
   decorative?: boolean;
@@ -358,9 +360,10 @@ export const correctDescriptionHistoryItem = async (
   options?: DescriptionCorrectionOptions,
 ): Promise<DescriptionHistoryItem> => {
   const body: { alt_text: string; decorative?: boolean } = { alt_text: altText };
-  // Send the flag only when true — identical body for all existing two-arg callers.
-  if (options?.decorative === true) {
-    body.decorative = true;
+  // Send whenever defined — including explicit false for un-mark [A-02].
+  // undefined still omits the key so two-arg callers keep an identical body.
+  if (options?.decorative !== undefined) {
+    body.decorative = options.decorative;
   }
   return fetchRequiredApi<DescriptionHistoryItem>(
     `${getEndpoint('recognitionDescribeHistory')}/${encodeURIComponent(String(mediaId))}/correction`,

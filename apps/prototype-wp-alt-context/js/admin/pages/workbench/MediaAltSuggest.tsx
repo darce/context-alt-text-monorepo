@@ -35,6 +35,12 @@ export interface MediaAltSuggestProps {
    */
   committedAlt?: string | null;
   /**
+   * Whether the row already holds the durable decorative marker. Required —
+   * no silent default — so the control can offer the inverse operation when
+   * marked [A-02][INT-09]. A silent default is how A-03 went wrong.
+   */
+  isDecorative: boolean;
+  /**
    * Row media title for Suggest / Mark decorative accessible names so AT
    * element lists can tell which image each bare verb belongs to [A11Y-04].
    * When absent, controls keep their short visible labels as accessible names.
@@ -82,7 +88,8 @@ export const ALT_SUGGEST_COMMIT_CLAIM_REFUSED_MESSAGE = __(
 /**
  * Explicit control to mark the image decorative (empty alt + durable marker).
  * Label states the screen-reader outcome — "decorative" alone is jargon [INT-06]
- * [A11Y-02]. Recoverable: a later description clears the marker server-side.
+ * [A11Y-02]. Recoverable: un-mark control when isDecorative, or a later
+ * non-empty description clears the marker server-side [INT-09].
  */
 export const MARK_DECORATIVE_LABEL = __(
   'Mark as decorative — screen readers will announce nothing',
@@ -91,7 +98,24 @@ export const MARK_DECORATIVE_LABEL = __(
 
 /** Polite success after a deliberate decorative mark. Mentions undo path. */
 export const MARK_DECORATIVE_SUCCESS_MESSAGE = __(
-  'Marked as decorative. Screen readers will skip this image. You can describe it later to undo.',
+  'Marked as decorative. Screen readers will skip this image. You can remove the decorative mark later to undo.',
+  'alt-context',
+);
+
+/**
+ * Inverse of MARK_DECORATIVE_LABEL when the row is already marked [INT-06][INT-09].
+ * Names the operation (remove decorative mark) and the destination (to-do list)
+ * so the two control states are distinguishable and the operator knows where
+ * the image goes after undo.
+ */
+export const UNMARK_DECORATIVE_LABEL = __(
+  'Remove decorative mark — return image to the to-do list',
+  'alt-context',
+);
+
+/** Polite success after un-mark: tells the operator the image is back on the missing list. */
+export const UNMARK_DECORATIVE_SUCCESS_MESSAGE = __(
+  'Decorative mark removed. The image is back on the missing-alt to-do list.',
   'alt-context',
 );
 
@@ -130,6 +154,7 @@ export const formatWithinLengthAnnouncement = (): string =>
 export const MediaAltSuggest = ({
   mediaId,
   committedAlt = null,
+  isDecorative,
   title,
   onPoliteAnnounce,
   onPoliteClear,
@@ -142,8 +167,11 @@ export const MediaAltSuggest = ({
   const suggestTriggerLabel = title
     ? sprintf(__('Suggest alt text for %s', 'alt-context'), title)
     : undefined;
-  const markDecorativeLabel = title
-    ? sprintf(__('Mark as decorative for %s', 'alt-context'), title)
+  // Distinct label per state so AT users do not act on the wrong operation [INT-06].
+  const decorativeControlAriaLabel = title
+    ? isDecorative
+      ? sprintf(__('Remove decorative mark for %s', 'alt-context'), title)
+      : sprintf(__('Mark as decorative for %s', 'alt-context'), title)
     : undefined;
   // House BR-68 pattern (same hook ScanTabContent uses one directory away): seq
   // bumps on every announce so a repeated string (regenerate → same "Draft
@@ -381,14 +409,15 @@ export const MediaAltSuggest = ({
   useFocusPark(isPending || isCommitInFlight, containerRef);
 
   /**
-   * Deliberate decorative mark: empty alt + decorative:true on the wire.
+   * Deliberate decorative mark or un-mark [A-02][INT-09].
+   * Mark: empty alt + decorative:true. Un-mark: empty alt + decorative:false.
    * Separate from Accept/Save so clearing the box cannot silently mark
    * decorative [WBUX-5-S2C3C-BR-01]. Routes through useCorrectMediaAlt so the
    * shared onSuccess patch (patchWorkbenchRowAlt + invalidateMediaStats) and
    * PARTIAL onError stored_alt_text reconcile still run [S7-BR-01][S7-BR-02]
    * [HARM-BR-02].
    */
-  const markDecorative = (): void => {
+  const toggleDecorative = (): void => {
     if (isAcceptingRef.current || isAccepting || isMarkingDecorative || peerCommitPending) {
       return;
     }
@@ -403,23 +432,31 @@ export const MediaAltSuggest = ({
       setConflictMessage((prev) => prev ?? ALT_SUGGEST_COMMIT_CLAIM_REFUSED_MESSAGE);
       return;
     }
+    // Capture direction at click: isDecorative may flip after cache patch.
+    const unmarking = isDecorative;
     setConflictMessage(null);
     isAcceptingRef.current = true;
     setIsMarkingDecorative(true);
     lastCorrectionWasDecorativeRef.current = true;
-    announceStatus(__('Marking as decorative…', 'alt-context'));
+    announceStatus(
+      unmarking
+        ? __('Removing decorative mark…', 'alt-context')
+        : __('Marking as decorative…', 'alt-context'),
+    );
     // Same correction mutation as Accept/Save — decorative flag is additive.
     // Hook onSuccess patches cache from data.current_alt_text; hook onError
     // reconciles PARTIAL from stored_alt_text. Local callbacks only own UI.
     acceptDraft(
-      { mediaId, altText: '', decorative: true },
+      { mediaId, altText: '', decorative: unmarking ? false : true },
       {
         onSuccess: () => {
           isAcceptingRef.current = false;
           setIsMarkingDecorative(false);
           onCommitEnd?.();
           shouldFocusSuggestRef.current = true;
-          announceStatus(MARK_DECORATIVE_SUCCESS_MESSAGE);
+          announceStatus(
+            unmarking ? UNMARK_DECORATIVE_SUCCESS_MESSAGE : MARK_DECORATIVE_SUCCESS_MESSAGE,
+          );
           setIsEditing(false);
           setConflictMessage(null);
           reset();
@@ -443,7 +480,9 @@ export const MediaAltSuggest = ({
           setConflictMessage(
             resolveDescribeErrorMessage(
               err,
-              __('Could not mark as decorative. Please try again.', 'alt-context'),
+              unmarking
+                ? __('Could not remove decorative mark. Please try again.', 'alt-context')
+                : __('Could not mark as decorative. Please try again.', 'alt-context'),
             ),
           );
         },
@@ -684,7 +723,9 @@ export const MediaAltSuggest = ({
       // surface has no busy name, and name is already gated so the role need
       // not be. (axe accepts unnamed group; generate host is also unconditional.)
       const acceptingLabel = isMarkingDecorative
-        ? __('Marking as decorative…', 'alt-context')
+        ? isDecorative
+          ? __('Removing decorative mark…', 'alt-context')
+          : __('Marking as decorative…', 'alt-context')
         : isEditing
           ? __('Saving alt text…', 'alt-context')
           : __('Accepting draft…', 'alt-context');
@@ -798,17 +839,21 @@ export const MediaAltSuggest = ({
                 type="button"
                 ref={decorativeButtonRef}
                 className="button acx-media-selection__media-alt-suggest-decorative"
-                onClick={markDecorative}
+                onClick={toggleDecorative}
                 disabled={commitControlDisabled}
                 aria-label={
                   isMarkingDecorative
                     ? undefined
-                    : markDecorativeLabel
+                    : decorativeControlAriaLabel
                 }
               >
                 {isMarkingDecorative
-                  ? __('Marking as decorative…', 'alt-context')
-                  : MARK_DECORATIVE_LABEL}
+                  ? isDecorative
+                    ? __('Removing decorative mark…', 'alt-context')
+                    : __('Marking as decorative…', 'alt-context')
+                  : isDecorative
+                    ? UNMARK_DECORATIVE_LABEL
+                    : MARK_DECORATIVE_LABEL}
               </button>
               <button
                 type="button"
@@ -840,7 +885,13 @@ export const MediaAltSuggest = ({
         role="group"
         tabIndex={-1}
         aria-busy={isMarkingDecorative ? true : undefined}
-        aria-label={isMarkingDecorative ? __('Marking as decorative…', 'alt-context') : undefined}
+        aria-label={
+          isMarkingDecorative
+            ? isDecorative
+              ? __('Removing decorative mark…', 'alt-context')
+              : __('Marking as decorative…', 'alt-context')
+            : undefined
+        }
         onBlur={handleContainerBlur}
       >
         <button
@@ -857,17 +908,21 @@ export const MediaAltSuggest = ({
           type="button"
           ref={decorativeButtonRef}
           className="button acx-media-selection__media-alt-suggest-decorative"
-          onClick={markDecorative}
+          onClick={toggleDecorative}
           disabled={isMarkingDecorative || peerCommitPending}
           aria-label={
             isMarkingDecorative
               ? undefined
-              : markDecorativeLabel
+              : decorativeControlAriaLabel
           }
         >
           {isMarkingDecorative
-            ? __('Marking as decorative…', 'alt-context')
-            : MARK_DECORATIVE_LABEL}
+            ? isDecorative
+              ? __('Removing decorative mark…', 'alt-context')
+              : __('Marking as decorative…', 'alt-context')
+            : isDecorative
+              ? UNMARK_DECORATIVE_LABEL
+              : MARK_DECORATIVE_LABEL}
         </button>
         {conflictMessage ? (
           <div className="acx-media-selection__media-alt-error" role="alert">

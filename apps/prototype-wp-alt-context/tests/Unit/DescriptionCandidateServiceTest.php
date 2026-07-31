@@ -177,6 +177,38 @@ class DescriptionCandidateServiceTest extends TestCase
     }
 
     /**
+     * A-02: after un-mark (empty alt, no acx_alt_decorative), classification is
+     * missing_alt — the image returns to the describe-candidate queue.
+     * human_edit is intentionally ignored by the classifier.
+     */
+    public function testEmptyAltWithoutDecorativeMarkerAfterUnmarkIsMissingAlt(): void
+    {
+        // Simulate post-un-mark disk: empty alt, no marker (human_edit may exist).
+        $this->plantAttachment(84, 'Unmarked spacer', 'image/jpeg', '');
+        $GLOBALS['__ac_post_meta'][84]['_acx_description_human_edit'] = array(
+            'alt_text'  => '',
+            'edited_at' => '2026-01-01 00:00:00',
+            'user_id'   => 1,
+        );
+        // Ensure no decorative marker.
+        unset($GLOBALS['__ac_post_meta'][84]['acx_alt_decorative']);
+
+        $service = new DescriptionCandidateService();
+        $status  = $service->get_status_for_media_ids(array(84));
+        $this->assertSame('missing_alt', $status[0]['reason']);
+        $this->assertSame('missing_alt', $status[0]['candidate_reason']);
+
+        $result = $service->list_missing_alt_candidates(limit: 10, offset: 0);
+        $ids    = array_column($result['candidates'], 'media_id');
+        $this->assertContains(84, $ids);
+        $this->assertNotContains(
+            84,
+            array_column($result['exclusions'], 'media_id'),
+            'Unmarked empty-alt row must not stay in decorative exclusions'
+        );
+    }
+
+    /**
      * Stale-marker precedence: non-empty alt wins over a leftover decorative
      * marker. has_alt is checked before the marker so a real description is
      * never hidden behind bookkeeping.

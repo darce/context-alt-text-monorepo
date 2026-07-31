@@ -100,29 +100,34 @@ class DescriptionHistoryService {
 	 * is total; a null result is treated as an invariant violation (500), not a
 	 * silent success fallback. [rg-015] [RLSE-05] [BR-55]
 	 *
-	 * Decorative flag (WBUX-5-S2C3C-BR-01): optional third argument, default
-	 * false so every existing two-argument caller keeps working. When true,
-	 * empty alt is the correct finished answer and plants `acx_alt_decorative`
-	 * only when the verified alt read-back is empty [A-01]. decorative=true
-	 * with a non-empty pre-write alt is a 400 contradiction — never coerced.
-	 * decorative=true when a sanitize filter injects a non-empty stored alt is
-	 * a post-write PARTIAL (refuse to plant) — never silent plant [DATA-14].
-	 * Marker is planted only after both alt and human-edit writes are verified
-	 * (not on alt-write failure or the partial-failure path). A verified
-	 * non-empty alt clears any prior marker immediately — before the human-edit
-	 * write — so the PARTIAL early return still leaves disk consistent
-	 * (self-healing). Empty non-decorative leaves a prior marker untouched
-	 * (blanking alt does not un-mark decorative). Success and PARTIAL envelopes
-	 * both emit is_decorative from storage read-back [A-03][rg-015].
+	 * Decorative flag (WBUX-5-S2C3C-BR-01 / A-02): optional third argument is
+	 * tri-state `?bool $decorative = null` so every existing two-argument caller
+	 * keeps working (null ≡ today's prior default-false behaviour):
+	 *   true  — mark decorative: plant after verified empty alt read-back [A-01]
+	 *   false — explicit un-mark: clear the marker even when alt is empty [INT-09]
+	 *   null  — unspecified: clear only when verified alt read-back is non-empty;
+	 *           empty non-decorative leaves a prior marker untouched
+	 * decorative=true with a non-empty pre-write alt is a 400 contradiction —
+	 * never coerced. decorative=true when a sanitize filter injects a non-empty
+	 * stored alt is a post-write PARTIAL (refuse to plant) — never silent plant
+	 * [DATA-14]. Marker is planted only after both alt and human-edit writes are
+	 * verified (not on alt-write failure or the partial-failure path). A verified
+	 * non-empty alt (or explicit false) clears any prior marker immediately —
+	 * before the human-edit write — so later PARTIAL returns leave disk
+	 * consistent (self-healing). Clear-failure PARTIAL is deferred until after
+	 * human-edit so provenance is not skipped [CO-01]. Success and PARTIAL
+	 * envelopes both emit is_decorative from storage read-back [A-03][rg-015].
 	 *
 	 * @return array<string,mixed>|WP_Error
 	 */
-	public function record_correction( int $media_id, string $alt_text, bool $decorative = false ): array|WP_Error {
+	public function record_correction( int $media_id, string $alt_text, ?bool $decorative = null ): array|WP_Error {
 		$normalized_alt_text = sanitize_text_field( trim( $alt_text ) );
 
 		// decorative === true means empty alt. Non-empty + decorative is
 		// incoherent: reject 400, write nothing. Do not blank the alt or ignore
 		// the flag — guessing which half the caller meant is [rg-015].
+		// Tri-state still holds: null and false are both falsy here, so only an
+		// explicit mark (true) can trip the contradiction guard [A-02].
 		if ( $decorative && '' !== $normalized_alt_text ) {
 			return new WP_Error(
 				'description_correction_failed',
@@ -183,14 +188,17 @@ class DescriptionHistoryService {
 			);
 		}
 
-		// Self-heal decorative marker as soon as a non-empty alt has verified —
-		// BEFORE human-edit — so every later return path (including PARTIAL)
-		// leaves disk consistent. Empty non-decorative does not clear: blanking
-		// alt does not un-mark a decorative image. Plant for decorative=true
-		// still waits until both writes verify below. [WBUX-5-R3-01][WBUX-5-R1-02]
+		// Self-heal / un-mark decorative marker BEFORE human-edit so later
+		// return paths leave disk consistent. [WBUX-5-R3-01][WBUX-5-R1-02][A-02]
+		// Tri-state [INT-09]:
+		//   false — explicit un-mark: clear even when alt is empty
+		//   null  — unspecified: clear only when verified alt is non-empty
+		//           (byte-for-byte today's prior `false` behaviour)
+		//   true  — mark path; plant waits until both writes verify below
 		// Reconcile from the server's own read-back ($current), never the request body.
 		// $current is provably a string here: the alt_ok gate above returns when not.
-		if ( ! $decorative && '' !== trim( $current ) ) {
+		$clear_failure = null;
+		if ( false === $decorative || ( null === $decorative && '' !== trim( $current ) ) ) {
 			delete_post_meta( $media_id, self::DECORATIVE_META );
 			// Mirror the plant path's read-back [A-04][rg-002]: a surviving
 			// decorative marker is emitted as isDecorative on the next list fetch
@@ -198,13 +206,22 @@ class DescriptionHistoryService {
 			// durable-contract lie — same partial envelope the plant uses.
 			$decorative_after_clear = get_post_meta( $media_id, self::DECORATIVE_META, true );
 			if ( is_string( $decorative_after_clear ) && '1' === $decorative_after_clear ) {
-				return new WP_Error(
+				// Defer this PARTIAL until after the human-edit write [CO-01].
+				// Returning early would leave the corrected alt on disk without a
+				// human_edit provenance marker, so downstream readers treat the
+				// row as machine-authored. Pre-clear ordering (this block still
+				// runs before human-edit) remains load-bearing for disk
+				// consistency on later returns — do not move clear after
+				// human-edit to "simplify". Capture the failure, continue, then
+				// prefer human-edit PARTIAL if that write also fails (strictly
+				// worse: no provenance at all).
+				$clear_failure = new WP_Error(
 					'description_correction_partial',
 					'Alt text was saved, but the decorative marker could not be cleared. Please try again so the image is treated as described.',
 					array(
 						'status'          => 500,
 						'stored_alt_text' => is_string( $expected_alt ) ? $expected_alt : $normalized_alt_text,
-						// Server-owned marker truth for client cache reconcile [A-03][rg-015].
+						// Server-owned marker truth for client cache reconcile [A-03][rg-015][DATA-14].
 						'is_decorative'   => true,
 					)
 				);
@@ -244,10 +261,13 @@ class DescriptionHistoryService {
 			// reconcile cache from this field; without it they can only guess
 			// from the request body. Only this path carries it — the
 			// 404/400/alt-write-failure paths stored nothing new. [rg-015]
-			// Decorative marker already self-healed above when alt was non-empty.
-			// is_decorative is the post-write read-back of acx_alt_decorative —
-			// plant never ran on this path, but a prior marker may still exist
-			// (empty non-decorative) or may already be cleared (non-empty) [A-03].
+			// Decorative marker already self-healed above when alt was non-empty
+			// or explicit un-mark ran. is_decorative is the post-write read-back
+			// of acx_alt_decorative — plant never ran on this path, but a prior
+			// marker may still exist (empty unspecified) or may already be
+			// cleared (non-empty / explicit false) [A-03].
+			// When clear also failed, human-edit PARTIAL wins: no provenance is
+			// strictly worse than a surviving decorative marker [CO-01].
 			return new WP_Error(
 				'description_correction_partial',
 				'Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.',
@@ -257,6 +277,12 @@ class DescriptionHistoryService {
 					'is_decorative'   => $this->read_decorative_marker( $media_id ),
 				)
 			);
+		}
+
+		// Clear failed but human-edit landed: surface the deferred clear-failure
+		// PARTIAL now (same message + data as the pre-defer arm) [CO-01].
+		if ( null !== $clear_failure ) {
+			return $clear_failure;
 		}
 
 		// Both writes verified: a prior provenance-gap marker is no longer an

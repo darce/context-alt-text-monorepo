@@ -114,13 +114,20 @@ def _caption_flags(caption: str) -> list[str]:
 def _paid_describe_calls(rows: list[dict[str, object]]) -> int:
     """Count describe attempts; refund cache hits (mirrors cli.fetch_run_record billing).
 
-    cli bills on attempt (``paid_calls += 1`` before ``client.describe``) and refunds
-    only when the response carries ``cached: true``. Failed attempts still charge, so
-    this must walk *all* rows — not just error-free ones — or ``total_cost_usd``
-    under-reports on any run with errors (FL30-A-13).
+    cli bills on attempt (``paid_calls += 1`` at cli.py:249, immediately after
+    ``describe_started = time.monotonic()`` at :247). ``latency_s`` is the durable
+    signal of that attempt: initialised ``None`` (:232), written on success (:256),
+    and on the error path only when ``describe_started is not None`` (:270-271).
+    Rows that die before describe (missing file, bad dimensions, …) keep
+    ``latency_s is None`` and must not be billed — counting every non-cache-hit
+    row over-reports on NFC/NFD path failures (FL30-A-16). Refund rule unchanged:
+    ``describe.get("cached") is True`` still means refunded. Walk *all* rows so
+    thrown describes (``latency_s`` set, ``error`` set) still charge (FL30-A-13).
     """
     paid = 0
     for r in rows:
+        if not isinstance(r.get("latency_s"), (int, float)):
+            continue
         describe = r.get("describe")
         if isinstance(describe, dict) and describe.get("cached") is True:
             continue

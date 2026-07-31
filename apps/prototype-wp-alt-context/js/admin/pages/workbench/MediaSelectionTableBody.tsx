@@ -245,6 +245,7 @@ const MediaSelectionRow = ({
         <MediaAltSuggest
           mediaId={item.id}
           committedAlt={item.altText ?? null}
+          title={item.title}
           onPoliteAnnounce={suggestAnnounce}
           onPoliteClear={suggestClear}
           peerCommitPending={commitOwner === 'editor'}
@@ -258,7 +259,7 @@ const MediaSelectionRow = ({
               {item.mimeType ? <span className="acx-media-selection__detail-chip">{item.mimeType}</span> : null}
               {item.dimensions ? (
                 <span className="acx-media-selection__detail-chip">
-                  {sprintf(__('%d × %d px', 'alt-context'), item.dimensions.width ?? 0, item.dimensions.height ?? 0)}
+                  {sprintf(__('%1$d × %2$d px', 'alt-context'), item.dimensions.width ?? 0, item.dimensions.height ?? 0)}
                 </span>
               ) : null}
             </>

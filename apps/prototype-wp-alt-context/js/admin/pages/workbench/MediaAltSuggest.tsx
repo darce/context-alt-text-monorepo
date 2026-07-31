@@ -35,6 +35,12 @@ export interface MediaAltSuggestProps {
    */
   committedAlt?: string | null;
   /**
+   * Row media title for Suggest / Mark decorative accessible names so AT
+   * element lists can tell which image each bare verb belongs to [A11Y-04].
+   * When absent, controls keep their short visible labels as accessible names.
+   */
+  title?: string;
+  /**
    * When provided (row co-mount via MediaSelectionTableBody), polite cues go
    * through the row's single live region and the local status node is omitted.
    * Isolated renders keep a local always-mounted region for component tests.
@@ -124,12 +130,21 @@ export const formatWithinLengthAnnouncement = (): string =>
 export const MediaAltSuggest = ({
   mediaId,
   committedAlt = null,
+  title,
   onPoliteAnnounce,
   onPoliteClear,
   peerCommitPending = false,
   onCommitStart,
   onCommitEnd,
 }: MediaAltSuggestProps): React.JSX.Element => {
+  // Row-qualified accessible names when title is known; bare verbs otherwise
+  // so isolated tests and title-less rows stay labelled [A11Y-04][B-03].
+  const suggestTriggerLabel = title
+    ? sprintf(__('Suggest alt text for %s', 'alt-context'), title)
+    : undefined;
+  const markDecorativeLabel = title
+    ? sprintf(__('Mark as decorative for %s', 'alt-context'), title)
+    : undefined;
   // House BR-68 pattern (same hook ScanTabContent uses one directory away): seq
   // bumps on every announce so a repeated string (regenerate → same "Draft
   // ready…") still remounts the live region. Plain useState<string> bails out
@@ -785,6 +800,11 @@ export const MediaAltSuggest = ({
                 className="button acx-media-selection__media-alt-suggest-decorative"
                 onClick={markDecorative}
                 disabled={commitControlDisabled}
+                aria-label={
+                  isMarkingDecorative
+                    ? undefined
+                    : markDecorativeLabel
+                }
               >
                 {isMarkingDecorative
                   ? __('Marking as decorative…', 'alt-context')
@@ -829,6 +849,7 @@ export const MediaAltSuggest = ({
           className="button acx-media-selection__media-alt-suggest-trigger"
           onClick={generate}
           disabled={isMarkingDecorative}
+          aria-label={suggestTriggerLabel}
         >
           {__('Suggest alt text', 'alt-context')}
         </button>
@@ -838,6 +859,11 @@ export const MediaAltSuggest = ({
           className="button acx-media-selection__media-alt-suggest-decorative"
           onClick={markDecorative}
           disabled={isMarkingDecorative || peerCommitPending}
+          aria-label={
+            isMarkingDecorative
+              ? undefined
+              : markDecorativeLabel
+          }
         >
           {isMarkingDecorative
             ? __('Marking as decorative…', 'alt-context')

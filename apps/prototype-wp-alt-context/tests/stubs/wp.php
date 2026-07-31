@@ -1019,6 +1019,12 @@ if (!function_exists('update_post_meta')) {
 if (!function_exists('delete_post_meta')) {
     function delete_post_meta($postId, $metaKey)
     {
+        // Opt-in test hook: simulate a failed delete WITHOUT removing the key,
+        // so decorative-clear read-back can return description_correction_partial.
+        if (isset($GLOBALS['__ac_delete_post_meta_fail'][$postId][$metaKey])) {
+            return false;
+        }
+
         if (isset($GLOBALS['__ac_post_meta'][$postId][$metaKey])) {
             unset($GLOBALS['__ac_post_meta'][$postId][$metaKey]);
         }

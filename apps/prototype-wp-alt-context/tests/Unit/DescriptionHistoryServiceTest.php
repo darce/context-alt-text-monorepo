@@ -1279,6 +1279,36 @@ class DescriptionHistoryServiceTest extends TestCase
     }
 
     /**
+     * A-04: decorative clear must be verified. If delete_post_meta fails and the
+     * marker remains '1', return description_correction_partial (same code +
+     * stored_alt_text shape as the plant failure) so the client onError reconcile
+     * path runs. Claiming 200 while isDecorative stays true on the next fetch is
+     * a durable-contract lie [rg-002][INT-09].
+     */
+    public function testDecorativeMarkerClearFailureReturnsPartial(): void
+    {
+        $mediaId = 611;
+        $newAlt = 'Described after decorative clear fail.';
+        $this->seedAttachment($mediaId, 'Decorative clear fail');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', '');
+        $this->setPostMeta($mediaId, 'acx_alt_decorative', '1');
+        // Force delete of the decorative marker to no-op; read-back still sees '1'.
+        $GLOBALS['__ac_delete_post_meta_fail'][$mediaId]['acx_alt_decorative'] = true;
+
+        $result = (new DescriptionHistoryService())->record_correction($mediaId, $newAlt);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('description_correction_partial', $result->get_error_code());
+        $errorData = $result->get_error_data();
+        $this->assertIsArray($errorData);
+        $this->assertSame(500, $errorData['status']);
+        $this->assertSame($newAlt, $errorData['stored_alt_text']);
+        // Alt write landed; marker still present (delete failed).
+        $this->assertSame($newAlt, get_post_meta($mediaId, '_wp_attachment_image_alt', true));
+        $this->assertSame('1', get_post_meta($mediaId, 'acx_alt_decorative', true));
+    }
+
+    /**
      * Empty non-decorative correction must leave a prior decorative marker intact.
      * Blanking alt does not un-mark a decorative image; only a non-empty alt does.
      * [WBUX-5-R1-02][WBUX-5-D-01]

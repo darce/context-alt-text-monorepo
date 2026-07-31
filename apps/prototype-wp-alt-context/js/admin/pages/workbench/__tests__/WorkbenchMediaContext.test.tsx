@@ -5,7 +5,7 @@
  */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor, act } from '@testing-library/react';
-import { __, sprintf } from '@wordpress/i18n';
+import { __, _n, sprintf } from '@wordpress/i18n';
 import React from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -19,14 +19,18 @@ import { WorkbenchMediaProvider, useWorkbenchMediaContext } from '../WorkbenchMe
 vi.mock('@wordpress/i18n', () => ({
   __: vi.fn((text: string) => text),
   _n: vi.fn((single: string, plural: string, count: number) => (count === 1 ? single : plural)),
+  // Sentinel wrap distinguishes sprintf's return value from a raw template-literal
+  // join — a vacuous test that only checks call history + transparent output
+  // would stay green when production discards sprintf's result [C-01][TEST-15].
   sprintf: vi.fn((format: string, ...args: (string | number)[]) => {
     let sequentialIndex = 0;
-    return format.replace(/%((\d+)\$)?[sd]/g, (_match, _positional, explicitIndex) => {
+    const interpolated = format.replace(/%((\d+)\$)?[sd]/g, (_match, _positional, explicitIndex) => {
       if (explicitIndex) {
         return String(args[Number(explicitIndex) - 1] ?? '');
       }
       return String(args[sequentialIndex++] ?? '');
     });
+    return `⟦${interpolated}⟧`;
   }),
 }));
 
@@ -134,10 +138,13 @@ const renderProvider = (
     </QueryClientProvider>,
   );
 
+/** Strip the i18n sprintf sentinel wraps used by the mock (`⟦…⟧`). */
+const unwrapStatus = (text: string | null): string => (text ?? '').replace(/⟦|⟧/g, '');
+
 const waitForIdleStatus = async (): Promise<HTMLElement> => {
   await waitFor(() => {
     const el = screen.getByTestId('status-message');
-    expect(el.textContent).not.toBe('Updating media queue…');
+    expect(unwrapStatus(el.textContent)).not.toBe('Updating media queue…');
   });
   return screen.getByTestId('status-message');
 };
@@ -219,7 +226,7 @@ describe('WorkbenchMediaContext statusMessage [WBUX-5-BR-112]', () => {
 
     renderProvider(client, '/?status=missing');
     let status = await waitForIdleStatus();
-    expect(status.textContent).toContain('Showing 3 media items.');
+    expect(unwrapStatus(status.textContent)).toContain('Showing 3 media items.');
 
     act(() => {
       patchRowComplete(client, key, 1);
@@ -228,13 +235,13 @@ describe('WorkbenchMediaContext statusMessage [WBUX-5-BR-112]', () => {
 
     status = await waitForIdleStatus();
     // Envelope total untouched in the message [rg-015].
-    expect(status.textContent).toMatch(/Showing 3 media items\./);
+    expect(unwrapStatus(status.textContent)).toMatch(/Showing 3 media items\./);
     // Discrimination: must report the two listed rows that now have alt.
     // Pre-fix code never emits this — fails if reconciliation is missing.
-    expect(status.textContent).toMatch(/2 now have alt text/);
-    expect(status.textContent).toMatch(/will leave this view when the list next refreshes/);
+    expect(unwrapStatus(status.textContent)).toMatch(/2 now have alt text/);
+    expect(unwrapStatus(status.textContent)).toMatch(/will leave this view when the list next refreshes/);
     // Must not invent a decremented total.
-    expect(status.textContent).not.toMatch(/Showing 1 media item/);
+    expect(unwrapStatus(status.textContent)).not.toMatch(/Showing 1 media item/);
   });
 
   it('keeps the original envelope total in the message after listed rows are corrected', async () => {
@@ -253,7 +260,7 @@ describe('WorkbenchMediaContext statusMessage [WBUX-5-BR-112]', () => {
     });
 
     const status = await waitForIdleStatus();
-    expect(status.textContent).toContain('Showing 3 media items.');
+    expect(unwrapStatus(status.textContent)).toContain('Showing 3 media items.');
     // Cache envelope also unchanged.
     const cached = client.getQueryData<WorkbenchMediaResponse>(key);
     expect(cached?.total).toBe(3);
@@ -270,15 +277,16 @@ describe('WorkbenchMediaContext statusMessage [WBUX-5-BR-112]', () => {
     });
     renderProvider(client, '/?status=all');
     const status = await waitForIdleStatus();
-    expect(status.textContent).toBe('Showing 3 media items.');
-    expect(status.textContent).not.toMatch(/now have alt text|now has alt text/);
+    // sprintf sentinel wraps the showing sentence only (no reconciliation join).
+    expect(status.textContent).toBe('⟦Showing 3 media items.⟧');
+    expect(unwrapStatus(status.textContent)).not.toMatch(/now have alt text|now has alt text/);
     // Still true after a further listed-row patch under status=all.
     act(() => {
       patchRowComplete(client, key, 1);
     });
     const after = await waitForIdleStatus();
-    expect(after.textContent).toBe('Showing 3 media items.');
-    expect(after.textContent).not.toMatch(/now have alt text|now has alt text/);
+    expect(after.textContent).toBe('⟦Showing 3 media items.⟧');
+    expect(unwrapStatus(after.textContent)).not.toMatch(/now have alt text|now has alt text/);
   });
 
   it('does not append a reconciliation sentence when zero listed rows read complete', async () => {
@@ -290,8 +298,8 @@ describe('WorkbenchMediaContext statusMessage [WBUX-5-BR-112]', () => {
     });
     renderProvider(client, '/?status=missing');
     const status = await waitForIdleStatus();
-    expect(status.textContent).toBe('Showing 3 media items.');
-    expect(status.textContent).not.toMatch(/now have alt text|now has alt text|will leave this view/);
+    expect(status.textContent).toBe('⟦Showing 3 media items.⟧');
+    expect(unwrapStatus(status.textContent)).not.toMatch(/now have alt text|now has alt text|will leave this view/);
   });
 
   it('pluralises the reconciliation sentence for one corrected row vs several', async () => {
@@ -309,15 +317,15 @@ describe('WorkbenchMediaContext statusMessage [WBUX-5-BR-112]', () => {
       patchRowComplete(client, key, 1);
     });
     let status = await waitForIdleStatus();
-    expect(status.textContent).toMatch(/1 now has alt text/);
-    expect(status.textContent).not.toMatch(/1 now have alt text/);
+    expect(unwrapStatus(status.textContent)).toMatch(/1 now has alt text/);
+    expect(unwrapStatus(status.textContent)).not.toMatch(/1 now have alt text/);
 
     act(() => {
       patchRowComplete(client, key, 2);
     });
     status = await waitForIdleStatus();
-    expect(status.textContent).toMatch(/2 now have alt text/);
-    expect(status.textContent).not.toMatch(/2 now has alt text/);
+    expect(unwrapStatus(status.textContent)).toMatch(/2 now have alt text/);
+    expect(unwrapStatus(status.textContent)).not.toMatch(/2 now has alt text/);
   });
 
   it('does not claim alt text for decorative complete rows [INT-08]', async () => {
@@ -338,15 +346,54 @@ describe('WorkbenchMediaContext statusMessage [WBUX-5-BR-112]', () => {
     });
 
     const status = await waitForIdleStatus();
-    expect(status.textContent).toMatch(/1 marked decorative/);
-    expect(status.textContent).toMatch(/will leave this view when the list next refreshes/);
-    expect(status.textContent).not.toMatch(/now has alt text|now have alt text/);
+    expect(unwrapStatus(status.textContent)).toMatch(/1 is marked decorative/);
+    expect(unwrapStatus(status.textContent)).toMatch(/will leave this view when the list next refreshes/);
+    expect(unwrapStatus(status.textContent)).not.toMatch(/now has alt text|now have alt text/);
   });
 
-  it('composes showing + reconciliation through a translatable joiner [WBUX-5-D-04][INT-08]', async () => {
-    // Predicted RED: production returns `${showing} ${reconciliation}` with a
-    // hard-coded ASCII space, so translators never see a join format and
-    // sprintf is never called with '%1$s %2$s'.
+  it('mixed corrections emit two independent pluralised sentences [D-01][INT-08]', async () => {
+    // Opposite outcomes (gained alt vs marked decorative) must not share one
+    // _n() over the summed count — each count owns its plural form.
+    const client = buildClient();
+    const key = missingPageKey();
+    seedPage(client, {
+      items: [makeItem(1), makeItem(2), makeItem(3)],
+      total: 3,
+      status: 'missing',
+    });
+    renderProvider(client, '/?status=missing');
+    await waitForIdleStatus();
+
+    act(() => {
+      patchRowComplete(client, key, 1);
+      patchRowDecorative(client, key, 2);
+    });
+
+    const status = await waitForIdleStatus();
+    const text = unwrapStatus(status.textContent);
+    expect(text).toMatch(/1 now has alt text/);
+    expect(text).toMatch(/1 is marked decorative/);
+    // Combined-count wording must not appear.
+    expect(text).not.toMatch(/now complete and will leave/);
+    // Two independent _n() calls — not a single _n on the sum 2.
+    expect(vi.mocked(_n)).toHaveBeenCalledWith(
+      expect.stringContaining('now has alt text'),
+      expect.stringContaining('now have alt text'),
+      1,
+      'alt-context',
+    );
+    expect(vi.mocked(_n)).toHaveBeenCalledWith(
+      expect.stringContaining('is marked decorative'),
+      expect.stringContaining('are marked decorative'),
+      1,
+      'alt-context',
+    );
+  });
+
+  it('composes showing + reconciliation through a translatable joiner [WBUX-5-D-04][INT-08][C-01]', async () => {
+    // sprintf mock wraps interpolations in ⟦…⟧ so discarding the joiner return
+    // value and falling back to `${showing} ${reconciliation}` is observable
+    // in the DOM (outer sentinel missing) [C-01][TEST-15].
     const client = buildClient();
     const key = missingPageKey();
     seedPage(client, {
@@ -362,8 +409,12 @@ describe('WorkbenchMediaContext statusMessage [WBUX-5-BR-112]', () => {
     });
 
     const status = await waitForIdleStatus();
-    expect(status.textContent).toMatch(/Showing 3 media items\./);
-    expect(status.textContent).toMatch(/1 now has alt text/);
+    // Each arm is itself sprintf'd (inner ⟦…⟧); the joiner wraps both (outer ⟦…⟧).
+    // Vacuous mutation that keeps the sprintf call but returns a template join
+    // yields only the two inner sentinels with a bare space — no outer wrap.
+    expect(status.textContent).toBe(
+      '⟦⟦Showing 3 media items.⟧ ⟦1 now has alt text and will leave this view when the list next refreshes.⟧⟧',
+    );
 
     // Joiner must be a translatable format string (not string concatenation).
     expect(vi.mocked(__)).toHaveBeenCalledWith('%1$s %2$s', 'alt-context');
@@ -468,6 +519,7 @@ describe('WorkbenchMediaContext statusMessage [WBUX-5-BR-112]', () => {
     seedPage(client, { items: [], total: 0, status: 'missing' });
     renderProvider(client, '/?status=missing');
     let status = await waitForIdleStatus();
+    // Bare __() — no sprintf — so no sentinel wrap.
     expect(status.textContent).toBe('No media items match the current filters.');
 
     cleanup();
@@ -476,6 +528,7 @@ describe('WorkbenchMediaContext statusMessage [WBUX-5-BR-112]', () => {
     seedPage(clientSearch, { items: [], total: 0, status: 'missing', search: 'bridge' });
     renderProvider(clientSearch, '/?status=missing&s=bridge');
     status = await waitForIdleStatus();
-    expect(status.textContent).toBe('No media found for “bridge”.');
+    // sprintf wraps the search-specific empty message.
+    expect(status.textContent).toBe('⟦No media found for “bridge”.⟧');
   });
 });

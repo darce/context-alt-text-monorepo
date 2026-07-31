@@ -181,6 +181,11 @@ class AtlasRepository:
 
         Does **not** refresh the MV. The returned timestamp is
         ``max(refreshed_at)`` from MV rows present for the tenant (None if none).
+
+        No runtime caller yet — the consumer is ``scripts/atlas/build_atlas.py``,
+        still unimplemented in the FIR-9 plan. The model filter is a plan
+        requirement (EMB-01: never substitute across embedding spaces), not a
+        response to an observed defect.
         """
         tenant_uuid = _require_tenant_uuid(tenant_id)
         cluster_uuids = _coerce_cluster_ids(cluster_ids)

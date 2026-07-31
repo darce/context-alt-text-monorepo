@@ -91,6 +91,7 @@ const historyItem: DescriptionHistoryItem = {
     status: 'completed',
     updated_at: '2026-07-04 11:00:00',
   },
+  is_decorative: false,
 };
 
 const failedHistoryItem = {
@@ -412,7 +413,7 @@ describe('DescriptionHistoryPage', () => {
         `Request to /correction failed (500): ${JSON.stringify({
           code: 'description_correction_partial',
           message: partialMessage,
-          data: { status: 500, stored_alt_text: 'Corrected bridge alt.' },
+          data: { status: 500, stored_alt_text: 'Corrected bridge alt.' , is_decorative: false },
         })}`,
       ),
     );
@@ -799,7 +800,7 @@ describe('DescriptionHistoryPage', () => {
         `Request to /correction failed (500): ${JSON.stringify({
           code: 'description_correction_partial',
           message: partialMessage,
-          data: { status: 500, stored_alt_text: 'Partial-saved bridge alt.' },
+          data: { status: 500, stored_alt_text: 'Partial-saved bridge alt.' , is_decorative: false },
         })}`,
       ),
     );
@@ -833,7 +834,7 @@ describe('DescriptionHistoryPage', () => {
         `Request to /correction failed (500): ${JSON.stringify({
           code: 'description_correction_partial',
           message: partialMessage,
-          data: { status: 500, stored_alt_text: stored },
+          data: { status: 500, stored_alt_text: stored , is_decorative: false },
         })}`,
       ),
     );
@@ -907,7 +908,7 @@ describe('DescriptionHistoryPage', () => {
         `Request to /correction failed (500): ${JSON.stringify({
           code: 'description_correction_partial',
           message: partialMessage,
-          data: { status: 500, stored_alt_text: '' },
+          data: { status: 500, stored_alt_text: '' , is_decorative: false },
         })}`,
       ),
     );
@@ -1035,7 +1036,7 @@ describe('DescriptionHistoryPage', () => {
         `Request to /correction failed (500): ${JSON.stringify({
           code: 'description_correction_partial',
           message: partialMessage,
-          data: { status: 500, stored_alt_text: stored },
+          data: { status: 500, stored_alt_text: stored , is_decorative: false },
         })}`,
       ),
     );

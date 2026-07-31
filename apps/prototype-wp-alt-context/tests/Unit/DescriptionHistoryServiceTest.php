@@ -519,7 +519,7 @@ class DescriptionHistoryServiceTest extends TestCase
         $this->assertNotInstanceOf(WP_Error::class, $result);
         $this->assertIsArray($result);
         $this->assertSame(
-            ['media_id', 'title', 'mime_type', 'current_alt_text', 'generated_alt_text', 'provenance', 'human_edit', 'run_status'],
+            ['media_id', 'title', 'mime_type', 'current_alt_text', 'generated_alt_text', 'provenance', 'human_edit', 'run_status', 'is_decorative'],
             array_keys($result)
         );
         $this->assertSame($mediaId, $result['media_id']);
@@ -531,6 +531,7 @@ class DescriptionHistoryServiceTest extends TestCase
         $this->assertIsArray($result['human_edit']);
         $this->assertSame('Bare corrected alt.', $result['human_edit']['alt_text']);
         $this->assertNull($result['run_status']);
+        $this->assertFalse($result['is_decorative']);
     }
 
     /**
@@ -591,11 +592,12 @@ class DescriptionHistoryServiceTest extends TestCase
         $this->assertNotInstanceOf(WP_Error::class, $result);
         $this->assertIsArray($result);
         $this->assertSame(
-            ['media_id', 'title', 'mime_type', 'current_alt_text', 'generated_alt_text', 'provenance', 'human_edit', 'run_status'],
+            ['media_id', 'title', 'mime_type', 'current_alt_text', 'generated_alt_text', 'provenance', 'human_edit', 'run_status', 'is_decorative'],
             array_keys($result)
         );
         $this->assertSame($mediaId, $result['media_id']);
         $this->assertSame($sameAlt, $result['current_alt_text']);
+        $this->assertFalse($result['is_decorative']);
         $this->assertIsArray($result['human_edit']);
         $this->assertSame($matchingMarker, $result['human_edit']);
         $this->assertSame($matchingMarker, get_post_meta($mediaId, '_acx_description_human_edit', true));
@@ -1489,6 +1491,158 @@ class DescriptionHistoryServiceTest extends TestCase
             $response->get_data()['current_alt_text']
         );
         $this->assertSame('', get_post_meta($mediaId2, 'acx_alt_decorative', true));
+    }
+
+    /**
+     * A-01: plant keys on verified alt read-back, not the request flag alone.
+     *
+     * A sanitize_post_meta__wp_attachment_image_alt filter can map '' → non-empty
+     * after the pre-write 400 guard. The plant path must refuse to co-locate
+     * acx_alt_decorative='1' with a non-empty stored alt [rg-015][DATA-14].
+     */
+    public function testDecorativePlantRefusesWhenSanitizeFilterInjectsNonEmptyAlt(): void
+    {
+        $mediaId = 612;
+        $injected = 'Injected default alt';
+        $this->seedAttachment($mediaId, 'Sanitize inject decorative');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', 'Prior alt.');
+
+        // Core-faithful filter name (no subtype): sanitize_post_meta_{$key}.
+        add_filter(
+            'sanitize_post_meta__wp_attachment_image_alt',
+            static function ($value) use ($injected) {
+                if (is_string($value) && '' === trim($value)) {
+                    return $injected;
+                }
+                return $value;
+            },
+            10,
+            1
+        );
+
+        $result = (new DescriptionHistoryService())->record_correction($mediaId, '', true);
+
+        // Refuse-and-error (partial): alt + human-edit may have landed; marker must not.
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('description_correction_partial', $result->get_error_code());
+        $errorData = $result->get_error_data();
+        $this->assertIsArray($errorData);
+        $this->assertSame(500, $errorData['status']);
+        $this->assertSame($injected, $errorData['stored_alt_text']);
+        $this->assertArrayHasKey('is_decorative', $errorData);
+        $this->assertFalse($errorData['is_decorative']);
+
+        // Invariant: marker never '1' beside non-empty stored alt via this path.
+        $this->assertSame($injected, get_post_meta($mediaId, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta($mediaId, 'acx_alt_decorative', true));
+        $this->assertArrayNotHasKey(
+            'acx_alt_decorative',
+            $GLOBALS['__ac_post_meta'][$mediaId] ?? []
+        );
+        // Human-edit did land (partial: substantive writes, decorative plant refused).
+        $this->assertIsArray(get_post_meta($mediaId, '_acx_description_human_edit', true));
+    }
+
+    /**
+     * A-03: success envelope from build_item emits is_decorative as a boolean
+     * read from storage — true when planted, false when not [rg-015].
+     */
+    public function testSuccessEnvelopeEmitsIsDecorativeBooleanFromStorage(): void
+    {
+        $mediaId = 613;
+        $this->seedAttachment($mediaId, 'Decorative success wire');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', 'Prior.');
+
+        $decorative = (new DescriptionHistoryService())->record_correction($mediaId, '', true);
+        $this->assertNotInstanceOf(WP_Error::class, $decorative);
+        $this->assertIsArray($decorative);
+        $this->assertArrayHasKey('is_decorative', $decorative);
+        $this->assertTrue($decorative['is_decorative']);
+        $this->assertSame('', $decorative['current_alt_text']);
+        $this->assertIsBool($decorative['is_decorative']);
+
+        $mediaId2 = 614;
+        $this->seedAttachment($mediaId2, 'Non-decorative success wire');
+        $this->setPostMeta($mediaId2, '_wp_attachment_image_alt', 'Prior.');
+        $described = (new DescriptionHistoryService())->record_correction(
+            $mediaId2,
+            'A real description.'
+        );
+        $this->assertNotInstanceOf(WP_Error::class, $described);
+        $this->assertIsArray($described);
+        $this->assertArrayHasKey('is_decorative', $described);
+        $this->assertFalse($described['is_decorative']);
+        $this->assertSame('A real description.', $described['current_alt_text']);
+    }
+
+    /**
+     * A-03: human-edit PARTIAL carries is_decorative from post-write read-back.
+     * Non-empty alt self-heals the marker before human-edit, so false.
+     */
+    public function testHumanEditPartialEmitsIsDecorativeFalseAfterNonEmptyClear(): void
+    {
+        $mediaId = 615;
+        $newAlt = 'Partial-saved real description.';
+        $this->seedAttachment($mediaId, 'Partial is_decorative wire');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', '');
+        $this->setPostMeta($mediaId, 'acx_alt_decorative', '1');
+        $GLOBALS['__ac_update_post_meta_fail'][$mediaId]['_acx_description_human_edit'] = true;
+
+        $result = (new DescriptionHistoryService())->record_correction($mediaId, $newAlt);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('description_correction_partial', $result->get_error_code());
+        $errorData = $result->get_error_data();
+        $this->assertIsArray($errorData);
+        $this->assertSame($newAlt, $errorData['stored_alt_text']);
+        $this->assertArrayHasKey('is_decorative', $errorData);
+        $this->assertFalse($errorData['is_decorative']);
+        $this->assertIsBool($errorData['is_decorative']);
+    }
+
+    /**
+     * A-03: decorative plant PARTIAL (marker write failed) carries is_decorative false.
+     */
+    public function testDecorativePlantPartialEmitsIsDecorativeFalse(): void
+    {
+        $mediaId = 616;
+        $this->seedAttachment($mediaId, 'Plant fail is_decorative wire');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', 'Prior alt.');
+        $GLOBALS['__ac_update_post_meta_fail'][$mediaId]['acx_alt_decorative'] = true;
+
+        $result = (new DescriptionHistoryService())->record_correction($mediaId, '', true);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('description_correction_partial', $result->get_error_code());
+        $errorData = $result->get_error_data();
+        $this->assertIsArray($errorData);
+        $this->assertSame('', $errorData['stored_alt_text']);
+        $this->assertArrayHasKey('is_decorative', $errorData);
+        $this->assertFalse($errorData['is_decorative']);
+    }
+
+    /**
+     * A-03: empty non-decorative human-edit PARTIAL preserves prior marker and
+     * reports is_decorative true (plant path never ran; marker left alone).
+     */
+    public function testEmptyNonDecorativePartialEmitsIsDecorativeTrueWhenPriorMarker(): void
+    {
+        $mediaId = 617;
+        $this->seedAttachment($mediaId, 'Preserve marker partial wire');
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', '');
+        $this->setPostMeta($mediaId, 'acx_alt_decorative', '1');
+        $GLOBALS['__ac_update_post_meta_fail'][$mediaId]['_acx_description_human_edit'] = true;
+
+        $result = (new DescriptionHistoryService())->record_correction($mediaId, '');
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('description_correction_partial', $result->get_error_code());
+        $errorData = $result->get_error_data();
+        $this->assertIsArray($errorData);
+        $this->assertSame('', $errorData['stored_alt_text']);
+        $this->assertArrayHasKey('is_decorative', $errorData);
+        $this->assertTrue($errorData['is_decorative']);
+        $this->assertSame('1', get_post_meta($mediaId, 'acx_alt_decorative', true));
     }
 
     /**

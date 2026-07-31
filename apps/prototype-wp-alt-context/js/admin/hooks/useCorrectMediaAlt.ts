@@ -4,6 +4,7 @@ import {
   correctDescriptionHistoryItem,
   DESCRIPTION_CORRECTION_CODE,
   resolveDescribeErrorCode,
+  resolveDescribeErrorDataBooleanField,
   resolveDescribeErrorDataField,
   type DescriptionHistoryItem,
 } from '../api/describeApi';
@@ -30,6 +31,9 @@ interface CorrectMediaAltVariables {
  * Empty alt with decorative marker is 'complete' on a real refetch; deriving
  * from alt alone would mis-classify decorative success as 'missing'
  * [rg-015][DATA-14][WBUX-5-BR-112].
+ *
+ * `$decorative` must be server truth (success is_decorative / PARTIAL
+ * is_decorative) — never a client re-derivation from request intent [A-03].
  */
 const statusFromServerFacts = (
   altText: string,
@@ -37,58 +41,37 @@ const statusFromServerFacts = (
 ): WorkbenchMediaItem['status'] =>
   '' !== altText.trim() || decorative ? 'complete' : 'missing';
 
-interface PatchWorkbenchRowAltOptions {
-  /**
-   * True when this write planted (or reaffirmed) the durable decorative marker.
-   * PARTIAL failures must omit / pass false — the plant path did not run.
-   * Non-empty alt clears a prior marker regardless; empty non-decorative
-   * preserves the row's prior isDecorative (server leaves marker untouched).
-   */
-  decorative?: boolean;
-}
-
-/**
- * Mirror DescriptionHistoryService decorative self-heal per row:
- *   decorative intent → true;
- *   else non-empty alt → false (cleared);
- *   else empty alt → preserve prior isDecorative.
- * Never hard-write false from request intent alone [WBUX-5-D-01].
- */
-const nextIsDecorative = (
-  altText: string,
-  decorativeIntent: boolean,
-  priorIsDecorative: boolean | undefined,
-): boolean =>
-  decorativeIntent ? true : altText.trim() === '' ? priorIsDecorative === true : false;
-
 /**
  * Patch one media row's altText, isDecorative, and status across every cached
  * workbench page, without touching total / totalPages. Envelope counts stay
  * server truth [rg-015]; the row stays mounted until a natural refetch (no list
  * invalidate).
  *
- * status is derived via statusFromServerFacts (class-api.php:338) so a
- * successful correction no longer leaves status:'missing' forever on the
- * Status=missing workbench [WBUX-5-BR-112], including decorative marks.
+ * `isDecorative` is the server-owned marker value from the correction envelope
+ * (DescriptionHistoryItem.is_decorative or PARTIAL data.is_decorative) — never
+ * recomputed from request intent [A-03][rg-015]. status is derived via
+ * statusFromServerFacts (class-api.php:338) so a successful correction no longer
+ * leaves status:'missing' forever on the Status=missing workbench
+ * [WBUX-5-BR-112], including decorative marks.
  *
- * Used by both full success (from DescriptionHistoryItem.current_alt_text) and
- * partial failure (from server-reported stored_alt_text). Sibling traffic must
+ * Used by both full success (from DescriptionHistoryItem) and partial failure
+ * (from server-reported stored_alt_text + is_decorative). Sibling traffic must
  * never blow away an unread partial role=alert by refetching media.all [RLSE-05].
  */
 const patchWorkbenchRowAlt = (
   queryClient: QueryClient,
   mediaId: number,
   altText: string,
-  options?: PatchWorkbenchRowAltOptions,
+  isDecorative: boolean,
 ): void => {
   const workbenchQueries = queryClient.getQueriesData<WorkbenchMediaResponse>({
     queryKey: queryKeys.media.workbench(),
   });
-  const decorativeIntent = options?.decorative === true;
   // class-api.php:346 emits null when !has_alt — never ''. Consumers
   // distinguish '' (blank paragraph / alt="") from null ("No alt text yet" /
   // title fallback). Normalize at the patch boundary [API-11][A11Y-04].
   const nextAlt = altText.trim() === '' ? null : altText;
+  const status = statusFromServerFacts(altText, isDecorative);
 
   for (const [queryKey, data] of workbenchQueries) {
     if (!data?.items) {
@@ -104,8 +87,6 @@ const patchWorkbenchRowAlt = (
         if (item.id !== mediaId) {
           return item;
         }
-        const isDecorative = nextIsDecorative(altText, decorativeIntent, item.isDecorative);
-        const status = statusFromServerFacts(altText, isDecorative);
         return { ...item, altText: nextAlt, status, isDecorative };
       }),
     });
@@ -139,22 +120,22 @@ export const useCorrectMediaAlt = () => {
     // has no alt field, and identities are face-recognition projections. Alt
     // lives on the workbench list, which we patch from the server response.
     onSuccess: (data, variables) => {
-      // decorative:true plants the marker; otherwise nextIsDecorative clears on
-      // non-empty alt and preserves prior isDecorative on empty (server rule).
-      // PARTIAL onError omits decorative intent — plant path did not run.
-      patchWorkbenchRowAlt(queryClient, variables.mediaId, data.current_alt_text, {
-        decorative: variables.decorative === true,
-      });
+      // is_decorative is server storage truth from build_item — never re-derive
+      // from variables.decorative [A-03][rg-015].
+      patchWorkbenchRowAlt(
+        queryClient,
+        variables.mediaId,
+        data.current_alt_text,
+        data.is_decorative,
+      );
       invalidateMediaStats(queryClient);
     },
 
     // Partial success (alt written, human-edit / decorative plant failed):
     // reconcile the specific cached row in place from server-reported
-    // stored_alt_text. Do not pass decorative intent — plant did not run.
-    // nextIsDecorative still clears isDecorative when stored alt is non-empty
-    // (server self-heals the marker before human-edit) and preserves prior on
-    // empty. If stored_alt_text is absent, leave the cache alone — stale-but-real
-    // beats a fabricated request-body guess ([rg-015]). Gate on the stable error
+    // stored_alt_text + is_decorative. Do not invent decorative from request
+    // intent [A-03][rg-015]. If either server field is absent, leave the cache
+    // alone — stale-but-real beats a fabricated guess. Gate on the stable error
     // code — never on message text. Do not invalidate: a refetch on missing-status
     // lists drops the row and destroys the role=alert the operator still needs
     // [RLSE-04][RLSE-05].
@@ -168,7 +149,13 @@ export const useCorrectMediaAlt = () => {
       if (storedAltText === null) {
         return;
       }
-      patchWorkbenchRowAlt(queryClient, variables.mediaId, storedAltText);
+      // Boolean null gate: absent is_decorative must not fall back to request
+      // intent or a cached prior re-derivation [A-03][rg-015].
+      const storedIsDecorative = resolveDescribeErrorDataBooleanField(error, 'is_decorative');
+      if (storedIsDecorative === null) {
+        return;
+      }
+      patchWorkbenchRowAlt(queryClient, variables.mediaId, storedAltText, storedIsDecorative);
     },
   });
 };

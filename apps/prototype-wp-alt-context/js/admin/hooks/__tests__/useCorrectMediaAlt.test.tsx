@@ -65,6 +65,7 @@ const successHistoryItem = (
   mediaId: number,
   altText: string,
   title = 'Item',
+  isDecorative = false,
 ): describeApi.DescriptionHistoryItem => ({
   media_id: mediaId,
   title,
@@ -74,6 +75,7 @@ const successHistoryItem = (
   provenance: null,
   human_edit: { alt_text: altText, edited_at: '2026-07-28 12:00:00', user_id: 7 },
   run_status: null,
+  is_decorative: isDecorative,
 });
 
 const seedWorkbench = (
@@ -320,7 +322,7 @@ describe('useCorrectMediaAlt', () => {
 
   it('does not refresh stats counters on a partial correction [BR-101]', async () => {
     correctMock.mockRejectedValueOnce(
-      partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: 'Partial-saved alt' }),
+      partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: 'Partial-saved alt', is_decorative: false }),
     );
     fetchWorkbenchMock.mockImplementation((params) => {
       if (params.status === 'missing' && params.perPage === 1) {
@@ -407,9 +409,9 @@ describe('useCorrectMediaAlt', () => {
   });
 
   it('full success with decorative:true patches isDecorative true + complete + null alt [WBUX-5]', async () => {
-    // Write intent decorative must land on the cached row — status alone is not
+    // Server is_decorative true must land on the cached row — status alone is not
     // enough (altText null + complete is the same shape as a refetch race).
-    correctMock.mockResolvedValue(successHistoryItem(42, '', 'Bridge'));
+    correctMock.mockResolvedValue(successHistoryItem(42, '', 'Bridge', true));
     const client = buildClient();
     seedWorkbench(client, 'Prior alt', { total: 5, totalPages: 2 });
     const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
@@ -425,12 +427,15 @@ describe('useCorrectMediaAlt', () => {
     assertEnvelopeHonest(cached, 5, 2);
   });
 
-  it('PARTIAL path never plants isDecorative when prior was false even if request was decorative [WBUX-5]', async () => {
-    // Marker was not stored this write. Seed false so a sticky
-    // `decorative || prior` patch cannot hide the bug; empty PARTIAL must not
-    // invent isDecorative:true from request intent alone [WBUX-5-R2-02].
+  it('PARTIAL path never plants isDecorative when server reports false even if request was decorative [WBUX-5][A-03]', async () => {
+    // Marker was not stored this write. Server is_decorative:false is authoritative;
+    // empty PARTIAL must not invent isDecorative:true from request intent [A-03][rg-015].
     correctMock.mockRejectedValueOnce(
-      partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: '' }),
+      partialError(PARTIAL_MESSAGE, {
+        status: 500,
+        stored_alt_text: '',
+        is_decorative: false,
+      }),
     );
     const client = buildClient();
     const page = seedWorkbench(client, 'Prior alt', { total: 3, totalPages: 1 });
@@ -448,20 +453,23 @@ describe('useCorrectMediaAlt', () => {
     expect(row?.isDecorative).toBe(false);
   });
 
-  it('PARTIAL decorative with prior isDecorative true does not hard-clear the marker [WBUX-5-R2-02][WBUX-5-D-01]', async () => {
-    // Seed true so hard-writing isDecorative:false (request decorative omitted on
-    // PARTIAL) fails — prior marker still on disk; empty stored alt must preserve.
-    // Also fails if status is derived from alt alone (would become missing).
+  it('PARTIAL decorative with server is_decorative true keeps marker complete [WBUX-5-R2-02][WBUX-5-D-01][A-03]', async () => {
+    // Server reports marker still present (empty non-decorative / plant already
+    // on disk). Seed false so only server truth (not prior cache) can flip true.
     correctMock.mockRejectedValueOnce(
-      partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: '' }),
+      partialError(PARTIAL_MESSAGE, {
+        status: 500,
+        stored_alt_text: '',
+        is_decorative: true,
+      }),
     );
     const client = buildClient();
     const page = seedWorkbench(client, null, { total: 3, totalPages: 1 });
     page.items[0] = {
       ...page.items[0],
-      status: 'complete',
+      status: 'missing',
       altText: null,
-      isDecorative: true,
+      isDecorative: false,
     };
     client.setQueryData(missingPageKey, page);
     const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
@@ -479,7 +487,7 @@ describe('useCorrectMediaAlt', () => {
   it('non-empty non-decorative correction clears a prior isDecorative true [WBUX-5-D-01][WBUX-5-R2-02]', async () => {
     // Kills sticky `decorative || item.isDecorative` — describing a decorative
     // image must flip isDecorative false and status complete with alt set.
-    correctMock.mockResolvedValue(successHistoryItem(42, 'Now described', 'Bridge'));
+    correctMock.mockResolvedValue(successHistoryItem(42, 'Now described', 'Bridge', false));
     const client = buildClient();
     const page = seedWorkbench(client, null, { total: 5, totalPages: 2 });
     page.items[0] = {
@@ -501,11 +509,11 @@ describe('useCorrectMediaAlt', () => {
     expect(row?.isDecorative).toBe(false);
   });
 
-  it('empty non-decorative correction preserves prior isDecorative true [WBUX-5-D-01]', async () => {
+  it('empty non-decorative correction uses server is_decorative true [WBUX-5-D-01][A-03]', async () => {
     // Two-click repro: Edit→Save blank on a decorative row posts alt_text:'' with
-    // no decorative flag. Hard-writing isDecorative:false desyncs cache from the
-    // server marker and drops reconciliation / title-fallback alt. Preserve prior.
-    correctMock.mockResolvedValue(successHistoryItem(42, '', 'Bridge'));
+    // no decorative flag. Server still has the marker — is_decorative:true on the
+    // success envelope is the only honest source [A-03][rg-015].
+    correctMock.mockResolvedValue(successHistoryItem(42, '', 'Bridge', true));
     const client = buildClient();
     const page = seedWorkbench(client, null, { total: 4, totalPages: 1 });
     page.items[0] = {
@@ -527,12 +535,10 @@ describe('useCorrectMediaAlt', () => {
     expect(row?.status).toBe('complete');
   });
 
-  it('whitespace-only non-decorative correction preserves prior isDecorative true [C-02][rg-015]', async () => {
+  it('whitespace-only non-decorative correction uses server is_decorative true [C-02][rg-015][A-03]', async () => {
     // Server rule: '' !== trim($alt_text). Whitespace-only is empty for has_alt and
-    // must preserve a prior decorative marker — same as exact '' (empty-preserve
-    // case above). Without .trim() in nextIsDecorative, '   ' hard-clears the
-    // marker and status flips to missing while the server keeps complete.
-    correctMock.mockResolvedValue(successHistoryItem(42, '   ', 'Bridge'));
+    // preserves a prior decorative marker — server reports is_decorative:true.
+    correctMock.mockResolvedValue(successHistoryItem(42, '   ', 'Bridge', true));
     const client = buildClient();
     const page = seedWorkbench(client, null, { total: 4, totalPages: 1 });
     page.items[0] = {
@@ -554,12 +560,15 @@ describe('useCorrectMediaAlt', () => {
     expect(row?.status).toBe('complete');
   });
 
-  it('PARTIAL non-empty stored alt clears prior isDecorative true [WBUX-5-R3-01][WBUX-5-R2-02]', async () => {
+  it('PARTIAL non-empty stored alt clears prior isDecorative true [WBUX-5-R3-01][WBUX-5-R2-02][A-03]', async () => {
     // Server clears the marker on verified non-empty alt even when human-edit
-    // fails (PARTIAL). Omitting isDecorative from the patch would leave true and
-    // pass a seed-false assertion — seed true so omit fails [TEST-15].
+    // fails (PARTIAL) and reports is_decorative:false. Seed true so omit fails.
     correctMock.mockRejectedValueOnce(
-      partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: 'Partial-saved alt' }),
+      partialError(PARTIAL_MESSAGE, {
+        status: 500,
+        stored_alt_text: 'Partial-saved alt',
+        is_decorative: false,
+      }),
     );
     const client = buildClient();
     const page = seedWorkbench(client, null, { total: 6, totalPages: 2 });
@@ -580,6 +589,91 @@ describe('useCorrectMediaAlt', () => {
     expect(row?.altText).toBe('Partial-saved alt');
     expect(row?.status).toBe('complete');
     expect(row?.isDecorative).toBe(false);
+  });
+
+  it('cache patch follows server is_decorative even when it contradicts request intent [A-03][TEST-15]', async () => {
+    // Discrimination: old nextIsDecorative(alt, decorativeIntent=true, prior) was
+    // always true. Server reports is_decorative:false (plant refused / marker
+    // absent) — client must patch false, not re-derive true from request [rg-015].
+    correctMock.mockResolvedValue(successHistoryItem(42, '', 'Bridge', false));
+    const client = buildClient();
+    const page = seedWorkbench(client, 'Prior alt', { total: 4, totalPages: 1 });
+    page.items[0] = {
+      ...page.items[0],
+      altText: 'Prior alt',
+      status: 'complete',
+      isDecorative: false,
+    };
+    client.setQueryData(missingPageKey, page);
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+
+    result.current.mutate({ mediaId: 42, altText: '', decorative: true });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const cached = client.getQueryData<WorkbenchMediaResponse>(missingPageKey);
+    const row = cached?.items.find((item) => item.id === 42);
+    expect(row?.altText).toBeNull();
+    expect(row?.isDecorative).toBe(false);
+    expect(row?.status).toBe('missing');
+    assertEnvelopeHonest(cached, 4, 2);
+  });
+
+  it('PARTIAL cache patch follows server is_decorative even when prior cache and request disagree [A-03][TEST-15]', async () => {
+    // Request decorative:true + empty alt would have made old nextIsDecorative
+    // true on success; PARTIAL previously omitted decorative intent and preserved
+    // prior. Server says is_decorative:true while prior cache is false — only
+    // reading the server field can flip the row; re-derive from prior stays false.
+    correctMock.mockRejectedValueOnce(
+      partialError(PARTIAL_MESSAGE, {
+        status: 500,
+        stored_alt_text: '',
+        is_decorative: true,
+      }),
+    );
+    const client = buildClient();
+    const page = seedWorkbench(client, null, { total: 3, totalPages: 1 });
+    page.items[0] = {
+      ...page.items[0],
+      altText: null,
+      status: 'missing',
+      isDecorative: false,
+    };
+    client.setQueryData(missingPageKey, page);
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+
+    result.current.mutate({ mediaId: 42, altText: '', decorative: true });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    const cached = client.getQueryData<WorkbenchMediaResponse>(missingPageKey);
+    const row = cached?.items.find((item) => item.id === 42);
+    expect(row?.isDecorative).toBe(true);
+    expect(row?.status).toBe('complete');
+    expect(row?.altText).toBeNull();
+  });
+
+  it('PARTIAL without is_decorative leaves cache untouched [A-03][rg-015]', async () => {
+    // Absent boolean must not invent decorative from request intent or prior.
+    correctMock.mockRejectedValueOnce(
+      partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: 'Partial-saved alt' }),
+    );
+    const client = buildClient();
+    const page = seedWorkbench(client, null, { total: 5, totalPages: 1 });
+    page.items[0] = {
+      ...page.items[0],
+      altText: null,
+      status: 'missing',
+      isDecorative: false,
+    };
+    client.setQueryData(missingPageKey, page);
+    const before = client.getQueryData<WorkbenchMediaResponse>(missingPageKey);
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+
+    result.current.mutate({ mediaId: 42, altText: 'Partial-saved alt', decorative: true });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    const cached = client.getQueryData<WorkbenchMediaResponse>(missingPageKey);
+    expect(cached).toBe(before);
+    expect(cached?.items.find((item) => item.id === 42)?.altText).toBeNull();
   });
 
   it('full success with empty alt patches status back to missing [WBUX-5-BR-112]', async () => {
@@ -634,7 +728,7 @@ describe('useCorrectMediaAlt', () => {
 
   it('partial failure patches status from stored_alt_text [WBUX-5-BR-112]', async () => {
     correctMock.mockRejectedValueOnce(
-      partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: 'Partial-saved alt' }),
+      partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: 'Partial-saved alt', is_decorative: false }),
     );
     const client = buildClient();
     seedWorkbench(client, null, { total: 6, totalPages: 2 });
@@ -654,7 +748,7 @@ describe('useCorrectMediaAlt', () => {
 
   it('partial failure with blank stored_alt_text patches status to missing [WBUX-5-BR-112]', async () => {
     correctMock.mockRejectedValueOnce(
-      partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: '' }),
+      partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: '', is_decorative: false }),
     );
     const client = buildClient();
     const page = seedWorkbench(client, 'Prior honest alt', { total: 3, totalPages: 1 });
@@ -793,7 +887,7 @@ describe('useCorrectMediaAlt', () => {
     const partialMessage =
       'Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.';
     correctMock.mockRejectedValueOnce(
-      partialError(partialMessage, { status: 500, stored_alt_text: 'Partial-saved alt' }),
+      partialError(partialMessage, { status: 500, stored_alt_text: 'Partial-saved alt', is_decorative: false }),
     );
     const client = buildClient();
     seedWorkbench(client, null);
@@ -828,7 +922,7 @@ describe('useCorrectMediaAlt', () => {
     const submitted = '  <em>Sunset</em> over the bay  ';
     const stored = 'Sunset over the bay';
     correctMock.mockRejectedValueOnce(
-      partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: stored }),
+      partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: stored, is_decorative: false }),
     );
     const client = buildClient();
     seedWorkbench(client, 'Prior alt');
@@ -850,7 +944,7 @@ describe('useCorrectMediaAlt', () => {
     // alt — the class of lie this slice removed. Null-only gate must apply the
     // blank server fact; cache normalizes it to null (class-api.php:346).
     correctMock.mockRejectedValueOnce(
-      partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: '' }),
+      partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: '', is_decorative: false }),
     );
     const client = buildClient();
     seedWorkbench(client, 'Prior honest alt');
@@ -937,7 +1031,7 @@ describe('useCorrectMediaAlt', () => {
   it('reconciles on partial code even when the message text is unrelated [WBUX-5-BR-51]', async () => {
     const unrelatedMessage = 'Marker write failed with storage code 503.';
     correctMock.mockRejectedValueOnce(
-      partialError(unrelatedMessage, { status: 500, stored_alt_text: 'Code-gated partial alt' }),
+      partialError(unrelatedMessage, { status: 500, stored_alt_text: 'Code-gated partial alt', is_decorative: false }),
     );
     const client = buildClient();
     seedWorkbench(client, null);
@@ -967,7 +1061,7 @@ describe('useCorrectMediaAlt', () => {
     const { result: rowB } = renderHook(() => useCorrectMediaAlt(), { wrapper });
 
     correctMock.mockRejectedValueOnce(
-      partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: 'Partial-saved alt' }),
+      partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: 'Partial-saved alt', is_decorative: false }),
     );
     rowA.current.mutate({ mediaId: 42, altText: 'Partial-saved alt' });
     await waitFor(() => expect(rowA.current.isError).toBe(true));
@@ -1023,7 +1117,7 @@ describe('useCorrectMediaAlt', () => {
     seedWorkbench(client1, null);
     const { result: r1 } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client1) });
     correctMock.mockRejectedValueOnce(
-      partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: 'Pinned-would-leak' }),
+      partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: 'Pinned-would-leak', is_decorative: false }),
     );
     r1.current.mutate({ mediaId: 42, altText: 'Pinned-would-leak' });
     await waitFor(() => expect(r1.current.isError).toBe(true));
@@ -1080,7 +1174,7 @@ describe('useCorrectMediaAlt', () => {
     const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper });
 
     correctMock.mockRejectedValueOnce(
-      partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: 'Partial-saved alt' }),
+      partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: 'Partial-saved alt', is_decorative: false }),
     );
     result.current.mutate({ mediaId: 42, altText: 'Partial-saved alt' });
     await waitFor(() => expect(result.current.isError).toBe(true));

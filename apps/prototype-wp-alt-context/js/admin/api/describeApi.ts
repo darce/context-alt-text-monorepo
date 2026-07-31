@@ -184,6 +184,12 @@ export interface DescriptionHistoryItem {
   provenance: DescriptionHistoryProvenance | VisualFactsResponse | null;
   human_edit: DescriptionHistoryHumanEdit | null;
   run_status: DescriptionHistoryRunStatus | null;
+  /**
+   * Server-owned decorative marker truth (acx_alt_decorative read-back as a
+   * boolean). Present on correction success via build_item and on PARTIAL
+   * error data — clients must not re-derive from request intent [A-03][rg-015].
+   */
+  is_decorative: boolean;
 }
 
 export interface DescriptionHistoryResponse {
@@ -498,6 +504,35 @@ export const resolveDescribeErrorDataField = (error: unknown, field: string): st
   }
   const value = (data as Record<string, unknown>)[field];
   if (typeof value === 'string') {
+    return value;
+  }
+  return null;
+};
+
+/**
+ * Resolve a boolean field from the WP_Error `data` object when present.
+ * Returns null when the error is unstructured, `data` is missing, or the named
+ * field is absent / not a boolean — callers must not invent a value ([rg-015]).
+ * Used by partial-correction reconcile to read `is_decorative` from server
+ * truth rather than re-deriving from request intent [A-03].
+ */
+export const resolveDescribeErrorDataBooleanField = (
+  error: unknown,
+  field: string,
+): boolean | null => {
+  if (!(error instanceof Error)) {
+    return null;
+  }
+  const payload = parseWpErrorPayload(error.message);
+  if (!payload) {
+    return null;
+  }
+  const data = payload.data;
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return null;
+  }
+  const value = (data as Record<string, unknown>)[field];
+  if (typeof value === 'boolean') {
     return value;
   }
   return null;

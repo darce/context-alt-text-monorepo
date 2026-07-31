@@ -52,6 +52,7 @@ from .face_metrics import (
     face_identification_pr,
     face_unknown_rejection,
     identification_pr,
+    labeled_left_to_right,
     positional_identification,
 )
 from .manifest import Provenance, ProvenanceSource, SliceTag
@@ -380,6 +381,7 @@ def score_run_record(
     per_image: list[dict[str, Any]] = []
     detections: list[ImageDetection] = []
     identifications: list[ImageIdentities] = []
+    positional_items: list[ImageIdentities] = []
     failures: list[dict[str, Any]] = []
     distractor_injected = 0
     distractor_taken = 0
@@ -505,13 +507,33 @@ def score_run_record(
         # item["identities"] are positional dict rows from _extract_identities
         # ({name,bbox,unpositioned,...}); identity_names keeps L→R order as str
         # for ImageIdentities.predicted (Sequence[str]).
+        # Labeled order for the positional metric must NOT use present_identities
+        # (alphabetical / XMP write order). Derive L→R from face_boxes centre x;
+        # when face_boxes are missing, exclude from positional scoring (FL30A-GATE-01).
+        predicted_names = identity_names(item.get("identities", []))
+        present = list(entry["present_identities"])
+        ordered_labeled = labeled_left_to_right(entry.get("face_boxes") or [])
+        order_known = ordered_labeled is not None
+        # Set-based identification_pr still uses present_identities (order-blind).
+        # Positional uses face-box L→R when known; otherwise flags order unknown.
         identifications.append(
             ImageIdentities(
                 image=path,
-                predicted=identity_names(item.get("identities", [])),
-                labeled=list(entry["present_identities"]),
+                predicted=predicted_names,
+                labeled=present,
                 recognition_enabled=recognition_enabled,
                 stranger_faces=stranger_faces,
+            )
+        )
+        positional_items.append(
+            ImageIdentities(
+                image=path,
+                predicted=predicted_names,
+                # When order is known, feed spatial L→R — never sort predicted.
+                labeled=ordered_labeled if order_known else present,
+                recognition_enabled=recognition_enabled,
+                stranger_faces=stranger_faces,
+                labeled_order_known=order_known,
             )
         )
         row: dict[str, Any] = {
@@ -565,7 +587,9 @@ def score_run_record(
     ident = identification_pr(identifications)
     # Order-sensitive binding score (A-02): set-based identification_pr cannot
     # distinguish a correct left-to-right interleave from a swap of the same names.
-    positional = positional_identification(identifications)
+    # Uses positional_items (face_boxes L→R labeled order), not alphabetical
+    # present_identities (FL30A-GATE-01).
+    positional = positional_identification(positional_items)
 
     ignored_pairs = {tuple(p) for p in (ignore_list or {}).get("wrong_names", [])}
     live_wrong = [list(p) for p in ident.wrong_names if tuple(p) not in ignored_pairs]
@@ -670,6 +694,8 @@ def score_run_record(
                     "exact_order_images": positional.exact_order_images,
                     "compared_images": positional.compared_images,
                     "swap_images": positional.swap_images,
+                    # Legacy entries without face_boxes: order unknown (FL30A-GATE-01).
+                    "excluded_images": list(positional.excluded_images),
                 },
             },
             # A-07: loud surface for bbox-missing ordering degradation.

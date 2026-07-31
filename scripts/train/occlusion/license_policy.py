@@ -1116,6 +1116,39 @@ def _resolve_registry_head(
 # behind an allowlisted primary (BR-35).
 _LICENSE_FIELD_KEYS: tuple[str, ...] = ("license", "spdx_id", "license_id")
 
+# GATE-04: matching these keys exactly and case-sensitively let a denylisted
+# licence declared as "License" or "licence" slip past the floor unexamined.
+# Accept the spelling/casing variants, and treat any OTHER licence-shaped key
+# as invalid_row -- a caller who declares a licence must never have it ignored.
+_LICENSE_KEY_ALIASES: dict[str, str] = {
+    "license": "license",
+    "licence": "license",
+    "spdx_id": "spdx_id",
+    "spdxid": "spdx_id",
+    "spdx": "spdx_id",
+    "license_id": "license_id",
+    "licence_id": "license_id",
+    "licenseid": "license_id",
+    "licenceid": "license_id",
+}
+_LICENSE_KEY_SHAPED = re.compile(r"licen[sc]e|spdx")
+
+
+def _normalise_field_key(key: str) -> str:
+    """Fold casing and separators so 'SPDX-ID' and 'spdx_id' agree."""
+    return re.sub(r"[^a-z0-9]+", "_", key.strip().lower()).strip("_")
+
+
+def _unrecognised_license_keys(row: Mapping[str, Any]) -> list[str]:
+    """Licence-shaped keys the collector would silently ignore (GATE-04)."""
+    return sorted(
+        key
+        for key in row
+        if isinstance(key, str)
+        and _normalise_field_key(key) not in _LICENSE_KEY_ALIASES
+        and _LICENSE_KEY_SHAPED.search(_normalise_field_key(key))
+    )
+
 
 def _require_string_field(
     row: Mapping[str, Any],
@@ -1160,21 +1193,27 @@ def _spdx_of(row: Mapping[str, Any]) -> str:
 
 def _license_values_of(row: Mapping[str, Any]) -> list[str]:
     """Collect every non-empty licence-bearing field present on ``row`` (BR-35)."""
-    values: list[str] = []
-    seen: set[str] = set()
-    for key in _LICENSE_FIELD_KEYS:
-        if key not in row:
+    by_canonical: dict[str, list[str]] = {key: [] for key in _LICENSE_FIELD_KEYS}
+    for key, raw in row.items():
+        if not isinstance(key, str):
             continue
-        raw = row[key]
+        canonical_key = _LICENSE_KEY_ALIASES.get(_normalise_field_key(key))
+        if canonical_key is None:
+            continue
         if raw is None or not isinstance(raw, str):
             continue
         tag = raw.strip()
-        if not tag:
-            continue
-        # Preserve declaration order; de-dupe exact strings only.
-        if tag not in seen:
-            seen.add(tag)
-            values.append(tag)
+        if tag:
+            by_canonical[canonical_key].append(tag)
+
+    values: list[str] = []
+    seen: set[str] = set()
+    # Emit in canonical field order; de-dupe exact strings only.
+    for key in _LICENSE_FIELD_KEYS:
+        for tag in by_canonical[key]:
+            if tag not in seen:
+                seen.add(tag)
+                values.append(tag)
     return values
 
 
@@ -1190,9 +1229,23 @@ def _audit_row_licenses(
     When values agree, a single ``audit_spdx`` runs. When they disagree, the
     row is rejected rather than silently preferring the first-truthy key.
     """
-    # Type-check every present licence key first.
-    for key in _LICENSE_FIELD_KEYS:
-        if key not in row:
+    # GATE-04: a licence-shaped key we would not collect must fail closed, not
+    # be ignored -- otherwise `License: AGPL-3.0` launders into a pass.
+    unrecognised = _unrecognised_license_keys(row)
+    if unrecognised:
+        return _fail(
+            RejectionReason.INVALID_ROW,
+            detail=(
+                f"provenance row declares licence under unrecognised key(s) "
+                f"{unrecognised!r}; use one of {list(_LICENSE_FIELD_KEYS)!r}"
+            ),
+            category=category,
+        )
+
+    # Type-check every present licence key first, aliases included -- a
+    # non-string under `License` must fail the same way as under `license`.
+    for key in sorted(k for k in row if isinstance(k, str)):
+        if _normalise_field_key(key) not in _LICENSE_KEY_ALIASES:
             continue
         raw = row[key]
         if raw is None:
@@ -1341,6 +1394,38 @@ def _derived_ingest_key(derived: str) -> str | None:
     return None
 
 
+def _source_axis_taint(
+    row_or_source: Mapping[str, Any] | str,
+    *,
+    category: PolicyCategory,
+) -> LicenseAuditResult | None:
+    """NC / research taint on the ``source`` axis, re-tagged for the calling door.
+
+    Wraps :func:`audit_source` — the training-data reference implementation —
+    so every row-shaped door enforces the same source rules, including its
+    confusable fail-closed check. An absent or blank source is not an error
+    here; doors that require a source enforce that themselves.
+    """
+    if isinstance(row_or_source, str):
+        text = row_or_source.strip()
+    else:
+        raw = row_or_source.get("source")
+        if not isinstance(raw, str):
+            return None
+        text = raw.strip()
+    if not text:
+        return None
+    result = audit_source(text)
+    if result.ok:
+        return None
+    return LicenseAuditResult(
+        verdict=result.verdict,
+        reason=result.reason,
+        detail=result.detail,
+        category=category,
+    )
+
+
 def _common_provenance_checks(
     row: Mapping[str, Any],
     *,
@@ -1386,6 +1471,19 @@ def _common_provenance_checks(
                 detail=derived_result.detail,
                 category=category,
             )
+
+    # BR-53: the `source` axis is category-independent too -- model_ingest and
+    # tooling accepted an NC/research source outright while training_data has
+    # always rejected it. Registry membership stays a category-specific rule, so
+    # doors that legitimately accept an unregistered source are unaffected (the
+    # floor may only ADD). SYNTHETIC_SOURCE is exempt because its own door
+    # reports the more specific pending_legal_clearance for the same rows; the
+    # dispatcher re-applies this taint to any PASS from that door, so exempting
+    # it cannot widen a verdict.
+    if category is not PolicyCategory.SYNTHETIC_SOURCE:
+        source_taint = _source_axis_taint(row, category=category)
+        if source_taint is not None:
+            return source_taint
 
     # BR-53: licence floor. Runs on EVERY row-shaped door, including rows that
     # carry no derived_from_model key (present values only; doors that require
@@ -2040,7 +2138,18 @@ def audit_provenance_row(
             if isinstance(row_clearance_raw, str)
             else None
         )
-        return audit_synthetic_source(source_raw.strip(), row_clearance=row_clearance)
+        synth = audit_synthetic_source(source_raw.strip(), row_clearance=row_clearance)
+        if synth.ok:
+            # The floor skipped the source taint so this door could report its
+            # more specific reason. Re-apply it to any PASS so the exemption can
+            # never widen a verdict, even if a future registry entry is both
+            # commercially ALLOWED and NC by pattern (SECD-05 fail closed).
+            backstop = _source_axis_taint(
+                source_raw.strip(), category=PolicyCategory.SYNTHETIC_SOURCE
+            )
+            if backstop is not None:
+                return backstop
+        return synth
 
     # ------------------------------------------------------------------
     # TRAINING_DATA path (default)

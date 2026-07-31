@@ -1348,10 +1348,18 @@ def _common_provenance_checks(
 ) -> LicenseAuditResult | None:
     """Unconditional rules shared by every row-shaped entry point (BR-26).
 
-    Currently: ``derived_from_model`` NC ban. Returns a FAIL result when a
-    common rule fires; ``None`` means the caller may continue with
-    category-specific gates.
+    Category-independent floor: licence values (denylist + allowlist,
+    fail-closed on disagreement) and ``derived_from_model`` taint (NC **and**
+    research-corpus). Category-specific doors may only ADD restrictions,
+    never subtract. Returns a FAIL result when a common rule fires; ``None``
+    means the caller may continue with category-specific gates.
     """
+    # BR-53: licence floor on every row-shaped door (present values only;
+    # doors that require a licence field still enforce required=True later).
+    license_result = _audit_row_licenses(row, category=category, required=False)
+    if not license_result.ok:
+        return license_result
+
     if "derived_from_model" not in row:
         return None
     raw = row["derived_from_model"]
@@ -1372,7 +1380,7 @@ def _common_provenance_checks(
         )
     derived_result = audit_derived_from_model(raw)
     if not derived_result.ok:
-        # Preserve NC / invalid reasons; re-tag category for the calling door.
+        # Preserve NC / research / invalid reasons; re-tag category for the calling door.
         return LicenseAuditResult(
             verdict=derived_result.verdict,
             reason=derived_result.reason,
@@ -1450,6 +1458,18 @@ def audit_derived_from_model(derived_from_model: str | None) -> LicenseAuditResu
             detail=(
                 f"derived_from_model={text!r} matches non-commercial pattern "
                 f"{matched!r}; buffalo weights and output-derived data are banned"
+            ),
+            category=PolicyCategory.TRAINING_DATA,
+        )
+
+    # BR-64: research-only corpus as derived_from_model taint (after NC so
+    # InsightFace family keeps NC_MODEL_DERIVED precedence).
+    if _looks_like_research_source(text):
+        return _fail(
+            RejectionReason.RESEARCH_ONLY_SOURCE,
+            detail=(
+                f"derived_from_model={text!r} is a research-only corpus; "
+                "research-tainted lineage is banned for commercial use"
             ),
             category=PolicyCategory.TRAINING_DATA,
         )

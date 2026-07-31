@@ -1526,3 +1526,83 @@ class TestBr38NcIngestDerivationAndHelpers:
         result = policy.audit_provenance_row(row)
         assert result.ok is False
         assert result.reason is policy.RejectionReason.INVALID_ROW
+
+RESEARCH_CORPORA = ["ffhq", "ms1m", "glint360k", "casia_webface", "vggface2_train", "widerface"]
+
+
+class TestBr64ResearchCorpusDerivedFromModel:
+    """BR-64: derived_from_model was never checked against the research registry."""
+
+    @pytest.mark.parametrize("corpus", RESEARCH_CORPORA)
+    def test_research_corpus_rejected_by_scalar_door(self, corpus: str) -> None:
+        result = policy.audit_derived_from_model(corpus)
+        assert result.ok is False, f"{corpus!r} is research-only; must not pass"
+        assert result.reason is policy.RejectionReason.RESEARCH_ONLY_SOURCE
+
+    @pytest.mark.parametrize("nc_model", ["buffalo_l", "insightface/buffalo_l"])
+    def test_nc_precedence_preserved(self, nc_model: str) -> None:
+        # Discrimination control: the NC ban keeps precedence over the new
+        # research check, so the reason must NOT drift to research_only_source.
+        result = policy.audit_derived_from_model(nc_model)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    @pytest.mark.parametrize("corpus", RESEARCH_CORPORA)
+    def test_self_generated_row_cannot_launder_research_corpus(self, corpus: str) -> None:
+        # The operator-owned `self-generated` exemption must not waive the
+        # research taint carried by derived_from_model.
+        row = {"source": "self-generated", "license": "Apache-2.0",
+               "derived_from_model": corpus, "clearance": "cleared"}
+        result = policy.audit_provenance_row(row, category=policy.PolicyCategory.TRAINING_DATA)
+        assert result.ok is False, f"self-generated + derived={corpus!r} must not pass"
+        assert result.reason is policy.RejectionReason.RESEARCH_ONLY_SOURCE
+
+    def test_clean_derived_still_passes(self) -> None:
+        # Guards against a blanket-reject "fix".
+        assert policy.audit_derived_from_model("rt-detr").ok is True
+
+
+class TestBr53CategoryIndependentFloor:
+    """BR-53: a caller must not escape the floor by picking a weaker category."""
+
+    DENYLISTED_LICENSE_ROW = {"model_id": "yunet", "source": "insightface", "license": "AGPL-3.0"}
+    CLEARED_SYNTHETIC_ROW = {"source": "dcface", "license": "AGPL-3.0", "derived_from_model": ""}
+
+    @pytest.mark.parametrize("category", list(policy.PolicyCategory))
+    def test_denylisted_license_rejected_by_every_door(self, category) -> None:
+        result = policy.audit_provenance_row(dict(self.DENYLISTED_LICENSE_ROW), category=category)
+        assert result.ok is False, (
+            f"category={category.value} passed a row the other doors reject; "
+            "a caller could pick this door to bypass the gate"
+        )
+
+    @pytest.mark.parametrize("category", list(policy.PolicyCategory))
+    def test_clearance_does_not_waive_license_floor(self, category) -> None:
+        row = dict(self.CLEARED_SYNTHETIC_ROW)
+        row["clearance"] = policy.DCFACE_CLEARANCE_DECISION
+        result = policy.audit_provenance_row(row, category=category)
+        assert result.ok is False, (
+            f"category={category.value}: an operator clearance token must not "
+            "waive the AGPL-3.0 denylist"
+        )
+
+    def test_license_floor_reason_is_exact(self) -> None:
+        result = policy.audit_provenance_row(
+            dict(self.DENYLISTED_LICENSE_ROW),
+            category=policy.PolicyCategory.MODEL_INGEST,
+        )
+        assert result.reason is policy.RejectionReason.DENYLISTED_LICENSE
+
+    @pytest.mark.parametrize("category", list(policy.PolicyCategory))
+    def test_research_source_rejected_by_every_door(self, category) -> None:
+        row = {"source": "ffhq", "license": "Apache-2.0", "derived_from_model": ""}
+        result = policy.audit_provenance_row(row, category=category)
+        assert result.ok is False, (
+            f"category={category.value} accepted a research-only source"
+        )
+
+    def test_legitimate_model_ingest_still_passes(self) -> None:
+        # Guards against a blanket-reject "fix" that would make the floor vacuous.
+        row = {"model_id": "rt-detr", "license": "Apache-2.0", "derived_from_model": ""}
+        result = policy.audit_provenance_row(row, category=policy.PolicyCategory.MODEL_INGEST)
+        assert result.ok is True, f"clean ingest row must still pass: {result.detail}"

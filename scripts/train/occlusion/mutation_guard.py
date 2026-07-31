@@ -23,12 +23,13 @@ Mutations:
   M4  collapse _looks_like_research_source to exact frozenset membership
   M5  REQUIRED_MODEL_INGEST_DISPLAY_NAMES = ()  (suite must still hard-code names)
   M6  _synthetic_audit_targets: empty (source, derived) token loop
+      (equivalent after GATE-11 floor clearance; expect_survived)
   M7  row-category ValueError handler → pass
   M8  research expand: drop unsplit compound forms (single site after B4b / BR-47)
   M9  audit_derived_from_model non-str guard → if False
   M10 disable has_generator_lineage synthetic routing branch
   M11 slash-component membership disabled (dataset/ffhq path hits)
-  M12 get_model_ingest_entry primary raise → pass (xfail_until_b4c; known gap)
+  M12 get_model_ingest_entry primary raise → pass
 
 Paths resolve from __file__ (never cwd) so this script runs as documented from
 the repo root or from this directory (rg-006).
@@ -172,9 +173,12 @@ def _m_control_inert_comment(src: str) -> str:
 
 
 def _m1_unknown_spdx_pass(src: str) -> str:
-    """Flip UNKNOWN_SPDX default-deny to PASS."""
+    """Flip UNKNOWN_SPDX default-deny to PASS.
+
+    Anchor is the unique UNKNOWN_SPDX fail-closed return in ``audit_license``
+    (structure/symbol, not comment prose — BR-17).
+    """
     old = (
-        "    # operator-cleared is NOT an SPDX value and is never an unconditional pass.\n"
         "    return _fail(\n"
         "        RejectionReason.UNKNOWN_SPDX,\n"
         "        detail=f\"license {tag!r} is not on the allowlist\",\n"
@@ -275,7 +279,18 @@ def _m5_empty_required_names(src: str) -> str:
 
 
 def _m6_empty_synthetic_token_loop(src: str) -> str:
-    """Disable SYNTHETIC_SOURCE_ENTRIES routing via (source, derived) loop."""
+    """Disable SYNTHETIC_SOURCE_ENTRIES routing via (source, derived) loop.
+
+    Equivalence (post GATE-11 / BR-65 content-triggered floor clearance): the
+    BR-36 no-lineage registry-resolve loop is unreachable for any verdict-
+    changing input. Floor ``_content_triggered_clearance_check`` already
+    audits source/derived synthetic heads on every door; FORBIDDEN heads
+    (vec2face) are also covered by registration / NC derivation. Diff of
+    ``audit_provenance_row`` over all five ``PolicyCategory`` doors ×
+    synthetic/non-synthetic source × derived × clearance × lineage ×
+    licence candidates produced 0 verdict deltas (see RESULT-J.md). Retained
+    as a discrimination control with ``expect_survived=True``.
+    """
     old = "    for token in (source, derived):"
     new = "    for token in ():  # MUTATION M6: skip synthetic entry token audit"
     return _replace_unique(src, old, new, "M6")
@@ -312,9 +327,31 @@ def _m8_research_exact_only(src: str) -> str:
 
 
 def _m9_skip_derived_type_guard(src: str) -> str:
-    """Disable non-str guard in audit_derived_from_model."""
-    old = "    if not isinstance(derived_from_model, str):"
-    new = "    if False:  # MUTATION M9: skip non-str type guard"
+    """Disable non-str type guard on ``audit_derived_from_model`` only.
+
+    BR-46/BR-68 folded the inline ``isinstance`` into shared
+    ``_reject_non_string``. Anchor on the unique call site that names
+    ``field="derived_from_model"`` so a naive ``if type_err is not None:``
+    multi-hit raises ANCHOR-ERROR rather than mutating the wrong door.
+    """
+    old = (
+        "    type_err = _reject_non_string(\n"
+        "        derived_from_model,\n"
+        '        field="derived_from_model",\n'
+        "        category=PolicyCategory.TRAINING_DATA,\n"
+        "    )\n"
+        "    if type_err is not None:\n"
+        "        return type_err"
+    )
+    new = (
+        "    type_err = _reject_non_string(\n"
+        "        derived_from_model,\n"
+        '        field="derived_from_model",\n'
+        "        category=PolicyCategory.TRAINING_DATA,\n"
+        "    )\n"
+        "    if False:  # MUTATION M9: skip non-str type guard on audit_derived_from_model\n"
+        "        return type_err"
+    )
     return _replace_unique(src, old, new, "M9")
 
 
@@ -349,9 +386,10 @@ def _m11_collapse_separator_parity(src: str) -> str:
 def _m12_ingest_entry_raise_pass(src: str) -> str:
     """Primary raise LicensePolicyError(result) in get_model_ingest_entry → pass.
 
-    BR-62/B4c: the full suite currently stays green under this mutation.
-    Registered with expected_victims=[] and xfail_until_b4c so the guard
-    reports a KNOWN GAP rather than a silent kill.
+    BR-62 closed the gap: a registered non-ALLOWED ingest entry is the only
+    load-bearing path for the primary raise (unregistered misses are absorbed
+    by the second site). Victim:
+    ``test_registered_nc_entry_raises_from_the_primary_site``.
     """
     old = (
         "    result = audit_model_ingest(model_id)\n"
@@ -421,13 +459,18 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         name="M6",
-        description="_synthetic_audit_targets: for token in () (skip entry loop)",
-        apply="m6",
-        expected_victims=(
-            "test_br29_dcface_no_lineage_wrong_clearance_fails",
-            "test_br29_dcface_no_lineage_missing_clearance_fails",
-            "test_br36_dcface_v2_no_lineage_still_requires_clearance",
+        description=(
+            "_synthetic_audit_targets: for token in () (equivalent after "
+            "GATE-11 floor clearance; discrimination control)"
         ),
+        apply="m6",
+        # Equivalence proof (RESULT-J.md): floor content-triggered clearance +
+        # registration make the BR-36 no-lineage loop unreachable for every
+        # verdict-changing input across all five PolicyCategory doors. Not a
+        # test gap — do not invent a victim (TEST-15).
+        expected_victims=(),
+        expect_survived=True,
+        require_kill=False,
     ),
     Mutation(
         name="M7",
@@ -464,11 +507,12 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         name="M12",
-        description="get_model_ingest_entry primary raise → pass (known gap until B4c)",
+        description="get_model_ingest_entry primary raise → pass",
         apply="m12",
-        expected_victims=(),
-        require_kill=False,
-        xfail_until_b4c=True,
+        expected_victims=(
+            "test_registered_nc_entry_raises_from_the_primary_site",
+        ),
+        require_kill=True,
     ),
 ]
 
@@ -574,6 +618,19 @@ def _test_name_from_nodeid(node: str) -> str:
     return node.rsplit("::", 1)[-1]
 
 
+def _name_component_matches(observed: str, expected: str) -> bool:
+    """Match a pinned victim name against a collected/junit test name (BR-17).
+
+    Parametrised ids use ``name[param]``. A pinned victim may be either the
+    full ``name[param]`` or the bare function name (matches any param). A
+    victim that is only a prefix of another test name does **not** match.
+    Shared by kill discrimination and GATE-14 existence (one matcher).
+    """
+    tname = _test_name_from_nodeid(observed)
+    base = tname.split("[", 1)[0]
+    return expected == tname or expected == base
+
+
 def _victims_matched(failed_names: list[str], expected: tuple[str, ...]) -> list[str]:
     """Exact test-name match (BR-17) — no substring/prefix matching.
 
@@ -587,13 +644,96 @@ def _victims_matched(failed_names: list[str], expected: tuple[str, ...]) -> list
     hits: list[str] = []
     for exp in expected:
         for raw in failed_names:
-            tname = _test_name_from_nodeid(raw)
-            base = tname.split("[", 1)[0]
-            if exp == tname or exp == base:
+            if _name_component_matches(raw, exp):
                 if exp not in hits:
                     hits.append(exp)
                 break
     return hits
+
+
+def _collect_test_name_components(test_path: Path) -> tuple[frozenset[str], str | None]:
+    """Collect bare test-name components from the unmutated suite (GATE-14).
+
+    Runs ``pytest --collect-only -q`` under the same scrubbed env the guard
+    uses for suite runs. Returns (name_components, error). Components include
+    both full parametrised ``name[param]`` ids and their bare ``name`` base so
+    pinned victims can match either form via :func:`_name_component_matches`.
+    """
+    cmd = [
+        sys.executable,
+        "-m",
+        "pytest",
+        str(test_path),
+        "--collect-only",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+    ]
+    env = _scrubbed_env()
+    proc = subprocess.run(
+        cmd,
+        cwd=str(test_path.parent),
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    raw = (proc.stdout or "") + (proc.stderr or "")
+    if proc.returncode not in (0, 1):
+        # collect-only should be 0 on a clean suite; anything else is harness.
+        return frozenset(), (
+            f"pytest --collect-only failed rc={proc.returncode}: "
+            f"{raw.strip().splitlines()[-3:] if raw.strip() else '(no output)'}"
+        )
+    names: set[str] = set()
+    for line in (proc.stdout or "").splitlines():
+        line = line.strip()
+        if not line or line.startswith("=") or " " in line and "test" not in line:
+            # Summary lines like "661 tests collected in 0.12s" still parsed
+            # safely: no "::" → skip.
+            pass
+        if "::" not in line:
+            continue
+        # nodeid: path::…::name or path::…::name[param]
+        tname = _test_name_from_nodeid(line)
+        if not tname or tname.startswith("["):
+            continue
+        names.add(tname)
+        names.add(tname.split("[", 1)[0])
+    if not names:
+        return frozenset(), (
+            "pytest --collect-only produced zero test names "
+            f"(rc={proc.returncode})"
+        )
+    return frozenset(names), None
+
+
+def _pinned_victim_existence_errors(
+    mutations: list[Mutation],
+    collected: frozenset[str],
+) -> list[str]:
+    """GATE-14: every expected_victims name must exist in the unmutated suite.
+
+    A renamed/deleted pinned victim must be HARNESS-ERROR, never SURVIVED or
+    KILLED (SECD-03 complete mediation of the guard's own config; TEST-15).
+    """
+    errors: list[str] = []
+    for mutation in mutations:
+        for victim in mutation.expected_victims:
+            # collected already holds bare + parametrised components; exact
+            # membership is enough because both forms were inserted. Also
+            # accept via the shared matcher against every collected id so a
+            # bare pin matches a parametrised-only collection entry.
+            if victim in collected:
+                continue
+            if any(_name_component_matches(obs, victim) for obs in collected):
+                continue
+            errors.append(
+                f"HARNESS-ERROR {mutation.name}: pinned victim {victim!r} "
+                "does not exist in unmutated test_license_policy.py "
+                "(GATE-14 — renamed/deleted victim must not degrade to "
+                "SURVIVED/KILLED)"
+            )
+    return errors
 
 
 def _run_suite(scratch_dir: Path) -> SuiteReport:
@@ -763,6 +903,32 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     print(
         f"BASELINE: green ({baseline_info}; baseline_executed={baseline_executed})",
+        flush=True,
+    )
+    print(flush=True)
+
+    # --- GATE-14: pinned expected_victims must exist in the unmutated suite -
+    # A renamed/deleted victim silently turns KILLED into SURVIVED. Mediate
+    # every configured name against the live collect set before any mutant
+    # runs (SECD-03 / TEST-15). Failures are HARNESS-ERROR, never verdicts.
+    print("GATE-14: verifying pinned expected_victims exist...", flush=True)
+    collected_names, collect_err = _collect_test_name_components(_TEST)
+    if collect_err is not None:
+        print(f"HARNESS-ERROR GATE-14: collect failed: {collect_err}", flush=True)
+        return 2
+    pin_errors = _pinned_victim_existence_errors(selected, collected_names)
+    if pin_errors:
+        for line in pin_errors:
+            print(line, flush=True)
+        print(
+            f"FAIL: GATE-14 pinned-victim existence ({len(pin_errors)} missing)",
+            flush=True,
+        )
+        return 2
+    pinned_count = sum(len(m.expected_victims) for m in selected)
+    print(
+        f"GATE-14: ok ({pinned_count} pinned victim name(s) present in "
+        f"{len(collected_names)} collected name components)",
         flush=True,
     )
     print(flush=True)

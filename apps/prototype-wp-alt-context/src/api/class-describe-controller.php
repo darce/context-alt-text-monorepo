@@ -947,15 +947,19 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			// (alt still '') and the write still proceeds — clear here so the bulk
 			// path does not leave the self-contradictory pair on disk. [A-05]
 			// Only after $alt_ok, only when verified stored alt is non-empty.
+			// [INT-09] clear-failure is a partial: alt landed, secondary durable
+			// write did not — same bucket used when provenance fails after a
+			// verified alt. BULK_APPLY_BUCKETS already exposes `partial`; sibling
+			// record_correction returns description_correction_partial for the
+			// byte-identical fault. Continue provenance write so history still
+			// lists the item; bucket as partial at the end (not applied).
+			$decorative_clear_failed = false;
 			if ( '' !== trim( $current ) ) {
 				delete_post_meta( $media_id, 'acx_alt_decorative' );
 				// [DATA-14] read the marker back; do not trust delete_post_meta.
 				$decorative_after_clear = get_post_meta( $media_id, 'acx_alt_decorative', true );
 				if ( is_string( $decorative_after_clear ) && '1' === $decorative_after_clear ) {
-					// Alt write verified — keep the item on the provenance path /
-					// applied bucket. Do not invent an envelope field the client
-					// does not read [rg-015] (response is only run_id + bulk
-					// buckets). Ops telemetry is the existing channel.
+					$decorative_clear_failed = true;
 					Telemetry::log_line(
 						sprintf(
 							'[acx] describe run apply: acx_alt_decorative clear failed after verified non-empty alt for media_id=%d run_id=%s; item remains on apply path',
@@ -1071,7 +1075,13 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			// history lists via the verified provenance array (not pure-gap),
 			// and applied is still the correct bucket. Zombie cleared later.
 			delete_post_meta( $media_id, '_acx_description_provenance_pending' );
-			$buckets['applied'][] = $media_id;
+			// [INT-09] decorative clear failed after verified alt → partial
+			// (secondary durable write lag), not applied. See clear path above.
+			if ( $decorative_clear_failed ) {
+				$buckets['partial'][] = $media_id;
+			} else {
+				$buckets['applied'][] = $media_id;
+			}
 		}
 
 		// Envelope from the centralised bucket surface — same six keys, same order.

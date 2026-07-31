@@ -29,8 +29,13 @@ networks:
     external: true
   acx-dev-net:
     external: true
+  # Fir network is NOT external on this shared compose file (C-09). The demo/dev
+  # deploy also runs this file; external:true would require acx-dev-fir-net to
+  # already exist and fail `docker compose up` when the fir stack has never been
+  # stood up. Fixed name so the fir stack (ACX_NETWORK_NAME=acx-dev-fir-net) and
+  # Caddy share the same network once both are up. Compose creates it if absent.
   acx-dev-fir-net:
-    external: true
+    name: acx-dev-fir-net
   acx-demo-net:
     external: true
 

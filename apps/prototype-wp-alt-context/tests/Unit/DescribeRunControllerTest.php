@@ -3658,4 +3658,97 @@ class DescribeRunControllerTest extends TestCase
             $GLOBALS['__ac_post_meta'][71] ?? []
         );
     }
+
+    /**
+     * [TEST-15] Controller tri-state: omitted `decorative` must map to null, not
+     * false. Empty alt + prior marker + no decorative param must leave the
+     * marker intact (null ≡ clear-only-on-non-empty-alt). The collapsing form
+     * `(bool) ( $request->get_param('decorative') ?? false )` would un-mark and
+     * drop the image into missing_alt — existing tests cannot discriminate
+     * because they either send explicit false or use non-empty alt with no
+     * prior marker. [A-02]
+     */
+    public function testCorrectHistoryOmitsDecorativePreservesPriorMarkerOnEmptyAlt(): void
+    {
+        $mediaId = 630;
+        $GLOBALS['__ac_posts'][$mediaId] = (object) [
+            'ID' => $mediaId,
+            'post_type' => 'attachment',
+            'post_title' => 'Omitted decorative pin',
+        ];
+        $GLOBALS['__ac_attachment_mimes'][$mediaId] = 'image/jpeg';
+        $this->setPostMeta($mediaId, '_wp_attachment_image_alt', '');
+        $this->setPostMeta($mediaId, 'acx_alt_decorative', '1');
+
+        $request = new WP_REST_Request(
+            'POST',
+            '/acx/v1/recognition/describe/history/' . $mediaId . '/correction'
+        );
+        $request->set_param('media_id', $mediaId);
+        $request->set_param('alt_text', '');
+        // decorative intentionally not set — must be null at the service, not false.
+
+        $response = $this->controller->correct_description_history_item($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertTrue($response->get_data()['is_decorative']);
+        $this->assertSame('1', get_post_meta($mediaId, 'acx_alt_decorative', true));
+        $this->assertSame('', get_post_meta($mediaId, '_wp_attachment_image_alt', true));
+    }
+
+    /**
+     * [INT-09]: when delete of acx_alt_decorative fails after a verified non-empty
+     * alt write, the id must land in `partial` — not `applied`. Sibling of
+     * DescriptionHistoryService::record_correction's description_correction_partial
+     * for the same fault; bulk surface has an explicit partial bucket for
+     * "alt landed, secondary durable write did not". Telemetry log retained.
+     * [TEST-15] [DATA-14]
+     */
+    public function testApplyRunDraftsBucketsPartialWhenDecorativeClearFails(): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $this->plantPostType(70);
+        $this->plantPostType(71);
+        $this->plantPostType(72);
+        $this->setPostMeta(70, '_wp_attachment_image_alt', 'human-authored alt');
+        $this->setPostMeta(71, '_wp_attachment_image_alt', '');
+
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueRunItemsResponse($runId);
+
+        $this->setPostMeta(71, 'acx_alt_decorative', '1');
+        // Force delete of the decorative marker to no-op; read-back still sees '1'.
+        $GLOBALS['__ac_delete_post_meta_fail'][71]['acx_alt_decorative'] = true;
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $this->assertSame(200, $response->get_status());
+
+        $data = $response->get_data();
+        // Alt landed; decorative marker did not clear → partial, not applied.
+        $this->assertSame([], $data['applied']);
+        $this->assertSame([71], $data['partial']);
+        $this->assertSame([70], $data['skipped_existing']);
+        $this->assertSame([72], $data['skipped_no_draft']);
+        $this->assertSame([], $data['failed']);
+        $this->assertSame('a dog in a park', get_post_meta(71, '_wp_attachment_image_alt', true));
+        $this->assertSame('1', get_post_meta(71, 'acx_alt_decorative', true));
+        // Provenance still stamps (alt path succeeded; secondary clear is the gap).
+        $this->assertIsArray(get_post_meta(71, '_acx_description_provenance', true));
+
+        $log = $this->getErrorLog();
+        $this->assertNotEmpty($log);
+        $this->assertTrue(
+            (bool) array_filter(
+                $log,
+                static fn (string $line): bool => str_contains($line, 'acx_alt_decorative clear failed')
+                    && str_contains($line, 'media_id=71')
+                    && str_contains($line, $runId)
+            ),
+            'Expected telemetry log naming the failed decorative clear, media_id, and run_id'
+        );
+    }
 }

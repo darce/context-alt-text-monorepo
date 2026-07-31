@@ -571,6 +571,25 @@ _POSITIVE_TRAINING_SOURCES: frozenset[str] = frozenset(
     s.strip().lower() for s in OCCLUDER_REGISTERED_SOURCES
 )
 
+# Operator-owned *lineage* tags (GATE-21 / NAME-03). Distinct from the
+# training-data provenance namespace in ``source`` / ``_POSITIVE_TRAINING_SOURCES``.
+# Registration exemption answers "is this lineage operator-owned?" from the
+# lineage value itself — never from a door-dependent ``source`` field.
+# Operator-controlled registry; fails closed for anything not listed (BR-24).
+OPERATOR_OWNED_LINEAGE: frozenset[str] = frozenset(
+    {
+        "acx/occluder-renderer-v1",
+        "acx_internal_projector",
+    }
+)
+# GATE-24: resolution here is whole-token exact (modulo case/separator
+# canonicalisation) -- deliberately NOT :func:`_resolve_registry_head`, whose
+# slash-component and variant-suffix vocabulary would let a row author mint
+# bypass tokens the operator never registered (``evilcorp/acx_internal_projector``,
+# ``acx_internal_projector_r50``). This registry is a pure exemption, so
+# over-resolution is a laundering hole, not a naming convenience (BR-24 /
+# SECD-05). Matches :func:`_derived_ingest_key`'s exact-only discipline (BR-52).
+
 # Positive clearance statuses accepted at pack-build (module scope).
 OCCLUDER_ALLOWED_CLEARANCES: frozenset[str] = frozenset(
     {
@@ -924,7 +943,13 @@ _assert_no_must_pass_collisions()
 
 
 def _normalize_token(value: str) -> str:
-    return value.strip().lower()
+    """Normalise a token with unbound builtins (GATE-15).
+
+    ``str.strip`` / ``str.lower`` so a ``str`` subclass cannot launder a dirty
+    payload through overridden instance methods. Honest subclasses
+    (``numpy.str_`` shape) still evaluate correctly.
+    """
+    return str.lower(str.strip(value))
 
 
 def _resolve_model_key(model_id: str) -> str:
@@ -1002,7 +1027,7 @@ def match_nc_model_pattern(derived_from_model: str) -> str | None:
     :func:`canonical` (B4b / WEB-24). Non-ASCII residue yields ``None``;
     callers must treat that as ``invalid_row`` via their own canonical check.
     """
-    if not derived_from_model or not str(derived_from_model).strip():
+    if not derived_from_model or not str.strip(str(derived_from_model)):
         return None
     c = canonical(str(derived_from_model))
     if c is None:
@@ -1028,7 +1053,7 @@ def _looks_like_research_source(value: str) -> bool:
     ``acme/celeba/mirror`` — a subset or a mirror of a research corpus is still
     that corpus. Consistency does not outrank fail-safe defaults [SECD-05].
     """
-    if not value or not str(value).strip():
+    if not value or not str.strip(str(value)):
         return False
     c = canonical(str(value))
     if c is None:
@@ -1052,7 +1077,7 @@ def _resolve_registry_head(
     is intentionally absent — ``dcface_evil`` / ``not_dcface`` / ``yunet_evil``
     do not inherit clearance or ingest registration from a substring head.
     """
-    if not token or not str(token).strip():
+    if not token or not str.strip(str(token)):
         return None
     c = canonical(str(token))
     if c is None or not c:
@@ -1108,7 +1133,7 @@ _LICENSE_KEY_SHAPED = re.compile(r"licen[sc]e|spdx")
 
 def _normalise_field_key(key: str) -> str:
     """Fold casing and separators so 'SPDX-ID' and 'spdx_id' agree."""
-    return re.sub(r"[^a-z0-9]+", "_", key.strip().lower()).strip("_")
+    return re.sub(r"[^a-z0-9]+", "_", str.lower(str.strip(key))).strip("_")
 
 
 def _unrecognised_license_keys(row: Mapping[str, Any]) -> list[str]:
@@ -1168,7 +1193,7 @@ def _license_values_of(row: Mapping[str, Any]) -> list[str]:
             continue
         if raw is None or not isinstance(raw, str):
             continue
-        tag = raw.strip()
+        tag = str.strip(raw)
         if tag:
             by_canonical[canonical_key].append(tag)
 
@@ -1241,7 +1266,8 @@ def _audit_row_licenses(
         return _pass(detail="no license field present", category=category)
 
     # Normalise for comparison (casefold) — disagreeing SPDX ids fail closed.
-    folded = {v.casefold() for v in values}
+    # Unbound casefold: values may still be str subclasses (GATE-15).
+    folded = {str.casefold(v) for v in values}
     if len(folded) > 1:
         return _fail(
             RejectionReason.INVALID_ROW,
@@ -1268,7 +1294,7 @@ def _source_of(row: Mapping[str, Any]) -> str:
     raw = row.get("source") or ""
     if not isinstance(raw, str):
         return ""
-    return raw.strip()
+    return str.strip(raw)
 
 
 def _parse_row_category(
@@ -1295,7 +1321,7 @@ def _parse_row_category(
             ),
             category=audit_category,
         )
-    text = raw_cat.strip()
+    text = str.strip(raw_cat)
     if not text:
         return None, None
     try:
@@ -1309,13 +1335,50 @@ def _parse_row_category(
 
 
 def _is_operator_owned_source(source: str) -> bool:
-    """True for self-generated / operator-* provenance sources."""
+    """True for self-generated / operator-* *provenance* sources.
+
+    Training-data provenance namespace only. Not the registration-exemption
+    predicate — that is :func:`_is_operator_owned_lineage` (GATE-21).
+    """
     return _normalize_token(source) in _POSITIVE_TRAINING_SOURCES
+
+
+def _operator_owned_lineage_forms() -> frozenset[str]:
+    """Canonical exact forms of :data:`OPERATOR_OWNED_LINEAGE` (GATE-24).
+
+    Recomputed per call so a test may substitute the registry; the set is two
+    entries wide and this runs once per row, not per image.
+    """
+    forms: set[str] = set()
+    for key in OPERATOR_OWNED_LINEAGE:
+        kc = canonical(key)
+        if kc is None or not kc:
+            continue
+        forms.update(_expand_id_forms(kc, exact_only=True))
+    return frozenset(forms)
+
+
+def _is_operator_owned_lineage(derived: str) -> bool:
+    """True when ``derived`` is exactly an :data:`OPERATOR_OWNED_LINEAGE` tag.
+
+    Whole-token exact match after canonicalisation (GATE-21 / GATE-24). Fails
+    closed for anything not listed. Does **not** accept a row-author naming
+    convention (bare ``acx/`` prefix), a foreign org prefix
+    (``evilcorp/acx_internal_projector``), or a variant suffix
+    (``acx_internal_projector_r50``) -- the operator registers the exact
+    lineage or the row does not clear registration.
+    """
+    if not derived or not str.strip(str(derived)):
+        return False
+    c = canonical(str(derived))
+    if c is None or not c:
+        return False
+    return c in _operator_owned_lineage_forms()
 
 
 def _is_positive_or_registered_source(source: str) -> bool:
     """Source is on the positive allowlist, model-ingest registry, or synthetic registry."""
-    if not source or not str(source).strip():
+    if not source or not str.strip(str(source)):
         return False
     if _is_operator_owned_source(source):
         return True
@@ -1337,7 +1400,7 @@ def _derived_ingest_key(derived: str) -> str | None:
     must resolve to a registered key / alias. Progressive underscore-prefix
     laundering (``yunet_evil`` → ``yunet``) is intentionally absent.
     """
-    if not derived or not str(derived).strip():
+    if not derived or not str.strip(str(derived)):
         return None
     c = canonical(str(derived))
     if c is None or not c:
@@ -1373,12 +1436,12 @@ def _source_axis_taint(
     here; doors that require a source enforce that themselves.
     """
     if isinstance(row_or_source, str):
-        text = row_or_source.strip()
+        text = str.strip(row_or_source)
     else:
         raw = row_or_source.get("source")
         if not isinstance(raw, str):
             return None
-        text = raw.strip()
+        text = str.strip(raw)
     if not text:
         return None
     result = audit_source(text)
@@ -1401,7 +1464,7 @@ def _row_clearance_decision_token(row: Mapping[str, Any]) -> str | None:
     raw = row.get("clearance_decision")
     if not isinstance(raw, str):
         return None
-    text = raw.strip()
+    text = str.strip(raw)
     return text if text else None
 
 
@@ -1410,7 +1473,7 @@ def _row_photo_clearance_token(row: Mapping[str, Any]) -> str | None:
     raw = row.get("photo_clearance")
     if not isinstance(raw, str):
         return None
-    text = raw.strip()
+    text = str.strip(raw)
     return text if text else None
 
 
@@ -1431,7 +1494,7 @@ def _audit_clearance_decision(
     decision = entry.verification.clearance_decision
     if not decision:
         return None
-    if row_clearance and str(row_clearance).strip() == decision:
+    if row_clearance and str.strip(str(row_clearance)) == decision:
         return None
     label = source_label or entry.source_id
     return _fail(
@@ -1472,9 +1535,9 @@ def _content_triggered_clearance_check(
     # (BR-68); blank strings are absence, not a synthetic signal.
     for key in ("source", "derived_from_model"):
         raw = row.get(key)
-        if not isinstance(raw, str) or not raw.strip():
+        if not isinstance(raw, str) or not str.strip(raw):
             continue
-        token = raw.strip()
+        token = str.strip(raw)
         resolved = _resolve_registry_head(token, SYNTHETIC_SOURCE_ENTRIES)
         if resolved is None:
             continue
@@ -1541,19 +1604,21 @@ def _floor_taint_and_clearance(
       3. content-triggered synthetic ``clearance_decision`` (GATE-11 / BR-65):
          fires on every door when source/derived resolves to a registry entry
          that carries a decision token
-      4. unregistered ``derived_from_model`` registration gate (BR-33 / BR-66):
-         content-triggered on every door — not training-data only
 
-    Callers that must interleave the licence axis with their own gates (e.g.
-    TOOLING package denylist before row SPDX — BR-24 / GATE-05) call this
-    half, then their door gate, then :func:`_floor_licenses`. They never get
-    a floor call that silently omits an axis (BR-69 / ARCH-13).
+    Registration (BR-33 / BR-66) is a separate half — :func:`_floor_registration`
+    — so the TOOLING door can order package denylist ahead of it (GATE-22 /
+    BR-24) without a flag that drops an axis (BR-69).
+
+    Callers that must interleave axes with their own gates (e.g. TOOLING
+    package denylist before registration and row SPDX — BR-24 / GATE-05 /
+    GATE-22) call this half, then their door gate, then
+    :func:`_floor_registration` / :func:`_floor_licenses`. They never get a
+    floor call that silently omits an axis (BR-69 / ARCH-13).
     """
     # Taint outranks licence: a row that is both NC-derived and badly licensed
     # must report the NC reason. Swapping the licence field would clear a
     # licence reason while the banned lineage survives, so reporting the
     # licence first understates the problem (BR-64 / GATE-01).
-    derived_text = ""
     if "derived_from_model" in row:
         raw, type_err = _floor_string_field(
             row, "derived_from_model", category=category
@@ -1570,11 +1635,9 @@ def _floor_taint_and_clearance(
                 detail=derived_result.detail,
                 category=category,
             )
-        derived_text = raw.strip()
 
     # BR-68: non-string source fails closed on every door before any axis that
     # would otherwise skip it as "absence".
-    source_text = ""
     if "source" in row:
         raw_src, src_type_err = _floor_string_field(
             row, "source", category=category
@@ -1582,7 +1645,6 @@ def _floor_taint_and_clearance(
         if src_type_err is not None:
             return src_type_err
         assert raw_src is not None
-        source_text = raw_src.strip()
 
     # BR-53: the `source` axis is category-independent too -- model_ingest and
     # tooling accepted an NC/research source outright while training_data has
@@ -1603,18 +1665,35 @@ def _floor_taint_and_clearance(
     if clearance_hit is not None:
         return clearance_hit
 
-    # BR-66 / WEB-33 / ARCH-13: unregistered derived lineage is a floor
-    # obligation, not a training-data-only backstop. Same predicate as the
-    # former door-local BR-33 call.
-    unreg = _audit_derived_registration(
+    return None
+
+
+def _floor_registration(
+    row: Mapping[str, Any],
+    *,
+    category: PolicyCategory,
+) -> LicenseAuditResult | None:
+    """Registration half of the complete-mediation floor (BR-33 / BR-66).
+
+    Content-triggered on every door. Split from :func:`_floor_taint_and_clearance`
+    so TOOLING can run the package denylist first (GATE-22 / BR-24) without a
+    flag that drops this axis (BR-69 / ARCH-13).
+    """
+    derived_text = ""
+    if "derived_from_model" in row:
+        raw = row.get("derived_from_model")
+        if isinstance(raw, str):
+            derived_text = str.strip(raw)
+    source_text = ""
+    if "source" in row:
+        raw_src = row.get("source")
+        if isinstance(raw_src, str):
+            source_text = str.strip(raw_src)
+    return _audit_derived_registration(
         source=source_text,
         derived=derived_text,
         category=category,
     )
-    if unreg is not None:
-        return unreg
-
-    return None
 
 
 def _floor_licenses(
@@ -1682,12 +1761,18 @@ def _common_provenance_checks(
       5. licence values (denylist + allowlist, present values only; doors that
          require a licence field still enforce ``required=True`` later)
 
+    TOOLING does **not** use this composition: it interleaves the package
+    denylist between clearance and registration (GATE-22 / BR-24).
+
     Returns a FAIL result when a floor rule fires; ``None`` means the caller
     may continue with category-specific gates.
     """
     taint = _floor_taint_and_clearance(row, category=category)
     if taint is not None:
         return taint
+    unreg = _floor_registration(row, category=category)
+    if unreg is not None:
+        return unreg
     return _floor_licenses(row, category=category)
 
 
@@ -1756,10 +1841,10 @@ def audit_derived_from_model(derived_from_model: str | None) -> LicenseAuditResu
         return type_err
     if derived_from_model is None:
         return _pass(detail="no derived_from_model tag")
-    if not derived_from_model.strip():
+    if not str.strip(derived_from_model):
         return _pass(detail="no derived_from_model tag")
 
-    text = derived_from_model.strip()
+    text = str.strip(derived_from_model)
     c = canonical(text)
     if c is None:
         return _fail(
@@ -1828,10 +1913,10 @@ def _spdx_expression_tokens(tag: str) -> list[str]:
     attempt to evaluate the expression — callers check each token against
     the denylist fail-closed.
     """
-    text = tag.strip().replace("(", " ").replace(")", " ")
+    text = str.strip(tag).replace("(", " ").replace(")", " ")
     tokens: list[str] = []
     for part in _SPDX_EXPRESSION_JOINERS.split(text):
-        tok = part.strip()
+        tok = str.strip(part)
         if tok.endswith("+"):
             tok = tok[:-1].rstrip()
         if tok:
@@ -1864,13 +1949,14 @@ def audit_spdx(spdx_id: str | None) -> LicenseAuditResult:
     type_err = _reject_non_string(spdx_id, field="license")
     if type_err is not None:
         return type_err
-    if spdx_id is None or not spdx_id.strip():
+    if spdx_id is None or not str.strip(spdx_id):
         return _fail(
             RejectionReason.MISSING_LICENSE_FIELD,
             detail="license / spdx_id field is required",
         )
-    tag = spdx_id.strip()
-    tag_cf = tag.casefold()
+    # Unbound strip/casefold so str subclasses cannot launder (GATE-15).
+    tag = str.strip(spdx_id)
+    tag_cf = str.casefold(tag)
 
     denied = _denylist_reason_for_spdx_token(tag_cf)
     if denied is not None:
@@ -1888,7 +1974,7 @@ def audit_spdx(spdx_id: str | None) -> LicenseAuditResult:
 
     # GATE-10: compound / plus forms — denylist components before unknown_spdx.
     for tok in _spdx_expression_tokens(tag):
-        tok_cf = tok.casefold()
+        tok_cf = str.casefold(tok)
         denied = _denylist_reason_for_spdx_token(tok_cf)
         if denied is not None:
             return _fail(
@@ -1921,13 +2007,13 @@ def audit_source(source: str | None) -> LicenseAuditResult:
     )
     if type_err is not None:
         return type_err
-    if source is None or not source.strip():
+    if source is None or not str.strip(source):
         return _fail(
             RejectionReason.UNKNOWN_SOURCE,
             detail="source field is required for training-data rows",
             category=PolicyCategory.TRAINING_DATA,
         )
-    text = source.strip()
+    text = str.strip(source)
     c = canonical(text)
     if c is None:
         return _fail(
@@ -1974,7 +2060,7 @@ def audit_model_ingest(model_id: str) -> LicenseAuditResult:
     )
     if type_err is not None:
         return type_err
-    if model_id is None or not model_id.strip():
+    if model_id is None or not str.strip(model_id):
         return _fail(
             RejectionReason.MISSING_INGEST_ENTRY,
             detail="model_id is required for ingest",
@@ -2046,7 +2132,7 @@ def audit_tooling_dependency(package_name: str) -> LicenseAuditResult:
     )
     if type_err is not None:
         return type_err
-    if package_name is None or not package_name.strip():
+    if package_name is None or not str.strip(package_name):
         return _fail(
             RejectionReason.UNKNOWN_SOURCE,
             detail="tooling package_name is required",
@@ -2206,7 +2292,7 @@ def audit_synthetic_source(
     )
     if type_err is not None:
         return type_err
-    if source_id is None or not source_id.strip():
+    if source_id is None or not str.strip(source_id):
         return _fail(
             RejectionReason.UNKNOWN_SOURCE,
             detail="synthetic source_id is required",
@@ -2279,7 +2365,7 @@ def _synthetic_audit_targets(
     seen: set[str] = set()
 
     def _add(token: str) -> None:
-        t = token.strip()
+        t = str.strip(token)
         if not t:
             return
         key = _normalize_token(t)
@@ -2318,24 +2404,57 @@ def _audit_derived_registration(
     derived: str,
     category: PolicyCategory,
 ) -> LicenseAuditResult | None:
-    """BR-33: split unregistered derived from the synthetic clearance path.
+    """BR-33 / BR-66 / GATE-21 / GATE-23: unregistered derived registration.
 
     Returns a FAIL when ``derived`` is non-empty, not NC (already checked),
-    not a registered model-ingest head, not a synthetic-registry head, and
-    the row source is not operator-owned. Operator-owned self-generated rows
-    may declare an internal renderer without registering it as a synthetic
-    identity source. Returns ``None`` when no dedicated derived gate fires.
+    not a registered model-ingest head, not an ALLOWED synthetic-registry
+    head, and not in :data:`OPERATOR_OWNED_LINEAGE`.
+
+    Exemption is keyed off the **lineage value** (operator-controlled registry),
+    never off the door-dependent ``source`` field (GATE-21 / NAME-03). The
+    ``source`` parameter is retained for call-site compatibility but is not
+    consulted.
+
+    Synthetic-registry heads are re-checked for ``commercial_use`` on every
+    door (GATE-23): a FORBIDDEN / non-ALLOWED entry is not exempted merely
+    because ``_synthetic_audit_targets`` would handle it on TRAINING_DATA.
+    Returns ``None`` when no dedicated derived gate fires.
     """
+    del source  # GATE-21: provenance namespace must not exempt registration.
     if not derived:
         return None
     # Registered commercial ingest head → fine.
     if _derived_ingest_key(derived) is not None:
         return None
-    # Synthetic registry head → handled by _synthetic_audit_targets.
-    if _resolve_registry_head(derived, SYNTHETIC_SOURCE_ENTRIES) is not None:
-        return None
-    # Operator-owned sources may reference internal tools/renderers (contract 3).
-    if source and _is_operator_owned_source(source):
+    # Synthetic registry head — re-check commercial_use on every door (GATE-23).
+    # Previously exempted unconditionally with "handled by _synthetic_audit_targets",
+    # but that helper only runs on the TRAINING_DATA path; TOOLING / MODEL_INGEST
+    # would silently PASS a FORBIDDEN synthetic not mirrored into NC_MODEL_IDS.
+    resolved_synth = _resolve_registry_head(derived, SYNTHETIC_SOURCE_ENTRIES)
+    if resolved_synth is not None:
+        entry = SYNTHETIC_SOURCE_ENTRIES.get(resolved_synth)
+        if entry is not None and entry.verification.commercial_use is CommercialUse.ALLOWED:
+            return None
+        label = entry.source_id if entry is not None else derived
+        use = (
+            entry.verification.commercial_use.value
+            if entry is not None
+            else "unknown"
+        )
+        spdx = (
+            entry.verification.spdx_id
+            if entry is not None
+            else "PENDING-LEGAL-CLEARANCE"
+        )
+        return _fail(
+            RejectionReason.PENDING_LEGAL_CLEARANCE,
+            detail=(
+                f"synthetic source {label!r} is {spdx} / {use}"
+            ),
+            category=category,
+        )
+    # GATE-21: operator-owned LINEAGE registry (not source provenance namespace).
+    if _is_operator_owned_lineage(derived):
         return None
     return _fail(
         RejectionReason.UNREGISTERED_DERIVED_MODEL,
@@ -2428,8 +2547,8 @@ def audit_provenance_row(
         model_id = ""
         for key in ("model_id", "source", "package_name", "package"):
             raw = row.get(key)
-            if isinstance(raw, str) and raw.strip():
-                model_id = raw.strip()
+            if isinstance(raw, str) and str.strip(raw):
+                model_id = str.strip(raw)
                 break
         common = _common_provenance_checks(row, category=PolicyCategory.MODEL_INGEST)
         if common is not None:
@@ -2443,21 +2562,23 @@ def audit_provenance_row(
         if common is not None:
             return common
         source_raw = row.get("source")
-        if not isinstance(source_raw, str) or not source_raw.strip():
+        if not isinstance(source_raw, str) or not str.strip(source_raw):
             return _fail(
                 RejectionReason.UNKNOWN_SOURCE,
                 detail="synthetic_source category requires a non-empty source field",
                 category=PolicyCategory.SYNTHETIC_SOURCE,
             )
         row_clearance = _row_clearance_decision_token(row)
-        synth = audit_synthetic_source(source_raw.strip(), row_clearance=row_clearance)
+        synth = audit_synthetic_source(
+            str.strip(source_raw), row_clearance=row_clearance
+        )
         if synth.ok:
             # The floor skipped the source taint so this door could report its
             # more specific reason. Re-apply it to any PASS so the exemption can
             # never widen a verdict, even if a future registry entry is both
             # commercially ALLOWED and NC by pattern (SECD-05 fail closed).
             backstop = _source_axis_taint(
-                source_raw.strip(), category=PolicyCategory.SYNTHETIC_SOURCE
+                str.strip(source_raw), category=PolicyCategory.SYNTHETIC_SOURCE
             )
             if backstop is not None:
                 return backstop
@@ -2490,11 +2611,13 @@ def audit_provenance_row(
     if common is not None:
         return common
 
-    derived = (_derived_val or "").strip() if _derived_val is not None else ""
+    derived = (
+        str.strip(_derived_val) if _derived_val is not None else ""
+    )
 
     source = ""
     if "source" in row and isinstance(row["source"], str):
-        source = row["source"].strip()
+        source = str.strip(row["source"])
 
     # Training-data audits always require source (row cannot waive via category).
     if not source:
@@ -2537,7 +2660,10 @@ def audit_provenance_row(
             category=PolicyCategory.TRAINING_DATA,
         )
 
-    has_lineage = bool(str(row.get("generator_lineage") or "").strip())
+    lineage_raw = row.get("generator_lineage")
+    has_lineage = bool(
+        str.strip(lineage_raw) if isinstance(lineage_raw, str) else False
+    )
     # BR-34: only the *caller-supplied* category participates in synthetic
     # routing — never the row-declared value.
     row_clearance = _row_clearance_decision_token(row)
@@ -2563,22 +2689,27 @@ def audit_provenance_row(
 def audit_tooling_row(row: Mapping[str, Any]) -> LicenseAuditResult:
     """Audit a tooling dependency row (caller-owned TOOLING category).
 
-    Ordering (BR-24 / GATE-05) — restored after the floor hoist inverted it:
+    Ordering (BR-24 / GATE-05 / GATE-22) — package denylist cannot be masked
+    by a row-author-controlled self-declaration on any axis:
 
       1. Floor taint + content-triggered clearance via
-         :func:`_floor_taint_and_clearance` (``derived_from_model``,
-         ``source`` taint, synthetic clearance). The licence half is deferred
-         so it cannot mask the package reason.
+         :func:`_floor_taint_and_clearance` (``derived_from_model`` NC/research
+         taint, ``source`` taint, synthetic clearance). Registration and
+         licence halves are deferred so neither can mask the package reason.
       2. Resolve a package identifier from ``package`` / ``package_name`` /
-         ``source`` and run :func:`audit_tooling_dependency` **before** any
-         row-declared SPDX check so a self-declared licence cannot launder
-         a denylisted package (BR-24).
-      3. Present row-declared licence values via :func:`_floor_licenses`
+         ``source`` and run :func:`audit_tooling_dependency` **before**
+         registration and any row-declared SPDX check so a self-declared
+         licence **or** a junk ``derived_from_model`` tag cannot launder a
+         denylisted package (BR-24 / GATE-22).
+      3. Unregistered ``derived_from_model`` registration via
+         :func:`_floor_registration` (BR-66 / GATE-21).
+      4. Present row-declared licence values via :func:`_floor_licenses`
          (required=False) — still enforced, just after the package gate.
 
     Missing package identifier fails closed. The complete floor composition
-    :func:`_common_provenance_checks` is not used here because its licence
-    half must interleave *after* the package gate; both halves still run.
+    :func:`_common_provenance_checks` is not used here because registration
+    and licence halves must interleave *after* the package gate; every half
+    still runs (BR-69 / ARCH-13).
     """
     if not isinstance(row, Mapping):
         raise LicensePolicyError(
@@ -2591,9 +2722,10 @@ def audit_tooling_row(row: Mapping[str, Any]) -> LicenseAuditResult:
 
     cat = PolicyCategory.TOOLING
 
-    # Taint + clearance only — licence deferred until after the package gate
-    # so denylisted_package is the authoritative reason when both fire (BR-24).
-    # BR-69: call the split half explicitly; never a flag that drops an axis.
+    # Taint + clearance only — registration and licence deferred until after
+    # the package gate so denylisted_package is the authoritative reason when
+    # package + registration (or package + licence) both fire (BR-24 / GATE-22).
+    # BR-69: call each half explicitly; never a flag that drops an axis.
     common = _floor_taint_and_clearance(row, category=cat)
     if common is not None:
         return common
@@ -2601,8 +2733,8 @@ def audit_tooling_row(row: Mapping[str, Any]) -> LicenseAuditResult:
     package = ""
     for key in ("package", "package_name", "source"):
         raw = row.get(key)
-        if isinstance(raw, str) and raw.strip():
-            package = raw.strip()
+        if isinstance(raw, str) and str.strip(raw):
+            package = str.strip(raw)
             break
 
     if not package:
@@ -2615,10 +2747,17 @@ def audit_tooling_row(row: Mapping[str, Any]) -> LicenseAuditResult:
             category=cat,
         )
 
-    # Authoritative package gate — denylist / allowlist pin wins over row SPDX.
+    # Authoritative package gate — denylist / allowlist pin wins over both
+    # registration (GATE-22) and row SPDX (GATE-05 / BR-24).
     dep_result = audit_tooling_dependency(package)
     if not dep_result.ok:
         return dep_result
+
+    # Registration after package so a junk lineage tag cannot mask AGPL
+    # (GATE-22). Same predicate as the complete floor's registration axis.
+    unreg = _floor_registration(row, category=cat)
+    if unreg is not None:
+        return unreg
 
     # Row-declared licence still fails closed when present, but only after the
     # package reason has had its chance to surface (GATE-05). Same half as the

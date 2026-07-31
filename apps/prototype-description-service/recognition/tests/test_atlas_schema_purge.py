@@ -54,9 +54,35 @@ def _uncertainty(margin: float = 0.12) -> dict:
     }
 
 
-@pytest_asyncio.fixture
-async def atlas_db_session() -> AsyncGenerator[AsyncSession, None]:
-    """Isolated SQLite session including atlas tables (conftest omits them)."""
+_ATLAS_PURGE_TABLE_NAMES: tuple[str, ...] = (
+    "tenants",
+    "media_identities",
+    "identity_atlas_runs",
+    "identity_atlas_points",
+    "identity_atlas_queue_dispositions",
+    "audit_events",
+    "identity_clusters",
+    "identity_members",
+    "identity_cluster_representatives",
+    "identity_constraints",
+    "identity_suggestions",
+    "cluster_merge_suggestions",
+    "name_suggestions",
+    "identity_cluster_blocks",
+    "recognition_runs",
+    "recognition_events",
+    "clustering_feedback",
+    "assignment_decisions",
+    "clustering_job_reports",
+    "curation_replay_records",
+    "identity_scan_jobs",
+    "identity_scan_job_items",
+    "identity_clustering_jobs",
+)
+
+
+async def _atlas_db_session(*, foreign_keys: bool) -> AsyncGenerator[AsyncSession, None]:
+    """Isolated SQLite session with atlas (+ purge) tables; FK enforcement optional."""
     engine = create_async_engine(
         "sqlite+aiosqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -67,33 +93,10 @@ async def atlas_db_session() -> AsyncGenerator[AsyncSession, None]:
     def _register_vector_functions(dbapi_connection, _connection_record) -> None:
         dbapi_connection.create_function("vector_norm", 1, _sqlite_vector_norm)
 
+    fk_pragma = "ON" if foreign_keys else "OFF"
     async with engine.begin() as conn:
-        await conn.execute(text("PRAGMA foreign_keys=ON"))
-        tables: list[Table] = [
-            Table("tenants", Base.metadata),
-            Table("media_identities", Base.metadata),
-            Table("identity_atlas_runs", Base.metadata),
-            Table("identity_atlas_points", Base.metadata),
-            Table("identity_atlas_queue_dispositions", Base.metadata),
-            Table("audit_events", Base.metadata),
-            Table("identity_clusters", Base.metadata),
-            Table("identity_members", Base.metadata),
-            Table("identity_cluster_representatives", Base.metadata),
-            Table("identity_constraints", Base.metadata),
-            Table("identity_suggestions", Base.metadata),
-            Table("cluster_merge_suggestions", Base.metadata),
-            Table("name_suggestions", Base.metadata),
-            Table("identity_cluster_blocks", Base.metadata),
-            Table("recognition_runs", Base.metadata),
-            Table("recognition_events", Base.metadata),
-            Table("clustering_feedback", Base.metadata),
-            Table("assignment_decisions", Base.metadata),
-            Table("clustering_job_reports", Base.metadata),
-            Table("curation_replay_records", Base.metadata),
-            Table("identity_scan_jobs", Base.metadata),
-            Table("identity_scan_job_items", Base.metadata),
-            Table("identity_clustering_jobs", Base.metadata),
-        ]
+        await conn.execute(text(f"PRAGMA foreign_keys={fk_pragma}"))
+        tables: list[Table] = [Table(name, Base.metadata) for name in _ATLAS_PURGE_TABLE_NAMES]
         await conn.run_sync(Base.metadata.create_all, tables=tables)
         await conn.execute(
             text(
@@ -111,6 +114,9 @@ async def atlas_db_session() -> AsyncGenerator[AsyncSession, None]:
 
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:
+        # Re-apply on the live connection: StaticPool shares it, but begin() may
+        # not leave the pragma sticky for every SQLite/aiosqlite build.
+        await session.execute(text(f"PRAGMA foreign_keys={fk_pragma}"))
         await session.begin_nested()
 
         @event.listens_for(session.sync_session, "after_transaction_end")
@@ -125,6 +131,20 @@ async def atlas_db_session() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
 
     await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def atlas_db_session() -> AsyncGenerator[AsyncSession, None]:
+    """Isolated SQLite session including atlas tables (conftest omits them)."""
+    async for session in _atlas_db_session(foreign_keys=True):
+        yield session
+
+
+@pytest_asyncio.fixture
+async def atlas_db_session_fk_off() -> AsyncGenerator[AsyncSession, None]:
+    """Same schema as atlas_db_session but CASCADE cannot fire (PRAGMA foreign_keys=OFF)."""
+    async for session in _atlas_db_session(foreign_keys=False):
+        yield session
 
 
 @pytest_asyncio.fixture
@@ -832,6 +852,116 @@ async def test_atlas_purge_disposed_reports_cascaded_disposition_count(
 
     assert await atlas_db_session.get(IdentityAtlasPoint, point_id) is None
     assert await atlas_db_session.get(IdentityAtlasQueueDisposition, disposition_id) is None
+
+
+@pytest.mark.asyncio
+async def test_atlas_purge_disposed_cascade_count_observes_absent_rows_when_fk_off(
+    atlas_db_session_fk_off: AsyncSession,
+) -> None:
+    """FL30-B-08: disposition count must reflect rows actually gone, not pre-delete intent.
+
+    With foreign_keys=OFF the point delete does not cascade, so a disposition row
+    listed pre-delete still exists post-delete. Honest observation reports 0;
+    ``cascaded = len(disposition_ids)`` would falsely report 1.
+    """
+    session = atlas_db_session_fk_off
+    # Ensure the live connection still has cascade suppressed (savepoint start).
+    await session.execute(text("PRAGMA foreign_keys=OFF"))
+    fk_row = (await session.execute(text("PRAGMA foreign_keys"))).one()
+    assert int(fk_row[0]) == 0, f"test requires foreign_keys=OFF; got {fk_row!r}"
+
+    tenant = Tenant(site_url="https://atlas-fk-off.example.edu/wp")
+    session.add(tenant)
+    await session.flush()
+
+    disposed_identity = await _seed_identity(session, tenant.id, media_id=7401)
+    disposed_identity.disposed_at = datetime.now(tz=UTC)
+    await session.flush()
+
+    run = IdentityAtlasRun(
+        tenant_id=tenant.id,
+        embedding_model=_EMBEDDING_MODEL,
+        status=AtlasRunStatus.COMPLETE.value,
+        params=_atlas_params(),
+        point_count=1,
+    )
+    session.add(run)
+    await session.flush()
+
+    point = IdentityAtlasPoint(
+        run_id=run.id,
+        tenant_id=tenant.id,
+        identity_id=disposed_identity.id,
+        media_id=disposed_identity.media_id,
+        cluster_id=None,
+        x=3.0,
+        y=4.0,
+        queue_rank=0,
+        uncertainty=_uncertainty(0.15),
+    )
+    session.add(point)
+    await session.flush()
+
+    disposition = IdentityAtlasQueueDisposition(
+        run_id=run.id,
+        point_id=point.id,
+        tenant_id=tenant.id,
+        action=AtlasDispositionAction.REVIEWED.value,
+        actor="admin:cascade-observe",
+    )
+    session.add(disposition)
+    await session.commit()
+
+    disposition_id = disposition.id
+    point_id = point.id
+    tenant_id = tenant.id
+
+    dispositions_before = int(
+        (
+            await session.execute(
+                select(func.count())
+                .select_from(IdentityAtlasQueueDisposition)
+                .where(IdentityAtlasQueueDisposition.tenant_id == tenant_id)
+            )
+        ).scalar_one()
+        or 0
+    )
+    assert dispositions_before == 1
+
+    purge_result = await TenantPurgeService(session).purge_tenant_data(
+        str(tenant_id), "admin:cascade-observe", scope="disposed"
+    )
+    counts = purge_result["deleted_counts"]
+    assert isinstance(counts, dict)
+
+    session.expire_all()
+    dispositions_after = int(
+        (
+            await session.execute(
+                select(func.count())
+                .select_from(IdentityAtlasQueueDisposition)
+                .where(IdentityAtlasQueueDisposition.tenant_id == tenant_id)
+            )
+        ).scalar_one()
+        or 0
+    )
+    observed_gone = dispositions_before - dispositions_after
+
+    assert await session.get(IdentityAtlasPoint, point_id) is None, (
+        "point must still be deleted by the purge even when cascade is suppressed"
+    )
+    assert await session.get(IdentityAtlasQueueDisposition, disposition_id) is not None, (
+        "with foreign_keys=OFF the disposition must survive point delete — "
+        "otherwise this test cannot discriminate pre-delete vs observed counts"
+    )
+    assert observed_gone == 0, (
+        f"cascade suppressed: disposition must remain; remaining={dispositions_after}"
+    )
+    assert counts.get("identity_atlas_queue_dispositions", 0) == observed_gone, (
+        f"reported disposition deletes must equal rows actually gone ({observed_gone}); "
+        f"got {counts.get('identity_atlas_queue_dispositions')} "
+        f"(defective pre-delete JOIN count would report 1)"
+    )
 
 
 async def _shipped_atlas_schema_engine():

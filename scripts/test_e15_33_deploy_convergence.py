@@ -515,34 +515,6 @@ def test_reset_calls_face_pipeline_preflight() -> None:
     )
 
 
-def test_face_pipeline_preflight_does_not_swallow_ssh_failures() -> None:
-    """C-06: local ssh invocations in the preflight path must not end in `|| true`."""
-    body = _function_body("preflight_remote_face_pipeline_models")
-    # Ban the two historical forms: `$(ssh ...) || true` and `<<REMOTE || true`.
-    # Remote-side `grep ... || true` inside a double-quoted remote command is OK
-    # (expected missing-key path) and does not match these patterns.
-    assert re.search(r"<<REMOTE\s*\|\|\s*true", body) is None, (
-        "preflight must not append || true to the remote verify ssh heredoc"
-    )
-    # Drop comments and double-quoted remote strings, then forbid local || true
-    # attached to an ssh invocation (not prose that merely mentions the anti-pattern).
-    def _code_only(text: str) -> str:
-        no_comments = re.sub(r"(?m)^\s*#.*$", "", text)
-        return re.sub(r'"([^"\\]|\\.)*"', '""', no_comments)
-
-    stripped = _code_only(body)
-    assert re.search(r"(?:^|[^#])\s*\$?\(?ssh\b[\s\S]{0,200}\|\|\s*true", stripped) is None, (
-        "preflight must not swallow local ssh failures with || true"
-    )
-    if "_remote_dotenv_value()" in SCRIPT_TEXT:
-        helper = _code_only(_function_body("_remote_dotenv_value"))
-        assert re.search(
-            r"(?:^|[^#])\s*\$?\(?ssh\b[\s\S]{0,200}\|\|\s*true", helper
-        ) is None, (
-            "_remote_dotenv_value must not swallow local ssh failures with || true"
-        )
-
-
 def test_face_pipeline_preflight_reads_authoritative_models_dir() -> None:
     """C-10 [sr-007]: preflight must read RECOGNITION_FACE_PIPELINE_MODELS_DIR."""
     body = _function_body("preflight_remote_face_pipeline_models")
@@ -752,6 +724,87 @@ def test_face_pipeline_preflight_fails_on_ssh_error(tmp_path: Path) -> None:
     )
     combined = proc.stdout + proc.stderr
     assert proc.returncode != 0, combined
+
+
+def test_face_pipeline_preflight_rejects_ok_stdout_with_nonzero_exit(
+    tmp_path: Path,
+) -> None:
+    """C-06: OK on stdout with non-zero remote exit must not be treated as success.
+
+    The `&& remote_rc -eq 0` conjunct exists so a remote that prints OK then
+    exits non-zero still fails closed; return-code-only tests miss this path.
+    """
+    ssh = r"""#!/bin/sh
+if echo "$*" | grep -q "RECOGNITION_FACE_PIPELINE_MODELS_DIR"; then
+  echo "/data/cache/face_pipeline"
+  exit 0
+fi
+if echo "$*" | grep -q "ACX_MODELS_PATH"; then
+  echo "/opt/acx-backend/data/dev-fir-models"
+  exit 0
+fi
+cat >/dev/null
+echo "OK"
+exit 7
+"""
+    proc = _run_face_pipeline_preflight("dev-fir", tmp_path, ssh)
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0, combined
+    assert "ssh/remote failed" in combined, combined
+    assert "exit 7" in combined, combined
+
+
+def test_face_pipeline_preflight_dotenv_ssh_failure_not_misdiagnosed(
+    tmp_path: Path,
+) -> None:
+    """C-06/C-14: dotenv-read ssh transport failure must name ssh, not a missing key.
+
+    Swallowing `|| rc=$?` into `|| true` leaves empty stdout and the caller
+    reports RECOGNITION_FACE_PIPELINE_MODELS_DIR as missing — wrong diagnosis.
+    """
+    ssh = r"""#!/bin/sh
+# Fail only the dotenv key read; never reach the remote verify body.
+if echo "$*" | grep -q "RECOGNITION_FACE_PIPELINE_MODELS_DIR"; then
+  exit 255
+fi
+exit 255
+"""
+    proc = _run_face_pipeline_preflight("dev-fir", tmp_path, ssh)
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0, combined
+    assert "ssh failed reading" in combined, combined
+    assert "RECOGNITION_FACE_PIPELINE_MODELS_DIR" in combined, combined
+    assert "exit 255" in combined, combined
+    # Misdiagnosis path when exit status is swallowed:
+    assert "missing or unreadable" not in combined, combined
+    assert "cannot verify face_pipeline models" not in combined, combined
+
+
+def test_face_pipeline_preflight_reports_ssh_failure_on_remote_verify(
+    tmp_path: Path,
+) -> None:
+    """C-06: remote-verify ssh transport failure must name ssh/remote and the exit code.
+
+    Swallowing `|| remote_rc=$?` into `|| true` falls through to the catch-all
+    'preflight failed' message with no exit code — still non-zero, but undiagnosable.
+    """
+    ssh = r"""#!/bin/sh
+if echo "$*" | grep -q "RECOGNITION_FACE_PIPELINE_MODELS_DIR"; then
+  echo "/data/cache/face_pipeline"
+  exit 0
+fi
+if echo "$*" | grep -q "ACX_MODELS_PATH"; then
+  echo "/opt/acx-backend/data/dev-fir-models"
+  exit 0
+fi
+cat >/dev/null
+exit 255
+"""
+    proc = _run_face_pipeline_preflight("dev-fir", tmp_path, ssh)
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0, combined
+    assert "ssh/remote failed" in combined, combined
+    assert "exit 255" in combined, combined
 
 
 def test_face_pipeline_preflight_preserves_interior_spaces_in_env(tmp_path: Path) -> None:

@@ -527,6 +527,33 @@ describe('useCorrectMediaAlt', () => {
     expect(row?.status).toBe('complete');
   });
 
+  it('whitespace-only non-decorative correction preserves prior isDecorative true [C-02][rg-015]', async () => {
+    // Server rule: '' !== trim($alt_text). Whitespace-only is empty for has_alt and
+    // must preserve a prior decorative marker — same as exact '' (empty-preserve
+    // case above). Without .trim() in nextIsDecorative, '   ' hard-clears the
+    // marker and status flips to missing while the server keeps complete.
+    correctMock.mockResolvedValue(successHistoryItem(42, '   ', 'Bridge'));
+    const client = buildClient();
+    const page = seedWorkbench(client, null, { total: 4, totalPages: 1 });
+    page.items[0] = {
+      ...page.items[0],
+      altText: null,
+      status: 'complete',
+      isDecorative: true,
+    };
+    client.setQueryData(missingPageKey, page);
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+
+    result.current.mutate({ mediaId: 42, altText: '   ' });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const cached = client.getQueryData<WorkbenchMediaResponse>(missingPageKey);
+    const row = cached?.items.find((item) => item.id === 42);
+    expect(row?.altText).toBeNull();
+    expect(row?.isDecorative).toBe(true);
+    expect(row?.status).toBe('complete');
+  });
+
   it('PARTIAL non-empty stored alt clears prior isDecorative true [WBUX-5-R3-01][WBUX-5-R2-02]', async () => {
     // Server clears the marker on verified non-empty alt even when human-edit
     // fails (PARTIAL). Omitting isDecorative from the patch would leave true and

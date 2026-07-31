@@ -1,13 +1,16 @@
 /**
- * WBUX-5-D-02 — toolbar reconciliation/status sentence is a live status region.
- * AT users must hear mutations after operator actions (WCAG 2.1 AA 4.1.3).
+ * WBUX-5-D-02 / B-01 / B-02 — toolbar status live region:
+ * - always mounted before text arrives
+ * - debounced so keystroke fetch churn does not re-announce [B-01]
+ * - never carries per-correction success copy (row owns that) [B-02]
  */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MediaSelection } from '../MediaSelection';
+import { MARK_DECORATIVE_SUCCESS_MESSAGE } from '../MediaAltSuggest';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -18,9 +21,11 @@ vi.mock('@wordpress/i18n', () => ({
   },
 }));
 
-// String literal inside vi.mock factory (hoisted) — outer consts are not closed over.
 const STATUS_SENTENCE =
-  'Showing 3 media items. 1 marked decorative and will leave this view when the list next refreshes.';
+  'Showing 3 media items. 1 is marked decorative and will leave this view when the list next refreshes.';
+
+/** Mutable statusMessage the WorkbenchMediaContext mock reads each render. */
+let mockStatusMessage = STATUS_SENTENCE;
 
 vi.mock('../WorkbenchMediaContext', () => ({
   useWorkbenchMediaContext: () => ({
@@ -101,8 +106,9 @@ vi.mock('../WorkbenchMediaContext', () => ({
           refetch: vi.fn(),
         },
       },
-      statusMessage:
-        'Showing 3 media items. 1 marked decorative and will leave this view when the list next refreshes.',
+      get statusMessage() {
+        return mockStatusMessage;
+      },
       detailTruncationNotice: null,
       hasIdentities: false,
     },
@@ -172,24 +178,126 @@ const renderSelection = () => {
   );
 };
 
-describe('MediaSelection toolbar status announcement [WBUX-5-D-02]', () => {
+/** Force a re-read of mockStatusMessage by re-rendering the tree. */
+const rerenderSelection = (result: ReturnType<typeof renderSelection>) => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  result.rerender(
+    <QueryClientProvider client={client}>
+      <MediaSelection />
+    </QueryClientProvider>,
+  );
+};
+
+describe('MediaSelection toolbar status announcement [WBUX-5-D-02][B-01][B-02]', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.useFakeTimers();
+    mockStatusMessage = STATUS_SENTENCE;
   });
 
-  it('exposes the reconciliation sentence via role=status (not a bare span)', () => {
-    // Predicted RED: toolbar renders statusMessage in a class-only span with no
-    // role="status", so no status region carries the sentence. Provider harness
-    // data-testid cannot catch this — only the real toolbar can.
-    // Note: ARIA status names from author, not contents, so we match by role +
-    // text (same pattern as MediaSelection.identitiesDegraded).
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
+
+  it('exposes settled status via an always-mounted role=status live region', () => {
     renderSelection();
 
-    const status = screen
+    const live = screen.getByTestId('media-selection-toolbar-live-status');
+    expect(live).toHaveAttribute('role', 'status');
+    // Mounted before debounce fires — empty initially so the region exists first.
+    expect(live.textContent).toBe('');
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(live.textContent).toBe(STATUS_SENTENCE);
+    // Visual status (aria-hidden) still shows the message immediately.
+    const visual = document.querySelector('.acx-media-selection__status [aria-hidden="true"]');
+    expect(visual).toHaveTextContent(STATUS_SENTENCE);
+  });
+
+  it('does not churn the live region on rapid successive status changes [B-01]', () => {
+    const view = renderSelection();
+    const live = screen.getByTestId('media-selection-toolbar-live-status');
+    // Snapshot the live region's text after every intermediate tick so a
+    // pass-through (no debounce) mutation is observable — final-state-only
+    // checks stay green under both implementations [TEST-15].
+    const snapshots: string[] = [];
+
+    // Rapid keystroke-driven message storm (Updating… interleaved with settled).
+    const rapid = [
+      'Updating media queue…',
+      'Showing 1 media item.',
+      'Updating media queue…',
+      'Showing 2 media items.',
+      'Updating media queue…',
+      'Showing 3 media items.',
+    ];
+    for (const msg of rapid) {
+      mockStatusMessage = msg;
+      rerenderSelection(view);
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+      snapshots.push(live.textContent ?? '');
+    }
+
+    // Intermediate settled strings must not have been announced during the storm.
+    expect(snapshots).not.toContain('Showing 1 media item.');
+    expect(snapshots).not.toContain('Showing 2 media items.');
+    // "Updating…" is never announced at any snapshot.
+    expect(snapshots.some((s) => s.includes('Updating media queue'))).toBe(false);
+    // Debounce still pending for the final settled candidate.
+    expect(live.textContent).not.toBe('Showing 3 media items.');
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    // Only the final settled message lands after the quiet period.
+    expect(live.textContent).toBe('Showing 3 media items.');
+  });
+
+  it('never announces the transient Updating media queue… message [B-01]', () => {
+    mockStatusMessage = 'Updating media queue…';
+    renderSelection();
+    const live = screen.getByTestId('media-selection-toolbar-live-status');
+
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+    expect(live.textContent).toBe('');
+    // Visual still shows the transient copy.
+    const visual = document.querySelector('.acx-media-selection__status [aria-hidden="true"]');
+    expect(visual?.textContent).toBe('Updating media queue…');
+  });
+
+  it('row owns per-correction success; toolbar live region does not carry it [B-02]', () => {
+    // Toolbar status is list-level reconciliation, never "Alt text saved." /
+    // MARK_DECORATIVE_SUCCESS_MESSAGE — those belong on the row polite region.
+    mockStatusMessage = STATUS_SENTENCE;
+    renderSelection();
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    const live = screen.getByTestId('media-selection-toolbar-live-status');
+    expect(live.textContent).not.toContain('Alt text saved.');
+    expect(live.textContent).not.toContain(MARK_DECORATIVE_SUCCESS_MESSAGE);
+
+    // Simulate a row correction success region coexisting in the document.
+    const rowStatus = document.createElement('div');
+    rowStatus.setAttribute('role', 'status');
+    rowStatus.setAttribute('data-testid', 'media-selection-row-status');
+    rowStatus.textContent = 'Alt text saved.';
+    document.body.appendChild(rowStatus);
+
+    const correctionCarriers = screen
       .getAllByRole('status')
-      .find((el) => (el.textContent ?? '').includes(STATUS_SENTENCE));
-    expect(status).toBeDefined();
-    expect(status).toHaveClass('acx-media-selection__status');
-    expect(status).toHaveTextContent(STATUS_SENTENCE);
+      .filter((el) => (el.textContent ?? '').includes('Alt text saved.'));
+    expect(correctionCarriers).toHaveLength(1);
+    expect(correctionCarriers[0]).toHaveAttribute('data-testid', 'media-selection-row-status');
+
+    rowStatus.remove();
   });
 });

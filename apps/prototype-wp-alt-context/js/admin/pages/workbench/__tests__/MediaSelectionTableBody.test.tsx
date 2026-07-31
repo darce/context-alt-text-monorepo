@@ -91,6 +91,35 @@ describe('MediaSelectionTableBody — decorative alt + link name [A11Y-02][A11Y-
     expect(link).toHaveAttribute('aria-label', 'Edit Ornamental border');
   });
 
+  it('qualifies Suggest and Mark decorative accessible names with the media title [B-03][A11Y-04]', () => {
+    renderBody([makeItem({ title: 'Ornamental border', isDecorative: false, altText: null })]);
+
+    // Visible labels stay short; aria-label carries the row title for AT lists.
+    const suggest = screen.getByRole('button', { name: 'Suggest alt text for Ornamental border' });
+    expect(suggest).toBeInTheDocument();
+    expect(suggest).toHaveTextContent('Suggest alt text');
+
+    const decorative = screen.getByRole('button', { name: 'Mark as decorative for Ornamental border' });
+    expect(decorative).toBeInTheDocument();
+    // Visible copy keeps the longer outcome-oriented phrase.
+    expect(decorative.textContent).toMatch(/Mark as decorative/);
+  });
+
+  it('falls back to bare visible names when title is empty [B-03]', () => {
+    renderBody([makeItem({ title: '', isDecorative: false, altText: null })]);
+
+    // No aria-label — accessible name is the visible label alone.
+    const suggest = screen.getByRole('button', { name: 'Suggest alt text' });
+    expect(suggest).toBeInTheDocument();
+    expect(suggest.getAttribute('aria-label')).toBeNull();
+
+    const decorative = screen.getByRole('button', {
+      name: /Mark as decorative — screen readers will announce nothing/,
+    });
+    expect(decorative).toBeInTheDocument();
+    expect(decorative.getAttribute('aria-label')).toBeNull();
+  });
+
   it('still uses decoded altText for non-decorative described images', () => {
     renderBody([
       makeItem({

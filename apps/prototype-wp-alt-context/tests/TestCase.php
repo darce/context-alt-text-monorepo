@@ -43,6 +43,7 @@ abstract class TestCase extends PHPUnitTestCase
         $GLOBALS['__ac_post_meta'] = [];
         $GLOBALS['__ac_update_post_meta_fail'] = [];
         $GLOBALS['__ac_update_post_meta_mutate'] = [];
+        $GLOBALS['__ac_delete_post_meta_fail'] = [];
         $GLOBALS['__ac_wp_update_post_fail'] = [];
         $GLOBALS['__ac_transients'] = [];
         $GLOBALS['__ac_scheduled'] = [];

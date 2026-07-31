@@ -185,8 +185,24 @@ class DescriptionHistoryService {
 		// alt does not un-mark a decorative image. Plant for decorative=true
 		// still waits until both writes verify below. [WBUX-5-R3-01][WBUX-5-R1-02]
 		// Reconcile from the server's own read-back ($current), never the request body.
-		if ( ! $decorative && is_string( $current ) && '' !== trim( $current ) ) {
+		// $current is provably a string here: the alt_ok gate above returns when not.
+		if ( ! $decorative && '' !== trim( $current ) ) {
 			delete_post_meta( $media_id, self::DECORATIVE_META );
+			// Mirror the plant path's read-back [A-04][rg-002]: a surviving
+			// decorative marker is emitted as isDecorative on the next list fetch
+			// (class-api.php), so claiming success while delete failed is a
+			// durable-contract lie — same partial envelope the plant uses.
+			$decorative_after_clear = get_post_meta( $media_id, self::DECORATIVE_META, true );
+			if ( is_string( $decorative_after_clear ) && '1' === $decorative_after_clear ) {
+				return new WP_Error(
+					'description_correction_partial',
+					'Alt text was saved, but the decorative marker could not be cleared. Please try again so the image is treated as described.',
+					array(
+						'status'          => 500,
+						'stored_alt_text' => is_string( $expected_alt ) ? $expected_alt : $normalized_alt_text,
+					)
+				);
+			}
 		}
 
 		// Human-edit meta is required for an honest correction response and for

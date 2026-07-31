@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { __ } from '@wordpress/i18n';
 import type { ReactElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -13,16 +14,19 @@ import { queryKeys } from '../../../api/queryKeys';
 import type { WorkbenchMediaResponse } from '../../../api/workbenchMediaApi';
 
 vi.mock('@wordpress/i18n', () => ({
-  __: (text: string) => text,
-  sprintf: (format: string, ...args: (string | number)[]) => {
+  __: vi.fn((text: string) => text),
+  // Sentinel wrap so a bare JS concat producing the same English string cannot
+  // satisfy the accessible-name assertion [C-04][TEST-15].
+  sprintf: vi.fn((format: string, ...args: (string | number)[]) => {
     let sequentialIndex = 0;
-    return format.replace(/%((\d+)\$)?[sd]/g, (_match, _positional, explicitIndex) => {
+    const interpolated = format.replace(/%((\d+)\$)?[sd]/g, (_match, _positional, explicitIndex) => {
       if (explicitIndex) {
         return String(args[Number(explicitIndex) - 1] ?? '');
       }
       return String(args[sequentialIndex++] ?? '');
     });
-  },
+    return `⟦${interpolated}⟧`;
+  }),
 }));
 
 vi.mock('../../../api/describeApi', async () => {
@@ -73,17 +77,21 @@ describe('MediaAltInlineEditor', () => {
     expect(screen.getByRole('button', { name: /edit alt text/i })).toBeInTheDocument();
   });
 
-  it('qualifies the edit control accessible name with the media title [WBUX-5-D-05][A11Y-04]', () => {
+  it('qualifies the edit control accessible name with the media title [WBUX-5-D-05][A11Y-04][C-04]', () => {
     // Predicted RED: button accessible name is bare "Edit alt text" for every
     // row, so AT element lists cannot tell which image the control belongs to.
+    // sprintf mock wraps output in ⟦…⟧ so a raw JS concat of the English phrase
+    // cannot satisfy the name query [C-04][TEST-15].
     renderEditor(
       <MediaAltInlineEditor mediaId={42} altText="Bridge at dusk" title="Ornamental border" />,
     );
 
-    const edit = screen.getByRole('button', { name: 'Edit alt text for Ornamental border' });
+    const edit = screen.getByRole('button', { name: '⟦Edit alt text for Ornamental border⟧' });
     expect(edit).toBeInTheDocument();
     // Visible label stays the short phrase; title is for AT only.
     expect(edit).toHaveTextContent('Edit alt text');
+    // Pin the i18n construct — not merely the rendered English string.
+    expect(vi.mocked(__)).toHaveBeenCalledWith('Edit alt text for %s', 'alt-context');
   });
 
   it('decodes stored entity-encoded alt for the read display and edit seed (BR-140)', () => {

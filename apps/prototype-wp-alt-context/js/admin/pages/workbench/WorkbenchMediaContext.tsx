@@ -116,52 +116,49 @@ export const WorkbenchMediaProvider: React.FC<{ children: React.ReactNode }> = (
     // mismatch (complete rows belong there), so no sentence under that filter.
     if (statusFilter === 'missing') {
       // Split arms: ordinary corrections "have alt text"; decorative marks do
-      // not — claiming alt text for them is false [INT-08]. Wording is
-      // _n()-correct per arm; mixed uses a combined-count string. Showing +
-      // reconciliation are joined via a translatable sprintf format so
-      // translators control order and separator [INT-08][WBUX-5-D-04].
+      // not — claiming alt text for them is false [INT-08]. Each arm uses its
+      // own _n() on its own count so plural selection is per-outcome, not a
+      // summed total [INT-08][D-01]. Mixed arms emit two sentences joined via
+      // the same translatable sprintf format as showing + reconciliation.
+      // Showing + reconciliation are joined the same way so translators
+      // control order and separator [INT-08][WBUX-5-D-04].
       const nowHasAlt = mediaItems.filter(
         (item) => item.status === 'complete' && item.isDecorative !== true,
       ).length;
       const markedDecorative = mediaItems.filter(
         (item) => item.status === 'complete' && item.isDecorative === true,
       ).length;
-      const correctedOnPage = nowHasAlt + markedDecorative;
-      if (correctedOnPage > 0) {
-        let reconciliation: string;
-        if (nowHasAlt > 0 && markedDecorative > 0) {
-          // Mixed arms: one _n over the combined count — wording true of both
-          // (avoids dual-count pluralisation).
-          reconciliation = sprintf(
-            _n(
-              '%d now complete and will leave this view when the list next refreshes.',
-              '%d now complete and will leave this view when the list next refreshes.',
-              correctedOnPage,
-              'alt-context',
-            ),
-            correctedOnPage,
-          );
-        } else if (markedDecorative > 0) {
-          reconciliation = sprintf(
-            _n(
-              '%d marked decorative and will leave this view when the list next refreshes.',
-              '%d marked decorative and will leave this view when the list next refreshes.',
-              markedDecorative,
-              'alt-context',
-            ),
-            markedDecorative,
-          );
-        } else {
-          reconciliation = sprintf(
-            _n(
-              '%d now has alt text and will leave this view when the list next refreshes.',
-              '%d now have alt text and will leave this view when the list next refreshes.',
-              nowHasAlt,
-              'alt-context',
-            ),
-            nowHasAlt,
-          );
-        }
+      if (nowHasAlt > 0 || markedDecorative > 0) {
+        const altSentence =
+          nowHasAlt > 0
+            ? sprintf(
+                _n(
+                  '%d now has alt text and will leave this view when the list next refreshes.',
+                  '%d now have alt text and will leave this view when the list next refreshes.',
+                  nowHasAlt,
+                  'alt-context',
+                ),
+                nowHasAlt,
+              )
+            : null;
+        const decorativeSentence =
+          markedDecorative > 0
+            ? sprintf(
+                _n(
+                  '%d is marked decorative and will leave this view when the list next refreshes.',
+                  '%d are marked decorative and will leave this view when the list next refreshes.',
+                  markedDecorative,
+                  'alt-context',
+                ),
+                markedDecorative,
+              )
+            : null;
+        // Mixed: two independent sentences, each with its own _n() count.
+        // translators: 1: alt-text reconciliation sentence; 2: decorative reconciliation sentence.
+        const reconciliation =
+          altSentence && decorativeSentence
+            ? sprintf(__('%1$s %2$s', 'alt-context'), altSentence, decorativeSentence)
+            : (altSentence ?? decorativeSentence ?? '');
         // translators: 1: "Showing N media items." sentence; 2: reconciliation sentence about corrected rows.
         return sprintf(__('%1$s %2$s', 'alt-context'), showing, reconciliation);
       }

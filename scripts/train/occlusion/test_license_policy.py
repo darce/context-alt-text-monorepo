@@ -1623,3 +1623,82 @@ class TestBr53CategoryIndependentFloor:
         row = {"model_id": "rt-detr", "license": "Apache-2.0", "derived_from_model": ""}
         result = policy.audit_provenance_row(row, category=policy.PolicyCategory.MODEL_INGEST)
         assert result.ok is True, f"clean ingest row must still pass: {result.detail}"
+
+
+class TestTaintOutranksLicenseFloor:
+    """GATE-01: the floor must not mask the derived-taint reason.
+
+    Both rules reject, so ok=False cannot discriminate -- only the reason can.
+    Reporting the licence first understates the row: swapping the licence
+    clears that reason while the banned lineage survives.
+    """
+
+    # Trips BOTH the licence floor and the derived_from_model taint.
+    NC_PLUS_DENYLISTED = {
+        "source": "self-generated",
+        "license": "AGPL-3.0",
+        "derived_from_model": "insightface",
+        "clearance": "cleared",
+    }
+    RESEARCH_PLUS_DENYLISTED = {
+        "source": "self-generated",
+        "license": "AGPL-3.0",
+        "derived_from_model": "ffhq",
+        "clearance": "cleared",
+    }
+
+    @pytest.mark.parametrize("category", list(policy.PolicyCategory))
+    def test_nc_derivation_outranks_denylisted_license(self, category) -> None:
+        row = dict(self.NC_PLUS_DENYLISTED)
+        assert policy.match_nc_model_pattern(row["derived_from_model"]) is not None
+        floor = policy._audit_row_licenses(row, category=category, required=False)
+        assert floor.ok is False, "fixture must also trip the licence floor"
+        result = policy.audit_provenance_row(row, category=category)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED, (
+            f"category={category.value} reported {result.reason} -- the licence "
+            "floor is masking the NC lineage, which the licence field cannot clear"
+        )
+
+    @pytest.mark.parametrize("category", list(policy.PolicyCategory))
+    def test_research_derivation_outranks_denylisted_license(self, category) -> None:
+        row = dict(self.RESEARCH_PLUS_DENYLISTED)
+        result = policy.audit_provenance_row(row, category=category)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.RESEARCH_ONLY_SOURCE, (
+            f"category={category.value} reported {result.reason}; research-corpus "
+            "lineage must outrank the licence floor"
+        )
+
+    # TRAINING_DATA is excluded: it structurally requires derived_from_model and
+    # reports invalid_row before the floor is reached (pinned separately below).
+    FLOOR_REACHING_CATEGORIES = [
+        c for c in policy.PolicyCategory if c is not policy.PolicyCategory.TRAINING_DATA
+    ]
+    KEY_ABSENT_DENYLISTED_ROW = {
+        "source": "self-generated",
+        "license": "AGPL-3.0",
+        "clearance": "cleared",
+    }
+
+    @pytest.mark.parametrize("category", FLOOR_REACHING_CATEGORIES)
+    def test_floor_still_runs_when_derived_key_absent(self, category) -> None:
+        # The taint block is guarded by `if "derived_from_model" in row`. Replace
+        # that guard with an early `return None` and the floor is skipped for
+        # key-absent rows -- asserting the exact reason is what catches it,
+        # because other rules also produce ok=False here.
+        row = dict(self.KEY_ABSENT_DENYLISTED_ROW)
+        assert "derived_from_model" not in row
+        result = policy.audit_provenance_row(row, category=category)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_LICENSE, (
+            f"category={category.value} reported {result.reason} instead of the "
+            "licence floor; the floor was skipped for a row with no "
+            "derived_from_model key"
+        )
+
+    def test_training_data_requires_derived_key_before_floor(self) -> None:
+        row = dict(self.KEY_ABSENT_DENYLISTED_ROW)
+        result = policy.audit_provenance_row(row, category=policy.PolicyCategory.TRAINING_DATA)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.INVALID_ROW

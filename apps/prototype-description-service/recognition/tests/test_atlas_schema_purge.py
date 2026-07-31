@@ -1014,30 +1014,208 @@ async def test_atlas_disposition_rejects_cross_run_point_attachment() -> None:
     await engine.dispose()
 
 
-def test_atlas_purge_supporting_indexes_declared_in_schema() -> None:
-    """FIR-9 B4: purge/CASCADE supporting indexes must be declared in 001."""
-    import inspect
+# ---------------------------------------------------------------------------
+# FIR-9 B-02: structural migration↔ORM parity (object graphs, not source text)
+# ---------------------------------------------------------------------------
 
-    source = inspect.getsource(identity_schema.ensure_tables)
-    assert "idx_identity_atlas_points_tenant_identity" in source, (
-        "identity_atlas_points must declare (tenant_id, identity_id) index for purge"
-    )
-    assert "idx_identity_atlas_queue_dispositions_point" in source, (
-        "identity_atlas_queue_dispositions must declare point_id index for CASCADE"
-    )
-    assert '["tenant_id", "identity_id"]' in source or "['tenant_id', 'identity_id']" in source
-    assert '"point_id"' in source or "'point_id'" in source
+
+class _EnsureTablesRecorder:
+    """Recording alembic ``op`` for ``ensure_tables`` — captures declared DDL objects."""
+
+    def __init__(self) -> None:
+        self.table_args: dict[str, tuple[object, ...]] = {}
+        self.indexes: list[tuple[str, str, list[str]]] = []
+
+    def get_bind(self):
+        class _Result:
+            def __init__(self, row):
+                self._row = row
+
+            def scalar(self):
+                return self._row[0] if self._row else None
+
+            def __iter__(self):
+                return iter(())
+
+            def first(self):
+                return self._row
+
+        class _Bind:
+            def execute(self, stmt, params=None):  # noqa: ANN001
+                # Nothing exists → every create_table / create_index is recorded.
+                return _Result(None)
+
+        return _Bind()
+
+    def create_table(self, name: str, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+        self.table_args[name] = args
+
+    def create_index(
+        self, name: str, table_name: str, columns: list[str], *args, **kwargs
+    ) -> None:  # noqa: ANN002, ANN003
+        self.indexes.append((name, table_name, list(columns)))
+
+    def add_column(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+        raise AssertionError("add_column unexpected while recording ensure_tables")
+
+
+def _record_ensure_tables() -> _EnsureTablesRecorder:
+    recorder = _EnsureTablesRecorder()
+    identity_schema.ensure_tables(recorder)
+    return recorder
+
+
+def _named_table_constraints(elements: tuple[object, ...]) -> dict[str, object]:
+    import sqlalchemy as sa
+
+    out: dict[str, object] = {}
+    for el in elements:
+        if isinstance(el, (sa.UniqueConstraint, sa.ForeignKeyConstraint, sa.CheckConstraint)):
+            name = getattr(el, "name", None)
+            if name:
+                out[str(name)] = el
+    return out
+
+
+def _unique_columns(constraint) -> tuple[str, ...]:
+    # Unbound UniqueConstraint (fresh from ensure_tables) keeps names in
+    # _pending_colargs until attached to a Table; bound ORM constraints use .columns.
+    cols = tuple(col.name for col in constraint.columns)
+    if cols:
+        return cols
+    pending = getattr(constraint, "_pending_colargs", None) or ()
+    return tuple(str(c) for c in pending)
+
+
+def _fk_local_columns(constraint) -> tuple[str, ...]:
+    # ForeignKeyConstraint.column_keys is the local side in declaration order.
+    return tuple(constraint.column_keys)
+
+
+def _fk_remote_columns(constraint) -> tuple[str, ...]:
+    return tuple(str(el.target_fullname) for el in constraint.elements)
+
+
+def _fk_ondelete(constraint) -> str | None:
+    # Table-level FK: ondelete lives on the constraint or its elements.
+    ondelete = getattr(constraint, "ondelete", None)
+    if ondelete is not None:
+        return str(ondelete)
+    for el in constraint.elements:
+        if el.ondelete is not None:
+            return str(el.ondelete)
+    return None
+
+
+def _orm_named_constraints(table_name: str) -> dict[str, object]:
+    from db.base import Base
+
+    table = Base.metadata.tables[table_name]
+    out: dict[str, object] = {}
+    for c in table.constraints:
+        name = getattr(c, "name", None)
+        if name:
+            out[str(name)] = c
+    return out
+
+
+def _orm_index_columns(table_name: str) -> dict[str, tuple[str, ...]]:
+    from db.base import Base
+
+    table = Base.metadata.tables[table_name]
+    return {idx.name: tuple(col.name for col in idx.columns) for idx in table.indexes if idx.name}
+
+
+def test_atlas_purge_supporting_indexes_declared_in_schema() -> None:
+    """FIR-9 B4: purge/CASCADE supporting indexes — structural migration↔ORM parity.
+
+    Compares index *objects* captured from ``ensure_tables`` against
+    ``Base.metadata`` indexes for the same tables. Reformatting the migration
+    source cannot green this; removing either side turns it red.
+    """
+    recorder = _record_ensure_tables()
+    mig_indexes = {
+        name: (table, tuple(cols)) for name, table, cols in recorder.indexes
+    }
+
+    required = {
+        "idx_identity_atlas_points_tenant_identity": (
+            "identity_atlas_points",
+            ("tenant_id", "identity_id"),
+        ),
+        "idx_identity_atlas_queue_dispositions_point": (
+            "identity_atlas_queue_dispositions",
+            ("point_id",),
+        ),
+    }
+    for name, (table, cols) in required.items():
+        assert name in mig_indexes, f"migration ensure_tables missing index {name!r}"
+        assert mig_indexes[name] == (table, cols), (
+            f"migration index {name!r} declared as {mig_indexes[name]!r}, expected {(table, cols)!r}"
+        )
+        orm_idx = _orm_index_columns(table)
+        assert name in orm_idx, f"ORM model for {table!r} missing index {name!r}"
+        assert orm_idx[name] == cols, (
+            f"ORM index {name!r} columns {orm_idx[name]!r} != migration {cols!r}"
+        )
 
 
 def test_atlas_disposition_run_matches_point_constraint_declared() -> None:
-    """FIR-9 B3: composite unique + FK forcing disposition.run_id == point.run_id."""
-    import inspect
+    """FIR-9 B3: composite unique + FK — structural migration↔ORM parity.
 
-    source = inspect.getsource(identity_schema.ensure_tables)
-    assert "uq_identity_atlas_points_id_run" in source
-    assert "fk_identity_atlas_dispositions_point_run" in source
-    assert '["point_id", "run_id"]' in source or "['point_id', 'run_id']" in source
-    assert (
-        '["identity_atlas_points.id", "identity_atlas_points.run_id"]' in source
-        or "['identity_atlas_points.id', 'identity_atlas_points.run_id']" in source
-    )
+    Captures ``UniqueConstraint`` / ``ForeignKeyConstraint`` objects from
+    ``ensure_tables`` and compares name, column tuples, and ``ondelete`` to
+    ``Base.metadata``. A comment that still contains the constraint name cannot
+    pass; removing the constraint from either side fails.
+    """
+    import sqlalchemy as sa
+
+    recorder = _record_ensure_tables()
+
+    points_mig = _named_table_constraints(recorder.table_args["identity_atlas_points"])
+    disp_mig = _named_table_constraints(recorder.table_args["identity_atlas_queue_dispositions"])
+    points_orm = _orm_named_constraints("identity_atlas_points")
+    disp_orm = _orm_named_constraints("identity_atlas_queue_dispositions")
+
+    # Composite unique target on points (id, run_id).
+    uq_name = "uq_identity_atlas_points_id_run"
+    assert uq_name in points_mig, "migration must declare composite unique on points"
+    assert uq_name in points_orm, "ORM must declare composite unique on points"
+    assert isinstance(points_mig[uq_name], sa.UniqueConstraint)
+    assert isinstance(points_orm[uq_name], sa.UniqueConstraint)
+    mig_uq_cols = _unique_columns(points_mig[uq_name])
+    orm_uq_cols = _unique_columns(points_orm[uq_name])
+    assert mig_uq_cols == ("id", "run_id"), f"migration unique columns {mig_uq_cols!r}"
+    assert orm_uq_cols == ("id", "run_id"), f"ORM unique columns {orm_uq_cols!r}"
+    assert mig_uq_cols == orm_uq_cols
+
+    # Composite FK on dispositions: (point_id, run_id) → points (id, run_id) ON DELETE CASCADE.
+    fk_name = "fk_identity_atlas_dispositions_point_run"
+    assert fk_name in disp_mig, "migration must declare composite FK on dispositions"
+    assert fk_name in disp_orm, "ORM must declare composite FK on dispositions"
+    assert isinstance(disp_mig[fk_name], sa.ForeignKeyConstraint)
+    assert isinstance(disp_orm[fk_name], sa.ForeignKeyConstraint)
+
+    mig_local = _fk_local_columns(disp_mig[fk_name])
+    orm_local = _fk_local_columns(disp_orm[fk_name])
+    assert mig_local == ("point_id", "run_id"), f"migration FK local cols {mig_local!r}"
+    assert orm_local == ("point_id", "run_id"), f"ORM FK local cols {orm_local!r}"
+    assert mig_local == orm_local
+
+    mig_remote = _fk_remote_columns(disp_mig[fk_name])
+    orm_remote = _fk_remote_columns(disp_orm[fk_name])
+    assert mig_remote == (
+        "identity_atlas_points.id",
+        "identity_atlas_points.run_id",
+    ), f"migration FK remote {mig_remote!r}"
+    assert orm_remote == (
+        "identity_atlas_points.id",
+        "identity_atlas_points.run_id",
+    ), f"ORM FK remote {orm_remote!r}"
+    assert mig_remote == orm_remote
+
+    mig_ondelete = _fk_ondelete(disp_mig[fk_name])
+    orm_ondelete = _fk_ondelete(disp_orm[fk_name])
+    assert mig_ondelete == "CASCADE", f"migration ondelete={mig_ondelete!r}"
+    assert orm_ondelete == "CASCADE", f"ORM ondelete={orm_ondelete!r}"
+    assert mig_ondelete == orm_ondelete

@@ -5,6 +5,8 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from sqlalchemy import ForeignKeyConstraint
+
 from db.models.base_imports import (
     JSON,
     JSONB,
@@ -109,8 +111,13 @@ class IdentityAtlasPoint(Base):
 
     __table_args__ = (
         UniqueConstraint("run_id", "identity_id", name="uq_identity_atlas_points_run_identity"),
+        # Target for composite FK from dispositions: forces disposition.run_id
+        # to match the referenced point's run_id (FIR-9 cross-run attach).
+        UniqueConstraint("id", "run_id", name="uq_identity_atlas_points_id_run"),
         Index("idx_identity_atlas_points_run_queue_rank", "run_id", "queue_rank"),
         Index("idx_identity_atlas_points_tenant", "tenant_id"),
+        # Purge disposed scope filters points on (tenant_id, identity_id).
+        Index("idx_identity_atlas_points_tenant_identity", "tenant_id", "identity_id"),
     )
 
 
@@ -121,9 +128,8 @@ class IdentityAtlasQueueDisposition(Base):
     run_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("identity_atlas_runs.id", ondelete="CASCADE"), nullable=False
     )
-    point_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("identity_atlas_points.id", ondelete="CASCADE"), nullable=False
-    )
+    # Composite FK with run_id (see __table_args__) — not a single-column FK.
+    point_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
     )
@@ -138,11 +144,20 @@ class IdentityAtlasQueueDisposition(Base):
 
     __table_args__ = (
         UniqueConstraint("run_id", "point_id", name="uq_identity_atlas_dispositions_run_point"),
+        # Composite FK: disposition.run_id must equal the point's run_id.
+        ForeignKeyConstraint(
+            ["point_id", "run_id"],
+            ["identity_atlas_points.id", "identity_atlas_points.run_id"],
+            ondelete="CASCADE",
+            name="fk_identity_atlas_dispositions_point_run",
+        ),
         CheckConstraint(
             "action IN ('reviewed', 'skipped')",
             name="valid_atlas_disposition_action",
         ),
         Index("idx_identity_atlas_queue_dispositions_tenant", "tenant_id"),
+        # Point-delete CASCADE looks up dispositions by point_id.
+        Index("idx_identity_atlas_queue_dispositions_point", "point_id"),
     )
 
 

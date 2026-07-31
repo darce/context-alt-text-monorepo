@@ -196,6 +196,50 @@ def _ensure_columns(op, table_name: str, *columns) -> None:
         op.add_column(table_name, column)
 
 
+def _existing_constraint_names(op, table_name: str) -> set[str]:
+    """Named table-level constraints currently present on ``table_name``."""
+    return {
+        str(row[0])
+        for row in op.get_bind().execute(
+            sa.text(
+                "SELECT c.conname FROM pg_constraint c "
+                "JOIN pg_class t ON c.conrelid = t.oid "
+                "JOIN pg_namespace n ON t.relnamespace = n.oid "
+                "WHERE n.nspname = current_schema() AND t.relname = :t"
+            ),
+            {"t": table_name},
+        )
+    }
+
+
+def _ensure_table_constraints(op, table_name: str, *elements) -> None:
+    """Fail loudly when an existing table is missing declared table-level constraints.
+
+    ``_ensure_table`` cannot add UniqueConstraint / ForeignKeyConstraint /
+    CheckConstraint to an already-created table via create_table, and indexes
+    alone would leave a silent partial heal (new indexes land, composite FK
+    and unique targets do not). Greenfield: refuse the mismatch so operators
+    recreate or apply the constraints rather than running with a half-healed
+    schema (FL30-B-01).
+    """
+    declared: list[str] = []
+    for element in elements:
+        if isinstance(element, (sa.UniqueConstraint, sa.ForeignKeyConstraint, sa.CheckConstraint)):
+            name = getattr(element, "name", None)
+            if name:
+                declared.append(str(name))
+    if not declared:
+        return
+    existing = _existing_constraint_names(op, table_name)
+    missing = sorted(name for name in declared if name not in existing)
+    if missing:
+        raise RuntimeError(
+            f"{table_name} exists but is missing table-level constraints {missing}; "
+            "silent partial healing is forbidden — drop and recreate the table or "
+            "apply the constraints manually (operator action)"
+        )
+
+
 def _ensure_table(op, table_name: str, *columns, **kw) -> None:
     relkind = _relkind(op, table_name)
     if relkind is None:
@@ -211,6 +255,9 @@ def _ensure_table(op, table_name: str, *columns, **kw) -> None:
         # Table exists: reconcile additive column drift so an expand-first
         # column added after first creation still lands (MAINT-TPR-01 / PA-03).
         _ensure_columns(op, table_name, *columns)
+        # Table-level constraints are not additive via create_table; detect
+        # and refuse silent partial heals (FL30-B-01 / FIR-9 composite FK).
+        _ensure_table_constraints(op, table_name, *columns)
 
 
 def _ensure_index(op, index_name: str, table_name: str, columns, **kw) -> None:

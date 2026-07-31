@@ -1620,40 +1620,232 @@ def test_run_record_validation_rejects_wrong_identity_element_type():  # A-10
         score_run_record(record, entries)
 
 
-def test_positional_metric_discriminates_swap_from_correct_order():  # A-02
-    """Set-based identification_pr is swap-blind; positional accuracy is not."""
-    from scripts.eval_harness.face_metrics import ImageIdentities, identification_pr, positional_identification
+def test_positional_metric_discriminates_swap_from_correct_order():  # A-02 / FL30A-GATE-01
+    """Set-based identification_pr is swap-blind; positional accuracy is not.
 
-    labeled = ["Cam Left", "Amy Mid", "Zoe Right"]
-    correct = ImageIdentities(image="group.jpg", predicted=list(labeled), labeled=list(labeled))
+    predicted and labeled are independent sequences (not one list copied twice):
+    labeled is L→R as face_boxes would yield; predicted is written separately.
+    Alphabetical present_identities storage must not be used as labeled order.
+    """
+    from scripts.eval_harness.face_metrics import (
+        ImageIdentities,
+        identification_pr,
+        labeled_left_to_right,
+        positional_identification,
+    )
+
+    # Spatial L→R on a 3-person group: Cam, Amy, Zoe. Manifest stores alpha.
+    face_boxes = [
+        _gt_box(0.15, 0.4, 0.2, 0.3, "Cam Left"),
+        _gt_box(0.50, 0.4, 0.2, 0.3, "Amy Mid"),
+        _gt_box(0.85, 0.4, 0.2, 0.3, "Zoe Right"),
+    ]
+    present_alphabetical = ["Amy Mid", "Cam Left", "Zoe Right"]  # draft_labels sort
+    labeled_ltr = labeled_left_to_right(face_boxes)
+    assert labeled_ltr == ["Cam Left", "Amy Mid", "Zoe Right"]
+    assert labeled_ltr != present_alphabetical  # the bug premise
+
+    # Independently written predicted sequences — not list(labeled).
+    predicted_correct = ["Cam Left", "Amy Mid", "Zoe Right"]
+    predicted_swapped = ["Amy Mid", "Cam Left", "Zoe Right"]  # left/mid swap
+
+    correct = ImageIdentities(
+        image="group.jpg",
+        predicted=predicted_correct,
+        labeled=labeled_ltr,
+    )
     swapped = ImageIdentities(
         image="group.jpg",
-        predicted=["Amy Mid", "Cam Left", "Zoe Right"],  # left/mid swap
-        labeled=list(labeled),
+        predicted=predicted_swapped,
+        labeled=labeled_ltr,
     )
-    # Set-based PR is identical for both (A-02 premise).
+    # Using alphabetical labeled (the old call-site bug) would score correct as swap.
+    alpha_wrong = ImageIdentities(
+        image="group.jpg",
+        predicted=predicted_correct,
+        labeled=present_alphabetical,
+    )
+    # Set-based PR is identical for correct and swapped (A-02 premise).
     pr_ok = identification_pr([correct])
     pr_sw = identification_pr([swapped])
     assert pr_ok.precision == pr_sw.precision == 1.0
     assert pr_ok.recall == pr_sw.recall == 1.0
-    # Positional score diverges.
+    # Positional score diverges on genuine swap; perfect L→R is exact.
     pos_ok = positional_identification([correct])
     pos_sw = positional_identification([swapped])
     assert pos_ok.position_accuracy == 1.0
+    assert pos_ok.exact_order_rate == 1.0
+    assert pos_ok.swap_images == 0
     assert pos_sw.position_accuracy == pytest.approx(1 / 3)
-    assert pos_ok.swap_images == 0 and pos_sw.swap_images == 1
+    assert pos_sw.swap_images == 1
     assert pos_ok.position_accuracy != pos_sw.position_accuracy
+    # Prove the old input shape was wrong (TEST-15 discrimination).
+    pos_alpha = positional_identification([alpha_wrong])
+    assert pos_alpha.position_accuracy == pytest.approx(1 / 3)
+    assert pos_alpha.swap_images == 1
+
+
+def test_positional_alphabetical_present_identities_scored_via_face_boxes():  # FL30A-GATE-01
+    """Perfect L→R prediction must score 1.0 even when present_identities is alpha."""
+    record = {
+        "schema": "acx-eval/v1",
+        "kind": "run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "base_url": "https://api.example.com",
+            "head_sha": "0" * 40,
+            "started_at": "2026-07-06T00:00:00Z",
+        },
+        "items": [
+            {
+                "media_id": 1,
+                "path": "mock_images/group.jpg",
+                "describe": {
+                    "alt_text_draft": "Three people stand together.",
+                    "visual_facts": {"caption": "group", "objects": []},
+                    "adapter": "seeded",
+                    "model_id": "seeded-fixtures",
+                    "model_version": "1",
+                    "cached": False,
+                },
+                # Model predicts true L→R: Cam, Amy, Zoe.
+                "identities": [
+                    _dict_identity("Cam Left", x=10.0),
+                    _dict_identity("Amy Mid", x=100.0),
+                    _dict_identity("Zoe Right", x=200.0),
+                ],
+                "face_count": 3,
+                "error": None,
+            },
+        ],
+    }
+    entries = [
+        {
+            "path": "mock_images/group.jpg",
+            "media_id": 1,
+            "face_count": 3,
+            # Alphabetical as draft_labels stores it — NOT L→R.
+            "present_identities": ["Amy Mid", "Cam Left", "Zoe Right"],
+            "must_right": [],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+            "face_boxes": [
+                _gt_box(0.15, 0.4, 0.2, 0.3, "Cam Left"),
+                _gt_box(0.50, 0.4, 0.2, 0.3, "Amy Mid"),
+                _gt_box(0.85, 0.4, 0.2, 0.3, "Zoe Right"),
+            ],
+        },
+    ]
+    scored = score_run_record(record, entries)
+    pos = scored["faces"]["identification"]["positional"]
+    assert pos["position_accuracy"] == 1.0
+    assert pos["exact_order_rate"] == 1.0
+    assert pos["swap_images"] == 0
+    assert pos["compared_images"] == 1
+    assert pos["excluded_images"] == []
+
+
+def test_positional_genuine_swap_still_counted_with_face_boxes():  # FL30A-GATE-01
+    """Adjacent transposition relative to face_boxes is still a swap (not blind)."""
+    record = {
+        "schema": "acx-eval/v1",
+        "kind": "run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "base_url": "https://api.example.com",
+            "head_sha": "0" * 40,
+            "started_at": "2026-07-06T00:00:00Z",
+        },
+        "items": [
+            {
+                "media_id": 1,
+                "path": "mock_images/group.jpg",
+                "describe": {
+                    "alt_text_draft": "Three people stand together.",
+                    "visual_facts": {"caption": "group", "objects": []},
+                    "adapter": "seeded",
+                    "model_id": "seeded-fixtures",
+                    "model_version": "1",
+                    "cached": False,
+                },
+                # Predicted left/mid swap relative to boxes (Cam, Amy, Zoe L→R).
+                "identities": [
+                    _dict_identity("Amy Mid", x=10.0),
+                    _dict_identity("Cam Left", x=100.0),
+                    _dict_identity("Zoe Right", x=200.0),
+                ],
+                "face_count": 3,
+                "error": None,
+            },
+        ],
+    }
+    entries = [
+        {
+            "path": "mock_images/group.jpg",
+            "media_id": 1,
+            "face_count": 3,
+            "present_identities": ["Amy Mid", "Cam Left", "Zoe Right"],
+            "must_right": [],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+            "face_boxes": [
+                _gt_box(0.15, 0.4, 0.2, 0.3, "Cam Left"),
+                _gt_box(0.50, 0.4, 0.2, 0.3, "Amy Mid"),
+                _gt_box(0.85, 0.4, 0.2, 0.3, "Zoe Right"),
+            ],
+        },
+    ]
+    scored = score_run_record(record, entries)
+    pos = scored["faces"]["identification"]["positional"]
+    assert pos["swap_images"] == 1
+    assert pos["position_accuracy"] == pytest.approx(1 / 3)
+    assert pos["exact_order_rate"] == 0.0
+    assert pos["compared_images"] == 1
+
+
+def test_positional_excludes_entries_without_face_boxes():  # FL30A-GATE-01
+    """Legacy entries with no face_boxes are excluded, not compared alphabetically."""
+    record, entries = _identity_scoring_pair()
+    # Confirm fixtures have no face_boxes (legacy shape).
+    assert all(not e.get("face_boxes") for e in entries)
+    scored = score_run_record(record, entries)
+    pos = scored["faces"]["identification"]["positional"]
+    assert pos["compared_images"] == 0
+    assert pos["position_total"] == 0
+    assert pos["swap_images"] == 0
+    assert set(pos["excluded_images"]) == {
+        "mock_images/alice-pool.jpg",
+        "mock_images/bob-beach.jpg",
+    }
+
+
+def test_labeled_left_to_right_dedupes_duplicate_names_leftmost():  # FL30A-GATE-01
+    """Duplicate face_boxes names keep the leftmost occurrence only."""
+    from scripts.eval_harness.face_metrics import labeled_left_to_right
+
+    boxes = [
+        _gt_box(0.7, 0.4, 0.2, 0.3, "Alice"),  # right duplicate
+        _gt_box(0.2, 0.4, 0.2, 0.3, "Alice"),  # leftmost Alice
+        _gt_box(0.5, 0.4, 0.2, 0.3, "Bob"),
+        _gt_box(0.9, 0.4, 0.2, 0.3, None),  # anonymous stranger skipped
+    ]
+    assert labeled_left_to_right(boxes) == ["Alice", "Bob"]
+    assert labeled_left_to_right([]) is None
+    assert labeled_left_to_right(None) is None
 
 
 def test_score_run_record_wires_positional_into_report():  # A-02
-    """Report faces.identification.positional is populated and swap-sensitive."""
+    """Report faces.identification.positional is populated when face_boxes exist."""
     record, entries = _identity_scoring_pair()
-    # Single-name rows: exact order.
+    # Attach face_boxes so positional scoring is enabled (not legacy-excluded).
+    entries[0]["face_boxes"] = [_gt_box(0.4, 0.4, 0.3, 0.3, "Alice Example")]
+    entries[1]["face_boxes"] = [_gt_box(0.4, 0.4, 0.3, 0.3, "Bob Builder")]
     scored = score_run_record(record, entries)
     pos = scored["faces"]["identification"]["positional"]
     assert pos["position_hits"] == 1  # Alice correct; Bob image is wrong name (0 hits of 1)
     assert pos["position_total"] == 2
     assert "exact_order_rate" in pos and "swap_images" in pos
+    assert pos["excluded_images"] == []
 
 
 def test_identity_names_preserves_left_to_right_not_alphabetical():

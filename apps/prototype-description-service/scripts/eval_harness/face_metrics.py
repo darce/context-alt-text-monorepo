@@ -89,6 +89,55 @@ class ImageIdentities:
     labeled: Sequence[str]
     recognition_enabled: bool = True
     stranger_faces: int = 0
+    # False when labeled L→R order cannot be established (legacy entries with
+    # empty/missing face_boxes). Positional scoring excludes these; set-based
+    # identification_pr ignores the flag and still uses ``labeled`` as a set.
+    labeled_order_known: bool = True
+
+
+def labeled_left_to_right(face_boxes: Sequence[Any] | None) -> list[str] | None:
+    """Named identities left-to-right by face-box centre ``x``, or None if unknown.
+
+    ``present_identities`` is stored alphabetically (draft_labels) or in XMP
+    write order (export_identities) — neither is spatial. Curated ``face_boxes``
+    carry centre-point coords; sort named boxes by ``x`` to recover L→R order
+    for the positional metric.
+
+    Returns:
+    - ``None`` when ``face_boxes`` is missing/empty — order cannot be
+      established; the image must be excluded from positional scoring (never
+      fall back to stored ``present_identities`` order).
+    - Ordered unique names when boxes are present. Anonymous boxes (``name``
+      None/empty) are skipped. **Duplicate names keep the leftmost occurrence
+      only** so the sequence cardinality matches what ``predicted`` can hold
+      (one slot per distinct identity, as ``present_identities`` is a set-like
+      list). Later same-name boxes are ignored, not multi-counted.
+    """
+    if not face_boxes:
+        return None
+    named: list[tuple[float, str]] = []
+    for box in face_boxes:
+        if isinstance(box, Mapping):
+            name = box.get("name")
+            x = box.get("x")
+        else:
+            name = getattr(box, "name", None)
+            x = getattr(box, "x", None)
+        if name is None or name == "":
+            continue
+        if x is None:
+            continue
+        named.append((float(x), str(name)))
+    # Boxes present but none named (all strangers): established empty order.
+    named.sort(key=lambda t: t[0])
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for _, name in named:
+        if name in seen:
+            continue  # leftmost wins for duplicates
+        seen.add(name)
+        ordered.append(name)
+    return ordered
 
 
 def _ratio(numerator: int, denominator: int) -> float | None:
@@ -241,15 +290,18 @@ class PositionalIdResult:
 def positional_identification(items: Sequence[ImageIdentities]) -> PositionalIdResult:
     """Score predicted vs labeled name sequences left-to-right (order-sensitive).
 
-    For each recognition-enabled image, pad the shorter sequence with ``None``
-    and count position-wise equality. An image whose predicted multiset equals
-    the labeled multiset but whose order differs is counted as a ``swap_image``.
-    Empty/empty images are skipped (nothing to order).
+    For each recognition-enabled image with known labeled order, pad the shorter
+    sequence with ``None`` and count position-wise equality. An image whose
+    predicted multiset equals the labeled multiset but whose order differs is
+    counted as a ``swap_image``. Empty/empty images are skipped (nothing to
+    order). Images with ``recognition_enabled=False`` or
+    ``labeled_order_known=False`` (no face_boxes to establish L→R) are listed
+    in ``excluded_images`` and never compared in stored alphabetical order.
     """
     hits = total = exact = compared = swaps = 0
     excluded: list[str] = []
     for item in items:
-        if not item.recognition_enabled:
+        if not item.recognition_enabled or not item.labeled_order_known:
             excluded.append(item.image)
             continue
         predicted = list(item.predicted)

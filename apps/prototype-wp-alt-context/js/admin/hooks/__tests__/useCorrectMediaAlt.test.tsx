@@ -540,18 +540,20 @@ describe('useCorrectMediaAlt', () => {
     expect(row?.isDecorative).toBe(false);
   });
 
-  it('empty non-decorative correction uses server is_decorative true [WBUX-5-D-01][A-03]', async () => {
+  it('empty non-decorative correction uses server is_decorative true [WBUX-5-D-01][A-03][TEST-15]', async () => {
     // Two-click repro: Edit→Save blank on a decorative row posts alt_text:'' with
     // no decorative flag. Server still has the marker — is_decorative:true on the
     // success envelope is the only honest source [A-03][rg-015].
+    // Seed prior FALSE so sticky `decorative || prior` and collapsed
+    // `decorative === true` both leave false — only reading server flips true.
     correctMock.mockResolvedValue(successHistoryItem(42, '', 'Bridge', true));
     const client = buildClient();
     const page = seedWorkbench(client, null, { total: 4, totalPages: 1 });
     page.items[0] = {
       ...page.items[0],
       altText: null,
-      status: 'complete',
-      isDecorative: true,
+      status: 'missing',
+      isDecorative: false,
     };
     client.setQueryData(missingPageKey, page);
     const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
@@ -566,17 +568,18 @@ describe('useCorrectMediaAlt', () => {
     expect(row?.status).toBe('complete');
   });
 
-  it('whitespace-only non-decorative correction uses server is_decorative true [C-02][rg-015][A-03]', async () => {
+  it('whitespace-only non-decorative correction uses server is_decorative true [C-02][rg-015][A-03][TEST-15]', async () => {
     // Server rule: '' !== trim($alt_text). Whitespace-only is empty for has_alt and
     // preserves a prior decorative marker — server reports is_decorative:true.
+    // Prior false: sticky/collapsed client re-derive cannot invent true [TEST-15].
     correctMock.mockResolvedValue(successHistoryItem(42, '   ', 'Bridge', true));
     const client = buildClient();
     const page = seedWorkbench(client, null, { total: 4, totalPages: 1 });
     page.items[0] = {
       ...page.items[0],
       altText: null,
-      status: 'complete',
-      isDecorative: true,
+      status: 'missing',
+      isDecorative: false,
     };
     client.setQueryData(missingPageKey, page);
     const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
@@ -591,14 +594,15 @@ describe('useCorrectMediaAlt', () => {
     expect(row?.status).toBe('complete');
   });
 
-  it('PARTIAL non-empty stored alt clears prior isDecorative true [WBUX-5-R3-01][WBUX-5-R2-02][A-03]', async () => {
-    // Server clears the marker on verified non-empty alt even when human-edit
-    // fails (PARTIAL) and reports is_decorative:false. Seed true so omit fails.
+  it('PARTIAL non-empty stored alt follows server is_decorative over client re-derive [WBUX-5-R3-01][A-03][TEST-15]', async () => {
+    // Clear-failed PARTIAL can report non-empty stored alt with is_decorative:true
+    // (marker survived). Client "non-empty → clear marker" would set false; sticky
+    // prior false stays false. Only server truth flips true.
     correctMock.mockRejectedValueOnce(
       partialError(PARTIAL_MESSAGE, {
         status: 500,
         stored_alt_text: 'Partial-saved alt',
-        is_decorative: false,
+        is_decorative: true,
       }),
     );
     const client = buildClient();
@@ -606,8 +610,8 @@ describe('useCorrectMediaAlt', () => {
     page.items[0] = {
       ...page.items[0],
       altText: null,
-      status: 'complete',
-      isDecorative: true,
+      status: 'missing',
+      isDecorative: false,
     };
     client.setQueryData(missingPageKey, page);
     const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
@@ -619,7 +623,7 @@ describe('useCorrectMediaAlt', () => {
     const row = cached?.items.find((item) => item.id === 42);
     expect(row?.altText).toBe('Partial-saved alt');
     expect(row?.status).toBe('complete');
-    expect(row?.isDecorative).toBe(false);
+    expect(row?.isDecorative).toBe(true);
   });
 
   it('cache patch follows server is_decorative even when it contradicts request intent [A-03][TEST-15]', async () => {

@@ -823,6 +823,45 @@ describe('DescriptionHistoryPage', () => {
     expect(textarea).toHaveValue('Partial-saved bridge alt.');
   });
 
+  it('PARTIAL patches history cache is_decorative from server when present [A-03][rg-015][TEST-15]', async () => {
+    // Production spreads is_decorative onto the history row when the PARTIAL
+    // payload carries it. Without this pin the suite stayed green if that
+    // spread were dropped. Seed false; server true is the only way the row flips.
+    const partialMessage =
+      'Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.';
+    correctHistoryMock.mockRejectedValueOnce(
+      new Error(
+        `Request to /correction failed (500): ${JSON.stringify({
+          code: 'description_correction_partial',
+          message: partialMessage,
+          data: {
+            status: 500,
+            stored_alt_text: 'Partial-saved bridge alt.',
+            is_decorative: true,
+          },
+        })}`,
+      ),
+    );
+
+    const queryClient = buildClient();
+    renderPage(['/description-history'], queryClient);
+
+    const textarea = await screen.findByLabelText('Alt text correction for Bridge');
+    fireEvent.change(textarea, { target: { value: 'Partial-saved bridge alt.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save correction for Bridge' }));
+
+    await screen.findByRole('alert');
+
+    await waitFor(() => {
+      const history = queryClient.getQueryData<{
+        items: DescriptionHistoryItem[];
+      }>(['description-history']);
+      const row = history?.items.find((item) => item.media_id === 42);
+      expect(row?.current_alt_text).toBe('Partial-saved bridge alt.');
+      expect(row?.is_decorative).toBe(true);
+    });
+  });
+
   it('patches Current alt text with server stored_alt_text when it differs from the request [S1][rg-015]', async () => {
     // Decisive fixture: submitted text differs from what storage holds.
     const submitted = '  <em>Sunset</em> over the bay  ';

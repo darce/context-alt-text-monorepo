@@ -2637,6 +2637,85 @@ describe('MediaAltSuggest', () => {
     expect(correctMock).toHaveBeenCalledWith(42, '', { decorative: false });
   });
 
+  it('un-mark with a real committedAlt preserves that alt in the request [data-loss][TEST-15]', async () => {
+    // Precondition: a row can hold non-empty alt AND isDecorative true (server
+    // partial-failure / existing PHP fixture). Un-mark must clear the marker
+    // only — not blank the description. Against current code this fails with
+    // altText: '' because toggleDecorative always sends empty alt on both arms.
+    const committed = 'A stone bridge over a calm river at dusk.';
+    correctMock.mockResolvedValue(sampleHistoryItem(committed, false));
+    renderSuggest(
+      <MediaAltSuggest isDecorative={true} mediaId={42} committedAlt={committed} />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: UNMARK_DECORATIVE_LABEL }));
+
+    await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
+    expect(correctMock).toHaveBeenCalledWith(42, committed, { decorative: false });
+  });
+
+  it('surfaces un-mark failure on the assertive channel and returns focus to the control [A-02][A11Y-11]', async () => {
+    // Success path is covered; onError for un-mark was unpinned — alert copy
+    // and focus restore both untested. Mirror the mark-failure pattern.
+    correctMock.mockImplementation(() =>
+      Promise.reject(
+        new Error(
+          'Request to .../correction failed (500): {"code":"description_correction_failed","message":"Could not clear the decorative marker.","data":{"status":500}}',
+        ),
+      ),
+    );
+    renderSuggest(<MediaAltSuggest isDecorative={true} mediaId={42} committedAlt={null} />);
+
+    const unmarkBtn = screen.getByRole('button', { name: UNMARK_DECORATIVE_LABEL });
+    unmarkBtn.focus();
+    fireEvent.click(unmarkBtn);
+    parkFocusOnBody();
+
+    await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
+    const alert = await screen.findByRole('alert');
+    // Prefer server message when structured; fallback is un-mark-specific.
+    expect(alert).toHaveTextContent(/could not clear the decorative marker/i);
+    expect(
+      screen.getByRole('button', { name: UNMARK_DECORATIVE_LABEL }),
+    ).toHaveFocus();
+  });
+
+  it('keeps the un-mark busy label when isDecorative flips mid-flight [A11Y-02][TEST-15]', async () => {
+    // toggleDecorative captures direction for announceStatus, but busy button /
+    // host labels read live isDecorative. A cache patch (or parent re-render)
+    // can flip the prop while isMarkingDecorative is still true — AT then hears
+    // the opposite operation. Hold the mutation pending and flip the prop.
+    let resolveCorrect!: (value: DescriptionHistoryItem) => void;
+    correctMock.mockReturnValue(
+      new Promise<DescriptionHistoryItem>((resolve) => {
+        resolveCorrect = resolve;
+      }),
+    );
+    const client = buildClient();
+    const { rerender } = renderSuggest(
+      <MediaAltSuggest isDecorative={true} mediaId={42} committedAlt={null} />,
+      client,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: UNMARK_DECORATIVE_LABEL }));
+    expect(await screen.findByRole('button', { name: /removing decorative mark/i })).toBeDisabled();
+
+    // Mid-flight: parent re-renders with isDecorative false (success-path cache
+    // patch shape) while the local busy flag is still set.
+    rerender(
+      <QueryClientProvider client={client}>
+        <MediaAltSuggest isDecorative={false} mediaId={42} committedAlt={null} />
+      </QueryClientProvider>,
+    );
+
+    // [TEST-15]: live-prop labels flip to "Marking as decorative…" — wrong direction.
+    expect(screen.getByRole('button', { name: /removing decorative mark/i })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /marking as decorative/i })).not.toBeInTheDocument();
+
+    resolveCorrect(sampleHistoryItem('', false));
+    await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
+  });
+
   it('announces un-mark success pointing at the missing-alt to-do list [A-02][INT-06]', async () => {
     correctMock.mockResolvedValue(sampleHistoryItem('', false));
     renderSuggest(<MediaAltSuggest isDecorative={true} mediaId={42} committedAlt={null} />);

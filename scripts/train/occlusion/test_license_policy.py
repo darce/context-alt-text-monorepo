@@ -10,7 +10,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -1582,7 +1582,9 @@ class TestBr64ResearchCorpusDerivedFromModel:
 class TestBr53CategoryIndependentFloor:
     """BR-53: a caller must not escape the floor by picking a weaker category."""
 
-    DENYLISTED_LICENSE_ROW = {"model_id": "yunet", "source": "insightface", "license": "AGPL-3.0"}
+    # `source` must stay taint-free: an NC/research source outranks the licence
+    # floor (BR-53 source axis), which would mask the reason this class pins.
+    DENYLISTED_LICENSE_ROW = {"model_id": "yunet", "source": "self-generated", "license": "AGPL-3.0"}
     CLEARED_SYNTHETIC_ROW = {"source": "dcface", "license": "AGPL-3.0", "derived_from_model": ""}
 
     @pytest.mark.parametrize("category", list(policy.PolicyCategory))
@@ -1622,6 +1624,135 @@ class TestBr53CategoryIndependentFloor:
         # Guards against a blanket-reject "fix" that would make the floor vacuous.
         row = {"model_id": "rt-detr", "license": "Apache-2.0", "derived_from_model": ""}
         result = policy.audit_provenance_row(row, category=policy.PolicyCategory.MODEL_INGEST)
+        assert result.ok is True, f"clean ingest row must still pass: {result.detail}"
+
+
+class TestBr53SourceAxisClosedOnEveryDoor:
+    """BR-53 (source axis): the leaky half the licence fix did not cover.
+
+    At d243436c ``tooling`` and ``model_ingest`` PASSed a row carrying
+    ``source: insightface`` outright, while ``training_data`` rejected it --
+    a caller picking the weaker door bypassed the NC gate entirely.
+
+    Asserting only ``ok is False`` cannot prove this is closed. At d243436c the
+    research row failed ``tooling`` with ``unknown_source``, ``model_ingest``
+    with ``missing_ingest_entry`` and ``occluder_asset`` with
+    ``uncleared_occluder_asset`` -- three doors that never examined ``source``
+    at all, yet looked green. Each door's exact reason is pinned so an
+    incidental rejection cannot masquerade as the gate holding (TEST-17).
+    """
+
+    # Carries the key each door dispatches on, so every door reaches its own
+    # gate rather than dying early on a missing field.
+    def _row(self, source: str) -> dict:
+        return {
+            "model_id": "rt-detr",
+            "package": "numba",
+            "source": source,
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+            "clearance": "cleared",
+        }
+
+    # SYNTHETIC_SOURCE reports its own more specific reason; covered separately.
+    TAINT_REPORTING_DOORS: ClassVar[list] = [
+        c for c in policy.PolicyCategory if c is not policy.PolicyCategory.SYNTHETIC_SOURCE
+    ]
+
+    @pytest.mark.parametrize("category", TAINT_REPORTING_DOORS)
+    def test_nc_source_reason_is_exact_on_every_door(self, category) -> None:
+        result = policy.audit_provenance_row(self._row("insightface"), category=category)
+        assert result.ok is False, f"{category.value} PASSed an NC source"
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED, (
+            f"{category.value} rejected for {result.reason} rather than the NC "
+            "source; an incidental rejection leaves the bypass open"
+        )
+
+    @pytest.mark.parametrize("category", TAINT_REPORTING_DOORS)
+    def test_research_source_reason_is_exact_on_every_door(self, category) -> None:
+        result = policy.audit_provenance_row(self._row("ffhq"), category=category)
+        assert result.ok is False, f"{category.value} PASSed a research-only source"
+        assert result.reason is policy.RejectionReason.RESEARCH_ONLY_SOURCE, (
+            f"{category.value} rejected for {result.reason} rather than the "
+            "research-only source"
+        )
+
+    @pytest.mark.parametrize("category", TAINT_REPORTING_DOORS)
+    def test_confusable_nc_source_fails_closed_on_every_door(self, category) -> None:
+        # Reusing audit_source carries its NFKC/Cf check to doors that never had
+        # one: a Cyrillic-i 'insightface' must fail closed, not launder.
+        result = policy.audit_provenance_row(self._row("іnsightface"), category=category)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.INVALID_ROW, (
+            f"{category.value} accepted a confusable NC source as {result.reason}"
+        )
+
+    def test_synthetic_door_keeps_its_more_specific_reason(self) -> None:
+        # The floor exempts SYNTHETIC_SOURCE so the door reports the actionable
+        # clearance reason. The verdict must still be a rejection.
+        result = policy.audit_provenance_row(
+            self._row("insightface"), category=policy.PolicyCategory.SYNTHETIC_SOURCE
+        )
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+
+    def test_synthetic_exemption_cannot_pass_a_tainted_source(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The exemption is only safe because any PASS from the door is
+        # re-checked. Register a commercially ALLOWED synthetic entry whose id
+        # is NC by pattern: the door admits it, the backstop must not.
+        entry = policy.SyntheticSourceEntry(
+            source_id="arcface",
+            verification=policy.VerificationMetadata(
+                spdx_id="Apache-2.0",
+                commercial_use=policy.CommercialUse.ALLOWED,
+                verified_at="2026-07-31",
+                clearance_decision="test_clearance_20260731",
+                notes="test-only: ALLOWED entry that is also NC by pattern",
+            ),
+        )
+        new_entries = dict(policy.SYNTHETIC_SOURCE_ENTRIES)
+        new_entries["arcface"] = entry
+        monkeypatch.setattr(policy, "SYNTHETIC_SOURCE_ENTRIES", new_entries)
+        # Rebuild the import-time resolution maps the same way production does;
+        # patching the dict alone leaves the head map stale.
+        monkeypatch.setattr(
+            policy,
+            "SYNTHETIC_SOURCE_IDS_EXPANDED",
+            policy._expand_ids(frozenset(new_entries.keys())),
+        )
+        head_map: dict[str, str] = {}
+        for key in new_entries:
+            canon = policy.canonical(key)
+            if canon is None:
+                continue
+            for form in policy._expand_id_forms(canon, exact_only=False):
+                head_map.setdefault(form, canon)
+        monkeypatch.setattr(policy, "_SYNTHETIC_EXPANDED_TO_HEAD", head_map)
+
+        door = policy.audit_synthetic_source(
+            "arcface", row_clearance="test_clearance_20260731"
+        )
+        assert door.ok is True, (
+            "precondition: the door itself must admit this id, otherwise the "
+            f"backstop is never exercised and this test is vacuous ({door.detail})"
+        )
+
+        row = self._row("arcface")
+        row["clearance"] = "test_clearance_20260731"
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.SYNTHETIC_SOURCE
+        )
+        assert result.ok is False, "backstop did not re-check a door PASS"
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    def test_clean_source_still_passes_every_door_that_admits_it(self) -> None:
+        # Guards against a blanket-reject "fix" that would make the floor vacuous.
+        row = {"model_id": "rt-detr", "license": "Apache-2.0", "derived_from_model": ""}
+        result = policy.audit_provenance_row(
+            dict(row), category=policy.PolicyCategory.MODEL_INGEST
+        )
         assert result.ok is True, f"clean ingest row must still pass: {result.detail}"
 
 

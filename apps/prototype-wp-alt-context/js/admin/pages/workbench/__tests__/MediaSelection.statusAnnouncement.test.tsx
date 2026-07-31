@@ -26,6 +26,8 @@ const STATUS_SENTENCE =
 
 /** Mutable statusMessage the WorkbenchMediaContext mock reads each render. */
 let mockStatusMessage = STATUS_SENTENCE;
+/** Mutable isStatusPending — gate for transient suppression [sr-007]. */
+let mockIsStatusPending = false;
 
 vi.mock('../WorkbenchMediaContext', () => ({
   useWorkbenchMediaContext: () => ({
@@ -108,6 +110,9 @@ vi.mock('../WorkbenchMediaContext', () => ({
       },
       get statusMessage() {
         return mockStatusMessage;
+      },
+      get isStatusPending() {
+        return mockIsStatusPending;
       },
       detailTruncationNotice: null,
       hasIdentities: false,
@@ -193,6 +198,7 @@ describe('MediaSelection toolbar status announcement [WBUX-5-D-02][B-01][B-02]',
     vi.clearAllMocks();
     vi.useFakeTimers();
     mockStatusMessage = STATUS_SENTENCE;
+    mockIsStatusPending = false;
   });
 
   afterEach(() => {
@@ -225,17 +231,19 @@ describe('MediaSelection toolbar status announcement [WBUX-5-D-02][B-01][B-02]',
     // checks stay green under both implementations [TEST-15].
     const snapshots: string[] = [];
 
-    // Rapid keystroke-driven message storm (Updating… interleaved with settled).
-    const rapid = [
-      'Updating media queue…',
-      'Showing 1 media item.',
-      'Updating media queue…',
-      'Showing 2 media items.',
-      'Updating media queue…',
-      'Showing 3 media items.',
+    // Rapid keystroke-driven message storm (pending interleaved with settled).
+    // Pending flag (not message copy) drives suppression [sr-007].
+    const rapid: { msg: string; pending: boolean }[] = [
+      { msg: 'Updating media queue…', pending: true },
+      { msg: 'Showing 1 media item.', pending: false },
+      { msg: 'Updating media queue…', pending: true },
+      { msg: 'Showing 2 media items.', pending: false },
+      { msg: 'Updating media queue…', pending: true },
+      { msg: 'Showing 3 media items.', pending: false },
     ];
-    for (const msg of rapid) {
+    for (const { msg, pending } of rapid) {
       mockStatusMessage = msg;
+      mockIsStatusPending = pending;
       rerenderSelection(view);
       act(() => {
         vi.advanceTimersByTime(200);
@@ -260,6 +268,7 @@ describe('MediaSelection toolbar status announcement [WBUX-5-D-02][B-01][B-02]',
 
   it('never announces the transient Updating media queue… message [B-01]', () => {
     mockStatusMessage = 'Updating media queue…';
+    mockIsStatusPending = true;
     renderSelection();
     const live = screen.getByTestId('media-selection-toolbar-live-status');
 
@@ -270,6 +279,28 @@ describe('MediaSelection toolbar status announcement [WBUX-5-D-02][B-01][B-02]',
     // Visual still shows the transient copy.
     const visual = document.querySelector('.acx-media-selection__status [aria-hidden="true"]');
     expect(visual?.textContent).toBe('Updating media queue…');
+  });
+
+  /**
+   * Discriminator for "gate on isStatusPending" vs "string-equal English copy".
+   * A copy edit in WorkbenchMediaContext must not silently re-enable thrash;
+   * the boolean is the contract [sr-007][TEST-17].
+   */
+  it('suppresses announcement when isStatusPending even if message copy differs [CO-02]', () => {
+    // Deliberately NOT the English "Updating media queue…" literal — if the
+    // toolbar still compared display strings, this case would announce.
+    mockStatusMessage = 'Queue is refreshing — please wait.';
+    mockIsStatusPending = true;
+    renderSelection();
+    const live = screen.getByTestId('media-selection-toolbar-live-status');
+
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+    expect(live.textContent).toBe('');
+    // Visual still shows whatever copy the context emitted.
+    const visual = document.querySelector('.acx-media-selection__status [aria-hidden="true"]');
+    expect(visual?.textContent).toBe('Queue is refreshing — please wait.');
   });
 
   it('row owns per-correction success; toolbar live region does not carry it [B-02]', () => {

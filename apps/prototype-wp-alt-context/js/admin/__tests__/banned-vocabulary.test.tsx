@@ -416,6 +416,7 @@ vi.mock('../pages/workbench/WorkbenchMediaContext', () => {
       // 'Showing 1 media item.' and hasIdentities true. Leaving the empty-queue values
       // here would publish a queue that contradicts its own row.
       statusMessage: 'Showing 1 media item.',
+      isStatusPending: false,
       detailTruncationNotice: null,
       hasIdentities: true,
     },

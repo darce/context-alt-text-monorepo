@@ -425,8 +425,10 @@ describe('useCorrectMediaAlt', () => {
     assertEnvelopeHonest(cached, 5, 2);
   });
 
-  it('PARTIAL path never sets isDecorative even when the request was decorative [WBUX-5]', async () => {
-    // Marker was not stored — isDecorative must stay false (asymmetry with onSuccess).
+  it('PARTIAL path never plants isDecorative when prior was false even if request was decorative [WBUX-5]', async () => {
+    // Marker was not stored this write. Seed false so a sticky
+    // `decorative || prior` patch cannot hide the bug; empty PARTIAL must not
+    // invent isDecorative:true from request intent alone [WBUX-5-R2-02].
     correctMock.mockRejectedValueOnce(
       partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: '' }),
     );
@@ -443,6 +445,113 @@ describe('useCorrectMediaAlt', () => {
     const row = cached?.items.find((item) => item.id === 42);
     expect(row?.altText).toBeNull();
     expect(row?.status).toBe('missing');
+    expect(row?.isDecorative).toBe(false);
+  });
+
+  it('PARTIAL decorative with prior isDecorative true does not hard-clear the marker [WBUX-5-R2-02][WBUX-5-D-01]', async () => {
+    // Seed true so hard-writing isDecorative:false (request decorative omitted on
+    // PARTIAL) fails — prior marker still on disk; empty stored alt must preserve.
+    // Also fails if status is derived from alt alone (would become missing).
+    correctMock.mockRejectedValueOnce(
+      partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: '' }),
+    );
+    const client = buildClient();
+    const page = seedWorkbench(client, null, { total: 3, totalPages: 1 });
+    page.items[0] = {
+      ...page.items[0],
+      status: 'complete',
+      altText: null,
+      isDecorative: true,
+    };
+    client.setQueryData(missingPageKey, page);
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+
+    result.current.mutate({ mediaId: 42, altText: '', decorative: true });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    const cached = client.getQueryData<WorkbenchMediaResponse>(missingPageKey);
+    const row = cached?.items.find((item) => item.id === 42);
+    expect(row?.altText).toBeNull();
+    expect(row?.isDecorative).toBe(true);
+    expect(row?.status).toBe('complete');
+  });
+
+  it('non-empty non-decorative correction clears a prior isDecorative true [WBUX-5-D-01][WBUX-5-R2-02]', async () => {
+    // Kills sticky `decorative || item.isDecorative` — describing a decorative
+    // image must flip isDecorative false and status complete with alt set.
+    correctMock.mockResolvedValue(successHistoryItem(42, 'Now described', 'Bridge'));
+    const client = buildClient();
+    const page = seedWorkbench(client, null, { total: 5, totalPages: 2 });
+    page.items[0] = {
+      ...page.items[0],
+      altText: null,
+      status: 'complete',
+      isDecorative: true,
+    };
+    client.setQueryData(missingPageKey, page);
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+
+    result.current.mutate({ mediaId: 42, altText: 'Now described' });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const cached = client.getQueryData<WorkbenchMediaResponse>(missingPageKey);
+    const row = cached?.items.find((item) => item.id === 42);
+    expect(row?.altText).toBe('Now described');
+    expect(row?.status).toBe('complete');
+    expect(row?.isDecorative).toBe(false);
+  });
+
+  it('empty non-decorative correction preserves prior isDecorative true [WBUX-5-D-01]', async () => {
+    // Two-click repro: Edit→Save blank on a decorative row posts alt_text:'' with
+    // no decorative flag. Hard-writing isDecorative:false desyncs cache from the
+    // server marker and drops reconciliation / title-fallback alt. Preserve prior.
+    correctMock.mockResolvedValue(successHistoryItem(42, '', 'Bridge'));
+    const client = buildClient();
+    const page = seedWorkbench(client, null, { total: 4, totalPages: 1 });
+    page.items[0] = {
+      ...page.items[0],
+      altText: null,
+      status: 'complete',
+      isDecorative: true,
+    };
+    client.setQueryData(missingPageKey, page);
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+
+    result.current.mutate({ mediaId: 42, altText: '' });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const cached = client.getQueryData<WorkbenchMediaResponse>(missingPageKey);
+    const row = cached?.items.find((item) => item.id === 42);
+    expect(row?.altText).toBeNull();
+    expect(row?.isDecorative).toBe(true);
+    expect(row?.status).toBe('complete');
+  });
+
+  it('PARTIAL non-empty stored alt clears prior isDecorative true [WBUX-5-R3-01][WBUX-5-R2-02]', async () => {
+    // Server clears the marker on verified non-empty alt even when human-edit
+    // fails (PARTIAL). Omitting isDecorative from the patch would leave true and
+    // pass a seed-false assertion — seed true so omit fails [TEST-15].
+    correctMock.mockRejectedValueOnce(
+      partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: 'Partial-saved alt' }),
+    );
+    const client = buildClient();
+    const page = seedWorkbench(client, null, { total: 6, totalPages: 2 });
+    page.items[0] = {
+      ...page.items[0],
+      altText: null,
+      status: 'complete',
+      isDecorative: true,
+    };
+    client.setQueryData(missingPageKey, page);
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+
+    result.current.mutate({ mediaId: 42, altText: 'Partial-saved alt' });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    const cached = client.getQueryData<WorkbenchMediaResponse>(missingPageKey);
+    const row = cached?.items.find((item) => item.id === 42);
+    expect(row?.altText).toBe('Partial-saved alt');
+    expect(row?.status).toBe('complete');
     expect(row?.isDecorative).toBe(false);
   });
 

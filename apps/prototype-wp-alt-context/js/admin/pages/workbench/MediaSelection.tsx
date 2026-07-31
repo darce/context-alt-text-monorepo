@@ -292,7 +292,9 @@ const MediaSelectionToolbar = ({
     </div>
 
     <div className="acx-media-selection__toolbar-actions">
-      <span className="acx-media-selection__status">{statusMessage}</span>
+      <span className="acx-media-selection__status" role="status">
+        {statusMessage}
+      </span>
       {isError && onRetry && (
         <button type="button" className="acx-media-selection__retry" onClick={onRetry}>
           {__('Retry', 'alt-context')}

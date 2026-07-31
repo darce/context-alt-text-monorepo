@@ -219,9 +219,12 @@ export const IdentityThumbnail = ({
     // expose role=img + aria-label. Decorative alt="" stays aria-hidden.
     // Genuinely-missing media keeps aria-hidden + data-face-missing unchanged.
     //
-    // When onClick is provided, use a native <button> so the crop-pending window
-    // honours the same click/keyboard contract as the resolved <img> path
-    // [S3-BR-04] [A11Y-11] [A11Y-12].
+    // When onClick is provided *and* the placeholder is a named pending-crop
+    // (sole content of a wrapping control contract), use a native <button> so
+    // it honours the same click/keyboard path as the resolved <img> [S3-BR-04]
+    // [A11Y-11] [A11Y-12]. Decorative alt="" and genuinely-missing media must
+    // NOT be buttons: an aria-hidden control that still fires onClick violates
+    // keyboard operability and name/role/value [WBUX-5-D-03] [A11Y-04].
     const pendingCrop = needsCanvasCrop && !croppedSrc;
     const namedPending = pendingCrop && resolvedAlt !== '';
     const boxStyle: React.CSSProperties = {
@@ -231,21 +234,15 @@ export const IdentityThumbnail = ({
       verticalAlign: 'middle',
       flexShrink: 0,
     };
-    if (onClick) {
-      // Mirror the non-onClick branch: only a named pending-crop placeholder is
-      // announced and tabbable. Decorative alt="" and genuinely-missing media
-      // stay aria-hidden so we never ship an unnamed focusable button [A11Y-04].
+    if (onClick && namedPending) {
       return (
         <span ref={hostRef} style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}>
           <button
             type="button"
             className="acx-cluster-card__face--placeholder"
             onClick={onClick}
-            aria-label={namedPending ? resolvedAlt : undefined}
-            aria-hidden={namedPending ? undefined : 'true'}
-            tabIndex={namedPending ? undefined : -1}
-            data-face-missing={pendingCrop ? undefined : 'true'}
-            data-face-pending={pendingCrop ? 'true' : undefined}
+            aria-label={resolvedAlt}
+            data-face-pending="true"
             style={{
               ...boxStyle,
               border: 'none',
@@ -258,6 +255,8 @@ export const IdentityThumbnail = ({
         </span>
       );
     }
+    // Non-interactive placeholder: decorative, genuinely-missing, or pending
+    // crop without onClick. Same markup either way — never a hidden button.
     return (
       <span ref={hostRef} style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}>
         <div

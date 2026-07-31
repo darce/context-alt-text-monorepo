@@ -1,4 +1,4 @@
-import { __ } from '@wordpress/i18n';
+import { __, sprintf } from '@wordpress/i18n';
 import { useEffect, useId, useRef, useState } from 'react';
 
 import {
@@ -13,6 +13,11 @@ import { decodeHtmlEntities } from '../../utils/decodeHtmlEntities';
 export interface MediaAltInlineEditorProps {
   mediaId: number;
   altText: string | null;
+  /**
+   * Row media title for the edit control's accessible name so AT element
+   * lists can tell which image each "Edit alt text" belongs to [A11Y-04].
+   */
+  title?: string;
   /**
    * True when the row carries the durable decorative marker. Idle label must
    * not read "No alt text yet" for a deliberate decorative mark [A11Y-02].
@@ -70,6 +75,7 @@ export const DECORATIVE_IDLE_LABEL = __(
 export const MediaAltInlineEditor = ({
   mediaId,
   altText,
+  title,
   isDecorative = false,
   onPoliteAnnounce,
   onPoliteClear,
@@ -308,6 +314,11 @@ export const MediaAltInlineEditor = ({
             ref={editButtonRef}
             className="button button-link acx-media-selection__media-alt-edit"
             onClick={enterEditMode}
+            aria-label={
+              title
+                ? sprintf(__('Edit alt text for %s', 'alt-context'), title)
+                : undefined
+            }
           >
             {__('Edit alt text', 'alt-context')}
           </button>

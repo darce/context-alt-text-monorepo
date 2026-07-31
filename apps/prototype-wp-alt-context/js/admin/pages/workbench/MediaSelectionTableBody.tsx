@@ -190,10 +190,13 @@ const MediaSelectionRow = ({
               srcSet={item.thumbnailSrcset ?? undefined}
               sizes={item.thumbnailSizes ?? undefined}
               alt={
-                item.isDecorative
-                  ? ''
-                  : item.altText != null
-                    ? decodeHtmlEntities(item.altText)
+                // Prefer real alt over a leftover decorative marker (same
+                // precedence as DescriptionCandidateService: has_alt_text wins).
+                // Empty alt only when decorative AND altText is null. [WBUX-5-R1-01][A11Y-02]
+                item.altText != null
+                  ? decodeHtmlEntities(item.altText)
+                  : item.isDecorative
+                    ? ''
                     : item.title
               }
               className="acx-media-selection__thumb acx-media-selection__thumb--thumb"
@@ -231,6 +234,7 @@ const MediaSelectionRow = ({
         <MediaAltInlineEditor
           mediaId={item.id}
           altText={item.altText ?? null}
+          title={item.title}
           isDecorative={item.isDecorative === true}
           onPoliteAnnounce={editorAnnounce}
           onPoliteClear={editorClear}

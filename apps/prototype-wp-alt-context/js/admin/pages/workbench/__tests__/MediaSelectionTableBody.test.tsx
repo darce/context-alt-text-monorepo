@@ -118,4 +118,38 @@ describe('MediaSelectionTableBody — decorative alt + link name [A11Y-02][A11Y-
     const img = screen.getByRole('img');
     expect(img).toHaveAttribute('alt', 'Still missing');
   });
+
+  it('prefers real altText over leftover isDecorative marker [WBUX-5-R1-01][A11Y-02]', () => {
+    // Wire shape WorkbenchMediaListDecorativeTest pins: isDecorative:true with
+    // non-null altText (leftover marker after a real description landed). isDecorative
+    // must not win — empty alt would hide the description from assistive tech.
+    const { container } = renderBody([
+      makeItem({
+        isDecorative: true,
+        altText: 'A real description.',
+        status: 'complete',
+        title: 'Ornamental border',
+      }),
+    ]);
+
+    const img = container.querySelector('img');
+    expect(img).not.toBeNull();
+    expect(img?.getAttribute('alt')).toBe('A real description.');
+    expect(img?.getAttribute('alt')).not.toBe('');
+    expect(img?.getAttribute('alt')).not.toBe('Ornamental border');
+  });
+
+  it('qualifies each row edit control with its media title [WBUX-5-D-05][A11Y-04]', () => {
+    // MediaAltInlineEditor takes `title` optionally, so the component-level test
+    // passes even when the row forgets to wire it. Pin the call site: without
+    // this, every row in an AT element list reads a bare "Edit alt text".
+    renderBody([
+      makeItem({ id: 7, title: 'Harbour at dusk', altText: null, status: 'missing' }),
+    ]);
+
+    expect(
+      screen.getByRole('button', { name: 'Edit alt text for Harbour at dusk' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit alt text' })).toBeNull();
+  });
 });

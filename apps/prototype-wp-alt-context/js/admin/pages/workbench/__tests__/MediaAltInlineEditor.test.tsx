@@ -73,6 +73,19 @@ describe('MediaAltInlineEditor', () => {
     expect(screen.getByRole('button', { name: /edit alt text/i })).toBeInTheDocument();
   });
 
+  it('qualifies the edit control accessible name with the media title [WBUX-5-D-05][A11Y-04]', () => {
+    // Predicted RED: button accessible name is bare "Edit alt text" for every
+    // row, so AT element lists cannot tell which image the control belongs to.
+    renderEditor(
+      <MediaAltInlineEditor mediaId={42} altText="Bridge at dusk" title="Ornamental border" />,
+    );
+
+    const edit = screen.getByRole('button', { name: 'Edit alt text for Ornamental border' });
+    expect(edit).toBeInTheDocument();
+    // Visible label stays the short phrase; title is for AT only.
+    expect(edit).toHaveTextContent('Edit alt text');
+  });
+
   it('decodes stored entity-encoded alt for the read display and edit seed (BR-140)', () => {
     // Storage form from sanitize_text_field("x <= y"). Build the entity string in
     // JS (not a JSX attribute literal) so the bundler cannot HTML-decode `&lt;`

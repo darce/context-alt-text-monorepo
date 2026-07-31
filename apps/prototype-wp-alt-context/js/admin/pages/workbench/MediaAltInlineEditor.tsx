@@ -1,13 +1,23 @@
 import { __ } from '@wordpress/i18n';
 import { useEffect, useId, useRef, useState } from 'react';
 
-import { resolveDescribeErrorMessage } from '../../api/describeApi';
+import {
+  DESCRIPTION_CORRECTION_CODE,
+  resolveDescribeErrorCode,
+  resolveDescribeErrorDataField,
+  resolveDescribeErrorMessage,
+} from '../../api/describeApi';
 import { useCorrectMediaAlt } from '../../hooks/useCorrectMediaAlt';
 import { decodeHtmlEntities } from '../../utils/decodeHtmlEntities';
 
 export interface MediaAltInlineEditorProps {
   mediaId: number;
   altText: string | null;
+  /**
+   * True when the row carries the durable decorative marker. Idle label must
+   * not read "No alt text yet" for a deliberate decorative mark [A11Y-02].
+   */
+  isDecorative?: boolean;
   /**
    * When provided (row co-mount via MediaSelectionTableBody), polite cues go
    * through the row's single live region and the local status node is omitted.
@@ -51,9 +61,16 @@ export const ALT_COMMIT_CLAIM_REFUSED_MESSAGE = __(
 const decodeStoredAlt = (stored: string | null): string | null =>
   stored === null ? null : decodeHtmlEntities(stored);
 
+/** Idle label when the row is deliberately decorative (not "missing alt"). */
+export const DECORATIVE_IDLE_LABEL = __(
+  'Decorative — screen readers will skip this image',
+  'alt-context',
+);
+
 export const MediaAltInlineEditor = ({
   mediaId,
   altText,
+  isDecorative = false,
   onPoliteAnnounce,
   onPoliteClear,
   peerCommitPending = false,
@@ -198,12 +215,23 @@ export const MediaAltInlineEditor = ({
           shouldFocusEditButtonRef.current = true;
           setIsEditing(false);
         },
-        onError: () => {
+        onError: (err) => {
           onCommitEnd?.();
+          // Re-seed CAS baseline from PARTIAL reconcile so the operator's own
+          // half-failed write is not misread as a sibling conflict on retry
+          // [rg-002]. Empty stored alt matches class-api.php:346 null.
+          if (resolveDescribeErrorCode(err) === DESCRIPTION_CORRECTION_CODE.PARTIAL) {
+            const stored = resolveDescribeErrorDataField(err, 'stored_alt_text');
+            if (stored !== null) {
+              previousAltTextRef.current = stored.trim() === '' ? null : stored;
+            }
+          }
         },
       },
     );
   };
+
+  const idleAltLabel = displayAlt ?? (isDecorative ? DECORATIVE_IDLE_LABEL : __('No alt text yet', 'alt-context'));
 
   // BR-58 / Suggest BR-17: retire status once it has served its purpose — no
   // timeout. When focus leaves this surface while idle, "Alt text saved." is no
@@ -274,7 +302,7 @@ export const MediaAltInlineEditor = ({
         </>
       ) : (
         <>
-          <p className="acx-media-selection__media-alt-text">{displayAlt ?? __('No alt text yet', 'alt-context')}</p>
+          <p className="acx-media-selection__media-alt-text">{idleAltLabel}</p>
           <button
             type="button"
             ref={editButtonRef}

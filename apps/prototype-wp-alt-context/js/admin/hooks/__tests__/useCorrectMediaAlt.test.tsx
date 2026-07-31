@@ -89,6 +89,7 @@ const seedWorkbench = (
         status: 'missing',
         thumbnailUrl: null,
         altText,
+        isDecorative: false,
         editUrl: null,
         tags: [],
       },
@@ -98,6 +99,7 @@ const seedWorkbench = (
         status: 'missing',
         thumbnailUrl: null,
         altText: null,
+        isDecorative: false,
         editUrl: null,
         tags: [],
       },
@@ -176,6 +178,7 @@ describe('useCorrectMediaAlt', () => {
           status: 'missing',
           thumbnailUrl: null,
           altText: null,
+          isDecorative: false,
           editUrl: null,
           tags: [],
         },
@@ -185,6 +188,7 @@ describe('useCorrectMediaAlt', () => {
           status: 'missing',
           thumbnailUrl: null,
           altText: null,
+          isDecorative: false,
           editUrl: null,
           tags: [],
         },
@@ -204,6 +208,7 @@ describe('useCorrectMediaAlt', () => {
           status: 'missing',
           thumbnailUrl: null,
           altText: 'spliced',
+          isDecorative: false,
           editUrl: null,
           tags: [],
         },
@@ -394,10 +399,51 @@ describe('useCorrectMediaAlt', () => {
     const row = cached?.items.find((item) => item.id === 42);
     expect(row?.altText).toBe('Saved alt');
     expect(row?.status).toBe('complete');
+    expect(row?.isDecorative).toBe(false);
     // Envelope counts are server seed — never recomputed from one row [rg-015].
     expect(cached?.total).toBe(5);
     expect(cached?.totalPages).toBe(3);
     assertEnvelopeHonest(cached, 5, 2);
+  });
+
+  it('full success with decorative:true patches isDecorative true + complete + null alt [WBUX-5]', async () => {
+    // Write intent decorative must land on the cached row — status alone is not
+    // enough (altText null + complete is the same shape as a refetch race).
+    correctMock.mockResolvedValue(successHistoryItem(42, '', 'Bridge'));
+    const client = buildClient();
+    seedWorkbench(client, 'Prior alt', { total: 5, totalPages: 2 });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+
+    result.current.mutate({ mediaId: 42, altText: '', decorative: true });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const cached = client.getQueryData<WorkbenchMediaResponse>(missingPageKey);
+    const row = cached?.items.find((item) => item.id === 42);
+    expect(row?.altText).toBeNull();
+    expect(row?.status).toBe('complete');
+    expect(row?.isDecorative).toBe(true);
+    assertEnvelopeHonest(cached, 5, 2);
+  });
+
+  it('PARTIAL path never sets isDecorative even when the request was decorative [WBUX-5]', async () => {
+    // Marker was not stored — isDecorative must stay false (asymmetry with onSuccess).
+    correctMock.mockRejectedValueOnce(
+      partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: '' }),
+    );
+    const client = buildClient();
+    const page = seedWorkbench(client, 'Prior alt', { total: 3, totalPages: 1 });
+    page.items[0] = { ...page.items[0], status: 'complete', altText: 'Prior alt', isDecorative: false };
+    client.setQueryData(missingPageKey, page);
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+
+    result.current.mutate({ mediaId: 42, altText: '', decorative: true });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    const cached = client.getQueryData<WorkbenchMediaResponse>(missingPageKey);
+    const row = cached?.items.find((item) => item.id === 42);
+    expect(row?.altText).toBeNull();
+    expect(row?.status).toBe('missing');
+    expect(row?.isDecorative).toBe(false);
   });
 
   it('full success with empty alt patches status back to missing [WBUX-5-BR-112]', async () => {
@@ -416,8 +462,10 @@ describe('useCorrectMediaAlt', () => {
 
     const cached = client.getQueryData<WorkbenchMediaResponse>(missingPageKey);
     const row = cached?.items.find((item) => item.id === 42);
-    expect(row?.altText).toBe('');
+    // class-api.php:346 emits null for every !has_alt case — never '' [rg-015].
+    expect(row?.altText).toBeNull();
     expect(row?.status).toBe('missing');
+    expect(row?.isDecorative).toBe(false);
     expect(cached?.total).toBe(4);
     expect(cached?.totalPages).toBe(2);
     assertEnvelopeHonest(cached, 4, 2);
@@ -427,6 +475,7 @@ describe('useCorrectMediaAlt', () => {
     // PHP: $has_alt = '' !== trim( $alt_text ). A naive altText !== '' would
     // mark '   ' complete and pass wrongly. Seed complete so staying complete
     // (no status patch, or hard-coded complete) fails the assertion.
+    // Whitespace-only trims to empty → null on the wire (class-api.php:346).
     correctMock.mockResolvedValue(successHistoryItem(42, '   ', 'Bridge'));
     const client = buildClient();
     const page = seedWorkbench(client, 'Prior alt', { total: 8, totalPages: 4 });
@@ -439,8 +488,9 @@ describe('useCorrectMediaAlt', () => {
 
     const cached = client.getQueryData<WorkbenchMediaResponse>(missingPageKey);
     const row = cached?.items.find((item) => item.id === 42);
-    expect(row?.altText).toBe('   ');
+    expect(row?.altText).toBeNull();
     expect(row?.status).toBe('missing');
+    expect(row?.isDecorative).toBe(false);
     expect(cached?.total).toBe(8);
     expect(cached?.totalPages).toBe(4);
     assertEnvelopeHonest(cached, 8, 2);
@@ -481,8 +531,11 @@ describe('useCorrectMediaAlt', () => {
 
     const cached = client.getQueryData<WorkbenchMediaResponse>(missingPageKey);
     const row = cached?.items.find((item) => item.id === 42);
-    expect(row?.altText).toBe('');
+    // Blank stored_alt_text normalizes to null (class-api.php:346); PARTIAL
+    // never stores the decorative marker, so isDecorative stays false.
+    expect(row?.altText).toBeNull();
     expect(row?.status).toBe('missing');
+    expect(row?.isDecorative).toBe(false);
     expect(cached?.total).toBe(3);
     expect(cached?.totalPages).toBe(1);
     assertEnvelopeHonest(cached, 3, 2);
@@ -527,6 +580,7 @@ describe('useCorrectMediaAlt', () => {
               status: 'missing' as const,
               thumbnailUrl: null,
               altText: null,
+              isDecorative: false,
               editUrl: null,
               tags: [],
             },
@@ -654,10 +708,11 @@ describe('useCorrectMediaAlt', () => {
     assertEnvelopeHonest(cached, 2);
   });
 
-  it('reconciles blank stored_alt_text on partial — empty string is legitimate [TEST-15][rg-015]', async () => {
+  it('reconciles blank stored_alt_text on partial — blank server fact overwrites prior alt [TEST-15][rg-015]', async () => {
     // sanitize_text_field of a blank correction yields ''. A truthy guard
     // (`if (!storedAltText)`) would skip reconciliation and leave the prior
-    // alt — the class of lie this slice removed. Null-only gate must patch to ''.
+    // alt — the class of lie this slice removed. Null-only gate must apply the
+    // blank server fact; cache normalizes it to null (class-api.php:346).
     correctMock.mockRejectedValueOnce(
       partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: '' }),
     );
@@ -670,7 +725,8 @@ describe('useCorrectMediaAlt', () => {
     await waitFor(() => expect(result.current.isError).toBe(true));
 
     const cached = client.getQueryData<WorkbenchMediaResponse>(missingPageKey);
-    expect(cached?.items.find((item) => item.id === 42)?.altText).toBe('');
+    expect(cached?.items.find((item) => item.id === 42)?.altText).toBeNull();
+    // Discriminating pin: blank server value is APPLIED, not ignored.
     expect(cached?.items.find((item) => item.id === 42)?.altText).not.toBe('Prior honest alt');
     expect(describeApi.resolveDescribeErrorCode(result.current.error)).toBe(
       describeApi.DESCRIPTION_CORRECTION_CODE.PARTIAL,
@@ -847,6 +903,7 @@ describe('useCorrectMediaAlt', () => {
           status: 'missing',
           thumbnailUrl: null,
           altText: null,
+          isDecorative: false,
           editUrl: null,
           tags: [],
         },
@@ -865,6 +922,7 @@ describe('useCorrectMediaAlt', () => {
           status: 'missing',
           thumbnailUrl: null,
           altText: null,
+          isDecorative: false,
           editUrl: null,
           tags: [],
         },

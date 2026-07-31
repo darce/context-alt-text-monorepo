@@ -85,7 +85,9 @@ const patchWorkbenchRowAlt = (
     queryClient.setQueryData<WorkbenchMediaResponse>(queryKey, {
       ...data,
       items: data.items.map((item) =>
-        item.id === mediaId ? { ...item, altText: nextAlt, status } : item,
+        item.id === mediaId
+          ? { ...item, altText: nextAlt, status, isDecorative: decorative }
+          : item,
       ),
     });
   }

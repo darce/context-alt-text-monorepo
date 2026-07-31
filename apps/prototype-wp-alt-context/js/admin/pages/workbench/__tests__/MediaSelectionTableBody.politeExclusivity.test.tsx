@@ -68,6 +68,7 @@ const mediaItem: WorkbenchMediaItem = {
   status: 'missing',
   thumbnailUrl: null,
   altText: 'Existing alt',
+  isDecorative: false,
   editUrl: null,
   tags: [],
   mimeType: 'image/jpeg',

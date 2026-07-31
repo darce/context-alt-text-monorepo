@@ -335,6 +335,7 @@ vi.mock('../pages/workbench/WorkbenchMediaContext', () => {
     id: 11,
     title: 'Photo',
     altText: null,
+    isDecorative: false,
     status: 'missing' as const,
     thumbnailUrl: null,
     mimeType: 'image/jpeg',

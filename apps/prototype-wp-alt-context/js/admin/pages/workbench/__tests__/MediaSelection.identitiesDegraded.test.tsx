@@ -30,6 +30,7 @@ const baseItem: WorkbenchMediaItem = {
   id: 11,
   title: 'Photo',
   altText: null,
+  isDecorative: false,
   status: 'missing',
   thumbnailUrl: null,
   mimeType: 'image/jpeg',

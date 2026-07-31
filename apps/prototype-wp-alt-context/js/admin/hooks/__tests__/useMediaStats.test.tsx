@@ -106,6 +106,7 @@ describe('useMediaStats', () => {
           status: 'missing',
           thumbnailUrl: null,
           altText: null,
+          isDecorative: false,
           editUrl: null,
           tags: [],
         },

@@ -78,6 +78,7 @@ const rowA: WorkbenchMediaItem = {
   status: 'missing',
   thumbnailUrl: null,
   altText: null,
+  isDecorative: false,
   editUrl: null,
   tags: [],
 };
@@ -88,6 +89,7 @@ const rowB: WorkbenchMediaItem = {
   status: 'missing',
   thumbnailUrl: null,
   altText: null,
+  isDecorative: false,
   editUrl: null,
   tags: [],
 };

@@ -58,10 +58,85 @@ describe('IdentityThumbnail', () => {
     expect(pending).not.toBeNull();
     expect(document.querySelector('img')).toBeNull();
 
-    // Native control (not a bare div) so the prop contract is keyboard-reachable.
-    const control = screen.getByRole('button', { name: /Identity from media 100/ });
+    // Native control (not a bare div) so the prop contract is keyboard-reachable
+    // via focus + Enter/Space [A11Y-11] [A11Y-12]. Pointer click alone cannot
+    // distinguish <button> from role=button div without tabIndex/onKeyDown.
+    const control = screen.getByRole('button', {
+      name: /Identity from media 100/,
+    });
     await userEvent.click(control);
-    expect(onClick).toHaveBeenCalledTimes(1);
+    expect(onClick, 'pending placeholder pointer activation fires onClick').toHaveBeenCalledTimes(
+      1,
+    );
+
+    // After pointer activation, a real <button> retains focus; a role=button
+    // div without tabIndex does not. Tab from a clean start to prove reachability.
+    (document.activeElement as HTMLElement | null)?.blur();
+    await userEvent.tab();
+    expect(control, 'pending placeholder button is keyboard-focusable [A11Y-11]').toHaveFocus();
+    await userEvent.keyboard('{Enter}');
+    expect(
+      onClick,
+      'pending placeholder activates on Enter when focused [A11Y-12]',
+    ).toHaveBeenCalledTimes(2);
+  });
+
+  it('onClick + decorative alt="" does not leave an unnamed focusable button [A11Y-04]', () => {
+    const onClick = vi.fn();
+    // Documented decorative usage (alt="") with the onClick placeholder branch.
+    // media_id:0, no source → !resolvedSrc && onClick.
+    render(<IdentityThumbnail identity={{ media_id: 0 }} alt="" onClick={onClick} />);
+
+    const control = document.querySelector('.acx-cluster-card__face--placeholder');
+    expect(control, 'decorative onClick path still renders a placeholder control').not.toBeNull();
+    if (!control) {
+      return;
+    }
+
+    const accessibleName = control.getAttribute('aria-label')?.trim() ?? '';
+    const isAriaHidden = control.getAttribute('aria-hidden') === 'true';
+    expect(
+      isAriaHidden || accessibleName.length > 0,
+      'onClick placeholder with alt="" must be aria-hidden or carry a non-empty accessible name — unnamed focusable button is not acceptable [A11Y-04]',
+    ).toBe(true);
+
+    // If hidden from AT, it must not remain in the tab order either.
+    if (isAriaHidden) {
+      expect(
+        control.getAttribute('tabindex') === '-1' ||
+          (control as HTMLElement).tabIndex < 0 ||
+          control.getAttribute('disabled') !== null,
+        'aria-hidden onClick placeholder must not stay a tab stop',
+      ).toBe(true);
+    }
+  });
+
+  it('onClick + genuinely-missing media does not leave an unnamed focusable button [A11Y-04]', () => {
+    const onClick = vi.fn();
+    // No sourceUrl / thumb_url → data-face-missing path (not pending crop).
+    render(<IdentityThumbnail identity={{ media_id: 0 }} onClick={onClick} />);
+
+    const control = document.querySelector(
+      '.acx-cluster-card__face--placeholder[data-face-missing="true"]',
+    );
+    expect(control, 'missing-media onClick path renders data-face-missing placeholder').not.toBeNull();
+    if (!control) {
+      return;
+    }
+
+    const accessibleName = control.getAttribute('aria-label')?.trim() ?? '';
+    const isAriaHidden = control.getAttribute('aria-hidden') === 'true';
+    expect(
+      isAriaHidden || accessibleName.length > 0,
+      'onClick missing-media placeholder must be aria-hidden or carry a non-empty accessible name [A11Y-04]',
+    ).toBe(true);
+
+    // Regression guard: missing media used to be aria-hidden on the div branch.
+    // Prefer that over promoting a no-source face slot into an announced control.
+    expect(
+      isAriaHidden,
+      'genuinely-missing media with onClick should stay aria-hidden (matches non-onClick branch) [A11Y-04]',
+    ).toBe(true);
   });
 
   describe('lazy canvas crop [page-load]', () => {

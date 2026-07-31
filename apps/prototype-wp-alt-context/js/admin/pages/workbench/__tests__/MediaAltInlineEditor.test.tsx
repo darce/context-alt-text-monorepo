@@ -3,7 +3,11 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ALT_COMMIT_CONFLICT_MESSAGE, MediaAltInlineEditor } from '../MediaAltInlineEditor';
+import {
+  ALT_COMMIT_CONFLICT_MESSAGE,
+  DECORATIVE_IDLE_LABEL,
+  MediaAltInlineEditor,
+} from '../MediaAltInlineEditor';
 import { correctDescriptionHistoryItem } from '../../../api/describeApi';
 import { queryKeys } from '../../../api/queryKeys';
 import type { WorkbenchMediaResponse } from '../../../api/workbenchMediaApi';
@@ -88,6 +92,17 @@ describe('MediaAltInlineEditor', () => {
     renderEditor(<MediaAltInlineEditor mediaId={42} altText={null} />);
 
     expect(screen.getByRole('button', { name: /edit alt text/i })).toBeInTheDocument();
+    expect(screen.getByText('No alt text yet')).toBeInTheDocument();
+  });
+
+  it('renders a decorative-specific idle label instead of "No alt text yet" [A11Y-02]', () => {
+    // Operator just marked decorative: alt is null but isDecorative is true.
+    // Claiming "No alt text yet" contradicts the success message and invites a
+    // redundant edit of a deliberate empty-alt choice.
+    renderEditor(<MediaAltInlineEditor mediaId={42} altText={null} isDecorative />);
+
+    expect(screen.getByText(DECORATIVE_IDLE_LABEL)).toBeInTheDocument();
+    expect(screen.queryByText('No alt text yet')).not.toBeInTheDocument();
   });
 
   it('opens an editable field seeded with the current alt text', () => {
@@ -148,6 +163,7 @@ describe('MediaAltInlineEditor', () => {
           status: 'missing',
           thumbnailUrl: null,
           altText: null,
+          isDecorative: false,
           editUrl: null,
           tags: [],
         },
@@ -157,6 +173,7 @@ describe('MediaAltInlineEditor', () => {
           status: 'missing',
           thumbnailUrl: null,
           altText: null,
+          isDecorative: false,
           editUrl: null,
           tags: [],
         },
@@ -501,5 +518,78 @@ describe('MediaAltInlineEditor', () => {
       'Stale open buffer that must not clobber sibling.',
     );
     expect(screen.getByRole('button', { name: /cancel/i })).not.toBeDisabled();
+  });
+
+  it('allows Save retry after PARTIAL without false CAS conflict [rg-002]', async () => {
+    // Reachable lockout: open Edit on missing (baseline null), save "Hello",
+    // PARTIAL returns stored_alt_text "Hello" and patches the prop while open.
+    // Without re-seeding previousAltTextRef, second Save compares null !== "Hello"
+    // and surfaces ALT_COMMIT_CONFLICT_MESSAGE — never reaches the wire.
+    const partialMessage =
+      'Alt text was saved, but the human-edit record could not be stored. Please try again so history stays accurate.';
+    correctMock.mockRejectedValueOnce(
+      new Error(
+        `Request to /correction failed (500): ${JSON.stringify({
+          code: 'description_correction_partial',
+          message: partialMessage,
+          data: { status: 500, stored_alt_text: 'Hello' },
+        })}`,
+      ),
+    );
+
+    const workbenchKey = queryKeys.media.workbenchPage({ page: 1, perPage: 20, status: 'missing' });
+    const { client, rerender } = renderEditor(
+      <MediaAltInlineEditor mediaId={42} altText={null} />,
+    );
+    client.setQueryData<WorkbenchMediaResponse>(workbenchKey, {
+      items: [
+        {
+          id: 42,
+          title: 'Bridge',
+          status: 'missing',
+          thumbnailUrl: null,
+          altText: null,
+          isDecorative: false,
+          editUrl: null,
+          tags: [],
+        },
+      ],
+      total: 1,
+      totalPages: 1,
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /edit alt text/i }));
+    fireEvent.change(screen.getByRole('textbox', { name: /alt text/i }), {
+      target: { value: 'Hello' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^save/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/human-edit record could not be stored/i);
+    expect(correctMock).toHaveBeenCalledTimes(1);
+
+    // Simulate the parent re-render from useCorrectMediaAlt's PARTIAL patch.
+    rerender(
+      <QueryClientProvider client={client}>
+        <MediaAltInlineEditor mediaId={42} altText="Hello" />
+      </QueryClientProvider>,
+    );
+
+    // Retry must reach the wire — not false CAS from stale null baseline.
+    correctMock.mockResolvedValueOnce({
+      media_id: 42,
+      title: 'Bridge',
+      mime_type: 'image/jpeg',
+      current_alt_text: 'Hello',
+      generated_alt_text: null,
+      provenance: null,
+      human_edit: { alt_text: 'Hello', edited_at: '2026-07-28 12:00:00', user_id: 7 },
+      run_status: null,
+    } as never);
+
+    fireEvent.click(screen.getByRole('button', { name: /^save/i }));
+
+    await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText(ALT_COMMIT_CONFLICT_MESSAGE)).not.toBeInTheDocument();
   });
 });

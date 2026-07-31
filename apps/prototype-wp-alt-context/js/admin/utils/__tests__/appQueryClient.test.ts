@@ -13,6 +13,16 @@ const httpError = (status: number, retryAfterSeconds?: number): HTTPError =>
     message: `failed (${status})`,
   });
 
+describe('createAppQueryClient default options', () => {
+  it('pins refetchOnWindowFocus: false (load-bearing for partial-correction rows)', () => {
+    // A partial has alt text, so the server drops it from status=missing.
+    // Refetch-on-focus would remove the row mid-review under the operator.
+    const appQueryClient = createAppQueryClient();
+    expect(appQueryClient.getDefaultOptions().queries?.refetchOnWindowFocus).toBe(false);
+    appQueryClient.clear();
+  });
+});
+
 describe('createAppQueryClient cooldown arming', () => {
   beforeEach(() => {
     _resetCooldownForTests();

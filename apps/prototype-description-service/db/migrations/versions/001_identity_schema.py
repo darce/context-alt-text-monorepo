@@ -1091,6 +1091,13 @@ def ensure_tables(op) -> None:
     )
     _ensure_index(
         op,
+        "idx_media_identities_embedding_model",
+        "media_identities",
+        ["embedding_model"],
+        postgresql_where=sa.text("embedding_model IS NOT NULL"),
+    )
+    _ensure_index(
+        op,
         "idx_media_identities_embedding",
         "media_identities",
         ["embedding"],
@@ -1882,6 +1889,7 @@ def downgrade() -> None:
     op.drop_index("idx_identity_clusters_tenant_type", table_name="identity_clusters")
     op.drop_index("idx_identity_clusters_tenant", table_name="identity_clusters")
     op.drop_index("idx_media_identities_embedding", table_name="media_identities")
+    op.drop_index("idx_media_identities_embedding_model", table_name="media_identities")
     op.drop_index("idx_media_identities_tenant_type", table_name="media_identities")
     op.drop_index("idx_media_identities_tenant", table_name="media_identities")
     op.drop_index("idx_media_identities_tenant_media", table_name="media_identities")

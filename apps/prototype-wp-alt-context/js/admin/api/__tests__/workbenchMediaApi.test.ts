@@ -5,6 +5,7 @@ import { fetchWorkbenchMediaDetail } from '../workbenchMediaApi';
 
 const mockConfig = {
   nonce: 'nonce-123',
+  ajaxUrl: '/wp-admin/admin-ajax.php',
   endpoints: {
     workbenchMediaDetail: 'https://example.com/workbench/media/detail',
   } as Record<string, string>,

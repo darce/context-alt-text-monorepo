@@ -11,6 +11,7 @@
 import { fetchRequiredApi } from '../utils/http';
 import { getEndpoint, getConfig } from './config';
 import { createRecognitionTimeoutSignal } from './recognition/requestTimeout';
+import { parseWpErrorPayload, resolveWpErrorMessage } from './wpErrorMessage';
 
 export interface VisualFacts {
   caption: string;
@@ -37,11 +38,49 @@ export interface VisualFactsResponse {
   alt_text_write?: AltTextWriteResult;
 }
 
-export type AltTextWriteStatus = 'written' | 'skipped_existing_alt' | 'forced_overwrite';
+/**
+ * REST `alt_text_write.status` members — keep in lockstep with PHP
+ * `AltContext\Api\AltTextWriteStatus::REST_STATUSES` (sr-007 / BR-04).
+ * CLI-only `dry_run` is not part of this REST payload type.
+ * `provenance_healed` is success: force=false restamp when alt already matched.
+ */
+export type AltTextWriteStatus =
+  | 'written'
+  | 'skipped_existing_alt'
+  | 'skipped_empty_alt_text'
+  | 'forced_overwrite'
+  | 'provenance_healed'
+  | 'partial'
+  | 'failed';
+
+/**
+ * REST `alt_text_write.reason` when status is `partial` (BR-08).
+ * Distinguishes provenance-stamp failure (history gap, retry) from optional
+ * long-description failure (history intact). Lockstep with PHP
+ * `AltTextWriteStatus::PARTIAL_REASONS`.
+ */
+export type AltTextWritePartialReason =
+  | 'provenance_write_failed'
+  | 'description_write_failed';
+
+/**
+ * Nested `description_write` when `acx_alt_style` is `alt_plus_description`.
+ * Lockstep with PHP `DescriptionWriteStatus::ALL`.
+ */
+export type DescriptionWriteStatus =
+  | 'written'
+  | 'forced_overwrite'
+  | 'skipped_no_long_text'
+  | 'skipped_existing_description'
+  | 'failed';
 
 export interface AltTextWriteResult {
   status: AltTextWriteStatus;
   existing_alt_present: boolean;
+  /** Present when status is `partial` — distinguishes the two partial meanings. */
+  reason?: AltTextWritePartialReason;
+  /** Present only under alt_plus_description; omitted for alt_only. */
+  description_write?: DescriptionWriteStatus;
 }
 
 export interface DescribeMediaWriteOptions {
@@ -49,7 +88,11 @@ export interface DescribeMediaWriteOptions {
   force?: boolean;
 }
 
-export type DescriptionCandidateReason = 'missing_alt' | 'has_alt_text' | 'unsupported_mime';
+export type DescriptionCandidateReason =
+  | 'missing_alt'
+  | 'has_alt_text'
+  | 'unsupported_mime'
+  | 'decorative';
 
 export interface DescriptionCandidateRow {
   media_id: number;
@@ -86,15 +129,67 @@ export interface DescriptionHistoryHumanEdit {
   user_id?: number | null;
 }
 
+/**
+ * Recovery descriptor kinds on bulk-apply provenance envelopes.
+ * Lockstep with PHP `AltTextWriteStatus::RECOVERY_KINDS` [sr-007] [R23-BR-20/21/22].
+ */
+export const RECOVERY_KIND = {
+  NONE: 'none',
+  SAME_RUN: 'same_run',
+  RUN: 'run',
+  SURFACE: 'surface',
+  UNKNOWN: 'unknown',
+} as const;
+
+export type RecoveryKind = (typeof RECOVERY_KIND)[keyof typeof RECOVERY_KIND];
+
+/**
+ * Always-present recovery descriptor on bulk-applied provenance.
+ * Replaces the deleted scalar `recovered_from_run_id` [R23-BR-20/21/22].
+ */
+export interface ProvenanceRecoveredFrom {
+  /** Verbatim marker owner value when foreign recovery occurred; null otherwise. */
+  origin: string | null;
+  kind: RecoveryKind;
+  /** Append-only origin chain, oldest first. */
+  chain: string[];
+}
+
+/**
+ * Stored provenance envelope on a history row (bulk apply / single / CLI writers).
+ * Not the live VisualFactsResponse shape — recovery fields live here.
+ */
+export interface DescriptionHistoryProvenance {
+  adapter?: string;
+  model_id?: string;
+  model_version?: string;
+  prompt_or_task_version?: string;
+  image_hash?: string;
+  context_hash?: string;
+  generated_at?: string;
+  backend_result_id?: string;
+  alt_text_draft?: string;
+  source?: string;
+  run_id?: string;
+  applied_at?: string;
+  recovered_from?: ProvenanceRecoveredFrom;
+}
+
 export interface DescriptionHistoryItem {
   media_id: number;
   title: string;
   mime_type: string;
   current_alt_text: string;
   generated_alt_text: string;
-  provenance: VisualFactsResponse | Record<string, unknown> | null;
+  provenance: DescriptionHistoryProvenance | VisualFactsResponse | null;
   human_edit: DescriptionHistoryHumanEdit | null;
   run_status: DescriptionHistoryRunStatus | null;
+  /**
+   * Server-owned decorative marker truth (acx_alt_decorative read-back as a
+   * boolean). Present on correction success via build_item and on PARTIAL
+   * error data — clients must not re-derive from request intent [A-03][rg-015].
+   */
+  is_decorative: boolean;
 }
 
 export interface DescriptionHistoryResponse {
@@ -119,6 +214,19 @@ export const DESCRIBE_RUN_STATUS = {
   FAILED: 'failed',
   CANCELLED: 'cancelled',
 } as const;
+
+/**
+ * Canonical correction rejection codes from the history correction endpoint.
+ * Gate on these via resolveDescribeErrorCode — never on localized message text
+ * (sr-007, WBUX-5-BR-51).
+ */
+export const DESCRIPTION_CORRECTION_CODE = {
+  PARTIAL: 'description_correction_partial',
+  FAILED: 'description_correction_failed',
+} as const;
+
+export type DescriptionCorrectionCode =
+  (typeof DESCRIPTION_CORRECTION_CODE)[keyof typeof DESCRIPTION_CORRECTION_CODE];
 
 export type DescribeRunStatus = (typeof DESCRIBE_RUN_STATUS)[keyof typeof DESCRIBE_RUN_STATUS];
 export type DescribeRunPhase = 'queued' | 'describing' | 'complete' | 'failed' | 'cancelled';
@@ -157,7 +265,7 @@ export interface DescribeRunItem {
   status: string;
   alt_text_draft: string | null;
   caption: string | null;
-  provenance: VisualFactsResponse | Record<string, unknown> | null;
+  provenance: DescriptionHistoryProvenance | VisualFactsResponse | null;
   existing_alt: boolean;
 }
 
@@ -172,11 +280,13 @@ export interface DescribeRunItemsResponse {
 export interface ApplyDescribeRunResponse {
   run_id: string;
   applied: number[];
+  // Alt text landed but provenance/history record did not — not fully applied;
+  // operator should re-apply so the item appears in history. [RLSE-05]
+  partial: number[];
   skipped_existing: number[];
   skipped_no_draft: number[];
-  // Media ids skipped because they are not attachment posts (untrusted upstream
-  // media_id guard) and ids whose alt-text write failed — both reported so the
-  // History UI never over-reports `applied`.
+  // Non-attachment / invalid targets only (untrusted upstream media_id guard).
+  // Alt-write failures and unverified-marker outcomes land in `failed`, not here.
   skipped_invalid: number[];
   failed: number[];
 }
@@ -232,18 +342,38 @@ export const fetchDescriptionHistory = async ({
   });
 };
 
+/**
+ * Optional flags for history correction. Tri-state decorative [A-02][INT-09]:
+ *   true  — mark decorative (empty alt + durable marker)
+ *   false — explicit un-mark (clear marker even when alt is empty)
+ *   undefined — omit from the body; server treats as unspecified (today's
+ *               prior default-false behaviour for two-arg callers)
+ * The server rejects decorative + non-empty alt with description_correction_failed (400).
+ */
+export interface DescriptionCorrectionOptions {
+  decorative?: boolean;
+}
+
 export const correctDescriptionHistoryItem = async (
   mediaId: number,
   altText: string,
-): Promise<DescriptionHistoryItem> =>
-  fetchRequiredApi<DescriptionHistoryItem>(
+  options?: DescriptionCorrectionOptions,
+): Promise<DescriptionHistoryItem> => {
+  const body: { alt_text: string; decorative?: boolean } = { alt_text: altText };
+  // Send whenever defined — including explicit false for un-mark [A-02].
+  // undefined still omits the key so two-arg callers keep an identical body.
+  if (options?.decorative !== undefined) {
+    body.decorative = options.decorative;
+  }
+  return fetchRequiredApi<DescriptionHistoryItem>(
     `${getEndpoint('recognitionDescribeHistory')}/${encodeURIComponent(String(mediaId))}/correction`,
     {
       method: 'POST',
-      body: { alt_text: altText },
+      body,
       restNonce: getConfig().nonce,
     },
   );
+};
 
 export const submitBulkDescribeRun = async (mediaIds: number[]): Promise<DescribeRunResponse> =>
   fetchRequiredApi<DescribeRunResponse>(getEndpoint('recognitionDescribeRuns'), {
@@ -315,50 +445,98 @@ export const applyDescribeRunDrafts = async (
     },
   );
 
-const parsePayload = (raw: string): Record<string, unknown> | null => {
-  const start = raw.indexOf('{');
-  if (start < 0) {
-    return null;
-  }
-  try {
-    const payload: unknown = JSON.parse(raw.slice(start));
-    return payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
-};
-
 /**
  * Resolve a user-safe describe error message: the FastAPI `detail` (503 stub /
  * unavailable) or the WP_Error `message` (502 invalid envelope) when present,
  * otherwise the caller's localized fallback. Never returns raw proxy body text.
  *
- * Intentionally separate from recognition/scanApiError.ts (E19-1-REV-C-4): that
- * resolver special-cases `embedding_runtime_unavailable` and only reads `detail`;
- * describe instead needs the WP_Error `message` branch (502 invalid_description_
- * envelope) and a nested-`detail` branch. Kept as a small dedicated parser rather
- * than coupling describe to the scan-specific resolver.
+ * Shared parse lives in wpErrorMessage.ts so settings and describe do not drift
+ * ([REF-26]). Intentionally still separate from recognition/scanApiError.ts
+ * (E19-1-REV-C-4): that resolver special-cases `embedding_runtime_unavailable`
+ * and only reads `detail`.
  */
-export const resolveDescribeErrorMessage = (error: unknown, fallback: string): string => {
+export const resolveDescribeErrorMessage = (error: unknown, fallback: string): string =>
+  resolveWpErrorMessage(error, fallback);
+
+/**
+ * Resolve the WP_Error `code` from a describe/correction rejection when present.
+ * Returns null when the error is not structured or carries no code — callers must
+ * handle that honestly rather than inventing a sentinel ([rg-015]).
+ *
+ * Sibling of resolveDescribeErrorMessage: same parseWpErrorPayload, same deliberate
+ * separation from recognition/scanApiError.ts. Code and message resolve
+ * independently so a partial-correction path can gate on the stable code without
+ * matching localized message text.
+ */
+export const resolveDescribeErrorCode = (error: unknown): string | null => {
   if (!(error instanceof Error)) {
-    return fallback;
+    return null;
   }
-  const payload = parsePayload(error.message);
-  if (payload) {
-    const detail = payload.detail;
-    if (typeof detail === 'string' && detail.trim() !== '') {
-      return detail;
-    }
-    if (detail && typeof detail === 'object') {
-      const nested = (detail as { detail?: unknown }).detail;
-      if (typeof nested === 'string' && nested.trim() !== '') {
-        return nested;
-      }
-    }
-    const message = payload.message;
-    if (typeof message === 'string' && message.trim() !== '') {
-      return message;
-    }
+  const payload = parseWpErrorPayload(error.message);
+  if (!payload) {
+    return null;
   }
-  return fallback;
+  const code = payload.code;
+  if (typeof code === 'string' && code.trim() !== '') {
+    return code;
+  }
+  return null;
+};
+
+/**
+ * Resolve a string field from the WP_Error `data` object when present.
+ * Returns null when the error is unstructured, `data` is missing, or the named
+ * field is absent / not a string — callers must not invent a value ([rg-015]).
+ * Empty string is a legitimate stored value and is returned as-is.
+ *
+ * Sibling of resolveDescribeErrorCode: same parseWpErrorPayload, same tolerance for
+ * unparseable messages. Used by partial-correction reconcile to read
+ * `stored_alt_text` rather than guessing from the request payload.
+ */
+export const resolveDescribeErrorDataField = (error: unknown, field: string): string | null => {
+  if (!(error instanceof Error)) {
+    return null;
+  }
+  const payload = parseWpErrorPayload(error.message);
+  if (!payload) {
+    return null;
+  }
+  const data = payload.data;
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return null;
+  }
+  const value = (data as Record<string, unknown>)[field];
+  if (typeof value === 'string') {
+    return value;
+  }
+  return null;
+};
+
+/**
+ * Resolve a boolean field from the WP_Error `data` object when present.
+ * Returns null when the error is unstructured, `data` is missing, or the named
+ * field is absent / not a boolean — callers must not invent a value ([rg-015]).
+ * Used by partial-correction reconcile to read `is_decorative` from server
+ * truth rather than re-deriving from request intent [A-03].
+ */
+export const resolveDescribeErrorDataBooleanField = (
+  error: unknown,
+  field: string,
+): boolean | null => {
+  if (!(error instanceof Error)) {
+    return null;
+  }
+  const payload = parseWpErrorPayload(error.message);
+  if (!payload) {
+    return null;
+  }
+  const data = payload.data;
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return null;
+  }
+  const value = (data as Record<string, unknown>)[field];
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  return null;
 };

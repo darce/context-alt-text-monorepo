@@ -27,6 +27,12 @@ export interface WorkbenchMediaFilters {
 export interface WorkbenchMediaQueue {
   mediaQuery: ReturnType<typeof useWorkbenchMedia>;
   statusMessage: string;
+  /**
+   * True while the queue is fetching — same condition that produces the transient
+   * "Updating media queue…" statusMessage. Consumers that suppress that transient
+   * from live regions must gate on this flag, not on display-copy equality [sr-007].
+   */
+  isStatusPending: boolean;
   detailTruncationNotice: string | null;
   hasIdentities: boolean;
 }
@@ -65,7 +71,12 @@ export const WorkbenchMediaProvider: React.FC<{ children: React.ReactNode }> = (
   });
 
   const mediaData = mediaQuery.data;
-  const mediaItems = mediaQuery.itemsWithIdentities ?? mediaData?.items ?? [];
+  // Stable identity: bare `?? []` would allocate a new array every render and
+  // thrash the statusMessage useMemo that depends on mediaItems [WBUX-5-BR-112].
+  const mediaItems = useMemo(
+    () => mediaQuery.itemsWithIdentities ?? mediaData?.items ?? [],
+    [mediaQuery.itemsWithIdentities, mediaData?.items],
+  );
   const totalCount = mediaData?.total ?? 0;
 
   useEffect(() => {
@@ -97,8 +108,70 @@ export const WorkbenchMediaProvider: React.FC<{ children: React.ReactNode }> = (
         : __('No media items match the current filters.', 'alt-context');
     }
 
-    return sprintf(_n('Showing %d media item.', 'Showing %d media items.', totalCount, 'alt-context'), totalCount);
-  }, [mediaQuery.isError, mediaQuery.isFetching, normalizedSearch, totalCount]);
+    // Envelope total stays server truth — never rewritten from listed rows [rg-015].
+    const showing = sprintf(
+      _n('Showing %d media item.', 'Showing %d media items.', totalCount, 'alt-context'),
+      totalCount,
+    );
+
+    // Status=missing only: when corrections patch listed rows to complete without
+    // invalidating the list, the filter label + envelope count + visible rows
+    // would otherwise form an undesigned composite [WBUX-5-BR-112][RLSE-04].
+    // Reconcile by labelling what we can observe on this page — never by
+    // guessing other pages or decrementing total. Status=all has no filter
+    // mismatch (complete rows belong there), so no sentence under that filter.
+    if (statusFilter === 'missing') {
+      // Split arms: ordinary corrections "have alt text"; decorative marks do
+      // not — claiming alt text for them is false [INT-08]. Each arm uses its
+      // own _n() on its own count so plural selection is per-outcome, not a
+      // summed total [INT-08][D-01]. Mixed arms emit two sentences joined via
+      // the same translatable sprintf format as showing + reconciliation.
+      // Showing + reconciliation are joined the same way so translators
+      // control order and separator [INT-08][WBUX-5-D-04].
+      const nowHasAlt = mediaItems.filter(
+        (item) => item.status === 'complete' && item.isDecorative !== true,
+      ).length;
+      const markedDecorative = mediaItems.filter(
+        (item) => item.status === 'complete' && item.isDecorative === true,
+      ).length;
+      if (nowHasAlt > 0 || markedDecorative > 0) {
+        const altSentence =
+          nowHasAlt > 0
+            ? sprintf(
+                _n(
+                  '%d now has alt text and will leave this view when the list next refreshes.',
+                  '%d now have alt text and will leave this view when the list next refreshes.',
+                  nowHasAlt,
+                  'alt-context',
+                ),
+                nowHasAlt,
+              )
+            : null;
+        const decorativeSentence =
+          markedDecorative > 0
+            ? sprintf(
+                _n(
+                  '%d is marked decorative and will leave this view when the list next refreshes.',
+                  '%d are marked decorative and will leave this view when the list next refreshes.',
+                  markedDecorative,
+                  'alt-context',
+                ),
+                markedDecorative,
+              )
+            : null;
+        // Mixed: two independent sentences, each with its own _n() count.
+        // translators: 1: alt-text reconciliation sentence; 2: decorative reconciliation sentence.
+        const reconciliation =
+          altSentence && decorativeSentence
+            ? sprintf(__('%1$s %2$s', 'alt-context'), altSentence, decorativeSentence)
+            : (altSentence ?? decorativeSentence ?? '');
+        // translators: 1: "Showing N media items." sentence; 2: reconciliation sentence about corrected rows.
+        return sprintf(__('%1$s %2$s', 'alt-context'), showing, reconciliation);
+      }
+    }
+
+    return showing;
+  }, [mediaItems, mediaQuery.isError, mediaQuery.isFetching, normalizedSearch, statusFilter, totalCount]);
 
   const detailTruncationNotice = useMemo(() => {
     const detailData = mediaQuery.detailQuery.data;
@@ -153,14 +226,19 @@ export const WorkbenchMediaProvider: React.FC<{ children: React.ReactNode }> = (
     ],
   );
 
+  // Same condition that yields the transient "Updating media queue…" message —
+  // exposed as a boolean so consumers never key control flow on translated copy.
+  const isStatusPending = mediaQuery.isFetching;
+
   const mediaQueueGroup = useMemo<WorkbenchMediaQueue>(
     () => ({
       mediaQuery,
       statusMessage,
+      isStatusPending,
       detailTruncationNotice,
       hasIdentities: mediaItems.length > 0,
     }),
-    [mediaQuery, statusMessage, detailTruncationNotice, mediaItems.length],
+    [mediaQuery, statusMessage, isStatusPending, detailTruncationNotice, mediaItems.length],
   );
 
   const value = useMemo<WorkbenchMediaContextValue>(

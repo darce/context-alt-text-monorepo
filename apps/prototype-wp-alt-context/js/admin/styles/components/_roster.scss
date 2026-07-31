@@ -139,6 +139,34 @@
     display: flex;
     gap: var(--acx-space-8);
   }
+
+  /* Person state chip: icon + text (not colour alone) [PERC-02] [sr-004]. */
+  &__state {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--acx-space-4);
+    padding: var(--acx-space-2) var(--acx-space-8);
+    border-radius: var(--acx-radius-pill);
+    font-size: var(--acx-text-xs);
+    font-weight: var(--acx-font-weight-semibold);
+    line-height: var(--acx-leading-tight);
+    white-space: nowrap;
+  }
+
+  &__state--needs-review {
+    background: var(--acx-color-warning-pill-bg);
+    color: var(--acx-color-warning-pill-text);
+  }
+
+  &__state--unnamed {
+    background: var(--acx-color-surface);
+    color: var(--acx-color-text-muted);
+  }
+
+  &__state--named {
+    background: var(--acx-color-success-bg);
+    color: var(--acx-color-success-text);
+  }
 }
 
 .acx-icon-button {

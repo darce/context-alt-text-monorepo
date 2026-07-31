@@ -175,6 +175,7 @@ describe('projectionConsumerHarness (FBT-1 criterion 2 / ④)', () => {
     vi.clearAllMocks();
     window.AltContextAdmin = {
       nonce: 'test-nonce',
+      ajaxUrl: '/wp-admin/admin-ajax.php',
       tenant_id: 'tenant-1',
       endpoints: {
         recognitionClusters: 'http://localhost/recognition/clusters',

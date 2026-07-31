@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace AltContext\Sovereign\Mappers;
 
+require_once __DIR__ . '/trait-maps-response-fields.php';
+
 use function absint;
 use function trim;
 

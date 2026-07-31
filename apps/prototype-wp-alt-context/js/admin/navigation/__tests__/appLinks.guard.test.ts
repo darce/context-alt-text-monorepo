@@ -29,6 +29,7 @@ const HASH_LITERAL_RE = /(['"`])#\/[^'"`]*\1/g;
 const CONTRACT_PARAM_KEYS = [
   'tab',
   'panel',
+  'panes',
   'advanced',
   'cluster',
   'status',

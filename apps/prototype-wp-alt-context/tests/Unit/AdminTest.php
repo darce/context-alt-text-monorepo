@@ -126,6 +126,49 @@ class AdminTest extends TestCase
         );
     }
 
+    /**
+     * UXP-NET-2: SPA localize payload carries ajaxUrl + nonce for rest-nonce refresh.
+     */
+    public function testLocalizeSpaConfigIncludesAjaxUrlAndNonce(): void
+    {
+        $this->invokePrivateMethod($this->admin, 'localize_spa_config', ['test-handle']);
+
+        $localized = $GLOBALS['__ac_localized_scripts']['test-handle']['AltContextAdmin'] ?? null;
+
+        $this->assertIsArray($localized);
+        $this->assertArrayHasKey('nonce', $localized);
+        $this->assertSame('nonce-wp_rest', $localized['nonce'] ?? null);
+        $this->assertArrayHasKey('ajaxUrl', $localized);
+        $this->assertSame('/wp-admin/admin-ajax.php', $localized['ajaxUrl'] ?? null);
+    }
+
+    /**
+     * UXP-NET-2: attachment-edit localize payload carries ajaxUrl + nonce.
+     */
+    public function testLocalizeAttachmentEditConfigIncludesAjaxUrlAndNonce(): void
+    {
+        $_GET['post'] = '55';
+        $GLOBALS['__ac_posts'][55] = (object) [
+            'ID' => 55,
+            'post_type' => 'attachment',
+        ];
+        $GLOBALS['__ac_attachment_image_src'][55]['full'] = [
+            'http://example.test/wp-content/uploads/face.jpg',
+            1200,
+            800,
+        ];
+
+        $this->invokePrivateMethod($this->admin, 'localize_attachment_edit_config', ['test-handle']);
+
+        $localized = $GLOBALS['__ac_localized_scripts']['test-handle']['AltContextAttachmentEdit'] ?? null;
+
+        $this->assertIsArray($localized);
+        $this->assertArrayHasKey('nonce', $localized);
+        $this->assertSame('nonce-wp_rest', $localized['nonce'] ?? null);
+        $this->assertArrayHasKey('ajaxUrl', $localized);
+        $this->assertSame('/wp-admin/admin-ajax.php', $localized['ajaxUrl'] ?? null);
+    }
+
     public function testLocalizeSpaConfigIncludesRetentionEndpoints(): void
     {
         $this->invokePrivateMethod($this->admin, 'localize_spa_config', ['test-handle']);

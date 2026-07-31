@@ -65,7 +65,7 @@ logger = logging.getLogger(__name__)
 # Dedicated bounded pool for sync ORT/CPU work — not the default asyncio pool.
 # Lazy process-wide construction from RecognitionSettings.face_pipeline.max_workers
 # (RECOGNITION_FACE_PIPELINE_MAX_WORKERS). reset_shared_face_pipeline_runtime_for_tests
-# does not shut the pool down (see that hook's docstring). [FIR4-BR-05]
+# does not shut the pool down (see that hook's docstring). [FIR-4 finding BR-05]
 _POOL_LOCK = threading.Lock()
 _FACE_PIPELINE_EXECUTOR: ThreadPoolExecutor | None = None
 _FACE_PIPELINE_ADMISSION: FacePipelineAdmissionGate | None = None
@@ -88,7 +88,7 @@ class FacePipelineAdmissionGate:
 
     Unlike ``asyncio.Semaphore``, release does not require a live event loop, so
     residual workers completing after the caller's loop closes still free slots
-    ([RES-02][RES-04][RES-15] / FIR4-BR-05).
+    ([RES-02][RES-04][RES-15] / FIR-4 finding BR-05).
     """
 
     __slots__ = ("_capacity", "_sem")
@@ -288,13 +288,23 @@ class FacePipelineRuntime:
 
 
 def sface_embedding_model_manifest() -> EmbeddingModelManifest:
-    """Map MODEL_MANIFEST['sface'] provenance → EmbeddingModelManifest (rg-015)."""
+    """Map MODEL_MANIFEST['sface'] provenance → EmbeddingModelManifest (rg-015).
+
+    Embedding-space identity includes the numeric-relevant runtime token
+    (OpenCV full version + onnxruntime major.minor; see
+    ``NumericRuntimeFingerprint.space_token``) so aligner-numeric bumps and
+    ORT minor bumps cannot share a ``model_id`` string while ORT patch bumps
+    do not orphan rows (CVUP-1 findings LC-02 / HARM-02).
+    """
+    from recognition.infrastructure.face_pipeline.provenance import numeric_runtime_fingerprint
+
     entry = MODEL_MANIFEST["sface"]
     if entry.embedding_dim is None or entry.normalization is None or entry.metric is None:
         raise ValueError("MODEL_MANIFEST['sface'] missing embedding contract fields")
+    space = numeric_runtime_fingerprint().space_token
     return EmbeddingModelManifest(
         framework=entry.framework,
-        name="sface",
+        name=f"sface+{space}",
         dimensions=int(entry.embedding_dim),
         normalization=entry.normalization,
         metric=entry.metric,
@@ -566,7 +576,7 @@ def reset_shared_face_pipeline_runtime_for_tests() -> None:
     separate hook (``reconfigure_face_pipeline_pool_from_settings``).
 
     Also clears the shared ``face_pipeline.detect`` breaker so tests do not
-    leak open/closed state across cases (GROKHARM-03).
+    leak open/closed state across cases (local finding GROKHARM-03).
     """
     global _SHARED, _SHARED_DETECT_BREAKER
     with _SHARED_LOCK:

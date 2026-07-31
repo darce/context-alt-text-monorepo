@@ -79,6 +79,8 @@ class AdminEnqueueTest extends TestCase
             $localized['endpoints']['recognitionMediaIdentities'] ?? null
         );
         $this->assertArrayHasKey('nonce', $localized);
+        $this->assertArrayHasKey('ajaxUrl', $localized);
+        $this->assertSame('/wp-admin/admin-ajax.php', $localized['ajaxUrl'] ?? null);
         $this->assertArrayNotHasKey('alt-context-admin', $GLOBALS['__ac_scripts']);
     }
 
@@ -269,6 +271,34 @@ class AdminEnqueueTest extends TestCase
         $this->assertSame(
             'module',
             $GLOBALS['__ac_scripts']['alt-context-attachment-edit']['data']['type'] ?? null
+        );
+    }
+
+    public function testEnqueueWiresJsTranslationsForBothEntries(): void
+    {
+        // Without this the wp-i18n dependency ships but never receives a locale JED,
+        // so every SPA string stays in the source language on a non-English site.
+        // Pin the seam so deleting wp_set_script_translations(...) fails a test.
+        unset($_ENV['WP_ENVIRONMENT_TYPE']);
+        $this->setUserCapability('manage_options', true);
+
+        $admin = new Admin($this->dualManifestPath());
+
+        $admin->enqueue_scripts('toplevel_page_alt-context-dashboard');
+        $this->assertSame(
+            ['domain' => 'alt-context', 'path' => ACX_PLUGIN_DIR . 'public/languages'],
+            $GLOBALS['__ac_script_translations']['alt-context-admin'] ?? null
+        );
+
+        $GLOBALS['__ac_scripts'] = [];
+        $GLOBALS['__ac_styles'] = [];
+        $GLOBALS['__ac_script_translations'] = [];
+        $this->seedAttachmentPost(55);
+
+        $admin->enqueue_scripts('post.php');
+        $this->assertSame(
+            ['domain' => 'alt-context', 'path' => ACX_PLUGIN_DIR . 'public/languages'],
+            $GLOBALS['__ac_script_translations']['alt-context-attachment-edit'] ?? null
         );
     }
 }

@@ -386,7 +386,7 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
         db_check = await check_database(session)
         breaker_check = check_breaker(breaker)
         mc_check, cache_dir, model_name = await _model_probe()
-        embedding_model_check = check_active_embedding_model()
+        embedding_model_check = check_active_embedding_model(verbose=True)
         status = aggregate_status([db_check, breaker_check, mc_check, embedding_model_check])
         profile = _current_profile()
         if profile == "face_pipeline":

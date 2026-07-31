@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace AltContext\Media;
 
+require_once __DIR__ . '/interface-face-metrics-source.php';
+
 use AltContext\Api\MediaIdentitiesController;
 use WP_REST_Request;
 use WP_REST_Response;

@@ -1,10 +1,49 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { fetchApi, fetchRequiredApi, HTTPError, parseRetryAfter, ResponseParseError } from '../http';
+import { registerConfig, resetConfigCache, getNonce } from '../../api/config';
+import {
+  AuthExpiredError,
+  fetchApi,
+  fetchRequiredApi,
+  HTTPError,
+  parseRetryAfter,
+  ResponseParseError,
+} from '../http';
+
+const REST_URL = 'http://example.test/wp-json/acx/v1/endpoint';
+const AJAX_URL = 'https://example.test/wp-admin/admin-ajax.php';
+const STALE_NONCE = 'stale0001ab';
+const FRESH_NONCE = 'a1b2c3d4e5';
+
+const nonce403Body = JSON.stringify({
+  code: 'rest_cookie_invalid_nonce',
+  message: 'Cookie check failed',
+  data: { status: 403 },
+});
+
+const seedConfig = (nonce = STALE_NONCE): void => {
+  registerConfig({
+    nonce,
+    ajaxUrl: AJAX_URL,
+    endpoints: {},
+  });
+};
+
+const isAjaxCall = (url: unknown): boolean =>
+  typeof url === 'string' && url.includes('action=rest-nonce');
+
+const isRestCall = (url: unknown): boolean =>
+  typeof url === 'string' && !isAjaxCall(url);
 
 describe('fetchApi', () => {
+  beforeEach(() => {
+    resetConfigCache();
+    seedConfig();
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
+    resetConfigCache();
   });
 
   it('returns undefined for 204 responses', async () => {
@@ -80,8 +119,14 @@ describe('fetchApi', () => {
 });
 
 describe('fetchApi HTTPError', () => {
+  beforeEach(() => {
+    resetConfigCache();
+    seedConfig();
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
+    resetConfigCache();
   });
 
   it('throws a typed HTTPError carrying status and endpoint on a non-ok response', async () => {
@@ -162,5 +207,248 @@ describe('parseRetryAfter', () => {
     expect(parseRetryAfter('soon')).toBeUndefined();
     expect(parseRetryAfter('-3')).toBeUndefined();
     expect(parseRetryAfter('5.5')).toBeUndefined();
+  });
+});
+
+describe('fetchApi auth expiry seam (UXP-NET-2 slice 2)', () => {
+  beforeEach(() => {
+    resetConfigCache();
+    seedConfig();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetConfigCache();
+  });
+
+  it('nonce-403 → refresh → retry succeeds: 2 REST + 1 ajax; retry carries NEW header [RES-01][API-08]', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (isAjaxCall(url)) {
+        return new Response(FRESH_NONCE, { status: 200 });
+      }
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      if (headers['X-WP-Nonce'] === FRESH_NONCE) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      return new Response(nonce403Body, { status: 403 });
+    });
+
+    const result = await fetchApi<{ ok: boolean }>(REST_URL, { restNonce: STALE_NONCE });
+
+    expect(result).toEqual({ ok: true });
+    const restCalls = fetchMock.mock.calls.filter(([url]) => isRestCall(url));
+    const ajaxCalls = fetchMock.mock.calls.filter(([url]) => isAjaxCall(url));
+    expect(restCalls).toHaveLength(2);
+    expect(ajaxCalls).toHaveLength(1);
+    const retryHeaders = (restCalls[1]?.[1]?.headers ?? {}) as Record<string, string>;
+    expect(retryHeaders['X-WP-Nonce']).toBe(FRESH_NONCE);
+    expect(getNonce()).toBe(FRESH_NONCE);
+  });
+
+  it('non-nonce 403 → ordinary HTTPError, 1 fetch, 0 ajax [API-08]', async () => {
+    const body = JSON.stringify({ code: 'rest_forbidden', message: 'nope' });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(body, { status: 403 }));
+
+    await expect(fetchApi(REST_URL)).rejects.toBeInstanceOf(HTTPError);
+    expect(fetchMock.mock.calls.filter(([url]) => isRestCall(url))).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) => isAjaxCall(url))).toHaveLength(0);
+  });
+
+  it('non-JSON 403 body → ordinary HTTPError, no refresh', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('<html>WAF</html>', { status: 403 }));
+
+    try {
+      await fetchApi(REST_URL);
+      throw new Error('expected throw');
+    } catch (error) {
+      expect(error).toBeInstanceOf(HTTPError);
+      expect(error).not.toBeInstanceOf(AuthExpiredError);
+    }
+    expect(fetchMock.mock.calls.filter(([url]) => isAjaxCall(url))).toHaveLength(0);
+  });
+
+  it('401 rest_not_logged_in → AuthExpiredError, 0 ajax calls', async () => {
+    const body = JSON.stringify({ code: 'rest_not_logged_in', message: 'logged out' });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(body, { status: 401 }));
+
+    try {
+      await fetchApi(REST_URL);
+      throw new Error('expected throw');
+    } catch (error) {
+      expect(error).toBeInstanceOf(AuthExpiredError);
+      expect(error).not.toBeInstanceOf(HTTPError);
+      expect((error as AuthExpiredError).status).toBe(401);
+      expect((error as AuthExpiredError).endpoint).toBe(REST_URL);
+      expect((error as AuthExpiredError).name).toBe('AuthExpiredError');
+    }
+    expect(fetchMock.mock.calls.filter(([url]) => isAjaxCall(url))).toHaveLength(0);
+  });
+
+  it('second nonce-403 → AuthExpiredError, exactly 2 REST fetches', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      if (isAjaxCall(input)) {
+        return new Response(FRESH_NONCE, { status: 200 });
+      }
+      return new Response(nonce403Body, { status: 403 });
+    });
+
+    await expect(fetchApi(REST_URL)).rejects.toBeInstanceOf(AuthExpiredError);
+    expect(fetchMock.mock.calls.filter(([url]) => isRestCall(url))).toHaveLength(2);
+    expect(fetchMock.mock.calls.filter(([url]) => isAjaxCall(url))).toHaveLength(1);
+  });
+
+  it('refresh rejection → AuthExpiredError', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      if (isAjaxCall(input)) {
+        return new Response('0', { status: 400 });
+      }
+      return new Response(nonce403Body, { status: 403 });
+    });
+
+    await expect(fetchApi(REST_URL)).rejects.toBeInstanceOf(AuthExpiredError);
+    expect(fetchMock.mock.calls.filter(([url]) => isRestCall(url))).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) => isAjaxCall(url))).toHaveLength(1);
+  });
+
+  it('concurrent 403s → 1 refresh [RES-06]', async () => {
+    let ajaxCount = 0;
+    let restHits = 0;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      if (isAjaxCall(input)) {
+        ajaxCount += 1;
+        await new Promise((r) => setTimeout(r, 20));
+        return new Response(FRESH_NONCE, { status: 200 });
+      }
+      restHits += 1;
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      if (headers['X-WP-Nonce'] === FRESH_NONCE) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      return new Response(nonce403Body, { status: 403 });
+    });
+
+    const results = await Promise.all([fetchApi(REST_URL), fetchApi(REST_URL), fetchApi(REST_URL)]);
+    expect(results).toEqual([{ ok: true }, { ok: true }, { ok: true }]);
+    expect(ajaxCount).toBe(1);
+    expect(fetchMock.mock.calls.filter(([url]) => isAjaxCall(url))).toHaveLength(1);
+    // 3 first attempts + 3 retries
+    expect(restHits).toBe(6);
+  });
+
+  it('aborted signal mid-refresh → abort surfaced, no retry', async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      if (isAjaxCall(input)) {
+        controller.abort();
+        await new Promise((r) => setTimeout(r, 5));
+        return new Response(FRESH_NONCE, { status: 200 });
+      }
+      return new Response(nonce403Body, { status: 403 });
+    });
+
+    await expect(fetchApi(REST_URL, { signal: controller.signal })).rejects.toMatchObject({
+      name: 'AbortError',
+    });
+    expect(fetchMock.mock.calls.filter(([url]) => isRestCall(url))).toHaveLength(1);
+  });
+
+  it('UXP-NET-1 pin: 429 → fetch once, zero ajax, HTTPError status/retryAfterSeconds/message unchanged', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('slow down', { status: 429, headers: { 'Retry-After': '5' } }),
+    );
+
+    try {
+      await fetchApi(REST_URL);
+      throw new Error('expected throw');
+    } catch (error) {
+      expect(error).toBeInstanceOf(HTTPError);
+      expect((error as HTTPError).status).toBe(429);
+      expect((error as HTTPError).retryAfterSeconds).toBe(5);
+      expect((error as HTTPError).message).toBe(
+        `Request to ${REST_URL} failed (429): slow down`,
+      );
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.filter(([url]) => isAjaxCall(url))).toHaveLength(0);
+  });
+
+  it('UXP-NET-1 pin: 503+Retry-After → fetch once, zero ajax, HTTPError fields unchanged', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('overloaded', { status: 503, headers: { 'Retry-After': '12' } }),
+    );
+
+    try {
+      await fetchApi(REST_URL);
+      throw new Error('expected throw');
+    } catch (error) {
+      expect(error).toBeInstanceOf(HTTPError);
+      expect((error as HTTPError).status).toBe(503);
+      expect((error as HTTPError).retryAfterSeconds).toBe(12);
+      expect((error as HTTPError).message).toBe(
+        `Request to ${REST_URL} failed (503): overloaded`,
+      );
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.filter(([url]) => isAjaxCall(url))).toHaveLength(0);
+  });
+});
+
+describe('fetchApi review-fix discrimination pins (UXPNET2-BR-04/05)', () => {
+  beforeEach(() => {
+    resetConfigCache();
+    seedConfig();
+  });
+
+  afterEach(() => {
+    resetConfigCache();
+  });
+
+  it('first attempt uses options.restNonce over a fresher cached nonce (BR-05) [TEST-15]', async () => {
+    resetConfigCache();
+    seedConfig(FRESH_NONCE); // cached getNonce() is FRESH…
+    const restHeaders: Array<Record<string, string>> = [];
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      if (isAjaxCall(url)) {
+        return new Response(FRESH_NONCE, { status: 200 });
+      }
+      restHeaders.push((init?.headers ?? {}) as Record<string, string>);
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+
+    // …but the caller explicitly passes STALE — the first wire header must be STALE.
+    await fetchApi<{ ok: boolean }>(REST_URL, { restNonce: STALE_NONCE });
+    expect(restHeaders[0]['X-WP-Nonce']).toBe(STALE_NONCE);
+    expect(fetchMock.mock.calls.filter(([url]) => isAjaxCall(url))).toHaveLength(0);
+  });
+
+  it('omitted restNonce resolves the live cached nonce at send time (BR-05) [TEST-15]', async () => {
+    resetConfigCache();
+    seedConfig(FRESH_NONCE);
+    const restHeaders: Array<Record<string, string>> = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      restHeaders.push((init?.headers ?? {}) as Record<string, string>);
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+
+    await fetchApi<{ ok: boolean }>(REST_URL);
+    expect(restHeaders[0]['X-WP-Nonce']).toBe(FRESH_NONCE);
+  });
+
+  it('abort landing during a FAILING refresh surfaces AbortError, never session expiry (BR-04) [TEST-15]', async () => {
+    const controller = new AbortController();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      if (isAjaxCall(url)) {
+        controller.abort();
+        return new Response('0', { status: 400 }); // refresh fails while abort lands
+      }
+      return new Response(nonce403Body, { status: 403 });
+    });
+
+    await expect(
+      fetchApi<{ ok: boolean }>(REST_URL, { restNonce: STALE_NONCE, signal: controller.signal }),
+    ).rejects.toSatisfy((err: unknown) => err instanceof DOMException && err.name === 'AbortError');
   });
 });

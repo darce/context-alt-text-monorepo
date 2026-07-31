@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 from dataclasses import dataclass, field
 
+import pytest
 from sqlalchemy import CheckConstraint
 
 from roster.application.curation_sync_service import CurationRefreshStatus
@@ -146,3 +147,61 @@ def test_identity_schema_downgrade_drops_children_before_parents(monkeypatch) ->
         "media_identities"
     )
     assert recorder.dropped_tables.index("recognition_events") < recorder.dropped_tables.index("recognition_runs")
+
+
+def test_ensure_table_fails_loudly_when_existing_table_missing_named_constraint() -> None:
+    """FL30-B-01: existing tables missing table-level constraints must not silent-heal.
+
+    Predicted RED mutation: remove the ``_ensure_table_constraints`` call from
+    ``_ensure_table`` (table-exists branch) → this raises nothing and the missing
+    UniqueConstraint is silently skipped while indexes alone may still land.
+    """
+    import sqlalchemy as sa
+
+    class _Result:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def scalar(self):
+            return self._rows[0][0] if self._rows else None
+
+        def __iter__(self):
+            return iter(self._rows)
+
+    class _ExistingTableOp:
+        """Catalog reports the table exists, columns present, constraints empty."""
+
+        def get_bind(self):
+            parent = self
+
+            class _Bind:
+                def execute(self, stmt, params=None):  # noqa: ANN001
+                    sql = str(stmt).lower()
+                    if "relkind" in sql:
+                        return _Result([("r",)])
+                    if "column_name" in sql:
+                        return _Result([("id",), ("run_id",)])
+                    if "conname" in sql:
+                        # No constraints present — the heal gap under test.
+                        return _Result([])
+                    return _Result([None])
+
+            return _Bind()
+
+        def create_table(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            raise AssertionError("create_table must not run when the table already exists")
+
+        def add_column(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            raise AssertionError("no columns should be missing in this fixture")
+
+    op = _ExistingTableOp()
+    with pytest.raises(RuntimeError, match="missing table-level constraints") as exc_info:
+        identity_schema._ensure_table(
+            op,
+            "identity_atlas_points",
+            sa.Column("id", sa.Integer, primary_key=True),
+            sa.Column("run_id", sa.Integer, nullable=False),
+            sa.UniqueConstraint("id", "run_id", name="uq_identity_atlas_points_id_run"),
+        )
+    assert "uq_identity_atlas_points_id_run" in str(exc_info.value)
+    assert "identity_atlas_points" in str(exc_info.value)

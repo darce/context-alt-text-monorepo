@@ -291,6 +291,7 @@ async def test_centroid_mv_read_and_mean_of_representatives_fallback(
     repo = AtlasRepository(atlas_db_session)
     pairs, mv_ts = await repo.get_tenant_cluster_centroids(
         str(atlas_tenant.id),
+        _MODEL_A,
         cluster_ids=[str(cluster_mv.id), str(cluster_miss.id)],
     )
     by_id = {cid: emb for cid, emb in pairs}
@@ -472,6 +473,7 @@ async def test_centroid_fallback_uses_representatives_not_members(
     repo = AtlasRepository(atlas_db_session)
     pairs, _ = await repo.get_tenant_cluster_centroids(
         str(atlas_tenant.id),
+        _MODEL_A,
         cluster_ids=[str(cluster.id)],
     )
     by_id = {cid: emb for cid, emb in pairs}
@@ -513,6 +515,7 @@ async def test_centroid_fallback_uses_member_embeddings_when_no_reps(
     repo = AtlasRepository(atlas_db_session)
     pairs, _ = await repo.get_tenant_cluster_centroids(
         str(atlas_tenant.id),
+        _MODEL_A,
         cluster_ids=[str(cluster.id)],
     )
     by_id = {cid: emb for cid, emb in pairs}

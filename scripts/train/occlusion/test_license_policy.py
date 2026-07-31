@@ -3436,6 +3436,44 @@ class TestBr62GetModelIngestEntryPrimaryRaise:
         assert err.result.ok is False
         assert err.result.reason is policy.RejectionReason.NC_MODEL_DERIVED
 
+    def test_registered_nc_entry_raises_from_the_primary_site(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The primary raise is the ONLY path for a REGISTERED failing entry.
+
+        Both raise sites carry the identical ``result``, so every unregistered
+        id (``ultralytics``, ``insightface``, any miss) is absorbed by the
+        second site when the first is deleted — the mutant is equivalent for
+        them. No shipped entry is non-ALLOWED, so a registry injection is the
+        only way to reach ``MODEL_INGEST_ENTRIES.get(...) is not None`` with a
+        failing audit and make the primary site load-bearing (BR-62 / TEST-15).
+        """
+        entry = policy.ModelIngestEntry(
+            model_id="nc_ingest_probe",
+            display_name="NC Ingest Probe",
+            role=policy.DetectorRole.FACE_DETECTOR,
+            verification=policy.VerificationMetadata(
+                spdx_id="CC-BY-NC-4.0",
+                commercial_use=policy.CommercialUse.NON_COMMERCIAL,
+                notes="test-only registered entry that fails its own audit",
+            ),
+        )
+        key = policy._resolve_model_key("nc_ingest_probe")
+        monkeypatch.setattr(
+            policy,
+            "MODEL_INGEST_ENTRIES",
+            {**policy.MODEL_INGEST_ENTRIES, key: entry},
+        )
+        # Registered, so the second raise's `entry is None` guard cannot fire.
+        assert policy.MODEL_INGEST_ENTRIES.get(key) is not None
+        assert policy.PACKAGE_DENYLIST.get(key) is None
+
+        with pytest.raises(policy.LicensePolicyError) as exc_info:
+            policy.get_model_ingest_entry("nc_ingest_probe")
+        err = exc_info.value
+        assert err.result.ok is False
+        assert err.result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
 
 # ---------------------------------------------------------------------------
 # GATE-06 — result.category propagation pinned on every door

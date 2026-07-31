@@ -94,4 +94,52 @@ class DescriptionContentRefreshDryRunTest extends TestCase
         $this->assertSame(0, $result['summary']['candidates']);
         $this->assertSame(0, $result['summary']['skipped']);
     }
+
+    /**
+     * BR-141: when embedded alt (decoded) equals meta (entity-encoded then
+     * decoded), dry_run must report already_current — not a perpetual candidate.
+     */
+    public function testDryRunSkipsAlreadyCurrentWhenMetaIsEntityEncoded(): void
+    {
+        // Storage form after sanitize_text_field("x <= y").
+        $this->setPostMeta(42, '_wp_attachment_image_alt', 'x &lt;= y');
+        $GLOBALS['__ac_get_posts_results'] = [
+            (object) [
+                'ID' => 401,
+                'post_type' => 'post',
+                'post_title' => 'Already current entity alt',
+                // Embedded form after a correct apply (esc_attr + extract round-trip).
+                'post_content' => '<p><img class="wp-image-42" src="/cmp.jpg" alt="x &lt;= y" /></p>',
+            ],
+        ];
+
+        $result = (new DescriptionContentRefreshService())->dry_run([42], 10);
+
+        $this->assertSame(0, $result['summary']['candidates']);
+        $this->assertSame(1, $result['summary']['skipped']);
+        $this->assertSame('already_current', $result['skipped'][0]['reason']);
+        $this->assertSame(401, $result['skipped'][0]['post_id']);
+    }
+
+    /**
+     * BR-141: operator-facing payload fields are decoded for SPA display.
+     */
+    public function testDryRunCandidatePayloadUsesDecodedCurrentAltText(): void
+    {
+        $this->setPostMeta(42, '_wp_attachment_image_alt', 'x &lt;= y');
+        $GLOBALS['__ac_get_posts_results'] = [
+            (object) [
+                'ID' => 402,
+                'post_type' => 'post',
+                'post_title' => 'Needs refresh',
+                'post_content' => '<p><img class="wp-image-42" src="/cmp.jpg" alt="old comparison" /></p>',
+            ],
+        ];
+
+        $result = (new DescriptionContentRefreshService())->dry_run([42], 10);
+
+        $this->assertSame(1, $result['summary']['candidates']);
+        $this->assertSame('old comparison', $result['candidates'][0]['existing_alt_text']);
+        $this->assertSame('x <= y', $result['candidates'][0]['current_alt_text']);
+    }
 }

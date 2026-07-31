@@ -279,16 +279,34 @@ class Api {
 		}
 
 		if ( 'missing' === $status ) {
+			// Empty alt AND not decorative. Decorative exclusion mirrors
+			// DescriptionCandidateService::build_row so marked images leave the
+			// missing queue (and the coverage probe that reuses this filter).
 			$args['meta_query'] = array(
-				'relation' => 'OR',
+				'relation' => 'AND',
 				array(
-					'key'     => '_wp_attachment_image_alt',
-					'compare' => 'NOT EXISTS',
+					'relation' => 'OR',
+					array(
+						'key'     => '_wp_attachment_image_alt',
+						'compare' => 'NOT EXISTS',
+					),
+					array(
+						'key'     => '_wp_attachment_image_alt',
+						'value'   => '',
+						'compare' => '=',
+					),
 				),
 				array(
-					'key'     => '_wp_attachment_image_alt',
-					'value'   => '',
-					'compare' => '=',
+					'relation' => 'OR',
+					array(
+						'key'     => 'acx_alt_decorative',
+						'compare' => 'NOT EXISTS',
+					),
+					array(
+						'key'     => 'acx_alt_decorative',
+						'value'   => '1',
+						'compare' => '!=',
+					),
 				),
 			);
 		}
@@ -299,6 +317,12 @@ class Api {
 		$items = array_map(
 			function ( int $attachment_id ): array {
 				$alt_text = get_post_meta( $attachment_id, '_wp_attachment_image_alt', true );
+				// Precedence matches DescriptionCandidateService::build_row:
+				// non-empty alt wins over a leftover decorative marker; marker
+				// '1' with empty alt is treated as done (status complete).
+				$has_alt        = '' !== trim( (string) $alt_text );
+				$decorative_raw = get_post_meta( $attachment_id, 'acx_alt_decorative', true );
+				$is_decorative  = is_string( $decorative_raw ) && '1' === $decorative_raw;
 				$thumb_medium = wp_get_attachment_image_src( $attachment_id, 'medium' );
 				$thumb_url    = wp_get_attachment_image_url( $attachment_id, 'full' );
 				$thumb        = is_array( $thumb_medium ) && isset( $thumb_medium[0] ) ? $thumb_medium[0] : $thumb_url;
@@ -311,7 +335,7 @@ class Api {
 				return array(
 					'id'           => $attachment_id,
 					'title'        => get_the_title( $attachment_id ),
-					'status'       => '' === trim( (string) $alt_text ) ? 'missing' : 'complete',
+					'status'       => ( $has_alt || $is_decorative ) ? 'complete' : 'missing',
 					'thumbnailUrl' => false === $thumb ? null : $thumb,
 					'thumbnailSrcset' => is_string( $thumb_srcset ) ? $thumb_srcset : null,
 					'thumbnailSizes'  => is_string( $thumb_sizes ) ? $thumb_sizes : null,
@@ -319,7 +343,8 @@ class Api {
 						'width'  => $thumb_width,
 						'height' => $thumb_height,
 					),
-					'altText'      => '' === trim( (string) $alt_text ) ? null : $alt_text,
+					'altText'      => $has_alt ? $alt_text : null,
+					'isDecorative' => $is_decorative,
 					'editUrl'      => get_edit_post_link( $attachment_id, '' ),
 					'tags'         => is_wp_error( $terms ) || ! is_array( $terms ) ? array() : array_values( $terms ),
 				);

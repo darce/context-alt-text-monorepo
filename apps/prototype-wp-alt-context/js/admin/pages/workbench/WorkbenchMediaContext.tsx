@@ -27,6 +27,12 @@ export interface WorkbenchMediaFilters {
 export interface WorkbenchMediaQueue {
   mediaQuery: ReturnType<typeof useWorkbenchMedia>;
   statusMessage: string;
+  /**
+   * True while the queue is fetching — same condition that produces the transient
+   * "Updating media queue…" statusMessage. Consumers that suppress that transient
+   * from live regions must gate on this flag, not on display-copy equality [sr-007].
+   */
+  isStatusPending: boolean;
   detailTruncationNotice: string | null;
   hasIdentities: boolean;
 }
@@ -220,14 +226,19 @@ export const WorkbenchMediaProvider: React.FC<{ children: React.ReactNode }> = (
     ],
   );
 
+  // Same condition that yields the transient "Updating media queue…" message —
+  // exposed as a boolean so consumers never key control flow on translated copy.
+  const isStatusPending = mediaQuery.isFetching;
+
   const mediaQueueGroup = useMemo<WorkbenchMediaQueue>(
     () => ({
       mediaQuery,
       statusMessage,
+      isStatusPending,
       detailTruncationNotice,
       hasIdentities: mediaItems.length > 0,
     }),
-    [mediaQuery, statusMessage, detailTruncationNotice, mediaItems.length],
+    [mediaQuery, statusMessage, isStatusPending, detailTruncationNotice, mediaItems.length],
   );
 
   const value = useMemo<WorkbenchMediaContextValue>(

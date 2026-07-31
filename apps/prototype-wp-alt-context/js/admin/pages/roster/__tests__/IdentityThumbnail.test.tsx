@@ -13,6 +13,35 @@ const identity: ClusterIdentity = {
   bbox: { x: 0, y: 0, width: 20, height: 40 },
 };
 
+/**
+ * Interactive-element contract for !namedPending placeholders [A11Y-11][TEST-17].
+ * Pins "must not be interactive" rather than a specific tagName (div vs span are
+ * both valid; button / a[href] / input / role=button / contenteditable / tab-order
+ * entries are not). Structural selector + tabIndex — not element identity.
+ */
+const INTERACTIVE_CONTROL_SELECTOR = [
+  'button',
+  'a[href]',
+  'input',
+  'select',
+  'textarea',
+  'summary',
+  '[role="button"]',
+  '[role="link"]',
+  '[contenteditable]:not([contenteditable="false"])',
+].join(', ');
+
+const isInteractiveControl = (el: Element): boolean => {
+  if (!(el instanceof HTMLElement)) {
+    return false;
+  }
+  if (el.matches(INTERACTIVE_CONTROL_SELECTOR)) {
+    return true;
+  }
+  // In the tab order (tabIndex >= 0) even without a matching tag/role.
+  return el.tabIndex >= 0;
+};
+
 describe('IdentityThumbnail', () => {
   it('renders placeholder when no metadata is available', () => {
     const { container } = render(<IdentityThumbnail identity={identity} size={64} />);
@@ -99,8 +128,12 @@ describe('IdentityThumbnail', () => {
       return;
     }
 
-    // Same hard pins as the missing-media arm (symmetric across the branch).
-    expect(control.tagName, 'must not be an interactive button when !namedPending').toBe('DIV');
+    // Contract pin: not interactive — accepts div/span, rejects button/a/input/etc.
+    // (tagName==='DIV' was an implementation pin; span is a11y-equivalent [TEST-17]).
+    expect(
+      isInteractiveControl(control),
+      'must not be an interactive element when !namedPending [A11Y-11]',
+    ).toBe(false);
     expect(control).toHaveAttribute('aria-hidden', 'true');
     expect(control.getAttribute('aria-label')).toBeNull();
     expect(control.getAttribute('role')).toBeNull();
@@ -129,8 +162,11 @@ describe('IdentityThumbnail', () => {
       return;
     }
 
-    // Symmetric hard pins with the decorative arm — no disjunction, no nested if.
-    expect(control.tagName, 'must not be an interactive button when !namedPending').toBe('DIV');
+    // Symmetric contract pins with the decorative arm — no disjunction, no nested if.
+    expect(
+      isInteractiveControl(control),
+      'must not be an interactive element when !namedPending [A11Y-11]',
+    ).toBe(false);
     expect(control).toHaveAttribute('aria-hidden', 'true');
     expect(control.getAttribute('aria-label')).toBeNull();
     expect(control.getAttribute('role')).toBeNull();

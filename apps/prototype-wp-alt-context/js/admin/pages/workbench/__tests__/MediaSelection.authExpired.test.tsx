@@ -86,6 +86,7 @@ vi.mock('../WorkbenchMediaContext', () => ({
         identitiesQuery: identitiesSurface,
       },
       statusMessage: 'Showing 1 media item.',
+      isStatusPending: false,
       detailTruncationNotice: null,
       hasIdentities: false,
     },

@@ -54,7 +54,7 @@ export const MediaSelection = ({
     setPerPage: onPerPageChange,
     setCurrentPage: onPageChange,
   } = filters;
-  const { mediaQuery, statusMessage } = mediaQueue;
+  const { mediaQuery, statusMessage, isStatusPending } = mediaQueue;
 
   const mediaData = mediaQuery.data;
   const items = mediaQuery.itemsWithIdentities ?? mediaData?.items ?? [];
@@ -117,6 +117,7 @@ export const MediaSelection = ({
           statusFilter={statusFilter}
           onStatusFilterChange={onStatusFilterChange}
           statusMessage={statusMessage}
+          isStatusPending={isStatusPending}
           isError={isError}
           onRetry={onRetry}
         />
@@ -236,16 +237,15 @@ interface MediaSelectionToolbarProps {
   statusFilter: WorkbenchMediaStatus;
   onStatusFilterChange: (status: WorkbenchMediaStatus) => void;
   statusMessage: string;
+  /**
+   * True while the queue is still fetching. Suppresses the transient status from
+   * the live region — gated on the context boolean, not display-copy equality
+   * [B-01][A11Y-08][sr-007].
+   */
+  isStatusPending: boolean;
   isError: boolean;
   onRetry?: () => void;
 }
-
-/**
- * Transient fetch-churn copy from WorkbenchMediaContext while isFetching.
- * Must not enter the toolbar live region — every keystroke rewrites s= and
- * refetches, so announcing this on each change interrupts AT users [B-01][A11Y-08].
- */
-const UPDATING_MEDIA_QUEUE_MESSAGE = __('Updating media queue…', 'alt-context');
 
 /** Coalesce rapid settled-status changes (search keystroke storms) [B-01]. */
 const TOOLBAR_STATUS_ANNOUNCE_DEBOUNCE_MS = 1000;
@@ -256,13 +256,14 @@ const MediaSelectionToolbar = ({
   statusFilter,
   onStatusFilterChange,
   statusMessage,
+  isStatusPending,
   isError,
   onRetry,
 }: MediaSelectionToolbarProps) => {
-  // Settled candidate: exclude transient "Updating…" so fetch churn never enters
-  // the live region. Visual span still shows the full message [B-01 option b].
-  const settledCandidate =
-    statusMessage === UPDATING_MEDIA_QUEUE_MESSAGE ? null : statusMessage;
+  // Settled candidate: exclude transient fetch-pending so fetch churn never
+  // enters the live region. Visual span still shows the full message [B-01 option b].
+  // Gate on isStatusPending (not translated display copy) [sr-007].
+  const settledCandidate = isStatusPending ? null : statusMessage;
 
   // Always-mounted live region: start empty so the region exists before text
   // arrives (a status that mounts with content often is not announced).

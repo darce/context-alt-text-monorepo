@@ -111,10 +111,16 @@ def _caption_flags(caption: str) -> list[str]:
     return flags
 
 
-def _paid_describe_calls(ok_rows: list[dict[str, object]]) -> int:
-    """Count non-cached successful describes (mirrors cli.fetch_run_record billing)."""
+def _paid_describe_calls(rows: list[dict[str, object]]) -> int:
+    """Count describe attempts; refund cache hits (mirrors cli.fetch_run_record billing).
+
+    cli bills on attempt (``paid_calls += 1`` before ``client.describe``) and refunds
+    only when the response carries ``cached: true``. Failed attempts still charge, so
+    this must walk *all* rows — not just error-free ones — or ``total_cost_usd``
+    under-reports on any run with errors (FL30-A-13).
+    """
     paid = 0
-    for r in ok_rows:
+    for r in rows:
         describe = r.get("describe")
         if isinstance(describe, dict) and describe.get("cached") is True:
             continue
@@ -135,7 +141,8 @@ def _write_report(*, cost_per_image_usd: float | None = None) -> None:
     completed = [r["completed_at"] for r in rows if r.get("completed_at")]
     wall = (max(completed) - min(completed)) if len(completed) >= 2 else 0.0
     models = sorted({(r.get("describe") or {}).get("model_id") for r in ok if (r.get("describe") or {}).get("model_id")})
-    paid_describe_calls = _paid_describe_calls(ok)
+    # All rows: runner bills every describe attempt, including failed ones (A-13).
+    paid_describe_calls = _paid_describe_calls(rows)
     cost_fields = cost_report_fields(
         cost_per_image_usd=cost_per_image_usd,
         paid_describe_calls=paid_describe_calls,

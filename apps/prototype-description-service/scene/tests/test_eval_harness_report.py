@@ -1878,3 +1878,12 @@ def test_identity_names_rejects_empty_name_and_non_dict():  # A-06
         identity_names([{"name": "", "bbox": None, "unpositioned": True}])
     with pytest.raises(TypeError, match="dict identity row"):
         identity_names([_dict_identity("Keep Me"), 42])
+
+
+def test_identity_names_rejects_non_list_top_level():  # A-15
+    """Top-level non-list identities must raise TypeError (not silently return [])."""
+    from scripts.eval_harness.cli import identity_names
+
+    for bad in (None, "Zoe Alone", {"name": "dict-not-list"}):
+        with pytest.raises(TypeError, match="list of dict rows"):
+            identity_names(bad)

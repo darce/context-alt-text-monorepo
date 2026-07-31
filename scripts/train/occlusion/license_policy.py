@@ -1348,45 +1348,51 @@ def _common_provenance_checks(
 ) -> LicenseAuditResult | None:
     """Unconditional rules shared by every row-shaped entry point (BR-26).
 
-    Category-independent floor: licence values (denylist + allowlist,
-    fail-closed on disagreement) and ``derived_from_model`` taint (NC **and**
-    research-corpus). Category-specific doors may only ADD restrictions,
-    never subtract. Returns a FAIL result when a common rule fires; ``None``
-    means the caller may continue with category-specific gates.
+    Category-independent floor: ``derived_from_model`` taint (NC **and**
+    research-corpus) followed by licence values (denylist + allowlist,
+    fail-closed on disagreement). Both run on every row; the order fixes
+    which reason is reported when a row trips both. Category-specific doors
+    may only ADD restrictions, never subtract. Returns a FAIL result when a
+    common rule fires; ``None`` means the caller may continue with
+    category-specific gates.
     """
-    # BR-53: licence floor on every row-shaped door (present values only;
-    # doors that require a licence field still enforce required=True later).
+    # Taint outranks licence: a row that is both NC-derived and badly licensed
+    # must report the NC reason. Swapping the licence field would clear a
+    # licence reason while the banned lineage survives, so reporting the
+    # licence first understates the problem (BR-64 / GATE-01).
+    if "derived_from_model" in row:
+        raw = row["derived_from_model"]
+        if raw is None:
+            return _fail(
+                RejectionReason.INVALID_ROW,
+                detail="provenance row field 'derived_from_model' must be a string, got None",
+                category=category,
+            )
+        if not isinstance(raw, str):
+            return _fail(
+                RejectionReason.INVALID_ROW,
+                detail=(
+                    "provenance row field 'derived_from_model' must be a string, "
+                    f"got {type(raw).__name__}"
+                ),
+                category=category,
+            )
+        derived_result = audit_derived_from_model(raw)
+        if not derived_result.ok:
+            # Preserve NC / research / invalid reasons; re-tag for the calling door.
+            return LicenseAuditResult(
+                verdict=derived_result.verdict,
+                reason=derived_result.reason,
+                detail=derived_result.detail,
+                category=category,
+            )
+
+    # BR-53: licence floor. Runs on EVERY row-shaped door, including rows that
+    # carry no derived_from_model key (present values only; doors that require
+    # a licence field still enforce required=True later).
     license_result = _audit_row_licenses(row, category=category, required=False)
     if not license_result.ok:
         return license_result
-
-    if "derived_from_model" not in row:
-        return None
-    raw = row["derived_from_model"]
-    if raw is None:
-        return _fail(
-            RejectionReason.INVALID_ROW,
-            detail="provenance row field 'derived_from_model' must be a string, got None",
-            category=category,
-        )
-    if not isinstance(raw, str):
-        return _fail(
-            RejectionReason.INVALID_ROW,
-            detail=(
-                "provenance row field 'derived_from_model' must be a string, "
-                f"got {type(raw).__name__}"
-            ),
-            category=category,
-        )
-    derived_result = audit_derived_from_model(raw)
-    if not derived_result.ok:
-        # Preserve NC / research / invalid reasons; re-tag category for the calling door.
-        return LicenseAuditResult(
-            verdict=derived_result.verdict,
-            reason=derived_result.reason,
-            detail=derived_result.detail,
-            category=category,
-        )
     return None
 
 

@@ -91,3 +91,23 @@ export const selectMediaFooterCtaState = ({
 
 /** DOM marker for the single accent-primary element — counted by the DOM invariant test. */
 export const ACCENT_PRIMARY_ATTR = 'data-acx-accent-primary';
+
+export interface ReviewSurfaceActiveInputs {
+  /** The queue reports a card/label/review primary is mounted in its findings anchor. */
+  cardPrimaryPresent: boolean;
+  /** The control (queue) pane is collapsed, so its accent marker is rendered `hidden`. */
+  controlCollapsed: boolean;
+}
+
+/**
+ * The footer only steps its CTAs down when the QUEUE's accent primary is actually on
+ * screen. The queue lives in the control pane; when that pane is collapsed its card
+ * marker is `hidden` (still mounted, so `cardPrimaryPresent` stays true), so the footer
+ * must RECLAIM its accent primary — otherwise the viewport shows ZERO accent primaries.
+ * This preserves the single-accent-primary contract across the two-pane collapse states
+ * [WBUX-5 S1c-2].
+ */
+export const deriveReviewSurfaceActive = ({
+  cardPrimaryPresent,
+  controlCollapsed,
+}: ReviewSurfaceActiveInputs): boolean => cardPrimaryPresent && !controlCollapsed;

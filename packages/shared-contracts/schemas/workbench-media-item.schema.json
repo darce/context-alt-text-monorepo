@@ -10,6 +10,7 @@
     "status",
     "thumbnailUrl",
     "altText",
+    "isDecorative",
     "mimeType",
     "editUrl",
     "updatedAt",
@@ -39,6 +40,10 @@
     "altText": {
       "type": ["string", "null"],
       "description": "Current alt text (if any)."
+    },
+    "isDecorative": {
+      "type": "boolean",
+      "description": "True when the server holds the durable empty-alt decorative marker (acx_alt_decorative=1). Distinct from altText===null, which means never described. Emitted explicitly by the list producer; never inferred from altText alone."
     },
     "mimeType": {
       "type": "string",

@@ -2238,3 +2238,324 @@ class TestGate11ClearanceFloorOnEveryDoor:
             f"category={category.value} ignored derived_from_model=dcface/x"
         )
         assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+
+
+# ---------------------------------------------------------------------------
+# FIR-7-BR-56 — the slash/underscore asymmetry is deliberate (resolved wontfix)
+# ---------------------------------------------------------------------------
+
+
+class TestBr56SlashUnderscoreAsymmetryIsDeliberate:
+    """BR-56 asked that slash and underscore spellings agree. They must not.
+
+    Neither direction of "make them agree" is available:
+
+    * Segment-matching underscore compounds is the progressive-prefix grammar
+      that BR-50 / BR-52 removed for over-matching.
+    * Relaxing slash components to whole-string matching flips 637 currently
+      rejected sources to PASS (measured over a 3,330-source corpus), among
+      them ``vendor/casia/subset``, ``acme/celeba/mirror`` and
+      ``acme/casia/commercial_repack``. A subset or a mirror of a research
+      corpus is still that corpus.
+
+    So the asymmetry stays and is pinned here: a slash is a hierarchical
+    separator and each component is an identity token matched in its own
+    right; an underscore is not, and underscore forms match whole-string
+    only. Consistency does not outrank fail-safe defaults [SECD-05].
+
+    Correction to the finding as filed: ``internal/mfr/not_research`` PASSes
+    (``mfr`` is exact-only / BR-58) and was never a repro row.
+    """
+
+    @pytest.mark.parametrize(
+        ("source", "expect_ok", "expect_reason"),
+        [
+            # --- the rows the finding filed as inconsistent: slash FAILs ---
+            ("acme/ffhq/replacement_v1", False, "research_only_source"),
+            ("vendor/casia/commercial_repack", False, "research_only_source"),
+            ("ffhq/tools", False, "research_only_source"),
+            ("org/ffhq/reimpl", False, "research_only_source"),
+            ("acme/ffhq/replacement", False, "research_only_source"),
+            # --- ...and the underscore spelling PASSes. This is the asymmetry.
+            ("acme/ffhq_replacement_v1", True, None),
+            ("vendor/casia_commercial_repack", True, None),
+            # --- terminal research component (both shapes FAIL) ---
+            ("acme/ffhq", False, "research_only_source"),
+            ("dataset/ffhq", False, "research_only_source"),
+            ("ffhq", False, "research_only_source"),
+            ("vendor/casia", False, "research_only_source"),
+            ("casia", False, "research_only_source"),
+            # --- non-terminal research component (FAIL) ---
+            ("acme/ffhq/train", False, "research_only_source"),
+            ("org/casia/webface", False, "research_only_source"),
+            ("dataset/ffhq/aligned", False, "research_only_source"),
+            # --- no research component at all (PASS) ---
+            ("acme/commercial_pack_v1", True, None),
+            ("vendor/tools/internal", True, None),
+            # --- finding correction: mfr exact-only, not a BR-56 repro ---
+            ("internal/mfr/not_research", True, None),
+        ],
+    )
+    def test_br56_shape_table(
+        self,
+        source: str,
+        expect_ok: bool,
+        expect_reason: str | None,
+    ) -> None:
+        result = policy.audit_source(source)
+        assert isinstance(result, policy.LicenseAuditResult)
+        assert result.ok is expect_ok, (
+            f"source={source!r}: expected ok={expect_ok}, got {result}"
+        )
+        if expect_ok:
+            assert result.reason is None
+        else:
+            assert result.reason is policy.RejectionReason(expect_reason)
+
+    @pytest.mark.parametrize(
+        "leaf",
+        ["subset", "mirror", "clone", "pack", "assets", "eval", "derived"],
+    )
+    @pytest.mark.parametrize("corpus", ["casia", "ffhq", "celeba", "widerface"])
+    def test_laundering_leaf_under_research_component_still_fails(
+        self, corpus: str, leaf: str
+    ) -> None:
+        """A repack/mirror/subset of a research corpus is still that corpus.
+
+        These 28 sources were the bulk of the 637 that a whole-string relaxation
+        of the slash path would have opened. Regression guard: any future
+        "consistency" change to the matcher must keep them closed.
+        """
+        source = f"vendor/{corpus}/{leaf}"
+        result = policy.audit_source(source)
+        assert result.ok is False, f"{source!r} must not pass: {result}"
+        assert result.reason is policy.RejectionReason.RESEARCH_ONLY_SOURCE
+
+
+# ---------------------------------------------------------------------------
+# FIR-7-BR-48 — no live-looking dead private helpers on the security path
+# ---------------------------------------------------------------------------
+
+
+class TestBr48NoDeadPrivateHelpers:
+    """BR-48: private module-level helpers must have at least one load ref.
+
+    ``_nfkc_lower``, ``_compact_alnum``, ``_split_segments``, and ``_spdx_of``
+    (plus the equally-dead ``_prepare_match_text``) were defined but never
+    loaded. BR-56 resolved wontfix and did not claim ``_split_segments`` —
+    matching stays in ``_membership_hit`` — so all five were deleted rather
+    than routed. This AST guard keeps that class of defect from returning.
+    """
+
+    def test_no_private_module_function_with_zero_load_refs(self) -> None:
+        import ast
+
+        src = _MODULE_PATH.read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        defined = [
+            n.name
+            for n in tree.body
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and n.name.startswith("_")
+            and not n.name.startswith("__")
+        ]
+
+        class _LoadCounter(ast.NodeVisitor):
+            def __init__(self) -> None:
+                self.loads: dict[str, int] = {}
+
+            def visit_Name(self, node: ast.Name) -> None:  # noqa: N802
+                if isinstance(node.ctx, ast.Load):
+                    self.loads[node.id] = self.loads.get(node.id, 0) + 1
+                self.generic_visit(node)
+
+        counter = _LoadCounter()
+        counter.visit(tree)
+        dead = sorted(name for name in defined if counter.loads.get(name, 0) == 0)
+        assert dead == [], (
+            "private module-level helpers with zero load references "
+            f"(live-looking dead code on the security path): {dead}"
+        )
+
+    def test_br48_named_helpers_are_gone(self) -> None:
+        # Pin the four named in the finding plus the sibling dead helper removed
+        # with them so a rename-and-keep cannot dodge the load-ref guard alone.
+        for name in (
+            "_nfkc_lower",
+            "_compact_alnum",
+            "_split_segments",
+            "_spdx_of",
+            "_prepare_match_text",
+        ):
+            assert not hasattr(policy, name), f"{name} must not be defined"
+
+
+# ---------------------------------------------------------------------------
+# FIR-7-BR-46 — public scalar entry points share a non-string type contract
+# ---------------------------------------------------------------------------
+
+
+class TestBr46EntryPointTypeContract:
+    """BR-46: every public audit_* scalar door returns LicenseAuditResult.
+
+    Non-string, non-None inputs are uniformly ``invalid_row``. ``None`` and
+    ``''`` keep their documented per-door meanings (not type errors).
+    """
+
+    _ENTRY_POINTS: ClassVar[tuple[str, ...]] = (
+        "audit_derived_from_model",
+        "audit_spdx",
+        "audit_source",
+        "audit_model_ingest",
+        "audit_synthetic_source",
+        "audit_tooling_dependency",
+    )
+
+    # Explicit 30-cell expected-reason table (None reason ⇒ PASS).
+    @pytest.mark.parametrize(
+        ("entry_point", "value", "expected_reason"),
+        [
+            # audit_derived_from_model: None/'' are empty opt-out PASS
+            ("audit_derived_from_model", None, None),
+            ("audit_derived_from_model", "", None),
+            ("audit_derived_from_model", 123, "invalid_row"),
+            ("audit_derived_from_model", [], "invalid_row"),
+            ("audit_derived_from_model", {}, "invalid_row"),
+            # audit_spdx: None/'' → missing_license_field
+            ("audit_spdx", None, "missing_license_field"),
+            ("audit_spdx", "", "missing_license_field"),
+            ("audit_spdx", 123, "invalid_row"),
+            ("audit_spdx", [], "invalid_row"),
+            ("audit_spdx", {}, "invalid_row"),
+            # audit_source: None/'' → unknown_source
+            ("audit_source", None, "unknown_source"),
+            ("audit_source", "", "unknown_source"),
+            ("audit_source", 123, "invalid_row"),
+            ("audit_source", [], "invalid_row"),
+            ("audit_source", {}, "invalid_row"),
+            # audit_model_ingest: None/'' → missing_ingest_entry
+            ("audit_model_ingest", None, "missing_ingest_entry"),
+            ("audit_model_ingest", "", "missing_ingest_entry"),
+            ("audit_model_ingest", 123, "invalid_row"),
+            ("audit_model_ingest", [], "invalid_row"),
+            ("audit_model_ingest", {}, "invalid_row"),
+            # audit_synthetic_source: None/'' → unknown_source
+            ("audit_synthetic_source", None, "unknown_source"),
+            ("audit_synthetic_source", "", "unknown_source"),
+            ("audit_synthetic_source", 123, "invalid_row"),
+            ("audit_synthetic_source", [], "invalid_row"),
+            ("audit_synthetic_source", {}, "invalid_row"),
+            # audit_tooling_dependency: None/'' → unknown_source
+            ("audit_tooling_dependency", None, "unknown_source"),
+            ("audit_tooling_dependency", "", "unknown_source"),
+            ("audit_tooling_dependency", 123, "invalid_row"),
+            ("audit_tooling_dependency", [], "invalid_row"),
+            ("audit_tooling_dependency", {}, "invalid_row"),
+        ],
+        ids=[
+            "derived-None",
+            "derived-empty",
+            "derived-int",
+            "derived-list",
+            "derived-dict",
+            "spdx-None",
+            "spdx-empty",
+            "spdx-int",
+            "spdx-list",
+            "spdx-dict",
+            "source-None",
+            "source-empty",
+            "source-int",
+            "source-list",
+            "source-dict",
+            "ingest-None",
+            "ingest-empty",
+            "ingest-int",
+            "ingest-list",
+            "ingest-dict",
+            "synth-None",
+            "synth-empty",
+            "synth-int",
+            "synth-list",
+            "synth-dict",
+            "tooling-None",
+            "tooling-empty",
+            "tooling-int",
+            "tooling-list",
+            "tooling-dict",
+        ],
+    )
+    def test_br46_type_contract_table(
+        self,
+        entry_point: str,
+        value: Any,
+        expected_reason: str | None,
+    ) -> None:
+        fn = getattr(policy, entry_point)
+        result = fn(value)
+        assert isinstance(result, policy.LicenseAuditResult), (
+            f"{entry_point}({value!r}) must return LicenseAuditResult, "
+            f"got {type(result).__name__}"
+        )
+        if expected_reason is None:
+            assert result.ok is True, (
+                f"{entry_point}({value!r}) expected PASS, got {result}"
+            )
+            assert result.reason is None
+        else:
+            assert result.ok is False, (
+                f"{entry_point}({value!r}) expected FAIL, got PASS"
+            )
+            assert result.reason is policy.RejectionReason(expected_reason), (
+                f"{entry_point}({value!r}): expected reason "
+                f"{expected_reason!r}, got {result.reason}"
+            )
+            if expected_reason == "invalid_row" and value is not None:
+                # Detail must name the offending type (rg-015).
+                assert type(value).__name__ in result.detail, (
+                    f"{entry_point}({value!r}) invalid_row detail must name "
+                    f"type {type(value).__name__!r}: {result.detail!r}"
+                )
+
+
+# ---------------------------------------------------------------------------
+# GATE-10 — compound SPDX expressions report denylisted_license correctly
+# ---------------------------------------------------------------------------
+
+
+class TestGate10CompoundSpdxDenylistReason:
+    """GATE-10: denylisted components inside SPDX expressions must surface
+    ``denylisted_license`` (or ``research_only_license`` for NC-family), not
+    ``unknown_spdx``. Fail-closed: a denylisted component in an OR cannot PASS.
+    """
+
+    @pytest.mark.parametrize(
+        ("spdx", "expected_reason"),
+        [
+            # verified repro rows (literal)
+            ("AGPL-3.0", "denylisted_license"),
+            ("AGPL-3.0+", "denylisted_license"),
+            ("Apache-2.0 OR AGPL-3.0", "denylisted_license"),
+            ("AGPL-3.0 WITH Classpath-exception-2.0", "denylisted_license"),
+            ("MIT OR CC-BY-NC-4.0", "research_only_license"),  # NC-family maps here
+        ],
+    )
+    def test_gate10_verified_repro_reasons(
+        self, spdx: str, expected_reason: str
+    ) -> None:
+        result = policy.audit_spdx(spdx)
+        assert result.ok is False, f"{spdx!r} must FAIL, got PASS"
+        assert result.reason is policy.RejectionReason(expected_reason), (
+            f"{spdx!r}: expected {expected_reason!r}, got {result.reason}"
+        )
+
+    def test_gate10_bare_allowlisted_still_passes(self) -> None:
+        result = policy.audit_spdx("MIT")
+        assert result.ok is True
+        assert result.reason is None
+
+    def test_gate10_or_with_denylisted_component_cannot_pass(self) -> None:
+        # Fail-closed: allowlisted OR denylisted is still a FAIL.
+        result = policy.audit_spdx("Apache-2.0 OR AGPL-3.0")
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_LICENSE

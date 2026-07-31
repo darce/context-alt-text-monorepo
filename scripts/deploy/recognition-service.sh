@@ -208,6 +208,17 @@ FACE_PIPELINE_ONNX_SHA256=(
   "face_recognition_sface_2021dec.onnx:0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"
 )
 
+# sha256 of a local file. sha256sum is Linux/macOS-15+; older macOS only has
+# shasum. verify_face_pipeline_models_dir inlines the same fallback on purpose —
+# it is shipped to the remote via declare -f and must stay self-contained.
+_local_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
 # Host-local integrity check for face_pipeline ONNX weights (C-07 extractable body).
 # Args: models_dir. Prints OK on success; DIR_FAIL:/FILE_FAIL:/HASH_FAIL: + exit 1 otherwise.
 # Sourced by tests and shipped to the remote via declare -f for preflight.
@@ -446,12 +457,26 @@ render_unit() {
 # Converge the deployed compose file(s) + systemd unit + shared Caddy edge with
 # the repo *before* the image restart, so drift (missing volume/env/overlay or a
 # stale Caddyfile) cannot reach a live env. Backs up the prior compose/unit/
-# edge on the VM first. Edge ship+reload is required so Caddyfile changes take
-# effect on fir/dev deploys (C-08/C-12); validate before promote, then
-# `docker compose up -d` so new network joins apply (reload alone does not
-# attach networks — same reason as sync-demo.sh).
+# edge on the VM first.
+#
+# Edge policy (C-08/C-12, FL30C-GATE-01/02):
+#   - Shared multi-env edge at /opt/acx-backend — shipping it is correct, but
+#     unbounded `compose up -d` recreates the container that serves prod on
+#     every env's converge. Bound it: checksum-compare deployed vs repo; no-op
+#     when both match; prefer `caddy reload` when only the Caddyfile changed;
+#     reserve `docker compose up -d` for compose-level changes (network joins).
+#   - acx-dev-fir-net is external:true on docker-compose.caddy.yml (must not be
+#     compose-owned — label collision with env stack's `backend` key). Ensure
+#     the network exists idempotently before any compose up so fir-absent
+#     demo/dev deploys still succeed. Labels match the fir stack's declaring
+#     key/project so a later fir `compose up` can adopt the pre-created net.
 converge_runtime() {
   local env="$1" remote_dir unit edge_dir
+  local repo_caddy_sum repo_compose_sum remote_caddy_sum remote_compose_sum
+  local edge_caddy_drift=0 edge_compose_drift=0
+  # Must match ACX_NETWORK_NAME in .env.fir.example and the external network
+  # key on docker-compose.caddy.yml (shared edge hardcodes the name).
+  local fir_net="acx-dev-fir-net"
   remote_dir="$(env_to_remote_dir "$env")"
   unit="$(env_to_unit "$env")"
   edge_dir="/opt/acx-backend"
@@ -472,22 +497,59 @@ converge_runtime() {
   fi
   render_unit "$env" | ssh "${SSH_TARGET}" "cat > '/tmp/${unit}.service' && sudo cp '/tmp/${unit}.service' '/etc/systemd/system/${unit}.service' && rm -f '/tmp/${unit}.service' && sudo systemctl daemon-reload"
 
-  # Shared multi-env Caddy edge lives at /opt/acx-backend (not env-scoped).
-  ssh "${SSH_TARGET}" "cp -f '${edge_dir}/Caddyfile' '${edge_dir}/Caddyfile.bak' 2>/dev/null || true; cp -f '${edge_dir}/docker-compose.caddy.yml' '${edge_dir}/docker-compose.caddy.yml.bak' 2>/dev/null || true"
-  _ship_file "${SERVICE_DIR}/Caddyfile" "${edge_dir}/Caddyfile"
-  _ship_file "${SERVICE_DIR}/docker-compose.caddy.yml" "${edge_dir}/docker-compose.caddy.yml"
-  ssh "${SSH_TARGET}" "bash -s" <<'EDGE'
+  # Shared multi-env Caddy edge — mutate only when repo content differs.
+  # Local hashing must use the same Linux/macOS fallback as verify_model_hashes;
+  # sha256sum is absent on macOS before 15 and `set -e` would abort the deploy.
+  repo_caddy_sum="$(_local_sha256 "${SERVICE_DIR}/Caddyfile")"
+  repo_compose_sum="$(_local_sha256 "${SERVICE_DIR}/docker-compose.caddy.yml")"
+  remote_caddy_sum="$(ssh "${SSH_TARGET}" "sha256sum '${edge_dir}/Caddyfile' 2>/dev/null | awk '{print \$1}'" || true)"
+  remote_compose_sum="$(ssh "${SSH_TARGET}" "sha256sum '${edge_dir}/docker-compose.caddy.yml' 2>/dev/null | awk '{print \$1}'" || true)"
+  [[ "${remote_caddy_sum}" == "${repo_caddy_sum}" ]] || edge_caddy_drift=1
+  [[ "${remote_compose_sum}" == "${repo_compose_sum}" ]] || edge_compose_drift=1
+
+  if (( edge_caddy_drift == 0 && edge_compose_drift == 0 )); then
+    log "Caddy edge already matches repo; skipping ship/reload for ${env}"
+    log "Runtime converged for ${env} (compose + unit match repo; edge unchanged)"
+  else
+    ssh "${SSH_TARGET}" "cp -f '${edge_dir}/Caddyfile' '${edge_dir}/Caddyfile.bak' 2>/dev/null || true; cp -f '${edge_dir}/docker-compose.caddy.yml' '${edge_dir}/docker-compose.caddy.yml.bak' 2>/dev/null || true"
+    if (( edge_caddy_drift )); then
+      _ship_file "${SERVICE_DIR}/Caddyfile" "${edge_dir}/Caddyfile"
+    fi
+    if (( edge_compose_drift )); then
+      _ship_file "${SERVICE_DIR}/docker-compose.caddy.yml" "${edge_dir}/docker-compose.caddy.yml"
+    fi
+    # Build only the apply path we need so a Caddyfile-only converge does not
+    # even mention `compose up -d` except as reload fallback (FL30C-GATE-02).
+    local edge_apply
+    if (( edge_compose_drift )); then
+      # Compose-level change (network membership etc.) needs container recreate.
+      edge_apply="docker compose -f docker-compose.caddy.yml up -d"
+    else
+      # Caddyfile-only: reload in-place; fall back to up -d if container is down.
+      edge_apply="docker compose -f docker-compose.caddy.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile || docker compose -f docker-compose.caddy.yml up -d"
+    fi
+    # Expand locals into the remote script (fir_net / edge_apply).
+    ssh "${SSH_TARGET}" "bash -s" <<EDGE
 set -euo pipefail
 cd /opt/acx-backend
-# Validate the live Caddyfile we just shipped before recreating the container.
-docker run --rm \
-  -v /opt/acx-backend/Caddyfile:/etc/caddy/Caddyfile:ro \
-  caddy:2-alpine \
+# FL30C-GATE-01: acx-dev-fir-net is external on the shared compose; create it
+# if the fir stack has never stood it up. Labels match docker-compose.env.yml's
+# declaring key (backend) + COMPOSE_PROJECT_NAME=acx-dev-fir so fir can adopt.
+if ! docker network inspect '${fir_net}' >/dev/null 2>&1; then
+  docker network create \\
+    --label com.docker.compose.network=backend \\
+    --label com.docker.compose.project=acx-dev-fir \\
+    '${fir_net}'
+fi
+# Validate before applying (syntax-only; catch bad Caddyfile before reload/up).
+docker run --rm \\
+  -v /opt/acx-backend/Caddyfile:/etc/caddy/Caddyfile:ro \\
+  caddy:2-alpine \\
   caddy validate --config /etc/caddy/Caddyfile
-# Recreate (not reload-only) so network membership matches docker-compose.caddy.yml.
-docker compose -f docker-compose.caddy.yml up -d
+${edge_apply}
 EDGE
-  log "Runtime converged for ${env} (compose + unit + caddy edge match repo)"
+    log "Runtime converged for ${env} (compose + unit + caddy edge match repo)"
+  fi
 }
 
 # Read-only drift gate: diff the deployed compose/unit against the repo and exit

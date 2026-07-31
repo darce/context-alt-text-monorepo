@@ -280,12 +280,16 @@ def test_dev_fir_ready_url_routable_via_caddy() -> None:
     )
 
 
-def test_shared_caddy_compose_does_not_require_fir_external_network() -> None:
-    """C-09: shared docker-compose.caddy.yml must not require acx-dev-fir-net to pre-exist.
+def test_shared_caddy_non_fir_deploy_handles_absent_fir_network() -> None:
+    """C-09 / FL30C-GATE-01: non-fir deploy of the shared caddy file succeeds when
+    acx-dev-fir-net is absent.
 
-    external:true on a fir-specific network makes `docker compose up` of the
-    shared caddy file fail when the fir stack has never created that network,
-    taking down demo/dev deploys.
+    Pin behaviour, not the broken mechanism: the prior pin forbade external:true
+    and forced a compose-owned network, which collides on
+    com.docker.compose.network labels with docker-compose.env.yml's `backend`
+    key (same name, different key → second stack fails). Correct shape is
+    external:true plus an idempotent ensure-before-up on the deploy path so a
+    missing fir network does not abort demo/dev converges.
     """
     fir_env = ENV_FIR_EXAMPLE.read_text()
     network = _parse_env_example_key(fir_env, "ACX_NETWORK_NAME")
@@ -293,14 +297,65 @@ def test_shared_caddy_compose_does_not_require_fir_external_network() -> None:
     top_nets = compose_data.get("networks") or {}
     assert network in top_nets, f"{network} must appear under top-level networks"
     net_cfg = top_nets[network]
-    # null / empty mapping / name-only are fine; external:true is not.
-    if isinstance(net_cfg, dict):
-        external = net_cfg.get("external", False)
+    assert isinstance(net_cfg, dict), f"{network} config must be a mapping, got {net_cfg!r}"
+    external = net_cfg.get("external", False)
+    assert external is True or external == "true", (
+        f"{network} must be external:true on the shared caddy compose so it does "
+        f"not fight docker-compose.env.yml for ownership of the same name; got {net_cfg!r}"
+    )
+    # Behaviour: converge_runtime must create the network if missing before
+    # `docker compose up` on the shared file (fir-absent path).
+    start = SCRIPT_TEXT.index("converge_runtime()")
+    end = SCRIPT_TEXT.index("converge_check()")
+    body = SCRIPT_TEXT[start:end]
+    assert "docker network inspect" in body and "docker network create" in body, (
+        "converge_runtime must idempotently ensure the fir network exists before "
+        "compose up (external:true alone fails when fir stack is absent)"
+    )
+    assert network in body, (
+        f"converge_runtime must reference {network} when ensuring the fir network"
+    )
+    assert "docker compose -f docker-compose.caddy.yml up -d" in body
+
+
+def test_caddy_and_env_compose_never_dual_own_same_network_name() -> None:
+    """FL30C-GATE-01 regression: shared caddy compose and docker-compose.env.yml
+    must never both declare the same network name non-externally.
+
+    Compose stamps com.docker.compose.network=<declaring key>; two projects that
+    non-externally create the same `name:` under different keys (caddy key
+    acx-dev-fir-net vs env key backend) refuse to adopt each other's network.
+    """
+    caddy_data = yaml.safe_load(CADDY_COMPOSE.read_text())
+    caddy_owned: set[str] = set()
+    for key, cfg in (caddy_data.get("networks") or {}).items():
+        cfg = cfg if isinstance(cfg, dict) else {}
+        external = cfg.get("external", False)
         if external is True or external == "true":
-            raise AssertionError(
-                f"{network} must not be external:true on the shared caddy compose "
-                f"(breaks non-fir deploys when fir stack is absent); got {net_cfg!r}"
-            )
+            continue
+        if isinstance(external, dict):
+            # external: { name: ... } still means "do not create"
+            continue
+        caddy_owned.add(str(cfg.get("name") or key))
+
+    env_network_names: set[str] = set()
+    for path in sorted(SERVICE_DIR.glob(".env*.example")):
+        for line in path.read_text().splitlines():
+            if line.startswith("ACX_NETWORK_NAME="):
+                val = line.split("=", 1)[1].strip().strip("'\"")
+                if val:
+                    env_network_names.add(val)
+                break
+    assert env_network_names, (
+        "expected at least one .env*.example to define ACX_NETWORK_NAME"
+    )
+
+    collision = caddy_owned & env_network_names
+    assert not collision, (
+        f"non-external network name(s) {sorted(collision)} declared by both "
+        f"docker-compose.caddy.yml and docker-compose.env.yml (via ACX_NETWORK_NAME); "
+        f"compose label collision — keep external:true on the shared caddy file"
+    )
 
 
 def test_dev_fir_remote_dir_basename_matches_env() -> None:
@@ -363,7 +418,13 @@ def test_converge_runs_before_restart_via_gate() -> None:
 
 
 def test_caddy_edge_shipped_and_reloaded_by_converge() -> None:
-    """C-08/C-12: converge_runtime must ship Caddyfile + caddy compose and reload."""
+    """C-08/C-12 + FL30C-GATE-02: edge ship is checksum-gated; reload preferred.
+
+    Unbounded `compose up -d` on every converge recreates the shared multi-env
+    edge (including prod) even when config is byte-identical. Assert the bound:
+    checksum compare, caddy reload when only Caddyfile changed, up -d reserved
+    for compose-level changes.
+    """
     start = SCRIPT_TEXT.index("converge_runtime()")
     end = SCRIPT_TEXT.index("converge_check()")
     converge_body = SCRIPT_TEXT[start:end]
@@ -374,8 +435,14 @@ def test_caddy_edge_shipped_and_reloaded_by_converge() -> None:
     assert "caddy validate" in converge_body, (
         "converge_runtime must validate Caddy config before reload"
     )
+    assert "sha256sum" in converge_body, (
+        "converge_runtime must checksum-compare deployed edge config before mutating"
+    )
+    assert "caddy reload" in converge_body, (
+        "converge_runtime must prefer caddy reload when only Caddyfile changed"
+    )
     assert "docker compose -f docker-compose.caddy.yml up -d" in converge_body, (
-        "converge_runtime must recreate/reload the caddy edge"
+        "converge_runtime must still be able to recreate the caddy edge when compose changes"
     )
 
 
@@ -771,20 +838,49 @@ def test_check_does_not_require_promote_confirm(tmp_path: Path) -> None:
 # ---- converge_runtime mutation path (hermetic, sourced) -----------------
 
 
-def _run_converge_runtime(env_arg: str, tmp_path: Path) -> str:
+def _edge_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _run_converge_runtime(
+    env_arg: str,
+    tmp_path: Path,
+    *,
+    remote_caddy_sum: str | None = None,
+    remote_compose_sum: str | None = None,
+) -> str:
     """Source the script and run `converge_runtime <env>` with recording fakes.
 
     Returns the recorded ssh/scp command log so tests can assert which files
     were shipped (env compose always, admin overlay only for prod, Caddy edge
-    always) and which remote edge reload commands ran.
+    when drifted) and which remote edge reload/recreate commands ran.
+
+    remote_*_sum: if set, fake ssh answers sha256sum queries for the edge files
+    with these digests (simulating deployed content). None → empty (missing).
     """
     bindir = tmp_path / "bin"
     bindir.mkdir()
     scp_log = tmp_path / "ship.log"
     # Record argv and any stdin body (edge validate/reload travels via bash -s).
+    # Answer edge checksum probes so GATE-02 no-op / reload / recreate paths
+    # can be exercised hermetically.
+    caddy_reply = remote_caddy_sum or ""
+    compose_reply = remote_compose_sum or ""
     (bindir / "ssh").write_text(
         f"""#!/bin/sh
 echo "$@" >> {scp_log}
+# Checksum probes (FL30C-GATE-02); match path fragments in the remote command.
+case "$*" in
+  *sha256sum*Caddyfile*)
+    # Remote command already includes `| awk '{{print $1}}'`; fake emits digest only.
+    if [ -n "{caddy_reply}" ]; then echo "{caddy_reply}"; fi
+    exit 0
+    ;;
+  *sha256sum*docker-compose.caddy.yml*)
+    if [ -n "{compose_reply}" ]; then echo "{compose_reply}"; fi
+    exit 0
+    ;;
+esac
 if [ ! -t 0 ]; then
   body=$(cat)
   if [ -n "$body" ]; then
@@ -810,11 +906,12 @@ exit 0
 
 
 def test_converge_runtime_ships_both_compose_files_for_prod(tmp_path: Path) -> None:
+    # Missing remote edge (default) → ship edge + recreate.
     log = _run_converge_runtime("prod", tmp_path)
     assert "sudo cp '/tmp/docker-compose.env.yml'" in log
     assert "sudo cp '/tmp/docker-compose.admin.yml'" in log, "prod must ship the admin overlay"
     assert "SCP " not in log, "compose files must not travel via direct scp (root-owned targets)"
-    # C-08/C-12: shared edge must be shipped on every converge path.
+    # C-08/C-12: shared edge must be shipped when remote edge is missing/drifted.
     assert "sudo cp '/tmp/Caddyfile'" in log, "converge_runtime must ship Caddyfile"
     assert "sudo cp '/tmp/docker-compose.caddy.yml'" in log, (
         "converge_runtime must ship docker-compose.caddy.yml"
@@ -840,10 +937,68 @@ def test_converge_runtime_ships_only_env_compose_for_dev_fir(tmp_path: Path) -> 
     assert "/opt/acx-backend/dev-fir" in log
     assert "sudo cp '/tmp/Caddyfile'" in log, "dev-fir converge must ship shared Caddy edge"
     assert "sudo cp '/tmp/docker-compose.caddy.yml'" in log
-    # Edge validate + reload commands must be issued over ssh (stdin body).
+    # Edge validate + recreate when compose is missing/drifted (stdin body).
     assert "caddy validate" in log, "converge_runtime must run caddy validate on the edge"
+    assert "docker network create" in log or "docker network inspect" in log, (
+        "converge_runtime must ensure fir network before compose up"
+    )
     assert "docker compose -f docker-compose.caddy.yml up -d" in log, (
-        "converge_runtime must recreate the caddy edge"
+        "converge_runtime must recreate the caddy edge when compose is missing/changed"
+    )
+
+
+def test_converge_runtime_skips_edge_mutate_when_unchanged(tmp_path: Path) -> None:
+    """FL30C-GATE-02: unchanged edge config must perform no ship/reload/recreate."""
+    log = _run_converge_runtime(
+        "dev",
+        tmp_path,
+        remote_caddy_sum=_edge_sha256(CADDYFILE),
+        remote_compose_sum=_edge_sha256(CADDY_COMPOSE),
+    )
+    assert "sudo cp '/tmp/docker-compose.env.yml'" in log, "env compose still ships"
+    assert "sudo cp '/tmp/Caddyfile'" not in log, "unchanged Caddyfile must not be re-shipped"
+    assert "sudo cp '/tmp/docker-compose.caddy.yml'" not in log, (
+        "unchanged caddy compose must not be re-shipped"
+    )
+    assert "docker compose -f docker-compose.caddy.yml up -d" not in log, (
+        "unchanged edge must not recreate the shared caddy container (blast radius)"
+    )
+    assert "caddy reload" not in log, "unchanged edge must not reload caddy either"
+
+
+def test_converge_runtime_reloads_when_only_caddyfile_changed(tmp_path: Path) -> None:
+    """FL30C-GATE-02: Caddyfile-only drift → reload, not container recreate."""
+    log = _run_converge_runtime(
+        "dev",
+        tmp_path,
+        remote_caddy_sum="0" * 64,  # differs from repo
+        remote_compose_sum=_edge_sha256(CADDY_COMPOSE),
+    )
+    assert "sudo cp '/tmp/Caddyfile'" in log
+    assert "sudo cp '/tmp/docker-compose.caddy.yml'" not in log, (
+        "matching caddy compose must not be re-shipped on Caddyfile-only drift"
+    )
+    assert "caddy reload" in log, "Caddyfile-only change must caddy reload"
+    # up -d may appear only as reload fallback; primary path is reload.
+    # Accept fallback after reload failure, but require reload was attempted.
+    reload_idx = log.find("caddy reload")
+    assert reload_idx != -1
+    up_idx = log.find("docker compose -f docker-compose.caddy.yml up -d")
+    if up_idx != -1:
+        assert up_idx > reload_idx, "up -d must only be reload fallback, not primary"
+
+
+def test_converge_runtime_recreates_when_caddy_compose_changed(tmp_path: Path) -> None:
+    """FL30C-GATE-02: compose-level drift (network membership) → up -d."""
+    log = _run_converge_runtime(
+        "staging",
+        tmp_path,
+        remote_caddy_sum=_edge_sha256(CADDYFILE),
+        remote_compose_sum="1" * 64,  # differs from repo
+    )
+    assert "sudo cp '/tmp/docker-compose.caddy.yml'" in log
+    assert "docker compose -f docker-compose.caddy.yml up -d" in log, (
+        "compose drift must recreate the edge so network membership applies"
     )
 
 

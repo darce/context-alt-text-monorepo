@@ -3760,3 +3760,389 @@ class TestGate20FloorPrecedenceAdjacentPairs:
         )
         assert result.ok is False
         assert result.reason is policy.RejectionReason.UNREGISTERED_DERIVED_MODEL
+
+
+# ---------------------------------------------------------------------------
+# GATE-27 — TRAINING_DATA synthetic backstop must not retag category
+# ---------------------------------------------------------------------------
+
+
+class TestGate27SyntheticBackstopCategoryLeak:
+    """GATE-27: caller-asked category is preserved through the synthetic backstop.
+
+    The synthetic helper stamps SYNTHETIC_SOURCE on its own results. When the
+    TRAINING_DATA path delegates into that helper (generator_lineage present),
+    verdict/reason/detail stay the helper's, but ``result.category`` must
+    remain the door the *caller* asked for (rg-015 / SECD-03).
+    """
+
+    def test_generator_lineage_backstop_keeps_training_data_category(self) -> None:
+        # Measured leak row: TRAINING_DATA + generator_lineage → pending, but
+        # previously stamped synthetic_source.
+        row = {
+            "source": "yunet",
+            "license": "MIT",
+            "derived_from_model": "",
+            "generator_lineage": "ffhq",
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+        assert result.category == policy.PolicyCategory.TRAINING_DATA.value
+
+    def test_floor_nc_rejection_still_reports_training_data(self) -> None:
+        # Control: floor rejections on the same door already stamped correctly.
+        row = {
+            "source": "self-generated",
+            "license": "MIT",
+            "derived_from_model": "buffalo_l",
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        assert result.category == policy.PolicyCategory.TRAINING_DATA.value
+
+    def test_clean_training_data_row_still_reports_training_data(self) -> None:
+        row = {
+            "source": "yunet",
+            "license": "MIT",
+            "derived_from_model": "",
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is True
+        assert result.category == policy.PolicyCategory.TRAINING_DATA.value
+
+
+class TestGate27FiveDoorCategoryInvariant:
+    """Five-door category invariant (GATE-27 item 2/3).
+
+    Rule: for every representative row and every door D the caller asked for,
+    ``result.category == D.value``. No intentional exemptions found in the
+    sweep: invalid_row results already stamp the asked door, and a genuine
+    SYNTHETIC_SOURCE dispatch correctly stays ``synthetic_source`` under the
+    same equality. The allowlist below is therefore empty — any future
+    intentional mismatch must be added as an explicit (row_fingerprint, door,
+    allowed_category, reason) tuple, never a blanket ``or``.
+    """
+
+    # Explicit, narrow allowlist of intentional mismatches (empty after sweep).
+    _INTENTIONAL_CATEGORY_MISMATCHES: ClassVar[
+        frozenset[tuple[str, str, str, str]]
+    ] = frozenset()
+
+    _REPRESENTATIVE_ROWS: ClassVar[tuple[dict[str, str], ...]] = (
+        {"source": "yunet", "license": "MIT", "derived_from_model": ""},
+        {
+            "source": "yunet",
+            "license": "MIT",
+            "derived_from_model": "",
+            "generator_lineage": "ffhq",
+        },
+        {
+            "source": "self-generated",
+            "license": "MIT",
+            "derived_from_model": "buffalo_l",
+        },
+        {"source": "self-generated", "license": "MIT", "derived_from_model": ""},
+        {
+            "source": "dcface",
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+        },
+        {"source": "ffhq", "license": "MIT", "derived_from_model": ""},
+        {
+            "source": "operator-phone",
+            "license": "MIT",
+            "derived_from_model": "",
+        },
+        {
+            "package": "umap-learn",
+            "license": "BSD-3-Clause",
+            "derived_from_model": "",
+        },
+        {
+            "model_id": "sface",
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+        },
+        {
+            "source": "self-generated",
+            "license": "MIT",
+            "derived_from_model": "",
+            "photo_clearance": "cleared",
+        },
+    )
+
+    @staticmethod
+    def _row_fingerprint(row: dict[str, str]) -> str:
+        return repr(sorted(row.items()))
+
+    @pytest.mark.parametrize("door", list(policy.PolicyCategory))
+    @pytest.mark.parametrize("row_idx", range(10))
+    def test_result_category_equals_asked_door(
+        self, door: policy.PolicyCategory, row_idx: int
+    ) -> None:
+        row = self._REPRESENTATIVE_ROWS[row_idx]
+        result = policy.audit_provenance_row(row, category=door)
+        got = (
+            result.category.value
+            if isinstance(result.category, policy.PolicyCategory)
+            else result.category
+        )
+        if got == door.value:
+            return
+        key = (
+            self._row_fingerprint(row),
+            door.value,
+            str(got),
+            result.reason.value if result.reason is not None else "None",
+        )
+        assert key in self._INTENTIONAL_CATEGORY_MISMATCHES, (
+            f"category leak: asked={door.value!r} got={got!r} "
+            f"ok={result.ok} reason={result.reason} row={row!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# GATE-28 — ALLOWED_SPDX_IDS: ISC / Zlib / Unlicense each have a PASS witness
+# ---------------------------------------------------------------------------
+
+
+class TestGate28AllowedSpdxIdsPassWitnesses:
+    """GATE-28: each of ISC/Zlib/Unlicense must PASS on TRAINING_DATA alone.
+
+    Deleting any one entry from ALLOWED_SPDX_IDS must RED its own fixture
+    (TEST-15 / TEST-17 — one assertion per token).
+    """
+
+    def test_isc_spdx_passes_training_data(self) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "ISC",
+            "derived_from_model": "",
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is True, result.detail
+        assert result.category == policy.PolicyCategory.TRAINING_DATA.value
+
+    def test_zlib_spdx_passes_training_data(self) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "Zlib",
+            "derived_from_model": "",
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is True, result.detail
+        assert result.category == policy.PolicyCategory.TRAINING_DATA.value
+
+    def test_unlicense_spdx_passes_training_data(self) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "Unlicense",
+            "derived_from_model": "",
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is True, result.detail
+        assert result.category == policy.PolicyCategory.TRAINING_DATA.value
+
+    def test_isc_near_miss_still_rejected(self) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "ISC-License",
+            "derived_from_model": "",
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.UNKNOWN_SPDX
+
+    def test_zlib_near_miss_still_rejected(self) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "Zlib-acknowledgement",
+            "derived_from_model": "",
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.UNKNOWN_SPDX
+
+    def test_unlicense_near_miss_still_rejected(self) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "Unlicensed",
+            "derived_from_model": "",
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.UNKNOWN_SPDX
+
+
+# ---------------------------------------------------------------------------
+# GATE-29 — TOOLING_ALLOWLIST: tensorflow / llvmlite each have a PASS witness
+# ---------------------------------------------------------------------------
+
+
+class TestGate29ToolingAllowlistPassWitnesses:
+    """GATE-29: tensorflow and llvmlite must PASS on the TOOLING door alone."""
+
+    def test_tensorflow_tooling_package_passes(self) -> None:
+        row = {"package": "tensorflow"}
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TOOLING
+        )
+        assert result.ok is True, result.detail
+        assert result.category == policy.PolicyCategory.TOOLING.value
+
+    def test_llvmlite_tooling_package_passes(self) -> None:
+        row = {"package": "llvmlite"}
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TOOLING
+        )
+        assert result.ok is True, result.detail
+        assert result.category == policy.PolicyCategory.TOOLING.value
+
+    def test_tensorflow_near_miss_still_rejected(self) -> None:
+        row = {"package": "tensorflow-gpu"}
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TOOLING
+        )
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.UNKNOWN_SOURCE
+
+    def test_llvmlite_near_miss_still_rejected(self) -> None:
+        row = {"package": "llvmlite-dev"}
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TOOLING
+        )
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.UNKNOWN_SOURCE
+
+
+# ---------------------------------------------------------------------------
+# GATE-30 — MODEL_INGEST_ENTRIES: sface has a PASS witness
+# ---------------------------------------------------------------------------
+
+
+class TestGate30SfaceIngestPassWitness:
+    """GATE-30: sface must PASS audit_model_ingest; near-misses must not."""
+
+    def test_sface_model_ingest_passes(self) -> None:
+        result = policy.audit_model_ingest("sface")
+        assert result.ok is True, result.detail
+        assert result.category == policy.PolicyCategory.MODEL_INGEST.value
+
+    def test_sface_near_miss_sface_v2_still_rejected(self) -> None:
+        result = policy.audit_model_ingest("sface_v2")
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.MISSING_INGEST_ENTRY
+
+    def test_sface_near_miss_opencv_sface_still_rejected(self) -> None:
+        result = policy.audit_model_ingest("opencv_sface")
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.MISSING_INGEST_ENTRY
+
+
+# ---------------------------------------------------------------------------
+# GATE-31 — operator-phone / operator-render source tokens (exact match)
+# ---------------------------------------------------------------------------
+
+
+class TestGate31OperatorOwnedSourcePassWitnesses:
+    """GATE-31: operator-phone / operator-render PASS on TRAINING_DATA.
+
+    These tokens live on the positive training-source axis
+    (OCCLUDER_REGISTERED_SOURCES → _POSITIVE_TRAINING_SOURCES). Exact-token
+    matching means variant / underscore / prefix neighbours must still fail
+    PENDING_LEGAL_CLEARANCE (SECD-05).
+    """
+
+    def test_operator_phone_source_passes_training_data(self) -> None:
+        row = {
+            "source": "operator-phone",
+            "license": "MIT",
+            "derived_from_model": "",
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is True, result.detail
+        assert result.category == policy.PolicyCategory.TRAINING_DATA.value
+
+    def test_operator_render_source_passes_training_data(self) -> None:
+        row = {
+            "source": "operator-render",
+            "license": "MIT",
+            "derived_from_model": "",
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is True, result.detail
+        assert result.category == policy.PolicyCategory.TRAINING_DATA.value
+
+    def test_operator_phone_v2_variant_rejected(self) -> None:
+        row = {
+            "source": "operator-phone-v2",
+            "license": "MIT",
+            "derived_from_model": "",
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+
+    def test_operator_phone_underscore_form_rejected(self) -> None:
+        row = {
+            "source": "operator_phone",
+            "license": "MIT",
+            "derived_from_model": "",
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+
+    def test_operator_render_prefix_neighbour_rejected(self) -> None:
+        # Substring/prefix neighbour — must not inherit operator-render clearance.
+        row = {
+            "source": "operator-render-extra",
+            "license": "MIT",
+            "derived_from_model": "",
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+
+    def test_operator_render_v2_variant_rejected(self) -> None:
+        row = {
+            "source": "operator-render-v2",
+            "license": "MIT",
+            "derived_from_model": "",
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+

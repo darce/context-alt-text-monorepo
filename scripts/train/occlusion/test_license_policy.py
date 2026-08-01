@@ -1695,8 +1695,23 @@ class TestBr53CategoryIndependentFloor:
 
     # `source` must stay taint-free: an NC/research source outranks the licence
     # floor (BR-53 source axis), which would mask the reason this class pins.
-    DENYLISTED_LICENSE_ROW = {"model_id": "yunet", "source": "self-generated", "license": "AGPL-3.0"}
-    CLEARED_SYNTHETIC_ROW = {"source": "dcface", "license": "AGPL-3.0", "derived_from_model": ""}
+    # package is on TOOLING_ALLOWLIST (license_policy.py TOOLING_ALLOWLIST /
+    # "numba") so the TOOLING door reaches the licence axis rather than
+    # unknown_source. derived_from_model="" so TRAINING_DATA is not invalid_row
+    # for a missing type-checked field (RD-08 / GATE-12 / TEST-17).
+    DENYLISTED_LICENSE_ROW = {
+        "model_id": "yunet",
+        "source": "self-generated",
+        "license": "AGPL-3.0",
+        "derived_from_model": "",
+        "package": "numba",
+    }
+    CLEARED_SYNTHETIC_ROW = {
+        "source": "dcface",
+        "license": "AGPL-3.0",
+        "derived_from_model": "",
+        "package": "numba",
+    }
 
     @pytest.mark.parametrize("category", list(policy.PolicyCategory))
     def test_denylisted_license_rejected_by_every_door(self, category) -> None:
@@ -1704,6 +1719,10 @@ class TestBr53CategoryIndependentFloor:
         assert result.ok is False, (
             f"category={category.value} passed a row the other doors reject; "
             "a caller could pick this door to bypass the gate"
+        )
+        assert result.reason is policy.RejectionReason.DENYLISTED_LICENSE, (
+            f"category={category.value} reported {result.reason}; expected "
+            "denylisted_license — an off-axis rejection does not pin the floor"
         )
 
     @pytest.mark.parametrize("category", list(policy.PolicyCategory))
@@ -1714,6 +1733,10 @@ class TestBr53CategoryIndependentFloor:
         assert result.ok is False, (
             f"category={category.value}: an operator clearance token must not "
             "waive the AGPL-3.0 denylist"
+        )
+        assert result.reason is policy.RejectionReason.DENYLISTED_LICENSE, (
+            f"category={category.value} reported {result.reason}; expected "
+            "denylisted_license — clearance must not swap the fail axis"
         )
 
     def test_license_floor_reason_is_exact(self) -> None:
@@ -4325,4 +4348,249 @@ class TestGate34DerivedFromModelPackageDenylist:
             f"DENYLISTED_PACKAGE (not demote to unregistered_derived_model); "
             f"got {result.reason!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# RD-01..06 — measured coverage gaps (FIR-7 Lane N); additive RED pins
+# ---------------------------------------------------------------------------
+
+
+# Measured PASSing witnesses (one per door). Each returns ok=True, reason=None
+# on its door at the frozen policy; the guard under test is the only live fail
+# axis (TEST-17). prove_red.py --witness re-derives this map at runtime.
+_DOOR_PASSING_WITNESSES: dict[policy.PolicyCategory, dict[str, Any]] = {
+    policy.PolicyCategory.TRAINING_DATA: {
+        "source": "self-generated",
+        "license": "Apache-2.0",
+        "derived_from_model": "",
+    },
+    policy.PolicyCategory.TOOLING: {
+        "package": "llvmlite",
+        "license": "BSD-3-Clause",
+        "derived_from_model": "",
+    },
+    policy.PolicyCategory.MODEL_INGEST: {
+        "model_id": "yunet",
+        "license": "MIT",
+        "derived_from_model": "",
+    },
+    policy.PolicyCategory.OCCLUDER_ASSET: {
+        "source": "operator-phone",
+        "license": "Apache-2.0",
+        "derived_from_model": "",
+        "photo_clearance": "cleared",
+    },
+    policy.PolicyCategory.SYNTHETIC_SOURCE: {
+        "source": "dcface",
+        "license": "Apache-2.0",
+        "derived_from_model": "",
+        "clearance_decision": "dcface_operator_clearance_20260723",
+    },
+}
+
+
+class TestRd01NonStringRowCategory:
+    """RD-01: `_parse_row_category` rejects non-string ``category`` (TEST-15).
+
+    Flipping the guard to `_pass` short-circuits *every* downstream axis via
+    `if cat_err is not None: return cat_err` — complete mediation of the row
+    body depends on this type check (SECD-03 / rg shape reject).
+    """
+
+    @pytest.mark.parametrize("category", list(policy.PolicyCategory))
+    @pytest.mark.parametrize("bad_cat", (123, ["training_data"], {"k": "v"}))
+    def test_non_string_row_category_is_invalid_row(
+        self, category, bad_cat: Any
+    ) -> None:
+        row = dict(_DOOR_PASSING_WITNESSES[category])
+        row["category"] = bad_cat
+        result = policy.audit_provenance_row(row, category=category)
+        assert result.ok is False, (
+            f"{category.value} PASSed with category={bad_cat!r}; "
+            "non-string row category must be rejected"
+        )
+        assert result.reason is policy.RejectionReason.INVALID_ROW, (
+            f"{category.value} category={bad_cat!r}: expected INVALID_ROW, "
+            f"got {result.reason}"
+        )
+
+
+class TestRd02CategoryParameterTypeGuard:
+    """RD-02: ``audit_provenance_row`` category param must be PolicyCategory.
+
+    A plain ``PolicyCategory.value`` string is the plausible caller slip
+    (PolicyCategory is a StrEnum); the isinstance guard is the only thing
+    between that slip and a full bypass (SECD-03 / TEST-15).
+    """
+
+    # Tainted so that even if the type guard were absent the row *should*
+    # still fail — the pin is that a type slip must never come back PASS.
+    _TAINTED: ClassVar[dict[str, Any]] = {
+        "source": "ffhq",
+        "license": "Apache-2.0",
+        "derived_from_model": "",
+    }
+
+    @pytest.mark.parametrize("category", list(policy.PolicyCategory))
+    def test_string_category_value_is_invalid_row(self, category) -> None:
+        result = policy.audit_provenance_row(
+            dict(self._TAINTED), category=category.value  # type: ignore[arg-type]
+        )
+        assert result.ok is False, (
+            f"category={category.value!r} (plain str) PASSed a tainted row"
+        )
+        assert result.reason is policy.RejectionReason.INVALID_ROW, (
+            f"category={category.value!r} (plain str): expected INVALID_ROW, "
+            f"got {result.reason}"
+        )
+
+    @pytest.mark.parametrize(
+        "bad_category",
+        (123, object(), ["training_data"]),
+    )
+    def test_non_policy_category_type_is_invalid_row(self, bad_category: Any) -> None:
+        result = policy.audit_provenance_row(
+            dict(self._TAINTED), category=bad_category  # type: ignore[arg-type]
+        )
+        assert result.ok is False, f"category={bad_category!r} PASSed"
+        assert result.reason is policy.RejectionReason.INVALID_ROW, (
+            f"category={bad_category!r}: expected INVALID_ROW, got {result.reason}"
+        )
+
+
+class TestRd03LicenseFieldNoneArm:
+    """RD-03: `_audit_row_licenses` None arm (sibling of non-string arm).
+
+    The non-string arm is suite-killed; the `raw is None` arm was suite-blind
+    (TEST-15). Use otherwise-PASSing witnesses so None is the only fail axis
+    (TEST-17).
+    """
+
+    @pytest.mark.parametrize("category", list(policy.PolicyCategory))
+    @pytest.mark.parametrize("license_key", ("license", "spdx_id"))
+    def test_none_license_field_is_invalid_row(
+        self, category, license_key: str
+    ) -> None:
+        row = dict(_DOOR_PASSING_WITNESSES[category])
+        if license_key != "license":
+            # Keep a valid canonical licence so the only fail is the None key.
+            row["license"] = row.get("license", "Apache-2.0")
+        row[license_key] = None
+        result = policy.audit_provenance_row(row, category=category)
+        assert result.ok is False, (
+            f"{category.value} PASSed with {license_key}=None"
+        )
+        assert result.reason is policy.RejectionReason.INVALID_ROW, (
+            f"{category.value} {license_key}=None: expected INVALID_ROW, "
+            f"got {result.reason}"
+        )
+
+
+class TestRd04OccluderNonMappingAndAsymmetry:
+    """RD-04: ``audit_occluder_asset`` non-Mapping returns INVALID_ROW.
+
+    Sibling entry points RAISE LicensePolicyError; this door RETURNS a fail
+    result. Pin both the return path and the raise-vs-return asymmetry so
+    neither convention can drift silently (SECD-06 / TEST-15).
+    """
+
+    @pytest.mark.parametrize(
+        "bad_asset",
+        ("a-string", ["l"], 42, None),
+    )
+    def test_non_mapping_returns_invalid_row(self, bad_asset: Any) -> None:
+        result = policy.audit_occluder_asset(bad_asset)  # type: ignore[arg-type]
+        assert result.ok is False, f"non-Mapping {bad_asset!r} PASSed"
+        assert result.reason is policy.RejectionReason.INVALID_ROW, (
+            f"non-Mapping {bad_asset!r}: expected INVALID_ROW, got {result.reason}"
+        )
+
+    def test_raise_vs_return_asymmetry_across_entry_points(self) -> None:
+        """Provenance/tooling RAISE; occluder RETURNS — pin the contract."""
+        with pytest.raises(policy.LicensePolicyError) as ei_prov:
+            policy.audit_provenance_row("not-a-mapping")  # type: ignore[arg-type]
+        assert ei_prov.value.result.ok is False
+        assert (
+            ei_prov.value.result.reason is policy.RejectionReason.UNKNOWN_SOURCE
+        )
+
+        with pytest.raises(policy.LicensePolicyError) as ei_tool:
+            policy.audit_tooling_row("not-a-mapping")  # type: ignore[arg-type]
+        assert ei_tool.value.result.ok is False
+        assert (
+            ei_tool.value.result.reason is policy.RejectionReason.UNKNOWN_SOURCE
+        )
+
+        # Same shape, opposite convention: return, do not raise.
+        result = policy.audit_occluder_asset("not-a-mapping")  # type: ignore[arg-type]
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.INVALID_ROW
+
+
+class TestRd05OccluderPhotoClearanceType:
+    """RD-05: non-string ``photo_clearance`` is INVALID_ROW; None is allowed.
+
+    None is explicitly excluded from the type guard
+    (`if photo_raw is not None and not isinstance(...)`); pin that so a future
+    edit cannot tighten it by accident (TEST-15).
+    """
+
+    _CLEAN_OCCLUDER: ClassVar[dict[str, Any]] = {
+        "source": "operator-phone",
+        "license": "Apache-2.0",
+        "derived_from_model": "",
+        "photo_clearance": "cleared",
+    }
+
+    @pytest.mark.parametrize("bad_pc", (123, ["cleared"], {"status": "cleared"}))
+    def test_non_string_photo_clearance_is_invalid_row(self, bad_pc: Any) -> None:
+        row = dict(self._CLEAN_OCCLUDER)
+        row["photo_clearance"] = bad_pc
+        result = policy.audit_occluder_asset(row)
+        assert result.ok is False, f"photo_clearance={bad_pc!r} PASSed"
+        assert result.reason is policy.RejectionReason.INVALID_ROW, (
+            f"photo_clearance={bad_pc!r}: expected INVALID_ROW, got {result.reason}"
+        )
+
+    def test_none_photo_clearance_is_not_type_rejected(self) -> None:
+        """None is allowed by the type guard (not INVALID_ROW).
+
+        An otherwise-clean row with photo_clearance=None still fails the
+        photo-release axis as uncleared — that is the intended fail, not a
+        type error. A regression that rejects None as INVALID_ROW is a tighten.
+        """
+        row = dict(self._CLEAN_OCCLUDER)
+        row["photo_clearance"] = None
+        result = policy.audit_occluder_asset(row)
+        assert result.ok is False
+        assert result.reason is not policy.RejectionReason.INVALID_ROW, (
+            "photo_clearance=None must not be type-rejected as INVALID_ROW; "
+            f"got {result.reason}"
+        )
+        assert result.reason is policy.RejectionReason.UNCLEARED_OCCLUDER_ASSET, (
+            f"photo_clearance=None should fail photo-release, got {result.reason}"
+        )
+
+
+class TestRd06LicensePolicyErrorPayload:
+    """RD-06: raised LicensePolicyError must carry a FAIL payload (TEST-15).
+
+    Flipping the wrapped `_fail` to `_pass` still raises, so a bare
+    `pytest.raises` stays green while `err.result` becomes self-contradictory
+    (ok=True inside a rejection exception). Bind the exception and assert
+    the payload at both raise sites.
+    """
+
+    def test_audit_provenance_row_non_mapping_payload(self) -> None:
+        with pytest.raises(policy.LicensePolicyError) as ei:
+            policy.audit_provenance_row("not-a-mapping")  # type: ignore[arg-type]
+        assert ei.value.result.ok is False
+        assert ei.value.result.reason is policy.RejectionReason.UNKNOWN_SOURCE
+
+    def test_audit_tooling_row_non_mapping_payload(self) -> None:
+        with pytest.raises(policy.LicensePolicyError) as ei:
+            policy.audit_tooling_row("not-a-mapping")  # type: ignore[arg-type]
+        assert ei.value.result.ok is False
+        assert ei.value.result.reason is policy.RejectionReason.UNKNOWN_SOURCE
+
 

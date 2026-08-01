@@ -2676,7 +2676,15 @@ def audit_provenance_row(
     ):
         synth_result = audit_synthetic_source(cand, row_clearance=row_clearance)
         if not synth_result.ok:
-            return synth_result
+            # GATE-27 / rg-015: the synthetic backstop decides verdict/reason/
+            # detail, but the returned category must remain the door the
+            # *caller* asked for — never the helper's own SYNTHETIC_SOURCE stamp.
+            return LicenseAuditResult(
+                verdict=synth_result.verdict,
+                reason=synth_result.reason,
+                detail=synth_result.detail,
+                category=audit_category,
+            )
 
     # Unregistered derived is floor-mediated (BR-66); no door-local re-check.
 

@@ -30,6 +30,8 @@ Mutations:
   M10 disable has_generator_lineage synthetic routing branch
   M11 slash-component membership disabled (dataset/ffhq path hits)
   M12 get_model_ingest_entry primary raise → pass
+  M13 PENDING-LEGAL-CLEARANCE SPDX branch → PASS (GATE-33)
+  M14 _package_denylist_hit always returns None (GATE-34 / BR-51)
 
 Paths resolve from __file__ (never cwd) so this script runs as documented from
 the repo root or from this directory (rg-006).
@@ -404,6 +406,51 @@ def _m12_ingest_entry_raise_pass(src: str) -> str:
     return _replace_unique(src, old, new, "M12")
 
 
+def _m13_pending_legal_clearance_pass(src: str) -> str:
+    """Flip PENDING-LEGAL-CLEARANCE SPDX branch from _fail to _pass (GATE-33).
+
+    Anchor is the unique pending-legal-clearance fail-closed return in
+    ``audit_spdx`` (structure/symbol, not comment prose — BR-17). M1 only
+    covers the later UNKNOWN_SPDX default-deny, so this branch was unguarded.
+    """
+    old = (
+        '    if tag_cf == "pending-legal-clearance":\n'
+        "        return _fail(\n"
+        "            RejectionReason.PENDING_LEGAL_CLEARANCE,\n"
+        '            detail="license is PENDING-LEGAL-CLEARANCE",\n'
+        "        )"
+    )
+    new = (
+        '    if tag_cf == "pending-legal-clearance":\n'
+        "        # MUTATION M13: pending-legal-clearance incorrectly PASSes\n"
+        "        return _pass(\n"
+        '            detail="license is PENDING-LEGAL-CLEARANCE",\n'
+        "        )"
+    )
+    return _replace_unique(src, old, new, "M13")
+
+
+def _m14_package_denylist_always_miss(src: str) -> str:
+    """Force ``_package_denylist_hit`` to always return None (GATE-34 / BR-51).
+
+    Anchor is the unique function body start. model_ingest reads
+    ``PACKAGE_DENYLIST`` directly, so the blast radius is the public derived
+    API plus reason demotion on the row path.
+    """
+    old = (
+        "def _package_denylist_hit(value: str) -> PackageDenylistEntry | None:\n"
+        '    """Exact PACKAGE_DENYLIST lookup on canonical form / slash components (BR-51)."""\n'
+        "    c = canonical(value)"
+    )
+    new = (
+        "def _package_denylist_hit(value: str) -> PackageDenylistEntry | None:\n"
+        '    """MUTATION M14: package denylist always misses."""\n'
+        "    return None  # MUTATION M14: BR-51 derived denylist disabled\n"
+        "    c = canonical(value)"
+    )
+    return _replace_unique(src, old, new, "M14")
+
+
 MUTATIONS: list[Mutation] = [
     Mutation(
         name="CONTROL",
@@ -514,6 +561,28 @@ MUTATIONS: list[Mutation] = [
         ),
         require_kill=True,
     ),
+    Mutation(
+        name="M13",
+        description="PENDING-LEGAL-CLEARANCE SPDX branch → PASS (GATE-33)",
+        apply="m13",
+        expected_victims=(
+            "test_gate33_audit_spdx_pending_legal_clearance_fails",
+            "test_gate33_training_data_row_pending_license_fails",
+            "test_gate33_tooling_row_pending_license_fails",
+            "test_gate33_model_ingest_row_pending_license_fails",
+            "test_gate33_occluder_asset_row_pending_license_fails",
+            "test_gate33_synthetic_source_row_pending_license_fails",
+        ),
+    ),
+    Mutation(
+        name="M14",
+        description="_package_denylist_hit always returns None (GATE-34)",
+        apply="m14",
+        expected_victims=(
+            "test_gate34_audit_derived_from_model_denylisted_package",
+            "test_gate34_training_data_row_derived_ultralytics_reason",
+        ),
+    ),
 ]
 
 _APPLIERS = {
@@ -530,6 +599,8 @@ _APPLIERS = {
     "m10": _m10_disable_generator_lineage_branch,
     "m11": _m11_collapse_separator_parity,
     "m12": _m12_ingest_entry_raise_pass,
+    "m13": _m13_pending_legal_clearance_pass,
+    "m14": _m14_package_denylist_always_miss,
 }
 
 

@@ -3877,6 +3877,14 @@ class TestGate27FiveDoorCategoryInvariant:
             "derived_from_model": "",
             "photo_clearance": "cleared",
         },
+        # GATE-32: PASSing SYNTHETIC_SOURCE witness so the five-door category
+        # invariant exercises the synthetic accept path (not only FAILs).
+        {
+            "source": "dcface",
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+            "clearance_decision": "dcface_operator_clearance_20260723",
+        },
     )
 
     @staticmethod
@@ -3884,7 +3892,10 @@ class TestGate27FiveDoorCategoryInvariant:
         return repr(sorted(row.items()))
 
     @pytest.mark.parametrize("door", list(policy.PolicyCategory))
-    @pytest.mark.parametrize("row_idx", range(10))
+    # GATE-35: derived from the row space, never hardcoded — a hardcoded bound
+    # silently drops any row appended past it, which is the same under-coverage
+    # GATE-32 was filed for.
+    @pytest.mark.parametrize("row_idx", range(len(_REPRESENTATIVE_ROWS)))
     def test_result_category_equals_asked_door(
         self, door: policy.PolicyCategory, row_idx: int
     ) -> None:
@@ -3906,6 +3917,28 @@ class TestGate27FiveDoorCategoryInvariant:
         assert key in self._INTENTIONAL_CATEGORY_MISMATCHES, (
             f"category leak: asked={door.value!r} got={got!r} "
             f"ok={result.ok} reason={result.reason} row={row!r}"
+        )
+
+    @pytest.mark.parametrize("door", list(policy.PolicyCategory))
+    def test_gate32_every_door_has_at_least_one_pass_witness(
+        self, door: policy.PolicyCategory
+    ) -> None:
+        """GATE-32: each door must see ≥1 PASS in ``_REPRESENTATIVE_ROWS``.
+
+        Without a synthetic PASS witness the category invariant never exercises
+        the SYNTHETIC_SOURCE accept path; a PASS-path category leak there
+        stays green. Removing the clearance_decision dcface row must RED this
+        for ``synthetic_source`` (TEST-15).
+        """
+        pass_count = 0
+        for row in self._REPRESENTATIVE_ROWS:
+            result = policy.audit_provenance_row(row, category=door)
+            if result.ok is True:
+                pass_count += 1
+        assert pass_count >= 1, (
+            f"GATE-32: PolicyCategory.{door.name} has zero PASS witnesses in "
+            f"_REPRESENTATIVE_ROWS ({len(self._REPRESENTATIVE_ROWS)} rows); "
+            "the five-door category invariant cannot cover its accept path"
         )
 
 
@@ -4145,4 +4178,151 @@ class TestGate31OperatorOwnedSourcePassWitnesses:
         )
         assert result.ok is False
         assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+
+
+# ---------------------------------------------------------------------------
+# GATE-33 — PENDING-LEGAL-CLEARANCE SPDX branch is RED-capable (FIR-7-GATE-33)
+# ---------------------------------------------------------------------------
+
+
+class TestGate33PendingLegalClearanceSpdxBranch:
+    """GATE-33: the explicit pending-legal-clearance licence tag must FAIL.
+
+    Flipping ``audit_spdx``'s ``tag_cf == "pending-legal-clearance"`` branch
+    from ``_fail`` to ``_pass`` previously left the full suite green. Pin the
+    exact ``RejectionReason`` on the bare SPDX door and on every row door
+    (TEST-15 / TEST-17 / SECD-05).
+    """
+
+    @pytest.mark.parametrize(
+        "token",
+        (
+            "PENDING-LEGAL-CLEARANCE",
+            "pending-legal-clearance",
+            "Pending-Legal-Clearance",
+        ),
+    )
+    def test_gate33_audit_spdx_pending_legal_clearance_fails(
+        self, token: str
+    ) -> None:
+        result = policy.audit_spdx(token)
+        assert result.ok is False, result.detail
+        assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE, (
+            f"audit_spdx({token!r}) must report PENDING_LEGAL_CLEARANCE, "
+            f"got {result.reason!r}"
+        )
+
+    def test_gate33_training_data_row_pending_license_fails(self) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "PENDING-LEGAL-CLEARANCE",
+            "derived_from_model": "",
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is False, result.detail
+        assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+
+    def test_gate33_tooling_row_pending_license_fails(self) -> None:
+        row = {
+            "package": "umap-learn",
+            "license": "PENDING-LEGAL-CLEARANCE",
+            "derived_from_model": "",
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TOOLING
+        )
+        assert result.ok is False, result.detail
+        assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+
+    def test_gate33_model_ingest_row_pending_license_fails(self) -> None:
+        row = {
+            "model_id": "sface",
+            "license": "PENDING-LEGAL-CLEARANCE",
+            "derived_from_model": "",
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.MODEL_INGEST
+        )
+        assert result.ok is False, result.detail
+        assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+
+    def test_gate33_occluder_asset_row_pending_license_fails(self) -> None:
+        row = {
+            "source": "operator-phone",
+            "license": "PENDING-LEGAL-CLEARANCE",
+            "derived_from_model": "",
+            "photo_clearance": "cleared",
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.OCCLUDER_ASSET
+        )
+        assert result.ok is False, result.detail
+        assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+
+    def test_gate33_synthetic_source_row_pending_license_fails(self) -> None:
+        # Self-declared pending licence must not ride a cleared synthetic head.
+        row = {
+            "source": "dcface",
+            "license": "PENDING-LEGAL-CLEARANCE",
+            "derived_from_model": "",
+            "clearance_decision": "dcface_operator_clearance_20260723",
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.SYNTHETIC_SOURCE
+        )
+        assert result.ok is False, result.detail
+        assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+
+
+# ---------------------------------------------------------------------------
+# GATE-34 — BR-51 package denylist on derived_from_model is RED-capable
+# ---------------------------------------------------------------------------
+
+
+class TestGate34DerivedFromModelPackageDenylist:
+    """GATE-34: Ultralytics-family tags FAIL via ``_package_denylist_hit``.
+
+    Making ``_package_denylist_hit`` always return ``None`` previously left the
+    suite green. Pin the public derived API and the TRAINING_DATA row reason
+    (not just ok=False) so demotion to ``unregistered_derived_model`` is itself
+    RED (TEST-15 / TEST-17 / SECD-06).
+    """
+
+    @pytest.mark.parametrize(
+        "token",
+        (
+            "ultralytics",
+            "yolov8",
+            "yolo",
+            "path/ultralytics",
+        ),
+    )
+    def test_gate34_audit_derived_from_model_denylisted_package(
+        self, token: str
+    ) -> None:
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False, result.detail
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE, (
+            f"audit_derived_from_model({token!r}) must report DENYLISTED_PACKAGE, "
+            f"got {result.reason!r}"
+        )
+
+    def test_gate34_training_data_row_derived_ultralytics_reason(self) -> None:
+        """Row door must keep DENYLISTED_PACKAGE, not demote to registration."""
+        row = {
+            "source": "self-generated",
+            "license": "MIT",
+            "derived_from_model": "ultralytics",
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is False, result.detail
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE, (
+            f"TRAINING_DATA row with derived_from_model=ultralytics must report "
+            f"DENYLISTED_PACKAGE (not demote to unregistered_derived_model); "
+            f"got {result.reason!r}"
+        )
 

@@ -455,14 +455,19 @@ test-scripts:
 # green can go red. Its victim suite is test_license_policy.py only —
 # test_license_policy_hardening.py is gated by test-scripts but kills no
 # mutant, so coverage that lives only there is not discrimination evidence.
-# Applies 12 known-bad mutations to license_policy.py in
-# place (restored under finally) plus one semantically inert CONTROL, and fails
-# unless every required mutant is killed by its own named victim tests and the
-# CONTROL survives. M12 is a declared known gap (no victim test yet; owned by
-# lane B4c) and is reported, not counted as a kill. Child pytest runs get a
-# scrubbed allowlist env and verdicts come from junitxml on disk plus a
+# Applies every entry in the MUTATIONS table to scratch copies of
+# license_policy.py under a temp dir (the real tree is never written) and fails
+# unless each required mutant is killed by its own named victim tests and the
+# semantically inert CONTROL survives. Child pytest runs get a scrubbed
+# allowlist env and verdicts come from junitxml on disk plus a
 # baseline-executed-count invariant, so an injected plugin cannot forge kills.
-# Without it a suite that stops discriminating stays green in CI.
+#
+# What it floors, precisely: the collected node-id set (may grow, must not
+# shrink), the existence of the pinned victim names, and that each required
+# mutant dies. What it does NOT floor: assertion strength inside a test body,
+# skip marks, or fixture-data diversity — a test whose body is replaced by
+# `pass` keeps its node id and still counts as executed. EXIT=0 means the suite
+# still has its shape and its pins, not that the suite was not gutted.
 mutation-guard-license-policy:
 	@python3 scripts/train/occlusion/mutation_guard.py --mutation all
 

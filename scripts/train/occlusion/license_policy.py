@@ -2247,12 +2247,6 @@ def audit_occluder_asset(asset: Mapping[str, Any]) -> LicenseAuditResult:
         )
     source_key = _normalize_token(source)
     if source_key not in {_normalize_token(s) for s in OCCLUDER_REGISTERED_SOURCES}:
-        if _looks_like_research_source(source):
-            return _fail(
-                RejectionReason.RESEARCH_ONLY_SOURCE,
-                detail=f"occluder asset source {source!r} is research-only",
-                category=cat,
-            )
         return _fail(
             RejectionReason.UNKNOWN_SOURCE,
             detail=(

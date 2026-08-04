@@ -1,381 +1,395 @@
-# OCIGOV-1. WorkBay Estate — VM/OCI governance as a separate application
+# OCIGOV-1. WorkBay Estate — local OCI estate governance
 
 > **Metadata**
 >
 > - **Date**: 2026-08-04 EST
 > - **Author**: Claude Opus 5 (`claude-opus-5`)
-> - **Project**: `workbay` (new package) + `context-alt-text-monorepo` (`infra/oci/`)
+> - **Project**: `context-alt-text-monorepo` (`infra/oci/`, local estate policy, host deploy)
 > - **Task ID**: `OCIGOV-1`
 > - **Target Branch**: `feature/ocigov-1`
 > - **Review Coverage Target**: 2
-> - **Status**: **DRAFT** — not accepted, not baselined. Written for `plan-analyze` triage.
+> - **Status**: **DRAFT** — not accepted, not baselined.
 
 ---
 
 ## Objective
 
-Stand up **WorkBay Estate** — a third workbay application, sibling to *handoff*
-(task state) and *orchestrator* (work dispatch) — that owns **machines**:
-provider inventory, capacity-slot accounting, tag-driven instance lifecycle, and
-scheduled reclamation of lanes and disk. When complete, no OCI instance, lane
-sandbox, or image generation on the estate persists because nothing was watching
-it.
+Wire this tenancy to **WorkBay Estate** so machines, slots, and host garbage are governed by tag policy and scheduled reclaimers, not by name-pinned self-stop or dispatch-time hooks. This task ships **only** the consumer-repo half: OCI tags, cloud-init retirement after shadow agreement, `config/estate.yaml`, host timer deploy, credential boundary proofs, OPS-2 fork retirement, and disposition of the stopped A10 occupying AD-1.
 
 ## Problem Statement
 
-The OCI estate has grown six workloads (ACX production, WordPress demo, remote
-lane execution, VLM burst GPU, WAN2.2 diffusion, prospective local codegen)
-across two shapes of instance, and there is **no component whose job is the
-machines themselves**. The consequences are measured, not hypothetical
-— see [`docs/operations/acx-vm-workload-organization-2026-08-04.md`](../../operations/acx-vm-workload-organization-2026-08-04.md)
-(findings N1–N5b) and [`docs/operations/acx-backend-host-disk-audit-2026-08-04.md`](../../operations/acx-backend-host-disk-audit-2026-08-04.md):
+Six workloads run with **no component that owns the machines**. Measured 2026-08-04 on `acx-backend` — see [`docs/operations/acx-vm-workload-organization-2026-08-04.md`](../../operations/acx-vm-workload-organization-2026-08-04.md) and [`docs/operations/acx-backend-host-disk-audit-2026-08-04.md`](../../operations/acx-backend-host-disk-audit-2026-08-04.md):
 
-1. **Capacity is accounted in the wrong unit.** A *stopped* A10 still consumes
-   its availability domain's `gpu-a10-count` service limit. Region-wide the
-   tenancy has **two** free A10 slots; nothing in the system knows that number,
-   so "we stopped it, we're fine" is false and the next burst can fail to launch.
-2. **Lifecycle policy is pinned to an instance name.** `infra/oci/cloud-init.yaml`
-   passes `--instance-id ${GPU_INSTANCE_ID}` to the reaper, and the reaper runs
-   *on the instance it is meant to stop*. Hand-created instances get no reaper
-   (one already ran 173 h); a wedged OS cannot reap itself; and `acx-backend`,
-   the one always-on box, has no `oci` CLI at all so it cannot supervise.
-3. **Every reclaimer is dispatch-triggered.** The lane sandbox sweep runs inside
-   `remote_agent.sh` at dispatch time, so it stops exactly when a burst ends and
-   garbage is at its peak. No principal on the host has both the authority and a
-   schedule: `root` and `gate` have no crontab, `gate` has no usable `sudo`.
-4. **The resulting leak is roughly half the disk.** ~50 GB of the 92 GB used on
-   `acx-backend` is agent-lane residue, across at least three classes that no
-   sweep can see (unmarked sandboxes, `~ubuntu` scratch clones, build cache).
+1. **Wrong capacity unit.** A STOPPED A10 still consumes that AD's `gpu-a10-count`. Region-wide only two free A10 slots; nothing accounts for them. Stopped ≠ free.
+2. **Lifecycle is name-pinned and self-hosted.** `infra/oci/cloud-init.yaml:44` runs the reaper with `--instance-id ${GPU_INSTANCE_ID}` on the instance it should stop. Hand-created instances get no reaper; a wedged OS cannot reap itself; `acx-backend` has no `oci` CLI.
+3. **Every reclaimer is dispatch-triggered.** Lane sweep lives inside `remote_agent.sh` at dispatch; it stops when a burst ends and garbage peaks. No principal has both authority and a schedule.
+4. **Disk leak is structural.** A large fraction of used space on `acx-backend` is agent-lane residue across classes no dispatch sweep can see (unmarked sandboxes, scratch clones, build cache). Absolute counts go stale within a day `[COST-12]`; the invariant is that **blanket delete is unsafe** because a majority of unmarked sandboxes hold commits beyond the synthetic base `[CARD-11]`.
 
-These are four symptoms of one absence. Patching them individually inside
-`remote_agent.sh`, `infra/oci/`, and ad-hoc root commands reproduces the same
-split ownership that produced them.
+Patching these inside `remote_agent.sh`, `infra/oci/`, and ad-hoc root commands reproduces the split ownership that created them.
 
 ## Constraints
 
-- **Two-repo split, and it is not negotiable.** The application belongs upstream
-  in `agentic-protocol-monorepo` (it is workbay infrastructure, reusable across
-  consumer repos). This repo owns only `infra/oci/` and its own estate policy
-  file. Per the Plugin Boundary Rule, the upstream half must be filed as an
-  upstream request, not edited from here.
-- **The governor must not live inside what it governs** — an instance cannot be
-  relied on to stop itself `[CARD-16]`.
-- **Reclamation must be evidence-gated.** A lane sandbox is the only copy of the
-  work of a lane that died before harvest; 197 of 312 unmarked sandboxes hold
-  commits beyond the synthetic base.
-- **Credentials are the hard constraint.** An estate agent that can terminate
-  instances needs OCI API credentials. `acx-backend` also runs disposable agent
-  lanes as `gate`. Terminate authority and lane execution must not share a
-  trust boundary `[CARD-10]`.
-- **Fail-open on reclamation, fail-closed on creation.** A broken sweep must
-  leave garbage, never delete live work; a broken slot ledger must refuse to
-  launch, never launch blind `[CARD-07]`.
+- **Two-repo split, non-negotiable.** Mechanism belongs in `agentic-protocol-monorepo` (`workbay-estate`). This repo may only change paths inside `context-alt-text-monorepo`. Upstream half is filed at [`docs/workbay/upstream-requests/2026-08-04-workbay-estate-governance/README.md`](../../workbay/upstream-requests/2026-08-04-workbay-estate-governance/README.md) — not edited from here (Plugin Boundary Rule).
+- **Upstream package is a hard precondition** for every local slice that invokes estate CLI/modules. Until that package exists and is installable on the T0 host, this task ships tags, policy, credential layout, and shadow dry-runs only — no cloud-init deletion, no timer apply.
+- **Governor must not live inside what it governs** `[CARD-16]`.
+- **Reclamation is evidence-gated.** A lane sandbox may be the only copy of work that died before harvest.
+- **Credentials are the hard constraint.** Terminate authority and `gate` lane execution must not share a trust boundary `[CARD-10]`. Timer principal is **stop-only**; terminate is operator-only off-box `[SEC-04]` `[PG-01]`.
+- **Two failure axes, not one** `[CARD-07]`:
+  - **Destructive action fails open** — never delete/stop under uncertainty.
+  - **Process exit fails loud** — non-zero on stall or per-class error after bounded retries `[rg-007]`.
+- **Greenfield** — no production users, no migrations, no back-compat shims.
 
 ## Workflow Principles
 
-- **Policy keys off tags, never off names or IDs.** A generic lifecycle module
-  containing a specific instance identifier is the `[rg-009]` violation this task
-  exists to remove.
-- **Config is validated at load time and fails loudly** `[rg-008]`; a missing or
-  malformed policy key must not degrade to a permissive default. (The
-  `host_memory`-at-top-level silent-fallback bug upstream is the cautionary case.)
-- **Every sweep loop bounds its own stalls** `[rg-007]`: per-target no-progress
-  counters, one target's failure never halts the others, non-zero exit past the
-  threshold.
-- **Reclamation is steady-state, not event-driven.** Timer, not hook.
-- **Every action is reversible until it isn't, and the irreversible ones are
-  gated separately** `[CARD-15]`: stop is routine, terminate is a distinct
-  authority, delete-with-commits is never automatic.
+- **Policy keys off tags, never names or IDs in generic modules** `[rg-009]`. Instance names appear only in this plan, operator runbooks, and `config/estate.yaml`.
+- **Config validated at load time** `[rg-008]`; missing/malformed required keys raise, never silent defaults.
+- **Sweep loops bound stalls** `[rg-007]`: per-target no-progress counters; one target's failure never halts others; non-zero exit past threshold.
+- **Reclamation is steady-state** — timer, not dispatch hook `[RES-07]`.
+- **Reversible until irreversible** `[CARD-15]`: stop routine; terminate distinct authority; delete-with-commits never automatic.
+- **Shadow then cut over** `[AIPX-06]`; **rollback written before ship** `[RLSE-08]`; **kill switch first** `[BOOT-06]`.
 
 ## Terminology
 
-- **Estate**: the set of provider resources (instances, boot volumes, images,
-  service-limit slots) across all availability domains in one tenancy.
-- **Slot**: one unit of a provider service limit in one availability domain. The
-  scarce GPU resource. Consumed by RUNNING **and STOPPED** instances alike.
-- **Tier**: the lifetime class of a workload — `T0` durable, `T1` working,
-  `T2` ephemeral. Determines blast-radius policy, not placement alone.
-- **Reclaimer**: a scheduled, idempotent, evidence-gated sweep over one garbage
-  class.
-- **Actuator**: the component that changes provider state (start/stop/terminate).
+| Term | Meaning |
+| --- | --- |
+| **Estate** | Provider resources (instances, boot volumes, images, service-limit slots) across all ADs in this tenancy. Prefer *estate* over *tenancy* in success criteria and ops language. |
+| **Slot** | One unit of a provider service limit in one AD. Scarce GPU resource. Consumed by RUNNING **and STOPPED** instances. |
+| **Tier** | Lifetime class — `T0` durable, `T1` working, `T2` ephemeral. Blast-radius policy, not placement alone. |
+| **Reclaimer** | Scheduled, idempotent, evidence-gated sweep over one garbage class. |
+| **Actuator** | Component that changes provider state (start/stop/terminate). |
+| **Supervisor** | The off-box scheduled process (systemd timer + estate CLI) that selects targets by tag and invokes reclaimers/actuators. Not co-located with T2 subjects. |
+| **Reaper / sweep** | Legacy names: existing `infra/oci/gpu_lifecycle/reaper.py` decision path and `remote_agent.sh` dispatch-time sandbox cleanup. Both are reclaimer *shapes*; this plan uses **reclaimer** for new work and **reaper** only for the current on-box unit. |
 
 ## Current State Analysis
 
-**What works.** `infra/oci/gpu_lifecycle/reaper.py` is sound *as a decision
-function*: it fail-safes to busy (`_BUSY_LOAD = JobLoadSnapshot(queue_depth=1,
-in_flight=1)`), it re-samples load after a fence delay before acting, and
-`OciCliStopActuator` cleanly separates decision from actuation. The upstream
-`remote_agent.sh` sandbox sweep is marker-gated by design so it can never delete
-a directory it did not create.
+**What works.** `infra/oci/gpu_lifecycle/reaper.py` is sound as a decision function: fail-safe busy (`_BUSY_LOAD = JobLoadSnapshot(queue_depth=1, in_flight=1)`), re-sample after fence delay, `OciCliStopActuator` separates decision from actuation. Upstream `remote_agent.sh` sweep is marker-gated (`.workbay-lane-sandbox`) so it cannot delete directories it did not create.
 
 **What is broken or drifting.**
 
-- The reaper's *deployment* undoes its design: name-pinned target, co-located
-  with its subject, and only one instance in `infra/oci/main.tf` carries
-  `"scale_to_zero" = "true"` — the tag exists but nothing reads it.
-- All 10 `acx-*` containers run with `HostConfig.Memory = 0` and
-  `NanoCpus = 0`. Production shares an uncapped kernel with disposable lanes.
-- This repo's vendored `scripts/remote_agent.sh` fork writes no
-  `.workbay-lane-sandbox` marker, so its sandboxes are permanently invisible to
-  the marker-gated sweep, and its `MAX_LANES=3` against upstream's 20 produces
-  cap split-brain on a shared scope namespace (`OPS-2`).
-- No image retention policy exists, and the obvious one is wrong: `system df`
-  advertises 11.19 GB reclaimable where the true figure is ~2.29 GB, ~2.2 GB of
-  which sits in three images (`OPS-1`).
+- Reaper *deployment* undoes design: name-pinned, co-located with subject; `infra/oci/main.tf:270` sets `"scale_to_zero" = "true"` on one instance and **nothing reads that tag**.
+- All 10 `acx-*` containers: `HostConfig.Memory = 0`, `NanoCpus = 0`. Production shares an uncapped kernel with disposable lanes.
+- Vendored `scripts/remote_agent.sh` (git-excluded, often absent from feature worktrees) writes no marker; `MAX_LANES=3` vs upstream 20 → cap split-brain (OPS-2).
+- No image retention policy; `docker system df` reclaimable figure is misleading.
 
-**What is currently misleading.** `docker system df`'s reclaimable figure; the
-assumption that a stopped GPU instance costs nothing (it costs a slot); and the
-E14 diagram that centres a "GPU Inference Server", which the local-AI roadmap
-already corrects to "GPU is optional burst capacity, not the product definition".
+**What is misleading.** Assumption that stopped GPU costs nothing (it costs a slot); E14-style "GPU Inference Server" framing already corrected by the local-AI roadmap.
+
+**Bring-up observation (not a test oracle)** `[CARD-11]`. Hand-measured 2026-08-04: AD-1 used 1 / limit 1 (stopped `acx-gpu-burst`), AD-2 used 1 / available 1, AD-3 used 0 / available 1. Record in handoff; do not assert these ratios in CI.
 
 ## Target Outcome
 
-A `workbay-estate` package exposing a CLI and an MCP surface, deployed as a
-scheduled supervisor, that:
+When this local task is done:
 
-- maintains a **slot ledger** per availability domain reconciled against the
-  provider's real service limits, and refuses a launch that would exceed one;
-- **stops and terminates by policy tag** — any instance carrying
-  `scale_to_zero=true` and idle past its tier's TTL is acted on, regardless of
-  who created it or what it is called;
-- runs **timer-driven reclaimers** over named garbage classes (lane sandboxes,
-  scratch clones, build cache, image generations, journal) with per-class
-  evidence gates and per-class byte accounting in its log;
-- reports **cost and slot occupancy** as first-class output, so a burst's true
-  price (GPU-hours *and* the slot it held) is visible.
-
-Consumer repos supply an `estate.yaml` describing their tiers and classes; the
-application supplies mechanism only.
+- Every managed instance carries tier + `scale_to_zero` tags; generic modules contain no instance ids.
+- Estate supervisor runs **off-box** on the T0 host under a **stop-only** OCI principal; credentials unreadable by `gate`.
+- On-box name-pinned reaper unit is gone **only after** shadow agreement.
+- Timer-driven reclaimers bound lane/disk residue; dispatch-time sweep remains a second consumer of the same marker, not the only one.
+- `acx-gpu-burst` is disposed (image + terminate) or kept with explicit slot-cost decision recorded.
+- Slot-aware launch gating may still be upstream/stretch; **interim contract** for GPU dispatch is stated below `[REF-13]`.
 
 ## Context Loading
 
 - Assessment: `docs/operations/acx-vm-workload-organization-2026-08-04.md`
-- Audit: `docs/operations/acx-backend-host-disk-audit-2026-08-04.md`
-- Deferred debt this task supersedes: `docs/tech-debt/OPS-1-vm-host-retention-hygiene.md`,
-  `docs/tech-debt/OPS-2-vendored-remote-agent-fork.md`
-- Existing decision function: `infra/oci/gpu_lifecycle/reaper.py`
-- Existing deployment: `infra/oci/cloud-init.yaml`, `infra/oci/main.tf`
-- Prior art for the shape (admission governance on one host, upstream):
-  `packages/mcp-workbay-orchestrator/src/workbay_orchestrator_mcp/orchestration/host_resources.py`
-  (`probe_host`, `load_host_memory_policy`, `evaluate_admission`,
-  `acquire_heavy_slot`, `crash_breaker_width_cap`, `record_admission_telemetry`)
-  and its CLI `orchestration/hostgov_cli.py`
-- Lane sweep semantics: `packages/workbay-system/workbay_system/payload/scripts/remote_agent.sh`
-  (`AGENT_ROOT`, `MAX_LANES`, `SANDBOX_TTL_SEC`, the `.workbay-lane-sandbox` marker)
+- Disk audit: `docs/operations/acx-backend-host-disk-audit-2026-08-04.md`
+- Superseded debt: `docs/tech-debt/OPS-1-vm-host-retention-hygiene.md`, `docs/tech-debt/OPS-2-vendored-remote-agent-fork.md`
+- Decision function: `infra/oci/gpu_lifecycle/reaper.py`
+- Deploy surfaces: `infra/oci/cloud-init.yaml`, `infra/oci/main.tf`
+- Local policy: `config/estate.yaml` (companion deliverable)
+- Upstream request (precondition): `docs/workbay/upstream-requests/2026-08-04-workbay-estate-governance/README.md`
+- Prior art (upstream, do not edit): `host_resources.py` / `hostgov_cli.py` — host admission, not machine governance
+- Lane marker semantics (upstream): `remote_agent.sh` — `AGENT_ROOT`, `MAX_LANES`, `SANDBOX_TTL_SEC`, `.workbay-lane-sandbox`
 
 ## Contract and Boundary Impact
 
-| Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
+| Boundary | Owner | Current | Expected change | Compat? | Verification |
 | --- | --- | --- | --- | --- | --- |
-| `estate.yaml` policy file | workbay-estate (new) | none | new schema, load-time validated | no — greenfield | schema test + malformed-config test asserting a raised error, not a default |
-| OCI provider API | workbay-estate (new) | `OciCliStopActuator` in this repo | actuator moves upstream, gains terminate + launch-gate | no — same CLI calls | dry-run against live tenancy, recorded |
-| lane sandbox marker | workbay-system `remote_agent.sh` | `.workbay-lane-sandbox` marker file, 48 h TTL | reclaimer becomes a second, timer-driven consumer of the same marker | **yes** — marker semantics must not change | reclaimer dry-run reports the same set the dispatch sweep would |
-| `infra/oci/` | this repo | name-pinned reaper in cloud-init | reduced to policy + tags; decision logic leaves | no | `terraform plan` clean; tag present on every managed instance |
-| orchestrator host admission | workbay-orchestrator | `host_memory` under `orchestrator:` | none — estate governs machines, orchestrator governs work on a machine | n/a | assert no import from estate into `host_resources.py` |
+| Upstream `workbay-estate` package | upstream request doc | none | inventory, policy load, tag lifecycle, reclaimers, CLI | **precondition** — not built in this task | package installable; CLI present on T0 before apply/timer slices |
+| `config/estate.yaml` | this repo | none | tiers, TTLs, classes, kill switch, retention | greenfield | load-time validation fails loud on malformed keys `[rg-008]` |
+| `infra/oci/main.tf` tags | this repo | one instance tagged | every managed instance: tier + `scale_to_zero` | no | `terraform plan` clean; tags present |
+| `infra/oci/cloud-init.yaml` reaper unit | this repo | name-pinned on-box reaper | deleted **after** shadow agreement | rollback: restore unit | shadow N-day agreement; then delete |
+| OCI principal on T0 | this repo / tenancy IAM | no `oci` CLI | stop+read principal; no terminate | n/a | negative terminate test; `gate` cannot read creds |
+| Lane marker | upstream `remote_agent.sh` | marker + dispatch sweep | timer reclaimer is second consumer | **yes** — marker semantics unchanged | dry-run set ⊆ marker-gated set |
+| Orchestrator dispatch ↔ slots | temporal coupling `[REF-13]` | no check | **interim:** operator or launch path checks estate inventory before GPU launch; opaque provider error is not acceptable as sole signal `[CARD-07]` `[RES-09]` | document until upstream gate | handoff names checker + operator-visible error |
+| `host_resources.py` | upstream orchestrator | host admission | no import from estate into host admission | n/a | assert no such import in this repo |
+
+### Interim slot contract (delivered scope)
+
+Until slot-aware launch gating ships upstream:
+
+1. **Who checks:** operator (or any local launch wrapper this repo owns) runs estate inventory / plan and confirms free `gpu-a10-count` in the target AD **before** requesting a GPU instance.
+2. **What the operator sees:** explicit "no free A10 slot in AD-*" from inventory/plan — not a raw provider launch failure after work is already queued.
+3. **What still fails closed:** estate refuses apply/launch actions when the slot ledger would exceed limit (upstream package behaviour once present).
 
 ## Proposed Solution
 
-Split the existing reaper along its already-visible seam. The **decision
-function** (idle detection, fence, fail-safe-to-busy) is good and moves upstream
-largely intact. What is added around it is everything it lacks: a target
-*selector* driven by tags, a slot *ledger* that knows stopped instances still
-cost, a *scheduler* that is not the dispatch path, and reclaimers for the
-non-instance garbage classes.
+Keep the reaper decision function; change **deployment and ownership**.
 
-Deployment answers "who governs the governor" by **not requiring an always-live
-governor**: every action is idempotent and derived from provider state at run
-time, so a missed tick costs latency, never correctness. The supervisor runs as
-a root-owned systemd timer on the T0 host, under a **separate OCI principal from
-the lane-execution account**, with `terminate` authority withheld from the timer
-principal entirely — terminate is operator-invoked from the laptop.
+1. **Precondition.** Land upstream request; install `workbay-estate` on T0 when available. Local work that only needs tags/policy/creds may proceed in parallel; anything that deletes the on-box reaper or runs apply/timer **waits**.
+2. **Policy + tags.** `config/estate.yaml` encodes this estate. Terraform tags every managed instance. Kill switch lives in `config/estate.yaml` (companion schema); supervisor checks it before any mutating plan `[BOOT-06]`. **Hard refusal:** never act on tier `T0`, independent of `scale_to_zero` `[CARD-15]`.
+3. **Shadow.** Run tag selector **report-only** alongside existing on-box reaper for N days; assert agreement on stop candidates before deleting cloud-init unit `[AIPX-06]`.
+4. **Credentials.** Install `oci` CLI + stop/read-only principal on T0. Cred files mode/owner exclude `gate` `[PG-09]` `[SEC-16]`. Terminate only from operator laptop principal `[CARD-04]` `[CARD-12]`.
+5. **Cut over.** Enable supervised stop (still dry-run default until explicit apply flag); remove name-pinned unit and `${GPU_INSTANCE_ID}` pin.
+6. **Reclaimers.** Root-owned systemd timer; per-class evidence gates; fail-open deletes, fail-loud exits. On non-zero exit: unit `OnFailure=` journal-visible failure + automatic next timer tick (retry by schedule, not tight loop); no silent success `[CARD-07]`.
+7. **OPS-2.** Identify dispatch redirect; switch to marker-writing upstream script; then remove laptop-local fork — or fall back to isolate fork under distinct `AGENT_ROOT` and align `MAX_LANES` `[CARD-15]`.
+8. **N1 disposition.** Capture `acx-gpu-burst` boot volume as custom image, verify image, then terminate; assert AD-1 used drops per provider limits `[OPS-16]` `[CARD-06]`. Or record deliberate keep + ongoing slot cost.
 
 ## Files and Surfaces to Change
 
+Every row is inside `context-alt-text-monorepo`.
+
 | Surface | File | Change |
 | --- | --- | --- |
-| upstream package | `packages/workbay-estate/…/estate/policy.py` | `load_estate_policy(root)`, load-time validation, raise on malformed |
-| upstream package | `…/estate/inventory.py` | `probe_estate()` → instances + boot volumes + limits per AD |
-| upstream package | `…/estate/slots.py` | `SlotLedger`, `reserve()`, counts STOPPED as consuming |
-| upstream package | `…/estate/lifecycle.py` | tag-driven selector + the ported idle/fence decision function |
-| upstream package | `…/estate/reclaim/` | one module per garbage class, each with an evidence gate |
-| upstream package | `…/estate/cli.py` | `estate inventory|plan|apply|reclaim`, `--dry-run` default |
-| upstream package | `…/estate/telemetry.py` | per-class removed count + bytes; slot occupancy; cost |
-| this repo | `infra/oci/main.tf` | tag every managed instance with tier + `scale_to_zero` |
-| this repo | `infra/oci/cloud-init.yaml` | delete the name-pinned `ExecStart` reaper unit |
-| this repo | `infra/oci/gpu_lifecycle/` | retire in favour of the upstream package |
-| this repo | `config/estate.yaml` | this estate's tiers, classes, TTLs, retention counts |
-| this repo | `docs/workbay/upstream-requests/REQUEST-workbay-estate.md` | the upstream half of this plan |
-| this repo | `scripts/remote_agent.sh` | delete (OPS-2 resolution A) so one marker-writing implementation remains |
+| tags | `infra/oci/main.tf` | tier + `scale_to_zero` on every managed instance; no generic module hardcodes instance ids |
+| on-box reaper deploy | `infra/oci/cloud-init.yaml` | after shadow gate: remove name-pinned reaper `ExecStart` / `${GPU_INSTANCE_ID}` |
+| retire local decision deploy | `infra/oci/gpu_lifecycle/` | stop shipping as the production governor; decision logic superseded by upstream package (local tree retired or reduced to thin wrapper only if install path requires it — prefer delete once upstream is live) |
+| estate policy | `config/estate.yaml` | this estate's tiers, TTLs, classes, retention, kill switch (schema in companion deliverable) |
+| upstream request | `docs/workbay/upstream-requests/2026-08-04-workbay-estate-governance/README.md` | precondition artifact; do not implement package here |
+| host timer units | operator-installed under `/etc/systemd/system/` on T0 (not git) | root-owned timer invoking estate reclaim/apply; documents unit names in handoff |
+| OPS-2 fork | `scripts/remote_agent.sh` | **operator action**, not a reviewable git delete (file is `.git/info/exclude`'d) — see Slice 4 |
+| tech-debt close | `docs/tech-debt/OPS-1-vm-host-retention-hygiene.md`, `docs/tech-debt/OPS-2-vendored-remote-agent-fork.md` | delete when acceptance criteria met by shipped mechanism |
 
 ## Related Files
 
 | File | Note |
 | --- | --- |
-| `docs/roadmaps/local-ai-managed-default-roadmap-2026-07-31.md` | §4.1 already rejects GPU-as-product-centre; estate must not re-introduce it |
-| `docs/tech-debt/OPS-1-vm-host-retention-hygiene.md` | its acceptance criteria become Slice 4's; delete on completion |
-| `docs/tech-debt/OPS-2-vendored-remote-agent-fork.md` | its resolution A is a precondition for Slice 4's lane reclaimer |
+| `docs/roadmaps/local-ai-managed-default-roadmap-2026-07-31.md` | §4.1 rejects GPU-as-product-centre; estate must not re-introduce it |
+| `docs/tech-debt/OPS-1-vm-host-retention-hygiene.md` | acceptance criteria become reclaimer slice proof |
+| `docs/tech-debt/OPS-2-vendored-remote-agent-fork.md` | resolution A preferred; B is reversible fallback |
+| `docs/operations/acx-vm-workload-organization-2026-08-04.md` | dated measurements; re-run census at implement time |
+| `docs/operations/acx-backend-host-disk-audit-2026-08-04.md` | dated disk classes; not absolute oracles |
 
 ## Verification Strategy
 
-- Deterministic tests (upstream package):
-  - `uv run --extra dev pytest packages/workbay-estate/tests`
-  - malformed `estate.yaml` raises, does **not** return an empty default `[rg-008]`
-  - a reclaimer whose target errors still processes the remaining targets and
-    exits non-zero past the stall threshold `[rg-007]`
-  - the slot ledger counts a STOPPED instance as occupying a slot (the N1 regression test)
-  - a sandbox fixture holding commits beyond base is **not** selected for deletion
-- Runtime-parity:
-  - `estate plan` against the live tenancy reproduces the hand-measured AD slot
-    table (AD-1 1/1, AD-2 1/1, AD-3 0/1) before any policy change
-  - the reclaimer's dry-run set equals the dispatch sweep's set on the same host
-- Manual verification:
-  - the timer fires twice on `acx-backend` and its log shows per-class bytes both times
-  - a deliberately wedged GPU instance is stopped by the off-box supervisor
+**Invariants (CI / automated where package tests live upstream; this repo asserts integration):**
 
-## Slice Delivery
+- Inventory per-AD **used** equals provider-reported limit usage for the same resource, whatever current values are `[CARD-11]`.
+- Slot ledger counts STOPPED as occupying (regression for N1 rule).
+- Malformed `config/estate.yaml` fails load; no empty default `[rg-008]`.
+- Kill switch armed → zero mutating actions.
+- Tier `T0` never appears in stop/terminate candidate set.
+- Reclaimer: destructive path skips on uncertainty; process exits non-zero if any class stalls past threshold; other classes still processed `[rg-007]`.
+- Sandbox with commits beyond base is not selected for delete.
 
-### Slice 1: Estate inventory and the slot ledger (read-only)
+**Credential proofs (local, mandatory):**
 
-**Goal**: Make capacity visible in the unit that is actually scarce.
+- Timer principal: stop allowed; **terminate call rejected** (negative test).
+- Credential file(s) on T0: not readable by `gate` (filesystem permission assertion as `gate`).
+- No terminate capability installed for the timer principal on the box.
 
-Changes:
+**Shadow gate:**
 
-- `probe_estate()` enumerating instances, lifecycle state, AD, shape, tags,
-  boot volumes; `SlotLedger` computing used/available per AD **counting STOPPED**.
-- `estate inventory --json`; no actuation in this slice.
+- For N consecutive days (default N=3 unless operator sets higher), report-only selector and existing reaper agree on the set of stop candidates (same instance ocids). Disagreement blocks cloud-init deletion `[AIPX-06]`.
 
-Proof:
+**Bring-up (handoff only, not oracle):**
 
-- Output matches the hand-measured AD table; unit test pins the STOPPED-counts
-  rule.
+- Record first inventory snapshot vs hand-measured 2026-08-04 table for human orientation.
+- Re-run sandbox census at implement time; do not paste stale absolute counts into success criteria `[COST-12]`.
 
-### Slice 2: Policy file with load-time validation
+**Manual:**
 
-**Goal**: Tiers, TTLs, and retention counts come from validated config, never
-from code.
+- Two timer firings log per-class removed count + bytes.
+- Deliberately idle tagged T2 is stopped by off-box supervisor while on-box unit is already gone (post-cutover).
 
-Changes:
+## Slices
 
-- `estate.yaml` schema (tiers, per-tier idle TTL, reclaim classes, retention
-  counts); `load_estate_policy()` raising on missing/malformed required keys.
-- This repo's `config/estate.yaml` encoding T0/T1/T2 as assessed.
+### Precondition: Upstream package available
 
-Proof:
+**Gate.** `docs/workbay/upstream-requests/2026-08-04-workbay-estate-governance/README.md` accepted path exists; `workbay-estate` installable on T0 with CLI (`inventory`, `plan`, `apply`, `reclaim`).
 
-- Malformed-config test asserts a raised error; a nested-vs-top-level key
-  mistake is rejected loudly rather than silently defaulted.
+**Interim without package.** Land tags + `config/estate.yaml` + IAM principal layout only. Do not delete cloud-init reaper. Do not install apply timer.
 
-### Slice 3: Tag-driven lifecycle, off-box
+### Slice 1: Tags, policy, kill switch
 
-**Goal**: Replace the name-pinned, self-hosted reaper.
+**Goal.** This estate is described in validated config; every managed instance is selectable by tag.
 
-Changes:
+**Changes.**
 
-- Port the idle/fence/fail-safe decision function; add a **tag selector** so any
-  `scale_to_zero=true` instance is in scope; `estate apply --dry-run` default.
-- Install `oci` CLI + a read/stop-only principal on the T0 host; delete the
-  cloud-init unit and the `${GPU_INSTANCE_ID}` pin.
+- `infra/oci/main.tf`: tier + `scale_to_zero` on all managed instances.
+- `config/estate.yaml`: tiers/TTLs/classes/retention/kill switch per companion schema.
+- Document hard rule: supervisor never mutates `T0`.
 
-Proof:
+**Proof.**
 
-- A hand-created, untagged-by-terraform GPU instance is selected once tagged;
-  the `[rg-009]` violation is gone from `infra/oci/`.
+- `terraform plan` shows tag changes only as intended.
+- Loading policy with kill switch on yields plan with empty action set.
+- No instance-specific id in generic Python modules under `infra/oci/`.
 
-### Slice 4: Timer-driven reclaimers
+### Slice 2: Credentials and least privilege
 
-**Goal**: Garbage is collected on a schedule, by a principal that has authority.
+**Goal.** Enforce the credential boundary the constraints assert `[SEC-04]` `[CARD-10]`.
 
-Changes:
+**Changes.**
 
-- Reclaimers for lane sandboxes (marker + no-commits-beyond-base gate), scratch
-  clones, build cache, images (**count-based on `rollback-*`**, never age-based),
-  journal, apt; per-class byte accounting; root-owned daily systemd timer.
-- Retire the vendored `remote_agent.sh` fork so one marker-writing implementation
-  remains.
+- Install `oci` CLI on T0.
+- Create/stop-only dynamic group + IAM policy for timer principal: allow read instance/family and stop instance; **no** terminate/launch-delete.
+- Store credentials outside paths `gate` can read; ownership/mode exclude uid 1002.
 
-Proof:
+**Proof.**
 
-- Two consecutive firings bound every class; the census of commits-beyond-base
-  sandboxes is untouched; ~50 GB reclaimed across the one-time backlog.
+- As timer principal: stop on a disposable T2 test target succeeds (or dry-run equivalent accepted by operator).
+- As timer principal: terminate is **rejected** by IAM.
+- As `gate`: cannot read credential files.
+- Terminate remains operator-laptop-only.
 
-### Slice 5: Cost and occupancy telemetry
+### Slice 3: Shadow supervisor (report-only)
 
-**Goal**: A burst's true price is visible without an OCI console trip.
+**Goal.** Prove tag selector before removing the on-box reaper `[AIPX-06]` `[RLSE-08]`.
 
-Changes:
+**Changes.**
 
-- Per-run cost estimate (GPU-hours × rate, A1 hours × rate) and slot-occupancy
-  duration; emitted with each `apply` and each reclaim.
+- Install report-only timer/service on T0: estate plan against tags; log candidates; **no stop**.
+- Leave `infra/oci/cloud-init.yaml` reaper unit in place.
+- Kill switch must force empty candidate set when armed.
 
-Proof:
+**Agreement criterion.** N=3 consecutive daily runs where report-only candidate set equals the set the existing reaper would stop (same ocids), or documented empty-empty agreement if none idle.
 
-- A completed VLM burst reports GPU-hours, dollars, and the wall-clock time its
-  slot was held including while stopped.
+**Rollback.** Disable shadow timer; on-box reaper unchanged.
+
+### Slice 4: Cut over lifecycle + reclaimers + OPS-2
+
+**Goal.** Off-box stop; scheduled reclaim; single marker-writing lane path.
+
+**Depends on.** Precondition package; Slice 2 proofs; Slice 3 agreement.
+
+**Changes.**
+
+- Enable supervised stop path (apply still defaults dry-run; explicit flag for mutate).
+- Delete name-pinned reaper unit and `${GPU_INSTANCE_ID}` from `infra/oci/cloud-init.yaml`.
+- Root-owned daily reclaim timer; per-class gates (marker + no-commits-beyond-base for lanes; count-based `rollback-*` for images; scratch; build cache; journal; apt as policy lists).
+- OPS-2: identify dispatch → script resolution; redirect to upstream marker-writing `remote_agent.sh`; **then** remove laptop-local `scripts/remote_agent.sh`. If redirect unknown, stop and resolve Open Question before delete. Fallback B: distinct `AGENT_ROOT` + aligned `MAX_LANES` without deleting fork `[CARD-15]`.
+- Re-run sandbox census at start of slice (dated note in handoff).
+
+**Failure posture.**
+
+| Axis | Behaviour |
+| --- | --- |
+| Uncertain delete/stop | skip target; leave resource |
+| Class error / stall past threshold | continue other classes; process exit non-zero |
+| systemd on non-zero | failure recorded in journal; next tick retries by schedule; no auto-disable of kill switch |
+
+**Proof.**
+
+- Cloud-init no longer passes instance id to reaper.
+- Two reclaim firings bound classes without touching commits-beyond-base census.
+- Dispatch produces sandbox containing `.workbay-lane-sandbox` after redirect.
+- Rollback note: restore cloud-init reaper unit from git; stop apply timer; keep kill switch armed `[RLSE-08]`.
+
+### Slice 5: Dispose stopped A10 occupying AD-1
+
+**Goal.** Use the instrument on the instance that motivated N1 `[OPS-16]`.
+
+**Changes (operator-driven; name only in plan/config, not generic modules)** `[rg-009]`.
+
+1. Capture `acx-gpu-burst` boot volume → custom image.
+2. Verify image bootable / inspectable `[CARD-06]`.
+3. Terminate instance (operator principal).
+4. Confirm provider AD-1 `gpu-a10-count` used decreased (inventory matches provider).
+
+**Alternative.** Operator records **keep** decision with ongoing slot cost (1 of 1 in AD-1) in handoff; success criteria then require that record, not free slot.
+
+### Slice 6: Cost / occupancy telemetry (local consumption)
+
+**Goal.** Burst true price visible from estate CLI output once upstream emits it.
+
+**Changes.** This repo documents operator runbook fields only (GPU-hours, A1-hours, slot-hold including stopped). No new package code here.
+
+**Proof.** One completed VLM burst (or dry-run sample) shows slot-hold duration including stopped time in handoff.
 
 ---
 
 ## Consolidated Checklist
 
-## Context and Ownership
+### Context and Ownership
 
-- [ ] Loaded the assessment, the disk audit, OPS-1, OPS-2, and the existing
-      `gpu_lifecycle` decision function before editing.
-- [ ] Filed the upstream request for the `workbay-estate` package and recorded
-      the two-repo ownership split.
+- [ ] Load assessment, disk audit, OPS-1, OPS-2, and `infra/oci/gpu_lifecycle/reaper.py` before edits.
+- [ ] Confirm upstream request path `docs/workbay/upstream-requests/2026-08-04-workbay-estate-governance/README.md` is the sole channel for package work.
+- [ ] Confirm companion `config/estate.yaml` schema deliverable is present or coordinated.
+- [ ] Record two-repo split and credential boundary in handoff.
 
-### Checklist for Slice 1: Estate inventory and the slot ledger
+### Checklist for Precondition: Upstream package
 
-- [ ] `probe_estate()` enumerates instances, state, AD, shape, tags, boot volumes.
-- [ ] `SlotLedger` counts STOPPED instances against the AD limit.
-- [ ] `estate inventory --json` output matches the hand-measured AD table.
-- [ ] Unit test pins the STOPPED-counts-a-slot rule.
+- [ ] Upstream request documents inventory, slot ledger (STOPPED counts), policy load, tag lifecycle, reclaimers, CLI.
+- [ ] `workbay-estate` installable on T0; `estate inventory` / `estate plan` invoke successfully.
+- [ ] Until install succeeds: block Slice 4 mutate/cutover and Slice 5 terminate automation; allow Slice 1 tags/policy and Slice 2 IAM layout.
 
-### Checklist for Slice 2: Policy file with load-time validation
+### Checklist for Slice 1: Tags, policy, kill switch
 
-- [ ] `estate.yaml` schema defined with tiers, TTLs, reclaim classes, retention counts.
-- [ ] `load_estate_policy()` raises on missing/malformed keys; no permissive default.
-- [ ] This repo's `config/estate.yaml` encodes T0/T1/T2.
-- [ ] Malformed-config test asserts the raise.
+- [ ] `infra/oci/main.tf`: every managed instance has tier and `scale_to_zero` tags.
+- [ ] `config/estate.yaml` committed with kill switch key per companion schema; load fails on malformed required keys.
+- [ ] Supervisor path checks kill switch before mutate; armed → empty actions.
+- [ ] Hard refusal: no stop/terminate candidate with tier `T0`.
+- [ ] `terraform plan` reviewed; no instance id hardcoded into generic modules under `infra/oci/`.
 
-### Checklist for Slice 3: Tag-driven lifecycle, off-box
+### Checklist for Slice 2: Credentials
 
-- [ ] Idle/fence/fail-safe-to-busy decision function ported with its tests.
-- [ ] Tag selector replaces the instance-ID pin.
-- [ ] `oci` CLI and a read/stop-only principal installed on the T0 host.
-- [ ] Cloud-init reaper unit and `${GPU_INSTANCE_ID}` deleted from `infra/oci/`.
-- [ ] `apply` defaults to dry-run; terminate authority withheld from the timer principal.
+- [ ] `oci` CLI installed on `acx-backend` (T0).
+- [ ] Timer principal IAM: read + stop allowed; terminate denied (negative test recorded).
+- [ ] Credential files not readable by `gate` (permission test as uid 1002).
+- [ ] Terminate not available to timer principal on the box; operator-laptop principal documented for terminate.
+- [ ] Lane execution account `gate` unchanged: no sudo, no docker, no estate creds.
 
-### Checklist for Slice 4: Timer-driven reclaimers
+### Checklist for Slice 3: Shadow
 
-- [ ] One reclaimer module per garbage class, each with its evidence gate.
-- [ ] Image retention is count-based on `rollback-*` aliases.
-- [ ] Per-class removed-count and bytes logged on every run.
-- [ ] Bounded stall detection: one class's failure does not halt the others.
-- [ ] Root-owned daily systemd timer installed on the T0 host.
-- [ ] Vendored `scripts/remote_agent.sh` fork deleted.
+- [ ] Report-only supervisor timer installed; on-box reaper in `infra/oci/cloud-init.yaml` still present.
+- [ ] N=3 days candidate-set agreement logged (or empty-empty).
+- [ ] Kill switch test during shadow: armed run emits zero candidates.
+- [ ] Rollback path documented: disable shadow timer only.
 
-### Checklist for Slice 5: Cost and occupancy telemetry
+### Checklist for Slice 4: Cut over, reclaim, OPS-2
 
-- [ ] Cost estimate emitted per apply and per reclaim.
-- [ ] Slot-occupancy duration includes stopped time.
+- [ ] Slice 3 agreement satisfied before editing `infra/oci/cloud-init.yaml`.
+- [ ] Name-pinned reaper unit and `${GPU_INSTANCE_ID}` removed from `infra/oci/cloud-init.yaml`.
+- [ ] Apply defaults dry-run; mutate requires explicit flag.
+- [ ] Reclaim timer root-owned; per-class evidence gates; per-class count+bytes logged.
+- [ ] Stall policy: per-class no-progress counters; one class failure does not halt others; non-zero exit; systemd journal shows failure; next tick retries.
+- [ ] Identify dispatch→script resolution mechanism (Open Question if unknown); redirect **before** any fork removal.
+- [ ] After redirect: one dispatch creates sandbox with `.workbay-lane-sandbox`.
+- [ ] Remove laptop-local `scripts/remote_agent.sh` only after redirect proof — or implement OPS-2 fallback B (`AGENT_ROOT` isolation + `MAX_LANES` align).
+- [ ] Re-run sandbox census; record dated counts in handoff only.
+- [ ] Rollback: restore cloud-init reaper from git; stop apply timer; arm kill switch.
 
-## Review Readiness
+### Checklist for Slice 5: `acx-gpu-burst` disposition
 
-- [ ] No provider-mutating path ships without a dry-run mode and a recorded
-      live dry-run against the real tenancy.
-- [ ] Evidence gates are tested against fixtures that would be destroyed if the
-      gate were absent.
-- [ ] Handoff decision records the two-repo split and the credential boundary.
+- [ ] Custom image from boot volume captured and verified before terminate.
+- [ ] Terminate via operator principal (not timer).
+- [ ] Provider + inventory agree AD-1 usage dropped — **or** handoff records keep + slot cost (1 AD-1 slot).
+- [ ] Instance name used only in plan/handoff/config, not generic modules.
+
+### Checklist for Slice 6: Telemetry consumption
+
+- [ ] Runbook lists fields: GPU-hours, host-hours, slot-hold including stopped.
+- [ ] One sample burst/handoff line shows slot-hold including stopped time.
+
+### Review Readiness
+
+- [ ] No provider-mutating path without dry-run and a recorded live dry-run.
+- [ ] Evidence gates tested against fixtures that would be destroyed if gates were absent.
+- [ ] Negative IAM terminate test and `gate` credential-read denial attached to handoff.
+- [ ] Shadow agreement log attached before cloud-init deletion review.
+- [ ] Interim GPU slot check contract named (who checks, operator-visible error).
+- [ ] Handoff states two-repo split, kill switch location in `config/estate.yaml`, and rollback steps.
+
+### Success Criteria
+
+- [ ] No managed instance outside tag-driven policy scope.
+- [ ] Off-box supervisor is the production stop path; on-box name-pinned reaper gone post-shadow.
+- [ ] `infra/oci/` generic modules contain no instance-specific identifiers.
+- [ ] Estate inventory per-AD used matches provider limit usage (invariant, not the 2026-08-04 ratios).
+- [ ] Lane/scratch residue bounded across two timer firings without deleting commits-beyond-base sandboxes.
+- [ ] Timer principal cannot terminate; `gate` cannot read estate credentials.
+- [ ] `acx-gpu-burst` disposed with free AD-1 slot, or keep decision with slot cost recorded.
+- [ ] OPS-1 and OPS-2 debt docs deleted only when their acceptance criteria are met by shipped mechanism.
 
 ## Stretch Goals
 
-- [ ] Boot-volume-to-custom-image capture so T2 persists as an image, not an instance.
-- [ ] Slot-aware launch gating wired into the orchestrator's dispatch path.
+- [ ] Boot-volume→custom-image automation for T2 as routine path (Slice 5 remains manual until then).
+- [ ] Slot-aware launch gating in orchestrator dispatch (replaces interim operator contract) — upstream request follow-on.
+- [ ] Host cgroup caps for `acx-*` containers (N3); out of estate ownership but residual risk.
 
-## Success Criteria
+## Open Questions
 
-- [ ] No instance in the tenancy is outside the tag-driven policy's scope.
-- [ ] `~gate/grok-sandbox` and `~ubuntu` scratch are bounded across two timer firings.
-- [ ] `infra/oci/` contains no instance-specific identifier in a generic module.
-- [ ] The AD slot table is queryable in one command and is correct for stopped instances.
-- [ ] OPS-1 and OPS-2 are deleted, superseded by shipped mechanism.
+- What exact env var, make target, or compose path resolves which `remote_agent.sh` dispatch uses on `acx-backend`? Must be identified before OPS-2 fork removal; do not invent a name.
+- Exact OCI IAM policy statement identifiers / dynamic-group names for the stop-only principal (create in tenancy; record in handoff — not invented here).
+- Shadow window N: default 3 days acceptable, or operator requires longer given burst cadence?
+- Preferred `acx-gpu-burst` path: terminate after image, or keep with permanent AD-1 slot cost?
+- Systemd unit names and install path conventions on `acx-backend` (new vs existing ops patterns).
+- Whether local tree `infra/oci/gpu_lifecycle/` is deleted outright post-cutover or kept as a thin deprecated shim until upstream pin is mandatory in all images.

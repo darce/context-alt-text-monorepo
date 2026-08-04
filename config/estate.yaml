@@ -1,0 +1,205 @@
+# WorkBay Estate policy — this repository's instance of the estate schema.
+# Committed to git. Contains no secrets, OCIDs, tenancy ids, API keys, or
+# credential material (WEB-16, PG-09). Operator fills env-var *names* only.
+#
+# Loader contract (rg-008): every required key is structurally validated at
+# load time. Missing or malformed required keys → refuse to run. Never degrade
+# to a permissive default. An absent or unreadable file is inert (no mutation).
+#
+# All reclaim and lifecycle actions are idempotent: safe to re-run on the same
+# target (RES-19, FLOW-05, API-02). A second pass after success is a no-op.
+
+version: 1
+
+# ---------------------------------------------------------------------------
+# Control plane — gates before any destructive path
+# ---------------------------------------------------------------------------
+control:
+  # Estate-wide kill switch. Required key. Values: disarmed | armed.
+  # Safe value: disarmed. Must be explicitly armed before any mutate path runs.
+  # armed alone is insufficient: each action class has its own arm (CARD-04).
+  # Wrong: armed with shadow.mode still shadow → report only, no mutation.
+  kill_switch: disarmed
+
+  # Shadow phase: new selector runs report-only beside the existing reaper.
+  # Cannot be silently permanent (AIPX-06, CARD-15). Past expires_on without
+  # an explicit mode: live promotion, mutate paths refuse to run.
+  shadow:
+    # Values: shadow | live. Safe value: shadow.
+    mode: shadow
+    # ISO date (UTC). Judgement: ~14 days for dual-run observation.
+    # Loader treats an expired shadow.mode=shadow as a hard block on mutation,
+    # not a silent fall-through to live.
+    expires_on: "2026-08-18"
+
+# ---------------------------------------------------------------------------
+# Tier vocabulary — tag-enforced meaning (CARD-12)
+# Invariant: T0 is never a stop/terminate/reclaim target, independent of
+# scale_to_zero. That refusal is structural, not a per-instance opt-out.
+# ---------------------------------------------------------------------------
+tiers:
+  T0:
+    # Durable always-on hosts (control plane, production services).
+    description: durable
+    allow_stop: false
+    allow_terminate: false
+    # scale_to_zero tag is ignored on T0; selector hard-refuses.
+    allow_scale_to_zero: false
+    # null = idle TTL not applicable; never selected for lifecycle stop.
+    idle_seconds: null
+
+  T1:
+    # Working capacity; may stop under policy; terminate never automated.
+    description: working
+    allow_stop: true
+    allow_terminate: false
+    allow_scale_to_zero: true
+    # Matches current reaper default (idle-seconds 300).
+    idle_seconds: 300
+
+  T2:
+    # Ephemeral burst capacity (GPU, disposable workers).
+    description: ephemeral
+    allow_stop: true
+    allow_terminate: false
+    allow_scale_to_zero: true
+    idle_seconds: 300
+
+# Instance with no tier tag: most protective posture, not least.
+# Treated as T0 for all lifecycle and reclaim decisions.
+untagged_instance_posture: T0
+
+# Tag keys the selector reads. Never instance names or OCIDs (rg-009).
+tags:
+  tier_key: workbay_tier
+  # Expected values: T0 | T1 | T2. Other values → treat as untagged (T0).
+  scale_to_zero_key: scale_to_zero
+  # Exact string match; only "true" enables scale-to-zero selection.
+  scale_to_zero_value: "true"
+
+# ---------------------------------------------------------------------------
+# What is never automated — operator-only, even when kill_switch is armed
+# ---------------------------------------------------------------------------
+never_automate:
+  - terminate
+  - boot_volume_delete
+  - any_mutation_on_t0
+  - any_mutation_on_untagged
+  - delete_sandbox_with_commits_beyond_base
+  - delete_unmarked_directory
+
+# ---------------------------------------------------------------------------
+# Instance lifecycle — off-box supervisor; decision ported from reaper.py
+# ---------------------------------------------------------------------------
+lifecycle:
+  # Re-sample load after this delay before acting (matches --fence-delay-seconds).
+  fence_delay_seconds: 2
+  # Missing/unreadable load snapshot → treat as busy; never stop blind.
+  fail_safe_on_unreadable_load: busy
+
+  stop:
+    # Per-action arm. Requires control.kill_switch=armed AND shadow.mode=live
+    # AND this armed=true. Safe value: false.
+    armed: false
+    # Only instances with scale_to_zero match AND tier.allow_stop AND not T0.
+
+  terminate:
+    # Must remain false for the host timer principal. Operator laptop only.
+    # Even if set true here, timer deployment must lack the OCI verb.
+    armed: false
+
+# ---------------------------------------------------------------------------
+# Slot ledger — scarce unit is AD service-limit slots, not dollars
+# STOPPED instances consume slots the same as RUNNING.
+# ---------------------------------------------------------------------------
+slots:
+  # Service limit name observed for A10 GPUs. Informational for the ledger.
+  resource_name: gpu-a10-count
+
+  # Free slots (region-wide sum of available) that must remain after any
+  # lifecycle act that holds a stopped instance. Judgement: keep one launch path.
+  free_floor: 1
+
+  # Free-slot level that *triggers* urgent reclaim of stoppable T1/T2 stopped
+  # instances (prefer free the slot over dollars). RES-07, RES-09.
+  free_trigger: 1
+
+  # Launch / create paths fail-closed when free would drop below this.
+  launch_min_free: 1
+
+  # Max instances one inventory/lifecycle pass considers.
+  max_instances_per_pass: 64
+  # Hitting the cap is loud: non-zero exit, no silent truncation (CARD-07).
+  enumeration_cap_is_error: true
+
+# ---------------------------------------------------------------------------
+# Reclaimers — steady-state timer, not dispatch-hook (RES-07)
+# Fail-open: a broken class leaves garbage; never deletes live work (CARD-07).
+# ---------------------------------------------------------------------------
+reclaim:
+  # Free disk (GB) below which reclaim runs aggressively. Judgement for this host.
+  free_disk_trigger_gb: 30
+  # Free disk that must remain after a pass; reclaimer stops when floor met.
+  free_disk_floor_gb: 20
+  # Max targets (dirs/images) one pass considers across all classes.
+  max_targets_per_pass: 200
+  enumeration_cap_is_error: true
+
+  classes:
+    # --- Marker-bearing lane sandboxes (created by remote_agent.sh) ---
+    marker_lane_sandboxes:
+      armed: false
+      # Directory name under the lane principal home; matches AGENT_ROOT default.
+      agent_root: grok-sandbox
+      marker_name: .workbay-lane-sandbox
+      # Matches SANDBOX_TTL_SEC upstream default (48 h).
+      ttl_seconds: 172800
+      # Evidence gate: commits beyond synthetic base → skip, never delete.
+      require_no_commits_beyond_base: true
+      # Age-gated class; no count ceiling (MLDATA-15 applies to identity stores).
+      keep_count: null
+
+    # --- Unmarked directories under the same root ---
+    # Created by something this reclaimer did not create (e.g. marker-less fork).
+    # Never delete under uncertainty.
+    unmarked_lane_sandboxes:
+      armed: false
+      # report_only: log and exit. marker_backfill: write marker only when the
+      # directory is proven base-commit-only; then the marker TTL sweep may act.
+      # Values: report_only | marker_backfill. Delete is not a value.
+      action: report_only
+      never_delete: true
+      # Cap on backfill writes per pass when action=marker_backfill.
+      max_backfill_per_pass: 50
+
+    # --- Container images — count-based on rollback tags, not size ---
+    # docker system df overstates reclaimable space; size-based policy is wrong.
+    # MLDATA-15: retention has a maximum. RES-07: steady-state reclaimer.
+    container_images:
+      armed: false
+      tag_pattern: "rollback-*"
+      # Keep this many newest matching tags; older matching tags are candidates.
+      # Judgement: three rollback generations.
+      keep_count: 3
+      # Forbidden: reclaim by advertised reclaimable bytes.
+      size_based: false
+
+# ---------------------------------------------------------------------------
+# Credentials — indirection only; values live outside this file
+# ---------------------------------------------------------------------------
+credentials:
+  # Environment variable *names* the supervisor reads. File is committed.
+  oci_config_env: OCI_CLI_CONFIG_FILE
+  oci_profile_env: OCI_CLI_PROFILE
+  # Timer principal: read + instance stop only. Terminate principal is a
+  # separate operator path, not shared with the lane-execution account (CARD-10).
+
+# ---------------------------------------------------------------------------
+# Per-resource overrides — ONLY place a specific display name may appear
+# Generic sections above must not hardcode instance names (rg-009).
+# ---------------------------------------------------------------------------
+overrides: []
+# Example (disabled — copy into the list only when needed):
+# - match_display_name: REPLACE_WITH_DISPLAY_NAME
+#   force_tier: T0
+#   note: "forces T0 refusal regardless of free-form tags"

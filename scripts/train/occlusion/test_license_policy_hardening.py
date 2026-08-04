@@ -413,3 +413,54 @@ class TestGate23SyntheticExemptionRechecksCommercialUse:
             f"category={category.value} reported {result.reason}; "
             "expected pending_legal_clearance from commercial_use re-check"
         )
+
+
+# ---------------------------------------------------------------------------
+# RV-14 — unreadable node-id baseline returns named harness error (not traceback)
+# ---------------------------------------------------------------------------
+
+
+def _load_mutation_guard_module():
+    """Import mutation_guard by path (same pattern as license_policy subject)."""
+    path = Path(__file__).resolve().parent / "mutation_guard.py"
+    spec = importlib.util.spec_from_file_location(
+        "mutation_guard_hardening_subject",
+        path,
+    )
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["mutation_guard_hardening_subject"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class TestRv14UnreadableNodeidBaseline:
+    """RV-14: PermissionError on fixture must be a named harness error, not bare OSError."""
+
+    def test_unreadable_baseline_returns_harness_error(
+        self, tmp_path: Path
+    ) -> None:
+        import os
+
+        if os.geteuid() == 0:
+            pytest.skip("chmod 000 does not restrict root; RV-14 untestable as root")
+
+        fixture = tmp_path / "mutation_guard_nodeid_baseline.txt"
+        fixture.write_text(
+            "test_license_policy.py::TestApacheSelfGeneratedPasses::"
+            "test_apache_self_generated_row_passes\n",
+            encoding="utf-8",
+        )
+        fixture.chmod(0o000)
+        try:
+            guard = _load_mutation_guard_module()
+            nodeids, err = guard._load_nodeid_baseline(fixture)
+        finally:
+            fixture.chmod(0o644)
+
+        assert nodeids == frozenset()
+        assert err is not None
+        assert "unreadable" in err
+        assert str(fixture) in err
+        # Must not surface as a bare PermissionError traceback path — named error only.
+        assert "errno" in err.lower() or "Permission" in err or "permission" in err

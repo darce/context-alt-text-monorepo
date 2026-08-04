@@ -4,44 +4,51 @@
       {
         "matcher": "Edit|Write|apply_patch|create_file|replace_string_in_file|multi_replace_string_in_file",
         "type": "command",
-        "command": "python3 scripts/hooks/_run_guard.py .github/hooks/guard-worktree-drift.py",
+        "command": "sh -c 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; exec python3 \"$root/scripts/hooks/_run_guard.py\" \"$root/.github/hooks/guard-worktree-drift.py\"' sh",
         "timeout": 5,
         "statusMessage": "Guarding worktree drift"
       },
       {
         "matcher": "Edit|Write|apply_patch|create_file|replace_string_in_file|multi_replace_string_in_file",
         "type": "command",
-        "command": "python3 scripts/hooks/_run_guard.py .github/hooks/guard-main-branch.py",
+        "command": "sh -c 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; exec python3 \"$root/scripts/hooks/_run_guard.py\" \"$root/.github/hooks/guard-main-branch.py\"' sh",
         "timeout": 5,
         "statusMessage": "Guarding main branch edits"
       },
       {
         "matcher": "Bash",
         "type": "command",
-        "command": "python3 scripts/hooks/_run_guard.py scripts/hooks/guard-bash-main-branch.py",
+        "command": "sh -c 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; exec python3 \"$root/scripts/hooks/_run_guard.py\" \"$root/scripts/hooks/guard-bash-main-branch.py\"' sh",
         "timeout": 5,
         "statusMessage": "Guarding main branch"
       },
       {
         "matcher": "Edit|Write",
         "type": "command",
-        "command": "python3 scripts/hooks/_run_guard.py scripts/hooks/guard-task-plan-findings.py",
+        "command": "sh -c 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; exec python3 \"$root/scripts/hooks/_run_guard.py\" \"$root/scripts/hooks/guard-task-plan-findings.py\"' sh",
         "timeout": 5,
         "statusMessage": "Guarding task plan findings"
       },
       {
         "matcher": "mcp__workbay-handoff-mcp__record_event|mcp__workbay-handoff-mcp__close_slice",
         "type": "command",
-        "command": "python3 scripts/hooks/_run_guard.py scripts/hooks/guard-rationale-size.py",
+        "command": "sh -c 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; exec python3 \"$root/scripts/hooks/_run_guard.py\" \"$root/scripts/hooks/guard-rationale-size.py\"' sh",
         "timeout": 5,
         "statusMessage": "Checking rationale size"
       },
       {
         "matcher": "mcp__workbay-handoff-mcp__record_event|mcp__workbay-handoff-mcp__review_findings|mcp__workbay-handoff-mcp__review_runs",
         "type": "command",
-        "command": "python3 scripts/hooks/_run_guard.py scripts/hooks/validate-mcp-dict-params.py",
+        "command": "sh -c 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; exec python3 \"$root/scripts/hooks/_run_guard.py\" \"$root/scripts/hooks/validate-mcp-dict-params.py\"' sh",
         "timeout": 5,
         "statusMessage": "Validating MCP dict params"
+      },
+      {
+        "matcher": "mcp__workbay-handoff-mcp__review_findings",
+        "type": "command",
+        "command": "sh -c 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; exec python3 \"$root/scripts/hooks/_run_guard.py\" \"$root/scripts/hooks/guard-review-finding-resolve.py\"' sh",
+        "timeout": 5,
+        "statusMessage": "Guarding review finding resolve"
       }
     ],
     "PostToolUse": [
@@ -50,7 +57,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 scripts/hooks/_run_guard.py scripts/hooks/record-file-touch.py",
+            "command": "sh -c 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; exec python3 \"$root/scripts/hooks/_run_guard.py\" \"$root/scripts/hooks/record-file-touch.py\"' sh",
             "timeout": 10,
             "statusMessage": "Recording file touch"
           }
@@ -61,7 +68,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 scripts/hooks/_run_guard.py scripts/hooks/ace-detect.py",
+            "command": "sh -c 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; exec python3 \"$root/scripts/hooks/_run_guard.py\" \"$root/scripts/hooks/ace-detect.py\"' sh",
             "timeout": 5,
             "statusMessage": "Detecting ACE references"
           }
@@ -72,7 +79,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 scripts/hooks/_run_guard.py scripts/hooks/slim-handoff-response.py",
+            "command": "sh -c 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; exec python3 \"$root/scripts/hooks/_run_guard.py\" \"$root/scripts/hooks/slim-handoff-response.py\"' sh",
             "timeout": 5,
             "statusMessage": "Slimming handoff response"
           }
@@ -83,7 +90,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 scripts/hooks/_run_guard.py scripts/hooks/filter-test-output.py",
+            "command": "sh -c 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; exec python3 \"$root/scripts/hooks/_run_guard.py\" \"$root/scripts/hooks/filter-test-output.py\"' sh",
             "timeout": 5,
             "statusMessage": "Filtering test output"
           }
@@ -94,7 +101,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 scripts/hooks/_run_guard.py scripts/hooks/capture-agent-errors.py",
+            "command": "sh -c 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; exec python3 \"$root/scripts/hooks/_run_guard.py\" \"$root/scripts/hooks/capture-agent-errors.py\"' sh",
             "timeout": 15,
             "statusMessage": "Capturing agent errors"
           }
@@ -104,13 +111,13 @@
     "SessionStart": [
       {
         "type": "command",
-        "command": "python3 scripts/hooks/_run_guard.py scripts/hooks/advise-worktree-cd.py",
+        "command": "sh -c 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; exec python3 \"$root/scripts/hooks/_run_guard.py\" \"$root/scripts/hooks/advise-worktree-cd.py\"' sh",
         "timeout": 5,
         "statusMessage": "Advising worktree cd"
       },
       {
         "type": "command",
-        "command": "python3 scripts/hooks/_run_guard.py scripts/hooks/coherence-self-check.py",
+        "command": "sh -c 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; exec python3 \"$root/scripts/hooks/_run_guard.py\" \"$root/scripts/hooks/coherence-self-check.py\"' sh",
         "timeout": 10,
         "statusMessage": "Checking hook-surface coherence"
       }
@@ -118,7 +125,7 @@
     "UserPromptSubmit": [
       {
         "type": "command",
-        "command": "python3 scripts/hooks/_run_guard.py scripts/hooks/advise-worktree-cd.py",
+        "command": "sh -c 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; exec python3 \"$root/scripts/hooks/_run_guard.py\" \"$root/scripts/hooks/advise-worktree-cd.py\"' sh",
         "timeout": 5,
         "statusMessage": "Advising worktree cd"
       }

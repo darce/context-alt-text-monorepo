@@ -69,8 +69,9 @@ _TEST_HARDENING = _HERE / "test_license_policy_hardening.py"
 # live collect must be a superset of this fixture — coverage may grow, never
 # shrink). Rewrite only via ``--record-baseline``.
 _NODEID_BASELINE = _HERE / "mutation_guard_nodeid_baseline.txt"
-# Bootstrap baseline embedded in this module so scratch trees that copy
-# only mutation_guard.py (e.g. prove_guard.py) still mediate RF-01.
+# Second, independent copy of the recorded node-id set for the RF-06
+# cross-check: an agent that edits the on-disk fixture alone is caught
+# because this embedded set must still be a subset of the fixture.
 # Prefer the on-disk fixture when present; else use this set.
 # Refresh both via: python mutation_guard.py --record-baseline
 _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
@@ -894,12 +895,12 @@ class Mutation:
     # that stay green until a companion lane lands; they are still registered
     # and reported so they cannot rot invisibly.
     require_kill: bool = True
-    target: str = "policy"  # "policy" | "test"
     # When True, SURVIVED is reported as a known gap (B4c owns the victim).
     xfail_until_b4c: bool = False
-    # RF-03: broad/smoke mutants are certified as kill-presence only; they are
-    # not axis evidence. Collateral is reported either way; smoke mutants are
-    # exempt from the "victims-removed must SURVIVE" discrimination check.
+    # When True, the mutant is labelled role=smoke in the discrimination
+    # report and the collateral WARN is suppressed (kill-presence only,
+    # not axis-tight evidence). There is no "victims-removed must SURVIVE"
+    # discrimination re-run; that check is not implemented.
     smoke_level: bool = False
 
 
@@ -1781,10 +1782,11 @@ def _collect_test_name_components(test_path: Path) -> tuple[frozenset[str], str 
 def _load_nodeid_baseline(path: Path) -> tuple[frozenset[str], str | None]:
     """Load node-id baseline: on-disk fixture if present, else embedded set.
 
-    The embedded bootstrap exists so scratch trees that copy only
-    ``mutation_guard.py`` (prove_guard) still mediate RF-01. When the on-disk
-    fixture is present it wins, so intentional growth can be recorded without
-    editing this module's constant.
+    The embedded set is a second, independent copy of the recorded node-id
+    set for the RF-06 cross-check: an agent that edits the on-disk fixture
+    alone is caught because this set must still be a subset of the fixture.
+    When the on-disk fixture is present it wins, so intentional growth can
+    be recorded without editing this module's constant.
 
     The two copies are cross-checked, because otherwise this function
     reintroduces one level up exactly the hole RF-01 closed: the fixture is
@@ -1797,7 +1799,14 @@ def _load_nodeid_baseline(path: Path) -> tuple[frozenset[str], str | None]:
     """
     if path.is_file():
         recorded: set[str] = set()
-        for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            errno_part = f" [errno {exc.errno}]" if exc.errno is not None else ""
+            return frozenset(), (
+                f"node-id baseline fixture unreadable: {path}{errno_part}: {exc}"
+            )
+        for line in text.splitlines():
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
@@ -1829,8 +1838,8 @@ def _load_nodeid_baseline(path: Path) -> tuple[frozenset[str], str | None]:
 def _write_nodeid_baseline(path: Path, nodeids: tuple[str, ...]) -> None:
     """Rewrite the node-id fixture (explicit operator action only).
 
-    Also rewrites ``_EMBEDDED_NODEID_BASELINE`` in this module so scratch
-    copies of mutation_guard.py stay in sync (prove_guard only copies .py).
+    Also rewrites ``_EMBEDDED_NODEID_BASELINE`` in this module so the RF-06
+    cross-check remains consistent (second independent copy of the set).
     """
     header = (
         "# mutation_guard node-id baseline (subset semantics: live ⊇ recorded)\n"
@@ -1842,8 +1851,8 @@ def _write_nodeid_baseline(path: Path, nodeids: tuple[str, ...]) -> None:
     body = "\n".join(sorted(nodeids))
     path.write_text(header + body + "\n", encoding="utf-8")
 
-    # Keep the embedded bootstrap identical so prove_guard scratch trees
-    # (which do not copy the .txt fixture) mediate the same set.
+    # Keep the embedded copy identical so the RF-06 cross-check continues to
+    # catch agents that edit only the on-disk fixture.
     guard_path = Path(__file__).resolve()
     src = guard_path.read_text(encoding="utf-8")
     begin = src.find("_EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({")

@@ -49,6 +49,13 @@
         "command": "sh -c 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; exec python3 \"$root/scripts/hooks/_run_guard.py\" \"$root/scripts/hooks/guard-review-finding-resolve.py\"' sh",
         "timeout": 5,
         "statusMessage": "Guarding review finding resolve"
+      },
+      {
+        "matcher": "Bash",
+        "type": "command",
+        "command": "sh -c 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; exec python3 \"$root/scripts/hooks/_run_guard.py\" \"$root/scripts/guard_codemap_first.py\"' sh",
+        "timeout": 5,
+        "statusMessage": "Routing code searches to codemap"
       }
     ],
     "PostToolUse": [

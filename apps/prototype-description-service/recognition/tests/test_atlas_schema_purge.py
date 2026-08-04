@@ -324,24 +324,48 @@ async def test_atlas_cascade_tenant_empties_all_three_tables(
 async def test_atlas_purge_disposed_scope_keeps_live_points_and_runs(
     atlas_db_session: AsyncSession, atlas_tenant: Tenant
 ) -> None:
-    """FIR-9-BR-01: scope=disposed must exercise atlas predicates (not only scope=all).
+    """FIR-9-BR-01: scope=disposed must narrow atlas deletes (kills M1/M2/M3).
 
-    Predicted first-run failures if predicates return None under disposed:
-    - point predicate None → live point deleted
-    - run predicate None → run deleted
-    - disposition predicate None → disposition counts non-zero / live disposition gone
+    Fixture discriminates three identity arms:
+    - disposed identity → point deleted via identity_ids arm of _atlas_point_predicate
+    - pure-live identity → point retained
+    - live identity that is an identity_members member of a disposed cluster →
+      point deleted via membership arm (not denormalized point.cluster_id)
+
+    Predicted RED if predicates return None under disposed (TEST-15):
+    - M1 point predicate None → pure-live point deleted / TypeError
+    - M2 disposition predicate None → live disposition deleted / TypeError
+    - M3 run predicate None → run deleted / TypeError
     """
     live_identity = await _seed_identity(atlas_db_session, atlas_tenant.id, media_id=5201)
     disposed_identity = await _seed_identity(atlas_db_session, atlas_tenant.id, media_id=5202)
+    member_identity = await _seed_identity(atlas_db_session, atlas_tenant.id, media_id=5203)
     disposed_identity.disposed_at = datetime.now(tz=UTC)
+
+    disposed_cluster = IdentityCluster(
+        tenant_id=atlas_tenant.id,
+        label="Disposed membership cluster",
+        identity_count=1,
+        disposed_at=datetime.now(tz=UTC),
+    )
+    atlas_db_session.add(disposed_cluster)
     await atlas_db_session.flush()
+
+    atlas_db_session.add(
+        IdentityMember(
+            tenant_id=atlas_tenant.id,
+            cluster_id=disposed_cluster.id,
+            identity_id=member_identity.id,
+            similarity=0.96,
+        )
+    )
 
     run = IdentityAtlasRun(
         tenant_id=atlas_tenant.id,
         embedding_model=_EMBEDDING_MODEL,
         status=AtlasRunStatus.COMPLETE.value,
         params=_atlas_params(),
-        point_count=2,
+        point_count=3,
     )
     atlas_db_session.add(run)
     await atlas_db_session.flush()
@@ -368,7 +392,19 @@ async def test_atlas_purge_disposed_scope_keeps_live_points_and_runs(
         queue_rank=1,
         uncertainty=_uncertainty(0.05),
     )
-    atlas_db_session.add_all([live_point, disposed_point])
+    # cluster_id deliberately NULL: only identity_members can place this in scope.
+    member_point = IdentityAtlasPoint(
+        run_id=run.id,
+        tenant_id=atlas_tenant.id,
+        identity_id=member_identity.id,
+        media_id=member_identity.media_id,
+        cluster_id=None,
+        x=0.4,
+        y=0.9,
+        queue_rank=2,
+        uncertainty=_uncertainty(0.07),
+    )
+    atlas_db_session.add_all([live_point, disposed_point, member_point])
     await atlas_db_session.flush()
 
     live_disposition = IdentityAtlasQueueDisposition(
@@ -385,14 +421,26 @@ async def test_atlas_purge_disposed_scope_keeps_live_points_and_runs(
         action=AtlasDispositionAction.SKIPPED.value,
         actor="admin:disposed-scope",
     )
-    atlas_db_session.add_all([live_disposition, disposed_disposition])
+    member_disposition = IdentityAtlasQueueDisposition(
+        run_id=run.id,
+        point_id=member_point.id,
+        tenant_id=atlas_tenant.id,
+        action=AtlasDispositionAction.REVIEWED.value,
+        actor="admin:disposed-scope",
+    )
+    atlas_db_session.add_all([live_disposition, disposed_disposition, member_disposition])
     await atlas_db_session.commit()
 
     live_point_id = live_point.id
     disposed_point_id = disposed_point.id
+    member_point_id = member_point.id
     live_disposition_id = live_disposition.id
     disposed_disposition_id = disposed_disposition.id
+    member_disposition_id = member_disposition.id
     run_id = run.id
+    live_identity_id = live_identity.id
+    member_identity_id = member_identity.id
+    disposed_cluster_id = disposed_cluster.id
 
     purge_result = await TenantPurgeService(atlas_db_session).purge_tenant_data(
         str(atlas_tenant.id), "admin:disposed-scope", scope="disposed"
@@ -400,15 +448,16 @@ async def test_atlas_purge_disposed_scope_keeps_live_points_and_runs(
     counts = purge_result["deleted_counts"]
     assert isinstance(counts, dict)
 
-    assert counts.get("identity_atlas_points", 0) == 1, (
-        f"disposed scope must delete exactly one atlas point; got {counts.get('identity_atlas_points')}"
+    assert counts.get("identity_atlas_points", 0) == 2, (
+        "disposed scope must delete disposed-identity + disposed-cluster-member points "
+        f"(not the pure-live point); got {counts.get('identity_atlas_points')}"
     )
     assert counts.get("identity_atlas_runs", 0) == 0, (
         f"disposed scope must not delete atlas runs; got {counts.get('identity_atlas_runs')}"
     )
-    assert counts.get("identity_atlas_queue_dispositions", 0) == 1, (
-        f"disposed scope must report the disposition removed via point CASCADE; "
-        f"got {counts.get('identity_atlas_queue_dispositions')}"
+    assert counts.get("identity_atlas_queue_dispositions", 0) == 2, (
+        "disposed scope must report dispositions removed via point CASCADE for the two "
+        f"purged points; got {counts.get('identity_atlas_queue_dispositions')}"
     )
 
     # Expire identity map: FK cascades are not reflected in cached instances.
@@ -416,6 +465,7 @@ async def test_atlas_purge_disposed_scope_keeps_live_points_and_runs(
 
     remaining_live_point = await atlas_db_session.get(IdentityAtlasPoint, live_point_id)
     remaining_disposed_point = await atlas_db_session.get(IdentityAtlasPoint, disposed_point_id)
+    remaining_member_point = await atlas_db_session.get(IdentityAtlasPoint, member_point_id)
     remaining_run = await atlas_db_session.get(IdentityAtlasRun, run_id)
     remaining_live_disposition = await atlas_db_session.get(
         IdentityAtlasQueueDisposition, live_disposition_id
@@ -423,13 +473,154 @@ async def test_atlas_purge_disposed_scope_keeps_live_points_and_runs(
     remaining_disposed_disposition = await atlas_db_session.get(
         IdentityAtlasQueueDisposition, disposed_disposition_id
     )
+    remaining_member_disposition = await atlas_db_session.get(
+        IdentityAtlasQueueDisposition, member_disposition_id
+    )
 
-    assert remaining_live_point is not None, "live identity's atlas point must SURVIVE disposed purge"
-    assert remaining_disposed_point is None, "disposed identity's atlas point must be REMOVED"
-    assert remaining_run is not None, "atlas run must SURVIVE disposed purge"
-    assert remaining_live_disposition is not None, "live point disposition must SURVIVE disposed purge"
+    assert remaining_live_point is not None, (
+        f"pure-live identity point {live_point_id} must SURVIVE disposed purge"
+    )
+    assert remaining_disposed_point is None, (
+        f"disposed identity point {disposed_point_id} must be REMOVED"
+    )
+    assert remaining_member_point is None, (
+        f"membership-scoped point {member_point_id} (live identity member of disposed "
+        f"cluster {disposed_cluster_id}) must be REMOVED"
+    )
+    assert remaining_run is not None, f"atlas run {run_id} must SURVIVE disposed purge"
+    assert remaining_live_disposition is not None, (
+        f"live point disposition {live_disposition_id} must SURVIVE disposed purge "
+        "(disposition predicate is NO_ROWS; only point CASCADE removes dispositions)"
+    )
     assert remaining_disposed_disposition is None, (
-        "disposed point disposition must cascade away when its point is deleted"
+        f"disposition {disposed_disposition_id} attached to purged point must cascade away"
+    )
+    assert remaining_member_disposition is None, (
+        f"disposition {member_disposition_id} attached to membership-purged point must cascade away"
+    )
+    assert await atlas_db_session.get(MediaIdentity, live_identity_id) is not None, (
+        f"pure-live identity {live_identity_id} row must SURVIVE"
+    )
+    assert await atlas_db_session.get(MediaIdentity, member_identity_id) is not None, (
+        f"member identity {member_identity_id} is not disposed and must SURVIVE"
+    )
+
+
+@pytest.mark.asyncio
+async def test_atlas_purge_disposed_scope_with_no_disposed_ids_deletes_zero_atlas_points(
+    atlas_db_session: AsyncSession, atlas_tenant: Tenant
+) -> None:
+    """FIR-9-BR-01 / TEST-15: NO_ROWS branch of _atlas_point_predicate (second M1 kill).
+
+    Tenant has live atlas data only — no disposed identities and no disposed clusters.
+    scope=disposed must delete zero atlas points (and leave runs/dispositions intact).
+    Under M1 (point predicate returns None) this fails with TypeError or wipes live rows.
+    """
+    live_identity = await _seed_identity(atlas_db_session, atlas_tenant.id, media_id=5301)
+    live_cluster = IdentityCluster(
+        tenant_id=atlas_tenant.id,
+        label="Live cluster not disposed",
+        identity_count=1,
+        disposed_at=None,
+    )
+    atlas_db_session.add(live_cluster)
+    await atlas_db_session.flush()
+
+    atlas_db_session.add(
+        IdentityMember(
+            tenant_id=atlas_tenant.id,
+            cluster_id=live_cluster.id,
+            identity_id=live_identity.id,
+            similarity=0.91,
+        )
+    )
+
+    run = IdentityAtlasRun(
+        tenant_id=atlas_tenant.id,
+        embedding_model=_EMBEDDING_MODEL,
+        status=AtlasRunStatus.COMPLETE.value,
+        params=_atlas_params(),
+        point_count=1,
+    )
+    atlas_db_session.add(run)
+    await atlas_db_session.flush()
+
+    live_point = IdentityAtlasPoint(
+        run_id=run.id,
+        tenant_id=atlas_tenant.id,
+        identity_id=live_identity.id,
+        media_id=live_identity.media_id,
+        cluster_id=live_cluster.id,
+        x=0.25,
+        y=-0.5,
+        queue_rank=0,
+        uncertainty=_uncertainty(0.1),
+    )
+    atlas_db_session.add(live_point)
+    await atlas_db_session.flush()
+
+    live_disposition = IdentityAtlasQueueDisposition(
+        run_id=run.id,
+        point_id=live_point.id,
+        tenant_id=atlas_tenant.id,
+        action=AtlasDispositionAction.REVIEWED.value,
+        actor="admin:no-disposed",
+    )
+    atlas_db_session.add(live_disposition)
+    await atlas_db_session.commit()
+
+    live_point_id = live_point.id
+    live_disposition_id = live_disposition.id
+    run_id = run.id
+    live_cluster_id = live_cluster.id
+    live_identity_id = live_identity.id
+
+    purge_result = await TenantPurgeService(atlas_db_session).purge_tenant_data(
+        str(atlas_tenant.id), "admin:no-disposed", scope="disposed"
+    )
+    counts = purge_result["deleted_counts"]
+    assert isinstance(counts, dict)
+
+    assert counts.get("identity_atlas_points", 0) == 0, (
+        "NO_ROWS: disposed scope with no disposed identity_ids/cluster_ids must delete "
+        f"zero atlas points; got {counts.get('identity_atlas_points')}"
+    )
+    assert counts.get("identity_atlas_runs", 0) == 0, (
+        f"NO_ROWS: atlas runs must not be deleted; got {counts.get('identity_atlas_runs')}"
+    )
+    assert counts.get("identity_atlas_queue_dispositions", 0) == 0, (
+        "NO_ROWS: atlas dispositions must not be deleted when no points are purged; "
+        f"got {counts.get('identity_atlas_queue_dispositions')}"
+    )
+    assert counts.get("media_identities", 0) == 0, (
+        f"NO_ROWS: no disposed identities to delete; got {counts.get('media_identities')}"
+    )
+    assert counts.get("identity_clusters", 0) == 0, (
+        f"NO_ROWS: no disposed clusters to delete; got {counts.get('identity_clusters')}"
+    )
+
+    atlas_db_session.expire_all()
+
+    remaining_point = await atlas_db_session.get(IdentityAtlasPoint, live_point_id)
+    remaining_disposition = await atlas_db_session.get(
+        IdentityAtlasQueueDisposition, live_disposition_id
+    )
+    remaining_run = await atlas_db_session.get(IdentityAtlasRun, run_id)
+    remaining_cluster = await atlas_db_session.get(IdentityCluster, live_cluster_id)
+    remaining_identity = await atlas_db_session.get(MediaIdentity, live_identity_id)
+
+    assert remaining_point is not None, (
+        f"live atlas point {live_point_id} must SURVIVE empty disposed-scope purge"
+    )
+    assert remaining_disposition is not None, (
+        f"live disposition {live_disposition_id} must SURVIVE empty disposed-scope purge"
+    )
+    assert remaining_run is not None, f"atlas run {run_id} must SURVIVE empty disposed-scope purge"
+    assert remaining_cluster is not None, (
+        f"live cluster {live_cluster_id} must SURVIVE empty disposed-scope purge"
+    )
+    assert remaining_identity is not None, (
+        f"live identity {live_identity_id} must SURVIVE empty disposed-scope purge"
     )
 
 

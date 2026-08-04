@@ -54,6 +54,16 @@
         ]
       },
       {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard-network-sourced-authority.py\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
         "matcher": "mcp__workbay-handoff-mcp__record_event|mcp__workbay-handoff-mcp__close_slice",
         "hooks": [
           {

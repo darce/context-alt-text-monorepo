@@ -12,7 +12,15 @@
 #   - file absent or unreadable
 #   - file present but malformed (not valid YAML / not a mapping)
 #   - any required key missing
-#   - any unknown key (typos in safety fields must not silently disable them)
+#   - any unknown key (typos in safety fields must not silently disable them);
+#     a class parameter written as a sibling of enabled: instead of inside
+#     params: is an unknown key
+#   - any key of the wrong type (string where integer required, list where map
+#     required) — error names the key and both types
+#   - any value outside its domain: negative TTL or count, percent outside
+#     0-100, tier name not declared in tiers:, enum value not in the declared
+#     set, or free_disk_floor_pct <= free_disk_trigger_pct
+#   - observation mode/started_on pair mismatch in either direction
 #   - duplicate overrides targeting the same resource (not last-wins)
 # Required keys have no silent defaults. Never degrade to a permissive default.
 #
@@ -43,16 +51,21 @@ control:
   # Past max_duration_days from started_on without an explicit mode: live
   # promotion, mutate paths refuse to run (AIPX-06, CARD-15).
   observation:
-    # Values: report_only | live. Safe value: report_only.
-    mode: report_only
+    # Values: null | report_only | live. Safe value: null (window not started).
+    # mode and started_on are set together: a non-null mode with a null
+    # started_on is a load error, because the window would have no clock and
+    # max_duration_days could never elapse (A1 acceptance criterion 8).
+    # The operator starts the window by setting BOTH in one edit.
+    mode: null
     # Relative window length. Judgement: 7 days — long enough for several
     # idle/reclaim cycles on a greenfield build with no dual-actuator hazard
     # (nothing is running today to dual-run against), short enough that the
     # window cannot silently become permanent policy.
     max_duration_days: 7
-    # ISO date (YYYY-MM-DD). Written when report_only observation begins
-    # (first report-only pass or operator start). null until then; loader
-    # requires a non-null value once the observation clock is running.
+    # ISO date (YYYY-MM-DD). Set by the operator in the same edit that sets
+    # mode. null is valid ONLY while mode is null. Loader rejects the pair
+    # (mode != null, started_on == null) and the pair (mode == null,
+    # started_on != null).
     started_on: null
 
 # ---------------------------------------------------------------------------
@@ -155,23 +168,55 @@ slots:
   # Service limit name observed for A10 GPUs. Informational for the ledger.
   resource_name: gpu-a10-count
 
-  # Lease held by the supervisor while planning/actuating. Required; no silent
-  # default. Expired lease → refuse to mutate; re-acquire and re-plan.
+  # Lease held by the supervisor over ONE reservation record for the whole
+  # launch window: acquired before the provider launch call, released only by
+  # an observed terminal outcome. Required; no silent default.
+  #
+  # Expiry does NOT free the reservation. On expiry the record moves to
+  # `uncertain`, which is cleared only by reconciliation against the provider
+  # count — never by the timer, never automatically. An expired lease is not
+  # re-acquirable while its reservation is uncertain (DATA-18, DATA-19,
+  # RES-01). This is the lost-update the ledger exists to prevent.
+  #
+  # PROVISIONAL VALUE. No launch latency has been measured on this estate yet.
+  # Before live mode this must be re-derived as p99 observed launch time plus
+  # margin, and the measurement recorded. Do not treat 600 as validated.
   reservation_lease_ttl_seconds: 600
 
   # Free slots (region-wide sum of available) that must remain after any
-  # lifecycle act that holds a stopped instance. Judgement: keep one launch path.
+  # lifecycle act. Predicate: refuse the act when
+  #   free_slots_after_act < free_floor
   free_floor: 1
 
   # Free-slot level that raises an operator blocker — not an automated action.
+  # Predicate: free_slots_now <= free_trigger.
   # No permitted scheduled action frees a slot (stop holds the slot; terminate
-  # is never_automate for the timer principal). On free < free_trigger the
-  # supervisor logs a blocker and exits non-zero for that unit; it does not
-  # stop or terminate to relieve pressure (RES-09).
-  free_trigger: 1
+  # is never_automate for the timer principal), so the blocker is the only
+  # response: log it, exit non-zero for that unit, do not stop or terminate to
+  # relieve pressure (RES-09, C-7).
+  # Set above free_floor so the blocker warns before exhaustion rather than at
+  # it. At the 2026-08-04 census (2 free region-wide) this threshold is
+  # asserted — that is the intended signal, not a misconfiguration.
+  free_trigger: 2
 
-  # Launch / create paths refuse to proceed when free would drop below this.
+  # Launch / create paths refuse to proceed when the launch would drop free
+  # slots below this. Predicate, evaluated BEFORE the provider call:
+  #   refuse when (free_slots_before_launch - 1) < launch_min_free
+  # Stated as an explicit pre-check because pre- and post-check readings differ
+  # by exactly one slot — the entire margin at two free slots region-wide.
   launch_min_free: 1
+
+  # Reconciliation — the only path that clears an `uncertain` reservation.
+  reconcile:
+    # Principal: the same read+stop timer principal (read-only for this path).
+    # Cadence: every supervisor pass, before planning.
+    # Clearing predicate: a reservation is released only when the provider's
+    # authoritative free-slot count for that AD is observed and no instance
+    # matching the reservation exists. On disagreement the provider count wins.
+    # Drift (ledger rows with no provider counterpart, or vice versa) is logged
+    # and raises an operator blocker; it is never silently repaired.
+    every_pass: true
+    provider_count_is_authoritative: true
 
 # ---------------------------------------------------------------------------
 # Reclaimers — steady-state timer, not dispatch-hook (RES-07)
@@ -187,44 +232,72 @@ slots:
 # trigger still asserted (RES-07).
 # ---------------------------------------------------------------------------
 reclaim:
-  # Free disk (GB) below which reclaim runs aggressively. Judgement for this host.
-  free_disk_trigger_gb: 30
-  # Free disk (GB) that must remain after a pass; reclaimer stops when floor met.
-  # Margin above trigger: 10 GB. floor 40 > trigger 30 → next pass is not re-triggered.
-  free_disk_floor_gb: 40
-  # Max targets (dirs/images) one pass considers across all classes.
+  # Two independent trigger paths. Steady-state runs unconditionally; pressure
+  # escalation only adds urgency. A reclaimer gated ONLY on free disk never
+  # runs on a host with headroom — acx-backend measured ~107 GB free on
+  # 2026-08-04 — which would make every reclaim proof unsatisfiable.
+  #
+  # 1. Steady state (RES-07): every timer firing, every enabled class runs its
+  #    age/count gate regardless of free disk. This is the normal path and the
+  #    one slice proofs assert against.
+  steady_state_always_runs: true
+
+  # 2. Pressure escalation, expressed as a fraction of the volume so it does
+  #    not go stale when the disk is resized (COST-12). Below trigger_pct the
+  #    reclaimer additionally lowers per-class TTLs to their configured floors.
+  #    Hysteresis: floor_pct must exceed trigger_pct so a pass that reaches the
+  #    floor also clears the trigger; the loader rejects floor_pct <=
+  #    trigger_pct.
+  free_disk_trigger_pct: 15
+  free_disk_floor_pct: 20
+
+  # Enumeration budget. A single global cap consumed in declaration order lets
+  # one high-volume class exhaust it every pass and starve the trailing classes
+  # forever (RES-01, PERF-07). Budget is therefore per class, with the global
+  # value as a hard ceiling on the sum.
+  max_targets_per_class_per_pass: 50
   max_targets_per_pass: 200
-  # Hitting the cap is fail loud: non-zero exit, no silent truncation (CARD-07).
+  # Classes are visited in a rotating order, starting at
+  # (pass_number mod class_count), so no class is structurally last.
+  class_visit_order: rotating
+  # Hitting either cap is fail loud: non-zero exit, no silent truncation
+  # (CARD-07). One class hitting its cap must not halt the others (rg-007).
   enumeration_cap_is_error: true
 
   classes:
-    # --- Marker-bearing lane sandboxes (created by remote_agent.sh upstream) ---
+    # --- Marker-bearing lane sandboxes (created by the upstream lane script) ---
     marker_lane_sandboxes:
       enabled: false
+      # Class parameters (A1 schema: reclaim.classes.<name>.params, map).
+      params:
       # Directory name under the lane principal home; matches AGENT_ROOT default.
-      agent_root: grok-sandbox
-      marker_name: .workbay-lane-sandbox
+        agent_root: grok-sandbox
+        marker_name: .workbay-lane-sandbox
       # Matches SANDBOX_TTL_SEC upstream default (48 h).
-      ttl_seconds: 172800
+        ttl_seconds: 172800
       # Evidence gate: commits beyond synthetic base → skip, never delete.
-      require_no_commits_beyond_base: true
+        require_no_commits_beyond_base: true
       # Age-gated class; no count ceiling (MLDATA-15 applies to identity stores).
-      keep_count: null
+        keep_count: null
 
     # --- Unmarked directories under the same root ---
     # Reaches the ~8.8 GB of lane residue no existing reaper-sweep can see
-    # (host-side fork under ~gate on acx-backend; not the repo remote_agent.sh).
+    # (written by an older copy of the lane script running on the T0 host
+    # under the lane-execution account; not by this repo's script). Host and
+    # account names live in the operator runbook, not in committed policy.
     # Refuse-to-act under uncertainty: a lane sandbox may be the only copy of
     # work that died before harvest. Never delete under uncertainty.
     unmarked_lane_sandboxes:
       enabled: false
+      # Class parameters (A1 schema: reclaim.classes.<name>.params, map).
+      params:
       # report_only: log and exit. marker_backfill: write marker only when the
       # directory is proven base-commit-only; then the marker TTL reclaimer may act.
       # Values: report_only | marker_backfill. Delete is not a value.
-      action: report_only
-      never_delete: true
+        action: report_only
+        never_delete: true
       # Cap on backfill writes per pass when action=marker_backfill.
-      max_backfill_per_pass: 50
+        max_backfill_per_pass: 50
 
     # --- Container images — count-based retention, not size ---
     # Every build lands two tags: 40-hex git SHA and rollback-<image-id> alias.
@@ -234,59 +307,81 @@ reclaim:
     # MLDATA-15: retention has a maximum. RES-07: steady-state reclaimer.
     container_images:
       enabled: false
-      tag_pattern: "rollback-*"
+      # Class parameters (A1 schema: reclaim.classes.<name>.params, map).
+      params:
+        tag_pattern: "rollback-*"
       # Also drop the companion 40-hex git SHA tag that pins the same image.
-      drop_companion_sha_tag: true
+        drop_companion_sha_tag: true
       # Never reclaim these tags even if they match other selectors.
-      protected_tags:
-        - dev
-        - latest
-        - staging
+        protected_tags:
+          - dev
+          - latest
+          - staging
       # Skip any image referenced by a running container.
-      skip_images_referenced_by_running_containers: true
+        skip_images_referenced_by_running_containers: true
       # Keep this many newest rollback generations; OPS-1 suggested value is 5.
-      keep_count: 5
+        keep_count: 5
       # Forbidden: reclaim by advertised reclaimable bytes.
-      size_based: false
+        size_based: false
 
     # --- Scratch clones (temp working trees outside lane sandboxes) ---
     scratch_clones:
       enabled: false
-      # Age gate; refuse-to-act if path is not under an allowed root.
-      ttl_seconds: 86400
-      max_targets_per_pass: 50
+      # Class parameters (A1 schema: reclaim.classes.<name>.params, map).
+      params:
+        # Age gate. Refuse-to-act when a candidate is not under one of
+        # allowed_roots, is a symlink, or is not owned by the expected
+        # account. The bound is configured, not merely asserted
+        # (SEC-01, SEC-16).
+        allowed_roots:
+          - /tmp/estate-scratch
+          - /var/tmp/estate-scratch
+        ttl_seconds: 86400
+        max_targets_per_pass: 50
 
     # --- Docker build cache ---
     docker_build_cache:
       enabled: false
+      # Class parameters (A1 schema: reclaim.classes.<name>.params, map).
+      params:
       # prune unused build cache older than this age.
-      older_than_seconds: 604800
+        older_than_seconds: 604800
 
     # --- journald ---
     journal:
       enabled: false
+      # Class parameters (A1 schema: reclaim.classes.<name>.params, map).
+      params:
       # vacuum to this max disk use (journalctl --vacuum-size).
-      vacuum_size_mb: 200
+        # 512 M matches the value OPS-1 records for this host; do not diverge
+        # without stating why here and in OPS-1.
+        vacuum_size_mb: 512
 
     # --- apt package cache ---
     apt_cache:
       enabled: false
+      # Class parameters (A1 schema: reclaim.classes.<name>.params, map).
+      params:
       # apt-get clean / autoclean equivalents; no package remove.
-      clean_only: true
+        clean_only: true
 
     # --- uv package cache ---
     uv_cache:
       enabled: false
+      # Class parameters (A1 schema: reclaim.classes.<name>.params, map).
+      params:
       # Max age for cached wheels/source; refuse-to-act if uv not installed.
-      ttl_seconds: 1209600
+        ttl_seconds: 1209600
 
     # --- grok / agent logs (lane and operator accounts) ---
     grok_logs:
       enabled: false
+      # Class parameters (A1 schema: reclaim.classes.<name>.params, map).
+      params:
       # Age-gated log files under known agent log roots only.
-      ttl_seconds: 604800
+        ttl_seconds: 604800
       # Retention maximum for identity-adjacent log streams (MLDATA-15).
-      keep_count: 20
+        keep_count: 20
 
 # ---------------------------------------------------------------------------
 # Credentials — indirection only; values live outside this file

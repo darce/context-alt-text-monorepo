@@ -78,7 +78,7 @@ Choose your domain to load targeted context. Always load the matching testing gu
 
 If a user prompt begins with a registered `/command_id`, treat that prefix as a portable workflow command routed through `config/agent-workflows/portable_commands.json`.
 
-Current managed ids: `/scope`, `/refactor`, `/auto-fix`, `/branch-lifecycle`, `/branch-review`, `/handoff-lifecycle`, `/investigate`, `/incremental-implementation`, `/plan-analyze`, `/planning-review`, `/review-parallel`, `/tdd`, `/offload`, `/workbay`.
+Current managed ids: `/scope`, `/refactor`, `/auto-fix`, `/branch-lifecycle`, `/branch-review`, `/handoff-lifecycle`, `/investigate`, `/incremental-implementation`, `/plan-analyze`, `/planning-review`, `/review-parallel`, `/tdd`, `/offload`, `/workbay`, `/ux-map`.
 
 Routing rules:
 
@@ -103,6 +103,7 @@ Command map:
 - `/tdd` (write) -> skill `tdd` -> `make slice-start TASK=<task-ref> TEST_CMD="<command>"`
 - `/offload` (write) -> skill `offload` -> `(in-session cross-harness offload skill; no standalone make target)`
 - `/workbay` (guide) -> skill `workbay` -> `(in-session harness control; no standalone make target)`
+- `/ux-map` (guide) -> skill `ux-map` -> `(in-session advisory skill; no standalone make target)`
 
 <!-- END GENERATED: codex-command-router -->
 

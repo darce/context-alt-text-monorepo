@@ -351,13 +351,33 @@ async def test_atlas_purge_disposed_scope_keeps_live_points_and_runs(
     atlas_db_session.add(disposed_cluster)
     await atlas_db_session.flush()
 
-    atlas_db_session.add(
-        IdentityMember(
-            tenant_id=atlas_tenant.id,
-            cluster_id=disposed_cluster.id,
-            identity_id=member_identity.id,
-            similarity=0.96,
-        )
+    # Live cluster with a live member: proves the membership arm is narrowed to
+    # *disposed* clusters, not merely "has any identity_members row". Without
+    # this, widening the arm to IdentityMember.cluster_id.is_not(None) survives.
+    live_cluster = IdentityCluster(
+        tenant_id=atlas_tenant.id,
+        label="Live membership cluster",
+        identity_count=1,
+        disposed_at=None,
+    )
+    atlas_db_session.add(live_cluster)
+    await atlas_db_session.flush()
+
+    atlas_db_session.add_all(
+        [
+            IdentityMember(
+                tenant_id=atlas_tenant.id,
+                cluster_id=disposed_cluster.id,
+                identity_id=member_identity.id,
+                similarity=0.96,
+            ),
+            IdentityMember(
+                tenant_id=atlas_tenant.id,
+                cluster_id=live_cluster.id,
+                identity_id=live_identity.id,
+                similarity=0.94,
+            ),
+        ]
     )
 
     run = IdentityAtlasRun(
@@ -621,6 +641,87 @@ async def test_atlas_purge_disposed_scope_with_no_disposed_ids_deletes_zero_atla
     )
     assert remaining_identity is not None, (
         f"live identity {live_identity_id} must SURVIVE empty disposed-scope purge"
+    )
+
+
+@pytest.mark.asyncio
+async def test_atlas_purge_disposed_identities_without_disposed_clusters_uses_single_arm(
+    atlas_db_session: AsyncSession, atlas_tenant: Tenant
+) -> None:
+    """FIR-9-AMG-02: the single-clause branch of _atlas_point_predicate.
+
+    Disposed identities but NO disposed clusters is the most common production
+    shape, and it is the only one that reaches ``if len(clauses) == 1: return
+    clauses[0]``. The disposed-scope fixture above always has both arms, so
+    without this test that branch is unexercised.
+
+    Goes red if the single-clause branch returns NO_ROWS (disposed point
+    survives) or ALL_TENANT_ROWS (live point deleted).
+    """
+    live_identity = await _seed_identity(atlas_db_session, atlas_tenant.id, media_id=5401)
+    disposed_identity = await _seed_identity(atlas_db_session, atlas_tenant.id, media_id=5402)
+    disposed_identity.disposed_at = datetime.now(tz=UTC)
+
+    run = IdentityAtlasRun(
+        tenant_id=atlas_tenant.id,
+        embedding_model=_EMBEDDING_MODEL,
+        status=AtlasRunStatus.COMPLETE.value,
+        params=_atlas_params(),
+        point_count=2,
+    )
+    atlas_db_session.add(run)
+    await atlas_db_session.flush()
+
+    live_point = IdentityAtlasPoint(
+        run_id=run.id,
+        tenant_id=atlas_tenant.id,
+        identity_id=live_identity.id,
+        media_id=live_identity.media_id,
+        cluster_id=None,
+        x=0.3,
+        y=0.3,
+        queue_rank=0,
+        uncertainty=_uncertainty(0.11),
+    )
+    disposed_point = IdentityAtlasPoint(
+        run_id=run.id,
+        tenant_id=atlas_tenant.id,
+        identity_id=disposed_identity.id,
+        media_id=disposed_identity.media_id,
+        cluster_id=None,
+        x=-0.7,
+        y=0.8,
+        queue_rank=1,
+        uncertainty=_uncertainty(0.04),
+    )
+    atlas_db_session.add_all([live_point, disposed_point])
+    await atlas_db_session.commit()
+
+    live_point_id = live_point.id
+    disposed_point_id = disposed_point.id
+
+    purge_result = await TenantPurgeService(atlas_db_session).purge_tenant_data(
+        str(atlas_tenant.id), "admin:single-arm", scope="disposed"
+    )
+    counts = purge_result["deleted_counts"]
+    assert isinstance(counts, dict)
+    assert counts.get("identity_atlas_points", 0) == 1, (
+        "single-arm disposed scope must delete exactly the disposed identity's point; "
+        f"got {counts.get('identity_atlas_points')}"
+    )
+
+    atlas_db_session.expire_all()
+
+    remaining_live = await atlas_db_session.get(IdentityAtlasPoint, live_point_id)
+    remaining_disposed = await atlas_db_session.get(IdentityAtlasPoint, disposed_point_id)
+
+    assert remaining_live is not None, (
+        f"live atlas point {live_point_id} must SURVIVE a single-arm disposed-scope purge "
+        "(ALL_TENANT_ROWS on the single-clause branch would delete it)"
+    )
+    assert remaining_disposed is None, (
+        f"disposed atlas point {disposed_point_id} must be DELETED by a single-arm "
+        "disposed-scope purge (NO_ROWS on the single-clause branch would retain it)"
     )
 
 

@@ -128,21 +128,39 @@ process refuses to start, exits non-zero, mutates nothing `[rg-008]`.
 | Key | Type / values | Role |
 | --- | --- | --- |
 | `control.mutations` | `disabled` \| `enabled` (required; safe value is `disabled`) | Master mutation gate. `disabled` means **no mutating action may run, ever, for any class.** `enabled` is necessary but never sufficient: each action class carries its own `enabled:` and observation mode must also permit it. Emergency-stop instruction: **set `control.mutations: disabled`**. |
-| `control.observation.mode` | `report_only` \| `live` (required) | When `report_only`, the supervisor plans and emits what it would do; it does not actuate. When `live`, actuation may proceed only if `control.mutations: enabled` and the class is enabled. |
+| `control.observation.mode` | `null` \| `report_only` \| `live` (required key; `null` = window not started) | When `report_only`, the supervisor plans and emits what it would do; it does not actuate. When `live`, actuation may proceed only if `control.mutations: enabled` and the class is enabled. |
 | `control.observation.max_duration_days` | integer (required) | Relative duration of the report-only window. Never an absolute `expires_on`. |
-| `control.observation.started_on` | ISO date (written when report-only begins) | Anchor for the relative window; package or consumer writes this when entering report-only mode. |
+| `control.observation.started_on` | ISO date \| `null` (required key) | Anchor for the relative window. **Paired with `mode`:** the loader rejects (`mode` non-null, `started_on` null) — the window would have no clock — and rejects (`mode` null, `started_on` non-null). Both are set in one operator edit. |
 | `inventory.max_items` | integer (required; no silent default) | Hard item cap for `probe_estate` enumeration. |
-| `slots.reservation_lease_ttl_seconds` | integer (required) | Lease TTL covering the whole launch window. |
-| `slots.free_floor` | integer | Floor free-slot count the ledger treats as reserved headroom. |
-| `slots.free_trigger` | integer | Threshold at which free-slot pressure raises an **operator blocker**. Must **not** name an automated action that frees a slot: stop does not free a slot; terminate is forbidden to the scheduled principal. |
-| `slots.launch_min_free` | integer | Minimum free slots required before a launch may be attempted. |
+| `slots.reservation_lease_ttl_seconds` | integer (required) | Lease over **one** reservation record, covering the whole launch window: acquired before the provider launch call, released only by an observed terminal outcome. Expiry moves the record to `uncertain` — it does **not** free the slot and the lease is not re-acquirable while uncertain. |
+| `slots.free_floor` | integer | Free-slot headroom. Predicate: refuse an act when `free_slots_after_act < free_floor`. |
+| `slots.free_trigger` | integer | Threshold at which free-slot pressure raises an **operator blocker**. Predicate: `free_slots_now <= free_trigger`. Must **not** name an automated action that frees a slot: stop does not free a slot; terminate is forbidden to the scheduled principal. |
+| `slots.launch_min_free` | integer | Launch **pre-check**, evaluated before the provider call: refuse when `(free_slots_before_launch - 1) < launch_min_free`. Pre- and post-check readings differ by exactly one slot, which is the entire margin at two free slots region-wide. |
+| `slots.resource_name` | string | Provider service-limit name for the scarce resource (e.g. `gpu-a10-count`). |
+| `slots.reconcile.every_pass` | boolean (required) | Whether reconciliation runs before planning on every supervisor pass. |
+| `slots.reconcile.provider_count_is_authoritative` | boolean (required) | On ledger/provider disagreement the provider count wins. Reconciliation is the **only** path that clears an `uncertain` reservation; drift raises an operator blocker and is never silently repaired. |
 | `untagged_instance_posture` | tier name | Posture applied to instances that lack a governance tier tag. |
 | `never_automate` | list of action names | Actions the supervisor must never take automatically. |
-| `tiers.<T>.idle_ttl_seconds` | integer | Per-tier idle TTL before stop is considered. |
+| `version` | integer (required) | Policy schema version; loader refuses a version it does not implement. |
+| `tags.tier_key` / `tags.scale_to_zero_key` / `tags.scale_to_zero_value` | string (required) | Tag keys and the exact scale-to-zero match value the selector reads. Never instance names or OCIDs `[rg-009]`. |
+| `tiers.<T>.description` | string | Human label for the tier. |
+| `tiers.<T>.idle_ttl_seconds` | integer \| `null` | Per-tier idle TTL before stop is considered. `null` = idle TTL not applicable; the tier is never selected for lifecycle stop. |
 | `tiers.<T>.allow_stop` | boolean | Whether stop is permitted for tier T (code-level check is defence in depth; see T0 structural refusal below). |
 | `tiers.<T>.allow_terminate` | boolean | Whether terminate is permitted for tier T. |
-| `reclaim.classes.<name>.enabled` | boolean | Per-class enable. All nine classes must be declared; arming is staged per class. |
-| `reclaim.classes.<name>.params` | map | Per-class parameters (retention counts, paths, protected tags, etc.). |
+| `tiers.<T>.allow_scale_to_zero` | boolean | Whether the scale-to-zero tag is honoured for tier T. |
+| `lifecycle.fence_delay_seconds` | integer (required) | Re-sample delay before acting on an idle decision. |
+| `lifecycle.fail_safe_on_unreadable_load` | `busy` (required) | Posture when the load snapshot is missing or unreadable: treat as busy, never stop blind. |
+| `lifecycle.stop.enabled` / `lifecycle.terminate.enabled` | boolean (required; safe value `false`) | Per-action gates, additional to `control.mutations` and the observation mode. |
+| `reclaim.steady_state_always_runs` | boolean (required) | Enabled classes run their age/count gates on every timer firing regardless of free disk. A reclaimer gated only on disk pressure never runs on a host with headroom, which makes every reclaim proof unsatisfiable. |
+| `reclaim.free_disk_trigger_pct` / `reclaim.free_disk_floor_pct` | integer percent (required) | Pressure escalation as a fraction of the volume, so the values do not go stale when the disk is resized `[COST-12]`. Hysteresis: the loader rejects `floor_pct <= trigger_pct`. |
+| `reclaim.max_targets_per_class_per_pass` | integer (required) | Per-class enumeration budget. A single global cap consumed in declaration order starves trailing classes `[RES-01]` `[PERF-07]`. |
+| `reclaim.max_targets_per_pass` | integer (required) | Hard ceiling on the sum across classes. |
+| `reclaim.class_visit_order` | `rotating` (required) | Classes are visited starting at `pass_number mod class_count`, so no class is structurally last. |
+| `reclaim.enumeration_cap_is_error` | boolean (required) | Hitting either cap is fail loud: non-zero exit, no silent truncation `[CARD-07]`. One class hitting its cap must not halt the others `[rg-007]`. |
+| `reclaim.classes.<name>.enabled` | boolean | Per-class enable. All nine classes must be declared; enabling is staged per class. |
+| `reclaim.classes.<name>.params` | map | Per-class parameters (retention counts, paths, protected tags, etc.). **Every** class parameter lives inside this map; a parameter written as a sibling of `enabled:` is an unknown key and refuses the load. |
+| `credentials.oci_config_env` / `credentials.oci_profile_env` | string (required) | Environment-variable **names** only; no credential material in the file `[WEB-16]` `[PG-09]`. |
+| `overrides` | list (required; may be empty) | Per-resource overrides — the only place a display name may appear. Duplicate match targets are a load error, not last-wins `[PROV-08]`. |
 
 Canonical reclaim class names (all nine must appear in policy):
 
@@ -292,22 +310,39 @@ assertion against the package under test.
    default `[rg-008]`.
 3. A nested-vs-top-level key mistake in policy is rejected at load (no silent
    ignore).
-4. An unknown key in policy is a load error (not ignored).
+4. An unknown key in policy is a load error (not ignored). A class parameter
+   written as a sibling of `enabled:` instead of inside `params:` is an unknown
+   key and fails this criterion.
 5. Duplicate overrides targeting the same resource are a load error (not
    last-wins).
+5a. A key of the **wrong type** (string where an integer is required, list where
+    a map is required) is a load error naming the key and both types.
+5b. A value **outside its domain** — negative TTL or count, percent outside
+    0–100, tier name not in `tiers`, enum value not in the declared set,
+    `reclaim.free_disk_floor_pct <= reclaim.free_disk_trigger_pct` — is a load
+    error naming the key and the permitted domain.
 6. When `control.mutations` is `disabled`, every mutating CLI path
    (`apply`, `reclaim`, stop/terminate actuators) performs zero mutations and
    exits with a typed "mutations disabled" outcome.
 7. When `control.observation.mode` is `report_only`, plan output is produced and
    zero provider mutations occur, even if class-level `enabled:` is true and
    `control.mutations` is `enabled`.
-8. `control.observation.max_duration_days` and `control.observation.started_on`
-   are required when mode is `report_only`; absolute `expires_on` is rejected as
-   an unknown/unsupported key.
+8. `control.observation.mode` and `control.observation.started_on` are validated
+   as a pair: (`mode` non-null, `started_on` null) is a load error, and
+   (`mode` null, `started_on` non-null) is a load error. `max_duration_days` is
+   required in all cases. An absolute `expires_on` is rejected as an
+   unknown/unsupported key.
 9. `inventory.max_items` is required at load; omitting it is a load error (no
-   silent default).
+   silent default). A `probe_estate` run against an estate with more items than
+   the cap returns `truncated=true` and exits non-zero rather than a short list.
 10. `slots.reservation_lease_ttl_seconds` is required at load; omitting it is a
-    load error (no silent default).
+    load error (no silent default). A reservation whose lease has expired is
+    reported as `uncertain` and a second `reserve()` for the same AD is refused
+    while it remains so.
+10a. `untagged_instance_posture` is required at load. An instance carrying no
+     tier tag, or a tier tag whose value is not declared in `tiers`, is
+     evaluated under that posture; a test fixture with a missing tag and one
+     with a garbage tag both resolve to it and neither is stopped.
 11. Policy declaring fewer or more than the nine canonical reclaim class names,
     or renaming one, is a load error.
 12. Each of the nine reclaim classes carries its own `enabled:`; a class with

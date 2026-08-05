@@ -216,7 +216,7 @@ oci limits resource-availability get --service-name compute --limit-name gpu-a10
 # expected: per-AD used from inventory == provider used
 
 # Slot ledger counts STOPPED as occupying.
-estate inventory --format json | python -c "import sys,json; d=json.load(sys.stdin); assert all(i['holds_slot'] for i in d['instances'] if i['lifecycle_state'] in ('STOPPED','STOPPING'))"
+estate inventory --format json | python3 -c "import sys,json; d=json.load(sys.stdin); assert all(i['holds_slot'] for i in d['instances'] if i['lifecycle_state'] in ('STOPPED','STOPPING'))"
 
 # Report-only: mutations never issued.
 # control.observation.mode: report_only; run plan/apply path; assert zero provider stop calls in audit log.
@@ -229,16 +229,40 @@ estate inventory --format json | python -c "import sys,json; d=json.load(sys.std
 terraform -chdir=infra/oci plan -no-color
 # expected: tag changes on managed instances; no destroy of T0
 
-# Positive control + negative terminate in the same run (timer principal; no scarce-slot launch).
-# Replace $GPU_BURST_OCID with the live acx-gpu-burst instance OCID from inventory.
-oci compute instance get --instance-id "$GPU_BURST_OCID" --auth api_key \
-  --config-file /etc/acx/estate/oci-timer-principal.cfg
-# expected: HTTP 200 / instance JSON (positive control: read permitted)
+# Positive control + negative terminate (timer principal; no scarce-slot launch).
+#
+# NEVER issue a live `instance terminate` against a production instance as an
+# IAM proof. If the tag condition is wrong the call SUCCEEDS and destroys the
+# GPU. The authority is proved by reading the policy, not by attempting the
+# destructive verb (CARD-06, CARD-15).
 
-oci compute instance terminate --instance-id "$GPU_BURST_OCID" --auth api_key \
-  --config-file /etc/acx/estate/oci-timer-principal.cfg 2>&1 | tee /tmp/term-neg.txt ; test ${PIPESTATUS[0]} -ne 0
-# expected: stderr matches authorization/NotAuthorizedOrNotFound for INSTANCE_TERMINATE (or tenancy-specific
-#   auth denial naming terminate); must NOT be "command not found", connection error alone, or empty stderr
+# Positive control — read is permitted. $T2_OCID is any T2-tier instance.
+oci compute instance get --instance-id "$T2_OCID" --auth api_key \
+  --config-file /etc/acx/estate/oci-timer-principal.cfg
+# expected: HTTP 200 / instance JSON
+
+# Negative proof, read-only: no policy statement reachable by the timer
+# principal's group grants a terminate verb, and the group holds no
+# manage-instance-family statement.
+oci iam policy list --compartment-id "$ESTATE_COMPARTMENT_OCID" --all \
+  --query 'data[].statements[]' --raw-output \
+  | grep -iE "group +estate-timer-principal" > /tmp/term-neg.txt
+! grep -qiE "manage +instance-family|INSTANCE_TERMINATE|instance_terminate" /tmp/term-neg.txt
+# expected: exit 0 — no terminate authority in any statement bound to the principal.
+# This assertion goes red the moment a broadening policy edit lands, and it
+# destroys nothing when it does.
+
+# Live-call confirmation is permitted ONLY against a purpose-created,
+# disposable T2 instance whose loss is acceptable, never against an instance
+# carrying production or burst workload, and only after the read-only proof
+# above passes:
+#   oci compute instance terminate --instance-id "$THROWAWAY_OCID" --auth api_key \
+#     --config-file /etc/acx/estate/oci-timer-principal.cfg --force 2>&1 \
+#     | tee /tmp/term-live.txt ; test ${PIPESTATUS[0]} -ne 0
+# expected stderr: an authorization denial naming the terminate verb
+#   (NotAuthorizedOrNotFound, or the provider's own authorization-denial text).
+# must NOT be "command not found", a bare connection error, or empty stderr.
+# `--force` is required or the CLI prompts and the step hangs non-interactively.
 
 # gate cannot read estate credentials.
 sudo -u gate test ! -r /etc/acx/estate/oci-timer-principal.cfg ; echo gate_denied:$?
@@ -263,7 +287,7 @@ test -z "$(find "$AGENT_ROOT" -mindepth 1 -maxdepth 1 -type d ! -exec test -e '{
 
 **Report-only gate (not agreement with a non-existent reaper):**
 
-- Hand audit over the full instance list for `control.observation.max_duration_days` (default 3 unless operator raises): each selector decision matches auditor; **non-empty** candidate set observed at least once. Vacuous empty-empty does not pass `[AIPX-06]` `[CARD-11]`.
+- Hand audit over the full instance list for `control.observation.max_duration_days` (committed value 7 in `config/estate.yaml`; the operator may raise it, never silently): each selector decision matches auditor; **non-empty** candidate set observed at least once. Vacuous empty-empty does not pass `[AIPX-06]` `[CARD-11]`.
 
 **Bring-up (handoff only, not oracle):**
 
@@ -333,7 +357,7 @@ test -z "$(find "$AGENT_ROOT" -mindepth 1 -maxdepth 1 -type d ! -exec test -e '{
 
 **Changes.**
 
-- Install report-only timer/service on T0: estate plan against tags; log candidates; **no stop**. Set `control.observation.mode: report_only`, write `control.observation.started_on` (ISO date) when observation begins, set `control.observation.max_duration_days` (default 3).
+- Install report-only timer/service on T0: estate plan against tags; log candidates; **no stop**. Set `control.observation.mode: report_only`, write `control.observation.started_on` (ISO date) when observation begins, set `control.observation.max_duration_days` (committed value 7).
 - Leave `infra/oci/cloud-init.yaml` as-is (dead template; no live unit to preserve).
 - With `control.mutations: disabled`, plan emits zero mutating actions even if observation later flips.
 
@@ -534,7 +558,7 @@ Same procedure as 5a (capture → AVAILABLE → durable OCID → restore rehears
 
 - What exact env var, make target, or compose path resolves which `remote_agent.sh` dispatch uses on `acx-backend` under `~gate`? Must be identified before host-fork removal; do not invent a name.
 - Exact OCI IAM policy statement identifiers / dynamic-group names for the stop-only principal (create in estate; record in handoff — not invented here), including the tag condition that excludes T0.
-- Report-only window: default `max_duration_days: 3` acceptable, or operator requires longer given burst cadence?
+- Report-only window: is the committed `max_duration_days: 7` right, or does burst cadence require longer?
 - Preferred `acx-gpu-burst` path: terminate after image + restore rehearsal, or keep with permanent AD-1 slot cost?
 - Systemd unit names and install path conventions on `acx-backend` (new vs existing ops patterns).
 - Whether local tree `infra/oci/gpu_lifecycle/` is deleted outright once upstream is live, or kept briefly until pinning tests and memo string are migrated — either way, `scripts/test_vlm3_gpu_lifecycle.py` and `scripts/test_vlm3_decision_memo.py` must move in the same change.

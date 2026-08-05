@@ -460,7 +460,30 @@ class TestRv14UnreadableNodeidBaseline:
 
         assert nodeids == frozenset()
         assert err is not None
-        assert "unreadable" in err
-        assert str(fixture) in err
-        # Must not surface as a bare PermissionError traceback path — named error only.
-        assert "errno" in err.lower() or "Permission" in err or "permission" in err
+        # Exact contract, not a substring soup: the loader must emit the named
+        # harness message with the path and the concrete errno (13 = EACCES).
+        assert err.startswith(
+            f"node-id baseline fixture unreadable: {fixture} [errno 13]:"
+        ), err
+
+    def test_non_utf8_baseline_returns_harness_error(self, tmp_path: Path) -> None:
+        """A readable but non-UTF-8 fixture must not escape as a bare traceback.
+
+        UnicodeDecodeError subclasses ValueError, not OSError, so an OSError-only
+        catch leaves this branch crashing while every sibling malformed-fixture
+        branch reports HARNESS-ERROR. Goes red if the catch narrows back to OSError.
+        """
+        fixture = tmp_path / "mutation_guard_nodeid_baseline.txt"
+        fixture.write_bytes(
+            b"test_license_policy.py::TestApacheSelfGeneratedPasses::"
+            b"test_apache_self_generated_row_passes\n\xff\xfe"
+        )
+
+        guard = _load_mutation_guard_module()
+        nodeids, err = guard._load_nodeid_baseline(fixture)
+
+        assert nodeids == frozenset()
+        assert err is not None
+        # No errno on UnicodeDecodeError, so the bracket segment must be absent.
+        assert err.startswith(f"node-id baseline fixture unreadable: {fixture}: "), err
+        assert "codec can't decode" in err, err

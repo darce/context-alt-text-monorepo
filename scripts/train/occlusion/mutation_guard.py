@@ -69,7 +69,7 @@ _TEST_HARDENING = _HERE / "test_license_policy_hardening.py"
 # live collect must be a superset of this fixture — coverage may grow, never
 # shrink). Rewrite only via ``--record-baseline``.
 _NODEID_BASELINE = _HERE / "mutation_guard_nodeid_baseline.txt"
-# Second, independent copy of the recorded node-id set for the RF-06
+# Second, independent copy of the recorded node-id set for the embedded-baseline
 # cross-check: an agent that edits the on-disk fixture alone is caught
 # because this embedded set must still be a subset of the fixture.
 # Prefer the on-disk fixture when present; else use this set.
@@ -1783,7 +1783,7 @@ def _load_nodeid_baseline(path: Path) -> tuple[frozenset[str], str | None]:
     """Load node-id baseline: on-disk fixture if present, else embedded set.
 
     The embedded set is a second, independent copy of the recorded node-id
-    set for the RF-06 cross-check: an agent that edits the on-disk fixture
+    set for the embedded-baseline cross-check: an agent that edits the on-disk fixture
     alone is caught because this set must still be a subset of the fixture.
     When the on-disk fixture is present it wins, so intentional growth can
     be recorded without editing this module's constant.
@@ -1801,8 +1801,12 @@ def _load_nodeid_baseline(path: Path) -> tuple[frozenset[str], str | None]:
         recorded: set[str] = set()
         try:
             text = path.read_text(encoding="utf-8")
-        except OSError as exc:
-            errno_part = f" [errno {exc.errno}]" if exc.errno is not None else ""
+        except (OSError, UnicodeDecodeError) as exc:
+            # UnicodeDecodeError subclasses ValueError, not OSError: a readable
+            # but non-UTF-8 fixture would otherwise escape as a raw traceback
+            # while every sibling malformed-fixture branch reports HARNESS-ERROR.
+            errno = getattr(exc, "errno", None)
+            errno_part = f" [errno {errno}]" if errno is not None else ""
             return frozenset(), (
                 f"node-id baseline fixture unreadable: {path}{errno_part}: {exc}"
             )
@@ -1838,7 +1842,7 @@ def _load_nodeid_baseline(path: Path) -> tuple[frozenset[str], str | None]:
 def _write_nodeid_baseline(path: Path, nodeids: tuple[str, ...]) -> None:
     """Rewrite the node-id fixture (explicit operator action only).
 
-    Also rewrites ``_EMBEDDED_NODEID_BASELINE`` in this module so the RF-06
+    Also rewrites ``_EMBEDDED_NODEID_BASELINE`` in this module so the embedded-baseline
     cross-check remains consistent (second independent copy of the set).
     """
     header = (
@@ -1851,7 +1855,7 @@ def _write_nodeid_baseline(path: Path, nodeids: tuple[str, ...]) -> None:
     body = "\n".join(sorted(nodeids))
     path.write_text(header + body + "\n", encoding="utf-8")
 
-    # Keep the embedded copy identical so the RF-06 cross-check continues to
+    # Keep the embedded copy identical so the embedded-baseline cross-check continues to
     # catch agents that edit only the on-disk fixture.
     guard_path = Path(__file__).resolve()
     src = guard_path.read_text(encoding="utf-8")

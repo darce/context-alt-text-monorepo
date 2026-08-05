@@ -7,3 +7,5 @@ Deferring is a decision, not a skip: every item here was consciously moved out o
 ## Open items
 
 - [E21-5 VoiceOver AT protocol](e21-5-voiceover-at-protocol.md) — the manual screen-reader acceptance pass for the unified review queue, deferred to the next phase (UX-flow correctness prioritized first).
+- [OPS-1 `acx-backend` host retention hygiene](OPS-1-vm-host-retention-hygiene.md) — no scheduled reaper for the Docker build cache, image tags, or `/home/ubuntu` scratch; deferred while the box sits at 94 GB free. Note the trap: an age-based `docker image prune -a` destroys the rollback tag history to reclaim ~80 MB.
+- [OPS-2 vendored `remote_agent.sh` fork](OPS-2-vendored-remote-agent-fork.md) — our untracked 2026-07-22 copy shares the upstream sandbox root without writing the reap marker (8.8 GB unreapable and growing) and caps lanes at 3 against upstream's 20 on a shared scope namespace.

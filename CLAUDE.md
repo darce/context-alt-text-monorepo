@@ -116,23 +116,6 @@ This project has NO production users and NO existing data to preserve.
 - No data migrations. Schema changes go directly in `001_identity_schema.py`.
 - Clean rewrites over backward-compatibility shims. Delete-over-flag.
 
-### External MCP Package Verification
-
-> **For E17-13 cleanup and later consumer-bound verification, validate the MCP packages from standalone refs in a scratch venv instead of using package-local Makefile targets.**
-
-```bash
-python3 -m venv /tmp/e17-13-external-mcp
-/tmp/e17-13-external-mcp/bin/pip install --quiet \
-    "git+ssh://git@github.com/darce/mcp-workbay-handoff.git@v0.4.3" \
-    "git+ssh://git@github.com/darce/mcp-workbay-orchestrator.git@v0.1.4"
-/tmp/e17-13-external-mcp/bin/mcp-workbay-handoff --workspace-root . doctor
-/tmp/e17-13-external-mcp/bin/mcp-workbay-orchestrator --workspace-root . --help
-```
-
-This external-install verification path proves the monorepo can consume the packaged MCP surfaces without any editable install from this checkout. Use a scratch venv, not a worktree-local `PYTHONPATH` override, and keep the verification anchored to the published `git+ssh://` refs the task plan selected.
-
-See [docs/workbay/rules/testing-python.md § External MCP Package Verification](docs/workbay/rules/testing-python.md#external-mcp-package-verification-e17-13) for the live convention used by this cleanup task.
-
 ### Commit SHA Provenance Discipline
 
 > **Pass full 40-character SHAs from `git rev-parse` to every handoff `commit_sha` field. Never type SHA suffixes from memory.**
@@ -169,13 +152,7 @@ See [docs/workbay/rules/branch-review-guide.md § Review Findings Placement](doc
 
 > **Routine `get_handoff_state` calls must use the bounded-read levers — never call it with `detail="full"` and high `top_n_*` values for an identity check.**
 
-The handoff response envelope appends an `oversize_response: ...` advisory warning to `payload["warnings"]` whenever the serialised payload exceeds ~20 KB (~5,000 tokens). The warning is purely advisory — the response is still returned in full so callers are not silently truncated — but it names the bounded-read levers callers should adopt for the next call:
-
-- `sections="identity"` for routine identity-only checks (returns just `active` + `limits`).
-- `sections="<comma-separated>"` to fetch only the sections you need (`current_lane`, `blockers_open`, `actions_pending`, etc.).
-- `detail="summary"` to truncate long-form rationale, fix, and verification fields to 200 chars.
-- Lower `top_n_blockers`, `top_n_actions`, `top_n_decisions`, `top_n_tests`, `top_n_findings` to reduce row counts.
-- `fields=...` (where supported) to project specific columns.
+The handoff response envelope appends an `oversize_response: ...` advisory warning to `payload["warnings"]` whenever the serialised payload exceeds ~20 KB (~5,000 tokens). The warning is purely advisory — the response is still returned in full so callers are not silently truncated — but it names the bounded-read levers to adopt on the next call (`sections`, `detail`, the `top_n_*` caps, `fields`).
 
 See the installed `workbay-handoff-mcp` package documentation for the full set of bounded-read levers and example call patterns.
 
@@ -258,7 +235,7 @@ Epic titles: `E<number>. <Title>` · Task plans: `<EpicShortID>-<N>. <Title>` ·
 
 If a user prompt begins with a registered `/command_id`, treat that prefix as a portable workflow command routed through `config/agent-workflows/portable_commands.json`.
 
-Current managed ids: `/scope`, `/refactor`, `/auto-fix`, `/branch-lifecycle`, `/branch-review`, `/handoff-lifecycle`, `/investigate`, `/incremental-implementation`, `/plan-analyze`, `/planning-review`, `/review-parallel`, `/tdd`, `/offload`, `/workbay`.
+Current managed ids: `/scope`, `/refactor`, `/auto-fix`, `/branch-lifecycle`, `/branch-review`, `/handoff-lifecycle`, `/investigate`, `/incremental-implementation`, `/plan-analyze`, `/planning-review`, `/review-parallel`, `/tdd`, `/offload`, `/workbay`, `/ux-map`.
 
 Routing rules:
 
@@ -283,6 +260,7 @@ Command map:
 - `/tdd` (write) -> skill `tdd` -> `make slice-start TASK=<task-ref> TEST_CMD="<command>"`
 - `/offload` (write) -> skill `offload` -> `(in-session cross-harness offload skill; no standalone make target)`
 - `/workbay` (guide) -> skill `workbay` -> `(in-session harness control; no standalone make target)`
+- `/ux-map` (guide) -> skill `ux-map` -> `(in-session advisory skill; no standalone make target)`
 
 <!-- END GENERATED: codex-command-router -->
 

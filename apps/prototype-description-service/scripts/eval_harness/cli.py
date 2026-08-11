@@ -53,6 +53,7 @@ from .manifest import GoldenManifest, ManifestError, _resolve_image, load_manife
 from .perf_leg import PerfLegError
 from .remote_client import RemoteClientError, RemoteSceneClient
 from .report import (
+    WRONG_NAME_RATE_FLOOR,
     Audience,
     ReportError,
     build_face_reports,
@@ -618,18 +619,33 @@ def _cmd_score(args: argparse.Namespace) -> None:
         record, entries, ignore_list=ignore_list, score_manifest_sha256=manifest_sha, manifest_roster=roster
     )
     print(md_path)
+    verdict = scored.get("verdict") or {}
     print(
         f"scored={scored['counts']['scored']}/{scored['counts']['total']} "
         f"insertion_rate={scored['caption']['insertion_rate']} "
-        f"wrong_names={len(scored['faces']['identification']['wrong_names'])}"
+        f"wrong_names={len(scored['faces']['identification']['wrong_names'])} "
+        f"verdict={verdict.get('verdict', 'unknown')} "
+        f"wrong_name_rate={verdict.get('wrong_name_rate')} "
+        f"wrong_name_rate_floor={verdict.get('wrong_name_rate_floor', WRONG_NAME_RATE_FLOOR)}"
     )
     # Fail loud when any item was skipped from scoring (S7-01): a "passing" run
     # that dropped NFC-miss / remote errors must not look like full-corpus evidence.
+    # Gate name is distinct from the wrong-name floor gate below so a red run
+    # says which one fired (VLM-6 S2A).
     failed = int(scored["counts"]["failed"])
     if failed > 0:
         sys.exit(
-            f"score gate failed: {failed} item(s) not scored (see failures[] in {json_path}); "
+            f"score failed-items gate: {failed} item(s) not scored (see failures[] in {json_path}); "
             "refusing to treat a partial corpus as full eval evidence"
+        )
+    # VLM-6 S2A: wrong-name floor — hallucinated human names on photographs are
+    # the highest-severity failure this harness detects; gate, do not merely report.
+    wrong_name_rate = float(verdict.get("wrong_name_rate", 0.0))
+    floor = float(verdict.get("wrong_name_rate_floor", WRONG_NAME_RATE_FLOOR))
+    if wrong_name_rate > floor:
+        sys.exit(
+            f"score wrong-name floor gate: wrong_name_rate={wrong_name_rate} exceeds "
+            f"floor={floor} (see {json_path})"
         )
 
 

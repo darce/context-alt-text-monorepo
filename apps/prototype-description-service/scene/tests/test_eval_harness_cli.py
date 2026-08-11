@@ -629,10 +629,18 @@ def _w1_audience_manifest_and_record(tmp_path):
 
 def test_cmd_score_public_audience_emits_redacted_public_artifact(tmp_path, monkeypatch):  # VLM-6 S5 W1
     """--audience public writes a distinct <run>-report.public.{json,md} with only
-    publishable entries and no local path/name leak (VLM6-C-01 / VLM6-F-03)."""
+    publishable entries and no local path/name leak (VLM6-C-01 / VLM6-F-03).
+
+    Fixture keeps a local wrong-name row so public redaction of wrong_names is
+    exercised; VLM-6 S2A wrong-name floor therefore exits non-zero *after*
+    artifacts are written — catch SystemExit and still assert the files.
+    """
     manifest_path, record_path = _w1_audience_manifest_and_record(tmp_path)
     monkeypatch.chdir(tmp_path)
-    main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path), "--audience", "public"])
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path), "--audience", "public"])
+    assert excinfo.value.code != 0
+    assert "wrong-name" in str(excinfo.value).lower()
 
     public_json = (tmp_path / "run-x-report.public.json").read_text()
     public_md = (tmp_path / "run-x-report.public.md").read_text()
@@ -652,10 +660,17 @@ def test_cmd_score_public_audience_emits_redacted_public_artifact(tmp_path, monk
 
 
 def test_cmd_score_default_local_emits_no_public_artifact(tmp_path, monkeypatch):  # VLM-6 S5 W1
-    """Default audience stays byte-compatible: no public artifact is produced."""
+    """Default audience stays byte-compatible: no public artifact is produced.
+
+    Fixture includes a wrong-name row; score exits non-zero on the S2A floor
+    after writing the local report (artifacts still land).
+    """
     manifest_path, record_path = _w1_audience_manifest_and_record(tmp_path)
     monkeypatch.chdir(tmp_path)
-    main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
+    assert excinfo.value.code != 0
+    assert "wrong-name" in str(excinfo.value).lower()
     assert (tmp_path / "run-x-report.json").exists()
     assert not (tmp_path / "run-x-report.public.json").exists()
     assert not (tmp_path / "run-x-report.public.md").exists()
@@ -707,6 +722,199 @@ def test_cmd_score_exits_nonzero_when_items_failed(tmp_path, monkeypatch):  # S7
         main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
     assert excinfo.value.code != 0
     assert "not scored" in str(excinfo.value)
+    # Gate names itself so a red run says which one fired (VLM-6 S2A).
+    assert "failed-items" in str(excinfo.value).lower()
+
+
+def _wrong_name_everywhere_manifest_and_record(tmp_path):
+    """Every scored image asserts a wrong human name (zero failed items).
+
+    Used to prove the wrong-name floor gate CAN go red: pre-S2A, score exited 0
+    for this catastrophic case (wrong name on 100% of images).
+    """
+    from scripts.eval_harness.schema import SCHEMA, DocKind
+
+    entries = [
+        {
+            "path": "mock_images/alice.jpg",
+            "sha256": "a" * 64,
+            "media_id": 1,
+            "face_count": 1,
+            "present_identities": ["Alice Example"],
+            "context_pack": {},
+            "base_caption": "",
+            "must_right": [],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+        },
+        {
+            "path": "mock_images/bob.jpg",
+            "sha256": "b" * 64,
+            "media_id": 2,
+            "face_count": 1,
+            "present_identities": ["Bob Builder"],
+            "context_pack": {},
+            "base_caption": "",
+            "must_right": [],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+        },
+    ]
+    manifest_path = tmp_path / "golden.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "manifest_version": 2,
+                "roster": ["Alice Example", "Bob Builder"],
+                "entries": entries,
+            }
+        )
+    )
+    record_path = tmp_path / "run-wrong.json"
+    record_path.write_text(
+        json.dumps(
+            {
+                "schema": SCHEMA,
+                "kind": DocKind.RUN_RECORD.value,
+                "provenance": {
+                    "manifest_sha256": "0" * 64,
+                    "base_url": "https://example.test",
+                    "head_sha": "f" * 40,
+                    "started_at": "t",
+                },
+                "items": [
+                    {
+                        "media_id": 1,
+                        "path": "mock_images/alice.jpg",
+                        "describe": {
+                            "alt_text_draft": "A person outdoors.",
+                            "visual_facts": {"objects": []},
+                        },
+                        # Wrong name on every image (Alice image labeled Bob).
+                        "identities": [
+                            {
+                                "name": "Bob Builder",
+                                "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                                "unpositioned": False,
+                            }
+                        ],
+                        "face_count": 1,
+                        "error": None,
+                    },
+                    {
+                        "media_id": 2,
+                        "path": "mock_images/bob.jpg",
+                        "describe": {
+                            "alt_text_draft": "A person on a beach.",
+                            "visual_facts": {"objects": []},
+                        },
+                        # Wrong name on every image (Bob image labeled Alice).
+                        "identities": [
+                            {
+                                "name": "Alice Example",
+                                "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                                "unpositioned": False,
+                            }
+                        ],
+                        "face_count": 1,
+                        "error": None,
+                    },
+                ],
+            }
+        )
+    )
+    return manifest_path, record_path
+
+
+def test_cmd_score_exits_nonzero_when_wrong_name_rate_breaches_floor(tmp_path, monkeypatch):
+    """VLM-6 S2A: wrong name on 100% of images must fail score (TEST-15 red-capable).
+
+    Pre-fix empirical false-green: this record exited 0. Gate must name itself
+    distinctly from the failed-items gate and cite rate, floor, and report path.
+    """
+    from scripts.eval_harness.report import WRONG_NAME_RATE_FLOOR
+
+    manifest_path, record_path = _wrong_name_everywhere_manifest_and_record(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
+    msg = str(excinfo.value)
+    assert excinfo.value.code != 0
+    assert "wrong-name" in msg.lower()
+    assert "floor" in msg.lower()
+    assert str(WRONG_NAME_RATE_FLOOR) in msg
+    assert "run-wrong-report.json" in msg
+    # Distinct from the failed-items gate message.
+    assert "not scored" not in msg
+    report = json.loads((tmp_path / "run-wrong-report.json").read_text())
+    assert report["verdict"]["verdict"] == "fail"
+    assert report["verdict"]["wrong_name_rate"] > WRONG_NAME_RATE_FLOOR
+    assert report["verdict"]["wrong_name_rate_floor"] == WRONG_NAME_RATE_FLOOR
+    assert report["verdict"]["reasons"]
+
+
+def test_cmd_score_exits_zero_when_no_wrong_names_and_no_failures(tmp_path, monkeypatch):
+    """Complementary green path: clean identities + no failures → score exits 0."""
+    from scripts.eval_harness.schema import SCHEMA, DocKind
+
+    entries = [
+        {
+            "path": "mock_images/alice.jpg",
+            "sha256": "a" * 64,
+            "media_id": 1,
+            "face_count": 1,
+            "present_identities": ["Alice Example"],
+            "context_pack": {},
+            "base_caption": "",
+            "must_right": [],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+        }
+    ]
+    manifest_path = tmp_path / "golden.json"
+    manifest_path.write_text(
+        json.dumps({"manifest_version": 2, "roster": ["Alice Example"], "entries": entries})
+    )
+    record_path = tmp_path / "run-clean.json"
+    record_path.write_text(
+        json.dumps(
+            {
+                "schema": SCHEMA,
+                "kind": DocKind.RUN_RECORD.value,
+                "provenance": {
+                    "manifest_sha256": "0" * 64,
+                    "base_url": "https://example.test",
+                    "head_sha": "f" * 40,
+                    "started_at": "t",
+                },
+                "items": [
+                    {
+                        "media_id": 1,
+                        "path": "mock_images/alice.jpg",
+                        "describe": {
+                            "alt_text_draft": "Alice Example outdoors.",
+                            "visual_facts": {"objects": []},
+                        },
+                        "identities": [
+                            {
+                                "name": "Alice Example",
+                                "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                                "unpositioned": False,
+                            }
+                        ],
+                        "face_count": 1,
+                        "error": None,
+                    }
+                ],
+            }
+        )
+    )
+    monkeypatch.chdir(tmp_path)
+    main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
+    report = json.loads((tmp_path / "run-clean-report.json").read_text())
+    assert report["verdict"]["verdict"] == "pass"
+    assert report["verdict"]["wrong_name_rate"] == 0.0
+    assert report["verdict"]["reasons"] == []
 
 
 # --- FIR-5 S5: face-bakeoff / score-face CLI surface ---

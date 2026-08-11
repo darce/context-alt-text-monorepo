@@ -120,7 +120,20 @@ vlm = [
     "accelerate>=0.33.0",
 ]
 
+# torch's own dependency markers gate the whole CUDA stack on
+# `sys_platform == 'linux'` with no `platform_machine` guard, so a
+# `--platform linux/arm64` build of the vlm extra resolves ~2.1 GB of
+# nvidia-*/triton wheels onto a GPU-less Ampere A1 CPU VM — aarch64 wheels
+# exist, so it succeeds silently instead of failing loudly
+# (ORCH-LAUNCH-01-S1-BR-05). Pin linux torch to the CPU index; darwin keeps
+# resolving from PyPI so local dev on Apple silicon is unaffected.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
 
 [build-system]
 requires = ["setuptools>=68.0.0"]

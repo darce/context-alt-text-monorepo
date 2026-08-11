@@ -200,12 +200,27 @@ def test_resolve_snapshot_dir_hub_layout(gate: ModuleType, tmp_path: Path) -> No
     )
 
 
+def test_exit_constants_are_literal_polarity(gate: ModuleType) -> None:
+    """RLSE-02: EXIT_OK/EXIT_FAIL must stay 0/1 — comparing only to the names
+    lets EXIT_FAIL=0 leave every failure test green while the gate returns success.
+    """
+    assert gate.EXIT_OK == 0
+    assert gate.EXIT_FAIL == 1
+    assert gate.EXIT_FAIL != gate.EXIT_OK
+
+
 def test_main_skips_non_local_cpu_profile(gate: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
-    """D7: seeded / non-Florence adapters skip even on the VLM image."""
+    """D7 trade-off (pinned): seeded skips Florence pin even on the VLM image.
+
+    Non-LOCAL_CPU adapters must boot under ``set -eu`` without demanding a
+    Florence snapshot. VLM image + default ``seeded`` therefore prints green
+    with zero snapshot/manifest/module-cache checks — intentional, not a
+    regression of the LOCAL_CPU fail-closed path (see florence tests below).
+    """
     monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "seeded")
     monkeypatch.setenv("ACX_IMAGE_VARIANT", "vlm")
     code = gate.main([])
-    assert code == gate.EXIT_OK
+    assert code == 0  # literal: not gate.EXIT_OK (RLSE-02)
 
 
 def test_main_skips_gpu_qwen_on_vlm_image(
@@ -215,7 +230,7 @@ def test_main_skips_gpu_qwen_on_vlm_image(
     monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "gpu_qwen30b")
     monkeypatch.setenv("ACX_IMAGE_VARIANT", "vlm")
     code = gate.main([])
-    assert code == gate.EXIT_OK
+    assert code == 0  # literal
 
 
 def test_main_fails_closed_when_local_cpu_cache_absent(
@@ -227,7 +242,7 @@ def test_main_fails_closed_when_local_cpu_cache_absent(
     modules.mkdir()
     monkeypatch.setenv("HF_MODULES_CACHE", str(modules))
     code = gate.main([])
-    assert code == gate.EXIT_FAIL
+    assert code == 1  # literal EXIT_FAIL — mutates of EXIT_FAIL→0 go red
 
     # TEST-15: seed a matching tree + manifest under the pin, gate goes green.
     from scene.config.profiles import DescriptionProfile, get_profile_spec
@@ -241,7 +256,7 @@ def test_main_fails_closed_when_local_cpu_cache_absent(
     _write_tree(snapshot, files)
     _write_manifest(gate, snapshot, files)
     code_ok = gate.main([])
-    assert code_ok == gate.EXIT_OK
+    assert code_ok == 0  # literal EXIT_OK
 
 
 def test_modules_cache_required_present_and_writable(
@@ -268,23 +283,23 @@ def test_modules_cache_required_present_and_writable(
     _write_manifest(gate, snapshot, files)
 
     # Intact snapshot but no module cache env → fail.
-    assert gate.main([]) == gate.EXIT_FAIL
+    assert gate.main([]) == 1
 
     # Set path but directory missing → fail.
     missing = tmp_path / "no-modules"
     monkeypatch.setenv("HF_MODULES_CACHE", str(missing))
-    assert gate.main([]) == gate.EXIT_FAIL
+    assert gate.main([]) == 1
 
     # Present + writable → green.
     modules = tmp_path / "modules"
     modules.mkdir()
     monkeypatch.setenv("HF_MODULES_CACHE", str(modules))
-    assert gate.main([]) == gate.EXIT_OK
+    assert gate.main([]) == 0
 
     # Present but unwritable → fail (simulates read-only mount of module cache).
     modules.chmod(0o555)
     try:
-        assert gate.main([]) == gate.EXIT_FAIL
+        assert gate.main([]) == 1
     finally:
         modules.chmod(0o755)
 

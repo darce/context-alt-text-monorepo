@@ -12,6 +12,11 @@ from starlette.middleware.cors import CORSMiddleware
 
 from api.logging_config import configure_logging
 from db.session import get_pool_stats
+from scripts.verify_vlm_cache import (
+    IMAGE_VARIANT_ARTIFACT,
+    IMAGE_VARIANT_ENV,
+    ImageVariant,
+)
 from recognition.application.health import (
     CheckResult,
     aggregate_status,
@@ -98,25 +103,25 @@ def _resolve_version_build_time() -> str:
     return os.environ.get("APP_BUILD_TIME", "").strip() or "unknown"
 
 
-# Build-immutable identity artifact (Dockerfile writes this per runtime stage).
-# Path is module-level so tests can monkeypatch; production path is fixed.
-_IMAGE_VARIANT_ARTIFACT = Path("/app/.image-variant")
+# Canonical path + labels live in scripts.verify_vlm_cache (sr-007). Module-level
+# alias keeps the historical test monkeypatch surface (api.main._IMAGE_VARIANT_ARTIFACT).
+_IMAGE_VARIANT_ARTIFACT = IMAGE_VARIANT_ARTIFACT
 
 
 def _resolve_image_variant() -> str:
     """Build-immutable image variant from ``/app/.image-variant`` (rg-015).
 
-    The Dockerfile bakes recognition|vlm into that file at image build. Compose
-    ``env_file`` can override ``ACX_IMAGE_VARIANT`` ENV, so ENV alone fails open
-    (a VLM image can report as recognition). Source of truth is the artifact;
-    a non-empty env claim that disagrees fails closed. When the artifact is
-    absent (local dev / unit tests), fall back to env then ``recognition``.
-    Read/OSError and invalid bake values fail closed (match entrypoint) — never
-    report ``recognition`` when the bake is unreadable or corrupt.
-    Canonical labels match ``ImageVariant`` in ``scripts.verify_vlm_cache``
-    (sr-007); this helper stays import-light for the hatch wheel include.
+    The Dockerfile bakes ``ImageVariant`` labels into that file at image build.
+    Compose ``env_file`` can override ``ACX_IMAGE_VARIANT`` ENV, so ENV alone
+    fails open (a VLM image can report as recognition). Source of truth is the
+    artifact; a non-empty env claim that disagrees fails closed. When the
+    artifact is absent (local dev / unit tests), fall back to env then
+    ``ImageVariant.RECOGNITION``. Read/OSError and invalid bake values fail
+    closed (match entrypoint) — never report recognition when the bake is
+    unreadable or corrupt. Labels are the ``ImageVariant`` enum members only
+    (sr-007) — do not reintroduce bare string literals here.
     """
-    env_claim = os.environ.get("ACX_IMAGE_VARIANT", "").strip()
+    env_claim = os.environ.get(IMAGE_VARIANT_ENV, "").strip()
     baked = ""
     try:
         if _IMAGE_VARIANT_ARTIFACT.is_file():
@@ -126,7 +131,8 @@ def _resolve_image_variant() -> str:
             f"cannot read baked image variant at {_IMAGE_VARIANT_ARTIFACT}: {exc}"
         ) from exc
     if baked:
-        if baked not in {"recognition", "vlm"}:
+        valid = {member.value for member in ImageVariant}
+        if baked not in valid:
             raise RuntimeError(
                 f"invalid baked image variant {baked!r} at {_IMAGE_VARIANT_ARTIFACT}"
             )
@@ -136,7 +142,7 @@ def _resolve_image_variant() -> str:
                 f"{baked!r} at {_IMAGE_VARIANT_ARTIFACT}"
             )
         return baked
-    return env_claim or "recognition"
+    return env_claim or ImageVariant.RECOGNITION.value
 
 
 def _log_startup_info() -> None:

@@ -54,10 +54,26 @@
 #   ACX_BUILD_TARGET         optional docker build --target (e.g. runtime-vlm). Empty = last stage
 #                              (runtime). Remote build REFUSES runtime-vlm — multi-GB torch builds
 #                              must run on a workstation/CI runner under a distinct image name.
+#                              Also selects the image repository name (RA-07): empty/runtime →
+#                              IMAGE_NAME (default acx-backend); runtime-vlm → IMAGE_NAME-vlm.
 #   ACX_SMOKE_TIMEOUT        positive integer seconds for Gate 2 /health budget (do_boot_smoke).
 #                              Default 24 for recognition; longer unmeasured default when the
 #                              VLM target/variant is selected. Validated at read time.
 #   CONFIRM                  required for prod actions: CONFIRM=PROMOTE (applies to deploy prod and promote * prod)
+#
+# Image variants / rollback (RA-07):
+#   Build targets produce distinct repository names so variants never clobber each other:
+#     empty / runtime  →  ${OCIR}/${NS}/${IMAGE_NAME}       (default acx-backend)
+#     runtime-vlm      →  ${OCIR}/${NS}/${IMAGE_NAME}-vlm   (default acx-backend-vlm)
+#   Greppable from the host alone:  docker images | grep -E 'acx-backend(-vlm)?'
+#   Identify a running container's variant (Dockerfile ENV, owned by ol01-img):
+#     docker inspect <container> --format '{{range .Config.Env}}{{println .}}{{end}}' \
+#       | grep '^ACX_IMAGE_VARIANT='
+#     # recognition → ACX_IMAGE_VARIANT=recognition ; VLM → ACX_IMAGE_VARIANT=vlm
+#   Rollback TO that variant's previous tag:
+#     recognition:  ${OCIR}/.../acx-backend:rollback-<id>  (or :staging / :latest)
+#     VLM:          ${OCIR}/.../acx-backend-vlm:rollback-<id>  (set ACX_BUILD_TARGET=runtime-vlm
+#                   so this script's IMAGE_BASE resolves to the -vlm repository)
 #
 # Reset-specific environment overrides (see do_reset()):
 #   ACX_RESET_SITE_URL       REQUIRED for reset. WordPress site URL the plugin will hit
@@ -104,8 +120,19 @@ SMOKE_TIMEOUT_VLM_DEFAULT=120
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 SERVICE_DIR="${REPO_ROOT}/apps/prototype-description-service"
-IMAGE_BASE="${OCIR_REGISTRY}/${OCIR_NAMESPACE}/${IMAGE_NAME}"
 SSH_TARGET="${OCI_USER}@${OCI_HOST}"
+
+# RA-07: derive repository name from ACX_BUILD_TARGET so VLM and recognition never share tags.
+# Empty target keeps the historical IMAGE_NAME (default acx-backend). runtime-vlm appends -vlm.
+# Unknown non-empty targets also get a greppable suffix so they cannot overwrite recognition.
+resolve_image_repo_name() {
+  case "${ACX_BUILD_TARGET:-}" in
+    ""|runtime) printf '%s\n' "${IMAGE_NAME}" ;;
+    runtime-vlm) printf '%s-vlm\n' "${IMAGE_NAME}" ;;
+    *) printf '%s-%s\n' "${IMAGE_NAME}" "${ACX_BUILD_TARGET}" ;;
+  esac
+}
+IMAGE_BASE="${OCIR_REGISTRY}/${OCIR_NAMESPACE}/$(resolve_image_repo_name)"
 
 GREEN=$'\033[0;32m'
 YELLOW=$'\033[0;33m'
@@ -312,6 +339,13 @@ do_build_remote() {
   ssh "${SSH_TARGET}" "mkdir -p ${REMOTE_BUILD_DIR}"
   # Weight-artifact excludes must stay in lockstep with apps/prototype-description-service/.dockerignore
   # (see test_dockerignore_weight_exclusions.py). This list does NOT read .dockerignore.
+  #
+  # WHY (rsync glob-depth rule — do NOT "fix" by adding **/):
+  #   rsync: a pattern with no `/` (except an optional trailing `/` for "directory only")
+  #   matches the basename at every depth. `models--*/` therefore excludes both a top-level
+  #   models--Qwen.../ and one ten levels down. Prefixing `**/` injects a slash and switches
+  #   the rule to full-path matching; that is the opposite of Docker .dockerignore, where
+  #   `*.bin` is root-anchored and `**/*.bin` is the recursive form. Never add `**/` here.
   rsync -az --delete \
     --exclude='.git/' \
     --exclude='__pycache__/' \
@@ -333,7 +367,7 @@ do_build_remote() {
     --exclude='*.pth' \
     --exclude='*.gguf' \
     --exclude='*.msgpack' \
-    --exclude='**/models--*/' \
+    --exclude='models--*/' \
     "${SERVICE_DIR}/" "${SSH_TARGET}:${REMOTE_BUILD_DIR}/"
 
   log "Building ${IMAGE_BASE}:${tag} + :${sha:0:8} on ${SSH_TARGET} (native arm64${ACX_BUILD_TARGET:+, target=${ACX_BUILD_TARGET}})"

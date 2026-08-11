@@ -179,6 +179,10 @@ exit 0
 # Small deterministic values so health-fail path completes quickly.
 _SMOKE_HARNESS_ARGS_TAIL = ("4", "1", "2", "0")  # budget_s, poll_s, attempts, vlm_budget
 
+# S2-A-08: the smoke body fails closed without this key, so every fixture that
+# expects to reach `docker run` must supply it.
+_MODELS_PATH_LINE = "ACX_MODELS_PATH=/opt/acx-models\n"
+
 
 def _highest_positional_deref(body: str) -> int:
     """Highest $N the heredoc body dereferences (for arity drift guard)."""
@@ -237,16 +241,33 @@ def test_smoke_harness_arity_covers_heredoc_positionals() -> None:
 def test_smoke_body_defaults_network_when_env_key_missing(tmp_path: Path) -> None:
     # BR2-07: no ACX_NETWORK_NAME line must not abort under pipefail; the
     # acx-<env>-net fallback must be reachable.
-    rc, log = _run_smoke_heredoc(tmp_path, env_lines="OTHER=1\n", curl_ok=True)
+    rc, log = _run_smoke_heredoc(
+        tmp_path, env_lines=f"OTHER=1\n{_MODELS_PATH_LINE}", curl_ok=True
+    )
     assert rc == 0
     assert "--network acx-prod-net" in log
+
+
+def test_smoke_body_fails_closed_when_models_path_missing(tmp_path: Path) -> None:
+    # S2-A-08: compose has no default for the :ro model-cache bind, so an .env
+    # without ACX_MODELS_PATH cannot start the real stack. Smoke must refuse
+    # BEFORE starting the api container rather than go green on it.
+    rc, log = _run_smoke_heredoc(tmp_path, env_lines="OTHER=1\n", curl_ok=True)
+    assert rc != 0, "smoke must fail closed without ACX_MODELS_PATH"
+    assert not re.search(r"^docker run .*--name acx-smoke-prod-", log, re.MULTILINE), (
+        f"guard must refuse before starting the api container; docker log was:\n{log}"
+    )
 
 
 def test_smoke_body_fails_and_tears_down_when_health_never_answers(tmp_path: Path) -> None:
     # BR2-06 / HARM-A-01: gate 2 must exit non-zero when /health never answers,
     # and the EXIT trap must reap the api container, ephemeral Postgres, and
     # the smoke blob volume — not just the api container.
-    rc, log = _run_smoke_heredoc(tmp_path, env_lines="ACX_NETWORK_NAME=acx-x\n", curl_ok=False)
+    rc, log = _run_smoke_heredoc(
+        tmp_path,
+        env_lines=f"ACX_NETWORK_NAME=acx-x\n{_MODELS_PATH_LINE}",
+        curl_ok=False,
+    )
     assert rc == 1
     # Require trap *rm* lines, not mere create/run mentions of the same names.
     assert re.search(r"docker rm -f acx-smoke-prod-", log), (

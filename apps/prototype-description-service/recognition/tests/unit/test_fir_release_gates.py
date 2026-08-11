@@ -34,6 +34,8 @@ from recognition.tests.dockerfile_stages import (
     _PROJECT_EXTRAS_RE,
     dockerfile_stages,
     effective_stage_body,
+    has_vlm_extra,
+    join_continued_lines,
     unlocked_project_extra_installs,
 )
 from recognition.tests.unit import face_pipeline_support as fps
@@ -176,6 +178,81 @@ def test_dockerfile_rejects_unlocked_pip_bench_dependency_install() -> None:
         "default image stages must not use unlocked project+extras pip/uv install "
         "for dependency resolution; switch to COPY uv.lock + "
         "`uv sync --frozen --extra bench`. Found:\n  - " + "\n  - ".join(offenders)
+    )
+
+
+def test_default_builder_stage_has_no_vlm_extra() -> None:
+    """RC-02: default builder dependency set must not pull the vlm extra.
+
+    Whole-file greps stay green when ``--extra vlm`` lives only on builder-vlm
+    *or* when it is smuggled into the default builder — stage scope is the only
+    way to enforce the comment that the default builder/runtime set is unchanged.
+    """
+    stages = _dockerfile_stages()
+    builder = stages[DEFAULT_BUILDER_STAGE]
+    assert not has_vlm_extra(builder), (
+        "default builder stage must not resolve --extra vlm / .[vlm] / --all-extras "
+        "(torch belongs to builder-vlm only; RC-02 stage scope)"
+    )
+    # Active (non-comment) lines must not mention torch in the default builder.
+    active = "\n".join(
+        ln
+        for ln in join_continued_lines(builder)
+        if ln.strip() and not ln.strip().startswith("#")
+    )
+    assert "torch" not in active.lower(), (
+        "default builder active body must not mention torch (VLM path only)"
+    )
+
+
+def test_no_stage_installs_deps_outside_uv_lock() -> None:
+    """RC-03: every stage that creates ``/opt/venv`` must use locked ``uv sync``.
+
+    Creating a venv then ``pip install ".[bench,vlm]"`` abandons frozen-lock
+    resolution while still producing ``/opt/venv`` — the headline supply-chain
+    invariant. Detect create-site stages and require ``uv sync --frozen|--locked``.
+    """
+    stages = _dockerfile_stages()
+    create_markers = (
+        re.compile(r"\buv\s+venv\b.*/opt/venv"),
+        re.compile(r"\bpython(?:3)?\s+-m\s+venv\s+/opt/venv"),
+        re.compile(r"\bvirtualenv\s+/opt/venv"),
+    )
+    offenders: list[str] = []
+    for name, body in stages.items():
+        joined = "\n".join(join_continued_lines(body))
+        creates = any(
+            m.search(ln)
+            for ln in join_continued_lines(body)
+            if not ln.strip().startswith("#")
+            for m in create_markers
+        ) or bool(re.search(r"UV_PROJECT_ENVIRONMENT=/opt/venv", joined))
+        if not creates:
+            # Also treat an own-body ``uv sync`` that writes /opt/venv as a create site.
+            has_sync = any(
+                re.search(r"\buv\s+sync\b", ln)
+                for ln in join_continued_lines(body)
+                if not ln.strip().startswith("#")
+            )
+            if not has_sync:
+                continue
+            # Sync without create in this stage is fine only if it is a re-sync
+            # of an inherited venv (builder-vlm FROM builder). Still require lock flags.
+            creates = True
+        sync_cmds = [
+            ln.strip()
+            for ln in join_continued_lines(body)
+            if re.search(r"\buv\s+sync\b", ln) and not ln.strip().startswith("#")
+        ]
+        if not sync_cmds:
+            offenders.append(f"{name}: creates/uses /opt/venv but has no `uv sync`")
+            continue
+        for cmd in sync_cmds:
+            if "--frozen" not in cmd and "--locked" not in cmd:
+                offenders.append(f"{name}: uv sync without --frozen/--locked: {cmd}")
+    assert not offenders, (
+        "stages that materialise /opt/venv must install via `uv sync --frozen` "
+        "(or --locked). Found:\n  - " + "\n  - ".join(offenders)
     )
 
 

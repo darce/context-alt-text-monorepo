@@ -243,11 +243,25 @@ def test_smoke_body_defaults_network_when_env_key_missing(tmp_path: Path) -> Non
 
 
 def test_smoke_body_fails_and_tears_down_when_health_never_answers(tmp_path: Path) -> None:
-    # BR2-06: gate 2 must exit non-zero when /health never answers, and the
-    # trap must remove the throwaway container.
+    # BR2-06 / HARM-A-01: gate 2 must exit non-zero when /health never answers,
+    # and the EXIT trap must reap the api container, ephemeral Postgres, and
+    # the smoke blob volume — not just the api container.
     rc, log = _run_smoke_heredoc(tmp_path, env_lines="ACX_NETWORK_NAME=acx-x\n", curl_ok=False)
     assert rc == 1
-    assert "docker rm -f" in log
+    # Require trap *rm* lines, not mere create/run mentions of the same names.
+    assert re.search(r"docker rm -f acx-smoke-prod-", log), (
+        f"EXIT trap must docker rm the api smoke container; log:\n{log}"
+    )
+    assert re.search(r"docker rm -f acx-smoke-pg-", log), (
+        "EXIT trap must docker rm the ephemeral Postgres (acx-smoke-pg-*); "
+        f"docker log was:\n{log}"
+    )
+    assert re.search(r"docker volume rm(?: -f)? acx-smoke-blobs-", log) or (
+        "volume rm" in log and "acx-smoke-blobs-" in log
+    ), (
+        "EXIT trap must docker volume rm the smoke blob volume "
+        f"(acx-smoke-blobs-*); docker log was:\n{log}"
+    )
 
 
 def test_promote_gate_failure_blocks_converge_and_restart(tmp_path: Path) -> None:

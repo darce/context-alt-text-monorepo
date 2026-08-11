@@ -51,6 +51,12 @@
 #   ACX_BOOT_SMOKE           default 1: 'deploy' boots the freshly-built :SHA in a throwaway
 #                              container (import smoke + /health probe) before promoting/restarting,
 #                              aborting on failure with prod untouched. Set 0 to bypass.
+#   ACX_BUILD_TARGET         optional docker build --target (e.g. runtime-vlm). Empty = last stage
+#                              (runtime). Remote build REFUSES runtime-vlm — multi-GB torch builds
+#                              must run on a workstation/CI runner under a distinct image name.
+#   ACX_SMOKE_TIMEOUT        positive integer seconds for Gate 2 /health budget (do_boot_smoke).
+#                              Default 24 for recognition; longer unmeasured default when the
+#                              VLM target/variant is selected. Validated at read time.
 #   CONFIRM                  required for prod actions: CONFIRM=PROMOTE (applies to deploy prod and promote * prod)
 #
 # Reset-specific environment overrides (see do_reset()):
@@ -75,6 +81,25 @@ GIT_REF="${GIT_REF:-HEAD}"
 PLATFORM="${ACX_DEPLOY_PLATFORM:-linux/arm64}"
 REMOTE_BUILD="${REMOTE_BUILD:-${ACX_REMOTE_BUILD:-0}}"
 REMOTE_BUILD_DIR="${ACX_REMOTE_BUILD_DIR:-/tmp/acx-build}"
+# Optional docker build --target. Empty means BuildKit's default (last stage = runtime).
+# This is the plumbing the script would pass as `docker build --target ...`; there was no
+# prior target notion in this file — introduce it only as the explicit opt-in for VLM/etc.
+ACX_BUILD_TARGET="${ACX_BUILD_TARGET:-}"
+
+# Pre-build free-space floor on the remote docker data root (GB).
+# Justification (not a round guess): torch-free recognition image is ~1.1GB today; a single
+# remote build leaves multi-GB BuildKit intermediate layers; README/OPS-1 already document
+# disk fill on the Always Free A1. Budget = ~2× image + ~4GB cache headroom + ~2GB for
+# concurrent container layers/logs ≈ 8GB. VLM multi-GB builds are refused entirely on the
+# remote path (see refuse_remote_vlm_build) rather than raising this further.
+REMOTE_BUILD_MIN_FREE_GB=8
+
+# Boot-smoke Gate 2 /health budget defaults (seconds). Recognition keeps the historical
+# 24s (12 × 2s polls) sized for the ~1.1GB torch-free image on 4-core Ampere A1.
+# VLM default is an UNMEASURED estimate — no VLM image has ever been built or booted in
+# this repo; replace with a measured figure once a real smoke run exists.
+SMOKE_TIMEOUT_DEFAULT=24
+SMOKE_TIMEOUT_VLM_DEFAULT=120
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -90,6 +115,55 @@ RESET=$'\033[0m'
 log()  { printf '%s==>%s %s\n' "${GREEN}" "${RESET}" "$*"; }
 warn() { printf '%s!!%s %s\n'  "${YELLOW}" "${RESET}" "$*" >&2; }
 fail() { printf '%sxx%s %s\n'  "${RED}"    "${RESET}" "$*" >&2; exit 1; }
+
+# Positive-integer validation for ACX_SMOKE_TIMEOUT (rg-008: fail fast at read time).
+# Defaults are image-aware; operator override must still be a positive integer.
+resolve_smoke_timeout() {
+  local default raw
+  if [[ "${ACX_BUILD_TARGET:-}" == "runtime-vlm" || "${ACX_IMAGE_VARIANT:-}" == "vlm" ]]; then
+    default="${SMOKE_TIMEOUT_VLM_DEFAULT}"
+  else
+    default="${SMOKE_TIMEOUT_DEFAULT}"
+  fi
+  raw="${ACX_SMOKE_TIMEOUT:-${default}}"
+  if ! [[ "${raw}" =~ ^[1-9][0-9]*$ ]]; then
+    fail "ACX_SMOKE_TIMEOUT must be a positive integer (got: ${raw})"
+  fi
+  printf '%s\n' "${raw}"
+}
+
+# Remote-build hard refuse for the torch-bearing VLM target (RA-03 / sr-001).
+# No override env — multi-GB builds must not run on the production-serving VM.
+refuse_remote_vlm_build() {
+  if [[ "${ACX_BUILD_TARGET:-}" == "runtime-vlm" ]]; then
+    fail "Remote build refuses ACX_BUILD_TARGET=runtime-vlm. Build and push the VLM image from a workstation or CI runner under a distinct image name (do not build multi-GB torch images on the production-serving VM)."
+  fi
+}
+
+# Assert the remote docker data root has enough free space for a recognition build.
+assert_remote_build_free_space() {
+  local min_gb avail_gb
+  min_gb="${REMOTE_BUILD_MIN_FREE_GB}"
+  # df -BG prints e.g. "12G"; strip the unit. DockerRootDir is the volume that fills
+  # with BuildKit cache (OPS-1), not the rsync temp dir.
+  avail_gb="$(ssh -o BatchMode=yes -o ConnectTimeout=5 "${SSH_TARGET}" \
+    'root="$(docker info -f "{{.DockerRootDir}}" 2>/dev/null || echo /var/lib/docker)"; df -BG "$root" | awk "NR==2 {gsub(/G/,\"\",\$4); print \$4}"')"
+  if ! [[ "${avail_gb}" =~ ^[0-9]+$ ]]; then
+    fail "Could not determine free space on ${SSH_TARGET} docker data root (got: ${avail_gb})"
+  fi
+  if (( avail_gb < min_gb )); then
+    fail "Remote docker data root has ${avail_gb}GB free; need at least ${min_gb}GB before build (prune BuildKit cache or free disk on ${SSH_TARGET})"
+  fi
+  log "Remote free space OK: ${avail_gb}GB available (need ${min_gb}GB)"
+}
+
+# Bounded BuildKit cache reclaim on the remote host. Removes unused build-cache
+# entries older than 72h only — not a full wipe — so subsequent builds keep recent
+# layers while reclaiming the long-term disk fill documented in OPS-1 / README.
+remote_builder_prune() {
+  log "Pruning remote BuildKit cache older than 72h on ${SSH_TARGET}"
+  ssh "${SSH_TARGET}" "docker builder prune --force --filter until=72h"
+}
 
 #---------------------------------------------------------------- env mapping
 env_to_tag() {
@@ -193,16 +267,26 @@ preflight_branch_synced() {
 }
 
 #---------------------------------------------------------------- build
+# Optional --target flag from ACX_BUILD_TARGET (empty = last stage).
+_build_target_args() {
+  if [[ -n "${ACX_BUILD_TARGET}" ]]; then
+    printf -- '--target %s' "${ACX_BUILD_TARGET}"
+  fi
+}
+
 do_build() {
   preflight_docker
-  local sha tag
+  local sha tag target_args
   sha="$(git -C "${REPO_ROOT}" rev-parse "${GIT_REF}")"
   tag="${1:-dev}"
-  log "Building ${IMAGE_BASE}:${tag} + :${sha:0:8} (${PLATFORM}, GIT_COMMIT_SHA=${sha:0:8})"
+  target_args="$(_build_target_args)"
+  log "Building ${IMAGE_BASE}:${tag} + :${sha:0:8} (${PLATFORM}, GIT_COMMIT_SHA=${sha:0:8}${ACX_BUILD_TARGET:+, target=${ACX_BUILD_TARGET}})"
   cd "${SERVICE_DIR}"
+  # shellcheck disable=SC2086 # target_args is intentionally word-split (empty or "--target X")
   docker build \
     --platform "${PLATFORM}" \
     --build-arg "GIT_COMMIT_SHA=${sha}" \
+    ${target_args} \
     -t "${IMAGE_BASE}:${tag}" \
     -t "${IMAGE_BASE}:${sha}" \
     .
@@ -213,12 +297,21 @@ do_build_remote() {
   preflight_ssh
   preflight_remote_docker
   preflight_rsync
-  local sha tag
+  # RA-03: never run the multi-GB torch VLM build on the production-serving VM.
+  refuse_remote_vlm_build
+  local sha tag target_args
   sha="$(git -C "${REPO_ROOT}" rev-parse "${GIT_REF}")"
   tag="${1:-dev}"
+  target_args="$(_build_target_args)"
+
+  # Reclaim stale BuildKit cache first so the free-space gate reflects post-prune headroom.
+  remote_builder_prune
+  assert_remote_build_free_space
 
   log "Syncing build context ${SERVICE_DIR}/ -> ${SSH_TARGET}:${REMOTE_BUILD_DIR}/"
   ssh "${SSH_TARGET}" "mkdir -p ${REMOTE_BUILD_DIR}"
+  # Weight-artifact excludes must stay in lockstep with apps/prototype-description-service/.dockerignore
+  # (see test_dockerignore_weight_exclusions.py). This list does NOT read .dockerignore.
   rsync -az --delete \
     --exclude='.git/' \
     --exclude='__pycache__/' \
@@ -240,13 +333,15 @@ do_build_remote() {
     --exclude='*.pth' \
     --exclude='*.gguf' \
     --exclude='*.msgpack' \
-    --exclude='models--*/' \
+    --exclude='**/models--*/' \
     "${SERVICE_DIR}/" "${SSH_TARGET}:${REMOTE_BUILD_DIR}/"
 
-  log "Building ${IMAGE_BASE}:${tag} + :${sha:0:8} on ${SSH_TARGET} (native arm64)"
+  log "Building ${IMAGE_BASE}:${tag} + :${sha:0:8} on ${SSH_TARGET} (native arm64${ACX_BUILD_TARGET:+, target=${ACX_BUILD_TARGET}})"
   # No --platform: VM is already linux/arm64 (Ampere A1).
+  # shellcheck disable=SC2086 # target_args is intentionally word-split (empty or "--target X")
   ssh "${SSH_TARGET}" "cd ${REMOTE_BUILD_DIR} && docker build \
       --build-arg GIT_COMMIT_SHA=${sha} \
+      ${target_args} \
       -t ${IMAGE_BASE}:${tag} \
       -t ${IMAGE_BASE}:${sha} \
       ."
@@ -405,9 +500,14 @@ preserve_rollback_tag() {
 # smoke that catches ModuleNotFoundError-class packaging omissions; (2) a
 # short-lived full-boot /health probe on an ephemeral port against the env net.
 do_boot_smoke() {
-  local env="$1" image="$2" remote_dir
+  local env="$1" image="$2" remote_dir smoke_timeout poll_interval attempts
   remote_dir="$(env_to_remote_dir "$env")"
-  log "Pre-promote boot smoke: ${image} on ${SSH_TARGET} (env=${env})"
+  # Image-aware budget: recognition default 24s; VLM uses the unmeasured longer
+  # default. ACX_SMOKE_TIMEOUT overrides either, validated as a positive integer.
+  smoke_timeout="$(resolve_smoke_timeout)"
+  poll_interval=2
+  attempts=$(( (smoke_timeout + poll_interval - 1) / poll_interval ))
+  log "Pre-promote boot smoke: ${image} on ${SSH_TARGET} (env=${env}, health_budget=${smoke_timeout}s)"
   # Gate 1 — network-free import smoke. Catches the ModuleNotFoundError-class
   # packaging omissions (the scene/ incident) without touching the DB.
   # RECOGNITION_RUNTIME_MODE=development so the production load-time secret
@@ -423,9 +523,10 @@ do_boot_smoke() {
   # steps), so the smoke never mutates the live prod schema — it proves the app
   # boots and /health answers, then is torn down. Network name is read (not
   # sourced) from the deployed .env so a docker-only env line cannot abort it.
-  if ! ssh "${SSH_TARGET}" "bash -s ${env} ${image} ${remote_dir}" <<'SMOKE'
+  # Budget is ACX_SMOKE_TIMEOUT (default 24s recognition / longer unmeasured VLM).
+  if ! ssh "${SSH_TARGET}" "bash -s ${env} ${image} ${remote_dir} ${smoke_timeout} ${poll_interval} ${attempts}" <<'SMOKE'
 set -euo pipefail
-env="$1"; image="$2"; remote_dir="$3"
+env="$1"; image="$2"; remote_dir="$3"; budget_s="$4"; poll_s="$5"; attempts="$6"
 net="$(grep -E '^ACX_NETWORK_NAME=' "${remote_dir}/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"' " || true)"
 net="${net:-acx-${env}-net}"
 name="acx-smoke-${env}-$$"
@@ -433,15 +534,15 @@ docker run -d --rm --name "$name" --env-file "${remote_dir}/.env" --network "$ne
   --entrypoint sh "$image" -c 'cd /app && exec uvicorn api.main:app --host 0.0.0.0 --port 8000' >/dev/null
 trap 'docker rm -f "$name" >/dev/null 2>&1 || true' EXIT
 port="$(docker port "$name" 8000/tcp | head -1 | sed 's/.*://')"
-for _ in $(seq 1 12); do
+for _ in $(seq 1 "${attempts}"); do
   if curl -fsS "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then echo "smoke health OK"; exit 0; fi
-  sleep 2
+  sleep "${poll_s}"
 done
-echo "smoke health FAILED after 24s" >&2
+echo "smoke health FAILED after ${budget_s}s" >&2
 exit 1
 SMOKE
   then
-    warn "boot smoke: /health never came up for ${image}"
+    warn "boot smoke: /health never came up for ${image} after ${smoke_timeout}s"
     return 1
   fi
   log "Boot smoke passed for ${image}"

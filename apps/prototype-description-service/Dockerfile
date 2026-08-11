@@ -21,10 +21,12 @@
 #   docker build --platform linux/arm64 \
 #     --build-arg GIT_COMMIT_SHA=$(git rev-parse HEAD) \
 #     -t iad.ocir.io/idu2kqqe2jxy/acx-backend:latest .
-# Build VLM-capable (explicit target; does not change the default image):
+# Build VLM-capable (explicit target; distinct repository — not a :vlm tag on
+# acx-backend). scripts/deploy/recognition-service.sh maps ACX_BUILD_TARGET=runtime-vlm
+# → IMAGE_NAME-vlm (default acx-backend-vlm):
 #   docker build --platform linux/arm64 --target runtime-vlm \
 #     --build-arg GIT_COMMIT_SHA=$(git rev-parse HEAD) \
-#     -t iad.ocir.io/idu2kqqe2jxy/acx-backend:vlm .
+#     -t iad.ocir.io/idu2kqqe2jxy/acx-backend-vlm:latest .
 #
 # Deps resolve from the checked-in uv.lock via `uv sync --locked` (FIR4-BR-01 /
 # ORCH-LAUNCH-01-S1-RB-07): --locked asserts uv.lock still matches pyproject.toml.
@@ -159,19 +161,22 @@ CMD ["/app/scripts/docker-entrypoint.sh"]
 #
 # Model-weight cache strategy (mount, not bake):
 #   VLM weights (Florence-2 / HF hub) are served from a persistent bind mount at
-#   /data/cache. Operators pre-populate HF_HOME before production start.
-#   HF_HUB_OFFLINE=1 fails closed if weights are missing — no HuggingFace
-#   download on the production boot path.
-#   Tradeoff: larger operator ops surface (seed the volume once) vs smaller
-#   image than baking multi-GB weights into a layer; boot stays network-free.
+#   /data/cache. Operators seed HF_HOME outside this offline image
+#   (`python -m scripts.seed_vlm_cache`, see infra/oci/README.md § VLM weight cache).
+#   Boot fail-closed is scripts.verify_vlm_cache (manifest + trust_remote_code
+#   *.py set match) on the entrypoint VLM path — not HF_HUB_OFFLINE alone.
+#   HF_HUB_OFFLINE=1 / TRANSFORMERS_OFFLINE=1 are a second line of defense:
+#   no HuggingFace network fetch on the production path if something bypasses
+#   the gate. Tradeoff: larger operator ops surface (seed the volume once) vs
+#   smaller image than baking multi-GB weights; boot stays network-free.
 # ---------------------------------------------------------------------------
 FROM runtime-base AS runtime-vlm
 
 COPY --from=builder-vlm /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Lets /health and an operator `docker inspect` tell the two images apart
-# without diffing package lists (ORCH-LAUNCH-01-S1-RA-07).
+# Baked identity for /health + /version (must match ImageVariant.VLM in
+# scripts/verify_vlm_cache.py — sr-007). Explicit per stage; do not rely on a default.
 ENV ACX_IMAGE_VARIANT=vlm
 
 # Install the app package into /opt/venv without resolving build/runtime deps.
@@ -180,7 +185,7 @@ ENV ACX_IMAGE_VARIANT=vlm
 # outside the lock (FINALB-05 / DEP-01/02). Use the venv interpreter explicitly.
 RUN /opt/venv/bin/pip install --no-cache-dir -e . --no-deps --no-build-isolation
 
-# Fail closed on missing weights — production must not fetch at start.
+# Offline runtime: cannot self-seed; network fetch blocked if gate is bypassed.
 ENV HF_HUB_OFFLINE=1
 ENV TRANSFORMERS_OFFLINE=1
 
@@ -188,8 +193,8 @@ ENV TRANSFORMERS_OFFLINE=1
 # No VOLUME instruction: an anonymous volume here would leak unreclaimable disk
 # on every `docker run` without an explicit mount (including boot-smoke).
 
-# Drop root for the VLM image only (ORCH-LAUNCH-01-S1-RB-03). Recognition
-# (runtime) privilege drop is deferred — see comment on that stage.
+# Drop root for the serving process (SEC-13). /data/cache is acx-owned;
+# /app and /opt/venv stay root:root world-readable (no code/venv write for acx).
 USER acx
 
 # ---------------------------------------------------------------------------
@@ -202,7 +207,7 @@ FROM runtime-base AS runtime
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# See ACX_IMAGE_VARIANT in runtime-vlm (ORCH-LAUNCH-01-S1-RA-07).
+# Baked identity for /health + /version (must match ImageVariant.RECOGNITION).
 ENV ACX_IMAGE_VARIANT=recognition
 
 # Install the app package into /opt/venv without resolving build/runtime deps.
@@ -211,7 +216,9 @@ ENV ACX_IMAGE_VARIANT=recognition
 # outside the lock (FINALB-05 / DEP-01/02). Use the venv interpreter explicitly.
 RUN /opt/venv/bin/pip install --no-cache-dir -e . --no-deps --no-build-isolation
 
-# ORCH-LAUNCH-01-S1-RB-03: recognition stage privilege drop is deferred to a
-# slice that can build and boot-test this image. No arm64 build of this
-# Dockerfile has been executed in this lane, and the recognition image is live
-# in production — flipping the running uid without a boot test is out of scope.
+# Drop root for the recognition serving process too (SEC-13 / wave3).
+# WHY same model as runtime-vlm: boot chain (alembic → schema sync → uvicorn)
+# only needs network to Postgres plus writes under /data/cache (acx-owned).
+# PYTHONDONTWRITEBYTECODE=1 avoids __pycache__ writes under /app. No path
+# requires root on the serving path; do not re-introduce USER root here.
+USER acx

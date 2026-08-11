@@ -28,6 +28,13 @@ from types import ModuleType
 
 import pytest
 
+from recognition.tests.dockerfile_stages import (
+    DEFAULT_BUILDER_STAGE,
+    DEFAULT_RUNTIME_STAGE,
+    _PROJECT_EXTRAS_RE,
+    dockerfile_stages,
+    unlocked_project_extra_installs,
+)
 from recognition.tests.unit import face_pipeline_support as fps
 from recognition.tests.unit.face_pipeline_support import (
     FACE_PIPELINE_PARITY_REQUIRED_ENV,
@@ -49,10 +56,35 @@ _PARITY_WORKFLOW_CANDIDATES = (
     _REPO_ROOT / ".github" / "workflows" / "face_pipeline_ort_parity.yml",
 )
 
+# Default image path only (builder + runtime). Do not assert internals of
+# builder-vlm / runtime-vlm — a concurrent lane owns those stages.
+_DEFAULT_IMAGE_STAGES = (DEFAULT_BUILDER_STAGE, DEFAULT_RUNTIME_STAGE)
 
-def _dockerfile_text() -> str:
+
+def _dockerfile_stages() -> dict[str, str]:
     assert _DOCKERFILE.is_file(), f"missing Dockerfile at {_DOCKERFILE}"
-    return _DOCKERFILE.read_text(encoding="utf-8")
+    return dockerfile_stages(_DOCKERFILE)
+
+
+def _builder_body() -> str:
+    stages = _dockerfile_stages()
+    assert DEFAULT_BUILDER_STAGE in stages, (
+        f"Dockerfile missing {DEFAULT_BUILDER_STAGE!r} stage; have {list(stages)}"
+    )
+    return stages[DEFAULT_BUILDER_STAGE]
+
+
+def _runtime_body() -> str:
+    stages = _dockerfile_stages()
+    assert DEFAULT_RUNTIME_STAGE in stages, (
+        f"Dockerfile missing {DEFAULT_RUNTIME_STAGE!r} stage; have {list(stages)}"
+    )
+    return stages[DEFAULT_RUNTIME_STAGE]
+
+
+def _default_image_stage_text() -> str:
+    stages = _dockerfile_stages()
+    return "\n".join(stages[name] for name in _DEFAULT_IMAGE_STAGES if name in stages)
 
 
 def _parity_workflow_path() -> Path:
@@ -63,8 +95,14 @@ def _parity_workflow_path() -> Path:
     return _PARITY_WORKFLOW_CANDIDATES[0]
 
 
+def _write_dockerfile(tmp_path: Path, text: str) -> Path:
+    path = tmp_path / "Dockerfile"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
 # ---------------------------------------------------------------------------
-# 1. Docker frozen-lock install (FIR4-BR-01)
+# 1. Docker frozen-lock install (FIR4-BR-01) — stage-scoped (RC-02/RC-03)
 # ---------------------------------------------------------------------------
 
 
@@ -77,77 +115,76 @@ def test_service_uv_lock_exists() -> None:
 
 def test_dockerfile_copies_uv_lock() -> None:
     """Builder must COPY uv.lock so frozen sync can consume exact pins."""
-    text = _dockerfile_text()
+    text = _builder_body()
     # Accept COPY of lock alone or alongside pyproject on one line.
     assert re.search(r"^COPY\s+[^\n]*\buv\.lock\b", text, re.MULTILINE), (
-        "Dockerfile must COPY uv.lock into the build context "
+        "builder stage must COPY uv.lock into the build context "
         "(FIR4-BR-01: lock is system of record for image deps)"
     )
 
 
 def test_dockerfile_installs_deps_via_uv_sync_frozen() -> None:
     """Dependency install must use uv sync with a frozen/locked resolution."""
-    text = _dockerfile_text()
+    text = _builder_body()
     assert "uv sync" in text, (
-        "Dockerfile must install runtime deps with `uv sync` (not unlocked pip resolve)"
+        "builder stage must install runtime deps with `uv sync` "
+        "(not unlocked pip resolve)"
     )
     assert "--frozen" in text or "--locked" in text, (
-        "Dockerfile `uv sync` must pass --frozen (or --locked) for exact lock consumption"
+        "builder stage `uv sync` must pass --frozen (or --locked) for exact lock consumption"
     )
 
 
 def test_dockerfile_frozen_sync_enables_bench_extra() -> None:
     """runtime+[bench]: insightface stays available for the dark default until FIR-6."""
-    text = _dockerfile_text()
+    text = _builder_body()
     # Prefer explicit --extra bench on a uv sync line; allow multi-line RUN.
     sync_blocks = re.findall(r"uv sync[^\n]*(?:\\\n[^\n]*)*", text)
     joined = "\n".join(sync_blocks) if sync_blocks else text
     assert re.search(r"--extra\s+bench\b", joined) or "extras=bench" in joined, (
-        "Dockerfile frozen install must enable the bench extra "
+        "builder frozen install must enable the bench extra "
         "(`uv sync --frozen --extra bench` or equivalent)"
     )
 
 
 def test_dockerfile_rejects_unlocked_pip_bench_dependency_install() -> None:
-    """Unlocked ``pip install .[bench]`` (without --no-deps) must not resolve deps."""
-    text = _dockerfile_text()
-    offenders = [
-        ln.strip()
-        for ln in text.splitlines()
-        if "pip install" in ln and ".[bench]" in ln.replace(" ", "") and "--no-deps" not in ln
-    ]
-    # Also catch spaced forms: pip install ".[bench]"
-    if not offenders:
-        offenders = [
-            ln.strip()
-            for ln in text.splitlines()
-            if "pip install" in ln and ".[bench]" in ln and "--no-deps" not in ln
-        ]
+    """Unlocked project-with-extras install must not resolve deps outside the lock.
+
+    Structural (RC-03): catch ``.[bench]``, ``".[bench,vlm]"``, any extra name,
+    quoting, spacing, and line continuations — not just the literal ``.[bench]``
+    token the old gate matched.
+    """
+    offenders: list[str] = []
+    stages = _dockerfile_stages()
+    for stage in _DEFAULT_IMAGE_STAGES:
+        body = stages.get(stage, "")
+        for hit in unlocked_project_extra_installs(body):
+            offenders.append(f"{stage}: {hit}")
     assert not offenders, (
-        "Dockerfile must not use unlocked `pip install .[bench]` for dependency "
-        "resolution; switch to COPY uv.lock + `uv sync --frozen --extra bench`. "
-        "Found:\n  - " + "\n  - ".join(offenders)
+        "default image stages must not use unlocked project+extras pip/uv install "
+        "for dependency resolution; switch to COPY uv.lock + "
+        "`uv sync --frozen --extra bench`. Found:\n  - " + "\n  - ".join(offenders)
     )
 
 
 def test_dockerfile_runtime_editable_install_may_remain_no_deps() -> None:
     """App package install may stay `pip install -e . --no-deps` after lock-based deps."""
-    text = _dockerfile_text()
+    text = _runtime_body()
     # Not a hard requirement that editable install exists — only that if pip
-    # installs the app package without the bench extra, --no-deps is used.
+    # installs the app package without extras, --no-deps is used.
     app_pip = [
         ln
         for ln in text.splitlines()
         if "pip install" in ln and re.search(r"\s-e\s+\.|\spip install[^\n]*\s\.\s", ln)
     ]
     for ln in app_pip:
-        if ".[bench]" in ln or ".[dev]" in ln:
+        if _PROJECT_EXTRAS_RE.search(ln):
             continue
         if re.search(r"pip install[^\n]*\s\.(?:\s|$)", ln) or " -e ." in ln or " -e ." in ln.replace(
             "  ", " "
         ):
             assert "--no-deps" in ln, (
-                "Runtime app `pip install` of `.` must use --no-deps when deps "
+                "runtime stage app `pip install` of `.` must use --no-deps when deps "
                 f"come from the lock. Offending line: {ln.strip()}"
             )
 
@@ -162,7 +199,7 @@ def _project_install_lines(text: str) -> list[str]:
         if "pip install" not in stripped and "uv pip install" not in stripped:
             continue
         # Project package: `-e .` or bare `.` without extras; skip deps-only paths.
-        if ".[bench]" in stripped or ".[dev]" in stripped:
+        if _PROJECT_EXTRAS_RE.search(stripped):
             continue
         if re.search(r"(?:^|\s)-e\s+\.(?:\s|$)", stripped) or re.search(
             r"pip install[^\n]*\s\.(?:\s|$)", stripped
@@ -179,18 +216,19 @@ def test_dockerfile_project_install_disables_build_isolation() -> None:
     pull ``setuptools>=68`` (etc.) from the network, unbound by ``uv.lock``.
     GREEN must disable build isolation (and keep install inside ``/opt/venv``).
     """
-    text = _dockerfile_text()
-    # Preserve frozen lock consumption for deps.
-    assert "uv sync" in text and ("--frozen" in text or "--locked" in text), (
-        "FINALB-05: Dockerfile must keep frozen uv sync for dependency install"
+    builder = _builder_body()
+    runtime = _runtime_body()
+    # Preserve frozen lock consumption for deps (builder stage).
+    assert "uv sync" in builder and ("--frozen" in builder or "--locked" in builder), (
+        "FINALB-05: builder stage must keep frozen uv sync for dependency install"
     )
-    assert re.search(r"--extra\s+bench\b", text) or "extras=bench" in text, (
-        "FINALB-05: frozen sync must still enable the bench extra"
+    assert re.search(r"--extra\s+bench\b", builder) or "extras=bench" in builder, (
+        "FINALB-05: builder frozen sync must still enable the bench extra"
     )
 
-    project_lines = _project_install_lines(text)
+    project_lines = _project_install_lines(runtime)
     assert project_lines, (
-        "FINALB-05: expected a project install step "
+        "FINALB-05: expected a project install step in the runtime stage "
         "(`pip install -e .` / `uv pip install -e .`) after frozen dep sync"
     )
     for ln in project_lines:
@@ -204,18 +242,20 @@ def test_dockerfile_project_install_disables_build_isolation() -> None:
             f"Offending: {ln}"
         )
         # Install executes with /opt/venv on PATH (builder/runtime copy pattern).
-        assert "/opt/venv" in text, (
+        assert "/opt/venv" in runtime or "/opt/venv" in builder, (
             "FINALB-05: image must install into /opt/venv (relocatable locked venv)"
         )
 
-    # Reject unlocked bench dependency resolution (regression guard).
-    offenders = [
-        ln.strip()
-        for ln in text.splitlines()
-        if "pip install" in ln and ".[bench]" in ln.replace(" ", "") and "--no-deps" not in ln
-    ]
+    # Structural unlocked-extras rejection on the default image path (RC-03).
+    offenders: list[str] = []
+    for stage_name, body in (
+        (DEFAULT_BUILDER_STAGE, builder),
+        (DEFAULT_RUNTIME_STAGE, runtime),
+    ):
+        for hit in unlocked_project_extra_installs(body):
+            offenders.append(f"{stage_name}: {hit}")
     assert not offenders, (
-        "FINALB-05: unlocked `pip install .[bench]` must not resolve deps. Found:\n  - "
+        "FINALB-05: unlocked project+extras pip/uv install must not resolve deps. Found:\n  - "
         + "\n  - ".join(offenders)
     )
 
@@ -225,8 +265,9 @@ def test_dockerfile_no_hardcoded_ort_version_independent_of_lock() -> None:
 
     A post-install smoke may still import onnxruntime, but hard-coded version
     tuples (e.g. ``(1, 22) <= p < (2, 0)``) reintroduce dual writers vs the lock.
+    Scoped to the default image stages (builder + runtime).
     """
-    text = _dockerfile_text()
+    text = _default_image_stage_text()
     # Only flag executable/version-check forms — not prose mentioning 1.22.
     patterns = (
         r"\(1\s*,\s*22\)\s*<=",  # tuple lower bound
@@ -236,10 +277,105 @@ def test_dockerfile_no_hardcoded_ort_version_independent_of_lock() -> None:
     )
     hits = [m.group(0) for pat in patterns if (m := re.search(pat, text))]
     assert not hits, (
-        "Dockerfile must not hard-code a second ORT version bound independent of "
-        "uv.lock (remove the pip-resolved [1.22, 2.0) smoke; lock pins ORT). "
-        f"Matched: {hits!r}"
+        "Dockerfile default image stages must not hard-code a second ORT version "
+        "bound independent of uv.lock (remove the pip-resolved [1.22, 2.0) smoke; "
+        f"lock pins ORT). Matched: {hits!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 1b. Negative guards — prove stage scope + structural install bite (TEST-15)
+# ---------------------------------------------------------------------------
+
+def test_guard_bites_when_uv_lock_copy_only_in_non_builder_stage(tmp_path: Path) -> None:
+    """RC-02: uv.lock present only outside builder must not satisfy the gate."""
+    text = (
+        "FROM python:3.12-slim AS builder\n"
+        "RUN uv sync --frozen --extra bench\n"
+        "\n"
+        "FROM python:3.12-slim AS runtime\n"
+        "COPY pyproject.toml uv.lock ./\n"
+    )
+    path = _write_dockerfile(tmp_path, text)
+    stages = dockerfile_stages(path)
+    # Whole-file would still see the lock COPY.
+    assert re.search(r"^COPY\s+[^\n]*\buv\.lock\b", path.read_text(), re.MULTILINE)
+    assert not re.search(
+        r"^COPY\s+[^\n]*\buv\.lock\b", stages[DEFAULT_BUILDER_STAGE], re.MULTILINE
+    ), "stage-scoped builder body must not claim a lock COPY that lives in runtime"
+
+
+def test_guard_bites_on_quoted_multi_extra_unlocked_install(tmp_path: Path) -> None:
+    """RC-03 mutation (c): ``pip install ".[bench,vlm]"`` must be rejected."""
+    text = (
+        "FROM python:3.12-slim AS builder\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        "RUN uv sync --frozen --no-dev --extra bench --no-install-project\n"
+        "\n"
+        "FROM python:3.12-slim AS runtime\n"
+        'RUN pip install ".[bench,vlm]"\n'
+    )
+    path = _write_dockerfile(tmp_path, text)
+    offenders = unlocked_project_extra_installs(
+        dockerfile_stages(path)[DEFAULT_RUNTIME_STAGE]
+    )
+    assert offenders, (
+        "structural gate must reject quoted multi-extra unlocked project install"
+    )
+    assert any("bench" in o and "vlm" in o for o in offenders)
+
+
+def test_guard_bites_on_continued_line_unlocked_extra_install(tmp_path: Path) -> None:
+    """RC-03: line-continued pip install of project extras must still be caught."""
+    text = (
+        "FROM python:3.12-slim AS builder\n"
+        "RUN true\n"
+        "\n"
+        "FROM python:3.12-slim AS runtime\n"
+        "RUN pip install \\\n"
+        "    --no-cache-dir \\\n"
+        "    '.[dev]'\n"
+    )
+    path = _write_dockerfile(tmp_path, text)
+    offenders = unlocked_project_extra_installs(
+        dockerfile_stages(path)[DEFAULT_RUNTIME_STAGE]
+    )
+    assert offenders, "line-continued unlocked project+extras install must be caught"
+
+
+def test_guard_bites_when_uv_sync_only_in_vlm_builder(tmp_path: Path) -> None:
+    """RC-02: frozen uv sync only in builder-vlm must not satisfy the default builder."""
+    text = (
+        "FROM python:3.12-slim AS builder\n"
+        "RUN echo no-sync-here\n"
+        "\n"
+        "FROM python:3.12-slim AS builder-vlm\n"
+        "RUN uv sync --frozen --extra bench --extra vlm\n"
+        "\n"
+        "FROM python:3.12-slim AS runtime\n"
+        "RUN true\n"
+    )
+    path = _write_dockerfile(tmp_path, text)
+    stages = dockerfile_stages(path)
+    whole = path.read_text()
+    assert "uv sync" in whole and "--frozen" in whole  # whole-file would stay green
+    assert "uv sync" not in stages[DEFAULT_BUILDER_STAGE]
+    assert "--frozen" not in stages[DEFAULT_BUILDER_STAGE]
+
+
+def test_literal_bench_token_gate_is_evadable_control(tmp_path: Path) -> None:
+    """Control: the old literal ``.[bench]`` match misses quoted multi-extra forms.
+
+    Documents why RC-03 replaced the token check with a structural parser.
+    """
+    line = 'RUN pip install ".[bench,vlm]"'
+    # Old gate (simplified): look for the exact ``.[bench]`` token.
+    old_hit = ".[bench]" in line.replace(" ", "") and "--no-deps" not in line
+    # ``.[bench,vlm]`` does not contain the exact ``.[bench]`` token after
+    # space-stripping either — the comma breaks the literal.
+    assert ".[bench]" not in line.replace(" ", "")
+    assert old_hit is False
+    assert unlocked_project_extra_installs(line), "structural parser must still catch it"
 
 
 # ---------------------------------------------------------------------------

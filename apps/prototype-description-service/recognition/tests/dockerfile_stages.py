@@ -31,20 +31,21 @@ RUNTIME_VLM_STAGE = "runtime-vlm"
 # Project install with extras: .[bench], ".[bench,vlm]", '.[dev]', etc.
 _PROJECT_EXTRAS_RE = re.compile(r"""(?:['"]\.\[[^\]]+\]['"]|\.\[[^\]]+\])""")
 
-# Optional Dockerfile `RUN` prefix, env wrappers, absolute interpreter, and
-# `python -m` before pip/uv. env FOO=1 / env A=1 B=2 prefixes are real install
-# forms that previously evaded a fragment-start-only match (D5.5).
+# pip/uv install anywhere in a shell fragment (D5.5 / G-08). Leading
+# ``env VAR=…`` wrappers, bare ``VAR=VALUE`` assignments, absolute interpreters,
+# and ``python -m`` prefixes are stripped by ``_strip_leading_wrappers`` so a
+# start-anchored match cannot be defeated by inert tokens.
 _PIP_INSTALL_RE = re.compile(
-    r"(?:^|&&|;|\|)\s*(?:RUN\s+)?"
-    r"(?:env(?:\s+[A-Za-z_][\w]*=\S+)+\s+)?"
-    r"(?:(?:/[\w./-]+/)?(?:python3?|[\w.-]*python3?)\s+-m\s+)?"
     r"(?:uv\s+pip\s+install|pip(?:3)?\s+install)\b",
     re.IGNORECASE,
 )
 
-# sh -c / bash -c quoted payloads (single- or double-quoted).
+# Leading env assignment tokens (``FOO=1`` / ``env FOO=1 BAR=2``).
+_ENV_ASSIGN_RE = re.compile(r"^(?:env\s+)?(?:[A-Za-z_][\w]*=\S+\s+)+")
+
+# sh -c / bash -c / sh -lc / bash -lc quoted payloads.
 _SHELL_C_RE = re.compile(
-    r"""(?:ba)?sh\s+-c\s+(?P<q>['"])(?P<body>.*?)(?P=q)""",
+    r"""(?:ba)?sh\s+-[a-zA-Z]*c[a-zA-Z]*\s+(?P<q>['"])(?P<body>.*?)(?P=q)""",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -207,7 +208,30 @@ def _parse_dockerfile(
     order: list[str | None] = []
     arg_defaults: dict[str, str] = {}
     current: list[str] | None = None
+    heredoc_delim: str | None = None
+    heredoc_indented = False
     for line in Path(dockerfile).read_text(encoding="utf-8").splitlines():
+        # Heredoc bodies are opaque: a line beginning with FROM must not open a
+        # new stage (G-10). Track openers only on RUN/COPY/ADD via the shared
+        # heredoc regex used by join_continued_lines.
+        if heredoc_delim is not None:
+            if current is not None:
+                current.append(line)
+            if _is_heredoc_terminator(line, heredoc_delim, indented=heredoc_indented):
+                heredoc_delim = None
+                heredoc_indented = False
+            continue
+
+        if not line.lstrip().startswith("#"):
+            scan = _strip_trailing_comment(line)
+            heredoc = _HEREDOC_OPEN_RE.match(scan)
+            if heredoc:
+                if current is not None:
+                    current.append(line)
+                heredoc_delim = heredoc.group("delim")
+                heredoc_indented = heredoc.group("dash") == "-"
+                continue
+
         parsed = parse_from_instruction(line)
         if parsed is not None:
             ref, name = parsed
@@ -219,7 +243,12 @@ def _parse_dockerfile(
                 # previous stage so bodies do not bleed across the FROM.
                 current = None
                 continue
-            current = stages.setdefault(name, [])
+            if name in stages:
+                raise DockerfileParseError(
+                    f"duplicate stage name {name!r} (BuildKit rejects redefinition)"
+                )
+            current = []
+            stages[name] = current
             bases[name] = ref
             continue
         # ARG defaults apply to subsequent FROM refs (global + re-declared).
@@ -566,8 +595,36 @@ def stage_resolves_vlm_extra(
     return False
 
 
+def _strip_leading_wrappers(fragment: str) -> str:
+    """Drop RUN / env wrappers / VAR=VALUE / python -m prefixes before pip.
+
+    Keeps the install match behavioural rather than start-anchored so
+    ``PIP_NO_INPUT=1 pip install ".[bench]"`` and ``env FOO=1 …`` cannot evade.
+    """
+    text = fragment.strip()
+    if text.upper().startswith("RUN"):
+        rest = text[3:]
+        if not rest or rest[0].isspace():
+            text = rest.lstrip()
+    # Repeat: env FOO=1 BAR=2 and bare FOO=1 prefixes may stack.
+    while True:
+        match = _ENV_ASSIGN_RE.match(text)
+        if not match:
+            break
+        text = text[match.end() :]
+    # Absolute or bare python -m pip …
+    text = re.sub(
+        r"^(?:/[\w./-]+/)?(?:python3?|[\w.-]*python3?)\s+-m\s+",
+        "",
+        text,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    return text.strip()
+
+
 def _fragments_to_scan(part: str) -> list[str]:
-    """Expand shell wrappers so ``sh -c "pip install …"`` is visible (D5.5)."""
+    """Expand shell wrappers so ``sh -c`` / ``sh -lc`` payloads are visible (D5.5)."""
     out = [part]
     for match in _SHELL_C_RE.finditer(part):
         body = match.group("body")
@@ -585,7 +642,8 @@ def unlocked_project_extra_installs(stage_text: str) -> list[str]:
 
     Catches ``pip install .[bench]``, ``python -m pip install ".[bench]"``,
     ``/opt/venv/bin/python -m pip install '.[dev]'``, ``uv pip install …``,
-    ``env FOO=1 pip install …``, ``sh -c "pip install …"``, line continuations,
+    ``env FOO=1 pip install …``, ``PIP_NO_INPUT=1 pip install …``,
+    ``sh -c`` / ``sh -lc`` / ``bash -c`` wrappers, line continuations,
     heredoc bodies, and any extra name — whenever ``--no-deps`` is absent
     from the *same* shell fragment (ORCH-LAUNCH-01-S1-RC-03 / RC4 / FIR4-BR-01 / D5).
 
@@ -603,8 +661,7 @@ def unlocked_project_extra_installs(stage_text: str) -> list[str]:
                 fragment = fragment.strip()
                 if not fragment or fragment.startswith("#"):
                     continue
-                # Anchor at fragment start so mid-line noise cannot hide an install.
-                probe = fragment if _PIP_INSTALL_RE.match(fragment) else f"&& {fragment}"
+                probe = _strip_leading_wrappers(fragment)
                 if not _PIP_INSTALL_RE.search(probe):
                     continue
                 if "--no-deps" in fragment:

@@ -447,16 +447,31 @@ def test_rc04_uv_sync_uses_locked_not_frozen() -> None:
             )
 
 
-def test_rc04_user_acx_only_on_runtime_vlm() -> None:
-    """RB-03 as shipped: runtime-vlm drops to USER acx; runtime does not."""
-    runtime_eff = effective_stage_body(DOCKERFILE, DEFAULT_RUNTIME_STAGE)
-    runtime_vlm_eff = effective_stage_body(DOCKERFILE, RUNTIME_VLM_STAGE)
-    assert re.search(r"^\s*USER\s+acx\s*$", runtime_vlm_eff, re.MULTILINE), (
-        "runtime-vlm effective body must declare USER acx"
-    )
-    assert not re.search(r"^\s*USER\s+acx\s*$", runtime_eff, re.MULTILINE), (
-        "runtime must not declare USER acx (RB-03 privilege drop deferred)"
-    )
+def test_rc04_both_runtimes_drop_privilege() -> None:
+    """RB-03: EVERY serving runtime drops to USER acx, and none returns to root.
+
+    Superseding the earlier form of this test, which pinned the deferral
+    itself as an invariant (runtime-vlm drops privilege, runtime does not).
+    That spelling made the security defect load-bearing: closing it turned
+    the gate red. The invariant worth guarding is that no serving stage runs
+    as root, so a future stage that forgets USER acx fails here.
+    """
+    for stage in (DEFAULT_RUNTIME_STAGE, RUNTIME_VLM_STAGE):
+        body = effective_stage_body(DOCKERFILE, stage)
+        assert re.search(r"^\s*USER\s+acx\s*$", body, re.MULTILINE), (
+            f"{stage} effective body must declare USER acx (RB-03): the "
+            f"serving process must not run as root"
+        )
+        # A later USER root would silently undo the drop.
+        last_user = None
+        for line in body.splitlines():
+            match = re.match(r"^\s*USER\s+(\S+)\s*$", line)
+            if match:
+                last_user = match.group(1)
+        assert last_user == "acx", (
+            f"{stage} must END as USER acx; last USER directive was "
+            f"{last_user!r} (RB-03)"
+        )
 
 
 def test_rc04_no_volume_instruction_anywhere() -> None:

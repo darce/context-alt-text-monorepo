@@ -1881,6 +1881,94 @@ describe('ReviewQueue', () => {
     });
   });
 
+  it('E21-14-BR-16: top-unlabeled 500 shows error+retry, not drain or retired copy', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockRejectedValue(
+      new HTTPError({
+        status: 500,
+        retryAfterSeconds: undefined,
+        endpoint: '/acx/v1/recognition/clusters/top-unlabeled',
+        bodyPreview: 'acx_projection_query_failed',
+        message: 'projection query failed',
+      }),
+    );
+
+    renderQueue();
+
+    const error = await screen.findByTestId('acx-review-queue-top-unlabeled-error');
+    expect(error).toHaveAttribute('role', 'alert');
+    expect(error).toHaveTextContent('Unable to load unlabeled clusters.');
+    expect(within(error).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).not.toBeInTheDocument();
+    expect(screen.queryByText('This cluster is no longer available.')).not.toBeInTheDocument();
+  });
+
+  it('E21-14-BR-16: topUnlabeledQuery sets retry:false (no automatic 500 reattempts)', async () => {
+    // Client defaults intentionally omit retry:false so the per-query option is the only guard.
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retryDelay: 0 },
+      },
+    });
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockRejectedValue(
+      new HTTPError({
+        status: 500,
+        retryAfterSeconds: undefined,
+        endpoint: '/acx/v1/recognition/clusters/top-unlabeled',
+        bodyPreview: 'acx_projection_query_failed',
+        message: 'projection query failed',
+      }),
+    );
+
+    render(withQueueProviders(queryClient, <ReviewQueueHarness />));
+
+    await screen.findByTestId('acx-review-queue-top-unlabeled-error');
+    // Without per-query retry:false, React Query would re-fire ~3 times (4 total).
+    expect(fetchTopUnlabeledClusters).toHaveBeenCalledTimes(1);
+  });
+
+  it('E21-14-BR-16: top-unlabeled failure keeps assignment cards and surfaces retry', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-keep-1',
+          identity_id: 'identity-keep-1',
+          suggested_cluster_id: 'cluster-keep-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockRejectedValue(
+      new HTTPError({
+        status: 500,
+        retryAfterSeconds: undefined,
+        endpoint: '/acx/v1/recognition/clusters/top-unlabeled',
+        bodyPreview: 'acx_projection_query_failed',
+        message: 'projection query failed',
+      }),
+    );
+
+    renderQueue();
+
+    await screen.findByTestId('acx-review-card');
+    expect(await screen.findByTestId('acx-review-queue-top-unlabeled-error')).toBeInTheDocument();
+    expect(screen.queryByText('Failed to load suggestions.')).not.toBeInTheDocument();
+  });
+
   it('BR-31: CLUSTER card renders Review members affordance and drives onReview', async () => {
     const onReview = vi.fn();
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({

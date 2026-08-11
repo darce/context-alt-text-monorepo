@@ -635,6 +635,145 @@ class LifecycleManagerTest extends TestCase
         $this->assertFalse(get_option('acx_schema_fingerprint'));
     }
 
+    /**
+     * E21-14-BR-01 / RLSE-05 / OBS-08: dbDelta MySQL failure must not stamp version or
+     * fingerprint (that permanently suppresses retry). Next maybe_upgrade must re-run.
+     * TEST-15: goes red when maybe_create returns true after last_error.
+     */
+    public function testMaybeUpgradeDoesNotStampOnDbDeltaFailureAndRetries(): void
+    {
+        global $wpdb;
+
+        $mysqlError = "Invalid default value for 'assigned_at'";
+        $this->setOption('acx_version', '0.0.1-stale');
+        $GLOBALS['__ac_dbdelta_fail_on_match'] = 'acx_identity_members';
+        $GLOBALS['__ac_dbdelta_fail_error'] = $mysqlError;
+        $GLOBALS['__ac_error_log'] = [];
+
+        $this->manager->maybe_upgrade();
+
+        $this->assertSame(
+            '0.0.1-stale',
+            get_option('acx_version'),
+            'failed schema apply must not stamp acx_version (would suppress retry)'
+        );
+        $this->assertFalse(
+            get_option('acx_schema_fingerprint'),
+            'failed schema apply must not stamp acx_schema_fingerprint'
+        );
+        $log = $this->getErrorLog();
+        $this->assertNotEmpty($log, 'schema apply failure must log via Telemetry (OBS-08)');
+        $joined = \implode("\n", $log);
+        $this->assertStringContainsString($mysqlError, $joined);
+        $this->assertSame('', $wpdb->last_error, 'last_error must be cleared so it is not attributed to later work');
+
+        // Clear the simulated failure; next request must retry the full apply.
+        unset($GLOBALS['__ac_dbdelta_fail_on_match'], $GLOBALS['__ac_dbdelta_fail_error']);
+        $GLOBALS['__ac_dbdelta_queries'] = [];
+        $wpdb->last_error = '';
+
+        $this->manager->maybe_upgrade();
+
+        $retryQueries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
+        $this->assertNotEmpty($retryQueries, 'next maybe_upgrade must retry dbDelta after a failed apply');
+        $this->assertSame(ACX_VERSION, get_option('acx_version'));
+        $this->assertSame(
+            $this->manager->compute_projection_schema_fingerprint(),
+            get_option('acx_schema_fingerprint')
+        );
+    }
+
+    /**
+     * E21-14-BR-01: seed backfill failure must also refuse to stamp (same permanent-success trap).
+     */
+    public function testMaybeUpgradeDoesNotStampWhenAssignedAtSeedFails(): void
+    {
+        global $wpdb;
+
+        $this->setOption('acx_version', '0.0.1-stale');
+        $GLOBALS['__ac_error_log'] = [];
+
+        $fallback = '1970-01-01 00:00:00.000000';
+        $fallbackSecond = '1970-01-01 00:00:00';
+        $seedSql = $wpdb->prepare(
+            'UPDATE %i SET assigned_at = created_at WHERE assigned_at = %s OR assigned_at = %s',
+            'wp_acx_identity_members',
+            $fallback,
+            $fallbackSecond
+        );
+        $this->assertIsString($seedSql);
+        $wpdb->queryResults[trim((string) $seedSql)] = false;
+        $wpdb->last_error = '';
+
+        $this->manager->maybe_upgrade();
+
+        $this->assertSame(
+            '0.0.1-stale',
+            get_option('acx_version'),
+            'seed failure must not stamp acx_version'
+        );
+        $this->assertFalse(
+            get_option('acx_schema_fingerprint'),
+            'seed failure must not stamp fingerprint'
+        );
+    }
+
+    /**
+     * E21-14-BR-02 / rg-005: every key in build_projection_schema_statements must be applied.
+     * Goes red if a table is added to the map but never passed to dbDelta.
+     */
+    public function testMaybeUpgradeAppliesEveryProjectionSchemaStatementKey(): void
+    {
+        $statements = $this->manager->build_projection_schema_statements('wp_', 'COLLATE test');
+        $this->assertNotEmpty($statements, 'schema statement map must not be empty');
+
+        $this->manager->maybe_upgrade();
+
+        $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
+        $this->assertCount(
+            \count($statements),
+            $queries,
+            'dbDelta invocation count must equal statement map size (no orphan keys, no second list)'
+        );
+
+        $appliedSql = \implode("\n", $queries);
+        foreach (\array_keys($statements) as $key) {
+            $tableName = 'wp_' . $key;
+            $this->assertStringContainsString(
+                $tableName,
+                $appliedSql,
+                \sprintf('statement key "%s" must be applied via dbDelta (table %s)', $key, $tableName)
+            );
+        }
+    }
+
+    /**
+     * E21-14-BR-09: uninstall/reset owned-table list must include every schema map key
+     * (including acx_description_usage, previously omitted from OWNED_TABLE_SUFFIXES).
+     */
+    public function testUninstallDropsEveryProjectionSchemaTableIncludingDescriptionUsage(): void
+    {
+        global $wpdb;
+
+        $statements = $this->manager->build_projection_schema_statements('wp_', 'COLLATE test');
+        $this->manager->uninstall();
+
+        foreach (\array_keys($statements) as $key) {
+            $drop = 'DROP TABLE IF EXISTS `wp_' . $key . '`';
+            $this->assertContains(
+                $drop,
+                $wpdb->queries,
+                \sprintf('uninstall must drop schema table %s (single source of truth with statement map)', $key)
+            );
+        }
+
+        $this->assertContains(
+            'DROP TABLE IF EXISTS `wp_acx_description_usage`',
+            $wpdb->queries,
+            'acx_description_usage must not be orphaned on uninstall (BR-09)'
+        );
+    }
+
     private function findQueryContaining(array $queries, string $needle): string
     {
         foreach ($queries as $query) {

@@ -9,15 +9,19 @@ require_once __DIR__ . '/class-outbox-drain.php';
 require_once __DIR__ . '/class-curation-idempotency-key.php';
 require_once __DIR__ . '/interface-outbox-writer.php';
 require_once __DIR__ . '/class-outbox-writer.php';
+require_once __DIR__ . '/../class-projection-query-exception.php';
 require_once __DIR__ . '/../repositories/class-clusters-repository.php';
 require_once __DIR__ . '/../repositories/class-identity-members-repository.php';
 require_once __DIR__ . '/../repositories/interface-clusters-repository.php';
 require_once __DIR__ . '/../repositories/interface-identity-members-repository.php';
+require_once __DIR__ . '/../../support/class-telemetry.php';
 
+use AltContext\Sovereign\ProjectionQueryException;
 use AltContext\Sovereign\Repositories\ClustersRepository;
 use AltContext\Sovereign\Repositories\ClustersRepositoryInterface;
 use AltContext\Sovereign\Repositories\IdentityMembersRepository;
 use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
+use AltContext\Support\Telemetry;
 
 use function function_exists;
 use function get_current_user_id;
@@ -25,6 +29,7 @@ use function in_array;
 use function is_array;
 use function is_string;
 use function max;
+use function sprintf;
 use function trim;
 
 final class ConflictResolutionService {
@@ -133,14 +138,42 @@ final class ConflictResolutionService {
 		$metrics_refreshed = false;
 		$restore_report = null;
 
-		if ( 'accepted' === $resolution || 'accept_backend' === $resolution ) {
-			if ( $has_outbox_conflict ) {
-				$operation = $this->outbox_drain->find_operation_by_id( (int) $conflict['outbox_id'], $tenant_id );
-				$operation_type = is_array( $operation ) ? (string) ( $operation['operation_type'] ?? '' ) : '';
-				if (
-					! in_array( $operation_type, self::ACCEPT_MACHINE_OUTBOX_OPERATIONS, true )
-					&& ! in_array( $operation_type, self::ACCEPT_MACHINE_COMPOUND_OUTBOX_OPERATIONS, true )
-				) {
+		try {
+			if ( 'accepted' === $resolution || 'accept_backend' === $resolution ) {
+				if ( $has_outbox_conflict ) {
+					$operation = $this->outbox_drain->find_operation_by_id( (int) $conflict['outbox_id'], $tenant_id );
+					$operation_type = is_array( $operation ) ? (string) ( $operation['operation_type'] ?? '' ) : '';
+					if (
+						! in_array( $operation_type, self::ACCEPT_MACHINE_OUTBOX_OPERATIONS, true )
+						&& ! in_array( $operation_type, self::ACCEPT_MACHINE_COMPOUND_OUTBOX_OPERATIONS, true )
+					) {
+						$wpdb->query( 'ROLLBACK' );
+						return array(
+							'ok' => false,
+							'reason' => 'resolution_not_allowed',
+							'metrics_refreshed' => false,
+						);
+					}
+
+					if ( in_array( $operation_type, self::ACCEPT_MACHINE_COMPOUND_OUTBOX_OPERATIONS, true ) ) {
+						$mutation_ok = $this->resolve_compound_outbox_acceptance( $operation_type, $operation, $conflict, $tenant_id );
+					} else {
+						$mutation_ok = $this->clear_curation_for_entity(
+							(string) ( $conflict['entity_type'] ?? '' ),
+							(string) ( $conflict['entity_key'] ?? '' ),
+							$tenant_id
+						) > 0;
+					}
+					if ( $mutation_ok ) {
+						$mutation_ok = $this->outbox_drain->discard_operation( (int) $conflict['outbox_id'], $tenant_id );
+						$metrics_refreshed = $mutation_ok;
+					}
+				} else {
+					$mutation_ok = $this->resolve_projection_acceptance( $conflict, $tenant_id );
+				}
+			} elseif ( 'merge' === $resolution ) {
+				$normalized_merged_value = is_string( $merged_value ) ? trim( $merged_value ) : '';
+				if ( '' === $normalized_merged_value ) {
 					$wpdb->query( 'ROLLBACK' );
 					return array(
 						'ok' => false,
@@ -149,84 +182,73 @@ final class ConflictResolutionService {
 					);
 				}
 
-				if ( in_array( $operation_type, self::ACCEPT_MACHINE_COMPOUND_OUTBOX_OPERATIONS, true ) ) {
-					$mutation_ok = $this->resolve_compound_outbox_acceptance( $operation_type, $operation, $conflict, $tenant_id );
-				} else {
-					$mutation_ok = $this->clear_curation_for_entity(
-						(string) ( $conflict['entity_type'] ?? '' ),
-						(string) ( $conflict['entity_key'] ?? '' ),
-						$tenant_id
-					) > 0;
-				}
-				if ( $mutation_ok ) {
-					$mutation_ok = $this->outbox_drain->discard_operation( (int) $conflict['outbox_id'], $tenant_id );
+				$mutation_ok = $this->resolve_merge_acceptance( $conflict, $tenant_id, $normalized_merged_value );
+				$metrics_refreshed = $mutation_ok;
+				if ( $mutation_ok && $has_outbox_conflict ) {
+					$mutation_ok = $this->outbox_drain->re_enqueue_with_current_base(
+						(int) $conflict['outbox_id'],
+						(int) ( $conflict['backend_version'] ?? 0 ),
+						$tenant_id,
+						$normalized_merged_value
+					);
 					$metrics_refreshed = $mutation_ok;
 				}
-			} else {
-				$mutation_ok = $this->resolve_projection_acceptance( $conflict, $tenant_id );
+			} elseif ( 'restore_local' === $resolution ) {
+				// Top-level branch by construction (PR2-01): resolve_projection_acceptance()
+				// only runs under accepted|accept_backend, so restore_local dispatches here,
+				// beside merge/accept_backend. Local curation is the good copy — synthesize
+				// re-push outbox ops instead of mutating local state.
+				$restore_report = $this->restore_local_roster_curation( $conflict, $tenant_id );
+				$mutation_ok = null !== $restore_report;
+				$metrics_refreshed = $mutation_ok && $restore_report['enqueued'] > 0;
+			} elseif ( $has_outbox_conflict ) {
+				$mutation_ok = $this->outbox_drain->re_enqueue_with_current_base(
+					(int) $conflict['outbox_id'],
+					(int) ( $conflict['backend_version'] ?? 0 ),
+					$tenant_id
+				);
+				$metrics_refreshed = $mutation_ok;
 			}
-		} elseif ( 'merge' === $resolution ) {
-			$normalized_merged_value = is_string( $merged_value ) ? trim( $merged_value ) : '';
-			if ( '' === $normalized_merged_value ) {
+
+			if ( ! $mutation_ok ) {
 				$wpdb->query( 'ROLLBACK' );
 				return array(
 					'ok' => false,
-					'reason' => 'resolution_not_allowed',
+					'reason' => 'entity_mutation_failed',
 					'metrics_refreshed' => false,
 				);
 			}
 
-			$mutation_ok = $this->resolve_merge_acceptance( $conflict, $tenant_id, $normalized_merged_value );
-			$metrics_refreshed = $mutation_ok;
-			if ( $mutation_ok && $has_outbox_conflict ) {
-				$mutation_ok = $this->outbox_drain->re_enqueue_with_current_base(
-					(int) $conflict['outbox_id'],
-					(int) ( $conflict['backend_version'] ?? 0 ),
-					$tenant_id,
-					$normalized_merged_value
+			if ( ! $this->conflict_repository->mark_resolved( $conflict_id, $resolution, $tenant_id ) ) {
+				$wpdb->query( 'ROLLBACK' );
+				return array(
+					'ok' => false,
+					'reason' => 'conflict_update_failed',
+					'metrics_refreshed' => false,
 				);
-				$metrics_refreshed = $mutation_ok;
 			}
-		} elseif ( 'restore_local' === $resolution ) {
-			// Top-level branch by construction (PR2-01): resolve_projection_acceptance()
-			// only runs under accepted|accept_backend, so restore_local dispatches here,
-			// beside merge/accept_backend. Local curation is the good copy — synthesize
-			// re-push outbox ops instead of mutating local state.
-			$restore_report = $this->restore_local_roster_curation( $conflict, $tenant_id );
-			$mutation_ok = null !== $restore_report;
-			$metrics_refreshed = $mutation_ok && $restore_report['enqueued'] > 0;
-		} elseif ( $has_outbox_conflict ) {
-			$mutation_ok = $this->outbox_drain->re_enqueue_with_current_base(
-				(int) $conflict['outbox_id'],
-				(int) ( $conflict['backend_version'] ?? 0 ),
-				$tenant_id
-			);
-			$metrics_refreshed = $mutation_ok;
-		}
 
-		if ( ! $mutation_ok ) {
+			if ( false === $wpdb->query( 'COMMIT' ) ) {
+				$wpdb->query( 'ROLLBACK' );
+				return array(
+					'ok' => false,
+					'reason' => 'conflict_update_failed',
+					'metrics_refreshed' => false,
+				);
+			}
+		} catch ( ProjectionQueryException $exception ) {
+			// E21-14-BR-11: projection read failure mid-resolve must not fatal the request.
 			$wpdb->query( 'ROLLBACK' );
+			Telemetry::log_line(
+				sprintf(
+					'[acx] ConflictResolutionService projection failure on conflict %d: %s',
+					$conflict_id,
+					$exception->getMessage()
+				)
+			);
 			return array(
 				'ok' => false,
 				'reason' => 'entity_mutation_failed',
-				'metrics_refreshed' => false,
-			);
-		}
-
-		if ( ! $this->conflict_repository->mark_resolved( $conflict_id, $resolution, $tenant_id ) ) {
-			$wpdb->query( 'ROLLBACK' );
-			return array(
-				'ok' => false,
-				'reason' => 'conflict_update_failed',
-				'metrics_refreshed' => false,
-			);
-		}
-
-		if ( false === $wpdb->query( 'COMMIT' ) ) {
-			$wpdb->query( 'ROLLBACK' );
-			return array(
-				'ok' => false,
-				'reason' => 'conflict_update_failed',
 				'metrics_refreshed' => false,
 			);
 		}

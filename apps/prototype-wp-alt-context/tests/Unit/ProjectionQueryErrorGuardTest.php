@@ -14,6 +14,7 @@ use AltContext\Sovereign\ClusterFacade;
 use AltContext\Sovereign\Mappers\ClusterResponseMapper;
 use AltContext\Sovereign\Mappers\MemberResponseMapper;
 use AltContext\Sovereign\ProjectionQueryException;
+use AltContext\Sovereign\Repositories\ClustersReadRepository;
 use AltContext\Sovereign\Repositories\IdentityMembersReadRepository;
 use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
 use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
@@ -22,6 +23,7 @@ use AltContext\Tests\Stubs\NullIdentityMembersRepository;
 use AltContext\Tests\Stubs\NullSyncStateRepository;
 use AltContext\Tests\Stubs\SpySyncPullJob;
 use AltContext\Tests\TestCase;
+use ReflectionClass;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -142,8 +144,179 @@ class ProjectionQueryErrorGuardTest extends TestCase
         $this->assertSame('acx_projection_query_failed', $response->get_error_code());
         $this->assertSame(500, (int) ($response->get_error_data()['status'] ?? 0));
         $this->assertStringContainsString('get_cluster_members', $response->get_error_message());
-        $this->assertStringContainsString(self::MYSQL_ASSIGNED_AT_ERROR, $response->get_error_message());
+        // BR-10: REST surface must not leak raw MySQL / schema internals.
+        $this->assertStringNotContainsString(self::MYSQL_ASSIGNED_AT_ERROR, $response->get_error_message());
+        $this->assertStringNotContainsString('assigned_at', $response->get_error_message());
+        $this->assertStringNotContainsString('wp_acx_', $response->get_error_message());
         $this->assertSame(0, $repairCalls, 'repair must not fire when the cause is a query error');
+    }
+
+    /**
+     * E21-14-BR-17: null result with empty last_error must still throw.
+     * wpdb returns null without setting last_error when !ready or query filter nullifies SQL.
+     */
+    public function testListForClusterThrowsOnNullResultWithoutLastError(): void
+    {
+        global $wpdb;
+        $wpdb->get_results_returns_null = true;
+        $wpdb->last_error = '';
+
+        $this->expectException(ProjectionQueryException::class);
+        $this->expectExceptionMessage('query did not execute');
+
+        $this->repository->list_for_cluster('cluster-null-path', 10, 0, self::currentTenantId());
+    }
+
+    /**
+     * E21-14-BR-14: legitimately empty get_results must not throw.
+     */
+    public function testListForClusterReturnsEmptyWhenNoRowsAndNoError(): void
+    {
+        global $wpdb;
+        $wpdb->mockResults = [];
+        $wpdb->last_error = '';
+        $wpdb->get_results_returns_null = false;
+
+        $rows = $this->repository->list_for_cluster('cluster-empty', 10, 0, self::currentTenantId());
+
+        $this->assertSame([], $rows);
+    }
+
+    /**
+     * E21-14-BR-08 / OBS-08: every public read method in both repositories must call the guard.
+     * A new unguarded read method fails this suite rather than silently laundering errors.
+     */
+    public function testEveryReadMethodInBothRepositoriesCallsGuardQueryError(): void
+    {
+        $files = [
+            IdentityMembersReadRepository::class => dirname(__DIR__, 2)
+                . '/src/sovereign/repositories/class-identity-members-read-repository.php',
+            ClustersReadRepository::class => dirname(__DIR__, 2)
+                . '/src/sovereign/repositories/class-clusters-read-repository.php',
+        ];
+
+        foreach ($files as $class => $path) {
+            $this->assertFileExists($path, $class . ' source missing');
+            $source = (string) file_get_contents($path);
+            $reflection = new ReflectionClass($class);
+            foreach ($reflection->getMethods(\ReflectionMethod::IS_PUBLIC) as $method) {
+                if ($method->class !== $class || $method->isConstructor()) {
+                    continue;
+                }
+                $name = $method->getName();
+                $body = $this->extractMethodBody($source, $name);
+                $this->assertNotSame(
+                    '',
+                    $body,
+                    sprintf('%s::%s body not found for guard scan', $class, $name)
+                );
+                $this->assertStringContainsString(
+                    'guard_query_error',
+                    $body,
+                    sprintf(
+                        '%s::%s must call guard_query_error (OBS-08 / E21-14-BR-08)',
+                        $class,
+                        $name
+                    )
+                );
+            }
+        }
+    }
+
+    /**
+     * E21-14-BR-08 behavioural: unguarded cluster reads used to return empty; they must throw.
+     */
+    public function testClustersListForTenantThrowsOnMysqlError(): void
+    {
+        global $wpdb;
+        $wpdb->get_results_returns_null = true;
+        $wpdb->last_error = self::MYSQL_ASSIGNED_AT_ERROR;
+
+        $repo = new ClustersReadRepository('wp_acx_clusters');
+
+        $this->expectException(ProjectionQueryException::class);
+        $this->expectExceptionMessage('clusters.list_for_tenant');
+
+        $repo->list_for_tenant(self::currentTenantId(), 10, 0);
+    }
+
+    public function testClustersListForTenantThrowsOnNullWithoutLastError(): void
+    {
+        global $wpdb;
+        $wpdb->get_results_returns_null = true;
+        $wpdb->last_error = '';
+
+        $repo = new ClustersReadRepository('wp_acx_clusters');
+
+        $this->expectException(ProjectionQueryException::class);
+        $this->expectExceptionMessage('query did not execute');
+
+        $repo->list_for_tenant(self::currentTenantId(), 10, 0);
+    }
+
+    public function testFindByUuidDoesNotThrowOnLegitimateNullRow(): void
+    {
+        global $wpdb;
+        $wpdb->mockRow = null;
+        $wpdb->get_row_returns_null = true;
+        $wpdb->last_error = '';
+
+        $repo = new ClustersReadRepository('wp_acx_clusters');
+        $row = $repo->find_by_uuid('missing-cluster');
+
+        $this->assertNull($row);
+    }
+
+    public function testFindByUuidThrowsWhenLastErrorSet(): void
+    {
+        global $wpdb;
+        $wpdb->get_row_returns_null = true;
+        $wpdb->last_error = self::MYSQL_ASSIGNED_AT_ERROR;
+
+        $repo = new ClustersReadRepository('wp_acx_clusters');
+
+        $this->expectException(ProjectionQueryException::class);
+        $this->expectExceptionMessage('clusters.find_by_uuid');
+
+        $repo->find_by_uuid('broken-cluster');
+    }
+
+    public function testHasProjectionRowsDoesNotThrowOnLegitimateNullVar(): void
+    {
+        global $wpdb;
+        $wpdb->get_var_returns_null = true;
+        $wpdb->last_error = '';
+
+        $repo = new ClustersReadRepository('wp_acx_clusters');
+        $this->assertFalse($repo->has_projection_rows_for_tenant(self::currentTenantId()));
+    }
+
+    /**
+     * @return string Method body between opening brace and matching close, or empty.
+     */
+    private function extractMethodBody(string $source, string $methodName): string
+    {
+        $pattern = '/function\s+' . preg_quote($methodName, '/') . '\s*\([^)]*\)[^{]*\{/';
+        if (!preg_match($pattern, $source, $match, PREG_OFFSET_CAPTURE)) {
+            return '';
+        }
+
+        $start = $match[0][1] + strlen($match[0][0]);
+        $depth = 1;
+        $length = strlen($source);
+        for ($i = $start; $i < $length; $i++) {
+            $char = $source[$i];
+            if ('{' === $char) {
+                ++$depth;
+            } elseif ('}' === $char) {
+                --$depth;
+                if (0 === $depth) {
+                    return substr($source, $start, $i - $start);
+                }
+            }
+        }
+
+        return '';
     }
 
     public function testGetClusterMembersWithRealReadRepoDoesNotCollapseQueryErrorIntoEmptyList(): void

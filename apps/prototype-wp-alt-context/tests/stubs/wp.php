@@ -2814,6 +2814,16 @@ if (!function_exists('dbDelta')) {
 
             $GLOBALS['__ac_dbdelta_queries'][] = $normalized;
             $executed[] = $normalized;
+
+            // Test injection: simulate MySQL rejecting a statement (sets $wpdb->last_error).
+            // Match is a substring of the SQL (typically a table suffix like acx_identity_members).
+            $failOn = $GLOBALS['__ac_dbdelta_fail_on_match'] ?? null;
+            if (is_string($failOn) && $failOn !== '' && str_contains($normalized, $failOn)) {
+                $error = $GLOBALS['__ac_dbdelta_fail_error'] ?? "dbDelta simulated failure for {$failOn}";
+                if (isset($GLOBALS['wpdb']) && is_object($GLOBALS['wpdb'])) {
+                    $GLOBALS['wpdb']->last_error = (string) $error;
+                }
+            }
         }
 
         return $executed;

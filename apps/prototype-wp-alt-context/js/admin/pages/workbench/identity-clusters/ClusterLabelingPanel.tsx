@@ -167,6 +167,7 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
   const {
     members,
     isLoading,
+    isError,
     truncated,
     total,
     isFullyLoaded,
@@ -486,6 +487,8 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
         <div className="acx-cluster-labeling-panel__grid" ref={memberGridRef} tabIndex={-1}>
           {isLoading ? (
             <p>{__('Loading faces...', 'alt-context')}</p>
+          ) : isError ? (
+            <p>{__('Unable to load cluster members.', 'alt-context')}</p>
           ) : members.length > 0 ? (
             members.map((member) => (
               <div key={member.identity_id} className="acx-cluster-labeling-panel__face">

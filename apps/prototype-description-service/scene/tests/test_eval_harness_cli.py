@@ -562,10 +562,16 @@ def _write_score_manifest(tmp_path, entries, roster, name="golden.json"):
     return manifest_path, _manifest_sha(load_manifest(str(manifest_path)))
 
 
-def _w1_audience_manifest_and_record(tmp_path):
-    """One publishable celeb (media 10) + one local-only personal photo (media 20)."""
+def _w1_audience_manifest_and_record(tmp_path, *, inject_wrong_name: bool = False):
+    """One publishable celeb (media 10) + one local-only personal photo (media 20).
+
+    Default is a clean successful score (correct local identity). Pass
+    ``inject_wrong_name=True`` when the case needs a wrong-name floor breach
+    (public redaction, wrong-name failure path).
+    """
     from scripts.eval_harness.schema import SCHEMA, DocKind
 
+    local_identity = "Wrong Celebrity" if inject_wrong_name else _W1_LOCAL_NAME
     entries = [
         {
             "path": _W1_PUBLIC_PATH,
@@ -577,7 +583,7 @@ def _w1_audience_manifest_and_record(tmp_path):
             "base_caption": "",
             "must_right": [_W1_PUBLIC_NAME],
             # Non-empty easy_wrong so independent vacuity gates do not fire before
-            # the wrong-name floor this fixture is meant to exercise (F1-1).
+            # the wrong-name floor this fixture can exercise (F1-1).
             "easy_wrong": [_W1_LOCAL_NAME],
             "policy": {"recognition_enabled": True},
             "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
@@ -630,7 +636,7 @@ def _w1_audience_manifest_and_record(tmp_path):
                             "alt_text_draft": f"{_W1_LOCAL_NAME} at a party.",
                             "visual_facts": {"objects": []},
                         },
-                        "identities": [{"name": "Wrong Celebrity", "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0}, "unpositioned": False}],
+                        "identities": [{"name": local_identity, "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0}, "unpositioned": False}],
                         "face_count": 1,
                         "error": None,
                     },
@@ -649,7 +655,9 @@ def test_cmd_score_public_audience_emits_redacted_public_artifact(tmp_path, monk
     exercised; VLM-6 S2A wrong-name floor therefore exits non-zero *after*
     artifacts are written — catch SystemExit and still assert the files.
     """
-    manifest_path, record_path = _w1_audience_manifest_and_record(tmp_path)
+    manifest_path, record_path = _w1_audience_manifest_and_record(
+        tmp_path, inject_wrong_name=True
+    )
     monkeypatch.chdir(tmp_path)
     with pytest.raises(SystemExit) as excinfo:
         main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path), "--audience", "public"])
@@ -674,12 +682,32 @@ def test_cmd_score_public_audience_emits_redacted_public_artifact(tmp_path, monk
 
 
 def test_cmd_score_default_local_emits_no_public_artifact(tmp_path, monkeypatch):  # VLM-6 S5 W1
-    """Default audience stays byte-compatible: no public artifact is produced.
+    """Default audience stays byte-compatible: successful score emits no public artifact.
 
-    Fixture includes a wrong-name row; score exits non-zero on the S2A floor
-    after writing the local report (artifacts still land).
+    Restored clean success path (F1-9 / TEST-15): a regression that writes
+    public artifacts only on a *successful* default score is caught here.
+    Wrong-name failure coverage lives in a separate test (net count up).
     """
     manifest_path, record_path = _w1_audience_manifest_and_record(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
+    assert (tmp_path / "run-x-report.json").exists()
+    assert not (tmp_path / "run-x-report.public.json").exists()
+    assert not (tmp_path / "run-x-report.public.md").exists()
+    report = json.loads((tmp_path / "run-x-report.json").read_text())
+    assert report["verdict"]["verdict"] == "pass"
+    assert "redaction" not in report
+
+
+def test_cmd_score_default_local_wrong_name_exits_nonzero(tmp_path, monkeypatch):  # VLM-6 S5 W1 / F1-9
+    """Default audience with a wrong-name row exits non-zero on the S2A floor.
+
+    Split from the green-path public-artifact guard so both paths stay watched
+    (sr-001: do not convert a success test into a failure test).
+    """
+    manifest_path, record_path = _w1_audience_manifest_and_record(
+        tmp_path, inject_wrong_name=True
+    )
     monkeypatch.chdir(tmp_path)
     with pytest.raises(SystemExit) as excinfo:
         main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])

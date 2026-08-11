@@ -1267,6 +1267,29 @@ def _cmd_score(args: argparse.Namespace) -> None:
 
 
 def _cmd_run(args: argparse.Namespace) -> None:
+    # C-06 / OBS-04: --check-determinism is honoured per scored leg (each
+    # provider matrix record is an independent artifact). Announce the child
+    # multiplier *before* paid fetch and before the first child spawns so the
+    # operator sees legs × seeds before wall clock pays — not a silent tax.
+    # Per-leg (not once) is deliberate: a single check would leave other legs
+    # uncertified under a flag that claims certification.
+    if getattr(args, "check_determinism", False):
+        providers: list[str | None] = (
+            list(dict.fromkeys(args.provider)) if args.provider else [None]
+        )
+        n_legs = len(providers)
+        n_seeds = len(_DEFAULT_DETERMINISM_CHILD_SEEDS)
+        is_public = getattr(args, "audience", Audience.LOCAL.value) == Audience.PUBLIC.value
+        audiences_per_leg = 2 if is_public else 1
+        n_children = n_legs * n_seeds * audiences_per_leg
+        if audiences_per_leg > 1:
+            mult = f"{n_legs} legs × {n_seeds} seeds × {audiences_per_leg} audiences"
+        else:
+            mult = f"{n_legs} legs × {n_seeds} seeds"
+        print(
+            f"run --check-determinism: per-leg certification — {mult} "
+            f"= {n_children} fresh interpreter(s) before scoring completes"
+        )
     for record_path in _cmd_fetch(args):
         args.run_record = record_path
         _cmd_score(args)
@@ -1553,7 +1576,19 @@ def main(argv: list[str] | None = None) -> None:
         p.add_argument("--stall-limit", type=int, default=DEFAULT_STALL_LIMIT)
         p.add_argument("--keep", type=_keep_arg, default=DEFAULT_KEEP)
         p.add_argument("--llm-judge", action="store_true", help="stub — not implemented (§6c)")
-        p.add_argument("--check-determinism", action="store_true")
+        # C-06: --check-determinism is NOT on _common. Only score/run/score-face
+        # honour it; fetch accepting it was a silent no-op (paid green that
+        # certified nothing). argparse free-rejects unknown flags — keep that.
+
+    def _check_determinism_flag(p: argparse.ArgumentParser) -> None:
+        p.add_argument(
+            "--check-determinism",
+            action="store_true",
+            help=(
+                "re-score in a fresh process under varied PYTHONHASHSEED; "
+                "bit-identical JSON/MD required before the report is trusted"
+            ),
+        )
 
     def _audience_flag(p: argparse.ArgumentParser) -> None:
         # score/run only. LOCAL (default) writes the full operator report unchanged;
@@ -1619,6 +1654,7 @@ def main(argv: list[str] | None = None) -> None:
     _common(score_p)
     _audience_flag(score_p)
     _rubric_gate_flag(score_p)
+    _check_determinism_flag(score_p)
     score_p.add_argument("--run-record", required=True)
     score_p.set_defaults(func=_cmd_score)
 
@@ -1627,6 +1663,7 @@ def main(argv: list[str] | None = None) -> None:
     _provider_flags(run_p)
     _audience_flag(run_p)
     _rubric_gate_flag(run_p)
+    _check_determinism_flag(run_p)
     run_p.set_defaults(func=_cmd_run)
 
     seed_p = sub.add_parser("seed-roster", help="idempotent eval-tenant roster seeding")

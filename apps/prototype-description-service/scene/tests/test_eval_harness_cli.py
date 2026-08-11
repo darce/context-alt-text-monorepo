@@ -1136,16 +1136,24 @@ def _score_run_record(entries: list[dict], *, caption_fn, identity_fn, manifest_
 def test_score_guard_caption_corruption_fails_must_right_gate(tmp_path, monkeypatch):
     """Corruption 1: every caption collapsed → must-right failures gate (named).
 
-    F1-11: gate is the conjunction (rubric non-vacuous ∧ failure rate == 1.0 ∧
-    mean_gated_score == 0.0). All-rubric synthetic corpus + garbage captions
-    yields rate 1.0 and mean 0.0 (caption collapse), not mere name-miss.
+    F1b-2 / F1-12: simple predicate must_right_failed_images > 0 under default
+    --rubric-gate enforce. Fixture mirrors golden's 34/37 shape (not all-rubric):
+    at least one entry has empty must_right + empty present_identities so plain
+    garbage cannot rely on mean_gated collapsing to 0.0 (F1-11 synthetic gap).
     """
     roster, entries = _corpus_entries(6, with_rubric=True)
+    # Golden-shaped mixed rubric: one no-must_right / no-present-identities entry
+    # still contributes gated 1.0 for plain garbage (mean != 0.0).
+    entries[-1]["must_right"] = []
+    entries[-1]["present_identities"] = []
+    assert entries[-1]["easy_wrong"]  # empty-rubric gate must not fire
     manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, roster)
     record = _score_run_record(
         entries,
-        caption_fn=lambda _e: "COMPLETELY CORRUPTED GARBAGE CAPTION xyz",
-        identity_fn=lambda e: [_score_identity(e["present_identities"][0])],
+        caption_fn=lambda _e: "xxxxx yyyyy zzzzz qqqqq",
+        identity_fn=lambda e: (
+            [_score_identity(e["present_identities"][0])] if e["present_identities"] else []
+        ),
         manifest_sha=manifest_sha,
         name="run-caption-corrupt.json",
     )
@@ -1164,12 +1172,12 @@ def test_score_guard_caption_corruption_fails_must_right_gate(tmp_path, monkeypa
     assert "empty-rubric" not in msg.lower()
 
 
-def test_score_guard_seeded_name_misses_do_not_fire_must_right_gate(tmp_path, monkeypatch):
-    """F1-11: rate==1.0 with non-zero mean_gated must remain scorable (seeded shape).
+def test_score_guard_rubric_gate_skip_bypasses_must_right_gate(tmp_path, monkeypatch):
+    """F1b-2: --rubric-gate skip bypasses must-right gate only (seeded/shakedown shape).
 
-    All must_right images fail (generic captions name nobody) but images without
-    must_right terms and empty present_identities still contribute gated 1.0 —
-    same structural shape as the frozen S0 seeded anchor (mean ≈ 0.081 on golden).
+    Un-flagged seeded shape (generic captions, mixed must_right) exits non-zero
+    under default enforce. With --rubric-gate skip the same record exits 0 and
+    the artifact records rubric_gate=skip. Other gates remain active.
     """
     roster, entries = _corpus_entries(6, with_rubric=True)
     # Leave one entry without must_right and without present identities so
@@ -1181,7 +1189,7 @@ def test_score_guard_seeded_name_misses_do_not_fire_must_right_gate(tmp_path, mo
     record = _score_run_record(
         entries,
         # Avoid the token "person" — synthetic easy_wrong names are "Person N"
-        # and token-level traps would zero mean_gated (not the seeded shape).
+        # and token-level traps would fire the wrong-name floor gate.
         caption_fn=lambda _e: "A human standing outdoors near greenery.",
         identity_fn=lambda _e: [],
         manifest_sha=manifest_sha,
@@ -1190,7 +1198,51 @@ def test_score_guard_seeded_name_misses_do_not_fire_must_right_gate(tmp_path, mo
     record_path = tmp_path / "run-seeded-shape.json"
     record_path.write_text(json.dumps(record))
     monkeypatch.chdir(tmp_path)
+    # Default enforce: un-flagged seeded shape must exit non-zero (F1-12).
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
+    assert excinfo.value.code != 0
+    assert "must-right failures" in str(excinfo.value).lower()
+    # Explicit skip: harness-shakedown exemption by declaration (rg-009).
+    assert (
+        main(
+            [
+                "score",
+                "--manifest",
+                str(manifest_path),
+                "--run-record",
+                str(record_path),
+                "--rubric-gate",
+                "skip",
+            ]
+        )
+        is None
+    )
+    report = json.loads(record_path.with_name("run-seeded-shape-report.json").read_text())
+    assert report["verdict"]["rubric_gate"] == "skip"
+
+
+def test_score_report_records_rubric_gate_flag(tmp_path, monkeypatch):
+    """F1b-2: report + verdict stamp --rubric-gate so skip is never a silent pass."""
+    roster, entries = _corpus_entries(6, with_rubric=True)
+    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, roster)
+    record = _score_run_record(
+        entries,
+        caption_fn=lambda e: f"{e['present_identities'][0]} outdoors smiling.",
+        identity_fn=lambda e: [_score_identity(e["present_identities"][0])],
+        manifest_sha=manifest_sha,
+        name="run-rubric-flag.json",
+    )
+    record_path = tmp_path / "run-rubric-flag.json"
+    record_path.write_text(json.dumps(record))
+    monkeypatch.chdir(tmp_path)
+    # Default enforce is recorded even when the gate does not fire.
     assert main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)]) is None
+    report = json.loads(record_path.with_name("run-rubric-flag-report.json").read_text())
+    assert report["verdict"]["rubric_gate"] == "enforce"
+    md = record_path.with_name("run-rubric-flag-report.md").read_text()
+    assert "rubric_gate" in md
+    assert "enforce" in md
 
 
 def test_score_guard_wrong_names_fails_wrong_name_floor_gate(tmp_path, monkeypatch):

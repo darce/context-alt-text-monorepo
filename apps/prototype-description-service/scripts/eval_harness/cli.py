@@ -534,6 +534,8 @@ def _load_ignore_list(source_dir: Path) -> dict[str, Any] | None:
     expiry/commit binding, so a pair triaged once stays suppressed even if the
     same wrong-name later genuinely regresses. Every suppressed pair is still
     surfaced under ``ignored_wrong_names`` in the report so it is never invisible.
+    Presentation-only (F1-5): the wrong-name floor rate counts live + ignored;
+    this file cannot certify a model that asserts wrong names on every image.
     """
     path = source_dir / IGNORE_LIST_NAME
     if not path.is_file():
@@ -841,13 +843,28 @@ def _cmd_score(args: argparse.Namespace) -> None:
             f"score must-right failures gate: {must_right_failed} image(s) failed Must-Right "
             f"caption hard-gate (caption corruption / missing required names; see {json_path})"
         )
+    # F1-5 / EVAL-19: wrong-name floor is vacuous when zero images entered
+    # identification counting (recognition_enabled false corpus-wide). Distinct
+    # token from empty-rubric so a red run names the correct corruption class.
+    ident_block = (scored.get("faces") or {}).get("identification") or {}
+    identification_evaluated = int(ident_block.get("evaluated_images") or 0)
+    if identification_evaluated == 0:
+        excluded_n = len(ident_block.get("excluded_images") or [])
+        sys.exit(
+            f"score wrong-name floor vacuity gate: identification denominator is empty "
+            f"(evaluated_images=0, excluded_images={excluded_n}); "
+            f"wrong-name floor is vacuous — no image contributed to identification "
+            f"(recognition_enabled false corpus-wide or none scored; see {json_path})"
+        )
     # VLM-6 S2A: wrong-name floor — hallucinated human names on photographs are
     # the highest-severity failure this harness detects; gate, do not merely report.
+    # Rate includes ignore-list-triaged pairs (F1-5 / OBS-04).
     floor = float(verdict.get("wrong_name_rate_floor", WRONG_NAME_RATE_FLOOR))
     if wrong_name_rate > floor:
+        ignored_n = len(ident_block.get("ignored_wrong_names") or [])
         sys.exit(
             f"score wrong-name floor gate: wrong_name_rate={wrong_name_rate} exceeds "
-            f"floor={floor} (see {json_path})"
+            f"floor={floor} (ignored_wrong_names={ignored_n}; see {json_path})"
         )
 
 

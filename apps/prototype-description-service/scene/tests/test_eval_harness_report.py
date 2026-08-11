@@ -208,6 +208,7 @@ def test_markdown_reports_failures_and_provenance():
 
 
 def test_ignore_list_suppresses_triaged_wrong_names():
+    """Presentation split only: ignore-list must not zero the wrong-name floor (F1-5)."""
     ignore = {"wrong_names": [["mock_images/bob-beach.jpg", "Alice Example"]]}
     json_doc, md = build_reports(_run_record(), _manifest_entries(), ignore_list=ignore)
     parsed = json.loads(json_doc)
@@ -215,6 +216,10 @@ def test_ignore_list_suppresses_triaged_wrong_names():
     assert ident["wrong_names"] == []
     assert ident["ignored_wrong_names"] == [["mock_images/bob-beach.jpg", "Alice Example"]]
     assert "ignored (triaged): 1" in md.lower()
+    # Gate rate still counts the ignored pair (1 wrong / 2 scored = 0.5).
+    assert parsed["verdict"]["wrong_name_rate"] == pytest.approx(0.5)
+    assert parsed["verdict"]["verdict"] == ScoreVerdict.FAIL.value
+    assert ident["evaluated_images"] == 2
 
 
 def test_model_provenance_surfaced():  # HARM-01

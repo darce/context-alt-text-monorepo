@@ -21,9 +21,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import unicodedata
 import warnings
+from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
@@ -32,6 +34,45 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 SUPPORTED_MANIFEST_VERSION = 2
+
+# Stratification / metric-backing fields inventoried for MEAS-09 / EVAL-04.
+# A metric whose backing field is 0/N corpus-wide must refuse certification
+# rather than return a vacuous single-bucket pass (VLM6-R2-03).
+STRATIFICATION_INVENTORY_FIELDS: tuple[str, ...] = (
+    "difficulty",
+    "domain",
+    "tags",
+    "reference_facts",
+    "spatial_facts",
+    "face_boxes",
+    "provenance",
+    "must_right",
+    "easy_wrong",
+    "demographic_cohort",
+)
+
+# Honest coverage gaps on the shipped golden-37 corpus: fields that cannot be
+# populated without viewing image bytes or operator-authored geometry. Each
+# value names the owner and the concrete next action (OBS-04). Do not invent
+# ground truth to silence these gaps (VLM6-R2-03).
+SHIPPED_CORPUS_COVERAGE_GAPS: dict[str, str] = {
+    "reference_facts": (
+        "owner=VLM-6-operator; action=author polarity-tagged reference_facts per image "
+        "after a visual pass — cannot be derived from filename/face_count alone"
+    ),
+    "spatial_facts": (
+        "owner=VLM-6-operator; action=author spatial relations from curated boxes — "
+        "no box geometry is vendored for the full corpus"
+    ),
+    "face_boxes": (
+        "owner=FIR-1/VLM-6-operator; action=author FaceBox x/y/w/h per face — "
+        "phrase_boxes.json has centers only for 6 scenes and is not a substitute"
+    ),
+    "demographic_cohort": (
+        "owner=FIR-5; action=label roster_cohorts / demographic_cohort after "
+        "operator cohort definitions land — no labelled source exists yet"
+    ),
+}
 
 
 # --- Golden-100 stratification vocabulary (VLM-6 S1) -------------------------
@@ -160,6 +201,24 @@ class ManifestError(Exception):
 
 class RubricEmptyWarning(UserWarning):
     """The corpus defines no Must-Right/Easy-Wrong rubric entries (gate vacuous)."""
+
+
+@dataclass(frozen=True)
+class FieldPopulation:
+    """Per-field population count for a loaded corpus (VLM6-R2-03 inventory)."""
+
+    field: str
+    populated: int
+    total: int
+
+    @property
+    def empty(self) -> int:
+        return self.total - self.populated
+
+    @property
+    def is_vacuous(self) -> bool:
+        """True when zero entries populate the field (metric would be single-bucket)."""
+        return self.total > 0 and self.populated == 0
 
 
 class ContextPack(BaseModel):
@@ -420,15 +479,122 @@ class GoldenManifest(BaseModel):
         return value
 
 
-def load_manifest(path: str, images_dir: str | None = None) -> GoldenManifest:
-    """Load and validate the golden manifest; optionally verify image hashes.
+def _entry_field_is_populated(entry: GoldenEntry, field: str) -> bool:
+    """True when ``field`` carries non-empty metric-backing content on ``entry``."""
+    value = getattr(entry, field, None)
+    if value is None:
+        return False
+    if isinstance(value, list):
+        return len(value) > 0
+    if isinstance(value, str):
+        return bool(value.strip())
+    return True
+
+
+def inventory_corpus_fields(manifest: GoldenManifest) -> dict[str, FieldPopulation]:
+    """Report per-field population counts for stratification / metric backing.
+
+    Makes empty strata visible (MEAS-09) instead of silently collapsing every
+    per-stratum gate into one bucket (VLM6-R2-03 / EVAL-04).
+    """
+    total = len(manifest.entries)
+    out: dict[str, FieldPopulation] = {}
+    for field in STRATIFICATION_INVENTORY_FIELDS:
+        populated = sum(1 for entry in manifest.entries if _entry_field_is_populated(entry, field))
+        out[field] = FieldPopulation(field=field, populated=populated, total=total)
+    return out
+
+
+def require_metric_backing(manifest: GoldenManifest, field: str) -> FieldPopulation:
+    """Refuse to certify a metric whose backing field is empty corpus-wide.
+
+    Call this before any gate that buckets or scores on ``field``. A vacuous
+    0/N field must not return pass — it must name the field, the 0/N counts,
+    and the remedy (populate the field or declare a coverage gap with owner).
+    """
+    if field not in STRATIFICATION_INVENTORY_FIELDS:
+        raise ManifestError(
+            f"unknown metric-backing field {field!r}; known fields are "
+            f"{', '.join(STRATIFICATION_INVENTORY_FIELDS)}"
+        )
+    pop = inventory_corpus_fields(manifest)[field]
+    if pop.is_vacuous:
+        gap = SHIPPED_CORPUS_COVERAGE_GAPS.get(field)
+        gap_hint = (
+            f" Declared coverage gap: {gap}."
+            if gap
+            else (
+                f" Populate {field!r} on golden entries (derivable labels or operator "
+                "curation) before gating on it, or add it to SHIPPED_CORPUS_COVERAGE_GAPS "
+                "with owner=… and a concrete action."
+            )
+        )
+        raise ManifestError(
+            f"cannot certify metric backed by {field!r}: {pop.populated}/{pop.total} entries "
+            f"populate that field (vacuous corpus-wide; per-stratum gate would collapse to "
+            f"a single bucket).{gap_hint}"
+        )
+    return pop
+
+
+def resolve_verified_image(entry: GoldenEntry, images_root: Path | str) -> Path:
+    """Resolve ``entry.path`` under ``images_root`` and verify the sha256 pin.
+
+    Any path that reads image bytes must go through this (or ``load_manifest``
+    hash verification) so corpus drift cannot stay silent (VLM6-R2-05 / OBS-04).
+    """
+    root = Path(images_root)
+    if not root.is_dir():
+        raise ManifestError(
+            f"images directory not found: {root} — set GOLDEN_IMAGES_DIR to the "
+            "rsync-bootstrapped fixture copy (see scene/tests/seed/README.md) before "
+            "reading image bytes"
+        )
+    image_path = _resolve_image(root, entry.path)
+    if image_path is None:
+        raise ManifestError(
+            f"image file missing: {entry.path} (under {root}) — re-rsync fixtures or "
+            "fix the manifest path (see scene/tests/seed/README.md)"
+        )
+    digest = hashlib.sha256(image_path.read_bytes()).hexdigest()
+    if digest != entry.sha256:
+        raise ManifestError(
+            f"sha256 mismatch for {entry.path}: manifest {entry.sha256}, file {digest} — "
+            "image bytes drifted from the pinned corpus; re-bootstrap GOLDEN_IMAGES_DIR "
+            "or update the manifest pin after an intentional replacement"
+        )
+    return image_path
+
+
+def load_manifest(
+    path: str,
+    images_dir: str | None = None,
+    *,
+    skip_hash_verification: bool = False,
+) -> GoldenManifest:
+    """Load and validate the golden manifest; verify image hashes by default.
+
+    Hash verification is the default (VLM6-R2-05 / OBS-04). Resolution order:
+
+    1. Explicit ``images_dir`` argument — always verified.
+    2. Else ``GOLDEN_IMAGES_DIR`` env — verified when set.
+    3. Else, if ``skip_hash_verification=True`` — metadata-only load (explicit
+       opt-out for score paths that do not read image bytes).
+    4. Else refuse with an actionable error.
 
     Raises ManifestError on: missing/unreadable file, malformed JSON, schema
     violations, unsupported version, empty corpus, duplicate media_id/path,
-    identities outside the roster, roster_cohorts keys outside the roster, and (when ``images_dir`` is given) missing
-    image files or sha256 mismatches. Emits ``RubricEmptyWarning`` if the corpus
-    defines no Must-Right/Easy-Wrong entries — the caption hard gate is then
-    vacuous but that is surfaced, not silent (S1-02).
+    identities outside the roster, roster_cohorts keys outside the roster, missing
+    image files or sha256 mismatches, and silent no-verify attempts.
+    Emits ``RubricEmptyWarning`` if the corpus defines no Must-Right/Easy-Wrong
+    entries — the caption hard gate is then vacuous but that is surfaced, not
+    silent (S1-02).
+
+    Later-wave ``cli.py`` call sites that currently omit ``images_dir`` must either
+    pass ``images_dir=`` / rely on ``GOLDEN_IMAGES_DIR`` when they read pixels, or
+    pass ``skip_hash_verification=True`` for deliberate metadata-only loads
+    (see ``_cmd_score`` ~1193, determinism helpers ~1109/1137, ``_cmd_score_face``
+    ~1638/1653/1693, face fetch ~1536).
     """
     manifest_path = Path(path)
     if not manifest_path.is_file():
@@ -495,8 +661,19 @@ def load_manifest(path: str, images_dir: str | None = None) -> GoldenManifest:
             stacklevel=2,
         )
 
-    if images_dir is not None:
-        _verify_hashes(manifest, Path(images_dir))
+    resolved_images = images_dir if images_dir is not None else (os.environ.get("GOLDEN_IMAGES_DIR") or None)
+    if resolved_images:
+        _verify_hashes(manifest, Path(resolved_images))
+    elif skip_hash_verification:
+        pass  # explicit metadata-only opt-out (OBS-04: caller named the skip)
+    else:
+        raise ManifestError(
+            "image hash verification is required by default but no images_dir was given "
+            "and GOLDEN_IMAGES_DIR is unset. Pass images_dir=... (or set GOLDEN_IMAGES_DIR) "
+            "to verify every entry's sha256 pin before any path that may read image bytes, "
+            "or pass skip_hash_verification=True only for deliberate metadata-only loads "
+            "that will not open image files (VLM6-R2-05 / OBS-04)."
+        )
     return manifest
 
 
@@ -507,12 +684,7 @@ def _verify_hashes(manifest: GoldenManifest, images_root: Path) -> None:
             "rsync-bootstrapped fixture copy (see scene/tests/seed/README.md)"
         )
     for entry in manifest.entries:
-        image_path = _resolve_image(images_root, entry.path)
-        if image_path is None:
-            raise ManifestError(f"image file missing: {entry.path} (under {images_root})")
-        digest = hashlib.sha256(image_path.read_bytes()).hexdigest()
-        if digest != entry.sha256:
-            raise ManifestError(f"sha256 mismatch for {entry.path}: manifest {entry.sha256}, file {digest}")
+        resolve_verified_image(entry, images_root)
 
 
 def _resolve_image(images_root: Path, rel_path: str) -> Path | None:

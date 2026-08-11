@@ -51,8 +51,14 @@ import hashlib
 import json
 import os
 import sys
-from enum import StrEnum
 from pathlib import Path
+
+from shared.image_variant import (
+    DEFAULT_IMAGE_VARIANT,
+    IMAGE_VARIANT_ARTIFACT,
+    IMAGE_VARIANT_ENV,
+    ImageVariant,
+)
 
 # Inventory of relative_path -> sha256; lives next to weights; excluded from set.
 MANIFEST_FILENAME = "acx-vlm-cache.manifest.json"
@@ -65,14 +71,8 @@ MANIFEST_SHA256_FILE = Path("/app/acx-vlm-cache.manifest.sha256")
 
 # Operator-facing seed hint — path-agnostic (rg-006). Host models dir varies
 # (/opt/acx-backend/prod/... on the VM; never hardcode a container-only path).
-SEED_COMMAND = (
-    "uv run --extra vlm python -m scripts.seed_vlm_cache "
-    "--hf-home <ACX_MODELS_PATH>/huggingface_cache"
-)
-SEED_HINT_NOTE = (
-    "Run on the host from apps/prototype-description-service "
-    "(not inside the offline runtime-vlm image)."
-)
+SEED_COMMAND = "uv run --extra vlm python -m scripts.seed_vlm_cache --hf-home <ACX_MODELS_PATH>/huggingface_cache"
+SEED_HINT_NOTE = "Run on the host from apps/prototype-description-service (not inside the offline runtime-vlm image)."
 
 EXIT_OK = 0
 EXIT_FAIL = 1
@@ -80,23 +80,6 @@ EXIT_FAIL = 1
 # Opt-in full Florence pin verify even for non-LOCAL_CPU profiles.
 REQUIRE_VLM_CACHE_ENV = "ACX_REQUIRE_VLM_CACHE"
 
-
-class ImageVariant(StrEnum):
-    """Canonical Docker image variant labels (sr-007).
-
-    Baked into each runtime stage as ``/app/.image-variant`` (and ENV mirror).
-    Do not scatter the string literals elsewhere in Python — import these members.
-    """
-
-    RECOGNITION = "recognition"
-    VLM = "vlm"
-
-
-IMAGE_VARIANT_ENV = "ACX_IMAGE_VARIANT"
-DEFAULT_IMAGE_VARIANT = ImageVariant.RECOGNITION
-# Build-immutable identity artifact (Dockerfile writes this per runtime stage).
-# Module-level so tests can monkeypatch; production path is fixed.
-IMAGE_VARIANT_ARTIFACT = Path("/app/.image-variant")
 
 # Env key for the HF trust_remote_code module cache (Lane A sets this in-image).
 # Never hardcode the path — read it from the environment so the gate stays
@@ -127,14 +110,12 @@ def resolve_image_variant_label() -> str:
             baked = IMAGE_VARIANT_ARTIFACT.read_text(encoding="utf-8").strip()
     except OSError as exc:
         raise CacheIntegrityError(
-            f"VLM cache gate failed: cannot read baked image variant at "
-            f"{IMAGE_VARIANT_ARTIFACT}: {exc}"
+            f"VLM cache gate failed: cannot read baked image variant at {IMAGE_VARIANT_ARTIFACT}: {exc}"
         ) from exc
     if baked:
         if baked not in {ImageVariant.RECOGNITION.value, ImageVariant.VLM.value}:
             raise CacheIntegrityError(
-                f"VLM cache gate failed: invalid baked image variant {baked!r} "
-                f"at {IMAGE_VARIANT_ARTIFACT}"
+                f"VLM cache gate failed: invalid baked image variant {baked!r} at {IMAGE_VARIANT_ARTIFACT}"
             )
         if env_claim and env_claim != baked:
             raise CacheIntegrityError(
@@ -161,10 +142,7 @@ def resolve_hf_hub_cache() -> Path:
 
 def hf_cache_explicitly_configured() -> bool:
     """True when HF_HUB_CACHE or HF_HOME is set (mounted-cache intent)."""
-    return bool(
-        (os.environ.get("HF_HUB_CACHE") or "").strip()
-        or (os.environ.get("HF_HOME") or "").strip()
-    )
+    return bool((os.environ.get("HF_HUB_CACHE") or "").strip() or (os.environ.get("HF_HOME") or "").strip())
 
 
 def model_cache_dirname(model_id: str) -> str:
@@ -199,8 +177,7 @@ def resolve_manifest_trust_pin() -> str | None:
             return MANIFEST_SHA256_FILE.read_text(encoding="utf-8").strip().lower()
     except OSError as exc:
         raise CacheIntegrityError(
-            f"VLM cache gate failed: cannot read manifest trust pin at "
-            f"{MANIFEST_SHA256_FILE}: {exc}"
+            f"VLM cache gate failed: cannot read manifest trust pin at {MANIFEST_SHA256_FILE}: {exc}"
         ) from exc
     return None
 
@@ -222,8 +199,7 @@ def assert_modules_cache_ready() -> None:
         )
     if not modules.is_dir():
         raise CacheIntegrityError(
-            f"VLM cache gate failed: module cache directory missing: {modules} "
-            f"({HF_MODULES_CACHE_ENV}). {_seed_hint()}"
+            f"VLM cache gate failed: module cache directory missing: {modules} ({HF_MODULES_CACHE_ENV}). {_seed_hint()}"
         )
     probe = modules / ".acx_modules_cache_write_probe"
     try:
@@ -288,24 +264,20 @@ def list_snapshot_files(snapshot_dir: Path) -> dict[str, Path]:
             entries = list(os.scandir(current))
         except OSError as exc:
             raise CacheIntegrityError(
-                f"VLM cache gate failed: cannot enumerate snapshot directory "
-                f"{current}: {exc}. {_seed_hint()}"
+                f"VLM cache gate failed: cannot enumerate snapshot directory {current}: {exc}. {_seed_hint()}"
             ) from exc
         for entry in entries:
             path = Path(entry.path)
             try:
                 rel = path.relative_to(snapshot_dir).as_posix()
             except ValueError:
-                raise CacheIntegrityError(
-                    f"VLM cache gate failed: snapshot entry escaped tree: {path}"
-                ) from None
+                raise CacheIntegrityError(f"VLM cache gate failed: snapshot entry escaped tree: {path}") from None
             if entry.is_symlink():
                 try:
                     target = path.resolve(strict=True)
                 except OSError as exc:
                     raise CacheIntegrityError(
-                        f"VLM cache gate failed: broken symlink in snapshot: {rel} "
-                        f"({exc}). {_seed_hint()}"
+                        f"VLM cache gate failed: broken symlink in snapshot: {rel} ({exc}). {_seed_hint()}"
                     ) from exc
                 try:
                     target.relative_to(allowed_root)
@@ -331,8 +303,7 @@ def list_snapshot_files(snapshot_dir: Path) -> dict[str, Path]:
                 _visit(path)
             else:
                 raise CacheIntegrityError(
-                    f"VLM cache gate failed: unsupported snapshot entry type: {rel}. "
-                    f"{_seed_hint()}"
+                    f"VLM cache gate failed: unsupported snapshot entry type: {rel}. {_seed_hint()}"
                 )
 
     _visit(snapshot_dir)
@@ -347,14 +318,10 @@ def write_manifest(snapshot_dir: Path, *, manifest_path: Path | None = None) -> 
     Prints the detached trust pin (sha256 of the manifest bytes) for image bake.
     """
     if not snapshot_dir.is_dir():
-        raise CacheIntegrityError(
-            f"cannot write manifest: snapshot directory missing: {snapshot_dir}"
-        )
+        raise CacheIntegrityError(f"cannot write manifest: snapshot directory missing: {snapshot_dir}")
     files = list_snapshot_files(snapshot_dir)
     if not files:
-        raise CacheIntegrityError(
-            f"cannot write manifest: snapshot directory is empty: {snapshot_dir}"
-        )
+        raise CacheIntegrityError(f"cannot write manifest: snapshot directory is empty: {snapshot_dir}")
     payload = {rel: sha256_file(path) for rel, path in files.items()}
     out = manifest_path if manifest_path is not None else snapshot_dir / MANIFEST_FILENAME
     text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
@@ -421,10 +388,7 @@ def verify_snapshot(snapshot_dir: Path, *, manifest_path: Path | None = None) ->
     Raises ``CacheIntegrityError`` with a distinct message per failure mode.
     """
     if not snapshot_dir.is_dir():
-        raise CacheIntegrityError(
-            f"VLM cache gate failed: snapshot directory missing: {snapshot_dir}. "
-            f"{_seed_hint()}"
-        )
+        raise CacheIntegrityError(f"VLM cache gate failed: snapshot directory missing: {snapshot_dir}. {_seed_hint()}")
 
     on_disk = list_snapshot_files(snapshot_dir)
     manifest_file = manifest_path if manifest_path is not None else snapshot_dir / MANIFEST_FILENAME
@@ -452,22 +416,19 @@ def verify_snapshot(snapshot_dir: Path, *, manifest_path: Path | None = None) ->
         raw = json.loads(manifest_file.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise CacheIntegrityError(
-            f"VLM cache gate failed: manifest is not valid JSON: {manifest_file}: {exc}. "
-            f"{_seed_hint()}"
+            f"VLM cache gate failed: manifest is not valid JSON: {manifest_file}: {exc}. {_seed_hint()}"
         ) from exc
 
     if not isinstance(raw, dict) or not raw:
         raise CacheIntegrityError(
-            f"VLM cache gate failed: manifest is empty or not an object: {manifest_file}. "
-            f"{_seed_hint()}"
+            f"VLM cache gate failed: manifest is empty or not an object: {manifest_file}. {_seed_hint()}"
         )
 
     expected: dict[str, str] = {}
     for key, value in raw.items():
         if not isinstance(key, str) or not isinstance(value, str):
             raise CacheIntegrityError(
-                f"VLM cache gate failed: manifest entries must be string path -> sha256; "
-                f"bad entry {key!r}: {value!r}"
+                f"VLM cache gate failed: manifest entries must be string path -> sha256; bad entry {key!r}: {value!r}"
             )
         expected[key] = value.lower()
 
@@ -521,7 +482,7 @@ def assert_vlm_hub_weak(hub_cache: Path, *, florence_spec) -> None:
             f"VLM cache gate failed: VLM image HF hub cache missing: {hub_cache}. "
             f"Mount a seeded host cache or set HF_HUB_CACHE. {_seed_hint()}"
         )
-    # Non-empty: any file/dir entry other than '.' 
+    # Non-empty: any file/dir entry other than '.'
     try:
         next(hub_cache.iterdir())
     except StopIteration as exc:
@@ -531,14 +492,11 @@ def assert_vlm_hub_weak(hub_cache: Path, *, florence_spec) -> None:
         ) from exc
     except OSError as exc:
         raise CacheIntegrityError(
-            f"VLM cache gate failed: cannot read VLM HF hub cache {hub_cache}: {exc}. "
-            f"{_seed_hint()}"
+            f"VLM cache gate failed: cannot read VLM HF hub cache {hub_cache}: {exc}. {_seed_hint()}"
         ) from exc
 
     if florence_spec is not None and florence_spec.model_id and florence_spec.model_revision:
-        snap = resolve_snapshot_dir(
-            florence_spec.model_id, florence_spec.model_revision, hub_cache=hub_cache
-        )
+        snap = resolve_snapshot_dir(florence_spec.model_id, florence_spec.model_revision, hub_cache=hub_cache)
         if snap.is_dir():
             verify_snapshot(snap)
 

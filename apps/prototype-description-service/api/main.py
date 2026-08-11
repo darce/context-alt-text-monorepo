@@ -12,11 +12,6 @@ from starlette.middleware.cors import CORSMiddleware
 
 from api.logging_config import configure_logging
 from db.session import get_pool_stats
-from scripts.verify_vlm_cache import (
-    IMAGE_VARIANT_ARTIFACT,
-    IMAGE_VARIANT_ENV,
-    ImageVariant,
-)
 from recognition.application.health import (
     CheckResult,
     aggregate_status,
@@ -58,6 +53,11 @@ from recognition.observability.curation_refresh_metrics import get_default_curat
 from roster.interface_adapters.http.curation_router import router as roster_curation_router
 from scene.interface_adapters.http.router import router as scene_router
 from shared.health import HealthStatus
+from shared.image_variant import (
+    IMAGE_VARIANT_ARTIFACT,
+    IMAGE_VARIANT_ENV,
+    ImageVariant,
+)
 from shared.secrets import validate_oci_vault_boot
 
 # Configure logging to show diagnostic output

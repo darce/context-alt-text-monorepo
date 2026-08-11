@@ -40,3 +40,9 @@ Makefile
 # Face-pipeline ONNX weights are operator-provisioned at deploy (not baked in).
 # Keep LICENSE.* + README under recognition/infrastructure/face_pipeline/models/.
 recognition/infrastructure/face_pipeline/models/*.onnx
+
+# VLM / HuggingFace weight caches are operator-provisioned on a volume mount
+# (/data/cache) for the runtime-vlm target — never bake multi-GB weights into
+# the build context.
+**/huggingface_cache/
+**/.cache/huggingface/

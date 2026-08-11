@@ -559,17 +559,33 @@ Binding for whoever runs the intake.
 
 ### 7a. Egress — non-negotiable
 
-**Raw book text must not leave the laptop.** These are copyrighted works from a
-shadow library; shipping them to a third-party inference host is a data-egress
-decision nobody has made, and it is avoidable at zero cost. Extraction,
-chunking, and claim identification run locally. **Distilled claims** — one-line
-operational restatements, no source prose — may be sent to remote lanes for
-clustering and card drafting.
+**Revised 2026-08-06 — the decision this paragraph deferred has now been made.**
+The original rule said raw book text must not leave the laptop, because
+"shipping them to a third-party inference host is a data-egress decision nobody
+has made." Daniel has made it, and the bound is narrower than the original text
+assumed. Two facts moved it:
 
-The research repo already enforces the same split structurally, and this intake
-inherits it rather than inventing a parallel convention:
-`literature/extracted/<lane>/<slug>.txt` holds full third-party text and is
-**gitignored** (research-copy-only under `RIGHTS_DEFAULT`);
+1. **The lane host is not a third party.** `remote_agent.sh` dispatches into a
+   sandbox on Daniel's own OCI VM. Text on that box has not left his control;
+   it is the same posture as the laptop, not a disclosure to a vendor.
+2. **The old rule protected nothing it claimed to.** The tree was gitignored and
+   a lane is shipped by pushing its branch, which carries committed content only,
+   so a lane briefed to distil a book received no book — and could not tell. The egress rule was not preventing a
+   leak; it was silently producing invented distillations.
+
+**The operative rule.** Raw book text may reach Daniel-controlled compute — this
+laptop and the OCI lane sandbox — and reaches model vendors only as the
+inference payload a lane necessarily sends. It must never reach the **public
+projection** or any repo that is not private. `literature/extracted/` is
+therefore tracked in the private research repo (since 2026-08-06) and the guard
+moved from `.gitignore` to
+`tools/test_publish.py::test_public_projection_carries_no_extracted_source_text`,
+which asserts on bytes in the projected tree — an ignore rule holds only until
+someone passes `-f`, a failing cut holds always. Extraction still runs locally,
+because `extract.py` needs the shelf files, which are not in git at all.
+
+`literature/extracted/<lane>/<slug>.txt` holds full third-party text
+(research-copy-only under `RIGHTS_DEFAULT`);
 `literature/extraction-manifest.json` is committed and carries **provenance
 only** — slug, lane, title/creator, source basename, sha256, byte and char
 counts, extractor id, date. No source text. The distillation is the publishable

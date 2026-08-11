@@ -492,21 +492,181 @@ def _chown_mentions_path(stage_text: str, path: str) -> bool:
 
 
 def test_rc04_runtime_base_acx_user_and_cache_chown_only() -> None:
-    """runtime-base creates uid 10001 acx, chowns /data/cache, not /app or /opt/venv."""
+    """runtime-base creates uid 10001 acx, chowns writable paths, not /app or /opt/venv."""
     own = dockerfile_stages(DOCKERFILE)[RUNTIME_BASE_STAGE]
     joined = "\n".join(join_continued_lines(own))
     assert re.search(r"useradd\b[^\n]*-u\s+10001\b[^\n]*\bacx\b", joined) or re.search(
         r"useradd\b[^\n]*\bacx\b[^\n]*-u\s+10001\b", joined
     ), "runtime-base must create user acx with uid 10001"
-    assert _chown_mentions_path(own, "/data/cache"), (
-        "runtime-base must chown /data/cache for the unprivileged cache writes"
-    )
+    for path in ("/data/cache", "/var/lib/acx-blobs", "/var/log/acx"):
+        assert _chown_mentions_path(own, path), (
+            f"runtime-base must chown {path} so USER acx can write there"
+        )
     # Deliberate RB-03 deviation: do NOT chown /app or /opt/venv to acx.
     for path in ("/app", "/opt/venv"):
         assert not _chown_mentions_path(own, path), (
             f"runtime-base must NOT chown {path} (deliberate RB-03 deviation; "
             "a helpful chown -R would hand code/venv write access to acx)"
         )
+
+
+def _stage_bakes_image_variant(stage_text: str, expected: str) -> bool:
+    """True when stage writes /app/.image-variant with expected label and chmod 0444.
+
+    Discriminator for the bake invariant (TEST-15): deleting the printf line or
+    weakening chmod must flip this false. ENV alone is not enough.
+    """
+    lines = join_continued_lines(stage_text)
+    bake_ok = False
+    chmod_ok = False
+    for ln in lines:
+        stripped = ln.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        # printf 'vlm\n' > /app/.image-variant  OR  echo … (reject echo-only without chmod)
+        if re.search(
+            rf"""printf\s+['"]{re.escape(expected)}\\n['"]\s*>\s*/app/\.image-variant""",
+            stripped,
+        ):
+            bake_ok = True
+        if re.search(r"chmod\s+0444\s+/app/\.image-variant", stripped):
+            chmod_ok = True
+        # Combined form: printf … && chmod 0444 …
+        if (
+            re.search(
+                rf"""printf\s+['"]{re.escape(expected)}\\n['"]\s*>\s*/app/\.image-variant""",
+                stripped,
+            )
+            and re.search(r"chmod\s+0444\s+/app/\.image-variant", stripped)
+        ):
+            return True
+    return bake_ok and chmod_ok
+
+
+def test_rc04_both_runtimes_bake_immutable_image_variant() -> None:
+    """Both runtime stages bake /app/.image-variant (chmod 0444), not ENV alone."""
+    for stage, label in (
+        (DEFAULT_RUNTIME_STAGE, "recognition"),
+        (RUNTIME_VLM_STAGE, "vlm"),
+    ):
+        own = dockerfile_stages(DOCKERFILE)[stage]
+        assert _stage_bakes_image_variant(own, label), (
+            f"{stage} must `printf '{label}\\n' > /app/.image-variant && chmod 0444` "
+            f"(ENV ACX_IMAGE_VARIANT alone fails open under compose env_file)"
+        )
+
+
+def _entrypoint_variant_fail_closed(script_text: str) -> bool:
+    """True when entrypoint fails closed on missing/invalid/mismatched bake."""
+    lines = _non_comment_lines(script_text)
+    text = "\n".join(lines)
+    if "/app/.image-variant" not in text:
+        return False
+    # Missing file → exit 1
+    if not re.search(
+        r"if\s+\[\s*!\s+-f\s+.*IMAGE_VARIANT|/app/\.image-variant",
+        text,
+    ):
+        return False
+    if "missing baked image variant" not in text and "FATAL: missing" not in text:
+        return False
+    # Invalid value case arm
+    if not re.search(r"invalid baked image variant", text):
+        return False
+    # Env disagreement
+    if "disagrees with baked" not in text:
+        return False
+    # At least three exit 1 paths in the variant preamble (before alembic)
+    alembic_idx = next(
+        (i for i, ln in enumerate(lines) if "alembic" in ln and "upgrade" in ln),
+        len(lines),
+    )
+    preamble = "\n".join(lines[:alembic_idx])
+    exits = len(re.findall(r"\bexit\s+1\b", preamble))
+    return exits >= 3
+
+
+def _entrypoint_blob_root_fail_closed(script_text: str) -> bool:
+    """True when entrypoint refuses an unwritable blob root with repair hint."""
+    lines = _non_comment_lines(script_text)
+    text = "\n".join(lines)
+    if "RECOGNITION_BLOB_ROOT" not in text and "/var/lib/acx-blobs" not in text:
+        return False
+    if not re.search(r"\[\s*!\s+-w\s+", text):
+        return False
+    if "fix-blob-ownership" not in text:
+        return False
+    if not re.search(r"\bexit\s+1\b", text):
+        return False
+    return True
+
+
+def test_entrypoint_image_variant_fail_closed_branches() -> None:
+    """Entrypoint must exit 1 on missing/invalid/mismatched /app/.image-variant."""
+    script = _entrypoint_script_text()
+    assert _entrypoint_variant_fail_closed(script), (
+        "docker-entrypoint.sh must fail closed on missing, invalid, and "
+        "env-mismatched baked image variants (not ENV-only)"
+    )
+
+
+def test_entrypoint_blob_root_unwritable_fail_closed() -> None:
+    """Entrypoint must fail closed when blob root is not writable (stale volume)."""
+    script = _entrypoint_script_text()
+    assert _entrypoint_blob_root_fail_closed(script), (
+        "docker-entrypoint.sh must refuse an unwritable blob root and name "
+        "the fix-blob-ownership repair path"
+    )
+
+
+def _compose_has_blob_ownership_repair(compose_text: str) -> bool:
+    """True when compose defines a root one-shot chown repair for acx_blobs."""
+    # Service name present
+    if not re.search(r"^\s*fix-blob-ownership\s*:", compose_text, re.MULTILINE):
+        return False
+    # Must run as root
+    if not re.search(r'user:\s*["\']?0:0["\']?', compose_text):
+        return False
+    # Must chown the blob mount path
+    if "chown" not in compose_text or "/var/lib/acx-blobs" not in compose_text:
+        return False
+    # Gated behind a profile so default up does not run it
+    if not re.search(r'profiles:\s*\[\s*["\']repair["\']\s*\]', compose_text):
+        return False
+    # Mounts the named volume
+    if not re.search(r"acx_blobs:/var/lib/acx-blobs", compose_text):
+        return False
+    return True
+
+
+def test_compose_env_blob_ownership_repair_profile() -> None:
+    """Existing root:root acx_blobs volumes need an explicit operator repair path."""
+    compose = (SERVICE_ROOT / "docker-compose.env.yml").read_text(encoding="utf-8")
+    assert _compose_has_blob_ownership_repair(compose), (
+        "docker-compose.env.yml must ship a profiles:[repair] fix-blob-ownership "
+        "service that chowns acx_blobs as root (Docker never re-chowns volumes)"
+    )
+
+
+def test_logging_config_avoids_app_logs_mkdir_at_import() -> None:
+    """Import-time mkdir of /app/logs kills USER acx boot; guard the source shape."""
+    src = (SERVICE_ROOT / "api" / "logging_config.py").read_text(encoding="utf-8")
+    # Container path is the preferred seed.
+    assert "/var/log/acx" in src, "logging_config must target /var/log/acx for USER acx"
+    # No module-level LOG_DIR.mkdir(...) right after LOG_DIR assignment.
+    tree = ast.parse(src)
+    module_mkdir_targets: list[str] = []
+    for node in tree.body:
+        if not isinstance(node, ast.Expr) or not isinstance(node.value, ast.Call):
+            continue
+        call = node.value
+        func = call.func
+        if isinstance(func, ast.Attribute) and func.attr == "mkdir":
+            module_mkdir_targets.append(ast.dump(func))
+    assert not module_mkdir_targets, (
+        "logging_config must not call mkdir at module import time "
+        f"(USER acx PermissionError on root-owned /app); found {module_mkdir_targets}"
+    )
 
 
 # ---- RC-04 / inheritance negative mutations (TEST-15) --------------------
@@ -766,3 +926,62 @@ def test_guard_bites_when_cmd_has_decorative_argv(tmp_path: Path) -> None:
     cmds = _cmd_lines(effective_stage_body(df, DEFAULT_RUNTIME_STAGE))
     assert cmds
     assert cmds[-1].strip() != _CLEAN_RUNTIME_CMD
+
+
+def test_guard_bites_when_image_variant_bake_deleted(tmp_path: Path) -> None:
+    """TEST-15: dropping the printf bake must fail _stage_bakes_image_variant."""
+    own_good = (
+        "ENV ACX_IMAGE_VARIANT=vlm\n"
+        "RUN printf 'vlm\\n' > /app/.image-variant && chmod 0444 /app/.image-variant\n"
+    )
+    own_bad = "ENV ACX_IMAGE_VARIANT=vlm\n"
+    assert _stage_bakes_image_variant(own_good, "vlm")
+    assert not _stage_bakes_image_variant(own_bad, "vlm"), (
+        "ENV-only stage must fail the bake discriminator"
+    )
+    # chmod alone is not enough either
+    own_no_chmod = "RUN printf 'vlm\\n' > /app/.image-variant\n"
+    assert not _stage_bakes_image_variant(own_no_chmod, "vlm")
+    # Wrong label must fail
+    assert not _stage_bakes_image_variant(own_good, "recognition")
+
+
+def test_guard_bites_when_entrypoint_variant_fail_closed_removed() -> None:
+    """TEST-15: entrypoint without variant fail-closed branches must go red."""
+    bare = (
+        "#!/bin/sh\n"
+        "set -eu\n"
+        "alembic -c db/alembic.ini upgrade head\n"
+        "exec uvicorn api.main:app --host 0.0.0.0 --port 8000\n"
+    )
+    assert not _entrypoint_variant_fail_closed(bare)
+    good = _entrypoint_script_text()
+    assert _entrypoint_variant_fail_closed(good)
+    # Strip the missing-file fatal message → discriminator fails
+    stripped = good.replace("missing baked image variant", "variant absent")
+    assert not _entrypoint_variant_fail_closed(stripped)
+
+
+def test_guard_bites_when_blob_repair_service_removed() -> None:
+    """Mutation: compose without fix-blob-ownership repair must fail the guard."""
+    clean = (SERVICE_ROOT / "docker-compose.env.yml").read_text(encoding="utf-8")
+    assert _compose_has_blob_ownership_repair(clean)
+    # Drop the repair service block by name + profile.
+    dirty = re.sub(
+        r"\n  fix-blob-ownership:.*?(?=\nvolumes:)",
+        "\n",
+        clean,
+        count=1,
+        flags=re.DOTALL,
+    )
+    assert not _compose_has_blob_ownership_repair(dirty), (
+        "compose without fix-blob-ownership must fail the repair discriminator"
+    )
+
+
+def test_guard_bites_when_entrypoint_blob_check_removed() -> None:
+    """Mutation: entrypoint without unwritable-blob fail-closed must go red."""
+    good = _entrypoint_script_text()
+    assert _entrypoint_blob_root_fail_closed(good)
+    stripped = good.replace("fix-blob-ownership", "SOME_OTHER_HINT")
+    assert not _entrypoint_blob_root_fail_closed(stripped)

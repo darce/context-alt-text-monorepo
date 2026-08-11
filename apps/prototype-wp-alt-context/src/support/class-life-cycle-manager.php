@@ -554,9 +554,12 @@ class LifecycleManager {
 			KEY tenant_revision (tenant_id, local_revision)
 		) {$charset_collate};";
 
-		// rg-005 / DATA-09: assigned_at is the recognition source-of-truth membership-order
+		// rg-005 / DATA-15: assigned_at is the recognition source-of-truth membership-order
 		// key (ORDER BY assigned_at ASC, identity_uuid); datetime(6) preserves recognition's
-		// sub-second precision so same-second members keep true order.
+		// sub-second precision so same-second members keep true order. assigned_at is stamped
+		// by a single writer (recognition), so DATA-15's multi-node clock-skew failure mode
+		// does not apply, and the identity_uuid secondary sort makes same-timestamp ordering
+		// deterministic.
 		// Explicit DEFAULT is required under STRICT_TRANS_TABLES + NO_ZERO_DATE so
 		// dbDelta ALTER ADD COLUMN against populated tables does not fail (DATA-03).
 		$assigned_at_default = self::ASSIGNED_AT_FALLBACK_UTC;

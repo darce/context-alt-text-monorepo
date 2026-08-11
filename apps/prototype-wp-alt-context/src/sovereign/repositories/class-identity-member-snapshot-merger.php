@@ -124,7 +124,7 @@ class IdentityMemberSnapshotMerger {
 			$similarity_threshold_value = $this->normalize_optional_float_value( $member['similarity_threshold'] ?? null );
 			$thumb_path       = $this->normalize_thumb_path( $member, $identity_uuid, $attachment_id );
 			$bbox_json        = $this->encode_bbox_json( $member );
-			// rg-005 / DATA-09: populate assigned_at so members ORDER BY matches recognition
+			// rg-005 / DATA-15: populate assigned_at so members ORDER BY matches recognition
 			// source-of-truth (assigned_at ASC, identity_uuid). Fallback is a STABLE epoch
 			// (not $now_utc) so a timestamp-less re-merge is idempotent (B-03).
 			$assigned_at      = $this->normalize_assigned_at( $member, self::ASSIGNED_AT_FALLBACK_UTC );

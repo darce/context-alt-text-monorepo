@@ -683,6 +683,36 @@ class LifecycleManagerTest extends TestCase
         );
     }
 
+    public function testMaybeUpgradeDoesNotStampWhenDbDeltaSilentlyOmitsColumn(): void
+    {
+        $this->setOption('acx_version', '0.0.1-stale');
+        $GLOBALS['__ac_dbdelta_silent_skip_column'] = 'assigned_at';
+        $GLOBALS['__ac_error_log'] = [];
+
+        $this->manager->maybe_upgrade();
+        unset($GLOBALS['__ac_dbdelta_silent_skip_column']);
+
+        $this->assertSame('0.0.1-stale', get_option('acx_version'));
+        $this->assertFalse(get_option('acx_schema_fingerprint'));
+        $this->assertStringContainsString(
+            'wp_acx_identity_members',
+            \implode("\n", $this->getErrorLog())
+        );
+        $this->assertStringContainsString('assigned_at', \implode("\n", $this->getErrorLog()));
+    }
+
+    public function testMaybeUpgradeVerifiedSchemaStampsExactlyOnce(): void
+    {
+        $this->manager->maybe_upgrade();
+        $appliedCount = \count($GLOBALS['__ac_dbdelta_queries'] ?? []);
+
+        $this->manager->maybe_upgrade();
+
+        $this->assertSame(ACX_VERSION, get_option('acx_version'));
+        $this->assertSame($this->manager->compute_projection_schema_fingerprint(), get_option('acx_schema_fingerprint'));
+        $this->assertCount($appliedCount, $GLOBALS['__ac_dbdelta_queries'] ?? []);
+    }
+
     /**
      * E21-14-BR-01: seed backfill failure must also refuse to stamp (same permanent-success trap).
      */

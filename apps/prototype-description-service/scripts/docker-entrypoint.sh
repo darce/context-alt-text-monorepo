@@ -31,6 +31,22 @@ fi
 # still see the env-shaped compare (RHS must be vlm, not recognition).
 ACX_IMAGE_VARIANT="${BAKED_IMAGE_VARIANT}"
 
+# Pre-privilege-drop stacks may still mount a root:root acx_blobs named volume
+# (Docker never re-chowns existing volumes). Fail closed with the one-shot
+# repair path rather than 500ing every multipart upload under USER acx.
+BLOB_ROOT="${RECOGNITION_BLOB_ROOT:-/var/lib/acx-blobs}"
+if [ ! -d "${BLOB_ROOT}" ]; then
+	echo "FATAL: blob root ${BLOB_ROOT} does not exist" >&2
+	exit 1
+fi
+if [ ! -w "${BLOB_ROOT}" ]; then
+	echo "FATAL: blob root ${BLOB_ROOT} is not writable by uid $(id -u) ($(id -un 2>/dev/null || echo unknown))." >&2
+	echo "Existing named volumes created as root stay root:root; Docker never re-chowns them." >&2
+	echo "Remediate once per stack (compose profile repair):" >&2
+	echo "  docker compose -f docker-compose.env.yml --profile repair run --rm fix-blob-ownership" >&2
+	exit 1
+fi
+
 alembic -c db/alembic.ini upgrade head
 python -m scripts.sync_identity_schema
 python -m scripts.verify_identity_schema

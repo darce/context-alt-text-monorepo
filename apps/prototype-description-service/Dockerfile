@@ -118,13 +118,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #   /data/cache — compose bind-mounts host weights here :ro. Image mkdir+chown
 #     is only a seed for unmounted `docker run`; host ownership wins on the bind.
 #   /var/lib/acx-blobs — named volume for multipart uploads; image seed+chown
-#     so the volume inherits acx ownership (USER acx must write job blobs).
+#     so *fresh* volumes inherit acx ownership. Docker never re-chowns an
+#     existing named volume created under root — operators must run the
+#     compose `fix-blob-ownership` repair profile once on upgraded stacks
+#     (see docker-compose.env.yml). Entrypoint fails closed if unwritable.
+#   /var/log/acx — file logs for USER acx (api.logging_config). Not under /app:
+#     /app stays root:root and import-time mkdir of /app/logs would kill boot.
 #   /var/cache/acx/hf_modules — private HF trust_remote_code module scratch.
 #     Compose mounts a per-container noexec tmpfs here; image seed for bare runs.
 #     HF_MODULES_CACHE MUST be set as ENV (transformers reads it at import time).
 RUN groupadd -r acx && useradd -r -g acx -u 10001 acx \
-    && mkdir -p /data/cache /var/lib/acx-blobs /var/cache/acx/hf_modules \
-    && chown acx:acx /data/cache /var/lib/acx-blobs /var/cache/acx/hf_modules
+    && mkdir -p /data/cache /var/lib/acx-blobs /var/cache/acx/hf_modules /var/log/acx \
+    && chown acx:acx /data/cache /var/lib/acx-blobs /var/cache/acx/hf_modules /var/log/acx
 ENV HF_MODULES_CACHE=/var/cache/acx/hf_modules
 
 ENV PYTHONDONTWRITEBYTECODE=1

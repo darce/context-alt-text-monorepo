@@ -30,13 +30,11 @@ still satisfy the contract), and the script fails closed when the last
 stage is not ``runtime`` (so a silent flip to ``runtime-vlm`` cannot go
 green).
 
-When invoked as a script (``python3 scripts/test_acx_backend_image_contract.py``)
-the checks run via ``main()`` and exit non-zero on failure. pytest discovery
-still collects the ``test_*`` functions.
-
-The parser is intentionally local (duplicated from
-``recognition/tests/dockerfile_stages.py``) so this script runs from the
-repo root without importing the service package.
+Parser source (GATE-BR-01 / wave-3): the multi-stage Dockerfile parser
+lives in ``recognition/tests/dockerfile_stages.py``. This script imports
+that shared module (with a small sys.path bootstrap so it runs from the
+repo root without installing the service package). Do not reintroduce a
+local ``_FROM_RE`` duplicate.
 """
 
 from __future__ import annotations
@@ -49,6 +47,8 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 DOCKERFILE = REPO_ROOT / "apps" / "prototype-description-service" / "Dockerfile"
 SCRIPTS_DIR = REPO_ROOT / "apps" / "prototype-description-service" / "scripts"
 OCI_README = REPO_ROOT / "infra" / "oci" / "README.md"
+_SERVICE_ROOT = REPO_ROOT / "apps" / "prototype-description-service"
+_TESTS_PARENT = _SERVICE_ROOT  # recognition is importable when service root is on path
 
 DEFAULT_RUNTIME_STAGE = "runtime"
 
@@ -62,79 +62,27 @@ README_BUILD_ARG = re.compile(
     r"docker\s+build(?:[^\n]|\\\n)*--build-arg\s+GIT_COMMIT_SHA=",
 )
 
-_FROM_RE = re.compile(
-    r"^\s*FROM\s+(?P<ref>\S+)(?:\s+AS\s+(?P<name>[\w.-]+))?\s*$",
-    re.IGNORECASE,
+
+def _ensure_shared_parser_importable() -> None:
+    """Put the service root on sys.path so recognition.tests.dockerfile_stages imports."""
+    service = str(_SERVICE_ROOT)
+    if service not in sys.path:
+        sys.path.insert(0, service)
+
+
+_ensure_shared_parser_importable()
+
+from recognition.tests.dockerfile_stages import (  # noqa: E402
+    default_build_target,
+    dockerfile_stages,
+    effective_stage_body,
 )
-
-
-def _parse_dockerfile(
-    dockerfile: pathlib.Path,
-) -> tuple[dict[str, str], dict[str, str]]:
-    stages: dict[str, list[str]] = {}
-    bases: dict[str, str] = {}
-    current: list[str] | None = None
-    for line in pathlib.Path(dockerfile).read_text(encoding="utf-8").splitlines():
-        match = _FROM_RE.match(line)
-        if match:
-            name = match.group("name")
-            ref = match.group("ref")
-            if name is None:
-                current = None
-                continue
-            current = stages.setdefault(name, [])
-            bases[name] = ref
-            continue
-        if current is not None:
-            current.append(line)
-    return {name: "\n".join(body) for name, body in stages.items()}, bases
-
-
-def dockerfile_stages(dockerfile: pathlib.Path) -> dict[str, str]:
-    """Ordered ``{stage_name: own_stage_body}`` for every named ``FROM ... AS``.
-
-    Insertion order is the file order, so ``list(stages)[-1]`` is the default
-    BuildKit target. Kept local so this script runs from the repo root without
-    importing the service package.
-    """
-    bodies, _ = _parse_dockerfile(dockerfile)
-    return bodies
-
-
-def _resolve_effective(
-    own: dict[str, str],
-    bases: dict[str, str],
-    stage: str,
-    stack: frozenset[str] = frozenset(),
-) -> str:
-    if stage not in own:
-        raise KeyError(stage)
-    if stage in stack:
-        cycle = " -> ".join([*stack, stage])
-        raise ValueError(f"Dockerfile stage inheritance cycle: {cycle}")
-    own_body = own[stage]
-    base = bases.get(stage, "")
-    if base in own:
-        parent = _resolve_effective(own, bases, base, stack | {stage})
-        if parent and own_body:
-            return f"{parent}\n{own_body}"
-        return parent or own_body
-    return own_body
-
-
-def effective_stage_body(dockerfile: pathlib.Path, stage: str) -> str:
-    """Built-image body for ``stage`` (own + inherited parents)."""
-    own, bases = _parse_dockerfile(dockerfile)
-    assert stage in own, (
-        f"Dockerfile missing stage {stage!r}; have {list(own)}"
-    )
-    return _resolve_effective(own, bases, stage)
 
 
 def assert_default_target_is_runtime(dockerfile: pathlib.Path = DOCKERFILE) -> None:
     stages = dockerfile_stages(dockerfile)
     assert stages, f"expected named build stages in {dockerfile}"
-    last = list(stages)[-1]
+    last = default_build_target(dockerfile)
     assert last == DEFAULT_RUNTIME_STAGE, (
         f"last Dockerfile stage is {last!r}, so a bare `docker build` would "
         f"build it. {DEFAULT_RUNTIME_STAGE!r} must stay last or production "

@@ -32,6 +32,7 @@ from recognition.tests.dockerfile_stages import (
     effective_stage_body,
     has_vlm_extra,
     join_continued_lines,
+    stage_resolves_vlm_extra,
 )
 
 # recognition/tests/deploy/<this> → parents[3] = the service root.
@@ -317,24 +318,37 @@ def test_entrypoint_cmd_chain_modules_are_copied() -> None:
         "uvicorn must be exec'd so it becomes PID 1"
     )
 
-    # VLM cache verify must be gated on ACX_IMAGE_VARIANT (recognition image
-    # must not grow a VLM boot dependency).
+    # VLM cache verify must be gated on ACX_IMAGE_VARIANT = "vlm" specifically
+    # (recognition image must not grow a VLM boot dependency). M7 inversion to
+    # = "recognition" must go red — mere presence of any ACX_IMAGE_VARIANT if
+    # is not enough (wave-3 / RLSE-02).
     vlm_line_idx = next(
         (i for i, ln in enumerate(lines) if "python -m scripts.verify_vlm_cache" in ln),
         None,
     )
     assert vlm_line_idx is not None, "entrypoint must invoke scripts.verify_vlm_cache for VLM"
-    # Walk backward for the conditional that opens the gate.
-    gated = False
+    gate_line: str | None = None
     for ln in lines[:vlm_line_idx][::-1]:
         if "ACX_IMAGE_VARIANT" in ln and ("if " in ln or ln.startswith("if")):
-            gated = True
+            gate_line = ln
             break
         if ln in {"fi", "else", "elif"}:
             break
-    assert gated, (
+    assert gate_line is not None, (
         "python -m scripts.verify_vlm_cache must sit inside an "
         "ACX_IMAGE_VARIANT conditional, not run unconditionally"
+    )
+    # Comparison RHS only: `${VAR:-recognition}` default must not confuse the gate.
+    # Good:  [ "${ACX_IMAGE_VARIANT:-recognition}" = "vlm" ]
+    # M7:    [ "${ACX_IMAGE_VARIANT:-recognition}" = "recognition" ]
+    assert re.search(r"""=\s*["']vlm["']""", gate_line), (
+        "verify_vlm_cache gate must compare ACX_IMAGE_VARIANT equal to \"vlm\" "
+        f"(got {gate_line!r}); inverted = \"recognition\" ships a VLM boot "
+        "dependency on the recognition image (M7)"
+    )
+    assert not re.search(r"""=\s*["']recognition["']""", gate_line), (
+        "verify_vlm_cache must not compare equal to \"recognition\" "
+        f"(inverted polarity; got {gate_line!r})"
     )
 
     # Every python -m scripts.<mod> module package must be COPYd + present on disk.
@@ -377,21 +391,28 @@ def test_entrypoint_cmd_chain_modules_are_copied() -> None:
 def test_rc04_runtime_does_not_resolve_vlm_extra_runtime_vlm_does() -> None:
     """runtime must not pull the vlm extra; runtime-vlm must (via builder-vlm).
 
-    Effective bodies so an inherited ``uv sync --extra vlm`` is not missed.
+    Uses COPY --from provenance (RC3): runtime's venv arrives from builder, not
+    FROM inheritance, so an effective-body-only scan cannot see builder torch.
     """
     runtime_eff = effective_stage_body(DOCKERFILE, DEFAULT_RUNTIME_STAGE)
     runtime_vlm_eff = effective_stage_body(DOCKERFILE, RUNTIME_VLM_STAGE)
     builder_vlm_eff = effective_stage_body(DOCKERFILE, "builder-vlm")
 
+    assert not stage_resolves_vlm_extra(DOCKERFILE, DEFAULT_RUNTIME_STAGE), (
+        "default runtime image must not resolve the vlm extra via own body, "
+        "FROM parents, or COPY --from venv edges (torch belongs to VLM path only)"
+    )
     assert not has_vlm_extra(runtime_eff), (
-        "effective runtime body must not resolve the vlm extra "
-        "(torch belongs to the VLM image path only)"
+        "effective runtime body must not itself declare the vlm extra"
     )
     assert "COPY --from=builder-vlm" not in runtime_eff, (
         "runtime must not COPY the vlm builder venv"
     )
     assert has_vlm_extra(builder_vlm_eff), (
         "builder-vlm effective body must resolve --extra vlm"
+    )
+    assert stage_resolves_vlm_extra(DOCKERFILE, RUNTIME_VLM_STAGE), (
+        "runtime-vlm must resolve the vlm extra via builder-vlm COPY --from"
     )
     assert "COPY --from=builder-vlm" in runtime_vlm_eff, (
         "runtime-vlm must COPY the vlm builder venv (vlm extra resolution path)"
@@ -517,6 +538,51 @@ def test_guard_bites_when_runtime_inherits_vlm_extra(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert has_vlm_extra(effective_stage_body(df, DEFAULT_RUNTIME_STAGE))
+    assert stage_resolves_vlm_extra(df, DEFAULT_RUNTIME_STAGE)
+
+
+def test_guard_bites_when_runtime_copies_venv_from_vlm_builder(tmp_path: Path) -> None:
+    """Wave-3 RC3: COPY --from a vlm-resolving stage contaminates runtime."""
+    df = tmp_path / "Dockerfile"
+    df.write_text(
+        "FROM python:3.12-slim AS builder\n"
+        "RUN uv sync --locked --extra=vlm\n"
+        "\n"
+        "FROM python:3.12-slim AS runtime\n"
+        "COPY --from=builder /opt/venv /opt/venv\n"
+        "ENV ACX_IMAGE_VARIANT=recognition\n",
+        encoding="utf-8",
+    )
+    # Effective body alone is blind to COPY --from contamination.
+    assert not has_vlm_extra(effective_stage_body(df, DEFAULT_RUNTIME_STAGE))
+    assert stage_resolves_vlm_extra(df, DEFAULT_RUNTIME_STAGE)
+
+
+def test_guard_bites_when_entrypoint_variant_gate_is_inverted(tmp_path: Path) -> None:
+    """Wave-3 M7: ACX_IMAGE_VARIANT = \"recognition\" must fail the polarity check."""
+    script = (
+        "#!/bin/sh\n"
+        "set -eu\n"
+        "alembic -c db/alembic.ini upgrade head\n"
+        "python -m scripts.sync_identity_schema\n"
+        "python -m scripts.verify_identity_schema\n"
+        'if [ "${ACX_IMAGE_VARIANT:-recognition}" = "recognition" ]; then\n'
+        "  python -m scripts.verify_vlm_cache\n"
+        "fi\n"
+        "exec uvicorn api.main:app --host 0.0.0.0 --port 8000\n"
+    )
+    lines = _non_comment_lines(script)
+    vlm_line_idx = next(
+        i for i, ln in enumerate(lines) if "python -m scripts.verify_vlm_cache" in ln
+    )
+    gate_line = next(
+        ln
+        for ln in lines[:vlm_line_idx][::-1]
+        if "ACX_IMAGE_VARIANT" in ln and ("if " in ln or ln.startswith("if"))
+    )
+    # Inverted polarity: comparison RHS is recognition — production gate must reject.
+    assert re.search(r'=\s*["\']recognition["\']', gate_line)
+    assert not re.search(r'=\s*["\']vlm["\']', gate_line)
 
 
 def test_guard_bites_when_uv_sync_uses_frozen(tmp_path: Path) -> None:

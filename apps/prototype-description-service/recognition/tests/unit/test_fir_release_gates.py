@@ -317,6 +317,29 @@ def test_guard_bites_when_uv_lock_copy_only_in_non_builder_stage(tmp_path: Path)
     ), "stage-scoped builder body must not claim a lock COPY that lives in runtime"
 
 
+def test_guard_bites_on_python_m_pip_unlocked_extra_install() -> None:
+    """Wave-3 M3b/RC4: ``python -m pip install ".[bench]"`` must be caught."""
+    for form in (
+        'RUN python -m pip install ".[bench]"',
+        'RUN python3 -m pip install ".[bench]"',
+        'RUN /opt/venv/bin/python -m pip install ".[bench]"',
+        'RUN /app/.venv/bin/python -m pip install ".[dev]"',
+    ):
+        offenders = unlocked_project_extra_installs(form)
+        assert offenders, f"must catch interpreter form: {form}"
+
+
+def test_guard_bites_on_semicolon_sibling_no_deps_whitelist() -> None:
+    """Wave-3 M4/RC4: --no-deps on a sibling fragment must not whitelist extras install."""
+    line = 'RUN pip install --no-deps wheel ; pip install ".[bench]"'
+    offenders = unlocked_project_extra_installs(line)
+    assert offenders, (
+        "per-fragment --no-deps: harmless `pip install --no-deps wheel` must not "
+        "whitelist sibling `pip install \".[bench]\"`"
+    )
+    assert all("--no-deps" not in o for o in offenders)
+
+
 def test_guard_bites_on_quoted_multi_extra_unlocked_install(tmp_path: Path) -> None:
     """RC-03 mutation (c): ``pip install ".[bench,vlm]"`` must be rejected."""
     text = (

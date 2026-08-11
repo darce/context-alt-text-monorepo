@@ -687,35 +687,59 @@ def _run_determinism_children(
     base_json: str,
     base_md: str,
     artifact_dir: Path,
+    expected_build_reports_file: str,
 ) -> None:
     """Shared cross-process determinism substrate for score / score-face (C-08).
 
-    Holds the seed tuple, env handling, subprocess invocation (including the
-    no-op ``cwd=`` left for a later import-root lane), out-of-band payload
-    transport (F2b / C-04), timeout, and the ERROR/FAILED error taxonomy
-    (C-03 / OBS-04).
+    Holds the seed tuple, env handling, subprocess invocation with a pinned
+    import root (F2c / C-01), out-of-band payload transport (F2b / C-04),
+    timeout, and the ERROR/FAILED error taxonomy (C-03 / OBS-04).
 
     Payload transport: parent allocates a tempfile path per seed, appends it as
     the final argv entry, and the child writes a JSON dict
-    ``{"json": <str>, "md": <str>}`` there. Dict shape (not a 2-tuple) so later
-    lanes can add provenance fields without a positional refactor. Child stdout
-    is intentionally unused for comparison — banners/warnings cannot contaminate
-    the verdict, and free-form caption text cannot forge a framing delimiter.
+    ``{"json": <str>, "md": <str>, "build_reports_file": <str>}`` there. Dict
+    shape (not a 2-tuple) carries provenance without a positional refactor.
+    Child stdout is intentionally unused for comparison — banners/warnings
+    cannot contaminate the verdict, and free-form caption text cannot forge a
+    framing delimiter.
+
+    Import root pin (F2c): ``python -c`` puts the caller's cwd at
+    ``sys.path[0]`` ahead of ``PYTHONPATH``, so an unpinned child can bind a
+    decoy ``scripts/`` under cwd while the parent scores with its own
+    checkout. Both ``cwd`` and a prepended ``PYTHONPATH`` are forced to
+    ``Path(__file__).resolve().parents[2]`` (package root). The child also
+    reports ``build_reports.__code__.co_filename`` (or face equivalent); the
+    parent resolves and compares paths — mismatch is ERROR (environment
+    drift), not FAILED (build regression) (OBS-04).
 
     ``label`` (``score`` / ``score-face``) is interpolated into every operator
     message so CI lines name which gate fired.
 
     Taxonomy:
     - ``determinism check ERROR [label]: ...`` — child could not run, timed out,
-      or produced no readable/parseable payload (operator action: environment/tooling).
-      Sub-cases name missing / unreadable / unparseable distinctly (OBS-04).
+      produced no readable/parseable payload, or bound a different
+      ``build_reports`` module than the parent (operator action: environment).
+      Sub-cases name missing / unreadable / unparseable / provenance distinctly.
     - ``determinism check FAILED [label]: ...`` — genuine byte mismatch
       (build regression). Names JSON vs MD, writes a side-by-side artifact, and
       includes stderr.
     """
+    # <root>/scripts/eval_harness/cli.py → parents[2] is the package root
+    # (apps/prototype-description-service). Pin once; never inherit Path.cwd().
+    import_root = Path(__file__).resolve().parents[2]
+    parent_reports_file = Path(expected_build_reports_file).resolve()
     for hash_seed in ("0", "1", "42"):
         env = dict(os.environ)
         env["PYTHONHASHSEED"] = hash_seed
+        # Prepend pin even though cwd=import_root already puts that tree first
+        # under ``python -c``: a hostile inherited PYTHONPATH entry must not
+        # outrank the package root for non-cwd lookups.
+        existing_pp = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = (
+            str(import_root)
+            if not existing_pp
+            else f"{import_root}{os.pathsep}{existing_pp}"
+        )
         # Allocate a unique path the child must create; do not pre-write content
         # (absence must be distinguishable from empty/unparseable). Do not place
         # under artifact_dir — that may be read-only and already owns FAILED diffs.
@@ -732,7 +756,7 @@ def _run_determinism_children(
                     capture_output=True,
                     text=True,
                     env=env,
-                    cwd=str(Path.cwd()),
+                    cwd=str(import_root),
                     timeout=_DETERMINISM_CHILD_TIMEOUT_S,
                 )
             except subprocess.TimeoutExpired as exc:
@@ -786,6 +810,23 @@ def _run_determinism_children(
                     f"determinism check ERROR [{label}]: payload file unparseable "
                     f"seed={hash_seed} path={payload_path}: 'json' and 'md' must be "
                     f"strings; stderr={proc.stderr!r}"
+                )
+            # F2c / C-01: prove the child bound the same build_reports module as
+            # the parent. Missing/mismatched provenance is environment drift → ERROR.
+            child_reports_raw = payload.get("build_reports_file")
+            if not isinstance(child_reports_raw, str) or not child_reports_raw:
+                sys.exit(
+                    f"determinism check ERROR [{label}]: payload missing "
+                    f"build_reports_file provenance seed={hash_seed} "
+                    f"path={payload_path}; stderr={proc.stderr!r}"
+                )
+            child_reports_file = Path(child_reports_raw).resolve()
+            if child_reports_file != parent_reports_file:
+                sys.exit(
+                    f"determinism check ERROR [{label}]: child build_reports module "
+                    f"differs from parent (environment/import-root drift) "
+                    f"seed={hash_seed} parent={parent_reports_file} "
+                    f"child={child_reports_file}; stderr={proc.stderr!r}"
                 )
             json_differs = sub_json != base_json
             md_differs = sub_md != base_md
@@ -864,6 +905,7 @@ def _check_score_determinism_cross_process(
     )
 
     # Final argv entry is the parent-allocated payload path (F2b out-of-band).
+    # build_reports_file provenance (F2c) proves the child bound this module.
     script = (
         "import json,sys; "
         "from pathlib import Path; "
@@ -879,7 +921,9 @@ def _check_score_determinism_cross_process(
         "roster=sorted(set(getattr(man,'roster',None) or [])); "
         "j,m=build_reports(rec,entries,ignore_list=ignore,"
         "score_manifest_sha256=sha,manifest_roster=roster); "
-        "Path(sys.argv[3]).write_text(json.dumps({'json':j,'md':m}))"
+        "Path(sys.argv[3]).write_text(json.dumps({"
+        "'json':j,'md':m,"
+        "'build_reports_file':build_reports.__code__.co_filename}))"
     )
     _run_determinism_children(
         script,
@@ -888,6 +932,7 @@ def _check_score_determinism_cross_process(
         base_json=base_json,
         base_md=base_md,
         artifact_dir=record_path.parent,
+        expected_build_reports_file=build_reports.__code__.co_filename,
     )
 
 
@@ -1283,6 +1328,7 @@ def _check_face_determinism_cross_process(
     )
 
     # Final argv entry is the parent-allocated payload path (F2b out-of-band).
+    # build_reports_file carries build_face_reports provenance (F2c).
     script = (
         "import json,sys; "
         "from pathlib import Path; "
@@ -1295,7 +1341,9 @@ def _check_face_determinism_cross_process(
         "sp,rp=occlusion_inputs_from_record(rec,man); "
         "j,m=build_face_reports(rec,man,score_manifest_sha256=_manifest_sha(man),"
         "occlusion_pairs_by_tag=sp,real_occlusion_pairs_by_tag=rp,public=pub); "
-        "Path(sys.argv[4]).write_text(json.dumps({'json':j,'md':m}))"
+        "Path(sys.argv[4]).write_text(json.dumps({"
+        "'json':j,'md':m,"
+        "'build_reports_file':build_face_reports.__code__.co_filename}))"
     )
     _run_determinism_children(
         script,
@@ -1304,6 +1352,7 @@ def _check_face_determinism_cross_process(
         base_json=base_json,
         base_md=base_md,
         artifact_dir=record_path.parent,
+        expected_build_reports_file=build_face_reports.__code__.co_filename,
     )
 
 

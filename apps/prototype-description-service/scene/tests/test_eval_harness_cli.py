@@ -1324,10 +1324,19 @@ def test_cli_score_determinism_guard_ignores_stdout_prefix_banner(tmp_path, monk
         score_manifest_sha256=cli_mod._manifest_sha(manifest),
         manifest_roster=sorted(set(getattr(manifest, "roster", []) or [])),
     )
+    reports_file = build_reports.__code__.co_filename
 
     def _banner_then_payload(*args, **kwargs):
         path = _det_payload_path_from_run_args(args, kwargs)
-        path.write_text(json.dumps({"json": base_json, "md": base_md}))
+        path.write_text(
+            json.dumps(
+                {
+                    "json": base_json,
+                    "md": base_md,
+                    "build_reports_file": reports_file,
+                }
+            )
+        )
 
         class _Proc:
             returncode = 0
@@ -1351,6 +1360,7 @@ def test_cli_determinism_guard_labels_distinguish_score_and_face(tmp_path, monke
     disambiguator in CI is the interpolated label.
     """
     from scripts.eval_harness import cli as cli_mod
+    from scripts.eval_harness.report import build_reports
 
     manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
     monkeypatch.chdir(tmp_path)
@@ -1378,6 +1388,7 @@ def test_cli_determinism_guard_labels_distinguish_score_and_face(tmp_path, monke
             base_json="{}",
             base_md="",
             artifact_dir=tmp_path,
+            expected_build_reports_file=build_reports.__code__.co_filename,
         )
     face_msg = str(face_exc.value)
     assert "determinism check ERROR [score-face]" in face_msg
@@ -1386,6 +1397,130 @@ def test_cli_determinism_guard_labels_distinguish_score_and_face(tmp_path, monke
     # [score-face] is fine only if the full token is [score-face]).
     assert "[score]" not in face_msg.replace("[score-face]", "")
     assert "[score-face]" not in score_msg
+
+
+def test_cli_score_determinism_guard_pins_import_root_against_cwd_decoy(
+    tmp_path, monkeypatch, capsys
+):
+    """F2c / C-01: child must bind the parent's build_reports, not a cwd decoy.
+
+    Empirically (pre-pin): ``python -c`` puts cwd at sys.path[0], so a decoy
+    ``scripts/eval_harness/report.py`` under chdir shadows both an editable
+    install and a PYTHONPATH entry. Package is NOT only site-packages-resolved
+    here — cwd shadowing is the real hazard. After the pin (cwd=import_root +
+    PYTHONPATH prepend + provenance), chdir to a decoy tree must still pass.
+    """
+    from scripts.eval_harness import cli as cli_mod
+    from scripts.eval_harness.report import build_reports
+
+    # Fixture lives under tmp_path/fixture so decoy root can own scripts/.
+    fixture_dir = tmp_path / "fixture"
+    fixture_dir.mkdir()
+    manifest_path, record_path = _clean_score_manifest_and_record(fixture_dir)
+
+    # Decoy package root: full eval_harness tree via symlinks, only report.py swapped.
+    decoy_root = tmp_path / "decoy_root"
+    real_eh = Path(cli_mod.__file__).resolve().parent
+    decoy_scripts = decoy_root / "scripts"
+    decoy_eh = decoy_scripts / "eval_harness"
+    decoy_eh.mkdir(parents=True)
+    (decoy_scripts / "__init__.py").write_text("")
+    for item in real_eh.iterdir():
+        if item.name == "report.py":
+            continue
+        target = decoy_eh / item.name
+        if not target.exists():
+            target.symlink_to(item)
+    # Divergent build_reports — load real report symbols so transitive imports
+    # (cli → report constants) succeed, then override build_reports. Pre-pin
+    # this forces FAILED; post-pin the decoy is unused.
+    real_report = real_eh / "report.py"
+    (decoy_eh / "report.py").write_text(
+        "from pathlib import Path as _P\n"
+        f"_real = _P({str(real_report)!r})\n"
+        "exec(compile(_real.read_text(), str(_real), 'exec'), globals())\n"
+        "def build_reports(*a, **k):\n"
+        "    return ('DECOY_JSON_BYTES', 'DECOY_MD_BYTES')\n"
+        "def build_face_reports(*a, **k):\n"
+        "    return ('DECOY_JSON_BYTES', 'DECOY_MD_BYTES')\n"
+    )
+    # Prove decoy shadows under unpinned python -c (documentation of hazard).
+    probe = (
+        "from scripts.eval_harness.report import build_reports; "
+        "print(build_reports.__code__.co_filename); "
+        "print(build_reports())"
+    )
+    probe_proc = cli_mod.subprocess.run(
+        [cli_mod.sys.executable, "-c", probe],
+        cwd=str(decoy_root),
+        capture_output=True,
+        text=True,
+        env=dict(cli_mod.os.environ),
+    )
+    assert probe_proc.returncode == 0, probe_proc.stderr
+    assert "decoy_root" in probe_proc.stdout
+    assert "DECOY_JSON_BYTES" in probe_proc.stdout
+
+    monkeypatch.chdir(decoy_root)
+    # Pin must make the guard ignore the decoy and match the parent's module.
+    cli_mod._check_score_determinism_cross_process(record_path, str(manifest_path))
+    out = capsys.readouterr().out
+    assert "determinism check passed [score]" in out
+    # Parent module path still the real checkout (not the decoy).
+    assert "decoy_root" not in Path(build_reports.__code__.co_filename).resolve().as_posix()
+
+
+def test_cli_score_determinism_guard_errors_on_build_reports_provenance_mismatch(
+    tmp_path, monkeypatch
+):
+    """F2c / OBS-04: child provenance ≠ parent is ERROR (env drift), not FAILED.
+
+    Names both resolved paths and carries [score]. Operator remedy is fix the
+    environment / import root, not hunt a build regression.
+    """
+    from scripts.eval_harness import cli as cli_mod
+    from scripts.eval_harness.report import build_reports
+    from scripts.eval_harness.manifest import load_manifest
+
+    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    record = json.loads(record_path.read_text())
+    manifest = load_manifest(str(manifest_path))
+    entries = [e.model_dump() for e in manifest.entries]
+    ignore_list = cli_mod._load_ignore_list(record_path.parent)
+    base_json, base_md = build_reports(
+        record,
+        entries,
+        ignore_list=ignore_list,
+        score_manifest_sha256=cli_mod._manifest_sha(manifest),
+        manifest_roster=sorted(set(getattr(manifest, "roster", []) or [])),
+    )
+    decoy_path = str((tmp_path / "decoy" / "scripts" / "eval_harness" / "report.py").resolve())
+
+    def _wrong_provenance(*args, **kwargs):
+        path = _det_payload_path_from_run_args(args, kwargs)
+        path.write_text(
+            json.dumps(
+                {
+                    "json": base_json,
+                    "md": base_md,
+                    "build_reports_file": decoy_path,
+                }
+            )
+        )
+        return _det_ok_proc()
+
+    monkeypatch.setattr(cli_mod.subprocess, "run", _wrong_provenance)
+    with pytest.raises(SystemExit) as exc:
+        cli_mod._check_score_determinism_cross_process(record_path, str(manifest_path))
+    msg = str(exc.value)
+    assert "determinism check ERROR [score]" in msg
+    assert "build_reports module differs" in msg or "import-root drift" in msg
+    parent_resolved = str(Path(build_reports.__code__.co_filename).resolve())
+    assert parent_resolved in msg
+    assert decoy_path in msg
+    assert "determinism check FAILED" not in msg
 
 
 # --- VLM-6 S2A item 4: four corruption discrimination guards (TEST-15) ---
@@ -2729,9 +2864,20 @@ def test_cli_score_face_determinism_guard_detects_nondeterminism(tmp_path, monke
     man_path = tmp_path / "man.json"
     man_path.write_text(json.dumps(manifest))
 
+    from scripts.eval_harness.report import build_face_reports
+
     def _divergent_payload(*args, **kwargs):
         path = _det_payload_path_from_run_args(args, kwargs)
-        path.write_text(json.dumps({"json": "DIFFERENT-JSON", "md": "DIFFERENT-MD"}))
+        # Matching provenance so we reach FAILED (byte mismatch), not ERROR.
+        path.write_text(
+            json.dumps(
+                {
+                    "json": "DIFFERENT-JSON",
+                    "md": "DIFFERENT-MD",
+                    "build_reports_file": build_face_reports.__code__.co_filename,
+                }
+            )
+        )
         return _det_ok_proc()
 
     monkeypatch.setattr(cli_mod.subprocess, "run", _divergent_payload)

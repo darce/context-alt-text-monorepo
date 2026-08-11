@@ -887,6 +887,12 @@ fi
 # inject the live prod POSTGRES_DSN after env-file is loaded.
 # tmpfs matches compose HF_MODULES_CACHE mount (HARM-A-02): noexec + uid 10001
 # so smoke exercises the deployed module-scratch topology, not the image layer dir.
+# S2-A-08: compose hard-fails without ACX_MODELS_PATH (no default on the :ro
+# cache bind). Smoke must not go green on an .env the real stack cannot start under.
+if [[ -z "${models_path}" ]]; then
+  echo "smoke requires ACX_MODELS_PATH in ${env_file} (compose would fail without it)" >&2
+  exit 1
+fi
 run_args=( -d --rm --name "$name" --env-file "${env_file}" --network "$net" -P
   -e RECOGNITION_BLOB_ROOT=/var/lib/acx-blobs
   -e RECOGNITION_SECRET_BACKEND=env
@@ -899,10 +905,8 @@ run_args=( -d --rm --name "$name" --env-file "${env_file}" --network "$net" -P
   -e DB_NAME="${smoke_db}"
   -e RECOGNITION_ADMIN_TOKEN=acx-smoke-admin-token-not-for-prod-use
   -v "${blob_vol}:/var/lib/acx-blobs"
+  -v "${models_path}:/data/cache:ro"
   --tmpfs /var/cache/acx/hf_modules:mode=0700,uid=10001,gid=10001,size=32m,noexec )
-if [[ -n "${models_path}" ]]; then
-  run_args+=( -v "${models_path}:/data/cache:ro" )
-fi
 docker run "${run_args[@]}" "$image" >/dev/null
 port="$(docker port "$name" 8000/tcp | head -1 | sed 's/.*://')"
 for _ in $(seq 1 "${attempts}"); do

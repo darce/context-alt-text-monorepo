@@ -794,6 +794,8 @@ fi
 # (and /app/.image-variant fail-closed checks owned by sibling lane).
 # -e overrides beat --env-file; force env secret backend so oci_vault cannot
 # inject the live prod POSTGRES_DSN after env-file is loaded.
+# tmpfs matches compose HF_MODULES_CACHE mount (HARM-A-02): noexec + uid 10001
+# so smoke exercises the deployed module-scratch topology, not the image layer dir.
 run_args=( -d --rm --name "$name" --env-file "${env_file}" --network "$net" -P
   -e RECOGNITION_BLOB_ROOT=/var/lib/acx-blobs
   -e RECOGNITION_SECRET_BACKEND=env
@@ -805,7 +807,8 @@ run_args=( -d --rm --name "$name" --env-file "${env_file}" --network "$net" -P
   -e PGPASSWORD="${smoke_pass}"
   -e DB_NAME="${smoke_db}"
   -e RECOGNITION_ADMIN_TOKEN=acx-smoke-admin-token-not-for-prod-use
-  -v "${blob_vol}:/var/lib/acx-blobs" )
+  -v "${blob_vol}:/var/lib/acx-blobs"
+  --tmpfs /var/cache/acx/hf_modules:mode=0700,uid=10001,gid=10001,size=32m,noexec )
 if [[ -n "${models_path}" ]]; then
   run_args+=( -v "${models_path}:/data/cache:ro" )
 fi
@@ -833,6 +836,25 @@ SMOKE
   log "Boot smoke passed for ${image}"
 }
 
+# One-shot acx_blobs ownership repair for volumes created under root before USER acx
+# (ORCH-LAUNCH-01-REV-r0811af90-S1-A-02). Docker only propagates image-path ownership
+# when initialising an empty new volume — existing root:root named volumes stay root
+# forever and every multipart upload 500s with EACCES. Compose defines a
+# profiles:[repair] fix-blob-ownership service; this runs it on every restart
+# (idempotent chown). Safe when the volume is already acx-owned.
+repair_blob_volume_ownership() {
+  local env="$1"
+  local remote_dir compose_files
+  remote_dir="$(env_to_remote_dir "$env")"
+  compose_files="$(env_to_compose_files "$env")"
+  log "Repairing acx_blobs ownership on ${env} (idempotent; fix-blob-ownership profile)"
+  # shellcheck disable=SC2086 # compose_files is intentionally word-split (-f a -f b).
+  if ! ssh "${SSH_TARGET}" \
+    "cd '${remote_dir}' && docker compose ${compose_files} --profile repair run --rm fix-blob-ownership"; then
+    fail "acx_blobs ownership repair failed on ${env}; multipart uploads will EACCES under USER acx. Run: cd ${remote_dir} && docker compose ${compose_files} --profile repair run --rm fix-blob-ownership"
+  fi
+}
+
 do_restart() {
   local env="$1"
   local remote_dir unit compose_files
@@ -842,8 +864,13 @@ do_restart() {
   # Always re-ship ACX_IMAGE_REPO before pull/restart so image-only hotfixes
   # (ACX_CONVERGE_RUNTIME=0) still select the variant repository.
   ship_remote_image_repo_env "${remote_dir}"
-  log "Pulling ${ACX_IMAGE_REPO} + restarting ${unit} on ${SSH_TARGET}"
-  ssh "${SSH_TARGET}" "cd ${remote_dir} && docker compose ${compose_files} pull api && sudo systemctl restart ${unit}"
+  # Pull first so the repair service image matches the about-to-restart stack.
+  log "Pulling ${ACX_IMAGE_REPO} on ${SSH_TARGET}"
+  # shellcheck disable=SC2086
+  ssh "${SSH_TARGET}" "cd ${remote_dir} && docker compose ${compose_files} pull api"
+  repair_blob_volume_ownership "$env"
+  log "Restarting ${unit} on ${SSH_TARGET}"
+  ssh "${SSH_TARGET}" "sudo systemctl restart ${unit}"
 }
 
 #---------------------------------------------------------------- deploy

@@ -554,6 +554,37 @@ ACX_REMOTE_BUILD_DIR=/var/tmp/acx-build make deploy-dev REMOTE_BUILD=1
 - VM disk fills with build cache over time; run
   `ssh ubuntu@<vm> 'docker buildx prune -f'` periodically.
 
+#### acx_blobs ownership migration (non-root runtime)
+
+Stacks that created the `acx_blobs` named volume while the recognition image
+still ran as root keep that volume as `root:root` forever — Docker only
+propagates image-path ownership when it **initialises an empty new volume**,
+never on an existing one. After the image drops to `USER acx` (uid 10001),
+multipart uploads fail with `EACCES` under `/var/lib/acx-blobs`.
+
+`scripts/deploy/recognition-service.sh` runs an idempotent repair on every
+`do_restart` (deploy / promote path):
+
+```bash
+docker compose -f docker-compose.env.yml --profile repair run --rm fix-blob-ownership
+# prod compose file (manual / legacy stacks):
+docker compose -f docker-compose.prod.yml --profile repair run --rm fix-blob-ownership
+```
+
+The `fix-blob-ownership` service is root (`user: "0:0"`), mounts `acx_blobs`,
+and `chown -R acx:acx /var/lib/acx-blobs`. Safe to re-run. One-shot manual
+repair on an already-deployed env (no full redeploy):
+
+```bash
+ssh ubuntu@acx-backend.tail1a44b8.ts.net \
+  'cd /opt/acx-backend/prod && docker compose -f docker-compose.env.yml --profile repair run --rm fix-blob-ownership'
+```
+
+Alternatively, destroy the volume only when data loss is acceptable
+(`docker volume rm <project>_acx_blobs`) so the next start re-initialises it
+from the image seed. Prefer the chown repair. The entrypoint fails closed if
+the blob root is unwritable and names this repair profile in the error.
+
 
 **Manual procedure** (the wrapper runs exactly this; documented for
 disaster-recovery scenarios where the script is unavailable):

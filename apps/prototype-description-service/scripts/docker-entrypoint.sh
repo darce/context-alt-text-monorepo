@@ -3,11 +3,34 @@
 # Order is load-bearing: migrate, sync schema, verify schema, then (vlm only)
 # verify the pre-seeded model cache, then hand off to uvicorn as PID 1.
 #
-# ACX_IMAGE_VARIANT string values must match ImageVariant in
-# scripts/verify_vlm_cache.py (recognition | vlm). Shell cannot import that
-# module before the venv is on PATH; keep the comparison literals in lockstep.
+# Image variant is build-immutable at /app/.image-variant (not ENV alone —
+# compose env_file can override ACX_IMAGE_VARIANT and fail open). String values
+# must match ImageVariant in scripts/verify_vlm_cache.py (recognition | vlm).
 set -eu
 cd /app
+
+IMAGE_VARIANT_FILE=/app/.image-variant
+if [ ! -f "${IMAGE_VARIANT_FILE}" ]; then
+	echo "FATAL: missing baked image variant at ${IMAGE_VARIANT_FILE}" >&2
+	exit 1
+fi
+BAKED_IMAGE_VARIANT=$(tr -d '[:space:]' < "${IMAGE_VARIANT_FILE}")
+case "${BAKED_IMAGE_VARIANT}" in
+recognition|vlm) ;;
+*)
+	echo "FATAL: invalid baked image variant '${BAKED_IMAGE_VARIANT}'" >&2
+	exit 1
+	;;
+esac
+# Fail closed when env claim disagrees with the bake (env_file override).
+if [ -n "${ACX_IMAGE_VARIANT:-}" ] && [ "${ACX_IMAGE_VARIANT}" != "${BAKED_IMAGE_VARIANT}" ]; then
+	echo "FATAL: ACX_IMAGE_VARIANT=${ACX_IMAGE_VARIANT} disagrees with baked ${BAKED_IMAGE_VARIANT} at ${IMAGE_VARIANT_FILE}" >&2
+	exit 1
+fi
+# Prefer bake; keep ACX_IMAGE_VARIANT in the gate so packaging polarity tests
+# still see the env-shaped compare (RHS must be vlm, not recognition).
+ACX_IMAGE_VARIANT="${BAKED_IMAGE_VARIANT}"
+
 alembic -c db/alembic.ini upgrade head
 python -m scripts.sync_identity_schema
 python -m scripts.verify_identity_schema

@@ -6,14 +6,15 @@ without depending on pytest conftest discovery across directories
 (ORCH-LAUNCH-01-S1-RC-02). Do not reintroduce a second parser.
 
 Stage inheritance (ORCH-LAUNCH-01 wave-2): ``dockerfile_stages`` returns each
-stage's OWN body (file-order insertion preserved so
-``list(stages)[-1]`` stays the default BuildKit target). Claims about what a
-*built image* contains must use ``effective_stage_body``, which follows
-``FROM <named-stage>`` transitively with cycle detection.
+stage's OWN body (file-order insertion preserved for named stages). BuildKit's
+default target when ``--target`` is omitted is the **last stage in the file**,
+named or anonymous — use ``default_build_target``, not ``list(stages)[-1]``.
+Claims about what a *built image* contains must use ``effective_stage_body``,
+which follows ``FROM <named-stage>`` transitively with cycle detection.
 
 COPY --from provenance (ORCH-LAUNCH-01 wave-3 / RC3): dependency-set claims
-(vlm extras / torch contamination) must also walk ``COPY --from=<stage>`` edges
-that ship a venv or site-packages tree — the default runtime receives its venv
+(vlm extras / torch contamination) walk every ``COPY --from=<stage>`` edge
+(including numeric stage indices) — the default runtime receives its venv
 via ``COPY --from=builder``, not via ``FROM``.
 """
 
@@ -30,13 +31,21 @@ RUNTIME_VLM_STAGE = "runtime-vlm"
 # Project install with extras: .[bench], ".[bench,vlm]", '.[dev]', etc.
 _PROJECT_EXTRAS_RE = re.compile(r"""(?:['"]\.\[[^\]]+\]['"]|\.\[[^\]]+\])""")
 
-# Optional Dockerfile `RUN` prefix, absolute interpreter, and `python -m` before pip/uv.
-# Anchored at fragment start (or after &&/;/|) so mid-line noise cannot hide an install.
+# Optional Dockerfile `RUN` prefix, env wrappers, absolute interpreter, and
+# `python -m` before pip/uv. env FOO=1 / env A=1 B=2 prefixes are real install
+# forms that previously evaded a fragment-start-only match (D5.5).
 _PIP_INSTALL_RE = re.compile(
     r"(?:^|&&|;|\|)\s*(?:RUN\s+)?"
+    r"(?:env(?:\s+[A-Za-z_][\w]*=\S+)+\s+)?"
     r"(?:(?:/[\w./-]+/)?(?:python3?|[\w.-]*python3?)\s+-m\s+)?"
     r"(?:uv\s+pip\s+install|pip(?:3)?\s+install)\b",
     re.IGNORECASE,
+)
+
+# sh -c / bash -c quoted payloads (single- or double-quoted).
+_SHELL_C_RE = re.compile(
+    r"""(?:ba)?sh\s+-c\s+(?P<q>['"])(?P<body>.*?)(?P=q)""",
+    re.IGNORECASE | re.DOTALL,
 )
 
 # COPY --from=<stage> … (flags may precede or follow --from=)
@@ -45,14 +54,20 @@ _COPY_FROM_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Paths that constitute a dependency-set edge when copied across stages.
-_DEP_COPY_PATH_RE = re.compile(
-    r"(?:/opt/venv|/app/\.venv|(?:^|[\s=])\.venv\b|site-packages)",
-    re.IGNORECASE,
-)
-
 # Shell fragment separators for RUN chains (RC4).
 _FRAGMENT_SPLIT_RE = re.compile(r"&&|;|\|")
+
+# Heredoc openers: RUN <<EOF / COPY <<"EOT" / RUN <<-EOF …
+_HEREDOC_OPEN_RE = re.compile(
+    r"^(?P<prefix>.*?)<<[-]?(?P<q>['\"]?)(?P<delim>\w+)(?P=q)(?P<suffix>.*)$"
+)
+
+# --extra vlm / --extra=vlm / --extra "vlm" / --extra='vlm'
+# Quoted forms must not require a word-boundary after the closing quote
+# (\" is non-word, so \\b after \"vlm\" never fires).
+_EXTRA_VLM_RE = re.compile(
+    r"""--extra(?:=|\s+)(?:"vlm"|'vlm'|vlm\b)"""
+)
 
 
 class DockerfileParseError(ValueError):
@@ -119,20 +134,29 @@ def parse_from_instruction(line: str) -> tuple[str, str | None] | None:
     return ref, name
 
 
-def _parse_dockerfile(dockerfile: Path) -> tuple[dict[str, str], dict[str, str]]:
-    """Return ``(own_bodies, bases)`` for every named ``FROM ... AS <name>``.
+def _parse_dockerfile(
+    dockerfile: Path,
+) -> tuple[dict[str, str], dict[str, str], list[str | None]]:
+    """Return ``(own_bodies, bases, stage_order)`` for every ``FROM``.
 
-    ``own_bodies`` is insertion-ordered by file order.
-    ``bases`` maps stage name → the ``FROM`` ref (image or prior stage name).
+    ``own_bodies`` / ``bases`` cover **named** stages only (insertion-ordered).
+    ``stage_order`` lists every stage in file order; anonymous stages appear as
+    ``None`` so ``default_build_target`` can match BuildKit (last stage wins,
+    named or not).
     """
     stages: dict[str, list[str]] = {}
     bases: dict[str, str] = {}
+    order: list[str | None] = []
     current: list[str] | None = None
     for line in Path(dockerfile).read_text(encoding="utf-8").splitlines():
         parsed = parse_from_instruction(line)
         if parsed is not None:
             ref, name = parsed
+            order.append(name)
             if name is None:
+                # Anonymous stage: BuildKit still builds it when last, but we
+                # have no stable name to attach body claims to. Terminate the
+                # previous stage so bodies do not bleed across the FROM.
                 current = None
                 continue
             current = stages.setdefault(name, [])
@@ -140,27 +164,30 @@ def _parse_dockerfile(dockerfile: Path) -> tuple[dict[str, str], dict[str, str]]
             continue
         if current is not None:
             current.append(line)
-    return {name: "\n".join(body) for name, body in stages.items()}, bases
+    return {name: "\n".join(body) for name, body in stages.items()}, bases, order
 
 
 def dockerfile_stages(dockerfile: Path) -> dict[str, str]:
     """Ordered ``{stage_name: own_stage_body}`` for every named ``FROM ... AS``.
 
-    Insertion order is the file order, so ``list(stages)[-1]`` is the stage
-    BuildKit builds when ``--target`` is omitted. Unnamed ``FROM`` lines start an
-    anonymous stage; its body is discarded but it still terminates the previous
-    stage, which keeps the bodies from bleeding into each other.
+    Named-stage insertion order is file order among *named* stages only.
+    BuildKit's default target when ``--target`` is omitted is the last stage in
+    the file — including an anonymous final ``FROM`` — so do **not** treat
+    ``list(stages)[-1]`` as the build default; use ``default_build_target``.
+
+    Unnamed ``FROM`` lines still terminate the previous stage (bodies do not
+    bleed) but are omitted from this map.
 
     Returns OWN bodies only — does not follow ``FROM <named-stage>``. Use
     ``effective_stage_body`` for built-image claims (COPY/CMD/ENV/USER/…).
     """
-    bodies, _ = _parse_dockerfile(dockerfile)
+    bodies, _, _ = _parse_dockerfile(dockerfile)
     return bodies
 
 
 def dockerfile_stage_bases(dockerfile: Path) -> dict[str, str]:
     """Map ``{stage_name: FROM_ref}`` for every named stage."""
-    _, bases = _parse_dockerfile(dockerfile)
+    _, bases, _ = _parse_dockerfile(dockerfile)
     return bases
 
 
@@ -169,11 +196,18 @@ _dockerfile_stages = dockerfile_stages
 
 
 def default_build_target(dockerfile: Path) -> str | None:
-    """Stage name BuildKit builds when ``--target`` is omitted, or None."""
-    stages = dockerfile_stages(dockerfile)
-    if not stages:
+    """Stage name BuildKit builds when ``--target`` is omitted.
+
+    Returns the last stage's name in file order. Returns ``None`` when the
+    Dockerfile has no stages, or when the last stage is anonymous (unnamed
+    ``FROM``) — BuildKit still builds that stage, but there is no name to
+    return. Callers that require a named production target must treat
+    ``None`` as a failure.
+    """
+    _, _, order = _parse_dockerfile(dockerfile)
+    if not order:
         return None
-    return list(stages)[-1]
+    return order[-1]
 
 
 def stage_body(dockerfile: Path, stage: str) -> str:
@@ -216,7 +250,7 @@ def effective_stage_body(dockerfile: Path, stage: str) -> str:
     External image refs (``python:3.12-slim``, ``ghcr.io/...``) stop the walk.
     Raises ``AssertionError`` when ``stage`` is missing; ``ValueError`` on cycles.
     """
-    own, bases = _parse_dockerfile(dockerfile)
+    own, bases, _ = _parse_dockerfile(dockerfile)
     assert stage in own, (
         f"Dockerfile missing stage {stage!r}; have {list(own)}"
     )
@@ -225,32 +259,104 @@ def effective_stage_body(dockerfile: Path, stage: str) -> str:
 
 def effective_stage_bodies(dockerfile: Path) -> dict[str, str]:
     """Effective bodies for every named stage, in file insertion order."""
-    own, bases = _parse_dockerfile(dockerfile)
+    own, bases, _ = _parse_dockerfile(dockerfile)
     return {name: _resolve_effective(own, bases, name) for name in own}
 
 
+def _stage_index_map(order: list[str | None]) -> dict[str, str]:
+    """Map BuildKit numeric stage indices to named stage names.
+
+    Anonymous stages occupy an index but have no name; numeric refs that land
+    on them are left unresolved (cannot attach named-stage claims).
+    """
+    mapping: dict[str, str] = {}
+    for i, name in enumerate(order):
+        if name is not None:
+            mapping[str(i)] = name
+    return mapping
+
+
 def join_continued_lines(text: str) -> list[str]:
-    """Join backslash-continued Dockerfile lines into logical commands."""
+    """Join Dockerfile physical lines into logical instructions.
+
+    Models BuildKit/Docker preprocessing that the gates care about:
+
+    1. Backslash continuations — Docker removes **comment-only** lines inside a
+       ``\\`` continuation *before* joining, so a mid-continuation ``#`` line
+       must not split one logical instruction into two.
+    2. Heredocs — ``RUN <<EOF`` … ``EOF`` (and ``COPY <<…``) fold the body into
+       a single logical command so pip/uv/COPY edges inside are visible.
+    """
+    physical = text.splitlines()
     logical: list[str] = []
     buf = ""
-    for raw in text.splitlines():
+    continuing = False
+    i = 0
+    while i < len(physical):
+        raw = physical[i]
         line = raw.rstrip()
+
+        # Heredoc only starts a new instruction when not mid-continuation.
+        if not continuing:
+            heredoc = _HEREDOC_OPEN_RE.match(line)
+            if heredoc and "<<" in line:
+                delim = heredoc.group("delim")
+                prefix = heredoc.group("prefix")
+                suffix = heredoc.group("suffix").strip()
+                body_parts: list[str] = []
+                i += 1
+                while i < len(physical):
+                    if physical[i].rstrip() == delim:
+                        break
+                    body_parts.append(physical[i].rstrip())
+                    i += 1
+                # Skip the closing delimiter when present.
+                if i < len(physical) and physical[i].rstrip() == delim:
+                    i += 1
+                body = " ; ".join(
+                    part.strip()
+                    for part in body_parts
+                    if part.strip() and not part.strip().startswith("#")
+                )
+                pieces = [prefix.rstrip(), body, suffix]
+                logical.append(" ".join(p for p in pieces if p))
+                continue
+
+        # Inside a backslash continuation, Docker drops comment-only lines.
+        if continuing:
+            stripped = line.lstrip()
+            if stripped.startswith("#") or stripped == "":
+                i += 1
+                continue
+
         if line.endswith("\\"):
             buf += line[:-1] + " "
+            continuing = True
+            i += 1
             continue
+
         buf += line
         logical.append(buf)
         buf = ""
+        continuing = False
+        i += 1
+
     if buf:
         logical.append(buf)
     return logical
 
 
-def copy_from_dep_stages(stage_text: str) -> list[str]:
-    """Stage names whose venv/site-packages are ``COPY --from=``'d into this body.
+def copy_from_dep_stages(
+    stage_text: str,
+    *,
+    stage_index: dict[str, str] | None = None,
+) -> list[str]:
+    """Stage names referenced by ``COPY --from=`` in ``stage_text``.
 
-    Only edges that ship a virtualenv or site-packages tree count as
-    dependency-set provenance (RC3). Plain ``COPY --from=uv /uv …`` does not.
+    Every ``COPY --from`` edge is a dependency-set provenance edge (D5.4): a
+    path allowlist previously let ``COPY --from=builder-vlm / /`` (or any path
+    outside venv/site-packages) ship torch while the gate stayed green.
+    Numeric refs (``COPY --from=0``) resolve via ``stage_index`` when provided.
     """
     deps: list[str] = []
     for line in join_continued_lines(stage_text):
@@ -260,22 +366,27 @@ def copy_from_dep_stages(stage_text: str) -> list[str]:
         match = _COPY_FROM_RE.match(stripped)
         if not match:
             continue
-        if _DEP_COPY_PATH_RE.search(stripped):
-            deps.append(match.group(1))
+        ref = match.group(1)
+        # Strip quotes if present: --from="builder"
+        if len(ref) >= 2 and ref[0] == ref[-1] and ref[0] in {"'", '"'}:
+            ref = ref[1:-1]
+        if stage_index is not None and ref.isdigit() and ref in stage_index:
+            ref = stage_index[ref]
+        deps.append(ref)
     return deps
 
 
 def has_vlm_extra(stage_text: str) -> bool:
     """True when the stage text resolves the project ``vlm`` extra.
 
-    Recognises (RC2):
-    - ``--extra vlm`` / ``--extra=vlm``
+    Recognises (RC2 / D5.3):
+    - ``--extra vlm`` / ``--extra=vlm`` / ``--extra "vlm"`` / ``--extra='vlm'``
     - ``--all-extras`` (implies vlm when the project declares it)
     - project-extras forms ``.[vlm]`` / ``".[bench,vlm]"`` / ``'.[vlm]'``
     """
     if re.search(r"--all-extras\b", stage_text):
         return True
-    if re.search(r"--extra(?:=|\s+)vlm\b", stage_text):
+    if _EXTRA_VLM_RE.search(stage_text):
         return True
     for match in _PROJECT_EXTRAS_RE.finditer(stage_text):
         if re.search(r"\bvlm\b", match.group(0)):
@@ -288,19 +399,29 @@ def stage_resolves_vlm_extra(
     stage: str,
     *,
     _stack: frozenset[str] | None = None,
+    _own: dict[str, str] | None = None,
+    _bases: dict[str, str] | None = None,
+    _index: dict[str, str] | None = None,
 ) -> bool:
     """True if ``stage``'s built image would contain the vlm extra.
 
     Checks the effective body (FROM inheritance) and walks ``COPY --from``
-    venv/site-packages edges as dependency-set provenance (RC3). A default
-    ``runtime`` that copies ``/opt/venv`` from a builder which synced
-    ``--extra=vlm`` / ``--all-extras`` is a failure even though the runtime
-    stage's own body never mentions vlm.
+    edges as dependency-set provenance (RC3 / D5.4). A default ``runtime`` that
+    copies a venv from a builder which synced ``--extra=vlm`` / ``--all-extras``
+    is a failure even though the runtime stage's own body never mentions vlm.
+
+    Raises ``ValueError`` on a ``COPY --from`` / FROM provenance cycle instead
+    of returning False (silent cycle was a gate bypass).
     """
     stack = _stack or frozenset()
     if stage in stack:
-        return False
-    own, bases = _parse_dockerfile(dockerfile)
+        cycle = " -> ".join([*stack, stage])
+        raise ValueError(f"Dockerfile stage dependency cycle: {cycle}")
+    if _own is None or _bases is None or _index is None:
+        own, bases, order = _parse_dockerfile(dockerfile)
+        index = _stage_index_map(order)
+    else:
+        own, bases, index = _own, _bases, _index
     if stage not in own:
         raise AssertionError(
             f"Dockerfile missing stage {stage!r}; have {list(own)}"
@@ -309,12 +430,31 @@ def stage_resolves_vlm_extra(
     if has_vlm_extra(eff):
         return True
     next_stack = stack | {stage}
-    for dep in copy_from_dep_stages(eff):
+    for dep in copy_from_dep_stages(eff, stage_index=index):
         if dep in own and stage_resolves_vlm_extra(
-            dockerfile, dep, _stack=next_stack
+            dockerfile,
+            dep,
+            _stack=next_stack,
+            _own=own,
+            _bases=bases,
+            _index=index,
         ):
             return True
     return False
+
+
+def _fragments_to_scan(part: str) -> list[str]:
+    """Expand shell wrappers so ``sh -c "pip install …"`` is visible (D5.5)."""
+    out = [part]
+    for match in _SHELL_C_RE.finditer(part):
+        body = match.group("body")
+        out.append(body)
+        # Nested fragments inside the quoted body.
+        for sub in _FRAGMENT_SPLIT_RE.split(body):
+            sub = sub.strip()
+            if sub:
+                out.append(sub)
+    return out
 
 
 def unlocked_project_extra_installs(stage_text: str) -> list[str]:
@@ -322,8 +462,9 @@ def unlocked_project_extra_installs(stage_text: str) -> list[str]:
 
     Catches ``pip install .[bench]``, ``python -m pip install ".[bench]"``,
     ``/opt/venv/bin/python -m pip install '.[dev]'``, ``uv pip install …``,
-    line continuations, and any extra name — whenever ``--no-deps`` is absent
-    from the *same* shell fragment (ORCH-LAUNCH-01-S1-RC-03 / RC4 / FIR4-BR-01).
+    ``env FOO=1 pip install …``, ``sh -c "pip install …"``, line continuations,
+    heredoc bodies, and any extra name — whenever ``--no-deps`` is absent
+    from the *same* shell fragment (ORCH-LAUNCH-01-S1-RC-03 / RC4 / FIR4-BR-01 / D5).
 
     Fragments are split on ``&&``, ``;``, and ``|`` so a harmless
     ``pip install --no-deps wheel`` cannot whitelist a sibling
@@ -335,12 +476,16 @@ def unlocked_project_extra_installs(stage_text: str) -> list[str]:
             part = part.strip()
             if not part or part.startswith("#"):
                 continue
-            # Anchor at fragment start so mid-line noise cannot hide an install.
-            probe = part if _PIP_INSTALL_RE.match(part) else f"&& {part}"
-            if not _PIP_INSTALL_RE.search(probe):
-                continue
-            if "--no-deps" in part:
-                continue
-            if _PROJECT_EXTRAS_RE.search(part):
-                offenders.append(part)
+            for fragment in _fragments_to_scan(part):
+                fragment = fragment.strip()
+                if not fragment or fragment.startswith("#"):
+                    continue
+                # Anchor at fragment start so mid-line noise cannot hide an install.
+                probe = fragment if _PIP_INSTALL_RE.match(fragment) else f"&& {fragment}"
+                if not _PIP_INSTALL_RE.search(probe):
+                    continue
+                if "--no-deps" in fragment:
+                    continue
+                if _PROJECT_EXTRAS_RE.search(fragment):
+                    offenders.append(fragment)
     return offenders

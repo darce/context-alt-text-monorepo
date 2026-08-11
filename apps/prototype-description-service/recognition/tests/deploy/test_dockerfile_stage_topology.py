@@ -23,8 +23,13 @@ from pathlib import Path
 import pytest
 
 from recognition.tests.dockerfile_stages import (
+    DockerfileParseError,
+    default_build_target,
     dockerfile_stages as _dockerfile_stages_shared,
     effective_stage_body,
+    has_vlm_extra,
+    parse_from_instruction,
+    stage_resolves_vlm_extra,
 )
 
 # recognition/tests/deploy/<this> → parents[3] = the service root.
@@ -52,22 +57,35 @@ def _write(tmp_path: Path, text: str) -> Path:
 def test_default_build_target_is_the_torch_free_runtime() -> None:
     stages = _dockerfile_stages()
     assert stages, "expected named build stages in the Dockerfile"
-    assert list(stages)[-1] == DEFAULT_STAGE, (
-        f"last stage is {list(stages)[-1]!r}, so a bare `docker build` would build it. "
+    last = default_build_target(DOCKERFILE)
+    assert last == DEFAULT_STAGE, (
+        f"last stage is {last!r}, so a bare `docker build` would build it. "
         f"{DEFAULT_STAGE!r} must stay last or production ships the VLM image."
     )
+    assert list(stages)[-1] == DEFAULT_STAGE
 
 
 def test_default_builder_does_not_install_the_vlm_extra() -> None:
-    assert "--extra vlm" not in _dockerfile_stages()["builder"], (
-        "the default `builder` stage must not sync --extra vlm; torch belongs to builder-vlm only"
+    """Default builder must not resolve vlm (space, equals, or --all-extras forms)."""
+    builder = _dockerfile_stages()["builder"]
+    assert not has_vlm_extra(builder), (
+        "the default `builder` stage must not sync the vlm extra "
+        "(--extra vlm / --extra=vlm / --all-extras / .[vlm]); torch belongs to builder-vlm only"
+    )
+    # COPY --from provenance: default runtime must not receive a vlm-contaminated venv.
+    assert not stage_resolves_vlm_extra(DOCKERFILE, DEFAULT_STAGE), (
+        "default runtime image must not resolve the vlm extra via own body, FROM parents, "
+        "or COPY --from venv edges (RC3)"
     )
 
 
 def test_vlm_stage_still_exists_and_is_reachable_by_target() -> None:
     stages = _dockerfile_stages()
     assert VLM_STAGE in stages, f"{VLM_STAGE!r} stage disappeared; `--target {VLM_STAGE}` would fail"
-    assert "--extra vlm" in stages["builder-vlm"], "builder-vlm must sync the vlm extra"
+    assert has_vlm_extra(stages["builder-vlm"]), "builder-vlm must sync the vlm extra"
+    assert stage_resolves_vlm_extra(DOCKERFILE, VLM_STAGE), (
+        "runtime-vlm must resolve the vlm extra (via builder-vlm COPY --from)"
+    )
 
 
 def test_each_runtime_stage_copies_its_matching_builder() -> None:
@@ -123,7 +141,28 @@ def test_guard_bites_when_default_builder_gains_the_vlm_extra(tmp_path: Path) ->
         "RUN uv sync --frozen --no-dev --extra bench --extra vlm --no-install-project",
         1,
     )
-    assert "--extra vlm" in _dockerfile_stages(_write(tmp_path, leaked))["builder"]
+    path = _write(tmp_path, leaked)
+    assert has_vlm_extra(_dockerfile_stages(path)["builder"])
+    assert stage_resolves_vlm_extra(path, DEFAULT_STAGE)
+
+
+@pytest.mark.parametrize(
+    "extra_flag",
+    ["--extra=vlm", "--all-extras"],
+    ids=["equals-form", "all-extras"],
+)
+def test_guard_bites_on_equals_and_all_extras_vlm_forms(
+    tmp_path: Path, extra_flag: str
+) -> None:
+    """Wave-3 M2/M2b: --extra=vlm and --all-extras must be detected (RC2)."""
+    leaked = _SYNTHETIC.replace(
+        "RUN uv sync --frozen --no-dev --extra bench --no-install-project",
+        f"RUN uv sync --frozen --no-dev --extra bench {extra_flag} --no-install-project",
+        1,
+    )
+    path = _write(tmp_path, leaked)
+    assert has_vlm_extra(_dockerfile_stages(path)["builder"]), extra_flag
+    assert stage_resolves_vlm_extra(path, DEFAULT_STAGE), extra_flag
 
 
 def test_guard_bites_when_the_vlm_stages_are_deleted(tmp_path: Path) -> None:
@@ -162,3 +201,68 @@ def test_effective_body_follows_named_stage_parent(tmp_path: Path) -> None:
     assert "ACX_IMAGE_VARIANT=recognition" in eff
     # Own-body order invariant for default target is unchanged.
     assert list(_dockerfile_stages(path))[-1] == DEFAULT_STAGE
+
+
+def test_from_parser_tolerates_platform_flag_and_trailing_comment() -> None:
+    """RC1: FROM --platform=… and trailing # comments must parse, not become body."""
+    ref, name = parse_from_instruction(
+        "FROM --platform=$TARGETPLATFORM runtime-vlm AS runtime-final"
+    )
+    assert (ref, name) == ("runtime-vlm", "runtime-final")
+    ref, name = parse_from_instruction(
+        "FROM runtime-vlm AS runtime-final # ship the vlm image by default"
+    )
+    assert (ref, name) == ("runtime-vlm", "runtime-final")
+    ref, name = parse_from_instruction("FROM python:3.12-slim AS builder")
+    assert (ref, name) == ("python:3.12-slim", "builder")
+
+
+def test_from_parser_raises_on_unparseable_from_line() -> None:
+    """RC1: unparseable FROM must RAISE, never silently reclassify as body."""
+    with pytest.raises(DockerfileParseError):
+        parse_from_instruction("FROM")
+    with pytest.raises(DockerfileParseError):
+        parse_from_instruction("FROM --platform=linux/arm64")
+    with pytest.raises(DockerfileParseError):
+        parse_from_instruction("FROM python:3.12-slim AS")
+
+
+def test_guard_bites_when_platform_flagged_final_stage_appended(tmp_path: Path) -> None:
+    """Wave-3 M1: FROM --platform=… AS runtime-final must flip default target."""
+    text = _SYNTHETIC + (
+        "\nFROM --platform=$TARGETPLATFORM runtime-vlm AS runtime-final\n"
+    )
+    path = _write(tmp_path, text)
+    assert default_build_target(path) == "runtime-final"
+    assert list(_dockerfile_stages(path))[-1] == "runtime-final"
+
+
+def test_guard_bites_when_commented_final_stage_appended(tmp_path: Path) -> None:
+    """Wave-3 M1b: trailing # comment on final FROM must not hide the stage."""
+    text = _SYNTHETIC + (
+        "\nFROM runtime-vlm AS runtime-final # ship the vlm image by default\n"
+    )
+    path = _write(tmp_path, text)
+    assert default_build_target(path) == "runtime-final"
+
+
+def test_guard_bites_when_copy_from_vlm_builder_contaminates_runtime(
+    tmp_path: Path,
+) -> None:
+    """Wave-3 RC3/M8: COPY --from a stage that resolved vlm must fail the gate."""
+    path = _write(
+        tmp_path,
+        "FROM python:3.12-slim AS deps-base\n"
+        "RUN uv sync --locked --extra vlm\n"
+        "\n"
+        "FROM deps-base AS builder\n"
+        "RUN true\n"
+        "\n"
+        "FROM python:3.12-slim AS runtime\n"
+        "COPY --from=builder /opt/venv /opt/venv\n"
+        "ENV ACX_IMAGE_VARIANT=recognition\n",
+    )
+    # Own/effective runtime body never mentions vlm — provenance walk must.
+    assert not has_vlm_extra(effective_stage_body(path, DEFAULT_STAGE))
+    assert stage_resolves_vlm_extra(path, DEFAULT_STAGE)
+    assert stage_resolves_vlm_extra(path, "builder")

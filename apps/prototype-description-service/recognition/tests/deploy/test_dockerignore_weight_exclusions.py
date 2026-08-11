@@ -15,7 +15,9 @@ module compares **artifact class sets**, each side spelled in its own syntax.
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -308,18 +310,43 @@ def test_dead_cache_dir_patterns_are_absent() -> None:
         assert dead not in script_excludes, f"dead pattern {dead!r} reappeared as rsync --exclude="
 
 
+def _probe_repo_name(target: str, script: Path = DEPLOY_SCRIPT) -> subprocess.CompletedProcess[str]:
+    """Call the real resolve_image_repo_name.
+
+    The deploy script guards its dispatcher with BASH_SOURCE, so sourcing it
+    defines the helpers without running a command. Probing behaviour keeps this
+    gate alive across equivalent refactors of the case arms (TEST-06) — the
+    earlier source-regex form went red when `runtime-vlm)` widened to
+    `runtime-vlm|builder-vlm)` even though the mapping was unchanged.
+    """
+    return subprocess.run(
+        ["bash", "-c", f'source "{script}"; resolve_image_repo_name'],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "ACX_BUILD_TARGET": target},
+        timeout=15,
+    )
+
+
 def test_image_repo_name_derived_from_build_target() -> None:
     """RA-07: ACX_BUILD_TARGET selects a distinct repository so variants never collide."""
     script = DEPLOY_SCRIPT.read_text()
     assert "resolve_image_repo_name()" in script, "expected resolve_image_repo_name helper"
-    # Exact case arm — comments mentioning runtime-vlm must not satisfy this.
-    assert re.search(
-        r"runtime-vlm\)\s*printf\s+'%s-vlm\\n'\s+\"\$\{IMAGE_NAME\}\"",
-        script,
-    ), "runtime-vlm must map to IMAGE_NAME-vlm via printf '%s-vlm'"
-    assert re.search(r'""\|runtime\)\s*printf\s+\'%s\\n\'\s+"\$\{IMAGE_NAME\}"', script), (
-        "empty/runtime target must keep default IMAGE_NAME"
-    )
+    for target in ("runtime-vlm", "builder-vlm"):
+        proc = _probe_repo_name(target)
+        assert proc.returncode == 0, f"{target}: {proc.stderr}"
+        assert proc.stdout.strip().endswith("-vlm"), (
+            f"{target} must map to IMAGE_NAME-vlm (got {proc.stdout.strip()!r})"
+        )
+    for target in ("", "runtime"):
+        proc = _probe_repo_name(target)
+        assert proc.returncode == 0, f"{target!r}: {proc.stderr}"
+        assert not proc.stdout.strip().endswith("-vlm"), (
+            f"{target!r} must keep the default IMAGE_NAME (got {proc.stdout.strip()!r})"
+        )
+    # Unmapped targets fail closed rather than inventing a repo suffix.
+    assert _probe_repo_name("bogus").returncode != 0, "unknown ACX_BUILD_TARGET must fail closed"
     assert re.search(
         r'IMAGE_BASE="\$\{OCIR_REGISTRY\}/\$\{OCIR_NAMESPACE\}/\$\(resolve_image_repo_name\)"',
         script,
@@ -438,26 +465,34 @@ def test_rsync_depth_recursive_helper_rejects_double_star() -> None:
     assert not _is_rsync_depth_recursive_pattern("recognition/infrastructure/face_pipeline/models/*.onnx")
 
 
-def test_image_tag_derivation_mutation_would_collide() -> None:
-    """TEST-15: if resolve_image_repo_name ignored runtime-vlm, variants would share IMAGE_BASE."""
-    script = DEPLOY_SCRIPT.read_text()
-    # Prove the case arm exists; deleting the printf line must go red (not comments alone).
-    vlm_arm = re.search(
-        r"runtime-vlm\)\s*printf\s+'%s-vlm\\n'\s+\"\$\{IMAGE_NAME\}\"",
-        script,
-    )
-    assert vlm_arm, "missing runtime-vlm → IMAGE_NAME-vlm mapping (RA-07)"
-    # Synthetic mirror of the shell case: empty vs runtime-vlm must never collide.
-    def resolve(target: str, image_name: str = "acx-backend") -> str:
-        if target in ("", "runtime"):
-            return image_name
-        if target == "runtime-vlm":
-            return f"{image_name}-vlm"
-        return f"{image_name}-{target}"
+def test_image_tag_derivation_mutation_would_collide(tmp_path: Path) -> None:
+    """TEST-15: if resolve_image_repo_name dropped the vlm arm, variants would collide.
 
-    assert resolve("") != resolve("runtime-vlm")
-    assert resolve("runtime-vlm") == "acx-backend-vlm"
-    assert resolve("") == "acx-backend"
+    Mutates a *copy of the real script* rather than a synthetic Python mirror —
+    a mirror asserts on its own reimplementation and stays green no matter what
+    the shell does.
+    """
+    assert _probe_repo_name("") .stdout.strip() != _probe_repo_name("runtime-vlm").stdout.strip(), (
+        "empty and runtime-vlm targets must not share a repository (RA-07)"
+    )
+
+    original = DEPLOY_SCRIPT.read_text()
+    mutant_text, subs = re.subn(
+        r"^\s*runtime-vlm\|builder-vlm\)\s*printf.*$",
+        "    runtime-vlm|builder-vlm) printf '%s\\\\n' \"${IMAGE_NAME}\" ;;",
+        original,
+        count=1,
+        flags=re.MULTILINE,
+    )
+    assert subs == 1, "could not locate the vlm case arm to mutate (arm renamed?)"
+    mutant = tmp_path / "recognition-service.sh"
+    mutant.write_text(mutant_text)
+
+    collided = _probe_repo_name("runtime-vlm", script=mutant).stdout.strip()
+    baseline = _probe_repo_name("", script=mutant).stdout.strip()
+    assert collided == baseline, (
+        "mutation harness is inert: dropping the -vlm suffix did not cause a collision"
+    )
 
 
 def test_dockerignore_negation_reincludes_weight_class() -> None:

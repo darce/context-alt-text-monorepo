@@ -316,12 +316,18 @@ def test_modules_cache_required_present_and_writable(
     monkeypatch.setenv("HF_MODULES_CACHE", str(modules))
     assert gate.main([]) == 0
 
-    # Present but unwritable → fail (simulates read-only mount of module cache).
-    modules.chmod(0o555)
-    try:
-        assert gate.main([]) == 1
-    finally:
-        modules.chmod(0o755)
+    # Present but unwritable → fail. Use PermissionError monkeypatch rather than
+    # chmod(0o555): root runners ignore DAC mode bits so chmod stays green under
+    # container CI (A-12). Gate writes ``.acx_modules_cache_write_probe``.
+    real_write_text = Path.write_text
+
+    def _deny_probe(self: Path, data: object = "", *args: object, **kwargs: object) -> int:
+        if self.name == ".acx_modules_cache_write_probe":
+            raise PermissionError("read-only mount")
+        return real_write_text(self, data, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "write_text", _deny_probe)
+    assert gate.main([]) == 1
 
 
 def test_main_module_invocable_as_python_m(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -334,6 +340,9 @@ def test_main_module_invocable_as_python_m(monkeypatch: pytest.MonkeyPatch) -> N
     env.pop("HF_HUB_CACHE", None)
     env.pop("HF_HOME", None)
     env.pop("ACX_REQUIRE_VLM_CACHE", None)
+    # Scrub variant so a parent shell exporting ACX_IMAGE_VARIANT=vlm cannot
+    # invert seeded → EXIT_FAIL (V-09).
+    env.pop("ACX_IMAGE_VARIANT", None)
     result = subprocess.run(
         [sys.executable, "-m", "scripts.verify_vlm_cache"],
         cwd=SERVICE_ROOT,

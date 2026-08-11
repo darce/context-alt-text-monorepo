@@ -869,6 +869,26 @@ def test_guard_bites_when_runtime_missing_user_acx(tmp_path: Path) -> None:
     assert _runtime_ends_as_acx(effective_stage_body(df, DEFAULT_RUNTIME_STAGE))
 
 
+def test_guard_bites_when_runtime_re_escalates_to_root(tmp_path: Path) -> None:
+    """G-05: last USER wins — USER acx then USER root must fail the privilege gate."""
+    df = tmp_path / "Dockerfile"
+    df.write_text(
+        "FROM python:3.12-slim AS runtime-base\n"
+        "RUN useradd -u 10001 acx\n"
+        "USER acx\n"
+        "\n"
+        "FROM runtime-base AS runtime\n"
+        "USER root\n"
+        "ENV ACX_IMAGE_VARIANT=recognition\n",
+        encoding="utf-8",
+    )
+    body = effective_stage_body(df, DEFAULT_RUNTIME_STAGE)
+    assert _last_user(body) == "root"
+    assert not _runtime_ends_as_acx(body), (
+        "USER acx followed by USER root must fail _runtime_ends_as_acx"
+    )
+
+
 def _volume_instruction_hits(text: str) -> list[str]:
     """Active VOLUME instruction lines (comments ignored) — RA-10 discriminator."""
     return [
@@ -935,40 +955,38 @@ def test_guard_bites_when_runtime_base_chowns_app(tmp_path: Path) -> None:
 
 
 def test_guard_bites_on_stage_inheritance_cycle(tmp_path: Path) -> None:
-    """Cycle in FROM graph must raise rather than recurse forever."""
-    df = tmp_path / "Dockerfile"
-    df.write_text(
-        "FROM python:3.12-slim AS a\n"
-        "RUN true\n"
-        "\n"
-        "FROM a AS b\n"
-        "RUN true\n"
-        "\n"
-        "FROM b AS a\n"
-        "RUN true\n",
-        encoding="utf-8",
-    )
-    # Last definition of `a` wins in our setdefault? setdefault keeps first body's
-    # list object but bases[name] is overwritten on each FROM — last base wins.
-    # Either way resolution of a stage that points at a cycle must raise.
+    """COPY --from provenance cycle must raise via the public API (B-09).
+
+    Hand-built private ``_resolve_effective`` helpers are not the gate — a
+    synthetic Dockerfile that expresses the cycle is.
+    FROM redefinition cycles are rejected as duplicate stage names (A-09).
+    """
     import pytest
 
-    # Rewrite with a true cycle a→b→a via distinct names without redefinition:
-    df.write_text(
-        "FROM python:3.12-slim AS a\n"
+    from recognition.tests.dockerfile_stages import stage_resolves_vlm_extra
+
+    cyclic = tmp_path / "cycle.Dockerfile"
+    cyclic.write_text(
+        "FROM python:3.12-slim AS stage_a\n"
+        "COPY --from=stage_b /opt/venv /opt/venv\n"
+        "\n"
+        "FROM python:3.12-slim AS stage_b\n"
+        "COPY --from=stage_a /opt/venv /opt/venv\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="cycle"):
+        stage_resolves_vlm_extra(cyclic, "stage_a")
+
+    linear = tmp_path / "linear.Dockerfile"
+    linear.write_text(
+        "FROM python:3.12-slim AS stage_a\n"
         "RUN echo a\n"
         "\n"
-        "FROM a AS b\n"
+        "FROM stage_a AS stage_b\n"
         "RUN echo b\n",
         encoding="utf-8",
     )
-    # Manually poke bases to create a cycle without invalid Dockerfile redef.
-    from recognition.tests import dockerfile_stages as ds
-
-    own = {"a": "RUN echo a", "b": "RUN echo b"}
-    bases = {"a": "b", "b": "a"}
-    with pytest.raises(ValueError, match="cycle"):
-        ds._resolve_effective(own, bases, "a")
+    assert "echo a" in effective_stage_body(linear, "stage_b")
 
 
 def test_guard_bites_when_cmd_has_decorative_argv(tmp_path: Path) -> None:

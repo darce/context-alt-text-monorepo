@@ -403,13 +403,62 @@ def test_image_variant_artifact_constant_is_canonical() -> None:
     """rg-015 / TEST-15: production constant must be /app/.image-variant.
 
     Monkeypatching the path in other tests must not let a wrong constant pass:
-    this asserts the real module-level path used in the image.
+    this asserts the real module-level path used in the image. Also pins
+    agreement with the canonical scripts.verify_vlm_cache export (sr-007).
     """
     from pathlib import Path
 
     from api.main import _IMAGE_VARIANT_ARTIFACT
+    from scripts.verify_vlm_cache import IMAGE_VARIANT_ARTIFACT
 
     assert _IMAGE_VARIANT_ARTIFACT == Path("/app/.image-variant")
+    assert _IMAGE_VARIANT_ARTIFACT == IMAGE_VARIANT_ARTIFACT
+
+
+def test_image_variant_labels_lockstep_with_bake_surfaces() -> None:
+    """sr-007: Dockerfile bakes + entrypoint case arm use ImageVariant members.
+
+    Five historical copies of the recognition|vlm labels drift silently when
+    only one is renamed. Assert every bake surface equals an ImageVariant
+    member; mutating a label off the enum must fail this gate.
+    """
+    import re
+    from pathlib import Path
+
+    from scripts.verify_vlm_cache import ImageVariant
+
+    service_root = Path(__file__).resolve().parents[3]
+    dockerfile = (service_root / "Dockerfile").read_text(encoding="utf-8")
+    entrypoint = (service_root / "scripts" / "docker-entrypoint.sh").read_text(
+        encoding="utf-8"
+    )
+    valid = {member.value for member in ImageVariant}
+
+    # printf 'recognition\n' > /app/.image-variant  (and vlm)
+    baked = set(
+        re.findall(
+            r"""printf\s+['"]([^'"\\]+)\\n['"]\s*>\s*/app/\.image-variant""",
+            dockerfile,
+        )
+    )
+    assert baked, "Dockerfile must printf bake labels into /app/.image-variant"
+    assert baked <= valid, (
+        f"Dockerfile bake labels {baked} must be ImageVariant members {valid}"
+    )
+    assert valid <= baked, (
+        f"every ImageVariant member must be baked somewhere; missing {valid - baked}"
+    )
+
+    # entrypoint case recognition|vlm)
+    case_m = re.search(
+        r"case\s+\"\$\{BAKED_IMAGE_VARIANT\}\"\s+in\s*\n([^\n]+)\)",
+        entrypoint,
+    )
+    assert case_m, "entrypoint must case on BAKED_IMAGE_VARIANT"
+    case_labels = {part.strip() for part in case_m.group(1).split("|") if part.strip()}
+    assert case_labels == valid, (
+        f"entrypoint case labels {case_labels} must equal ImageVariant {valid}"
+    )
 
 
 def test_health_and_version_report_baked_image_variant(tmp_path, monkeypatch) -> None:
@@ -476,6 +525,28 @@ def test_image_variant_unreadable_bake_fails_closed(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="cannot read baked image variant"):
         _resolve_image_variant()
+
+
+def test_image_variant_absent_bake_falls_back_to_env_then_recognition(
+    tmp_path, monkeypatch
+) -> None:
+    """Absent artifact (local dev / unit tests): env claim, else recognition.
+
+    Does not fabricate a VLM identity when no bake and no env claim — that is
+    the only permitted fail-open path (production images always bake).
+    """
+    from scripts.verify_vlm_cache import ImageVariant
+
+    missing = tmp_path / "no-such-image-variant"
+    monkeypatch.setattr("api.main._IMAGE_VARIANT_ARTIFACT", missing)
+
+    from api.main import _resolve_image_variant
+
+    monkeypatch.setenv("ACX_IMAGE_VARIANT", ImageVariant.VLM.value)
+    assert _resolve_image_variant() == ImageVariant.VLM.value
+
+    monkeypatch.delenv("ACX_IMAGE_VARIANT", raising=False)
+    assert _resolve_image_variant() == ImageVariant.RECOGNITION.value
 
 
 def test_image_variant_invalid_bake_fails_closed(tmp_path, monkeypatch) -> None:

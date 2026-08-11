@@ -10,11 +10,15 @@ and verification share one operator gesture. Writing the manifest is a
 TRUST-ESTABLISHING act: it certifies the just-downloaded tree. Do not re-run
 the writer later to silence a failing boot gate.
 
-Usage (from apps/prototype-description-service, with the [vlm] extra installed):
+Usage (from apps/prototype-description-service on the **host**, with the [vlm]
+extra installed — not inside the offline runtime-vlm image):
 
-    uv run --extra vlm python -m scripts.seed_vlm_cache --hf-home /data/cache/huggingface_cache
+    uv run --extra vlm python -m scripts.seed_vlm_cache \\
+        --hf-home <ACX_MODELS_PATH>/huggingface_cache
 
-Then mount that cache read-only into the runtime-vlm container (see
+``ACX_MODELS_PATH`` is the host models directory (e.g. ``/opt/acx-backend/prod``
+on the VM). Then mount that cache read-only into the runtime-vlm container and
+bake the printed ``ACX_VLM_MANIFEST_SHA256`` pin into the image (see
 infra/oci/README.md § VLM weight cache).
 """
 
@@ -112,14 +116,25 @@ def seed_snapshot(
     print(f"Snapshot at {snapshot_dir}", flush=True)
 
     if write_manifest:
-        from scripts.verify_vlm_cache import write_manifest as write_integrity_manifest
+        from scripts.verify_vlm_cache import (
+            MANIFEST_SHA256_ENV,
+            MANIFEST_SHA256_FILE,
+            manifest_content_sha256,
+            write_manifest as write_integrity_manifest,
+        )
 
         print(
             "Writing integrity manifest (TRUST-ESTABLISHING — certifies this download)...",
             flush=True,
         )
         manifest = write_integrity_manifest(snapshot_dir)
+        pin = manifest_content_sha256(manifest)
         print(f"Manifest: {manifest}", flush=True)
+        print(
+            f"Detached trust pin (bake into the runtime-vlm image, outside the volume): "
+            f"{MANIFEST_SHA256_ENV}={pin} or printf '%s\\n' '{pin}' > {MANIFEST_SHA256_FILE}",
+            flush=True,
+        )
 
     return snapshot_dir
 

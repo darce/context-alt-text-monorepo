@@ -28,7 +28,8 @@ if [ -n "${ACX_IMAGE_VARIANT:-}" ] && [ "${ACX_IMAGE_VARIANT}" != "${BAKED_IMAGE
 	exit 1
 fi
 # Prefer bake; keep ACX_IMAGE_VARIANT in the gate so packaging polarity tests
-# still see the env-shaped compare (RHS must be vlm, not recognition).
+# still see the env-shaped compare (RHS must be vlm, not recognition). The
+# compare is no longer env-mutable fail-open: bake overwrote the env above.
 ACX_IMAGE_VARIANT="${BAKED_IMAGE_VARIANT}"
 
 # Pre-privilege-drop stacks may still mount a root:root acx_blobs named volume
@@ -50,7 +51,9 @@ fi
 alembic -c db/alembic.ini upgrade head
 python -m scripts.sync_identity_schema
 python -m scripts.verify_identity_schema
-# VLM image only: recognition must not grow a VLM weight-mount boot dependency.
+# VLM image only (bake-driven via ACX_IMAGE_VARIANT above). The Python gate
+# self-skips non-LOCAL_CPU profiles; recognition must not grow a weight-mount
+# boot dependency. Packaging polarity tests require RHS = "vlm" (not inverted).
 if [ "${ACX_IMAGE_VARIANT:-recognition}" = "vlm" ]; then
 	python -m scripts.verify_vlm_cache
 fi

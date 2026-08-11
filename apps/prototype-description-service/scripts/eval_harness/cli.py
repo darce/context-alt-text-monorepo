@@ -70,6 +70,12 @@ DEFAULT_STALL_LIMIT = 5
 OUT_DIR = Path(__file__).parent / "out"
 IGNORE_LIST_NAME = "ignore-list.json"
 _RUN_STAMP_RE = re.compile(r"^run-(\d{8}-\d{6})")
+# Caption-collapse hard gate (VLM-6 S2A F1-11 / r08116b50): zero-vs-nonzero is
+# structural, not a tuned threshold. A model that names nobody (seeded) fails
+# Must-Right on every rubric image (rate == 1.0) but still produces non-zero
+# mean_gated_score on images without must_right terms. A run that scores
+# literally 0.0 on every image produced no usable caption content.
+CAPTION_COLLAPSE_MEAN_GATED_SCORE = 0.0
 
 
 def _keep_arg(raw: str) -> int:
@@ -716,13 +722,19 @@ def _cmd_score(args: argparse.Namespace) -> None:
             f"(missing={media_id_missing}, extra={media_id_extra}; "
             f"record_items={record_n}, manifest_entries={manifest_n}; see {json_path})"
         )
-    # Corpus truncation / post-fetch edit: score-time manifest sha must match the
-    # fetch-time stamp on the run record. A truncated 37→5 corpus with a stale
-    # full-corpus fetch sha previously exited 0 (adversarial r0811e7f1).
-    if scored.get("provenance", {}).get("manifest_matches_fetch") is False:
+    # F1-3 / r08116b50: do NOT hard-gate on score-time file sha vs fetch-time sha.
+    # _manifest_sha hashes model_dump(), so label edits (e.g. Slice 2 face_boxes)
+    # change the current-file hash and would permanently block re-scoring archived
+    # baselines. provenance.manifest_matches_fetch remains informational in the
+    # report. Self-consistency: the run-record must carry its own fetch-time
+    # manifest_sha256 so the record is attributable to a fetch-time corpus.
+    # Media-id coverage vs the score-time manifest is the truncation gate above.
+    fetch_manifest_sha = scored.get("provenance", {}).get("manifest_sha256")
+    if not fetch_manifest_sha:
         sys.exit(
-            f"score manifest-mismatch gate: score_manifest_sha256 differs from fetch-time "
-            f"manifest_sha256 — corpus truncation or post-fetch edit (see {json_path})"
+            f"score manifest-mismatch gate: run-record provenance missing fetch-time "
+            f"manifest_sha256 — record is not self-consistent with its fetch provenance "
+            f"(see {json_path})"
         )
     # Empty rubric: Must-Right and Easy-Wrong vacuity are independent. Emptying
     # only must_right while easy_wrong remains used to leave the OR'd counter
@@ -739,10 +751,26 @@ def _cmd_score(args: argparse.Namespace) -> None:
             f"score empty-rubric gate: easy_wrong is vacuous corpus-wide "
             f"(easy_wrong_defined_images=0); wrong-name trap is vacuous (see {json_path})"
         )
-    # Caption hard-gate collapse: any Must-Right miss zeroes that image; a run
-    # that still exits 0 with every caption corrupted is a false green.
+    # F1-11 / r08116b50: Must-Right misses alone are not a bake-off gate — person
+    # names on 34/37 golden entries make "any miss → exit 1" a 100%-recall ID
+    # gate that was never in scope (seeded prod adapter fails 34/34 at rate 1.0
+    # with mean_gated_score ≈ 0.081). Tell caption-collapse from "names nobody"
+    # structurally: rubric non-vacuous AND failure rate == 1.0 AND mean gated
+    # score is structurally zero (CAPTION_COLLAPSE_MEAN_GATED_SCORE). Zero-vs-
+    # nonzero is structural — a model scoring literally zero on every image
+    # produced no usable caption content.
     must_right_failed = int(scored.get("caption", {}).get("must_right_failed_images") or 0)
-    if must_right_failed > 0:
+    mean_gated_raw = scored.get("caption", {}).get("mean_gated_score")
+    mean_gated = float(mean_gated_raw) if mean_gated_raw is not None else None
+    must_right_failure_rate = (
+        (must_right_failed / must_right_defined) if must_right_defined > 0 else None
+    )
+    if (
+        must_right_defined > 0
+        and must_right_failure_rate == 1.0
+        and mean_gated is not None
+        and mean_gated == CAPTION_COLLAPSE_MEAN_GATED_SCORE
+    ):
         sys.exit(
             f"score must-right failures gate: {must_right_failed} image(s) failed Must-Right "
             f"caption hard-gate (caption corruption / missing required names; see {json_path})"

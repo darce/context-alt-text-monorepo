@@ -1134,7 +1134,12 @@ def _score_run_record(entries: list[dict], *, caption_fn, identity_fn, manifest_
 
 
 def test_score_guard_caption_corruption_fails_must_right_gate(tmp_path, monkeypatch):
-    """Corruption 1: every caption corrupted → must-right failures gate (named)."""
+    """Corruption 1: every caption collapsed → must-right failures gate (named).
+
+    F1-11: gate is the conjunction (rubric non-vacuous ∧ failure rate == 1.0 ∧
+    mean_gated_score == 0.0). All-rubric synthetic corpus + garbage captions
+    yields rate 1.0 and mean 0.0 (caption collapse), not mere name-miss.
+    """
     roster, entries = _corpus_entries(6, with_rubric=True)
     manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, roster)
     record = _score_run_record(
@@ -1159,6 +1164,35 @@ def test_score_guard_caption_corruption_fails_must_right_gate(tmp_path, monkeypa
     assert "empty-rubric" not in msg.lower()
 
 
+def test_score_guard_seeded_name_misses_do_not_fire_must_right_gate(tmp_path, monkeypatch):
+    """F1-11: rate==1.0 with non-zero mean_gated must remain scorable (seeded shape).
+
+    All must_right images fail (generic captions name nobody) but images without
+    must_right terms and empty present_identities still contribute gated 1.0 —
+    same structural shape as the frozen S0 seeded anchor (mean ≈ 0.081 on golden).
+    """
+    roster, entries = _corpus_entries(6, with_rubric=True)
+    # Leave one entry without must_right and without present identities so
+    # generic caption scores gated 1.0 (seeded no-name shape on real golden).
+    entries[-1]["must_right"] = []
+    entries[-1]["present_identities"] = []
+    assert entries[-1]["easy_wrong"]  # independent vacuity still non-empty
+    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, roster)
+    record = _score_run_record(
+        entries,
+        # Avoid the token "person" — synthetic easy_wrong names are "Person N"
+        # and token-level traps would zero mean_gated (not the seeded shape).
+        caption_fn=lambda _e: "A human standing outdoors near greenery.",
+        identity_fn=lambda _e: [],
+        manifest_sha=manifest_sha,
+        name="run-seeded-shape.json",
+    )
+    record_path = tmp_path / "run-seeded-shape.json"
+    record_path.write_text(json.dumps(record))
+    monkeypatch.chdir(tmp_path)
+    assert main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)]) is None
+
+
 def test_score_guard_wrong_names_fails_wrong_name_floor_gate(tmp_path, monkeypatch):
     """Corruption 2: wrong human names on every image → wrong-name floor gate (named)."""
     manifest_path, record_path = _wrong_name_everywhere_manifest_and_record(tmp_path)
@@ -1174,29 +1208,26 @@ def test_score_guard_wrong_names_fails_wrong_name_floor_gate(tmp_path, monkeypat
     assert "empty-rubric" not in msg.lower()
 
 
-def test_score_guard_corpus_truncation_fails_manifest_mismatch_gate(tmp_path, monkeypatch):
-    """Corruption 3: corpus truncated 37→5 with stale full-corpus fetch sha.
+def test_score_guard_missing_fetch_sha_fails_manifest_mismatch_gate(tmp_path, monkeypatch):
+    """Corruption 3: run-record lacks fetch-time manifest_sha256 provenance.
 
-    Score-time manifest is the truncated surface; run-record provenance still
-    stamps the full-corpus fetch sha → manifest-mismatch gate (not generic fail).
+    F1-3: score-time file sha vs fetch-time sha is informational only (archived
+    re-scores under evolved manifests must succeed; truncation is the media-id
+    multiset gate). Self-consistency requires the record to carry its own
+    fetch-time stamp so provenance is attributable.
     """
-    roster, full_entries = _corpus_entries(37, with_rubric=True)
-    full_path, full_sha = _write_score_manifest(tmp_path, full_entries, roster, name="full-golden.json")
-    assert full_path.exists()
-    truncated = full_entries[:5]
-    assert len(truncated) == 5
-    manifest_path, trunc_sha = _write_score_manifest(
-        tmp_path, truncated, roster, name="golden.json"
-    )
-    assert trunc_sha != full_sha
-    # Stale fetch-time sha: claims the full 37-image corpus was fetched.
+    roster, entries = _corpus_entries(6, with_rubric=True)
+    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, roster)
+    assert manifest_sha
     record = _score_run_record(
-        truncated,
+        entries,
         caption_fn=lambda e: f"{e['present_identities'][0]} outdoors smiling.",
         identity_fn=lambda e: [_score_identity(e["present_identities"][0])],
-        manifest_sha=full_sha,
+        manifest_sha=manifest_sha,
     )
-    record_path = tmp_path / "run-truncated.json"
+    # Drop the fetch-time stamp — record is not self-consistent with any corpus.
+    del record["provenance"]["manifest_sha256"]
+    record_path = tmp_path / "run-no-fetch-sha.json"
     record_path.write_text(json.dumps(record))
     monkeypatch.chdir(tmp_path)
     with pytest.raises(SystemExit) as excinfo:
@@ -1204,10 +1235,35 @@ def test_score_guard_corpus_truncation_fails_manifest_mismatch_gate(tmp_path, mo
     msg = str(excinfo.value)
     assert excinfo.value.code != 0
     assert "manifest-mismatch" in msg.lower()
-    assert "truncation" in msg.lower()
+    assert "fetch-time" in msg.lower() or "provenance" in msg.lower()
+    # Must not claim corpus truncation (that is the media-id multiset gate).
+    assert "truncation" not in msg.lower()
     assert "wrong-name" not in msg.lower()
     assert "must-right failures" not in msg.lower()
     assert "empty-rubric" not in msg.lower()
+
+
+def test_score_allows_fetch_sha_drift_from_score_time_manifest(tmp_path, monkeypatch):
+    """F1-3 green path: evolved score-time manifest sha must not block re-score.
+
+    Full media-id coverage + good captions + non-empty fetch stamp + mismatched
+    score-time sha (as when face_boxes are later populated) → exit 0.
+    """
+    roster, entries = _corpus_entries(6, with_rubric=True)
+    manifest_path, score_sha = _write_score_manifest(tmp_path, entries, roster)
+    stale_fetch_sha = "a" * 64
+    assert stale_fetch_sha != score_sha
+    record = _score_run_record(
+        entries,
+        caption_fn=lambda e: f"{e['present_identities'][0]} outdoors smiling.",
+        identity_fn=lambda e: [_score_identity(e["present_identities"][0])],
+        manifest_sha=stale_fetch_sha,
+    )
+    record_path = tmp_path / "run-sha-drift.json"
+    record_path.write_text(json.dumps(record))
+    monkeypatch.chdir(tmp_path)
+    # Must exit 0 (main returns None on success).
+    assert main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)]) is None
 
 
 def test_score_guard_empty_must_right_fails_empty_rubric_gate(tmp_path, monkeypatch):

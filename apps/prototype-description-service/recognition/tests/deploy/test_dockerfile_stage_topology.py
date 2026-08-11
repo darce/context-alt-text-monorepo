@@ -18,10 +18,14 @@ asserting the current tree is clean.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import pytest
+
+from recognition.tests.dockerfile_stages import (
+    dockerfile_stages as _dockerfile_stages_shared,
+    effective_stage_body,
+)
 
 # recognition/tests/deploy/<this> → parents[3] = the service root.
 SERVICE_ROOT = Path(__file__).resolve().parents[3]
@@ -30,31 +34,10 @@ DOCKERFILE = SERVICE_ROOT / "Dockerfile"
 DEFAULT_STAGE = "runtime"
 VLM_STAGE = "runtime-vlm"
 
-_FROM_RE = re.compile(r"^\s*FROM\s+\S+(?:\s+AS\s+(?P<name>[\w.-]+))?\s*$", re.IGNORECASE)
-
 
 def _dockerfile_stages(dockerfile: Path = DOCKERFILE) -> dict[str, str]:
-    """Ordered {stage_name: stage_body} for every named `FROM ... AS <name>`.
-
-    Insertion order is the file order, so `list(stages)[-1]` is the stage
-    BuildKit builds when `--target` is omitted. Unnamed `FROM` lines start an
-    anonymous stage; its body is discarded but it still terminates the previous
-    stage, which keeps the bodies from bleeding into each other.
-    """
-    stages: dict[str, list[str]] = {}
-    current: list[str] | None = None
-    for line in Path(dockerfile).read_text().splitlines():
-        match = _FROM_RE.match(line)
-        if match:
-            name = match.group("name")
-            if name is None:
-                current = None
-                continue
-            current = stages.setdefault(name, [])
-            continue
-        if current is not None:
-            current.append(line)
-    return {name: "\n".join(body) for name, body in stages.items()}
+    """Own-body stage map via the shared parser (file order preserved)."""
+    return _dockerfile_stages_shared(dockerfile)
 
 
 def _write(tmp_path: Path, text: str) -> Path:
@@ -157,3 +140,25 @@ def test_guard_bites_when_a_variant_marker_is_missing(tmp_path: Path, stage: str
         f"ENV ACX_IMAGE_VARIANT={'recognition' if stage == DEFAULT_STAGE else 'vlm'}\n", "", 1
     )
     assert "ACX_IMAGE_VARIANT" not in _dockerfile_stages(_write(tmp_path, stripped))[stage]
+
+
+def test_effective_body_follows_named_stage_parent(tmp_path: Path) -> None:
+    """Wave-2: effective body includes parent stage instructions."""
+    path = _write(
+        tmp_path,
+        "FROM python:3.12-slim AS runtime-base\n"
+        "COPY scripts/ scripts/\n"
+        'CMD ["/app/scripts/docker-entrypoint.sh"]\n'
+        "\n"
+        "FROM runtime-base AS runtime\n"
+        "ENV ACX_IMAGE_VARIANT=recognition\n",
+    )
+    own = _dockerfile_stages(path)[DEFAULT_STAGE]
+    assert "COPY scripts/ scripts/" not in own
+    assert "CMD" not in own
+    eff = effective_stage_body(path, DEFAULT_STAGE)
+    assert "COPY scripts/ scripts/" in eff
+    assert 'CMD ["/app/scripts/docker-entrypoint.sh"]' in eff
+    assert "ACX_IMAGE_VARIANT=recognition" in eff
+    # Own-body order invariant for default target is unchanged.
+    assert list(_dockerfile_stages(path))[-1] == DEFAULT_STAGE

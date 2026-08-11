@@ -881,59 +881,98 @@ def _run_determinism_children(
 def _check_score_determinism_cross_process(
     record_path: Path,
     manifest_path: str,
-) -> None:
+    *,
+    rubric_gate: str = RUBRIC_GATE_ENFORCE,
+    audience: Audience = Audience.LOCAL,
+    label: str = "score",
+) -> tuple[str, str]:
     """Re-run caption score in a FRESH process under varied PYTHONHASHSEED (§G).
 
-    Baseline is computed in-process from the persisted run-record; each subprocess
-    re-loads that same path from disk (not an in-memory twin of the first call) so
-    hash-ordering, import-order, and mutated-anchor failures are visible.
-    Subprocess loop lives in ``_run_determinism_children`` (C-08).
+    Baseline is computed in-process from the persisted run-record with the same
+    ``rubric_gate`` and ``audience`` the command will write (F2d / GATE-05);
+    each subprocess re-loads that same path from disk so hash-ordering,
+    import-order, and mutated-anchor failures are visible. Subprocess loop lives
+    in ``_run_determinism_children`` (C-08).
+
+    Returns the certified ``(json_doc, md_doc)`` pair so the caller can write
+    *those* bytes — one build, not a second uncertified serialisation.
+
+    Labels: ``score`` for the full LOCAL report; ``score-public`` for the
+    additive redacted PUBLIC export under ``--audience public``.
     """
-    # Baseline: current process, reading the persisted anchor.
-    record = json.loads(record_path.read_text())
-    manifest = load_manifest(manifest_path)
+    # F2C-01: resolve data paths before handing them to a child whose cwd is
+    # pinned to the package root (F2c). Relative argv would resolve against the
+    # pin, not the caller's cwd, and FileNotFoundError as ERROR.
+    resolved_record = record_path.resolve()
+    resolved_manifest = Path(manifest_path).resolve()
+    # Baseline: current process, reading the persisted anchor with the real
+    # operator parameters (not the build_reports defaults).
+    record = json.loads(resolved_record.read_text())
+    manifest = load_manifest(str(resolved_manifest))
     entries = [e.model_dump() for e in manifest.entries]
     manifest_sha = _manifest_sha(manifest)
-    ignore_list = _load_ignore_list(record_path.parent)
+    ignore_list = _load_ignore_list(resolved_record.parent)
     roster = sorted(set(getattr(manifest, "roster", []) or []))
+    audience_value = audience.value if isinstance(audience, Audience) else str(audience)
+    audience_enum = Audience(audience_value)
     base_json, base_md = build_reports(
         record,
         entries,
         ignore_list=ignore_list,
         score_manifest_sha256=manifest_sha,
         manifest_roster=roster,
+        audience=audience_enum,
+        rubric_gate=rubric_gate,
     )
 
     # Final argv entry is the parent-allocated payload path (F2b out-of-band).
     # build_reports_file provenance (F2c) proves the child bound this module.
+    # argv: record, manifest, rubric_gate, audience, [payload]
     script = (
         "import json,sys; "
         "from pathlib import Path; "
         "from scripts.eval_harness.manifest import load_manifest; "
         "from scripts.eval_harness.cli import _manifest_sha, _load_ignore_list; "
-        "from scripts.eval_harness.report import build_reports; "
+        "from scripts.eval_harness.report import build_reports, Audience; "
         "rec_path=Path(sys.argv[1]); "
         "rec=json.loads(rec_path.read_text()); "
         "man=load_manifest(sys.argv[2]); "
+        "rg=sys.argv[3]; "
+        "aud=Audience(sys.argv[4]); "
         "entries=[e.model_dump() for e in man.entries]; "
         "sha=_manifest_sha(man); "
         "ignore=_load_ignore_list(rec_path.parent); "
         "roster=sorted(set(getattr(man,'roster',None) or [])); "
         "j,m=build_reports(rec,entries,ignore_list=ignore,"
-        "score_manifest_sha256=sha,manifest_roster=roster); "
-        "Path(sys.argv[3]).write_text(json.dumps({"
+        "score_manifest_sha256=sha,manifest_roster=roster,"
+        "audience=aud,rubric_gate=rg); "
+        "Path(sys.argv[5]).write_text(json.dumps({"
         "'json':j,'md':m,"
         "'build_reports_file':build_reports.__code__.co_filename}))"
     )
     _run_determinism_children(
         script,
-        [str(record_path), manifest_path],
-        label="score",
+        [str(resolved_record), str(resolved_manifest), rubric_gate, audience_value],
+        label=label,
         base_json=base_json,
         base_md=base_md,
-        artifact_dir=record_path.parent,
+        artifact_dir=resolved_record.parent,
         expected_build_reports_file=build_reports.__code__.co_filename,
     )
+    return base_json, base_md
+
+
+def _serialize_score_docs(scored: dict[str, Any]) -> tuple[str, str]:
+    """Serialize a scored report dict to the on-disk JSON + markdown pair."""
+    json_doc = json.dumps(scored, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    try:
+        md_doc = _score_report_markdown(scored)
+    except (KeyError, TypeError, AttributeError):
+        md_doc = (
+            "# score report\n\n"
+            "(markdown omitted: scored document is schema-degraded; see JSON verdict)\n"
+        )
+    return json_doc, md_doc
 
 
 def _cmd_score(args: argparse.Namespace) -> None:
@@ -951,52 +990,75 @@ def _cmd_score(args: argparse.Namespace) -> None:
     # Harness-shakedown / seeded-stub runs must pass --rubric-gate skip explicitly;
     # never infer exemption from adapter/model_id (rg-009).
     rubric_gate = getattr(args, "rubric_gate", RUBRIC_GATE_ENFORCE) or RUBRIC_GATE_ENFORCE
-    # F1d-1 / OBS-04: score once, fold every exit condition into the verdict, THEN
-    # serialise. No gate may fire against a report that still claims pass.
-    scored = score_run_record(
-        record,
-        entries,
-        ignore_list=ignore_list,
-        score_manifest_sha256=manifest_sha,
-        manifest_roster=roster,
-        rubric_gate=rubric_gate,
-    )
+    is_public = getattr(args, "audience", Audience.LOCAL.value) == Audience.PUBLIC.value
+    # F2d / GATE-05: when --check-determinism is set, the documents written are
+    # exactly the documents the cross-process guard certified (one build).
+    # rubric_gate + audience must match the operator flags — pre-F2d the guard
+    # always certified LOCAL/enforce while disk could say skip/public.
+    public_json: str | None = None
+    public_md: str | None = None
     if args.check_determinism:
-        # VLM-6 S2A item 3: cross-process re-score from the persisted anchor under
-        # varied PYTHONHASHSEED (same shape as score-face). Same-process double
-        # build_reports only caught intra-call nondeterminism and certified nothing.
-        _check_score_determinism_cross_process(record_path, args.manifest)
-    # Schema hard-keys fold into the verdict before write so a drifted report
-    # field cannot leave a pass artifact on disk while exiting non-zero.
-    schema_exit = _fold_schema_errors_into_verdict(scored)
-    base = record_path.with_suffix("")
-    json_path, md_path = Path(f"{base}-report.json"), Path(f"{base}-report.md")
-    # JSON is the load-bearing Slice-2 artifact (OBS-04). Write it first so a
-    # schema-degraded document still leaves a fail verdict on disk even if the
-    # human markdown renderer cannot tolerate missing hard-keyed fields.
-    json_path.write_text(json.dumps(scored, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
-    try:
-        md_path.write_text(_score_report_markdown(scored))
-    except (KeyError, TypeError, AttributeError):
-        md_path.write_text(
-            "# score report\n\n"
-            "(markdown omitted: scored document is schema-degraded; see JSON verdict)\n"
+        local_json, local_md = _check_score_determinism_cross_process(
+            record_path,
+            args.manifest,
+            rubric_gate=rubric_gate,
+            audience=Audience.LOCAL,
+            label="score",
         )
-    # VLM-6 S5 W1 (VLM6-C-01 / VLM6-F-03): audience-aware export. Additive — the
-    # full LOCAL report above is always written (operator triage + the failure gate
-    # below score the whole corpus); --audience public ALSO emits a redacted,
-    # publishable-only artifact. This is the sole sanctioned eval->public path,
-    # the prerequisite that makes the rd.altcontext.com gallery (RND-1) safe.
-    if getattr(args, "audience", Audience.LOCAL.value) == Audience.PUBLIC.value:
-        public_json, public_md = build_reports(
+        scored = json.loads(local_json)
+        # Schema hard-keys fold into the verdict before write. On a clean report
+        # this is a no-op and certified bytes == written bytes. On hard-key drift
+        # the fold mutates the in-memory dict; we re-serialize so the fail
+        # artifact is correct (OBS-04). That re-serialize is post-certification
+        # and only fires when schema hard-keys are already broken — not the
+        # normal determinism path.
+        schema_exit = _fold_schema_errors_into_verdict(scored)
+        if schema_exit is not None:
+            local_json, local_md = _serialize_score_docs(scored)
+        if is_public:
+            public_json, public_md = _check_score_determinism_cross_process(
+                record_path,
+                args.manifest,
+                rubric_gate=rubric_gate,
+                audience=Audience.PUBLIC,
+                label="score-public",
+            )
+    else:
+        # F1d-1 / OBS-04: score once, fold every exit condition into the verdict,
+        # THEN serialise. No gate may fire against a report that still claims pass.
+        scored = score_run_record(
             record,
             entries,
             ignore_list=ignore_list,
             score_manifest_sha256=manifest_sha,
             manifest_roster=roster,
-            audience=Audience.PUBLIC,
             rubric_gate=rubric_gate,
         )
+        schema_exit = _fold_schema_errors_into_verdict(scored)
+        local_json, local_md = _serialize_score_docs(scored)
+        if is_public:
+            public_json, public_md = build_reports(
+                record,
+                entries,
+                ignore_list=ignore_list,
+                score_manifest_sha256=manifest_sha,
+                manifest_roster=roster,
+                audience=Audience.PUBLIC,
+                rubric_gate=rubric_gate,
+            )
+    base = record_path.with_suffix("")
+    json_path, md_path = Path(f"{base}-report.json"), Path(f"{base}-report.md")
+    # JSON is the load-bearing Slice-2 artifact (OBS-04). Write it first so a
+    # schema-degraded document still leaves a fail verdict on disk even if the
+    # human markdown renderer cannot tolerate missing hard-keyed fields.
+    json_path.write_text(local_json)
+    md_path.write_text(local_md)
+    # VLM-6 S5 W1 (VLM6-C-01 / VLM6-F-03): audience-aware export. Additive — the
+    # full LOCAL report above is always written (operator triage + the failure gate
+    # below score the whole corpus); --audience public ALSO emits a redacted,
+    # publishable-only artifact. This is the sole sanctioned eval->public path,
+    # the prerequisite that makes the rd.altcontext.com gallery (RND-1) safe.
+    if is_public and public_json is not None and public_md is not None:
         public_json_path, public_md_path = Path(f"{base}-report.public.json"), Path(f"{base}-report.public.md")
         public_json_path.write_text(public_json)
         public_md_path.write_text(public_md)
@@ -1319,9 +1381,12 @@ def _check_face_determinism_cross_process(
     Subprocess loop lives in ``_run_determinism_children`` (C-08) so caption and
     face gates share seed/env/timeout/error taxonomy and differ only by label.
     """
+    # F2C-01: resolve data paths; child cwd is package-root pin (F2c).
+    resolved_record = record_path.resolve()
+    resolved_manifest = Path(manifest_path).resolve()
     # Baseline: current process
-    record = json.loads(record_path.read_text())
-    manifest = load_manifest(manifest_path)
+    record = json.loads(resolved_record.read_text())
+    manifest = load_manifest(str(resolved_manifest))
     manifest_sha = _manifest_sha(manifest)
     base_json, base_md = _face_score_once(
         record, manifest, score_manifest_sha256=manifest_sha, public=public
@@ -1347,11 +1412,11 @@ def _check_face_determinism_cross_process(
     )
     _run_determinism_children(
         script,
-        [str(record_path), manifest_path, "1" if public else "0"],
+        [str(resolved_record), str(resolved_manifest), "1" if public else "0"],
         label="score-face",
         base_json=base_json,
         base_md=base_md,
-        artifact_dir=record_path.parent,
+        artifact_dir=resolved_record.parent,
         expected_build_reports_file=build_face_reports.__code__.co_filename,
     )
 

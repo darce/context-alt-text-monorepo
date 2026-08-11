@@ -1523,6 +1523,176 @@ def test_cli_score_determinism_guard_errors_on_build_reports_provenance_mismatch
     assert "determinism check FAILED" not in msg
 
 
+# --- VLM-6 S2A F2d: certify the artifact actually written (GATE-05 / F2C-01) ---
+
+
+def test_cli_score_determinism_certifies_written_rubric_gate(tmp_path, monkeypatch, capsys):
+    """F2d / GATE-05: --rubric-gate skip is certified AND written, not enforce.
+
+    Pre-fix the guard always called build_reports without rubric_gate, so it
+    certified verdict.rubric_gate=enforce while _cmd_score wrote skip. After
+    fix the on-disk artifact and the certified baseline share skip.
+    """
+    from scripts.eval_harness.report import build_reports, Audience
+    from scripts.eval_harness.manifest import load_manifest
+    from scripts.eval_harness import cli as cli_mod
+
+    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    # Pre-fix shape: default build_reports stamps enforce even when the
+    # operator will write skip — the GATE-05 divergence in one comparison.
+    record = json.loads(record_path.read_text())
+    manifest = load_manifest(str(manifest_path))
+    entries = [e.model_dump() for e in manifest.entries]
+    ignore = cli_mod._load_ignore_list(record_path.parent)
+    sha = cli_mod._manifest_sha(manifest)
+    roster = sorted(set(getattr(manifest, "roster", []) or []))
+    default_json, _ = build_reports(
+        record, entries, ignore_list=ignore, score_manifest_sha256=sha, manifest_roster=roster
+    )
+    skip_json, _ = build_reports(
+        record,
+        entries,
+        ignore_list=ignore,
+        score_manifest_sha256=sha,
+        manifest_roster=roster,
+        audience=Audience.LOCAL,
+        rubric_gate="skip",
+    )
+    assert json.loads(default_json)["verdict"]["rubric_gate"] == "enforce"
+    assert json.loads(skip_json)["verdict"]["rubric_gate"] == "skip"
+    assert default_json != skip_json  # the certified-vs-written gap at base
+
+    main(
+        [
+            "score",
+            "--manifest",
+            str(manifest_path),
+            "--run-record",
+            str(record_path),
+            "--rubric-gate",
+            "skip",
+            "--check-determinism",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert "determinism check passed [score]" in out
+    written = json.loads((tmp_path / "run-det-report.json").read_text())
+    assert written["verdict"]["rubric_gate"] == "skip"
+    # Certified baseline returned by the guard must equal the written bytes.
+    certified_json, _ = cli_mod._check_score_determinism_cross_process(
+        record_path,
+        str(manifest_path),
+        rubric_gate="skip",
+        audience=Audience.LOCAL,
+        label="score",
+    )
+    assert json.loads(certified_json)["verdict"]["rubric_gate"] == "skip"
+    assert certified_json == (tmp_path / "run-det-report.json").read_text()
+
+
+def test_cli_score_audience_public_check_determinism_covers_both_labels(
+    tmp_path, monkeypatch, capsys
+):
+    """F2d / TEST-15: --audience public --check-determinism certifies LOCAL + PUBLIC.
+
+    Structural coverage proof: both labels print a passed line. Clean control
+    still exits 0 (discrimination control — a battery of only reds proves nothing).
+    """
+    manifest_path, record_path = _w1_audience_manifest_and_record(
+        tmp_path, inject_wrong_name=False
+    )
+    monkeypatch.chdir(tmp_path)
+    main(
+        [
+            "score",
+            "--manifest",
+            str(manifest_path),
+            "--run-record",
+            str(record_path),
+            "--audience",
+            "public",
+            "--check-determinism",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert "determinism check passed [score]" in out
+    assert "determinism check passed [score-public]" in out
+    assert (tmp_path / "run-x-report.json").exists()
+    assert (tmp_path / "run-x-report.public.json").exists()
+    local = json.loads((tmp_path / "run-x-report.json").read_text())
+    public = json.loads((tmp_path / "run-x-report.public.json").read_text())
+    assert "redaction" not in local
+    assert public["redaction"]["audience"] == "public"
+    assert public["redaction"]["withheld_items"] == 1
+
+
+def test_cli_score_determinism_public_label_fails_on_mismatch(tmp_path, monkeypatch):
+    """F2d / TEST-15: genuine public-artifact mismatch exits FAILED [score-public]."""
+    from scripts.eval_harness import cli as cli_mod
+    from scripts.eval_harness.report import Audience
+
+    manifest_path, record_path = _w1_audience_manifest_and_record(
+        tmp_path, inject_wrong_name=False
+    )
+    monkeypatch.chdir(tmp_path)
+
+    real_run = cli_mod.subprocess.run
+
+    def _mutate_then_run(*args, **kwargs):
+        payload = json.loads(record_path.read_text())
+        # Mutate only the local-only item's caption: LOCAL report changes, and
+        # PUBLIC withholds that item — but flipping the public item forces a
+        # public-pair divergence the score-public label must name.
+        for item in payload["items"]:
+            if item["media_id"] == 10:
+                item["describe"] = {
+                    "alt_text_draft": "PUBLIC-ONLY MUTATION FOR DETERMINISM",
+                    "visual_facts": {"objects": ["public-divergence"]},
+                }
+        record_path.write_text(json.dumps(payload))
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(cli_mod.subprocess, "run", _mutate_then_run)
+    with pytest.raises(SystemExit) as exc:
+        cli_mod._check_score_determinism_cross_process(
+            record_path,
+            str(manifest_path),
+            rubric_gate="enforce",
+            audience=Audience.PUBLIC,
+            label="score-public",
+        )
+    msg = str(exc.value)
+    assert "determinism check FAILED [score-public]" in msg
+    assert "determinism check ERROR" not in msg
+
+
+def test_cli_score_determinism_resolves_relative_paths_from_foreign_cwd(
+    tmp_path, monkeypatch, capsys
+):
+    """F2C-01: relative record/manifest paths survive package-root cwd pin.
+
+    Parent may be invoked from a fixture directory with relative paths; the
+    child runs with cwd=package root. Unresolved argv → FileNotFoundError ERROR.
+    """
+    from scripts.eval_harness import cli as cli_mod
+
+    work = tmp_path / "fixture_dir"
+    work.mkdir()
+    manifest_path, record_path = _clean_score_manifest_and_record(work)
+    # chdir to fixture dir; pass relative basenames only.
+    monkeypatch.chdir(work)
+    rel_record = Path(record_path.name)
+    rel_manifest = Path(manifest_path.name)
+    assert not rel_record.is_absolute()
+    assert not rel_manifest.is_absolute()
+    # Guard must resolve against the caller's view, not the pin.
+    cli_mod._check_score_determinism_cross_process(rel_record, str(rel_manifest))
+    out = capsys.readouterr().out
+    assert "determinism check passed [score]" in out
+
+
 # --- VLM-6 S2A item 4: four corruption discrimination guards (TEST-15) ---
 #
 # Adversarial review r0811e7f1 ran these four mutations against

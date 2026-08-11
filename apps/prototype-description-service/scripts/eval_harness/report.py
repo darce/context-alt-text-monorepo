@@ -386,13 +386,18 @@ def face_wrong_name_rate(scored: Mapping[str, Any]) -> float:
     return wrong_n / scored_n
 
 
-def build_score_verdict(scored: Mapping[str, Any]) -> dict[str, Any]:
+def build_score_verdict(
+    scored: Mapping[str, Any],
+    *,
+    rubric_gate: str = "enforce",
+) -> dict[str, Any]:
     """Build the machine-readable scored verdict block (VLM-6 S2A).
 
     Only the wrong-name floor is a fail reason here. ``insertion_rate``,
     ``mean_gated_score``, and ``must_right_failed_images`` are reported for
-    operators but do not flip the verdict or the score CLI exit code in this
-    slice.
+    operators; the CLI must-right exit gate is controlled by ``rubric_gate``
+    (enforce|skip) and is recorded so a skipped run is never readable as a
+    gated pass from the artifact alone (F1b-2 / F1-12).
     """
     rate = face_wrong_name_rate(scored)
     reasons: list[str] = []
@@ -412,6 +417,8 @@ def build_score_verdict(scored: Mapping[str, Any]) -> dict[str, Any]:
         "insertion_rate": caption.get("insertion_rate"),
         "mean_gated_score": caption.get("mean_gated_score"),
         "must_right_failed_images": caption.get("must_right_failed_images"),
+        # Operator-declared mode for the CLI must-right failures gate (F1b-2).
+        "rubric_gate": rubric_gate,
     }
 
 
@@ -422,6 +429,7 @@ def score_run_record(
     *,
     score_manifest_sha256: str | None = None,
     manifest_roster: list[str] | None = None,
+    rubric_gate: str = "enforce",
 ) -> dict[str, Any]:
     """Pure scoring: run record + manifest labels -> metrics dict."""
     # Lazy: cli imports report at module load; avoid circular import at import time.
@@ -783,7 +791,9 @@ def score_run_record(
     }
     # VLM-6 S2A: machine-readable scored verdict (pass/fail + reasons). Built
     # after the face/caption blocks so rate derives from live wrong_names.
-    result["verdict"] = build_score_verdict(result)
+    # rubric_gate is operator-declared CLI mode (enforce|skip), not derived
+    # from scores — recorded so skipped harness-shakedown runs stay self-describing.
+    result["verdict"] = build_score_verdict(result, rubric_gate=rubric_gate)
 
     # ALTQ-1 Slice 2: surfaced only when a short compression actually failed so
     # pre-Slice-2 records keep their exact report shape (additive schema).
@@ -883,6 +893,9 @@ def _markdown(scored: dict[str, Any]) -> str:
             f"(wrong_name_rate={_fmt(rate) if isinstance(rate, int | float) else rate}, "
             f"floor={_fmt(floor) if isinstance(floor, int | float) else floor})"
         )
+        # F1b-2: always surface rubric_gate so skip mode is never silent in MD.
+        if verdict.get("rubric_gate") is not None:
+            lines.append(f"- rubric_gate: `{verdict.get('rubric_gate')}`")
         for reason in verdict.get("reasons") or []:
             lines.append(f"- verdict reason: {reason}")
     # Honest redaction: public reports must state what they withheld (VLM-6 S1).
@@ -1070,6 +1083,7 @@ def build_reports(
     score_manifest_sha256: str | None = None,
     manifest_roster: list[str] | None = None,
     audience: Audience = Audience.LOCAL,
+    rubric_gate: str = "enforce",
 ) -> tuple[str, str]:
     """Return (json_report, markdown_report) — deterministic for identical inputs.
 
@@ -1077,6 +1091,9 @@ def build_reports(
     pre-audience contract. ``audience=PUBLIC`` filters to publishable items only
     (via ``Provenance.is_publishable``) and stamps a top-level ``redaction`` block
     so withheld local-only items are never silent.
+
+    ``rubric_gate`` is the operator-declared Must-Right exit-gate mode
+    (``enforce``|``skip``); stamped into ``verdict.rubric_gate`` (F1b-2 / F1-12).
     """
     score_record = run_record
     score_entries = manifest_entries
@@ -1095,6 +1112,7 @@ def build_reports(
         ignore_list=ignore_list,
         score_manifest_sha256=score_manifest_sha256,
         manifest_roster=manifest_roster,
+        rubric_gate=rubric_gate,
     )
     if redaction is not None:
         scored["redaction"] = redaction

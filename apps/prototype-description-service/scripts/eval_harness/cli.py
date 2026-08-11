@@ -70,12 +70,15 @@ DEFAULT_STALL_LIMIT = 5
 OUT_DIR = Path(__file__).parent / "out"
 IGNORE_LIST_NAME = "ignore-list.json"
 _RUN_STAMP_RE = re.compile(r"^run-(\d{8}-\d{6})")
-# Caption-collapse hard gate (VLM-6 S2A F1-11 / r08116b50): zero-vs-nonzero is
-# structural, not a tuned threshold. A model that names nobody (seeded) fails
-# Must-Right on every rubric image (rate == 1.0) but still produces non-zero
-# mean_gated_score on images without must_right terms. A run that scores
-# literally 0.0 on every image produced no usable caption content.
-CAPTION_COLLAPSE_MEAN_GATED_SCORE = 0.0
+# Must-Right caption hard gate mode (VLM-6 S2A F1b-2 / F1-12). enforce = exit
+# non-zero when any must_right image fails; skip = bypass that gate only.
+# Seeded/harness-shakedown runs are exempt by explicit operator declaration
+# (--rubric-gate skip), not by adapter/model_id inference (rg-009) and not by
+# a derived mean_gated threshold (garbage captions share the seeded mean shape
+# on real golden.json — F1-11 conjunction was false-green on plain garbage).
+RUBRIC_GATE_ENFORCE = "enforce"
+RUBRIC_GATE_SKIP = "skip"
+RUBRIC_GATE_CHOICES = (RUBRIC_GATE_ENFORCE, RUBRIC_GATE_SKIP)
 
 
 def _keep_arg(raw: str) -> int:
@@ -657,8 +660,17 @@ def _cmd_score(args: argparse.Namespace) -> None:
     manifest_sha = _manifest_sha(manifest)
     ignore_list = _load_ignore_list(record_path.parent)
     roster = sorted(set(getattr(manifest, "roster", []) or []))
+    # Operator-declared Must-Right gate mode (F1b-2 / F1-12). Default enforce.
+    # Harness-shakedown / seeded-stub runs must pass --rubric-gate skip explicitly;
+    # never infer exemption from adapter/model_id (rg-009).
+    rubric_gate = getattr(args, "rubric_gate", RUBRIC_GATE_ENFORCE) or RUBRIC_GATE_ENFORCE
     json_doc, md_doc = build_reports(
-        record, entries, ignore_list=ignore_list, score_manifest_sha256=manifest_sha, manifest_roster=roster
+        record,
+        entries,
+        ignore_list=ignore_list,
+        score_manifest_sha256=manifest_sha,
+        manifest_roster=roster,
+        rubric_gate=rubric_gate,
     )
     if args.check_determinism:
         # VLM-6 S2A item 3: cross-process re-score from the persisted anchor under
@@ -682,13 +694,19 @@ def _cmd_score(args: argparse.Namespace) -> None:
             score_manifest_sha256=manifest_sha,
             manifest_roster=roster,
             audience=Audience.PUBLIC,
+            rubric_gate=rubric_gate,
         )
         public_json_path, public_md_path = Path(f"{base}-report.public.json"), Path(f"{base}-report.public.md")
         public_json_path.write_text(public_json)
         public_md_path.write_text(public_md)
         print(public_md_path)
     scored = score_run_record(
-        record, entries, ignore_list=ignore_list, score_manifest_sha256=manifest_sha, manifest_roster=roster
+        record,
+        entries,
+        ignore_list=ignore_list,
+        score_manifest_sha256=manifest_sha,
+        manifest_roster=roster,
+        rubric_gate=rubric_gate,
     )
     print(md_path)
     verdict = scored.get("verdict") or {}
@@ -698,7 +716,8 @@ def _cmd_score(args: argparse.Namespace) -> None:
         f"wrong_names={len(scored['faces']['identification']['wrong_names'])} "
         f"verdict={verdict.get('verdict', 'unknown')} "
         f"wrong_name_rate={verdict.get('wrong_name_rate')} "
-        f"wrong_name_rate_floor={verdict.get('wrong_name_rate_floor', WRONG_NAME_RATE_FLOOR)}"
+        f"wrong_name_rate_floor={verdict.get('wrong_name_rate_floor', WRONG_NAME_RATE_FLOOR)} "
+        f"rubric_gate={rubric_gate}"
     )
     # Fail loud when any item was skipped from scoring (S7-01): a "passing" run
     # that dropped NFC-miss / remote errors must not look like full-corpus evidence.
@@ -751,26 +770,19 @@ def _cmd_score(args: argparse.Namespace) -> None:
             f"score empty-rubric gate: easy_wrong is vacuous corpus-wide "
             f"(easy_wrong_defined_images=0); wrong-name trap is vacuous (see {json_path})"
         )
-    # F1-11 / r08116b50: Must-Right misses alone are not a bake-off gate — person
-    # names on 34/37 golden entries make "any miss → exit 1" a 100%-recall ID
-    # gate that was never in scope (seeded prod adapter fails 34/34 at rate 1.0
-    # with mean_gated_score ≈ 0.081). Tell caption-collapse from "names nobody"
-    # structurally: rubric non-vacuous AND failure rate == 1.0 AND mean gated
-    # score is structurally zero (CAPTION_COLLAPSE_MEAN_GATED_SCORE). Zero-vs-
-    # nonzero is structural — a model scoring literally zero on every image
-    # produced no usable caption content.
+    # F1b-2 / F1-12: simple must-right failures gate. Any failed must_right image
+    # exits non-zero under --rubric-gate enforce (default). The F1-11 conjunction
+    # (rate==1.0 ∧ mean_gated==0.0) was false-green on plain garbage against real
+    # golden.json: mean_gated measures easy_wrong trap avoidance, and the 3
+    # no-must_right entries score gated 1.0 regardless of caption content
+    # (garbage and seeded both ~0.0811). Content-based discrimination is
+    # impossible here — the seeded stub's captions have near-zero overlap with
+    # base_caption — so harness-shakedown exemption is an explicit operator
+    # declaration (--rubric-gate skip), recorded in the artifact, never inferred
+    # from adapter/model_id (rg-009). The seeded report already discloses it is
+    # "harness-shakedown numbers, NOT a caption-model baseline."
     must_right_failed = int(scored.get("caption", {}).get("must_right_failed_images") or 0)
-    mean_gated_raw = scored.get("caption", {}).get("mean_gated_score")
-    mean_gated = float(mean_gated_raw) if mean_gated_raw is not None else None
-    must_right_failure_rate = (
-        (must_right_failed / must_right_defined) if must_right_defined > 0 else None
-    )
-    if (
-        must_right_defined > 0
-        and must_right_failure_rate == 1.0
-        and mean_gated is not None
-        and mean_gated == CAPTION_COLLAPSE_MEAN_GATED_SCORE
-    ):
+    if rubric_gate == RUBRIC_GATE_ENFORCE and must_right_failed > 0:
         sys.exit(
             f"score must-right failures gate: {must_right_failed} image(s) failed Must-Right "
             f"caption hard-gate (caption corruption / missing required names; see {json_path})"
@@ -1122,9 +1134,25 @@ def main(argv: list[str] | None = None) -> None:
     _provider_flags(fetch_p)
     fetch_p.set_defaults(func=_cmd_fetch)
 
+    def _rubric_gate_flag(p: argparse.ArgumentParser) -> None:
+        # score/run only. enforce (default) hard-gates on any must_right failure;
+        # skip bypasses that gate only (other gates still fire). Mode is recorded
+        # in the report/verdict so a skipped run is never readable as a gated pass.
+        p.add_argument(
+            "--rubric-gate",
+            choices=RUBRIC_GATE_CHOICES,
+            default=RUBRIC_GATE_ENFORCE,
+            help=(
+                "enforce (default): exit non-zero when any must_right image fails; "
+                "skip: bypass the must-right failures gate only (harness-shakedown / "
+                "seeded-stub exemption by declaration; recorded in report.verdict)"
+            ),
+        )
+
     score_p = sub.add_parser("score", help="run record -> reports (pure, offline)")
     _common(score_p)
     _audience_flag(score_p)
+    _rubric_gate_flag(score_p)
     score_p.add_argument("--run-record", required=True)
     score_p.set_defaults(func=_cmd_score)
 
@@ -1132,6 +1160,7 @@ def main(argv: list[str] | None = None) -> None:
     _common(run_p)
     _provider_flags(run_p)
     _audience_flag(run_p)
+    _rubric_gate_flag(run_p)
     run_p.set_defaults(func=_cmd_run)
 
     seed_p = sub.add_parser("seed-roster", help="idempotent eval-tenant roster seeding")

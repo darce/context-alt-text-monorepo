@@ -22,7 +22,7 @@ DEMO_WALKTHROUGH_APP  := $(ROOT_MAKEFILE_DIR)/apps/prototype-wp-alt-context
         deploy-dev deploy-staging deploy-prod deploy-demo \
         deploy-promote-staging deploy-promote-prod deploy-rollback-dev \
         deploy-verify deploy-verify-dev deploy-verify-staging deploy-verify-prod \
-        deploy-status \
+        deploy-status deploy-clear-image-repo \
         deploy-compose-dev deploy-compose-staging deploy-compose-prod \
         reset-remote db-reset-remote demo-walkthrough-proof walkthrough-first-visitor
 
@@ -38,16 +38,18 @@ deploy-help:
 	@echo "    make deploy-dev REMOTE_BUILD=0             Same, built locally (requires colima / Docker Desktop)"
 	@echo "    make deploy-staging                        Remote build on VM, push :staging + :SHA, restart acx-staging, verify"
 	@echo "    make deploy-prod CONFIRM=PROMOTE           Remote build on VM, push :latest + :SHA, restart acx-prod, verify"
+	@echo "    ACX_BUILD_TARGET=runtime-vlm make deploy-dev REMOTE_BUILD=0   Local VLM image build+deploy (never remote)"
 	@echo ""
 	@echo "  Promote / rollback (retag existing image — remote ssh by default):"
 	@echo "    make deploy-promote-staging                Retag :dev -> :staging, restart, verify"
 	@echo "    make deploy-promote-prod CONFIRM=PROMOTE   Retag :staging -> :latest, restart, verify"
 	@echo "    make deploy-rollback-dev                   Retag :staging -> :dev (rollback path)"
 	@echo ""
-	@echo "  Verify / status:"
+	@echo "  Verify / status / sticky-repo reset:"
 	@echo "    make deploy-verify ENV=dev                 GET /health and compare commit_sha to local HEAD"
-	@echo "    make deploy-verify-dev|staging|prod        Same, fixed env"
+	@echo "    make deploy-verify-dev|staging|prod        Same, fixed env (reads remote ACX_IMAGE_REPO for VLM)"
 	@echo "    make deploy-status                         Snapshot /health for dev, staging, prod"
+	@echo "    make deploy-clear-image-repo ENV=prod      Remove sticky ACX_IMAGE_REPO from remote .env (→ recognition default)"
 	@echo ""
 	@echo "  Destructive remote reset (stops unit, clears env Postgres state, restarts, verifies /ready):"
 	@echo "    ACX_RESET_SITE_URL is REQUIRED — the WordPress site URL the plugin will hit."
@@ -85,8 +87,12 @@ deploy-help:
 	@echo "  Optional overrides: OCI_HOST OCI_USER OCIR_REGISTRY OCIR_NAMESPACE IMAGE_NAME GIT_REF"
 	@echo "                      ACX_DEPLOY_PLATFORM ACX_REMOTE_BUILD_DIR ACX_ALLOW_DIRTY"
 	@echo "                      REMOTE_BUILD (default 1; set 0 for local), ACX_REMOTE_BUILD (env equivalent)"
+	@echo "                      ACX_BUILD_TARGET (e.g. runtime-vlm; charset [A-Za-z0-9_.-]+ only)"
+	@echo "                      ACX_IMAGE_VARIANT (recognition|vlm; vlm requires *vlm* build target)"
+	@echo "                      ACX_VERIFY_OPTIONAL=1 ACX_VERIFY_ATTEMPTS ACX_VERIFY_SLEEP ACX_BOOT_SMOKE"
 
 # Build only (no push). Override the tag with TAG=staging.
+# ACX_BUILD_TARGET / ACX_IMAGE_VARIANT are passed through the environment.
 deploy-build:
 	@"$(DEPLOY_SCRIPT)" build $(TAG)
 
@@ -127,6 +133,8 @@ deploy-rollback-dev:
 		"$(DEPLOY_SCRIPT)" promote staging dev
 
 # Verify a deployed environment matches local HEAD.
+# Reads remote ACX_IMAGE_REPO when present so VLM deploys verify without re-exporting
+# ACX_BUILD_TARGET. Bounded retries via ACX_VERIFY_ATTEMPTS / ACX_VERIFY_SLEEP.
 deploy-verify:
 	@"$(DEPLOY_SCRIPT)" verify $(ENV)
 
@@ -142,6 +150,14 @@ deploy-verify-prod:
 # Cross-env health snapshot. Cheap triage tool.
 deploy-status:
 	@"$(DEPLOY_SCRIPT)" status
+
+# D9: remove sticky ACX_IMAGE_REPO from remote .env (compose → recognition default).
+deploy-clear-image-repo:
+	@if [ -z "$(ENV)" ]; then \
+		echo "deploy-clear-image-repo: ENV is required (dev|staging|prod)" >&2; \
+		exit 2; \
+	fi
+	@"$(DEPLOY_SCRIPT)" clear-image-repo $(ENV)
 
 # Destructive remote reset. Requires explicit ENV=<dev|staging|prod> and confirmation
 # levers (CONFIRM_REMOTE_RESET=RESET; CONFIRM=PROMOTE additionally for prod). Pass

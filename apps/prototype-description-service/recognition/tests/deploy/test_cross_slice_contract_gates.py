@@ -1031,3 +1031,431 @@ def test_assert_remote_disk_headroom_vlm_calls_free_space(tmp_path: Path) -> Non
     )
     assert proc2.returncode == 0, proc2.stderr
     assert not marker2.exists(), "recognition pull must not enforce disk floor by default"
+
+
+# ---- wave-10 recovery gates (ol01-w10a) -----------------------------------
+
+
+def _run_script_help(extra_env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, **extra_env}
+    return subprocess.run(
+        ["bash", str(DEPLOY_SCRIPT), "help"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+
+def test_build_target_charset_refuses_metacharacters() -> None:
+    """R0811-D-07: ACX_BUILD_TARGET with shell metacharacters fails at ingestion.
+
+    Must fail with charset language (not only the later enum), so a metachar
+    never reaches remote sed/ssh interpolation even if the enum were widened.
+    """
+    proc = _run_script_help({"ACX_BUILD_TARGET": "a|b"})
+    assert proc.returncode != 0
+    combined = (proc.stdout or "") + (proc.stderr or "")
+    assert "charset" in combined.lower(), combined
+
+
+def test_build_target_enum_refuses_unknown() -> None:
+    """REV-r08112960-A-12: unknown ACX_BUILD_TARGET must fail closed at enum.
+
+    Message must be the allowlist failure (not a later incidental error).
+    """
+    proc = _run_script_help({"ACX_BUILD_TARGET": "runtime-vim"})
+    assert proc.returncode != 0
+    combined = (proc.stdout or "") + (proc.stderr or "")
+    assert "must be one of" in combined, combined
+    assert "runtime-vim" in combined
+
+
+def test_image_variant_case_fold_and_d8_fail_closed() -> None:
+    """S2-A-03 / H-03: VLM (case variants) without *vlm* target fails closed.
+
+    Conjuncts proven separately:
+    (1) case-fold so VLM hits D8 (requires ACX_BUILD_TARGET matching *vlm*);
+    (2) enum rejects bogus labels (vlm2).
+    """
+    # (1) case fold + D8 — after fold, message names lowercase vlm + target requirement
+    proc = _run_script_help({"ACX_IMAGE_VARIANT": "VLM", "ACX_BUILD_TARGET": "runtime"})
+    assert proc.returncode != 0
+    combined = (proc.stdout or "") + (proc.stderr or "")
+    assert "requires ACX_BUILD_TARGET" in combined, combined
+    assert "vlm" in combined.lower()
+    # Must not be the bare enum "got: VLM" path — that means fold is missing.
+    assert "got: VLM" not in combined, combined
+    # (2) enum
+    proc2 = _run_script_help({"ACX_IMAGE_VARIANT": "vlm2"})
+    assert proc2.returncode != 0
+    c2 = (proc2.stdout or "") + (proc2.stderr or "")
+    assert "must be one of" in c2 and "vlm2" in c2, c2
+
+
+def test_refuse_remote_vlm_case_folded_at_ingestion() -> None:
+    """R0811-D-11: mixed-case runtime-VLM is lowercased then refused on remote path.
+
+    After fold, refuse_remote_vlm_build must fire (not the build-target enum).
+    """
+    proc = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'export ACX_BUILD_TARGET=runtime-VLM; source "{DEPLOY_SCRIPT}"; refuse_remote_vlm_build; echo ACCEPTED',
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert proc.returncode != 0
+    combined = (proc.stdout or "") + (proc.stderr or "")
+    assert "Remote build refuses" in combined or "refuses ACX_BUILD_TARGET" in combined, combined
+    assert "ACCEPTED" not in combined
+
+
+def test_help_covers_variant_and_smoke_docs() -> None:
+    """R0811-D-12: `help` must print the Image variants / rollback block (past line 40)."""
+    proc = _run_script_help({})
+    assert proc.returncode == 0
+    out = (proc.stdout or "") + (proc.stderr or "")
+    # These only appear in the RA-07 / env-override blocks past the old 2,40p window.
+    assert "Image variants" in out, "help truncated before Image variants / rollback block"
+    assert "ACX_SMOKE_TIMEOUT" in out, "help truncated before ACX_SMOKE_TIMEOUT docs"
+    assert "clear-image-repo" in out
+
+
+def test_verify_image_mismatch_returns_not_exits(tmp_path: Path) -> None:
+    """R0811-D-04: verify_running_image_matches_deployed must return, not fail/exit."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    # Empty Config.Image → empty running_image branch.
+    (bindir / "ssh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    (bindir / "ssh").chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{bindir}:{os.environ['PATH']}",
+        "ACX_VERIFY_EXPECT_LOCAL": "1",
+    }
+    proc = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'source "{DEPLOY_SCRIPT}"; '
+            'if ! verify_running_image_matches_deployed dev; then echo SURVIVED rc=$?; exit 0; fi; '
+            "echo UNEXPECTED_PASS",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    combined = (proc.stdout or "") + (proc.stderr or "")
+    assert proc.returncode == 0, combined
+    assert "SURVIVED" in combined, combined
+    assert "UNEXPECTED_PASS" not in combined
+
+
+def test_ship_remote_normalises_newline_and_uses_sudo(tmp_path: Path) -> None:
+    """R0811-D-05 / D-06: ship_remote appends on its own line via sudo tee.
+
+    Behavioural: fake ssh executes the remote snippet against a local file that
+    lacks a trailing newline; result must be prior secret intact + ACX_IMAGE_REPO
+    on a new line; remote command must use sudo.
+    """
+    log = tmp_path / "ssh.log"
+    env_file = tmp_path / "prod.env"
+    # No trailing newline — the D-05 failure input.
+    env_file.write_bytes(b"POSTGRES_PASSWORD=hunter2")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    # Fake ssh: record argv, map remote path to local env_file, run snippet with
+    # a local `sudo` shim that just execs the rest.
+    (bindir / "sudo").write_text(
+        "#!/bin/sh\nexec \"$@\"\n",
+        encoding="utf-8",
+    )
+    (bindir / "sudo").chmod(0o755)
+    (bindir / "ssh").write_text(
+        textwrap.dedent(
+            f"""\
+            #!/bin/sh
+            echo "ssh $@" >> "{log}"
+            # Last arg is the remote shell snippet (may contain spaces).
+            remote=""
+            for a in "$@"; do remote="$a"; done
+            # Rewrite the fixed remote env path to our temp file.
+            remote=$(printf '%s' "$remote" | sed 's|/opt/acx-backend/[^/]*/\\.env|{env_file}|g')
+            # shellcheck disable=SC2086
+            eval "$remote"
+            exit $?
+            """
+        ),
+        encoding="utf-8",
+    )
+    (bindir / "ssh").chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{bindir}:{os.environ['PATH']}",
+        "ACX_BUILD_TARGET": "",
+        "ACX_IMAGE_VARIANT": "",
+    }
+    proc = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'source "{DEPLOY_SCRIPT}"; ship_remote_image_repo_env /opt/acx-backend/dev',
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    raw = env_file.read_bytes()
+    text = raw.decode()
+    assert "POSTGRES_PASSWORD=hunter2\n" in text or text.startswith("POSTGRES_PASSWORD=hunter2\n"), (
+        f"secret line must keep trailing newline separation; got {raw!r}"
+    )
+    assert "hunter2ACX_IMAGE_REPO" not in text, f"concatenated secret: {raw!r}"
+    assert re.search(r"(?m)^ACX_IMAGE_REPO=", text), text
+    logged = log.read_text()
+    assert "sudo" in logged, f"ship must use sudo for root-owned .env:\n{logged}"
+    assert "tail -c1" in logged or "tee -a" in logged, logged
+
+
+def test_bare_verify_prefers_remote_image_repo(tmp_path: Path) -> None:
+    """R0811-D-03: standalone verify uses remote sticky repo (not ambient resolve)."""
+    log = tmp_path / "ssh.log"
+    log.write_text("")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "ssh").write_text(
+        textwrap.dedent(
+            f"""\
+            #!/bin/sh
+            echo "ssh $@" >> "{log}"
+            case "$*" in
+              *Config.Image*|*docker*inspect*)
+                echo "iad.ocir.io/idu2kqqe2jxy/acx-backend-vlm:latest"
+                ;;
+              *ACX_IMAGE_REPO*)
+                echo "iad.ocir.io/idu2kqqe2jxy/acx-backend-vlm"
+                ;;
+              *)
+                echo "iad.ocir.io/idu2kqqe2jxy/acx-backend-vlm:latest"
+                ;;
+            esac
+            exit 0
+            """
+        ),
+        encoding="utf-8",
+    )
+    (bindir / "ssh").chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{bindir}:{os.environ['PATH']}",
+        # Bare verify: no EXPECT_LOCAL, no variant selectors.
+        "ACX_BUILD_TARGET": "",
+        "ACX_IMAGE_VARIANT": "",
+    }
+    # Unset EXPECT_LOCAL if present.
+    env.pop("ACX_VERIFY_EXPECT_LOCAL", None)
+    proc = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'unset ACX_VERIFY_EXPECT_LOCAL; source "{DEPLOY_SCRIPT}"; '
+            "verify_running_image_matches_deployed prod; echo rc=$?",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    combined = (proc.stdout or "") + (proc.stderr or "")
+    assert "via remote .env" in combined, combined
+    assert "rc=0" in combined, combined
+
+
+def test_boot_smoke_requires_models_path() -> None:
+    """S2-A-08: Gate 2 remote body must fail closed when ACX_MODELS_PATH is absent."""
+    body = _fn_body(DEPLOY_SCRIPT.read_text(encoding="utf-8"), "do_boot_smoke")
+    assert "smoke requires ACX_MODELS_PATH" in body or (
+        "models_path" in body and "exit 1" in body
+    ), "do_boot_smoke must refuse empty ACX_MODELS_PATH"
+    # Must not silently skip the cache mount.
+    assert re.search(
+        r'\[\[ -z "\$\{models_path\}" \]\]',
+        body,
+    ) or "smoke requires ACX_MODELS_PATH" in body
+    # Unconditional :ro mount after the check (not only inside if -n).
+    assert "-v \"${models_path}:/data/cache:ro\"" in body or (
+        "models_path}:/data/cache:ro" in body
+    )
+
+
+def test_vlm_smoke_timeout_default_is_image_aware() -> None:
+    """S1-RA-06 / C-05: VLM resolve_smoke_timeout > recognition default; override works."""
+    proc = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'export ACX_BUILD_TARGET=runtime-vlm; unset ACX_SMOKE_TIMEOUT; '
+            f'source "{DEPLOY_SCRIPT}"; resolve_smoke_timeout',
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert proc.returncode == 0, proc.stderr
+    vlm_budget = int((proc.stdout or "").strip())
+    proc2 = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'export ACX_BUILD_TARGET=; unset ACX_SMOKE_TIMEOUT; '
+            f'source "{DEPLOY_SCRIPT}"; resolve_smoke_timeout',
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert proc2.returncode == 0, proc2.stderr
+    rec_budget = int((proc2.stdout or "").strip())
+    assert vlm_budget > rec_budget, f"vlm={vlm_budget} rec={rec_budget}"
+    proc3 = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'export ACX_BUILD_TARGET=runtime-vlm ACX_SMOKE_TIMEOUT=99; '
+            f'source "{DEPLOY_SCRIPT}"; resolve_smoke_timeout',
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert proc3.returncode == 0
+    assert (proc3.stdout or "").strip() == "99"
+
+
+def test_restore_prior_image_repo_on_post_ship_failure(tmp_path: Path) -> None:
+    """S2-A-06: restore_prior_image_repo_env re-ships prior value after failure."""
+    log = tmp_path / "ship.log"
+    log.write_text("")
+    proc = subprocess.run(
+        [
+            "bash",
+            "-c",
+            textwrap.dedent(
+                f"""\
+                source "{DEPLOY_SCRIPT}"
+                ship_remote_image_repo_env() {{
+                  echo "ship repo=$ACX_IMAGE_REPO dir=$1" >> "{log}"
+                }}
+                clear_remote_image_repo_env() {{
+                  echo "clear $1" >> "{log}"
+                }}
+                ACX_PRIOR_IMAGE_REPO=iad.ocir.io/ns/acx-backend-vlm
+                ACX_PRIOR_IMAGE_REPO_ENV=prod
+                restore_prior_image_repo_env
+                """
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert proc.returncode == 0, proc.stderr
+    logged = log.read_text()
+    assert "acx-backend-vlm" in logged, logged
+    assert "ship repo=" in logged, logged
+
+
+def test_repair_skips_chown_when_root_uid_matches(tmp_path: Path) -> None:
+    """W8-VER-03: when volume root is already uid 10001, recursive chown must not run.
+
+    Executes the remote probe script body against fake stat/chown on PATH.
+    """
+    log = tmp_path / "cmd.log"
+    log.write_text("")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    # Fake ssh: run the remote command string with our docker/stat/chown on PATH.
+    # Strip `cd <remote_dir> &&` so we do not need /opt/acx-backend on the host.
+    (bindir / "ssh").write_text(
+        textwrap.dedent(
+            f"""\
+            #!/bin/sh
+            echo "ssh-invoke" >> "{log}"
+            # Destination form: ssh [opts] -l user -- host "remote cmd"
+            remote=""
+            for a in "$@"; do remote="$a"; done
+            remote=$(printf '%s' "$remote" | sed 's|^cd [^&]*&& *||')
+            export PATH="{bindir}:$PATH"
+            # shellcheck disable=SC2086
+            eval "$remote"
+            exit $?
+            """
+        ),
+        encoding="utf-8",
+    )
+    (bindir / "ssh").chmod(0o755)
+    (bindir / "stat").write_text(
+        textwrap.dedent(
+            f"""\
+            #!/bin/sh
+            echo "stat $@" >> "{log}"
+            echo 10001
+            """
+        ),
+        encoding="utf-8",
+    )
+    (bindir / "stat").chmod(0o755)
+    (bindir / "chown").write_text(
+        textwrap.dedent(
+            f"""\
+            #!/bin/sh
+            echo "CHOWN_RAN $@" >> "{log}"
+            exit 0
+            """
+        ),
+        encoding="utf-8",
+    )
+    (bindir / "chown").chmod(0o755)
+    # docker compose ... run ... sh -c 'SCRIPT' → execute SCRIPT with fakes.
+    (bindir / "docker").write_text(
+        textwrap.dedent(
+            f"""\
+            #!/bin/sh
+            echo "docker $@" >> "{log}"
+            while [ $# -gt 0 ]; do
+              if [ "$1" = "-c" ]; then
+                shift
+                export PATH="{bindir}:$PATH"
+                eval "$1"
+                exit $?
+              fi
+              shift
+            done
+            exit 0
+            """
+        ),
+        encoding="utf-8",
+    )
+    (bindir / "docker").chmod(0o755)
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"}
+    proc = subprocess.run(
+        ["bash", "-c", f'source "{DEPLOY_SCRIPT}"; repair_blob_volume_ownership dev'],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    logged = log.read_text()
+    # Probe must run; recursive chown must not (marker only written if chown exec'd).
+    assert "stat" in logged, logged
+    assert "CHOWN_RAN" not in logged, (
+        f"recursive chown must be skipped when uid matches:\n{logged}"
+    )

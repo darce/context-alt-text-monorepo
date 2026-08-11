@@ -346,6 +346,68 @@ def test_main_module_invocable_as_python_m(monkeypatch: pytest.MonkeyPatch) -> N
     assert "skipped" in result.stdout.lower() or "does not need" in result.stdout.lower()
 
 
+def test_main_module_subprocess_fails_on_tampered_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RLSE-02 / S3-A-02: `python -m` exit code must be literal 1 on tamper.
+
+    In-process asserts against ``gate.EXIT_FAIL`` stay green if that constant
+    is rewritten to 0; the entrypoint under ``set -eu`` only sees the process
+    exit status. Prove the real module returns 1 for a sha256 mismatch.
+    """
+    from scene.config.profiles import DescriptionProfile, get_profile_spec
+
+    gate = _import_gate()
+    hub = tmp_path / "hub"
+    modules = tmp_path / "modules"
+    modules.mkdir()
+    spec = get_profile_spec(DescriptionProfile.FLORENCE_SMALL)
+    assert spec.model_id and spec.model_revision
+    snapshot = gate.resolve_snapshot_dir(
+        spec.model_id, spec.model_revision, hub_cache=hub
+    )
+    files = _intact_files()
+    _write_tree(snapshot, files)
+    _write_manifest(gate, snapshot, files)
+    # Tamper after certifying so verify_snapshot (and main) must fail closed.
+    (snapshot / "modeling_florence2.py").write_bytes(b"# subprocess-tamper\n")
+
+    env = {
+        **os.environ,
+        "ACX_DESCRIPTION_ADAPTER": "florence_small",
+        "HF_HUB_CACHE": str(hub),
+        "HF_MODULES_CACHE": str(modules),
+    }
+    env.pop("ACX_VLM_MANIFEST_SHA256", None)
+    env.pop("ACX_REQUIRE_VLM_CACHE", None)
+    # No bake artifact on host; force env claim so main takes the LOCAL_CPU path.
+    env["ACX_IMAGE_VARIANT"] = "vlm"
+    result = subprocess.run(
+        [sys.executable, "-m", "scripts.verify_vlm_cache"],
+        cwd=SERVICE_ROOT,
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert result.returncode == 1, (
+        f"tampered snapshot must exit 1 (not gate.EXIT_FAIL alias); "
+        f"got {result.returncode}; stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+
+    # TEST-15 control: restore bytes → subprocess goes green (literal 0).
+    (snapshot / "modeling_florence2.py").write_bytes(files["modeling_florence2.py"])
+    ok = subprocess.run(
+        [sys.executable, "-m", "scripts.verify_vlm_cache"],
+        cwd=SERVICE_ROOT,
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert ok.returncode == 0, ok.stdout + ok.stderr
+
+
 # ---- S1-A-07: bake-first image variant resolution ------------------------
 
 

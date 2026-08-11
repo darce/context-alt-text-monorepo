@@ -9,12 +9,15 @@ require_once __DIR__ . '/../api/services/class-person-resolution-service.php';
 
 use AltContext\Api\Services\PersonResolutionService;
 use AltContext\Sovereign\Sync\OutboxDrain;
+use function array_keys;
 use function defined;
 use function function_exists;
 use function get_option;
 use function is_object;
 use function is_readable;
+use function is_string;
 use function method_exists;
+use function sprintf;
 use function time;
 use function update_option;
 use function wp_clear_scheduled_hook;
@@ -37,24 +40,6 @@ class LifecycleManager {
 	 * ADD COLUMN against populated tables succeeds (implicit zero-date is rejected).
 	 */
 	private const ASSIGNED_AT_FALLBACK_UTC = '1970-01-01 00:00:00.000000';
-	/**
-	 * Plugin-owned custom table suffixes (without WordPress prefix).
-	 *
-	 * @var string[]
-	 */
-	private const OWNED_TABLE_SUFFIXES = array(
-		'acx_clusters',
-		'acx_identity_members',
-		'acx_sync_state',
-		'acx_persons',
-		'acx_batch_runs',
-		'acx_batch_run_failures',
-		'acx_description_runs',
-		'acx_description_run_items',
-		'acx_sync_outbox',
-		'acx_topology_commands',
-		'acx_sync_conflicts',
-	);
 
 	public function __construct() {
 		if ( function_exists( 'add_action' ) ) {
@@ -117,6 +102,13 @@ class LifecycleManager {
 		}
 
 		if ( ! $this->maybe_create_projection_tables() ) {
+			// RLSE-05 / OBS-08: refuse to stamp so the next request retries.
+			Telemetry::log_line(
+				sprintf(
+					'[acx] maybe_upgrade: projection schema apply failed; not stamping acx_version=%s or fingerprint (will retry)',
+					ACX_VERSION
+				)
+			);
 			return;
 		}
 		update_option( self::OPTION_VERSION, ACX_VERSION );
@@ -470,7 +462,8 @@ class LifecycleManager {
 	/**
 	 * Drop plugin-owned custom tables during uninstall.
 	 *
-	 * This keeps create/destroy behavior symmetric as sovereign tables are added.
+	 * Suffixes are derived from build_projection_schema_statements so create,
+	 * fingerprint, and destroy share one source of truth (BR-02 / BR-09).
 	 */
 	private function drop_tables(): void {
 		global $wpdb;
@@ -479,11 +472,20 @@ class LifecycleManager {
 			return;
 		}
 
-		foreach ( self::OWNED_TABLE_SUFFIXES as $table_suffix ) {
+		foreach ( $this->owned_table_suffixes() as $table_suffix ) {
 			$table_name = $wpdb->prefix . $table_suffix;
 			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared -- Table names are fixed plugin-owned suffixes with wpdb prefix.
 			$wpdb->query( "DROP TABLE IF EXISTS `{$table_name}`" );
 		}
+	}
+
+	/**
+	 * Plugin-owned custom table suffixes (without WordPress prefix).
+	 *
+	 * @return list<string>
+	 */
+	private function owned_table_suffixes(): array {
+		return array_keys( $this->build_projection_schema_statements( '', '' ) );
 	}
 
 	/**
@@ -792,9 +794,13 @@ class LifecycleManager {
 	 * Create sovereign projection tables during activation / upgrade.
 	 *
 	 * Safe to call multiple times; dbDelta performs idempotent updates.
+	 * Iterates the statement map directly (single source of truth with the
+	 * fingerprint and uninstall drop list). Partial applies are left in place
+	 * and return false so callers refuse to stamp; the next request retries.
 	 *
-	 * @return bool True when dbDelta ran; false when an environment guard
-	 *              skipped the upgrade (callers must not mark it complete).
+	 * @return bool True when every statement and the assigned_at seed succeeded;
+	 *              false when an environment guard skipped the run or MySQL
+	 *              rejected a statement (callers must not mark complete).
 	 */
 	private function maybe_create_projection_tables(): bool {
 		global $wpdb;
@@ -822,29 +828,29 @@ class LifecycleManager {
 			$wpdb->get_charset_collate()
 		);
 
-		// Preserve historical dbDelta call order (activate tests assert positions).
-		$ordered_keys = array(
-			'acx_persons',
-			'acx_clusters',
-			'acx_identity_members',
-			'acx_sync_state',
-			'acx_sync_outbox',
-			'acx_topology_commands',
-			'acx_sync_conflicts',
-			'acx_batch_runs',
-			'acx_batch_run_failures',
-			'acx_description_runs',
-			'acx_description_run_items',
-			'acx_description_usage',
-		);
+		// Map insertion order is the apply order (persons before clusters, etc.).
+		foreach ( $statements as $key => $sql ) {
+			if ( property_exists( $wpdb, 'last_error' ) ) {
+				$wpdb->last_error = '';
+			}
 
-		foreach ( $ordered_keys as $key ) {
-			if ( isset( $statements[ $key ] ) ) {
-				dbDelta( $statements[ $key ] );
+			dbDelta( $sql );
+
+			$error = property_exists( $wpdb, 'last_error' ) ? (string) $wpdb->last_error : '';
+			if ( '' !== $error ) {
+				if ( property_exists( $wpdb, 'last_error' ) ) {
+					$wpdb->last_error = '';
+				}
+				Telemetry::log_line(
+					sprintf( '[acx] schema apply failed for %s: %s', $key, $error )
+				);
+				return false;
 			}
 		}
 
-		$this->seed_assigned_at_from_created_at( (string) $wpdb->prefix . 'acx_identity_members' );
+		if ( ! $this->seed_assigned_at_from_created_at( (string) $wpdb->prefix . 'acx_identity_members' ) ) {
+			return false;
+		}
 
 		return true;
 	}
@@ -853,16 +859,23 @@ class LifecycleManager {
 	 * Derived-projection repair: rows that received the epoch DEFAULT when
 	 * assigned_at was added keep a sane ORDER BY until the next recognition
 	 * sync overwrites them. Not a migration framework (Greenfield Policy).
+	 *
+	 * @return bool False when the UPDATE fails or the environment cannot query.
 	 */
-	private function seed_assigned_at_from_created_at( string $members_table ): void {
+	private function seed_assigned_at_from_created_at( string $members_table ): bool {
 		global $wpdb;
 
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
-			return;
+			return false;
 		}
 
-		$fallback = self::ASSIGNED_AT_FALLBACK_UTC;
+		if ( property_exists( $wpdb, 'last_error' ) ) {
+			$wpdb->last_error = '';
+		}
+
+		$fallback        = self::ASSIGNED_AT_FALLBACK_UTC;
 		$fallback_second = '1970-01-01 00:00:00';
+		$result          = null;
 
 		if ( method_exists( $wpdb, 'prepare' ) ) {
 			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- %i table placeholder; constants only.
@@ -874,14 +887,29 @@ class LifecycleManager {
 			);
 			if ( is_string( $sql ) && '' !== $sql ) {
 				// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Prepared above.
-				$wpdb->query( $sql );
-				return;
+				$result = $wpdb->query( $sql );
 			}
 		}
 
-		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is plugin-owned; literals are constants.
-		$wpdb->query(
-			"UPDATE `{$members_table}` SET assigned_at = created_at WHERE assigned_at = '{$fallback}' OR assigned_at = '{$fallback_second}'"
-		);
+		if ( null === $result ) {
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is plugin-owned; literals are constants.
+			$result = $wpdb->query(
+				"UPDATE `{$members_table}` SET assigned_at = created_at WHERE assigned_at = '{$fallback}' OR assigned_at = '{$fallback_second}'"
+			);
+		}
+
+		$error = property_exists( $wpdb, 'last_error' ) ? (string) $wpdb->last_error : '';
+		if ( false === $result || '' !== $error ) {
+			if ( property_exists( $wpdb, 'last_error' ) ) {
+				$wpdb->last_error = '';
+			}
+			$message = '' !== $error ? $error : 'query returned false';
+			Telemetry::log_line(
+				sprintf( '[acx] schema seed assigned_at failed for %s: %s', $members_table, $message )
+			);
+			return false;
+		}
+
+		return true;
 	}
 }

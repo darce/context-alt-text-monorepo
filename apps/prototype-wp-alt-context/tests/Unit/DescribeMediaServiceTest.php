@@ -8,6 +8,7 @@ use AltContext\Api\DescribeController;
 use AltContext\Api\DescribeHostInterface;
 use AltContext\Api\Services\DescribeMediaService;
 use AltContext\Api\Services\DescriptionBudgetService;
+use AltContext\Sovereign\ProjectionQueryException;
 use AltContext\Tests\Stubs\NullIdentityMembersRepository;
 use AltContext\Tests\TestCase;
 use WP_Error;
@@ -211,6 +212,49 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertSame('', get_post_meta(42, '_wp_attachment_image_alt', true));
         $this->assertSame('', get_post_meta(42, '_acx_description_provenance', true));
         $this->assertArrayNotHasKey('alt_text_write', $result->get_data());
+    }
+
+    /**
+     * E21-14-BR-05: identity context is enrichment — projection failure must not abort describe.
+     * Degrade to empty identities, log, continue generation (AGT-10).
+     */
+    public function testDescribeContinuesWithEmptyIdentityContextWhenProjectionQueryFails(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0fake-jpeg-bytes", 'jpg');
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+
+        $host = new DescribeMediaServiceTestHost(self::currentTenantId(), $this->validBackendBody(42));
+        $repo = new class() extends NullIdentityMembersRepository {
+            public function list_for_media_ids(string $tenant_id, array $media_ids): array
+            {
+                throw new ProjectionQueryException(
+                    'Projection query failed [identity_members.list_for_media_ids]: '
+                    . "Unknown column 'm.assigned_at' in 'order clause'"
+                );
+            }
+        };
+        $service = new DescribeMediaService($host, null, $repo);
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $result = $service->describe_media($req);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result, 'Describe must not fatal on projection failure');
+        $this->assertSame(200, $result->get_status());
+
+        $body = $host->lastBody['request'] ?? '';
+        $this->assertIsString($body);
+        $envelope = json_decode($body, true);
+        $this->assertIsArray($envelope);
+        $identities = $envelope['context_pack']['identity']['identities'] ?? null;
+        $this->assertIsArray($identities);
+        $this->assertSame([], $identities);
+
+        $log = implode("\n", $this->getErrorLog());
+        $this->assertStringContainsString('identity_members.list_for_media_ids', $log);
     }
 
     public function testWriteIntentPersistsMissingAltTextAndProvenance(): void

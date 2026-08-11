@@ -259,6 +259,15 @@ describe('ClusterLabelingPanel', () => {
     expect(screen.queryByText(/Is this /)).not.toBeInTheDocument();
   });
 
+  it('E21-14-BR-15: members projection failure shows error, not "No members found."', async () => {
+    vi.mocked(fetchClusterMembers).mockRejectedValue(new Error('acx_projection_query_failed'));
+
+    renderPanel();
+
+    expect(await screen.findByText('Unable to load cluster members.')).toBeInTheDocument();
+    expect(screen.queryByText('No members found.')).not.toBeInTheDocument();
+  });
+
   it('prefers dedicated face-thumb URLs before client-side crop data', async () => {
     vi.mocked(fetchClusterMembers).mockResolvedValue(
       makeClusterMembersResponse([

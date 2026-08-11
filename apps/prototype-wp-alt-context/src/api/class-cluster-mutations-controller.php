@@ -14,6 +14,7 @@ require_once __DIR__ . '/services/class-cluster-merge-service.php';
 require_once __DIR__ . '/services/class-cluster-split-service.php';
 require_once __DIR__ . '/services/class-cluster-membership-service.php';
 require_once __DIR__ . '/services/class-cluster-representative-service.php';
+require_once __DIR__ . '/../sovereign/class-projection-query-exception.php';
 require_once __DIR__ . '/../sovereign/sync/interface-outbox-writer.php';
 require_once __DIR__ . '/../sovereign/sync/class-outbox-writer.php';
 require_once __DIR__ . '/../sovereign/sync/class-curation-idempotency-key.php';
@@ -27,6 +28,7 @@ use AltContext\Api\Services\ClusterMembershipService;
 use AltContext\Api\Services\ClusterMergeService;
 use AltContext\Api\Services\ClusterRepresentativeService;
 use AltContext\Api\Services\ClusterSplitService;
+use AltContext\Sovereign\ProjectionQueryException;
 use AltContext\Sovereign\Repositories\ClustersRepository;
 use AltContext\Sovereign\Repositories\ClustersRepositoryInterface;
 use AltContext\Sovereign\Repositories\IdentityMembersRepository;
@@ -232,52 +234,88 @@ class ClusterMutationsController extends AbstractRecognitionProxyController impl
 	}
 
 	public function reassign_cluster_identity( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		return $this->membership_service->reassign_cluster_identity( $request );
+		return $this->run_mutation( 'reassign_cluster_identity', function () use ( $request ) {
+			return $this->membership_service->reassign_cluster_identity( $request );
+		} );
 	}
 
 	public function update_cluster_label( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		return $this->label_service->update_cluster_label( $request );
+		return $this->run_mutation( 'update_cluster_label', function () use ( $request ) {
+			return $this->label_service->update_cluster_label( $request );
+		} );
 	}
 
 	public function dismiss_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		return $this->lifecycle_service->dismiss_cluster( $request );
+		return $this->run_mutation( 'dismiss_cluster', function () use ( $request ) {
+			return $this->lifecycle_service->dismiss_cluster( $request );
+		} );
 	}
 
 	public function undismiss_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		return $this->lifecycle_service->undismiss_cluster( $request );
+		return $this->run_mutation( 'undismiss_cluster', function () use ( $request ) {
+			return $this->lifecycle_service->undismiss_cluster( $request );
+		} );
 	}
 
 	public function merge_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		return $this->merge_service->merge_cluster( $request );
+		return $this->run_mutation( 'merge_cluster', function () use ( $request ) {
+			return $this->merge_service->merge_cluster( $request );
+		} );
 	}
 
 	public function split_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		return $this->split_service->split_cluster( $request );
+		return $this->run_mutation( 'split_cluster', function () use ( $request ) {
+			return $this->split_service->split_cluster( $request );
+		} );
 	}
 
 	public function create_cluster_for_identity( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		return $this->membership_service->create_cluster_for_identity( $request );
+		return $this->run_mutation( 'create_cluster_for_identity', function () use ( $request ) {
+			return $this->membership_service->create_cluster_for_identity( $request );
+		} );
 	}
 
 	public function revert_merge_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		return $this->merge_service->revert_merge_cluster( $request );
+		return $this->run_mutation( 'revert_merge_cluster', function () use ( $request ) {
+			return $this->merge_service->revert_merge_cluster( $request );
+		} );
 	}
 
 	public function assign_outlier_to_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		return $this->membership_service->assign_outlier_to_cluster( $request );
+		return $this->run_mutation( 'assign_outlier_to_cluster', function () use ( $request ) {
+			return $this->membership_service->assign_outlier_to_cluster( $request );
+		} );
 	}
 
 	public function pin_representative( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		return $this->representative_service->pin_representative( $request );
+		return $this->run_mutation( 'pin_representative', function () use ( $request ) {
+			return $this->representative_service->pin_representative( $request );
+		} );
 	}
 
 	public function get_tenant_id(): string {
 		return parent::get_tenant_id();
 	}
 
+	/**
+	 * Hard-fail on projection probe errors (do not fall back to backend proxy).
+	 * A failed local read cannot be trusted as "empty projection"; proxying would
+	 * risk split-brain writes against a broken local state (RLSE-05 / E21-14-BR-04).
+	 */
 	public function should_proxy_mutation_to_backend( string $tenant_id ): bool {
 		return ! $this->clusters_repository->has_projection_rows_for_tenant( $tenant_id )
 			&& ! $this->members_repository->has_projection_rows_for_tenant( $tenant_id );
+	}
+
+	/**
+	 * @param callable(): (WP_REST_Response|WP_Error) $callback
+	 */
+	private function run_mutation( string $surface, callable $callback ): WP_REST_Response|WP_Error {
+		try {
+			return $callback();
+		} catch ( ProjectionQueryException $exception ) {
+			return ProjectionQueryException::to_rest_error( $surface );
+		}
 	}
 
 	public function proxy_cluster_mutation(

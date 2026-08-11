@@ -1140,7 +1140,23 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               onRetry={() => void data.refetchAssignment().then(() => data.refetchMerge())}
             />
           ) : length === 0 || !currentItem ? (
-            filteredEmptyWithWork ? (
+            data.isTopUnlabeledError ? (
+              // RLSE-05: top-unlabeled 500 must not read as an empty/caught-up queue.
+              <div
+                className="acx-review-queue__error"
+                role="alert"
+                data-testid="acx-review-queue-top-unlabeled-error"
+              >
+                <p>{__('Unable to load unlabeled clusters.', 'alt-context')}</p>
+                <button
+                  type="button"
+                  className="button"
+                  onClick={() => void data.refetchTopUnlabeled()}
+                >
+                  {__('Retry', 'alt-context')}
+                </button>
+              </div>
+            ) : filteredEmptyWithWork ? (
               // [COG-03] filters hide work; [NAV-07] escape hatch; [INT-06] clear label; [rg-003]
               <div className="acx-review-queue__empty">
                 <p>{__(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context')}</p>
@@ -1165,6 +1181,27 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               {liveMessage ?? __('This review target is no longer available.', 'alt-context')}
             </p>
           ) : (
+            <>
+              {data.isTopUnlabeledError &&
+              !(
+                currentItem.kind === NEXT_ACTION_KIND.CLUSTER &&
+                !topClustersById.has(currentItem.clusterId)
+              ) ? (
+                <div
+                  className="acx-review-queue__error"
+                  role="alert"
+                  data-testid="acx-review-queue-top-unlabeled-error"
+                >
+                  <p>{__('Unable to load unlabeled clusters.', 'alt-context')}</p>
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={() => void data.refetchTopUnlabeled()}
+                  >
+                    {__('Retry', 'alt-context')}
+                  </button>
+                </div>
+              ) : null}
             <CurrentCard
               item={currentItem}
               // BR-82: the card primary steps down to neutral while the bulk commit owns
@@ -1174,6 +1211,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               mergeById={mergeById}
               nameById={nameById}
               topClustersById={topClustersById}
+              isTopUnlabeledError={data.isTopUnlabeledError}
+              onRetryTopUnlabeled={() => void data.refetchTopUnlabeled()}
               isCardPending={(suggestionId, kinds) =>
                 // BR-47: selected cards cannot open a single hold (bulk exclusion).
                 data.isCardPending(suggestionId, kinds) ||
@@ -1228,6 +1267,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                   : undefined
               }
             />
+            </>
           )}
         </div>
 
@@ -1263,6 +1303,9 @@ interface CurrentCardProps {
   mergeById: Map<string, PendingMergeSuggestion>;
   nameById: Map<string, PendingNameSuggestion>;
   topClustersById: Map<string, TopUnlabeledCluster>;
+  /** Projection outage on top-unlabeled — distinct from retired-cluster empty. */
+  isTopUnlabeledError: boolean;
+  onRetryTopUnlabeled: () => void;
   isCardPending: (suggestionId: string, kinds: readonly SuggestionCommitKind[]) => boolean;
   /** BR-47: title/reason when Accept/Reject disabled due to selection or bulk. */
   cardActionsDisabledReason: string | null;
@@ -1398,6 +1441,8 @@ const CurrentCard = ({
   mergeById,
   nameById,
   topClustersById,
+  isTopUnlabeledError,
+  onRetryTopUnlabeled,
   isCardPending,
   cardActionsDisabledReason,
   hold,
@@ -1693,6 +1738,21 @@ const CurrentCard = ({
     case NEXT_ACTION_KIND.CLUSTER: {
       const cluster = topClustersById.get(item.clusterId);
       if (!cluster) {
+        // RLSE-05: projection 500 must not read as "cluster retired".
+        if (isTopUnlabeledError) {
+          return (
+            <div
+              className="acx-review-queue__error"
+              role="alert"
+              data-testid="acx-review-queue-top-unlabeled-error"
+            >
+              <p>{__('Unable to load unlabeled clusters.', 'alt-context')}</p>
+              <button type="button" className="button" onClick={onRetryTopUnlabeled}>
+                {__('Retry', 'alt-context')}
+              </button>
+            </div>
+          );
+        }
         return (
           <p className="acx-review-queue__empty">{__('This cluster is no longer available.', 'alt-context')}</p>
         );

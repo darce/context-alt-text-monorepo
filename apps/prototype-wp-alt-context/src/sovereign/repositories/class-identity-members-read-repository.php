@@ -91,7 +91,7 @@ class IdentityMembersReadRepository {
 
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$rows = $wpdb->get_results( $sql, ARRAY_A );
-		$this->guard_query_error( 'identity_members.list_for_cluster' );
+		$this->guard_query_error( 'identity_members.list_for_cluster', $rows, true );
 		return is_array( $rows ) ? $rows : array();
 	}
 
@@ -151,7 +151,7 @@ class IdentityMembersReadRepository {
 
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$rows = $wpdb->get_results( $sql, ARRAY_A );
-		$this->guard_query_error( 'identity_members.list_for_cluster_uuids' );
+		$this->guard_query_error( 'identity_members.list_for_cluster_uuids', $rows, true );
 
 		if ( ! is_array( $rows ) ) {
 			return array();
@@ -239,7 +239,7 @@ class IdentityMembersReadRepository {
 
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$rows = $wpdb->get_results( $sql, ARRAY_A );
-		$this->guard_query_error( 'identity_members.list_for_media_ids' );
+		$this->guard_query_error( 'identity_members.list_for_media_ids', $rows, true );
 		return is_array( $rows ) ? $rows : array();
 	}
 
@@ -275,7 +275,8 @@ class IdentityMembersReadRepository {
 
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$value = $wpdb->get_var( $sql );
-		$this->guard_query_error( 'identity_members.has_projection_rows_for_tenant' );
+		// null is a legitimate "no rows" for SELECT 1 ... LIMIT 1.
+		$this->guard_query_error( 'identity_members.has_projection_rows_for_tenant', $value, false );
 		return null !== $value;
 	}
 
@@ -319,7 +320,8 @@ class IdentityMembersReadRepository {
 
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$value = $wpdb->get_var( $sql );
-		$this->guard_query_error( 'identity_members.count_for_cluster' );
+		// COUNT(*) always returns a row on success; null means the query did not run.
+		$this->guard_query_error( 'identity_members.count_for_cluster', $value, true );
 		return max( 0, (int) $value );
 	}
 
@@ -349,7 +351,8 @@ class IdentityMembersReadRepository {
 
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$row = $wpdb->get_row( $sql, ARRAY_A );
-		$this->guard_query_error( 'identity_members.find_by_identity_uuid' );
+		// null is a legitimate miss for get_row.
+		$this->guard_query_error( 'identity_members.find_by_identity_uuid', $row, false );
 		return is_array( $row ) ? $row : null;
 	}
 
@@ -386,7 +389,7 @@ class IdentityMembersReadRepository {
 
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$rows = $wpdb->get_results( $sql, ARRAY_A );
-		$this->guard_query_error( 'identity_members.get_curated_members_for_tenant' );
+		$this->guard_query_error( 'identity_members.get_curated_members_for_tenant', $rows, true );
 		if ( ! is_array( $rows ) ) {
 			return array();
 		}

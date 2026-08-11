@@ -371,10 +371,6 @@ class ClusterReadService {
 	 * Must not collapse into an empty 200 list (RLSE-05 / OBS-08).
 	 */
 	private function projection_query_failed_error( string $surface, ProjectionQueryException $exception ): WP_Error {
-		return new WP_Error(
-			'acx_projection_query_failed',
-			sprintf( 'Projection query failed on %s: %s', $surface, $exception->getMessage() ),
-			array( 'status' => 500 )
-		);
+		return ProjectionQueryException::to_rest_error( $surface );
 	}
 }

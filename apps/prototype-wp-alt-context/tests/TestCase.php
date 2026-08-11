@@ -78,6 +78,7 @@ abstract class TestCase extends PHPUnitTestCase
         $GLOBALS['__ac_connection_aborted'] = false;
         $GLOBALS['__ac_connection_aborted_call_count'] = 0;
         unset($GLOBALS['__ac_site_url']);
+        unset($GLOBALS['__ac_dbdelta_fail_on_match'], $GLOBALS['__ac_dbdelta_fail_error']);
         // BR-50: clear the current_time freeze here, not in the test body — a
         // failing assertion aborts before an in-body unset and would leave every
         // later test in the process running on a frozen 2023 clock.

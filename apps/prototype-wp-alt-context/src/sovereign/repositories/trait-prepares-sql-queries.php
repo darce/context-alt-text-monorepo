@@ -65,15 +65,16 @@ trait PreparesSqlQueries {
 	}
 
 	/**
-	 * Fail loud when wpdb recorded a MySQL error (RLSE-05 / OBS-08 / AGT-10).
+	 * Fail loud when a projection read fails (RLSE-05 / OBS-08 / AGT-10).
 	 *
-	 * get_results()/get_var()/get_row() return null on failure; callers that
-	 * coerce null to [] hide projection outages as empty data. This guard
-	 * logs, clears last_error, and throws — it never returns an empty set.
+	 * Keys off $wpdb->last_error and, when $null_is_failure is true, a null
+	 * result (get_results / COUNT get_var). get_row and existence get_var may
+	 * legitimately return null — pass $null_is_failure = false for those.
 	 *
-	 * @throws ProjectionQueryException When $wpdb->last_error is non-empty.
+	 * @param mixed $result Query result from get_results/get_var/get_row.
+	 * @throws ProjectionQueryException On MySQL error or non-executing query.
 	 */
-	private function guard_query_error( string $query_label ): void {
+	private function guard_query_error( string $query_label, $result = null, bool $null_is_failure = false ): void {
 		global $wpdb;
 
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) ) {
@@ -82,15 +83,23 @@ trait PreparesSqlQueries {
 
 		$error = '';
 		if ( property_exists( $wpdb, 'last_error' ) || isset( $wpdb->last_error ) ) {
-			$raw = $wpdb->last_error;
+			$raw   = $wpdb->last_error;
 			$error = is_string( $raw ) ? trim( $raw ) : '';
 		}
 
-		if ( '' === $error ) {
+		if ( '' === $error && ! ( $null_is_failure && null === $result ) ) {
 			return;
 		}
 
-		$message = sprintf( 'Projection query failed [%s]: %s', $query_label, $error );
+		if ( '' !== $error ) {
+			$message = sprintf( 'Projection query failed [%s]: %s', $query_label, $error );
+		} else {
+			$message = sprintf(
+				'Projection query failed [%s]: query did not execute (wpdb not ready or query filtered)',
+				$query_label
+			);
+		}
+
 		Telemetry::log_line( $message );
 		$wpdb->last_error = '';
 

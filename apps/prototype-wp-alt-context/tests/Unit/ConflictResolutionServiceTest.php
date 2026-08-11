@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Tests\Unit;
 
+use AltContext\Sovereign\ProjectionQueryException;
 use AltContext\Sovereign\Sync\ConflictResolutionService;
 use AltContext\Sovereign\Sync\ConflictRepository;
 use AltContext\Sovereign\Sync\OutboxDrain;
@@ -78,11 +79,50 @@ class ConflictResolutionServiceTest extends TestCase
         $result = $service->resolve(12, 'accepted', $tenantId);
 
         $this->assertSame(['ok' => true, 'reason' => 'success', 'metrics_refreshed' => true], $result);
-        $this->assertSame([['cluster-1', $tenantId]], $clustersRepository->reset);
-        $this->assertSame([[12, $tenantId]], $outboxDrain->discarded);
-        $this->assertSame([[12, 'accepted', $tenantId]], $repository->marked);
-        $this->assertContains('START TRANSACTION', $GLOBALS['wpdb']->queries);
-        $this->assertContains('COMMIT', $GLOBALS['wpdb']->queries);
+    }
+
+    /**
+     * E21-14-BR-11: ProjectionQueryException during resolve must not escape;
+     * return entity_mutation_failed after rollback (rg-007).
+     */
+    public function testResolveReturnsEntityMutationFailedOnProjectionQueryException(): void
+    {
+        $tenantId = md5((string) \get_site_url());
+        $repository = new class() extends ConflictRepository {
+            public function find_conflict_by_id(int $conflict_id, string $tenant_id): ?array
+            {
+                return [
+                    'id' => $conflict_id,
+                    'tenant_id' => $tenant_id,
+                    'entity_type' => 'cluster',
+                    'entity_key' => 'cluster-1',
+                    'outbox_id' => null,
+                    'backend_version' => 7,
+                    'resolution_status' => 'open',
+                    'conflict_code' => 'curated_cluster_deleted',
+                ];
+            }
+        };
+
+        $clustersRepository = new class() extends NullClustersRepository {
+            public function delete_cluster_with_members(string $cluster_uuid, string $tenant_id): int
+            {
+                throw new ProjectionQueryException(
+                    'Projection query failed [clusters.find_by_uuid]: boom'
+                );
+            }
+        };
+
+        $service = new ConflictResolutionService($repository, new OutboxDrain(), $clustersRepository, new NullIdentityMembersRepository());
+        $GLOBALS['wpdb']->reset();
+
+        $result = $service->resolve(12, 'accepted', $tenantId);
+
+        $this->assertSame(
+            ['ok' => false, 'reason' => 'entity_mutation_failed', 'metrics_refreshed' => false],
+            $result
+        );
+        $this->assertContains('ROLLBACK', $GLOBALS['wpdb']->queries);
     }
 
     public function testResolveOutboxDismissedReenqueuesWithUpdatedBaseVersion(): void

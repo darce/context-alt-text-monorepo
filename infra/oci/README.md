@@ -790,6 +790,77 @@ procurement path, SSH/Tailscale admin-plane scope, provisioning sequence, and co
 If OCI denies the A10 quota, **[GPU-TIER-FALLBACK-PLAN.md](GPU-TIER-FALLBACK-PLAN.md)**
 covers the backend-agnostic fallbacks (self-host over Tailscale, serverless, hosted API).
 
+## VLM weight cache (runtime-vlm / Florence LOCAL_CPU)
+
+The `runtime-vlm` image is permanently offline for Hugging Face
+(`HF_HUB_OFFLINE=1` / `TRANSFORMERS_OFFLINE=1` baked in). It cannot download
+Florence weights at boot. Operators seed a host path **outside** that image,
+write an integrity manifest, then mount the cache **read-only** at
+`/data/cache`. The boot gate (`python -m scripts.verify_vlm_cache`) fails closed
+before uvicorn starts when the active profile is LOCAL_CPU
+(`ACX_DESCRIPTION_ADAPTER=florence_small`) and the snapshot does not match the
+manifest exactly — including when an **extra unlisted file** appears (model
+files are code; see SEC-13).
+
+### 1. Seed the pinned snapshot (outside the offline image)
+
+From `apps/prototype-description-service`, with the `[vlm]` extra installed
+(network required once):
+
+```bash
+cd apps/prototype-description-service
+uv run --extra vlm python -m scripts.seed_vlm_cache \
+  --hf-home /data/cache/huggingface_cache \
+  --profile florence_small
+```
+
+This downloads the profile-pinned `model_id` at the pinned commit SHA (never a
+branch name), including `trust_remote_code` modeling `*.py` files and weight
+shards, then writes `acx-vlm-cache.manifest.json` inside the snapshot directory.
+
+### 2. Manifest is a trust-establishing act
+
+`--write-manifest` (also invoked by the seeder) **certifies whatever is on
+disk at that moment**. Run it only on a freshly downloaded, out-of-band-verified
+snapshot. **Never re-run it to silence a failing gate** — that would turn the
+gate into a no-op (sr-001 / RLSE-02).
+
+Standalone re-certify of an already-seeded tree (rare; prefer the seeder):
+
+```bash
+cd apps/prototype-description-service
+export ACX_DESCRIPTION_ADAPTER=florence_small
+export HF_HUB_CACHE=/data/cache/huggingface_cache
+uv run python -m scripts.verify_vlm_cache --write-manifest
+```
+
+### 3. Mount read-only at runtime and fail closed on boot
+
+Mount the pre-seeded cache into the `runtime-vlm` container at `/data/cache`
+**read-only** (least privilege; a writable shared volume is a code-execution
+vector under `trust_remote_code=True`):
+
+```bash
+docker run --rm \
+  -e ACX_DESCRIPTION_ADAPTER=florence_small \
+  -v /data/cache:/data/cache:ro \
+  iad.ocir.io/idu2kqqe2jxy/acx-backend:vlm
+```
+
+On boot the entrypoint runs `python -m scripts.verify_vlm_cache` with no
+arguments. Exit 0 only when every manifest entry verifies and the on-disk file
+set matches exactly; any problem exits non-zero and the container does not
+serve traffic. Non-LOCAL_CPU profiles (e.g. `seeded`) make the gate a no-op.
+
+Manual check against a host cache:
+
+```bash
+cd apps/prototype-description-service
+export ACX_DESCRIPTION_ADAPTER=florence_small
+export HF_HUB_CACHE=/data/cache/huggingface_cache
+uv run python -m scripts.verify_vlm_cache
+```
+
 ## Security Note
 
 - The default security list restricts SSH to the CIDRs defined in `ssh_allowed_cidrs`.

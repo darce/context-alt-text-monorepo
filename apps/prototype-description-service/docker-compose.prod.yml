@@ -62,6 +62,21 @@ services:
       - /var/cache/acx/hf_modules:mode=0700,uid=10001,gid=10001,size=32m,noexec
     command: ["python", "-m", "recognition.worker.scan_worker"]
 
+  # One-shot ownership repair for stacks that created acx_blobs while the image
+  # still ran as root. Docker never re-chowns an existing named volume, so
+  # image-time `chown acx:acx /var/lib/acx-blobs` only helps fresh volumes —
+  # USER acx then hits EACCES on every multipart upload. Run once after upgrade:
+  #   docker compose -f docker-compose.prod.yml --profile repair run --rm fix-blob-ownership
+  # Not started by default (profiles: [repair]); safe to re-run (idempotent chown).
+  # scripts/deploy/recognition-service.sh runs this on every restart for env.yml stacks.
+  fix-blob-ownership:
+    image: ${ACX_IMAGE_REPO:-iad.ocir.io/idu2kqqe2jxy/acx-backend}:latest
+    user: "0:0"
+    volumes:
+      - acx_blobs:/var/lib/acx-blobs
+    entrypoint: ["chown", "-R", "acx:acx", "/var/lib/acx-blobs"]
+    profiles: ["repair"]
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped

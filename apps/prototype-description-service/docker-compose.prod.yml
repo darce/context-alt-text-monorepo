@@ -26,7 +26,8 @@ services:
       retries: 10
 
   api:
-    image: iad.ocir.io/idu2kqqe2jxy/acx-backend:latest
+    # Repo via ACX_IMAGE_REPO (default recognition); tag stays :latest (prod semantics).
+    image: ${ACX_IMAGE_REPO:-iad.ocir.io/idu2kqqe2jxy/acx-backend}:latest
     restart: unless-stopped
     depends_on:
       postgres:
@@ -36,19 +37,20 @@ services:
       - HOST=0.0.0.0
       - PORT=8000
     volumes:
-      - /opt/acx-backend/data/models:/data/cache
+      # :ro — Florence-2 trust_remote_code executes cache python; writable = RCE.
+      - /opt/acx-backend/data/models:/data/cache:ro
     expose:
       - "8000"
 
   worker:
-    image: iad.ocir.io/idu2kqqe2jxy/acx-backend:latest
+    image: ${ACX_IMAGE_REPO:-iad.ocir.io/idu2kqqe2jxy/acx-backend}:latest
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
     env_file: .env
     volumes:
-      - /opt/acx-backend/data/models:/data/cache
+      - /opt/acx-backend/data/models:/data/cache:ro
     command: ["python", "-m", "recognition.worker.scan_worker"]
 
   caddy:

@@ -764,11 +764,6 @@ describe('WorkbenchPage (integration-lite)', () => {
     renderWithClient(client);
 
     const user = userEvent.setup();
-    // Media queue may already be expanded; only click the summary expand control if present.
-    const showMediaTable = screen.queryByRole('button', { name: 'Show media table' });
-    if (showMediaTable) {
-      await user.click(showMediaTable);
-    }
 
     // Banner lives in App.tsx (unit-tested with aria-live); this page-level test
     // proves the gated analyze CTA reacts to the sync-health envelope flip.

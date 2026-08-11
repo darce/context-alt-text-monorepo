@@ -18,9 +18,12 @@ BLOCKER 2 (HARM-A-03) — /app/.image-variant:
   this module pins the authoritative bake + chmod 0444 with stage-derived
   labels (do not hardcode a single string for both stages).
 
-Assertions read the live Dockerfile + docker-compose.env.yml. Synthetic
-tmp_path fixtures only prove discriminators bite (TEST-15). Stage scoping uses
-recognition.tests.dockerfile_stages — not whole-file greps.
+Assertions read the live Dockerfile + docker-compose.env.yml +
+docker-compose.prod.yml. Synthetic tmp_path fixtures only prove discriminators
+bite (TEST-15). Stage scoping uses recognition.tests.dockerfile_stages — not
+whole-file greps. Boot-smoke / blob-repair deploy steps are parsed from the
+real recognition-service.sh (sourced helpers stay behavioural; structural
+body checks only pin mount flags and call sites).
 """
 
 from __future__ import annotations
@@ -41,14 +44,23 @@ from recognition.tests.dockerfile_stages import (
 )
 
 SERVICE_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[5]
 DOCKERFILE = SERVICE_ROOT / "Dockerfile"
 COMPOSE_ENV = SERVICE_ROOT / "docker-compose.env.yml"
+COMPOSE_PROD = SERVICE_ROOT / "docker-compose.prod.yml"
+DEPLOY_SCRIPT = REPO_ROOT / "scripts" / "deploy" / "recognition-service.sh"
 
 # Runtime stages that must bake an identity file (not builder stages).
 _RUNTIME_STAGES = (DEFAULT_RUNTIME_STAGE, RUNTIME_VLM_STAGE)
 
 # Services that run the recognition image and need the modules tmpfs.
 _APP_SERVICES = ("api", "worker")
+
+# Compose files that ship the HF modules tmpfs + blob volume topology.
+_COMPOSE_FILES = (
+    ("docker-compose.env.yml", COMPOSE_ENV),
+    ("docker-compose.prod.yml", COMPOSE_PROD),
+)
 
 _ENV_ASSIGN_RE = re.compile(
     r"^\s*ENV\s+([A-Za-z_][\w]*)=(.+?)\s*$",
@@ -262,32 +274,128 @@ def _live_hf_modules_cache_path() -> str:
 
 
 def test_compose_api_and_worker_mount_modules_tmpfs() -> None:
-    """Both api and worker must tmpfs-mount the exact HF_MODULES_CACHE path."""
+    """Both api and worker must tmpfs-mount the exact HF_MODULES_CACHE path.
+
+    Covers env + prod compose (HARM-A-02 live half: prod was previously ungated).
+    """
     modules_path = _live_hf_modules_cache_path()
-    compose = _load_compose()
-    for service in _APP_SERVICES:
-        opts = modules_tmpfs_for_service(compose, service, modules_path)
-        assert opts is not None, (
-            f"docker-compose.env.yml service {service!r} must mount tmpfs at "
-            f"{modules_path} (HF_MODULES_CACHE)"
-        )
+    for label, path in _COMPOSE_FILES:
+        compose = _load_compose(path)
+        for service in _APP_SERVICES:
+            opts = modules_tmpfs_for_service(compose, service, modules_path)
+            assert opts is not None, (
+                f"{label} service {service!r} must mount tmpfs at "
+                f"{modules_path} (HF_MODULES_CACHE)"
+            )
 
 
 def test_modules_tmpfs_noexec_mode_and_uid_parity() -> None:
-    """tmpfs: noexec + mode=0700 + uid/gid == Dockerfile useradd -u (derived)."""
+    """tmpfs: noexec + mode=0700 + uid/gid == Dockerfile useradd -u (derived).
+
+    Asserted on every compose file that runs the recognition image (env + prod).
+    """
     stages = dockerfile_stages(DOCKERFILE)
     base = stages[RUNTIME_BASE_STAGE]
     uid = useradd_uid(base)
     assert uid is not None, "runtime-base must create acx via useradd -u <uid>"
     modules_path = _live_hf_modules_cache_path()
-    compose = _load_compose()
-    for service in _APP_SERVICES:
-        opts = modules_tmpfs_for_service(compose, service, modules_path)
-        assert opts is not None, f"{service}: missing modules tmpfs at {modules_path}"
-        assert tmpfs_contract_ok(opts, uid=uid), (
-            f"{service}: tmpfs at {modules_path} must carry noexec, mode=0700, "
-            f"uid={uid}, gid={uid} (derived from Dockerfile useradd); got {opts}"
+    for label, path in _COMPOSE_FILES:
+        compose = _load_compose(path)
+        for service in _APP_SERVICES:
+            opts = modules_tmpfs_for_service(compose, service, modules_path)
+            assert opts is not None, (
+                f"{label} {service}: missing modules tmpfs at {modules_path}"
+            )
+            assert tmpfs_contract_ok(opts, uid=uid), (
+                f"{label} {service}: tmpfs at {modules_path} must carry noexec, "
+                f"mode=0700, uid={uid}, gid={uid} (derived from Dockerfile "
+                f"useradd); got {opts}"
+            )
+
+
+def _compose_has_blob_ownership_repair(compose_text: str) -> bool:
+    """True when compose defines a root one-shot chown repair for acx_blobs."""
+    if not re.search(r"^\s*fix-blob-ownership\s*:", compose_text, re.MULTILINE):
+        return False
+    if not re.search(r'user:\s*["\']?0:0["\']?', compose_text):
+        return False
+    if "chown" not in compose_text or "/var/lib/acx-blobs" not in compose_text:
+        return False
+    if not re.search(r'profiles:\s*\[\s*["\']repair["\']\s*\]', compose_text):
+        return False
+    if not re.search(r"acx_blobs:/var/lib/acx-blobs", compose_text):
+        return False
+    return True
+
+
+def test_compose_env_and_prod_blob_ownership_repair_profile() -> None:
+    """Both compose files ship fix-blob-ownership (S1-A-02 prod half was open)."""
+    for label, path in _COMPOSE_FILES:
+        text = path.read_text(encoding="utf-8")
+        assert _compose_has_blob_ownership_repair(text), (
+            f"{label} must ship profiles:[repair] fix-blob-ownership that chowns "
+            f"acx_blobs as root (Docker never re-chowns existing named volumes)"
         )
+
+
+def _fn_body(script_text: str, name: str) -> str:
+    start = script_text.index(f"{name}()")
+    end = script_text.index("\n}\n", start)
+    return script_text[start:end]
+
+
+def test_boot_smoke_mounts_modules_tmpfs_matching_dockerfile() -> None:
+    """HARM-A-02: Gate 2 run_args must tmpfs-mount HF_MODULES_CACHE with parity.
+
+    Behavioural contract: the live Dockerfile ENV path + useradd uid appear in
+    do_boot_smoke's --tmpfs flag with noexec (not a synthetic re-implementation
+    of the smoke itself).
+    """
+    modules_path = _live_hf_modules_cache_path()
+    stages = dockerfile_stages(DOCKERFILE)
+    uid = useradd_uid(stages[RUNTIME_BASE_STAGE])
+    assert uid is not None
+    body = _fn_body(DEPLOY_SCRIPT.read_text(encoding="utf-8"), "do_boot_smoke")
+    # --tmpfs /path:mode=0700,uid=N,gid=N,...,noexec
+    tmpfs_flags = re.findall(r"--tmpfs\s+(\S+)", body)
+    assert tmpfs_flags, (
+        "do_boot_smoke must pass --tmpfs for HF_MODULES_CACHE so smoke exercises "
+        "the deployed mount topology (not the image-layer seed dir)"
+    )
+    matched = False
+    for flag in tmpfs_flags:
+        path, opts = parse_tmpfs_spec(flag)
+        if path.rstrip("/") != modules_path.rstrip("/"):
+            continue
+        assert tmpfs_contract_ok(opts, uid=uid), (
+            f"do_boot_smoke --tmpfs {flag!r} must match Dockerfile "
+            f"HF_MODULES_CACHE={modules_path} uid={uid} noexec mode=0700"
+        )
+        matched = True
+    assert matched, (
+        f"do_boot_smoke --tmpfs must include path {modules_path} "
+        f"(from Dockerfile ENV HF_MODULES_CACHE); got {tmpfs_flags}"
+    )
+
+
+def test_deploy_restart_runs_blob_ownership_repair() -> None:
+    """S1-A-02: do_restart must invoke repair_blob_volume_ownership before unit restart."""
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert "repair_blob_volume_ownership()" in script, (
+        "recognition-service.sh must define repair_blob_volume_ownership"
+    )
+    repair_body = _fn_body(script, "repair_blob_volume_ownership")
+    assert "--profile repair" in repair_body
+    assert "fix-blob-ownership" in repair_body
+    restart_body = _fn_body(script, "do_restart")
+    assert "repair_blob_volume_ownership" in restart_body, (
+        "do_restart must call repair_blob_volume_ownership so existing root:root "
+        "acx_blobs volumes are chowned before USER acx serves traffic"
+    )
+    # Repair must run before systemctl restart (order is load-bearing).
+    assert restart_body.index("repair_blob_volume_ownership") < restart_body.index(
+        "systemctl restart"
+    )
 
 
 def test_every_runtime_stage_bakes_stage_identity_image_variant() -> None:
@@ -407,3 +515,24 @@ def test_discriminator_compose_tmpfs_path_and_service_scope(tmp_path: Path) -> N
     yml.write_text(yaml.safe_dump(good), encoding="utf-8")
     loaded = _load_compose(yml)
     assert modules_tmpfs_for_service(loaded, "api", path) is not None
+
+
+def test_discriminator_blob_repair_profile_mutations() -> None:
+    """Deleting fix-blob service / profile / root user must fail the guard."""
+    good = """
+services:
+  fix-blob-ownership:
+    image: example
+    user: "0:0"
+    volumes:
+      - acx_blobs:/var/lib/acx-blobs
+    entrypoint: ["chown", "-R", "acx:acx", "/var/lib/acx-blobs"]
+    profiles: ["repair"]
+volumes:
+  acx_blobs:
+"""
+    assert _compose_has_blob_ownership_repair(good)
+    assert not _compose_has_blob_ownership_repair(good.replace("fix-blob-ownership", "other"))
+    assert not _compose_has_blob_ownership_repair(good.replace('user: "0:0"', 'user: "10001:10001"'))
+    assert not _compose_has_blob_ownership_repair(good.replace('profiles: ["repair"]', "profiles: []"))
+    assert not _compose_has_blob_ownership_repair(good.replace("chown", "true"))

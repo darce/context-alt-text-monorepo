@@ -549,6 +549,12 @@ def _vlm_cache_gate_polarity_ok(script_text: str) -> bool:
 
     Shared by the positive entrypoint contract and the M7 inversion mutation
     so the negative test actually calls the same discriminator (D11).
+
+    Contract-breaking forms that must return False (RLSE-02):
+    - ``!= \"vlm\"`` (the bare ``= \"vlm\"`` substring must not match inside ``!=``)
+    - ``verify_vlm_cache || true`` (soft-fail swallows EXIT_FAIL under ``set -e``)
+    - ``if … || true; then`` around the gate
+    - inverted ``= \"recognition\"``
     """
     lines = _non_comment_lines(script_text)
     vlm_line_idx = next(
@@ -557,6 +563,11 @@ def _vlm_cache_gate_polarity_ok(script_text: str) -> bool:
     )
     if vlm_line_idx is None:
         return False
+    vlm_line = lines[vlm_line_idx]
+    # Soft-fail on the invoke line: gate exit status is discarded.
+    if re.search(r"\|\|\s*true\b", vlm_line):
+        return False
+
     gate_line: str | None = None
     for ln in lines[:vlm_line_idx][::-1]:
         if "ACX_IMAGE_VARIANT" in ln and ("if " in ln or ln.startswith("if")):
@@ -566,9 +577,18 @@ def _vlm_cache_gate_polarity_ok(script_text: str) -> bool:
             break
     if gate_line is None:
         return False
-    if not re.search(r"""=\s*["']vlm["']""", gate_line):
+    # Soft-fail on the if header itself (e.g. `if … || true; then`).
+    if re.search(r"\|\|\s*true\b", gate_line):
         return False
-    if re.search(r"""=\s*["']recognition["']""", gate_line):
+    # Reject inequality forms before testing positive equality (``!=`` contains ``=``).
+    if re.search(r"""!=\s*["']vlm["']""", gate_line):
+        return False
+    if re.search(r"""!=\s*["']recognition["']""", gate_line):
+        return False
+    # Positive equality to "vlm" only — ``(?<!!)`` keeps ``!=`` from matching.
+    if not re.search(r"""(?<!!)=\s*["']vlm["']""", gate_line):
+        return False
+    if re.search(r"""(?<!!)=\s*["']recognition["']""", gate_line):
         return False
     return True
 
@@ -592,6 +612,45 @@ def test_guard_bites_when_entrypoint_variant_gate_is_inverted(tmp_path: Path) ->
     # Control: correct polarity passes the same function (not a tautology on raw text).
     good = inverted.replace('= "recognition"', '= "vlm"', 1)
     assert _vlm_cache_gate_polarity_ok(good)
+
+
+def test_guard_bites_when_entrypoint_vlm_gate_uses_inequality() -> None:
+    """RLSE-02: ``!= \"vlm\"`` must not pass (``=`` inside ``!=`` is not equality)."""
+    bad = (
+        "#!/bin/sh\n"
+        'if [ "${ACX_IMAGE_VARIANT:-recognition}" != "vlm" ]; then\n'
+        "  python -m scripts.verify_vlm_cache\n"
+        "fi\n"
+    )
+    assert not _vlm_cache_gate_polarity_ok(bad)
+    good = bad.replace("!=", "=", 1)
+    assert _vlm_cache_gate_polarity_ok(good)
+
+
+def test_guard_bites_when_verify_vlm_cache_soft_fails() -> None:
+    """RLSE-02: ``verify_vlm_cache || true`` must not pass the polarity gate."""
+    soft = (
+        "#!/bin/sh\n"
+        'if [ "${ACX_IMAGE_VARIANT:-recognition}" = "vlm" ]; then\n'
+        "  python -m scripts.verify_vlm_cache || true\n"
+        "fi\n"
+    )
+    assert not _vlm_cache_gate_polarity_ok(soft)
+    hard = soft.replace(" || true", "", 1)
+    assert _vlm_cache_gate_polarity_ok(hard)
+
+
+def test_guard_bites_when_if_header_soft_fails_with_or_true() -> None:
+    """RLSE-02: ``if … || true; then`` must not pass (gate cannot fail)."""
+    soft_if = (
+        "#!/bin/sh\n"
+        'if [ "${ACX_IMAGE_VARIANT:-recognition}" = "vlm" ] || true; then\n'
+        "  python -m scripts.verify_vlm_cache\n"
+        "fi\n"
+    )
+    assert not _vlm_cache_gate_polarity_ok(soft_if)
+    hard = soft_if.replace(" || true", "", 1)
+    assert _vlm_cache_gate_polarity_ok(hard)
 
 
 def test_guard_bites_when_uv_sync_uses_frozen(tmp_path: Path) -> None:

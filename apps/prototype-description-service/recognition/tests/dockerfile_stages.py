@@ -57,10 +57,25 @@ _COPY_FROM_RE = re.compile(
 # Shell fragment separators for RUN chains (RC4).
 _FRAGMENT_SPLIT_RE = re.compile(r"&&|;|\|")
 
-# Heredoc openers: RUN <<EOF / COPY <<"EOT" / RUN <<-EOF …
+# Heredoc openers only in genuine redirect position on RUN/COPY/ADD.
+# Requires << or <<- not immediately after a word char (rejects 1<<3 / x<<y),
+# and only on Dockerfile instruction lines (rejects comments / prose).
+# Group "dash" is "-" for <<- (indented terminator) else "".
 _HEREDOC_OPEN_RE = re.compile(
-    r"^(?P<prefix>.*?)<<[-]?(?P<q>['\"]?)(?P<delim>\w+)(?P=q)(?P<suffix>.*)$"
+    r"^(?P<prefix>(?:RUN|COPY|ADD)\b(?:(?!<<).)*?)"
+    r"(?<![\w])<<(?P<dash>-?)"
+    r"(?P<q>['\"]?)(?P<delim>\w+)(?P=q)(?P<suffix>.*)$",
+    re.IGNORECASE,
 )
+
+# Global ARG default: ARG NAME=value / ARG NAME (before or between FROMs).
+_ARG_DEFAULT_RE = re.compile(
+    r"^\s*ARG\s+([A-Za-z_][\w]*)(?:=(.*))?\s*$",
+    re.IGNORECASE,
+)
+
+# ${VAR} or $VAR in a FROM ref (simple, unbraced single identifier).
+_FROM_VAR_RE = re.compile(r"\$\{([A-Za-z_][\w]*)\}|\$([A-Za-z_][\w]*)")
 
 # --extra vlm / --extra=vlm / --extra "vlm" / --extra='vlm'
 # Quoted forms must not require a word-boundary after the closing quote
@@ -134,6 +149,45 @@ def parse_from_instruction(line: str) -> tuple[str, str | None] | None:
     return ref, name
 
 
+def _expand_from_ref(ref: str, arg_defaults: dict[str, str]) -> str:
+    """Expand simple ``$VAR`` / ``${VAR}`` in a FROM ref via known ARG defaults.
+
+    Only substitutes identifiers present in ``arg_defaults``. Unresolved vars
+    are left intact so external image refs keep working. Stage-scoped ARGs
+    declared *after* a FROM do not affect that FROM (BuildKit global-ARG rule
+    for the image ref): callers pass only args seen before the current FROM.
+    """
+
+    def _sub(match: re.Match[str]) -> str:
+        name = match.group(1) or match.group(2)
+        return arg_defaults.get(name, match.group(0))
+
+    return _FROM_VAR_RE.sub(_sub, ref)
+
+
+def _parse_arg_default(line: str) -> tuple[str, str] | None:
+    """Return ``(name, default)`` for a global/stage ``ARG`` line, else None.
+
+    ``ARG NAME`` (no default) is recorded as empty string so a later
+    ``FROM $NAME`` does not invent a value. Trailing comments are stripped.
+    """
+    body = _strip_trailing_comment(line.strip())
+    if not body:
+        return None
+    match = _ARG_DEFAULT_RE.match(body)
+    if not match:
+        return None
+    name = match.group(1)
+    raw = match.group(2)
+    if raw is None:
+        return name, ""
+    # Strip optional surrounding quotes on the default value.
+    default = raw.strip()
+    if len(default) >= 2 and default[0] == default[-1] and default[0] in {"'", '"'}:
+        default = default[1:-1]
+    return name, default
+
+
 def _parse_dockerfile(
     dockerfile: Path,
 ) -> tuple[dict[str, str], dict[str, str], list[str | None]]:
@@ -143,15 +197,21 @@ def _parse_dockerfile(
     ``stage_order`` lists every stage in file order; anonymous stages appear as
     ``None`` so ``default_build_target`` can match BuildKit (last stage wins,
     named or not).
+
+    Global ``ARG NAME=value`` lines seen before a FROM expand ``$NAME`` /
+    ``${NAME}`` in that FROM ref so provenance walks
+    ``ARG BASE=builder-vlm`` / ``FROM ${BASE} AS runtime`` correctly.
     """
     stages: dict[str, list[str]] = {}
     bases: dict[str, str] = {}
     order: list[str | None] = []
+    arg_defaults: dict[str, str] = {}
     current: list[str] | None = None
     for line in Path(dockerfile).read_text(encoding="utf-8").splitlines():
         parsed = parse_from_instruction(line)
         if parsed is not None:
             ref, name = parsed
+            ref = _expand_from_ref(ref, arg_defaults)
             order.append(name)
             if name is None:
                 # Anonymous stage: BuildKit still builds it when last, but we
@@ -161,6 +221,15 @@ def _parse_dockerfile(
                 continue
             current = stages.setdefault(name, [])
             bases[name] = ref
+            continue
+        # ARG defaults apply to subsequent FROM refs (global + re-declared).
+        arg = _parse_arg_default(line)
+        if arg is not None:
+            arg_defaults[arg[0]] = arg[1]
+            # Still keep ARG lines in the stage body when inside a stage so
+            # own-body scans remain complete.
+            if current is not None:
+                current.append(line)
             continue
         if current is not None:
             current.append(line)
@@ -198,15 +267,23 @@ _dockerfile_stages = dockerfile_stages
 def default_build_target(dockerfile: Path) -> str | None:
     """Stage name BuildKit builds when ``--target`` is omitted.
 
-    Returns the last stage's name in file order. Returns ``None`` when the
-    Dockerfile has no stages, or when the last stage is anonymous (unnamed
-    ``FROM``) — BuildKit still builds that stage, but there is no name to
-    return. Callers that require a named production target must treat
-    ``None`` as a failure.
+    Returns the last stage's name in file order when that stage is named.
+
+    Disambiguates the two failure modes that previously both returned
+    ``None`` (a gate that cannot fail when callers only assert
+    ``is not None`` against empty files):
+
+    * **No stages** — raises ``DockerfileParseError`` so the empty-file case
+      cannot be confused with a successful anonymous build.
+    * **Anonymous last stage** — returns ``None`` (BuildKit still builds it,
+      but there is no name). Callers that require a named production target
+      must treat ``None`` as failure.
     """
     _, _, order = _parse_dockerfile(dockerfile)
     if not order:
-        return None
+        raise DockerfileParseError(
+            "Dockerfile has no FROM stages; cannot determine default build target"
+        )
     return order[-1]
 
 
@@ -276,6 +353,19 @@ def _stage_index_map(order: list[str | None]) -> dict[str, str]:
     return mapping
 
 
+def _is_heredoc_terminator(line: str, delim: str, *, indented: bool) -> bool:
+    """True when ``line`` closes a heredoc opened with ``delim``.
+
+    ``<<-`` allows the terminator to be indented with leading tabs (and, for
+    Dockerfile practicality, leading spaces). Plain ``<<`` requires an exact
+    match after trailing-whitespace strip only.
+    """
+    candidate = line.rstrip("\r\n").rstrip()
+    if indented:
+        return candidate.lstrip(" \t") == delim
+    return candidate == delim
+
+
 def join_continued_lines(text: str) -> list[str]:
     """Join Dockerfile physical lines into logical instructions.
 
@@ -283,9 +373,13 @@ def join_continued_lines(text: str) -> list[str]:
 
     1. Backslash continuations — Docker removes **comment-only** lines inside a
        ``\\`` continuation *before* joining, so a mid-continuation ``#`` line
-       must not split one logical instruction into two.
-    2. Heredocs — ``RUN <<EOF`` … ``EOF`` (and ``COPY <<…``) fold the body into
-       a single logical command so pip/uv/COPY edges inside are visible.
+       must not split one logical instruction into two. A comment-only line
+       that *ends* in ``\\`` must **not** start a continuation (otherwise the
+       next ``COPY --from`` is absorbed into a ``#…`` logical line and vanishes).
+    2. Heredocs — ``RUN <<EOF`` / ``RUN <<-EOF`` / ``COPY <<…`` only when
+       ``<<`` is a genuine redirect on a RUN/COPY/ADD instruction (not in a
+       comment, not a shift operator). ``<<-`` closes on an indented terminator.
+       Body folds into one logical command so pip/uv/COPY edges stay visible.
     """
     physical = text.splitlines()
     logical: list[str] = []
@@ -298,20 +392,33 @@ def join_continued_lines(text: str) -> list[str]:
 
         # Heredoc only starts a new instruction when not mid-continuation.
         if not continuing:
-            heredoc = _HEREDOC_OPEN_RE.match(line)
-            if heredoc and "<<" in line:
+            # Full-line comments never open heredocs or backslash continuations.
+            # Strip a trailing inline comment only for heredoc detection so
+            # ``RUN <<EOF  # note`` still opens, while ``# prefer RUN <<EOF``
+            # does not.
+            if line.lstrip().startswith("#"):
+                logical.append(line)
+                i += 1
+                continue
+
+            scan = _strip_trailing_comment(line)
+            heredoc = _HEREDOC_OPEN_RE.match(scan)
+            if heredoc:
                 delim = heredoc.group("delim")
+                indented = heredoc.group("dash") == "-"
                 prefix = heredoc.group("prefix")
                 suffix = heredoc.group("suffix").strip()
                 body_parts: list[str] = []
                 i += 1
                 while i < len(physical):
-                    if physical[i].rstrip() == delim:
+                    if _is_heredoc_terminator(physical[i], delim, indented=indented):
                         break
                     body_parts.append(physical[i].rstrip())
                     i += 1
                 # Skip the closing delimiter when present.
-                if i < len(physical) and physical[i].rstrip() == delim:
+                if i < len(physical) and _is_heredoc_terminator(
+                    physical[i], delim, indented=indented
+                ):
                     i += 1
                 body = " ; ".join(
                     part.strip()
@@ -379,19 +486,35 @@ def copy_from_dep_stages(
 def has_vlm_extra(stage_text: str) -> bool:
     """True when the stage text resolves the project ``vlm`` extra.
 
+    Scans **logical** instructions (backslash continuations joined, comments
+    skipped) so a live Dockerfile form such as::
+
+        RUN uv sync --extra \\
+            vlm
+
+    is detected, and prose/comments mentioning ``--extra vlm`` are not.
+
     Recognises (RC2 / D5.3):
     - ``--extra vlm`` / ``--extra=vlm`` / ``--extra "vlm"`` / ``--extra='vlm'``
     - ``--all-extras`` (implies vlm when the project declares it)
     - project-extras forms ``.[vlm]`` / ``".[bench,vlm]"`` / ``'.[vlm]'``
     """
-    if re.search(r"--all-extras\b", stage_text):
-        return True
-    if _EXTRA_VLM_RE.search(stage_text):
-        return True
-    for match in _PROJECT_EXTRAS_RE.finditer(stage_text):
-        if re.search(r"\bvlm\b", match.group(0)):
+    for line in join_continued_lines(stage_text):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        active = _strip_trailing_comment(stripped)
+        if not active:
+            continue
+        if re.search(r"--all-extras\b", active):
             return True
+        if _EXTRA_VLM_RE.search(active):
+            return True
+        for match in _PROJECT_EXTRAS_RE.finditer(active):
+            if re.search(r"\bvlm\b", match.group(0)):
+                return True
     return False
+
 
 
 def stage_resolves_vlm_extra(

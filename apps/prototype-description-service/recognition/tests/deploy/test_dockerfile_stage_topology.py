@@ -429,3 +429,151 @@ def test_d5_heredoc_run_body_is_modelled(tmp_path: Path) -> None:
     assert "pip install" in joined[0]
     offenders = unlocked_project_extra_installs(body)
     assert offenders, f"heredoc pip install must be detected; joined={joined!r}"
+
+
+def test_d5_heredoc_false_positives_do_not_blind_copy_from(tmp_path: Path) -> None:
+    """W5C: ``<<`` in comments / shift ops must not swallow the rest of the stage.
+
+    Before: _HEREDOC_OPEN_RE fired on any ``<<``, so a comment like
+    ``# prefer RUN <<EOF`` or ``RUN python -c 'print(1<<3)'`` consumed every
+    subsequent line as a heredoc body — ``copy_from_dep_stages`` returned [],
+    ``stage_resolves_vlm_extra`` stayed False, and gates reported clean.
+    """
+    # Comment mentioning heredoc must leave the following COPY visible.
+    comment_poison = _write(
+        tmp_path / "comment",
+        "FROM python:3.12-slim AS builder-vlm\n"
+        "RUN uv sync --locked --extra vlm\n"
+        "\n"
+        "FROM python:3.12-slim AS runtime\n"
+        "# prefer RUN <<EOF for multi-line installs\n"
+        "COPY --from=builder-vlm /opt/venv /opt/venv\n"
+        "ENV ACX_IMAGE_VARIANT=recognition\n",
+    )
+    body = _dockerfile_stages(comment_poison)[DEFAULT_STAGE]
+    assert copy_from_dep_stages(body) == ["builder-vlm"], (
+        f"comment << must not blind COPY --from; joined={join_continued_lines(body)!r}"
+    )
+    assert stage_resolves_vlm_extra(comment_poison, DEFAULT_STAGE)
+
+    # Shift operator must not open a heredoc.
+    shift = _write(
+        tmp_path / "shift",
+        "FROM python:3.12-slim AS builder-vlm\n"
+        "RUN uv sync --locked --extra vlm\n"
+        "\n"
+        "FROM python:3.12-slim AS runtime\n"
+        "RUN python -c 'print(1<<3)'\n"
+        "COPY --from=builder-vlm /opt/venv /opt/venv\n",
+    )
+    body = _dockerfile_stages(shift)[DEFAULT_STAGE]
+    assert copy_from_dep_stages(body) == ["builder-vlm"], (
+        f"shift << must not blind COPY --from; joined={join_continued_lines(body)!r}"
+    )
+    assert stage_resolves_vlm_extra(shift, DEFAULT_STAGE)
+
+
+def test_d5_heredoc_indented_terminator_closes(tmp_path: Path) -> None:
+    """W5C: ``RUN <<-EOF`` must close on a tab/space-indented terminator."""
+    path = _write(
+        tmp_path,
+        "FROM python:3.12-slim AS builder\n"
+        "RUN <<-EOF\n"
+        'env FOO=1 pip install ".[bench]"\n'
+        "\tEOF\n"
+        "RUN true\n"
+        "\n"
+        "FROM python:3.12-slim AS runtime\n"
+        "RUN true\n",
+    )
+    body = _dockerfile_stages(path)["builder"]
+    joined = join_continued_lines(body)
+    assert any("pip install" in ln for ln in joined), joined
+    # Second RUN must remain a separate logical line (terminator closed).
+    assert any(ln.strip() == "RUN true" or ln.strip().endswith("RUN true") for ln in joined) or any(
+        "RUN true" in ln and "pip install" not in ln for ln in joined
+    ), f"indented terminator must close heredoc; got {joined!r}"
+    assert unlocked_project_extra_installs(body)
+
+
+def test_d5_has_vlm_extra_joins_continuations_and_ignores_comments(tmp_path: Path) -> None:
+    """W5C: has_vlm_extra must use join_continued_lines (live Dockerfile form).
+
+    ``--extra \\`` / next-line ``vlm`` is how builder-vlm invokes uv sync.
+    Comment prose mentioning the extra must not trip the gate.
+    """
+    continued = (
+        "RUN uv sync --locked --no-dev --extra \\\n"
+        "    vlm --no-install-project\n"
+    )
+    assert has_vlm_extra(continued), "continued --extra vlm must resolve"
+
+    prose = (
+        "FROM python:3.12-slim AS builder\n"
+        "# do not use --extra vlm here; torch is builder-vlm only\n"
+        "RUN uv sync --locked --no-dev --extra bench\n"
+    )
+    assert not has_vlm_extra(prose), "comment mentioning --extra vlm must not trip"
+
+    path = _write(
+        tmp_path,
+        "FROM python:3.12-slim AS builder\n"
+        "RUN uv sync --locked --extra \\\n"
+        "    vlm\n"
+        "\n"
+        "FROM python:3.12-slim AS runtime\n"
+        "COPY --from=builder /opt/venv /opt/venv\n",
+    )
+    assert has_vlm_extra(_dockerfile_stages(path)["builder"])
+    assert stage_resolves_vlm_extra(path, DEFAULT_STAGE)
+
+
+def test_d5_comment_line_ending_backslash_does_not_absorb_copy(tmp_path: Path) -> None:
+    """W5C: a ``# … \\`` line must not continue into the next COPY --from."""
+    path = _write(
+        tmp_path,
+        "FROM python:3.12-slim AS builder-vlm\n"
+        "RUN uv sync --locked --extra vlm\n"
+        "\n"
+        "FROM python:3.12-slim AS runtime\n"
+        "# note about multi-line installs \\\n"
+        "COPY --from=builder-vlm /opt/venv /opt/venv\n"
+        "ENV ACX_IMAGE_VARIANT=recognition\n",
+    )
+    body = _dockerfile_stages(path)[DEFAULT_STAGE]
+    assert copy_from_dep_stages(body) == ["builder-vlm"], (
+        f"comment-ending-\\\\ must not absorb COPY; joined={join_continued_lines(body)!r}"
+    )
+    assert stage_resolves_vlm_extra(path, DEFAULT_STAGE)
+
+
+def test_d5_from_arg_expansion_walks_provenance(tmp_path: Path) -> None:
+    """W5C: ARG BASE=builder-vlm + FROM ${BASE} AS runtime must see vlm provenance."""
+    path = _write(
+        tmp_path,
+        "FROM python:3.12-slim AS builder-vlm\n"
+        "RUN uv sync --locked --extra vlm\n"
+        "\n"
+        "ARG BASE=builder-vlm\n"
+        "FROM ${BASE} AS runtime\n"
+        "ENV ACX_IMAGE_VARIANT=recognition\n",
+    )
+    from recognition.tests.dockerfile_stages import dockerfile_stage_bases
+
+    bases = dockerfile_stage_bases(path)
+    assert bases["runtime"] == "builder-vlm", bases
+    assert stage_resolves_vlm_extra(path, DEFAULT_STAGE)
+
+
+def test_d5_empty_dockerfile_raises_not_none(tmp_path: Path) -> None:
+    """W5C: no stages raises; anonymous last returns None — disambiguated.
+
+    Callers that only assert ``is not None`` would stay green on an empty
+    file if both cases returned None.
+    """
+    empty = _write(tmp_path / "empty", "# no from lines\n")
+    with pytest.raises(DockerfileParseError, match="no FROM stages"):
+        default_build_target(empty)
+
+    anon = _write(tmp_path / "anon", "FROM python:3.12-slim\nRUN true\n")
+    assert default_build_target(anon) is None

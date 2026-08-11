@@ -616,6 +616,22 @@ bakeoff-face-score:
 	@if [ -z "$(FACE_RUN)" ]; then echo "error: FACE_RUN is required" >&2; exit 2; fi
 	@cd apps/prototype-description-service && uv run python -m scripts.eval_harness.cli score-face --run-record "$(FACE_RUN)" $(EVAL_ARGS)
 
+# Offline determinism freezes (caption + face). Not eval-captions / bakeoff-face-score:
+# those score a freshly fetched record with no committed freeze. Non-zero on mismatch.
+.PHONY: eval-anchor-check
+eval-anchor-check:
+	@cd apps/prototype-description-service && uv run --extra dev python -m scripts.eval_harness.cli score \
+		--manifest scene/tests/seed/golden.json \
+		--run-record ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811.json \
+		--check-determinism \
+		--expect-report ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811-report.json \
+		--rubric-gate skip
+	@cd apps/prototype-description-service && uv run --extra dev python -m scripts.eval_harness.cli score-face \
+		--manifest ../../docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-manifest-20260811.json \
+		--run-record ../../docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-run-20260811.json \
+		--check-determinism \
+		--expect-report ../../docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-run-20260811-face-report.json
+
 # DS-3 per-prospect demo provisioning (backend registry + minter wrap only).
 # Usage: make provision-demo LABEL="Acme Gallery" SEED=default
 #        make expire-demo SLUG=<slug>

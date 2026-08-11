@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a re-scorable synthetic face determinism anchor (VLM-6 F6 / B-06).
+"""Generate a re-scorable synthetic face determinism anchor (VLM-6 F6/F7 / B-06).
 
 Offline, model-free, no private images: hand-constructed dim=8 unit vectors and
 synthetic bboxes describe no real person. Built via ``build_face_run_record`` —
@@ -11,6 +11,14 @@ assignment is IoU-over-GT-boxes; a zero-box corpus yields only unmatched
 detections and vacuous slices. This generator therefore emits a small dedicated
 synthetic face manifest next to the run-record (does not bend ``golden.json``).
 
+F7 de-vacates the freeze (MLDATA-09): the F6 3-item corpus pinned every hard
+cell at empty/zero. This generator extends the corpus so clustering, detection
+FP/FN, wrong-name, occlusion eligibility, multi-cohort demographic, and the
+error-item exclusion path each execute at least once. Cells that remain
+under-floor (n_floor 90–100) stay DIRECTIONAL — that is expected. Whatever is
+still vacuous is declared in ``provenance.coverage_gaps`` (AUDIT-07), computed
+from the scored report at generation time (rg-015 — never hand-stamped).
+
 Default outputs (repo-root relative when run from ``apps/prototype-description-service``)::
 
     ../../docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-manifest-20260811.json
@@ -21,8 +29,8 @@ Default outputs (repo-root relative when run from ``apps/prototype-description-s
 Regeneration is byte-stable: fixed ``started_at`` / ``head_sha`` defaults
 (byte-stability sentinels, not live git provenance), sorted JSON keys,
 synthetic embeddings derived only from fixed construction constants.
-``provenance.manifest_sha256`` is always computed via ``cli._manifest_sha`` at
-generation time — never hand-stamped (rg-015).
+``provenance.manifest_sha256`` and ``provenance.coverage_gaps`` are always
+computed at generation time — never hand-stamped (rg-015).
 """
 
 from __future__ import annotations
@@ -39,9 +47,10 @@ from scripts.eval_harness.face_run_record import (
     build_face_detection,
     build_face_run_item,
     build_face_run_record,
+    validate_face_run_record,
 )
 from scripts.eval_harness.manifest import load_manifest
-from scripts.eval_harness.report import build_face_reports
+from scripts.eval_harness.report import build_face_reports, occlusion_inputs_from_record
 
 # Fixed defaults so two generator runs on the same tree are byte-identical.
 # These are BYTE-STABILITY SENTINELS, not live git / wall-clock provenance.
@@ -55,9 +64,18 @@ _EMBEDDING_DIM = 8
 _IMAGE_SIZE = [100, 100]
 # det bbox_px [x,y,w,h] = [20,20,40,40] on 100x100 → centre (0.4,0.4) size (0.4,0.4)
 _BBOX_PX = [20.0, 20.0, 40.0, 40.0]
+# Offset box for FP detection / multi-box scenes (no GT at this location).
+_BBOX_PX_FP = [60.0, 60.0, 20.0, 20.0]
 _GT_BOX = {"x": 0.4, "y": 0.4, "w": 0.4, "h": 0.4, "source": "iptc"}
+# Secondary GT for missed-detection item (no face will be placed here).
+_GT_BOX_FN = {"x": 0.1, "y": 0.1, "w": 0.2, "h": 0.2, "source": "iptc"}
 _LANDMARKS = [[0.0, 0.0]] * 5
 _DET_SCORE = 0.95
+
+_ALICE = "Alice Example"
+_BOB = "Bob Example"
+_COHORT_A = "cohort_a"
+_COHORT_B = "cohort_b"
 
 
 def _unit(values: list[float]) -> list[float]:
@@ -67,42 +85,51 @@ def _unit(values: list[float]) -> list[float]:
 
 
 def _synthetic_embeddings() -> dict[str, list[float]]:
-    """Hand-constructed dim=8 unit vectors; no real image or person.
+    """Hand-constructed dim=8 unit vectors; no real image or person (PROV-01).
 
-    Alice near e0, stranger near e1 so open-set reject is natural at typical τ
-    (same geometry as ``_face_fixture_corpus`` in test_eval_harness_report.py).
+    Geometry (axes deliberately far so open-set / wrong-name is controllable):
+    - Alice near e0, Bob near e2 (orthogonal), stranger near e1.
+    - alice_wrong is Bob's axis so a GT-named Alice probe predicts Bob.
     """
     dim = _EMBEDDING_DIM
     return {
         "alice_a": _unit([1.0] + [0.0] * (dim - 1)),
         "alice_b": _unit([0.98, 0.1] + [0.0] * (dim - 2)),
+        "bob_a": _unit([0.0, 0.0, 1.0] + [0.0] * (dim - 3)),
+        "bob_b": _unit([0.0, 0.05, 0.98] + [0.0] * (dim - 3)),
+        # Alice GT box, Bob embedding → wrong_names non-empty (precision < 1).
+        "alice_wrong": _unit([0.0, 0.0, 0.99, 0.1] + [0.0] * (dim - 4)),
         "stranger": _unit([0.0, 1.0] + [0.0] * (dim - 2)),
+        # Unmatched detection (no GT box at this location).
+        "fp_det": _unit([0.0, 0.0, 0.0, 1.0] + [0.0] * (dim - 4)),
     }
 
 
 def build_synthetic_face_manifest() -> dict[str, Any]:
-    """Small dedicated face manifest with GT centre boxes (IoU-matchable).
+    """Dedicated face manifest with multi-identity, multi-cohort, FP/FN levers.
 
     Not ``golden.json``: golden has face_count/present_identities but no
     face_boxes, so score_face_run_record cannot associate detections usefully.
     """
     emb_note = (
         "synthetic face determinism anchor — no real images; "
-        "GT boxes pair with dim=8 unit-vector detections"
+        "GT boxes pair with dim=8 unit-vector detections (F7 multi-regime)"
     )
-    alice_box = {**_GT_BOX, "name": "Alice Example"}
+    alice_box = {**_GT_BOX, "name": _ALICE}
+    bob_box = {**_GT_BOX, "name": _BOB}
     stranger_box = {**_GT_BOX, "name": None}
+    fn_box = {**_GT_BOX_FN, "name": _ALICE}
     return {
         "manifest_version": 2,
-        "roster": ["Alice Example"],
-        "roster_cohorts": {"Alice Example": "cohort_a"},
+        "roster": [_ALICE, _BOB],
+        "roster_cohorts": {_ALICE: _COHORT_A, _BOB: _COHORT_B},
         "entries": [
             {
                 "path": "celebs01/alice-a.jpg",
                 "sha256": "a" * 64,
                 "media_id": 1,
                 "face_count": 1,
-                "present_identities": ["Alice Example"],
+                "present_identities": [_ALICE],
                 "base_caption": "",
                 "must_right": [],
                 "easy_wrong": [],
@@ -114,14 +141,14 @@ def build_synthetic_face_manifest() -> dict[str, Any]:
                     "publishable": True,
                     "note": emb_note,
                 },
-                "demographic_cohort": "cohort_a",
+                "demographic_cohort": _COHORT_A,
             },
             {
                 "path": "celebs01/alice-b.jpg",
                 "sha256": "b" * 64,
                 "media_id": 2,
                 "face_count": 1,
-                "present_identities": ["Alice Example"],
+                "present_identities": [_ALICE],
                 "base_caption": "",
                 "must_right": [],
                 "easy_wrong": [],
@@ -133,7 +160,104 @@ def build_synthetic_face_manifest() -> dict[str, Any]:
                     "publishable": True,
                     "note": emb_note,
                 },
-                "demographic_cohort": "cohort_a",
+                "demographic_cohort": _COHORT_A,
+            },
+            {
+                "path": "celebs01/bob-a.jpg",
+                "sha256": "d" * 64,
+                "media_id": 4,
+                "face_count": 1,
+                "present_identities": [_BOB],
+                "base_caption": "",
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "face_boxes": [bob_box],
+                "provenance": {
+                    "source": "celeb",
+                    "license": "public_domain",
+                    "publishable": True,
+                    "note": emb_note,
+                },
+                "demographic_cohort": _COHORT_B,
+            },
+            {
+                "path": "celebs01/bob-b.jpg",
+                "sha256": "e" * 64,
+                "media_id": 5,
+                "face_count": 1,
+                "present_identities": [_BOB],
+                "base_caption": "",
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "face_boxes": [bob_box],
+                "provenance": {
+                    "source": "celeb",
+                    "license": "public_domain",
+                    "publishable": True,
+                    "note": emb_note,
+                },
+                "demographic_cohort": _COHORT_B,
+            },
+            {
+                # Wrong-name probe: Alice GT, Bob-axis embedding.
+                "path": "celebs01/alice-wrong.jpg",
+                "sha256": "f" * 64,
+                "media_id": 6,
+                "face_count": 1,
+                "present_identities": [_ALICE],
+                "base_caption": "",
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "face_boxes": [alice_box],
+                "provenance": {
+                    "source": "celeb",
+                    "license": "public_domain",
+                    "publishable": True,
+                    "note": emb_note,
+                },
+                "demographic_cohort": _COHORT_A,
+            },
+            {
+                # Detection FP: no GT boxes, one unmatched detection.
+                "path": "celebs01/fp-only.jpg",
+                "sha256": "1" * 64,
+                "media_id": 7,
+                "face_count": 0,
+                "present_identities": [],
+                "base_caption": "",
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "face_boxes": [],
+                "provenance": {
+                    "source": "celeb",
+                    "license": "public_domain",
+                    "publishable": True,
+                    "note": emb_note,
+                },
+            },
+            {
+                # Detection FN: named GT box, zero detections (missed_gt).
+                "path": "celebs01/fn-miss.jpg",
+                "sha256": "2" * 64,
+                "media_id": 8,
+                "face_count": 1,
+                "present_identities": [_ALICE],
+                "base_caption": "",
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "face_boxes": [fn_box],
+                "provenance": {
+                    "source": "celeb",
+                    "license": "public_domain",
+                    "publishable": True,
+                    "note": emb_note,
+                },
+                "demographic_cohort": _COHORT_A,
             },
             {
                 "path": "localwp/uploads/stranger-party.jpg",
@@ -153,13 +277,16 @@ def build_synthetic_face_manifest() -> dict[str, Any]:
                     "note": emb_note,
                 },
             },
+            # failures[] intentionally not exercised: score-face exits non-zero
+            # when counts.failed > 0, which would make the freeze green path red.
+            # Declared in provenance.coverage_gaps (AUDIT-07).
         ],
     }
 
 
-def _face(embedding: list[float]) -> dict[str, Any]:
+def _face(embedding: list[float], *, bbox_px: list[float] | None = None) -> dict[str, Any]:
     return build_face_detection(
-        bbox_px=_BBOX_PX,
+        bbox_px=list(bbox_px) if bbox_px is not None else list(_BBOX_PX),
         landmarks_px=_LANDMARKS,
         embedding=embedding,
         det_score=_DET_SCORE,
@@ -192,6 +319,46 @@ def build_face_anchor_run_record(
             faces=[_face(emb["alice_b"])],
         ),
         build_face_run_item(
+            media_id=4,
+            path="celebs01/bob-a.jpg",
+            model_id=_MODEL_ID,
+            embedding_dim=_EMBEDDING_DIM,
+            image_size=_IMAGE_SIZE,
+            faces=[_face(emb["bob_a"])],
+        ),
+        build_face_run_item(
+            media_id=5,
+            path="celebs01/bob-b.jpg",
+            model_id=_MODEL_ID,
+            embedding_dim=_EMBEDDING_DIM,
+            image_size=_IMAGE_SIZE,
+            faces=[_face(emb["bob_b"])],
+        ),
+        build_face_run_item(
+            media_id=6,
+            path="celebs01/alice-wrong.jpg",
+            model_id=_MODEL_ID,
+            embedding_dim=_EMBEDDING_DIM,
+            image_size=_IMAGE_SIZE,
+            faces=[_face(emb["alice_wrong"])],
+        ),
+        build_face_run_item(
+            media_id=7,
+            path="celebs01/fp-only.jpg",
+            model_id=_MODEL_ID,
+            embedding_dim=_EMBEDDING_DIM,
+            image_size=_IMAGE_SIZE,
+            faces=[_face(emb["fp_det"], bbox_px=_BBOX_PX_FP)],
+        ),
+        build_face_run_item(
+            media_id=8,
+            path="celebs01/fn-miss.jpg",
+            model_id=_MODEL_ID,
+            embedding_dim=_EMBEDDING_DIM,
+            image_size=_IMAGE_SIZE,
+            faces=[],  # missed GT
+        ),
+        build_face_run_item(
             media_id=3,
             path="localwp/uploads/stranger-party.jpg",
             model_id=_MODEL_ID,
@@ -200,6 +367,20 @@ def build_face_anchor_run_record(
             faces=[_face(emb["stranger"])],
         ),
     ]
+    # Document-level synthetic occlusion twin (EVAL-16: never an item).
+    # Alice has ≥2 matched faces and Bob is enrolled → multi-identity gallery
+    # + distinct-image min-gallery make the twin eligible (n_eligible > 0).
+    occlusion_twin_pairs_by_tag = {
+        "masked": [
+            {
+                "media_id": 1,
+                "box_index": 0,
+                "true_name": _ALICE,
+                "kind": "masked",
+                "embedding": emb["alice_a"],
+            }
+        ]
+    }
     provenance = {
         "manifest_sha256": manifest_sha256,
         "head_sha": head_sha,
@@ -210,10 +391,98 @@ def build_face_anchor_run_record(
         "generator": "scripts.eval_harness.generate_face_determinism_anchor",
         "note": (
             "synthetic dim=8 unit vectors; no real image/embedding (PROV-01); "
-            "head_sha/started_at are byte-stability sentinels"
+            "head_sha/started_at are byte-stability sentinels; "
+            "F7 multi-regime corpus (2 identities, FP/FN, wrong-name, "
+            "occlusion twin, 2 cohorts; failures[] declared gap — score-face "
+            "hard-exits on counts.failed>0)"
         ),
     }
-    return build_face_run_record(items, provenance=provenance)
+    record = build_face_run_record(items, provenance=provenance)
+    record["occlusion_twin_pairs_by_tag"] = occlusion_twin_pairs_by_tag
+    return validate_face_run_record(record)
+
+
+def _is_vacuous_occlusion_cell(cell: dict[str, Any]) -> bool:
+    synth = cell.get("synthetic") if isinstance(cell.get("synthetic"), dict) else cell
+    if not isinstance(synth, dict):
+        return True
+    n_eligible = synth.get("n_eligible")
+    accuracy = synth.get("accuracy")
+    if n_eligible is None:
+        return True
+    return int(n_eligible) == 0 or accuracy is None
+
+
+def _is_vacuous_id_slice(slice_doc: dict[str, Any]) -> bool:
+    """Identification-style slice vacuous when every error path is pinned at zero."""
+    wrong = slice_doc.get("wrong_names") or []
+    return (
+        int(slice_doc.get("fp") or 0) == 0
+        and int(slice_doc.get("fn") or 0) == 0
+        and int(slice_doc.get("missed_gt") or 0) == 0
+        and int(slice_doc.get("unmatched_detections") or 0) == 0
+        and len(wrong) == 0
+    )
+
+
+def compute_coverage_gaps(report: dict[str, Any]) -> list[str]:
+    """Derive still-vacuous slice names from a scored face report (rg-015).
+
+    A green face gate proves byte-stable re-score + that named cells execute.
+    It does **not** prove ship-ready floors (UNDER-FLOOR/DIRECTIONAL is expected
+    on this tiny synthetic corpus). Gaps name cells still pinned at empty/null.
+    """
+    gaps: list[str] = []
+    slices = report.get("slices") or {}
+
+    occ = slices.get("occlusion") or {}
+    for tag in ("masked", "sunglasses", "occlusion_other"):
+        cell = occ.get(tag)
+        if not isinstance(cell, dict) or _is_vacuous_occlusion_cell(cell):
+            gaps.append(f"occlusion.{tag}")
+
+    clustering = slices.get("clustering") or {}
+    if int(clustering.get("p_diff") or 0) == 0:
+        gaps.append("clustering.p_diff")
+
+    demo = slices.get("demographic") or {}
+    by_cohort = demo.get("by_cohort") or {}
+    if len(by_cohort) < 2:
+        gaps.append("demographic.by_cohort")
+
+    for key in ("full_corpus_identification", "headline_identification"):
+        cell = slices.get(key) or {}
+        if isinstance(cell, dict) and _is_vacuous_id_slice(cell):
+            gaps.append(key)
+
+    detection = report.get("detection") or {}
+    if int(detection.get("fp") or 0) == 0:
+        gaps.append("detection.fp")
+    if int(detection.get("fn") or 0) == 0:
+        gaps.append("detection.fn")
+
+    if not (report.get("failures") or []):
+        gaps.append("failures")
+
+    return sorted(gaps)
+
+
+def _score_face_like_cli(
+    record: dict[str, Any],
+    manifest: Any,
+    *,
+    manifest_sha: str,
+) -> tuple[str, str]:
+    """Score the same way score-face does (occlusion twins from the record)."""
+    synth, real = occlusion_inputs_from_record(record, manifest)
+    return build_face_reports(
+        record,
+        manifest,
+        score_manifest_sha256=manifest_sha,
+        occlusion_pairs_by_tag=synth,
+        real_occlusion_pairs_by_tag=real,
+        public=False,
+    )
 
 
 def _dumps(obj: dict[str, Any]) -> str:
@@ -251,14 +520,16 @@ def write_face_anchor(
         head_sha=head_sha,
         started_at=started_at,
     )
+
+    # Score once to discover still-vacuous cells, then stamp coverage_gaps into
+    # run-record provenance and re-score so the freeze matches score-face (rg-015).
+    probe_json, _ = _score_face_like_cli(record, manifest, manifest_sha=manifest_sha)
+    gaps = compute_coverage_gaps(json.loads(probe_json))
+    record.setdefault("provenance", {})["coverage_gaps"] = gaps
+    record = validate_face_run_record(record)
     run_path.write_text(_dumps(record))
 
-    json_doc, md_doc = build_face_reports(
-        record,
-        manifest,
-        score_manifest_sha256=manifest_sha,
-        public=False,
-    )
+    json_doc, md_doc = _score_face_like_cli(record, manifest, manifest_sha=manifest_sha)
     report_json_path.write_text(json_doc)
     report_md_path.write_text(md_doc)
     return manifest_path, run_path, report_json_path, report_md_path, manifest_sha
@@ -266,7 +537,7 @@ def write_face_anchor(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Generate a synthetic offline face determinism anchor (VLM-6 F6)."
+        description="Generate a synthetic offline face determinism anchor (VLM-6 F6/F7)."
     )
     parser.add_argument(
         "--out-dir",

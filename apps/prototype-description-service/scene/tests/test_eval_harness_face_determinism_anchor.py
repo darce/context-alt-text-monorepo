@@ -1,4 +1,4 @@
-"""Committed synthetic face determinism anchor (VLM-6 F6 / B-06).
+"""Committed synthetic face determinism anchor (VLM-6 F6/F7 / B-06).
 
 Pins the offline face freeze under docs/tasks/vlm/bakeoff-results/ and drives
 the shipped ``score-face --check-determinism --expect-report`` gate:
@@ -8,6 +8,9 @@ the shipped ``score-face --check-determinism --expect-report`` gate:
   - run-record-side embedding corruption → ANCHOR_MISMATCH (TEST-15)
   - same run-record corruption without --expect-report → silent pass (DBG-11)
   - clean freeze → green with matches --expect-report
+  - F7: coverage_gaps declare every still-vacuous slice (AUDIT-07)
+  - F7: newly-live cells go red when corrupted; old 1-id corpus cannot (DBG-11)
+  - F7-01: ANCHOR_MISMATCH artifact lands in out/, never under bakeoff-results/
 
 PROV-01: embeddings are synthetic dim=8 unit vectors; no real face data.
 """
@@ -17,12 +20,15 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import tempfile
 from pathlib import Path
 
 import pytest
 
 from scripts.eval_harness.cli import (
+    OUT_DIR,
     _check_face_determinism_cross_process,
+    _determinism_artifact_dir,
     _manifest_sha,
     main,
 )
@@ -30,9 +36,11 @@ from scripts.eval_harness.generate_face_determinism_anchor import (
     _DEFAULT_MANIFEST_STEM,
     _DEFAULT_STEM,
     _EMBEDDING_DIM,
+    compute_coverage_gaps,
     write_face_anchor,
 )
 from scripts.eval_harness.manifest import load_manifest
+from scripts.eval_harness.report import build_face_reports, occlusion_inputs_from_record
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _SERVICE_ROOT = Path(__file__).resolve().parents[2]
@@ -46,10 +54,10 @@ _REPORT_MD = _ANCHOR_DIR / f"{_STEM}-face-report.md"
 
 # File digests of the committed face quadruple — update only when intentionally regenerating.
 _FROZEN_DIGESTS = {
-    _MANIFEST.name: "f41a93d771cad4cfc9baa9553c8fd42e3ea512f5baa3c3e4a3edaa699cde669f",
-    _RUN.name: "3fb8628a2f6b5594e724b365684f37ff01173aac420035f3bbcfeaa037b0a751",
-    _REPORT_JSON.name: "6c696a5450236fce3ed7ba66acbcc7982b3263d6ad8b7f49fa260d57bca59dca",
-    _REPORT_MD.name: "6d066e5be26f1b20663fb381038affdfd883656bcf641170a6cc47849e7fb88b",
+    _MANIFEST.name: "1209733ed2b62e837449855690c15931dc0e76fcb24be8a715668020e05c8958",
+    _RUN.name: "38a5168d051bc830ec1503a59858ff76e532807b9fbb7a8ccb1aaafadf7c10ff",
+    _REPORT_JSON.name: "dcee8efa6aa0846c2ef22f054030bc5ee921093f20043f0d498247d471c29442",
+    _REPORT_MD.name: "212c46a0cb615432b87b3d2e0b7acaeb31429df51873aeea7d93daf6e8420368",
 }
 
 
@@ -60,6 +68,24 @@ def _sha256(path: Path) -> str:
 def _unit(values: list[float]) -> list[float]:
     norm = math.sqrt(sum(v * v for v in values)) or 1.0
     return [float(v) / norm for v in values]
+
+
+def _live_slice_names(report: dict) -> set[str]:
+    """Slice keys that currently execute (non-vacuous) under compute_coverage_gaps rules."""
+    all_candidates = {
+        "occlusion.masked",
+        "occlusion.sunglasses",
+        "occlusion.occlusion_other",
+        "clustering.p_diff",
+        "demographic.by_cohort",
+        "full_corpus_identification",
+        "headline_identification",
+        "detection.fp",
+        "detection.fn",
+        "failures",
+    }
+    gaps = set(compute_coverage_gaps(report))
+    return all_candidates - gaps
 
 
 @pytest.mark.parametrize("name,expected", list(_FROZEN_DIGESTS.items()))
@@ -80,7 +106,7 @@ def test_face_generator_regenerates_byte_identical_committed_anchor(tmp_path: Pa
     )
     expected_sha = _manifest_sha(load_manifest(str(_MANIFEST)))
     assert manifest_sha == expected_sha
-    assert manifest_sha.startswith("e7004f3b")
+    assert manifest_sha.startswith("19861fed")
     assert man_path.read_bytes() == _MANIFEST.read_bytes()
     assert run_path.read_bytes() == _RUN.read_bytes()
     assert report_json.read_bytes() == _REPORT_JSON.read_bytes()
@@ -96,11 +122,61 @@ def test_face_run_record_is_synthetic_dim8_no_real_embeddings() -> None:
     assert record["provenance"]["manifest_sha256"] == _manifest_sha(
         load_manifest(str(_MANIFEST))
     )
-    assert len(record["items"]) == 3
+    assert len(record["items"]) >= 7  # F7 multi-regime corpus
     for item in record["items"]:
         assert item["embedding_dim"] == _EMBEDDING_DIM
-        for face in item["faces"]:
+        for face in item.get("faces") or []:
             assert len(face["embedding"]) == _EMBEDDING_DIM
+
+
+def test_coverage_gaps_enumerate_every_vacuous_or_live_slice() -> None:
+    """AUDIT-07 / EVAL-04: every tracked slice is live XOR named in coverage_gaps.
+
+    Derived from the frozen report at test time — no parallel hardcoded inventory.
+    """
+    report = json.loads(_REPORT_JSON.read_text())
+    record = json.loads(_RUN.read_text())
+    declared = list((report.get("provenance") or {}).get("coverage_gaps") or [])
+    # Run-record provenance must agree (rg-015 single source at generation).
+    assert (record.get("provenance") or {}).get("coverage_gaps") == declared
+
+    computed = compute_coverage_gaps(report)
+    assert declared == computed, (
+        f"stale coverage_gaps: declared={declared} computed={computed}"
+    )
+
+    live = _live_slice_names(report)
+    # F7 must light up the previously vacuous hard cells (not merely declare them).
+    for required in (
+        "clustering.p_diff",
+        "detection.fp",
+        "detection.fn",
+        "full_corpus_identification",
+        "headline_identification",
+        "demographic.by_cohort",
+        "occlusion.masked",
+    ):
+        assert required in live, f"expected live cell still vacuous: {required}"
+    # failures[] is an honest declared gap: score-face hard-exits on counts.failed>0.
+    assert "failures" in declared
+
+    # Declared gaps must actually be vacuous; live cells must not be declared.
+    for g in declared:
+        assert g not in live, f"coverage_gaps names live slice {g}"
+    for g in computed:
+        assert g in declared
+
+
+def test_coverage_gaps_guard_fails_when_gap_list_under_declares(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deleting a still-vacuous gap from coverage_gaps must fail the guard."""
+    report = json.loads(_REPORT_JSON.read_text())
+    gaps = list(report["provenance"]["coverage_gaps"])
+    assert gaps, "fixture expects at least one honest gap (sunglasses/occlusion_other)"
+    # Drop one real gap without fixing the corpus → guard must fire.
+    report["provenance"]["coverage_gaps"] = gaps[1:]
+    assert compute_coverage_gaps(report) != report["provenance"]["coverage_gaps"]
 
 
 def test_corrupt_face_expect_report_makes_determinism_gate_red(tmp_path: Path) -> None:
@@ -115,6 +191,7 @@ def test_corrupt_face_expect_report_makes_determinism_gate_red(tmp_path: Path) -
     )
     assert _sha256(corrupt_expect) != _FROZEN_DIGESTS[_REPORT_JSON.name]
 
+    before_docs = {p.name: _sha256(p) for p in _ANCHOR_DIR.glob("S2A-face-*")}
     with pytest.raises(SystemExit) as exc:
         _check_face_determinism_cross_process(
             run_copy,
@@ -129,7 +206,13 @@ def test_corrupt_face_expect_report_makes_determinism_gate_red(tmp_path: Path) -
     assert "do NOT regenerate" in msg
     assert "determinism check FAILED" not in msg
     assert "determinism check ERROR" not in msg
-    assert list(tmp_path.glob("determinism-anchor-mismatch-score-face.diff.txt"))
+    # F7-01: artifact lands in out/, never beside the run-record / freeze tree.
+    artifact = _determinism_artifact_dir() / "determinism-anchor-mismatch-score-face.diff.txt"
+    assert artifact.is_file()
+    assert str(artifact.resolve()) in msg
+    assert not list(tmp_path.glob("determinism-anchor-mismatch*.diff.txt"))
+    assert not list(_ANCHOR_DIR.glob("determinism-anchor-mismatch*.diff.txt"))
+    assert {p.name: _sha256(p) for p in _ANCHOR_DIR.glob("S2A-face-*")} == before_docs
     assert _sha256(_REPORT_JSON) == _FROZEN_DIGESTS[_REPORT_JSON.name]
 
 
@@ -165,9 +248,253 @@ def test_corrupt_face_run_record_embedding_makes_determinism_gate_red(tmp_path: 
     assert "determinism check FAILED" not in msg
     assert "determinism check ERROR" not in msg
     assert "score-face gate failed" not in msg
-    assert list(tmp_path.glob("determinism-anchor-mismatch-score-face.diff.txt"))
+    artifact = _determinism_artifact_dir() / "determinism-anchor-mismatch-score-face.diff.txt"
+    assert artifact.is_file()
+    assert str(artifact.resolve()) in msg
+    assert not list(tmp_path.glob("determinism-anchor-mismatch*.diff.txt"))
     assert _sha256(_RUN) == _FROZEN_DIGESTS[_RUN.name]
     assert _sha256(_REPORT_JSON) == _FROZEN_DIGESTS[_REPORT_JSON.name]
+
+
+def test_f7_clustering_corruption_goes_red(tmp_path: Path) -> None:
+    """TEST-15: newly-live clustering cell — collapse Bob into Alice axis → red."""
+    payload = json.loads(_RUN.read_text())
+    report = json.loads(_REPORT_JSON.read_text())
+    before_p_diff = report["slices"]["clustering"]["p_diff"]
+    assert before_p_diff > 0  # F7 live cell
+
+    # Bob faces are media_id 4 and 5; pin them to Alice's axis so clusters merge.
+    alice_axis = _unit([1.0] + [0.0] * (_EMBEDDING_DIM - 1))
+    for item in payload["items"]:
+        if item.get("media_id") in (4, 5):
+            for face in item.get("faces") or []:
+                face["embedding"] = list(alice_axis)
+
+    run_copy = tmp_path / "run-cluster-corrupt.json"
+    run_copy.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    )
+    expect_copy = tmp_path / _REPORT_JSON.name
+    expect_copy.write_bytes(_REPORT_JSON.read_bytes())
+
+    with pytest.raises(SystemExit) as exc:
+        _check_face_determinism_cross_process(
+            run_copy,
+            str(_MANIFEST),
+            public=False,
+            expect_report=expect_copy,
+        )
+    assert "determinism check ANCHOR_MISMATCH" in str(exc.value)
+
+    # Prove the cell itself moved (not just some other field).
+    manifest = load_manifest(str(_MANIFEST))
+    synth, real = occlusion_inputs_from_record(payload, manifest)
+    json_doc, _ = build_face_reports(
+        payload,
+        manifest,
+        score_manifest_sha256=_manifest_sha(manifest),
+        occlusion_pairs_by_tag=synth,
+        real_occlusion_pairs_by_tag=real,
+        public=False,
+    )
+    after = json.loads(json_doc)["slices"]["clustering"]
+    assert after["p_diff"] != before_p_diff or after["false_merge"] != report["slices"][
+        "clustering"
+    ]["false_merge"]
+
+
+def test_f7_detection_fp_corruption_goes_red(tmp_path: Path) -> None:
+    """TEST-15: newly-live detection.fp — drop the unmatched detection → red."""
+    payload = json.loads(_RUN.read_text())
+    report = json.loads(_REPORT_JSON.read_text())
+    assert report["detection"]["fp"] >= 1
+
+    for item in payload["items"]:
+        if item.get("media_id") == 7:  # fp-only image
+            item["faces"] = []
+
+    run_copy = tmp_path / "run-fp-corrupt.json"
+    run_copy.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    )
+    expect_copy = tmp_path / _REPORT_JSON.name
+    expect_copy.write_bytes(_REPORT_JSON.read_bytes())
+
+    with pytest.raises(SystemExit) as exc:
+        _check_face_determinism_cross_process(
+            run_copy,
+            str(_MANIFEST),
+            public=False,
+            expect_report=expect_copy,
+        )
+    assert "determinism check ANCHOR_MISMATCH" in str(exc.value)
+
+
+def test_old_single_identity_corpus_cannot_detect_clustering_or_fp_bugs() -> None:
+    """DBG-11: pre-F7 3-item corpus pins clustering p_diff=0 and detection.fp=0.
+
+    Collapsing 'Bob into Alice' and removing an FP face are invisible on a corpus
+    that has neither a second identity nor an unmatched detection — the cells
+    stay at their empty values. That is the coverage gap F7 closes.
+    """
+    # Minimal Alice×2 + stranger (F6 shape), scored twice with a "Bob collapse"
+    # that cannot apply and an FP face that does not exist.
+    from scripts.eval_harness.face_run_record import (
+        build_face_detection,
+        build_face_run_item,
+        build_face_run_record,
+    )
+
+    emb_alice_a = _unit([1.0] + [0.0] * 7)
+    emb_alice_b = _unit([0.98, 0.1] + [0.0] * 6)
+    emb_stranger = _unit([0.0, 1.0] + [0.0] * 6)
+    bbox = [20.0, 20.0, 40.0, 40.0]
+    lm = [[0.0, 0.0]] * 5
+
+    def _face(e):
+        return build_face_detection(
+            bbox_px=bbox, landmarks_px=lm, embedding=e, det_score=0.95
+        )
+
+    def _old_record(alice_a_emb):
+        items = [
+            build_face_run_item(
+                media_id=1,
+                path="celebs01/alice-a.jpg",
+                model_id="synthetic-face-anchor",
+                embedding_dim=8,
+                image_size=[100, 100],
+                faces=[_face(alice_a_emb)],
+            ),
+            build_face_run_item(
+                media_id=2,
+                path="celebs01/alice-b.jpg",
+                model_id="synthetic-face-anchor",
+                embedding_dim=8,
+                image_size=[100, 100],
+                faces=[_face(emb_alice_b)],
+            ),
+            build_face_run_item(
+                media_id=3,
+                path="localwp/uploads/stranger-party.jpg",
+                model_id="synthetic-face-anchor",
+                embedding_dim=8,
+                image_size=[100, 100],
+                faces=[_face(emb_stranger)],
+            ),
+        ]
+        return build_face_run_record(
+            items,
+            provenance={
+                "manifest_sha256": "0" * 64,
+                "head_sha": "0" * 40,
+                "started_at": "2026-08-11T00:00:00Z",
+                "leg": "candidate",
+                "model_id": "synthetic-face-anchor",
+                "embedding_dim": 8,
+            },
+        )
+
+    man = {
+        "manifest_version": 2,
+        "roster": ["Alice Example"],
+        "roster_cohorts": {"Alice Example": "cohort_a"},
+        "entries": [
+            {
+                "path": "celebs01/alice-a.jpg",
+                "sha256": "a" * 64,
+                "media_id": 1,
+                "face_count": 1,
+                "present_identities": ["Alice Example"],
+                "base_caption": "",
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "face_boxes": [
+                    {"x": 0.4, "y": 0.4, "w": 0.4, "h": 0.4, "source": "iptc", "name": "Alice Example"}
+                ],
+                "provenance": {
+                    "source": "celeb",
+                    "license": "public_domain",
+                    "publishable": True,
+                },
+                "demographic_cohort": "cohort_a",
+            },
+            {
+                "path": "celebs01/alice-b.jpg",
+                "sha256": "b" * 64,
+                "media_id": 2,
+                "face_count": 1,
+                "present_identities": ["Alice Example"],
+                "base_caption": "",
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "face_boxes": [
+                    {"x": 0.4, "y": 0.4, "w": 0.4, "h": 0.4, "source": "iptc", "name": "Alice Example"}
+                ],
+                "provenance": {
+                    "source": "celeb",
+                    "license": "public_domain",
+                    "publishable": True,
+                },
+                "demographic_cohort": "cohort_a",
+            },
+            {
+                "path": "localwp/uploads/stranger-party.jpg",
+                "sha256": "c" * 64,
+                "media_id": 3,
+                "face_count": 1,
+                "present_identities": [],
+                "base_caption": "",
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "face_boxes": [
+                    {"x": 0.4, "y": 0.4, "w": 0.4, "h": 0.4, "source": "iptc", "name": None}
+                ],
+                "provenance": {
+                    "source": "localwp",
+                    "license": "consented",
+                    "publishable": False,
+                },
+            },
+        ],
+    }
+    with tempfile.TemporaryDirectory() as td:
+        mp = Path(td) / "old-man.json"
+        mp.write_text(json.dumps(man, indent=2, sort_keys=True) + "\n")
+        manifest = load_manifest(str(mp))
+        sha = _manifest_sha(manifest)
+
+        def score(rec):
+            rec = dict(rec)
+            rec["provenance"] = {**rec["provenance"], "manifest_sha256": sha}
+            synth, real = occlusion_inputs_from_record(rec, manifest)
+            j, _ = build_face_reports(
+                rec,
+                manifest,
+                score_manifest_sha256=sha,
+                occlusion_pairs_by_tag=synth,
+                real_occlusion_pairs_by_tag=real,
+                public=False,
+            )
+            return json.loads(j)
+
+        base = score(_old_record(emb_alice_a))
+        # "Bob collapse" analogue on a 1-id corpus: nudge Alice A slightly.
+        # Clustering still has p_diff=0 and detection.fp=0 — cell never executes.
+        nudged = _unit([0.97, 0.2] + [0.0] * 6)
+        after = score(_old_record(nudged))
+        assert base["slices"]["clustering"]["p_diff"] == 0
+        assert after["slices"]["clustering"]["p_diff"] == 0
+        assert base["detection"]["fp"] == 0
+        assert after["detection"]["fp"] == 0
+        assert base["detection"]["fn"] == 0
+        assert after["detection"]["fn"] == 0
+        # No second cohort, no wrong_names path from a Bob collapse that never lands.
+        assert len(base["slices"]["demographic"]["by_cohort"]) == 1
+        assert (base["slices"]["full_corpus_identification"].get("wrong_names") or []) == []
 
 
 def test_corrupt_face_run_record_without_expect_report_passes_silently(
@@ -276,3 +603,55 @@ def test_cli_score_face_expect_report_end_to_end_green(
     assert _sha256(_REPORT_JSON) == _FROZEN_DIGESTS[_REPORT_JSON.name]
     assert _sha256(_RUN) == _FROZEN_DIGESTS[_RUN.name]
     assert _sha256(_MANIFEST) == _FROZEN_DIGESTS[_MANIFEST.name]
+
+
+def test_f7_01_mismatch_artifact_never_dirties_bakeoff_results(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """F7-01: red gate against committed freeze paths must not write under docs/.
+
+    Operator workflow uses the docs/ freeze as --run-record; pre-fix the
+    mismatch artifact was derived from that parent and dirtied the tree.
+    """
+    # Copy freeze into a docs-like layout under tmp to avoid actually writing
+    # reports beside the real freeze; assert the diagnostic still targets OUT_DIR.
+    # Also run once with the real committed expect path to prove message path.
+    run_copy = tmp_path / _RUN.name
+    run_copy.write_bytes(_RUN.read_bytes())
+    payload = json.loads(_REPORT_JSON.read_text())
+    payload.setdefault("counts", {})["matched_faces"] = 12345
+    corrupt_expect = tmp_path / "corrupt-expect.json"
+    corrupt_expect.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    )
+
+    before = {p.name for p in _ANCHOR_DIR.iterdir()}
+    # Clear any stale mismatch artifact so existence is from this run.
+    stale = OUT_DIR / "determinism-anchor-mismatch-score-face.diff.txt"
+    if stale.is_file():
+        stale.unlink()
+
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "score-face",
+                "--manifest",
+                str(_MANIFEST),
+                "--run-record",
+                str(run_copy),
+                "--check-determinism",
+                "--expect-report",
+                str(corrupt_expect),
+            ]
+        )
+    msg = str(exc.value)
+    assert "determinism check ANCHOR_MISMATCH" in msg
+    artifact = Path(msg.split("artifact=")[1].split(")")[0].split(";")[0].strip())
+    assert artifact.is_file()
+    assert artifact.resolve().is_relative_to(OUT_DIR.resolve()) or str(
+        OUT_DIR.resolve()
+    ) in str(artifact.resolve())
+    assert "bakeoff-results" not in str(artifact.resolve())
+    after = {p.name for p in _ANCHOR_DIR.iterdir()}
+    assert after == before
+    assert not list(_ANCHOR_DIR.glob("determinism-*.diff.txt"))

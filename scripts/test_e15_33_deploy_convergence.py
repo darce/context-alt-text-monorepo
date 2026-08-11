@@ -809,12 +809,17 @@ exit 255
 
 def test_face_pipeline_preflight_preserves_interior_spaces_in_env(tmp_path: Path) -> None:
     """C-05: remote dotenv values with interior spaces must not be mangled."""
-    # Host-absolute models dir containing a space; no /data/cache mapping.
-    # Fake ssh returns a value with interior spaces; the verify body must receive
-    # that path (printf %q-escaped is fine — stripping spaces is not).
+    # In-mount models dir whose host mapping contains spaces (out-of-mount dirs
+    # are rejected outright — see the fail-closed test below). The verify body
+    # must receive the mapped host path with spaces intact (printf %q-escaped
+    # is fine — stripping spaces is not).
     ssh = r"""#!/bin/sh
 if echo "$*" | grep -q "RECOGNITION_FACE_PIPELINE_MODELS_DIR"; then
-  printf '%s' "/opt/acx models/face pipeline"
+  printf '%s' "/data/cache/face pipeline"
+  exit 0
+fi
+if echo "$*" | grep -q "ACX_MODELS_PATH"; then
+  printf '%s' "/opt/acx models"
   exit 0
 fi
 body=$(cat)
@@ -835,6 +840,30 @@ exit 0
     combined = proc.stdout + proc.stderr
     assert proc.returncode == 0, combined
     assert "SPACE_MANGLED" not in combined
+
+
+def test_face_pipeline_preflight_rejects_models_dir_outside_mount(tmp_path: Path) -> None:
+    """Gate r0811864a B-02: an out-of-mount models dir must fail closed.
+
+    The container only mounts ${ACX_MODELS_PATH}:/data/cache. A host-absolute
+    dir outside /data/cache can verify green on the host while the container
+    cannot load it at runtime — the preflight must reject it, not verify it.
+    """
+    ssh = r"""#!/bin/sh
+if echo "$*" | grep -q "RECOGNITION_FACE_PIPELINE_MODELS_DIR"; then
+  printf '%s' "/opt/acx-models/face_pipeline"
+  exit 0
+fi
+# The remote verify body must never run for an out-of-mount dir.
+cat >/dev/null
+echo "VERIFY_RAN"
+exit 0
+"""
+    proc = _run_face_pipeline_preflight("dev-fir", tmp_path, ssh)
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0, combined
+    assert "outside the container mount /data/cache" in combined, combined
+    assert "VERIFY_RAN" not in combined, "out-of-mount dir must not reach the remote verify"
 
 
 def test_face_pipeline_preflight_passes_when_models_present(tmp_path: Path) -> None:
@@ -901,6 +930,9 @@ def _run_converge_runtime(
     *,
     remote_caddy_sum: str | None = None,
     remote_compose_sum: str | None = None,
+    edge_membership: str = "MEMBER",
+    edge_apply: str | None = "1",
+    checksum_ssh_rc: int = 0,
 ) -> str:
     """Source the script and run `converge_runtime <env>` with recording fakes.
 
@@ -910,6 +942,13 @@ def _run_converge_runtime(
 
     remote_*_sum: if set, fake ssh answers sha256sum queries for the edge files
     with these digests (simulating deployed content). None → empty (missing).
+    edge_membership: fake answer to the caddy net-membership probe
+    (MEMBER|MISSING|NOCADDY). edge_apply: value for ACX_EDGE_APPLY (None →
+    unset, exercising the confirm gate). checksum_ssh_rc: exit code for the
+    sha256sum probes (non-zero simulates ssh transport failure).
+
+    The last run's CompletedProcess is stored on
+    ``_run_converge_runtime.last_proc`` for exit-code/stderr assertions.
     """
     bindir = tmp_path / "bin"
     bindir.mkdir()
@@ -924,13 +963,18 @@ def _run_converge_runtime(
 echo "$@" >> {scp_log}
 # Checksum probes (FL30C-GATE-02); match path fragments in the remote command.
 case "$*" in
+  *sha256sum*docker-compose.caddy.yml*)
+    if [ -n "{compose_reply}" ]; then echo "{compose_reply}"; fi
+    exit {checksum_ssh_rc}
+    ;;
   *sha256sum*Caddyfile*)
     # Remote command already includes `| awk '{{print $1}}'`; fake emits digest only.
     if [ -n "{caddy_reply}" ]; then echo "{caddy_reply}"; fi
-    exit 0
+    exit {checksum_ssh_rc}
     ;;
-  *sha256sum*docker-compose.caddy.yml*)
-    if [ -n "{compose_reply}" ]; then echo "{compose_reply}"; fi
+  *NetworkSettings*)
+    # Caddy net-membership probe (gate r0811864a G2-03).
+    echo "{edge_membership}"
     exit 0
     ;;
 esac
@@ -946,8 +990,11 @@ exit 0
     (bindir / "scp").write_text(f'#!/bin/sh\necho "SCP $@" >> {scp_log}\nexit 0\n')
     for name in ("ssh", "scp"):
         (bindir / name).chmod(0o755)
-    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"}
-    subprocess.run(
+    env = {k: v for k, v in os.environ.items() if k != "ACX_EDGE_APPLY"}
+    env["PATH"] = f"{bindir}:{env['PATH']}"
+    if edge_apply is not None:
+        env["ACX_EDGE_APPLY"] = edge_apply
+    proc = subprocess.run(
         ["/bin/bash", "-c", f'source "{SCRIPT}"; converge_runtime {env_arg}'],
         env=env,
         capture_output=True,
@@ -955,6 +1002,7 @@ exit 0
         timeout=30,
         check=False,
     )
+    _run_converge_runtime.last_proc = proc  # type: ignore[attr-defined]
     return scp_log.read_text() if scp_log.exists() else ""
 
 
@@ -1055,6 +1103,62 @@ def test_converge_runtime_recreates_when_caddy_compose_changed(tmp_path: Path) -
     )
 
 
+def test_converge_runtime_missing_net_membership_forces_recreate(tmp_path: Path) -> None:
+    """Gate r0811864a G2-03: matching checksums + caddy not on the fir net → recreate.
+
+    `caddy reload` / matching compose files never attach newly-declared
+    networks to a RUNNING container, so checksum parity alone reports
+    converged while fir.dev.api 502s. Membership drift must escalate to the
+    compose-level recreate path.
+    """
+    log = _run_converge_runtime(
+        "dev",
+        tmp_path,
+        remote_caddy_sum=_edge_sha256(CADDYFILE),
+        remote_compose_sum=_edge_sha256(CADDY_COMPOSE),
+        edge_membership="MISSING",
+    )
+    assert "docker compose -f docker-compose.caddy.yml up -d" in log, (
+        "membership drift must recreate the caddy edge despite matching checksums"
+    )
+
+
+def test_converge_runtime_edge_apply_gate_refuses_without_confirm(tmp_path: Path) -> None:
+    """Gate r0811864a G2-01: edge mutation requires ACX_EDGE_APPLY=1.
+
+    Any env's converge can recreate the single prod-fronting caddy; without the
+    explicit opt-in the converge must fail closed, naming the lever, and must
+    not ship edge files or touch the container.
+    """
+    log = _run_converge_runtime("dev", tmp_path, edge_apply=None)
+    proc = _run_converge_runtime.last_proc  # type: ignore[attr-defined]
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0, combined
+    assert "ACX_EDGE_APPLY=1" in combined, combined
+    assert "sudo cp '/tmp/Caddyfile'" not in log, "gate must block the edge ship"
+    assert "docker compose -f docker-compose.caddy.yml up -d" not in log, (
+        "gate must block the edge recreate"
+    )
+
+
+def test_converge_runtime_checksum_ssh_failure_is_not_drift(tmp_path: Path) -> None:
+    """Gate r0811864a B-03: ssh transport failure on checksum reads must abort.
+
+    An empty checksum from ssh exit!=0 would read as drift and recreate the
+    prod-serving edge off a network blip; the converge must fail closed and
+    name the transport failure instead.
+    """
+    log = _run_converge_runtime("dev", tmp_path, checksum_ssh_rc=255)
+    proc = _run_converge_runtime.last_proc  # type: ignore[attr-defined]
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0, combined
+    assert "refusing to treat transport failure as edge drift" in combined, combined
+    assert "sudo cp '/tmp/Caddyfile'" not in log, "transport failure must not ship edge"
+    assert "docker compose -f docker-compose.caddy.yml up -d" not in log, (
+        "transport failure must not recreate the edge"
+    )
+
+
 def test_check_passes_clean_when_deployed_matches_repo(tmp_path: Path) -> None:
     # BR2-11: the no-drift branch of converge_check must exit 0 — a fake ssh
     # cats the repo's own compose/admin/rendered-unit content back, so every
@@ -1066,6 +1170,8 @@ def test_check_passes_clean_when_deployed_matches_repo(tmp_path: Path) -> None:
 case "$*" in
   *docker-compose.env.yml*) cat "$REPO_ENV_COMPOSE" ;;
   *docker-compose.admin.yml*) cat "$REPO_ADMIN_COMPOSE" ;;
+  *docker-compose.caddy.yml*) cat "$REPO_CADDY_COMPOSE" ;;
+  *Caddyfile*) cat "$REPO_CADDYFILE" ;;
   *.service*) cat "$RENDERED_UNIT" ;;
 esac
 exit 0
@@ -1078,6 +1184,8 @@ exit 0
         f'render_unit prod > "{unit_file}"; '
         f'export REPO_ENV_COMPOSE="$SERVICE_DIR/docker-compose.env.yml"; '
         f'export REPO_ADMIN_COMPOSE="$SERVICE_DIR/docker-compose.admin.yml"; '
+        f'export REPO_CADDY_COMPOSE="$SERVICE_DIR/docker-compose.caddy.yml"; '
+        f'export REPO_CADDYFILE="$SERVICE_DIR/Caddyfile"; '
         f'export RENDERED_UNIT="{unit_file}"; '
         "converge_check prod"
     )

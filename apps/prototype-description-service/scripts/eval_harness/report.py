@@ -16,6 +16,7 @@ from __future__ import annotations
 import copy
 import json
 import math
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from enum import StrEnum
 from typing import Any
@@ -680,7 +681,18 @@ def score_run_record(
         "model": _model_provenance(run_record["items"]),
     }
 
-    rubric_images = sum(1 for e in manifest_entries if e.get("must_right") or e.get("easy_wrong"))
+    # Vacuity is per-rubric, not OR'd: emptying only must_right while easy_wrong
+    # remains must still trip the empty-rubric gate (VLM-6 S2A F1-1 / r08116b50).
+    must_right_defined_images = sum(1 for e in manifest_entries if e.get("must_right"))
+    easy_wrong_defined_images = sum(1 for e in manifest_entries if e.get("easy_wrong"))
+
+    # Media-id multiset coverage: fetch --limit N yields a partial run-record whose
+    # provenance still stamps the full-corpus fetch sha. counts.total alone is
+    # self-referential (scored=N/N) and never compared to the manifest (F1-2).
+    manifest_media_ids = Counter(int(e["media_id"]) for e in manifest_entries)
+    record_media_ids = Counter(int(item["media_id"]) for item in run_record["items"])
+    media_id_missing = int(sum((manifest_media_ids - record_media_ids).values()))
+    media_id_extra = int(sum((record_media_ids - manifest_media_ids).values()))
 
     def _quality_block(scores: list[CaptionScores], band: tuple[int, int]) -> dict[str, Any]:
         duplication = [s.context_duplication_ratio for s in scores if s.context_duplication_ratio is not None]
@@ -706,13 +718,17 @@ def score_run_record(
             "total": len(run_record["items"]),
             "scored": len(per_image),
             "failed": len(failures),
+            "manifest_entries": len(manifest_entries),
+            "media_id_missing": media_id_missing,
+            "media_id_extra": media_id_extra,
         },
         "caption": {
             "insertion_rate": insertion_rate(caption_scores),
             "name_precision": name_precision(caption_scores),
             "wrong_name_image_rate": wrong_name_image_rate(caption_scores),
             "must_right_failed_images": sum(1 for s in caption_scores if not s.must_right_pass),
-            "must_right_defined_images": rubric_images,  # 0 => hard gate vacuous (S1-02)
+            "must_right_defined_images": must_right_defined_images,  # 0 => Must-Right gate vacuous
+            "easy_wrong_defined_images": easy_wrong_defined_images,  # 0 => Easy-Wrong trap vacuous
             "policy_violations": sum(1 for s in caption_scores if s.policy_violation),
             "wrong_name_images": sum(1 for s in caption_scores if s.named_wrong_person),
             "mean_gated_score": (round(sum(gated_values) / len(gated_values), 4) if gated_values else None),
@@ -895,8 +911,10 @@ def _markdown(scored: dict[str, Any]) -> str:
             f"(source run: `{source.get('path', 'unknown')}` sha256 `{source.get('sha256', 'unknown')}`); "
             "no image was sent — NOT comparable to image-grounded runs."
         )
-    if cap["must_right_defined_images"] == 0:
-        lines.append("- ⚠ no Must-Right/Easy-Wrong rubric entries in the corpus — the caption hard gate is vacuous.")
+    if cap.get("must_right_defined_images", 0) == 0:
+        lines.append("- ⚠ no Must-Right rubric entries in the corpus — the caption hard gate is vacuous.")
+    if cap.get("easy_wrong_defined_images", 0) == 0:
+        lines.append("- ⚠ no Easy-Wrong rubric entries in the corpus — the wrong-name trap is vacuous.")
     eval_mode = scored.get("eval_mode", "standard")
     if eval_mode != "standard":
         lines.append(
@@ -935,7 +953,8 @@ def _markdown(scored: dict[str, Any]) -> str:
         f"(wrong-name images: {cap.get('wrong_name_images', 0)}, "
         f"rate: {_fmt(cap.get('wrong_name_image_rate'))})",
         f"- Must-Right failed images (hard gate): {cap['must_right_failed_images']} "
-        f"(rubric-defined images: {cap['must_right_defined_images']})",
+        f"(must_right-defined images: {cap['must_right_defined_images']}; "
+        f"easy_wrong-defined images: {cap.get('easy_wrong_defined_images')})",
         f"- policy violations: {cap['policy_violations']}",
         f"- mean gated score: {_fmt(cap['mean_gated_score'])}",
     ]

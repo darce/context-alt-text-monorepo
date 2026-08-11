@@ -118,7 +118,14 @@ def _manifest_entries() -> list[dict]:
 
 def test_score_run_record_shapes():
     scored = score_run_record(_run_record(), _manifest_entries())
-    assert scored["counts"] == {"total": 3, "scored": 2, "failed": 1}
+    assert scored["counts"] == {
+        "total": 3,
+        "scored": 2,
+        "failed": 1,
+        "manifest_entries": 3,
+        "media_id_missing": 0,
+        "media_id_extra": 0,
+    }
     assert scored["caption"]["insertion_rate"] == pytest.approx(0.5)
     ident = scored["faces"]["identification"]
     assert ident["wrong_names"] == [["mock_images/bob-beach.jpg", "Alice Example"]]
@@ -297,10 +304,30 @@ def test_missing_provenance_rejected():  # S3-04 malformed-doc guard
 
 def test_rubric_defined_images_surfaced():  # S1-02
     scored = score_run_record(_run_record(), _manifest_entries())
+    # must_right and easy_wrong are counted independently (F1-1); alice-pool alone
+    # has must_right, bob-beach has neither (see _manifest_entries fixture).
     assert scored["caption"]["must_right_defined_images"] == 1  # only alice-pool has must_right
+    assert "easy_wrong_defined_images" in scored["caption"]
     empty = [{**e, "must_right": [], "easy_wrong": []} for e in _manifest_entries()]
     scored_empty = score_run_record(_run_record(), empty)
     assert scored_empty["caption"]["must_right_defined_images"] == 0
+    assert scored_empty["caption"]["easy_wrong_defined_images"] == 0
+
+
+def test_media_id_multiset_coverage_counts():  # VLM-6 S2A F1-2
+    """Partial run-record against full manifest reports missing media_id count."""
+    entries = _manifest_entries()
+    record = _run_record()
+    # Drop second item → one manifest media_id missing from the record multiset.
+    record = {**record, "items": record["items"][:1]}
+    scored = score_run_record(record, entries)
+    assert scored["counts"]["manifest_entries"] == len(entries)
+    assert scored["counts"]["media_id_missing"] == len(entries) - 1
+    assert scored["counts"]["media_id_extra"] == 0
+    # Full coverage → zeros.
+    full = score_run_record(_run_record(), entries)
+    assert full["counts"]["media_id_missing"] == 0
+    assert full["counts"]["media_id_extra"] == 0
 
 
 def test_all_items_failed_aggregate_paths():  # S3-08

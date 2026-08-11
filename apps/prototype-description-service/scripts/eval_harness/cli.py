@@ -703,6 +703,19 @@ def _cmd_score(args: argparse.Namespace) -> None:
             f"score failed-items gate: {failed} item(s) not scored (see failures[] in {json_path}); "
             "refusing to treat a partial corpus as full eval evidence"
         )
+    # Corpus truncation via partial run-record (fetch --limit N): media-id multiset
+    # must match the score-time manifest. counts.total alone is self-referential
+    # (scored=5/5) and previously exited 0 with a full-corpus fetch sha (F1-2 / r08116b50).
+    media_id_missing = int(scored.get("counts", {}).get("media_id_missing") or 0)
+    media_id_extra = int(scored.get("counts", {}).get("media_id_extra") or 0)
+    if media_id_missing or media_id_extra:
+        manifest_n = int(scored.get("counts", {}).get("manifest_entries") or 0)
+        record_n = int(scored.get("counts", {}).get("total") or 0)
+        sys.exit(
+            f"score truncation gate: run-record media-id multiset differs from manifest "
+            f"(missing={media_id_missing}, extra={media_id_extra}; "
+            f"record_items={record_n}, manifest_entries={manifest_n}; see {json_path})"
+        )
     # Corpus truncation / post-fetch edit: score-time manifest sha must match the
     # fetch-time stamp on the run record. A truncated 37→5 corpus with a stale
     # full-corpus fetch sha previously exited 0 (adversarial r0811e7f1).
@@ -711,13 +724,20 @@ def _cmd_score(args: argparse.Namespace) -> None:
             f"score manifest-mismatch gate: score_manifest_sha256 differs from fetch-time "
             f"manifest_sha256 — corpus truncation or post-fetch edit (see {json_path})"
         )
-    # Empty rubric: Must-Right/Easy-Wrong absent across the corpus makes the
-    # caption hard gate vacuous. A warning is not a gate (adversarial r0811e7f1).
+    # Empty rubric: Must-Right and Easy-Wrong vacuity are independent. Emptying
+    # only must_right while easy_wrong remains used to leave the OR'd counter
+    # non-zero and exit 0 (F1-1 / r08116b50). A warning is not a gate.
     must_right_defined = int(scored.get("caption", {}).get("must_right_defined_images") or 0)
+    easy_wrong_defined = int(scored.get("caption", {}).get("easy_wrong_defined_images") or 0)
     if must_right_defined == 0:
         sys.exit(
-            f"score empty-rubric gate: golden corpus defines no Must-Right/Easy-Wrong "
-            f"rubric entries; caption hard gate is vacuous (see {json_path})"
+            f"score empty-rubric gate: must_right is vacuous corpus-wide "
+            f"(must_right_defined_images=0); caption hard gate is vacuous (see {json_path})"
+        )
+    if easy_wrong_defined == 0:
+        sys.exit(
+            f"score empty-rubric gate: easy_wrong is vacuous corpus-wide "
+            f"(easy_wrong_defined_images=0); wrong-name trap is vacuous (see {json_path})"
         )
     # Caption hard-gate collapse: any Must-Right miss zeroes that image; a run
     # that still exits 0 with every caption corrupted is a false green.

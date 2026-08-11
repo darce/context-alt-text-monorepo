@@ -201,8 +201,19 @@ def test_resolve_snapshot_dir_hub_layout(gate: ModuleType, tmp_path: Path) -> No
 
 
 def test_main_skips_non_local_cpu_profile(gate: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    """D7: seeded / non-Florence adapters skip even on the VLM image."""
     monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "seeded")
-    # Ensure DescriptionSettings re-reads env (frozen model is built per call).
+    monkeypatch.setenv("ACX_IMAGE_VARIANT", "vlm")
+    code = gate.main([])
+    assert code == gate.EXIT_OK
+
+
+def test_main_skips_gpu_qwen_on_vlm_image(
+    gate: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D7: gpu_qwen30b must not demand the Florence pin (set -eu boot killer)."""
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "gpu_qwen30b")
+    monkeypatch.setenv("ACX_IMAGE_VARIANT", "vlm")
     code = gate.main([])
     assert code == gate.EXIT_OK
 
@@ -212,6 +223,9 @@ def test_main_fails_closed_when_local_cpu_cache_absent(
 ) -> None:
     monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "florence_small")
     monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "empty-hub"))
+    modules = tmp_path / "modules"
+    modules.mkdir()
+    monkeypatch.setenv("HF_MODULES_CACHE", str(modules))
     code = gate.main([])
     assert code == gate.EXIT_FAIL
 
@@ -230,6 +244,51 @@ def test_main_fails_closed_when_local_cpu_cache_absent(
     assert code_ok == gate.EXIT_OK
 
 
+def test_modules_cache_required_present_and_writable(
+    gate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D2: snapshot-only green is not enough — HF_MODULES_CACHE must be writable.
+
+    Before: gate inspected only snapshots/<revision> and reported ok while
+    trust_remote_code imports failed. After: missing/unwritable module cache
+    fails closed; a present writable dir (e.g. private tmpfs) passes.
+    """
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "florence_small")
+    hub = tmp_path / "hub"
+    monkeypatch.setenv("HF_HUB_CACHE", str(hub))
+    monkeypatch.delenv("HF_MODULES_CACHE", raising=False)
+
+    from scene.config.profiles import DescriptionProfile, get_profile_spec
+
+    spec = get_profile_spec(DescriptionProfile.FLORENCE_SMALL)
+    assert spec.model_id and spec.model_revision
+    snapshot = gate.resolve_snapshot_dir(spec.model_id, spec.model_revision, hub_cache=hub)
+    files = _intact_files()
+    _write_tree(snapshot, files)
+    _write_manifest(gate, snapshot, files)
+
+    # Intact snapshot but no module cache env → fail.
+    assert gate.main([]) == gate.EXIT_FAIL
+
+    # Set path but directory missing → fail.
+    missing = tmp_path / "no-modules"
+    monkeypatch.setenv("HF_MODULES_CACHE", str(missing))
+    assert gate.main([]) == gate.EXIT_FAIL
+
+    # Present + writable → green.
+    modules = tmp_path / "modules"
+    modules.mkdir()
+    monkeypatch.setenv("HF_MODULES_CACHE", str(modules))
+    assert gate.main([]) == gate.EXIT_OK
+
+    # Present but unwritable → fail (simulates read-only mount of module cache).
+    modules.chmod(0o555)
+    try:
+        assert gate.main([]) == gate.EXIT_FAIL
+    finally:
+        modules.chmod(0o755)
+
+
 def test_main_module_invocable_as_python_m(monkeypatch: pytest.MonkeyPatch) -> None:
     """Frozen CLI contract: `python -m scripts.verify_vlm_cache` with no args."""
     import subprocess
@@ -245,4 +304,4 @@ def test_main_module_invocable_as_python_m(monkeypatch: pytest.MonkeyPatch) -> N
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "not LOCAL_CPU" in result.stdout or "skipped" in result.stdout.lower()
+    assert "skipped" in result.stdout.lower() or "does not need" in result.stdout.lower()

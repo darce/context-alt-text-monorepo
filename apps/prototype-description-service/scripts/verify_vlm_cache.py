@@ -4,12 +4,13 @@ Invoked as ``python -m scripts.verify_vlm_cache`` with no required arguments
 (docker-entrypoint runs this when ``ACX_IMAGE_VARIANT`` is the VLM image).
 
 When the gate runs, exit 0 only when the pinned HF snapshot under HF_HOME
-matches its integrity manifest exactly **and** trust_remote_code modeling
-``*.py`` files are present. Skipping is the narrow case: recognition image
-with a non-LOCAL_CPU profile (no VLM weights expected). On the VLM image the
-gate always verifies — if the active profile is not LOCAL_CPU it still checks
-the default Florence pin (``florence_small``), so a boot with the default
-``seeded`` adapter cannot silently skip an empty weight mount.
+matches its integrity manifest exactly, trust_remote_code modeling ``*.py``
+files are present, **and** the HuggingFace module cache
+(``HF_MODULES_CACHE``) is present and writable. Skipping is the case where
+the active profile is not a LOCAL_CPU adapter that needs offline weights
+(e.g. ``seeded``, ``gpu_qwen30b``) — those must boot without a Florence pin.
+Only profiles that actually load Florence (``adapter_kind=LOCAL_CPU`` with a
+pinned model) run the snapshot + module-cache checks.
 
 Manifest location (choice, load-bearing)
 ----------------------------------------
@@ -32,7 +33,8 @@ Failure modes (each yields a distinct non-zero message)
 -------------------------------------------------------
 snapshot directory missing; directory empty; manifest missing; listed file
 missing; sha256 mismatch; extra unlisted file present in the snapshot;
-no trust_remote_code ``*.py`` modeling files (safetensors-only seed).
+no trust_remote_code ``*.py`` modeling files (safetensors-only seed);
+``HF_MODULES_CACHE`` unset/missing/unwritable (trust_remote_code import path).
 The extra-file case is the RB-02 attack surface: an attacker ADDS a .py
 without modifying an existing entry.
 
@@ -82,9 +84,10 @@ class ImageVariant(StrEnum):
 IMAGE_VARIANT_ENV = "ACX_IMAGE_VARIANT"
 DEFAULT_IMAGE_VARIANT = ImageVariant.RECOGNITION
 
-# Default LOCAL_CPU pin verified on the VLM image when the active profile is
-# not itself LOCAL_CPU (so seeded/default boot still fails closed on empty cache).
-DEFAULT_VLM_VERIFY_PROFILE = "florence_small"
+# Env key for the HF trust_remote_code module cache (Lane A sets this in-image).
+# Never hardcode the path — read it from the environment so the gate stays
+# aligned with the runtime layout (private writable tmpfs vs read-only weights).
+HF_MODULES_CACHE_ENV = "HF_MODULES_CACHE"
 
 
 class CacheIntegrityError(RuntimeError):
@@ -127,6 +130,47 @@ def model_cache_dirname(model_id: str) -> str:
 def resolve_snapshot_dir(model_id: str, model_revision: str, *, hub_cache: Path | None = None) -> Path:
     root = hub_cache if hub_cache is not None else resolve_hf_hub_cache()
     return root / model_cache_dirname(model_id) / "snapshots" / model_revision
+
+
+def resolve_modules_cache() -> Path | None:
+    """Return the configured HF modules cache path, or None when unset/blank."""
+    raw = os.environ.get(HF_MODULES_CACHE_ENV)
+    if raw is None or not str(raw).strip():
+        return None
+    return Path(str(raw).strip())
+
+
+def assert_modules_cache_ready() -> None:
+    """Fail closed unless ``HF_MODULES_CACHE`` exists and is writable.
+
+    ``trust_remote_code=True`` imports modeling modules from this cache, not
+    from the weight snapshot. A green snapshot check with a missing or
+    read-only module cache is the D2 outage: gate says ok, then inference dies.
+    Path is always read from the environment — never hardcoded (XL-2 / D2).
+    """
+    modules = resolve_modules_cache()
+    if modules is None:
+        raise CacheIntegrityError(
+            f"VLM cache gate failed: {HF_MODULES_CACHE_ENV} is unset or blank. "
+            "Florence trust_remote_code imports require a writable module cache "
+            f"(set {HF_MODULES_CACHE_ENV} in the image/runtime). {_seed_hint()}"
+        )
+    if not modules.is_dir():
+        raise CacheIntegrityError(
+            f"VLM cache gate failed: module cache directory missing: {modules} "
+            f"({HF_MODULES_CACHE_ENV}). {_seed_hint()}"
+        )
+    probe = modules / ".acx_modules_cache_write_probe"
+    try:
+        probe.write_text("ok\n", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+    except OSError as exc:
+        raise CacheIntegrityError(
+            f"VLM cache gate failed: module cache is not writable: {modules} "
+            f"({HF_MODULES_CACHE_ENV}): {exc}. "
+            "Weights may be read-only; the module cache must remain writable "
+            f"for trust_remote_code imports. {_seed_hint()}"
+        ) from exc
 
 
 def sha256_file(path: Path) -> str:
@@ -303,13 +347,15 @@ def verify_snapshot(snapshot_dir: Path, *, manifest_path: Path | None = None) ->
 def resolve_verify_spec():
     """Resolve which ProfileSpec the gate must verify, or (None, skip_reason).
 
-    Order:
-    1. Active profile is LOCAL_CPU → verify that pin.
-    2. Image variant is VLM → verify the default Florence pin even when the
-       active adapter is seeded/remote (boot must still fail closed on empty cache).
-    3. Else skip (narrow case: recognition image, no VLM weights expected).
+    Only profiles that actually need the Florence offline pin run the gate:
+
+    1. Active profile is LOCAL_CPU → verify that profile's pin (+ module cache).
+    2. Else skip — ``seeded``, ``gpu_qwen30b``, and other non-Florence adapters
+       must boot on the VLM image without demanding a Florence snapshot (D7).
+       Forcing ``florence_small`` on every VLM boot made non-Florence adapters
+       exit 1 under ``set -eu`` and kill the container.
     """
-    from scene.config.profiles import DescriptionProfile, get_profile_spec
+    from scene.config.profiles import get_profile_spec
     from scene.config.settings import DescriptionSettings
     from scene.domain.description import DescriptionAdapterKind
 
@@ -319,14 +365,10 @@ def resolve_verify_spec():
         return spec, None
 
     variant = resolve_image_variant_label()
-    if variant == ImageVariant.VLM.value:
-        default_spec = get_profile_spec(DescriptionProfile(DEFAULT_VLM_VERIFY_PROFILE))
-        return default_spec, None
-
     return None, (
         f"VLM cache gate skipped: profile={settings.profile.value!r} "
-        f"adapter_kind={spec.adapter_kind.value!r} is not LOCAL_CPU "
-        f"and image_variant={variant!r} is not {ImageVariant.VLM.value!r}"
+        f"adapter_kind={spec.adapter_kind.value!r} does not need the Florence "
+        f"offline pin (image_variant={variant!r})"
     )
 
 
@@ -367,13 +409,18 @@ def run_gate(*, write_manifest_mode: bool = False, hub_cache: Path | None = None
             print(f"Wrote integrity manifest: {out} ({len(json.loads(out.read_text()))} files)")
             return EXIT_OK
         verify_snapshot(snapshot)
+        # Module cache is required for trust_remote_code imports at inference
+        # time; check after snapshot integrity so failure modes stay distinct.
+        assert_modules_cache_ready()
     except CacheIntegrityError as exc:
         print(str(exc), file=sys.stderr)
         return EXIT_FAIL
 
+    modules = resolve_modules_cache()
     print(
         f"VLM cache gate ok: {snapshot} "
-        f"(profile={spec.profile.value} image_variant={resolve_image_variant_label()})"
+        f"(profile={spec.profile.value} image_variant={resolve_image_variant_label()} "
+        f"modules_cache={modules})"
     )
     return EXIT_OK
 
@@ -381,10 +428,11 @@ def run_gate(*, write_manifest_mode: bool = False, hub_cache: Path | None = None
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Fail-closed integrity gate for the Florence LOCAL_CPU snapshot under HF_HOME. "
-            "On the VLM image, always verifies (default florence_small pin when profile "
-            "is not LOCAL_CPU). No args: verify. --write-manifest: certify current disk "
-            "contents (trust-establishing)."
+            "Fail-closed integrity gate for the Florence LOCAL_CPU snapshot under HF_HOME "
+            "and the writable HF_MODULES_CACHE used by trust_remote_code. "
+            "Runs only when the active profile is LOCAL_CPU (non-Florence adapters skip). "
+            "No args: verify. --write-manifest: certify current disk contents "
+            "(trust-establishing)."
         )
     )
     parser.add_argument(

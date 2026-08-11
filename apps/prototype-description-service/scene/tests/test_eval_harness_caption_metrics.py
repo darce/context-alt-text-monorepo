@@ -4,7 +4,9 @@ import pytest
 
 from scripts.eval_harness.caption_metrics import (
     CaptionScores,
+    aggregate_gated_scores,
     insertion_rate,
+    mean_gated_score,
     name_precision,
     score_caption,
     wrong_name_image_rate,
@@ -156,6 +158,62 @@ def test_insertion_rate_excludes_policy_disabled():
 def test_insertion_rate_none_when_no_eligible_identities():
     scores = [score_caption("A glacier.", **_entry(present_identities=[], must_right=[]))]
     assert insertion_rate(scores) is None
+
+
+# --- VLM6-R4-01: vacuous gated_score must not be a perfect win (UXR-07, EXP-06) ---
+
+
+def test_empty_identity_set_gated_score_is_not_applicable():
+    """Empty present_identities ⇒ metric undefined (None), never a vacuous 1.0.
+
+    Twyman's-law control (EXP-06): a garbage caption with no identity rubric must
+    not score as perfect. UXR-07: a rate with zero denominator is undefined.
+    """
+    scores = score_caption(
+        "A totally unrelated garbage caption about nothing at all whatsoever here.",
+        present_identities=[],
+        must_right=[],
+        easy_wrong=[],
+        recognition_enabled=True,
+    )
+    assert scores.insertion_eligible is True
+    assert scores.inserted_identities == []
+    assert scores.missing_identities == []
+    assert scores.gated_score is None  # not 1.0
+
+
+def test_empty_identity_set_hard_gate_failures_still_zero():
+    """Wrong-name / policy failures remain 0.0 even when identity denominator is empty."""
+    wrong = score_caption(
+        "Mallory Trap by a lake.",
+        present_identities=[],
+        must_right=[],
+        easy_wrong=["Mallory Trap"],
+        recognition_enabled=True,
+    )
+    assert wrong.gated_score == 0.0
+
+
+def test_aggregate_gated_scores_excludes_not_applicable_and_reports_count():
+    """Aggregates must drop N/A rows from the mean and surface how many were excluded."""
+    perfect = score_caption(CAPTION, **_entry())  # gated 1.0
+    miss = score_caption("A person by a lake.", **_entry())  # gated 0.0 (must-right fail)
+    na_empty = score_caption(
+        "Generic filler with no relationship to any image.",
+        **_entry(present_identities=[], must_right=[]),
+    )  # gated None (VLM6-R4-01)
+    na_policy_clean = score_caption(
+        "A person stands by a lake.",
+        **_entry(recognition_enabled=False, must_right=[]),
+    )  # gated None (VLMFIX-S3-04)
+
+    agg = aggregate_gated_scores([perfect, miss, na_empty, na_policy_clean])
+    assert agg.scored == 2
+    assert agg.excluded == 2
+    assert agg.mean == pytest.approx(0.5)
+    # Vacuous N/A rows must not inflate the mean toward 1.0
+    assert mean_gated_score([na_empty, na_empty]) is None
+    assert mean_gated_score([perfect, na_empty]) == pytest.approx(1.0)
 
 
 # --- ALTQ-1: wrong-name trap + roster hallucination (hard gates) ---

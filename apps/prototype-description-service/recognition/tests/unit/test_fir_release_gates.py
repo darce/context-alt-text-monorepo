@@ -33,6 +33,7 @@ from recognition.tests.dockerfile_stages import (
     DEFAULT_RUNTIME_STAGE,
     _PROJECT_EXTRAS_RE,
     dockerfile_stages,
+    effective_stage_body,
     unlocked_project_extra_installs,
 )
 from recognition.tests.unit import face_pipeline_support as fps
@@ -75,16 +76,23 @@ def _builder_body() -> str:
 
 
 def _runtime_body() -> str:
+    """Effective runtime body (built-image claims; follows FROM inheritance)."""
     stages = _dockerfile_stages()
     assert DEFAULT_RUNTIME_STAGE in stages, (
         f"Dockerfile missing {DEFAULT_RUNTIME_STAGE!r} stage; have {list(stages)}"
     )
-    return stages[DEFAULT_RUNTIME_STAGE]
+    return effective_stage_body(_DOCKERFILE, DEFAULT_RUNTIME_STAGE)
 
 
 def _default_image_stage_text() -> str:
+    """Effective bodies for the default image path (builder + runtime)."""
     stages = _dockerfile_stages()
-    return "\n".join(stages[name] for name in _DEFAULT_IMAGE_STAGES if name in stages)
+    parts: list[str] = []
+    for name in _DEFAULT_IMAGE_STAGES:
+        if name not in stages:
+            continue
+        parts.append(effective_stage_body(_DOCKERFILE, name))
+    return "\n".join(parts)
 
 
 def _parity_workflow_path() -> Path:
@@ -157,7 +165,11 @@ def test_dockerfile_rejects_unlocked_pip_bench_dependency_install() -> None:
     offenders: list[str] = []
     stages = _dockerfile_stages()
     for stage in _DEFAULT_IMAGE_STAGES:
-        body = stages.get(stage, "")
+        if stage not in stages:
+            continue
+        # Effective body: an unlocked install inherited from a parent stage is
+        # indistinguishable in the built image from one declared directly.
+        body = effective_stage_body(_DOCKERFILE, stage)
         for hit in unlocked_project_extra_installs(body):
             offenders.append(f"{stage}: {hit}")
     assert not offenders, (

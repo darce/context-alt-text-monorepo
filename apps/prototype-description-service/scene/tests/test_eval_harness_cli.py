@@ -1693,6 +1693,192 @@ def test_cli_score_determinism_resolves_relative_paths_from_foreign_cwd(
     assert "determinism check passed [score]" in out
 
 
+# --- VLM-6 S2A F2e: C-05 seed regime naming + D-05 seed-dimension proof ---
+
+
+def test_parent_hash_seed_regime_names_fixed_and_randomized(monkeypatch):
+    """C-05: parent regime distinguishes fixed:<n> from randomized (OBS-04)."""
+    from scripts.eval_harness import cli as cli_mod
+
+    monkeypatch.setenv("PYTHONHASHSEED", "0")
+    label, fixed = cli_mod._parent_hash_seed_regime()
+    assert label == "fixed:0"
+    assert fixed == "0"
+
+    monkeypatch.setenv("PYTHONHASHSEED", "42")
+    label, fixed = cli_mod._parent_hash_seed_regime()
+    assert label == "fixed:42"
+    assert fixed == "42"
+
+    monkeypatch.delenv("PYTHONHASHSEED", raising=False)
+    # Ambient pytest process typically has hash_randomization on; if not, the
+    # helper still returns a named fixed:0 rather than an empty claim.
+    label, fixed = cli_mod._parent_hash_seed_regime()
+    assert label in ("randomized", "fixed:0")
+    if label == "randomized":
+        assert fixed is None
+    else:
+        assert fixed == "0"
+
+
+def test_resolve_determinism_child_seeds_substitutes_parent_collision():
+    """C-05: PYTHONHASHSEED=0 must not silently drop a child configuration.
+
+    Pre-fix: child set (0,1,42) + parent fixed:0 → four configs collapse to
+    three (seed-0 child duplicates baseline). Post-fix: substitute so children
+    remain three distinct seeds, none equal to the parent.
+    """
+    from scripts.eval_harness import cli as cli_mod
+
+    # No parent fixed → default set unchanged.
+    assert cli_mod._resolve_determinism_child_seeds(None) == ("0", "1", "42")
+
+    # Parent fixed at 0 collides with first child → substitute lowest free int.
+    resolved = cli_mod._resolve_determinism_child_seeds("0")
+    assert resolved == ("2", "1", "42")
+    assert "0" not in resolved
+    assert len(set(resolved)) == 3
+
+    # Parent fixed at 1 collides mid-set.
+    resolved = cli_mod._resolve_determinism_child_seeds("1")
+    assert resolved == ("0", "2", "42")
+    assert "1" not in resolved
+    assert len(set(resolved)) == 3
+
+
+def test_cli_score_determinism_pass_names_baseline_and_child_seeds(
+    tmp_path, monkeypatch, capsys
+):
+    """C-05 / OBS-04: pass line names parent regime and exact child seed set."""
+    from scripts.eval_harness import cli as cli_mod
+
+    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    # Force a fixed parent seed so the claim is deterministic in CI.
+    monkeypatch.setenv("PYTHONHASHSEED", "7")
+    cli_mod._check_score_determinism_cross_process(record_path, str(manifest_path))
+    out = capsys.readouterr().out
+    assert "determinism check passed [score]" in out
+    assert "baseline=fixed:7" in out
+    assert "child_seeds=0,1,42" in out
+
+
+def test_cli_score_determinism_collision_substitutes_seed_zero(
+    tmp_path, monkeypatch, capsys
+):
+    """C-05 collision: parent PYTHONHASHSEED=0 → child set substitutes 0→2.
+
+    Pre-change behaviour: child seeds (0,1,42) with parent fixed:0 silently
+    tested only three distinct configs (seed-0 child == baseline). Post-change
+    pass line must claim child_seeds=2,1,42 (or equivalent without 0).
+    """
+    from scripts.eval_harness import cli as cli_mod
+
+    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PYTHONHASHSEED", "0")
+    cli_mod._check_score_determinism_cross_process(record_path, str(manifest_path))
+    out = capsys.readouterr().out
+    assert "determinism check passed [score]" in out
+    assert "baseline=fixed:0" in out
+    assert "child_seeds=2,1,42" in out
+    # Must not claim the colliding seed as a distinct child configuration.
+    assert "child_seeds=0,1,42" not in out
+
+
+def test_cli_score_determinism_fail_artifact_carries_baseline_regime(
+    tmp_path, monkeypatch
+):
+    """C-05: FAILED message + mismatch artifact name baseline + child seeds."""
+    from scripts.eval_harness import cli as cli_mod
+
+    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PYTHONHASHSEED", "0")
+
+    real_run = cli_mod.subprocess.run
+
+    def _mutate_then_run(*args, **kwargs):
+        payload = json.loads(record_path.read_text())
+        item = payload["items"][0]
+        item["describe"] = {
+            "alt_text_draft": "MUTATED CAPTION FOR REGIME ARTIFACT",
+            "visual_facts": {"objects": ["regime-probe"]},
+        }
+        record_path.write_text(json.dumps(payload))
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(cli_mod.subprocess, "run", _mutate_then_run)
+    with pytest.raises(SystemExit) as exc:
+        cli_mod._check_score_determinism_cross_process(record_path, str(manifest_path))
+    msg = str(exc.value)
+    assert "determinism check FAILED [score]" in msg
+    assert "baseline=fixed:0" in msg
+    assert "child_seeds=2,1,42" in msg
+    assert "determinism check ERROR" not in msg
+
+    artifacts = list(tmp_path.glob("determinism-mismatch-score-seed*.diff.txt"))
+    assert artifacts, "expected mismatch artifact beside run record"
+    body = artifacts[0].read_text()
+    assert "baseline_regime=fixed:0" in body
+    assert "child_seeds=2,1,42" in body
+    # Child seed that fired is recorded and is not the colliding parent seed.
+    assert "PYTHONHASHSEED=" in body
+    assert "PYTHONHASHSEED=0\n" not in body
+
+
+def test_determinism_gate_detects_hash_order_dependence(tmp_path):
+    """D-05 / TEST-15: gate goes red because of PYTHONHASHSEED, not anchor mutation.
+
+    Injects a set-repr into the compared documents. Set iteration order varies
+    with PYTHONHASHSEED, so parent baseline and seed-varied children diverge
+    without mutating any run-record on disk. Proves the seed dimension is
+    load-bearing for the gate substrate.
+    """
+    from scripts.eval_harness import cli as cli_mod
+    from scripts.eval_harness.report import build_reports
+
+    # Large set → hash-order divergence across seeds is effectively certain.
+    probe_src = "seed-probe-" + "".join(chr(c) for c in range(ord("a"), ord("z") + 1))
+    probe = set(probe_src)
+    base = "SEED_PROBE:" + repr(probe)
+    reports_file = build_reports.__code__.co_filename
+    # Child rebuilds the same set under its pinned PYTHONHASHSEED; repr order
+    # differs from the parent process unless seeds coincide (C-05 substitution
+    # keeps children distinct from a fixed parent; randomized parent still
+    # diverges from fixed child seeds with overwhelming probability).
+    script = (
+        "import json,sys; "
+        "from pathlib import Path; "
+        "from scripts.eval_harness.report import build_reports; "
+        f"probe=set({probe_src!r}); "
+        "doc='SEED_PROBE:'+repr(probe); "
+        "Path(sys.argv[1]).write_text(json.dumps({"
+        "'json':doc,'md':doc,"
+        "'build_reports_file':build_reports.__code__.co_filename}))"
+    )
+    with pytest.raises(SystemExit) as exc:
+        cli_mod._run_determinism_children(
+            script,
+            [],
+            label="score",
+            base_json=base,
+            base_md=base,
+            artifact_dir=tmp_path,
+            expected_build_reports_file=reports_file,
+        )
+    msg = str(exc.value)
+    assert "determinism check FAILED [score]" in msg
+    assert "baseline=" in msg
+    assert "child_seeds=" in msg
+    assert "determinism check ERROR" not in msg
+    artifacts = list(tmp_path.glob("determinism-mismatch-score-seed*.diff.txt"))
+    assert artifacts, "expected seed-order mismatch artifact"
+    body = artifacts[0].read_text()
+    assert "SEED_PROBE:" in body
+    assert "baseline_regime=" in body
+
+
 # --- VLM-6 S2A item 4: four corruption discrimination guards (TEST-15) ---
 #
 # Adversarial review r0811e7f1 ran these four mutations against

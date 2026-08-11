@@ -201,7 +201,8 @@ RUN printf 'vlm\n' > /app/.image-variant && chmod 0444 /app/.image-variant
 # --no-deps: runtime deps come only from the locked uv.lock sync above.
 # --no-build-isolation: PEP 517 must not pull setuptools/etc. from the network
 # outside the lock (FINALB-05 / DEP-01/02). Use the venv interpreter explicitly.
-RUN /opt/venv/bin/pip install --no-cache-dir -e . --no-deps --no-build-isolation
+RUN --mount=type=bind,from=uv,source=/uv,target=/usr/local/bin/uv \
+    uv pip install --python /opt/venv/bin/python --no-cache-dir -e . --no-deps --no-build-isolation
 
 # Offline runtime: cannot self-seed; network fetch blocked if gate is bypassed.
 ENV HF_HUB_OFFLINE=1
@@ -234,7 +235,8 @@ RUN printf 'recognition\n' > /app/.image-variant && chmod 0444 /app/.image-varia
 # --no-deps: runtime deps come only from the locked uv.lock sync above.
 # --no-build-isolation: PEP 517 must not pull setuptools/etc. from the network
 # outside the lock (FINALB-05 / DEP-01/02). Use the venv interpreter explicitly.
-RUN /opt/venv/bin/pip install --no-cache-dir -e . --no-deps --no-build-isolation
+RUN --mount=type=bind,from=uv,source=/uv,target=/usr/local/bin/uv \
+    uv pip install --python /opt/venv/bin/python --no-cache-dir -e . --no-deps --no-build-isolation
 
 # Drop root for the recognition serving process too (SEC-13 / wave3).
 # WHY same model as runtime-vlm: boot chain (alembic → schema sync → uvicorn)

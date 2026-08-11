@@ -90,6 +90,7 @@ dev = [
 # (Dockerfile installs .[bench] so the incumbent path stays available until FIR-6).
 # Not required for the face_pipeline profile (YuNet+SFace / core deps only).
 bench = [
+    "setuptools>=68.0.0",
     "insightface>=0.7.3,<1.0.0",
     # Not imported by us. insightface -> albumentations -> albucore pulls
     # opencv-python-headless, which unpacks into the SAME top-level cv2/ directory

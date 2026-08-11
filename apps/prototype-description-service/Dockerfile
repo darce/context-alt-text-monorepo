@@ -149,12 +149,8 @@ EXPOSE 8000
 
 # Single boot chain for both images (ORCH-LAUNCH-01-S1-BR-02 / RA-08).
 # POSTGRES_SYNC_DSN is used by Alembic (via db/migrations/env.py).
-# Entrypoint is the sole executable boot chain (script ends with exec uvicorn so
-# it becomes PID 1). Extra argv tokens after the script path are unused at
-# runtime; they exist so test_entrypoint_cmd_chain_modules_are_copied — which
-# still scans the Dockerfile CMD line for the ordered chain — remains green
-# after the chain moved out of an inline `sh -c` string.
-CMD ["/app/scripts/docker-entrypoint.sh", "alembic", "python -m scripts.sync_identity_schema", "python -m scripts.verify_identity_schema", "uvicorn api.main:app"]
+# Full boot chain lives in scripts/docker-entrypoint.sh; CMD is deliberately bare.
+CMD ["/app/scripts/docker-entrypoint.sh"]
 
 # ---------------------------------------------------------------------------
 # Stage 2a: Runtime VLM — recognition path + torch/transformers (OPTIONAL)

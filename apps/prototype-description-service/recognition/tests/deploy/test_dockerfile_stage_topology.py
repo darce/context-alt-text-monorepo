@@ -18,6 +18,7 @@ asserting the current tree is clean.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -66,7 +67,8 @@ def test_default_build_target_is_the_torch_free_runtime() -> None:
         f"last stage is {last!r}, so a bare `docker build` would build it. "
         f"{DEFAULT_STAGE!r} must stay last or production ships the VLM image."
     )
-    assert list(stages)[-1] == DEFAULT_STAGE
+    # Do not use list(stages)[-1]: named-only order is not BuildKit's default
+    # when an anonymous final FROM exists (D5.1 / A-13).
 
 
 def test_default_builder_does_not_install_the_vlm_extra() -> None:
@@ -93,16 +95,26 @@ def test_vlm_stage_still_exists_and_is_reachable_by_target() -> None:
 
 
 def test_each_runtime_stage_copies_its_matching_builder() -> None:
+    """Parsed COPY --from deps, not raw substring (A-11)."""
     stages = _dockerfile_stages()
-    assert "COPY --from=builder /opt/venv" in stages[DEFAULT_STAGE]
-    assert "COPY --from=builder-vlm /opt/venv" in stages[VLM_STAGE]
+    assert copy_from_dep_stages(stages[DEFAULT_STAGE]) == ["builder"]
+    assert copy_from_dep_stages(stages[VLM_STAGE]) == ["builder-vlm"]
 
 
 def test_runtime_stages_are_distinguishable_at_runtime() -> None:
     """RA-07: an operator must be able to tell which image is running."""
     stages = _dockerfile_stages()
-    assert "ACX_IMAGE_VARIANT=recognition" in stages[DEFAULT_STAGE]
-    assert "ACX_IMAGE_VARIANT=vlm" in stages[VLM_STAGE]
+    # ENV map lookup via active lines (not brittle substring adjacency).
+    def _env_map(body: str) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for ln in body.splitlines():
+            m = re.match(r"^\s*ENV\s+([A-Za-z_][\w]*)=(.+?)\s*$", ln)
+            if m:
+                out[m.group(1)] = m.group(2).strip().strip("'\"")
+        return out
+
+    assert _env_map(stages[DEFAULT_STAGE]).get("ACX_IMAGE_VARIANT") == "recognition"
+    assert _env_map(stages[VLM_STAGE]).get("ACX_IMAGE_VARIANT") == "vlm"
 
 
 # ---- negative: prove each guard bites (TEST-15) --------------------------
@@ -130,12 +142,17 @@ def test_parser_reads_the_synthetic_control(tmp_path: Path) -> None:
 
 
 def test_guard_bites_when_stage_order_is_swapped(tmp_path: Path) -> None:
-    """RC mutation (a): appending runtime-vlm last flips the default target."""
+    """RC mutation (a): appending runtime-vlm last flips the default target.
+
+    Routes through ``default_build_target`` (BuildKit last-stage rule), not
+    ``list(named_stages)[-1]`` which ignores anonymous finals (A-13).
+    """
     swapped = _SYNTHETIC.replace(
         "FROM python:3.12-slim AS runtime-vlm\nCOPY --from=builder-vlm /opt/venv /opt/venv\nENV ACX_IMAGE_VARIANT=vlm\n\n",
         "",
     ) + "\nFROM python:3.12-slim AS runtime-vlm\nCOPY --from=builder-vlm /opt/venv /opt/venv\nENV ACX_IMAGE_VARIANT=vlm\n"
-    assert list(_dockerfile_stages(_write(tmp_path, swapped)))[-1] == VLM_STAGE
+    path = _write(tmp_path, swapped)
+    assert default_build_target(path) == VLM_STAGE
 
 
 def test_guard_bites_when_default_builder_gains_the_vlm_extra(tmp_path: Path) -> None:
@@ -577,3 +594,162 @@ def test_d5_empty_dockerfile_raises_not_none(tmp_path: Path) -> None:
 
     anon = _write(tmp_path / "anon", "FROM python:3.12-slim\nRUN true\n")
     assert default_build_target(anon) is None
+
+
+def test_d5_from_as_case_and_quoted_hash_strip() -> None:
+    """A-08: Docker accepts as/As/AS; quote-aware # strip must keep quoted hashes."""
+    for spelling in ("as", "As", "AS"):
+        ref, name = parse_from_instruction(
+            f"FROM python:3.12-slim {spelling} builder"
+        )
+        assert (ref, name) == ("python:3.12-slim", "builder"), spelling
+
+    # Quoted '#' in the image ref must survive; trailing unquoted comment must not.
+    # Naive line.split("#") would truncate the ref before AS and raise.
+    ref, name = parse_from_instruction('FROM "registry.example/app#canary" AS runtime')
+    assert name == "runtime"
+    assert "app#canary" in ref
+    ref, name = parse_from_instruction(
+        "FROM python:3.12-slim AS builder # ship torch-free"
+    )
+    assert (ref, name) == ("python:3.12-slim", "builder")
+
+
+def test_d5_heredoc_instruction_restriction_ignores_env_label(tmp_path: Path) -> None:
+    """W8-VER-02: ENV/LABEL/ARG lines with << must not open a heredoc.
+
+    Use ``ENV MSG=<<EOF`` (non-word char before ``<<``) so the lookbehind half
+    of ``_HEREDOC_OPEN_RE`` still matches — only the instruction-prefix half
+    rejects the line. Widening ``(?:RUN|COPY|ADD)`` to ``.*?`` then swallows
+    the following COPY --from (wave-8 compound-gate rule).
+    """
+    path = _write(
+        tmp_path,
+        "FROM python:3.12-slim AS builder-vlm\n"
+        "RUN uv sync --locked --extra vlm\n"
+        "\n"
+        "FROM python:3.12-slim AS runtime\n"
+        "ENV MSG=<<EOF\n"
+        "LABEL note=<<EOF\n"
+        "ARG FLAG=<<EOF\n"
+        "COPY --from=builder-vlm /opt/venv /opt/venv\n"
+        "ENV ACX_IMAGE_VARIANT=recognition\n",
+    )
+    body = _dockerfile_stages(path)[DEFAULT_STAGE]
+    joined = join_continued_lines(body)
+    assert copy_from_dep_stages(body) == ["builder-vlm"], (
+        f"ENV/LABEL/ARG << must not open heredoc; joined={joined!r}"
+    )
+    # ENV line must remain its own logical instruction (not a heredoc opener).
+    assert any(ln.strip().startswith("ENV MSG=") for ln in joined), joined
+    assert stage_resolves_vlm_extra(path, DEFAULT_STAGE)
+
+
+def test_d5_heredoc_from_line_is_not_stage_boundary(tmp_path: Path) -> None:
+    """G-10: FROM inside RUN <<EOF must not truncate the stage or raise."""
+    path = _write(
+        tmp_path,
+        "FROM python:3.12-slim AS runtime\n"
+        "RUN <<EOF\n"
+        "echo FROM nowhere\n"
+        "FROM nowhere\n"
+        "EOF\n"
+        "USER root\n",
+    )
+    stages = _dockerfile_stages(path)
+    body = stages[DEFAULT_STAGE]
+    assert "USER root" in body, f"trailing USER vanished from stage: {body!r}"
+    assert "FROM nowhere" in body
+    assert list(stages) == [DEFAULT_STAGE]
+
+
+def test_d5_duplicate_stage_name_raises(tmp_path: Path) -> None:
+    """A-09: BuildKit rejects duplicate stage names; parser must too."""
+    path = _write(
+        tmp_path,
+        "FROM python:3.12-slim AS runtime\n"
+        "ENV A=1\n"
+        "\n"
+        "FROM python:3.12-slim AS runtime\n"
+        "ENV B=1\n",
+    )
+    with pytest.raises(DockerfileParseError, match="duplicate stage name"):
+        _dockerfile_stages(path)
+
+
+def test_d5_pip_var_assign_and_sh_lc_wrappers() -> None:
+    """G-08: bare VAR=VALUE and sh -lc wrappers must trip unlocked installs."""
+    var_wrapped = 'RUN PIP_NO_INPUT=1 pip install ".[bench]"'
+    assert unlocked_project_extra_installs(var_wrapped), var_wrapped
+
+    sh_lc = "RUN sh -lc 'pip install \".[bench]\"'"
+    assert unlocked_project_extra_installs(sh_lc), sh_lc
+
+    chained = 'RUN cd /app && FOO=1 pip install ".[bench]"'
+    assert unlocked_project_extra_installs(chained), chained
+
+    # Control: --no-deps still exempts.
+    assert not unlocked_project_extra_installs(
+        'RUN PIP_NO_INPUT=1 pip install --no-deps ".[bench]"'
+    )
+
+
+_TORCH_CONTAMINANT_RE = re.compile(
+    r"(?:^|&&|;|\|)\s*(?:RUN\s+)?"
+    r"(?:(?:env(?:\s+[A-Za-z_][\w]*=\S+)+\s+)|(?:[A-Za-z_][\w]*=\S+\s+)*)?"
+    r"(?:"
+    r"(?:(?:/[\w./-]+/)?(?:python3?|[\w.-]*python3?)\s+-m\s+)?"
+    r"(?:uv\s+pip\s+install|pip(?:3)?\s+install|uv\s+add)"
+    r"|"
+    r"(?:/[\w./-]+/)?pip(?:3)?\s+install"  # /opt/venv/bin/pip install …
+    r")\b"
+    r"[^\n]*\b(?:torch|transformers|nvidia-[\w-]+|triton)\b",
+    re.IGNORECASE,
+)
+
+
+def _stage_installs_torch_stack(stage_text: str) -> list[str]:
+    """Install fragments that name torch/transformers/nvidia-/triton (G-09)."""
+    hits: list[str] = []
+    for ln in join_continued_lines(stage_text):
+        stripped = ln.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        active = re.sub(r"\s+#.*$", "", stripped)  # crude trailing comment drop
+        if _TORCH_CONTAMINANT_RE.search(active):
+            hits.append(stripped)
+    return hits
+
+
+def test_default_image_path_does_not_install_torch_stack() -> None:
+    """G-09: torch-free default path — not only 'no vlm extra' spelling."""
+    stages = _dockerfile_stages()
+    for name in ("builder", "runtime-base", DEFAULT_STAGE):
+        if name not in stages:
+            continue
+        body = effective_stage_body(DOCKERFILE, name) if name != "builder" else stages[name]
+        hits = _stage_installs_torch_stack(body)
+        assert not hits, (
+            f"{name} must not pip/uv-install torch/transformers/nvidia-/triton; got {hits}"
+        )
+
+
+def test_guard_bites_when_runtime_pip_installs_torch(tmp_path: Path) -> None:
+    """TEST-15: direct torch install on default path is detectable (G-09)."""
+    path = _write(
+        tmp_path,
+        "FROM python:3.12-slim AS builder\n"
+        "RUN uv sync --locked --no-dev --extra bench --no-install-project\n"
+        "\n"
+        "FROM python:3.12-slim AS runtime\n"
+        "RUN /opt/venv/bin/pip install --no-cache-dir torch\n",
+    )
+    body = effective_stage_body(path, DEFAULT_STAGE)
+    assert _stage_installs_torch_stack(body), "torch pip install must be detected"
+    # Control: torch-free path stays clean.
+    clean = _write(
+        tmp_path / "clean",
+        "FROM python:3.12-slim AS runtime\n"
+        "RUN /opt/venv/bin/pip install --no-cache-dir pillow\n",
+    )
+    assert not _stage_installs_torch_stack(effective_stage_body(clean, DEFAULT_STAGE))

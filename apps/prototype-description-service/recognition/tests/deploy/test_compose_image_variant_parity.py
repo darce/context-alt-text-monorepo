@@ -190,19 +190,48 @@ def test_data_cache_bind_mounts_are_readonly_in_both_compose_files() -> None:
         )
 
 
+def _fn_body(script_text: str, name: str) -> str:
+    """Extract a top-level ``name() { … }`` body from the deploy script."""
+    m = re.search(
+        rf"^{re.escape(name)}\(\)\s*\{{(?P<body>.*?)^\}}",
+        script_text,
+        re.DOTALL | re.MULTILINE,
+    )
+    assert m, f"{name}() not found in deploy script"
+    return m.group("body")
+
+
+def _active_call(body: str, pattern: str) -> bool:
+    """True when a non-comment line in ``body`` matches ``pattern``."""
+    for ln in body.splitlines():
+        stripped = ln.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if re.search(pattern, stripped):
+            return True
+    return False
+
+
 def test_deploy_script_threads_image_repo_from_resolve() -> None:
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     assert script_threads_resolve_to_acx_image_repo(script), (
         "ACX_IMAGE_REPO must equal IMAGE_BASE from resolve_image_repo_name and be shipped remotely"
     )
-    # ship_remote_image_repo_env called from converge_runtime and do_restart.
-    assert "ship_remote_image_repo_env" in script
-    assert re.search(r"ship_remote_image_repo_env\s+\"\$\{remote_dir\}\"", script)
-    # do_verify must hard-check the running container image (not SHA-only).
-    assert "verify_running_image_matches_deployed" in script
-    assert "read_running_api_image" in script
-    assert "Config.Image" in script
-    assert "IMAGE MISMATCH" in script
+    # D-08: active call sites, not bare identifier / comment presence — deleting
+    # the do_restart invocation while leaving the helper defined must go red.
+    converge_body = _fn_body(script, "converge_runtime")
+    restart_body = _fn_body(script, "do_restart")
+    verify_body = _fn_body(script, "do_verify")
+    ship_pat = r"ship_remote_image_repo_env\s+\"\$\{remote_dir\}\""
+    assert _active_call(converge_body, ship_pat), (
+        "converge_runtime must call ship_remote_image_repo_env"
+    )
+    assert _active_call(restart_body, ship_pat), (
+        "do_restart must call ship_remote_image_repo_env (ACX_CONVERGE_RUNTIME=0 path)"
+    )
+    assert _active_call(verify_body, r"verify_running_image_matches_deployed\b"), (
+        "do_verify must invoke verify_running_image_matches_deployed"
+    )
 
 
 def test_refuse_remote_vlm_build_rejects_builder_vlm_and_runtime_vlm() -> None:
@@ -317,3 +346,66 @@ def test_mutation_missing_acx_image_repo_thread_fails_guard() -> None:
     )
     assert script_threads_resolve_to_acx_image_repo(good)
     assert not script_threads_resolve_to_acx_image_repo(bad)
+
+
+def _probe_resolve_repo_name(target: str) -> str:
+    """Source the real resolve_image_repo_name and return its stdout (D-09)."""
+    probe = textwrap.dedent(
+        f"""\
+        #!/usr/bin/env bash
+        set -euo pipefail
+        IMAGE_NAME=acx-backend
+        ACX_BUILD_TARGET={target!r}
+        source "{DEPLOY_SCRIPT}"
+        resolve_image_repo_name
+        """
+    )
+    result = subprocess.run(
+        ["bash", "-c", probe],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode == 0, (
+        f"resolve_image_repo_name failed for {target!r}: {result.stderr}"
+    )
+    return (result.stdout or "").strip()
+
+
+def test_resolve_image_repo_name_exact_strings() -> None:
+    """D-09 / rg-005: variant parity is the exact repository string, not a grep."""
+    assert _probe_resolve_repo_name("") == "acx-backend"
+    assert _probe_resolve_repo_name("runtime") == "acx-backend"
+    assert _probe_resolve_repo_name("runtime-vlm") == "acx-backend-vlm"
+    # Distinctness is the headline claim — underscore or prefix rewrites go red.
+    assert _probe_resolve_repo_name("runtime-vlm") != _probe_resolve_repo_name("")
+
+
+def test_guard_bites_when_ship_or_verify_call_site_removed() -> None:
+    """TEST-15: function defined but not called from do_restart/do_verify goes red."""
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    restart_body = _fn_body(script, "do_restart")
+    verify_body = _fn_body(script, "do_verify")
+    ship_pat = r"ship_remote_image_repo_env\s+\"\$\{remote_dir\}\""
+    # Synthetic: comment out the active ship call (identifier remains in prose).
+    stripped_restart = re.sub(
+        r"^(\s*)ship_remote_image_repo_env\s+\"\$\{remote_dir\}\"",
+        r"\1# ship_remote_image_repo_env \"${remote_dir}\"",
+        restart_body,
+        flags=re.MULTILINE,
+    )
+    assert not _active_call(stripped_restart, ship_pat), (
+        "commented-out ship call must fail _active_call"
+    )
+    stripped_verify = re.sub(
+        r"^(\s*)(.*\bverify_running_image_matches_deployed\b.*)$",
+        r"\1# \2",
+        verify_body,
+        count=1,
+        flags=re.MULTILINE,
+    )
+    assert not _active_call(stripped_verify, r"verify_running_image_matches_deployed\b")
+    # Controls: live bodies still have active calls.
+    assert _active_call(restart_body, ship_pat)
+    assert _active_call(verify_body, r"verify_running_image_matches_deployed\b")

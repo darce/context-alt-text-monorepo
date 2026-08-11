@@ -141,3 +141,43 @@ def test_expect_report_matches_committed_freeze_green(tmp_path: Path, capsys: py
     assert json_doc == _REPORT_JSON.read_text(encoding="utf-8")
     assert _sha256(_REPORT_JSON) == _FROZEN_DIGESTS[_REPORT_JSON.name]
     assert _sha256(_RUN) == _FROZEN_DIGESTS[_RUN.name]
+
+
+def test_corrupt_run_record_alt_text_makes_determinism_gate_red(tmp_path: Path) -> None:
+    """F5-01 carry-over / TEST-15: corrupt run-record input (not just the freeze).
+
+    F5 landed report-side corruption. The hole the guard exists for is a
+    corrupted *run-record* that parent and children re-score identically —
+    seed-stability still "passes" without ``--expect-report``. Mutate
+    ``items[i].describe.alt_text_draft`` (no content gate watches it alone;
+    wrong-name stays clean) so ANCHOR_MISMATCH is the sole detector.
+    """
+    run_copy = tmp_path / _RUN.name
+    payload = json.loads(_RUN.read_text())
+    item = payload["items"][0]
+    describe = dict(item.get("describe") or {})
+    describe["alt_text_draft"] = "CORRUPTED ALT TEXT DRAFT FOR F5-01 INPUT CONTROL"
+    item["describe"] = describe
+    run_copy.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    )
+    expect_copy = tmp_path / _REPORT_JSON.name
+    expect_copy.write_bytes(_REPORT_JSON.read_bytes())
+
+    with pytest.raises(SystemExit) as exc:
+        _check_score_determinism_cross_process(
+            run_copy,
+            str(_GOLDEN),
+            rubric_gate="skip",
+            expect_report=expect_copy,
+        )
+    msg = str(exc.value)
+    assert "determinism check ANCHOR_MISMATCH" in msg
+    assert "[score]" in msg
+    assert "determinism check FAILED" not in msg
+    assert "determinism check ERROR" not in msg
+    assert "wrong-name" not in msg.lower()
+    assert list(tmp_path.glob("determinism-anchor-mismatch-score.diff.txt"))
+    # Committed freeze and original run-record untouched.
+    assert _sha256(_REPORT_JSON) == _FROZEN_DIGESTS[_REPORT_JSON.name]
+    assert _sha256(_RUN) == _FROZEN_DIGESTS[_RUN.name]

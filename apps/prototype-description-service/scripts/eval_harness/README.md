@@ -258,11 +258,28 @@ three remedies — do not treat them as synonyms:
 
 `label` is `score`, `score-public`, or `score-face` so CI logs name which document failed.
 
-**`--expect-report` is score-only, opt-in, and requires `--check-determinism`.**
-Discovery is never by sibling filename. The committed caption freeze covers the
-LOCAL score document only — there is no frozen face-report anchor yet, so
-`score-face --check-determinism` remains seed-stability only (face path hole
-documented in the F5 lane report).
+**`--expect-report` is opt-in on `score` and `score-face`, and requires
+`--check-determinism`.** Discovery is never by sibling filename.
+
+- **Caption freeze (F5):** LOCAL score document only under
+  `docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811*`.
+- **Face freeze (F6):** synthetic face run-record + dedicated manifest + face
+  report under `docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-*`
+  (dim=8 unit vectors; no real embeddings — PROV-01). Regenerate via
+  `python -m scripts.eval_harness.generate_face_determinism_anchor`.
+
+```text
+$ cd apps/prototype-description-service
+$ uv run --extra dev python -m scripts.eval_harness.cli score-face \
+    --manifest ../../docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-manifest-20260811.json \
+    --run-record ../../docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-run-20260811.json \
+    --check-determinism \
+    --expect-report ../../docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-run-20260811-face-report.json
+determinism check passed [score-face]: cross-process re-score is bit-identical under varied PYTHONHASHSEED (baseline=randomized; child_seeds=0,1,42); matches --expect-report …/S2A-face-determinism-anchor-run-20260811-face-report.json
+…/S2A-face-determinism-anchor-run-20260811-face-report.md
+scored=3/3 matched_faces=3 occlusion_n_eligible=0 directional_excluded=6
+# EXIT_CODE:0
+```
 
 ## Report schema (`acx-eval/v1`, E19-1 extension)
 
@@ -336,6 +353,13 @@ uv run python -m scripts.eval_harness.cli score-face \
   --run-record scripts/eval_harness/out/face-run-<stamp>.json \
   --check-determinism
 
+# frozen synthetic face anchor (F6 / B-06) — dim=8 unit vectors, no real embeddings
+uv run python -m scripts.eval_harness.cli score-face \
+  --manifest ../../docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-manifest-20260811.json \
+  --run-record ../../docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-run-20260811.json \
+  --check-determinism \
+  --expect-report ../../docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-run-20260811-face-report.json
+
 # published artifact: score full corpus, THEN post-score redact
 uv run python -m scripts.eval_harness.cli score-face \
   --run-record scripts/eval_harness/out/face-run-<stamp>.json --public
@@ -343,6 +367,11 @@ uv run python -m scripts.eval_harness.cli score-face \
 
 `--check-determinism` on `score-face` re-runs §C–§F in a **fresh process** under
 varied `PYTHONHASHSEED` and asserts bit-identical JSON/MD (sorted nested lists).
+Seed-stability alone cannot detect a corrupted face run-record (parent and
+children re-read the same file). Pair with `--expect-report` against the
+committed synthetic freeze for the third outcome (`ANCHOR_MISMATCH`). Never
+promote real buffalo 512D embeddings out of `out/` (PROV-01) — the committed
+anchor is synthetic only.
 
 ### Floor + demotion policy
 

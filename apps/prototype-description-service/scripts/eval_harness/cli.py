@@ -964,9 +964,14 @@ def _run_determinism_children(
     return regime
 
 
-# Opt-in frozen-report regeneration command named in ANCHOR_MISMATCH (OBS-04).
+# Opt-in frozen-report regeneration commands named in ANCHOR_MISMATCH (OBS-04).
+# Caption and face freezes have distinct generators; _check_expect_report takes
+# regen_cmd so the remedy line names the right module (no helper fork).
 _DETERMINISM_ANCHOR_REGEN_CMD = (
     "python -m scripts.eval_harness.generate_determinism_anchor"
+)
+_FACE_DETERMINISM_ANCHOR_REGEN_CMD = (
+    "python -m scripts.eval_harness.generate_face_determinism_anchor"
 )
 
 
@@ -977,8 +982,9 @@ def _check_expect_report(
     label: str,
     regime: str,
     artifact_dir: Path,
+    regen_cmd: str = _DETERMINISM_ANCHOR_REGEN_CMD,
 ) -> None:
-    """Third determinism outcome: compare certified JSON to a frozen report (F5 / B-06).
+    """Third determinism outcome: compare certified JSON to a frozen report (F5/F6 / B-06).
 
     Seed-stability (ERROR / FAILED / passed) only proves the scoring function is
     stable across interpreters. Without an external reference, a corrupted
@@ -994,6 +1000,10 @@ def _check_expect_report(
     Mismatch artifacts land under ``artifact_dir`` (run-record parent), never
     beside the frozen expect path, so a red compare cannot dirty committed freeze
     trees.
+
+    ``regen_cmd`` defaults to the caption generator; face callers pass
+    ``_FACE_DETERMINISM_ANCHOR_REGEN_CMD`` so the ANCHOR_MISMATCH remedy names
+    the synthetic face regenerator (parameterised helper — not forked).
     """
     resolved = expect_report.resolve()
     if not resolved.is_file():
@@ -1043,7 +1053,7 @@ def _check_expect_report(
         f"(1) the frozen report or the run-record was corrupted — investigate, "
         f"do NOT regenerate (regenerating destroys the evidence); "
         f"(2) scoring was deliberately changed and the freeze is now stale — "
-        f"regenerate on purpose via `{_DETERMINISM_ANCHOR_REGEN_CMD}` and commit "
+        f"regenerate on purpose via `{regen_cmd}` and commit "
         f"the new freeze."
     )
 
@@ -1184,7 +1194,8 @@ def _cmd_score(args: argparse.Namespace) -> None:
     public_json: str | None = None
     public_md: str | None = None
     # F5 / B-06: --expect-report is opt-in frozen JSON for the LOCAL document only
-    # (no face freeze; PUBLIC has no committed anchor). Requires --check-determinism.
+    # (PUBLIC has no committed caption anchor; face freeze is score-face path).
+    # Requires --check-determinism.
     expect_report_raw = getattr(args, "expect_report", None)
     if expect_report_raw and not args.check_determinism:
         sys.exit("score: --expect-report requires --check-determinism")
@@ -1592,11 +1603,17 @@ def _check_face_determinism_cross_process(
     manifest_path: str,
     *,
     public: bool,
-) -> None:
+    expect_report: Path | None = None,
+) -> tuple[str, str]:
     """Re-run score-face in a FRESH process under varied PYTHONHASHSEED (§G).
 
     Subprocess loop lives in ``_run_determinism_children`` (C-08) so caption and
     face gates share seed/env/timeout/error taxonomy and differ only by label.
+
+    When ``expect_report`` is set (CLI ``--expect-report``), after seed-stability
+    the certified face JSON is compared to those frozen bytes (F6 / B-06). Same
+    three outcomes as caption (ERROR / FAILED / ANCHOR_MISMATCH) via the shared
+    ``_check_expect_report`` helper — no fork. Mismatch is ANCHOR_MISMATCH.
     """
     # F2C-01: resolve data paths; child cwd is package-root pin (F2c).
     resolved_record = record_path.resolve()
@@ -1627,7 +1644,8 @@ def _check_face_determinism_cross_process(
         "'json':j,'md':m,"
         "'build_reports_file':build_face_reports.__code__.co_filename}))"
     )
-    _run_determinism_children(
+    # Defer seed-stability pass when a frozen compare follows (same as caption).
+    regime = _run_determinism_children(
         script,
         [str(resolved_record), str(resolved_manifest), "1" if public else "0"],
         label="score-face",
@@ -1635,7 +1653,18 @@ def _check_face_determinism_cross_process(
         base_md=base_md,
         artifact_dir=resolved_record.parent,
         expected_build_reports_file=build_face_reports.__code__.co_filename,
+        announce_pass=expect_report is None,
     )
+    if expect_report is not None:
+        _check_expect_report(
+            base_json,
+            Path(expect_report),
+            label="score-face",
+            regime=regime,
+            artifact_dir=resolved_record.parent,
+            regen_cmd=_FACE_DETERMINISM_ANCHOR_REGEN_CMD,
+        )
+    return base_json, base_md
 
 
 def _cmd_score_face(args: argparse.Namespace) -> None:
@@ -1647,11 +1676,24 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
     manifest = load_manifest(args.manifest)
     manifest_sha = _manifest_sha(manifest)
     public = bool(getattr(args, "public", False))
-    json_doc, md_doc = _face_score_once(
-        record, manifest, score_manifest_sha256=manifest_sha, public=public
-    )
+    # F6 / B-06: --expect-report is opt-in frozen face-report JSON. Requires
+    # --check-determinism (same coupling as caption score).
+    expect_report_raw = getattr(args, "expect_report", None)
+    if expect_report_raw and not args.check_determinism:
+        sys.exit("score-face: --expect-report requires --check-determinism")
+    expect_report = Path(expect_report_raw) if expect_report_raw else None
+    # When --check-determinism is set, write the certified documents (one build).
     if args.check_determinism:
-        _check_face_determinism_cross_process(record_path, args.manifest, public=public)
+        json_doc, md_doc = _check_face_determinism_cross_process(
+            record_path,
+            args.manifest,
+            public=public,
+            expect_report=expect_report,
+        )
+    else:
+        json_doc, md_doc = _face_score_once(
+            record, manifest, score_manifest_sha256=manifest_sha, public=public
+        )
     base = record_path.with_suffix("")
     json_path, md_path = Path(f"{base}-face-report.json"), Path(f"{base}-face-report.md")
     json_path.write_text(json_doc)
@@ -1832,6 +1874,17 @@ def main(argv: list[str] | None = None) -> None:
         "--check-determinism",
         action="store_true",
         help="re-score in a fresh process under varied PYTHONHASHSEED; bit-identical JSON/MD required",
+    )
+    score_face_p.add_argument(
+        "--expect-report",
+        default=None,
+        metavar="PATH",
+        help=(
+            "with --check-determinism: require the certified face score JSON to "
+            "match this frozen report byte-for-byte (opt-in; no sibling inference). "
+            "Mismatch is ANCHOR_MISMATCH — corrupt freeze/record or deliberate "
+            "scoring change — not seed FAILED and not environment ERROR"
+        ),
     )
     score_face_p.add_argument(
         "--public",

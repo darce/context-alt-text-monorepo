@@ -1,0 +1,104 @@
+{
+  "entries": [
+    {
+      "base_caption": "",
+      "demographic_cohort": "cohort_a",
+      "easy_wrong": [],
+      "face_boxes": [
+        {
+          "h": 0.4,
+          "name": "Alice Example",
+          "source": "iptc",
+          "w": 0.4,
+          "x": 0.4,
+          "y": 0.4
+        }
+      ],
+      "face_count": 1,
+      "media_id": 1,
+      "must_right": [],
+      "path": "celebs01/alice-a.jpg",
+      "policy": {
+        "recognition_enabled": true
+      },
+      "present_identities": [
+        "Alice Example"
+      ],
+      "provenance": {
+        "license": "public_domain",
+        "note": "synthetic face determinism anchor — no real images; GT boxes pair with dim=8 unit-vector detections",
+        "publishable": true,
+        "source": "celeb"
+      },
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "base_caption": "",
+      "demographic_cohort": "cohort_a",
+      "easy_wrong": [],
+      "face_boxes": [
+        {
+          "h": 0.4,
+          "name": "Alice Example",
+          "source": "iptc",
+          "w": 0.4,
+          "x": 0.4,
+          "y": 0.4
+        }
+      ],
+      "face_count": 1,
+      "media_id": 2,
+      "must_right": [],
+      "path": "celebs01/alice-b.jpg",
+      "policy": {
+        "recognition_enabled": true
+      },
+      "present_identities": [
+        "Alice Example"
+      ],
+      "provenance": {
+        "license": "public_domain",
+        "note": "synthetic face determinism anchor — no real images; GT boxes pair with dim=8 unit-vector detections",
+        "publishable": true,
+        "source": "celeb"
+      },
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "base_caption": "",
+      "easy_wrong": [],
+      "face_boxes": [
+        {
+          "h": 0.4,
+          "name": null,
+          "source": "iptc",
+          "w": 0.4,
+          "x": 0.4,
+          "y": 0.4
+        }
+      ],
+      "face_count": 1,
+      "media_id": 3,
+      "must_right": [],
+      "path": "localwp/uploads/stranger-party.jpg",
+      "policy": {
+        "recognition_enabled": true
+      },
+      "present_identities": [],
+      "provenance": {
+        "license": "consented",
+        "note": "synthetic face determinism anchor — no real images; GT boxes pair with dim=8 unit-vector detections",
+        "publishable": false,
+        "source": "localwp"
+      },
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  ],
+  "manifest_version": 2,
+  "roster": [
+    "Alice Example"
+  ],
+  "roster_cohorts": {
+    "Alice Example": "cohort_a"
+  }
+}

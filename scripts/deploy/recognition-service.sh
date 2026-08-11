@@ -234,6 +234,13 @@ do_build_remote() {
     --exclude='logs/' \
     --exclude='node_modules/' \
     --exclude='recognition/infrastructure/face_pipeline/models/*.onnx' \
+    --exclude='*.safetensors' \
+    --exclude='*.bin' \
+    --exclude='*.pt' \
+    --exclude='*.pth' \
+    --exclude='*.gguf' \
+    --exclude='*.msgpack' \
+    --exclude='models--*/' \
     "${SERVICE_DIR}/" "${SSH_TARGET}:${REMOTE_BUILD_DIR}/"
 
   log "Building ${IMAGE_BASE}:${tag} + :${sha:0:8} on ${SSH_TARGET} (native arm64)"

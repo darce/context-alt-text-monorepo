@@ -1827,10 +1827,10 @@ name = "onnxruntime-gpu"
 version = "1.28.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "flatbuffers" },
-    { name = "numpy" },
-    { name = "packaging" },
-    { name = "protobuf" },
+    { name = "flatbuffers", marker = "sys_platform == 'linux'" },
+    { name = "numpy", marker = "sys_platform == 'linux'" },
+    { name = "packaging", marker = "sys_platform == 'linux'" },
+    { name = "protobuf", marker = "sys_platform == 'linux'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f2/18/e4e906d564af3dd84c2816118ce8e0c087d351ef69a819727b940fb01b6b/onnxruntime_gpu-1.28.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:3b3a63cecd239d72432cd44569d047de8f4d69e471cd5f60f7ac7fc8769be5ec", size = 249767362, upload-time = "2026-07-29T16:31:09.077Z" },
@@ -2133,11 +2133,11 @@ vlm = [
 
 [package.metadata]
 requires-dist = [
-    { name = "accelerate", marker = "extra == 'vlm'", specifier = ">=0.33.0" },
+    { name = "accelerate", marker = "extra == 'vlm'", specifier = ">=1.14.0,<2.0.0" },
     { name = "aiosqlite", marker = "extra == 'dev'", specifier = ">=0.19.0,<1.0.0" },
     { name = "alembic", specifier = ">=1.17.0,<2.0.0" },
     { name = "asyncpg", specifier = ">=0.31.0,<0.33.0" },
-    { name = "einops", marker = "extra == 'vlm'", specifier = ">=0.7.0" },
+    { name = "einops", marker = "extra == 'vlm'", specifier = ">=0.8.2,<1.0.0" },
     { name = "fastapi", specifier = ">=0.124.0,<0.130.0" },
     { name = "fastmcp", marker = "extra == 'dev'", specifier = ">=3.1.1,<4.0.0" },
     { name = "greenlet", specifier = ">=3.3.0,<4.0.0" },
@@ -2171,9 +2171,9 @@ requires-dist = [
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.44,<3.0.0" },
     { name = "sse-starlette", specifier = ">=2.0.0,<3.0.0" },
     { name = "textual", marker = "extra == 'dashboard'", specifier = ">=3.0.0,<4.0.0" },
-    { name = "timm", marker = "extra == 'vlm'", specifier = ">=1.0.0" },
-    { name = "torch", marker = "sys_platform == 'linux' and extra == 'vlm'", specifier = ">=2.2.0", index = "https://download.pytorch.org/whl/cpu" },
-    { name = "torch", marker = "sys_platform != 'linux' and extra == 'vlm'", specifier = ">=2.2.0" },
+    { name = "timm", marker = "extra == 'vlm'", specifier = ">=1.0.27,<2.0.0" },
+    { name = "torch", marker = "sys_platform == 'linux' and extra == 'vlm'", specifier = ">=2.12.0,<3.0.0", index = "https://download.pytorch.org/whl/cpu" },
+    { name = "torch", marker = "sys_platform != 'linux' and extra == 'vlm'", specifier = ">=2.12.0,<3.0.0" },
     { name = "transformers", marker = "extra == 'vlm'", specifier = ">=4.44.0,<4.49.0" },
     { name = "types-networkx", marker = "extra == 'dev'" },
     { name = "types-pillow", marker = "extra == 'dev'" },

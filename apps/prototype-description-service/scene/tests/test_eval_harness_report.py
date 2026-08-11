@@ -153,18 +153,80 @@ def test_score_run_record_emits_verdict_fail_when_wrong_names_present():
 
 
 def test_score_run_record_emits_verdict_pass_when_no_wrong_names():
-    """Clean identities → pass verdict with rate 0 and empty reasons."""
-    record = _run_record()
-    # Fix Bob's identity so faces.identification has no wrong_names.
-    record["items"][1]["identities"] = [
+    """Clean identities → pass verdict with rate 0 and empty reasons.
+
+    Fixture is fully gate-clean (F1d-1): no failed items, non-empty must_right and
+    easy_wrong, fetch-time sha present, recognition_enabled on every scored image.
+    """
+    record = {
+        "schema": "acx-eval/v1",
+        "kind": "run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "base_url": "https://api.example.com",
+            "head_sha": "0" * 40,
+            "started_at": "2026-07-06T00:00:00Z",
+        },
+        "items": [
+            {
+                "media_id": 1,
+                "path": "mock_images/alice-pool.jpg",
+                "describe": {
+                    "alt_text_draft": "Alice Example relaxes by a pool.",
+                    "visual_facts": {"objects": []},
+                },
+                "identities": [
+                    {
+                        "name": "Alice Example",
+                        "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                        "unpositioned": False,
+                    }
+                ],
+                "face_count": 1,
+                "error": None,
+            },
+            {
+                "media_id": 2,
+                "path": "mock_images/bob-beach.jpg",
+                "describe": {
+                    "alt_text_draft": "Bob Builder on a beach.",
+                    "visual_facts": {"objects": []},
+                },
+                "identities": [
+                    {
+                        "name": "Bob Builder",
+                        "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                        "unpositioned": False,
+                    }
+                ],
+                "face_count": 1,
+                "error": None,
+            },
+        ],
+    }
+    entries = [
         {
-            "name": "Bob Builder",
-            "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
-            "unpositioned": False,
-        }
+            "path": "mock_images/alice-pool.jpg",
+            "media_id": 1,
+            "face_count": 1,
+            "present_identities": ["Alice Example"],
+            "must_right": ["Alice Example"],
+            "easy_wrong": ["Bob Builder"],
+            "policy": {"recognition_enabled": True},
+        },
+        {
+            "path": "mock_images/bob-beach.jpg",
+            "media_id": 2,
+            "face_count": 1,
+            "present_identities": ["Bob Builder"],
+            "must_right": ["Bob Builder"],
+            "easy_wrong": ["Alice Example"],
+            "policy": {"recognition_enabled": True},
+        },
     ]
-    scored = score_run_record(record, _manifest_entries())
+    scored = score_run_record(record, entries)
     assert scored["faces"]["identification"]["wrong_names"] == []
+    assert scored["counts"]["failed"] == 0
     verdict = scored["verdict"]
     assert verdict["verdict"] == ScoreVerdict.PASS.value
     assert verdict["wrong_name_rate"] == 0.0
@@ -176,7 +238,11 @@ def test_build_reports_json_includes_verdict_block():
     json_doc, md = build_reports(_run_record(), _manifest_entries())
     parsed = json.loads(json_doc)
     assert "verdict" in parsed
-    assert parsed["verdict"]["verdict"] in {ScoreVerdict.PASS.value, ScoreVerdict.FAIL.value}
+    assert parsed["verdict"]["verdict"] in {
+        ScoreVerdict.PASS.value,
+        ScoreVerdict.FAIL.value,
+        ScoreVerdict.PASS_UNGATED.value,
+    }
     assert "wrong_name_rate" in parsed["verdict"]
     assert "wrong_name_rate_floor" in parsed["verdict"]
     # Markdown surfaces the verdict for operator scan.

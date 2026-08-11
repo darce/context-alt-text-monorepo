@@ -1,6 +1,7 @@
 """VLM-2A Slice 3: CLI fetch loop (per-item isolation, bounded stall rg-007) + retention."""
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -1416,6 +1417,162 @@ def test_score_guard_fetch_limit_truncation_fails_coverage_gate(tmp_path, monkey
     assert "empty-rubric" not in msg.lower()
     assert "must-right failures" not in msg.lower()
     assert "wrong-name" not in msg.lower()
+
+
+# --- VLM-6 S2A F1-4: hard-key three gate inputs (schema drift must not fail open) ---
+
+
+_GOLDEN_SEED = Path(__file__).resolve().parent / "seed" / "golden.json"
+
+
+def _real_golden_good_record() -> tuple[Path, dict]:
+    """Full 37-entry run-record from scene/tests/seed/golden.json that scores clean.
+
+    identities are dict rows (bare strings rejected by _validate_identities_element_types).
+    Caption text lives in describe.alt_text_draft / named_draft / generic_draft.
+    """
+    from scripts.eval_harness.cli import _manifest_sha
+    from scripts.eval_harness.manifest import load_manifest
+    from scripts.eval_harness.schema import SCHEMA, DocKind
+
+    manifest = load_manifest(str(_GOLDEN_SEED))
+    entries = [e.model_dump() for e in manifest.entries]
+    assert len(entries) == 37
+    msha = _manifest_sha(manifest)
+    items = []
+    for entry in entries:
+        names = list(entry.get("present_identities") or [])
+        must = list(entry.get("must_right") or [])
+        cap = (
+            " ".join(must + names + ["outdoors smiling."])
+            if (must or names)
+            else "A scenic outdoor photograph."
+        )
+        idents = [
+            {
+                "name": n,
+                "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                "unpositioned": False,
+            }
+            for n in names
+        ]
+        items.append(
+            {
+                "media_id": entry["media_id"],
+                "path": entry["path"],
+                "describe": {
+                    "alt_text_draft": cap,
+                    "named_draft": cap,
+                    "generic_draft": cap,
+                    "visual_facts": {"objects": []},
+                },
+                "identities": idents,
+                "face_count": entry.get("face_count") or 0,
+                "error": None,
+            }
+        )
+    record = {
+        "schema": SCHEMA,
+        "kind": DocKind.RUN_RECORD.value,
+        "provenance": {
+            "manifest_sha256": msha,
+            "base_url": "https://example.test",
+            "head_sha": "f" * 40,
+            "started_at": "t",
+        },
+        "items": items,
+    }
+    return _GOLDEN_SEED, record
+
+
+def _corrupt_score_run_record(monkeypatch, mutator):
+    """Post-process score_run_record to simulate report.py schema drift (F1-4)."""
+    import scripts.eval_harness.cli as cli_mod
+
+    real = cli_mod.score_run_record
+
+    def _wrapped(*args, **kwargs):
+        scored = real(*args, **kwargs)
+        return mutator(scored)
+
+    monkeypatch.setattr(cli_mod, "score_run_record", _wrapped)
+
+
+def _assert_schema_error_only(excinfo, dotted_path: str) -> None:
+    msg = str(excinfo.value)
+    assert excinfo.value.code != 0
+    assert "score schema error" in msg.lower()
+    assert dotted_path in msg
+    # Class-unique token: no other gate class may claim the exit.
+    assert "must-right failures" not in msg.lower()
+    assert "wrong-name" not in msg.lower() or "wrong_name_rate" in dotted_path
+    assert "manifest-mismatch" not in msg.lower()
+    assert "empty-rubric" not in msg.lower()
+    assert "truncation" not in msg.lower()
+    assert "failed-items" not in msg.lower()
+
+
+def test_score_schema_error_when_manifest_matches_fetch_missing(tmp_path, monkeypatch):
+    """F1-4: provenance.manifest_matches_fetch missing → schema error (real golden)."""
+    import copy
+
+    golden, record = _real_golden_good_record()
+
+    def _drop(scored):
+        scored = copy.deepcopy(scored)
+        scored["provenance"].pop("manifest_matches_fetch", None)
+        return scored
+
+    _corrupt_score_run_record(monkeypatch, _drop)
+    record_path = tmp_path / "run-no-mmf.json"
+    record_path.write_text(json.dumps(record))
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(golden), "--run-record", str(record_path)])
+    _assert_schema_error_only(excinfo, "provenance.manifest_matches_fetch")
+    assert "bool" in str(excinfo.value).lower()
+
+
+def test_score_schema_error_when_must_right_failed_images_missing(tmp_path, monkeypatch):
+    """F1-4: caption.must_right_failed_images missing → schema error (real golden)."""
+    import copy
+
+    golden, record = _real_golden_good_record()
+
+    def _drop(scored):
+        scored = copy.deepcopy(scored)
+        scored["caption"].pop("must_right_failed_images", None)
+        return scored
+
+    _corrupt_score_run_record(monkeypatch, _drop)
+    record_path = tmp_path / "run-no-mrf.json"
+    record_path.write_text(json.dumps(record))
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(golden), "--run-record", str(record_path)])
+    _assert_schema_error_only(excinfo, "caption.must_right_failed_images")
+    assert "number" in str(excinfo.value).lower()
+
+
+def test_score_schema_error_when_wrong_name_rate_missing(tmp_path, monkeypatch):
+    """F1-4: verdict.wrong_name_rate missing → schema error (real golden)."""
+    import copy
+
+    golden, record = _real_golden_good_record()
+
+    def _drop(scored):
+        scored = copy.deepcopy(scored)
+        scored["verdict"].pop("wrong_name_rate", None)
+        return scored
+
+    _corrupt_score_run_record(monkeypatch, _drop)
+    record_path = tmp_path / "run-no-wnr.json"
+    record_path.write_text(json.dumps(record))
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(golden), "--run-record", str(record_path)])
+    _assert_schema_error_only(excinfo, "verdict.wrong_name_rate")
+    assert "number" in str(excinfo.value).lower()
 
 
 # --- FIR-5 S5: face-bakeoff / score-face CLI surface ---

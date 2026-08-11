@@ -46,6 +46,12 @@ _DEAD_CACHE_PATTERNS = (
 )
 
 _EXCLUDE_RE = re.compile(r"""--exclude=(?:'([^']+)'|"([^"]+)"|(\S+))""")
+_INCLUDE_RE = re.compile(r"""--include=(?:'([^']+)'|"([^"]+)"|(\S+))""")
+# rsync --filter='+ *.bin' / '--filter=- *.bin' (first token after = is rule).
+_FILTER_RE = re.compile(
+    r"""--filter=(?:'([^']+)'|"([^"]+)"|(\S+))"""
+)
+_FILES_FROM_RE = re.compile(r"""--files-from=(?:'([^']+)'|"([^"]+)"|(\S+))""")
 
 # Docker depth-recursive weight patterns: **/ + class shape.
 _DOCKER_EXT_RE = re.compile(
@@ -187,20 +193,90 @@ def docker_weight_classes(text: str) -> set[str]:
     return {cid for cid, excluded in disposition.items() if excluded}
 
 
+def _rsync_pattern_to_class(pattern: str) -> str | None:
+    """Map an rsync include/exclude pattern to a weight class id, or None."""
+    if pattern == ONNX_PATTERN:
+        return ONNX_CLASS
+    m = _RSYNC_EXT_RE.match(pattern)
+    if m:
+        return m.group("ext")
+    if _RSYNC_HF_RE.match(pattern):
+        return HF_SNAPSHOT_CLASS
+    return None
+
+
+def _rsync_filter_rule(raw: str) -> tuple[str, str] | None:
+    """Parse ``+ pattern`` / ``- pattern`` filter rules → (disposition, pattern)."""
+    text = raw.strip()
+    if not text:
+        return None
+    # Leading merge-file tokens: + / - / P / S … we only care about +/- class patterns.
+    if text[0] in {"+", "-"}:
+        disp = "include" if text[0] == "+" else "exclude"
+        pattern = text[1:].lstrip()
+        if pattern:
+            return disp, pattern
+    return None
+
+
 def rsync_weight_classes(text: str) -> set[str]:
-    """Map rsync --exclude= values → protected class ids (rsync-recursive forms only)."""
-    classes: set[str] = set()
-    for pattern in rsync_excludes_from_script(text):
-        if pattern == ONNX_PATTERN:
-            classes.add(ONNX_CLASS)
-            continue
-        m = _RSYNC_EXT_RE.match(pattern)
-        if m:
-            classes.add(m.group("ext"))
-            continue
-        if _RSYNC_HF_RE.match(pattern):
-            classes.add(HF_SNAPSHOT_CLASS)
-    return classes
+    """Map context-shipping rsync rules → excluded class ids (first-match-wins).
+
+    rsync evaluates ``--include`` / ``--exclude`` / ``--filter`` left-to-right;
+    the first matching rule wins. A leading ``--include=*.bin`` before the
+    weight excludes re-ships every ``.bin`` while a pure-exclude scan would
+    still report full class coverage (G-06). ``--files-from`` is treated as
+    failing closed for the whole class set (explicit file list bypasses
+    exclude globs).
+    """
+    context_cmds = context_shipping_rsync_commands(text)
+    commands = context_cmds if context_cmds else _iter_rsync_commands(text)
+    if not commands:
+        # Synthetic single-line fixtures without a full rsync invocation.
+        disposition: dict[str, bool] = {}
+        for match in _EXCLUDE_RE.finditer(text):
+            value = match.group(1) or match.group(2) or match.group(3)
+            if not value:
+                continue
+            class_id = _rsync_pattern_to_class(value)
+            if class_id is not None and class_id not in disposition:
+                disposition[class_id] = True  # excluded
+        for match in _INCLUDE_RE.finditer(text):
+            value = match.group(1) or match.group(2) or match.group(3)
+            if not value:
+                continue
+            class_id = _rsync_pattern_to_class(value)
+            if class_id is not None and class_id not in disposition:
+                disposition[class_id] = False  # included (not excluded)
+        return {cid for cid, excluded in disposition.items() if excluded}
+
+    disposition: dict[str, bool] = {}
+    for cmd in commands:
+        if _FILES_FROM_RE.search(cmd):
+            # Explicit file list: weight globs no longer protect the transfer.
+            return set()
+        # Walk flags left-to-right; first disposition per class wins.
+        tokens: list[tuple[str, str]] = []
+        for match in re.finditer(
+            r"""--(?:exclude|include|filter)=(?:'([^']+)'|"([^"]+)"|(\S+))""",
+            cmd,
+        ):
+            full = match.group(0)
+            value = match.group(1) or match.group(2) or match.group(3) or ""
+            if full.startswith("--exclude="):
+                tokens.append(("exclude", value))
+            elif full.startswith("--include="):
+                tokens.append(("include", value))
+            else:
+                rule = _rsync_filter_rule(value)
+                if rule is not None:
+                    tokens.append(rule)
+        for disp, pattern in tokens:
+            class_id = _rsync_pattern_to_class(pattern)
+            if class_id is None or class_id in disposition:
+                continue
+            disposition[class_id] = disp == "exclude"
+    return {cid for cid, excluded in disposition.items() if excluded}
 
 
 def expected_weight_classes() -> set[str]:
@@ -516,6 +592,35 @@ def test_dockerignore_negation_reincludes_weight_class() -> None:
     # Control: mere line presence of **/*.bin would stay green under the old gate.
     lines = set(_active_dockerignore_lines(body))
     assert "**/*.bin" in lines and "!**/*.bin" in lines
+
+
+def test_rsync_include_before_exclude_drops_class() -> None:
+    """G-06 / first-match-wins: --include=*.bin ahead of --exclude=*.bin re-ships bins."""
+    script = (
+        "rsync -az --delete \\\n"
+        "  --include='*.bin' \\\n"
+        "  --exclude='*.safetensors' \\\n"
+        "  --exclude='*.bin' \\\n"
+        "  --exclude='*.pt' \\\n"
+        "  --exclude='models--*/' \\\n"
+        f"  --exclude='{ONNX_PATTERN}' \\\n"
+        '  "${SERVICE_DIR}/" "${SSH_TARGET}:${REMOTE_BUILD_DIR}/"\n'
+    )
+    classes = rsync_weight_classes(script)
+    assert "bin" not in classes, (
+        "leading --include='*.bin' must drop bin from the excluded set (rsync first-match)"
+    )
+    assert "safetensors" in classes
+    # filter=+ form is the same disposition.
+    filtered = (
+        "rsync -az \\\n"
+        "  --filter='+ *.bin' \\\n"
+        "  --exclude='*.bin' \\\n"
+        "  --exclude='*.safetensors' \\\n"
+        '  "${SERVICE_DIR}/" "${SSH_TARGET}:${REMOTE_BUILD_DIR}/"\n'
+    )
+    assert "bin" not in rsync_weight_classes(filtered)
+    assert "safetensors" in rsync_weight_classes(filtered)
 
 
 def test_rsync_excludes_bound_to_context_shipping_invocation() -> None:

@@ -52,13 +52,16 @@
 #                              container (import smoke + /health probe) before promoting/restarting,
 #                              aborting on failure with prod untouched. Set 0 to bypass.
 #   ACX_BUILD_TARGET         optional docker build --target (e.g. runtime-vlm). Empty = last stage
-#                              (runtime). Remote build REFUSES runtime-vlm — multi-GB torch builds
-#                              must run on a workstation/CI runner under a distinct image name.
+#                              (runtime). Remote build REFUSES any target matching *vlm* (runtime-vlm,
+#                              builder-vlm, …) — multi-GB torch builds must run on a workstation/CI
+#                              runner under a distinct image name, never on the serving VM.
 #                              Also selects the image repository name (RA-07): empty/runtime →
 #                              IMAGE_NAME (default acx-backend); runtime-vlm → IMAGE_NAME-vlm.
+#                              That same name is exported as ACX_IMAGE_REPO for compose substitution.
 #   ACX_SMOKE_TIMEOUT        positive integer seconds for Gate 2 /health budget (do_boot_smoke).
-#                              Default 24 for recognition; longer unmeasured default when the
-#                              VLM target/variant is selected. Validated at read time.
+#                              Default 24 for recognition; longer UNVALIDATED default (120s) when the
+#                              VLM target/variant is selected. Override this env var to raise the
+#                              budget; replace the default once a real arm64 VLM smoke is measured.
 #   CONFIRM                  required for prod actions: CONFIRM=PROMOTE (applies to deploy prod and promote * prod)
 #
 # Image variants / rollback (RA-07):
@@ -133,6 +136,10 @@ resolve_image_repo_name() {
   esac
 }
 IMAGE_BASE="${OCIR_REGISTRY}/${OCIR_NAMESPACE}/$(resolve_image_repo_name)"
+# Compose image repo — same resolve_image_repo_name() result as build/push (one source of truth).
+# Shipped into the remote env .env so docker-compose.env.yml / .prod.yml pull the variant repo.
+ACX_IMAGE_REPO="${IMAGE_BASE}"
+export ACX_IMAGE_REPO
 
 GREEN=$'\033[0;32m'
 YELLOW=$'\033[0;33m'
@@ -143,11 +150,16 @@ log()  { printf '%s==>%s %s\n' "${GREEN}" "${RESET}" "$*"; }
 warn() { printf '%s!!%s %s\n'  "${YELLOW}" "${RESET}" "$*" >&2; }
 fail() { printf '%sxx%s %s\n'  "${RED}"    "${RESET}" "$*" >&2; exit 1; }
 
+# True when the selected target/variant is torch-bearing VLM (budget is unvalidated).
+is_vlm_smoke_budget() {
+  [[ "${ACX_BUILD_TARGET:-}" == *vlm* || "${ACX_IMAGE_VARIANT:-}" == "vlm" ]]
+}
+
 # Positive-integer validation for ACX_SMOKE_TIMEOUT (rg-008: fail fast at read time).
 # Defaults are image-aware; operator override must still be a positive integer.
 resolve_smoke_timeout() {
   local default raw
-  if [[ "${ACX_BUILD_TARGET:-}" == "runtime-vlm" || "${ACX_IMAGE_VARIANT:-}" == "vlm" ]]; then
+  if is_vlm_smoke_budget; then
     default="${SMOKE_TIMEOUT_VLM_DEFAULT}"
   else
     default="${SMOKE_TIMEOUT_DEFAULT}"
@@ -159,11 +171,14 @@ resolve_smoke_timeout() {
   printf '%s\n' "${raw}"
 }
 
-# Remote-build hard refuse for the torch-bearing VLM target (RA-03 / sr-001).
+# Remote-build hard refuse for ANY target that pulls the vlm extra (RA-03 / sr-001).
+# Match *vlm* not just the literal runtime-vlm — builder-vlm is the stage that runs
+# `uv sync --extra vlm` (full torch/CUDA download) and was a trivial bypass.
 # No override env — multi-GB builds must not run on the production-serving VM.
 refuse_remote_vlm_build() {
-  if [[ "${ACX_BUILD_TARGET:-}" == "runtime-vlm" ]]; then
-    fail "Remote build refuses ACX_BUILD_TARGET=runtime-vlm. Build and push the VLM image from a workstation or CI runner under a distinct image name (do not build multi-GB torch images on the production-serving VM)."
+  local target="${ACX_BUILD_TARGET:-}"
+  if [[ "${target}" == *vlm* ]]; then
+    fail "Remote build refuses ACX_BUILD_TARGET=${target} (matches *vlm*). Build and push torch-bearing VLM images from a workstation or CI runner under a distinct image name — never on the production-serving VM."
   fi
 }
 
@@ -451,6 +466,20 @@ render_unit() {
     "${SERVICE_DIR}/systemd/acx-env.service.template"
 }
 
+# Write ACX_IMAGE_REPO into the remote env .env so compose substitutes the same
+# repository resolve_image_repo_name() selected for build/push (variant parity).
+ship_remote_image_repo_env() {
+  local remote_dir="$1" env_file
+  env_file="${remote_dir}/.env"
+  log "Shipping ACX_IMAGE_REPO=${ACX_IMAGE_REPO} into ${env_file} on ${SSH_TARGET}"
+  # Upsert the key without rewriting other secrets. Value is OCIR path (no spaces).
+  ssh "${SSH_TARGET}" \
+    "f='${env_file}'; v='${ACX_IMAGE_REPO}'; \
+     if [ -f \"\$f\" ] && grep -q '^ACX_IMAGE_REPO=' \"\$f\"; then \
+       sed -i \"s|^ACX_IMAGE_REPO=.*|ACX_IMAGE_REPO=\${v}|\" \"\$f\"; \
+     else printf 'ACX_IMAGE_REPO=%s\\n' \"\$v\" >> \"\$f\"; fi"
+}
+
 # Converge the deployed compose file(s) + systemd unit with the repo *before*
 # the image restart, so drift (missing volume/env/overlay) cannot reach a live
 # prod. Backs up the prior compose/unit on the VM first. The Caddy edge is
@@ -475,6 +504,8 @@ converge_runtime() {
     ssh "${SSH_TARGET}" "cp -f '${remote_dir}/docker-compose.admin.yml' '${remote_dir}/docker-compose.admin.yml.bak' 2>/dev/null || true"
     _ship_file "${SERVICE_DIR}/docker-compose.admin.yml" "${remote_dir}/docker-compose.admin.yml"
   fi
+  # Thread the build-variant repo into compose substitution before any restart.
+  ship_remote_image_repo_env "${remote_dir}"
   render_unit "$env" | ssh "${SSH_TARGET}" "cat > '/tmp/${unit}.service' && sudo cp '/tmp/${unit}.service' '/etc/systemd/system/${unit}.service' && rm -f '/tmp/${unit}.service' && sudo systemctl daemon-reload"
   log "Runtime converged for ${env} (compose + unit match repo)"
 }
@@ -557,10 +588,16 @@ do_boot_smoke() {
   # steps), so the smoke never mutates the live prod schema — it proves the app
   # boots and /health answers, then is torn down. Network name is read (not
   # sourced) from the deployed .env so a docker-only env line cannot abort it.
-  # Budget is ACX_SMOKE_TIMEOUT (default 24s recognition / longer unmeasured VLM).
-  if ! ssh "${SSH_TARGET}" "bash -s ${env} ${image} ${remote_dir} ${smoke_timeout} ${poll_interval} ${attempts}" <<'SMOKE'
+  # Budget is ACX_SMOKE_TIMEOUT (default 24s recognition / longer unvalidated VLM).
+  # Pass vlm_budget=1 when the default is the unmeasured VLM figure so the failure
+  # message names ACX_SMOKE_TIMEOUT (BUG 4 — do not invent a new measured number).
+  local vlm_budget=0
+  if is_vlm_smoke_budget && [[ -z "${ACX_SMOKE_TIMEOUT:-}" ]]; then
+    vlm_budget=1
+  fi
+  if ! ssh "${SSH_TARGET}" "bash -s ${env} ${image} ${remote_dir} ${smoke_timeout} ${poll_interval} ${attempts} ${vlm_budget}" <<'SMOKE'
 set -euo pipefail
-env="$1"; image="$2"; remote_dir="$3"; budget_s="$4"; poll_s="$5"; attempts="$6"
+env="$1"; image="$2"; remote_dir="$3"; budget_s="$4"; poll_s="$5"; attempts="$6"; vlm_budget="$7"
 net="$(grep -E '^ACX_NETWORK_NAME=' "${remote_dir}/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"' " || true)"
 net="${net:-acx-${env}-net}"
 name="acx-smoke-${env}-$$"
@@ -572,11 +609,19 @@ for _ in $(seq 1 "${attempts}"); do
   if curl -fsS "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then echo "smoke health OK"; exit 0; fi
   sleep "${poll_s}"
 done
-echo "smoke health FAILED after ${budget_s}s" >&2
+if [[ "${vlm_budget}" == "1" ]]; then
+  echo "smoke health FAILED after ${budget_s}s (VLM budget is an UNVALIDATED default — raise via ACX_SMOKE_TIMEOUT once a real arm64 VLM smoke is measured)" >&2
+else
+  echo "smoke health FAILED after ${budget_s}s" >&2
+fi
 exit 1
 SMOKE
   then
-    warn "boot smoke: /health never came up for ${image} after ${smoke_timeout}s"
+    if [[ "${vlm_budget}" == "1" ]]; then
+      warn "boot smoke: /health never came up for ${image} after ${smoke_timeout}s (VLM budget is an UNVALIDATED default — set ACX_SMOKE_TIMEOUT=<seconds> to raise it)"
+    else
+      warn "boot smoke: /health never came up for ${image} after ${smoke_timeout}s"
+    fi
     return 1
   fi
   log "Boot smoke passed for ${image}"
@@ -588,7 +633,10 @@ do_restart() {
   remote_dir="$(env_to_remote_dir "$env")"
   unit="$(env_to_unit "$env")"
   compose_files="$(env_to_compose_files "$env")"
-  log "Pulling latest image + restarting ${unit} on ${SSH_TARGET}"
+  # Always re-ship ACX_IMAGE_REPO before pull/restart so image-only hotfixes
+  # (ACX_CONVERGE_RUNTIME=0) still select the variant repository.
+  ship_remote_image_repo_env "${remote_dir}"
+  log "Pulling ${ACX_IMAGE_REPO} + restarting ${unit} on ${SSH_TARGET}"
   ssh "${SSH_TARGET}" "cd ${remote_dir} && docker compose ${compose_files} pull api && sudo systemctl restart ${unit}"
 }
 
@@ -698,6 +746,39 @@ do_promote() {
 }
 
 #---------------------------------------------------------------- verify
+# Read the running api container's Config.Image from the remote host (rg-015).
+# Returns the raw reference on stdout; empty on inspect failure.
+read_running_api_image() {
+  local env="$1" remote_dir compose_files
+  remote_dir="$(env_to_remote_dir "$env")"
+  compose_files="$(env_to_compose_files "$env")"
+  # shellcheck disable=SC2086 # compose_files is intentionally word-split (-f a -f b).
+  ssh -o BatchMode=yes -o ConnectTimeout=10 "${SSH_TARGET}" \
+    "cd '${remote_dir}' && cid=\$(docker compose ${compose_files} ps -q api 2>/dev/null | head -1) && \
+     [ -n \"\$cid\" ] && docker inspect --format '{{.Config.Image}}' \"\$cid\"" 2>/dev/null || true
+}
+
+# Hard-fail when the live container image is not under the repo we just deployed.
+# Compares against ACX_IMAGE_REPO (= IMAGE_BASE from resolve_image_repo_name).
+verify_running_image_matches_deployed() {
+  local env="$1" env_tag expected_ref running_image
+  env_tag="$(env_to_tag "$env")"
+  expected_ref="${ACX_IMAGE_REPO}:${env_tag}"
+  running_image="$(read_running_api_image "$env")"
+  if [[ -z "${running_image}" ]]; then
+    fail "IMAGE VERIFY: could not read running api Config.Image on ${env} (container missing?)"
+  fi
+  # Accept tag form (repo:tag) or digest form (repo@sha256:...) under ACX_IMAGE_REPO.
+  case "${running_image}" in
+    "${ACX_IMAGE_REPO}:"*|"${ACX_IMAGE_REPO}"@*)
+      log "Image verified: ${env} running ${running_image} (repo matches ACX_IMAGE_REPO=${ACX_IMAGE_REPO}; expected tag ref ${expected_ref})"
+      return 0
+      ;;
+  esac
+  # Loud hard failure — silent success with the wrong repo was the VLM deploy bug.
+  fail "IMAGE MISMATCH: ${env} running container image is '${running_image}', expected repository '${ACX_IMAGE_REPO}' (deployed as ${expected_ref}). Variant deploys must not silently run a different repo."
+}
+
 do_verify() {
   local env="$1"
   local url expected_sha actual_sha body attempt max_attempts sleep_s
@@ -730,6 +811,10 @@ do_verify() {
     fi
 
     if [[ "${actual_sha:0:8}" == "${expected_sha:0:8}" ]]; then
+      # SHA match alone is insufficient: both variants share GIT_REF, so a VLM
+      # deploy that still ran acx-backend would pass. Also compare the running
+      # container image (read from runtime — rg-015) against ACX_IMAGE_REPO.
+      verify_running_image_matches_deployed "$env"
       log "Verified: ${env} runs ${actual_sha:0:8} (matches GIT_REF=${GIT_REF})"
       return 0
     else

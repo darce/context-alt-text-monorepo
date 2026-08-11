@@ -575,7 +575,9 @@ def _w1_audience_manifest_and_record(tmp_path):
             "context_pack": {},
             "base_caption": "",
             "must_right": [_W1_PUBLIC_NAME],
-            "easy_wrong": [],
+            # Non-empty easy_wrong so independent vacuity gates do not fire before
+            # the wrong-name floor this fixture is meant to exercise (F1-1).
+            "easy_wrong": [_W1_LOCAL_NAME],
             "policy": {"recognition_enabled": True},
             "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
         },
@@ -587,8 +589,8 @@ def _w1_audience_manifest_and_record(tmp_path):
             "present_identities": [_W1_LOCAL_NAME],
             "context_pack": {},
             "base_caption": "",
-            "must_right": [],
-            "easy_wrong": [],
+            "must_right": [_W1_LOCAL_NAME],
+            "easy_wrong": [_W1_PUBLIC_NAME],
             "policy": {"recognition_enabled": True},
             "provenance": {"source": "localwp", "license": "consented", "publishable": False},
         },
@@ -701,11 +703,13 @@ def test_cmd_score_exits_nonzero_when_items_failed(tmp_path, monkeypatch):  # S7
             "base_caption": "",
             # Non-empty rubric so empty-rubric does not fire before failed-items.
             "must_right": ["Alice Example"],
-            "easy_wrong": [],
+            "easy_wrong": ["Bob Builder"],
             "policy": {"recognition_enabled": True},
         }
     ]
-    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, ["Alice Example"])
+    manifest_path, manifest_sha = _write_score_manifest(
+        tmp_path, entries, ["Alice Example", "Bob Builder"]
+    )
     record_path = tmp_path / "run-x.json"
     record_path.write_text(
         json.dumps(
@@ -1207,10 +1211,16 @@ def test_score_guard_corpus_truncation_fails_manifest_mismatch_gate(tmp_path, mo
 
 
 def test_score_guard_empty_must_right_fails_empty_rubric_gate(tmp_path, monkeypatch):
-    """Corruption 4: must_right emptied → empty-rubric gate (warning alone is not a gate)."""
-    roster, entries = _corpus_entries(6, with_rubric=False)
-    # with_rubric=False already empties must_right + easy_wrong.
-    assert all(not e["must_right"] and not e["easy_wrong"] for e in entries)
+    """Corruption 4: must_right emptied corpus-wide → empty-rubric gate (easy_wrong kept).
+
+    Vacuity is per-rubric: emptying only must_right while easy_wrong remains must
+    still fail (OR'd counters previously silenced this; r08116b50 F1-1).
+    """
+    roster, entries = _corpus_entries(6, with_rubric=True)
+    for entry in entries:
+        entry["must_right"] = []
+    # Docstring contract: only must_right is emptied; easy_wrong stays non-empty.
+    assert all(not e["must_right"] and e["easy_wrong"] for e in entries)
     manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, roster)
     record = _score_run_record(
         entries,
@@ -1222,18 +1232,82 @@ def test_score_guard_empty_must_right_fails_empty_rubric_gate(tmp_path, monkeypa
     record_path = tmp_path / "run-empty-rubric.json"
     record_path.write_text(json.dumps(record))
     monkeypatch.chdir(tmp_path)
-    # RubricEmptyWarning is expected; a warning alone used to leave exit 0 — the gate
-    # must still fire with a named message.
-    with pytest.warns(match="Must-Right/Easy-Wrong"):
-        with pytest.raises(SystemExit) as excinfo:
-            main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
+    # easy_wrong remains, so RubricEmptyWarning (OR'd loader check) does not fire —
+    # the named empty-rubric gate must still exit non-zero for must_right vacuity.
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
     msg = str(excinfo.value)
     assert excinfo.value.code != 0
     assert "empty-rubric" in msg.lower()
+    assert "must_right" in msg.lower()
     assert "vacuous" in msg.lower()
     assert "wrong-name" not in msg.lower()
     assert "manifest-mismatch" not in msg.lower()
     assert "must-right failures" not in msg.lower()
+    assert "truncation" not in msg.lower()
+
+
+def test_score_guard_empty_easy_wrong_fails_empty_rubric_gate(tmp_path, monkeypatch):
+    """Symmetric to must_right: easy_wrong emptied corpus-wide must name easy_wrong."""
+    roster, entries = _corpus_entries(6, with_rubric=True)
+    for entry in entries:
+        entry["easy_wrong"] = []
+    assert all(e["must_right"] and not e["easy_wrong"] for e in entries)
+    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, roster)
+    record = _score_run_record(
+        entries,
+        caption_fn=lambda e: f"{e['present_identities'][0]} outdoors smiling.",
+        identity_fn=lambda e: [_score_identity(e["present_identities"][0])],
+        manifest_sha=manifest_sha,
+        name="run-empty-easy-wrong.json",
+    )
+    record_path = tmp_path / "run-empty-easy-wrong.json"
+    record_path.write_text(json.dumps(record))
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
+    msg = str(excinfo.value)
+    assert excinfo.value.code != 0
+    assert "empty-rubric" in msg.lower()
+    assert "easy_wrong" in msg.lower()
+    assert "vacuous" in msg.lower()
+    assert "must-right failures" not in msg.lower()
+    assert "truncation" not in msg.lower()
+
+
+def test_score_guard_fetch_limit_truncation_fails_coverage_gate(tmp_path, monkeypatch):
+    """Corruption F1-2: 5-of-37 run-record with matching full-corpus fetch sha.
+
+    fetch --limit N produces exactly this shape: provenance.manifest_sha256 matches
+    the full score-time manifest, but items cover only a subset. Media-id multiset
+    asymmetry must exit non-zero (sha-match alone is not coverage).
+    """
+    roster, full_entries = _corpus_entries(37, with_rubric=True)
+    manifest_path, full_sha = _write_score_manifest(
+        tmp_path, full_entries, roster, name="golden.json"
+    )
+    truncated_items = full_entries[:5]
+    assert len(truncated_items) == 5
+    record = _score_run_record(
+        truncated_items,
+        caption_fn=lambda e: f"{e['present_identities'][0]} outdoors smiling.",
+        identity_fn=lambda e: [_score_identity(e["present_identities"][0])],
+        manifest_sha=full_sha,  # matching full-corpus sha — not the stale-sha shape
+    )
+    record_path = tmp_path / "run-limit5.json"
+    record_path.write_text(json.dumps(record))
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
+    msg = str(excinfo.value)
+    assert excinfo.value.code != 0
+    assert "truncation" in msg.lower()
+    assert "missing=32" in msg or "missing=32," in msg
+    assert "extra=0" in msg
+    assert "manifest-mismatch" not in msg.lower()
+    assert "empty-rubric" not in msg.lower()
+    assert "must-right failures" not in msg.lower()
+    assert "wrong-name" not in msg.lower()
 
 
 # --- FIR-5 S5: face-bakeoff / score-face CLI surface ---

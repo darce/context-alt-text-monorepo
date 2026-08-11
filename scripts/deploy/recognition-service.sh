@@ -695,6 +695,8 @@ do_boot_smoke() {
   #   ACX_MODELS_PATH → /data/cache:ro
   #   RECOGNITION_BLOB_ROOT=/var/lib/acx-blobs (ephemeral volume for smoke)
   # Network name is read (not sourced) from the deployed .env.
+  # DB target is an ephemeral Postgres started for this smoke only — never the
+  # env-file / Vault prod DSN (H2 / INT-01). Real entrypoint stays (D4).
   # Budget is ACX_SMOKE_TIMEOUT (default 24s recognition / longer unvalidated VLM).
   local vlm_budget=0
   if is_vlm_smoke_budget && [[ -z "${ACX_SMOKE_TIMEOUT:-}" ]]; then
@@ -709,16 +711,54 @@ net="${net:-acx-${env}-net}"
 models_path="$(grep -E '^ACX_MODELS_PATH=' "${env_file}" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"'" || true)"
 name="acx-smoke-${env}-$$"
 blob_vol="acx-smoke-blobs-${env}-$$"
+pg_name="acx-smoke-pg-${env}-$$"
+smoke_user="acx_smoke"
+smoke_pass="acx_smoke_not_prod"
+smoke_db="acx_smoke"
+# Throwaway DSNs — host is the ephemeral container name on the smoke network.
+smoke_async_dsn="postgresql+asyncpg://${smoke_user}:${smoke_pass}@${pg_name}:5432/${smoke_db}"
+smoke_sync_dsn="postgresql+psycopg://${smoke_user}:${smoke_pass}@${pg_name}:5432/${smoke_db}"
+# Inline trap (no nested function) so structural parsers that stop at first \n}\n
+# still capture the full do_boot_smoke body.
+trap 'docker rm -f "$name" >/dev/null 2>&1 || true; docker rm -f "$pg_name" >/dev/null 2>&1 || true; docker volume rm -f "$blob_vol" >/dev/null 2>&1 || true' EXIT
+# Ephemeral Postgres so entrypoint migrate/schema-verify never touch live env DB.
+docker run -d --rm --name "$pg_name" --network "$net" \
+  -e POSTGRES_USER="$smoke_user" \
+  -e POSTGRES_PASSWORD="$smoke_pass" \
+  -e POSTGRES_DB="$smoke_db" \
+  pgvector/pgvector:pg17 >/dev/null
+pg_ready=0
+for _ in $(seq 1 30); do
+  if docker exec "$pg_name" pg_isready -U "$smoke_user" -d "$smoke_db" >/dev/null 2>&1; then
+    pg_ready=1
+    break
+  fi
+  sleep 1
+done
+if [[ "$pg_ready" != "1" ]]; then
+  echo "smoke ephemeral postgres failed to become ready" >&2
+  exit 1
+fi
 # Real image CMD — do not override entrypoint; must exercise docker-entrypoint.sh
 # (and /app/.image-variant fail-closed checks owned by sibling lane).
+# -e overrides beat --env-file; force env secret backend so oci_vault cannot
+# inject the live prod POSTGRES_DSN after env-file is loaded.
 run_args=( -d --rm --name "$name" --env-file "${env_file}" --network "$net" -P
   -e RECOGNITION_BLOB_ROOT=/var/lib/acx-blobs
+  -e RECOGNITION_SECRET_BACKEND=env
+  -e POSTGRES_DSN="${smoke_async_dsn}"
+  -e POSTGRES_SYNC_DSN="${smoke_sync_dsn}"
+  -e PGHOST="${pg_name}"
+  -e PGPORT=5432
+  -e PGUSER="${smoke_user}"
+  -e PGPASSWORD="${smoke_pass}"
+  -e DB_NAME="${smoke_db}"
+  -e RECOGNITION_ADMIN_TOKEN=acx-smoke-admin-token-not-for-prod-use
   -v "${blob_vol}:/var/lib/acx-blobs" )
 if [[ -n "${models_path}" ]]; then
   run_args+=( -v "${models_path}:/data/cache:ro" )
 fi
 docker run "${run_args[@]}" "$image" >/dev/null
-trap 'docker rm -f "$name" >/dev/null 2>&1 || true; docker volume rm -f "$blob_vol" >/dev/null 2>&1 || true' EXIT
 port="$(docker port "$name" 8000/tcp | head -1 | sed 's/.*://')"
 for _ in $(seq 1 "${attempts}"); do
   if curl -fsS "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then echo "smoke health OK"; exit 0; fi

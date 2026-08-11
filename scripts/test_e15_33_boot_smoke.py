@@ -64,11 +64,24 @@ def test_boot_smoke_runs_import_and_health_and_is_throwaway() -> None:
 
 
 def test_boot_smoke_full_probe_does_not_migrate_prod_db() -> None:
-    # H2 fix: the full-boot probe overrides the entrypoint to uvicorn-only, so it
-    # never runs `alembic upgrade head`/create_all against the live prod DB.
+    # INT-01 / H2 invariant: Gate 2 keeps the real image CMD (entrypoint migrate
+    # + schema verify) but the smoke container's DB target must be provably not
+    # the deployed/prod database. Assert the override, not entrypoint spelling.
     body = _fn_body("do_boot_smoke")
-    assert "--entrypoint sh" in body and "uvicorn api.main:app" in body
-    assert "alembic" not in body, "smoke must not run migrations against prod"
+    # Real entrypoint retained (D4) — no uvicorn-only entrypoint override.
+    assert "--entrypoint sh" not in body
+    # Ephemeral throwaway Postgres for smoke migrations only.
+    assert "acx-smoke-pg-" in body
+    assert "pgvector/pgvector" in body
+    # Explicit DSN overrides on the smoke container (beat --env-file).
+    assert "POSTGRES_DSN=" in body
+    assert "POSTGRES_SYNC_DSN=" in body
+    # Host is the throwaway container, not a prod/service hostname from .env.
+    assert "PGHOST=" in body and "${pg_name}" in body
+    # Force env secret backend so oci_vault cannot inject live prod DSN.
+    assert "RECOGNITION_SECRET_BACKEND=env" in body
+    # DSN literals must not point at the live compose postgres service name.
+    assert "@postgres:" not in body
     # Network is read (grep), not bash-sourced from the docker env-file.
     assert "grep -E '^ACX_NETWORK_NAME=" in body
     assert ". ./.env" not in body

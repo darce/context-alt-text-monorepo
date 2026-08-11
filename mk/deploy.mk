@@ -39,6 +39,10 @@ deploy-help:
 	@echo "    make deploy-staging                        Remote build on VM, push :staging + :SHA, restart acx-staging, verify"
 	@echo "    make deploy-prod CONFIRM=PROMOTE           Remote build on VM, push :latest + :SHA, restart acx-prod, verify"
 	@echo "    ACX_BUILD_TARGET=runtime-vlm make deploy-dev REMOTE_BUILD=0   Local VLM image build+deploy (never remote)"
+	@echo "  VLM notes (rg-006): remote build of *vlm* targets is refused (refuse_remote_vlm_build)."
+	@echo "    Required: REMOTE_BUILD=0, ACX_BUILD_TARGET=runtime-vlm, seed weights into \$$ACX_MODELS_PATH/huggingface_cache"
+	@echo "    on the VM first. Compose selects the -vlm repo via sticky ACX_IMAGE_REPO shipped by the deploy script."
+	@echo "    Free-space floor (REMOTE_BUILD_MIN_FREE_GB) still applies on the VM pull/smoke path for VLM."
 	@echo ""
 	@echo "  Promote / rollback (retag existing image — remote ssh by default):"
 	@echo "    make deploy-promote-staging                Retag :dev -> :staging, restart, verify"
@@ -49,7 +53,8 @@ deploy-help:
 	@echo "    make deploy-verify ENV=dev                 GET /health and compare commit_sha to local HEAD"
 	@echo "    make deploy-verify-dev|staging|prod        Same, fixed env (reads remote ACX_IMAGE_REPO for VLM)"
 	@echo "    make deploy-status                         Snapshot /health for dev, staging, prod"
-	@echo "    make deploy-clear-image-repo ENV=prod      Remove sticky ACX_IMAGE_REPO from remote .env (→ recognition default)"
+	@echo "    make deploy-clear-image-repo ENV=dev       Remove sticky ACX_IMAGE_REPO from remote .env (→ recognition default)"
+	@echo "    make deploy-clear-image-repo ENV=prod CONFIRM=PROMOTE   Same for prod (CONFIRM required)"
 	@echo ""
 	@echo "  Destructive remote reset (stops unit, clears env Postgres state, restarts, verifies /ready):"
 	@echo "    ACX_RESET_SITE_URL is REQUIRED — the WordPress site URL the plugin will hit."
@@ -151,10 +156,16 @@ deploy-verify-prod:
 deploy-status:
 	@"$(DEPLOY_SCRIPT)" status
 
-# D9: remove sticky ACX_IMAGE_REPO from remote .env (compose → recognition default).
+# D9 / S2-A-10: remove sticky ACX_IMAGE_REPO from remote .env (compose → recognition default).
+# Prod requires CONFIRM=PROMOTE — same lever as deploy-prod / reset-remote — because a
+# mistyped ENV=prod is latent (no restart) and only bites at the next unattended unit restart.
 deploy-clear-image-repo:
 	@if [ -z "$(ENV)" ]; then \
 		echo "deploy-clear-image-repo: ENV is required (dev|staging|prod)" >&2; \
+		exit 2; \
+	fi
+	@if [ "$(ENV)" = "prod" ] && [ "$(CONFIRM)" != "PROMOTE" ]; then \
+		echo "deploy-clear-image-repo: ENV=prod requires CONFIRM=PROMOTE (sticky-repo clear is latent until next unit restart)" >&2; \
 		exit 2; \
 	fi
 	@"$(DEPLOY_SCRIPT)" clear-image-repo $(ENV)

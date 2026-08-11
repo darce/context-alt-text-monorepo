@@ -36,9 +36,13 @@ services:
     environment:
       - HOST=0.0.0.0
       - PORT=8000
+      - RECOGNITION_BLOB_ROOT=/var/lib/acx-blobs
     volumes:
       # :ro — Florence-2 trust_remote_code executes cache python; writable = RCE.
       - /opt/acx-backend/data/models:/data/cache:ro
+      - acx_blobs:/var/lib/acx-blobs
+    tmpfs:
+      - /var/cache/acx/hf_modules:mode=0700,uid=10001,gid=10001,size=32m,noexec
     expose:
       - "8000"
 
@@ -49,8 +53,13 @@ services:
       postgres:
         condition: service_healthy
     env_file: .env
+    environment:
+      - RECOGNITION_BLOB_ROOT=/var/lib/acx-blobs
     volumes:
       - /opt/acx-backend/data/models:/data/cache:ro
+      - acx_blobs:/var/lib/acx-blobs
+    tmpfs:
+      - /var/cache/acx/hf_modules:mode=0700,uid=10001,gid=10001,size=32m,noexec
     command: ["python", "-m", "recognition.worker.scan_worker"]
 
   caddy:
@@ -67,5 +76,6 @@ services:
       - caddy_config:/config
 
 volumes:
+  acx_blobs:
   caddy_data:
   caddy_config:

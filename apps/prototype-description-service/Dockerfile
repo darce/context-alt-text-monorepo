@@ -108,14 +108,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Non-root identity + writable cache dir only (ORCH-LAUNCH-01-S1-RB-03).
+# Non-root identity + writable scratch paths only (ORCH-LAUNCH-01-S1-RB-03).
 # DEVIATION from the reviewer's suggested `chown -R acx:acx /app /opt/venv`:
 # leave /app and /opt/venv root:root (world-readable/executable) so the
 # unprivileged runtime user cannot rewrite application code or the virtualenv —
 # chowning them to acx would hand that persistence target straight back.
-# Only /data/cache needs to be acx-owned for HF/InsightFace weight writes.
+#
+# Paths (what is actually true at runtime):
+#   /data/cache — compose bind-mounts host weights here :ro. Image mkdir+chown
+#     is only a seed for unmounted `docker run`; host ownership wins on the bind.
+#   /var/lib/acx-blobs — named volume for multipart uploads; image seed+chown
+#     so the volume inherits acx ownership (USER acx must write job blobs).
+#   /var/cache/acx/hf_modules — private HF trust_remote_code module scratch.
+#     Compose mounts a per-container noexec tmpfs here; image seed for bare runs.
+#     HF_MODULES_CACHE MUST be set as ENV (transformers reads it at import time).
 RUN groupadd -r acx && useradd -r -g acx -u 10001 acx \
-    && mkdir -p /data/cache && chown acx:acx /data/cache
+    && mkdir -p /data/cache /var/lib/acx-blobs /var/cache/acx/hf_modules \
+    && chown acx:acx /data/cache /var/lib/acx-blobs /var/cache/acx/hf_modules
+ENV HF_MODULES_CACHE=/var/cache/acx/hf_modules
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
@@ -137,10 +147,12 @@ COPY shared/ shared/
 COPY scripts/ scripts/
 COPY pyproject.toml .
 
-# Default cache directory inside the container (bind-mounted by compose/deploy;
-# do not declare VOLUME here — see runtime-vlm comment, ORCH-LAUNCH-01-S1-RA-10).
+# Weight/cache env: /data/cache is the host bind (compose :ro). Module cache is
+# HF_MODULES_CACHE above — not under HF_HOME — so trust_remote_code never tries
+# to makedirs on the read-only weight mount.
 # TRANSFORMERS_CACHE intentionally omitted (ORCH-LAUNCH-01-S1-BR-04): deprecated
 # since transformers 4.36 in favour of HF_HOME/HF_HUB_CACHE (locked 4.48.3).
+# Do not declare VOLUME here — see runtime-vlm comment, ORCH-LAUNCH-01-S1-RA-10.
 ENV CACHE_BASE=/data/cache
 ENV HF_HOME=/data/cache/huggingface_cache
 ENV HF_HUB_CACHE=/data/cache/huggingface_cache
@@ -160,24 +172,25 @@ CMD ["/app/scripts/docker-entrypoint.sh"]
 # Deliberately NOT the last stage — see the stage-order note in the header.
 #
 # Model-weight cache strategy (mount, not bake):
-#   VLM weights (Florence-2 / HF hub) are served from a persistent bind mount at
-#   /data/cache. Operators seed HF_HOME outside this offline image
+#   VLM weights (Florence-2 / HF hub) are served from a host bind mount at
+#   /data/cache:ro (immutable weights; trust_remote_code must not write there).
+#   Operators seed HF_HOME outside this offline image
 #   (`python -m scripts.seed_vlm_cache`, see infra/oci/README.md § VLM weight cache).
-#   Boot fail-closed is scripts.verify_vlm_cache (manifest + trust_remote_code
-#   *.py set match) on the entrypoint VLM path — not HF_HUB_OFFLINE alone.
-#   HF_HUB_OFFLINE=1 / TRANSFORMERS_OFFLINE=1 are a second line of defense:
-#   no HuggingFace network fetch on the production path if something bypasses
-#   the gate. Tradeoff: larger operator ops surface (seed the volume once) vs
-#   smaller image than baking multi-GB weights; boot stays network-free.
+#   Module scratch is HF_MODULES_CACHE=/var/cache/acx/hf_modules (private tmpfs
+#   in compose — not the weight mount). Boot fail-closed is scripts.verify_vlm_cache
+#   (manifest + trust_remote_code *.py set match) on the entrypoint VLM path.
+#   HF_HUB_OFFLINE=1 / TRANSFORMERS_OFFLINE=1 are a second line of defense.
 # ---------------------------------------------------------------------------
 FROM runtime-base AS runtime-vlm
 
 COPY --from=builder-vlm /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Baked identity for /health + /version (must match ImageVariant.VLM in
-# scripts/verify_vlm_cache.py — sr-007). Explicit per stage; do not rely on a default.
+# Build-immutable identity: /app/.image-variant is the source of truth for
+# /health + /version + entrypoint (must match ImageVariant.VLM — sr-007).
+# ENV alone is not safe: compose env_file can override image ENV and fail open.
 ENV ACX_IMAGE_VARIANT=vlm
+RUN printf 'vlm\n' > /app/.image-variant && chmod 0444 /app/.image-variant
 
 # Install the app package into /opt/venv without resolving build/runtime deps.
 # --no-deps: runtime deps come only from the locked uv.lock sync above.
@@ -189,12 +202,13 @@ RUN /opt/venv/bin/pip install --no-cache-dir -e . --no-deps --no-build-isolation
 ENV HF_HUB_OFFLINE=1
 ENV TRANSFORMERS_OFFLINE=1
 
-# /data/cache is a bind mount supplied by compose/deploy (ORCH-LAUNCH-01-S1-RA-10).
+# /data/cache is a :ro host bind supplied by compose/deploy (ORCH-LAUNCH-01-S1-RA-10).
 # No VOLUME instruction: an anonymous volume here would leak unreclaimable disk
 # on every `docker run` without an explicit mount (including boot-smoke).
 
-# Drop root for the serving process (SEC-13). /data/cache is acx-owned;
-# /app and /opt/venv stay root:root world-readable (no code/venv write for acx).
+# Drop root for the serving process (SEC-13). Writable under USER acx:
+# /var/lib/acx-blobs (named volume) + /var/cache/acx/hf_modules (tmpfs).
+# /data/cache is read-only weights; /app and /opt/venv stay root:root.
 USER acx
 
 # ---------------------------------------------------------------------------
@@ -207,8 +221,9 @@ FROM runtime-base AS runtime
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Baked identity for /health + /version (must match ImageVariant.RECOGNITION).
+# Build-immutable identity (must match ImageVariant.RECOGNITION). See runtime-vlm.
 ENV ACX_IMAGE_VARIANT=recognition
+RUN printf 'recognition\n' > /app/.image-variant && chmod 0444 /app/.image-variant
 
 # Install the app package into /opt/venv without resolving build/runtime deps.
 # --no-deps: runtime deps come only from the locked uv.lock sync above.
@@ -218,7 +233,7 @@ RUN /opt/venv/bin/pip install --no-cache-dir -e . --no-deps --no-build-isolation
 
 # Drop root for the recognition serving process too (SEC-13 / wave3).
 # WHY same model as runtime-vlm: boot chain (alembic → schema sync → uvicorn)
-# only needs network to Postgres plus writes under /data/cache (acx-owned).
-# PYTHONDONTWRITEBYTECODE=1 avoids __pycache__ writes under /app. No path
-# requires root on the serving path; do not re-introduce USER root here.
+# needs Postgres plus writes under /var/lib/acx-blobs (and hf_modules scratch
+# if ever used). Weights on /data/cache stay :ro. PYTHONDONTWRITEBYTECODE=1
+# avoids __pycache__ under /app. Do not re-introduce USER root here.
 USER acx

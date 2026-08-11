@@ -79,6 +79,24 @@ class ClusterResponseMapperTest extends TestCase
         $this->assertSame('http://example.test/media/12.jpg', $payload[0]['sample_identities'][0]['thumb_url']);
     }
 
+    public function testMapClusterListUsesObservedEmptyMemberCountOnCounterMismatch(): void
+    {
+        $GLOBALS['__ac_error_log'] = [];
+        $payload = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-stale-count',
+                    'identity_count' => 1,
+                ],
+            ],
+            ['cluster-stale-count' => []]
+        );
+
+        $this->assertSame(0, $payload[0]['identity_count']);
+        $this->assertStringContainsString('cluster-stale-count', \implode("\n", $GLOBALS['__ac_error_log']));
+        $this->assertStringContainsString('projected=1 observed=0', \implode("\n", $GLOBALS['__ac_error_log']));
+    }
+
     public function testMapClusterListIncludesPinnedRepresentativeState(): void
     {
         $clusters = [

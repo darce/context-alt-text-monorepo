@@ -848,8 +848,58 @@ class LifecycleManager {
 			}
 		}
 
+		if ( ! $this->verify_projection_schema_columns( $statements ) ) {
+			return false;
+		}
+
 		if ( ! $this->seed_assigned_at_from_created_at( (string) $wpdb->prefix . 'acx_identity_members' ) ) {
 			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * @param array<string,string> $statements
+	 */
+	private function verify_projection_schema_columns( array $statements ): bool {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_results' ) ) {
+			return false;
+		}
+
+		foreach ( $statements as $key => $sql ) {
+			$intended_columns = array();
+			if ( preg_match( '/^CREATE TABLE\s+[^\s(]+\s*\((.*)\)\s*[^)]*;?$/si', trim( $sql ), $matches ) ) {
+				foreach ( preg_split( '/\R/', $matches[1] ) ?: array() as $definition ) {
+					if ( preg_match( '/^\s*`?([a-zA-Z0-9_]+)`?\s+/', $definition, $column_match ) ) {
+						$name = $column_match[1];
+						if ( ! in_array( strtoupper( $name ), array( 'PRIMARY', 'KEY', 'UNIQUE', 'FULLTEXT', 'SPATIAL' ), true ) ) {
+							$intended_columns[] = $name;
+						}
+					}
+				}
+			}
+
+			$table = (string) $wpdb->prefix . $key;
+			$query = method_exists( $wpdb, 'prepare' ) ? $wpdb->prepare( 'SHOW COLUMNS FROM %i', $table ) : "SHOW COLUMNS FROM `{$table}`";
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Prepared above or plugin-owned table name.
+			$rows = $wpdb->get_results( $query, ARRAY_A );
+			$actual_columns = array();
+			foreach ( is_array( $rows ) ? $rows : array() as $row ) {
+				if ( is_array( $row ) && isset( $row['Field'] ) ) {
+					$actual_columns[] = (string) $row['Field'];
+				}
+			}
+
+			$missing = array_values( array_diff( $intended_columns, $actual_columns ) );
+			if ( array() !== $missing ) {
+				Telemetry::log_line(
+					sprintf( '[acx] schema verification failed for %s; missing columns: %s', $table, implode( ', ', $missing ) )
+				);
+				return false;
+			}
 		}
 
 		return true;

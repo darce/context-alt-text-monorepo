@@ -6,6 +6,7 @@ namespace AltContext\Sovereign\Mappers;
 
 require_once __DIR__ . '/trait-maps-response-fields.php';
 
+use AltContext\Support\Telemetry;
 use function absint;
 use function array_slice;
 use function array_values;
@@ -31,7 +32,7 @@ class ClusterResponseMapper {
 			if ( '' !== $cluster_id && isset( $members_by_cluster[ $cluster_id ] ) && is_array( $members_by_cluster[ $cluster_id ] ) ) {
 				$members = $members_by_cluster[ $cluster_id ];
 			}
-			$results[] = $this->map_cluster_summary( $row, $members );
+			$results[] = $this->map_cluster_summary( $row, $members, isset( $members_by_cluster[ $cluster_id ] ) );
 		}
 
 		return $results;
@@ -43,7 +44,7 @@ class ClusterResponseMapper {
 	 * @return array<string,mixed>
 	 */
 	public function map_cluster_detail( array $cluster_row, array $member_rows ): array {
-		return $this->map_cluster_summary( $cluster_row, $member_rows );
+		return $this->map_cluster_summary( $cluster_row, $member_rows, true );
 	}
 
 	/**
@@ -95,7 +96,7 @@ class ClusterResponseMapper {
 				'label' => $label_state['label'],
 				'is_labeled' => $label_state['is_labeled'],
 				'is_auto_label' => $label_state['is_auto_label'],
-				'identity_count' => $this->resolve_identity_count( $row, $members ),
+				'identity_count' => $this->resolve_identity_count( $row, $members, isset( $members_by_cluster[ $cluster_id ] ) ),
 				'user_confirmed' => $label_state['user_confirmed'],
 				'suggested_label' => isset( $row['suggested_label'] ) && '' !== $row['suggested_label'] ? (string) $row['suggested_label'] : null,
 				'suggested_label_source' => isset( $row['suggested_label_source'] ) && '' !== $row['suggested_label_source'] ? (string) $row['suggested_label_source'] : null,
@@ -113,7 +114,7 @@ class ClusterResponseMapper {
 	 * @param array<int,array<string,mixed>> $member_rows
 	 * @return array<string,mixed>
 	 */
-	private function map_cluster_summary( array $cluster_row, array $member_rows ): array {
+	private function map_cluster_summary( array $cluster_row, array $member_rows, bool $members_loaded ): array {
 		$cluster_id = trim( (string) ( $cluster_row['cluster_uuid'] ?? '' ) );
 		$label_state = $this->resolve_label_state( $cluster_row );
 		$members    = array_values( $member_rows );
@@ -138,7 +139,7 @@ class ClusterResponseMapper {
 			'id' => $cluster_id,
 			'label' => $label_state['label'],
 			'is_auto_label' => $label_state['is_auto_label'],
-			'identity_count' => $this->resolve_identity_count( $cluster_row, $members ),
+			'identity_count' => $this->resolve_identity_count( $cluster_row, $members, $members_loaded ),
 			'member_ids' => $member_ids,
 			'representative_identity' => $representative,
 			'sample_identities' => $sample_identities,
@@ -221,9 +222,25 @@ class ClusterResponseMapper {
 	 * @param array<string,mixed> $cluster_row
 	 * @param array<int,array<string,mixed>> $member_rows
 	 */
-	private function resolve_identity_count( array $cluster_row, array $member_rows ): int {
+	private function resolve_identity_count( array $cluster_row, array $member_rows, bool $members_loaded ): int {
 		if ( is_numeric( $cluster_row['identity_count'] ?? null ) ) {
-			return max( 0, (int) $cluster_row['identity_count'] );
+			$projected_count = max( 0, (int) $cluster_row['identity_count'] );
+			$observed_count  = count( $member_rows );
+			if ( $members_loaded && $projected_count !== $observed_count ) {
+				Telemetry::log_line(
+					sprintf(
+						'[acx] cluster identity count mismatch for %s: projected=%d observed=%d',
+						trim( (string) ( $cluster_row['cluster_uuid'] ?? '' ) ),
+						$projected_count,
+						$observed_count
+					)
+				);
+				if ( 0 === $observed_count ) {
+					return 0;
+				}
+			}
+
+			return $projected_count;
 		}
 
 		return count( $member_rows );

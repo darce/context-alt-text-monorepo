@@ -2279,6 +2279,8 @@ if (!isset($GLOBALS['wpdb'])) {
         public array $updateResults = [];
         /** @var array<string,array<int,array<string,mixed>>> */
         public array $tableRows = [];
+        /** @var array<string,array<int,string>> */
+        public array $tableColumns = [];
         /** @var callable|null Optional observer invoked with each get_var SQL string (test instrumentation). */
         public $onGetVar = null;
 
@@ -2376,7 +2378,14 @@ if (!isset($GLOBALS['wpdb'])) {
                 return null;
             }
 
-            $results = $this->mockResults;
+            if (preg_match('/^SHOW COLUMNS FROM\s+`?([^\s`]+)`?/i', $normalizedSql, $matches)) {
+                $results = array_map(
+                    static fn(string $column): array => ['Field' => $column],
+                    $this->tableColumns[$matches[1]] ?? []
+                );
+            } else {
+                $results = $this->mockResults;
+            }
             if ($results === []) {
                 $results = $this->resolveStoredSelectResults($normalizedSql);
             }
@@ -2779,6 +2788,7 @@ if (!isset($GLOBALS['wpdb'])) {
             $this->defaultUpdateResult = 1;
             $this->updateResults = [];
             $this->tableRows = [];
+            $this->tableColumns = [];
             $this->onGetVar = null;
         }
     }
@@ -2814,6 +2824,24 @@ if (!function_exists('dbDelta')) {
 
             $GLOBALS['__ac_dbdelta_queries'][] = $normalized;
             $executed[] = $normalized;
+
+            if (isset($GLOBALS['wpdb']) && is_object($GLOBALS['wpdb']) && property_exists($GLOBALS['wpdb'], 'tableColumns')) {
+                if (preg_match('/^CREATE TABLE\s+`?([^\s`(]+)`?\s*\((.*)\)\s*[^)]*;?$/si', $normalized, $matches)) {
+                    $columns = [];
+                    foreach (preg_split('/\R/', $matches[2]) ?: [] as $definition) {
+                        if (preg_match('/^\s*`?([a-zA-Z0-9_]+)`?\s+/', $definition, $columnMatch)) {
+                            $name = $columnMatch[1];
+                            if (!in_array(strtoupper($name), ['PRIMARY', 'KEY', 'UNIQUE', 'FULLTEXT', 'SPATIAL'], true)) {
+                                $skip = $GLOBALS['__ac_dbdelta_silent_skip_column'] ?? null;
+                                if (!is_string($skip) || $skip !== $name) {
+                                    $columns[] = $name;
+                                }
+                            }
+                        }
+                    }
+                    $GLOBALS['wpdb']->tableColumns[$matches[1]] = $columns;
+                }
+            }
 
             // Test injection: simulate MySQL rejecting a statement (sets $wpdb->last_error).
             // Match is a substring of the SQL (typically a table suffix like acx_identity_members).

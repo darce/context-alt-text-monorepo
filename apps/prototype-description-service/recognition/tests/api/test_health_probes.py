@@ -399,6 +399,19 @@ def test_root_health_includes_commit_sha(monkeypatch) -> None:
     assert not (forbidden_keys & body.keys())
 
 
+def test_image_variant_artifact_constant_is_canonical() -> None:
+    """rg-015 / TEST-15: production constant must be /app/.image-variant.
+
+    Monkeypatching the path in other tests must not let a wrong constant pass:
+    this asserts the real module-level path used in the image.
+    """
+    from pathlib import Path
+
+    from api.main import _IMAGE_VARIANT_ARTIFACT
+
+    assert _IMAGE_VARIANT_ARTIFACT == Path("/app/.image-variant")
+
+
 def test_health_and_version_report_baked_image_variant(tmp_path, monkeypatch) -> None:
     """D8: /health and /version report image_variant from /app/.image-variant.
 
@@ -437,6 +450,82 @@ def test_image_variant_env_mismatch_with_bake_fails_closed(tmp_path, monkeypatch
 
     with pytest.raises(RuntimeError, match="disagrees with baked"):
         create_app()
+
+
+def test_image_variant_unreadable_bake_fails_closed(monkeypatch) -> None:
+    """OSError reading the bake must fail closed — never report recognition."""
+    import pytest
+
+    class _Unreadable:
+        def is_file(self) -> bool:
+            return True
+
+        def read_text(self, *args, **kwargs) -> str:
+            raise OSError("permission denied")
+
+        def __str__(self) -> str:
+            return "/app/.image-variant"
+
+        def __fspath__(self) -> str:
+            return "/app/.image-variant"
+
+    monkeypatch.setattr("api.main._IMAGE_VARIANT_ARTIFACT", _Unreadable())
+    monkeypatch.delenv("ACX_IMAGE_VARIANT", raising=False)
+
+    from api.main import _resolve_image_variant
+
+    with pytest.raises(RuntimeError, match="cannot read baked image variant"):
+        _resolve_image_variant()
+
+
+def test_image_variant_invalid_bake_fails_closed(tmp_path, monkeypatch) -> None:
+    """Corrupt bake values must fail closed (match entrypoint case arm)."""
+    import pytest
+
+    artifact = tmp_path / ".image-variant"
+    artifact.write_text("torch-edition\n", encoding="utf-8")
+    monkeypatch.setattr("api.main._IMAGE_VARIANT_ARTIFACT", artifact)
+    monkeypatch.delenv("ACX_IMAGE_VARIANT", raising=False)
+
+    from api.main import _resolve_image_variant
+
+    with pytest.raises(RuntimeError, match="invalid baked image variant"):
+        _resolve_image_variant()
+
+
+def test_logging_file_handler_falls_back_when_dir_unwritable(tmp_path, monkeypatch) -> None:
+    """Explicit stream-only fallback when log dir cannot be created (not bare pass)."""
+    import logging
+
+    from api import logging_config as lc
+
+    blocked = tmp_path / "nope" / "logs"
+    # Parent is a file → mkdir parents fails with OSError (not PermissionError-only).
+    blocker = tmp_path / "nope"
+    blocker.write_text("not-a-dir", encoding="utf-8")
+    monkeypatch.setenv("ACX_LOG_DIR", str(blocked))
+    # Temporarily pretend we are not under pytest so file handler is attempted.
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.setattr(lc, "_is_test_environment", lambda: False)
+
+    root = logging.getLogger()
+    before_handlers = list(root.handlers)
+    try:
+        lc.configure_logging("INFO")
+        # Console handler always present; file handler must be absent.
+        file_handlers = [
+            h
+            for h in root.handlers
+            if isinstance(h, logging.handlers.WatchedFileHandler)
+        ]
+        assert file_handlers == [], (
+            "unwritable log dir must not attach WatchedFileHandler"
+        )
+        assert any(isinstance(h, logging.StreamHandler) for h in root.handlers)
+    finally:
+        root.handlers.clear()
+        for h in before_handlers:
+            root.addHandler(h)
 
 
 def test_ready_model_cache_flips_unhealthy_when_bundle_missing(tmp_path) -> None:

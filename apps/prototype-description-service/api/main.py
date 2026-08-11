@@ -111,6 +111,8 @@ def _resolve_image_variant() -> str:
     (a VLM image can report as recognition). Source of truth is the artifact;
     a non-empty env claim that disagrees fails closed. When the artifact is
     absent (local dev / unit tests), fall back to env then ``recognition``.
+    Read/OSError and invalid bake values fail closed (match entrypoint) — never
+    report ``recognition`` when the bake is unreadable or corrupt.
     Canonical labels match ``ImageVariant`` in ``scripts.verify_vlm_cache``
     (sr-007); this helper stays import-light for the hatch wheel include.
     """
@@ -119,9 +121,15 @@ def _resolve_image_variant() -> str:
     try:
         if _IMAGE_VARIANT_ARTIFACT.is_file():
             baked = _IMAGE_VARIANT_ARTIFACT.read_text(encoding="utf-8").strip()
-    except OSError:
-        baked = ""
+    except OSError as exc:
+        raise RuntimeError(
+            f"cannot read baked image variant at {_IMAGE_VARIANT_ARTIFACT}: {exc}"
+        ) from exc
     if baked:
+        if baked not in {"recognition", "vlm"}:
+            raise RuntimeError(
+                f"invalid baked image variant {baked!r} at {_IMAGE_VARIANT_ARTIFACT}"
+            )
         if env_claim and env_claim != baked:
             raise RuntimeError(
                 f"ACX_IMAGE_VARIANT={env_claim!r} disagrees with baked "

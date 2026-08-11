@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -31,7 +32,9 @@ import pytest
 from recognition.tests.dockerfile_stages import (
     DEFAULT_BUILDER_STAGE,
     DEFAULT_RUNTIME_STAGE,
+    RUNTIME_VLM_STAGE,
     _PROJECT_EXTRAS_RE,
+    default_build_target,
     dockerfile_stages,
     effective_stage_body,
     has_vlm_extra,
@@ -59,9 +62,18 @@ _PARITY_WORKFLOW_CANDIDATES = (
     _REPO_ROOT / ".github" / "workflows" / "face_pipeline_ort_parity.yml",
 )
 
-# Default image path only (builder + runtime). Do not assert internals of
-# builder-vlm / runtime-vlm — a concurrent lane owns those stages.
-_DEFAULT_IMAGE_STAGES = (DEFAULT_BUILDER_STAGE, DEFAULT_RUNTIME_STAGE)
+# Every stage that contributes to a shippable image (recognition + VLM).
+# ACX_BUILD_TARGET=runtime-vlm publishes acx-backend-vlm; lock-integrity and
+# unlocked-install gates must cover both image paths (REV-r08112960-B-10).
+_BUILDER_VLM_STAGE = "builder-vlm"
+_SHIPPABLE_IMAGE_STAGES = (
+    DEFAULT_BUILDER_STAGE,
+    _BUILDER_VLM_STAGE,
+    DEFAULT_RUNTIME_STAGE,
+    RUNTIME_VLM_STAGE,
+)
+# Back-compat alias used by tests that mean "all publishable stage bodies".
+_DEFAULT_IMAGE_STAGES = _SHIPPABLE_IMAGE_STAGES
 
 
 def _dockerfile_stages() -> dict[str, str]:
@@ -87,10 +99,10 @@ def _runtime_body() -> str:
 
 
 def _default_image_stage_text() -> str:
-    """Effective bodies for the default image path (builder + runtime)."""
+    """Effective bodies for every shippable image stage (recognition + VLM)."""
     stages = _dockerfile_stages()
     parts: list[str] = []
-    for name in _DEFAULT_IMAGE_STAGES:
+    for name in _SHIPPABLE_IMAGE_STAGES:
         if name not in stages:
             continue
         parts.append(effective_stage_body(_DOCKERFILE, name))
@@ -114,6 +126,66 @@ def _write_dockerfile(tmp_path: Path, text: str) -> Path:
 # ---------------------------------------------------------------------------
 # 1. Docker frozen-lock install (FIR4-BR-01) — stage-scoped (RC-02/RC-03)
 # ---------------------------------------------------------------------------
+
+
+_ENTRYPOINT = _SERVICE_ROOT / "scripts" / "docker-entrypoint.sh"
+
+
+def test_entrypoint_exports_baked_image_variant() -> None:
+    """S1-A-08: bake must be exported so children see ACX_IMAGE_VARIANT without image ENV."""
+    text = _ENTRYPOINT.read_text(encoding="utf-8")
+    assert re.search(r"(?m)^export\s+ACX_IMAGE_VARIANT=", text), (
+        "docker-entrypoint.sh must `export ACX_IMAGE_VARIANT=...` from the bake "
+        "(plain assignment is not visible to children if image ENV is stripped)"
+    )
+
+
+def test_entrypoint_traps_term_during_pre_uvicorn() -> None:
+    """A-13: PID 1 must handle SIGTERM during migrate/schema/verify window."""
+    text = _ENTRYPOINT.read_text(encoding="utf-8")
+    assert re.search(r"""trap\s+['"]_on_term['"]\s+TERM\b""", text), (
+        "entrypoint must install trap _on_term TERM before long boot steps"
+    )
+    # alembic backgrounded so the trap can kill it (not a forever-foreground child).
+    assert re.search(r"(?m)^alembic\b.+\s&\s*$", text), (
+        "alembic must run under &+wait so SIGTERM can interrupt the migrate step"
+    )
+
+
+def test_entrypoint_export_reaches_child_process() -> None:
+    """Behavioural: export (not bare assign) propagates bake into a child shell."""
+    # Mirrors the entrypoint's prefer-bake export without running the full boot chain.
+    probe = (
+        "#!/bin/sh\n"
+        "set -eu\n"
+        "BAKED_IMAGE_VARIANT=vlm\n"
+        "export ACX_IMAGE_VARIANT=\"${BAKED_IMAGE_VARIANT}\"\n"
+        # Child without inherited env would still see exported names from parent.
+        "sh -c 'printf %s \"$ACX_IMAGE_VARIANT\"'\n"
+    )
+    proc = subprocess.run(
+        ["sh", "-c", probe],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == "vlm"
+    # Control: bare assign without export does not reach an env-cleared child.
+    bare = (
+        "#!/bin/sh\n"
+        "set -eu\n"
+        "ACX_IMAGE_VARIANT=vlm\n"
+        "env -i PATH=\"$PATH\" sh -c 'printf %s \"${ACX_IMAGE_VARIANT:-missing}\"'\n"
+    )
+    bare_proc = subprocess.run(
+        ["sh", "-c", bare],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert bare_proc.returncode == 0
+    assert bare_proc.stdout == "missing"
 
 
 def test_service_uv_lock_exists() -> None:
@@ -175,9 +247,10 @@ def test_dockerfile_rejects_unlocked_pip_bench_dependency_install() -> None:
         for hit in unlocked_project_extra_installs(body):
             offenders.append(f"{stage}: {hit}")
     assert not offenders, (
-        "default image stages must not use unlocked project+extras pip/uv install "
-        "for dependency resolution; switch to COPY uv.lock + "
-        "`uv sync --frozen --extra bench`. Found:\n  - " + "\n  - ".join(offenders)
+        "shippable image stages (builder, builder-vlm, runtime, runtime-vlm) must "
+        "not use unlocked project+extras pip/uv install for dependency resolution; "
+        "switch to COPY uv.lock + `uv sync --frozen --extra bench`. Found:\n  - "
+        + "\n  - ".join(offenders)
     )
 
 
@@ -203,6 +276,76 @@ def test_default_builder_stage_has_no_vlm_extra() -> None:
     assert "torch" not in active.lower(), (
         "default builder active body must not mention torch (VLM path only)"
     )
+
+
+def test_dockerfile_stage_topology_keeps_default_torch_free() -> None:
+    """S1-RC-06: default target stays torch-free; VLM path is explicit + offline.
+
+    Stage-aware: last stage must be runtime; builder has no --extra vlm; VLM
+    builder/stage exist with offline fail-closed env on runtime-vlm.
+    """
+    stages = _dockerfile_stages()
+    assert stages, "expected named Dockerfile stages"
+    last = default_build_target(_DOCKERFILE)
+    assert last == DEFAULT_RUNTIME_STAGE, (
+        f"last Dockerfile stage is {last!r}; bare docker build would ship it. "
+        f"{DEFAULT_RUNTIME_STAGE!r} must stay last (S1-RC-06 / RA-05)."
+    )
+    assert not has_vlm_extra(stages[DEFAULT_BUILDER_STAGE]), (
+        "default builder must not pull --extra vlm"
+    )
+    assert _BUILDER_VLM_STAGE in stages and RUNTIME_VLM_STAGE in stages, (
+        "builder-vlm and runtime-vlm must remain reachable via --target"
+    )
+    assert has_vlm_extra(stages[_BUILDER_VLM_STAGE]), (
+        "builder-vlm must resolve --extra vlm"
+    )
+    vlm_eff = effective_stage_body(_DOCKERFILE, RUNTIME_VLM_STAGE)
+    # Offline second line of defense (HF hub / transformers only — not insightface).
+    active_vlm = "\n".join(
+        ln
+        for ln in join_continued_lines(vlm_eff)
+        if ln.strip() and not ln.strip().startswith("#")
+    )
+    assert re.search(r"(?m)^ENV\s+HF_HUB_OFFLINE=1\s*$", active_vlm), (
+        "runtime-vlm must set ENV HF_HUB_OFFLINE=1 (fail closed if weights missing)"
+    )
+    assert re.search(r"(?m)^ENV\s+TRANSFORMERS_OFFLINE=1\s*$", active_vlm), (
+        "runtime-vlm must set ENV TRANSFORMERS_OFFLINE=1"
+    )
+
+
+def test_guard_bites_when_runtime_vlm_drops_offline_env(tmp_path: Path) -> None:
+    """TEST-15: removing HF_HUB_OFFLINE from a synthetic runtime-vlm fails the gate."""
+    text = (
+        "FROM python:3.12-slim AS builder\n"
+        "RUN uv sync --frozen --extra bench\n"
+        "\n"
+        "FROM python:3.12-slim AS builder-vlm\n"
+        "RUN uv sync --frozen --extra bench --extra vlm\n"
+        "\n"
+        "FROM python:3.12-slim AS runtime-base\n"
+        "RUN true\n"
+        "\n"
+        "FROM runtime-base AS runtime-vlm\n"
+        "COPY --from=builder-vlm /opt/venv /opt/venv\n"
+        "ENV TRANSFORMERS_OFFLINE=1\n"
+        "\n"
+        "FROM runtime-base AS runtime\n"
+        "COPY --from=builder /opt/venv /opt/venv\n"
+    )
+    path = _write_dockerfile(tmp_path, text)
+    vlm_eff = effective_stage_body(path, RUNTIME_VLM_STAGE)
+    active = "\n".join(
+        ln
+        for ln in join_continued_lines(vlm_eff)
+        if ln.strip() and not ln.strip().startswith("#")
+    )
+    assert not re.search(r"(?m)^ENV\s+HF_HUB_OFFLINE=1\s*$", active)
+    # Control: both offline ENVs present would pass the same predicate.
+    with_both = active + "\nENV HF_HUB_OFFLINE=1\n"
+    assert re.search(r"(?m)^ENV\s+HF_HUB_OFFLINE=1\s*$", with_both)
+    assert re.search(r"(?m)^ENV\s+TRANSFORMERS_OFFLINE=1\s*$", with_both)
 
 
 def test_no_stage_installs_deps_outside_uv_lock() -> None:
@@ -354,7 +497,8 @@ def test_dockerfile_no_hardcoded_ort_version_independent_of_lock() -> None:
 
     A post-install smoke may still import onnxruntime, but hard-coded version
     tuples (e.g. ``(1, 22) <= p < (2, 0)``) reintroduce dual writers vs the lock.
-    Scoped to the default image stages (builder + runtime).
+    Scoped to every shippable image stage (builder, builder-vlm, runtime,
+    runtime-vlm) so the VLM publish path is not ungated (B-10).
     """
     text = _default_image_stage_text()
     # Only flag executable/version-check forms — not prose mentioning 1.22.
@@ -366,7 +510,7 @@ def test_dockerfile_no_hardcoded_ort_version_independent_of_lock() -> None:
     )
     hits = [m.group(0) for pat in patterns if (m := re.search(pat, text))]
     assert not hits, (
-        "Dockerfile default image stages must not hard-code a second ORT version "
+        "Dockerfile shippable stages must not hard-code a second ORT version "
         "bound independent of uv.lock (remove the pip-resolved [1.22, 2.0) smoke; "
         f"lock pins ORT). Matched: {hits!r}"
     )

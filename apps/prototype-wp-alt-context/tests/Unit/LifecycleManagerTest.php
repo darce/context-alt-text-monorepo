@@ -482,6 +482,11 @@ class LifecycleManagerTest extends TestCase
         $this->assertIsArray($queries);
         $this->assertNotEmpty($queries, 'Projection tables should be created when version differs');
         $this->assertSame(ACX_VERSION, get_option('acx_version'));
+        $this->assertSame(
+            $this->manager->compute_projection_schema_fingerprint(),
+            get_option('acx_schema_fingerprint'),
+            'successful upgrade must stamp schema fingerprint'
+        );
     }
 
     public function testMaybeUpgradeCreatesTablesAndSetsVersionWhenStoredMissing(): void
@@ -494,6 +499,10 @@ class LifecycleManagerTest extends TestCase
         $this->assertIsArray($queries);
         $this->assertNotEmpty($queries, 'Projection tables should be created when version is missing');
         $this->assertSame(ACX_VERSION, get_option('acx_version'));
+        $this->assertSame(
+            $this->manager->compute_projection_schema_fingerprint(),
+            get_option('acx_schema_fingerprint')
+        );
     }
 
     public function testMaybeUpgradeOutboxSchemaCarriesRetryBackoffColumns(): void
@@ -519,20 +528,82 @@ class LifecycleManagerTest extends TestCase
         $this->assertMatchesRegularExpression('/^\s*first_failed_at datetime DEFAULT NULL,$/m', $outboxSql);
     }
 
-    public function testMaybeUpgradeIsStrictNoopWhenStoredVersionMatches(): void
+    /**
+     * DATA-03 / RLSE-05: fingerprint mismatch alone must re-run dbDelta even when
+     * ACX_VERSION is unchanged. This is the gate that would have landed assigned_at
+     * without a human version bump. Unlike string-vs-string parity tests, this
+     * assertion goes red against the pre-fix version-only early-return.
+     */
+    public function testMaybeUpgradeRunsWhenSchemaFingerprintDiffersWithMatchingVersion(): void
     {
         $this->setOption('acx_version', ACX_VERSION);
+        $this->setOption('acx_schema_fingerprint', 'stale-not-a-real-hash');
+
+        $this->manager->maybe_upgrade();
+
+        $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
+        $this->assertNotEmpty(
+            $queries,
+            'fingerprint mismatch must trigger dbDelta even when version matches'
+        );
+        $this->assertSame(ACX_VERSION, get_option('acx_version'));
+        $stamped = get_option('acx_schema_fingerprint');
+        $this->assertNotSame('stale-not-a-real-hash', $stamped);
+        $this->assertSame(
+            $this->manager->compute_projection_schema_fingerprint(),
+            $stamped,
+            'successful fingerprint-driven upgrade must stamp the current hash'
+        );
+        $this->assertSame(40, strlen((string) $stamped), 'fingerprint is sha1 hex');
+    }
+
+    public function testMaybeUpgradeIsStrictNoopWhenVersionAndFingerprintMatch(): void
+    {
+        // Stamp version + fingerprint via a successful upgrade first.
+        $this->manager->maybe_upgrade();
+        $GLOBALS['__ac_dbdelta_queries'] = [];
         $optionsBefore = $GLOBALS['__ac_options'];
 
         $this->manager->maybe_upgrade();
 
         $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
-        $this->assertSame([], $queries, 'Equal versions must not run dbDelta');
+        $this->assertSame([], $queries, 'matching version+fingerprint must not run dbDelta');
         $this->assertSame(
             $optionsBefore,
             $GLOBALS['__ac_options'],
-            'equal versions must not write options'
+            'matching version+fingerprint must not write options'
         );
+    }
+
+    public function testMembersSchemaCarriesAssignedAtDefaultForStrictModeAlter(): void
+    {
+        $this->manager->maybe_upgrade();
+
+        $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
+        $membersSql = '';
+        foreach ($queries as $sql) {
+            if (is_string($sql) && str_contains($sql, 'acx_identity_members')) {
+                $membersSql = $sql;
+                break;
+            }
+        }
+
+        $this->assertNotSame('', $membersSql, 'Expected identity_members CREATE TABLE on upgrade.');
+        $this->assertMatchesRegularExpression(
+            "/assigned_at datetime\\(6\\) NOT NULL DEFAULT '1970-01-01 00:00:00\\.000000'/",
+            $membersSql,
+            'STRICT_TRANS_TABLES / NO_ZERO_DATE requires an explicit DEFAULT on assigned_at'
+        );
+    }
+
+    public function testMaybeUpgradeSeedsAssignedAtFromCreatedAtForEpochDefault(): void
+    {
+        global $wpdb;
+
+        $this->manager->maybe_upgrade();
+
+        $backfill = $this->findQueryContaining($wpdb->queries, 'SET assigned_at = created_at');
+        $this->assertStringContainsString('1970-01-01 00:00:00.000000', $backfill);
     }
 
     public function testMaybeUpgradeDoesNotStampVersionWhenSchemaUpgradeIsSkipped(): void
@@ -554,6 +625,14 @@ class LifecycleManagerTest extends TestCase
 
         $this->assertSame([], $GLOBALS['__ac_dbdelta_queries'] ?? [], 'skipped upgrade must not run dbDelta');
         $this->assertFalse(get_option('acx_version'), 'skipped upgrade must not stamp acx_version');
+        $this->assertFalse(get_option('acx_schema_fingerprint'), 'skipped upgrade must not stamp fingerprint');
+    }
+
+    public function testUninstallRemovesSchemaFingerprintOption(): void
+    {
+        $this->setOption('acx_schema_fingerprint', 'some-hash');
+        $this->manager->uninstall();
+        $this->assertFalse(get_option('acx_schema_fingerprint'));
     }
 
     private function findQueryContaining(array $queries, string $needle): string

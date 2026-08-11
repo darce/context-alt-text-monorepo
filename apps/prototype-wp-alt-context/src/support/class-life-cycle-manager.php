@@ -23,6 +23,7 @@ class LifecycleManager {
 
 	private const OPTION_VERSION      = 'acx_version';
 	private const OPTION_INSTALLED_AT = 'acx_installed';
+	private const OPTION_SCHEMA_FINGERPRINT = 'acx_schema_fingerprint';
 	private const OPTION_LEGACY_ROSTER_MIGRATION_CURSOR = 'acx_legacy_roster_migration_cursor';
 	private const LEGACY_ROSTER_MIGRATION_HOOK = 'acx_continue_legacy_roster_migration';
 	private const MAX_LEGACY_MIGRATION_CHUNK = 100;
@@ -30,6 +31,12 @@ class LifecycleManager {
 	private const CURATION_OUTBOX_DRAIN_HOOK = 'acx_sync_drain_curation_outbox';
 	private const SPLIT_TOPOLOGY_DRAIN_HOOK = 'acx_sync_drain_split_topology_commands';
 	private const ACTION_SCHEDULER_GROUP = 'acx-sync';
+	/**
+	 * Epoch DEFAULT for assigned_at under STRICT_TRANS_TABLES / NO_ZERO_DATE.
+	 * Matches IdentityMemberSnapshotMerger::ASSIGNED_AT_FALLBACK_UTC so ALTER TABLE
+	 * ADD COLUMN against populated tables succeeds (implicit zero-date is rejected).
+	 */
+	private const ASSIGNED_AT_FALLBACK_UTC = '1970-01-01 00:00:00.000000';
 	/**
 	 * Plugin-owned custom table suffixes (without WordPress prefix).
 	 *
@@ -69,34 +76,43 @@ class LifecycleManager {
 			update_option( self::OPTION_INSTALLED_AT, time() );
 		}
 
-		$this->maybe_create_projection_tables();
+		if ( $this->maybe_create_projection_tables() ) {
+			update_option( self::OPTION_SCHEMA_FINGERPRINT, $this->compute_projection_schema_fingerprint() );
+		}
 		$this->migrate_legacy_roster_data();
 		flush_rewrite_rules( false );
 	}
 
 	/**
 	 * Apply projection-table schema upgrades when the packaged plugin version
-	 * diverges from the stored acx_version option.
+	 * or the projection DDL fingerprint diverges from stored options.
 	 *
 	 * WP-admin plugin updates (and `wp plugin install --force`) skip activation
-	 * hooks, so dbDelta must also run on load. Equal versions are a strict
-	 * no-op so the every-request path stays cheap. Does not run legacy roster
-	 * migration or flush rewrite rules — those remain activation-only.
+	 * hooks, so dbDelta must also run on load. Matching version AND fingerprint
+	 * is a strict no-op so the every-request path stays cheap (one option read
+	 * plus a hash of static DDL strings). Does not run legacy roster migration
+	 * or flush rewrite rules — those remain activation-only.
 	 *
-	 * The version is stamped only when the upgrade actually ran; if the
-	 * environment guards skip dbDelta, the mismatch persists so a later
+	 * Version and fingerprint are stamped only when the upgrade actually ran;
+	 * if the environment guards skip dbDelta, the mismatch persists so a later
 	 * request retries instead of permanently masking a missed upgrade.
 	 *
-	 * A mismatch includes downgrades (stored newer than code): dbDelta never
-	 * drops columns, but it may narrow a changed column type on rollback.
+	 * Fingerprint gating is the durable fix for DDL edits that forget to bump
+	 * ACX_VERSION (DATA-03 / DATA-04): any change to build_projection_schema_statements
+	 * changes the hash and re-runs dbDelta automatically.
+	 *
+	 * A version mismatch includes downgrades (stored newer than code): dbDelta
+	 * never drops columns, but it may narrow a changed column type on rollback.
 	 */
 	public function maybe_upgrade(): void {
 		if ( ! defined( 'ACX_VERSION' ) ) {
 			return;
 		}
 
-		$stored = get_option( self::OPTION_VERSION );
-		if ( $stored === ACX_VERSION ) {
+		$fingerprint         = $this->compute_projection_schema_fingerprint();
+		$version_matches     = get_option( self::OPTION_VERSION ) === ACX_VERSION;
+		$fingerprint_matches = get_option( self::OPTION_SCHEMA_FINGERPRINT ) === $fingerprint;
+		if ( $version_matches && $fingerprint_matches ) {
 			return;
 		}
 
@@ -104,6 +120,7 @@ class LifecycleManager {
 			return;
 		}
 		update_option( self::OPTION_VERSION, ACX_VERSION );
+		update_option( self::OPTION_SCHEMA_FINGERPRINT, $fingerprint );
 	}
 
 	/**
@@ -424,6 +441,7 @@ class LifecycleManager {
 	public function uninstall(): void {
 		delete_option( self::OPTION_VERSION );
 		delete_option( self::OPTION_INSTALLED_AT );
+		delete_option( self::OPTION_SCHEMA_FINGERPRINT );
 		wp_clear_scheduled_hook( self::SNAPSHOT_SYNC_HOOK );
 		$this->clear_legacy_roster_migration_schedule();
 		$this->clear_curation_outbox_drain_schedule();
@@ -469,47 +487,27 @@ class LifecycleManager {
 	}
 
 	/**
-	 * Create sovereign projection tables during activation.
+	 * Pure projection CREATE TABLE statements keyed by logical table name.
 	 *
-	 * Safe to call multiple times; dbDelta performs idempotent updates.
+	 * Shared by the schema fingerprint and the dbDelta runner so DDL edits
+	 * cannot drift between the two surfaces. Keys are stable table suffixes
+	 * (without WordPress prefix).
 	 *
-	 * @return bool True when dbDelta ran; false when an environment guard
-	 *              skipped the upgrade (callers must not mark it complete).
+	 * @return array<string, string>
 	 */
-	private function maybe_create_projection_tables(): bool {
-		global $wpdb;
-
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! isset( $wpdb->prefix ) || ! method_exists( $wpdb, 'get_charset_collate' ) ) {
-			return false;
-		}
-
-		if ( ! function_exists( 'dbDelta' ) ) {
-			$upgrade_path = defined( 'ABSPATH' ) ? ABSPATH . 'wp-admin/includes/upgrade.php' : '';
-			if ( '' === $upgrade_path || ! is_readable( $upgrade_path ) ) {
-				return false;
-			}
-
-			require_once $upgrade_path;
-
-			/** @phpstan-ignore booleanNot.alwaysTrue */
-			if ( ! function_exists( 'dbDelta' ) ) {
-				return false;
-			}
-		}
-
-		$charset_collate = $wpdb->get_charset_collate();
-		$clusters_table  = $wpdb->prefix . 'acx_clusters';
-		$members_table   = $wpdb->prefix . 'acx_identity_members';
-		$sync_table      = $wpdb->prefix . 'acx_sync_state';
-		$persons_table   = $wpdb->prefix . 'acx_persons';
-		$batch_runs_table = $wpdb->prefix . 'acx_batch_runs';
-		$batch_failures_table = $wpdb->prefix . 'acx_batch_run_failures';
-		$description_runs_table = $wpdb->prefix . 'acx_description_runs';
-		$description_run_items_table = $wpdb->prefix . 'acx_description_run_items';
-		$description_usage_table = $wpdb->prefix . 'acx_description_usage';
-		$outbox_table    = $wpdb->prefix . 'acx_sync_outbox';
-		$topology_table  = $wpdb->prefix . 'acx_topology_commands';
-		$conflicts_table = $wpdb->prefix . 'acx_sync_conflicts';
+	public function build_projection_schema_statements( string $prefix, string $charset_collate ): array {
+		$clusters_table              = $prefix . 'acx_clusters';
+		$members_table               = $prefix . 'acx_identity_members';
+		$sync_table                  = $prefix . 'acx_sync_state';
+		$persons_table               = $prefix . 'acx_persons';
+		$batch_runs_table            = $prefix . 'acx_batch_runs';
+		$batch_failures_table        = $prefix . 'acx_batch_run_failures';
+		$description_runs_table      = $prefix . 'acx_description_runs';
+		$description_run_items_table = $prefix . 'acx_description_run_items';
+		$description_usage_table     = $prefix . 'acx_description_usage';
+		$outbox_table                = $prefix . 'acx_sync_outbox';
+		$topology_table              = $prefix . 'acx_topology_commands';
+		$conflicts_table             = $prefix . 'acx_sync_conflicts';
 
 		// E21-9: uniqueness is product policy via normalized_name (utf8mb4_bin), not
 		// collation-folded idx_name. Greenfield — edit CREATE TABLE directly; no migration.
@@ -558,9 +556,11 @@ class LifecycleManager {
 
 		// rg-005 / DATA-09: assigned_at is the recognition source-of-truth membership-order
 		// key (ORDER BY assigned_at ASC, identity_uuid); datetime(6) preserves recognition's
-		// sub-second precision so same-second members keep true order. Greenfield —
-		// no migration; CREATE TABLE is authoritative after wipe-on-deploy.
-		$members_sql = "CREATE TABLE {$members_table} (
+		// sub-second precision so same-second members keep true order.
+		// Explicit DEFAULT is required under STRICT_TRANS_TABLES + NO_ZERO_DATE so
+		// dbDelta ALTER ADD COLUMN against populated tables does not fail (DATA-03).
+		$assigned_at_default = self::ASSIGNED_AT_FALLBACK_UTC;
+		$members_sql         = "CREATE TABLE {$members_table} (
 			identity_uuid varchar(64) NOT NULL,
 			cluster_uuid varchar(64) NOT NULL,
 			attachment_id bigint(20) unsigned NOT NULL,
@@ -570,7 +570,7 @@ class LifecycleManager {
 			similarity_threshold double NULL,
 			is_curated tinyint(1) NOT NULL DEFAULT 0,
 			projection_version bigint(20) unsigned NOT NULL DEFAULT 0,
-			assigned_at datetime(6) NOT NULL,
+			assigned_at datetime(6) NOT NULL DEFAULT '{$assigned_at_default}',
 			created_at datetime NOT NULL,
 			updated_at datetime NOT NULL,
 			PRIMARY KEY  (identity_uuid),
@@ -752,19 +752,133 @@ class LifecycleManager {
 			KEY idx_entity_resolution (entity_type, entity_key, resolution_status)
 		) {$charset_collate};";
 
-		dbDelta( $persons_sql );
-		dbDelta( $clusters_sql );
-		dbDelta( $members_sql );
-		dbDelta( $sync_sql );
-		dbDelta( $outbox_sql );
-		dbDelta( $topology_sql );
-		dbDelta( $conflicts_sql );
-		dbDelta( $batch_runs_sql );
-		dbDelta( $batch_failures_sql );
-		dbDelta( $description_runs_sql );
-		dbDelta( $description_run_items_sql );
-		dbDelta( $description_usage_sql );
+		return array(
+			'acx_persons'              => $persons_sql,
+			'acx_clusters'             => $clusters_sql,
+			'acx_identity_members'     => $members_sql,
+			'acx_sync_state'           => $sync_sql,
+			'acx_sync_outbox'          => $outbox_sql,
+			'acx_topology_commands'    => $topology_sql,
+			'acx_sync_conflicts'       => $conflicts_sql,
+			'acx_batch_runs'           => $batch_runs_sql,
+			'acx_batch_run_failures'   => $batch_failures_sql,
+			'acx_description_runs'     => $description_runs_sql,
+			'acx_description_run_items'=> $description_run_items_sql,
+			'acx_description_usage'    => $description_usage_sql,
+		);
+	}
+
+	/**
+	 * sha1 of normalised projection DDL. Prefix/charset are fixed placeholders so
+	 * the hash is environment-independent and cheap to recompute every request.
+	 */
+	public function compute_projection_schema_fingerprint(): string {
+		$statements = $this->build_projection_schema_statements( '{prefix}', '{charset_collate}' );
+		ksort( $statements );
+
+		$normalized_parts = array();
+		foreach ( $statements as $table => $sql ) {
+			$collapsed = preg_replace( '/\s+/', ' ', trim( $sql ) );
+			$normalized_parts[] = $table . "\n" . ( is_string( $collapsed ) ? $collapsed : trim( $sql ) );
+		}
+
+		return sha1( implode( "\n", $normalized_parts ) );
+	}
+
+	/**
+	 * Create sovereign projection tables during activation / upgrade.
+	 *
+	 * Safe to call multiple times; dbDelta performs idempotent updates.
+	 *
+	 * @return bool True when dbDelta ran; false when an environment guard
+	 *              skipped the upgrade (callers must not mark it complete).
+	 */
+	private function maybe_create_projection_tables(): bool {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! isset( $wpdb->prefix ) || ! method_exists( $wpdb, 'get_charset_collate' ) ) {
+			return false;
+		}
+
+		if ( ! function_exists( 'dbDelta' ) ) {
+			$upgrade_path = defined( 'ABSPATH' ) ? ABSPATH . 'wp-admin/includes/upgrade.php' : '';
+			if ( '' === $upgrade_path || ! is_readable( $upgrade_path ) ) {
+				return false;
+			}
+
+			require_once $upgrade_path;
+
+			/** @phpstan-ignore booleanNot.alwaysTrue */
+			if ( ! function_exists( 'dbDelta' ) ) {
+				return false;
+			}
+		}
+
+		$statements = $this->build_projection_schema_statements(
+			(string) $wpdb->prefix,
+			$wpdb->get_charset_collate()
+		);
+
+		// Preserve historical dbDelta call order (activate tests assert positions).
+		$ordered_keys = array(
+			'acx_persons',
+			'acx_clusters',
+			'acx_identity_members',
+			'acx_sync_state',
+			'acx_sync_outbox',
+			'acx_topology_commands',
+			'acx_sync_conflicts',
+			'acx_batch_runs',
+			'acx_batch_run_failures',
+			'acx_description_runs',
+			'acx_description_run_items',
+			'acx_description_usage',
+		);
+
+		foreach ( $ordered_keys as $key ) {
+			if ( isset( $statements[ $key ] ) ) {
+				dbDelta( $statements[ $key ] );
+			}
+		}
+
+		$this->seed_assigned_at_from_created_at( (string) $wpdb->prefix . 'acx_identity_members' );
 
 		return true;
+	}
+
+	/**
+	 * Derived-projection repair: rows that received the epoch DEFAULT when
+	 * assigned_at was added keep a sane ORDER BY until the next recognition
+	 * sync overwrites them. Not a migration framework (Greenfield Policy).
+	 */
+	private function seed_assigned_at_from_created_at( string $members_table ): void {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
+			return;
+		}
+
+		$fallback = self::ASSIGNED_AT_FALLBACK_UTC;
+		$fallback_second = '1970-01-01 00:00:00';
+
+		if ( method_exists( $wpdb, 'prepare' ) ) {
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- %i table placeholder; constants only.
+			$sql = $wpdb->prepare(
+				'UPDATE %i SET assigned_at = created_at WHERE assigned_at = %s OR assigned_at = %s',
+				$members_table,
+				$fallback,
+				$fallback_second
+			);
+			if ( is_string( $sql ) && '' !== $sql ) {
+				// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Prepared above.
+				$wpdb->query( $sql );
+				return;
+			}
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is plugin-owned; literals are constants.
+		$wpdb->query(
+			"UPDATE `{$members_table}` SET assigned_at = created_at WHERE assigned_at = '{$fallback}' OR assigned_at = '{$fallback_second}'"
+		);
 	}
 }

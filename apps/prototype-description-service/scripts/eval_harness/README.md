@@ -32,8 +32,18 @@ uv run python -m scripts.eval_harness.cli run
 # smoke: 3 images
 uv run python -m scripts.eval_harness.cli run --limit 3
 
-# offline re-score of a recorded run (deterministic; bit-identical check)
-uv run python -m scripts.eval_harness.cli score --run-record scripts/eval_harness/out/run-<stamp>.json --check-determinism
+# offline re-score of a recorded run (report write + score gates)
+uv run python -m scripts.eval_harness.cli score \
+  --run-record scripts/eval_harness/out/run-<stamp>.json
+
+# optional: cross-process determinism certification (score / run / score-face only)
+# Requires a run-record whose identities are dict rows and whose
+# provenance.manifest_sha256 is present. Committed baselines currently fail
+# ReportError on bare-string identities — see § Score gates below.
+uv run python -m scripts.eval_harness.cli score \
+  --manifest <path-to-matching-manifest.json> \
+  --run-record <path-to-matching-run-record.json> \
+  --check-determinism
 ```
 
 ## Hosted provider matrix (E20-11)
@@ -89,6 +99,145 @@ uv run python -m scripts.eval_harness.cli run \
   suppresses triaged wrong-name false positives across runs; ignored entries
   are still reported under `ignored_wrong_names`. Never pruned.
 - Curated baselines are promoted by hand to `docs/tasks/vlm/`.
+
+## Score gates, verdict, and `--check-determinism`
+
+Operator reference for `score` exit semantics (VLM-6 S2A). Read a red line by
+its **prefix** — the prefix names the corruption class and selects the remedy
+(**OBS-04**).
+
+### Where `--check-determinism` is allowed
+
+| Subcommand | Flag | Behaviour |
+| --- | --- | --- |
+| `score` | yes | Spawns child interpreters; certifies the exact `rubric_gate` + `audience` documents that are written (`score` / `score-public` labels). |
+| `run` | yes | Per-leg certification (each provider matrix record). **Announces** `legs × seeds` (and `× 2 audiences` when `--audience public`) **before** paid fetch / first child spawn. |
+| `score-face` | yes | Same cross-process guard over face score documents. |
+| `fetch` (and others) | **no** | Argparse rejection: `unrecognized arguments: --check-determinism` (exit 2). Not a silent no-op. |
+
+### Empirically verified commands (do not invent paths)
+
+**Broken — committed baselines (exit 1).** Both curated run-records still carry
+bare-string `identities` lists; greenfield scoring rejects them before any gate
+fires:
+
+```text
+$ cd apps/prototype-description-service
+$ uv run --extra dev python -m scripts.eval_harness.cli score \
+    --run-record ../../docs/tasks/vlm/VLM-2C-seeded-stub-run-record-20260707.json \
+    --check-determinism
+ReportError: items[0].identities[0] must be a dict identity row (keys include 'name'); got str — greenfield rejects bare-string identity lists
+# EXIT_CODE:1
+
+$ uv run --extra dev python -m scripts.eval_harness.cli score \
+    --run-record ../../docs/tasks/vlm/VLM-2A-baseline-20260706-run-record.json \
+    --check-determinism
+ReportError: items[2].identities[0] must be a dict identity row (keys include 'name'); got str — greenfield rejects bare-string identity lists
+# EXIT_CODE:1
+```
+
+Restoring a green `score --run-record <committed baseline> --check-determinism`
+path requires a **code/record** change (re-fetch or migrate identity rows) —
+out of scope for docs (sr-001). Until then, do not document that shape as green.
+
+**Working — matched fixture (exit 0).** Same shape as
+`test_cli_score_check_determinism_runs_cross_process_guard`: dict identity rows
+and `provenance.manifest_sha256` equal to the score-time manifest sha.
+
+```text
+$ cd apps/prototype-description-service
+$ uv run --extra dev python -m scripts.eval_harness.cli score \
+    --manifest /tmp/vlm6-f3-det-ly5h__cv/manifest.json \
+    --run-record /tmp/vlm6-f3-det-ly5h__cv/run-det.json \
+    --check-determinism
+determinism check passed [score]: cross-process re-score is bit-identical under varied PYTHONHASHSEED (baseline=randomized; child_seeds=0,1,42)
+/tmp/vlm6-f3-det-ly5h__cv/run-det-report.md
+scored=1/1 insertion_rate=1.0 wrong_names=0 verdict=pass wrong_name_rate=0.0 wrong_name_rate_floor=0.0 rubric_gate=enforce
+# EXIT_CODE:0
+```
+
+**Working — suite evidence path (exit 0):**
+
+```text
+$ cd apps/prototype-description-service
+$ uv run --extra dev pytest scene/tests/test_eval_harness_cli.py \
+    -k score_check_determinism_runs_cross_process -q
+.                                                                        [100%]
+1 passed, 94 deselected in 7.24s
+```
+
+**`fetch` free-reject (exit 2):**
+
+```text
+$ uv run --extra dev python -m scripts.eval_harness.cli fetch --check-determinism
+usage: eval_harness [-h]
+                    {fetch,score,run,seed-roster,seed-scenes,face-bakeoff,score-face}
+                    ...
+eval_harness: error: unrecognized arguments: --check-determinism
+# EXIT_CODE:2
+```
+
+**`run` cost announcement (before live gate / first child):**
+
+```text
+run --check-determinism: per-leg certification — 1 legs × 3 seeds = 3 fresh interpreter(s) before scoring completes
+```
+
+### `verdict` in the report JSON
+
+`score` builds `result["verdict"]` **before** any exit gate fires and writes the
+JSON report **before** non-zero exits. A red run still leaves a truthful artifact
+on disk (`*-report.json`). Fields:
+
+| Field | Meaning |
+| --- | --- |
+| `verdict` | `pass` \| `fail` \| `pass_ungated` (`pass_ungated` only when `--rubric-gate skip` and no other reasons). |
+| `reasons` | Machine-readable list of every condition that would force a non-zero exit (failed-items, truncation, manifest-mismatch, empty-rubric, must-right failures, wrong-name floor / vacuity, schema hard-key errors). |
+| `wrong_name_rate` / `wrong_name_rate_floor` | Display rate (rounded) + floor constant; gate decisions use count / unrounded rate, not the rounded display. |
+| `rubric_gate` | Operator-declared mode stamped into the artifact (`enforce` \| `skip`). |
+| `insertion_rate`, `mean_gated_score`, `must_right_failed_images` | Reported metrics mirrored for operator triage. |
+
+Stdout always prints a one-line summary including `verdict=…` and
+`rubric_gate=…` before any `sys.exit`.
+
+### Score non-zero exit prefixes
+
+Content gates fire **after** the report is on disk. Prefixes are class-unique:
+
+| Gate / class | Exit message prefix | When it fires |
+| --- | --- | --- |
+| schema hard-key | `score schema error:` | Required dotted path missing or wrong type (`provenance.manifest_matches_fetch`, `caption.must_right_failed_images`, `verdict.wrong_name_rate`). Folded into `verdict.reasons` before write. |
+| failed-items | `score failed-items gate:` | `counts.failed > 0` — partial corpus must not look like full-corpus evidence. |
+| truncation | `score truncation gate:` | Run-record media-id multiset differs from score-time manifest (`corpus.media_id_missing` / `media_id_extra`). |
+| manifest-mismatch | `score manifest-mismatch gate:` | Run-record provenance missing fetch-time `manifest_sha256` (record not self-consistent). **Not** a hard fail on score-time file sha vs fetch-time sha (that flag stays informational). |
+| empty-rubric | `score empty-rubric gate:` | `must_right_defined_images == 0` **or** `easy_wrong_defined_images == 0` (independent; either vacuity fails closed). |
+| must-right failures | `score must-right failures gate:` | `--rubric-gate enforce` (default) and `must_right_failed_images > 0`. Bypass only via explicit `--rubric-gate skip` (artifact says `pass_ungated`). |
+| wrong-name floor vacuity | `score wrong-name floor vacuity gate:` | Images scored but `identification.evaluated_images == 0` (floor would be vacuous). |
+| wrong-name floor | `score wrong-name floor gate:` | Wrong-name floor breached (count when floor is 0.0; unrounded rate otherwise). Ignore-list pairs still count toward the rate. |
+
+The original S2A “five named gates” are failed-items, manifest-mismatch,
+empty-rubric, must-right failures, and wrong-name floor; truncation, vacuity, and
+schema hard-keys are additional class-unique exits on the same path.
+
+Pre-gate hard failures (no report write for that invocation):
+
+| Class | Example | Remedy |
+| --- | --- | --- |
+| identity shape | `ReportError: … identities[…] must be a dict identity row … got str` | Re-fetch or migrate run-record identity rows (code/record lane). |
+| missing args | argparse exit 2 (`--run-record` required) | Pass a real run-record path. |
+| missing file | `FileNotFoundError` on `--run-record` | Point at an existing record. |
+
+### Determinism guard: ERROR vs FAILED vs pass (**OBS-04**)
+
+Pass and red lines name the `PYTHONHASHSEED` regime:
+
+| Line shape | Meaning | Operator action |
+| --- | --- | --- |
+| `determinism check passed [label]: … (baseline=…; child_seeds=…)` | Cross-process re-score bit-identical under the named child seeds. | None — certified. |
+| `determinism check ERROR [label]: …` | Child could not run, timed out, payload missing/unreadable/unparseable, or bound a different `build_reports` module than the parent (**environment / import drift**). | Fix environment / import root / PYTHONPATH; re-run. **Not** a caption-model regression. |
+| `determinism check FAILED [label]: …` | Genuine byte mismatch across seeds (**build regression**). Writes `determinism-mismatch-<label>-seed<n>.diff.txt` under the artifact dir; artifact carries the same `baseline=…; child_seeds=…` regime. | Investigate scoring code / non-determinism in the build. |
+
+`label` is `score`, `score-public`, or `score-face` so CI logs name which document failed.
 
 ## Report schema (`acx-eval/v1`, E19-1 extension)
 

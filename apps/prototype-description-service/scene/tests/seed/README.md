@@ -68,8 +68,19 @@ idempotently ingests the scene images under their golden `media_id`s so the
 eval tenant holds server-side `MediaIdentity` face regions for E19-4a.
 Zero-face scenes are skipped (they produce no identity rows or bboxes).
 
-Deterministic scoring evidence (seeded stub, `cli score --check-determinism`):
-`docs/tasks/vlm/VLM-2C-seeded-stub-score-20260707-report.md`.
+Deterministic scoring evidence:
+
+- **Do not** use the committed seeded-stub / VLM-2A baseline run-records with
+  `score --check-determinism` as a green copy-paste path. Both exit **1** today
+  (`ReportError` on bare-string `identities` rows — greenfield requires dict
+  rows). See `scripts/eval_harness/README.md` § Score gates, verdict, and
+  `--check-determinism` (rg-006).
+- **Working evidence today:** the unit suite
+  `test_cli_score_check_determinism_runs_cross_process_guard` (matched
+  run-record + score-time manifest, dict identities). Operator reference and
+  pass-line format live in the eval-harness README.
+- Historical seeded-stub score write-up (pre-gate system):
+  `docs/tasks/vlm/VLM-2C-seeded-stub-score-20260707-report.md`.
 
 Florence-2 benchmark note (pre-existing use of this directory): a real .jpg/.png
 dropped here can serve as a checked-in fixture for `scripts/benchmark_local_vlm.py`;

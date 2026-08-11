@@ -22,8 +22,10 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import stat
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 from types import ModuleType
 
@@ -186,6 +188,91 @@ def test_entrypoint_export_reaches_child_process() -> None:
     )
     assert bare_proc.returncode == 0
     assert bare_proc.stdout == "missing"
+
+
+def _stub_bin(dir_path: Path, name: str, body: str = "#!/bin/sh\nexit 0\n") -> None:
+    path = dir_path / name
+    path.write_text(body, encoding="utf-8")
+    path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
+def test_entrypoint_unreadable_data_cache_fails_closed(tmp_path: Path) -> None:
+    """A-08: VLM boot must refuse an unreadable /data/cache host bind with ownership hint.
+
+    Image-layer chown is masked by the host bind; without this gate, uid 10001
+    hits a bare library PermissionError. Behavioural: run the real entrypoint
+    under path rewrites (do not only grep source for the FATAL string).
+    """
+    root = tmp_path / "root"
+    app = root / "app"
+    blobs = root / "var" / "lib" / "acx-blobs"
+    cache = root / "data" / "cache"
+    bin_dir = root / "bin"
+    app.mkdir(parents=True)
+    blobs.mkdir(parents=True)
+    cache.mkdir(parents=True)
+    bin_dir.mkdir(parents=True)
+    (app / ".image-variant").write_text("vlm\n", encoding="utf-8")
+    # Mode 000: exists but not readable by the executing uid (non-root).
+    cache.chmod(0o000)
+
+    for name in ("alembic", "python", "uvicorn"):
+        _stub_bin(bin_dir, name)
+    _stub_bin(
+        bin_dir,
+        "id",
+        textwrap.dedent(
+            """\
+            #!/bin/sh
+            if [ "$1" = "-u" ]; then echo 10001; else echo acx; fi
+            """
+        ),
+    )
+
+    src = _ENTRYPOINT.read_text(encoding="utf-8")
+    rewritten = (
+        src.replace("/app", str(app))
+        .replace("/var/lib/acx-blobs", str(blobs))
+        .replace("/data/cache", str(cache))
+    )
+    script = root / "docker-entrypoint.sh"
+    script.write_text(rewritten, encoding="utf-8")
+    script.chmod(script.stat().st_mode | stat.S_IXUSR)
+
+    env = {
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "HOME": str(root),
+        "RECOGNITION_BLOB_ROOT": str(blobs),
+        "ACX_IMAGE_VARIANT": "vlm",
+    }
+    result = subprocess.run(
+        ["/bin/sh", str(script)],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+        cwd=str(root),
+    )
+    # Restore cache perms so tmp cleanup cannot fail on some hosts.
+    cache.chmod(0o755)
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    err = result.stderr
+    assert "not readable" in err, err
+    assert "10001" in err or "ACX_MODELS_PATH" in err, err
+
+    # Control: readable cache proceeds past the ownership gate (stubs exit 0).
+    cache.chmod(0o755)
+    result_ok = subprocess.run(
+        ["/bin/sh", str(script)],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+        cwd=str(root),
+    )
+    assert result_ok.returncode == 0, result_ok.stdout + result_ok.stderr
+    assert "not readable" not in result_ok.stderr
 
 
 def test_service_uv_lock_exists() -> None:

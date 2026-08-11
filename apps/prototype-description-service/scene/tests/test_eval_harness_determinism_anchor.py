@@ -1,10 +1,11 @@
-"""Committed S2A determinism anchor is regenerable and load-bearing (VLM-6 F4).
+"""Committed S2A determinism anchor is regenerable and load-bearing (VLM-6 F4/F5).
 
 The frozen triple under docs/tasks/vlm/bakeoff-results/ is the artifact the
-future digest gate (VLM6-S2A-B-06) will compare. These tests pin:
+digest gate (VLM6-S2A-B-06) compares via ``score --check-determinism
+--expect-report``. These tests pin:
   - generator byte-stability against the committed files
   - computed provenance.manifest_sha256 equals current golden manifest
-  - TEST-15: mutating the frozen report digest is detectable
+  - TEST-15: corrupting a tmp expect-report makes the shipped gate go red
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.eval_harness.cli import _manifest_sha
+from scripts.eval_harness.cli import _check_score_determinism_cross_process, _manifest_sha
 from scripts.eval_harness.generate_determinism_anchor import (
     _DEFAULT_STEM,
     write_anchor,
@@ -80,21 +81,63 @@ def test_committed_run_record_identity_rows_are_dicts_and_manifest_sha_computed(
         assert (item.get("describe") or {}).get("adapter") == "seeded"
 
 
-def test_corrupt_frozen_report_digest_diverges(tmp_path: Path) -> None:
-    """TEST-15 control: mutating one field of the frozen report.json changes its digest.
+def test_corrupt_expect_report_makes_determinism_gate_red(tmp_path: Path) -> None:
+    """TEST-15 / DBG-11: corrupted --expect-report turns the shipped gate red.
 
-    Full B-06 digest-gate comparison is not implemented yet; this proves the
-    frozen artifact is load-bearing (corruption is detectable at the digest level).
+    Pre-F5 the guard compared the record to itself across seeds, so a doctored
+    freeze was undetectable. This control must fail if ANCHOR_MISMATCH is
+    removed or weakened (sr-001).
     """
-    original = _REPORT_JSON.read_text()
-    payload = json.loads(original)
-    # Flip a stable field that must exist on a scored report.
-    verdict = payload.setdefault("verdict", {})
-    before = verdict.get("verdict", "pass_ungated")
-    verdict["verdict"] = "CORRUPTED_FOR_TEST_15"
-    corrupted_path = tmp_path / _REPORT_JSON.name
-    corrupted_path.write_text(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
-    assert _sha256(corrupted_path) != _FROZEN_DIGESTS[_REPORT_JSON.name]
-    # Restore semantics: re-reading the committed file still matches the freeze.
+    run_copy = tmp_path / _RUN.name
+    run_copy.write_bytes(_RUN.read_bytes())
+    payload = json.loads(_REPORT_JSON.read_text())
+    before = (payload.get("verdict") or {}).get("verdict", "pass_ungated")
+    payload.setdefault("verdict", {})["verdict"] = "CORRUPTED_FOR_TEST_15"
+    corrupt_expect = tmp_path / "expect-corrupt-report.json"
+    corrupt_expect.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    )
+    assert _sha256(corrupt_expect) != _FROZEN_DIGESTS[_REPORT_JSON.name]
+
+    with pytest.raises(SystemExit) as exc:
+        _check_score_determinism_cross_process(
+            run_copy,
+            str(_GOLDEN),
+            rubric_gate="skip",
+            expect_report=corrupt_expect,
+        )
+    msg = str(exc.value)
+    assert "determinism check ANCHOR_MISMATCH" in msg
+    assert "[score]" in msg
+    assert "generate_determinism_anchor" in msg
+    assert "do NOT regenerate" in msg
+    assert "determinism check FAILED" not in msg
+    assert "determinism check ERROR" not in msg
+    # Side-by-side artifact beside the run-record (tmp), not the freeze tree.
+    assert list(tmp_path.glob("determinism-anchor-mismatch-score.diff.txt"))
+    # Committed freeze still intact (TEST-15 restore semantics).
     assert _sha256(_REPORT_JSON) == _FROZEN_DIGESTS[_REPORT_JSON.name]
     assert before != "CORRUPTED_FOR_TEST_15"
+
+
+def test_expect_report_matches_committed_freeze_green(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Clean --expect-report against the committed freeze still exits green (discrimination)."""
+    run_copy = tmp_path / _RUN.name
+    run_copy.write_bytes(_RUN.read_bytes())
+    # Copy freeze into tmp so we never risk writing beside committed artifacts.
+    expect_copy = tmp_path / _REPORT_JSON.name
+    expect_copy.write_bytes(_REPORT_JSON.read_bytes())
+
+    json_doc, _md = _check_score_determinism_cross_process(
+        run_copy,
+        str(_GOLDEN),
+        rubric_gate="skip",
+        expect_report=expect_copy,
+    )
+    out = capsys.readouterr().out
+    assert "determinism check passed [score]" in out
+    assert "matches --expect-report" in out
+    assert "ANCHOR_MISMATCH" not in out
+    assert json_doc == _REPORT_JSON.read_text(encoding="utf-8")
+    assert _sha256(_REPORT_JSON) == _FROZEN_DIGESTS[_REPORT_JSON.name]
+    assert _sha256(_RUN) == _FROZEN_DIGESTS[_RUN.name]

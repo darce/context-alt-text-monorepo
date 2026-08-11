@@ -149,14 +149,21 @@ the full golden corpus (37 items); dict identity rows; `provenance.manifest_sha2
 computed at generation time (`859a083e…`). Seeded-stub scoring requires
 `--rubric-gate skip` (vacuity exemption → `verdict=pass_ungated`).
 
+Seed-stability alone (`--check-determinism` without a freeze) proves the scorer
+is hash-stable; it does **not** detect a corrupted run-record or report (parent
+and children all read the same file). Use **`--expect-report`** for the third
+outcome against the committed freeze (F5 / B-06) — opt-in path, no sibling
+filename inference.
+
 ```text
 $ cd apps/prototype-description-service
 $ uv run --extra dev python -m scripts.eval_harness.cli score \
     --manifest scene/tests/seed/golden.json \
     --run-record ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811.json \
     --rubric-gate skip \
-    --check-determinism
-determinism check passed [score]: cross-process re-score is bit-identical under varied PYTHONHASHSEED (baseline=randomized; child_seeds=0,1,42)
+    --check-determinism \
+    --expect-report ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811-report.json
+determinism check passed [score]: cross-process re-score is bit-identical under varied PYTHONHASHSEED (baseline=randomized; child_seeds=0,1,42); matches --expect-report …/S2A-determinism-anchor-run-20260811-report.json
 ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811-report.md
 scored=37/37 insertion_rate=0.0 wrong_names=0 verdict=pass_ungated wrong_name_rate=0.0 wrong_name_rate_floor=0.0 rubric_gate=skip
 # EXIT_CODE:0
@@ -164,7 +171,7 @@ scored=37/37 insertion_rate=0.0 wrong_names=0 verdict=pass_ungated wrong_name_ra
 
 Frozen triple (run-record + report JSON + report MD) lives under
 `docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811*`. The
-`.json` report is the machine-diffable artifact for a future digest gate (B-06).
+`.json` report is the machine-diffable `--expect-report` artifact (B-06).
 
 **Working — suite evidence path (exit 0):**
 
@@ -237,17 +244,25 @@ Pre-gate hard failures (no report write for that invocation):
 | missing args | argparse exit 2 (`--run-record` required) | Pass a real run-record path. |
 | missing file | `FileNotFoundError` on `--run-record` | Point at an existing record. |
 
-### Determinism guard: ERROR vs FAILED vs pass (**OBS-04**)
+### Determinism guard: ERROR vs FAILED vs ANCHOR_MISMATCH vs pass (**OBS-04**)
 
-Pass and red lines name the `PYTHONHASHSEED` regime:
+Pass and red lines name the `PYTHONHASHSEED` regime. Three red classes select
+three remedies — do not treat them as synonyms:
 
 | Line shape | Meaning | Operator action |
 | --- | --- | --- |
-| `determinism check passed [label]: … (baseline=…; child_seeds=…)` | Cross-process re-score bit-identical under the named child seeds. | None — certified. |
-| `determinism check ERROR [label]: …` | Child could not run, timed out, payload missing/unreadable/unparseable, or bound a different `build_reports` module than the parent (**environment / import drift**). | Fix environment / import root / PYTHONPATH; re-run. **Not** a caption-model regression. |
+| `determinism check passed [label]: … (baseline=…; child_seeds=…)` | Cross-process re-score bit-identical under the named child seeds. With `--expect-report`, the line also says `matches --expect-report <path>`. | None — certified. |
+| `determinism check ERROR [label]: …` | Child could not run, timed out, payload missing/unreadable/unparseable, bound a different `build_reports` module, or `--expect-report` path missing/unreadable (**environment / path drift**). | Fix environment / import root / PYTHONPATH / path; re-run. **Not** a caption-model regression. |
 | `determinism check FAILED [label]: …` | Genuine byte mismatch across seeds (**build regression**). Writes `determinism-mismatch-<label>-seed<n>.diff.txt` under the artifact dir; artifact carries the same `baseline=…; child_seeds=…` regime. | Investigate scoring code / non-determinism in the build. |
+| `determinism check ANCHOR_MISMATCH [label]: …` | Seed-stable re-score does **not** match `--expect-report` (**external reference diverge**). Neither FAILED nor ERROR. Message names both legitimate causes and the regen command. | **(1)** Frozen report or run-record corrupted → investigate; **do not regenerate** (destroys evidence). **(2)** Scoring deliberately changed → regenerate on purpose via `python -m scripts.eval_harness.generate_determinism_anchor` and commit the new freeze. |
 
 `label` is `score`, `score-public`, or `score-face` so CI logs name which document failed.
+
+**`--expect-report` is score-only, opt-in, and requires `--check-determinism`.**
+Discovery is never by sibling filename. The committed caption freeze covers the
+LOCAL score document only — there is no frozen face-report anchor yet, so
+`score-face --check-determinism` remains seed-stability only (face path hole
+documented in the F5 lane report).
 
 ## Report schema (`acx-eval/v1`, E19-1 extension)
 

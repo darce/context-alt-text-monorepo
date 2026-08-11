@@ -752,7 +752,8 @@ def _run_determinism_children(
     base_md: str,
     artifact_dir: Path,
     expected_build_reports_file: str,
-) -> None:
+    announce_pass: bool = True,
+) -> str:
     """Shared cross-process determinism substrate for score / score-face (C-08).
 
     Holds the seed tuple, env handling, subprocess invocation with a pinned
@@ -792,6 +793,12 @@ def _run_determinism_children(
     - ``determinism check FAILED [label]: ...`` — genuine byte mismatch
       (build regression). Names JSON vs MD, writes a side-by-side artifact, and
       includes stderr.
+    - ``determinism check ANCHOR_MISMATCH [label]: ...`` — optional third
+      outcome when ``--expect-report`` is set (F5 / B-06); emitted by the
+      caller after seed-stability, not here.
+
+    Returns the regime clause string so callers that defer the pass line
+    (frozen-anchor compare) can print a single combined message (OBS-04).
     """
     # <root>/scripts/eval_harness/cli.py → parents[2] is the package root
     # (apps/prototype-description-service). Pin once; never inherit Path.cwd().
@@ -949,9 +956,95 @@ def _run_determinism_children(
                 payload_path.unlink(missing_ok=True)
             except OSError:
                 pass
-    print(
-        f"determinism check passed [{label}]: cross-process re-score is "
-        f"bit-identical under varied PYTHONHASHSEED ({regime})"
+    if announce_pass:
+        print(
+            f"determinism check passed [{label}]: cross-process re-score is "
+            f"bit-identical under varied PYTHONHASHSEED ({regime})"
+        )
+    return regime
+
+
+# Opt-in frozen-report regeneration command named in ANCHOR_MISMATCH (OBS-04).
+_DETERMINISM_ANCHOR_REGEN_CMD = (
+    "python -m scripts.eval_harness.generate_determinism_anchor"
+)
+
+
+def _check_expect_report(
+    base_json: str,
+    expect_report: Path,
+    *,
+    label: str,
+    regime: str,
+    artifact_dir: Path,
+) -> None:
+    """Third determinism outcome: compare certified JSON to a frozen report (F5 / B-06).
+
+    Seed-stability (ERROR / FAILED / passed) only proves the scoring function is
+    stable across interpreters. Without an external reference, a corrupted
+    run-record or report is re-scored the same way by parent and children and
+    still "passes". ``--expect-report`` is that external reference — opt-in and
+    path-explicit (no sibling-filename inference).
+
+    Taxonomy (OBS-04) — distinct from ERROR and FAILED:
+    - missing/unreadable expect path → ERROR (operator path/env action)
+    - readable but bytes differ → ANCHOR_MISMATCH (corrupt freeze/record *or*
+      deliberate scoring change; message names both remedies and the regen cmd)
+
+    Mismatch artifacts land under ``artifact_dir`` (run-record parent), never
+    beside the frozen expect path, so a red compare cannot dirty committed freeze
+    trees.
+    """
+    resolved = expect_report.resolve()
+    if not resolved.is_file():
+        sys.exit(
+            f"determinism check ERROR [{label}]: --expect-report path missing "
+            f"or not a file: {resolved} ({regime})"
+        )
+    try:
+        expected = resolved.read_text(encoding="utf-8")
+    except OSError as read_exc:
+        sys.exit(
+            f"determinism check ERROR [{label}]: --expect-report unreadable "
+            f"path={resolved}: {read_exc} ({regime})"
+        )
+    if expected == base_json:
+        print(
+            f"determinism check passed [{label}]: cross-process re-score is "
+            f"bit-identical under varied PYTHONHASHSEED ({regime}); "
+            f"matches --expect-report {resolved}"
+        )
+        return
+    artifact = artifact_dir / f"determinism-anchor-mismatch-{label}.diff.txt"
+    body = "\n".join(
+        [
+            f"gate={label}",
+            f"regime={regime}",
+            f"expect_report={resolved}",
+            "outcome=ANCHOR_MISMATCH",
+            "",
+            "=== expected (--expect-report) JSON ===",
+            expected,
+            "=== certified (fresh re-score) JSON ===",
+            base_json,
+            "",
+        ]
+    )
+    try:
+        artifact.write_text(body)
+        artifact_ref = str(artifact)
+    except OSError as write_exc:
+        artifact_ref = f"(could not write artifact: {write_exc})"
+    sys.exit(
+        f"determinism check ANCHOR_MISMATCH [{label}]: fresh re-score does not "
+        f"match --expect-report {resolved} ({regime}; artifact={artifact_ref}). "
+        f"This is neither seed divergence (FAILED) nor environment drift (ERROR). "
+        f"Two legitimate causes — choose carefully: "
+        f"(1) the frozen report or the run-record was corrupted — investigate, "
+        f"do NOT regenerate (regenerating destroys the evidence); "
+        f"(2) scoring was deliberately changed and the freeze is now stale — "
+        f"regenerate on purpose via `{_DETERMINISM_ANCHOR_REGEN_CMD}` and commit "
+        f"the new freeze."
     )
 
 
@@ -962,6 +1055,7 @@ def _check_score_determinism_cross_process(
     rubric_gate: str = RUBRIC_GATE_ENFORCE,
     audience: Audience = Audience.LOCAL,
     label: str = "score",
+    expect_report: Path | None = None,
 ) -> tuple[str, str]:
     """Re-run caption score in a FRESH process under varied PYTHONHASHSEED (§G).
 
@@ -970,6 +1064,10 @@ def _check_score_determinism_cross_process(
     each subprocess re-loads that same path from disk so hash-ordering,
     import-order, and mutated-anchor failures are visible. Subprocess loop lives
     in ``_run_determinism_children`` (C-08).
+
+    When ``expect_report`` is set (CLI ``--expect-report``), after seed-stability
+    the certified JSON is compared to those frozen bytes (F5 / B-06). Mismatch
+    is ``ANCHOR_MISMATCH`` — a third outcome, not ERROR or FAILED (OBS-04).
 
     Returns the certified ``(json_doc, md_doc)`` pair so the caller can write
     *those* bytes — one build, not a second uncertified serialisation.
@@ -1027,7 +1125,9 @@ def _check_score_determinism_cross_process(
         "'json':j,'md':m,"
         "'build_reports_file':build_reports.__code__.co_filename}))"
     )
-    _run_determinism_children(
+    # Defer the seed-stability pass line when a frozen compare follows so the
+    # operator sees one terminal outcome (OBS-04), not pass-then-mismatch.
+    regime = _run_determinism_children(
         script,
         [str(resolved_record), str(resolved_manifest), rubric_gate, audience_value],
         label=label,
@@ -1035,7 +1135,16 @@ def _check_score_determinism_cross_process(
         base_md=base_md,
         artifact_dir=resolved_record.parent,
         expected_build_reports_file=build_reports.__code__.co_filename,
+        announce_pass=expect_report is None,
     )
+    if expect_report is not None:
+        _check_expect_report(
+            base_json,
+            Path(expect_report),
+            label=label,
+            regime=regime,
+            artifact_dir=resolved_record.parent,
+        )
     return base_json, base_md
 
 
@@ -1074,6 +1183,12 @@ def _cmd_score(args: argparse.Namespace) -> None:
     # always certified LOCAL/enforce while disk could say skip/public.
     public_json: str | None = None
     public_md: str | None = None
+    # F5 / B-06: --expect-report is opt-in frozen JSON for the LOCAL document only
+    # (no face freeze; PUBLIC has no committed anchor). Requires --check-determinism.
+    expect_report_raw = getattr(args, "expect_report", None)
+    if expect_report_raw and not args.check_determinism:
+        sys.exit("score: --expect-report requires --check-determinism")
+    expect_report = Path(expect_report_raw) if expect_report_raw else None
     if args.check_determinism:
         local_json, local_md = _check_score_determinism_cross_process(
             record_path,
@@ -1081,6 +1196,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
             rubric_gate=rubric_gate,
             audience=Audience.LOCAL,
             label="score",
+            expect_report=expect_report,
         )
         scored = json.loads(local_json)
         # Schema hard-keys fold into the verdict before write. On a clean report
@@ -1093,6 +1209,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
         if schema_exit is not None:
             local_json, local_md = _serialize_score_docs(scored)
         if is_public:
+            # No --expect-report on PUBLIC: committed freeze is LOCAL only.
             public_json, public_md = _check_score_determinism_cross_process(
                 record_path,
                 args.manifest,
@@ -1656,6 +1773,17 @@ def main(argv: list[str] | None = None) -> None:
     _rubric_gate_flag(score_p)
     _check_determinism_flag(score_p)
     score_p.add_argument("--run-record", required=True)
+    score_p.add_argument(
+        "--expect-report",
+        default=None,
+        metavar="PATH",
+        help=(
+            "with --check-determinism: require the certified LOCAL score JSON to "
+            "match this frozen report byte-for-byte (opt-in; no sibling inference). "
+            "Mismatch is ANCHOR_MISMATCH — corrupt freeze/record or deliberate "
+            "scoring change — not seed FAILED and not environment ERROR"
+        ),
+    )
     score_p.set_defaults(func=_cmd_score)
 
     run_p = sub.add_parser("run", help="fetch then score")

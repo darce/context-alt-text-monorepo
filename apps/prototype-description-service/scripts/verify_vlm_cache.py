@@ -1,9 +1,15 @@
 """Fail-closed VLM cache integrity gate for the runtime-vlm image boot path.
 
 Invoked as ``python -m scripts.verify_vlm_cache`` with no required arguments
-(sibling lane wires this into docker-entrypoint for ACX_IMAGE_VARIANT=vlm).
-Exit 0 only when the active description profile is not LOCAL_CPU, or when the
-pinned HF snapshot under HF_HOME matches its integrity manifest exactly.
+(docker-entrypoint runs this when ``ACX_IMAGE_VARIANT`` is the VLM image).
+
+When the gate runs, exit 0 only when the pinned HF snapshot under HF_HOME
+matches its integrity manifest exactly **and** trust_remote_code modeling
+``*.py`` files are present. Skipping is the narrow case: recognition image
+with a non-LOCAL_CPU profile (no VLM weights expected). On the VLM image the
+gate always verifies — if the active profile is not LOCAL_CPU it still checks
+the default Florence pin (``florence_small``), so a boot with the default
+``seeded`` adapter cannot silently skip an empty weight mount.
 
 Manifest location (choice, load-bearing)
 ----------------------------------------
@@ -25,9 +31,17 @@ a gate.
 Failure modes (each yields a distinct non-zero message)
 -------------------------------------------------------
 snapshot directory missing; directory empty; manifest missing; listed file
-missing; sha256 mismatch; extra unlisted file present in the snapshot
-(this last case is the RB-02 attack surface: an attacker ADDS a .py without
-modifying an existing entry).
+missing; sha256 mismatch; extra unlisted file present in the snapshot;
+no trust_remote_code ``*.py`` modeling files (safetensors-only seed).
+The extra-file case is the RB-02 attack surface: an attacker ADDS a .py
+without modifying an existing entry.
+
+Image variant constants (sr-007)
+--------------------------------
+``ImageVariant`` / ``IMAGE_VARIANT_ENV`` are the single importable source of
+truth for the recognition vs VLM labels. Dockerfile ``ENV ACX_IMAGE_VARIANT=...``
+and the entrypoint shell check must use these same string values; the API
+reads the env via ``resolve_image_variant_label`` (rg-015: report what is set).
 """
 
 from __future__ import annotations
@@ -37,18 +51,58 @@ import hashlib
 import json
 import os
 import sys
+from enum import StrEnum
 from pathlib import Path
 
 # Stored inside the HF snapshot dir; excluded from the hashed payload set.
 MANIFEST_FILENAME = "acx-vlm-cache.manifest.json"
 _HASH_CHUNK = 1024 * 1024  # 1 MiB — never load multi-GB shards whole.
 
+# Operator-facing seed command named in every fail-closed message (rg-006).
+SEED_COMMAND = (
+    "uv run --extra vlm python -m scripts.seed_vlm_cache "
+    "--hf-home /data/cache/huggingface_cache"
+)
+
 EXIT_OK = 0
 EXIT_FAIL = 1
 
 
+class ImageVariant(StrEnum):
+    """Canonical Docker image variant labels (sr-007).
+
+    Baked into each runtime stage as ``ENV ACX_IMAGE_VARIANT=...``. Do not
+    scatter the string literals elsewhere in Python — import these members.
+    """
+
+    RECOGNITION = "recognition"
+    VLM = "vlm"
+
+
+IMAGE_VARIANT_ENV = "ACX_IMAGE_VARIANT"
+DEFAULT_IMAGE_VARIANT = ImageVariant.RECOGNITION
+
+# Default LOCAL_CPU pin verified on the VLM image when the active profile is
+# not itself LOCAL_CPU (so seeded/default boot still fails closed on empty cache).
+DEFAULT_VLM_VERIFY_PROFILE = "florence_small"
+
+
 class CacheIntegrityError(RuntimeError):
     """Actionable integrity failure; message is printed and mapped to EXIT_FAIL."""
+
+
+def resolve_image_variant_label() -> str:
+    """Return the image variant the running process actually has (rg-015).
+
+    Reads ``ACX_IMAGE_VARIANT`` from the environment. Unset/blank falls back
+    to the recognition default (matches Dockerfile ``runtime`` stage ENV).
+    Unknown non-empty values are returned as-is so operators see the truth,
+    not a guessed member of ``ImageVariant``.
+    """
+    raw = os.environ.get(IMAGE_VARIANT_ENV)
+    if raw is None or not str(raw).strip():
+        return DEFAULT_IMAGE_VARIANT.value
+    return str(raw).strip()
 
 
 def resolve_hf_hub_cache() -> Path:
@@ -127,6 +181,38 @@ def write_manifest(snapshot_dir: Path, *, manifest_path: Path | None = None) -> 
     return out
 
 
+def _seed_hint() -> str:
+    return f"Fix: seed outside the offline runtime-vlm image with `{SEED_COMMAND}`."
+
+
+def assert_remote_code_present(snapshot_dir: Path, on_disk: dict[str, Path]) -> None:
+    """Florence-2 loads via trust_remote_code; safetensors alone still fail at load.
+
+    Require at least one HF remote-code module (``modeling_*.py``, ``processing_*.py``,
+    or ``configuration_*.py``) so a weights-only copy cannot pass the gate. Full
+    Florence snapshots from the seeder include the full set; the gate only needs
+    proof that remote code is present, not a second inventory of every module.
+    """
+    names = list(on_disk)
+    remote_code = [
+        n
+        for n in names
+        if n.endswith(".py")
+        and (
+            Path(n).name.startswith("modeling_")
+            or Path(n).name.startswith("processing_")
+            or Path(n).name.startswith("configuration_")
+        )
+    ]
+    if not remote_code:
+        raise CacheIntegrityError(
+            f"VLM cache gate failed: trust_remote_code remote modules missing under "
+            f"{snapshot_dir} (expected modeling_*.py / processing_*.py / "
+            "configuration_*.py). Florence-2 offline load execs these .py files; "
+            f"copying only safetensors is not enough. {_seed_hint()}"
+        )
+
+
 def verify_snapshot(snapshot_dir: Path, *, manifest_path: Path | None = None) -> None:
     """Fail closed if the snapshot does not match its manifest exactly.
 
@@ -135,8 +221,7 @@ def verify_snapshot(snapshot_dir: Path, *, manifest_path: Path | None = None) ->
     if not snapshot_dir.is_dir():
         raise CacheIntegrityError(
             f"VLM cache gate failed: snapshot directory missing: {snapshot_dir}. "
-            "Seed outside the offline runtime image with "
-            "`python -m scripts.seed_vlm_cache --hf-home <path>`."
+            f"{_seed_hint()}"
         )
 
     on_disk = list_snapshot_files(snapshot_dir)
@@ -146,7 +231,8 @@ def verify_snapshot(snapshot_dir: Path, *, manifest_path: Path | None = None) ->
     if not on_disk and not manifest_file.is_file():
         raise CacheIntegrityError(
             f"VLM cache gate failed: snapshot directory is empty: {snapshot_dir}. "
-            "Seed weights + remote-code files, then write the integrity manifest."
+            f"Seed weights + remote-code *.py files, then write the integrity manifest. "
+            f"{_seed_hint()}"
         )
 
     if not manifest_file.is_file():
@@ -154,19 +240,21 @@ def verify_snapshot(snapshot_dir: Path, *, manifest_path: Path | None = None) ->
             f"VLM cache gate failed: manifest missing: {manifest_file}. "
             "After seeding a verified snapshot, run "
             "`python -m scripts.verify_vlm_cache --write-manifest` once "
-            "(trust-establishing; never re-run to silence a failing gate)."
+            f"(trust-establishing; never re-run to silence a failing gate). {_seed_hint()}"
         )
 
     try:
         raw = json.loads(manifest_file.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise CacheIntegrityError(
-            f"VLM cache gate failed: manifest is not valid JSON: {manifest_file}: {exc}"
+            f"VLM cache gate failed: manifest is not valid JSON: {manifest_file}: {exc}. "
+            f"{_seed_hint()}"
         ) from exc
 
     if not isinstance(raw, dict) or not raw:
         raise CacheIntegrityError(
-            f"VLM cache gate failed: manifest is empty or not an object: {manifest_file}"
+            f"VLM cache gate failed: manifest is empty or not an object: {manifest_file}. "
+            f"{_seed_hint()}"
         )
 
     expected: dict[str, str] = {}
@@ -183,7 +271,7 @@ def verify_snapshot(snapshot_dir: Path, *, manifest_path: Path | None = None) ->
         if rel not in on_disk:
             raise CacheIntegrityError(
                 f"VLM cache gate failed: file listed in manifest is missing: {rel} "
-                f"(under {snapshot_dir})"
+                f"(under {snapshot_dir}). {_seed_hint()}"
             )
 
     # Extra unlisted files (RB-02: attacker ADDS modeling .py / payload).
@@ -194,7 +282,7 @@ def verify_snapshot(snapshot_dir: Path, *, manifest_path: Path | None = None) ->
         raise CacheIntegrityError(
             f"VLM cache gate failed: unlisted file(s) present in snapshot "
             f"(integrity set mismatch / possible cache tamper): {preview}{more}. "
-            "Do not re-run --write-manifest to silence this; re-seed from a trusted source."
+            f"Do not re-run --write-manifest to silence this; re-seed. {_seed_hint()}"
         )
 
     # Digest mismatches.
@@ -204,30 +292,48 @@ def verify_snapshot(snapshot_dir: Path, *, manifest_path: Path | None = None) ->
             raise CacheIntegrityError(
                 f"VLM cache gate failed: sha256 mismatch for {rel}: "
                 f"expected {expected[rel]}, got {actual}. "
-                "Cache contents differ from the certified manifest; re-seed, do not rewrite the manifest."
+                f"Cache contents differ from the certified manifest; do not rewrite the manifest. "
+                f"{_seed_hint()}"
             )
 
+    # Defense in depth: even a manifest of weights-only must not pass (Florence remote code).
+    assert_remote_code_present(snapshot_dir, on_disk)
 
-def resolve_active_local_cpu_spec():
-    """Return ProfileSpec when active profile is LOCAL_CPU; else None + skip reason."""
-    from scene.config.profiles import get_profile_spec
+
+def resolve_verify_spec():
+    """Resolve which ProfileSpec the gate must verify, or (None, skip_reason).
+
+    Order:
+    1. Active profile is LOCAL_CPU → verify that pin.
+    2. Image variant is VLM → verify the default Florence pin even when the
+       active adapter is seeded/remote (boot must still fail closed on empty cache).
+    3. Else skip (narrow case: recognition image, no VLM weights expected).
+    """
+    from scene.config.profiles import DescriptionProfile, get_profile_spec
     from scene.config.settings import DescriptionSettings
     from scene.domain.description import DescriptionAdapterKind
 
     settings = DescriptionSettings()
     spec = get_profile_spec(settings.profile)
-    if spec.adapter_kind is not DescriptionAdapterKind.LOCAL_CPU:
-        return None, (
-            f"VLM cache gate skipped: profile={settings.profile.value!r} "
-            f"adapter_kind={spec.adapter_kind.value!r} is not LOCAL_CPU"
-        )
-    return spec, None
+    if spec.adapter_kind is DescriptionAdapterKind.LOCAL_CPU:
+        return spec, None
+
+    variant = resolve_image_variant_label()
+    if variant == ImageVariant.VLM.value:
+        default_spec = get_profile_spec(DescriptionProfile(DEFAULT_VLM_VERIFY_PROFILE))
+        return default_spec, None
+
+    return None, (
+        f"VLM cache gate skipped: profile={settings.profile.value!r} "
+        f"adapter_kind={spec.adapter_kind.value!r} is not LOCAL_CPU "
+        f"and image_variant={variant!r} is not {ImageVariant.VLM.value!r}"
+    )
 
 
 def run_gate(*, write_manifest_mode: bool = False, hub_cache: Path | None = None) -> int:
-    """CLI body: skip non-LOCAL_CPU, else verify or write-manifest. Returns exit code."""
+    """CLI body: verify (or write-manifest) unless the narrow skip case applies."""
     try:
-        spec, skip_reason = resolve_active_local_cpu_spec()
+        spec, skip_reason = resolve_verify_spec()
     except Exception as exc:  # noqa: BLE001 - gate must fail closed on config errors
         print(f"VLM cache gate failed: could not resolve description profile: {exc}", file=sys.stderr)
         return EXIT_FAIL
@@ -241,8 +347,9 @@ def run_gate(*, write_manifest_mode: bool = False, hub_cache: Path | None = None
         return EXIT_FAIL
     if not spec.model_id or not spec.model_revision:
         print(
-            f"VLM cache gate failed: LOCAL_CPU profile {spec.profile.value!r} "
-            "lacks pinned model_id/model_revision; cannot verify cache.",
+            f"VLM cache gate failed: profile {spec.profile.value!r} "
+            "lacks pinned model_id/model_revision; cannot verify cache. "
+            f"{_seed_hint()}",
             file=sys.stderr,
         )
         return EXIT_FAIL
@@ -264,15 +371,20 @@ def run_gate(*, write_manifest_mode: bool = False, hub_cache: Path | None = None
         print(str(exc), file=sys.stderr)
         return EXIT_FAIL
 
-    print(f"VLM cache gate ok: {snapshot}")
+    print(
+        f"VLM cache gate ok: {snapshot} "
+        f"(profile={spec.profile.value} image_variant={resolve_image_variant_label()})"
+    )
     return EXIT_OK
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Fail-closed integrity gate for the LOCAL_CPU Florence snapshot under HF_HOME. "
-            "No args: verify. --write-manifest: certify current disk contents (trust-establishing)."
+            "Fail-closed integrity gate for the Florence LOCAL_CPU snapshot under HF_HOME. "
+            "On the VLM image, always verifies (default florence_small pin when profile "
+            "is not LOCAL_CPU). No args: verify. --write-manifest: certify current disk "
+            "contents (trust-establishing)."
         )
     )
     parser.add_argument(

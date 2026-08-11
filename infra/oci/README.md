@@ -776,8 +776,10 @@ focused on the destructive contract.
 
 - Registry: `iad.ocir.io`
 - Namespace: `idu2kqqe2jxy`
-- Repository: `acx-backend`
-- Image tags: `:latest` (prod), `:staging`, `:dev`
+- Repositories (distinct per image variant — not a tag on a shared repo):
+  - `acx-backend` — recognition / default `runtime` stage
+  - `acx-backend-vlm` — VLM / `runtime-vlm` stage (`ACX_BUILD_TARGET=runtime-vlm` in `scripts/deploy/recognition-service.sh`)
+- Image tags: `:latest` (prod), `:staging`, `:dev` (and SHA / rollback tags from the deploy script)
 - Auth: OCI auth token, username `idu2kqqe2jxy/<email>`
 
 ## GPU Burst Tier (detailed description)
@@ -796,11 +798,21 @@ The `runtime-vlm` image is permanently offline for Hugging Face
 (`HF_HUB_OFFLINE=1` / `TRANSFORMERS_OFFLINE=1` baked in). It cannot download
 Florence weights at boot. Operators seed a host path **outside** that image,
 write an integrity manifest, then mount the cache **read-only** at
-`/data/cache`. The boot gate (`python -m scripts.verify_vlm_cache`) fails closed
-before uvicorn starts when the active profile is LOCAL_CPU
-(`ACX_DESCRIPTION_ADAPTER=florence_small`) and the snapshot does not match the
-manifest exactly — including when an **extra unlisted file** appears (model
-files are code; see SEC-13).
+`/data/cache`. On the VLM image the entrypoint always runs
+`python -m scripts.verify_vlm_cache` before uvicorn: the gate fails closed when
+the pinned snapshot does not match the integrity manifest exactly — including
+when an **extra unlisted file** appears or when trust_remote_code `modeling_*.py`
+/ `processing_*.py` files are absent (model files are code; see SEC-13). If the
+active adapter is not LOCAL_CPU, the gate still verifies the default
+`florence_small` pin so an empty mount cannot boot green. Skipping is only for
+the recognition image with a non-LOCAL_CPU profile.
+
+Identify which image is running (same commit SHA can be either variant):
+
+```bash
+curl -sS http://127.0.0.1:8000/health | jq '{commit_sha, image_variant}'
+# or: curl -sS http://127.0.0.1:8000/version
+```
 
 ### 1. Seed the pinned snapshot (outside the offline image)
 
@@ -838,19 +850,21 @@ uv run python -m scripts.verify_vlm_cache --write-manifest
 
 Mount the pre-seeded cache into the `runtime-vlm` container at `/data/cache`
 **read-only** (least privilege; a writable shared volume is a code-execution
-vector under `trust_remote_code=True`):
+vector under `trust_remote_code=True`). Push/pull the VLM image under the
+`acx-backend-vlm` repository (not `:vlm` on `acx-backend`):
 
 ```bash
 docker run --rm \
   -e ACX_DESCRIPTION_ADAPTER=florence_small \
   -v /data/cache:/data/cache:ro \
-  iad.ocir.io/idu2kqqe2jxy/acx-backend:vlm
+  iad.ocir.io/idu2kqqe2jxy/acx-backend-vlm:latest
 ```
 
 On boot the entrypoint runs `python -m scripts.verify_vlm_cache` with no
-arguments. Exit 0 only when every manifest entry verifies and the on-disk file
-set matches exactly; any problem exits non-zero and the container does not
-serve traffic. Non-LOCAL_CPU profiles (e.g. `seeded`) make the gate a no-op.
+arguments when `ACX_IMAGE_VARIANT=vlm`. Exit 0 only when every manifest entry
+verifies, the on-disk file set matches exactly, and remote-code `*.py` modules
+are present; any problem exits non-zero and the container does not serve
+traffic.
 
 Manual check against a host cache:
 

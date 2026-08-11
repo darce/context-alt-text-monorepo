@@ -917,6 +917,138 @@ def test_cmd_score_exits_zero_when_no_wrong_names_and_no_failures(tmp_path, monk
     assert report["verdict"]["reasons"] == []
 
 
+def _clean_score_manifest_and_record(tmp_path):
+    """Minimal clean caption run-record + manifest for score determinism tests."""
+    from scripts.eval_harness.schema import SCHEMA, DocKind
+
+    entries = [
+        {
+            "path": "mock_images/alice.jpg",
+            "sha256": "a" * 64,
+            "media_id": 1,
+            "face_count": 1,
+            "present_identities": ["Alice Example"],
+            "context_pack": {},
+            "base_caption": "",
+            "must_right": [],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+        }
+    ]
+    manifest_path = tmp_path / "golden.json"
+    manifest_path.write_text(
+        json.dumps({"manifest_version": 2, "roster": ["Alice Example"], "entries": entries})
+    )
+    record_path = tmp_path / "run-det.json"
+    record_path.write_text(
+        json.dumps(
+            {
+                "schema": SCHEMA,
+                "kind": DocKind.RUN_RECORD.value,
+                "provenance": {
+                    "manifest_sha256": "0" * 64,
+                    "base_url": "https://example.test",
+                    "head_sha": "f" * 40,
+                    "started_at": "t",
+                },
+                "items": [
+                    {
+                        "media_id": 1,
+                        "path": "mock_images/alice.jpg",
+                        "describe": {
+                            "alt_text_draft": "Alice Example outdoors.",
+                            "visual_facts": {"objects": []},
+                        },
+                        "identities": [
+                            {
+                                "name": "Alice Example",
+                                "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                                "unpositioned": False,
+                            }
+                        ],
+                        "face_count": 1,
+                        "error": None,
+                    }
+                ],
+            }
+        )
+    )
+    return manifest_path, record_path
+
+
+def test_cli_score_check_determinism_runs_cross_process_guard(tmp_path, monkeypatch, capsys):
+    """--check-determinism on score drives the SHIPPED cross-process guard (VLM-6 S2A item 3).
+
+    Clean case: re-score from the persisted run-record under varied PYTHONHASHSEED
+    must pass. Reaching report write without SystemExit means the guard ran and
+    matched — not the old same-process double build_reports call.
+    """
+    from scripts.eval_harness import cli as cli_mod
+
+    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    main(
+        [
+            "score",
+            "--manifest",
+            str(manifest_path),
+            "--run-record",
+            str(record_path),
+            "--check-determinism",
+        ]
+    )
+    assert (tmp_path / "run-det-report.json").exists()
+    out = capsys.readouterr().out
+    assert "cross-process" in out
+    assert "determinism check passed" in out
+
+    # Flag still recognized when required args are missing (parse error, not silent ignore).
+    with pytest.raises(SystemExit) as missing:
+        main(["score", "--check-determinism"])
+    assert missing.value.code == 2
+
+
+def test_cli_score_determinism_guard_detects_mutated_persisted_anchor(tmp_path, monkeypatch):
+    """Non-vacuity (TEST-15): mutating the persisted run-record between baseline and
+    subprocess re-score must make the cross-process guard report FAILED.
+
+    Pre-fix false-green: in-process double build_reports never re-reads disk, so a
+    mutated anchor still "passed". Against that implementation this test must go red.
+    """
+    from scripts.eval_harness import cli as cli_mod
+
+    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    real_run = cli_mod.subprocess.run
+
+    def _mutate_then_run(*args, **kwargs):
+        # Corrupt the persisted anchor after in-process baseline, before subprocess score.
+        payload = json.loads(record_path.read_text())
+        item = payload["items"][0]
+        item["describe"] = {
+            "alt_text_draft": "MUTATED CAPTION FOR DETERMINISM GUARD",
+            "visual_facts": {"objects": ["definitely-not-in-baseline"]},
+        }
+        # Also flip identity so identification surfaces diverge if captions alone are ignored.
+        item["identities"] = [
+            {
+                "name": "Bob Builder",
+                "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                "unpositioned": False,
+            }
+        ]
+        record_path.write_text(json.dumps(payload))
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(cli_mod.subprocess, "run", _mutate_then_run)
+    with pytest.raises(SystemExit) as exc:
+        cli_mod._check_score_determinism_cross_process(record_path, str(manifest_path))
+    msg = str(exc.value)
+    assert "determinism check FAILED" in msg
+    assert "cross-process" in msg
+
+
 # --- FIR-5 S5: face-bakeoff / score-face CLI surface ---
 
 

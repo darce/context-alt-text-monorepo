@@ -572,6 +572,74 @@ def _cmd_fetch(args: argparse.Namespace) -> list[str]:
     return record_paths
 
 
+def _check_score_determinism_cross_process(
+    record_path: Path,
+    manifest_path: str,
+) -> None:
+    """Re-run caption score in a FRESH process under varied PYTHONHASHSEED (§G).
+
+    Mirrors ``_check_face_determinism_cross_process`` for the caption/report path.
+    Baseline is computed in-process from the persisted run-record; each subprocess
+    re-loads that same path from disk (not an in-memory twin of the first call) so
+    hash-ordering, import-order, and mutated-anchor failures are visible.
+    """
+    # Baseline: current process, reading the persisted anchor.
+    record = json.loads(record_path.read_text())
+    manifest = load_manifest(manifest_path)
+    entries = [e.model_dump() for e in manifest.entries]
+    manifest_sha = _manifest_sha(manifest)
+    ignore_list = _load_ignore_list(record_path.parent)
+    roster = sorted(set(getattr(manifest, "roster", []) or []))
+    base_json, base_md = build_reports(
+        record,
+        entries,
+        ignore_list=ignore_list,
+        score_manifest_sha256=manifest_sha,
+        manifest_roster=roster,
+    )
+
+    script = (
+        "import json,sys; "
+        "from pathlib import Path; "
+        "from scripts.eval_harness.manifest import load_manifest; "
+        "from scripts.eval_harness.cli import _manifest_sha, _load_ignore_list; "
+        "from scripts.eval_harness.report import build_reports; "
+        "rec_path=Path(sys.argv[1]); "
+        "rec=json.loads(rec_path.read_text()); "
+        "man=load_manifest(sys.argv[2]); "
+        "entries=[e.model_dump() for e in man.entries]; "
+        "sha=_manifest_sha(man); "
+        "ignore=_load_ignore_list(rec_path.parent); "
+        "roster=sorted(set(getattr(man,'roster',None) or [])); "
+        "j,m=build_reports(rec,entries,ignore_list=ignore,"
+        "score_manifest_sha256=sha,manifest_roster=roster); "
+        "sys.stdout.write(j); sys.stdout.write('---MD---'); sys.stdout.write(m)"
+    )
+    for hash_seed in ("0", "1", "42"):
+        env = dict(os.environ)
+        env["PYTHONHASHSEED"] = hash_seed
+        proc = subprocess.run(
+            [sys.executable, "-c", script, str(record_path), manifest_path],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=str(Path.cwd()),
+        )
+        if proc.returncode != 0:
+            sys.exit(
+                f"determinism check FAILED: subprocess seed={hash_seed} rc={proc.returncode}: {proc.stderr}"
+            )
+        out = proc.stdout
+        if "---MD---" not in out:
+            sys.exit(f"determinism check FAILED: malformed subprocess output seed={hash_seed}")
+        sub_json, sub_md = out.split("---MD---", 1)
+        if sub_json != base_json or sub_md != base_md:
+            sys.exit(
+                f"determinism check FAILED: cross-process re-score differs under PYTHONHASHSEED={hash_seed}"
+            )
+    print("determinism check passed: cross-process re-score is bit-identical under varied PYTHONHASHSEED")
+
+
 def _cmd_score(args: argparse.Namespace) -> None:
     _reject_llm_judge(args)
     record_path = Path(args.run_record)
@@ -587,12 +655,10 @@ def _cmd_score(args: argparse.Namespace) -> None:
         record, entries, ignore_list=ignore_list, score_manifest_sha256=manifest_sha, manifest_roster=roster
     )
     if args.check_determinism:
-        json_again, md_again = build_reports(
-            record, entries, ignore_list=ignore_list, score_manifest_sha256=manifest_sha, manifest_roster=roster
-        )
-        if json_doc != json_again or md_doc != md_again:
-            sys.exit("determinism check FAILED: re-score produced different output")
-        print("determinism check passed: re-score is bit-identical")
+        # VLM-6 S2A item 3: cross-process re-score from the persisted anchor under
+        # varied PYTHONHASHSEED (same shape as score-face). Same-process double
+        # build_reports only caught intra-call nondeterminism and certified nothing.
+        _check_score_determinism_cross_process(record_path, args.manifest)
     base = record_path.with_suffix("")
     json_path, md_path = Path(f"{base}-report.json"), Path(f"{base}-report.md")
     json_path.write_text(json_doc)

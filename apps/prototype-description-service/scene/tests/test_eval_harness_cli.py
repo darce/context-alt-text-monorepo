@@ -1575,6 +1575,211 @@ def test_score_schema_error_when_wrong_name_rate_missing(tmp_path, monkeypatch):
     assert "number" in str(excinfo.value).lower()
 
 
+# --- VLM-6 S2A F1-5: wrong-name floor defeatable + vacuous (F1c-2) ---
+
+
+def _real_golden_wrong_name_record() -> tuple[Path, dict, list[list[str]]]:
+    """37-entry golden run-record with a wrong identity on every image.
+
+    Returns (manifest_path, record, ignore_pairs) where ignore_pairs covers every
+    asserted wrong name so an ignore-list can silence the pre-fix floor gate.
+    """
+    from scripts.eval_harness.cli import _manifest_sha
+    from scripts.eval_harness.manifest import load_manifest
+    from scripts.eval_harness.schema import SCHEMA, DocKind
+
+    manifest = load_manifest(str(_GOLDEN_SEED))
+    entries = [e.model_dump() for e in manifest.entries]
+    assert len(entries) == 37
+    msha = _manifest_sha(manifest)
+    roster = list(manifest.roster or [])
+    items: list[dict] = []
+    ignore_pairs: list[list[str]] = []
+    for entry in entries:
+        names = list(entry.get("present_identities") or [])
+        must = list(entry.get("must_right") or [])
+        cap = (
+            " ".join(must + names + ["outdoors smiling."])
+            if (must or names)
+            else "A scenic outdoor photograph."
+        )
+        wrong = "Definitely Wrong Person"
+        for n in roster:
+            if n not in names:
+                wrong = n
+                break
+        idents = [
+            {
+                "name": wrong,
+                "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                "unpositioned": False,
+            }
+        ]
+        items.append(
+            {
+                "media_id": entry["media_id"],
+                "path": entry["path"],
+                "describe": {
+                    "alt_text_draft": cap,
+                    "named_draft": cap,
+                    "generic_draft": cap,
+                    "visual_facts": {"objects": []},
+                },
+                "identities": idents,
+                "face_count": entry.get("face_count") or 0,
+                "error": None,
+            }
+        )
+        ignore_pairs.append([entry["path"], wrong])
+    record = {
+        "schema": SCHEMA,
+        "kind": DocKind.RUN_RECORD.value,
+        "provenance": {
+            "manifest_sha256": msha,
+            "base_url": "https://example.test",
+            "head_sha": "f" * 40,
+            "started_at": "t",
+        },
+        "items": items,
+    }
+    return _GOLDEN_SEED, record, ignore_pairs
+
+
+def test_score_ignore_list_cannot_defeat_wrong_name_floor(tmp_path, monkeypatch):
+    """F1-5 (a): ignore-list covering 100% wrong names must still fail floor.
+
+    Pre-fix: ignore-list moved every pair into ignored_wrong_names → rate=0,
+    verdict=pass, exit 0. Gate must count live + ignored; presentation split
+    remains (ignored_wrong_names populated, live wrong_names empty).
+    """
+    from scripts.eval_harness.report import WRONG_NAME_RATE_FLOOR
+
+    golden, record, ignore_pairs = _real_golden_wrong_name_record()
+    assert len(ignore_pairs) == 37
+    record_path = tmp_path / "run-ignore-defeat.json"
+    record_path.write_text(json.dumps(record))
+    (tmp_path / "ignore-list.json").write_text(json.dumps({"wrong_names": ignore_pairs}))
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(golden), "--run-record", str(record_path)])
+    msg = str(excinfo.value)
+    assert excinfo.value.code != 0
+    assert "wrong-name floor" in msg.lower()
+    assert "vacuity" not in msg.lower()  # class-unique: floor breach, not vacuity
+    assert "empty-rubric" not in msg.lower()
+    assert "must-right failures" not in msg.lower()
+    assert "manifest-mismatch" not in msg.lower()
+    assert "truncation" not in msg.lower()
+    assert "schema error" not in msg.lower()
+    report = json.loads(record_path.with_name("run-ignore-defeat-report.json").read_text())
+    ident = report["faces"]["identification"]
+    assert ident["wrong_names"] == []
+    assert len(ident["ignored_wrong_names"]) == 37
+    assert report["verdict"]["wrong_name_rate"] > WRONG_NAME_RATE_FLOOR
+    assert report["verdict"]["verdict"] == "fail"
+    assert report["verdict"]["wrong_name_rate"] == pytest.approx(1.0)
+
+
+def test_score_recognition_disabled_corpus_fails_wrong_name_floor_vacuity(
+    tmp_path, monkeypatch
+):
+    """F1-5 (b): recognition_enabled=false corpus-wide → floor vacuity gate.
+
+    Pre-fix: identification_pr excluded every image → wrong_names=[], rate=0.0,
+    exit 0 no matter how wrong the identities were (EVAL-19). Class-unique token
+    must not match empty-rubric.
+    """
+    import copy
+
+    from scripts.eval_harness.cli import _manifest_sha
+    from scripts.eval_harness.manifest import load_manifest
+    from scripts.eval_harness.schema import SCHEMA, DocKind
+
+    raw = json.loads(_GOLDEN_SEED.read_text())
+    man = copy.deepcopy(raw)
+    for entry in man["entries"]:
+        entry["policy"] = {**entry.get("policy", {}), "recognition_enabled": False}
+    man_path = tmp_path / "golden-rec-off.json"
+    man_path.write_text(json.dumps(man))
+    manifest = load_manifest(str(man_path))
+    entries = [e.model_dump() for e in manifest.entries]
+    assert len(entries) == 37
+    assert all(not e["policy"]["recognition_enabled"] for e in entries)
+    msha = _manifest_sha(manifest)
+    roster = list(manifest.roster or [])
+    items = []
+    for entry in entries:
+        names = list(entry.get("present_identities") or [])
+        must = list(entry.get("must_right") or [])
+        cap = (
+            " ".join(must + names + ["outdoors smiling."])
+            if (must or names)
+            else "A scenic outdoor photograph."
+        )
+        wrong = "Definitely Wrong Person"
+        for n in roster:
+            if n not in names:
+                wrong = n
+                break
+        items.append(
+            {
+                "media_id": entry["media_id"],
+                "path": entry["path"],
+                "describe": {
+                    "alt_text_draft": cap,
+                    "named_draft": cap,
+                    "generic_draft": cap,
+                    "visual_facts": {"objects": []},
+                },
+                "identities": [
+                    {
+                        "name": wrong,
+                        "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                        "unpositioned": False,
+                    }
+                ],
+                "face_count": entry.get("face_count") or 0,
+                "error": None,
+            }
+        )
+    record = {
+        "schema": SCHEMA,
+        "kind": DocKind.RUN_RECORD.value,
+        "provenance": {
+            "manifest_sha256": msha,
+            "base_url": "https://example.test",
+            "head_sha": "f" * 40,
+            "started_at": "t",
+        },
+        "items": items,
+    }
+    record_path = tmp_path / "run-rec-off.json"
+    record_path.write_text(json.dumps(record))
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(man_path), "--run-record", str(record_path)])
+    msg = str(excinfo.value)
+    assert excinfo.value.code != 0
+    assert "wrong-name floor vacuity" in msg.lower()
+    assert "evaluated_images=0" in msg
+    assert "vacuous" in msg.lower()
+    # Class-unique vs empty-rubric and the non-vacuous floor breach token.
+    assert "empty-rubric" not in msg.lower()
+    assert "must_right is vacuous" not in msg.lower()
+    assert "easy_wrong is vacuous" not in msg.lower()
+    assert "must-right failures" not in msg.lower()
+    assert "manifest-mismatch" not in msg.lower()
+    assert "truncation" not in msg.lower()
+    assert "schema error" not in msg.lower()
+    # Not the plain floor-breach message (rate would be 0.0 here).
+    assert "exceeds floor" not in msg.lower()
+    report = json.loads(record_path.with_name("run-rec-off-report.json").read_text())
+    ident = report["faces"]["identification"]
+    assert ident["evaluated_images"] == 0
+    assert len(ident["excluded_images"]) == 37
+    assert ident["wrong_names"] == []
+
+
 # --- FIR-5 S5: face-bakeoff / score-face CLI surface ---
 
 

@@ -5,10 +5,10 @@ provenance); this module is the pure score phase — re-runnable offline,
 bit-identical for unchanged inputs. The JSON artifact is an additive extension
 of the E19-1 benchmark schema (``metrics``/``faces`` sections).
 
-The ignore-list (a JSON file persisted next to the reports) suppresses triaged
-wrong-name false positives across runs without deleting them: ignored entries
-move to ``ignored_wrong_names`` so the report stays honest about what was
-triaged away.
+The ignore-list (a JSON file persisted next to the reports) splits triaged
+wrong-name pairs into ``ignored_wrong_names`` for operator presentation only.
+The wrong-name floor gate still counts **all** observed wrong names (live +
+ignored) so an operator-supplied side file cannot zero out a hard gate (F1-5).
 """
 
 from __future__ import annotations
@@ -372,17 +372,31 @@ def _latency_summary(items: list[dict[str, Any]]) -> dict[str, Any] | None:
     }
 
 
+def _total_wrong_name_count(ident: Mapping[str, Any]) -> int:
+    """All observed wrong-name pairs, including ignore-list-triaged ones (F1-5).
+
+    Presentation keeps ``wrong_names`` vs ``ignored_wrong_names`` split; the
+    hard gate must not shrink when an operator file moves pairs into ignored.
+    """
+    live = ident.get("wrong_names") or []
+    ignored = ident.get("ignored_wrong_names") or []
+    return len(live) + len(ignored)
+
+
 def face_wrong_name_rate(scored: Mapping[str, Any]) -> float:
-    """Wrong-name rate = len(faces.identification.wrong_names) / counts.scored.
+    """Wrong-name rate = (live + ignored wrong names) / counts.scored.
 
     Denominator is scored images (not total): items that failed to score are
     gated separately by the failed-items exit path. Empty scored set → 0.0 so
     the wrong-name floor never fires vacuously on an all-failed run.
+
+    Numerator includes ignore-list-triaged pairs (F1-5 / OBS-04): suppression is
+    presentation-only and cannot certify a model that names every image wrong.
     """
     scored_n = int(scored["counts"]["scored"])
     if scored_n <= 0:
         return 0.0
-    wrong_n = len(scored["faces"]["identification"]["wrong_names"])
+    wrong_n = _total_wrong_name_count(scored["faces"]["identification"])
     return wrong_n / scored_n
 
 
@@ -402,11 +416,13 @@ def build_score_verdict(
     rate = face_wrong_name_rate(scored)
     reasons: list[str] = []
     if rate > WRONG_NAME_RATE_FLOOR:
-        wrong_n = len(scored["faces"]["identification"]["wrong_names"])
+        ident = scored["faces"]["identification"]
+        wrong_n = _total_wrong_name_count(ident)
+        ignored_n = len(ident.get("ignored_wrong_names") or [])
         scored_n = int(scored["counts"]["scored"])
         reasons.append(
             f"wrong_name_rate={rate:.4f} exceeds floor={WRONG_NAME_RATE_FLOOR} "
-            f"(wrong_names={wrong_n}, scored={scored_n})"
+            f"(wrong_names={wrong_n}, ignored={ignored_n}, scored={scored_n})"
         )
     caption = scored.get("caption") or {}
     return {
@@ -657,9 +673,15 @@ def score_run_record(
     # present_identities (FL30A-GATE-01).
     positional = positional_identification(positional_items)
 
+    # Presentation split only: ignore-list moves pairs into ignored_wrong_names
+    # for operator triage visibility. The wrong-name floor rate still counts
+    # live + ignored (F1-5); a side file must not zero a hard gate.
     ignored_pairs = {tuple(p) for p in (ignore_list or {}).get("wrong_names", [])}
     live_wrong = [list(p) for p in ident.wrong_names if tuple(p) not in ignored_pairs]
     ignored_wrong = [list(p) for p in ident.wrong_names if tuple(p) in ignored_pairs]
+    # Images that actually entered identification_pr counting (recognition_enabled).
+    # Zero ⇒ wrong-name floor is vacuous regardless of asserted names (F1-5 / EVAL-19).
+    identification_evaluated = len(identifications) - len(ident.excluded_images)
 
     # Surface fetch-time ordering degradation (A-07): missing/malformed bboxes
     # must not silently reinstate alphabetical name order without a number.
@@ -764,6 +786,8 @@ def score_run_record(
                 },
                 "true_rejections": ident.true_rejections,
                 "excluded_images": ident.excluded_images,
+                # recognition_enabled scored images; 0 ⇒ wrong-name floor vacuous (F1-5).
+                "evaluated_images": identification_evaluated,
                 "wrong_names": live_wrong,
                 "ignored_wrong_names": ignored_wrong,
                 # A-02: order-sensitive score alongside set-based P/R.

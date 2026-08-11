@@ -13,6 +13,7 @@ script and run `do_boot_smoke` with fake `ssh` on PATH (no VM required).
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -145,11 +146,14 @@ def test_boot_smoke_returns_zero_when_ssh_ok(tmp_path: Path) -> None:
 
 def test_rollback_tag_preserved_even_when_smoke_bypassed(tmp_path: Path) -> None:
     # BR2-03: ACX_BOOT_SMOKE=0 must not silently skip rollback-tag creation.
+    # Stub ship_remote_image_repo_env too — promote_gate always ships ACX_IMAGE_REPO and
+    # must not open a real ssh session in this hermetic unit test.
     marker = tmp_path / "calls.log"
     script = (
         f'source "{SCRIPT}"; '
         f'preserve_rollback_tag() {{ echo "rollback $1" >> "{marker}"; }}; '
         f'do_boot_smoke() {{ echo "smoke $1" >> "{marker}"; }}; '
+        f'ship_remote_image_repo_env() {{ echo "ship $1" >> "{marker}"; }}; '
         f'converge_runtime() {{ echo "converge $1" >> "{marker}"; }}; '
         "ACX_BOOT_SMOKE=0 promote_gate prod img:cand"
     )
@@ -170,10 +174,24 @@ esac
 exit 0
 """
 
+# Full 7-arg vector matching do_boot_smoke's bash -s invocation:
+#   env image remote_dir budget_s poll_s attempts vlm_budget
+# Small deterministic values so health-fail path completes quickly.
+_SMOKE_HARNESS_ARGS_TAIL = ("4", "1", "2", "0")  # budget_s, poll_s, attempts, vlm_budget
+
+
+def _highest_positional_deref(body: str) -> int:
+    """Highest $N the heredoc body dereferences (for arity drift guard)."""
+    nums = [int(n) for n in re.findall(r"\$([1-9][0-9]*)\b", body)]
+    return max(nums) if nums else 0
+
 
 def _run_smoke_heredoc(tmp_path: Path, *, env_lines: str, curl_ok: bool) -> tuple[int, str]:
-    # BR2-06: execute the remote SMOKE body itself with fake docker/curl/sleep.
+    # BR2-06 / INT-03: execute the remote SMOKE body itself with fake docker/curl/sleep.
+    # Must pass the full 7-arg vector — under set -euo pipefail, missing $4..$7 aborts
+    # before docker is ever invoked (dead-red behavioural gates).
     body = SCRIPT_TEXT.split("<<'SMOKE'\n", 1)[1].split("\nSMOKE\n", 1)[0]
+    max_n = _highest_positional_deref(body)
     smoke = tmp_path / "smoke.sh"
     smoke.write_text(body + "\n")
     remote_dir = tmp_path / "remote"
@@ -189,14 +207,31 @@ def _run_smoke_heredoc(tmp_path: Path, *, env_lines: str, curl_ok: bool) -> tupl
     for f in ("docker", "curl", "sleep"):
         (bindir / f).chmod(0o755)
     env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "FAKE_LOG": str(log)}
+    harness_args = ["prod", "img:cand", str(remote_dir), *_SMOKE_HARNESS_ARGS_TAIL]
+    assert len(harness_args) >= max_n, (
+        f"smoke harness passes {len(harness_args)} args but heredoc dereferences "
+        f"${max_n}; cannot silently drift (INT-03)"
+    )
     proc = subprocess.run(
-        ["/bin/bash", str(smoke), "prod", "img:cand", str(remote_dir)],
+        ["/bin/bash", str(smoke), *harness_args],
         env=env,
         capture_output=True,
         text=True,
         timeout=60,
     )
     return proc.returncode, log.read_text()
+
+
+def test_smoke_harness_arity_covers_heredoc_positionals() -> None:
+    """INT-03: harness arg count must stay >= highest $N the SMOKE body uses."""
+    body = SCRIPT_TEXT.split("<<'SMOKE'\n", 1)[1].split("\nSMOKE\n", 1)[0]
+    max_n = _highest_positional_deref(body)
+    # 3 fixed (env/image/remote_dir) + len(_SMOKE_HARNESS_ARGS_TAIL)
+    harness_n = 3 + len(_SMOKE_HARNESS_ARGS_TAIL)
+    assert max_n >= 7, f"expected 7-arg SMOKE body, highest $N is {max_n}"
+    assert harness_n >= max_n, (
+        f"harness supplies {harness_n} args but body needs ${max_n}"
+    )
 
 
 def test_smoke_body_defaults_network_when_env_key_missing(tmp_path: Path) -> None:

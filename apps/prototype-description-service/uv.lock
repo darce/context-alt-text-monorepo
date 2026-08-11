@@ -2102,6 +2102,7 @@ dependencies = [
 bench = [
     { name = "insightface" },
     { name = "opencv-python-headless" },
+    { name = "setuptools" },
 ]
 dashboard = [
     { name = "rich" },
@@ -2168,6 +2169,7 @@ requires-dist = [
     { name = "rich", marker = "extra == 'dashboard'", specifier = ">=13.0.0,<15.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.7.0,<1.0.0" },
     { name = "scipy", specifier = ">=1.18.0,<2.0.0" },
+    { name = "setuptools", marker = "extra == 'bench'", specifier = ">=68.0.0" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.44,<3.0.0" },
     { name = "sse-starlette", specifier = ">=2.0.0,<3.0.0" },
     { name = "textual", marker = "extra == 'dashboard'", specifier = ">=3.0.0,<4.0.0" },

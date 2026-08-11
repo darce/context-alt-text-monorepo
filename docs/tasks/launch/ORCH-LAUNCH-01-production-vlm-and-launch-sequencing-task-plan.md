@@ -118,13 +118,51 @@ the container and that the recognition path is unregressed. Measure resident mem
 live host headroom before any traffic is routed (PERF-06, PERF-13). Exit: image published, boot smoke green,
 measured RSS and free-memory delta recorded as a `test_result`.
 
-### Slice 2: `cpu_qwen4b` profile + offline regression gate
+### Slice 2A: A gate that can fail (prerequisite — added 2026-08-11)
+
+**Why this slice exists.** Slice 2 as originally written assumed `feature/vlm-6` supplied a working offline
+regression gate. The adversarial review of that branch (round `r0811e7f1`, 5 reviewers, 40 findings, verdict
+**fail**) established empirically that it does not: `score` exits 0 for a model that puts a wrong human name on
+100% of images, and `--check-determinism` passed all four deliberate corruptions (every caption corrupted, wrong
+names injected, corpus truncated 37→5, `must_right` emptied) because it re-scores the same inputs twice in one
+process. A green exit from that harness is a false green by construction. Under TEST-15 a gate that cannot go
+red certifies nothing, so a gate must exist before there is anything to gate.
+
+**Scope is the catastrophic case only, not all 40 findings.** Moving from `seeded` placeholder text to any real
+VLM does not need a meets-or-beats quality gate — that comparison is close to trivial and PROD-05 forbids
+building eval apparatus ahead of market evidence. What it does need is a floor on the one failure that is
+*worse* than placeholder text: attaching a wrong or hallucinated human name to a photograph. That is the only
+threshold that must be able to fail before cutover.
+
+Four items, in dependency order:
+
+1. Fix the emitter, not the validator (sr-001): `fusion_runner` emits bare-string identity rows against a
+   schema that now requires dicts. This is `VLM6-GATE-01`, and it is the same break that already made the
+   frozen determinism anchor un-rescorable at HEAD — it landed after the freeze and passed the gate meant to
+   catch it.
+2. Give `score` a verdict. A `verdict` field in the report JSON and a non-zero exit when the wrong-name rate
+   exceeds its floor. Today the only exit condition is items that could not be *scored*, never items that
+   scored badly.
+3. Make the determinism check cross-process: re-score from the persisted anchor artifact in a subprocess
+   rather than calling `build_reports` twice with identical arguments in one.
+4. Ship the four corruptions as permanent discrimination guards (TEST-15, second clause). Each mutation that
+   currently passes becomes a committed test asserting the specific red it should produce.
+
+Exit: each of the four corruptions fails the gate with its predicted message, and the suite proves it.
+
+### Slice 2: `cpu_qwen4b` profile, scored against the Slice 2A gate
 
 Add the Qwen3-VL-4B Q4 profile to `scene/config/profiles.py` with pinned revision and decode params. Score it
 against the golden corpus and the recorded 646-image CPU baseline, hallucination-first, reporting per-stratum
-scores rather than a single aggregate (EVAL-04). Delete or hard-gate the `gpu_phi4` and `florence_large` enum
-values, which today are selectable into a guaranteed 503 (AGT-10). Exit: gate meets-or-beats the incumbent on
-the same corpus, with the per-stratum table recorded.
+scores rather than a single aggregate (EVAL-04). Report readiness as the weakest category, not an average or a
+total (EVAL-23). Delete or hard-gate the `gpu_phi4` and `florence_large` enum values, which today are selectable
+into a guaranteed 503 (AGT-10). Exit: the wrong-name floor holds, with the per-stratum table recorded.
+
+**Corpus caveat carried forward.** All 37 golden entries have empty `difficulty`, `domain`, `tags`,
+`reference_facts`, `spatial_facts` and `face_boxes`. Per-stratum reporting (EVAL-04) is therefore uncomputable
+today, and positional-identity scoring silently excludes 37/37 images while reporting `degraded_images: 0`.
+Populating `face_boxes` is in scope for this slice because the wrong-name floor depends on it; the remaining
+stratification metadata (MLDATA-01) is explicitly deferred with the rest of the VLM-6 finding set.
 
 ### Slice 3: Async description path + fallback
 
@@ -147,8 +185,16 @@ badge (AIPX-10). Exit: events flowing with tenant correlation.
 
 ### Slice 6: Worktree debt triage
 
-Land vlm-6 slices 0–2 (determinism anchor, golden-100, harness) — they are the regression gate Slice 2 depends
-on — and park 3–6. Land or delete cmap-1. Batch-disposition the ~300 open FIR-wave findings in one pass rather
+~~Land vlm-6 slices 0–2 (determinism anchor, golden-100, harness) — they are the regression gate Slice 2 depends
+on~~ — **superseded 2026-08-11.** The review verdict on `feature/vlm-6` @`e7f1d164` is **fail**; slices 0–2 do
+not constitute a working gate, so landing them as-is would land the false green. The branch's genuinely sound
+parts (the FL30A identity/position binding fix, merge integrity, cloud-init safety) carry forward into Slice 2A,
+which is where the gate actually gets built. Park 3–6 as before. Batch-disposition the branch's 40 findings in
+one pass against the Slice 2A scope: `fixed` for the four items 2A takes on, explicit `deferred` with rationale
+for the rest — including the PUBLIC-report leak set (`R3-01/02/03`), which is real but only reachable if
+bake-off reports are actually published, and which no launch slice publishes.
+
+Land or delete cmap-1. Batch-disposition the ~300 open FIR-wave findings in one pass rather
 than per-branch; 158 open on a single task is a stalled review process, not review debt (AGT-06, AGT-08).
 Triage fir-8's dirty file before any teardown (rg-017). Decide land-or-re-derive on depiction-eval and fir-7,
 which at 165 ahead are forks rather than branches. Exit: worktree count reduced, every remaining one with a
@@ -163,7 +209,8 @@ Exit: an explicit yes or no from a real prospect, recorded either way.
 
 - [ ] Live-production adapter state re-measured at the end of the task, not assumed from config.
 - [ ] Every latency figure is a percentile from open-loop timing.
-- [ ] Every quality figure is per-stratum, not a single aggregate.
+- [ ] Every quality figure is per-stratum, not a single aggregate; readiness is the weakest category (EVAL-23).
+- [ ] The regression gate has been observed going red on a deliberate corruption, in CI, not by hand (TEST-15).
 - [ ] Rollback executed once in staging before prod cutover.
 - [ ] Every deferred item has a written reason; nothing is silently skipped.
 - [ ] Each slice merged only through a passing `handoff_close_check(enforce=True)`.

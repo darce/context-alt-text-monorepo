@@ -98,6 +98,19 @@ def _resolve_version_build_time() -> str:
     return os.environ.get("APP_BUILD_TIME", "").strip() or "unknown"
 
 
+def _resolve_image_variant() -> str:
+    """Baked image variant from the running process env (rg-015).
+
+    Reads ``ACX_IMAGE_VARIANT`` only — never derives a value from profile or
+    package set. Canonical label members are ``ImageVariant`` in
+    ``scripts.verify_vlm_cache`` (sr-007); this helper stays import-light so
+    api/main does not pull the scripts package into the hatch wheel include.
+    Unset/blank matches the Dockerfile recognition default.
+    """
+    raw = os.environ.get("ACX_IMAGE_VARIANT", "").strip()
+    return raw or "recognition"
+
+
 def _log_startup_info() -> None:
     """Log git commit and branch info at startup."""
     # Use db.startup namespace to pass the RecognitionFilter
@@ -248,9 +261,13 @@ def register_version_route(app: FastAPI) -> None:
     grepping OCI logs. `/version` is liveness-cheap (env lookups only) and
     must stay unauthenticated so clients can compare the deployed SHA against
     a minimum-supported-commit constant *before* authenticating.
+
+    ``image_variant`` distinguishes recognition vs VLM images that share a
+    commit SHA (RA-07 / wave3 identity); value is the baked ``ACX_IMAGE_VARIANT``.
     """
     commit_sha = _resolve_version_commit_sha() or "unknown"
     build_time = _resolve_version_build_time()
+    image_variant = _resolve_image_variant()
 
     @app.get("/version", summary="Deployed identity (E15-3a-BR-03)")
     def version() -> dict[str, str]:
@@ -258,6 +275,7 @@ def register_version_route(app: FastAPI) -> None:
             "commit_sha": commit_sha,
             "build_time": build_time,
             "version": app.version,
+            "image_variant": image_variant,
         }
 
 
@@ -296,6 +314,8 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
     UNHEALTHY 503 on /ready (S3CR-04); create_app still hard-fails on boot.
     """
     commit_sha = _resolve_version_commit_sha() or "unknown"
+    # Baked at image build (ENV ACX_IMAGE_VARIANT); resolve once like commit_sha.
+    image_variant = _resolve_image_variant()
     # Hoist full settings parse once; close over cache/model paths (S3CR-06).
     settings = RecognitionSettings()
     insightface_cache_dir = model_cache_dir or settings.insightface.model_cache_dir
@@ -338,11 +358,13 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
     def liveness() -> dict[str, str]:
         # Liveness is process-up only: no DB, breaker, or disk I/O. The Caddy
         # active probe hits this at 10s so it must never block on a dependency.
-        # commit_sha is a static identity string resolved at registration time.
+        # commit_sha / image_variant are static identity strings resolved at
+        # registration time from the process environment (rg-015).
         return {
             "status": HealthStatus.OK.value,
             "timestamp": datetime.now(UTC).isoformat(),
             "commit_sha": commit_sha,
+            "image_variant": image_variant,
         }
 
     @app.get("/ready", summary="Readiness probe (PR-01)")

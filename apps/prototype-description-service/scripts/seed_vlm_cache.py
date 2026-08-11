@@ -165,8 +165,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print(
-        "Seed complete. Mount the cache read-only into runtime-vlm; "
-        "python -m scripts.verify_vlm_cache must exit 0 on boot."
+        "Seed complete. Mount the cache read-only into the acx-backend-vlm image; "
+        "python -m scripts.verify_vlm_cache must exit 0 on the VLM boot path."
     )
     return 0
 

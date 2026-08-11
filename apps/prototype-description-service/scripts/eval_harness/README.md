@@ -38,13 +38,16 @@ uv run python -m scripts.eval_harness.cli score \
 
 # optional: cross-process determinism certification (score / run / score-face only)
 # Requires a run-record whose identities are dict rows and whose
-# provenance.manifest_sha256 is present. Committed baselines currently fail
-# ReportError on bare-string identities — see § Score gates below.
+# provenance.manifest_sha256 matches the score-time manifest. The S2A seeded
+# determinism anchor (bakeoff-results/) is the committed green path — see
+# § Score gates below. Legacy curated baselines still fail on bare-string identities.
 uv run python -m scripts.eval_harness.cli score \
-  --manifest <path-to-matching-manifest.json> \
-  --run-record <path-to-matching-run-record.json> \
+  --manifest scene/tests/seed/golden.json \
+  --run-record ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811.json \
+  --rubric-gate skip \
   --check-determinism
 ```
+
 
 ## Hosted provider matrix (E20-11)
 
@@ -136,25 +139,32 @@ ReportError: items[2].identities[0] must be a dict identity row (keys include 'n
 # EXIT_CODE:1
 ```
 
-Restoring a green `score --run-record <committed baseline> --check-determinism`
-path requires a **code/record** change (re-fetch or migrate identity rows) —
-out of scope for docs (sr-001). Until then, do not document that shape as green.
+Those legacy records remain archival (pre-greenfield bare-string identities).
+Do not re-stamp their `provenance.manifest_sha256` to force a green gate
+(rg-015). The load-bearing re-scorable anchor is the S2A seeded artifact below
+(regenerate via `python -m scripts.eval_harness.generate_determinism_anchor`).
 
-**Working — matched fixture (exit 0).** Same shape as
-`test_cli_score_check_determinism_runs_cross_process_guard`: dict identity rows
-and `provenance.manifest_sha256` equal to the score-time manifest sha.
+**Working — committed S2A determinism anchor (exit 0).** Offline seeded stub over
+the full golden corpus (37 items); dict identity rows; `provenance.manifest_sha256`
+computed at generation time (`859a083e…`). Seeded-stub scoring requires
+`--rubric-gate skip` (vacuity exemption → `verdict=pass_ungated`).
 
 ```text
 $ cd apps/prototype-description-service
 $ uv run --extra dev python -m scripts.eval_harness.cli score \
-    --manifest /tmp/vlm6-f3-det-ly5h__cv/manifest.json \
-    --run-record /tmp/vlm6-f3-det-ly5h__cv/run-det.json \
+    --manifest scene/tests/seed/golden.json \
+    --run-record ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811.json \
+    --rubric-gate skip \
     --check-determinism
 determinism check passed [score]: cross-process re-score is bit-identical under varied PYTHONHASHSEED (baseline=randomized; child_seeds=0,1,42)
-/tmp/vlm6-f3-det-ly5h__cv/run-det-report.md
-scored=1/1 insertion_rate=1.0 wrong_names=0 verdict=pass wrong_name_rate=0.0 wrong_name_rate_floor=0.0 rubric_gate=enforce
+../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811-report.md
+scored=37/37 insertion_rate=0.0 wrong_names=0 verdict=pass_ungated wrong_name_rate=0.0 wrong_name_rate_floor=0.0 rubric_gate=skip
 # EXIT_CODE:0
 ```
+
+Frozen triple (run-record + report JSON + report MD) lives under
+`docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811*`. The
+`.json` report is the machine-diffable artifact for a future digest gate (B-06).
 
 **Working — suite evidence path (exit 0):**
 

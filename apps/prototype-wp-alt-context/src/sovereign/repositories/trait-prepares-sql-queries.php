@@ -4,6 +4,12 @@ declare(strict_types=1);
 
 namespace AltContext\Sovereign\Repositories;
 
+require_once __DIR__ . '/../class-projection-query-exception.php';
+require_once __DIR__ . '/../../support/class-telemetry.php';
+
+use AltContext\Sovereign\ProjectionQueryException;
+use AltContext\Support\Telemetry;
+
 use function do_action;
 use function esc_html;
 use function function_exists;
@@ -12,8 +18,10 @@ use function is_string;
 use function method_exists;
 use function preg_match_all;
 use function preg_replace;
+use function property_exists;
 use function sprintf;
 use function strpos;
+use function trim;
 
 trait PreparesSqlQueries {
 	/**
@@ -54,6 +62,39 @@ trait PreparesSqlQueries {
 		$sanitized = preg_replace( '/[^A-Za-z0-9_$.]/', '', $identifier );
 		$value     = is_string( $sanitized ) && '' !== $sanitized ? $sanitized : 'invalid_identifier';
 		return sprintf( '`%s`', $value );
+	}
+
+	/**
+	 * Fail loud when wpdb recorded a MySQL error (RLSE-05 / OBS-08 / AGT-10).
+	 *
+	 * get_results()/get_var()/get_row() return null on failure; callers that
+	 * coerce null to [] hide projection outages as empty data. This guard
+	 * logs, clears last_error, and throws — it never returns an empty set.
+	 *
+	 * @throws ProjectionQueryException When $wpdb->last_error is non-empty.
+	 */
+	private function guard_query_error( string $query_label ): void {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) ) {
+			return;
+		}
+
+		$error = '';
+		if ( property_exists( $wpdb, 'last_error' ) || isset( $wpdb->last_error ) ) {
+			$raw = $wpdb->last_error;
+			$error = is_string( $raw ) ? trim( $raw ) : '';
+		}
+
+		if ( '' === $error ) {
+			return;
+		}
+
+		$message = sprintf( 'Projection query failed [%s]: %s', $query_label, $error );
+		Telemetry::log_line( $message );
+		$wpdb->last_error = '';
+
+		throw new ProjectionQueryException( $message );
 	}
 
 	private function log_empty_tenant_id_guard( string $method ): void {

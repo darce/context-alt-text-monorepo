@@ -91,6 +91,7 @@ class IdentityMembersReadRepository {
 
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$rows = $wpdb->get_results( $sql, ARRAY_A );
+		$this->guard_query_error( 'identity_members.list_for_cluster' );
 		return is_array( $rows ) ? $rows : array();
 	}
 
@@ -150,6 +151,7 @@ class IdentityMembersReadRepository {
 
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$rows = $wpdb->get_results( $sql, ARRAY_A );
+		$this->guard_query_error( 'identity_members.list_for_cluster_uuids' );
 
 		if ( ! is_array( $rows ) ) {
 			return array();
@@ -237,6 +239,7 @@ class IdentityMembersReadRepository {
 
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$rows = $wpdb->get_results( $sql, ARRAY_A );
+		$this->guard_query_error( 'identity_members.list_for_media_ids' );
 		return is_array( $rows ) ? $rows : array();
 	}
 
@@ -271,7 +274,9 @@ class IdentityMembersReadRepository {
 		}
 
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
-		return null !== $wpdb->get_var( $sql );
+		$value = $wpdb->get_var( $sql );
+		$this->guard_query_error( 'identity_members.has_projection_rows_for_tenant' );
+		return null !== $value;
 	}
 
 	public function count_for_cluster( string $cluster_uuid, ?string $tenant_id = null ): int {
@@ -314,6 +319,7 @@ class IdentityMembersReadRepository {
 
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$value = $wpdb->get_var( $sql );
+		$this->guard_query_error( 'identity_members.count_for_cluster' );
 		return max( 0, (int) $value );
 	}
 
@@ -343,6 +349,7 @@ class IdentityMembersReadRepository {
 
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$row = $wpdb->get_row( $sql, ARRAY_A );
+		$this->guard_query_error( 'identity_members.find_by_identity_uuid' );
 		return is_array( $row ) ? $row : null;
 	}
 
@@ -379,6 +386,7 @@ class IdentityMembersReadRepository {
 
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$rows = $wpdb->get_results( $sql, ARRAY_A );
+		$this->guard_query_error( 'identity_members.get_curated_members_for_tenant' );
 		if ( ! is_array( $rows ) ) {
 			return array();
 		}

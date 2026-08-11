@@ -6,6 +6,14 @@
 #   Installs locked `--extra bench --extra vlm` so ACX_DESCRIPTION_ADAPTER can
 #   leave the seeded placeholder once weights are provisioned.
 #
+# STAGE ORDER IS LOAD-BEARING: BuildKit builds the *last* stage when `--target`
+# is omitted, and no build path in this repo passes `--target`
+# (scripts/deploy/recognition-service.sh, .github/workflows/deploy-recognition.yml,
+# infra/oci/README.md). `runtime` must therefore stay the final stage in this
+# file or every default build silently ships torch to production
+# (ORCH-LAUNCH-01-S1-BR-01). recognition/tests/deploy/test_dockerfile_stage_topology.py
+# enforces this.
+#
 # Build recognition (default — production torch-free image):
 #   docker build --platform linux/arm64 \
 #     --build-arg GIT_COMMIT_SHA=$(git rev-parse HEAD) \
@@ -98,8 +106,72 @@ RUN uv venv /opt/venv \
 ENV PATH="/opt/venv/bin:$PATH"
 
 # ---------------------------------------------------------------------------
-# Stage 2: Runtime — slim image with only what's needed to run (recognition)
-# Default final stage: torch-free.
+# Stage 2a: Runtime VLM — recognition path + torch/transformers (OPTIONAL)
+# Build with: docker build --target runtime-vlm ...
+# Deliberately NOT the last stage — see the stage-order note in the header.
+#
+# Model-weight cache strategy (mount, not bake):
+#   VLM weights (Florence-2 / HF hub) are served from a persistent volume at
+#   /data/cache. Operators pre-populate HF_HOME before production start.
+#   HF_HUB_OFFLINE=1 fails closed if weights are missing — no HuggingFace
+#   download on the production boot path.
+#   Tradeoff: larger operator ops surface (seed the volume once) vs smaller
+#   image than baking multi-GB weights into a layer; boot stays network-free.
+# ---------------------------------------------------------------------------
+FROM python:3.12-slim AS runtime-vlm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libopenblas0 \
+    liblapack3 \
+    libgl1 \
+    libglib2.0-0 \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder-vlm /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+ARG GIT_COMMIT_SHA=unknown
+ENV APP_GIT_COMMIT_SHA=${GIT_COMMIT_SHA}
+
+# Lets /health and an operator `docker inspect` tell the two images apart
+# without diffing package lists (ORCH-LAUNCH-01-S1-RA-07).
+ENV ACX_IMAGE_VARIANT=vlm
+
+WORKDIR /app
+
+COPY api/ api/
+COPY db/ db/
+COPY recognition/ recognition/
+COPY roster/ roster/
+COPY scene/ scene/
+COPY shared/ shared/
+COPY scripts/ scripts/
+COPY pyproject.toml .
+
+RUN /opt/venv/bin/pip install --no-cache-dir -e . --no-deps --no-build-isolation
+
+# Persistent cache volume for HF / InsightFace weights (pre-seeded by operators).
+ENV CACHE_BASE=/data/cache
+ENV HF_HOME=/data/cache/huggingface_cache
+ENV HF_HUB_CACHE=/data/cache/huggingface_cache
+ENV TRANSFORMERS_CACHE=/data/cache/huggingface_cache
+ENV INSIGHTFACE_CACHE_DIR=/data/cache/insightface
+ENV INSIGHTFACE_HOME=/data/cache/insightface
+# Fail closed on missing weights — production must not fetch at start.
+ENV HF_HUB_OFFLINE=1
+ENV TRANSFORMERS_OFFLINE=1
+VOLUME ["/data/cache"]
+
+EXPOSE 8000
+
+CMD ["sh", "-c", "cd /app && alembic -c db/alembic.ini upgrade head && python -m scripts.sync_identity_schema && python -m scripts.verify_identity_schema && uvicorn api.main:app --host 0.0.0.0 --port 8000"]
+
+# ---------------------------------------------------------------------------
+# Stage 2b: Runtime — slim image with only what's needed to run (recognition)
+# DEFAULT final stage: torch-free. MUST remain the last stage in this file.
 # ---------------------------------------------------------------------------
 FROM python:3.12-slim AS runtime
 
@@ -122,6 +194,9 @@ ENV PYTHONUNBUFFERED=1
 # Without this, GIT_COMMIT_SHA is out of scope in the runtime image.
 ARG GIT_COMMIT_SHA=unknown
 ENV APP_GIT_COMMIT_SHA=${GIT_COMMIT_SHA}
+
+# See ACX_IMAGE_VARIANT in runtime-vlm (ORCH-LAUNCH-01-S1-RA-07).
+ENV ACX_IMAGE_VARIANT=recognition
 
 WORKDIR /app
 
@@ -152,63 +227,4 @@ EXPOSE 8000
 
 # Entrypoint: run Alembic migrations, verify the schema footprint, then start uvicorn.
 # The POSTGRES_SYNC_DSN env var is used by Alembic (via db/migrations/env.py).
-CMD ["sh", "-c", "cd /app && alembic -c db/alembic.ini upgrade head && python -m scripts.sync_identity_schema && python -m scripts.verify_identity_schema && uvicorn api.main:app --host 0.0.0.0 --port 8000"]
-
-# ---------------------------------------------------------------------------
-# Stage 2b: Runtime VLM — recognition path + torch/transformers (optional)
-# Build with: docker build --target runtime-vlm ...
-#
-# Model-weight cache strategy (mount, not bake):
-#   VLM weights (Florence-2 / HF hub) are served from a persistent volume at
-#   /data/cache. Operators pre-populate HF_HOME before production start.
-#   HF_HUB_OFFLINE=1 fails closed if weights are missing — no HuggingFace
-#   download on the production boot path.
-#   Tradeoff: larger operator ops surface (seed the volume once) vs smaller
-#   image than baking multi-GB weights into a layer; boot stays network-free.
-# ---------------------------------------------------------------------------
-FROM python:3.12-slim AS runtime-vlm
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libopenblas0 \
-    liblapack3 \
-    libgl1 \
-    libglib2.0-0 \
-    libgomp1 \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY --from=builder-vlm /opt/venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
-ARG GIT_COMMIT_SHA=unknown
-ENV APP_GIT_COMMIT_SHA=${GIT_COMMIT_SHA}
-
-WORKDIR /app
-
-COPY api/ api/
-COPY db/ db/
-COPY recognition/ recognition/
-COPY roster/ roster/
-COPY scene/ scene/
-COPY shared/ shared/
-COPY scripts/ scripts/
-COPY pyproject.toml .
-
-RUN /opt/venv/bin/pip install --no-cache-dir -e . --no-deps --no-build-isolation
-
-# Persistent cache volume for HF / InsightFace weights (pre-seeded by operators).
-ENV CACHE_BASE=/data/cache
-ENV HF_HOME=/data/cache/huggingface_cache
-ENV HF_HUB_CACHE=/data/cache/huggingface_cache
-ENV TRANSFORMERS_CACHE=/data/cache/huggingface_cache
-ENV INSIGHTFACE_CACHE_DIR=/data/cache/insightface
-ENV INSIGHTFACE_HOME=/data/cache/insightface
-# Fail closed on missing weights — production must not fetch at start.
-ENV HF_HUB_OFFLINE=1
-ENV TRANSFORMERS_OFFLINE=1
-VOLUME ["/data/cache"]
-
-EXPOSE 8000
-
 CMD ["sh", "-c", "cd /app && alembic -c db/alembic.ini upgrade head && python -m scripts.sync_identity_schema && python -m scripts.verify_identity_schema && uvicorn api.main:app --host 0.0.0.0 --port 8000"]

@@ -628,3 +628,150 @@ def test_ready_model_cache_flips_unhealthy_when_bundle_missing(tmp_path) -> None
     assert body["status"] == HealthStatus.UNHEALTHY.value
     mc_check = next(c for c in body["checks"] if c["name"] == "model_cache")
     assert mc_check["status"] == HealthStatus.UNHEALTHY.value
+
+
+# ---------------------------------------------------------------------------
+# Lane w10d gates: compose blob parity + VLM operator-runbook contracts.
+# Kept here because this file is the lane-owned test surface for compose/
+# README findings that deploy-parity tests do not cover (RECOGNITION_BLOB_ROOT
+# on api/worker; runnable README recipes).
+# ---------------------------------------------------------------------------
+
+
+def _service_root():
+    from pathlib import Path
+
+    return Path(__file__).resolve().parents[3]
+
+
+def _repo_root():
+    return _service_root().parents[1]
+
+
+def _compose_api_worker_blob_contract(compose_text: str) -> bool:
+    """api + worker must set RECOGNITION_BLOB_ROOT and mount acx_blobs.
+
+    Mirrors the env.yml production topology so a reference prod.yml cannot
+    silently fall back to /tmp/acx-recognition-blobs (R0811-H-04).
+    """
+    import re
+
+    try:
+        import yaml  # type: ignore
+    except ImportError:  # pragma: no cover - PyYAML is a service dep
+        # Fallback: structural string checks (both services + named volume).
+        if compose_text.count("RECOGNITION_BLOB_ROOT=/var/lib/acx-blobs") < 2:
+            return False
+        if compose_text.count("acx_blobs:/var/lib/acx-blobs") < 2:
+            return False
+        if not re.search(r"^\s*acx_blobs\s*:", compose_text, re.MULTILINE):
+            return False
+        return True
+
+    data = yaml.safe_load(compose_text)
+    services = (data or {}).get("services") or {}
+    for name in ("api", "worker"):
+        svc = services.get(name) or {}
+        env = svc.get("environment") or []
+        # environment may be list of "K=V" or a mapping
+        env_blob = False
+        if isinstance(env, dict):
+            env_blob = env.get("RECOGNITION_BLOB_ROOT") == "/var/lib/acx-blobs"
+        else:
+            env_blob = any(
+                isinstance(item, str) and item.strip() == "RECOGNITION_BLOB_ROOT=/var/lib/acx-blobs"
+                for item in env
+            )
+        if not env_blob:
+            return False
+        vols = svc.get("volumes") or []
+        if "acx_blobs:/var/lib/acx-blobs" not in vols:
+            return False
+    volumes = (data or {}).get("volumes") or {}
+    if "acx_blobs" not in volumes:
+        return False
+    return True
+
+
+def test_compose_env_and_prod_api_worker_blob_root_parity() -> None:
+    """R0811-H-04: env.yml + prod.yml share RECOGNITION_BLOB_ROOT + acx_blobs.
+
+    Deploy does not select prod.yml, but parity-gating it prevents a second
+    production topology with /tmp blob fallback under USER acx.
+    """
+    root = _service_root()
+    for name in ("docker-compose.env.yml", "docker-compose.prod.yml"):
+        text = (root / name).read_text(encoding="utf-8")
+        assert _compose_api_worker_blob_contract(text), (
+            f"{name}: api and worker must set RECOGNITION_BLOB_ROOT=/var/lib/acx-blobs "
+            f"and mount acx_blobs:/var/lib/acx-blobs (named volume declared)"
+        )
+
+
+def test_oci_readme_vlm_cache_gate_recipe_uses_entrypoint_override() -> None:
+    """rg-006 / R0811-V-05 / A-07: isolated gate recipe must not run full CMD.
+
+    Full image CMD hits alembic first; bare docker run without DSN never
+    reaches verify_vlm_cache. Recipe must use --entrypoint python … -m
+    scripts.verify_vlm_cache.
+    """
+    readme = (_repo_root() / "infra" / "oci" / "README.md").read_text(encoding="utf-8")
+    assert "--entrypoint python" in readme, (
+        "infra/oci/README.md must show --entrypoint python for the isolated "
+        "VLM cache-gate demonstration"
+    )
+    assert "-m scripts.verify_vlm_cache" in readme
+    # Forbid the historical bare-run form as the *only* recipe: if the
+    # isolation entrypoint disappears, this fails even if a full-stack
+    # docker run remains.
+    # Boot order must list alembic before the VLM gate so operators do not
+    # misread migration failures as cache-gate failures.
+    alembic_pos = readme.find("alembic -c db/alembic.ini upgrade head")
+    gate_pos = readme.find("python -m scripts.verify_vlm_cache")
+    assert alembic_pos != -1 and gate_pos != -1 and alembic_pos < gate_pos, (
+        "README boot order must list alembic before verify_vlm_cache"
+    )
+
+
+def test_oci_readme_health_identity_uses_docker_exec() -> None:
+    """R0811-V-05: host curl :8000 only works under prod admin overlay.
+
+    Prefer docker exec … localhost:8000/health so staging/dev (expose-only)
+    can still identify image_variant.
+    """
+    import re
+
+    readme = (_repo_root() / "infra" / "oci" / "README.md").read_text(encoding="utf-8")
+    assert "image_variant" in readme, "README health identity recipe must mention image_variant"
+    # Require a docker exec that targets /health (not postgres pg_isready).
+    health_exec = re.search(
+        r"docker exec[^\n]*/health",
+        readme,
+    )
+    assert health_exec is not None, (
+        "README must document docker exec … /health for image_variant identity "
+        "(host curl 127.0.0.1:8000 only works under prod admin overlay)"
+    )
+
+
+def test_oci_readme_documents_readonly_cache_and_build_immutable_variant() -> None:
+    """A-09 / HARM-A-09: README must match shipped :ro mount + bake identity.
+
+    Compose mounts ${ACX_MODELS_PATH}:/data/cache:ro; variant is baked into
+    /app/.image-variant (not free-form ACX_IMAGE_VARIANT selection).
+    """
+    readme = (_repo_root() / "infra" / "oci" / "README.md").read_text(encoding="utf-8")
+    # Primary compose contract annotation (unique; not the docker -v form).
+    assert "compose: `${ACX_MODELS_PATH}:/data/cache:ro`" in readme, (
+        "README must document compose: `${ACX_MODELS_PATH}:/data/cache:ro`"
+    )
+    # Ad-hoc docker run recipes also mount :ro (isolated gate + full-stack).
+    assert "-v /data/cache:/data/cache:ro" in readme, (
+        "README isolated docker run recipe must use -v /data/cache:/data/cache:ro"
+    )
+    assert "-v ${ACX_MODELS_PATH}:/data/cache:ro" in readme, (
+        "README full-stack docker run recipe must use -v ${ACX_MODELS_PATH}:/data/cache:ro"
+    )
+    assert "build-immutable" in readme.lower() or "Build-immutable" in readme
+    assert "/app/.image-variant" in readme
+    assert "Do not set `ACX_IMAGE_VARIANT`" in readme or "Do not set ACX_IMAGE_VARIANT" in readme

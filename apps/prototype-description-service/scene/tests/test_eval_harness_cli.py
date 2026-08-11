@@ -549,6 +549,18 @@ _W1_PUBLIC_NAME = "Barack Obama"
 _W1_INTERNAL_BASE_URL = "https://acx-backend.internal.example.ts.net"
 
 
+def _write_score_manifest(tmp_path, entries, roster, name="golden.json"):
+    """Write a v2 golden manifest and return (path, real score-time sha256)."""
+    from scripts.eval_harness.cli import _manifest_sha
+    from scripts.eval_harness.manifest import load_manifest
+
+    manifest_path = tmp_path / name
+    manifest_path.write_text(
+        json.dumps({"manifest_version": 2, "roster": roster, "entries": entries})
+    )
+    return manifest_path, _manifest_sha(load_manifest(str(manifest_path)))
+
+
 def _w1_audience_manifest_and_record(tmp_path):
     """One publishable celeb (media 10) + one local-only personal photo (media 20)."""
     from scripts.eval_harness.schema import SCHEMA, DocKind
@@ -581,9 +593,8 @@ def _w1_audience_manifest_and_record(tmp_path):
             "provenance": {"source": "localwp", "license": "consented", "publishable": False},
         },
     ]
-    manifest_path = tmp_path / "golden.json"
-    manifest_path.write_text(
-        json.dumps({"manifest_version": 2, "roster": [_W1_PUBLIC_NAME, _W1_LOCAL_NAME], "entries": entries})
+    manifest_path, manifest_sha = _write_score_manifest(
+        tmp_path, entries, [_W1_PUBLIC_NAME, _W1_LOCAL_NAME]
     )
     record_path = tmp_path / "run-x.json"
     record_path.write_text(
@@ -592,7 +603,7 @@ def _w1_audience_manifest_and_record(tmp_path):
                 "schema": SCHEMA,
                 "kind": DocKind.RUN_RECORD.value,
                 "provenance": {
-                    "manifest_sha256": "0" * 64,
+                    "manifest_sha256": manifest_sha,
                     "base_url": _W1_INTERNAL_BASE_URL,
                     "head_sha": "f" * 40,
                     "started_at": "t",
@@ -677,10 +688,8 @@ def test_cmd_score_default_local_emits_no_public_artifact(tmp_path, monkeypatch)
 
 
 def test_cmd_score_exits_nonzero_when_items_failed(tmp_path, monkeypatch):  # S7-01
-    from scripts.eval_harness import cli as cli_mod
     from scripts.eval_harness.schema import SCHEMA, DocKind
 
-    manifest_path = tmp_path / "golden.json"
     entries = [
         {
             "path": "mock_images/img-1.jpg",
@@ -690,19 +699,25 @@ def test_cmd_score_exits_nonzero_when_items_failed(tmp_path, monkeypatch):  # S7
             "present_identities": [],
             "context_pack": {},
             "base_caption": "",
-            "must_right": [],
+            # Non-empty rubric so empty-rubric does not fire before failed-items.
+            "must_right": ["Alice Example"],
             "easy_wrong": [],
             "policy": {"recognition_enabled": True},
         }
     ]
-    manifest_path.write_text(json.dumps({"manifest_version": 2, "roster": ["Alice Example"], "entries": entries}))
+    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, ["Alice Example"])
     record_path = tmp_path / "run-x.json"
     record_path.write_text(
         json.dumps(
             {
                 "schema": SCHEMA,
                 "kind": DocKind.RUN_RECORD.value,
-                "provenance": {"manifest_sha256": "0" * 64, "base_url": "x", "head_sha": "f" * 40, "started_at": "t"},
+                "provenance": {
+                    "manifest_sha256": manifest_sha,
+                    "base_url": "x",
+                    "head_sha": "f" * 40,
+                    "started_at": "t",
+                },
                 "items": [
                     {
                         "media_id": 1,
@@ -731,6 +746,9 @@ def _wrong_name_everywhere_manifest_and_record(tmp_path):
 
     Used to prove the wrong-name floor gate CAN go red: pre-S2A, score exited 0
     for this catastrophic case (wrong name on 100% of images).
+
+    Captions satisfy Must-Right so only the wrong-name floor fires (not must-right
+    failures or empty-rubric).
     """
     from scripts.eval_harness.schema import SCHEMA, DocKind
 
@@ -743,8 +761,8 @@ def _wrong_name_everywhere_manifest_and_record(tmp_path):
             "present_identities": ["Alice Example"],
             "context_pack": {},
             "base_caption": "",
-            "must_right": [],
-            "easy_wrong": [],
+            "must_right": ["Alice Example"],
+            "easy_wrong": ["Bob Builder"],
             "policy": {"recognition_enabled": True},
         },
         {
@@ -755,20 +773,13 @@ def _wrong_name_everywhere_manifest_and_record(tmp_path):
             "present_identities": ["Bob Builder"],
             "context_pack": {},
             "base_caption": "",
-            "must_right": [],
-            "easy_wrong": [],
+            "must_right": ["Bob Builder"],
+            "easy_wrong": ["Alice Example"],
             "policy": {"recognition_enabled": True},
         },
     ]
-    manifest_path = tmp_path / "golden.json"
-    manifest_path.write_text(
-        json.dumps(
-            {
-                "manifest_version": 2,
-                "roster": ["Alice Example", "Bob Builder"],
-                "entries": entries,
-            }
-        )
+    manifest_path, manifest_sha = _write_score_manifest(
+        tmp_path, entries, ["Alice Example", "Bob Builder"]
     )
     record_path = tmp_path / "run-wrong.json"
     record_path.write_text(
@@ -777,7 +788,7 @@ def _wrong_name_everywhere_manifest_and_record(tmp_path):
                 "schema": SCHEMA,
                 "kind": DocKind.RUN_RECORD.value,
                 "provenance": {
-                    "manifest_sha256": "0" * 64,
+                    "manifest_sha256": manifest_sha,
                     "base_url": "https://example.test",
                     "head_sha": "f" * 40,
                     "started_at": "t",
@@ -787,7 +798,8 @@ def _wrong_name_everywhere_manifest_and_record(tmp_path):
                         "media_id": 1,
                         "path": "mock_images/alice.jpg",
                         "describe": {
-                            "alt_text_draft": "A person outdoors.",
+                            # Caption keeps must_right; only face identities are wrong.
+                            "alt_text_draft": "Alice Example outdoors.",
                             "visual_facts": {"objects": []},
                         },
                         # Wrong name on every image (Alice image labeled Bob).
@@ -805,7 +817,7 @@ def _wrong_name_everywhere_manifest_and_record(tmp_path):
                         "media_id": 2,
                         "path": "mock_images/bob.jpg",
                         "describe": {
-                            "alt_text_draft": "A person on a beach.",
+                            "alt_text_draft": "Bob Builder on a beach.",
                             "visual_facts": {"objects": []},
                         },
                         # Wrong name on every image (Bob image labeled Alice).
@@ -866,14 +878,13 @@ def test_cmd_score_exits_zero_when_no_wrong_names_and_no_failures(tmp_path, monk
             "present_identities": ["Alice Example"],
             "context_pack": {},
             "base_caption": "",
-            "must_right": [],
-            "easy_wrong": [],
+            "must_right": ["Alice Example"],
+            "easy_wrong": ["Bob Builder"],
             "policy": {"recognition_enabled": True},
         }
     ]
-    manifest_path = tmp_path / "golden.json"
-    manifest_path.write_text(
-        json.dumps({"manifest_version": 2, "roster": ["Alice Example"], "entries": entries})
+    manifest_path, manifest_sha = _write_score_manifest(
+        tmp_path, entries, ["Alice Example", "Bob Builder"]
     )
     record_path = tmp_path / "run-clean.json"
     record_path.write_text(
@@ -882,7 +893,7 @@ def test_cmd_score_exits_zero_when_no_wrong_names_and_no_failures(tmp_path, monk
                 "schema": SCHEMA,
                 "kind": DocKind.RUN_RECORD.value,
                 "provenance": {
-                    "manifest_sha256": "0" * 64,
+                    "manifest_sha256": manifest_sha,
                     "base_url": "https://example.test",
                     "head_sha": "f" * 40,
                     "started_at": "t",
@@ -930,14 +941,13 @@ def _clean_score_manifest_and_record(tmp_path):
             "present_identities": ["Alice Example"],
             "context_pack": {},
             "base_caption": "",
-            "must_right": [],
-            "easy_wrong": [],
+            "must_right": ["Alice Example"],
+            "easy_wrong": ["Bob Builder"],
             "policy": {"recognition_enabled": True},
         }
     ]
-    manifest_path = tmp_path / "golden.json"
-    manifest_path.write_text(
-        json.dumps({"manifest_version": 2, "roster": ["Alice Example"], "entries": entries})
+    manifest_path, manifest_sha = _write_score_manifest(
+        tmp_path, entries, ["Alice Example", "Bob Builder"]
     )
     record_path = tmp_path / "run-det.json"
     record_path.write_text(
@@ -946,7 +956,7 @@ def _clean_score_manifest_and_record(tmp_path):
                 "schema": SCHEMA,
                 "kind": DocKind.RUN_RECORD.value,
                 "provenance": {
-                    "manifest_sha256": "0" * 64,
+                    "manifest_sha256": manifest_sha,
                     "base_url": "https://example.test",
                     "head_sha": "f" * 40,
                     "started_at": "t",
@@ -1047,6 +1057,183 @@ def test_cli_score_determinism_guard_detects_mutated_persisted_anchor(tmp_path, 
     msg = str(exc.value)
     assert "determinism check FAILED" in msg
     assert "cross-process" in msg
+
+
+# --- VLM-6 S2A item 4: four corruption discrimination guards (TEST-15) ---
+#
+# Adversarial review r0811e7f1 ran these four mutations against
+# ``score --check-determinism`` and all four exited 0. Each guard asserts both
+# non-zero exit AND a message that names its corruption class so one gate firing
+# cannot make the other three look green.
+
+
+def _bbox():
+    return {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0}
+
+
+def _score_identity(name: str) -> dict:
+    return {"name": name, "bbox": _bbox(), "unpositioned": False}
+
+
+def _corpus_entries(n: int, *, with_rubric: bool) -> tuple[list[str], list[dict]]:
+    roster: list[str] = []
+    entries: list[dict] = []
+    for i in range(1, n + 1):
+        name = f"Person {i}"
+        roster.append(name)
+        entries.append(
+            {
+                "path": f"mock_images/p{i}.jpg",
+                "sha256": f"{i:064x}",
+                "media_id": i,
+                "face_count": 1,
+                "present_identities": [name],
+                "context_pack": {},
+                "base_caption": "",
+                "must_right": [name] if with_rubric else [],
+                "easy_wrong": [f"Person {(i % n) + 1}"] if with_rubric else [],
+                "policy": {"recognition_enabled": True},
+            }
+        )
+    return roster, entries
+
+
+def _score_run_record(entries: list[dict], *, caption_fn, identity_fn, manifest_sha: str, name: str = "run.json"):
+    from scripts.eval_harness.schema import SCHEMA, DocKind
+
+    items = []
+    for entry in entries:
+        items.append(
+            {
+                "media_id": entry["media_id"],
+                "path": entry["path"],
+                "describe": {
+                    "alt_text_draft": caption_fn(entry),
+                    "visual_facts": {"objects": []},
+                },
+                "identities": identity_fn(entry),
+                "face_count": entry["face_count"],
+                "error": None,
+            }
+        )
+    return {
+        "schema": SCHEMA,
+        "kind": DocKind.RUN_RECORD.value,
+        "provenance": {
+            "manifest_sha256": manifest_sha,
+            "base_url": "https://example.test",
+            "head_sha": "f" * 40,
+            "started_at": "t",
+        },
+        "items": items,
+    }
+
+
+def test_score_guard_caption_corruption_fails_must_right_gate(tmp_path, monkeypatch):
+    """Corruption 1: every caption corrupted → must-right failures gate (named)."""
+    roster, entries = _corpus_entries(6, with_rubric=True)
+    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, roster)
+    record = _score_run_record(
+        entries,
+        caption_fn=lambda _e: "COMPLETELY CORRUPTED GARBAGE CAPTION xyz",
+        identity_fn=lambda e: [_score_identity(e["present_identities"][0])],
+        manifest_sha=manifest_sha,
+        name="run-caption-corrupt.json",
+    )
+    record_path = tmp_path / "run-caption-corrupt.json"
+    record_path.write_text(json.dumps(record))
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
+    msg = str(excinfo.value)
+    assert excinfo.value.code != 0
+    assert "must-right failures" in msg.lower()
+    assert "caption" in msg.lower()
+    # Must name this class distinctly from the other three guards.
+    assert "wrong-name" not in msg.lower()
+    assert "manifest-mismatch" not in msg.lower()
+    assert "empty-rubric" not in msg.lower()
+
+
+def test_score_guard_wrong_names_fails_wrong_name_floor_gate(tmp_path, monkeypatch):
+    """Corruption 2: wrong human names on every image → wrong-name floor gate (named)."""
+    manifest_path, record_path = _wrong_name_everywhere_manifest_and_record(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
+    msg = str(excinfo.value)
+    assert excinfo.value.code != 0
+    assert "wrong-name" in msg.lower()
+    assert "floor" in msg.lower()
+    assert "must-right failures" not in msg.lower()
+    assert "manifest-mismatch" not in msg.lower()
+    assert "empty-rubric" not in msg.lower()
+
+
+def test_score_guard_corpus_truncation_fails_manifest_mismatch_gate(tmp_path, monkeypatch):
+    """Corruption 3: corpus truncated 37→5 with stale full-corpus fetch sha.
+
+    Score-time manifest is the truncated surface; run-record provenance still
+    stamps the full-corpus fetch sha → manifest-mismatch gate (not generic fail).
+    """
+    roster, full_entries = _corpus_entries(37, with_rubric=True)
+    full_path, full_sha = _write_score_manifest(tmp_path, full_entries, roster, name="full-golden.json")
+    assert full_path.exists()
+    truncated = full_entries[:5]
+    assert len(truncated) == 5
+    manifest_path, trunc_sha = _write_score_manifest(
+        tmp_path, truncated, roster, name="golden.json"
+    )
+    assert trunc_sha != full_sha
+    # Stale fetch-time sha: claims the full 37-image corpus was fetched.
+    record = _score_run_record(
+        truncated,
+        caption_fn=lambda e: f"{e['present_identities'][0]} outdoors smiling.",
+        identity_fn=lambda e: [_score_identity(e["present_identities"][0])],
+        manifest_sha=full_sha,
+    )
+    record_path = tmp_path / "run-truncated.json"
+    record_path.write_text(json.dumps(record))
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
+    msg = str(excinfo.value)
+    assert excinfo.value.code != 0
+    assert "manifest-mismatch" in msg.lower()
+    assert "truncation" in msg.lower()
+    assert "wrong-name" not in msg.lower()
+    assert "must-right failures" not in msg.lower()
+    assert "empty-rubric" not in msg.lower()
+
+
+def test_score_guard_empty_must_right_fails_empty_rubric_gate(tmp_path, monkeypatch):
+    """Corruption 4: must_right emptied → empty-rubric gate (warning alone is not a gate)."""
+    roster, entries = _corpus_entries(6, with_rubric=False)
+    # with_rubric=False already empties must_right + easy_wrong.
+    assert all(not e["must_right"] and not e["easy_wrong"] for e in entries)
+    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, roster)
+    record = _score_run_record(
+        entries,
+        caption_fn=lambda e: f"{e['present_identities'][0]} outdoors smiling.",
+        identity_fn=lambda e: [_score_identity(e["present_identities"][0])],
+        manifest_sha=manifest_sha,
+        name="run-empty-rubric.json",
+    )
+    record_path = tmp_path / "run-empty-rubric.json"
+    record_path.write_text(json.dumps(record))
+    monkeypatch.chdir(tmp_path)
+    # RubricEmptyWarning is expected; a warning alone used to leave exit 0 — the gate
+    # must still fire with a named message.
+    with pytest.warns(match="Must-Right/Easy-Wrong"):
+        with pytest.raises(SystemExit) as excinfo:
+            main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
+    msg = str(excinfo.value)
+    assert excinfo.value.code != 0
+    assert "empty-rubric" in msg.lower()
+    assert "vacuous" in msg.lower()
+    assert "wrong-name" not in msg.lower()
+    assert "manifest-mismatch" not in msg.lower()
+    assert "must-right failures" not in msg.lower()
 
 
 # --- FIR-5 S5: face-bakeoff / score-face CLI surface ---

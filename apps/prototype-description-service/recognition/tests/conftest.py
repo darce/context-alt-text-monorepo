@@ -95,6 +95,10 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
             Table("identity_constraints", Base.metadata),
             Table("tenants", Base.metadata),
             Table("worker_capabilities", Base.metadata),
+            # FIR-9 atlas tables (purge_service delete_plan head entries)
+            Table("identity_atlas_runs", Base.metadata),
+            Table("identity_atlas_points", Base.metadata),
+            Table("identity_atlas_queue_dispositions", Base.metadata),
         ]
         await conn.run_sync(Base.metadata.create_all, tables=tables)
         # Create mv_identity_cluster_centroids as a regular table for SQLite
@@ -287,15 +291,76 @@ def cluster_service(
 # Scratch databases for `-m pg` schema tests. IDENTITY_PG_TEST_URL (sync
 # psycopg URL) selects host/port/user for the scratch DBs; its database name
 # is used as the base name, suffixed per-fixture and per-process so parallel
-# runs and concurrent worktrees cannot collide. IDENTITY_PG_ADMIN_URL must be
-# a role able to CREATE DATABASE and install the vector extension (Homebrew
-# superuser default). Skips (never fails) when Postgres is unreachable or the
-# admin role lacks privileges.
+# runs and concurrent worktrees cannot collide.
+#
+# IDENTITY_PG_ADMIN_URL must be a role able to CREATE DATABASE and install the
+# vector extension (Homebrew superuser default) — admin privilege is fine.
+#
+# IDENTITY_PG_TEST_URL must be a non-superuser WITHOUT BYPASSRLS. That *lack*
+# of privilege is what makes tenant-isolation tests mean anything: PostgreSQL
+# exempts superusers and BYPASSRLS roles from RLS even when FORCE ROW LEVEL
+# SECURITY is set (FORCE only removes the table-owner exemption). Connecting
+# the suite as a privileged role silently vacates every isolation assertion.
+# After the scratch engine connects, fixtures query pg_roles and pytest.fail
+# (not skip) if the test role is privileged — a skip would leave the gate
+# green while isolation is untested. [FL30B-GATE-01] [rg-008]
+#
+# Skips (never fails) only when Postgres is unreachable or the admin role
+# lacks CREATE DATABASE / vector privileges.
 
 IDENTITY_PG_TEST_URL = os.environ.get(
     "IDENTITY_PG_TEST_URL",
     "postgresql+psycopg://context:context@localhost:5432/acx_identity_test",
 )
+
+
+def rls_unenforceable_role_message(
+    *,
+    role: str,
+    rolsuper: bool,
+    rolbypassrls: bool,
+) -> str | None:
+    """Return a fail message when *role* is exempt from RLS; else None.
+
+    Superusers and BYPASSRLS roles skip row-level security even under
+    FORCE ROW LEVEL SECURITY. Isolation tests against such a role assert
+    nothing, so the harness must refuse them loudly.
+    """
+    if not rolsuper and not rolbypassrls:
+        return None
+    flags: list[str] = []
+    if rolsuper:
+        flags.append("rolsuper=true")
+    if rolbypassrls:
+        flags.append("rolbypassrls=true")
+    return (
+        f"RLS assertions are unenforceable for role {role!r} ({', '.join(flags)}). "
+        "PostgreSQL exempts superusers and BYPASSRLS roles from row-level security "
+        "even when FORCE ROW LEVEL SECURITY is set. "
+        "IDENTITY_PG_TEST_URL must point at a non-superuser without BYPASSRLS "
+        "(IDENTITY_PG_ADMIN_URL may remain a superuser for CREATE DATABASE / vector)."
+    )
+
+
+def assert_engine_role_rls_enforceable(engine) -> None:
+    """Fail hard if the engine's connected role is superuser or has BYPASSRLS.
+
+    Fail (not skip): a silent skip is the same greenwash as running isolation
+    tests under a privileged role — the gate stays green while asserting nothing.
+    """
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                "SELECT current_user, r.rolsuper, r.rolbypassrls "
+                "FROM pg_roles r WHERE r.rolname = current_user"
+            )
+        ).one()
+    role, rolsuper, rolbypassrls = str(row[0]), bool(row[1]), bool(row[2])
+    msg = rls_unenforceable_role_message(
+        role=role, rolsuper=rolsuper, rolbypassrls=rolbypassrls
+    )
+    if msg is not None:
+        pytest.fail(msg)
 
 
 def _pg_scratch_urls(suffix: str) -> tuple[str, str, str, str]:
@@ -383,6 +448,7 @@ def pg_migrated_engine():
 
     engine = create_engine(scratch_url)
     try:
+        assert_engine_role_rls_enforceable(engine)
         yield engine
     finally:
         engine.dispose()
@@ -399,6 +465,7 @@ def pg_empty_engine():
 
     engine = create_engine(scratch_url)
     try:
+        assert_engine_role_rls_enforceable(engine)
         yield engine
     finally:
         engine.dispose()

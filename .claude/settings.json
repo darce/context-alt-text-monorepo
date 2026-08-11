@@ -54,6 +54,26 @@
         ]
       },
       {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard-generated-render-write.py\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard-network-sourced-authority.py\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
         "matcher": "mcp__workbay-handoff-mcp__record_event|mcp__workbay-handoff-mcp__close_slice",
         "hooks": [
           {
@@ -153,7 +173,7 @@
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/advise-worktree-cd.py\"",
-            "timeout": 5
+            "timeout": 15
           }
         ]
       },
@@ -175,7 +195,7 @@
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/advise-worktree-cd.py\"",
-            "timeout": 5
+            "timeout": 15
           }
         ]
       }

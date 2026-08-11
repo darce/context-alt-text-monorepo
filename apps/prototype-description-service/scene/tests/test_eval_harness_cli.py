@@ -1090,6 +1090,110 @@ def test_cli_score_determinism_guard_detects_mutated_persisted_anchor(tmp_path, 
     msg = str(exc.value)
     assert "determinism check FAILED" in msg
     assert "cross-process" in msg
+    # C-08 / C-03: gate identity + document named; ERROR class must not fire.
+    assert "[score]" in msg
+    assert "document=" in msg
+    assert "determinism check ERROR" not in msg
+    # Mismatch artifact written beside the run record for operator triage.
+    assert "artifact=" in msg
+    artifacts = list(tmp_path.glob("determinism-mismatch-score-seed*.diff.txt"))
+    assert artifacts, "expected side-by-side mismatch artifact beside run record"
+
+
+def test_cli_score_determinism_guard_errors_on_child_nonzero_rc(tmp_path, monkeypatch):
+    """C-03 / OBS-04: child rc != 0 is ERROR (infra), not FAILED (regression).
+
+    A broken environment (e.g. ModuleNotFoundError for scripts.eval_harness)
+    must not be reported as a determinism regression — the remedy is operator
+    action on the runtime, not a build rollback.
+    """
+    from scripts.eval_harness import cli as cli_mod
+
+    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    class _Proc:
+        returncode = 1
+        stdout = ""
+        stderr = "ModuleNotFoundError: No module named 'scripts.eval_harness'"
+
+    monkeypatch.setattr(cli_mod.subprocess, "run", lambda *a, **k: _Proc())
+    with pytest.raises(SystemExit) as exc:
+        cli_mod._check_score_determinism_cross_process(record_path, str(manifest_path))
+    msg = str(exc.value)
+    assert "determinism check ERROR [score]" in msg
+    assert "rc=1" in msg
+    assert "ModuleNotFoundError" in msg
+    assert "determinism check FAILED" not in msg
+
+
+def test_cli_score_determinism_guard_errors_on_malformed_output(tmp_path, monkeypatch):
+    """C-03 / OBS-04: child stdout without ---MD--- framing is ERROR, not FAILED.
+
+    Distinct from both non-zero-rc infra faults and genuine byte mismatches so
+    an operator can select the remedy from the message alone.
+    """
+    from scripts.eval_harness import cli as cli_mod
+
+    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    class _Proc:
+        returncode = 0
+        stdout = "this-is-not-a-framed-payload"
+        stderr = "framing gone missing"
+
+    monkeypatch.setattr(cli_mod.subprocess, "run", lambda *a, **k: _Proc())
+    with pytest.raises(SystemExit) as exc:
+        cli_mod._check_score_determinism_cross_process(record_path, str(manifest_path))
+    msg = str(exc.value)
+    assert "determinism check ERROR [score]" in msg
+    assert "malformed" in msg
+    assert "determinism check FAILED" not in msg
+
+
+def test_cli_determinism_guard_labels_distinguish_score_and_face(tmp_path, monkeypatch):
+    """C-08 gate-identity: same failure class on both gates must differ by label.
+
+    Caption and face guards share ``_run_determinism_children``; the only
+    disambiguator in CI is the interpolated label.
+    """
+    from scripts.eval_harness import cli as cli_mod
+
+    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    class _Proc:
+        returncode = 2
+        stdout = ""
+        stderr = "boom"
+
+    monkeypatch.setattr(cli_mod.subprocess, "run", lambda *a, **k: _Proc())
+
+    with pytest.raises(SystemExit) as score_exc:
+        cli_mod._check_score_determinism_cross_process(record_path, str(manifest_path))
+    score_msg = str(score_exc.value)
+    assert "determinism check ERROR [score]" in score_msg
+    assert "[score-face]" not in score_msg
+
+    # Face path needs a face-shaped fixture; re-use the shared substrate directly
+    # with the face label so the identity claim does not depend on face score setup.
+    with pytest.raises(SystemExit) as face_exc:
+        cli_mod._run_determinism_children(
+            "import sys; sys.exit(2)",
+            [],
+            label="score-face",
+            base_json="{}",
+            base_md="",
+            artifact_dir=tmp_path,
+        )
+    face_msg = str(face_exc.value)
+    assert "determinism check ERROR [score-face]" in face_msg
+    assert face_msg != score_msg
+    # Bare [score] label must not appear on the face message (substring of
+    # [score-face] is fine only if the full token is [score-face]).
+    assert "[score]" not in face_msg.replace("[score-face]", "")
+    assert "[score-face]" not in score_msg
 
 
 # --- VLM-6 S2A item 4: four corruption discrimination guards (TEST-15) ---
@@ -2439,7 +2543,10 @@ def test_cli_score_face_determinism_guard_detects_nondeterminism(tmp_path, monke
     monkeypatch.setattr(cli_mod.subprocess, "run", lambda *a, **k: _Proc())
     with pytest.raises(SystemExit) as exc:
         cli_mod._check_face_determinism_cross_process(rec_path, str(man_path), public=False)
-    assert "determinism check FAILED" in str(exc.value)
+    msg = str(exc.value)
+    assert "determinism check FAILED" in msg
+    assert "[score-face]" in msg
+    assert "document=" in msg
 
 
 def test_cli_score_face_parse_run_record_required(tmp_path, monkeypatch, capsys):

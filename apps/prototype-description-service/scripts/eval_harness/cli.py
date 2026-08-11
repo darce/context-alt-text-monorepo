@@ -672,16 +672,126 @@ def _cmd_fetch(args: argparse.Namespace) -> list[str]:
     return record_paths
 
 
+# Child subprocess budget for cross-process determinism guards (C-03).
+# The child imports scripts.eval_harness.cli which can pull face_bakeoff ->
+# cv2/onnxruntime; a stalled model/cache resolve must not hang the gate forever.
+_DETERMINISM_CHILD_TIMEOUT_S = 120
+
+
+def _run_determinism_children(
+    child_script: str,
+    argv: list[str],
+    *,
+    label: str,
+    base_json: str,
+    base_md: str,
+    artifact_dir: Path,
+) -> None:
+    """Shared cross-process determinism substrate for score / score-face (C-08).
+
+    Holds the seed tuple, env handling, subprocess invocation (including the
+    no-op ``cwd=`` left for a later import-root lane), ``---MD---`` framing,
+    timeout, and the ERROR/FAILED error taxonomy (C-03 / OBS-04).
+
+    ``label`` (``score`` / ``score-face``) is interpolated into every operator
+    message so CI lines name which gate fired.
+
+    Taxonomy:
+    - ``determinism check ERROR [label]: ...`` — child could not run, timed out,
+      or produced no parseable payload (operator action: environment/tooling).
+    - ``determinism check FAILED [label]: ...`` — genuine byte mismatch
+      (build regression). Names JSON vs MD, writes a side-by-side artifact, and
+      includes stderr.
+    """
+    for hash_seed in ("0", "1", "42"):
+        env = dict(os.environ)
+        env["PYTHONHASHSEED"] = hash_seed
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-c", child_script, *argv],
+                capture_output=True,
+                text=True,
+                env=env,
+                cwd=str(Path.cwd()),
+                timeout=_DETERMINISM_CHILD_TIMEOUT_S,
+            )
+        except subprocess.TimeoutExpired as exc:
+            stderr_snip = ""
+            if exc.stderr is not None:
+                stderr_snip = exc.stderr if isinstance(exc.stderr, str) else exc.stderr.decode(
+                    "utf-8", errors="replace"
+                )
+            sys.exit(
+                f"determinism check ERROR [{label}]: subprocess timed out "
+                f"seed={hash_seed} after {_DETERMINISM_CHILD_TIMEOUT_S}s: {stderr_snip}"
+            )
+        if proc.returncode != 0:
+            sys.exit(
+                f"determinism check ERROR [{label}]: subprocess seed={hash_seed} "
+                f"rc={proc.returncode}: {proc.stderr}"
+            )
+        out = proc.stdout
+        if "---MD---" not in out:
+            sys.exit(
+                f"determinism check ERROR [{label}]: malformed subprocess output "
+                f"seed={hash_seed}; stderr={proc.stderr!r}"
+            )
+        sub_json, sub_md = out.split("---MD---", 1)
+        json_differs = sub_json != base_json
+        md_differs = sub_md != base_md
+        if not json_differs and not md_differs:
+            continue
+        docs: list[str] = []
+        if json_differs:
+            docs.append("JSON")
+        if md_differs:
+            docs.append("MD")
+        which = "+".join(docs)
+        artifact = artifact_dir / f"determinism-mismatch-{label}-seed{hash_seed}.diff.txt"
+        body = "\n".join(
+            [
+                f"gate={label}",
+                f"PYTHONHASHSEED={hash_seed}",
+                f"differed={which}",
+                f"stderr={proc.stderr!r}",
+                "",
+                "=== baseline JSON ===",
+                base_json,
+                "=== subprocess JSON ===",
+                sub_json,
+                "=== baseline MD ===",
+                base_md,
+                "=== subprocess MD ===",
+                sub_md,
+                "",
+            ]
+        )
+        try:
+            artifact.write_text(body)
+            artifact_ref = str(artifact)
+        except OSError as write_exc:
+            artifact_ref = f"(could not write artifact: {write_exc})"
+        sys.exit(
+            f"determinism check FAILED [{label}]: cross-process re-score differs "
+            f"under PYTHONHASHSEED={hash_seed} "
+            f"(document={which}; artifact={artifact_ref}; stderr={proc.stderr!r})"
+        )
+    print(
+        f"determinism check passed [{label}]: cross-process re-score is "
+        f"bit-identical under varied PYTHONHASHSEED"
+    )
+
+
 def _check_score_determinism_cross_process(
     record_path: Path,
     manifest_path: str,
 ) -> None:
     """Re-run caption score in a FRESH process under varied PYTHONHASHSEED (§G).
 
-    Mirrors ``_check_face_determinism_cross_process`` for the caption/report path.
     Baseline is computed in-process from the persisted run-record; each subprocess
     re-loads that same path from disk (not an in-memory twin of the first call) so
     hash-ordering, import-order, and mutated-anchor failures are visible.
+    Subprocess loop lives in ``_run_determinism_children`` (C-08).
     """
     # Baseline: current process, reading the persisted anchor.
     record = json.loads(record_path.read_text())
@@ -715,29 +825,14 @@ def _check_score_determinism_cross_process(
         "score_manifest_sha256=sha,manifest_roster=roster); "
         "sys.stdout.write(j); sys.stdout.write('---MD---'); sys.stdout.write(m)"
     )
-    for hash_seed in ("0", "1", "42"):
-        env = dict(os.environ)
-        env["PYTHONHASHSEED"] = hash_seed
-        proc = subprocess.run(
-            [sys.executable, "-c", script, str(record_path), manifest_path],
-            capture_output=True,
-            text=True,
-            env=env,
-            cwd=str(Path.cwd()),
-        )
-        if proc.returncode != 0:
-            sys.exit(
-                f"determinism check FAILED: subprocess seed={hash_seed} rc={proc.returncode}: {proc.stderr}"
-            )
-        out = proc.stdout
-        if "---MD---" not in out:
-            sys.exit(f"determinism check FAILED: malformed subprocess output seed={hash_seed}")
-        sub_json, sub_md = out.split("---MD---", 1)
-        if sub_json != base_json or sub_md != base_md:
-            sys.exit(
-                f"determinism check FAILED: cross-process re-score differs under PYTHONHASHSEED={hash_seed}"
-            )
-    print("determinism check passed: cross-process re-score is bit-identical under varied PYTHONHASHSEED")
+    _run_determinism_children(
+        script,
+        [str(record_path), manifest_path],
+        label="score",
+        base_json=base_json,
+        base_md=base_md,
+        artifact_dir=record_path.parent,
+    )
 
 
 def _cmd_score(args: argparse.Namespace) -> None:
@@ -1118,7 +1213,11 @@ def _check_face_determinism_cross_process(
     *,
     public: bool,
 ) -> None:
-    """Re-run score-face in a FRESH process under varied PYTHONHASHSEED (§G)."""
+    """Re-run score-face in a FRESH process under varied PYTHONHASHSEED (§G).
+
+    Subprocess loop lives in ``_run_determinism_children`` (C-08) so caption and
+    face gates share seed/env/timeout/error taxonomy and differ only by label.
+    """
     # Baseline: current process
     record = json.loads(record_path.read_text())
     manifest = load_manifest(manifest_path)
@@ -1140,29 +1239,14 @@ def _check_face_determinism_cross_process(
         "occlusion_pairs_by_tag=sp,real_occlusion_pairs_by_tag=rp,public=pub); "
         "sys.stdout.write(j); sys.stdout.write('---MD---'); sys.stdout.write(m)"
     )
-    for hash_seed in ("0", "1", "42"):
-        env = dict(os.environ)
-        env["PYTHONHASHSEED"] = hash_seed
-        proc = subprocess.run(
-            [sys.executable, "-c", script, str(record_path), manifest_path, "1" if public else "0"],
-            capture_output=True,
-            text=True,
-            env=env,
-            cwd=str(Path.cwd()),
-        )
-        if proc.returncode != 0:
-            sys.exit(
-                f"determinism check FAILED: subprocess seed={hash_seed} rc={proc.returncode}: {proc.stderr}"
-            )
-        out = proc.stdout
-        if "---MD---" not in out:
-            sys.exit(f"determinism check FAILED: malformed subprocess output seed={hash_seed}")
-        sub_json, sub_md = out.split("---MD---", 1)
-        if sub_json != base_json or sub_md != base_md:
-            sys.exit(
-                f"determinism check FAILED: cross-process re-score differs under PYTHONHASHSEED={hash_seed}"
-            )
-    print("determinism check passed: cross-process re-score is bit-identical under varied PYTHONHASHSEED")
+    _run_determinism_children(
+        script,
+        [str(record_path), manifest_path, "1" if public else "0"],
+        label="score-face",
+        base_json=base_json,
+        base_md=base_md,
+        artifact_dir=record_path.parent,
+    )
 
 
 def _cmd_score_face(args: argparse.Namespace) -> None:

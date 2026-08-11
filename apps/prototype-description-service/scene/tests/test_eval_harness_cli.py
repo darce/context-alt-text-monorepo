@@ -1127,29 +1127,221 @@ def test_cli_score_determinism_guard_errors_on_child_nonzero_rc(tmp_path, monkey
     assert "determinism check FAILED" not in msg
 
 
-def test_cli_score_determinism_guard_errors_on_malformed_output(tmp_path, monkeypatch):
-    """C-03 / OBS-04: child stdout without ---MD--- framing is ERROR, not FAILED.
+def _det_payload_path_from_run_args(args, kwargs):
+    """Extract the parent-allocated payload path from a subprocess.run call.
 
-    Distinct from both non-zero-rc infra faults and genuine byte mismatches so
-    an operator can select the remedy from the message alone.
+    Parent appends the path as the final argv entry of
+    ``[exe, "-c", script, *child_argv, payload_path]``.
+    """
+    cmd = args[0] if args else kwargs.get("args")
+    return Path(cmd[-1])
+
+
+def _det_ok_proc():
+    class _Proc:
+        returncode = 0
+        stdout = "banner-ok-to-ignore\n"
+        stderr = ""
+
+    return _Proc()
+
+
+def test_cli_score_determinism_guard_errors_on_malformed_output(tmp_path, monkeypatch):
+    """C-03 / F2b / OBS-04: missing payload file is ERROR, not FAILED.
+
+    Pre-F2b this was "stdout without ---MD--- framing". Transport changed; the
+    assertion intent (malformed child output → ERROR class) is preserved.
     """
     from scripts.eval_harness import cli as cli_mod
 
     manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
     monkeypatch.chdir(tmp_path)
 
-    class _Proc:
-        returncode = 0
-        stdout = "this-is-not-a-framed-payload"
-        stderr = "framing gone missing"
-
-    monkeypatch.setattr(cli_mod.subprocess, "run", lambda *a, **k: _Proc())
+    # Child exits 0 but never writes the payload path → missing-file ERROR.
+    monkeypatch.setattr(cli_mod.subprocess, "run", lambda *a, **k: _det_ok_proc())
     with pytest.raises(SystemExit) as exc:
         cli_mod._check_score_determinism_cross_process(record_path, str(manifest_path))
     msg = str(exc.value)
     assert "determinism check ERROR [score]" in msg
-    assert "malformed" in msg
+    assert "payload file missing" in msg
     assert "determinism check FAILED" not in msg
+
+
+def test_cli_score_determinism_guard_errors_on_unparseable_payload(tmp_path, monkeypatch):
+    """F2b / OBS-04: payload present but not valid JSON → ERROR unparseable."""
+    from scripts.eval_harness import cli as cli_mod
+
+    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    def _write_junk(*args, **kwargs):
+        path = _det_payload_path_from_run_args(args, kwargs)
+        path.write_text("this-is-not-json{{{")
+        return _det_ok_proc()
+
+    monkeypatch.setattr(cli_mod.subprocess, "run", _write_junk)
+    with pytest.raises(SystemExit) as exc:
+        cli_mod._check_score_determinism_cross_process(record_path, str(manifest_path))
+    msg = str(exc.value)
+    assert "determinism check ERROR [score]" in msg
+    assert "payload file unparseable" in msg
+    assert "determinism check FAILED" not in msg
+
+
+def test_cli_score_determinism_guard_errors_on_unreadable_payload(tmp_path, monkeypatch):
+    """F2b / OBS-04: payload path exists but cannot be read → ERROR unreadable.
+
+    Inject OSError on Path.read_text for the payload only — more reliable than
+    chmod 0o000 (root / some sandboxes still read mode-0 files).
+    """
+    from scripts.eval_harness import cli as cli_mod
+
+    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    payload_holder: dict[str, Path] = {}
+
+    def _write_payload(*args, **kwargs):
+        path = _det_payload_path_from_run_args(args, kwargs)
+        path.write_text(json.dumps({"json": "{}", "md": ""}))
+        payload_holder["path"] = path
+        return _det_ok_proc()
+
+    real_read_text = Path.read_text
+
+    def _read_text(self, *args, **kwargs):
+        target = payload_holder.get("path")
+        if target is not None and self == target:
+            raise OSError(13, "Permission denied", str(self))
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(cli_mod.subprocess, "run", _write_payload)
+    monkeypatch.setattr(Path, "read_text", _read_text)
+    with pytest.raises(SystemExit) as exc:
+        cli_mod._check_score_determinism_cross_process(record_path, str(manifest_path))
+    msg = str(exc.value)
+    assert "determinism check ERROR [score]" in msg
+    assert "payload file unreadable" in msg
+    assert "determinism check FAILED" not in msg
+
+
+def test_cli_score_determinism_guard_survives_sentinel_in_freeform_text(
+    tmp_path, monkeypatch, capsys
+):
+    """F2b / C-04 collision: free-form text that lands in the scored report docs
+    and contains the old ``---MD---`` sentinel must NOT false-RED the gate.
+
+    Report JSON/MD re-emit identity names (not raw caption drafts). Under the
+    old in-band stdout framing, a name containing ``---MD---`` splits at the
+    wrong offset so ``sub_json != base_json`` for content-identical docs — a
+    false FAILED. Out-of-band payload transport is content-safe.
+    """
+    from scripts.eval_harness import cli as cli_mod
+    from scripts.eval_harness.schema import SCHEMA, DocKind
+
+    # Name embeds the old framing sentinel — re-emitted into report JSON + MD.
+    name = "Alice ---MD--- Example"
+    entries = [
+        {
+            "path": "mock_images/alice.jpg",
+            "sha256": "a" * 64,
+            "media_id": 1,
+            "face_count": 1,
+            "present_identities": [name],
+            "context_pack": {},
+            "base_caption": "",
+            "must_right": [name],
+            "easy_wrong": ["Bob Builder"],
+            "policy": {"recognition_enabled": True},
+        }
+    ]
+    manifest_path, manifest_sha = _write_score_manifest(
+        tmp_path, entries, [name, "Bob Builder"]
+    )
+    caption = f"{name} outdoors."
+    record_path = tmp_path / "run-sentinel.json"
+    record_path.write_text(
+        json.dumps(
+            {
+                "schema": SCHEMA,
+                "kind": DocKind.RUN_RECORD.value,
+                "provenance": {
+                    "manifest_sha256": manifest_sha,
+                    "base_url": "https://example.test",
+                    "head_sha": "f" * 40,
+                    "started_at": "t",
+                },
+                "items": [
+                    {
+                        "media_id": 1,
+                        "path": "mock_images/alice.jpg",
+                        "describe": {
+                            "alt_text_draft": caption,
+                            "named_draft": caption,
+                            "generic_draft": caption,
+                            "visual_facts": {"objects": []},
+                        },
+                        "identities": [
+                            {
+                                "name": name,
+                                "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                                "unpositioned": False,
+                            }
+                        ],
+                        "face_count": 1,
+                        "error": None,
+                    }
+                ],
+            }
+        )
+    )
+    monkeypatch.chdir(tmp_path)
+    # Must not SystemExit — genuine match under content-safe transport.
+    cli_mod._check_score_determinism_cross_process(record_path, str(manifest_path))
+    out = capsys.readouterr().out
+    assert "determinism check passed [score]" in out
+
+
+def test_cli_score_determinism_guard_ignores_stdout_prefix_banner(tmp_path, monkeypatch, capsys):
+    """F2b / C-04 prefix contamination: banners on child stdout must not poison
+    the comparison. Parent reads the payload file, not stdout.
+    """
+    from scripts.eval_harness import cli as cli_mod
+    from scripts.eval_harness.report import build_reports
+    from scripts.eval_harness.manifest import load_manifest
+
+    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    record = json.loads(record_path.read_text())
+    manifest = load_manifest(str(manifest_path))
+    entries = [e.model_dump() for e in manifest.entries]
+    ignore_list = cli_mod._load_ignore_list(record_path.parent)
+    base_json, base_md = build_reports(
+        record,
+        entries,
+        ignore_list=ignore_list,
+        score_manifest_sha256=cli_mod._manifest_sha(manifest),
+        manifest_roster=sorted(set(getattr(manifest, "roster", []) or [])),
+    )
+
+    def _banner_then_payload(*args, **kwargs):
+        path = _det_payload_path_from_run_args(args, kwargs)
+        path.write_text(json.dumps({"json": base_json, "md": base_md}))
+
+        class _Proc:
+            returncode = 0
+            # Import-time / transitive banner that would prepend to sub_json under
+            # the old split("---MD---", 1) transport and false-RED every run.
+            stdout = "WARNING: onnxruntime CUDA EP unavailable\n"
+            stderr = ""
+
+        return _Proc()
+
+    monkeypatch.setattr(cli_mod.subprocess, "run", _banner_then_payload)
+    cli_mod._check_score_determinism_cross_process(record_path, str(manifest_path))
+    out = capsys.readouterr().out
+    assert "determinism check passed [score]" in out
 
 
 def test_cli_determinism_guard_labels_distinguish_score_and_face(tmp_path, monkeypatch):
@@ -2526,6 +2718,8 @@ def test_cli_score_face_determinism_guard_detects_nondeterminism(tmp_path, monke
     """Non-vacuity (TEST-15): the shipped guard's cross-process comparison CAN go
     red. A subprocess whose re-score differs from the in-process baseline makes
     _check_face_determinism_cross_process sys.exit with 'determinism check FAILED'.
+
+    Transport (F2b): child writes an out-of-band payload dict, not stdout framing.
     """
     from scripts.eval_harness import cli as cli_mod
 
@@ -2535,12 +2729,12 @@ def test_cli_score_face_determinism_guard_detects_nondeterminism(tmp_path, monke
     man_path = tmp_path / "man.json"
     man_path.write_text(json.dumps(manifest))
 
-    class _Proc:
-        returncode = 0
-        stdout = "DIFFERENT-JSON---MD---DIFFERENT-MD"
-        stderr = ""
+    def _divergent_payload(*args, **kwargs):
+        path = _det_payload_path_from_run_args(args, kwargs)
+        path.write_text(json.dumps({"json": "DIFFERENT-JSON", "md": "DIFFERENT-MD"}))
+        return _det_ok_proc()
 
-    monkeypatch.setattr(cli_mod.subprocess, "run", lambda *a, **k: _Proc())
+    monkeypatch.setattr(cli_mod.subprocess, "run", _divergent_payload)
     with pytest.raises(SystemExit) as exc:
         cli_mod._check_face_determinism_cross_process(rec_path, str(man_path), public=False)
     msg = str(exc.value)

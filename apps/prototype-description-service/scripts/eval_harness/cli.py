@@ -28,6 +28,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import UTC, datetime
 from io import BytesIO
@@ -690,15 +691,24 @@ def _run_determinism_children(
     """Shared cross-process determinism substrate for score / score-face (C-08).
 
     Holds the seed tuple, env handling, subprocess invocation (including the
-    no-op ``cwd=`` left for a later import-root lane), ``---MD---`` framing,
-    timeout, and the ERROR/FAILED error taxonomy (C-03 / OBS-04).
+    no-op ``cwd=`` left for a later import-root lane), out-of-band payload
+    transport (F2b / C-04), timeout, and the ERROR/FAILED error taxonomy
+    (C-03 / OBS-04).
+
+    Payload transport: parent allocates a tempfile path per seed, appends it as
+    the final argv entry, and the child writes a JSON dict
+    ``{"json": <str>, "md": <str>}`` there. Dict shape (not a 2-tuple) so later
+    lanes can add provenance fields without a positional refactor. Child stdout
+    is intentionally unused for comparison — banners/warnings cannot contaminate
+    the verdict, and free-form caption text cannot forge a framing delimiter.
 
     ``label`` (``score`` / ``score-face``) is interpolated into every operator
     message so CI lines name which gate fired.
 
     Taxonomy:
     - ``determinism check ERROR [label]: ...`` — child could not run, timed out,
-      or produced no parseable payload (operator action: environment/tooling).
+      or produced no readable/parseable payload (operator action: environment/tooling).
+      Sub-cases name missing / unreadable / unparseable distinctly (OBS-04).
     - ``determinism check FAILED [label]: ...`` — genuine byte mismatch
       (build regression). Names JSON vs MD, writes a side-by-side artifact, and
       includes stderr.
@@ -706,76 +716,121 @@ def _run_determinism_children(
     for hash_seed in ("0", "1", "42"):
         env = dict(os.environ)
         env["PYTHONHASHSEED"] = hash_seed
+        # Allocate a unique path the child must create; do not pre-write content
+        # (absence must be distinguishable from empty/unparseable). Do not place
+        # under artifact_dir — that may be read-only and already owns FAILED diffs.
+        fd, payload_name = tempfile.mkstemp(prefix="det-payload-", suffix=".json")
+        os.close(fd)
+        payload_path = Path(payload_name)
         try:
-            proc = subprocess.run(
-                [sys.executable, "-c", child_script, *argv],
-                capture_output=True,
-                text=True,
-                env=env,
-                cwd=str(Path.cwd()),
-                timeout=_DETERMINISM_CHILD_TIMEOUT_S,
-            )
-        except subprocess.TimeoutExpired as exc:
-            stderr_snip = ""
-            if exc.stderr is not None:
-                stderr_snip = exc.stderr if isinstance(exc.stderr, str) else exc.stderr.decode(
-                    "utf-8", errors="replace"
+            # Ensure missing until the child writes (mkstemp creates an empty file).
+            payload_path.unlink(missing_ok=True)
+            child_argv = [*argv, str(payload_path)]
+            try:
+                proc = subprocess.run(
+                    [sys.executable, "-c", child_script, *child_argv],
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    cwd=str(Path.cwd()),
+                    timeout=_DETERMINISM_CHILD_TIMEOUT_S,
                 )
-            sys.exit(
-                f"determinism check ERROR [{label}]: subprocess timed out "
-                f"seed={hash_seed} after {_DETERMINISM_CHILD_TIMEOUT_S}s: {stderr_snip}"
+            except subprocess.TimeoutExpired as exc:
+                stderr_snip = ""
+                if exc.stderr is not None:
+                    stderr_snip = (
+                        exc.stderr
+                        if isinstance(exc.stderr, str)
+                        else exc.stderr.decode("utf-8", errors="replace")
+                    )
+                sys.exit(
+                    f"determinism check ERROR [{label}]: subprocess timed out "
+                    f"seed={hash_seed} after {_DETERMINISM_CHILD_TIMEOUT_S}s: {stderr_snip}"
+                )
+            if proc.returncode != 0:
+                sys.exit(
+                    f"determinism check ERROR [{label}]: subprocess seed={hash_seed} "
+                    f"rc={proc.returncode}: {proc.stderr}"
+                )
+            if not payload_path.is_file():
+                sys.exit(
+                    f"determinism check ERROR [{label}]: payload file missing "
+                    f"seed={hash_seed} path={payload_path}; stderr={proc.stderr!r}"
+                )
+            try:
+                payload_text = payload_path.read_text(encoding="utf-8")
+            except OSError as read_exc:
+                sys.exit(
+                    f"determinism check ERROR [{label}]: payload file unreadable "
+                    f"seed={hash_seed} path={payload_path}: {read_exc}; "
+                    f"stderr={proc.stderr!r}"
+                )
+            try:
+                payload = json.loads(payload_text)
+            except json.JSONDecodeError as dec_exc:
+                sys.exit(
+                    f"determinism check ERROR [{label}]: payload file unparseable "
+                    f"seed={hash_seed} path={payload_path}: {dec_exc}; "
+                    f"stderr={proc.stderr!r}"
+                )
+            if not isinstance(payload, dict) or "json" not in payload or "md" not in payload:
+                sys.exit(
+                    f"determinism check ERROR [{label}]: payload file unparseable "
+                    f"seed={hash_seed} path={payload_path}: expected object with "
+                    f"'json' and 'md' keys; stderr={proc.stderr!r}"
+                )
+            sub_json = payload["json"]
+            sub_md = payload["md"]
+            if not isinstance(sub_json, str) or not isinstance(sub_md, str):
+                sys.exit(
+                    f"determinism check ERROR [{label}]: payload file unparseable "
+                    f"seed={hash_seed} path={payload_path}: 'json' and 'md' must be "
+                    f"strings; stderr={proc.stderr!r}"
+                )
+            json_differs = sub_json != base_json
+            md_differs = sub_md != base_md
+            if not json_differs and not md_differs:
+                continue
+            docs: list[str] = []
+            if json_differs:
+                docs.append("JSON")
+            if md_differs:
+                docs.append("MD")
+            which = "+".join(docs)
+            artifact = artifact_dir / f"determinism-mismatch-{label}-seed{hash_seed}.diff.txt"
+            body = "\n".join(
+                [
+                    f"gate={label}",
+                    f"PYTHONHASHSEED={hash_seed}",
+                    f"differed={which}",
+                    f"stderr={proc.stderr!r}",
+                    "",
+                    "=== baseline JSON ===",
+                    base_json,
+                    "=== subprocess JSON ===",
+                    sub_json,
+                    "=== baseline MD ===",
+                    base_md,
+                    "=== subprocess MD ===",
+                    sub_md,
+                    "",
+                ]
             )
-        if proc.returncode != 0:
+            try:
+                artifact.write_text(body)
+                artifact_ref = str(artifact)
+            except OSError as write_exc:
+                artifact_ref = f"(could not write artifact: {write_exc})"
             sys.exit(
-                f"determinism check ERROR [{label}]: subprocess seed={hash_seed} "
-                f"rc={proc.returncode}: {proc.stderr}"
+                f"determinism check FAILED [{label}]: cross-process re-score differs "
+                f"under PYTHONHASHSEED={hash_seed} "
+                f"(document={which}; artifact={artifact_ref}; stderr={proc.stderr!r})"
             )
-        out = proc.stdout
-        if "---MD---" not in out:
-            sys.exit(
-                f"determinism check ERROR [{label}]: malformed subprocess output "
-                f"seed={hash_seed}; stderr={proc.stderr!r}"
-            )
-        sub_json, sub_md = out.split("---MD---", 1)
-        json_differs = sub_json != base_json
-        md_differs = sub_md != base_md
-        if not json_differs and not md_differs:
-            continue
-        docs: list[str] = []
-        if json_differs:
-            docs.append("JSON")
-        if md_differs:
-            docs.append("MD")
-        which = "+".join(docs)
-        artifact = artifact_dir / f"determinism-mismatch-{label}-seed{hash_seed}.diff.txt"
-        body = "\n".join(
-            [
-                f"gate={label}",
-                f"PYTHONHASHSEED={hash_seed}",
-                f"differed={which}",
-                f"stderr={proc.stderr!r}",
-                "",
-                "=== baseline JSON ===",
-                base_json,
-                "=== subprocess JSON ===",
-                sub_json,
-                "=== baseline MD ===",
-                base_md,
-                "=== subprocess MD ===",
-                sub_md,
-                "",
-            ]
-        )
-        try:
-            artifact.write_text(body)
-            artifact_ref = str(artifact)
-        except OSError as write_exc:
-            artifact_ref = f"(could not write artifact: {write_exc})"
-        sys.exit(
-            f"determinism check FAILED [{label}]: cross-process re-score differs "
-            f"under PYTHONHASHSEED={hash_seed} "
-            f"(document={which}; artifact={artifact_ref}; stderr={proc.stderr!r})"
-        )
+        finally:
+            try:
+                payload_path.unlink(missing_ok=True)
+            except OSError:
+                pass
     print(
         f"determinism check passed [{label}]: cross-process re-score is "
         f"bit-identical under varied PYTHONHASHSEED"
@@ -808,6 +863,7 @@ def _check_score_determinism_cross_process(
         manifest_roster=roster,
     )
 
+    # Final argv entry is the parent-allocated payload path (F2b out-of-band).
     script = (
         "import json,sys; "
         "from pathlib import Path; "
@@ -823,7 +879,7 @@ def _check_score_determinism_cross_process(
         "roster=sorted(set(getattr(man,'roster',None) or [])); "
         "j,m=build_reports(rec,entries,ignore_list=ignore,"
         "score_manifest_sha256=sha,manifest_roster=roster); "
-        "sys.stdout.write(j); sys.stdout.write('---MD---'); sys.stdout.write(m)"
+        "Path(sys.argv[3]).write_text(json.dumps({'json':j,'md':m}))"
     )
     _run_determinism_children(
         script,
@@ -1226,8 +1282,10 @@ def _check_face_determinism_cross_process(
         record, manifest, score_manifest_sha256=manifest_sha, public=public
     )
 
+    # Final argv entry is the parent-allocated payload path (F2b out-of-band).
     script = (
         "import json,sys; "
+        "from pathlib import Path; "
         "from scripts.eval_harness.manifest import load_manifest; "
         "from scripts.eval_harness.cli import _manifest_sha; "
         "from scripts.eval_harness.report import build_face_reports, occlusion_inputs_from_record; "
@@ -1237,7 +1295,7 @@ def _check_face_determinism_cross_process(
         "sp,rp=occlusion_inputs_from_record(rec,man); "
         "j,m=build_face_reports(rec,man,score_manifest_sha256=_manifest_sha(man),"
         "occlusion_pairs_by_tag=sp,real_occlusion_pairs_by_tag=rp,public=pub); "
-        "sys.stdout.write(j); sys.stdout.write('---MD---'); sys.stdout.write(m)"
+        "Path(sys.argv[4]).write_text(json.dumps({'json':j,'md':m}))"
     )
     _run_determinism_children(
         script,

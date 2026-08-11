@@ -1,49 +1,47 @@
 """Fail-closed VLM cache integrity gate for the runtime-vlm image boot path.
 
 Invoked as ``python -m scripts.verify_vlm_cache`` with no required arguments
-(docker-entrypoint runs this when ``ACX_IMAGE_VARIANT`` is the VLM image).
+(docker-entrypoint runs this when the baked image variant is VLM).
 
-When the gate runs, exit 0 only when the pinned HF snapshot under HF_HOME
-matches its integrity manifest exactly, trust_remote_code modeling ``*.py``
-files are present, **and** the HuggingFace module cache
-(``HF_MODULES_CACHE``) is present and writable. Skipping is the case where
-the active profile is not a LOCAL_CPU adapter that needs offline weights
-(e.g. ``seeded``, ``gpu_qwen30b``) — those must boot without a Florence pin.
-Only profiles that actually load Florence (``adapter_kind=LOCAL_CPU`` with a
-pinned model) run the snapshot + module-cache checks.
+When the gate runs a LOCAL_CPU profile, exit 0 only when the pinned HF snapshot
+under HF_HOME matches its integrity manifest exactly, the on-disk manifest's
+own sha256 matches the image-baked root of trust (when present),
+trust_remote_code modeling ``*.py`` files are present, **and** the HuggingFace
+module cache (``HF_MODULES_CACHE``) is present and writable.
 
-Manifest location (choice, load-bearing)
-----------------------------------------
-The manifest lives **inside the snapshot directory** as
-``acx-vlm-cache.manifest.json`` (JSON object: relative_path -> sha256 hex).
+Non-LOCAL_CPU profiles (``seeded``, ``gpu_qwen30b``, …) skip the Florence pin
+so they can boot under ``set -eu``. On a VLM image with an explicit HF cache
+env, a weaker check still requires the mounted hub root to be non-empty, and
+verifies any present pinned Florence snapshot against its manifest.
 
-Rationale: the real weight digests are not known at repo commit time and must
-not be invented. Seeding (``scripts.seed_vlm_cache``) and ``--write-manifest``
-both write this file next to the weights they just certified. The gate treats
-the manifest itself as metadata and excludes it from the hashed file set.
+Manifest + root of trust
+------------------------
+The inventory manifest (``acx-vlm-cache.manifest.json``) lives next to the
+weights so the seeder can write it in one gesture. That file alone is
+self-referential inside the mutable volume — an attacker who rewrites weights
+and re-runs ``--write-manifest`` would pass. The **root of trust** is therefore
+detached from the volume:
+
+* env ``ACX_VLM_MANIFEST_SHA256`` (preferred; Dockerfile ARG→ENV), or
+* file ``/app/acx-vlm-cache.manifest.sha256`` (build-baked, chmod 0444)
+
+holding the sha256 of the manifest bytes. When either pin is present the gate
+requires a match before trusting the inventory. When absent (local unit tests,
+unpinned dev), inventory-vs-tree checks still run.
 
 TRUST-ESTABLISHING act (sr-001 / RLSE-02)
 -----------------------------------------
 ``--write-manifest`` certifies whatever is on disk at that moment. Run it only
 against a freshly downloaded, out-of-band-verified snapshot — never to "fix"
-a failing gate. A gate an operator can silence by re-running the writer is not
-a gate.
-
-Failure modes (each yields a distinct non-zero message)
--------------------------------------------------------
-snapshot directory missing; directory empty; manifest missing; listed file
-missing; sha256 mismatch; extra unlisted file present in the snapshot;
-no trust_remote_code ``*.py`` modeling files (safetensors-only seed);
-``HF_MODULES_CACHE`` unset/missing/unwritable (trust_remote_code import path).
-The extra-file case is the RB-02 attack surface: an attacker ADDS a .py
-without modifying an existing entry.
+a failing gate. After seeding, bake the printed manifest sha256 into the image.
 
 Image variant constants (sr-007)
 --------------------------------
 ``ImageVariant`` / ``IMAGE_VARIANT_ENV`` are the single importable source of
-truth for the recognition vs VLM labels. Dockerfile ``ENV ACX_IMAGE_VARIANT=...``
-and the entrypoint shell check must use these same string values; the API
-reads the env via ``resolve_image_variant_label`` (rg-015: report what is set).
+truth for the recognition vs VLM labels. Resolution prefers the build-immutable
+artifact ``/app/.image-variant`` (same fail-closed mismatch rule as
+``api.main._resolve_image_variant``); ENV alone is non-authoritative under
+compose ``env_file`` overrides.
 """
 
 from __future__ import annotations
@@ -56,25 +54,38 @@ import sys
 from enum import StrEnum
 from pathlib import Path
 
-# Stored inside the HF snapshot dir; excluded from the hashed payload set.
+# Inventory of relative_path -> sha256; lives next to weights; excluded from set.
 MANIFEST_FILENAME = "acx-vlm-cache.manifest.json"
 _HASH_CHUNK = 1024 * 1024  # 1 MiB — never load multi-GB shards whole.
 
-# Operator-facing seed command named in every fail-closed message (rg-006).
+# Detached root of trust for the manifest itself (outside the mounted volume).
+MANIFEST_SHA256_ENV = "ACX_VLM_MANIFEST_SHA256"
+# Module-level so tests can monkeypatch; production path is fixed.
+MANIFEST_SHA256_FILE = Path("/app/acx-vlm-cache.manifest.sha256")
+
+# Operator-facing seed hint — path-agnostic (rg-006). Host models dir varies
+# (/opt/acx-backend/prod/... on the VM; never hardcode a container-only path).
 SEED_COMMAND = (
     "uv run --extra vlm python -m scripts.seed_vlm_cache "
-    "--hf-home /data/cache/huggingface_cache"
+    "--hf-home <ACX_MODELS_PATH>/huggingface_cache"
+)
+SEED_HINT_NOTE = (
+    "Run on the host from apps/prototype-description-service "
+    "(not inside the offline runtime-vlm image)."
 )
 
 EXIT_OK = 0
 EXIT_FAIL = 1
 
+# Opt-in full Florence pin verify even for non-LOCAL_CPU profiles.
+REQUIRE_VLM_CACHE_ENV = "ACX_REQUIRE_VLM_CACHE"
+
 
 class ImageVariant(StrEnum):
     """Canonical Docker image variant labels (sr-007).
 
-    Baked into each runtime stage as ``ENV ACX_IMAGE_VARIANT=...``. Do not
-    scatter the string literals elsewhere in Python — import these members.
+    Baked into each runtime stage as ``/app/.image-variant`` (and ENV mirror).
+    Do not scatter the string literals elsewhere in Python — import these members.
     """
 
     RECOGNITION = "recognition"
@@ -83,6 +94,9 @@ class ImageVariant(StrEnum):
 
 IMAGE_VARIANT_ENV = "ACX_IMAGE_VARIANT"
 DEFAULT_IMAGE_VARIANT = ImageVariant.RECOGNITION
+# Build-immutable identity artifact (Dockerfile writes this per runtime stage).
+# Module-level so tests can monkeypatch; production path is fixed.
+IMAGE_VARIANT_ARTIFACT = Path("/app/.image-variant")
 
 # Env key for the HF trust_remote_code module cache (Lane A sets this in-image).
 # Never hardcode the path — read it from the environment so the gate stays
@@ -97,15 +111,38 @@ class CacheIntegrityError(RuntimeError):
 def resolve_image_variant_label() -> str:
     """Return the image variant the running process actually has (rg-015).
 
-    Reads ``ACX_IMAGE_VARIANT`` from the environment. Unset/blank falls back
-    to the recognition default (matches Dockerfile ``runtime`` stage ENV).
-    Unknown non-empty values are returned as-is so operators see the truth,
-    not a guessed member of ``ImageVariant``.
+    Prefers the build-immutable bake at ``IMAGE_VARIANT_ARTIFACT``
+    (``/app/.image-variant``). Compose ``env_file`` can override
+    ``ACX_IMAGE_VARIANT`` ENV, so ENV alone fails open. Same fail-closed
+    mismatch rule as ``api.main._resolve_image_variant``:
+
+    * bake present + valid → return bake; non-empty env that disagrees raises
+    * bake present + invalid / unreadable → raise (never report recognition)
+    * bake absent (local dev / unit tests) → env claim or recognition default
     """
-    raw = os.environ.get(IMAGE_VARIANT_ENV)
-    if raw is None or not str(raw).strip():
-        return DEFAULT_IMAGE_VARIANT.value
-    return str(raw).strip()
+    env_claim = (os.environ.get(IMAGE_VARIANT_ENV) or "").strip()
+    baked = ""
+    try:
+        if IMAGE_VARIANT_ARTIFACT.is_file():
+            baked = IMAGE_VARIANT_ARTIFACT.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise CacheIntegrityError(
+            f"VLM cache gate failed: cannot read baked image variant at "
+            f"{IMAGE_VARIANT_ARTIFACT}: {exc}"
+        ) from exc
+    if baked:
+        if baked not in {ImageVariant.RECOGNITION.value, ImageVariant.VLM.value}:
+            raise CacheIntegrityError(
+                f"VLM cache gate failed: invalid baked image variant {baked!r} "
+                f"at {IMAGE_VARIANT_ARTIFACT}"
+            )
+        if env_claim and env_claim != baked:
+            raise CacheIntegrityError(
+                f"VLM cache gate failed: ACX_IMAGE_VARIANT={env_claim!r} disagrees "
+                f"with baked {baked!r} at {IMAGE_VARIANT_ARTIFACT}"
+            )
+        return baked
+    return env_claim or DEFAULT_IMAGE_VARIANT.value
 
 
 def resolve_hf_hub_cache() -> Path:
@@ -120,6 +157,14 @@ def resolve_hf_hub_cache() -> Path:
         return Path(hub)
     home = os.environ.get("HF_HOME") or str(Path.home() / ".cache" / "huggingface")
     return Path(home) / "hub"
+
+
+def hf_cache_explicitly_configured() -> bool:
+    """True when HF_HUB_CACHE or HF_HOME is set (mounted-cache intent)."""
+    return bool(
+        (os.environ.get("HF_HUB_CACHE") or "").strip()
+        or (os.environ.get("HF_HOME") or "").strip()
+    )
 
 
 def model_cache_dirname(model_id: str) -> str:
@@ -138,6 +183,26 @@ def resolve_modules_cache() -> Path | None:
     if raw is None or not str(raw).strip():
         return None
     return Path(str(raw).strip())
+
+
+def resolve_manifest_trust_pin() -> str | None:
+    """Return the detached expected sha256 of the inventory manifest, or None.
+
+    Root of trust lives outside the mounted weight volume (A-03 / V-04):
+    env ``ACX_VLM_MANIFEST_SHA256`` first, then ``/app/acx-vlm-cache.manifest.sha256``.
+    """
+    env_pin = (os.environ.get(MANIFEST_SHA256_ENV) or "").strip().lower()
+    if env_pin:
+        return env_pin
+    try:
+        if MANIFEST_SHA256_FILE.is_file():
+            return MANIFEST_SHA256_FILE.read_text(encoding="utf-8").strip().lower()
+    except OSError as exc:
+        raise CacheIntegrityError(
+            f"VLM cache gate failed: cannot read manifest trust pin at "
+            f"{MANIFEST_SHA256_FILE}: {exc}"
+        ) from exc
+    return None
 
 
 def assert_modules_cache_ready() -> None:
@@ -184,24 +249,94 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def list_snapshot_files(snapshot_dir: Path) -> dict[str, Path]:
-    """Map relative POSIX paths -> absolute paths for every file under the snapshot.
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
-    The integrity manifest itself is excluded so it is not self-referential.
-    Symlinks are followed (HF hub may use them); only regular files after
-    resolve are included.
+
+def _allowed_symlink_root(snapshot_dir: Path) -> Path:
+    """HF hub puts blobs next to ``snapshots/``; allow symlink targets under model root."""
+    # snapshot_dir = <model>/snapshots/<rev> → model root is parent.parent
+    try:
+        return snapshot_dir.resolve().parent.parent
+    except OSError:
+        return snapshot_dir.resolve()
+
+
+def list_snapshot_files(snapshot_dir: Path) -> dict[str, Path]:
+    """Map relative POSIX paths -> paths for every certified file under the snapshot.
+
+    Enumerates with ``os.scandir`` recursion (``follow_symlinks=False``) so
+    symlink directories are not silently skipped or followed into attacker trees
+    (A-10). Classification:
+
+    * regular file → include (hash later)
+    * symlink whose target resolves to a regular file inside the HF model tree
+      (``snapshots/../`` including ``blobs/``) → include
+    * anything else (dir symlink, out-of-tree symlink, special file) → fail closed
+
+    The integrity manifest itself is excluded so it is not self-referential in
+    the inventory set.
     """
     files: dict[str, Path] = {}
     if not snapshot_dir.is_dir():
         return files
-    for path in sorted(snapshot_dir.rglob("*")):
-        if not path.is_file():
-            continue
-        rel = path.relative_to(snapshot_dir).as_posix()
-        if rel == MANIFEST_FILENAME:
-            continue
-        files[rel] = path
-    return files
+
+    allowed_root = _allowed_symlink_root(snapshot_dir)
+
+    def _visit(current: Path) -> None:
+        try:
+            entries = list(os.scandir(current))
+        except OSError as exc:
+            raise CacheIntegrityError(
+                f"VLM cache gate failed: cannot enumerate snapshot directory "
+                f"{current}: {exc}. {_seed_hint()}"
+            ) from exc
+        for entry in entries:
+            path = Path(entry.path)
+            try:
+                rel = path.relative_to(snapshot_dir).as_posix()
+            except ValueError:
+                raise CacheIntegrityError(
+                    f"VLM cache gate failed: snapshot entry escaped tree: {path}"
+                ) from None
+            if entry.is_symlink():
+                try:
+                    target = path.resolve(strict=True)
+                except OSError as exc:
+                    raise CacheIntegrityError(
+                        f"VLM cache gate failed: broken symlink in snapshot: {rel} "
+                        f"({exc}). {_seed_hint()}"
+                    ) from exc
+                try:
+                    target.relative_to(allowed_root)
+                except ValueError as exc:
+                    raise CacheIntegrityError(
+                        f"VLM cache gate failed: symlink {rel} resolves outside "
+                        f"the HF model tree ({target} not under {allowed_root}). "
+                        f"{_seed_hint()}"
+                    ) from exc
+                if not target.is_file():
+                    raise CacheIntegrityError(
+                        f"VLM cache gate failed: symlink {rel} does not resolve "
+                        f"to a regular file ({target}). {_seed_hint()}"
+                    )
+                if rel == MANIFEST_FILENAME:
+                    continue
+                files[rel] = path
+            elif entry.is_file(follow_symlinks=False):
+                if rel == MANIFEST_FILENAME:
+                    continue
+                files[rel] = path
+            elif entry.is_dir(follow_symlinks=False):
+                _visit(path)
+            else:
+                raise CacheIntegrityError(
+                    f"VLM cache gate failed: unsupported snapshot entry type: {rel}. "
+                    f"{_seed_hint()}"
+                )
+
+    _visit(snapshot_dir)
+    return dict(sorted(files.items()))
 
 
 def write_manifest(snapshot_dir: Path, *, manifest_path: Path | None = None) -> Path:
@@ -209,6 +344,7 @@ def write_manifest(snapshot_dir: Path, *, manifest_path: Path | None = None) -> 
 
     TRUST-ESTABLISHING: this certifies the current on-disk contents. Do not run
     it to silence a failing gate — only against a freshly seeded, verified tree.
+    Prints the detached trust pin (sha256 of the manifest bytes) for image bake.
     """
     if not snapshot_dir.is_dir():
         raise CacheIntegrityError(
@@ -221,12 +357,18 @@ def write_manifest(snapshot_dir: Path, *, manifest_path: Path | None = None) -> 
         )
     payload = {rel: sha256_file(path) for rel, path in files.items()}
     out = manifest_path if manifest_path is not None else snapshot_dir / MANIFEST_FILENAME
-    out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    out.write_text(text, encoding="utf-8")
     return out
 
 
+def manifest_content_sha256(manifest_path: Path) -> str:
+    """sha256 of the manifest file bytes (detached root-of-trust pin value)."""
+    return sha256_file(manifest_path)
+
+
 def _seed_hint() -> str:
-    return f"Fix: seed outside the offline runtime-vlm image with `{SEED_COMMAND}`."
+    return f"Fix: {SEED_HINT_NOTE} `{SEED_COMMAND}`."
 
 
 def assert_remote_code_present(snapshot_dir: Path, on_disk: dict[str, Path]) -> None:
@@ -254,6 +396,22 @@ def assert_remote_code_present(snapshot_dir: Path, on_disk: dict[str, Path]) -> 
             f"{snapshot_dir} (expected modeling_*.py / processing_*.py / "
             "configuration_*.py). Florence-2 offline load execs these .py files; "
             f"copying only safetensors is not enough. {_seed_hint()}"
+        )
+
+
+def assert_manifest_trust_pin(manifest_file: Path) -> None:
+    """When a detached pin is configured, require the on-disk manifest sha256 match."""
+    pin = resolve_manifest_trust_pin()
+    if pin is None:
+        return
+    actual = manifest_content_sha256(manifest_file)
+    if actual != pin:
+        raise CacheIntegrityError(
+            f"VLM cache gate failed: manifest trust pin mismatch for {manifest_file}: "
+            f"expected {pin}, got {actual}. The inventory inside the volume does not "
+            f"match the image-baked root of trust ({MANIFEST_SHA256_ENV} or "
+            f"{MANIFEST_SHA256_FILE}). Re-seed and re-bake the pin; do not rewrite "
+            f"the pin to silence this. {_seed_hint()}"
         )
 
 
@@ -286,6 +444,9 @@ def verify_snapshot(snapshot_dir: Path, *, manifest_path: Path | None = None) ->
             "`python -m scripts.verify_vlm_cache --write-manifest` once "
             f"(trust-establishing; never re-run to silence a failing gate). {_seed_hint()}"
         )
+
+    # Detached root of trust (A-03 / V-04): pin the manifest itself outside the volume.
+    assert_manifest_trust_pin(manifest_file)
 
     try:
         raw = json.loads(manifest_file.read_text(encoding="utf-8"))
@@ -344,18 +505,56 @@ def verify_snapshot(snapshot_dir: Path, *, manifest_path: Path | None = None) ->
     assert_remote_code_present(snapshot_dir, on_disk)
 
 
+def _require_vlm_cache_opt_in() -> bool:
+    raw = (os.environ.get(REQUIRE_VLM_CACHE_ENV) or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def assert_vlm_hub_weak(hub_cache: Path, *, florence_spec) -> None:
+    """Weaker VLM-image check when the active adapter is not LOCAL_CPU (S3-A-07).
+
+    * Mounted hub root (explicit HF_* env) must be non-empty.
+    * If the default Florence snapshot dir exists, it must match its manifest.
+    """
+    if not hub_cache.is_dir():
+        raise CacheIntegrityError(
+            f"VLM cache gate failed: VLM image HF hub cache missing: {hub_cache}. "
+            f"Mount a seeded host cache or set HF_HUB_CACHE. {_seed_hint()}"
+        )
+    # Non-empty: any file/dir entry other than '.' 
+    try:
+        next(hub_cache.iterdir())
+    except StopIteration as exc:
+        raise CacheIntegrityError(
+            f"VLM cache gate failed: VLM image HF hub cache is empty: {hub_cache}. "
+            f"Seed weights on the host and mount them read-only. {_seed_hint()}"
+        ) from exc
+    except OSError as exc:
+        raise CacheIntegrityError(
+            f"VLM cache gate failed: cannot read VLM HF hub cache {hub_cache}: {exc}. "
+            f"{_seed_hint()}"
+        ) from exc
+
+    if florence_spec is not None and florence_spec.model_id and florence_spec.model_revision:
+        snap = resolve_snapshot_dir(
+            florence_spec.model_id, florence_spec.model_revision, hub_cache=hub_cache
+        )
+        if snap.is_dir():
+            verify_snapshot(snap)
+
+
 def resolve_verify_spec():
     """Resolve which ProfileSpec the gate must verify, or (None, skip_reason).
 
-    Only profiles that actually need the Florence offline pin run the gate:
+    Full Florence offline pin (snapshot + modules + optional trust pin):
 
-    1. Active profile is LOCAL_CPU → verify that profile's pin (+ module cache).
-    2. Else skip — ``seeded``, ``gpu_qwen30b``, and other non-Florence adapters
-       must boot on the VLM image without demanding a Florence snapshot (D7).
-       Forcing ``florence_small`` on every VLM boot made non-Florence adapters
-       exit 1 under ``set -eu`` and kill the container.
+    1. Active profile is LOCAL_CPU → verify that profile's pin.
+    2. ``ACX_REQUIRE_VLM_CACHE=1`` opt-in → same full pin (intent, not image id).
+    3. Else non-LOCAL_CPU on a VLM image with explicit HF cache env → weak hub
+       check (S3-A-07); may still raise ``CacheIntegrityError``.
+    4. Else skip — ``seeded`` / ``gpu_qwen30b`` without a mounted cache must boot.
     """
-    from scene.config.profiles import get_profile_spec
+    from scene.config.profiles import DescriptionProfile, get_profile_spec
     from scene.config.settings import DescriptionSettings
     from scene.domain.description import DescriptionAdapterKind
 
@@ -363,8 +562,22 @@ def resolve_verify_spec():
     spec = get_profile_spec(settings.profile)
     if spec.adapter_kind is DescriptionAdapterKind.LOCAL_CPU:
         return spec, None
+    if _require_vlm_cache_opt_in():
+        # Opt-in forces the default Florence LOCAL_CPU pin regardless of adapter.
+        florence = get_profile_spec(DescriptionProfile.FLORENCE_SMALL)
+        return florence, None
 
     variant = resolve_image_variant_label()
+    if variant == ImageVariant.VLM.value and hf_cache_explicitly_configured():
+        # Weak path: raise on empty hub / bad present snapshot; otherwise skip.
+        florence = get_profile_spec(DescriptionProfile.FLORENCE_SMALL)
+        assert_vlm_hub_weak(resolve_hf_hub_cache(), florence_spec=florence)
+        return None, (
+            f"VLM cache gate: weak hub check ok; full Florence pin skipped "
+            f"(profile={settings.profile.value!r} "
+            f"adapter_kind={spec.adapter_kind.value!r} image_variant={variant!r})"
+        )
+
     return None, (
         f"VLM cache gate skipped: profile={settings.profile.value!r} "
         f"adapter_kind={spec.adapter_kind.value!r} does not need the Florence "
@@ -376,6 +589,9 @@ def run_gate(*, write_manifest_mode: bool = False, hub_cache: Path | None = None
     """CLI body: verify (or write-manifest) unless the narrow skip case applies."""
     try:
         spec, skip_reason = resolve_verify_spec()
+    except CacheIntegrityError as exc:
+        print(str(exc), file=sys.stderr)
+        return EXIT_FAIL
     except Exception as exc:  # noqa: BLE001 - gate must fail closed on config errors
         print(f"VLM cache gate failed: could not resolve description profile: {exc}", file=sys.stderr)
         return EXIT_FAIL
@@ -406,7 +622,12 @@ def run_gate(*, write_manifest_mode: bool = False, hub_cache: Path | None = None
                 file=sys.stderr,
             )
             out = write_manifest(snapshot)
+            pin = manifest_content_sha256(out)
             print(f"Wrote integrity manifest: {out} ({len(json.loads(out.read_text()))} files)")
+            print(
+                f"Detached trust pin (bake into image): {MANIFEST_SHA256_ENV}={pin} "
+                f"or write that hex to {MANIFEST_SHA256_FILE}"
+            )
             return EXIT_OK
         verify_snapshot(snapshot)
         # Module cache is required for trust_remote_code imports at inference
@@ -430,9 +651,10 @@ def main(argv: list[str] | None = None) -> int:
         description=(
             "Fail-closed integrity gate for the Florence LOCAL_CPU snapshot under HF_HOME "
             "and the writable HF_MODULES_CACHE used by trust_remote_code. "
-            "Runs only when the active profile is LOCAL_CPU (non-Florence adapters skip). "
-            "No args: verify. --write-manifest: certify current disk contents "
-            "(trust-establishing)."
+            "Full pin runs when the active profile is LOCAL_CPU (or ACX_REQUIRE_VLM_CACHE=1). "
+            "Non-Florence adapters on the VLM image get a weaker non-empty hub check when "
+            "HF_HOME/HF_HUB_CACHE is set. No args: verify. --write-manifest: certify current "
+            "disk contents (trust-establishing)."
         )
     )
     parser.add_argument(

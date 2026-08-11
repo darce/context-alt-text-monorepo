@@ -147,10 +147,15 @@ class Audience(StrEnum):
 
 
 class ScoreVerdict(StrEnum):
-    """Machine-readable pass/fail for a scored caption+face report (VLM-6 S2A)."""
+    """Machine-readable pass/fail for a scored caption+face report (VLM-6 S2A).
+
+    ``pass_ungated`` is reserved for ``--rubric-gate skip`` runs that clear every
+    other exit gate: the artifact must not be readable as a gated pass (F1d-1).
+    """
 
     PASS = "pass"
     FAIL = "fail"
+    PASS_UNGATED = "pass_ungated"
 
 
 # Floor for faces.identification wrong-name rate over scored images.
@@ -405,28 +410,79 @@ def build_score_verdict(
     *,
     rubric_gate: str = "enforce",
 ) -> dict[str, Any]:
-    """Build the machine-readable scored verdict block (VLM-6 S2A).
+    """Build the machine-readable scored verdict block (VLM-6 S2A / F1d-1).
 
-    Only the wrong-name floor is a fail reason here. ``insertion_rate``,
-    ``mean_gated_score``, and ``must_right_failed_images`` are reported for
-    operators; the CLI must-right exit gate is controlled by ``rubric_gate``
-    (enforce|skip) and is recorded so a skipped run is never readable as a
-    gated pass from the artifact alone (F1b-2 / F1-12).
+    Every condition that forces a non-zero ``score`` exit is folded into
+    ``reasons`` here so the persisted artifact cannot report ``pass`` while the
+    process exits 1 (OBS-04). ``insertion_rate``, ``mean_gated_score``, and
+    ``must_right_failed_images`` remain reported for operators. Schema-hard-key
+    failures are applied by the CLI before serialisation when report fields are
+    missing (cannot be known inside a well-formed score_run_record result).
+
+    ``rubric_gate=skip`` bypasses only the must-right failures reason; a clean
+    skip run persists ``pass_ungated`` so it is never readable as a gated pass.
     """
-    rate = face_wrong_name_rate(scored)
     reasons: list[str] = []
+    counts = scored.get("counts") or {}
+    caption = scored.get("caption") or {}
+    ident = (scored.get("faces") or {}).get("identification") or {}
+
+    failed = int(counts.get("failed") or 0)
+    if failed > 0:
+        reasons.append(f"failed-items: {failed} item(s) not scored")
+
+    media_id_missing = int(counts.get("media_id_missing") or 0)
+    media_id_extra = int(counts.get("media_id_extra") or 0)
+    if media_id_missing or media_id_extra:
+        reasons.append(
+            f"truncation: media-id multiset differs "
+            f"(missing={media_id_missing}, extra={media_id_extra})"
+        )
+
+    fetch_manifest_sha = (scored.get("provenance") or {}).get("manifest_sha256")
+    if not fetch_manifest_sha:
+        reasons.append(
+            "manifest-mismatch: run-record provenance missing fetch-time manifest_sha256"
+        )
+
+    must_right_defined = int(caption.get("must_right_defined_images") or 0)
+    easy_wrong_defined = int(caption.get("easy_wrong_defined_images") or 0)
+    if must_right_defined == 0:
+        reasons.append("empty-rubric: must_right is vacuous corpus-wide")
+    if easy_wrong_defined == 0:
+        reasons.append("empty-rubric: easy_wrong is vacuous corpus-wide")
+
+    must_right_failed = int(caption.get("must_right_failed_images") or 0)
+    # enforce only — skip is an explicit operator exemption (F1b-2 / F1-12).
+    if rubric_gate != "skip" and must_right_failed > 0:
+        reasons.append(
+            f"must-right failures: {must_right_failed} image(s) failed Must-Right"
+        )
+
+    # Vacuity only when images were scored but none entered identification
+    # (recognition_enabled false). All-failed runs are the failed-items class.
+    scored_n = int(counts.get("scored") or 0)
+    identification_evaluated = int(ident.get("evaluated_images") or 0)
+    if scored_n > 0 and identification_evaluated == 0:
+        reasons.append("wrong-name floor vacuity: evaluated_images=0")
+
+    rate = face_wrong_name_rate(scored)
     if rate > WRONG_NAME_RATE_FLOOR:
-        ident = scored["faces"]["identification"]
         wrong_n = _total_wrong_name_count(ident)
         ignored_n = len(ident.get("ignored_wrong_names") or [])
-        scored_n = int(scored["counts"]["scored"])
         reasons.append(
             f"wrong_name_rate={rate:.4f} exceeds floor={WRONG_NAME_RATE_FLOOR} "
             f"(wrong_names={wrong_n}, ignored={ignored_n}, scored={scored_n})"
         )
-    caption = scored.get("caption") or {}
+
+    if reasons:
+        verdict_value = ScoreVerdict.FAIL.value
+    elif rubric_gate == "skip":
+        verdict_value = ScoreVerdict.PASS_UNGATED.value
+    else:
+        verdict_value = ScoreVerdict.PASS.value
     return {
-        "verdict": (ScoreVerdict.FAIL if reasons else ScoreVerdict.PASS).value,
+        "verdict": verdict_value,
         "reasons": reasons,
         "wrong_name_rate": round(rate, 4),
         "wrong_name_rate_floor": WRONG_NAME_RATE_FLOOR,

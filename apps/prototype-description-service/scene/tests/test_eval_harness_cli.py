@@ -1221,6 +1221,9 @@ def test_score_guard_rubric_gate_skip_bypasses_must_right_gate(tmp_path, monkeyp
     )
     report = json.loads(record_path.with_name("run-seeded-shape-report.json").read_text())
     assert report["verdict"]["rubric_gate"] == "skip"
+    # F1d-1: skip must not persist a bare gated pass (OBS-04 overclaim).
+    assert report["verdict"]["verdict"] == "pass_ungated"
+    assert report["verdict"]["must_right_failed_images"] > 0
 
 
 def test_score_report_records_rubric_gate_flag(tmp_path, monkeypatch):
@@ -1778,6 +1781,304 @@ def test_score_recognition_disabled_corpus_fails_wrong_name_floor_vacuity(
     assert ident["evaluated_images"] == 0
     assert len(ident["excluded_images"]) == 37
     assert ident["wrong_names"] == []
+    # F1d-1: vacuity must persist fail (pre-fix left verdict=pass while exit 1).
+    assert report["verdict"]["verdict"] == "fail"
+    assert any("wrong-name floor vacuity" in r for r in report["verdict"]["reasons"])
+
+
+# --- VLM-6 S2A F1d-1: persisted verdict encodes every exit condition (OBS-04) ---
+
+
+def _assert_on_disk_fail_reason(report: dict, *, must_contain: str, must_not: tuple[str, ...]) -> None:
+    """On-disk artifact (not stdout) is the contract: fail + class-unique reason."""
+    assert report["verdict"]["verdict"] == "fail"
+    reasons = report["verdict"]["reasons"]
+    assert reasons, "fail verdict must list reasons"
+    blob = " | ".join(reasons).lower()
+    assert must_contain.lower() in blob
+    for other in must_not:
+        assert other.lower() not in blob, f"reason class leaked: {other!r} in {reasons!r}"
+
+
+def test_score_persisted_verdict_control_pass_on_real_golden(tmp_path, monkeypatch):
+    """F1d-1 discrimination control: clean real golden run persists pass, exits 0."""
+    golden, record = _real_golden_good_record()
+    record_path = tmp_path / "run-control-pass.json"
+    record_path.write_text(json.dumps(record))
+    monkeypatch.chdir(tmp_path)
+    assert main(["score", "--manifest", str(golden), "--run-record", str(record_path)]) is None
+    report = json.loads(record_path.with_name("run-control-pass-report.json").read_text())
+    assert report["verdict"]["verdict"] == "pass"
+    assert report["verdict"]["reasons"] == []
+    assert report["verdict"]["rubric_gate"] == "enforce"
+    assert report["counts"]["scored"] == 37
+
+
+def test_score_persisted_verdict_fail_failed_items_real_golden(tmp_path, monkeypatch):
+    """F1d-1: failed-items gate → on-disk verdict fail + reasons (real golden)."""
+    import copy
+
+    golden, record = _real_golden_good_record()
+    record = copy.deepcopy(record)
+    record["items"][0]["error"] = "FileNotFoundError: missing"
+    record["items"][0]["describe"] = None
+    record["items"][0]["identities"] = []
+    record_path = tmp_path / "run-fail-items.json"
+    record_path.write_text(json.dumps(record))
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(golden), "--run-record", str(record_path)])
+    assert excinfo.value.code != 0
+    assert "failed-items" in str(excinfo.value).lower()
+    report = json.loads(record_path.with_name("run-fail-items-report.json").read_text())
+    _assert_on_disk_fail_reason(
+        report,
+        must_contain="failed-items",
+        must_not=(
+            "truncation",
+            "manifest-mismatch",
+            "empty-rubric",
+            "must-right failures",
+            "wrong-name floor vacuity",
+            "schema error",
+        ),
+    )
+
+
+def test_score_persisted_verdict_fail_truncation_real_golden(tmp_path, monkeypatch):
+    """F1d-1: truncation gate → on-disk fail + truncation reason (real golden 5/37)."""
+    import copy
+
+    golden, record = _real_golden_good_record()
+    record = copy.deepcopy(record)
+    record["items"] = record["items"][:5]
+    record_path = tmp_path / "run-trunc.json"
+    record_path.write_text(json.dumps(record))
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(golden), "--run-record", str(record_path)])
+    assert excinfo.value.code != 0
+    assert "truncation" in str(excinfo.value).lower()
+    report = json.loads(record_path.with_name("run-trunc-report.json").read_text())
+    _assert_on_disk_fail_reason(
+        report,
+        must_contain="truncation",
+        must_not=(
+            "failed-items",
+            "manifest-mismatch",
+            "empty-rubric",
+            "must-right failures",
+            "wrong-name floor vacuity",
+            "schema error",
+        ),
+    )
+
+
+def test_score_persisted_verdict_fail_manifest_mismatch_real_golden(tmp_path, monkeypatch):
+    """F1d-1: missing fetch-time sha → on-disk fail + manifest-mismatch reason."""
+    import copy
+
+    golden, record = _real_golden_good_record()
+    record = copy.deepcopy(record)
+    del record["provenance"]["manifest_sha256"]
+    record_path = tmp_path / "run-no-sha.json"
+    record_path.write_text(json.dumps(record))
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(golden), "--run-record", str(record_path)])
+    assert excinfo.value.code != 0
+    assert "manifest-mismatch" in str(excinfo.value).lower()
+    report = json.loads(record_path.with_name("run-no-sha-report.json").read_text())
+    _assert_on_disk_fail_reason(
+        report,
+        must_contain="manifest-mismatch",
+        must_not=(
+            "failed-items",
+            "truncation",
+            "empty-rubric",
+            "must-right failures",
+            "wrong-name floor vacuity",
+            "schema error",
+        ),
+    )
+
+
+def test_score_persisted_verdict_fail_empty_rubric_must_right_real_golden(tmp_path, monkeypatch):
+    """F1d-1: must_right emptied corpus-wide → on-disk fail + empty-rubric reason."""
+    import copy
+
+    from scripts.eval_harness.cli import _manifest_sha
+    from scripts.eval_harness.manifest import load_manifest
+
+    raw = json.loads(_GOLDEN_SEED.read_text())
+    man = copy.deepcopy(raw)
+    for entry in man["entries"]:
+        entry["must_right"] = []
+    man_path = tmp_path / "golden-no-mr.json"
+    man_path.write_text(json.dumps(man))
+    manifest = load_manifest(str(man_path))
+    msha = _manifest_sha(manifest)
+    _, record = _real_golden_good_record()
+    record = copy.deepcopy(record)
+    record["provenance"]["manifest_sha256"] = msha
+    # Align media_ids/paths already match golden; re-point provenance only.
+    record_path = tmp_path / "run-empty-mr.json"
+    record_path.write_text(json.dumps(record))
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(man_path), "--run-record", str(record_path)])
+    assert excinfo.value.code != 0
+    assert "empty-rubric" in str(excinfo.value).lower()
+    assert "must_right" in str(excinfo.value).lower()
+    report = json.loads(record_path.with_name("run-empty-mr-report.json").read_text())
+    _assert_on_disk_fail_reason(
+        report,
+        must_contain="empty-rubric",
+        must_not=(
+            "failed-items",
+            "truncation",
+            "manifest-mismatch",
+            "must-right failures",
+            "wrong-name floor vacuity",
+            "schema error",
+        ),
+    )
+    assert any("must_right" in r for r in report["verdict"]["reasons"])
+
+
+def test_score_persisted_verdict_fail_must_right_real_golden(tmp_path, monkeypatch):
+    """F1d-1: caption corruption → on-disk fail + must-right failures reason."""
+    import copy
+
+    golden, record = _real_golden_good_record()
+    record = copy.deepcopy(record)
+    garbage = "xxxxx yyyyy zzzzz qqqqq"
+    for item in record["items"]:
+        item["describe"] = {
+            "alt_text_draft": garbage,
+            "named_draft": garbage,
+            "generic_draft": garbage,
+            "visual_facts": {"objects": []},
+        }
+    record_path = tmp_path / "run-mr-fail.json"
+    record_path.write_text(json.dumps(record))
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(golden), "--run-record", str(record_path)])
+    assert excinfo.value.code != 0
+    assert "must-right failures" in str(excinfo.value).lower()
+    report = json.loads(record_path.with_name("run-mr-fail-report.json").read_text())
+    _assert_on_disk_fail_reason(
+        report,
+        must_contain="must-right failures",
+        must_not=(
+            "failed-items",
+            "truncation",
+            "manifest-mismatch",
+            "empty-rubric",
+            "wrong-name floor vacuity",
+            "schema error",
+        ),
+    )
+
+
+def test_score_persisted_verdict_fail_wrong_name_floor_real_golden(tmp_path, monkeypatch):
+    """F1d-1: 100% wrong names → on-disk fail + wrong_name_rate reason."""
+    golden, record, _ignore = _real_golden_wrong_name_record()
+    record_path = tmp_path / "run-wn-floor.json"
+    record_path.write_text(json.dumps(record))
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(golden), "--run-record", str(record_path)])
+    assert excinfo.value.code != 0
+    assert "wrong-name floor" in str(excinfo.value).lower()
+    report = json.loads(record_path.with_name("run-wn-floor-report.json").read_text())
+    _assert_on_disk_fail_reason(
+        report,
+        must_contain="wrong_name_rate",
+        must_not=(
+            "failed-items",
+            "truncation",
+            "manifest-mismatch",
+            "empty-rubric",
+            "must-right failures",
+            "wrong-name floor vacuity",
+            "schema error",
+        ),
+    )
+
+
+def test_score_persisted_verdict_fail_schema_error_real_golden(tmp_path, monkeypatch):
+    """F1d-1: schema drift → on-disk fail + schema error reason (written before exit)."""
+    import copy
+
+    golden, record = _real_golden_good_record()
+
+    def _drop(scored):
+        scored = copy.deepcopy(scored)
+        scored["caption"].pop("must_right_failed_images", None)
+        return scored
+
+    _corrupt_score_run_record(monkeypatch, _drop)
+    record_path = tmp_path / "run-schema.json"
+    record_path.write_text(json.dumps(record))
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(golden), "--run-record", str(record_path)])
+    _assert_schema_error_only(excinfo, "caption.must_right_failed_images")
+    report = json.loads(record_path.with_name("run-schema-report.json").read_text())
+    _assert_on_disk_fail_reason(
+        report,
+        must_contain="schema error",
+        must_not=(
+            "failed-items",
+            "truncation",
+            "manifest-mismatch",
+            "empty-rubric",
+            "must-right failures",
+            "wrong-name floor vacuity",
+        ),
+    )
+    assert any("caption.must_right_failed_images" in r for r in report["verdict"]["reasons"])
+
+
+def test_score_persisted_verdict_pass_ungated_on_rubric_gate_skip(tmp_path, monkeypatch):
+    """F1d-1: --rubric-gate skip persists pass_ungated (not bare pass) on real golden."""
+    import copy
+
+    golden, record = _real_golden_good_record()
+    record = copy.deepcopy(record)
+    # Seeded-shape captions miss must_right but skip bypasses that gate only.
+    for item in record["items"]:
+        item["describe"] = {
+            "alt_text_draft": "A human standing outdoors near greenery.",
+            "named_draft": "A human standing outdoors near greenery.",
+            "generic_draft": "A human standing outdoors near greenery.",
+            "visual_facts": {"objects": []},
+        }
+        item["identities"] = []
+    record_path = tmp_path / "run-ungated.json"
+    record_path.write_text(json.dumps(record))
+    monkeypatch.chdir(tmp_path)
+    assert (
+        main(
+            [
+                "score",
+                "--manifest",
+                str(golden),
+                "--run-record",
+                str(record_path),
+                "--rubric-gate",
+                "skip",
+            ]
+        )
+        is None
+    )
+    report = json.loads(record_path.with_name("run-ungated-report.json").read_text())
+    assert report["verdict"]["verdict"] == "pass_ungated"
+    assert report["verdict"]["rubric_gate"] == "skip"
+    assert report["verdict"]["must_right_failed_images"] > 0
+    assert report["verdict"]["reasons"] == []
 
 
 # --- FIR-5 S5: face-bakeoff / score-face CLI surface ---

@@ -56,6 +56,8 @@ from .report import (
     WRONG_NAME_RATE_FLOOR,
     Audience,
     ReportError,
+    ScoreVerdict,
+    _markdown as _score_report_markdown,
     build_face_reports,
     build_reports,
     occlusion_inputs_from_record,
@@ -84,9 +86,14 @@ RUBRIC_GATE_SKIP = "skip"
 _SCORE_SCHEMA_ERROR_TOKEN = "score schema error"
 
 
+def _score_schema_error_message(dotted_path: str, expected: str) -> str:
+    """Class-unique schema-error exit text (never soft-falls through)."""
+    return f"{_SCORE_SCHEMA_ERROR_TOKEN}: {dotted_path} missing or not a {expected}"
+
+
 def _score_schema_error(dotted_path: str, expected: str) -> None:
     """Exit non-zero naming the missing/wrong-type dotted path (never falls through)."""
-    sys.exit(f"{_SCORE_SCHEMA_ERROR_TOKEN}: {dotted_path} missing or not a {expected}")
+    sys.exit(_score_schema_error_message(dotted_path, expected))
 
 
 def _hard_key(container: Mapping[str, Any] | None, *path: str, expected: str, check) -> Any:
@@ -102,6 +109,21 @@ def _hard_key(container: Mapping[str, Any] | None, *path: str, expected: str, ch
     return cur
 
 
+def _schema_hard_key_error(
+    container: Mapping[str, Any] | None, *path: str, expected: str, check
+) -> str | None:
+    """Return schema-error message when ``path`` is missing/wrong-type; else None."""
+    dotted = ".".join(path)
+    cur: Any = container
+    for key in path:
+        if not isinstance(cur, Mapping) or key not in cur:
+            return _score_schema_error_message(dotted, expected)
+        cur = cur[key]
+    if not check(cur):
+        return _score_schema_error_message(dotted, expected)
+    return None
+
+
 def _is_bool(value: Any) -> bool:
     return isinstance(value, bool)
 
@@ -109,6 +131,40 @@ def _is_bool(value: Any) -> bool:
 def _is_number(value: Any) -> bool:
     # bool is a subclass of int — reject it so True/False never soft-pass as 1/0.
     return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _fold_schema_errors_into_verdict(scored: dict[str, Any]) -> str | None:
+    """Hard-key gate inputs into the persisted verdict before serialisation (F1d-1).
+
+    Returns the first schema-error exit message when any required field is missing
+    or mistyped; mutates ``scored["verdict"]`` to ``fail`` with a class-unique
+    reason so the on-disk artifact cannot report pass while the process exits 1.
+    """
+    checks: list[tuple[tuple[str, ...], str, Any]] = [
+        (("provenance", "manifest_matches_fetch"), "bool", _is_bool),
+        (("caption", "must_right_failed_images"), "number", _is_number),
+        (("verdict", "wrong_name_rate"), "number", _is_number),
+    ]
+    first_msg: str | None = None
+    schema_reasons: list[str] = []
+    for path, expected, check in checks:
+        err = _schema_hard_key_error(scored, *path, expected=expected, check=check)
+        if err is None:
+            continue
+        if first_msg is None:
+            first_msg = err
+        # Machine-readable reason mirrors the exit token class (OBS-04).
+        schema_reasons.append(err)
+    if first_msg is None:
+        return None
+    verdict = dict(scored.get("verdict") or {})
+    prior = [r for r in (verdict.get("reasons") or []) if r not in schema_reasons]
+    verdict["verdict"] = ScoreVerdict.FAIL.value
+    verdict["reasons"] = schema_reasons + prior
+    scored["verdict"] = verdict
+    return first_msg
+
+
 RUBRIC_GATE_CHOICES = (RUBRIC_GATE_ENFORCE, RUBRIC_GATE_SKIP)
 
 
@@ -697,7 +753,9 @@ def _cmd_score(args: argparse.Namespace) -> None:
     # Harness-shakedown / seeded-stub runs must pass --rubric-gate skip explicitly;
     # never infer exemption from adapter/model_id (rg-009).
     rubric_gate = getattr(args, "rubric_gate", RUBRIC_GATE_ENFORCE) or RUBRIC_GATE_ENFORCE
-    json_doc, md_doc = build_reports(
+    # F1d-1 / OBS-04: score once, fold every exit condition into the verdict, THEN
+    # serialise. No gate may fire against a report that still claims pass.
+    scored = score_run_record(
         record,
         entries,
         ignore_list=ignore_list,
@@ -710,10 +768,22 @@ def _cmd_score(args: argparse.Namespace) -> None:
         # varied PYTHONHASHSEED (same shape as score-face). Same-process double
         # build_reports only caught intra-call nondeterminism and certified nothing.
         _check_score_determinism_cross_process(record_path, args.manifest)
+    # Schema hard-keys fold into the verdict before write so a drifted report
+    # field cannot leave a pass artifact on disk while exiting non-zero.
+    schema_exit = _fold_schema_errors_into_verdict(scored)
     base = record_path.with_suffix("")
     json_path, md_path = Path(f"{base}-report.json"), Path(f"{base}-report.md")
-    json_path.write_text(json_doc)
-    md_path.write_text(md_doc)
+    # JSON is the load-bearing Slice-2 artifact (OBS-04). Write it first so a
+    # schema-degraded document still leaves a fail verdict on disk even if the
+    # human markdown renderer cannot tolerate missing hard-keyed fields.
+    json_path.write_text(json.dumps(scored, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
+    try:
+        md_path.write_text(_score_report_markdown(scored))
+    except (KeyError, TypeError, AttributeError):
+        md_path.write_text(
+            "# score report\n\n"
+            "(markdown omitted: scored document is schema-degraded; see JSON verdict)\n"
+        )
     # VLM-6 S5 W1 (VLM6-C-01 / VLM6-F-03): audience-aware export. Additive — the
     # full LOCAL report above is always written (operator triage + the failure gate
     # below score the whole corpus); --audience public ALSO emits a redacted,
@@ -733,14 +803,6 @@ def _cmd_score(args: argparse.Namespace) -> None:
         public_json_path.write_text(public_json)
         public_md_path.write_text(public_md)
         print(public_md_path)
-    scored = score_run_record(
-        record,
-        entries,
-        ignore_list=ignore_list,
-        score_manifest_sha256=manifest_sha,
-        manifest_roster=roster,
-        rubric_gate=rubric_gate,
-    )
     print(md_path)
     verdict = scored.get("verdict") or {}
     print(
@@ -752,9 +814,13 @@ def _cmd_score(args: argparse.Namespace) -> None:
         f"wrong_name_rate_floor={verdict.get('wrong_name_rate_floor', WRONG_NAME_RATE_FLOOR)} "
         f"rubric_gate={rubric_gate}"
     )
+    if schema_exit is not None:
+        sys.exit(schema_exit)
     # Fail loud when any item was skipped from scoring (S7-01): a "passing" run
     # that dropped NFC-miss / remote errors must not look like full-corpus evidence.
     # Gate names are distinct so a red run says which corruption class fired (VLM-6 S2A).
+    # Exit messages stay class-unique; the on-disk verdict already encodes every
+    # fired gate in reasons (built before serialisation above).
     failed = int(scored["counts"]["failed"])
     if failed > 0:
         sys.exit(
@@ -778,7 +844,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
     # _manifest_sha hashes model_dump(), so label edits (e.g. Slice 2 face_boxes)
     # change the current-file hash and would permanently block re-scoring archived
     # baselines. provenance.manifest_matches_fetch remains informational in the
-    # report (still hard-keyed below so a rename cannot go silent). Self-consistency:
+    # report (still hard-keyed above so a rename cannot go silent). Self-consistency:
     # the run-record must carry its own fetch-time manifest_sha256 so the record is
     # attributable to a fetch-time corpus. Media-id coverage vs the score-time
     # manifest is the truncation gate above.
@@ -804,29 +870,10 @@ def _cmd_score(args: argparse.Namespace) -> None:
             f"score empty-rubric gate: easy_wrong is vacuous corpus-wide "
             f"(easy_wrong_defined_images=0); wrong-name trap is vacuous (see {json_path})"
         )
-    # F1-4 / r08116b50: hard-key the three gate inputs. Missing key or wrong type
-    # exits non-zero with a named schema error (never soft-default to pass).
-    # provenance.manifest_matches_fetch is informational post-F1-3 but still
-    # required as a bool so report schema drift cannot go silent.
-    _hard_key(scored, "provenance", "manifest_matches_fetch", expected="bool", check=_is_bool)
-    must_right_failed = int(
-        _hard_key(
-            scored,
-            "caption",
-            "must_right_failed_images",
-            expected="number",
-            check=_is_number,
-        )
-    )
-    wrong_name_rate = float(
-        _hard_key(
-            scored,
-            "verdict",
-            "wrong_name_rate",
-            expected="number",
-            check=_is_number,
-        )
-    )
+    # Schema hard-keys already folded above (pre-write). Re-read gate inputs from
+    # the validated scored dict for the remaining exit messages.
+    must_right_failed = int(scored["caption"]["must_right_failed_images"])
+    wrong_name_rate = float(scored["verdict"]["wrong_name_rate"])
     # F1b-2 / F1-12: simple must-right failures gate. Any failed must_right image
     # exits non-zero under --rubric-gate enforce (default). The F1-11 conjunction
     # (rate==1.0 ∧ mean_gated==0.0) was false-green on plain garbage against real
@@ -843,12 +890,13 @@ def _cmd_score(args: argparse.Namespace) -> None:
             f"score must-right failures gate: {must_right_failed} image(s) failed Must-Right "
             f"caption hard-gate (caption corruption / missing required names; see {json_path})"
         )
-    # F1-5 / EVAL-19: wrong-name floor is vacuous when zero images entered
-    # identification counting (recognition_enabled false corpus-wide). Distinct
-    # token from empty-rubric so a red run names the correct corruption class.
+    # F1-5 / EVAL-19: wrong-name floor is vacuous when images were scored but zero
+    # entered identification counting (recognition_enabled false corpus-wide).
+    # Distinct token from empty-rubric so a red run names the correct class.
     ident_block = (scored.get("faces") or {}).get("identification") or {}
     identification_evaluated = int(ident_block.get("evaluated_images") or 0)
-    if identification_evaluated == 0:
+    scored_n = int(scored["counts"]["scored"])
+    if scored_n > 0 and identification_evaluated == 0:
         excluded_n = len(ident_block.get("excluded_images") or [])
         sys.exit(
             f"score wrong-name floor vacuity gate: identification denominator is empty "

@@ -41,8 +41,23 @@ Makefile
 # Keep LICENSE.* + README under recognition/infrastructure/face_pipeline/models/.
 recognition/infrastructure/face_pipeline/models/*.onnx
 
-# VLM / HuggingFace weight caches are operator-provisioned on a volume mount
-# (/data/cache) for the runtime-vlm target — never bake multi-GB weights into
-# the build context.
-**/huggingface_cache/
-**/.cache/huggingface/
+# Model weights are operator-provisioned on the /data/cache volume mount for the
+# runtime-vlm target — never bake multi-GB weights into the build context.
+#
+# Exclude the artifact CLASSES, not cache directory names. `**/huggingface_cache/`
+# and `**/.cache/huggingface/` were tried first and matched nothing: the real
+# caches live at $HOME/.cache/huggingface (outside the context) and at the
+# in-container path HF_HOME=/data/cache/huggingface_cache, so neither could ever
+# appear here. A stray checkpoint dropped under scene/ or the service root was
+# the actual unguarded path (ORCH-LAUNCH-01-S1-RA-09 / RB-06).
+#
+# scripts/deploy/recognition-service.sh rsyncs this context to the build VM with
+# its own exclude list and does NOT read .dockerignore; keep the two in sync.
+# test_dockerignore_weight_exclusions.py asserts that parity.
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.gguf
+*.msgpack
+**/models--*/

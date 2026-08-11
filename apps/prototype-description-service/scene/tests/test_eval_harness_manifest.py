@@ -58,14 +58,14 @@ def test_v2_requires_base_caption_key(tmp_path):  # S6-01
     data = _valid_manifest_dict()
     del data["entries"][0]["base_caption"]
     with pytest.raises(ManifestError, match="base_caption"):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_v2_rejects_null_base_caption(tmp_path):  # VLMFIX-S3-03
     data = _valid_manifest_dict()
     data["entries"][0]["base_caption"] = None
     with pytest.raises(ManifestError, match="null base_caption|base_caption"):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def _write_manifest(tmp_path, data) -> str:
@@ -75,7 +75,7 @@ def _write_manifest(tmp_path, data) -> str:
 
 
 def test_valid_manifest_loads(tmp_path):
-    manifest = load_manifest(_write_manifest(tmp_path, _valid_manifest_dict()))
+    manifest = load_manifest(_write_manifest(tmp_path, _valid_manifest_dict()), skip_hash_verification=True)
     assert isinstance(manifest, GoldenManifest)
     assert len(manifest.entries) == 2
     assert manifest.entries[0].media_id == 1
@@ -84,42 +84,42 @@ def test_valid_manifest_loads(tmp_path):
 
 def test_missing_manifest_file_is_actionable(tmp_path):
     with pytest.raises(ManifestError, match="golden.json"):
-        load_manifest(str(tmp_path / "golden.json"))
+        load_manifest(str(tmp_path / "golden.json"), skip_hash_verification=True)
 
 
 def test_malformed_json_fails_fast(tmp_path):
     path = tmp_path / "golden.json"
     path.write_text("{not json")
     with pytest.raises(ManifestError):
-        load_manifest(str(path))
+        load_manifest(str(path), skip_hash_verification=True)
 
 
 def test_bad_sha256_rejected(tmp_path):
     data = _valid_manifest_dict()
     data["entries"][0]["sha256"] = "nothex"
     with pytest.raises(ManifestError, match="sha256"):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_duplicate_media_id_rejected(tmp_path):
     data = _valid_manifest_dict()
     data["entries"][1]["media_id"] = 1
     with pytest.raises(ManifestError, match="media_id"):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_identity_not_in_roster_rejected(tmp_path):
     data = _valid_manifest_dict()
     data["entries"][0]["present_identities"] = ["Nobody Known"]
     with pytest.raises(ManifestError, match="roster"):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_missing_required_entry_field_rejected(tmp_path):
     data = _valid_manifest_dict()
     del data["entries"][0]["media_id"]
     with pytest.raises(ManifestError):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_media_id_below_one_rejected(tmp_path):
@@ -128,7 +128,7 @@ def test_media_id_below_one_rejected(tmp_path):
     data = _valid_manifest_dict()
     data["entries"][0]["media_id"] = 0
     with pytest.raises(ManifestError):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_reference_fact_rejects_whitespace_only_phrases():
@@ -182,56 +182,56 @@ def test_duplicate_path_rejected(tmp_path):  # S1-04
     data = _valid_manifest_dict()
     data["entries"][1]["path"] = data["entries"][0]["path"]
     with pytest.raises(ManifestError, match="duplicate path"):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_empty_entries_rejected(tmp_path):  # S1-04
     data = _valid_manifest_dict()
     data["entries"] = []
     with pytest.raises(ManifestError, match="no entries"):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_unsupported_manifest_version_rejected(tmp_path):  # S1-04
     data = _valid_manifest_dict()
     data["manifest_version"] = 999
     with pytest.raises(ManifestError, match="manifest_version"):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_face_count_below_labeled_rejected(tmp_path):  # HARM-04 / S3-01 schema
     data = _valid_manifest_dict()
     data["entries"][0]["face_count"] = 0  # but present_identities has 1 name
     with pytest.raises(ManifestError, match="face_count"):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_must_right_name_not_in_roster_rejected(tmp_path):  # S1-05
     data = _valid_manifest_dict()
     data["entries"][0]["must_right"] = ["Nobody Known"]
     with pytest.raises(ManifestError, match="roster"):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_easy_wrong_name_not_in_roster_rejected(tmp_path):  # S1-05
     data = _valid_manifest_dict()
     data["entries"][0]["easy_wrong"] = ["Nobody Known"]
     with pytest.raises(ManifestError, match="roster"):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_unknown_entry_key_rejected(tmp_path):  # S1-05 extra='forbid'
     data = _valid_manifest_dict()
     data["entries"][0]["surprise"] = True
     with pytest.raises(ManifestError):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_policy_missing_recognition_enabled_rejected(tmp_path):  # S1-03
     data = _valid_manifest_dict()
     data["entries"][0]["policy"] = {"recogntion_enabled": True}  # typo -> extra key + missing required
     with pytest.raises(ManifestError):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_rubric_empty_warns(tmp_path):  # S1-02
@@ -240,7 +240,7 @@ def test_rubric_empty_warns(tmp_path):  # S1-02
         entry["must_right"] = []
         entry["easy_wrong"] = []
     with pytest.warns(RubricEmptyWarning):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_non_ascii_path_resolves_across_normalization_forms(tmp_path):  # S1-07
@@ -271,7 +271,7 @@ _DESIGNATED_STRANGER_MEDIA_ID = 38
 def _load_seed_manifest() -> GoldenManifest:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RubricEmptyWarning)
-        return load_manifest(_SEED_MANIFEST)
+        return load_manifest(_SEED_MANIFEST, skip_hash_verification=True)
 
 
 def test_seed_corpus_has_designated_stranger_entry():  # VLM-2C S1
@@ -320,7 +320,7 @@ def test_seed_corpus_reconciles_with_fixture_scan():  # VLM-2C S1
 def test_seed_corpus_caption_fixtures_populated():  # VLM-2C S2
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        manifest = load_manifest(_SEED_MANIFEST)
+        manifest = load_manifest(_SEED_MANIFEST, skip_hash_verification=True)
     assert not [w for w in caught if issubclass(w.category, RubricEmptyWarning)], (
         "seed corpus must define Must-Right/Easy-Wrong rubrics (RubricEmptyWarning fired)"
     )
@@ -401,7 +401,7 @@ GOLDEN_38_MEDIA_IDS = frozenset(
 
 def test_legacy_entry_defaults_additive_fields(tmp_path):
     """A manifest predating Golden-100 loads; new fields default empty/None."""
-    manifest = load_manifest(_write_manifest(tmp_path, _valid_manifest_dict()))
+    manifest = load_manifest(_write_manifest(tmp_path, _valid_manifest_dict()), skip_hash_verification=True)
     e = manifest.entries[0]
     assert e.difficulty is None and e.domain is None
     assert e.reference_facts == [] and e.spatial_facts == [] and e.provenance is None
@@ -424,7 +424,7 @@ def test_golden100_fields_roundtrip(tmp_path):
             "provenance": {"source": "wikimedia", "license": "cc0", "url": "http://example/x"},
         }
     )
-    e = load_manifest(_write_manifest(tmp_path, data)).entries[0]
+    e = load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True).entries[0]
     assert e.difficulty.value == "hard" and e.domain.value == "mirrors"
     assert e.provenance.license.value == "cc0"
     false_facts = [f for f in e.reference_facts if f.polarity.value == "false"]
@@ -435,7 +435,7 @@ def test_golden100_fields_roundtrip(tmp_path):
 def test_reference_fact_phrases_fallback_to_text(tmp_path):
     data = _valid_manifest_dict()
     data["entries"][0]["reference_facts"] = [{"text": "a red bicycle", "kind": "object"}]
-    e = load_manifest(_write_manifest(tmp_path, data)).entries[0]
+    e = load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True).entries[0]
     assert e.reference_facts[0].match_targets() == ["a red bicycle"]
 
 
@@ -443,20 +443,20 @@ def test_unknown_domain_rejected(tmp_path):
     data = _valid_manifest_dict()
     data["entries"][0]["domain"] = "not_a_real_stratum"
     with pytest.raises(ManifestError):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_spatial_binary_relation_requires_reference(tmp_path):
     data = _valid_manifest_dict()
     data["entries"][0]["spatial_facts"] = [{"subject": "Alice Example", "relation": "left_of"}]
     with pytest.raises(ManifestError):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_golden38_subset_pin():
     """The historical golden-38 media_ids are frozen (subset-pin, plan S1)."""
     path = os.path.join(os.path.dirname(__file__), "seed", "golden.json")
-    manifest = load_manifest(path)
+    manifest = load_manifest(path, skip_hash_verification=True)
     ids = {e.media_id for e in manifest.entries}
     legacy = {i for i in ids if i <= 38}
     assert legacy == GOLDEN_38_MEDIA_IDS, (
@@ -498,7 +498,7 @@ def test_legacy_domain_without_tags_or_cohort_loads(tmp_path):
     data = _valid_manifest_dict()
     data["entries"][0]["domain"] = "people"
     # deliberately omit tags / demographic_cohort / roster_cohorts
-    manifest = load_manifest(_write_manifest(tmp_path, data))
+    manifest = load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
     e = manifest.entries[0]
     assert e.domain.value == "people"
     assert e.tags == []
@@ -536,14 +536,14 @@ def test_unknown_tag_string_rejected_via_load_manifest(tmp_path):
     data = _valid_manifest_dict()
     data["entries"][0]["tags"] = ["wearing_hat"]
     with pytest.raises(ManifestError, match="schema violation"):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_roster_cohorts_key_outside_roster_rejected(tmp_path):
     data = _valid_manifest_dict()
     data["roster_cohorts"] = {"Nobody Known": "cohort-a"}
     with pytest.raises(ManifestError, match="Nobody Known"):
-        load_manifest(_write_manifest(tmp_path, data))
+        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
 def test_valid_roster_cohorts_loads(tmp_path):
@@ -553,9 +553,149 @@ def test_valid_roster_cohorts_loads(tmp_path):
         "Bob Example": "cohort-b",
     }
     data["entries"][0]["demographic_cohort"] = "cohort-a"
-    manifest = load_manifest(_write_manifest(tmp_path, data))
+    manifest = load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
     assert manifest.roster_cohorts == {
         "Alice Example": "cohort-a",
         "Bob Example": "cohort-b",
     }
     assert manifest.entries[0].demographic_cohort == "cohort-a"
+
+
+# --- VLM6-R2-05: image sha256 pin verified by default (OBS-04) -----------------
+
+
+def test_load_manifest_requires_hash_verification_by_default(tmp_path, monkeypatch):
+    """Without images_dir / GOLDEN_IMAGES_DIR / explicit skip, load is refuse-loud.
+
+    Pre-fix: load_manifest silently skipped hash checks when images_dir was omitted
+    (only _cmd_fetch passed it). That let every offline path drift from pinned
+    hashes without a word (VLM6-R2-05).
+    """
+    monkeypatch.delenv("GOLDEN_IMAGES_DIR", raising=False)
+    path = _write_manifest(tmp_path, _valid_manifest_dict())
+    with pytest.raises(ManifestError, match="skip_hash_verification=True|GOLDEN_IMAGES_DIR|images_dir"):
+        load_manifest(path)
+
+
+def test_load_manifest_skip_hash_verification_allows_metadata_only(tmp_path, monkeypatch):
+    monkeypatch.delenv("GOLDEN_IMAGES_DIR", raising=False)
+    manifest = load_manifest(
+        _write_manifest(tmp_path, _valid_manifest_dict()),
+        skip_hash_verification=True,
+    )
+    assert len(manifest.entries) == 2
+
+
+def test_load_manifest_verifies_via_golden_images_dir_env(tmp_path, monkeypatch):
+    data = _valid_manifest_dict()
+    images = tmp_path / "images"
+    (images / "mock_images").mkdir(parents=True)
+    (images / "mock_images" / "scene-001.jpg").write_bytes(b"fake image bytes")
+    (images / "mock_images" / "scene-002.jpg").write_bytes(b"fake image bytes")
+    monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(images))
+    manifest = load_manifest(_write_manifest(tmp_path, data))
+    assert len(manifest.entries) == 2
+
+
+def test_resolve_verified_image_rejects_sha_drift(tmp_path):
+    from scripts.eval_harness.manifest import resolve_verified_image
+
+    data = _valid_manifest_dict()
+    entry = load_manifest(
+        _write_manifest(tmp_path, data), skip_hash_verification=True
+    ).entries[0]
+    images = tmp_path / "images"
+    (images / "mock_images").mkdir(parents=True)
+    (images / "mock_images" / "scene-001.jpg").write_bytes(b"tampered bytes")
+    with pytest.raises(ManifestError, match="sha256 mismatch|scene-001"):
+        resolve_verified_image(entry, images)
+
+
+def test_resolve_verified_image_returns_path_when_pin_matches(tmp_path):
+    from scripts.eval_harness.manifest import resolve_verified_image
+
+    data = _valid_manifest_dict()
+    entry = load_manifest(
+        _write_manifest(tmp_path, data), skip_hash_verification=True
+    ).entries[0]
+    images = tmp_path / "images"
+    (images / "mock_images").mkdir(parents=True)
+    target = images / "mock_images" / "scene-001.jpg"
+    target.write_bytes(b"fake image bytes")
+    assert resolve_verified_image(entry, images) == target
+
+
+# --- VLM6-R2-03: corpus field inventory + vacuous-metric refuse --------------
+
+
+def test_inventory_corpus_fields_reports_per_field_counts(tmp_path):
+    from scripts.eval_harness.manifest import inventory_corpus_fields
+
+    data = _valid_manifest_dict()
+    data["entries"][0]["domain"] = "faces"
+    data["entries"][0]["difficulty"] = "easy"
+    data["entries"][0]["tags"] = ["blur"]
+    # entry 1 left empty on all stratification fields
+    manifest = load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
+    inv = inventory_corpus_fields(manifest)
+    assert inv["domain"].total == 2 and inv["domain"].populated == 1
+    assert inv["difficulty"].populated == 1
+    assert inv["tags"].populated == 1
+    assert inv["reference_facts"].populated == 0
+    assert inv["spatial_facts"].populated == 0
+    assert inv["face_boxes"].populated == 0
+    assert inv["must_right"].populated == 1  # only entry 0 has must_right
+    assert inv["easy_wrong"].populated == 1
+
+
+def test_require_metric_backing_refuses_empty_corpus_field(tmp_path):
+    from scripts.eval_harness.manifest import require_metric_backing
+
+    manifest = load_manifest(
+        _write_manifest(tmp_path, _valid_manifest_dict()),
+        skip_hash_verification=True,
+    )
+    with pytest.raises(ManifestError, match="reference_facts|vacuous|0/"):
+        require_metric_backing(manifest, "reference_facts")
+
+
+def test_require_metric_backing_passes_when_field_populated(tmp_path):
+    from scripts.eval_harness.manifest import require_metric_backing
+
+    data = _valid_manifest_dict()
+    data["entries"][0]["domain"] = "people"
+    data["entries"][1]["domain"] = "art"
+    manifest = load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
+    pop = require_metric_backing(manifest, "domain")
+    assert pop.populated == 2 and pop.total == 2
+
+
+def test_seed_corpus_inventory_exposes_stratification_gaps_honestly():
+    """Shipped golden must not silently look stratified when fields are empty.
+
+    After R2-03 population of *derivable* fields, domain/difficulty/tags/provenance
+    should be non-zero; reference_facts/spatial_facts/face_boxes remain honest gaps
+    (cannot invent ground truth without viewing images).
+    """
+    from scripts.eval_harness.manifest import (
+        SHIPPED_CORPUS_COVERAGE_GAPS,
+        inventory_corpus_fields,
+        require_metric_backing,
+    )
+
+    manifest = load_manifest(_SEED_MANIFEST, skip_hash_verification=True)
+    inv = inventory_corpus_fields(manifest)
+    assert inv["domain"].populated > 0, "derivable domain labels must be present"
+    assert inv["difficulty"].populated > 0, "derivable difficulty labels must be present"
+    assert inv["tags"].populated > 0, "filename-derived slice tags must be present"
+    assert inv["provenance"].populated == inv["provenance"].total
+    # Honest negatives — not fabricatable without image bytes / operator boxes:
+    for field in ("reference_facts", "spatial_facts", "face_boxes"):
+        assert inv[field].populated == 0, f"{field} must stay empty until operator-curated"
+        assert field in SHIPPED_CORPUS_COVERAGE_GAPS
+        assert "owner=" in SHIPPED_CORPUS_COVERAGE_GAPS[field]
+    # Gate refuses to certify a metric on an empty backing field:
+    with pytest.raises(ManifestError, match="face_boxes"):
+        require_metric_backing(manifest, "face_boxes")
+    # And accepts a populated one:
+    require_metric_backing(manifest, "domain")

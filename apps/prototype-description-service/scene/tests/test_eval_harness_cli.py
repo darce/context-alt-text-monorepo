@@ -340,6 +340,85 @@ def test_cli_score_rejects_provider_flags(tmp_path):
     assert excinfo.value.code == 2  # unrecognized argument: score is pure/offline
 
 
+def test_cli_fetch_rejects_check_determinism(capsys):
+    """F2f / C-06 / OBS-04: fetch must not silently accept --check-determinism.
+
+    Pre-fix: flag lived on _common(), so ``fetch --check-determinism`` parsed
+    cleanly, hit the live-env gate (or paid remote work), and exited without
+    certifying anything — a green that meant the opposite of what the operator
+    asked for. Post-fix: argparse free-rejects the unknown argument before any
+    paid call (TEST-15 discrimination: score/score-face still accept the flag).
+    """
+    with pytest.raises(SystemExit) as excinfo:
+        main(["fetch", "--check-determinism"])
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "unrecognized arguments" in err
+    assert "--check-determinism" in err
+    # Must not reach live work (pre-fix path exited with the live-env string).
+    assert "ACX_EVAL_LIVE" not in err
+    assert "ACX_EVAL_LIVE" not in str(excinfo.value)
+
+
+def test_cli_run_check_determinism_announces_multiplier(monkeypatch, capsys):
+    """F2f / C-06: run keeps --check-determinism but announces legs×seeds first.
+
+    Decision: per-leg certification (not single check). Each provider matrix
+    record is an independent scored artifact; a once-only check would leave
+    other legs uncertified under a flag that claims certification. Cost must
+    be visible before paid fetch / first child spawn (OBS-04).
+    """
+    from argparse import Namespace
+
+    from scripts.eval_harness import cli as cli_mod
+
+    announce_before_fetch: list[str] = []
+    score_records: list[str] = []
+
+    def fake_fetch(args):
+        # Capture stdout *at fetch entry* — announcement must already be there.
+        announce_before_fetch.append(capsys.readouterr().out)
+        return ["r0.json", "r1.json", "r2.json"]
+
+    def fake_score(args):
+        score_records.append(args.run_record)
+
+    monkeypatch.setattr(cli_mod, "_cmd_fetch", fake_fetch)
+    monkeypatch.setattr(cli_mod, "_cmd_score", fake_score)
+
+    args = Namespace(
+        check_determinism=True,
+        provider=["leg-a", "leg-b", "leg-c"],
+        audience="local",
+    )
+    cli_mod._cmd_run(args)
+    assert len(announce_before_fetch) == 1
+    pre = announce_before_fetch[0]
+    assert "run --check-determinism" in pre
+    assert "per-leg certification" in pre
+    assert "3 legs × 3 seeds" in pre
+    assert "9 fresh interpreter(s)" in pre
+    assert score_records == ["r0.json", "r1.json", "r2.json"]
+
+
+def test_cli_run_accepts_check_determinism_at_parse(monkeypatch):
+    """Discrimination control (TEST-15): run still declares --check-determinism.
+
+    Parse must succeed and dispatch to _cmd_run; we short-circuit before live
+    work so this is a free wiring check (not a paid matrix run).
+    """
+    from scripts.eval_harness import cli as cli_mod
+
+    seen: list[bool] = []
+
+    def fake_run(args):
+        seen.append(bool(args.check_determinism))
+
+    monkeypatch.setattr(cli_mod, "_cmd_run", fake_run)
+    main(["run", "--check-determinism", "--provider", "hosted_gpt4o"])
+    assert seen == [True]
+
+
 def test_stall_abort_preserves_partial_record(images_dir):
     client = FlakyClient({f"img-{i}.jpg" for i in range(1, 6)})
     with pytest.raises(BoundedStallError) as excinfo:

@@ -58,8 +58,10 @@ from .report import (
     ReportError,
     ScoreVerdict,
     _markdown as _score_report_markdown,
+    _total_wrong_name_count,
     build_face_reports,
     build_reports,
+    face_wrong_name_rate,
     occlusion_inputs_from_record,
     score_face_run_record,
     score_run_record,
@@ -873,7 +875,6 @@ def _cmd_score(args: argparse.Namespace) -> None:
     # Schema hard-keys already folded above (pre-write). Re-read gate inputs from
     # the validated scored dict for the remaining exit messages.
     must_right_failed = int(scored["caption"]["must_right_failed_images"])
-    wrong_name_rate = float(scored["verdict"]["wrong_name_rate"])
     # F1b-2 / F1-12: simple must-right failures gate. Any failed must_right image
     # exits non-zero under --rubric-gate enforce (default). The F1-11 conjunction
     # (rate==1.0 ∧ mean_gated==0.0) was false-green on plain garbage against real
@@ -906,12 +907,24 @@ def _cmd_score(args: argparse.Namespace) -> None:
         )
     # VLM-6 S2A: wrong-name floor — hallucinated human names on photographs are
     # the highest-severity failure this harness detects; gate, do not merely report.
-    # Rate includes ignore-list-triaged pairs (F1-5 / OBS-04).
+    # F1-7: never gate on the rounded serialised rate. When floor is 0.0, gate on
+    # wrong-name *count* so 1 wrong among ≥20001 images cannot round to 0.0 and
+    # silence the floor (TEST-15). Unrounded rate is used only for non-zero floors.
+    # Rate numerator includes ignore-list-triaged pairs (F1-5 / OBS-04).
     floor = float(verdict.get("wrong_name_rate_floor", WRONG_NAME_RATE_FLOOR))
-    if wrong_name_rate > floor:
+    wrong_n = _total_wrong_name_count(ident_block)
+    unrounded_rate = face_wrong_name_rate(scored)
+    if floor == 0.0:
+        floor_breach = wrong_n > 0
+    else:
+        floor_breach = unrounded_rate > floor
+    if floor_breach:
         ignored_n = len(ident_block.get("ignored_wrong_names") or [])
+        # Message shows the display rate from the artifact for operator triage,
+        # but the breach decision above did not consume the rounded value.
+        display_rate = verdict.get("wrong_name_rate", unrounded_rate)
         sys.exit(
-            f"score wrong-name floor gate: wrong_name_rate={wrong_name_rate} exceeds "
+            f"score wrong-name floor gate: wrong_name_rate={display_rate} exceeds "
             f"floor={floor} (ignored_wrong_names={ignored_n}; see {json_path})"
         )
 

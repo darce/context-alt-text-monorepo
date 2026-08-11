@@ -385,6 +385,21 @@ def test_rubric_defined_images_surfaced():  # S1-02
     assert scored_empty["caption"]["easy_wrong_defined_images"] == 0
 
 
+def test_rubric_defined_images_count_scored_set_not_full_manifest():  # F1-8
+    """Omitted rubriced manifest entry must not keep the scored-set counter non-zero."""
+    entries = _manifest_entries()
+    # alice-pool has must_right; bob-beach does not. Score only bob.
+    record = _run_record()
+    bob = next(i for i in record["items"] if i["media_id"] == 2)
+    record = {**record, "items": [bob]}
+    scored = score_run_record(record, entries)
+    assert scored["counts"]["scored"] == 1
+    assert scored["caption"]["must_right_defined_images"] == 0
+    # Full score still sees alice-pool's must_right among the scored set.
+    full = score_run_record(_run_record(), entries)
+    assert full["caption"]["must_right_defined_images"] == 1
+
+
 def test_media_id_multiset_coverage_counts():  # VLM-6 S2A F1-2
     """Partial run-record against full manifest reports missing media_id count."""
     entries = _manifest_entries()

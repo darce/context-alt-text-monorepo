@@ -2081,6 +2081,212 @@ def test_score_persisted_verdict_pass_ungated_on_rubric_gate_skip(tmp_path, monk
     assert report["verdict"]["reasons"] == []
 
 
+# --- VLM-6 S2A F1d-2: rounding floor (F1-7) + scored-set rubric denominator (F1-8) ---
+
+
+def test_score_one_wrong_name_real_golden_exits_nonzero(tmp_path, monkeypatch):
+    """F1-7 real-corpus: exactly 1 wrong name among 37 must exit non-zero (floor=0).
+
+    1/37 ≈ 0.0270 does not round to 0.0 — this is the non-scaled real-corpus case
+    that must still fail. Discrimination control remains the clean 37-item pass.
+    """
+    import copy
+
+    from scripts.eval_harness.report import WRONG_NAME_RATE_FLOOR
+
+    golden, record = _real_golden_good_record()
+    record = copy.deepcopy(record)
+    # Corrupt one identity only; captions stay Must-Right-clean.
+    target = record["items"][0]
+    names_on_item = [i["name"] for i in (target.get("identities") or [])]
+    wrong = "Definitely Wrong Person"
+    for n in json.loads(_GOLDEN_SEED.read_text()).get("roster") or []:
+        if n not in names_on_item:
+            wrong = n
+            break
+    if target.get("identities"):
+        target["identities"][0] = {
+            "name": wrong,
+            "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+            "unpositioned": False,
+        }
+    else:
+        target["identities"] = [
+            {
+                "name": wrong,
+                "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                "unpositioned": False,
+            }
+        ]
+    record_path = tmp_path / "run-one-wrong.json"
+    record_path.write_text(json.dumps(record))
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(golden), "--run-record", str(record_path)])
+    msg = str(excinfo.value)
+    assert excinfo.value.code != 0
+    assert "wrong-name floor" in msg.lower()
+    assert "vacuity" not in msg.lower()
+    assert "empty-rubric" not in msg.lower()
+    assert "must-right failures" not in msg.lower()
+    assert "truncation" not in msg.lower()
+    report = json.loads(record_path.with_name("run-one-wrong-report.json").read_text())
+    assert report["verdict"]["verdict"] == "fail"
+    assert report["verdict"]["wrong_name_rate_floor"] == WRONG_NAME_RATE_FLOOR
+    live = report["faces"]["identification"]["wrong_names"]
+    ignored = report["faces"]["identification"]["ignored_wrong_names"]
+    assert len(live) + len(ignored) == 1
+    assert any("wrong_name_rate" in r for r in report["verdict"]["reasons"])
+
+
+def test_score_rounding_cannot_hide_one_wrong_name_scaled(tmp_path, monkeypatch):
+    """F1-7 scaled fixture (explicit): 1 wrong / 20001 images rounds rate to 0.0.
+
+    SYNTHETIC SCALED FIXTURE — 20001 real images do not exist in golden.json.
+    Pre-fix gated on round(rate, 4) so 1/20001 → 0.0 and 0.0 > 0.0 was false
+    (exit 0). Post-fix gates on wrong-name count when floor is 0.0 (TEST-15).
+    """
+    from scripts.eval_harness.report import WRONG_NAME_RATE_FLOOR
+    from scripts.eval_harness.schema import SCHEMA, DocKind
+
+    n = 20001
+    roster = ["Alice Example", "Bob Builder"]
+    entries = []
+    items = []
+    for i in range(n):
+        name = roster[i % 2]
+        other = roster[(i + 1) % 2]
+        path = f"mock_images/scaled-{i:05d}.jpg"
+        entries.append(
+            {
+                "path": path,
+                "sha256": f"{i:064x}"[:64],
+                "media_id": i + 1,
+                "face_count": 1,
+                "present_identities": [name],
+                "context_pack": {},
+                "base_caption": "",
+                "must_right": [name],
+                "easy_wrong": [other],
+                "policy": {"recognition_enabled": True},
+            }
+        )
+        # Exactly one wrong name on image 0; the rest are correct.
+        pred = other if i == 0 else name
+        items.append(
+            {
+                "media_id": i + 1,
+                "path": path,
+                "describe": {
+                    "alt_text_draft": f"{name} outdoors smiling.",
+                    "named_draft": f"{name} outdoors smiling.",
+                    "generic_draft": f"{name} outdoors smiling.",
+                    "visual_facts": {"objects": []},
+                },
+                "identities": [
+                    {
+                        "name": pred,
+                        "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                        "unpositioned": False,
+                    }
+                ],
+                "face_count": 1,
+                "error": None,
+            }
+        )
+    manifest_path, manifest_sha = _write_score_manifest(
+        tmp_path, entries, roster, name="scaled-20001.json"
+    )
+    record = {
+        "schema": SCHEMA,
+        "kind": DocKind.RUN_RECORD.value,
+        "provenance": {
+            "manifest_sha256": manifest_sha,
+            "base_url": "https://example.test",
+            "head_sha": "f" * 40,
+            "started_at": "t",
+        },
+        "items": items,
+    }
+    record_path = tmp_path / "run-scaled-round.json"
+    record_path.write_text(json.dumps(record))
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
+    msg = str(excinfo.value)
+    assert excinfo.value.code != 0
+    assert "wrong-name floor" in msg.lower()
+    assert "vacuity" not in msg.lower()
+    assert "empty-rubric" not in msg.lower()
+    assert "truncation" not in msg.lower()
+    report = json.loads(record_path.with_name("run-scaled-round-report.json").read_text())
+    # Display rate rounds to 0.0 — that must NOT silence the gate (F1-7).
+    assert report["verdict"]["wrong_name_rate"] == 0.0
+    assert report["verdict"]["wrong_name_rate_floor"] == WRONG_NAME_RATE_FLOOR
+    assert report["verdict"]["verdict"] == "fail"
+    live = report["faces"]["identification"]["wrong_names"]
+    ignored = report["faces"]["identification"]["ignored_wrong_names"]
+    assert len(live) + len(ignored) == 1
+    assert any("wrong_names=1" in r for r in report["verdict"]["reasons"])
+
+
+def test_score_empty_rubric_keys_on_scored_set_not_manifest(tmp_path, monkeypatch):
+    """F1-8: rubric defined count is over scored items, not the full manifest.
+
+    Real golden has 34 must_right entries; scoring only the 3 non-must_right
+    media_ids leaves the measured set vacuous. Pre-fix counted the manifest
+    (defined=34) so empty-rubric stayed silent. Post-fix defined=0 and the
+    empty-rubric class token appears in on-disk reasons (EVAL-19).
+
+    Truncation also fires (media-id multiset incomplete vs full golden) — that
+    is expected; F1-8 is proved by must_right_defined_images==0 + empty-rubric
+    reason, not by exit-token order alone.
+    """
+    import copy
+
+    golden, full_record = _real_golden_good_record()
+    raw = json.loads(_GOLDEN_SEED.read_text())
+    no_mr_ids = {e["media_id"] for e in raw["entries"] if not e.get("must_right")}
+    assert len(no_mr_ids) == 3
+    record = copy.deepcopy(full_record)
+    record["items"] = [it for it in record["items"] if it["media_id"] in no_mr_ids]
+    assert len(record["items"]) == 3
+    record_path = tmp_path / "run-scored-no-mr.json"
+    record_path.write_text(json.dumps(record))
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(golden), "--run-record", str(record_path)])
+    assert excinfo.value.code != 0
+    report = json.loads(record_path.with_name("run-scored-no-mr-report.json").read_text())
+    # Measured set has zero must_right (F1-8); easy_wrong still defined on the 3.
+    assert report["caption"]["must_right_defined_images"] == 0
+    assert report["caption"]["easy_wrong_defined_images"] == 3
+    assert report["counts"]["scored"] == 3
+    assert report["verdict"]["verdict"] == "fail"
+    reasons_blob = " | ".join(report["verdict"]["reasons"]).lower()
+    assert "empty-rubric" in reasons_blob
+    assert "must_right" in reasons_blob
+    # Class token present; other non-applicable classes stay out of empty-rubric reason.
+    empty_reasons = [r for r in report["verdict"]["reasons"] if "empty-rubric" in r.lower()]
+    assert empty_reasons
+    assert all("wrong-name floor vacuity" not in r for r in empty_reasons)
+    assert all("schema error" not in r for r in empty_reasons)
+
+
+def test_score_f1d2_control_clean_real_golden_still_passes(tmp_path, monkeypatch):
+    """F1d-2 discrimination control: clean real golden still exits 0 / pass."""
+    golden, record = _real_golden_good_record()
+    record_path = tmp_path / "run-f1d2-control.json"
+    record_path.write_text(json.dumps(record))
+    monkeypatch.chdir(tmp_path)
+    assert main(["score", "--manifest", str(golden), "--run-record", str(record_path)]) is None
+    report = json.loads(record_path.with_name("run-f1d2-control-report.json").read_text())
+    assert report["verdict"]["verdict"] == "pass"
+    assert report["verdict"]["reasons"] == []
+    assert report["caption"]["must_right_defined_images"] == 34
+    assert report["counts"]["scored"] == 37
+
+
 # --- FIR-5 S5: face-bakeoff / score-face CLI surface ---
 
 

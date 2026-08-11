@@ -466,10 +466,18 @@ def build_score_verdict(
     if scored_n > 0 and identification_evaluated == 0:
         reasons.append("wrong-name floor vacuity: evaluated_images=0")
 
+    # F1-7 / TEST-15: never compare a rounded rate. When the floor is 0.0 the
+    # only non-vacuous signal is the wrong-name *count* — one wrong name among
+    # ≥20001 images serialises as round(rate, 4) == 0.0 and 0.0 > 0.0 is false,
+    # so a rate-only gate cannot go red. Display still rounds; the gate does not.
     rate = face_wrong_name_rate(scored)
-    if rate > WRONG_NAME_RATE_FLOOR:
-        wrong_n = _total_wrong_name_count(ident)
-        ignored_n = len(ident.get("ignored_wrong_names") or [])
+    wrong_n = _total_wrong_name_count(ident)
+    ignored_n = len(ident.get("ignored_wrong_names") or [])
+    if WRONG_NAME_RATE_FLOOR == 0.0:
+        floor_breach = wrong_n > 0
+    else:
+        floor_breach = rate > WRONG_NAME_RATE_FLOOR
+    if floor_breach:
         reasons.append(
             f"wrong_name_rate={rate:.4f} exceeds floor={WRONG_NAME_RATE_FLOOR} "
             f"(wrong_names={wrong_n}, ignored={ignored_n}, scored={scored_n})"
@@ -484,6 +492,7 @@ def build_score_verdict(
     return {
         "verdict": verdict_value,
         "reasons": reasons,
+        # Display-only rounding — comparisons above use count / unrounded rate.
         "wrong_name_rate": round(rate, 4),
         "wrong_name_rate_floor": WRONG_NAME_RATE_FLOOR,
         "insertion_rate": caption.get("insertion_rate"),
@@ -769,8 +778,13 @@ def score_run_record(
 
     # Vacuity is per-rubric, not OR'd: emptying only must_right while easy_wrong
     # remains must still trip the empty-rubric gate (VLM-6 S2A F1-1 / r08116b50).
-    must_right_defined_images = sum(1 for e in manifest_entries if e.get("must_right"))
-    easy_wrong_defined_images = sum(1 for e in manifest_entries if e.get("easy_wrong"))
+    # F1-8 / EVAL-19: count only among successfully scored run-record items, not
+    # the full score-time manifest. Un-rubriced scored items + omitted rubriced
+    # manifest entries used to keep the counter non-zero while the measured set
+    # had a vacuous rubric (empty-rubric then passed on a corpus it never scored).
+    scored_entries = [entries[int(row["media_id"])] for row in per_image if int(row["media_id"]) in entries]
+    must_right_defined_images = sum(1 for e in scored_entries if e.get("must_right"))
+    easy_wrong_defined_images = sum(1 for e in scored_entries if e.get("easy_wrong"))
 
     # Media-id multiset coverage: fetch --limit N yields a partial run-record whose
     # provenance still stamps the full-corpus fetch sha. counts.total alone is

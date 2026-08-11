@@ -2240,6 +2240,21 @@ if (!isset($GLOBALS['wpdb'])) {
         public string $term_relationships = 'wp_term_relationships';
         /** @var array<int,array<string,mixed>> */
         public array $mockResults = [];
+        /**
+         * When true, get_results returns null (WordPress behaviour on MySQL failure).
+         * Pair with last_error to drive fail-loud repository guards.
+         */
+        public bool $get_results_returns_null = false;
+        /**
+         * When true, get_var returns null and leaves last_error for the caller.
+         */
+        public bool $get_var_returns_null = false;
+        /**
+         * When true, get_row returns null and leaves last_error for the caller.
+         */
+        public bool $get_row_returns_null = false;
+        /** MySQL error text mirrored from real $wpdb->last_error. */
+        public string $last_error = '';
         /** @var array<string,mixed>|null */
         public ?array $mockRow = null;
         /**
@@ -2357,6 +2372,10 @@ if (!isset($GLOBALS['wpdb'])) {
             $normalizedSql = trim((string) $query);
             $this->queries[] = $normalizedSql;
 
+            if ($this->get_results_returns_null) {
+                return null;
+            }
+
             $results = $this->mockResults;
             if ($results === []) {
                 $results = $this->resolveStoredSelectResults($normalizedSql);
@@ -2376,6 +2395,10 @@ if (!isset($GLOBALS['wpdb'])) {
         {
             $normalizedSql = trim((string) $query);
             $this->queries[] = $normalizedSql;
+
+            if ($this->get_row_returns_null) {
+                return null;
+            }
 
             if ($this->mockRowSequence !== null) {
                 $row = array_key_exists($this->mockRowSequenceIndex, $this->mockRowSequence)
@@ -2412,6 +2435,10 @@ if (!isset($GLOBALS['wpdb'])) {
 
             if ($this->onGetVar !== null) {
                 ($this->onGetVar)($normalizedSql);
+            }
+
+            if ($this->get_var_returns_null) {
+                return null;
             }
 
             if (array_key_exists($normalizedSql, $this->queryResults)) {
@@ -2737,6 +2764,10 @@ if (!isset($GLOBALS['wpdb'])) {
             $this->queryResults = [];
             $this->defaultQueryResult = true;
             $this->mockResults = [];
+            $this->get_results_returns_null = false;
+            $this->get_var_returns_null = false;
+            $this->get_row_returns_null = false;
+            $this->last_error = '';
             $this->mockRow = null;
             $this->mockRowSequence = null;
             $this->mockRowSequenceIndex = 0;

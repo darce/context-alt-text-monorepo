@@ -231,6 +231,7 @@ class ClustersReadRepository {
 
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$rows = $wpdb->get_results( $sql, ARRAY_A );
+		$this->guard_query_error( 'clusters.list_top_unlabeled' );
 		return is_array( $rows ) ? $rows : array();
 	}
 

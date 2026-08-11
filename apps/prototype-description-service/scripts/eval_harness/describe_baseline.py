@@ -24,6 +24,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from statistics import mean, median
 
+from shared.secrets import get_secret_provider
+
 HERE = Path(__file__).resolve().parent
 SCRATCH = HERE / "out"  # gitignored: progressive/resumable JSONL only
 # Durable, git-committed results dir (NOT scratchpad — the face-pass was lost once
@@ -265,7 +267,8 @@ def main(argv: list[str] | None = None) -> int:
         )
     else:
         base = os.environ.get("ACX_EVAL_BASE_URL", "")
-        key = os.environ.get("ACX_EVAL_API_KEY", "")
+        # Through SecretProvider (same as face_pass.py / cli.py) — never raw env for secret names.
+        key = get_secret_provider().get_secret_optional("ACX_EVAL_API_KEY", "") or ""
         tenant = os.environ.get("ACX_EVAL_TENANT_ID", "")
         if not (base and key and tenant):
             sys.exit("missing ACX_EVAL_BASE_URL / ACX_EVAL_API_KEY / ACX_EVAL_TENANT_ID")

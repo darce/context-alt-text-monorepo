@@ -294,7 +294,11 @@ preflight_remote_face_pipeline_models() {
     fi
     models_dir="${models_path}${models_dir_cfg#/data/cache}"
   else
-    models_dir="${models_dir_cfg}"
+    # The container only mounts ${ACX_MODELS_PATH}:/data/cache. A models dir
+    # outside /data/cache may verify fine on the host yet be invisible to the
+    # container at runtime — fail closed instead of green-lighting an
+    # unloadable config (gate r0811864a B-02).
+    fail "RECOGNITION_FACE_PIPELINE_MODELS_DIR=${models_dir_cfg} is outside the container mount /data/cache; the api container cannot load models from host-only paths. Set it to /data/cache[/subdir] in ${remote_dir}/.env"
   fi
 
   # Ship the extractable verify body to the remote and execute it (C-07/C-11).
@@ -502,15 +506,48 @@ converge_runtime() {
   # sha256sum is absent on macOS before 15 and `set -e` would abort the deploy.
   repo_caddy_sum="$(_local_sha256 "${SERVICE_DIR}/Caddyfile")"
   repo_compose_sum="$(_local_sha256 "${SERVICE_DIR}/docker-compose.caddy.yml")"
-  remote_caddy_sum="$(ssh "${SSH_TARGET}" "sha256sum '${edge_dir}/Caddyfile' 2>/dev/null | awk '{print \$1}'" || true)"
-  remote_compose_sum="$(ssh "${SSH_TARGET}" "sha256sum '${edge_dir}/docker-compose.caddy.yml' 2>/dev/null | awk '{print \$1}'" || true)"
+  # A transport failure must fail the converge, not read as drift: an empty
+  # checksum from ssh exit!=0 would flip edge_*_drift=1 and recreate the
+  # prod-serving edge off a network blip (gate r0811864a B-03). The remote
+  # command itself exits 0 even when the file is missing (awk terminates the
+  # pipe), so a nonzero rc here is ssh/transport, not "file absent".
+  local edge_sum_rc=0
+  remote_caddy_sum="$(ssh "${SSH_TARGET}" "sha256sum '${edge_dir}/Caddyfile' 2>/dev/null | awk '{print \$1}'")" || edge_sum_rc=$?
+  if (( edge_sum_rc != 0 )); then
+    fail "cannot read remote edge checksums on ${SSH_TARGET} (ssh exit ${edge_sum_rc}); refusing to treat transport failure as edge drift"
+  fi
+  remote_compose_sum="$(ssh "${SSH_TARGET}" "sha256sum '${edge_dir}/docker-compose.caddy.yml' 2>/dev/null | awk '{print \$1}'")" || edge_sum_rc=$?
+  if (( edge_sum_rc != 0 )); then
+    fail "cannot read remote edge checksums on ${SSH_TARGET} (ssh exit ${edge_sum_rc}); refusing to treat transport failure as edge drift"
+  fi
   [[ "${remote_caddy_sum}" == "${repo_caddy_sum}" ]] || edge_caddy_drift=1
   [[ "${remote_compose_sum}" == "${repo_compose_sum}" ]] || edge_compose_drift=1
+
+  # Checksum parity alone misses network-membership drift: `caddy reload` /
+  # matching compose files never attach newly-declared networks to a RUNNING
+  # container, so a caddy predating acx-dev-fir-net looks converged while
+  # fir.dev.api 502s (gate r0811864a G2-03). Inspect the live container and
+  # escalate a missing membership to compose-level drift (recreate path).
+  local edge_membership edge_member_rc=0
+  edge_membership="$(ssh "${SSH_TARGET}" "cd '${edge_dir}' && cid=\$(docker compose -f docker-compose.caddy.yml ps -q caddy 2>/dev/null); if [ -z \"\$cid\" ]; then echo NOCADDY; elif docker inspect -f '{{json .NetworkSettings.Networks}}' \"\$cid\" | grep -q '\"${fir_net}\"'; then echo MEMBER; else echo MISSING; fi")" || edge_member_rc=$?
+  if (( edge_member_rc != 0 )); then
+    fail "cannot inspect caddy edge network membership on ${SSH_TARGET} (ssh exit ${edge_member_rc}); refusing to converge edge blind"
+  fi
+  if [[ "${edge_membership}" != "MEMBER" ]]; then
+    log "caddy edge container is not attached to ${fir_net} (${edge_membership}); marking compose-level edge drift"
+    edge_compose_drift=1
+  fi
 
   if (( edge_caddy_drift == 0 && edge_compose_drift == 0 )); then
     log "Caddy edge already matches repo; skipping ship/reload for ${env}"
     log "Runtime converged for ${env} (compose + unit match repo; edge unchanged)"
   else
+    # Mutating the shared edge can recreate the container that serves PROD as
+    # a side effect of any env's deploy (gate r0811864a G2-01). Make that an
+    # explicit operator decision instead of a silent side effect.
+    if [[ "${ACX_EDGE_APPLY:-0}" != "1" ]]; then
+      fail "caddy edge drift detected for ${env} (caddyfile_drift=${edge_caddy_drift} compose_drift=${edge_compose_drift} membership=${edge_membership}). Applying may reload/recreate the shared prod-serving edge. Re-run with ACX_EDGE_APPLY=1 to converge the edge, or ACX_CONVERGE_RUNTIME=0 to skip convergence entirely."
+    fi
     ssh "${SSH_TARGET}" "cp -f '${edge_dir}/Caddyfile' '${edge_dir}/Caddyfile.bak' 2>/dev/null || true; cp -f '${edge_dir}/docker-compose.caddy.yml' '${edge_dir}/docker-compose.caddy.yml.bak' 2>/dev/null || true"
     if (( edge_caddy_drift )); then
       _ship_file "${SERVICE_DIR}/Caddyfile" "${edge_dir}/Caddyfile"
@@ -574,6 +611,18 @@ converge_check() {
        | diff -u - <(printf '%s\n' "$rendered"); then
     warn "drift: ${unit}.service on ${env} differs from repo template (or is missing)"; drift=1
   fi
+  # Edge drift arm: converge_runtime now owns the shared caddy edge, so the
+  # read-only gate must surface edge drift too or --check reports clean while
+  # FIR routing / caddy net membership is stale (gate r0811864a B-04).
+  local edge_dir="/opt/acx-backend"
+  if ! ssh "${SSH_TARGET}" "cat '${edge_dir}/Caddyfile' 2>/dev/null" \
+       | diff -u - "${SERVICE_DIR}/Caddyfile"; then
+    warn "drift: shared edge Caddyfile differs from repo (or is missing)"; drift=1
+  fi
+  if ! ssh "${SSH_TARGET}" "cat '${edge_dir}/docker-compose.caddy.yml' 2>/dev/null" \
+       | diff -u - "${SERVICE_DIR}/docker-compose.caddy.yml"; then
+    warn "drift: shared edge docker-compose.caddy.yml differs from repo (or is missing)"; drift=1
+  fi
   if (( drift )); then
     fail "runtime drift detected for ${env}; run '$0 deploy ${env}' to converge"
   fi
@@ -630,6 +679,16 @@ set -euo pipefail
 env="$1"; image="$2"; remote_dir="$3"
 net="$(grep -E '^ACX_NETWORK_NAME=' "${remote_dir}/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"' " || true)"
 net="${net:-acx-${env}-net}"
+# First-ever deploy of an env runs this smoke BEFORE converge_runtime's net
+# auto-create, so the env net may not exist yet (gate r0811864a A-01). Create
+# it idempotently with compose-parity labels so the later `compose up` adopts
+# it instead of refusing an unlabeled pre-existing net (A-02 pattern).
+if ! docker network inspect "$net" >/dev/null 2>&1; then
+  docker network create \
+    --label com.docker.compose.network=backend \
+    --label "com.docker.compose.project=acx-${env}" \
+    "$net"
+fi
 name="acx-smoke-${env}-$$"
 docker run -d --rm --name "$name" --env-file "${remote_dir}/.env" --network "$net" -P \
   --entrypoint sh "$image" -c 'cd /app && exec uvicorn api.main:app --host 0.0.0.0 --port 8000' >/dev/null

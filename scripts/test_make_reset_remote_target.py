@@ -97,12 +97,24 @@ def test_reset_remote_dev_fir_dry_run_succeeds_and_summarizes_plan() -> None:
 
 
 def test_deploy_dev_fir_and_rollback_targets_exist() -> None:
-    """FIR23-STACK: mk/deploy.mk exposes deploy-dev-fir + deploy-rollback-dev-fir."""
+    """FIR23-STACK: deploy-dev-fir exists; rollback-dev-fir refuses (shared :dev tag)."""
     deploy_mk = (REPO_ROOT / "mk" / "deploy.mk").read_text(encoding="utf-8")
     assert "deploy-dev-fir:" in deploy_mk
     assert "deploy-rollback-dev-fir:" in deploy_mk
     assert 'deploy dev-fir' in deploy_mk or '"$(DEPLOY_SCRIPT)" deploy dev-fir' in deploy_mk
-    assert "promote staging dev-fir" in deploy_mk
+    # Gate r0811864a A-04/B-01: a FIR-only rollback would retag the :dev image
+    # both stacks share, silently rolling back acx-dev too. The target must
+    # refuse instead of running `promote staging dev-fir`.
+    assert "promote staging dev-fir" not in deploy_mk
+
+
+def test_deploy_rollback_dev_fir_refuses_at_runtime() -> None:
+    """Gate r0811864a A-04/B-01: the refusal must run as written, not just read well."""
+    result = _run_make(["deploy-rollback-dev-fir"])
+    assert result.returncode != 0
+    combined = result.stdout + result.stderr
+    assert "shares the :dev image tag" in combined
+    assert "deploy-rollback-dev" in combined
 
 
 def test_reset_remote_dev_dry_run_without_site_url_fails_closed() -> None:

@@ -131,10 +131,15 @@ deploy-rollback-dev:
 	@REMOTE_BUILD=$(RB_DEFAULT) \
 		"$(DEPLOY_SCRIPT)" promote staging dev
 
-# Rollback dev-fir to staging image (same retag path as deploy-rollback-dev).
+# FIR-only rollback is impossible by design: dev-fir shares the :dev image tag
+# with acx-dev (env_to_tag maps both to "dev"), so retagging for dev-fir would
+# also roll back acx-dev on its next restart. Fail closed and name the real
+# lever instead of silently mutating the shared tag (gate r0811864a A-04/B-01).
 deploy-rollback-dev-fir:
-	@REMOTE_BUILD=$(RB_DEFAULT) \
-		"$(DEPLOY_SCRIPT)" promote staging dev-fir
+	@echo "deploy-rollback-dev-fir: refused. dev-fir shares the :dev image tag with acx-dev;" >&2
+	@echo "a FIR-only image rollback does not exist. To roll back the shared :dev image for" >&2
+	@echo "BOTH stacks, run 'make deploy-rollback-dev' and restart acx-dev-fir afterwards." >&2
+	@exit 2
 
 # Verify a deployed environment matches local HEAD.
 deploy-verify:

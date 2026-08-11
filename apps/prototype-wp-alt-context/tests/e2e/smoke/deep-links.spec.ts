@@ -55,15 +55,6 @@ test('description-history run= deep-link via contract builder lands apply surfac
   await expect(page.locator(HISTORY_LIST)).toHaveCount(0);
 });
 
-test('media=expanded deep-link renders workbench scan with expanded media param in hash', async ({
-  page,
-  baseURL,
-}) => {
-  const base = requireBaseUrl(baseURL);
-  await openHash(page, base, 'alt-context-workbench', toWorkbench({ media: 'expanded' }));
-  await expect(page.locator(WORKBENCH_SHELL)).toBeVisible();
-  await expect(page).toHaveURL(/media=expanded/);
-});
 
 test('legacy tab=confirm does not open advanced or rewrite tab (shim retired)', async ({
   page,

@@ -1,0 +1,175 @@
+{
+  "items": [
+    {
+      "embedding_dim": 8,
+      "faces": [
+        {
+          "bbox_px": [
+            20.0,
+            20.0,
+            40.0,
+            40.0
+          ],
+          "det_score": 0.95,
+          "embedding": [
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "landmarks_px": [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ]
+          ]
+        }
+      ],
+      "image_size": [
+        100,
+        100
+      ],
+      "media_id": 1,
+      "model_id": "synthetic-face-anchor",
+      "path": "celebs01/alice-a.jpg"
+    },
+    {
+      "embedding_dim": 8,
+      "faces": [
+        {
+          "bbox_px": [
+            20.0,
+            20.0,
+            40.0,
+            40.0
+          ],
+          "det_score": 0.95,
+          "embedding": [
+            0.9948341425312659,
+            0.1015136880133945,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "landmarks_px": [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ]
+          ]
+        }
+      ],
+      "image_size": [
+        100,
+        100
+      ],
+      "media_id": 2,
+      "model_id": "synthetic-face-anchor",
+      "path": "celebs01/alice-b.jpg"
+    },
+    {
+      "embedding_dim": 8,
+      "faces": [
+        {
+          "bbox_px": [
+            20.0,
+            20.0,
+            40.0,
+            40.0
+          ],
+          "det_score": 0.95,
+          "embedding": [
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "landmarks_px": [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ]
+          ]
+        }
+      ],
+      "image_size": [
+        100,
+        100
+      ],
+      "media_id": 3,
+      "model_id": "synthetic-face-anchor",
+      "path": "localwp/uploads/stranger-party.jpg"
+    }
+  ],
+  "kind": "face_run_record",
+  "provenance": {
+    "embedding_dim": 8,
+    "generator": "scripts.eval_harness.generate_face_determinism_anchor",
+    "head_sha": "0000000000000000000000000000000000000000",
+    "leg": "candidate",
+    "manifest_sha256": "e7004f3b2355d8c46943acffa3d3ea8c85c068985494962d0c48c5d12e8ccc0e",
+    "model_id": "synthetic-face-anchor",
+    "note": "synthetic dim=8 unit vectors; no real image/embedding (PROV-01); head_sha/started_at are byte-stability sentinels",
+    "started_at": "2026-08-11T00:00:00Z"
+  },
+  "schema": "acx-eval/v1"
+}

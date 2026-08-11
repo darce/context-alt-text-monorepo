@@ -25,7 +25,6 @@ export const APP_LINK_PARAMS = {
   personFilter: 'personFilter',
   run: 'run',
   person: 'person',
-  media: 'media',
   /** E21-5-owned codec in workbenchQueueUrl.ts; name only re-exported here. */
   rq: 'rq',
   queue: 'queue',
@@ -42,7 +41,6 @@ export type AppLinkParam = (typeof APP_LINK_PARAMS)[keyof typeof APP_LINK_PARAMS
 /** Canonical wire values for params the contract serializes. */
 export const APP_LINK_VALUES = {
   advancedOpen: 'open',
-  mediaExpanded: 'expanded',
   personFilterUnassigned: 'unassigned',
   /** WBUX-5 workbench two-pane collapse states (`?panes=`). Default `both` is omitted. */
   panesBoth: 'both',
@@ -50,7 +48,6 @@ export const APP_LINK_VALUES = {
   panesLibraryCollapsed: 'library-collapsed',
 } as const;
 
-export type MediaExpandValue = (typeof APP_LINK_VALUES)['mediaExpanded'];
 export type PersonFilterValue = (typeof APP_LINK_VALUES)['personFilterUnassigned'];
 
 /** Workbench two-pane collapse state carried by `?panes=` (absent ⇔ both). */
@@ -86,7 +83,6 @@ export interface ToWorkbenchOptions {
   panel?: Exclude<WorkbenchOverlay, null>;
   /** Two-pane collapse; `'both'` (default) is omitted from the href. */
   panes?: PanesState;
-  media?: MediaExpandValue;
 }
 
 export interface ToRosterOptions {
@@ -129,9 +125,6 @@ export const toWorkbench = (options: ToWorkbenchOptions = {}): string => {
   }
   if (options.status !== undefined) {
     params.set(APP_LINK_PARAMS.status, options.status);
-  }
-  if (options.media !== undefined) {
-    params.set(APP_LINK_PARAMS.media, options.media);
   }
   return href(ROUTE.workbench, params);
 };
@@ -195,16 +188,3 @@ export const buildWorkbenchOverlayHref = (
 
 export const SCAN_CONFLICTS_HREF = buildWorkbenchOverlayHref('scan', 'conflicts');
 export const SCAN_DEAD_LETTER_HREF = buildWorkbenchOverlayHref('scan', 'dead-letter');
-
-// ── Codecs (malformed → default, never throw) ─────────────────────────────
-
-/**
- * Parse `media` search param. Only `expanded` is true; absent/other → false
- * (collapsed-per-heuristic default used by ScanTabContent today).
- */
-export const parseMediaExpanded = (raw: string | null | undefined): boolean =>
-  raw === APP_LINK_VALUES.mediaExpanded;
-
-/** Serialize expand state; false → null so callers omit the param (absent default). */
-export const serializeMediaExpanded = (expanded: boolean): string | null =>
-  expanded ? APP_LINK_VALUES.mediaExpanded : null;

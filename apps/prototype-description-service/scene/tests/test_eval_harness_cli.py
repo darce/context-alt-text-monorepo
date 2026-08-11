@@ -1174,11 +1174,13 @@ def test_cli_score_determinism_guard_detects_mutated_persisted_anchor(tmp_path, 
     assert "document=" in msg
     assert "determinism check ERROR" not in msg
     # F7-01: mismatch diagnostic lands in out/, not beside the run-record.
+    # F8: address by exact seed filename (randomized baseline → first child seed 0),
+    # never glob-index over the shared out/ directory.
     assert "artifact=" in msg
     from scripts.eval_harness.cli import _determinism_artifact_dir
 
-    artifacts = list(_determinism_artifact_dir().glob("determinism-mismatch-score-seed*.diff.txt"))
-    assert artifacts, "expected mismatch artifact under scripts/eval_harness/out/"
+    artifact = _determinism_artifact_dir() / "determinism-mismatch-score-seed0.diff.txt"
+    assert artifact.is_file(), "expected mismatch artifact under scripts/eval_harness/out/"
     assert not list(tmp_path.glob("determinism-mismatch-score-seed*.diff.txt"))
 
 
@@ -1954,12 +1956,19 @@ def test_cli_score_determinism_collision_substitutes_seed_zero(
 def test_cli_score_determinism_fail_artifact_carries_baseline_regime(
     tmp_path, monkeypatch
 ):
-    """C-05: FAILED message + mismatch artifact name baseline + child seeds."""
+    """C-05: FAILED message + mismatch artifact name baseline + child seeds.
+
+    F8: isolate diagnostics to this test's tmp_path and read the exact seed
+    filename (parent fixed:0 → first child seed is 2). Glob-index over the
+    shared out/ directory is platform-order-dependent (VLM6-S2A-F7-02).
+    """
     from scripts.eval_harness import cli as cli_mod
 
     manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("PYTHONHASHSEED", "0")
+    # Content assertions must not see sibling tests' files in shared out/.
+    monkeypatch.setattr(cli_mod, "_determinism_artifact_dir", lambda: tmp_path)
 
     real_run = cli_mod.subprocess.run
 
@@ -1982,17 +1991,84 @@ def test_cli_score_determinism_fail_artifact_carries_baseline_regime(
     assert "child_seeds=2,1,42" in msg
     assert "determinism check ERROR" not in msg
 
-    from scripts.eval_harness.cli import _determinism_artifact_dir
-
-    artifacts = list(_determinism_artifact_dir().glob("determinism-mismatch-score-seed*.diff.txt"))
-    assert artifacts, "expected mismatch artifact under scripts/eval_harness/out/"
-    assert not list(tmp_path.glob("determinism-mismatch-score-seed*.diff.txt"))
-    body = artifacts[0].read_text()
+    # Exact name: parent PYTHONHASHSEED=0 → child seeds (2,1,42); first fail is seed 2.
+    artifact = tmp_path / "determinism-mismatch-score-seed2.diff.txt"
+    assert artifact.is_file(), f"expected exact artifact path {artifact}"
+    body = artifact.read_text()
     assert "baseline_regime=fixed:0" in body
     assert "child_seeds=2,1,42" in body
     # Child seed that fired is recorded and is not the colliding parent seed.
     assert "PYTHONHASHSEED=" in body
     assert "PYTHONHASHSEED=0\n" not in body
+
+
+def test_f8_determinism_artifact_content_ignores_shared_out_decoy(
+    tmp_path, monkeypatch
+):
+    """F8 / TEST-15 / DBG-11: shared out/ decoy must not set suite colour.
+
+    Pre-F8 the regime test selected ``artifacts[0]`` after a glob of shared
+    ``scripts/eval_harness/out/``. A sibling test's seed0 file
+    (``baseline_regime=randomized``) made the suite green or red depending on
+    readdir order. This control plants that decoy (and a poisoned seed2) in
+    the real out/ dir, isolates diagnostics to ``tmp_path``, and reads the
+    exact seed2 filename — the green is independent of shared-directory state.
+    """
+    from scripts.eval_harness import cli as cli_mod
+    from scripts.eval_harness.cli import _determinism_artifact_dir
+
+    shared = _determinism_artifact_dir()
+    decoy = shared / "determinism-mismatch-score-seed0.diff.txt"
+    poison = shared / "determinism-mismatch-score-seed2.diff.txt"
+    decoy.write_text(
+        "gate=score\nbaseline_regime=randomized\nchild_seeds=0,1,42\n"
+        "PYTHONHASHSEED=0\n"
+    )
+    poison.write_text(
+        "gate=score\nbaseline_regime=randomized\nchild_seeds=0,1,42\n"
+        "POISONED_SHARED_OUT\n"
+    )
+    # Prove the old selection form would be order-dependent against these files.
+    globbed = list(shared.glob("determinism-mismatch-score-seed*.diff.txt"))
+    assert decoy in globbed and poison in globbed
+    seed0_first = sorted(globbed, key=lambda p: p.name)
+    assert "baseline_regime=fixed:0" not in seed0_first[0].read_text()
+
+    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PYTHONHASHSEED", "0")
+    monkeypatch.setattr(cli_mod, "_determinism_artifact_dir", lambda: tmp_path)
+
+    real_run = cli_mod.subprocess.run
+
+    def _mutate_then_run(*args, **kwargs):
+        payload = json.loads(record_path.read_text())
+        item = payload["items"][0]
+        item["describe"] = {
+            "alt_text_draft": "MUTATED CAPTION FOR F8 DECOY CONTROL",
+            "visual_facts": {"objects": ["f8-decoy-probe"]},
+        }
+        record_path.write_text(json.dumps(payload))
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(cli_mod.subprocess, "run", _mutate_then_run)
+    with pytest.raises(SystemExit) as exc:
+        cli_mod._check_score_determinism_cross_process(record_path, str(manifest_path))
+    msg = str(exc.value)
+    assert "determinism check FAILED [score]" in msg
+    assert "baseline=fixed:0" in msg
+
+    # Exact path under isolated dir — never glob-index, never shared out/.
+    artifact = tmp_path / "determinism-mismatch-score-seed2.diff.txt"
+    assert artifact.is_file()
+    body = artifact.read_text()
+    assert "baseline_regime=fixed:0" in body
+    assert "child_seeds=2,1,42" in body
+    assert "POISONED_SHARED_OUT" not in body
+    assert "baseline_regime=randomized" not in body
+    # Shared decoy/poison still present and still wrong — isolation held.
+    assert "baseline_regime=randomized" in decoy.read_text()
+    assert "POISONED_SHARED_OUT" in poison.read_text()
 
 
 def test_determinism_gate_detects_hash_order_dependence(tmp_path):
@@ -2040,9 +2116,11 @@ def test_determinism_gate_detects_hash_order_dependence(tmp_path):
     assert "baseline=" in msg
     assert "child_seeds=" in msg
     assert "determinism check ERROR" not in msg
-    artifacts = list(tmp_path.glob("determinism-mismatch-score-seed*.diff.txt"))
-    assert artifacts, "expected seed-order mismatch artifact"
-    body = artifacts[0].read_text()
+    # F8: exact filename from the FAILED message path (not glob-index).
+    # Randomized parent → first child seed is 0; artifact_dir is this test's tmp_path.
+    artifact = tmp_path / "determinism-mismatch-score-seed0.diff.txt"
+    assert artifact.is_file(), f"expected seed-order mismatch artifact at {artifact}"
+    body = artifact.read_text()
     assert "SEED_PROBE:" in body
     assert "baseline_regime=" in body
 

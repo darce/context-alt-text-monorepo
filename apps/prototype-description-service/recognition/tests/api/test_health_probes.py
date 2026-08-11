@@ -399,6 +399,46 @@ def test_root_health_includes_commit_sha(monkeypatch) -> None:
     assert not (forbidden_keys & body.keys())
 
 
+def test_health_and_version_report_baked_image_variant(tmp_path, monkeypatch) -> None:
+    """D8: /health and /version report image_variant from /app/.image-variant.
+
+    ENV alone is not build-immutable (compose env_file overrides image ENV).
+    The bake wins even when ACX_IMAGE_VARIANT is unset or matches.
+    """
+    artifact = tmp_path / ".image-variant"
+    artifact.write_text("vlm\n", encoding="utf-8")
+    monkeypatch.setattr("api.main._IMAGE_VARIANT_ARTIFACT", artifact)
+    monkeypatch.delenv("ACX_IMAGE_VARIANT", raising=False)
+
+    from api.main import create_app
+
+    app = create_app()
+    client = TestClient(app)
+
+    health = client.get("/health")
+    assert health.status_code == 200, health.text
+    assert health.json()["image_variant"] == "vlm"
+
+    version = client.get("/version")
+    assert version.status_code == 200, version.text
+    assert version.json()["image_variant"] == "vlm"
+
+
+def test_image_variant_env_mismatch_with_bake_fails_closed(tmp_path, monkeypatch) -> None:
+    """D8: non-empty ACX_IMAGE_VARIANT that disagrees with the bake fails closed."""
+    artifact = tmp_path / ".image-variant"
+    artifact.write_text("vlm\n", encoding="utf-8")
+    monkeypatch.setattr("api.main._IMAGE_VARIANT_ARTIFACT", artifact)
+    monkeypatch.setenv("ACX_IMAGE_VARIANT", "recognition")
+
+    import pytest
+
+    from api.main import create_app
+
+    with pytest.raises(RuntimeError, match="disagrees with baked"):
+        create_app()
+
+
 def test_ready_model_cache_flips_unhealthy_when_bundle_missing(tmp_path) -> None:
     """PA-10: the model-cache check must stat the filesystem on every call
     (no caching). Unlinking the bundle between calls flips the next /ready

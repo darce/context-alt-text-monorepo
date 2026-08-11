@@ -98,17 +98,37 @@ def _resolve_version_build_time() -> str:
     return os.environ.get("APP_BUILD_TIME", "").strip() or "unknown"
 
 
-def _resolve_image_variant() -> str:
-    """Baked image variant from the running process env (rg-015).
+# Build-immutable identity artifact (Dockerfile writes this per runtime stage).
+# Path is module-level so tests can monkeypatch; production path is fixed.
+_IMAGE_VARIANT_ARTIFACT = Path("/app/.image-variant")
 
-    Reads ``ACX_IMAGE_VARIANT`` only — never derives a value from profile or
-    package set. Canonical label members are ``ImageVariant`` in
-    ``scripts.verify_vlm_cache`` (sr-007); this helper stays import-light so
-    api/main does not pull the scripts package into the hatch wheel include.
-    Unset/blank matches the Dockerfile recognition default.
+
+def _resolve_image_variant() -> str:
+    """Build-immutable image variant from ``/app/.image-variant`` (rg-015).
+
+    The Dockerfile bakes recognition|vlm into that file at image build. Compose
+    ``env_file`` can override ``ACX_IMAGE_VARIANT`` ENV, so ENV alone fails open
+    (a VLM image can report as recognition). Source of truth is the artifact;
+    a non-empty env claim that disagrees fails closed. When the artifact is
+    absent (local dev / unit tests), fall back to env then ``recognition``.
+    Canonical labels match ``ImageVariant`` in ``scripts.verify_vlm_cache``
+    (sr-007); this helper stays import-light for the hatch wheel include.
     """
-    raw = os.environ.get("ACX_IMAGE_VARIANT", "").strip()
-    return raw or "recognition"
+    env_claim = os.environ.get("ACX_IMAGE_VARIANT", "").strip()
+    baked = ""
+    try:
+        if _IMAGE_VARIANT_ARTIFACT.is_file():
+            baked = _IMAGE_VARIANT_ARTIFACT.read_text(encoding="utf-8").strip()
+    except OSError:
+        baked = ""
+    if baked:
+        if env_claim and env_claim != baked:
+            raise RuntimeError(
+                f"ACX_IMAGE_VARIANT={env_claim!r} disagrees with baked "
+                f"{baked!r} at {_IMAGE_VARIANT_ARTIFACT}"
+            )
+        return baked
+    return env_claim or "recognition"
 
 
 def _log_startup_info() -> None:
@@ -263,7 +283,7 @@ def register_version_route(app: FastAPI) -> None:
     a minimum-supported-commit constant *before* authenticating.
 
     ``image_variant`` distinguishes recognition vs VLM images that share a
-    commit SHA (RA-07 / wave3 identity); value is the baked ``ACX_IMAGE_VARIANT``.
+    commit SHA (RA-07 / wave3 identity); value is the baked ``/app/.image-variant``.
     """
     commit_sha = _resolve_version_commit_sha() or "unknown"
     build_time = _resolve_version_build_time()
@@ -314,7 +334,7 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
     UNHEALTHY 503 on /ready (S3CR-04); create_app still hard-fails on boot.
     """
     commit_sha = _resolve_version_commit_sha() or "unknown"
-    # Baked at image build (ENV ACX_IMAGE_VARIANT); resolve once like commit_sha.
+    # Baked at image build (/app/.image-variant); resolve once like commit_sha.
     image_variant = _resolve_image_variant()
     # Hoist full settings parse once; close over cache/model paths (S3CR-06).
     settings = RecognitionSettings()
@@ -359,7 +379,7 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
         # Liveness is process-up only: no DB, breaker, or disk I/O. The Caddy
         # active probe hits this at 10s so it must never block on a dependency.
         # commit_sha / image_variant are static identity strings resolved at
-        # registration time from the process environment (rg-015).
+        # registration time from bake artifact + env (rg-015).
         return {
             "status": HealthStatus.OK.value,
             "timestamp": datetime.now(UTC).isoformat(),

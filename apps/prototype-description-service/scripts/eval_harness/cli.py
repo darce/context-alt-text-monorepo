@@ -696,13 +696,36 @@ def _cmd_score(args: argparse.Namespace) -> None:
     )
     # Fail loud when any item was skipped from scoring (S7-01): a "passing" run
     # that dropped NFC-miss / remote errors must not look like full-corpus evidence.
-    # Gate name is distinct from the wrong-name floor gate below so a red run
-    # says which one fired (VLM-6 S2A).
+    # Gate names are distinct so a red run says which corruption class fired (VLM-6 S2A).
     failed = int(scored["counts"]["failed"])
     if failed > 0:
         sys.exit(
             f"score failed-items gate: {failed} item(s) not scored (see failures[] in {json_path}); "
             "refusing to treat a partial corpus as full eval evidence"
+        )
+    # Corpus truncation / post-fetch edit: score-time manifest sha must match the
+    # fetch-time stamp on the run record. A truncated 37→5 corpus with a stale
+    # full-corpus fetch sha previously exited 0 (adversarial r0811e7f1).
+    if scored.get("provenance", {}).get("manifest_matches_fetch") is False:
+        sys.exit(
+            f"score manifest-mismatch gate: score_manifest_sha256 differs from fetch-time "
+            f"manifest_sha256 — corpus truncation or post-fetch edit (see {json_path})"
+        )
+    # Empty rubric: Must-Right/Easy-Wrong absent across the corpus makes the
+    # caption hard gate vacuous. A warning is not a gate (adversarial r0811e7f1).
+    must_right_defined = int(scored.get("caption", {}).get("must_right_defined_images") or 0)
+    if must_right_defined == 0:
+        sys.exit(
+            f"score empty-rubric gate: golden corpus defines no Must-Right/Easy-Wrong "
+            f"rubric entries; caption hard gate is vacuous (see {json_path})"
+        )
+    # Caption hard-gate collapse: any Must-Right miss zeroes that image; a run
+    # that still exits 0 with every caption corrupted is a false green.
+    must_right_failed = int(scored.get("caption", {}).get("must_right_failed_images") or 0)
+    if must_right_failed > 0:
+        sys.exit(
+            f"score must-right failures gate: {must_right_failed} image(s) failed Must-Right "
+            f"caption hard-gate (caption corruption / missing required names; see {json_path})"
         )
     # VLM-6 S2A: wrong-name floor — hallucinated human names on photographs are
     # the highest-severity failure this harness detects; gate, do not merely report.

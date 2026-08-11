@@ -677,6 +677,70 @@ def _cmd_fetch(args: argparse.Namespace) -> list[str]:
 # The child imports scripts.eval_harness.cli which can pull face_bakeoff ->
 # cv2/onnxruntime; a stalled model/cache resolve must not hang the gate forever.
 _DETERMINISM_CHILD_TIMEOUT_S = 120
+# Default child PYTHONHASHSEED set for cross-process determinism (C-05).
+# Substituted when a seed collides with the parent's fixed regime so coverage
+# is never silently narrowed (e.g. CI exporting PYTHONHASHSEED=0).
+_DEFAULT_DETERMINISM_CHILD_SEEDS: tuple[str, ...] = ("0", "1", "42")
+
+
+def _parent_hash_seed_regime() -> tuple[str, str | None]:
+    """Name the parent interpreter's PYTHONHASHSEED regime (C-05 / OBS-04).
+
+    Returns ``(regime_label, fixed_seed_or_None)``.
+
+    - ``fixed:<n>`` when ``PYTHONHASHSEED`` is an integer (including 0) — the
+      baseline is reconstructible under that seed.
+    - ``randomized`` when hash randomization is on and no fixed numeric seed is
+      set — baseline is process-local and not a child-seed duplicate.
+    """
+    env_val = os.environ.get("PYTHONHASHSEED")
+    if env_val is not None and env_val.isdigit():
+        return f"fixed:{env_val}", env_val
+    if sys.flags.hash_randomization:
+        return "randomized", None
+    # Hash randomization off without a numeric env (unusual); treat as fixed:0
+    # so collision handling still keeps child coverage distinct.
+    return "fixed:0", "0"
+
+
+def _resolve_determinism_child_seeds(
+    parent_fixed: str | None,
+    requested: tuple[str, ...] = _DEFAULT_DETERMINISM_CHILD_SEEDS,
+) -> tuple[str, ...]:
+    """Return child seeds with parent-fixed collisions substituted (C-05).
+
+    When the parent baseline runs under a fixed ``PYTHONHASHSEED`` that is also
+    in the requested child set, that child leg is a byte-for-byte duplicate of
+    the baseline configuration. Replace only the colliding entries with the
+    lowest unused integer seeds so the child set still contributes
+    ``len(requested)`` *distinct* configurations.
+    """
+    if parent_fixed is None:
+        return tuple(requested)
+    occupied: set[str] = {parent_fixed}
+    out: list[str] = []
+    placeholder_idxs: list[int] = []
+    for seed in requested:
+        if seed == parent_fixed:
+            placeholder_idxs.append(len(out))
+            out.append("")  # filled below
+        else:
+            out.append(seed)
+            occupied.add(seed)
+    next_i = 0
+    for idx in placeholder_idxs:
+        while str(next_i) in occupied:
+            next_i += 1
+        sub = str(next_i)
+        out[idx] = sub
+        occupied.add(sub)
+        next_i += 1
+    return tuple(out)
+
+
+def _determinism_regime_clause(baseline_regime: str, child_seeds: tuple[str, ...]) -> str:
+    """Operator-facing baseline + child seed claim fragment (C-05)."""
+    return f"baseline={baseline_regime}; child_seeds={','.join(child_seeds)}"
 
 
 def _run_determinism_children(
@@ -712,6 +776,11 @@ def _run_determinism_children(
     parent resolves and compares paths — mismatch is ERROR (environment
     drift), not FAILED (build regression) (OBS-04).
 
+    Seed regime (C-05): the parent's baseline regime is named in every
+    pass/FAILED/ERROR message and in mismatch artifacts so a red run is
+    reconstructible. Child seeds that collide with a fixed parent seed are
+    substituted so coverage is not silently narrowed.
+
     ``label`` (``score`` / ``score-face``) is interpolated into every operator
     message so CI lines name which gate fired.
 
@@ -728,7 +797,10 @@ def _run_determinism_children(
     # (apps/prototype-description-service). Pin once; never inherit Path.cwd().
     import_root = Path(__file__).resolve().parents[2]
     parent_reports_file = Path(expected_build_reports_file).resolve()
-    for hash_seed in ("0", "1", "42"):
+    baseline_regime, parent_fixed = _parent_hash_seed_regime()
+    child_seeds = _resolve_determinism_child_seeds(parent_fixed)
+    regime = _determinism_regime_clause(baseline_regime, child_seeds)
+    for hash_seed in child_seeds:
         env = dict(os.environ)
         env["PYTHONHASHSEED"] = hash_seed
         # Prepend pin even though cwd=import_root already puts that tree first
@@ -769,24 +841,26 @@ def _run_determinism_children(
                     )
                 sys.exit(
                     f"determinism check ERROR [{label}]: subprocess timed out "
-                    f"seed={hash_seed} after {_DETERMINISM_CHILD_TIMEOUT_S}s: {stderr_snip}"
+                    f"seed={hash_seed} after {_DETERMINISM_CHILD_TIMEOUT_S}s "
+                    f"({regime}): {stderr_snip}"
                 )
             if proc.returncode != 0:
                 sys.exit(
                     f"determinism check ERROR [{label}]: subprocess seed={hash_seed} "
-                    f"rc={proc.returncode}: {proc.stderr}"
+                    f"rc={proc.returncode} ({regime}): {proc.stderr}"
                 )
             if not payload_path.is_file():
                 sys.exit(
                     f"determinism check ERROR [{label}]: payload file missing "
-                    f"seed={hash_seed} path={payload_path}; stderr={proc.stderr!r}"
+                    f"seed={hash_seed} path={payload_path} ({regime}); "
+                    f"stderr={proc.stderr!r}"
                 )
             try:
                 payload_text = payload_path.read_text(encoding="utf-8")
             except OSError as read_exc:
                 sys.exit(
                     f"determinism check ERROR [{label}]: payload file unreadable "
-                    f"seed={hash_seed} path={payload_path}: {read_exc}; "
+                    f"seed={hash_seed} path={payload_path}: {read_exc} ({regime}); "
                     f"stderr={proc.stderr!r}"
                 )
             try:
@@ -794,14 +868,14 @@ def _run_determinism_children(
             except json.JSONDecodeError as dec_exc:
                 sys.exit(
                     f"determinism check ERROR [{label}]: payload file unparseable "
-                    f"seed={hash_seed} path={payload_path}: {dec_exc}; "
+                    f"seed={hash_seed} path={payload_path}: {dec_exc} ({regime}); "
                     f"stderr={proc.stderr!r}"
                 )
             if not isinstance(payload, dict) or "json" not in payload or "md" not in payload:
                 sys.exit(
                     f"determinism check ERROR [{label}]: payload file unparseable "
                     f"seed={hash_seed} path={payload_path}: expected object with "
-                    f"'json' and 'md' keys; stderr={proc.stderr!r}"
+                    f"'json' and 'md' keys ({regime}); stderr={proc.stderr!r}"
                 )
             sub_json = payload["json"]
             sub_md = payload["md"]
@@ -809,7 +883,7 @@ def _run_determinism_children(
                 sys.exit(
                     f"determinism check ERROR [{label}]: payload file unparseable "
                     f"seed={hash_seed} path={payload_path}: 'json' and 'md' must be "
-                    f"strings; stderr={proc.stderr!r}"
+                    f"strings ({regime}); stderr={proc.stderr!r}"
                 )
             # F2c / C-01: prove the child bound the same build_reports module as
             # the parent. Missing/mismatched provenance is environment drift → ERROR.
@@ -818,7 +892,7 @@ def _run_determinism_children(
                 sys.exit(
                     f"determinism check ERROR [{label}]: payload missing "
                     f"build_reports_file provenance seed={hash_seed} "
-                    f"path={payload_path}; stderr={proc.stderr!r}"
+                    f"path={payload_path} ({regime}); stderr={proc.stderr!r}"
                 )
             child_reports_file = Path(child_reports_raw).resolve()
             if child_reports_file != parent_reports_file:
@@ -826,7 +900,7 @@ def _run_determinism_children(
                     f"determinism check ERROR [{label}]: child build_reports module "
                     f"differs from parent (environment/import-root drift) "
                     f"seed={hash_seed} parent={parent_reports_file} "
-                    f"child={child_reports_file}; stderr={proc.stderr!r}"
+                    f"child={child_reports_file} ({regime}); stderr={proc.stderr!r}"
                 )
             json_differs = sub_json != base_json
             md_differs = sub_md != base_md
@@ -842,6 +916,8 @@ def _run_determinism_children(
             body = "\n".join(
                 [
                     f"gate={label}",
+                    f"baseline_regime={baseline_regime}",
+                    f"child_seeds={','.join(child_seeds)}",
                     f"PYTHONHASHSEED={hash_seed}",
                     f"differed={which}",
                     f"stderr={proc.stderr!r}",
@@ -865,7 +941,8 @@ def _run_determinism_children(
             sys.exit(
                 f"determinism check FAILED [{label}]: cross-process re-score differs "
                 f"under PYTHONHASHSEED={hash_seed} "
-                f"(document={which}; artifact={artifact_ref}; stderr={proc.stderr!r})"
+                f"({regime}; document={which}; artifact={artifact_ref}; "
+                f"stderr={proc.stderr!r})"
             )
         finally:
             try:
@@ -874,7 +951,7 @@ def _run_determinism_children(
                 pass
     print(
         f"determinism check passed [{label}]: cross-process re-score is "
-        f"bit-identical under varied PYTHONHASHSEED"
+        f"bit-identical under varied PYTHONHASHSEED ({regime})"
     )
 
 

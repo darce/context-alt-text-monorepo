@@ -119,6 +119,229 @@
           "det_score": 0.95,
           "embedding": [
             0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "landmarks_px": [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ]
+          ]
+        }
+      ],
+      "image_size": [
+        100,
+        100
+      ],
+      "media_id": 4,
+      "model_id": "synthetic-face-anchor",
+      "path": "celebs01/bob-a.jpg"
+    },
+    {
+      "embedding_dim": 8,
+      "faces": [
+        {
+          "bbox_px": [
+            20.0,
+            20.0,
+            40.0,
+            40.0
+          ],
+          "det_score": 0.95,
+          "embedding": [
+            0.0,
+            0.05095413237191096,
+            0.9987009944894547,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "landmarks_px": [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ]
+          ]
+        }
+      ],
+      "image_size": [
+        100,
+        100
+      ],
+      "media_id": 5,
+      "model_id": "synthetic-face-anchor",
+      "path": "celebs01/bob-b.jpg"
+    },
+    {
+      "embedding_dim": 8,
+      "faces": [
+        {
+          "bbox_px": [
+            20.0,
+            20.0,
+            40.0,
+            40.0
+          ],
+          "det_score": 0.95,
+          "embedding": [
+            0.0,
+            0.0,
+            0.9949371890224981,
+            0.1004987059618685,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "landmarks_px": [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ]
+          ]
+        }
+      ],
+      "image_size": [
+        100,
+        100
+      ],
+      "media_id": 6,
+      "model_id": "synthetic-face-anchor",
+      "path": "celebs01/alice-wrong.jpg"
+    },
+    {
+      "embedding_dim": 8,
+      "faces": [
+        {
+          "bbox_px": [
+            60.0,
+            60.0,
+            20.0,
+            20.0
+          ],
+          "det_score": 0.95,
+          "embedding": [
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "landmarks_px": [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ]
+          ]
+        }
+      ],
+      "image_size": [
+        100,
+        100
+      ],
+      "media_id": 7,
+      "model_id": "synthetic-face-anchor",
+      "path": "celebs01/fp-only.jpg"
+    },
+    {
+      "embedding_dim": 8,
+      "faces": [],
+      "image_size": [
+        100,
+        100
+      ],
+      "media_id": 8,
+      "model_id": "synthetic-face-anchor",
+      "path": "celebs01/fn-miss.jpg"
+    },
+    {
+      "embedding_dim": 8,
+      "faces": [
+        {
+          "bbox_px": [
+            20.0,
+            20.0,
+            40.0,
+            40.0
+          ],
+          "det_score": 0.95,
+          "embedding": [
+            0.0,
             1.0,
             0.0,
             0.0,
@@ -161,14 +384,39 @@
     }
   ],
   "kind": "face_run_record",
+  "occlusion_twin_pairs_by_tag": {
+    "masked": [
+      {
+        "box_index": 0,
+        "embedding": [
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "kind": "masked",
+        "media_id": 1,
+        "true_name": "Alice Example"
+      }
+    ]
+  },
   "provenance": {
+    "coverage_gaps": [
+      "failures",
+      "occlusion.occlusion_other",
+      "occlusion.sunglasses"
+    ],
     "embedding_dim": 8,
     "generator": "scripts.eval_harness.generate_face_determinism_anchor",
     "head_sha": "0000000000000000000000000000000000000000",
     "leg": "candidate",
-    "manifest_sha256": "e7004f3b2355d8c46943acffa3d3ea8c85c068985494962d0c48c5d12e8ccc0e",
+    "manifest_sha256": "19861fede2ec99bc0a7ed8777bca25829bce0fdd65e948e8c0080407e84c18e4",
     "model_id": "synthetic-face-anchor",
-    "note": "synthetic dim=8 unit vectors; no real image/embedding (PROV-01); head_sha/started_at are byte-stability sentinels",
+    "note": "synthetic dim=8 unit vectors; no real image/embedding (PROV-01); head_sha/started_at are byte-stability sentinels; F7 multi-regime corpus (2 identities, FP/FN, wrong-name, occlusion twin, 2 cohorts; failures[] declared gap — score-face hard-exits on counts.failed>0)",
     "started_at": "2026-08-11T00:00:00Z"
   },
   "schema": "acx-eval/v1"

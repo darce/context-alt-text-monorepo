@@ -975,6 +975,18 @@ _FACE_DETERMINISM_ANCHOR_REGEN_CMD = (
 )
 
 
+def _determinism_artifact_dir() -> Path:
+    """Home for non-promoted determinism diagnostics (FAILED / ANCHOR_MISMATCH).
+
+    Always ``scripts/eval_harness/out/`` (gitignored, PROV-01). Never derive from
+    the run-record or --expect-report path — those often live under committed
+    ``docs/tasks/vlm/bakeoff-results/``, and a red gate must not dirty the tree
+    (F7-01). Absolute path is printed in the operator message (OBS-04).
+    """
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    return OUT_DIR.resolve()
+
+
 def _check_expect_report(
     base_json: str,
     expect_report: Path,
@@ -997,9 +1009,9 @@ def _check_expect_report(
     - readable but bytes differ → ANCHOR_MISMATCH (corrupt freeze/record *or*
       deliberate scoring change; message names both remedies and the regen cmd)
 
-    Mismatch artifacts land under ``artifact_dir`` (run-record parent), never
-    beside the frozen expect path, so a red compare cannot dirty committed freeze
-    trees.
+    Mismatch artifacts land under ``artifact_dir`` (callers pass
+    ``_determinism_artifact_dir()`` → gitignored ``out/``), never beside a
+    committed freeze path, so a red compare cannot dirty the worktree (F7-01).
 
     ``regen_cmd`` defaults to the caption generator; face callers pass
     ``_FACE_DETERMINISM_ANCHOR_REGEN_CMD`` so the ANCHOR_MISMATCH remedy names
@@ -1025,7 +1037,8 @@ def _check_expect_report(
             f"matches --expect-report {resolved}"
         )
         return
-    artifact = artifact_dir / f"determinism-anchor-mismatch-{label}.diff.txt"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    artifact = (artifact_dir / f"determinism-anchor-mismatch-{label}.diff.txt").resolve()
     body = "\n".join(
         [
             f"gate={label}",
@@ -1137,13 +1150,15 @@ def _check_score_determinism_cross_process(
     )
     # Defer the seed-stability pass line when a frozen compare follows so the
     # operator sees one terminal outcome (OBS-04), not pass-then-mismatch.
+    # Diagnostics always land in out/ — never beside a committed freeze (F7-01).
+    det_artifact_dir = _determinism_artifact_dir()
     regime = _run_determinism_children(
         script,
         [str(resolved_record), str(resolved_manifest), rubric_gate, audience_value],
         label=label,
         base_json=base_json,
         base_md=base_md,
-        artifact_dir=resolved_record.parent,
+        artifact_dir=det_artifact_dir,
         expected_build_reports_file=build_reports.__code__.co_filename,
         announce_pass=expect_report is None,
     )
@@ -1153,7 +1168,7 @@ def _check_score_determinism_cross_process(
             Path(expect_report),
             label=label,
             regime=regime,
-            artifact_dir=resolved_record.parent,
+            artifact_dir=det_artifact_dir,
         )
     return base_json, base_md
 
@@ -1645,13 +1660,15 @@ def _check_face_determinism_cross_process(
         "'build_reports_file':build_face_reports.__code__.co_filename}))"
     )
     # Defer seed-stability pass when a frozen compare follows (same as caption).
+    # Diagnostics always land in out/ — never beside a committed freeze (F7-01).
+    det_artifact_dir = _determinism_artifact_dir()
     regime = _run_determinism_children(
         script,
         [str(resolved_record), str(resolved_manifest), "1" if public else "0"],
         label="score-face",
         base_json=base_json,
         base_md=base_md,
-        artifact_dir=resolved_record.parent,
+        artifact_dir=det_artifact_dir,
         expected_build_reports_file=build_face_reports.__code__.co_filename,
         announce_pass=expect_report is None,
     )
@@ -1661,7 +1678,7 @@ def _check_face_determinism_cross_process(
             Path(expect_report),
             label="score-face",
             regime=regime,
-            artifact_dir=resolved_record.parent,
+            artifact_dir=det_artifact_dir,
             regen_cmd=_FACE_DETERMINISM_ANCHOR_REGEN_CMD,
         )
     return base_json, base_md

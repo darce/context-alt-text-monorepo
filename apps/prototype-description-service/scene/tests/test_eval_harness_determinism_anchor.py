@@ -16,7 +16,11 @@ from pathlib import Path
 
 import pytest
 
-from scripts.eval_harness.cli import _check_score_determinism_cross_process, _manifest_sha
+from scripts.eval_harness.cli import (
+    _check_score_determinism_cross_process,
+    _determinism_artifact_dir,
+    _manifest_sha,
+)
 from scripts.eval_harness.generate_determinism_anchor import (
     _DEFAULT_STEM,
     write_anchor,
@@ -113,8 +117,11 @@ def test_corrupt_expect_report_makes_determinism_gate_red(tmp_path: Path) -> Non
     assert "do NOT regenerate" in msg
     assert "determinism check FAILED" not in msg
     assert "determinism check ERROR" not in msg
-    # Side-by-side artifact beside the run-record (tmp), not the freeze tree.
-    assert list(tmp_path.glob("determinism-anchor-mismatch-score.diff.txt"))
+    # F7-01: diagnostic lands in out/, never beside run-record or freeze tree.
+    artifact = _determinism_artifact_dir() / "determinism-anchor-mismatch-score.diff.txt"
+    assert artifact.is_file()
+    assert str(artifact.resolve()) in msg
+    assert not list(tmp_path.glob("determinism-anchor-mismatch*.diff.txt"))
     # Committed freeze still intact (TEST-15 restore semantics).
     assert _sha256(_REPORT_JSON) == _FROZEN_DIGESTS[_REPORT_JSON.name]
     assert before != "CORRUPTED_FOR_TEST_15"
@@ -177,7 +184,10 @@ def test_corrupt_run_record_alt_text_makes_determinism_gate_red(tmp_path: Path) 
     assert "determinism check FAILED" not in msg
     assert "determinism check ERROR" not in msg
     assert "wrong-name" not in msg.lower()
-    assert list(tmp_path.glob("determinism-anchor-mismatch-score.diff.txt"))
+    artifact = _determinism_artifact_dir() / "determinism-anchor-mismatch-score.diff.txt"
+    assert artifact.is_file()
+    assert str(artifact.resolve()) in msg
+    assert not list(tmp_path.glob("determinism-anchor-mismatch*.diff.txt"))
     # Committed freeze and original run-record untouched.
     assert _sha256(_REPORT_JSON) == _FROZEN_DIGESTS[_REPORT_JSON.name]
     assert _sha256(_RUN) == _FROZEN_DIGESTS[_RUN.name]

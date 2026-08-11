@@ -253,8 +253,8 @@ three remedies — do not treat them as synonyms:
 | --- | --- | --- |
 | `determinism check passed [label]: … (baseline=…; child_seeds=…)` | Cross-process re-score bit-identical under the named child seeds. With `--expect-report`, the line also says `matches --expect-report <path>`. | None — certified. |
 | `determinism check ERROR [label]: …` | Child could not run, timed out, payload missing/unreadable/unparseable, bound a different `build_reports` module, or `--expect-report` path missing/unreadable (**environment / path drift**). | Fix environment / import root / PYTHONPATH / path; re-run. **Not** a caption-model regression. |
-| `determinism check FAILED [label]: …` | Genuine byte mismatch across seeds (**build regression**). Writes `determinism-mismatch-<label>-seed<n>.diff.txt` under the artifact dir; artifact carries the same `baseline=…; child_seeds=…` regime. | Investigate scoring code / non-determinism in the build. |
-| `determinism check ANCHOR_MISMATCH [label]: …` | Seed-stable re-score does **not** match `--expect-report` (**external reference diverge**). Neither FAILED nor ERROR. Message names both legitimate causes and the regen command. | **(1)** Frozen report or run-record corrupted → investigate; **do not regenerate** (destroys evidence). **(2)** Scoring deliberately changed → regenerate on purpose via `python -m scripts.eval_harness.generate_determinism_anchor` and commit the new freeze. |
+| `determinism check FAILED [label]: …` | Genuine byte mismatch across seeds (**build regression**). Writes `determinism-mismatch-<label>-seed<n>.diff.txt` under gitignored `scripts/eval_harness/out/` (absolute path in the message); artifact carries the same `baseline=…; child_seeds=…` regime. | Investigate scoring code / non-determinism in the build. |
+| `determinism check ANCHOR_MISMATCH [label]: …` | Seed-stable re-score does **not** match `--expect-report` (**external reference diverge**). Neither FAILED nor ERROR. Message names both legitimate causes, the regen command, and the absolute path of `determinism-anchor-mismatch-<label>.diff.txt` under `scripts/eval_harness/out/` (never beside a committed freeze). | **(1)** Frozen report or run-record corrupted → investigate; **do not regenerate** (destroys evidence). **(2)** Scoring deliberately changed → regenerate on purpose via `python -m scripts.eval_harness.generate_determinism_anchor` (or `generate_face_determinism_anchor`) and commit the new freeze. |
 
 `label` is `score`, `score-public`, or `score-face` so CI logs name which document failed.
 
@@ -263,10 +263,16 @@ three remedies — do not treat them as synonyms:
 
 - **Caption freeze (F5):** LOCAL score document only under
   `docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811*`.
-- **Face freeze (F6):** synthetic face run-record + dedicated manifest + face
+- **Face freeze (F6/F7):** synthetic face run-record + dedicated manifest + face
   report under `docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-*`
-  (dim=8 unit vectors; no real embeddings — PROV-01). Regenerate via
-  `python -m scripts.eval_harness.generate_face_determinism_anchor`.
+  (dim=8 unit vectors; no real embeddings — PROV-01). Multi-regime corpus (2
+  identities, detection FP/FN, wrong-name, occlusion twin, 2 cohorts, error
+  item). A green face gate proves **byte-stable re-score** and that cells named
+  live in the freeze execute; it does **not** prove ship-ready floors
+  (UNDER-FLOOR/DIRECTIONAL is expected). Still-vacuous cells are listed in
+  `provenance.coverage_gaps` (AUDIT-07). Regenerate via
+  `python -m scripts.eval_harness.generate_face_determinism_anchor`. Offline both
+  freezes: `make eval-anchor-check` from the monorepo root.
 
 ```text
 $ cd apps/prototype-description-service
@@ -277,7 +283,7 @@ $ uv run --extra dev python -m scripts.eval_harness.cli score-face \
     --expect-report ../../docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-run-20260811-face-report.json
 determinism check passed [score-face]: cross-process re-score is bit-identical under varied PYTHONHASHSEED (baseline=randomized; child_seeds=0,1,42); matches --expect-report …/S2A-face-determinism-anchor-run-20260811-face-report.json
 …/S2A-face-determinism-anchor-run-20260811-face-report.md
-scored=3/3 matched_faces=3 occlusion_n_eligible=0 directional_excluded=6
+scored=8/8 matched_faces=6 occlusion_n_eligible=1 directional_excluded=…
 # EXIT_CODE:0
 ```
 
@@ -353,7 +359,7 @@ uv run python -m scripts.eval_harness.cli score-face \
   --run-record scripts/eval_harness/out/face-run-<stamp>.json \
   --check-determinism
 
-# frozen synthetic face anchor (F6 / B-06) — dim=8 unit vectors, no real embeddings
+# frozen synthetic face anchor (F6/F7 / B-06) — dim=8 unit vectors, no real embeddings
 uv run python -m scripts.eval_harness.cli score-face \
   --manifest ../../docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-manifest-20260811.json \
   --run-record ../../docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-run-20260811.json \
@@ -369,9 +375,11 @@ uv run python -m scripts.eval_harness.cli score-face \
 varied `PYTHONHASHSEED` and asserts bit-identical JSON/MD (sorted nested lists).
 Seed-stability alone cannot detect a corrupted face run-record (parent and
 children re-read the same file). Pair with `--expect-report` against the
-committed synthetic freeze for the third outcome (`ANCHOR_MISMATCH`). Never
-promote real buffalo 512D embeddings out of `out/` (PROV-01) — the committed
-anchor is synthetic only.
+committed synthetic freeze for the third outcome (`ANCHOR_MISMATCH`). Red-path
+diagnostics write under gitignored `scripts/eval_harness/out/` (F7-01) so a
+failed compare never dirties `docs/tasks/vlm/bakeoff-results/`. Never promote
+real buffalo 512D embeddings out of `out/` (PROV-01) — the committed anchor is
+synthetic only.
 
 ### Floor + demotion policy
 

@@ -1173,10 +1173,13 @@ def test_cli_score_determinism_guard_detects_mutated_persisted_anchor(tmp_path, 
     assert "[score]" in msg
     assert "document=" in msg
     assert "determinism check ERROR" not in msg
-    # Mismatch artifact written beside the run record for operator triage.
+    # F7-01: mismatch diagnostic lands in out/, not beside the run-record.
     assert "artifact=" in msg
-    artifacts = list(tmp_path.glob("determinism-mismatch-score-seed*.diff.txt"))
-    assert artifacts, "expected side-by-side mismatch artifact beside run record"
+    from scripts.eval_harness.cli import _determinism_artifact_dir
+
+    artifacts = list(_determinism_artifact_dir().glob("determinism-mismatch-score-seed*.diff.txt"))
+    assert artifacts, "expected mismatch artifact under scripts/eval_harness/out/"
+    assert not list(tmp_path.glob("determinism-mismatch-score-seed*.diff.txt"))
 
 
 def test_cli_score_expect_report_requires_check_determinism(tmp_path, monkeypatch, capsys):
@@ -1979,8 +1982,11 @@ def test_cli_score_determinism_fail_artifact_carries_baseline_regime(
     assert "child_seeds=2,1,42" in msg
     assert "determinism check ERROR" not in msg
 
-    artifacts = list(tmp_path.glob("determinism-mismatch-score-seed*.diff.txt"))
-    assert artifacts, "expected mismatch artifact beside run record"
+    from scripts.eval_harness.cli import _determinism_artifact_dir
+
+    artifacts = list(_determinism_artifact_dir().glob("determinism-mismatch-score-seed*.diff.txt"))
+    assert artifacts, "expected mismatch artifact under scripts/eval_harness/out/"
+    assert not list(tmp_path.glob("determinism-mismatch-score-seed*.diff.txt"))
     body = artifacts[0].read_text()
     assert "baseline_regime=fixed:0" in body
     assert "child_seeds=2,1,42" in body

@@ -832,10 +832,12 @@ def _cmd_score(args: argparse.Namespace) -> None:
     # Corpus truncation via partial run-record (fetch --limit N): media-id multiset
     # must match the score-time manifest. counts.total alone is self-referential
     # (scored=5/5) and previously exited 0 with a full-corpus fetch sha (F1-2 / r08116b50).
-    media_id_missing = int(scored.get("counts", {}).get("media_id_missing") or 0)
-    media_id_extra = int(scored.get("counts", {}).get("media_id_extra") or 0)
+    # F1d-4: corpus-integrity keys live under scored["corpus"], not counts.
+    corpus = scored.get("corpus") or {}
+    media_id_missing = int(corpus.get("media_id_missing") or 0)
+    media_id_extra = int(corpus.get("media_id_extra") or 0)
     if media_id_missing or media_id_extra:
-        manifest_n = int(scored.get("counts", {}).get("manifest_entries") or 0)
+        manifest_n = int(corpus.get("manifest_entries") or 0)
         record_n = int(scored.get("counts", {}).get("total") or 0)
         sys.exit(
             f"score truncation gate: run-record media-id multiset differs from manifest "

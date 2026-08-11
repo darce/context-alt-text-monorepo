@@ -424,6 +424,9 @@ def build_score_verdict(
     """
     reasons: list[str] = []
     counts = scored.get("counts") or {}
+    # F1d-4 / VLM-6-S2A-P-01: corpus-integrity counts live in scored["corpus"],
+    # not counts (counts is the pinned {total, scored, failed} contract shape).
+    corpus = scored.get("corpus") or {}
     caption = scored.get("caption") or {}
     ident = (scored.get("faces") or {}).get("identification") or {}
 
@@ -431,8 +434,8 @@ def build_score_verdict(
     if failed > 0:
         reasons.append(f"failed-items: {failed} item(s) not scored")
 
-    media_id_missing = int(counts.get("media_id_missing") or 0)
-    media_id_extra = int(counts.get("media_id_extra") or 0)
+    media_id_missing = int(corpus.get("media_id_missing") or 0)
+    media_id_extra = int(corpus.get("media_id_extra") or 0)
     if media_id_missing or media_id_extra:
         reasons.append(
             f"truncation: media-id multiset differs "
@@ -814,10 +817,15 @@ def score_run_record(
         "kind": DocKind.REPORT.value,
         "eval_mode": eval_mode,
         "provenance": provenance,
+        # counts is a pinned contract shape {total, scored, failed} (additive-schema
+        # proof in test_eval_harness_pipeline). Corpus-integrity multiset fields
+        # live in "corpus" so they cannot break that contract (F1d-4 / VLM-6-S2A-P-01).
         "counts": {
             "total": len(run_record["items"]),
             "scored": len(per_image),
             "failed": len(failures),
+        },
+        "corpus": {
             "manifest_entries": len(manifest_entries),
             "media_id_missing": media_id_missing,
             "media_id_extra": media_id_extra,

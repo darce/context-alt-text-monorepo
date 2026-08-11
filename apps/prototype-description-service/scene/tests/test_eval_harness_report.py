@@ -122,6 +122,8 @@ def test_score_run_record_shapes():
         "total": 3,
         "scored": 2,
         "failed": 1,
+    }
+    assert scored["corpus"] == {
         "manifest_entries": 3,
         "media_id_missing": 0,
         "media_id_extra": 0,
@@ -407,13 +409,13 @@ def test_media_id_multiset_coverage_counts():  # VLM-6 S2A F1-2
     # Drop second item → one manifest media_id missing from the record multiset.
     record = {**record, "items": record["items"][:1]}
     scored = score_run_record(record, entries)
-    assert scored["counts"]["manifest_entries"] == len(entries)
-    assert scored["counts"]["media_id_missing"] == len(entries) - 1
-    assert scored["counts"]["media_id_extra"] == 0
+    assert scored["corpus"]["manifest_entries"] == len(entries)
+    assert scored["corpus"]["media_id_missing"] == len(entries) - 1
+    assert scored["corpus"]["media_id_extra"] == 0
     # Full coverage → zeros.
     full = score_run_record(_run_record(), entries)
-    assert full["counts"]["media_id_missing"] == 0
-    assert full["counts"]["media_id_extra"] == 0
+    assert full["corpus"]["media_id_missing"] == 0
+    assert full["corpus"]["media_id_extra"] == 0
 
 
 def test_all_items_failed_aggregate_paths():  # S3-08

@@ -32,7 +32,7 @@ import time
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, Mapping, NamedTuple
 
 from scene.config.profiles import PROFILE_SPECS, DescriptionProfile
 from scene.domain.description import DescriptionAdapterKind
@@ -78,6 +78,37 @@ _RUN_STAMP_RE = re.compile(r"^run-(\d{8}-\d{6})")
 # on real golden.json — F1-11 conjunction was false-green on plain garbage).
 RUBRIC_GATE_ENFORCE = "enforce"
 RUBRIC_GATE_SKIP = "skip"
+# F1-4 / r08116b50: hard-key gate inputs. Soft defaults (.get(..., 0) / is False)
+# fail open when report.py renames a field — the gate cannot go red (TEST-15).
+# Message token ``score schema error:`` is class-unique vs gate tokens.
+_SCORE_SCHEMA_ERROR_TOKEN = "score schema error"
+
+
+def _score_schema_error(dotted_path: str, expected: str) -> None:
+    """Exit non-zero naming the missing/wrong-type dotted path (never falls through)."""
+    sys.exit(f"{_SCORE_SCHEMA_ERROR_TOKEN}: {dotted_path} missing or not a {expected}")
+
+
+def _hard_key(container: Mapping[str, Any] | None, *path: str, expected: str, check) -> Any:
+    """Require ``path`` present under container with a value passing ``check``."""
+    dotted = ".".join(path)
+    cur: Any = container
+    for key in path:
+        if not isinstance(cur, Mapping) or key not in cur:
+            _score_schema_error(dotted, expected)
+        cur = cur[key]
+    if not check(cur):
+        _score_schema_error(dotted, expected)
+    return cur
+
+
+def _is_bool(value: Any) -> bool:
+    return isinstance(value, bool)
+
+
+def _is_number(value: Any) -> bool:
+    # bool is a subclass of int — reject it so True/False never soft-pass as 1/0.
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 RUBRIC_GATE_CHOICES = (RUBRIC_GATE_ENFORCE, RUBRIC_GATE_SKIP)
 
 
@@ -745,9 +776,10 @@ def _cmd_score(args: argparse.Namespace) -> None:
     # _manifest_sha hashes model_dump(), so label edits (e.g. Slice 2 face_boxes)
     # change the current-file hash and would permanently block re-scoring archived
     # baselines. provenance.manifest_matches_fetch remains informational in the
-    # report. Self-consistency: the run-record must carry its own fetch-time
-    # manifest_sha256 so the record is attributable to a fetch-time corpus.
-    # Media-id coverage vs the score-time manifest is the truncation gate above.
+    # report (still hard-keyed below so a rename cannot go silent). Self-consistency:
+    # the run-record must carry its own fetch-time manifest_sha256 so the record is
+    # attributable to a fetch-time corpus. Media-id coverage vs the score-time
+    # manifest is the truncation gate above.
     fetch_manifest_sha = scored.get("provenance", {}).get("manifest_sha256")
     if not fetch_manifest_sha:
         sys.exit(
@@ -770,6 +802,29 @@ def _cmd_score(args: argparse.Namespace) -> None:
             f"score empty-rubric gate: easy_wrong is vacuous corpus-wide "
             f"(easy_wrong_defined_images=0); wrong-name trap is vacuous (see {json_path})"
         )
+    # F1-4 / r08116b50: hard-key the three gate inputs. Missing key or wrong type
+    # exits non-zero with a named schema error (never soft-default to pass).
+    # provenance.manifest_matches_fetch is informational post-F1-3 but still
+    # required as a bool so report schema drift cannot go silent.
+    _hard_key(scored, "provenance", "manifest_matches_fetch", expected="bool", check=_is_bool)
+    must_right_failed = int(
+        _hard_key(
+            scored,
+            "caption",
+            "must_right_failed_images",
+            expected="number",
+            check=_is_number,
+        )
+    )
+    wrong_name_rate = float(
+        _hard_key(
+            scored,
+            "verdict",
+            "wrong_name_rate",
+            expected="number",
+            check=_is_number,
+        )
+    )
     # F1b-2 / F1-12: simple must-right failures gate. Any failed must_right image
     # exits non-zero under --rubric-gate enforce (default). The F1-11 conjunction
     # (rate==1.0 ∧ mean_gated==0.0) was false-green on plain garbage against real
@@ -781,7 +836,6 @@ def _cmd_score(args: argparse.Namespace) -> None:
     # declaration (--rubric-gate skip), recorded in the artifact, never inferred
     # from adapter/model_id (rg-009). The seeded report already discloses it is
     # "harness-shakedown numbers, NOT a caption-model baseline."
-    must_right_failed = int(scored.get("caption", {}).get("must_right_failed_images") or 0)
     if rubric_gate == RUBRIC_GATE_ENFORCE and must_right_failed > 0:
         sys.exit(
             f"score must-right failures gate: {must_right_failed} image(s) failed Must-Right "
@@ -789,7 +843,6 @@ def _cmd_score(args: argparse.Namespace) -> None:
         )
     # VLM-6 S2A: wrong-name floor — hallucinated human names on photographs are
     # the highest-severity failure this harness detects; gate, do not merely report.
-    wrong_name_rate = float(verdict.get("wrong_name_rate", 0.0))
     floor = float(verdict.get("wrong_name_rate_floor", WRONG_NAME_RATE_FLOOR))
     if wrong_name_rate > floor:
         sys.exit(

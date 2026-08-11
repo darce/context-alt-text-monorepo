@@ -8,7 +8,12 @@ originals list (WP get_attached_file), sends each image to the remote descriptio
 service (ACX_EVAL_* creds), and captures caption + identities + face_count +
 per-image describe latency into a JSONL + a structured md/json report.
 
-Env: BASELINE_LIMIT (0=all), CHUNK (default 12), HEAD_SHA.
+Env: BASELINE_LIMIT (0=all), CHUNK (default 12), HEAD_SHA, BASELINE_UPLOADS
+(WordPress uploads root; required unless --uploads is set).
+
+Fail-closed (VLM6-RH-01 / RH-02):
+- Missing corpus => non-zero exit; never overwrites a non-empty report with empty.
+- Remote write path reuses ``face_pass.assert_scratch_tenant`` (scratch tenant only).
 """
 
 from __future__ import annotations
@@ -29,7 +34,8 @@ SCRATCH = HERE / "out"  # gitignored: progressive/resumable JSONL only
 # Durable, git-committed results dir (NOT scratchpad — the face-pass was lost once
 # by living only in /tmp). JSONL stays in out/ as the progressive/resumable log.
 RESULTS = HERE.parents[3] / "docs" / "tasks" / "vlm" / "bakeoff-results"
-UPLOADS = Path("/Volumes/Butter/WP/vlm/app/public/wp-content/uploads")
+# No hardcoded operator-laptop uploads path (VLM6-RH-01). Resolve via --uploads
+# or BASELINE_UPLOADS only.
 ATTACH_TSV = HERE / "vlm-corpus-attachments-20260716.tsv"
 JSONL = SCRATCH / "vlm-baseline-descriptions-20260716.jsonl"
 REPORT_JSON = RESULTS / "vlm-baseline-descriptions-20260716.json"
@@ -43,6 +49,43 @@ HEAD_SHA = os.environ.get("HEAD_SHA", "0" * 40)
 BAKEOFF_BASE_URL = os.environ.get("BAKEOFF_BASE_URL", "")
 BAKEOFF_MODEL_ID = os.environ.get("BAKEOFF_MODEL_ID", "Qwen3-VL-30B-A3B-Instruct")
 BAKEOFF_MODEL_VERSION = os.environ.get("BAKEOFF_MODEL_VERSION", "Q4_K_M")
+
+_UPLOADS_MARKERS = ("/wp-content/uploads/", "/uploads/")
+
+
+def resolve_uploads_root(cli_value: str | None = None) -> Path:
+    """Resolve the WordPress uploads corpus root (flag > env; no laptop default).
+
+    Raises SystemExit with an OBS-04 remedy when unset or not a directory.
+    """
+    raw = (cli_value or "").strip() or os.environ.get("BASELINE_UPLOADS", "").strip()
+    if not raw:
+        raise SystemExit(
+            "uploads corpus root not set: pass --uploads DIR or set BASELINE_UPLOADS "
+            "to the WordPress wp-content/uploads directory that holds the corpus images"
+        )
+    path = Path(raw).expanduser().resolve()
+    if not path.is_dir():
+        raise SystemExit(
+            f"uploads corpus root does not exist or is not a directory: {path}. "
+            "Pass --uploads DIR or set BASELINE_UPLOADS to a real uploads tree"
+        )
+    return path
+
+
+def reanchor_attachment_path(recorded: Path, uploads: Path) -> Path:
+    """Map a TSV-recorded absolute path onto the configured uploads root."""
+    text = recorded.as_posix()
+    for marker in _UPLOADS_MARKERS:
+        idx = text.find(marker)
+        if idx != -1:
+            return uploads / text[idx + len(marker) :]
+    if recorded.is_absolute():
+        try:
+            return uploads / recorded.relative_to(uploads)
+        except ValueError:
+            return recorded
+    return uploads / recorded
 
 
 def parse_cost_per_image_usd(raw: str | None) -> float | None:
@@ -135,11 +178,42 @@ def _paid_describe_calls(rows: list[dict[str, object]]) -> int:
     return paid
 
 
-def _write_report(*, cost_per_image_usd: float | None = None) -> None:
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write via temp file + replace so a crash cannot leave a half-written report."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
+
+
+def _refuse_empty_clobber(path: Path, *, new_empty: bool) -> None:
+    """Refuse to replace a non-empty committed report with an empty one (VLM6-RH-01)."""
+    if not new_empty:
+        return
+    if path.exists() and path.stat().st_size > 0:
+        raise RuntimeError(
+            f"refusing to overwrite non-empty report {path} with an empty report "
+            f"(0 items in JSONL). Fix --uploads / BASELINE_UPLOADS so the corpus is "
+            f"found before writing, or remove the report only if empty overwrite is intentional"
+        )
+
+
+def _write_report(
+    *,
+    cost_per_image_usd: float | None = None,
+    uploads: Path | None = None,
+) -> None:
     # Shared with report.py scoring (sr-007): one normalizer for both identity shapes.
     from scripts.eval_harness.cli import identity_names
 
     rows = [json.loads(ln) for ln in JSONL.read_text().splitlines() if ln.strip()] if JSONL.exists() else []
+    if not rows:
+        _refuse_empty_clobber(REPORT_JSON, new_empty=True)
+        _refuse_empty_clobber(REPORT_MD, new_empty=True)
+        raise RuntimeError(
+            "refusing to write empty baseline report (0 JSONL rows). "
+            "Describe at least one image, or fix --uploads / BASELINE_UPLOADS so the corpus is found"
+        )
     for r in rows:  # derive structured mask/sunglasses flags from each caption (report-only)
         r["caption_flags"] = _caption_flags((r.get("describe") or {}).get("alt_text_draft") or "")
     lat = [r["latency_s"] for r in rows if isinstance(r.get("latency_s"), (int, float))]
@@ -178,7 +252,8 @@ def _write_report(*, cost_per_image_usd: float | None = None) -> None:
         "model_ids": models,
         "head_sha": HEAD_SHA,
     }
-    REPORT_JSON.write_text(json.dumps({"summary": summary, "items": rows}, indent=2, sort_keys=True) + "\n")
+    payload = json.dumps({"summary": summary, "items": rows}, indent=2, sort_keys=True) + "\n"
+    _atomic_write_text(REPORT_JSON, payload)
 
     if cost_fields["cost_per_image_usd"] is None:
         cost_line = (
@@ -191,10 +266,11 @@ def _write_report(*, cost_per_image_usd: float | None = None) -> None:
             f"per-image=${summary['cost_per_image_usd']} "
             f"({paid_describe_calls} paid describe calls)"
         )
+    uploads_display = uploads if uploads is not None else Path("(uploads unset)")
     lines = [
         f"# VLM-6 baseline descriptions — `{', '.join(models) or 'model'}` @ `{summary['base_url']}`",
         "",
-        f"- source: `{UPLOADS}` (all {summary['total']} attachment originals) · "
+        f"- source: `{uploads_display}` (all {summary['total']} attachment originals) · "
         f"model provenance: `{', '.join(models) or 'unknown'}` (`{BAKEOFF_MODEL_VERSION}`, adapter=bakeoff)",
         f"- progress: **{summary['described_ok']}/{summary['total']}** described "
         f"({summary['errors']} errors) · images_with_faces: {summary['images_with_faces']} · "
@@ -219,14 +295,13 @@ def _write_report(*, cost_per_image_usd: float | None = None) -> None:
         lines.append(
             f"| {r.get('media_id')} | {fname} | {r.get('face_count')} | {ids} | {flags} | {r.get('latency_s')} | {cell} |"
         )
-    REPORT_MD.write_text("\n".join(lines) + "\n")
+    _atomic_write_text(REPORT_MD, "\n".join(lines) + "\n")
 
 
 def main(argv: list[str] | None = None) -> int:
-    from scripts.eval_harness.bakeoff import BakeoffClient
     from scripts.eval_harness.cli import BoundedStallError, fetch_run_record
+    from scripts.eval_harness.face_pass import SeededTenantError, assert_scratch_tenant
     from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest
-    from scripts.eval_harness.remote_client import RemoteSceneClient
 
     env = os.environ
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -237,10 +312,23 @@ def main(argv: list[str] | None = None) -> int:
         help="provider per-request price (USD); stamps total_cost_usd / cost_per_image_usd "
         "(or set COST_PER_IMAGE_USD). Omit to emit null cost fields.",
     )
+    parser.add_argument(
+        "--uploads",
+        default=None,
+        help="WordPress wp-content/uploads root holding the corpus "
+        "(or set BASELINE_UPLOADS). Required; no laptop-absolute default.",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="skip assert_scratch_tenant (accept writing face rows into a roster-seeded tenant)",
+    )
     args = parser.parse_args(argv)
     cost_per_image_usd = args.cost_per_image
     if cost_per_image_usd is None:
         cost_per_image_usd = parse_cost_per_image_usd(env.get("COST_PER_IMAGE_USD"))
+
+    uploads = resolve_uploads_root(args.uploads)
 
     RESULTS.mkdir(parents=True, exist_ok=True)
     SCRATCH.mkdir(parents=True, exist_ok=True)
@@ -248,35 +336,77 @@ def main(argv: list[str] | None = None) -> int:
     for line in ATTACH_TSV.read_text().splitlines():
         if "\t" in line:
             sid, path = line.split("\t", 1)
-            rows.append((int(sid), Path(path)))
+            rows.append((int(sid), reanchor_attachment_path(Path(path), uploads)))
+
+    found = [(mid, p) for (mid, p) in rows if p.exists()]
+    if not found:
+        print(
+            f"no corpus images found under uploads root {uploads} "
+            f"(0 of {len(rows)} attachment paths exist on disk). "
+            f"Pass --uploads DIR or set BASELINE_UPLOADS to the WordPress "
+            f"wp-content/uploads directory that holds this corpus.",
+            file=sys.stderr,
+        )
+        return 1
 
     done = _done_ids()
-    todo = [(mid, p) for (mid, p) in rows if mid not in done and p.exists()]
+    todo = [(mid, p) for (mid, p) in found if mid not in done]
     if LIMIT:
         todo = todo[:LIMIT]
-    print(f"baseline: {len(rows)} attachments, {len(done)} already done, {len(todo)} to describe (chunk={CHUNK})")
+    print(
+        f"baseline: {len(rows)} attachments, {len(found)} on disk, "
+        f"{len(done)} already done, {len(todo)} to describe (chunk={CHUNK}) "
+        f"uploads={uploads}"
+    )
+
+    if not todo:
+        # Resume-complete refresh only when JSONL already has work; never invent empty.
+        try:
+            _write_report(cost_per_image_usd=cost_per_image_usd, uploads=uploads)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print("done (nothing new).")
+        return 0
 
     if BAKEOFF_BASE_URL:
+        from scripts.eval_harness.bakeoff import BakeoffClient
+
         client = BakeoffClient(
             base_url=BAKEOFF_BASE_URL,
             model_id=BAKEOFF_MODEL_ID,
             model_version=BAKEOFF_MODEL_VERSION,
             timeout_s=900,
         )
+        # BakeoffClient.analyze is a no-op stub — no MediaIdentity writes.
+        needs_tenant_guard = False
     else:
+        from scripts.eval_harness.remote_client import RemoteSceneClient
+
         base = os.environ.get("ACX_EVAL_BASE_URL", "")
         key = os.environ.get("ACX_EVAL_API_KEY", "")
         tenant = os.environ.get("ACX_EVAL_TENANT_ID", "")
         if not (base and key and tenant):
             sys.exit("missing ACX_EVAL_BASE_URL / ACX_EVAL_API_KEY / ACX_EVAL_TENANT_ID")
         client = RemoteSceneClient(base_url=base, api_key=key, tenant_id=tenant)
+        # fetch_run_record -> client.analyze persists face rows (VLM6-RH-02).
+        needs_tenant_guard = True
+
     started = datetime.now(UTC).isoformat()
+    work_started = False
     try:
+        if needs_tenant_guard and not args.force:
+            try:
+                assert_scratch_tenant(client)
+            except SeededTenantError as exc:
+                print(f"REFUSED: {exc}", file=sys.stderr)
+                return 2
+
         for i in range(0, len(todo), CHUNK):
             chunk = todo[i : i + CHUNK]
             entries = []
             for mid, abspath in chunk:
-                rel = str(abspath.relative_to(UPLOADS))
+                rel = str(abspath.relative_to(uploads))
                 entries.append(
                     GoldenEntry(
                         path=rel,
@@ -294,7 +424,7 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 rec = fetch_run_record(
                     manifest,
-                    str(UPLOADS),
+                    str(uploads),
                     client,
                     head_sha=HEAD_SHA,
                     started_at=started,
@@ -309,14 +439,21 @@ def main(argv: list[str] | None = None) -> int:
                 for it in items:
                     it["completed_at"] = now
                     f.write(json.dumps(it) + "\n")
-            _write_report(cost_per_image_usd=cost_per_image_usd)
+            work_started = True
+            _write_report(cost_per_image_usd=cost_per_image_usd, uploads=uploads)
             print(f"  chunk {i // CHUNK + 1}: +{len(items)} items ({i + len(chunk)}/{len(todo)})", flush=True)
             if partial:
                 print("  bounded-stall abort (endpoint likely down); stopping — rerun to resume.", flush=True)
                 break
     finally:
         client.close()
-        _write_report(cost_per_image_usd=cost_per_image_usd)
+        # Only rewrite reports after real work; never empty-clobber on pre-work failure.
+        if work_started:
+            try:
+                _write_report(cost_per_image_usd=cost_per_image_usd, uploads=uploads)
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                return 1
     print("done.")
     return 0
 

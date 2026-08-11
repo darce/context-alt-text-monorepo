@@ -31,7 +31,9 @@ BAKEOFF = Path(__file__).parent / "seed" / "bakeoff_golden.json"
 
 @pytest.fixture(scope="module")
 def manifest():
-    return load_manifest(str(BAKEOFF))
+    # Metadata-only: run_fusion_eval → _synthetic_image_bytes; tests read labels/
+    # context_pack/policy/expected_attachments only — never open image bytes.
+    return load_manifest(str(BAKEOFF), skip_hash_verification=True)
 
 
 def test_bakeoff_labels_include_expected_attachments(manifest):

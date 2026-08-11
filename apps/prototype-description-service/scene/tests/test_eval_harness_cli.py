@@ -1179,6 +1179,89 @@ def test_cli_score_determinism_guard_detects_mutated_persisted_anchor(tmp_path, 
     assert artifacts, "expected side-by-side mismatch artifact beside run record"
 
 
+def test_cli_score_expect_report_requires_check_determinism(tmp_path, monkeypatch, capsys):
+    """F5 / OBS-04: --expect-report alone is rejected (no silent half-gate)."""
+    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
+    expect = tmp_path / "expect.json"
+    expect.write_text("{}\n")
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "score",
+                "--manifest",
+                str(manifest_path),
+                "--run-record",
+                str(record_path),
+                "--expect-report",
+                str(expect),
+            ]
+        )
+    msg = str(exc.value)
+    assert "--expect-report requires --check-determinism" in msg
+
+
+def test_cli_score_determinism_seed_failed_not_anchor_mismatch(tmp_path, monkeypatch):
+    """Discrimination (OBS-04 / TEST-15): genuine seed diverge stays FAILED.
+
+    Even when --expect-report is set, a cross-process byte mismatch must not be
+    re-labeled ANCHOR_MISMATCH — three outcomes, three distinct messages.
+    """
+    from scripts.eval_harness import cli as cli_mod
+
+    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
+    # Expect file is whatever the clean score would produce after a successful
+    # certify; seed mutation still fires first inside _run_determinism_children.
+    from scripts.eval_harness.report import Audience, build_reports
+    from scripts.eval_harness.manifest import load_manifest
+
+    record = json.loads(record_path.read_text())
+    man = load_manifest(str(manifest_path))
+    entries = [e.model_dump() for e in man.entries]
+    base_json, _ = build_reports(
+        record,
+        entries,
+        score_manifest_sha256=cli_mod._manifest_sha(man),
+        manifest_roster=sorted(set(getattr(man, "roster", []) or [])),
+        audience=Audience.LOCAL,
+        rubric_gate="enforce",
+    )
+    expect = tmp_path / "expect-ok.json"
+    expect.write_text(base_json)
+    monkeypatch.chdir(tmp_path)
+
+    real_run = cli_mod.subprocess.run
+
+    def _mutate_then_run(*args, **kwargs):
+        payload = json.loads(record_path.read_text())
+        item = payload["items"][0]
+        item["describe"] = {
+            "alt_text_draft": "MUTATED CAPTION FOR DETERMINISM GUARD",
+            "visual_facts": {"objects": ["definitely-not-in-baseline"]},
+        }
+        item["identities"] = [
+            {
+                "name": "Bob Builder",
+                "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                "unpositioned": False,
+            }
+        ]
+        record_path.write_text(json.dumps(payload))
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(cli_mod.subprocess, "run", _mutate_then_run)
+    with pytest.raises(SystemExit) as exc:
+        cli_mod._check_score_determinism_cross_process(
+            record_path,
+            str(manifest_path),
+            expect_report=expect,
+        )
+    msg = str(exc.value)
+    assert "determinism check FAILED" in msg
+    assert "determinism check ANCHOR_MISMATCH" not in msg
+    assert "determinism check ERROR" not in msg
+
+
 def test_cli_score_determinism_guard_errors_on_child_nonzero_rc(tmp_path, monkeypatch):
     """C-03 / OBS-04: child rc != 0 is ERROR (infra), not FAILED (regression).
 

@@ -24,12 +24,15 @@ import pytest
 
 from recognition.tests.dockerfile_stages import (
     DockerfileParseError,
+    copy_from_dep_stages,
     default_build_target,
     dockerfile_stages as _dockerfile_stages_shared,
     effective_stage_body,
     has_vlm_extra,
+    join_continued_lines,
     parse_from_instruction,
     stage_resolves_vlm_extra,
+    unlocked_project_extra_installs,
 )
 
 # recognition/tests/deploy/<this> → parents[3] = the service root.
@@ -47,6 +50,7 @@ def _dockerfile_stages(dockerfile: Path = DOCKERFILE) -> dict[str, str]:
 
 def _write(tmp_path: Path, text: str) -> Path:
     path = tmp_path / "Dockerfile"
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text)
     return path
 
@@ -266,3 +270,162 @@ def test_guard_bites_when_copy_from_vlm_builder_contaminates_runtime(
     assert not has_vlm_extra(effective_stage_body(path, DEFAULT_STAGE))
     assert stage_resolves_vlm_extra(path, DEFAULT_STAGE)
     assert stage_resolves_vlm_extra(path, "builder")
+
+
+# ---- D5: six parser bypasses (synthetic fixtures only; never live DOCKERFILE) -
+
+
+def test_d5_anonymous_final_stage_is_buildkit_default(tmp_path: Path) -> None:
+    """D5.1: anonymous final FROM is BuildKit's default; last *named* stage is not.
+
+    Before: default_build_target returned list(named)[-1] == runtime while
+    BuildKit would build the trailing anonymous FROM runtime-vlm.
+    After: default_build_target returns None (anonymous last) so the gate fails.
+    """
+    path = _write(
+        tmp_path,
+        _SYNTHETIC + "\nFROM runtime-vlm\nENV LEAKED=1\n",
+    )
+    named = _dockerfile_stages(path)
+    assert list(named)[-1] == DEFAULT_STAGE, "control: last named stage still runtime"
+    assert default_build_target(path) is None, (
+        "anonymous final stage must not report a named default target"
+    )
+    assert default_build_target(path) != DEFAULT_STAGE
+
+
+def test_d5_comment_inside_line_continuation_keeps_copy_edge(tmp_path: Path) -> None:
+    """D5.2: Docker drops # lines inside \\ continuations before join.
+
+    Before: join split the COPY across the comment, so COPY --from deps vanished.
+    After: the logical COPY remains one instruction and provenance sees the edge.
+    """
+    path = _write(
+        tmp_path,
+        "FROM python:3.12-slim AS builder-vlm\n"
+        "RUN uv sync --locked --extra vlm\n"
+        "\n"
+        "FROM python:3.12-slim AS runtime\n"
+        "COPY --from=builder-vlm \\\n"
+        "  # comment inside continuation (Docker strips this before join)\n"
+        "  /opt/venv /opt/venv\n"
+        "ENV ACX_IMAGE_VARIANT=recognition\n",
+    )
+    body = _dockerfile_stages(path)[DEFAULT_STAGE]
+    joined = join_continued_lines(body)
+    assert any("COPY --from=builder-vlm" in ln and "/opt/venv" in ln for ln in joined), (
+        f"continuation+comment must yield one COPY logical line; got {joined!r}"
+    )
+    assert copy_from_dep_stages(body) == ["builder-vlm"]
+    assert stage_resolves_vlm_extra(path, DEFAULT_STAGE)
+
+
+def test_d5_quoted_extra_vlm_is_detected(tmp_path: Path) -> None:
+    """D5.3: --extra \"vlm\" / --extra='vlm' must count as the vlm extra.
+
+    Before: only bare --extra vlm / --extra=vlm matched; quotes evaded the gate.
+    After: quoted forms are detected and stage_resolves_vlm_extra goes red.
+    """
+    for flag in ('--extra "vlm"', "--extra='vlm'", '--extra="vlm"'):
+        path = _write(
+            tmp_path,
+            "FROM python:3.12-slim AS builder\n"
+            f"RUN uv sync --locked {flag}\n"
+            "\n"
+            "FROM python:3.12-slim AS runtime\n"
+            "COPY --from=builder /opt/venv /opt/venv\n",
+        )
+        assert has_vlm_extra(_dockerfile_stages(path)["builder"]), flag
+        assert stage_resolves_vlm_extra(path, DEFAULT_STAGE), flag
+
+
+def test_d5_numeric_copy_from_and_path_allowlist_and_cycle(tmp_path: Path) -> None:
+    """D5.4: numeric --from, non-venv paths, and COPY cycles must not evade.
+
+    Before:
+      - COPY --from=0 resolved as stage name \"0\" (miss)
+      - COPY --from=builder-vlm / / skipped by path allowlist
+      - provenance cycles returned False silently
+    After: numeric refs resolve, all COPY --from edges count, cycles raise.
+    """
+    # Numeric stage index 0 -> builder-vlm
+    numeric = _write(
+        tmp_path / "numeric",
+        "FROM python:3.12-slim AS builder-vlm\n"
+        "RUN uv sync --locked --extra vlm\n"
+        "\n"
+        "FROM python:3.12-slim AS runtime\n"
+        "COPY --from=0 /opt/venv /opt/venv\n",
+    )
+    assert stage_resolves_vlm_extra(numeric, DEFAULT_STAGE)
+
+    # Path outside the old venv/site-packages allowlist
+    root_copy = _write(
+        tmp_path / "rootcopy",
+        "FROM python:3.12-slim AS builder-vlm\n"
+        "RUN uv sync --locked --extra vlm\n"
+        "\n"
+        "FROM python:3.12-slim AS runtime\n"
+        "COPY --from=builder-vlm / /\n",
+    )
+    assert copy_from_dep_stages(_dockerfile_stages(root_copy)[DEFAULT_STAGE]) == [
+        "builder-vlm"
+    ]
+    assert stage_resolves_vlm_extra(root_copy, DEFAULT_STAGE)
+
+    # COPY --from cycle must raise, not return False
+    cyclic = _write(
+        tmp_path / "cycle",
+        "FROM python:3.12-slim AS a\n"
+        "COPY --from=b /opt/venv /opt/venv\n"
+        "\n"
+        "FROM python:3.12-slim AS b\n"
+        "COPY --from=a /opt/venv /opt/venv\n",
+    )
+    with pytest.raises(ValueError, match="cycle"):
+        stage_resolves_vlm_extra(cyclic, "a")
+
+
+def test_d5_pip_install_env_and_shell_wrappers(tmp_path: Path) -> None:
+    """D5.5: env FOO=1 pip install and sh -c \"pip install\" must trip the gate.
+
+    Before: _PIP_INSTALL_RE required the install at fragment start, so wrappers
+    returned []. After: both forms appear in unlocked_project_extra_installs.
+    """
+    env_wrapped = 'RUN env FOO=1 pip install ".[bench]"'
+    assert unlocked_project_extra_installs(env_wrapped), env_wrapped
+
+    shell_wrapped = 'RUN sh -c "pip install .[bench]"'
+    assert unlocked_project_extra_installs(shell_wrapped), shell_wrapped
+
+    bash_wrapped = "RUN bash -c 'pip install .[dev]'"
+    assert unlocked_project_extra_installs(bash_wrapped), bash_wrapped
+
+    # Control: --no-deps still exempts.
+    assert not unlocked_project_extra_installs(
+        'RUN env FOO=1 pip install --no-deps ".[bench]"'
+    )
+
+
+def test_d5_heredoc_run_body_is_modelled(tmp_path: Path) -> None:
+    """D5.6: RUN <<EOF bodies must be one logical command for install scanning.
+
+    Before: heredoc lines were separate; a wrapped install inside could hide.
+    After: join_continued_lines folds the body and unlocked installs fire.
+    """
+    path = _write(
+        tmp_path,
+        "FROM python:3.12-slim AS builder\n"
+        "RUN <<EOF\n"
+        'env FOO=1 pip install ".[bench]"\n'
+        "EOF\n"
+        "\n"
+        "FROM python:3.12-slim AS runtime\n"
+        "RUN true\n",
+    )
+    body = _dockerfile_stages(path)["builder"]
+    joined = join_continued_lines(body)
+    assert len(joined) == 1, f"heredoc must fold to one logical RUN; got {joined!r}"
+    assert "pip install" in joined[0]
+    offenders = unlocked_project_extra_installs(body)
+    assert offenders, f"heredoc pip install must be detected; joined={joined!r}"

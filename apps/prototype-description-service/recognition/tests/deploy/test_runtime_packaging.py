@@ -321,34 +321,10 @@ def test_entrypoint_cmd_chain_modules_are_copied() -> None:
     # VLM cache verify must be gated on ACX_IMAGE_VARIANT = "vlm" specifically
     # (recognition image must not grow a VLM boot dependency). M7 inversion to
     # = "recognition" must go red — mere presence of any ACX_IMAGE_VARIANT if
-    # is not enough (wave-3 / RLSE-02).
-    vlm_line_idx = next(
-        (i for i, ln in enumerate(lines) if "python -m scripts.verify_vlm_cache" in ln),
-        None,
-    )
-    assert vlm_line_idx is not None, "entrypoint must invoke scripts.verify_vlm_cache for VLM"
-    gate_line: str | None = None
-    for ln in lines[:vlm_line_idx][::-1]:
-        if "ACX_IMAGE_VARIANT" in ln and ("if " in ln or ln.startswith("if")):
-            gate_line = ln
-            break
-        if ln in {"fi", "else", "elif"}:
-            break
-    assert gate_line is not None, (
-        "python -m scripts.verify_vlm_cache must sit inside an "
-        "ACX_IMAGE_VARIANT conditional, not run unconditionally"
-    )
-    # Comparison RHS only: `${VAR:-recognition}` default must not confuse the gate.
-    # Good:  [ "${ACX_IMAGE_VARIANT:-recognition}" = "vlm" ]
-    # M7:    [ "${ACX_IMAGE_VARIANT:-recognition}" = "recognition" ]
-    assert re.search(r"""=\s*["']vlm["']""", gate_line), (
-        "verify_vlm_cache gate must compare ACX_IMAGE_VARIANT equal to \"vlm\" "
-        f"(got {gate_line!r}); inverted = \"recognition\" ships a VLM boot "
-        "dependency on the recognition image (M7)"
-    )
-    assert not re.search(r"""=\s*["']recognition["']""", gate_line), (
-        "verify_vlm_cache must not compare equal to \"recognition\" "
-        f"(inverted polarity; got {gate_line!r})"
+    # is not enough (wave-3 / RLSE-02). Shared discriminator: _vlm_cache_gate_polarity_ok.
+    assert _vlm_cache_gate_polarity_ok(script), (
+        "verify_vlm_cache gate must compare ACX_IMAGE_VARIANT equal to \"vlm\"; "
+        "inverted = \"recognition\" ships a VLM boot dependency on recognition (M7)"
     )
 
     # Every python -m scripts.<mod> module package must be COPYd + present on disk.
@@ -447,55 +423,50 @@ def test_rc04_uv_sync_uses_locked_not_frozen() -> None:
             )
 
 
+def _last_user(stage_text: str) -> str | None:
+    """Last ``USER`` directive in a stage body, or None if absent."""
+    last: str | None = None
+    for line in stage_text.splitlines():
+        match = re.match(r"^\s*USER\s+(\S+)\s*$", line)
+        if match:
+            last = match.group(1)
+    return last
+
+
+def _runtime_ends_as_acx(stage_text: str) -> bool:
+    """True when the stage declares USER acx and does not later return to root."""
+    if not re.search(r"^\s*USER\s+acx\s*$", stage_text, re.MULTILINE):
+        return False
+    return _last_user(stage_text) == "acx"
+
+
 def test_rc04_both_runtimes_drop_privilege() -> None:
     """RB-03: EVERY serving runtime drops to USER acx, and none returns to root.
 
-    Superseding the earlier form of this test, which pinned the deferral
-    itself as an invariant (runtime-vlm drops privilege, runtime does not).
-    That spelling made the security defect load-bearing: closing it turned
-    the gate red. The invariant worth guarding is that no serving stage runs
-    as root, so a future stage that forgets USER acx fails here.
+    The RB-03 privilege-drop deferral is closed: both ``runtime`` and
+    ``runtime-vlm`` must end as USER acx. A future stage that forgets the drop
+    (or re-escalates to root) fails here.
     """
     for stage in (DEFAULT_RUNTIME_STAGE, RUNTIME_VLM_STAGE):
         body = effective_stage_body(DOCKERFILE, stage)
-        assert re.search(r"^\s*USER\s+acx\s*$", body, re.MULTILINE), (
-            f"{stage} effective body must declare USER acx (RB-03): the "
-            f"serving process must not run as root"
-        )
-        # A later USER root would silently undo the drop.
-        last_user = None
-        for line in body.splitlines():
-            match = re.match(r"^\s*USER\s+(\S+)\s*$", line)
-            if match:
-                last_user = match.group(1)
-        assert last_user == "acx", (
-            f"{stage} must END as USER acx; last USER directive was "
-            f"{last_user!r} (RB-03)"
+        assert _runtime_ends_as_acx(body), (
+            f"{stage} effective body must end as USER acx (RB-03): the "
+            f"serving process must not run as root; last USER="
+            f"{_last_user(body)!r}"
         )
 
 
 def test_rc04_no_volume_instruction_anywhere() -> None:
     """RA-10: no VOLUME instruction anywhere in the Dockerfile."""
     text = DOCKERFILE.read_text(encoding="utf-8")
-    # Match instruction lines only — comments mentioning VOLUME are fine.
-    hits = [
-        ln
-        for ln in text.splitlines()
-        if re.match(r"^\s*VOLUME\b", ln, re.IGNORECASE)
-    ]
+    hits = _volume_instruction_hits(text)
     assert not hits, f"Dockerfile must not declare VOLUME (RA-10); found: {hits}"
 
 
 def test_rc04_no_transformers_cache_env_anywhere() -> None:
     """BR-04: TRANSFORMERS_CACHE must not appear (deprecated; use HF_HOME)."""
     text = DOCKERFILE.read_text(encoding="utf-8")
-    # Instruction / assignment forms — prose in comments is allowed only if the
-    # token is not an active ENV. Flag any non-comment occurrence.
-    active = [
-        ln
-        for ln in text.splitlines()
-        if "TRANSFORMERS_CACHE" in ln and not ln.lstrip().startswith("#")
-    ]
+    active = _active_transformers_cache_hits(text)
     assert not active, (
         "TRANSFORMERS_CACHE must not be set (BR-04); use HF_HOME/HF_HUB_CACHE. "
         f"Found: {active}"
@@ -573,9 +544,38 @@ def test_guard_bites_when_runtime_copies_venv_from_vlm_builder(tmp_path: Path) -
     assert stage_resolves_vlm_extra(df, DEFAULT_RUNTIME_STAGE)
 
 
+def _vlm_cache_gate_polarity_ok(script_text: str) -> bool:
+    """True when verify_vlm_cache is gated on ACX_IMAGE_VARIANT equal to \"vlm\".
+
+    Shared by the positive entrypoint contract and the M7 inversion mutation
+    so the negative test actually calls the same discriminator (D11).
+    """
+    lines = _non_comment_lines(script_text)
+    vlm_line_idx = next(
+        (i for i, ln in enumerate(lines) if "python -m scripts.verify_vlm_cache" in ln),
+        None,
+    )
+    if vlm_line_idx is None:
+        return False
+    gate_line: str | None = None
+    for ln in lines[:vlm_line_idx][::-1]:
+        if "ACX_IMAGE_VARIANT" in ln and ("if " in ln or ln.startswith("if")):
+            gate_line = ln
+            break
+        if ln in {"fi", "else", "elif"}:
+            break
+    if gate_line is None:
+        return False
+    if not re.search(r"""=\s*["']vlm["']""", gate_line):
+        return False
+    if re.search(r"""=\s*["']recognition["']""", gate_line):
+        return False
+    return True
+
+
 def test_guard_bites_when_entrypoint_variant_gate_is_inverted(tmp_path: Path) -> None:
-    """Wave-3 M7: ACX_IMAGE_VARIANT = \"recognition\" must fail the polarity check."""
-    script = (
+    """Wave-3 M7 / D11: inverted ACX_IMAGE_VARIANT polarity must fail the shared check."""
+    inverted = (
         "#!/bin/sh\n"
         "set -eu\n"
         "alembic -c db/alembic.ini upgrade head\n"
@@ -586,18 +586,12 @@ def test_guard_bites_when_entrypoint_variant_gate_is_inverted(tmp_path: Path) ->
         "fi\n"
         "exec uvicorn api.main:app --host 0.0.0.0 --port 8000\n"
     )
-    lines = _non_comment_lines(script)
-    vlm_line_idx = next(
-        i for i, ln in enumerate(lines) if "python -m scripts.verify_vlm_cache" in ln
+    assert not _vlm_cache_gate_polarity_ok(inverted), (
+        "inverted = \"recognition\" polarity must fail the shared discriminator"
     )
-    gate_line = next(
-        ln
-        for ln in lines[:vlm_line_idx][::-1]
-        if "ACX_IMAGE_VARIANT" in ln and ("if " in ln or ln.startswith("if"))
-    )
-    # Inverted polarity: comparison RHS is recognition — production gate must reject.
-    assert re.search(r'=\s*["\']recognition["\']', gate_line)
-    assert not re.search(r'=\s*["\']vlm["\']', gate_line)
+    # Control: correct polarity passes the same function (not a tautology on raw text).
+    good = inverted.replace('= "recognition"', '= "vlm"', 1)
+    assert _vlm_cache_gate_polarity_ok(good)
 
 
 def test_guard_bites_when_uv_sync_uses_frozen(tmp_path: Path) -> None:
@@ -620,13 +614,17 @@ def test_guard_bites_when_uv_sync_uses_frozen(tmp_path: Path) -> None:
     assert all("--locked" not in c for c in cmds)
 
 
-def test_guard_bites_when_runtime_gains_user_acx(tmp_path: Path) -> None:
-    """Mutation: USER acx on runtime (effective) violates the RB-03 deferral."""
+def test_guard_bites_when_runtime_missing_user_acx(tmp_path: Path) -> None:
+    """D11: missing USER acx must fail the shared privilege discriminator.
+
+    The old test asserted USER acx was *present* as if that violated the
+    RB-03 deferral — after the deferral closed that assertion was always true
+    for the required state and never discriminated a defect.
+    """
     df = tmp_path / "Dockerfile"
     df.write_text(
         "FROM python:3.12-slim AS runtime-base\n"
         "RUN useradd -u 10001 acx && mkdir -p /data/cache && chown acx:acx /data/cache\n"
-        "USER acx\n"
         "\n"
         "FROM runtime-base AS runtime-vlm\n"
         "ENV ACX_IMAGE_VARIANT=vlm\n"
@@ -635,43 +633,68 @@ def test_guard_bites_when_runtime_gains_user_acx(tmp_path: Path) -> None:
         "ENV ACX_IMAGE_VARIANT=recognition\n",
         encoding="utf-8",
     )
-    assert re.search(
-        r"^\s*USER\s+acx\s*$",
-        effective_stage_body(df, DEFAULT_RUNTIME_STAGE),
-        re.MULTILINE,
+    body = effective_stage_body(df, DEFAULT_RUNTIME_STAGE)
+    assert not _runtime_ends_as_acx(body), (
+        "runtime without USER acx must fail _runtime_ends_as_acx"
     )
+    # Control: adding USER acx flips the same helper green.
+    df.write_text(
+        "FROM python:3.12-slim AS runtime-base\n"
+        "RUN useradd -u 10001 acx && mkdir -p /data/cache && chown acx:acx /data/cache\n"
+        "USER acx\n"
+        "\n"
+        "FROM runtime-base AS runtime\n"
+        "ENV ACX_IMAGE_VARIANT=recognition\n",
+        encoding="utf-8",
+    )
+    assert _runtime_ends_as_acx(effective_stage_body(df, DEFAULT_RUNTIME_STAGE))
+
+
+def _volume_instruction_hits(text: str) -> list[str]:
+    """Active VOLUME instruction lines (comments ignored) — RA-10 discriminator."""
+    return [
+        ln
+        for ln in text.splitlines()
+        if re.match(r"^\s*VOLUME\b", ln, re.IGNORECASE)
+    ]
+
+
+def _active_transformers_cache_hits(text: str) -> list[str]:
+    """Non-comment TRANSFORMERS_CACHE occurrences — BR-04 discriminator."""
+    return [
+        ln
+        for ln in text.splitlines()
+        if "TRANSFORMERS_CACHE" in ln and not ln.lstrip().startswith("#")
+    ]
 
 
 def test_guard_bites_when_volume_instruction_added(tmp_path: Path) -> None:
-    """Mutation: any VOLUME instruction is RA-10."""
+    """Mutation: any VOLUME instruction is RA-10 (shared helper must fire)."""
     df = tmp_path / "Dockerfile"
-    df.write_text(
-        "FROM python:3.12-slim AS runtime\n"
-        "VOLUME /data/cache\n",
-        encoding="utf-8",
-    )
-    hits = [
-        ln
-        for ln in df.read_text().splitlines()
-        if re.match(r"^\s*VOLUME\b", ln, re.IGNORECASE)
-    ]
-    assert hits
+    clean = "FROM python:3.12-slim AS runtime\nENV FOO=1\n"
+    dirty = clean + "VOLUME /data/cache\n"
+    df.write_text(dirty, encoding="utf-8")
+    assert _volume_instruction_hits(df.read_text()), "VOLUME must be detected"
+    assert not _volume_instruction_hits(clean), "control: clean Dockerfile has no VOLUME"
 
 
 def test_guard_bites_when_transformers_cache_env_set(tmp_path: Path) -> None:
-    """Mutation: active TRANSFORMERS_CACHE env is BR-04."""
+    """Mutation: active TRANSFORMERS_CACHE env is BR-04 (shared helper must fire)."""
     df = tmp_path / "Dockerfile"
-    df.write_text(
+    clean = (
         "FROM python:3.12-slim AS runtime\n"
-        "ENV TRANSFORMERS_CACHE=/data/cache/transformers\n",
-        encoding="utf-8",
+        "# TRANSFORMERS_CACHE is deprecated; use HF_HOME\n"
+        "ENV HF_HOME=/data/cache/huggingface_cache\n"
     )
-    active = [
-        ln
-        for ln in df.read_text().splitlines()
-        if "TRANSFORMERS_CACHE" in ln and not ln.lstrip().startswith("#")
-    ]
-    assert active
+    dirty = (
+        "FROM python:3.12-slim AS runtime\n"
+        "ENV TRANSFORMERS_CACHE=/data/cache/transformers\n"
+    )
+    df.write_text(dirty, encoding="utf-8")
+    assert _active_transformers_cache_hits(df.read_text())
+    assert not _active_transformers_cache_hits(clean), (
+        "control: comment-only mention must not trip BR-04"
+    )
 
 
 def test_guard_bites_when_runtime_base_chowns_app(tmp_path: Path) -> None:

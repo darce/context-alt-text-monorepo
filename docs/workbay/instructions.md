@@ -121,7 +121,7 @@ The repo ships portable invocation surfaces to Codex from the shared workflow ma
 
 Run at every session start (cold start, mid-task re-entry, lane inherit).
 
-1. Identify or start the task. Existing feature-branch work continues from its `target_worktree_path`; ad-hoc main-branch docs/config work should start with `make maint-start SLUG=<slug> OBJECTIVE="..."` before any cwd-resolving MCP read.
+1. Identify or start the task. Existing feature-branch work continues from its `target_worktree_path`; ad-hoc main-branch docs/config work should start with `make maint-start TASK=MAINT-<slug>-<YYYYMMDD> OBJECTIVE="..."` before any cwd-resolving MCP read.
 2. Run `make context` as a standalone command. It verifies branch/worktree alignment and prints the active task identity, open findings count, and a role-routing reminder. On `Ambiguous active task`, run `make maint-archive-stale` and retry.
 3. Apply the **[MCP Loading Protocol](rules/mcp-loading-protocol.md)** before additional MCP reads. Read [`maps/mcp-tool-routing.yaml`](maps/mcp-tool-routing.yaml) and surface only servers whose triggers match the current prompt + task scope.
 4. In a lane: run `make lane-inbox` to pick up routed findings, blockers, and dispatch messages before editing.

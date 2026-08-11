@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import tempfile
 import textwrap
 from pathlib import Path
 
@@ -217,18 +218,7 @@ def test_deploy_script_threads_image_repo_from_resolve() -> None:
     assert script_threads_resolve_to_acx_image_repo(script), (
         "ACX_IMAGE_REPO must equal IMAGE_BASE from resolve_image_repo_name and be shipped remotely"
     )
-    # D-08: active call sites, not bare identifier / comment presence — deleting
-    # the do_restart invocation while leaving the helper defined must go red.
-    converge_body = _fn_body(script, "converge_runtime")
-    restart_body = _fn_body(script, "do_restart")
     verify_body = _fn_body(script, "do_verify")
-    ship_pat = r"ship_remote_image_repo_env\s+\"\$\{remote_dir\}\""
-    assert _active_call(converge_body, ship_pat), (
-        "converge_runtime must call ship_remote_image_repo_env"
-    )
-    assert _active_call(restart_body, ship_pat), (
-        "do_restart must call ship_remote_image_repo_env (ACX_CONVERGE_RUNTIME=0 path)"
-    )
     assert _active_call(verify_body, r"verify_running_image_matches_deployed\b"), (
         "do_verify must invoke verify_running_image_matches_deployed"
     )
@@ -382,30 +372,86 @@ def test_resolve_image_repo_name_exact_strings() -> None:
     assert _probe_resolve_repo_name("runtime-vlm") != _probe_resolve_repo_name("")
 
 
-def test_guard_bites_when_ship_or_verify_call_site_removed() -> None:
-    """TEST-15: function defined but not called from do_restart/do_verify goes red."""
+def _probe_ship_invocations(script_text: str | None = None) -> list[str]:
+    """Execute promote_gate + do_restart against fakes; return the call log.
+
+    Behavioural, not textual: the invariant is that the deploy path ships the
+    remote ``ACX_IMAGE_REPO`` exactly once before the unit restarts. Which
+    function holds the call site is an implementation detail — asserting on the
+    call site pinned the old converge_runtime topology and went red on an
+    equivalent consolidation into promote_gate (W9-HARM-01).
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        log = Path(tmp) / "calls.log"
+        source = DEPLOY_SCRIPT
+        if script_text is not None:
+            source = Path(tmp) / "recognition-service.sh"
+            source.write_text(script_text, encoding="utf-8")
+        probe = textwrap.dedent(
+            f"""\
+            #!/usr/bin/env bash
+            set -euo pipefail
+            IMAGE_NAME=acx-backend
+            OCI_USER=probe
+            OCI_HOST=probe.invalid
+            source "{source}"
+            LOG={str(log)!r}
+            preserve_rollback_tag() {{ echo "preserve_rollback_tag $*" >> "$LOG"; }}
+            do_boot_smoke() {{ echo "do_boot_smoke $*" >> "$LOG"; }}
+            read_remote_image_repo() {{ printf '%s\\n' "acx/prior"; }}
+            ship_remote_image_repo_env() {{ echo "ship $*" >> "$LOG"; }}
+            converge_runtime() {{ echo "converge_runtime $*" >> "$LOG"; }}
+            assert_remote_disk_headroom_for_pull() {{ :; }}
+            repair_blob_volume_ownership() {{ echo "repair $*" >> "$LOG"; }}
+            ssh() {{ echo "ssh $*" >> "$LOG"; }}
+            promote_gate prod "acx/acx-backend:deadbeef"
+            do_restart prod
+            """
+        )
+        result = subprocess.run(
+            ["bash", "-c", probe],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert result.returncode == 0, (
+            f"probe failed: rc={result.returncode} err={result.stderr}"
+        )
+        return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+
+
+def test_deploy_path_ships_image_repo_exactly_once_before_restart() -> None:
+    """S2-A-06 behavioural: one ship, and it precedes the systemctl restart."""
+    calls = _probe_ship_invocations()
+    ships = [i for i, line in enumerate(calls) if line.startswith("ship ")]
+    assert len(ships) == 1, (
+        f"remote ACX_IMAGE_REPO must be shipped exactly once per deploy; got {calls}"
+    )
+    restarts = [i for i, line in enumerate(calls) if "systemctl restart" in line]
+    assert restarts, f"deploy path must restart the unit; got {calls}"
+    assert ships[0] < restarts[0], (
+        f"ship must precede the unit restart, else the unit boots on a stale "
+        f"ACX_IMAGE_REPO; got {calls}"
+    )
+
+
+def test_mutation_removing_ship_call_fails_behavioural_gate() -> None:
+    """TEST-15: delete the real ship call site and the gate must go red."""
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    restart_body = _fn_body(script, "do_restart")
-    verify_body = _fn_body(script, "do_verify")
-    ship_pat = r"ship_remote_image_repo_env\s+\"\$\{remote_dir\}\""
-    # Synthetic: comment out the active ship call (identifier remains in prose).
-    stripped_restart = re.sub(
-        r"^(\s*)ship_remote_image_repo_env\s+\"\$\{remote_dir\}\"",
-        r"\1# ship_remote_image_repo_env \"${remote_dir}\"",
-        restart_body,
-        flags=re.MULTILINE,
+    mutated = script.replace('  ship_remote_image_repo_env "${remote_dir}"\n', "", 1)
+    assert mutated != script, "mutation anchor not found"
+    calls = _probe_ship_invocations(mutated)
+    assert not [line for line in calls if line.startswith("ship ")], (
+        "mutation control: removing the call site must produce zero ship calls"
     )
-    assert not _active_call(stripped_restart, ship_pat), (
-        "commented-out ship call must fail _active_call"
+
+
+def test_mutation_ship_after_restart_fails_ordering_gate() -> None:
+    """TEST-15: shipping after the restart must not satisfy the ordering claim."""
+    calls = ["ssh sudo systemctl restart acx-prod", "ship /opt/acx-backend/prod"]
+    ships = [i for i, line in enumerate(calls) if line.startswith("ship ")]
+    restarts = [i for i, line in enumerate(calls) if "systemctl restart" in line]
+    assert not (ships[0] < restarts[0]), (
+        "ordering assertion must reject ship-after-restart"
     )
-    stripped_verify = re.sub(
-        r"^(\s*)(.*\bverify_running_image_matches_deployed\b.*)$",
-        r"\1# \2",
-        verify_body,
-        count=1,
-        flags=re.MULTILINE,
-    )
-    assert not _active_call(stripped_verify, r"verify_running_image_matches_deployed\b")
-    # Controls: live bodies still have active calls.
-    assert _active_call(restart_body, ship_pat)
-    assert _active_call(verify_body, r"verify_running_image_matches_deployed\b")

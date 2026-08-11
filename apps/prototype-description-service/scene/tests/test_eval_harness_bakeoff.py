@@ -22,7 +22,7 @@ import pytest
 
 from scripts.eval_harness.bakeoff import BakeoffClient, _extract_caption
 from scripts.eval_harness.cli import BoundedStallError, fetch_run_record
-from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest, load_manifest
+from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest, ManifestError, load_manifest
 from scripts.eval_harness.remote_client import RemoteClientError
 from scripts.eval_harness.report import build_reports
 
@@ -32,7 +32,24 @@ GOLDEN_MANIFEST = Path(__file__).parent / "seed" / "golden.json"
 
 @pytest.fixture(scope="module")
 def manifest() -> GoldenManifest:
-    return load_manifest(str(BAKEOFF_MANIFEST))
+    # Metadata-only: context_pack/present_identities/must_right/policy/face_count/
+    # rubrics/path pins — transport tests use fake image_bytes, never open fixtures.
+    return load_manifest(str(BAKEOFF_MANIFEST), skip_hash_verification=True)
+
+
+def test_pixel_path_load_manifest_requires_hash_verification(monkeypatch: pytest.MonkeyPatch) -> None:
+    """TEST-15: pixel-reading paths (bakeoff main → fetch_run_record) must not skip.
+
+    Default-on hash verification (VLM6-R2-05) still goes red when neither
+    images_dir nor GOLDEN_IMAGES_DIR is supplied and skip is not set — proves
+    metadata-only skips did not neuter the gate for image-byte consumers.
+    """
+    monkeypatch.delenv("GOLDEN_IMAGES_DIR", raising=False)
+    with pytest.raises(ManifestError, match="image hash verification is required by default"):
+        load_manifest(str(BAKEOFF_MANIFEST))
+    missing = "/nonexistent/golden-images-dir-vlm6-test15"
+    with pytest.raises(ManifestError, match="images directory not found"):
+        load_manifest(str(BAKEOFF_MANIFEST), images_dir=missing)
 
 
 def _context_text(entry: GoldenEntry) -> str:
@@ -96,7 +113,9 @@ def test_rubrics_are_not_vacuous(manifest: GoldenManifest) -> None:
 # main golden.json has no rubrics until VLM-2C populates it; that warning is its, not ours
 @pytest.mark.filterwarnings("ignore::scripts.eval_harness.manifest.RubricEmptyWarning")
 def test_entries_reuse_golden_corpus_images(manifest: GoldenManifest) -> None:
-    golden = load_manifest(str(GOLDEN_MANIFEST))
+    # Metadata-only pin compare (sha256/media_id/face_count/present_identities fields);
+    # does not open image bytes under GOLDEN_IMAGES_DIR.
+    golden = load_manifest(str(GOLDEN_MANIFEST), skip_hash_verification=True)
     golden_by_path = {e.path: e for e in golden.entries}
     for entry in manifest.entries:
         assert entry.path in golden_by_path, f"{entry.path}: not in golden corpus (new image needs README bootstrap)"

@@ -1,0 +1,1212 @@
+{
+  "items": [
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A plate of food on a wooden table.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A plate of food on a wooden table.",
+          "objects": [
+            "food",
+            "plate",
+            "table"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Maria Correonero",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 1,
+      "path": "mock_images/Breiðamerkurjökull.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A plate of food on a wooden table.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A plate of food on a wooden table.",
+          "objects": [
+            "food",
+            "plate",
+            "table"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Bea Burke",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 2,
+      "path": "mock_images/bea-nye.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Two people seated indoors in conversation.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "Two people seated indoors in conversation.",
+          "objects": [
+            "person",
+            "chair"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Caitlin Weaver",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 3,
+      "path": "mock_images/ccqw-antartica.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A pet animal resting on a soft surface.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A pet animal resting on a soft surface.",
+          "objects": [
+            "animal"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Caitlin Weaver",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 4,
+      "path": "mock_images/ccqw-bar.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A scenic landscape with mountains under a clear sky.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A scenic landscape with mountains under a clear sky.",
+          "objects": [
+            "mountain",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 4,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Caitlin Weaver",
+          "unpositioned": false
+        },
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 70.0,
+            "y": 40.0
+          },
+          "name": "Erika Hansen Miller",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 5,
+      "path": "mock_images/ccqw-erika.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A scenic landscape with mountains under a clear sky.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A scenic landscape with mountains under a clear sky.",
+          "objects": [
+            "mountain",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Caitlin Weaver",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 6,
+      "path": "mock_images/ccqw-flowers.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A pet animal resting on a soft surface.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A pet animal resting on a soft surface.",
+          "objects": [
+            "animal"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Caitlin Weaver",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 7,
+      "path": "mock_images/ccqw-hair.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A building exterior seen from the street.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A building exterior seen from the street.",
+          "objects": [
+            "building",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Caitlin Weaver",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 8,
+      "path": "mock_images/ccqw-occlusion-2.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A building exterior seen from the street.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A building exterior seen from the street.",
+          "objects": [
+            "building",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Caitlin Weaver",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 9,
+      "path": "mock_images/ccqw-occlusion.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A building exterior seen from the street.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A building exterior seen from the street.",
+          "objects": [
+            "building",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Caitlin Weaver",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 10,
+      "path": "mock_images/ccqw-purple.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A scenic landscape with mountains under a clear sky.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A scenic landscape with mountains under a clear sky.",
+          "objects": [
+            "mountain",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Caitlin Weaver",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 11,
+      "path": "mock_images/ccqw-running-2.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A scenic landscape with mountains under a clear sky.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A scenic landscape with mountains under a clear sky.",
+          "objects": [
+            "mountain",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 2,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Caitlin Weaver",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 12,
+      "path": "mock_images/ccqw-running.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A building exterior seen from the street.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A building exterior seen from the street.",
+          "objects": [
+            "building",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Caitlin Weaver",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 13,
+      "path": "mock_images/ccqw-sunglasses-flowers.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Two people seated indoors in conversation.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "Two people seated indoors in conversation.",
+          "objects": [
+            "person",
+            "chair"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Caitlin Weaver",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 14,
+      "path": "mock_images/ccqw-sunglasses.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A plate of food on a wooden table.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A plate of food on a wooden table.",
+          "objects": [
+            "food",
+            "plate",
+            "table"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Caitlin Weaver",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 15,
+      "path": "mock_images/ccqw-underexposed.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A person standing outdoors near greenery.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A person standing outdoors near greenery.",
+          "objects": [
+            "person",
+            "plant",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Caitlin Weaver",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 16,
+      "path": "mock_images/ccqw.blurry.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A printed document with several lines of text.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A printed document with several lines of text.",
+          "objects": [
+            "document"
+          ],
+          "ocr_text": "Sample text"
+        }
+      },
+      "error": null,
+      "face_count": 3,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Cristina Quintana",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 17,
+      "path": "mock_images/cristina-1.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A close-up of a small object on a neutral background.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A close-up of a small object on a neutral background.",
+          "objects": [
+            "object"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Ellyn Heald",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 18,
+      "path": "mock_images/example-ellynheald-goldleaf.jpeg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A scenic landscape with mountains under a clear sky.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A scenic landscape with mountains under a clear sky.",
+          "objects": [
+            "mountain",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 2,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Kirstie Mccarrel",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 19,
+      "path": "mock_images/k.mcc-1.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A printed document with several lines of text.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A printed document with several lines of text.",
+          "objects": [
+            "document"
+          ],
+          "ocr_text": "Sample text"
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Kirstie Mccarrel",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 20,
+      "path": "mock_images/kirstie-1.jpeg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Two people seated indoors in conversation.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "Two people seated indoors in conversation.",
+          "objects": [
+            "person",
+            "chair"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 3,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Kirstie Mccarrel",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 21,
+      "path": "mock_images/kirstie-boat.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Two people seated indoors in conversation.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "Two people seated indoors in conversation.",
+          "objects": [
+            "person",
+            "chair"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 2,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Daniel Arce",
+          "unpositioned": false
+        },
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 70.0,
+            "y": 40.0
+          },
+          "name": "Kirstie Mccarrel",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 23,
+      "path": "mock_images/kirstie-daniel-sunglasses.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A printed document with several lines of text.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A printed document with several lines of text.",
+          "objects": [
+            "document"
+          ],
+          "ocr_text": "Sample text"
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Kirstie Mccarrel",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 24,
+      "path": "mock_images/kirstie-pool.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A printed document with several lines of text.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A printed document with several lines of text.",
+          "objects": [
+            "document"
+          ],
+          "ocr_text": "Sample text"
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Liam Maloney",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 25,
+      "path": "mock_images/liam-maloney-2.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A building exterior seen from the street.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A building exterior seen from the street.",
+          "objects": [
+            "building",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Liam Maloney",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 26,
+      "path": "mock_images/liam-maloney-home.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A printed document with several lines of text.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A printed document with several lines of text.",
+          "objects": [
+            "document"
+          ],
+          "ocr_text": "Sample text"
+        }
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "media_id": 27,
+      "path": "mock_images/liam-maloney-painting.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A printed document with several lines of text.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A printed document with several lines of text.",
+          "objects": [
+            "document"
+          ],
+          "ocr_text": "Sample text"
+        }
+      },
+      "error": null,
+      "face_count": 4,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Maria Correonero",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 28,
+      "path": "mock_images/maria-cocktail.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A plate of food on a wooden table.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A plate of food on a wooden table.",
+          "objects": [
+            "food",
+            "plate",
+            "table"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 3,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Maria Correonero",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 29,
+      "path": "mock_images/maria-party.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A pet animal resting on a soft surface.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A pet animal resting on a soft surface.",
+          "objects": [
+            "animal"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Maria Correonero",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 30,
+      "path": "mock_images/maria-pool.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A printed document with several lines of text.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A printed document with several lines of text.",
+          "objects": [
+            "document"
+          ],
+          "ocr_text": "Sample text"
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Maria Correonero",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 31,
+      "path": "mock_images/mcm-eye-blocked.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Two people seated indoors in conversation.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "Two people seated indoors in conversation.",
+          "objects": [
+            "person",
+            "chair"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Maria Correonero",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 32,
+      "path": "mock_images/mcm-icecave.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A scenic landscape with mountains under a clear sky.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A scenic landscape with mountains under a clear sky.",
+          "objects": [
+            "mountain",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Maria Correonero",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 33,
+      "path": "mock_images/mcm-planecrash.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A printed document with several lines of text.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A printed document with several lines of text.",
+          "objects": [
+            "document"
+          ],
+          "ocr_text": "Sample text"
+        }
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "media_id": 34,
+      "path": "mock_images/nina-machiavelli.jpeg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A pet animal resting on a soft surface.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A pet animal resting on a soft surface.",
+          "objects": [
+            "animal"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 2,
+      "identities": [],
+      "media_id": 35,
+      "path": "mock_images/rrw-mirror.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A scenic landscape with mountains under a clear sky.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A scenic landscape with mountains under a clear sky.",
+          "objects": [
+            "mountain",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Ryann Wiseman",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 36,
+      "path": "mock_images/ryann-bar.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A printed document with several lines of text.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A printed document with several lines of text.",
+          "objects": [
+            "document"
+          ],
+          "ocr_text": "Sample text"
+        }
+      },
+      "error": null,
+      "face_count": 6,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Ryann Wiseman",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 37,
+      "path": "mock_images/ryann-group-party.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A pet animal resting on a soft surface.",
+        "cached": false,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A pet animal resting on a soft surface.",
+          "objects": [
+            "animal"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 2,
+      "identities": [
+        {
+          "bbox": {
+            "height": 60.0,
+            "width": 50.0,
+            "x": 10.0,
+            "y": 40.0
+          },
+          "name": "Ryann Wiseman",
+          "unpositioned": false
+        }
+      ],
+      "media_id": 38,
+      "path": "mock_images/ryann-party.jpg"
+    }
+  ],
+  "kind": "run_record",
+  "provenance": {
+    "adapter": "seeded",
+    "base_url": "seeded-stub://offline",
+    "generator": "scripts.eval_harness.generate_determinism_anchor",
+    "head_sha": "0000000000000000000000000000000000000000",
+    "manifest_sha256": "859a083ee2594b993543e52d9a5c5c9b13e4b98c7c2b87bc390bff8b29c6f123",
+    "started_at": "2026-08-11T00:00:00Z"
+  },
+  "schema": "acx-eval/v1"
+}

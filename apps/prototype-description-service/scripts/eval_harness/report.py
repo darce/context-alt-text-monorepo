@@ -145,6 +145,20 @@ class Audience(StrEnum):
     LOCAL = "local"
 
 
+class ScoreVerdict(StrEnum):
+    """Machine-readable pass/fail for a scored caption+face report (VLM-6 S2A)."""
+
+    PASS = "pass"
+    FAIL = "fail"
+
+
+# Floor for faces.identification wrong-name rate over scored images.
+# WHY 0.0: attaching a hallucinated human name to a photograph is the one
+# failure mode worse than placeholder text. Zero tolerance — any wrong-name
+# assertion on a scored image fails the scored verdict and the score CLI gate.
+WRONG_NAME_RATE_FLOOR = 0.0
+
+
 class ReportError(Exception):
     """The run record cannot be scored: wrong document kind, unknown schema, or a
     run-record item whose media_id is absent from the score-time manifest."""
@@ -354,6 +368,49 @@ def _latency_summary(items: list[dict[str, Any]]) -> dict[str, Any] | None:
             "per_image_mean": round(sum(calls) / len(calls), 4),
             "total": sum(calls),
         },
+    }
+
+
+def face_wrong_name_rate(scored: Mapping[str, Any]) -> float:
+    """Wrong-name rate = len(faces.identification.wrong_names) / counts.scored.
+
+    Denominator is scored images (not total): items that failed to score are
+    gated separately by the failed-items exit path. Empty scored set → 0.0 so
+    the wrong-name floor never fires vacuously on an all-failed run.
+    """
+    scored_n = int(scored["counts"]["scored"])
+    if scored_n <= 0:
+        return 0.0
+    wrong_n = len(scored["faces"]["identification"]["wrong_names"])
+    return wrong_n / scored_n
+
+
+def build_score_verdict(scored: Mapping[str, Any]) -> dict[str, Any]:
+    """Build the machine-readable scored verdict block (VLM-6 S2A).
+
+    Only the wrong-name floor is a fail reason here. ``insertion_rate``,
+    ``mean_gated_score``, and ``must_right_failed_images`` are reported for
+    operators but do not flip the verdict or the score CLI exit code in this
+    slice.
+    """
+    rate = face_wrong_name_rate(scored)
+    reasons: list[str] = []
+    if rate > WRONG_NAME_RATE_FLOOR:
+        wrong_n = len(scored["faces"]["identification"]["wrong_names"])
+        scored_n = int(scored["counts"]["scored"])
+        reasons.append(
+            f"wrong_name_rate={rate:.4f} exceeds floor={WRONG_NAME_RATE_FLOOR} "
+            f"(wrong_names={wrong_n}, scored={scored_n})"
+        )
+    caption = scored.get("caption") or {}
+    return {
+        "verdict": (ScoreVerdict.FAIL if reasons else ScoreVerdict.PASS).value,
+        "reasons": reasons,
+        "wrong_name_rate": round(rate, 4),
+        "wrong_name_rate_floor": WRONG_NAME_RATE_FLOOR,
+        "insertion_rate": caption.get("insertion_rate"),
+        "mean_gated_score": caption.get("mean_gated_score"),
+        "must_right_failed_images": caption.get("must_right_failed_images"),
     }
 
 
@@ -708,6 +765,9 @@ def score_run_record(
         "per_image": per_image,
         "failures": failures,
     }
+    # VLM-6 S2A: machine-readable scored verdict (pass/fail + reasons). Built
+    # after the face/caption blocks so rate derives from live wrong_names.
+    result["verdict"] = build_score_verdict(result)
 
     # ALTQ-1 Slice 2: surfaced only when a short compression actually failed so
     # pre-Slice-2 records keep their exact report shape (additive schema).
@@ -798,6 +858,17 @@ def _markdown(scored: dict[str, Any]) -> str:
         f"- images: {scored['counts']['scored']}/{scored['counts']['total']} scored, "
         f"{scored['counts']['failed']} failed",
     ]
+    verdict = scored.get("verdict") or {}
+    if verdict:
+        rate = verdict.get("wrong_name_rate")
+        floor = verdict.get("wrong_name_rate_floor")
+        lines.append(
+            f"- verdict: **{verdict.get('verdict', 'unknown')}** "
+            f"(wrong_name_rate={_fmt(rate) if isinstance(rate, int | float) else rate}, "
+            f"floor={_fmt(floor) if isinstance(floor, int | float) else floor})"
+        )
+        for reason in verdict.get("reasons") or []:
+            lines.append(f"- verdict reason: {reason}")
     # Honest redaction: public reports must state what they withheld (VLM-6 S1).
     redaction = scored.get("redaction")
     if redaction:

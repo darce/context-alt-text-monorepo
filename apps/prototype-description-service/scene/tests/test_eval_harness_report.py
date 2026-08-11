@@ -15,8 +15,10 @@ from scripts.eval_harness.report import (
     FACE_BAKEOFF_CANON_VERSION,
     GATE_PROPOSAL_RELEASE_SURFACE,
     HEADLINE_ID_RECALL_ELIGIBLE_FLOOR,
+    WRONG_NAME_RATE_FLOOR,
     Audience,
     ReportError,
+    ScoreVerdict,
     _latency_summary,
     build_face_reports,
     build_reports,
@@ -121,6 +123,57 @@ def test_score_run_record_shapes():
     ident = scored["faces"]["identification"]
     assert ident["wrong_names"] == [["mock_images/bob-beach.jpg", "Alice Example"]]
     assert scored["failures"] == [{"path": "mock_images/glacier.jpg", "media_id": 3, "error": "timeout after 60s"}]
+
+
+def test_score_run_record_emits_verdict_fail_when_wrong_names_present():
+    """VLM-6 S2A: machine-readable verdict with wrong-name rate + floor (TEST-15).
+
+    The fixture labels Bob as Alice → wrong_name_rate = 1/2 over scored images.
+    Floor is zero-tolerance: any wrong human name fails the scored verdict.
+    """
+    scored = score_run_record(_run_record(), _manifest_entries())
+    verdict = scored["verdict"]
+    assert verdict["verdict"] == ScoreVerdict.FAIL.value
+    assert verdict["wrong_name_rate"] == pytest.approx(0.5)
+    assert verdict["wrong_name_rate_floor"] == WRONG_NAME_RATE_FLOOR
+    assert WRONG_NAME_RATE_FLOOR == 0.0
+    assert verdict["wrong_name_rate"] > verdict["wrong_name_rate_floor"]
+    assert any("wrong_name_rate" in r for r in verdict["reasons"])
+    # Non-gating metrics are reported for operators, not used as exit thresholds here.
+    assert "insertion_rate" in verdict
+    assert "mean_gated_score" in verdict
+    assert "must_right_failed_images" in verdict
+
+
+def test_score_run_record_emits_verdict_pass_when_no_wrong_names():
+    """Clean identities → pass verdict with rate 0 and empty reasons."""
+    record = _run_record()
+    # Fix Bob's identity so faces.identification has no wrong_names.
+    record["items"][1]["identities"] = [
+        {
+            "name": "Bob Builder",
+            "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+            "unpositioned": False,
+        }
+    ]
+    scored = score_run_record(record, _manifest_entries())
+    assert scored["faces"]["identification"]["wrong_names"] == []
+    verdict = scored["verdict"]
+    assert verdict["verdict"] == ScoreVerdict.PASS.value
+    assert verdict["wrong_name_rate"] == 0.0
+    assert verdict["wrong_name_rate_floor"] == WRONG_NAME_RATE_FLOOR
+    assert verdict["reasons"] == []
+
+
+def test_build_reports_json_includes_verdict_block():
+    json_doc, md = build_reports(_run_record(), _manifest_entries())
+    parsed = json.loads(json_doc)
+    assert "verdict" in parsed
+    assert parsed["verdict"]["verdict"] in {ScoreVerdict.PASS.value, ScoreVerdict.FAIL.value}
+    assert "wrong_name_rate" in parsed["verdict"]
+    assert "wrong_name_rate_floor" in parsed["verdict"]
+    # Markdown surfaces the verdict for operator scan.
+    assert "verdict" in md.lower()
 
 
 def test_reports_deterministic_and_json_round_trips():

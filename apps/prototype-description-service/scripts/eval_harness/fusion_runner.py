@@ -155,6 +155,20 @@ def _detected_identities(entry: GoldenEntry) -> list[str]:
     return [name for name in entry.present_identities if name not in undetected]
 
 
+def _identity_rows(entry: GoldenEntry) -> list[dict[str, Any]]:
+    """Dict identity rows matching cli._identity_row_from_wire / report constructors.
+
+    Shape: ``{"name", "bbox", "unpositioned"}`` — greenfield rejects bare strings.
+    Bboxes reuse the same simulated face geometry as ``_make_face``.
+    """
+    rows: list[dict[str, Any]] = []
+    for index, name in enumerate(_detected_identities(entry)):
+        box = _face_box(index)
+        bbox = {"x": box.x, "y": box.y, "width": box.width, "height": box.height}
+        rows.append({"name": name, "bbox": bbox, "unpositioned": False})
+    return rows
+
+
 def build_typed_context_pack(entry: GoldenEntry, roster: Sequence[str]) -> ContextPack | None:
     """Build a real HTTP ContextPack from raw fixture data (never from labels).
 
@@ -420,7 +434,7 @@ async def _run_staged_item(entry: GoldenEntry, image_bytes: bytes, roster: Seque
             "cached": bool(response.cached),
             "attachment_provenance": {"facts": facts},
         },
-        "identities": detected,
+        "identities": _identity_rows(entry),
         "face_count": _reported_face_count(entry),
         "error": None,
     }
@@ -476,7 +490,7 @@ async def _run_adhoc_item(entry: GoldenEntry, image_bytes: bytes, roster: Sequen
                 "derivation": _ADHOC_EVIDENCE,
             },
         },
-        "identities": detected,
+        "identities": _identity_rows(entry),
         "face_count": _reported_face_count(entry),
         "error": None,
     }

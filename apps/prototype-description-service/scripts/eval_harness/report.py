@@ -176,12 +176,17 @@ class ScoreVerdict(StrEnum):
     probability π=0 (no measurable claim units) — readiness is the weakest
     category (EVAL-23), so this is never adoption-eligible and never collides
     with a gated ``pass`` (VLM6-A-05 / VLM6-B-07 / AUDIT-07).
+
+    ``non_comparable`` is reserved for archival manifest-relabel (VLM6-F-03 /
+    EVAL-13): ``compare`` rejects it; it is never an adoption-eligible pass
+    (S2-09 / sr-007 — single status vocabulary).
     """
 
     PASS = "pass"
     FAIL = "fail"
     PASS_UNGATED = "pass_ungated"
     NOT_READY = "not_ready"
+    NON_COMPARABLE = "non_comparable"
 
 
 # Floor for faces.identification wrong-name rate over scored images.
@@ -189,6 +194,18 @@ class ScoreVerdict(StrEnum):
 # failure mode worse than placeholder text. Zero tolerance — any wrong-name
 # assertion on a scored image fails the scored verdict and the score CLI gate.
 WRONG_NAME_RATE_FLOOR = 0.0
+
+# S2-02 quality floors — named policy constants (sr-007), not magic numbers.
+# Conservative degenerate-extreme floors: breach only at total measured failure
+# of a critical scored slice. A floor breach is FAIL (measured and bad), never
+# not_ready (not measured) — preserves the honesty property fx6 established.
+POSITION_ACCURACY_FLOOR = 0.0  # fail when position_accuracy <= floor
+PLACEMENT_ACCURACY_FLOOR = 0.0  # fail when placement.accuracy <= floor
+FABRICATED_FACT_RATE_CEILING = 1.0  # fail when fabricated_fact_rate >= ceiling
+
+# S2-05 sample-size floor: a single measurable image is not adoption evidence.
+# not_ready (insufficient sample), not fail. Named constant (sr-007).
+SCORE_PASS_MIN_SCORED_IMAGES = 2
 
 
 class ReportError(Exception):
@@ -221,6 +238,10 @@ _PUBLIC_PROVENANCE_ALLOW_FIELDS: frozenset[str] = frozenset(
 # detail lists (inserted_identities, missing_identities, must_right_failures,
 # hallucinated_names, wrong_name_hits, …) and any future name-bearing key are
 # excluded by default — deny-lists leak on schema growth.
+#
+# Free-text keys admitted here are NOT a redaction boundary by themselves (S2-03):
+# every admitted free-text value is scrubbed via ``_public_free_text_value`` before
+# emission. Adding a free-text key without scrubbing is a contract bug.
 _PUBLIC_PER_IMAGE_ALLOW_FIELDS: frozenset[str] = frozenset(
     {
         "path",
@@ -241,6 +262,19 @@ _PUBLIC_PER_IMAGE_ALLOW_FIELDS: frozenset[str] = frozenset(
         "hallucination",
         "long",
     }
+)
+_PUBLIC_PER_IMAGE_FREE_TEXT_FIELDS: frozenset[str] = frozenset({"path", "short_error"})
+# Failures previously passed whole records with no allow-list (S2-03 leak).
+_PUBLIC_FAILURE_ALLOW_FIELDS: frozenset[str] = frozenset({"media_id", "path", "error"})
+_PUBLIC_FAILURE_FREE_TEXT_FIELDS: frozenset[str] = frozenset({"path", "error"})
+# Model weights may keep basename; media/operator paths must not (S2-04).
+_PUBLIC_MODEL_PATH_SUFFIXES: tuple[str, ...] = (
+    ".gguf",
+    ".bin",
+    ".safetensors",
+    ".pt",
+    ".onnx",
+    ".ckpt",
 )
 _PUBLIC_PER_IMAGE_LONG_ALLOW_FIELDS: frozenset[str] = frozenset(
     {
@@ -370,14 +404,117 @@ def _public_provenance(provenance: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _public_per_image_row(row: Mapping[str, Any]) -> dict[str, Any]:
+def _collect_identity_names_for_public_scrub(
+    scored: Mapping[str, Any],
+    manifest_entries: Sequence[Mapping[str, Any]],
+    run_record: Mapping[str, Any],
+) -> list[str]:
+    """All known identity names (publishable + private) for free-text scrubbing."""
+    names: set[str] = set()
+    for entry in manifest_entries:
+        for key in ("present_identities", "must_right", "easy_wrong"):
+            for name in entry.get(key) or []:
+                if name:
+                    names.add(str(name))
+        for box in entry.get("face_boxes") or []:
+            if isinstance(box, Mapping) and box.get("name"):
+                names.add(str(box["name"]))
+    for item in run_record.get("items") or []:
+        for ident in item.get("identities") or []:
+            if isinstance(ident, Mapping) and ident.get("name"):
+                names.add(str(ident["name"]))
+    faces = scored.get("faces") if isinstance(scored.get("faces"), Mapping) else {}
+    identification = faces.get("identification") if isinstance(faces.get("identification"), Mapping) else {}
+    for name in identification.get("per_identity") or {}:
+        names.add(str(name))
+    for pair in list(identification.get("wrong_names") or []) + list(identification.get("ignored_wrong_names") or []):
+        if isinstance(pair, list | tuple):
+            for cell in pair:
+                if isinstance(cell, str) and cell and "/" not in cell and "." not in cell.rsplit("/", 1)[-1]:
+                    # Skip path-like cells; keep bare name strings.
+                    if not any(cell.lower().endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".webp", ".gif")):
+                        names.add(cell)
+    title = (scored.get("quality") or {}).get("title") if isinstance(scored.get("quality"), Mapping) else None
+    if isinstance(title, Mapping):
+        for name in title.get("hallucinated_names") or []:
+            if name:
+                names.add(str(name))
+    return sorted((n for n in names if n), key=len, reverse=True)
+
+
+def _scrub_identity_names(text: str, names: Sequence[str]) -> str:
+    out = text
+    for name in names:
+        if name and name in out:
+            out = out.replace(name, "[redacted]")
+    return out
+
+
+def _public_list_path(path: str, names: Sequence[str] = ()) -> str:
+    """Opaque-or-safe path for nested PUBLIC path lists (excluded_images, …).
+
+    Absolute → ``<absolute>`` (S2-04). Known identity names scrubbed. Basenames
+    containing spaces are treated as identity-bearing free text and opaqued —
+    operators put subject names in filenames (S2-03 shape, not key-by-key).
+    """
+    safe = _public_safe_path(path)
+    if safe in ("", "<absolute>"):
+        return safe
+    scrubbed = _scrub_identity_names(safe, names)
+    if scrubbed != safe:
+        return "<path>"
+    base = safe.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    stem = base.rsplit(".", 1)[0] if "." in base else base
+    if " " in stem:
+        return "<path>"
+    return safe
+
+
+def _public_free_text_value(
+    key: str,
+    value: object,
+    *,
+    media_id: object | None = None,
+    names: Sequence[str] = (),
+) -> str:
+    """Scrub free-text admitted to the PUBLIC boundary (S2-03 / S2-04).
+
+    Paths never emit operator basenames: prefer an opaque ``media_id:N`` token.
+    Absolute paths without media_id collapse to ``<absolute>`` (not basename).
+    Other free-text is name-scrubbed and never passes raw operator prose.
+    """
+    text = "" if value is None else str(value)
+    if key == "path":
+        if media_id is not None and str(media_id) != "":
+            return f"media_id:{media_id}"
+        return _public_list_path(text, names) if text else text
+    if not text:
+        return text
+    scrubbed = _scrub_identity_names(text, names)
+    if scrubbed != text:
+        return "<redacted>"
+    # Shape: free-text error strings are not a redaction boundary even without
+    # a known roster hit — emit an opaque token (S2-03).
+    if key in ("short_error", "error"):
+        return "<error>"
+    return scrubbed
+
+
+def _public_per_image_row(
+    row: Mapping[str, Any],
+    *,
+    names: Sequence[str] = (),
+) -> dict[str, Any]:
     """Build a PUBLIC per-image record from an explicit allow-list (VLM6-A-01).
 
     Fail-closed (rg-015): unknown keys — including future name-bearing fields —
     are dropped. Nested ``long`` / ``placement`` / ``hallucination`` are themselves
-    allow-listed so fact-string lists cannot carry roster names.
+    allow-listed so fact-string lists cannot carry roster names. Free-text keys
+    on the allow-list are scrubbed (S2-03); paths never keep identifying basenames
+    (S2-04).
     """
     out: dict[str, Any] = {}
+    media_id = row.get("media_id")
     for key in _PUBLIC_PER_IMAGE_ALLOW_FIELDS:
         if key not in row:
             continue
@@ -388,6 +525,27 @@ def _public_per_image_row(row: Mapping[str, Any]) -> dict[str, Any]:
             out[key] = {k: value[k] for k in _PUBLIC_PER_IMAGE_PLACEMENT_ALLOW_FIELDS if k in value}
         elif key == "hallucination" and isinstance(value, Mapping):
             out[key] = {k: value[k] for k in _PUBLIC_PER_IMAGE_HALLUCINATION_ALLOW_FIELDS if k in value}
+        elif key in _PUBLIC_PER_IMAGE_FREE_TEXT_FIELDS:
+            out[key] = _public_free_text_value(key, value, media_id=media_id, names=names)
+        else:
+            out[key] = value
+    return out
+
+
+def _public_failure_row(
+    fail: Mapping[str, Any],
+    *,
+    names: Sequence[str] = (),
+) -> dict[str, Any]:
+    """Fail-closed allow-list + free-text scrub for PUBLIC failures (S2-03)."""
+    out: dict[str, Any] = {}
+    media_id = fail.get("media_id")
+    for key in _PUBLIC_FAILURE_ALLOW_FIELDS:
+        if key not in fail:
+            continue
+        value = fail[key]
+        if key in _PUBLIC_FAILURE_FREE_TEXT_FIELDS:
+            out[key] = _public_free_text_value(key, value, media_id=media_id, names=names)
         else:
             out[key] = value
     return out
@@ -445,6 +603,7 @@ def _redact_caption_report_for_public(
     # Provenance: allow-list only (unknown keys dropped, not deny-listed).
     redacted["provenance"] = _public_provenance(redacted.get("provenance") or {})
 
+    scrub_names = _collect_identity_names_for_public_scrub(scored, manifest_entries, run_record)
     publishable_paths = {str(e["path"]) for e in manifest_entries if int(e["media_id"]) in publishable_ids}
 
     def _keep_publishable_paths(paths: list[Any]) -> list[Any]:
@@ -454,6 +613,16 @@ def _redact_caption_report_for_public(
                 kept.append(p)
         return kept
 
+    def _public_path_list(paths: list[Any]) -> list[Any]:
+        # S2-03/S2-04: path lists are free text — scrub after publishable filter.
+        out: list[Any] = []
+        for p in _keep_publishable_paths(paths):
+            if isinstance(p, str):
+                out.append(_public_list_path(p, scrub_names))
+            else:
+                out.append(p)
+        return out
+
     faces = redacted.get("faces") or {}
     identification = faces.get("identification") or {}
     # Identity-name surfaces: empty detail lists, keep aggregate tp/fp/fn.
@@ -461,21 +630,22 @@ def _redact_caption_report_for_public(
     identification["ignored_wrong_names"] = []
     per_identity = identification.get("per_identity") or {}
     identification["per_identity"] = {name: stats for name, stats in per_identity.items() if name in publishable_names}
-    # Path lists can name local-only media — keep publishable paths only.
-    identification["excluded_images"] = _keep_publishable_paths(list(identification.get("excluded_images") or []))
+    # Path lists can name local-only media — keep publishable paths only, then scrub.
+    identification["excluded_images"] = _public_path_list(list(identification.get("excluded_images") or []))
     positional = identification.get("positional") or {}
     if positional:
-        positional["excluded_images"] = _keep_publishable_paths(list(positional.get("excluded_images") or []))
+        positional["excluded_images"] = _public_path_list(list(positional.get("excluded_images") or []))
         identification["positional"] = positional
     faces["identification"] = identification
     ordering = faces.get("identity_ordering") or {}
     if ordering:
-        ordering["degraded_paths"] = _keep_publishable_paths(list(ordering.get("degraded_paths") or []))
+        ordering["degraded_paths"] = _public_path_list(list(ordering.get("degraded_paths") or []))
         faces["identity_ordering"] = ordering
     redacted["faces"] = faces
 
     # Per-image: only publishable rows; rebuild from allow-list so identity
     # name fields and future name-bearing keys cannot leak by default (VLM6-A-01).
+    # Free-text keys on the allow-list are scrubbed (S2-03 / S2-04).
     kept_rows: list[dict[str, Any]] = []
     for row in redacted.get("per_image") or []:
         media_id = int(row.get("media_id", -1))
@@ -483,7 +653,7 @@ def _redact_caption_report_for_public(
             continue
         if not isinstance(row, Mapping):
             continue
-        kept_rows.append(_public_per_image_row(row))
+        kept_rows.append(_public_per_image_row(row, names=scrub_names))
     redacted["per_image"] = kept_rows
 
     # Quality title block may list hallucinated roster names — clear for PUBLIC.
@@ -494,14 +664,30 @@ def _redact_caption_report_for_public(
         quality["title"] = title_q
         redacted["quality"] = quality
 
-    # Failures: keep unknown-media rows (corpus integrity);
-    # drop non-publishable local-only failure detail; keep publishable timeouts.
+    # Failures: allow-list + free-text scrub (S2-03). Keep unknown-media rows
+    # (corpus integrity) and publishable timeouts; drop non-publishable detail.
     kept_failures: list[dict[str, Any]] = []
     for fail in redacted.get("failures") or []:
+        if not isinstance(fail, Mapping):
+            continue
         media_id = int(fail.get("media_id", -1))
         if media_id not in entries or media_id in publishable_ids:
-            kept_failures.append(fail)
+            kept_failures.append(_public_failure_row(fail, names=scrub_names))
     redacted["failures"] = kept_failures
+
+    # Strata excluded_images are free-text path counts under difficulty/domain.
+    strata = redacted.get("strata")
+    if isinstance(strata, Mapping):
+        for bucket_key in ("by_difficulty", "by_domain"):
+            bucket = strata.get(bucket_key)
+            if not isinstance(bucket, Mapping):
+                continue
+            for _label, block in bucket.items():
+                if not isinstance(block, Mapping):
+                    continue
+                pos = block.get("positional")
+                if isinstance(pos, Mapping) and isinstance(pos.get("excluded_images"), list):
+                    pos["excluded_images"] = _public_path_list(list(pos.get("excluded_images") or []))
 
     redacted["redaction"] = {
         "audience": Audience.PUBLIC.value,
@@ -517,21 +703,29 @@ def _redact_caption_report_for_public(
             "stripped. unknown_media_items are corpus-integrity failures, not privacy."
         ),
     }
-    return _redact_public_paths(redacted)
+    return _redact_public_paths(redacted, names=scrub_names)
 
 
 def _public_safe_path(path: str) -> str:
     """Render-boundary path redaction for PUBLIC artifacts.
 
-    Absolute filesystem paths (POSIX or Windows drive) collapse to basename so a
-    hub-safe report never discloses operator home directories or LocalWP layout.
-    Relative corpus keys (``celebs01/…``, ``mock_images/…``) are left intact.
+    Absolute filesystem paths (POSIX or Windows drive) never emit operator layout
+    *or* identifying basenames (S2-04): operators put subject names in filenames.
+    Model-weight basenames (``.gguf`` / ``.onnx`` / …) are kept for legibility.
+    Relative corpus keys (``celebs01/…``, ``mock_images/…``) are left intact —
+    per-image/failure free-text paths still go through ``_public_free_text_value``.
     """
     text = str(path)
     if not text:
         return text
-    if text.startswith("/") or (len(text) > 2 and text[1] == ":" and text[2] in "\\/"):
-        return text.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    absolute = text.startswith("/") or (len(text) > 2 and text[1] == ":" and text[2] in "\\/")
+    if absolute:
+        base = text.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        lower = base.lower()
+        if any(lower.endswith(suffix) for suffix in _PUBLIC_MODEL_PATH_SUFFIXES):
+            return base
+        # S2-04: basename is exactly where subject names live — do not emit it.
+        return "<absolute>"
     return text
 
 
@@ -565,28 +759,39 @@ def _parse_reference_facts(raw: Any) -> list[ReferenceFact]:
     return facts
 
 
-def _redact_public_paths(obj: Any) -> Any:
-    """Rewrite absolute path strings nested in a scored report (render boundary)."""
+def _redact_public_paths(obj: Any, *, names: Sequence[str] = ()) -> Any:
+    """Rewrite path strings nested in a scored report (render boundary).
+
+    Absolute paths collapse without identifying basenames (S2-04). Nested path
+    lists also scrub known identity names / space-bearing basenames (S2-03).
+    """
     if isinstance(obj, dict):
         out: dict[str, Any] = {}
         for key, value in obj.items():
             if key in ("path",) and isinstance(value, str):
-                out[key] = _public_safe_path(value)
+                # media_id:N tokens from free-text scrub must pass through.
+                if value.startswith("media_id:") or value in ("<path>", "<absolute>", "<error>", "<redacted>"):
+                    out[key] = value
+                else:
+                    out[key] = _public_list_path(value, names)
             elif key in ("excluded_images", "degraded_paths") and isinstance(value, list):
-                out[key] = [_public_safe_path(v) if isinstance(v, str) else _redact_public_paths(v) for v in value]
+                out[key] = [
+                    _public_list_path(v, names) if isinstance(v, str) else _redact_public_paths(v, names=names)
+                    for v in value
+                ]
             elif key in ("wrong_names", "ignored_wrong_names") and isinstance(value, list):
                 rewritten: list[Any] = []
                 for pair in value:
                     if isinstance(pair, list | tuple) and pair and isinstance(pair[0], str):
-                        rewritten.append([_public_safe_path(str(pair[0])), *list(pair[1:])])
+                        rewritten.append([_public_list_path(str(pair[0]), names), *list(pair[1:])])
                     else:
-                        rewritten.append(_redact_public_paths(pair))
+                        rewritten.append(_redact_public_paths(pair, names=names))
                 out[key] = rewritten
             else:
-                out[key] = _redact_public_paths(value)
+                out[key] = _redact_public_paths(value, names=names)
         return out
     if isinstance(obj, list):
-        return [_redact_public_paths(v) for v in obj]
+        return [_redact_public_paths(v, names=names) for v in obj]
     return obj
 
 
@@ -834,6 +1039,199 @@ def face_wrong_name_rate(scored: Mapping[str, Any]) -> float:
     return len(_wrong_name_images(scored["faces"]["identification"])) / scored_n
 
 
+def fabricated_fact_is_vacuous(hall: Mapping[str, Any] | None) -> bool:
+    """True when fabricated-fact rate is non-observable (S2-01 / S2-06 / rg-005).
+
+    Shared by ``build_score_verdict`` and ``compare``: zero trap denominator OR
+    either rate field is None is vacuous. A stamped numeric ``0.0`` with
+    ``images_with_traps=0`` is still vacuous — the clean-zero lie this wave
+    removed. Prefer this single predicate over parallel copies of the rule.
+    """
+    if not isinstance(hall, Mapping):
+        return True
+    return (
+        int(hall.get("images_with_traps") or 0) == 0
+        or hall.get("fabricated_fact_rate") is None
+        or hall.get("fabricated_fact_rate_trapped") is None
+    )
+
+
+def _score_nested_number(doc: Mapping[str, Any], path: tuple[str, ...]) -> float | None:
+    cur: Any = doc
+    for key in path:
+        if not isinstance(cur, Mapping) or key not in cur:
+            return None
+        cur = cur[key]
+    if isinstance(cur, bool) or not isinstance(cur, (int, float)):
+        return None
+    return float(cur)
+
+
+def score_vacuous_category_labels(
+    doc: Mapping[str, Any],
+    *,
+    include_verdict_fields: bool = True,
+) -> list[str]:
+    """Shared vacuity axis labels for score + compare (S2-01 / S2-06 / EVAL-23).
+
+    Returns stable machine labels (no role prefix). ``compare`` prefixes with
+    ``baseline:`` / ``candidate:``. Key absence and zero-denominator regimes are
+    both non-observable. ``include_verdict_fields=False`` when building the
+    verdict block itself (``verdict.wrong_name_rate`` is not yet on the doc).
+    """
+    labels: list[str] = []
+    place = doc.get("placement") if isinstance(doc.get("placement"), Mapping) else {}
+    if place.get("accuracy") is None or int(place.get("claims") or 0) == 0:
+        labels.append("placement")
+    faces = doc.get("faces") if isinstance(doc.get("faces"), Mapping) else {}
+    ident = faces.get("identification") if isinstance(faces.get("identification"), Mapping) else {}
+    pos = ident.get("positional") if isinstance(ident.get("positional"), Mapping) else None
+    if (
+        not isinstance(pos, Mapping)
+        or pos.get("position_accuracy") is None
+        or int(pos.get("compared_images") or 0) == 0
+        or pos.get("evaluable") is False
+        or pos.get("status") == POSITIONAL_EVAL_NOT_EVALUABLE
+    ):
+        labels.append("positional_identification")
+    ordering = faces.get("identity_ordering") if isinstance(faces.get("identity_ordering"), Mapping) else None
+    if not isinstance(ordering, Mapping) or int(ordering.get("positional_images") or 0) == 0:
+        labels.append("identity_ordering")
+    hall = doc.get("hallucination") if isinstance(doc.get("hallucination"), Mapping) else {}
+    if fabricated_fact_is_vacuous(hall):
+        labels.append("fabricated_fact")
+    for path, label in (
+        (("faces", "detection", "precision"), "face_detection.precision"),
+        (("faces", "detection", "recall"), "face_detection.recall"),
+        (("faces", "identification", "precision"), "face_identification.precision"),
+        (("faces", "identification", "recall"), "face_identification.recall"),
+        (("caption", "insertion_rate"), "insertion_rate"),
+        (("caption", "mean_gated_score"), "mean_gated_score"),
+        (("caption", "must_right_failed_images"), "must_right_failed_images"),
+    ):
+        if _score_nested_number(doc, path) is None:
+            labels.append(label)
+    if include_verdict_fields and _score_nested_number(doc, ("verdict", "wrong_name_rate")) is None:
+        labels.append("wrong_name_rate")
+    return labels
+
+
+def build_score_vacuity_reasons(scored: Mapping[str, Any], *, scored_n: int) -> list[str]:
+    """Detailed category-vacuity reasons for the score verdict (AUDIT-07).
+
+    Uses the shared predicates in ``score_vacuous_category_labels`` /
+    ``fabricated_fact_is_vacuous`` so score and compare cannot disagree on which
+    axes are non-observable (S2-01 / S2-06 / rg-005).
+    """
+    vacuity_reasons: list[str] = []
+    if scored_n <= 0:
+        return vacuity_reasons
+    if scored_n < SCORE_PASS_MIN_SCORED_IMAGES:
+        vacuity_reasons.append(
+            f"sample-size: scored={scored_n} < min={SCORE_PASS_MIN_SCORED_IMAGES} "
+            f"(undersized corpus cannot certify adoption-shaped pass; EVAL-04 / S2-05)"
+        )
+    labels = set(score_vacuous_category_labels(scored, include_verdict_fields=False))
+    faces = scored.get("faces") if isinstance(scored.get("faces"), Mapping) else {}
+    ident = faces.get("identification") if isinstance(faces.get("identification"), Mapping) else {}
+    placement = scored.get("placement") if isinstance(scored.get("placement"), Mapping) else {}
+    if "positional_identification" in labels:
+        positional = ident.get("positional") if isinstance(ident.get("positional"), Mapping) else {}
+        compared_images = int(positional.get("compared_images") or 0)
+        pos_evaluable = positional.get("evaluable")
+        pos_status = positional.get("status")
+        ordering = faces.get("identity_ordering") if isinstance(faces.get("identity_ordering"), Mapping) else {}
+        # S2-07: report exclusions via order_unknown_excluded / excluded_images,
+        # not the overloaded degraded_images counter.
+        excluded_raw = positional.get("excluded_images") or []
+        excluded_n = len(excluded_raw) if isinstance(excluded_raw, list) else int(excluded_raw or 0)
+        order_unknown = int(ordering.get("order_unknown_excluded") or excluded_n)
+        vacuity_reasons.append(
+            "category-vacuity: positional — claim unit=image with face_boxes "
+            f"L→R order; compared_images={compared_images} "
+            f"status={pos_status!s} evaluable={pos_evaluable!s} "
+            f"order_unknown_excluded={order_unknown} excluded_images={excluded_n} "
+            f"(π=0 on face_boxes; AUDIT-07)"
+        )
+    if "placement" in labels:
+        place_claims = int(placement.get("claims") or 0)
+        place_acc = placement.get("accuracy")
+        abstained = int(placement.get("abstained") or 0)
+        images_scored = int(placement.get("images_scored") or 0)
+        vacuity_reasons.append(
+            "category-vacuity: placement — claim unit=asserted spatial_fact; "
+            f"claims={place_claims} accuracy={place_acc!s} abstained={abstained} "
+            f"images_scored={images_scored} (π=0 on spatial_facts; AUDIT-07)"
+        )
+    if "fabricated_fact" in labels:
+        hall = scored.get("hallucination") if isinstance(scored.get("hallucination"), Mapping) else {}
+        traps = int(hall.get("images_with_traps") or 0)
+        fab_rate = hall.get("fabricated_fact_rate")
+        vacuity_reasons.append(
+            "category-vacuity: fabricated_fact — claim unit=image with "
+            f"reference_facts trap; fabricated_fact_rate={fab_rate!s} "
+            f"images_with_traps={traps} (not measurable; AUDIT-07 / S2-01)"
+        )
+    if "identity_ordering" in labels:
+        ordering = faces.get("identity_ordering") if isinstance(faces.get("identity_ordering"), Mapping) else {}
+        vacuity_reasons.append(
+            "category-vacuity: identity_ordering — "
+            f"positional_images={int(ordering.get('positional_images') or 0)} "
+            f"(order metric non-observable; AUDIT-07 / S2-06)"
+        )
+    for label in (
+        "face_detection.precision",
+        "face_detection.recall",
+        "face_identification.precision",
+        "face_identification.recall",
+        "insertion_rate",
+        "mean_gated_score",
+        "must_right_failed_images",
+    ):
+        if label in labels:
+            vacuity_reasons.append(f"category-vacuity: {label} (None — category not observed; S2-06)")
+    return vacuity_reasons
+
+
+def build_score_quality_floor_reasons(scored: Mapping[str, Any], *, scored_n: int) -> list[str]:
+    """Quality-floor breaches on critical scored slices (S2-02 / EVAL-04).
+
+    Floor breach is FAIL (measured and bad), never not_ready. Thresholds are the
+    named constants ``POSITION_ACCURACY_FLOOR``, ``PLACEMENT_ACCURACY_FLOOR``,
+    ``FABRICATED_FACT_RATE_CEILING`` — conservative degenerate-extreme policy.
+    """
+    reasons: list[str] = []
+    if scored_n <= 0:
+        return reasons
+    faces = scored.get("faces") if isinstance(scored.get("faces"), Mapping) else {}
+    ident = faces.get("identification") if isinstance(faces.get("identification"), Mapping) else {}
+    positional = ident.get("positional") if isinstance(ident.get("positional"), Mapping) else {}
+    compared = int(positional.get("compared_images") or 0)
+    pos_acc = positional.get("position_accuracy")
+    if compared > 0 and pos_acc is not None and float(pos_acc) <= POSITION_ACCURACY_FLOOR:
+        reasons.append(
+            f"quality-floor: position_accuracy={pos_acc} <= floor={POSITION_ACCURACY_FLOOR} "
+            f"(critical scored slice total failure; EVAL-04 / S2-02)"
+        )
+    placement = scored.get("placement") if isinstance(scored.get("placement"), Mapping) else {}
+    place_claims = int(placement.get("claims") or 0)
+    place_acc = placement.get("accuracy")
+    if place_claims > 0 and place_acc is not None and float(place_acc) <= PLACEMENT_ACCURACY_FLOOR:
+        reasons.append(
+            f"quality-floor: placement.accuracy={place_acc} <= floor={PLACEMENT_ACCURACY_FLOOR} "
+            f"(critical scored slice total failure; EVAL-04 / S2-02)"
+        )
+    hall = scored.get("hallucination") if isinstance(scored.get("hallucination"), Mapping) else {}
+    traps = int(hall.get("images_with_traps") or 0)
+    fab_rate = hall.get("fabricated_fact_rate")
+    if traps > 0 and fab_rate is not None and float(fab_rate) >= FABRICATED_FACT_RATE_CEILING:
+        reasons.append(
+            f"quality-floor: fabricated_fact_rate={fab_rate} >= ceiling={FABRICATED_FACT_RATE_CEILING} "
+            f"(every trap fired; EVAL-04 / S2-02)"
+        )
+    return reasons
+
+
 def build_score_verdict(
     scored: Mapping[str, Any],
     *,
@@ -851,13 +1249,12 @@ def build_score_verdict(
     ``rubric_gate=skip`` bypasses only the must-right failures reason; a clean
     skip run persists ``pass_ungated`` so it is never readable as a gated pass.
 
-    Category vacuity (VLM6-A-05 / VLM6-B-07): positional and placement are
-    critical scored slices (EVAL-04). When their claim units have sampling
-    probability π=0 the verdict is ``not_ready`` (never ``pass``) — readiness is
-    the weakest category (EVAL-23), and AUDIT-07 requires naming the frame.
+    Category vacuity (VLM6-A-05 / VLM6-B-07 / S2-06): critical scored slices with
+    claim-unit sampling π=0 yield ``not_ready`` (never ``pass``). Quality-floor
+    breaches on measurable critical slices yield ``fail`` (S2-02). Readiness is
+    the weakest category (EVAL-23); AUDIT-07 requires naming the frame.
     """
     reasons: list[str] = []
-    vacuity_reasons: list[str] = []
     counts = scored.get("counts") or {}
     # F1d-4 / VLM-6-S2A-P-01: corpus-integrity counts live in scored["corpus"],
     # not counts (counts is the pinned {total, scored, failed} contract shape).
@@ -865,7 +1262,6 @@ def build_score_verdict(
     caption = scored.get("caption") or {}
     faces = scored.get("faces") or {}
     ident = faces.get("identification") or {}
-    placement = scored.get("placement") or {}
 
     failed = int(counts.get("failed") or 0)
     if failed > 0:
@@ -922,56 +1318,11 @@ def build_score_verdict(
             f"assertions={wrong_n}, ignored={ignored_n}, scored={scored_n})"
         )
 
-    # Category vacuity (EVAL-04 / EVAL-23 / AUDIT-07 / VLM6-A-05 / VLM6-B-07 / B-10):
-    # a critical scored slice with claim-unit sampling π=0 cannot certify pass.
-    # Frame: target=adoption readiness; sampling unit=scored image; observation
-    # unit=positional image (face_boxes L→R) or placement claim (spatial_fact).
-    # Prefer machine-readable positional.status / evaluable (sr-007) over the
-    # bare compared_images counter alone.
-    if scored_n > 0:
-        positional = ident.get("positional") or {}
-        compared_images = int(positional.get("compared_images") or 0)
-        pos_evaluable = positional.get("evaluable")
-        pos_status = positional.get("status")
-        pos_vacuous = (
-            compared_images == 0
-            or pos_evaluable is False
-            or pos_status == POSITIONAL_EVAL_NOT_EVALUABLE
-        )
-        if pos_vacuous:
-            ordering = faces.get("identity_ordering") or {}
-            degraded = int(ordering.get("degraded_images") or 0)
-            excluded_raw = positional.get("excluded_images") or []
-            excluded_n = len(excluded_raw) if isinstance(excluded_raw, list) else int(excluded_raw or 0)
-            vacuity_reasons.append(
-                "category-vacuity: positional — claim unit=image with face_boxes "
-                f"L→R order; compared_images={compared_images} "
-                f"status={pos_status!s} evaluable={pos_evaluable!s} "
-                f"degraded_images={degraded} excluded_images={excluded_n} "
-                f"(π=0 on face_boxes; AUDIT-07)"
-            )
-        place_claims = int(placement.get("claims") or 0)
-        place_acc = placement.get("accuracy")
-        if place_claims == 0 or place_acc is None:
-            abstained = int(placement.get("abstained") or 0)
-            images_scored = int(placement.get("images_scored") or 0)
-            vacuity_reasons.append(
-                "category-vacuity: placement — claim unit=asserted spatial_fact; "
-                f"claims={place_claims} accuracy={place_acc!s} abstained={abstained} "
-                f"images_scored={images_scored} (π=0 on spatial_facts; AUDIT-07)"
-            )
-        # VLM6-C-05 / fx4 coupling: fabricated_fact_rate may be None when there
-        # are no trap images. None is not measurable — never a clean 0.0 pass
-        # (EVAL-19 / AUDIT-07). 0.0 remains valid when traps exist and none fired.
-        hall = scored.get("hallucination") or {}
-        fab_rate = hall.get("fabricated_fact_rate")
-        if fab_rate is None:
-            traps = int(hall.get("images_with_traps") or 0)
-            vacuity_reasons.append(
-                "category-vacuity: fabricated_fact — claim unit=image with "
-                f"reference_facts trap; fabricated_fact_rate=None "
-                f"images_with_traps={traps} (not measurable; AUDIT-07)"
-            )
+    # S2-02: quality floors on critical slices (measured and bad → fail reasons).
+    reasons.extend(build_score_quality_floor_reasons(scored, scored_n=scored_n))
+
+    # Shared vacuity set with compare (S2-01 / S2-06 / EVAL-23 / AUDIT-07).
+    vacuity_reasons = build_score_vacuity_reasons(scored, scored_n=scored_n)
 
     # Hard failures win; otherwise vacuity yields not_ready (not adoption pass).
     if reasons:
@@ -1520,29 +1871,14 @@ def score_run_record(
                     "sampling_frame": positional.sampling_frame,
                 },
             },
-            # A-07 / VLM6-R2-04: loud surface for bbox-missing / degraded order.
-            # When every image is positional-excluded, fold exclusions into
-            # degraded_images so vacuity is visible (not degraded=0 + excluded=N).
+            # A-07 / VLM6-R2-04 / S2-07: degraded_images means identity_ordering
+            # stamp was DEGRADED — not positional exclusions. Vacuity of
+            # face_boxes-absent images is ``order_unknown_excluded`` (own counter;
+            # rg-015: do not invent contract metadata by overloading degraded).
             "identity_ordering": {
                 "positional_images": ordering_positional,
-                "degraded_images": (
-                    ordering_degraded
-                    if ordering_degraded
-                    else (
-                        len(positional.excluded_images)
-                        if positional.compared_images == 0 and positional.excluded_images
-                        else 0
-                    )
-                ),
-                "degraded_paths": (
-                    degraded_paths
-                    if degraded_paths
-                    else (
-                        list(positional.excluded_images)
-                        if positional.compared_images == 0 and positional.excluded_images
-                        else []
-                    )
-                ),
+                "degraded_images": ordering_degraded,
+                "degraded_paths": list(degraded_paths),
                 "order_unknown_excluded": len(positional.excluded_images),
             },
         },
@@ -1623,6 +1959,18 @@ def score_run_record(
         }
 
     return result
+
+
+def _fmt_prov(value: object, *, default: str = "unknown") -> str:
+    """Render provenance fields for markdown (S4-05).
+
+    JSON null must read as ``null``, not the Python identifier ``None``.
+    """
+    if value is None:
+        return "null"
+    if value == "":
+        return default
+    return str(value)
 
 
 def _fmt(value: float | None) -> str:
@@ -1764,11 +2112,11 @@ def _markdown(scored: dict[str, Any]) -> str:
         f"- schema: `{scored['schema']}` kind: `{scored.get('kind', 'report')}`",
         f"- adapter(s): `{adapters}` model(s): `{model_ids}` version(s): "
         f"`{', '.join(model.get('model_versions', [])) or 'unknown'}`",
-        f"- head_sha: `{prov.get('head_sha', 'unknown')}`",
-        f"- base_url: {prov.get('base_url', 'unknown')}",
-        f"- fetch manifest_sha256: `{prov.get('manifest_sha256', 'unknown')}`",
+        f"- head_sha: `{_fmt_prov(prov.get('head_sha'))}`",
+        f"- base_url: {_fmt_prov(prov.get('base_url'))}",
+        f"- fetch manifest_sha256: `{_fmt_prov(prov.get('manifest_sha256'))}`",
         _manifest_drift_line(prov),
-        f"- started_at: {prov.get('started_at', 'unknown')}",
+        f"- started_at: {_fmt_prov(prov.get('started_at'))}",
         f"- images: {scored['counts']['scored']}/{scored['counts']['total']} scored, "
         f"{scored['counts']['failed']} failed",
     ]
@@ -2006,6 +2354,12 @@ def _markdown(scored: dict[str, Any]) -> str:
             f"- ⚠ identity ordering degraded on {ordering['degraded_images']} image(s) "
             f"(missing/malformed bbox → not pure L→R): "
             + ", ".join(f"`{p}`" for p in ordering.get("degraded_paths", [])),
+        ]
+    # S2-07: exclusions are their own counter — do not overload degraded_images.
+    if ordering.get("order_unknown_excluded"):
+        lines += [
+            f"- ⚠ identity order unknown (no face_boxes) on "
+            f"{ordering['order_unknown_excluded']} image(s) — positional excluded",
         ]
     lines += [
         "",
@@ -2595,7 +2949,10 @@ def score_face_run_record(
         unmatched_detections=assignment.false_detections,
         sampling_frame=FACE_BAKEOFF_SAMPLING_FRAMES["full_corpus_identification"],
     )
-    unknown = face_unknown_rejection(assignment.decisions)
+    unknown = face_unknown_rejection(
+        assignment.decisions,
+        missed_stranger_gt=assignment.missed_stranger_gt,
+    )
 
     # Headline = celebs01 named probes only (provenance.source == CELEB).
     # Coupling counts are headline-scoped (not full-corpus) so the honesty flag
@@ -2857,6 +3214,10 @@ def score_face_run_record(
             "sampling_frame": unknown.sampling_frame,
             "rate_numerator": unknown.rate_numerator,
             "rate_denominator": unknown.rate_denominator,
+            # missed_stranger_gt is required into face_unknown_rejection (S3-03) and
+            # is already embedded in rate_denominator / sampling_frame text. A new
+            # JSON key would move face freeze bytes; surface after wave-C regen
+            # (AUDIT-07 optional disclosure deferred for freeze stability).
             **unknown_status,
         },
         "clustering": {
@@ -3162,8 +3523,8 @@ def _markdown_face(scored: dict[str, Any]) -> str:
         f"- schema: `{scored.get('schema')}` kind: `{scored.get('kind')}` report_kind: `{scored.get('report_kind')}`",
         f"- model_ids: `{', '.join(model.get('model_ids') or []) or 'unknown'}` "
         f"embedding_dims: `{model.get('embedding_dims')}` leg: `{model.get('leg')}`",
-        f"- head_sha: `{prov.get('head_sha', 'unknown')}`",
-        f"- fetch manifest_sha256: `{prov.get('manifest_sha256', 'unknown')}`",
+        f"- head_sha: `{_fmt_prov(prov.get('head_sha'))}`",
+        f"- fetch manifest_sha256: `{_fmt_prov(prov.get('manifest_sha256'))}`",
         _manifest_drift_line(prov),
         f"- canon_version: `{prov.get('canon_version', FACE_BAKEOFF_CANON_VERSION)}` "
         f"protocol_id: `{prov.get('protocol_id', FACE_BAKEOFF_PROTOCOL_ID)}`",

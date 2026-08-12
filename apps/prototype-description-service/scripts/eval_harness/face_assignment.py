@@ -495,7 +495,11 @@ class AssignmentResult:
     tau_op: float  # median(τ_k); context + clustering cut only
     association_by_media: dict[int, AssociationResult] = field(default_factory=dict)
     false_detections: int = 0
+    # Named unmatched GT only (S3-04 / EVAL-16 / EVAL-19) — feeds
+    # face_identification_pr FN fold-in. Stranger misses live on
+    # missed_stranger_gt for unknown-rejection.
     missed_gt: int = 0
+    missed_stranger_gt: int = 0
     excluded_single_face_recall: tuple[MatchedFace, ...] = ()
     # AUDIT-01/02 (FIR5RR-04): the caller-requested K and the K actually used
     # after the subject-count clamp. When they differ, provenance surfaces must
@@ -551,12 +555,22 @@ def global_fold_ranks(
 def collect_matched_faces(
     run_items: Sequence[Mapping[str, Any]],
     gt_by_media: Mapping[int, Sequence[Any]],
-) -> tuple[list[MatchedFace], dict[int, AssociationResult], int, int]:
-    """§C associate every run item; collect matched probes (+ det/miss counts)."""
+) -> tuple[list[MatchedFace], dict[int, AssociationResult], int, int, int]:
+    """§C associate every run item; collect matched probes (+ det/miss counts).
+
+    Returns ``(matched, associations, false_detections, missed_gt,
+    missed_stranger_gt)``.
+
+    ``missed_gt`` counts **named** unmatched GT only (``true_name is not None``)
+    so identification P/R FN fold-in matches the headline path (S3-04 /
+    EVAL-16 / EVAL-19). ``missed_stranger_gt`` counts unmatched anonymous GT
+    (``true_name is None``) for ``face_unknown_rejection`` (S3-03).
+    """
     matched: list[MatchedFace] = []
     associations: dict[int, AssociationResult] = {}
     false_det = 0
-    missed = 0
+    missed_named = 0
+    missed_stranger = 0
     for item in run_items:
         media_id = int(item["media_id"])
         path = str(item.get("path", ""))
@@ -567,7 +581,13 @@ def collect_matched_faces(
         assoc = associate_detections(det_bboxes, gt_boxes, image_size)
         associations[media_id] = assoc
         false_det += len(assoc.unmatched_detections)
-        missed += len(assoc.unmatched_gt)
+        for gi in assoc.unmatched_gt:
+            # Indices from associate_detections are in range(n_gt).
+            name = _gt_fields(gt_boxes[gi])[4]
+            if name is not None:
+                missed_named += 1
+            else:
+                missed_stranger += 1
         for pair in assoc.pairs:
             face = faces[pair.det_index]
             emb = tuple(float(v) for v in face["embedding"])
@@ -582,7 +602,7 @@ def collect_matched_faces(
                     bbox_px=tuple(float(v) for v in face["bbox_px"]),
                 )
             )
-    return matched, associations, false_det, missed
+    return matched, associations, false_det, missed_named, missed_stranger
 
 
 def _subject_count(matched: Sequence[MatchedFace]) -> int:
@@ -727,7 +747,9 @@ def score_face_assignment(
     tau_grid: Sequence[float] = TAU_GRID,
 ) -> AssignmentResult:
     """End-to-end §C association + §E k-fold assignment for one leg."""
-    matched, associations, false_det, missed = collect_matched_faces(run_items, gt_by_media)
+    matched, associations, false_det, missed_named, missed_stranger = collect_matched_faces(
+        run_items, gt_by_media
+    )
     result = assign_open_set_kfold(matched, k_folds=k_folds, tau_grid=tau_grid)
     return AssignmentResult(
         matched=result.matched,
@@ -736,7 +758,8 @@ def score_face_assignment(
         tau_op=result.tau_op,
         association_by_media=associations,
         false_detections=false_det,
-        missed_gt=missed,
+        missed_gt=missed_named,
+        missed_stranger_gt=missed_stranger,
         excluded_single_face_recall=result.excluded_single_face_recall,
         requested_k=result.requested_k,
         effective_k=result.effective_k,

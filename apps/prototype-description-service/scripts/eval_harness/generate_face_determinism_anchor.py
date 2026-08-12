@@ -26,11 +26,13 @@ Default outputs (repo-root relative when run from ``apps/prototype-description-s
     ../../docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-run-20260811-face-report.json
     ../../docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-run-20260811-face-report.md
 
-Regeneration is byte-stable: fixed ``started_at`` / ``head_sha`` defaults
-(byte-stability sentinels, not live git provenance), sorted JSON keys,
-synthetic embeddings derived only from fixed construction constants.
+Regeneration is byte-stable: fixed ``fixture_revision`` / ``canonical_timestamp``
+defaults (byte-stability sentinels in fixture_* fields — not live git /
+wall-clock provenance; VLM6-F-04 / S4-03 / S4-04), sorted JSON keys, synthetic
+embeddings derived only from fixed construction constants.
 ``provenance.manifest_sha256`` and ``provenance.coverage_gaps`` are always
-computed at generation time — never hand-stamped (rg-015).
+computed at generation time — never hand-stamped (rg-015). Contract fields
+``head_sha`` / ``started_at`` are written as null in pin mode.
 """
 
 from __future__ import annotations
@@ -302,10 +304,15 @@ def _face(embedding: list[float], *, bbox_px: list[float] | None = None) -> dict
 def build_face_anchor_run_record(
     *,
     manifest_sha256: str,
-    head_sha: str,
-    started_at: str,
+    fixture_revision: str,
+    canonical_timestamp: str,
+    # Legacy aliases (map onto fixture sentinels; not written into contract fields).
+    head_sha: str | None = None,
+    started_at: str | None = None,
 ) -> dict[str, Any]:
     """Build a validated face_run_record from synthetic vectors only (PROV-01)."""
+    fix_rev = head_sha if head_sha is not None else fixture_revision
+    can_ts = started_at if started_at is not None else canonical_timestamp
     emb = _synthetic_embeddings()
     items = [
         build_face_run_item(
@@ -389,12 +396,12 @@ def build_face_anchor_run_record(
     }
     provenance = {
         "manifest_sha256": manifest_sha256,
-        # Byte-stability sentinels — not git/wall-clock contract fields (VLM6-F-04).
-        "fixture_revision": head_sha,
-        "canonical_timestamp": started_at,
-        # Do not fabricate a 40-zero git SHA into the contract head_sha field.
+        # Byte-stability sentinels — not git/wall-clock contract fields (VLM6-F-04 / S4-04).
+        "fixture_revision": fix_rev,
+        "canonical_timestamp": can_ts,
+        # Never fabricate git SHA or wall-clock into contract fields (rg-015).
         "head_sha": None,
-        "started_at": started_at,
+        "started_at": None,
         "leg": "candidate",
         "model_id": _MODEL_ID,
         "embedding_dim": _EMBEDDING_DIM,
@@ -544,15 +551,126 @@ def _dumps(obj: dict[str, Any]) -> str:
     return json.dumps(obj, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
 
 
+# Journal + staging marker for set-atomic promote (S4-02 / rg-002).
+_PROMOTE_JOURNAL = ".vlm-anchor-promote.journal"
+_PROMOTE_STAGE_PREFIX = ".vlm-promote-stage-"
+
+
+def _fsync_path(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _write_promote_journal(dest_dir: Path, payload: dict[str, Any]) -> None:
+    path = dest_dir / _PROMOTE_JOURNAL
+    tmp = dest_dir / f".{_PROMOTE_JOURNAL}.tmp"
+    tmp.write_text(json.dumps(payload, sort_keys=True) + "\n")
+    _fsync_path(tmp)
+    os.replace(tmp, path)
+    _fsync_path(dest_dir)
+
+
+def _recover_promote(dest_dir: Path) -> None:
+    """Finish or abandon an interrupted set-promote so dest is never left mixed.
+
+    Phase ``staged``: no live paths touched → drop stage + journal (all-old).
+    Phase ``installing``: stage holds the full durable new set → complete every
+    name from stage (all-new). Either outcome is a consistent set (S4-02).
+    """
+    journal_path = dest_dir / _PROMOTE_JOURNAL
+    if not journal_path.is_file():
+        return
+    try:
+        journal = json.loads(journal_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        journal_path.unlink(missing_ok=True)
+        return
+    names = list(journal.get("names") or [])
+    stage = Path(journal["stage"]) if journal.get("stage") else None
+    phase = journal.get("phase")
+    if stage is None or not names:
+        journal_path.unlink(missing_ok=True)
+        return
+    if phase == "installing" and stage.is_dir():
+        for name in names:
+            src = stage / name
+            if not src.is_file():
+                continue
+            dest = dest_dir / name
+            tmp = dest_dir / f".{name}.promoting"
+            tmp.write_bytes(src.read_bytes())
+            _fsync_path(tmp)
+            os.replace(tmp, dest)
+        _fsync_path(dest_dir)
+    if stage.is_dir():
+        for child in stage.iterdir():
+            child.unlink(missing_ok=True)
+        stage.rmdir()
+    journal_path.unlink(missing_ok=True)
+
+
 def _atomic_promote(src_dir: Path, dest_dir: Path, names: list[str]) -> None:
-    """Promote verified artifacts with same-directory atomic replacements (rg-002)."""
+    """Promote a named freeze artifact *set* as one unit (rg-002 / VLM6-F-05 / S4-02).
+
+    Per-file ``os.replace`` is atomic, but a bare loop is not: a kill after the
+    first replace leaves a new artifact paired with stale siblings.
+
+    *dest_dir* is a shared bakeoff-results tree, so a whole-directory rename of
+    the destination is not workable. Instead:
+
+    1. Recover any prior interrupted promote (journal).
+    2. Stage the complete new set under a unique sibling dir and fsync it.
+    3. Journal ``phase=installing`` (durable intent).
+    4. Install each name from the durable stage via ``os.replace``.
+    5. Drop journal + stage.
+
+    Guarantee: after return, or after crash + ``_recover_promote`` (automatic on
+    the next promote), every named path is fully old or fully new — never mixed.
+    A crash mid-install may leave a transient mixed tree until recovery runs.
+    """
     dest_dir.mkdir(parents=True, exist_ok=True)
-    for name in names:
-        src = src_dir / name
-        dest = dest_dir / name
-        tmp = dest_dir / f".{name}.tmp"
-        tmp.write_bytes(src.read_bytes())
-        os.replace(tmp, dest)
+    _recover_promote(dest_dir)
+
+    token = f"{os.getpid():x}-{id(names):x}-{len(names):x}"
+    stage = dest_dir / f"{_PROMOTE_STAGE_PREFIX}{token}"
+    n = 0
+    while stage.exists():
+        n += 1
+        stage = dest_dir / f"{_PROMOTE_STAGE_PREFIX}{token}-{n}"
+    stage.mkdir()
+    try:
+        for name in names:
+            target = stage / name
+            target.write_bytes((src_dir / name).read_bytes())
+            _fsync_path(target)
+        _fsync_path(stage)
+
+        _write_promote_journal(
+            dest_dir,
+            {"stage": str(stage), "names": list(names), "phase": "staged"},
+        )
+        _write_promote_journal(
+            dest_dir,
+            {"stage": str(stage), "names": list(names), "phase": "installing"},
+        )
+
+        for name in names:
+            dest = dest_dir / name
+            tmp = dest_dir / f".{name}.promoting"
+            tmp.write_bytes((stage / name).read_bytes())
+            _fsync_path(tmp)
+            os.replace(tmp, dest)
+        _fsync_path(dest_dir)
+
+        (dest_dir / _PROMOTE_JOURNAL).unlink(missing_ok=True)
+        for child in stage.iterdir():
+            child.unlink(missing_ok=True)
+        stage.rmdir()
+    except BaseException:
+        raise
 
 
 def write_face_anchor(
@@ -560,17 +678,24 @@ def write_face_anchor(
     out_dir: Path,
     stem: str,
     manifest_stem: str,
-    head_sha: str,
-    started_at: str,
+    fixture_revision: str = _DEFAULT_FIXTURE_REVISION,
+    canonical_timestamp: str = _DEFAULT_CANONICAL_TIMESTAMP,
+    # Back-compat: older callers pass head_sha/started_at as byte-stability sentinels.
+    head_sha: str | None = None,
+    started_at: str | None = None,
 ) -> tuple[Path, Path, Path, Path, str]:
     """Generate manifest + run-record + scored face-report pair.
 
     Builds the full set in a temporary directory, validates coverage_gaps and
-    cross-file hashes, then promotes with atomic replacements (VLM6-F-05 /
-    VLM6-B-04 / rg-002). Never leaves a new manifest paired with stale reports.
+    cross-file hashes, then promotes the named set via journaled stage install
+    (VLM6-F-05 / VLM6-B-04 / rg-002 / S4-02). After return (or crash + recover)
+    the destination is fully old or fully new — never a mixed pairing.
 
     Returns (manifest_path, run_path, report_json, report_md, manifest_sha).
     """
+    fix_rev = head_sha if head_sha is not None else fixture_revision
+    can_ts = started_at if started_at is not None else canonical_timestamp
+
     man_name = f"{manifest_stem}.json"
     run_name = f"{stem}.json"
     report_json_name = f"{stem}-face-report.json"
@@ -589,8 +714,8 @@ def write_face_anchor(
 
         record = build_face_anchor_run_record(
             manifest_sha256=manifest_sha,
-            head_sha=head_sha,
-            started_at=started_at,
+            fixture_revision=fix_rev,
+            canonical_timestamp=can_ts,
         )
 
         # Score once to discover still-vacuous cells, then stamp coverage_gaps into
@@ -653,21 +778,43 @@ def main(argv: list[str] | None = None) -> int:
         help=f"manifest filename stem (default: {_DEFAULT_MANIFEST_STEM})",
     )
     parser.add_argument(
+        "--fixture-revision",
+        default=_DEFAULT_FIXTURE_REVISION,
+        help="provenance.fixture_revision byte-stability sentinel (default: 40 zero hex)",
+    )
+    parser.add_argument(
+        "--canonical-timestamp",
+        default=_DEFAULT_CANONICAL_TIMESTAMP,
+        help=f"provenance.canonical_timestamp sentinel (default: {_DEFAULT_CANONICAL_TIMESTAMP})",
+    )
+    # Back-compat aliases for older callers / tests (S4-03: demote fabricated head_sha).
+    parser.add_argument(
         "--head-sha",
-        default=_DEFAULT_HEAD_SHA,
-        help="provenance.head_sha (default: 40 zero hex; fixed for byte-stable regen)",
+        default=None,
+        help="(legacy) maps to --fixture-revision when set; prefer --fixture-revision "
+        "(does NOT write provenance.head_sha — that contract field is null in pin mode)",
     )
     parser.add_argument(
         "--started-at",
-        default=_DEFAULT_STARTED_AT,
-        help=f"provenance.started_at ISO-8601 (default: {_DEFAULT_STARTED_AT})",
+        default=None,
+        help="(legacy) maps to --canonical-timestamp when set; prefer --canonical-timestamp "
+        "(does NOT write provenance.started_at — that contract field is null in pin mode)",
     )
     args = parser.parse_args(argv)
+
+    fixture_revision = args.fixture_revision
+    canonical_timestamp = args.canonical_timestamp
+    if args.head_sha is not None:
+        fixture_revision = args.head_sha
+    if args.started_at is not None:
+        canonical_timestamp = args.started_at
 
     manifest_path, run_path, report_json, report_md, manifest_sha = write_face_anchor(
         out_dir=args.out_dir,
         stem=args.stem,
         manifest_stem=args.manifest_stem,
+        fixture_revision=fixture_revision,
+        canonical_timestamp=canonical_timestamp,
         head_sha=args.head_sha,
         started_at=args.started_at,
     )

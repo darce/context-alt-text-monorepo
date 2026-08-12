@@ -1123,22 +1123,49 @@ def test_converge_runtime_missing_net_membership_forces_recreate(tmp_path: Path)
     )
 
 
-def test_converge_runtime_edge_apply_gate_refuses_without_confirm(tmp_path: Path) -> None:
-    """Gate r0811864a G2-01: edge mutation requires ACX_EDGE_APPLY=1.
+def test_converge_runtime_edge_apply_gate_warns_non_fir_without_confirm(
+    tmp_path: Path,
+) -> None:
+    """Gate r08117ab7 RA-02/RB-02: non-fir env with edge drift + no lever.
 
-    Any env's converge can recreate the single prod-fronting caddy; without the
-    explicit opt-in the converge must fail closed, naming the lever, and must
-    not ship edge files or touch the container.
+    Prod/staging hotfixes must not hard-fail on FIR edge drift. Without
+    ACX_EDGE_APPLY=1 the converge WARNs, skips edge ship/recreate, and still
+    converges that env's own runtime (compose + unit).
     """
     log = _run_converge_runtime("dev", tmp_path, edge_apply=None)
     proc = _run_converge_runtime.last_proc  # type: ignore[attr-defined]
     combined = proc.stdout + proc.stderr
-    assert proc.returncode != 0, combined
+    assert proc.returncode == 0, combined
+    assert "edge drift present, skipping edge convergence" in combined, combined
     assert "ACX_EDGE_APPLY=1" in combined, combined
+    assert "sudo cp '/tmp/docker-compose.env.yml'" in log, (
+        "non-fir must still ship env compose when edge is skipped"
+    )
     assert "sudo cp '/tmp/Caddyfile'" not in log, "gate must block the edge ship"
     assert "docker compose -f docker-compose.caddy.yml up -d" not in log, (
         "gate must block the edge recreate"
     )
+
+
+def test_converge_runtime_edge_apply_gate_refuses_dev_fir_before_any_ship(
+    tmp_path: Path,
+) -> None:
+    """Gate r08117ab7 RA-02/RB-02: dev-fir edge drift + no lever fails closed.
+
+    The edge IS fir's ingress. Refusal must fire BEFORE any remote mutation
+    (no env compose ship, no unit ship, no daemon-reload) so a refused run
+    leaves zero partial remote state.
+    """
+    log = _run_converge_runtime("dev-fir", tmp_path, edge_apply=None)
+    proc = _run_converge_runtime.last_proc  # type: ignore[attr-defined]
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0, combined
+    assert "ACX_EDGE_APPLY=1" in combined, combined
+    assert "caddy edge drift detected" in combined, combined
+    # Zero ship / daemon-reload calls — probes only (sha256sum / NetworkSettings).
+    assert "sudo cp '/tmp/" not in log, f"refusal must not ship any file: {log}"
+    assert "daemon-reload" not in log, f"refusal must not daemon-reload: {log}"
+    assert "docker compose -f docker-compose.caddy.yml up -d" not in log
 
 
 def test_converge_runtime_checksum_ssh_failure_is_not_drift(tmp_path: Path) -> None:
@@ -1159,15 +1186,29 @@ def test_converge_runtime_checksum_ssh_failure_is_not_drift(tmp_path: Path) -> N
     )
 
 
-def test_check_passes_clean_when_deployed_matches_repo(tmp_path: Path) -> None:
-    # BR2-11: the no-drift branch of converge_check must exit 0 — a fake ssh
-    # cats the repo's own compose/admin/rendered-unit content back, so every
-    # diff matches.
+def _run_converge_check(
+    env_arg: str,
+    tmp_path: Path,
+    *,
+    edge_membership: str = "MEMBER",
+    ssh_rc: int = 0,
+    match_repo: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    """Source converge_check with a recording/controlled fake ssh.
+
+    match_repo=True: cat repo files back (clean content). False: empty body
+    (content drift). edge_membership: MEMBER|MISSING|NOCADDY for the net probe.
+    ssh_rc: forced exit code for all ssh calls (255 = transport failure).
+    """
     bindir = tmp_path / "bin"
-    bindir.mkdir()
-    (bindir / "ssh").write_text(
-        """#!/bin/sh
+    bindir.mkdir(exist_ok=True)
+    # NetworkSettings must be matched BEFORE docker-compose.caddy.yml because
+    # the membership probe command embeds the compose filename.
+    if match_repo:
+        ssh_body = f"""#!/bin/sh
+if [ "{ssh_rc}" -ne 0 ]; then exit {ssh_rc}; fi
 case "$*" in
+  *NetworkSettings*) echo "{edge_membership}"; exit 0 ;;
   *docker-compose.env.yml*) cat "$REPO_ENV_COMPOSE" ;;
   *docker-compose.admin.yml*) cat "$REPO_ADMIN_COMPOSE" ;;
   *docker-compose.caddy.yml*) cat "$REPO_CADDY_COMPOSE" ;;
@@ -1176,23 +1217,44 @@ case "$*" in
 esac
 exit 0
 """
-    )
+    else:
+        ssh_body = f"""#!/bin/sh
+if [ "{ssh_rc}" -ne 0 ]; then exit {ssh_rc}; fi
+case "$*" in
+  *NetworkSettings*) echo "{edge_membership}"; exit 0 ;;
+esac
+# Empty content → content drift vs repo.
+exit 0
+"""
+    (bindir / "ssh").write_text(ssh_body)
     (bindir / "ssh").chmod(0o755)
     unit_file = tmp_path / "unit.txt"
     script = (
         f'source "{SCRIPT}"; '
-        f'render_unit prod > "{unit_file}"; '
+        f'render_unit {env_arg} > "{unit_file}"; '
         f'export REPO_ENV_COMPOSE="$SERVICE_DIR/docker-compose.env.yml"; '
         f'export REPO_ADMIN_COMPOSE="$SERVICE_DIR/docker-compose.admin.yml"; '
         f'export REPO_CADDY_COMPOSE="$SERVICE_DIR/docker-compose.caddy.yml"; '
         f'export REPO_CADDYFILE="$SERVICE_DIR/Caddyfile"; '
         f'export RENDERED_UNIT="{unit_file}"; '
-        "converge_check prod"
+        f"converge_check {env_arg}"
     )
     env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"}
-    proc = subprocess.run(
-        ["/bin/bash", "-c", script], env=env, capture_output=True, text=True, timeout=30
+    return subprocess.run(
+        ["/bin/bash", "-c", script],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
     )
+
+
+def test_check_passes_clean_when_deployed_matches_repo(tmp_path: Path) -> None:
+    # BR2-11: the no-drift branch of converge_check must exit 0 — a fake ssh
+    # cats the repo's own compose/admin/rendered-unit content back, so every
+    # diff matches; membership probe returns MEMBER.
+    proc = _run_converge_check("prod", tmp_path, edge_membership="MEMBER")
     combined = proc.stdout + proc.stderr
     assert proc.returncode == 0, combined
     assert "no runtime drift" in combined
@@ -1269,3 +1331,122 @@ exit 0
     assert "declare -a FACE_PIPELINE_ONNX_SHA256" in body, (
         f"shipped body missing the declare -p sha256 pin array: {body!r}"
     )
+
+
+# ---- wave-2 gate r08117ab7 findings ------------------------------------
+
+
+def test_promote_refuses_dev_fir_destination(tmp_path: Path) -> None:
+    """RA-01/RB-03/RC-02: do_promote to_env=dev-fir fails closed (exit 2).
+
+    env_to_tag(dev-fir)=dev would retag the SHARED :dev image and only restart
+    acx-dev-fir. Refusal must fire before any remote call; message names the
+    real lever (promote <from> dev / make deploy-rollback-dev).
+    """
+    result = _run(["promote", "staging", "dev-fir"], tmp_path)
+    combined = result.stdout + result.stderr
+    assert result.returncode == 2, combined
+    assert "refused" in combined.lower(), combined
+    assert "dev-fir shares the :dev image tag" in combined, combined
+    assert "promote staging dev" in combined or "deploy-rollback-dev" in combined, (
+        combined
+    )
+    # No remote work: fake ssh never needed, but ensure we didn't try a pull/tag
+    # path that would mention docker pull of the source image.
+    assert "Pulling source image" not in combined, combined
+
+
+def test_converge_check_membership_missing_is_drift(tmp_path: Path) -> None:
+    """RB-01/RC-01: matching files + MISSING membership → --check nonzero."""
+    proc = _run_converge_check("dev", tmp_path, edge_membership="MISSING")
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0, combined
+    assert "not attached to acx-dev-fir-net" in combined or "MISSING" in combined, (
+        combined
+    )
+    assert "runtime drift detected" in combined, combined
+
+
+def test_converge_check_membership_member_is_clean(tmp_path: Path) -> None:
+    """RB-01/RC-01: matching files + MEMBER membership → --check clean."""
+    proc = _run_converge_check("dev", tmp_path, edge_membership="MEMBER")
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 0, combined
+    assert "no runtime drift" in combined
+
+
+def test_converge_check_ssh_transport_failure_is_not_drift(tmp_path: Path) -> None:
+    """RA-03/RB-04: ssh rc=255 on converge_check must fail as transport error.
+
+    Never take the 'runtime drift detected' path — empty stdin from a transport
+    blip must not be misread as whole-file drift.
+    """
+    proc = _run_converge_check("dev", tmp_path, ssh_rc=255)
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0, combined
+    assert "transport failure" in combined.lower() or "ssh exit 255" in combined, (
+        combined
+    )
+    assert "runtime drift detected" not in combined, (
+        f"transport failure must not report as drift: {combined}"
+    )
+
+
+def test_preflight_branch_synced_skips_dev_fir(tmp_path: Path) -> None:
+    """RB-05: dev-fir is dev-tier — skip origin/main branch-sync preflight."""
+    # A fake `git` that fails on fetch/rev-parse would trip the staging path;
+    # for dev-fir the function must return 0 without consulting origin/main.
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    git_log = tmp_path / "git.log"
+    (bindir / "git").write_text(
+        f"""#!/bin/sh
+echo "$@" >> "{git_log}"
+# If branch-sync runs it will fetch origin main / rev-parse origin/main —
+# make those fail so a regression surfaces as non-zero.
+case "$*" in
+  *fetch*|*origin/main*) exit 99 ;;
+  *rev-parse*HEAD*) echo deadbeefdeadbeefdeadbeefdeadbeefdeadbeef; exit 0 ;;
+  *diff*|*status*) exit 0 ;;
+esac
+exit 0
+"""
+    )
+    (bindir / "git").chmod(0o755)
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"}
+    proc = subprocess.run(
+        ["/bin/bash", "-c", f'source "{SCRIPT}"; preflight_branch_synced dev-fir'],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    # Early return: must not have attempted fetch/origin/main.
+    git_calls = git_log.read_text() if git_log.exists() else ""
+    assert "fetch" not in git_calls, git_calls
+    assert "origin/main" not in git_calls, git_calls
+
+
+def test_help_includes_acx_edge_apply_docs(tmp_path: Path) -> None:
+    """RA-04: help prints the whole header, including ACX_EDGE_APPLY docs."""
+    result = _run(["help"], tmp_path)
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert "ACX_EDGE_APPLY" in combined, combined
+
+
+def test_reset_usage_lists_dev_fir() -> None:
+    """RA-04: reset without env names dev-fir in the usage string."""
+    result = subprocess.run(
+        ["/bin/bash", str(SCRIPT), "reset"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "dev-fir" in combined, combined
+    assert "reset requires <env>" in combined

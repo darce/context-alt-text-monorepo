@@ -1208,3 +1208,64 @@ def test_converge_ships_compose_files_via_sudo_install(tmp_path: Path) -> None:
     # Structural: the shared ship helper stages under /tmp and installs with
     # sudo cp; the behavioral tests above assert the expanded per-file commands.
     assert "sudo cp '/tmp/" in body, "compose ship must go via /tmp + sudo cp"
+
+
+def test_g3_02_dev_fir_network_identity_is_pinned() -> None:
+    """G3-02: .env.fir.example must pin ACX_NETWORK_NAME=acx-dev-fir-net
+    (not the shared acx-dev-net) so fir-api DNS does not round-robin onto dev's DB.
+    """
+    env_path = (
+        REPO_ROOT
+        / "apps"
+        / "prototype-description-service"
+        / ".env.fir.example"
+    )
+    text = env_path.read_text(encoding="utf-8")
+    network_name = _parse_env_example_key(text, "ACX_NETWORK_NAME")
+    assert network_name == "acx-dev-fir-net", (
+        f"ACX_NETWORK_NAME must be acx-dev-fir-net, got {network_name!r}"
+    )
+    assert network_name != "acx-dev-net", (
+        "ACX_NETWORK_NAME must not revert to shared acx-dev-net "
+        "(postgres/api DNS alias collision would route fir-api onto dev's 512d DB)"
+    )
+
+
+def test_g3_05_face_pipeline_preflight_ships_sha256_verify_body(
+    tmp_path: Path,
+) -> None:
+    """G3-05: preflight must ship a sha256-verification body to the remote
+    (declare -p FACE_PIPELINE_ONNX_SHA256 + declare -f verify_face_pipeline_models_dir).
+    """
+    captured = tmp_path / "shipped_verify_body.sh"
+    ssh_script = f"""#!/bin/sh
+if echo "$*" | grep -q "RECOGNITION_FACE_PIPELINE_MODELS_DIR"; then
+  echo "/data/cache/face_pipeline"
+  exit 0
+fi
+if echo "$*" | grep -q "ACX_MODELS_PATH"; then
+  echo "/opt/models"
+  exit 0
+fi
+# Verify call: capture stdin body shipped via bash -s
+body=$(cat)
+printf '%s' "$body" > "{captured}"
+echo OK
+exit 0
+"""
+    proc = _run_face_pipeline_preflight("dev-fir", tmp_path, ssh_script)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert captured.is_file(), (
+        f"fake ssh did not capture a verify body; stdout={proc.stdout!r} "
+        f"stderr={proc.stderr!r}"
+    )
+    body = captured.read_text(encoding="utf-8")
+    assert "sha256" in body, f"shipped body missing sha256: {body!r}"
+    assert "verify_face_pipeline_models_dir" in body, (
+        f"shipped body missing verify_face_pipeline_models_dir: {body!r}"
+    )
+    # The verify function's own text mentions the array name, so require the
+    # expanded `declare -p` output (the pinned values), not just the name.
+    assert "declare -a FACE_PIPELINE_ONNX_SHA256" in body, (
+        f"shipped body missing the declare -p sha256 pin array: {body!r}"
+    )

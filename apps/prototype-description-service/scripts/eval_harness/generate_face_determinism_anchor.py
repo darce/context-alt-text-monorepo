@@ -97,7 +97,10 @@ _GT_BOX_STRANGER_FN_B = {"x": 0.7, "y": 0.7, "w": 0.2, "h": 0.2, "source": "iptc
 # VLM6-R2-G-01 / wF4: mixed-y order_degraded trap. Sibling named boxes share x;
 # one carries real y, one omits y. Correct per-box key orders (has-y first);
 # pre-G-01 whole-image (x, name) collapse reorders by name and is detectable.
-# Zero detections so face association never float()-coerces the null y.
+# Null-y + detections is now safe (wG2: associate_detections stamps
+# geometry_incomplete_gt instead of float(y)); this media still uses faces=[]
+# so the freeze isolates labeled_y_missing_images / order_degraded without also
+# exercising association incompleteness on the same item.
 _GT_BOX_Y_PRESENT = {"x": 0.5, "y": 0.1, "w": 0.2, "h": 0.2, "source": "iptc"}
 _GT_BOX_Y_MISSING = {"x": 0.5, "w": 0.2, "h": 0.2, "source": "iptc"}  # no y key
 _LANDMARKS = [[0.0, 0.0]] * 5
@@ -394,10 +397,13 @@ def build_synthetic_face_manifest() -> dict[str, Any]:
             },
             {
                 # VLM6-R2-G-01 / wF4: mixed-y order_degraded trap.
-                # Named Bob has y; named Alice omits y (sibling shape). Zero
-                # detections so face association never float()-coerces null y.
+                # Named Bob has y; named Alice omits y (sibling shape).
                 # Exists so labeled_y_missing_images can be non-zero on the freeze
                 # corpus (pre-extension the counter was structurally always 0).
+                # faces=[] on the matching run item is deliberate isolation of
+                # the order_degraded counter — not a crash dodge. wG2 made
+                # null-y + n_det>0 safe (geometry_incomplete stamp); a future
+                # trap may add detections without re-introducing TypeError.
                 "path": "celebs01/y-missing-mixed-order.jpg",
                 "sha256": "5" * 64,
                 "media_id": 11,
@@ -535,7 +541,7 @@ def build_face_anchor_run_record(
             model_id=_MODEL_ID,
             embedding_dim=_EMBEDDING_DIM,
             image_size=_IMAGE_SIZE,
-            faces=[],  # VLM6-R2-G-01: order_degraded trap; no det so no float(y)
+            faces=[],  # VLM6-R2-G-01: order_degraded trap; faces=[] isolates counter (null-y+dets safe since wG2)
         ),
     ]
     # Document-level synthetic occlusion twin (EVAL-16: never an item).

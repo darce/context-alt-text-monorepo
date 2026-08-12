@@ -79,8 +79,11 @@ def test_s4_04_pin_mode_nulls_head_sha_and_started_at(tmp_path: Path) -> None:
 
 
 def test_s4_04_non_pin_does_not_null_live_provenance(tmp_path: Path) -> None:
-    """Negative: non-pinned run keeps real head_sha / started_at (not unconditional null)."""
-    live_sha = "b" * 40
+    """Negative: non-pinned run keeps real head_sha / started_at (not unconditional null).
+
+    live_head_sha must be a resolvable commit (fx6: verify_git default-on).
+    """
+    live_sha = _worktree_head_sha()
     live_ts = "2026-03-15T12:00:00Z"
     run_path, report_json, _md, _sha = write_anchor(
         manifest_path=_GOLDEN,
@@ -147,12 +150,13 @@ def test_rv3_05_resolve_head_sha_degrades_without_git(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When git binary is missing, format-valid SHA is accepted (sane degrade)."""
-    import scripts.eval_harness.describe_baseline as db_mod
+    import scripts.eval_harness.provenance_sha as prov
 
     def _no_git(*_a, **_k):
         raise OSError("git missing")
 
-    monkeypatch.setattr(db_mod.subprocess, "run", _no_git)
+    # Git probe lives in the shared provenance module (fx6 de-dupe).
+    monkeypatch.setattr(prov.subprocess, "run", _no_git)
     fake = "deadbeef" * 5
     assert db.resolve_head_sha(fake) == fake
 
@@ -331,3 +335,63 @@ def test_rv2_06_no_head_sha_path_emits_forty_zeros(
         assert value != _ZERO_SHA
         # And never the pre-fix string encodings of "absent".
         assert value not in ("unknown", "")
+
+
+# --- fx6: resolve_head_sha ↔ validate_live_head_sha must not diverge (rg-015) ---
+
+
+def _outcome(fn, value):
+    """Drive one guard; return ('ok', sha) | ('none', None) | ('refuse', msg)."""
+    try:
+        out = fn(value)
+    except SystemExit as exc:
+        return ("refuse", str(exc))
+    if out is None:
+        return ("none", None)
+    return ("ok", out)
+
+
+def test_fx6_head_sha_entry_points_agree_on_accept_refuse_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """fx6 / rg-015 / TEST-15: both entry points share one accept/refuse table.
+
+    Empty-string policy legitimately differs (describe unset→None; CLI refuse),
+    so that row is asserted separately. Format / zero / real-HEAD / uppercase
+    outcomes must match so the two wrappers cannot drift open independently.
+    """
+    real = _worktree_head_sha()
+    # Shared rows: same accept/refuse class through both entry points.
+    shared_cases: list[tuple[object, str]] = [
+        (None, "none"),
+        (_ZERO_SHA, "refuse"),
+        ("deadbeef", "refuse"),
+        ("not-a-sha-at-all!!!", "refuse"),
+        ("a" * 40, "refuse"),  # format-valid but non-commit when git answers
+        (real, "ok"),
+        (real.upper(), "ok"),
+    ]
+    for value, expect_kind in shared_cases:
+        r_kind, r_val = _outcome(db.resolve_head_sha, value)
+        v_kind, v_val = _outcome(validate_live_head_sha, value)
+        assert r_kind == expect_kind, f"resolve_head_sha({value!r}) → {r_kind}, want {expect_kind}"
+        assert v_kind == expect_kind, f"validate_live_head_sha({value!r}) → {v_kind}, want {expect_kind}"
+        if expect_kind == "ok":
+            assert r_val == v_val == real
+
+    # Empty policy is the deliberate call-site difference (documented in fx6 report).
+    assert _outcome(db.resolve_head_sha, "")[0] == "none"
+    assert _outcome(db.resolve_head_sha, "   ")[0] == "none"
+    assert _outcome(validate_live_head_sha, "")[0] == "refuse"
+    assert _outcome(validate_live_head_sha, "   ")[0] == "refuse"
+
+    # When git is absent both degrade to format-only (same accept for fake hex).
+    import scripts.eval_harness.provenance_sha as prov
+
+    def _no_git(*_a, **_k):
+        raise OSError("git missing")
+
+    monkeypatch.setattr(prov.subprocess, "run", _no_git)
+    fake = "deadbeef" * 5
+    assert _outcome(db.resolve_head_sha, fake) == ("ok", fake)
+    assert _outcome(validate_live_head_sha, fake) == ("ok", fake)

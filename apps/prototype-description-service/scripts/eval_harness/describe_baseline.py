@@ -29,7 +29,6 @@ import hashlib
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 from collections.abc import Callable
@@ -59,73 +58,35 @@ BAKEOFF_BASE_URL = os.environ.get("BAKEOFF_BASE_URL", "")
 BAKEOFF_MODEL_ID = os.environ.get("BAKEOFF_MODEL_ID", "Qwen3-VL-30B-A3B-Instruct")
 BAKEOFF_MODEL_VERSION = os.environ.get("BAKEOFF_MODEL_VERSION", "Q4_K_M")
 
-_FABRICATED_ZERO_SHA = "0" * 40
-
-
 def resolve_head_sha(raw: str | None = None) -> str | None:
     """Return an explicit real HEAD SHA, or None when unset (never forty zeros).
 
+    Delegates format / zero-sentinel / git-verify rules to
+    ``provenance_sha.normalize_head_sha`` so this path cannot drift from
+    ``promote_atomic.validate_live_head_sha`` (fx6 / rg-015).
+
     - Unset / empty → ``None`` (report writes null; no fabrication).
     - Explicit ``0`` * 40 → hard refuse (S4-06 / rg-015).
-    - Any other value must be 40 lowercase hex chars.
-    - When git is available **and** the cwd is a git work tree, the SHA must
-      resolve via ``git rev-parse --verify <sha>^{commit}`` (RV3-05 / TEST-15).
-      Arbitrary 40-hex that is not a commit is refused — closes the fabrication
-      class adjacent to forty zeros.
-    - When git is missing or the cwd is not a repo, degrade to format-only
-      validation so offline / non-repo environments still record a format-valid
-      explicit SHA rather than hard-failing.
+    - Any other value must be 40 lowercase hex chars (uppercased input is
+      accepted and lowercased).
+    - Git verify is **default-on** with degrade when git is missing or cwd is
+      not a work tree (RV3-05 / TEST-15).
 
     Resolution order when *raw* is omitted: ``HEAD_SHA`` env, then the
     module-level ``HEAD_SHA`` (tests may monkeypatch the latter).
     """
+    from scripts.eval_harness.provenance_sha import normalize_head_sha
+
     if raw is None:
         raw = os.environ.get("HEAD_SHA")
         if raw is None:
             raw = HEAD_SHA
-    if raw is None:
-        return None
-    sha = str(raw).strip().lower()
-    if not sha:
-        return None
-    if sha == _FABRICATED_ZERO_SHA:
-        raise SystemExit(
-            "HEAD_SHA is the fabricated 40-zero sentinel; pass a real 40-char git "
-            "SHA via HEAD_SHA or unset it to record null (S4-06 / rg-015 / VLM6-F-04)"
-        )
-    if len(sha) != 40 or any(c not in "0123456789abcdef" for c in sha):
-        raise SystemExit(
-            f"HEAD_SHA must be a 40-char lowercase hex git SHA (got {raw!r}); "
-            "unset HEAD_SHA to record null rather than fabricating zeros"
-        )
-    # RV3-05 (a): when git can answer, require the SHA to be a real commit.
-    try:
-        in_repo = subprocess.run(
-            ["git", "rev-parse", "--is-inside-work-tree"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except OSError:
-        # No git binary — format-valid only.
-        return sha
-    if in_repo.returncode != 0 or (in_repo.stdout or "").strip() != "true":
-        # Not a git work tree — format-valid only.
-        return sha
-    verified = subprocess.run(
-        ["git", "rev-parse", "--verify", f"{sha}^{{commit}}"],
-        capture_output=True,
-        text=True,
-        check=False,
+    return normalize_head_sha(
+        raw,
+        empty_policy="none",
+        verify_git=True,
+        label="HEAD_SHA",
     )
-    if verified.returncode != 0:
-        raise SystemExit(
-            f"HEAD_SHA={sha!r} is not a resolvable commit in this repository "
-            f"(git rev-parse --verify failed); pass a real SHA from "
-            f"`git rev-parse HEAD` or unset HEAD_SHA to record null "
-            f"(RV3-05 / S4-06 / rg-015)"
-        )
-    return (verified.stdout or sha).strip().lower()
 
 _UPLOADS_MARKERS = ("/wp-content/uploads/", "/uploads/")
 

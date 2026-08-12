@@ -638,7 +638,8 @@ def _write_score_manifest(tmp_path, entries, roster, name="golden.json"):
     manifest_path.write_text(
         json.dumps({"manifest_version": 2, "roster": roster, "entries": entries})
     )
-    return manifest_path, _manifest_sha(load_manifest(str(manifest_path)))
+    # Metadata-only: computes score-time sha from roster/entries; never opens image bytes.
+    return manifest_path, _manifest_sha(load_manifest(str(manifest_path), skip_hash_verification=True))
 
 
 def _w1_audience_manifest_and_record(tmp_path, *, inject_wrong_name: bool = False):
@@ -1221,7 +1222,8 @@ def test_cli_score_determinism_seed_failed_not_anchor_mismatch(tmp_path, monkeyp
     from scripts.eval_harness.manifest import load_manifest
 
     record = json.loads(record_path.read_text())
-    man = load_manifest(str(manifest_path))
+    # Metadata-only: build_reports baseline for expect-report; never opens image bytes.
+    man = load_manifest(str(manifest_path), skip_hash_verification=True)
     entries = [e.model_dump() for e in man.entries]
     base_json, _ = build_reports(
         record,
@@ -1481,7 +1483,8 @@ def test_cli_score_determinism_guard_ignores_stdout_prefix_banner(tmp_path, monk
     monkeypatch.chdir(tmp_path)
 
     record = json.loads(record_path.read_text())
-    manifest = load_manifest(str(manifest_path))
+    # Metadata-only: build_reports for determinism baseline; never opens image bytes.
+    manifest = load_manifest(str(manifest_path), skip_hash_verification=True)
     entries = [e.model_dump() for e in manifest.entries]
     ignore_list = cli_mod._load_ignore_list(record_path.parent)
     base_json, base_md = build_reports(
@@ -1653,7 +1656,8 @@ def test_cli_score_determinism_guard_errors_on_build_reports_provenance_mismatch
     monkeypatch.chdir(tmp_path)
 
     record = json.loads(record_path.read_text())
-    manifest = load_manifest(str(manifest_path))
+    # Metadata-only: build_reports for determinism baseline; never opens image bytes.
+    manifest = load_manifest(str(manifest_path), skip_hash_verification=True)
     entries = [e.model_dump() for e in manifest.entries]
     ignore_list = cli_mod._load_ignore_list(record_path.parent)
     base_json, base_md = build_reports(
@@ -1710,7 +1714,8 @@ def test_cli_score_determinism_certifies_written_rubric_gate(tmp_path, monkeypat
     # Pre-fix shape: default build_reports stamps enforce even when the
     # operator will write skip — the GATE-05 divergence in one comparison.
     record = json.loads(record_path.read_text())
-    manifest = load_manifest(str(manifest_path))
+    # Metadata-only: build_reports for GATE-05 divergence baseline; never opens image bytes.
+    manifest = load_manifest(str(manifest_path), skip_hash_verification=True)
     entries = [e.model_dump() for e in manifest.entries]
     ignore = cli_mod._load_ignore_list(record_path.parent)
     sha = cli_mod._manifest_sha(manifest)
@@ -2499,7 +2504,8 @@ def _real_golden_good_record() -> tuple[Path, dict]:
     from scripts.eval_harness.manifest import load_manifest
     from scripts.eval_harness.schema import SCHEMA, DocKind
 
-    manifest = load_manifest(str(_GOLDEN_SEED))
+    # Metadata-only: builds synthetic run-record from roster/must_right; never opens image bytes.
+    manifest = load_manifest(str(_GOLDEN_SEED), skip_hash_verification=True)
     entries = [e.model_dump() for e in manifest.entries]
     assert len(entries) == 37
     msha = _manifest_sha(manifest)
@@ -2652,7 +2658,8 @@ def _real_golden_wrong_name_record() -> tuple[Path, dict, list[list[str]]]:
     from scripts.eval_harness.manifest import load_manifest
     from scripts.eval_harness.schema import SCHEMA, DocKind
 
-    manifest = load_manifest(str(_GOLDEN_SEED))
+    # Metadata-only: builds synthetic wrong-name record from roster; never opens image bytes.
+    manifest = load_manifest(str(_GOLDEN_SEED), skip_hash_verification=True)
     entries = [e.model_dump() for e in manifest.entries]
     assert len(entries) == 37
     msha = _manifest_sha(manifest)
@@ -2765,7 +2772,8 @@ def test_score_recognition_disabled_corpus_fails_wrong_name_floor_vacuity(
         entry["policy"] = {**entry.get("policy", {}), "recognition_enabled": False}
     man_path = tmp_path / "golden-rec-off.json"
     man_path.write_text(json.dumps(man))
-    manifest = load_manifest(str(man_path))
+    # Metadata-only: score path uses policy/must_right only; never opens image bytes.
+    manifest = load_manifest(str(man_path), skip_hash_verification=True)
     entries = [e.model_dump() for e in manifest.entries]
     assert len(entries) == 37
     assert all(not e["policy"]["recognition_enabled"] for e in entries)
@@ -2977,7 +2985,8 @@ def test_score_persisted_verdict_fail_empty_rubric_must_right_real_golden(tmp_pa
         entry["must_right"] = []
     man_path = tmp_path / "golden-no-mr.json"
     man_path.write_text(json.dumps(man))
-    manifest = load_manifest(str(man_path))
+    # Metadata-only: empty must_right scoring fixture; never opens image bytes.
+    manifest = load_manifest(str(man_path), skip_hash_verification=True)
     msha = _manifest_sha(manifest)
     _, record = _real_golden_good_record()
     record = copy.deepcopy(record)
@@ -3506,6 +3515,8 @@ def test_face_bakeoff_wires_synthetic_occlusion_twins_end_to_end(tmp_path, monke
     score-face stops passing the pairs into build_face_reports — either drop
     reverts occlusion to the pre-fix n_eligible=0 state.
     """
+    import hashlib
+
     import cv2
     import numpy as np
 
@@ -3521,11 +3532,14 @@ def test_face_bakeoff_wires_synthetic_occlusion_twins_end_to_end(tmp_path, monke
     entries = []
     for mid, (fname, name) in enumerate(files, start=1):
         img = rng.integers(0, 256, size=(100, 100, 3)).astype(np.uint8)
-        assert cv2.imwrite(str(images / fname), img)
+        img_path = images / fname
+        assert cv2.imwrite(str(img_path), img)
+        # Real pin: face-bakeoff verifies hashes before reading pixels (VLM6-R2-05).
+        digest = hashlib.sha256(img_path.read_bytes()).hexdigest()
         entries.append(
             {
                 "path": f"celebs01/{fname}",
-                "sha256": "0" * 64,
+                "sha256": digest,
                 "media_id": mid,
                 "face_count": 1,
                 "base_caption": "",
@@ -3606,6 +3620,77 @@ def test_face_bakeoff_wires_synthetic_occlusion_twins_end_to_end(tmp_path, monke
 # --- FIR-1 head-to-head: face-bakeoff --leg dispatch (candidate vs buffalo) ---
 
 
+def test_face_bakeoff_passes_images_dir_not_skip(tmp_path, monkeypatch):
+    """TEST-15 / VLM6-R2-05 discriminator: pixel path must pass images_dir=.
+
+    face-bakeoff opens image bytes (walk_face_run_record / twin pass). If a
+    future change blanket-applies skip_hash_verification=True here, this test
+    goes red even when GOLDEN_IMAGES_DIR is set (env auto-verify would otherwise
+    mask the skip). Captures kwargs at the load_manifest call site.
+    """
+    from scripts.eval_harness import cli as cli_mod
+    from scripts.eval_harness.manifest import ManifestError
+
+    man_path = tmp_path / "man.json"
+    man_path.write_text(
+        json.dumps(
+            {
+                "manifest_version": 2,
+                "roster": ["Alice Q"],
+                "entries": [
+                    {
+                        "path": "celebs01/a.jpg",
+                        "sha256": "a" * 64,
+                        "media_id": 1,
+                        "face_count": 1,
+                        "base_caption": "",
+                        "present_identities": ["Alice Q"],
+                        "must_right": [],
+                        "easy_wrong": [],
+                        "policy": {"recognition_enabled": True},
+                        "provenance": {
+                            "source": "celeb",
+                            "license": "public_domain",
+                            "publishable": True,
+                        },
+                    }
+                ],
+            }
+        )
+    )
+    images = tmp_path / "images"
+    images.mkdir()
+    leg = _FusedFakeLeg()
+    monkeypatch.setattr(cli_mod, "build_candidate_leg", lambda: (leg, _NoopAligner(), leg))
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(images))
+
+    captured: list[dict] = []
+
+    def _spy(path, images_dir=None, *, skip_hash_verification=False):
+        captured.append(
+            {
+                "path": path,
+                "images_dir": images_dir,
+                "skip_hash_verification": skip_hash_verification,
+            }
+        )
+        raise ManifestError("spy-stop: kwargs captured")
+
+    monkeypatch.setattr(cli_mod, "load_manifest", _spy)
+
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main(["face-bakeoff", "--manifest", str(man_path)])
+    assert "spy-stop" in str(exc.value)
+    assert captured, "load_manifest was never called"
+    call = captured[0]
+    assert call["images_dir"] == str(images), (
+        f"pixel path must pass images_dir= (got {call!r}); "
+        "skip_hash_verification alone re-opens VLM6-R2-05"
+    )
+    assert call["skip_hash_verification"] is False
+
+
 def test_cli_face_bakeoff_leg_rejects_unknown_value():
     with pytest.raises(SystemExit) as exc:
         main(["face-bakeoff", "--leg", "bogus"])
@@ -3636,13 +3721,18 @@ def test_cli_face_bakeoff_buffalo_requires_insightface(monkeypatch):
 
 def _leg_dispatch_manifest(tmp_path):
     """One-entry manifest (no named face_boxes → twin pass is a no-op) + images dir."""
+    import hashlib
+
     import cv2
     import numpy as np
 
     images = tmp_path / "images" / "celebs01"
     images.mkdir(parents=True)
     img = np.random.default_rng(11).integers(0, 256, size=(64, 64, 3)).astype(np.uint8)
-    assert cv2.imwrite(str(images / "a.jpg"), img)
+    img_path = images / "a.jpg"
+    assert cv2.imwrite(str(img_path), img)
+    # Real pin: face-bakeoff verifies hashes before reading pixels (VLM6-R2-05).
+    digest = hashlib.sha256(img_path.read_bytes()).hexdigest()
     man_path = tmp_path / "man.json"
     man_path.write_text(
         json.dumps(
@@ -3652,7 +3742,7 @@ def _leg_dispatch_manifest(tmp_path):
                 "entries": [
                     {
                         "path": "celebs01/a.jpg",
-                        "sha256": "a" * 64,
+                        "sha256": digest,
                         "media_id": 1,
                         "face_count": 1,
                         "base_caption": "",

@@ -511,7 +511,8 @@ def write_face_anchor(
     manifest_path.write_text(_dumps(raw_manifest))
 
     # Load through the real loader so sha matches score-time computation (rg-015).
-    manifest = load_manifest(str(manifest_path))
+    # Metadata-only: synthetic anchor has no image files; scoring uses roster/face_count/tags only.
+    manifest = load_manifest(str(manifest_path), skip_hash_verification=True)
     # Computed at generation time from the loaded manifest — never hand-stamped.
     manifest_sha = _manifest_sha(manifest)
 

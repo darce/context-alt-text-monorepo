@@ -2382,11 +2382,12 @@ def test_score_guard_missing_fetch_sha_fails_manifest_mismatch_gate(tmp_path, mo
     assert "empty-rubric" not in msg.lower()
 
 
-def test_score_allows_fetch_sha_drift_from_score_time_manifest(tmp_path, monkeypatch):
-    """F1-3 green path: evolved score-time manifest sha must not block re-score.
+def test_score_fetch_sha_drift_fails_closed_without_relabel_flag(tmp_path, monkeypatch):
+    """VLM6-F-03 / EVAL-13: score-time vs fetch-time manifest drift hard-fails.
 
-    Full media-id coverage + good captions + non-empty fetch stamp + mismatched
-    score-time sha (as when face_boxes are later populated) → exit 0.
+    Pre-fix (F1-3) allowed drift with a warning so archival re-scores under
+    evolved labels stayed green — that also certified incomparable numbers.
+    After fix: exit non-zero unless ``--allow-manifest-relabel`` (non_comparable).
     """
     roster, entries = _corpus_entries(6, with_rubric=True)
     manifest_path, score_sha = _write_score_manifest(tmp_path, entries, roster)
@@ -2401,8 +2402,12 @@ def test_score_allows_fetch_sha_drift_from_score_time_manifest(tmp_path, monkeyp
     record_path = tmp_path / "run-sha-drift.json"
     record_path.write_text(json.dumps(record))
     monkeypatch.chdir(tmp_path)
-    # Must exit 0 (main returns None on success).
-    assert main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)]) is None
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
+    assert excinfo.value.code != 0
+    msg = str(excinfo.value).lower()
+    assert "manifest-drift" in msg or "manifest_matches_fetch" in msg
+    assert "allow-manifest-relabel" in msg
 
 
 def test_score_guard_empty_must_right_fails_empty_rubric_gate(tmp_path, monkeypatch):
@@ -3978,45 +3983,259 @@ def test_cli_determinism_guard_errors_on_child_timeout(tmp_path, monkeypatch):
     assert "timed out" in msg2
 
 
-def test_cli_compare_meet_or_beat_pass_and_regression(tmp_path):
-    """VLM6-R2-08: compare subcommand exits 0 on meet-or-beat, non-zero on regression."""
-    baseline = {
-        "caption": {
-            "insertion_rate": 0.8,
-            "mean_gated_score": 0.5,
-            "must_right_failed_images": 2,
-        },
-        "verdict": {"wrong_name_rate": 0.1},
-    }
-    better = {
-        "caption": {
-            "insertion_rate": 0.9,
-            "mean_gated_score": 0.6,
-            "must_right_failed_images": 1,
-        },
-        "verdict": {"wrong_name_rate": 0.05},
-    }
-    worse = {
-        "caption": {
-            "insertion_rate": 0.7,
-            "mean_gated_score": 0.4,
-            "must_right_failed_images": 5,
-        },
-        "verdict": {"wrong_name_rate": 0.2},
-    }
-    base_path = tmp_path / "baseline-report.json"
-    good_path = tmp_path / "candidate-good.json"
-    bad_path = tmp_path / "candidate-bad.json"
-    base_path.write_text(json.dumps(baseline))
-    good_path.write_text(json.dumps(better))
-    bad_path.write_text(json.dumps(worse))
+def _adoption_compare_report(**overrides):
+    """Full-fidelity caption score report fixture for adoption-gate compare tests.
 
-    assert main(["compare", "--baseline", str(base_path), "--candidate", str(good_path)]) is None
+    Non-vacuous on every adoption category; counts.scored != 37 so harness-anchor
+    non-adoption does not fire. Callers override individual fields for polarity /
+    vacuity / protocol mismatch cases (VLM6-E-01 / A-02 / A-03).
+    """
+    import copy
+
+    base = {
+        "schema": "acx-eval/v1",
+        "kind": "report",
+        "eval_mode": "standard",
+        "provenance": {
+            "score_manifest_sha256": "aa" * 32,
+            "manifest_sha256": "aa" * 32,
+            "manifest_matches_fetch": True,
+            "prompt_variant": "v3_weave",
+            "two_pass": True,
+            "dual_length": False,
+            "face_gate": True,
+            "head_sha": "0" * 40,
+        },
+        "counts": {"total": 100, "scored": 100, "failed": 0},
+        "corpus": {"manifest_entries": 100, "media_id_missing": 0, "media_id_extra": 0},
+        "caption": {
+            "insertion_rate": 0.10,
+            "mean_gated_score": 0.50,
+            "must_right_failed_images": 0,
+            "must_right_defined_images": 90,
+            "easy_wrong_defined_images": 80,
+        },
+        "hallucination": {
+            "fabricated_fact_rate": 0.05,
+            "fabricated_fact_rate_trapped": 0.10,
+            "images_with_traps": 20,
+            "trap_instances": 20,
+            "fabricated_instances": 1,
+        },
+        "placement": {
+            "accuracy": 0.85,
+            "claims": 40,
+            "correct": 34,
+            "wrong": 6,
+            "abstained": 0,
+            "images_scored": 100,
+        },
+        "faces": {
+            "detection": {"precision": 0.90, "recall": 0.88, "tp": 80, "fp": 9, "fn": 11},
+            "identification": {
+                "precision": 0.92,
+                "recall": 0.91,
+                "evaluated_images": 90,
+                "wrong_names": [],
+                "ignored_wrong_names": [],
+                "positional": {
+                    "position_accuracy": 0.80,
+                    "exact_order_rate": 0.70,
+                    "compared_images": 50,
+                    "position_total": 100,
+                    "position_hits": 80,
+                    "excluded_images": [],
+                },
+            },
+            "identity_ordering": {
+                "positional_images": 50,
+                "degraded_images": 0,
+                "degraded_paths": [],
+            },
+        },
+        "verdict": {
+            "verdict": "pass",
+            "wrong_name_rate": 0.0,
+            "rubric_gate": "enforce",
+            "reasons": [],
+        },
+    }
+
+    def _merge(dst, src):
+        for key, value in src.items():
+            if isinstance(value, dict) and isinstance(dst.get(key), dict):
+                _merge(dst[key], value)
+            else:
+                dst[key] = value
+
+    out = copy.deepcopy(base)
+    _merge(out, overrides)
+    return out
+
+
+def test_cli_compare_insertion_rate_lower_is_better(tmp_path, capsys):
+    """VLM6-E-01 / TEST-15: insertion_rate polarity is lower-is-better.
+
+    inserted / (inserted + missing) measures hallucinated identities; a candidate
+    that inserts *more* wrong names must FAIL meet-or-beat (not PASS).
+    """
+    baseline = _adoption_compare_report(caption={"insertion_rate": 0.10})
+    # Higher insertion_rate = more hallucinations = regression (must go red).
+    worse = _adoption_compare_report(caption={"insertion_rate": 0.50})
+    # Lower insertion_rate = fewer hallucinations = meet-or-beat.
+    better = _adoption_compare_report(caption={"insertion_rate": 0.05})
+    base_path = tmp_path / "baseline.json"
+    worse_path = tmp_path / "worse.json"
+    better_path = tmp_path / "better.json"
+    base_path.write_text(json.dumps(baseline))
+    worse_path.write_text(json.dumps(worse))
+    better_path.write_text(json.dumps(better))
+
     with pytest.raises(SystemExit) as exc:
-        main(["compare", "--baseline", str(base_path), "--candidate", str(bad_path)])
+        main(["compare", "--baseline", str(base_path), "--candidate", str(worse_path)])
     assert exc.value.code != 0
-    assert "compare regression gate" in str(exc.value)
-    assert "insertion_rate" in str(exc.value) or "must_right_failed_images" in str(exc.value)
+    assert "insertion_rate" in str(exc.value)
+    assert "compare regression gate" in str(exc.value) or "compare" in str(exc.value).lower()
+
+    assert main(["compare", "--baseline", str(base_path), "--candidate", str(better_path)]) is None
+    out = capsys.readouterr().out
+    assert "insertion_rate" in out
+    assert "lower-better" in out
+
+
+def test_cli_compare_rejects_handwritten_four_field_json(tmp_path):
+    """VLM6-A-02 / F-02: bare four-metric JSON is not a same-corpus score report."""
+    bare = {
+        "caption": {
+            "insertion_rate": 0.0,
+            "mean_gated_score": 1.0,
+            "must_right_failed_images": 0,
+        },
+        "verdict": {"wrong_name_rate": 0.0},
+    }
+    full = _adoption_compare_report()
+    bare_path = tmp_path / "bare.json"
+    full_path = tmp_path / "full.json"
+    bare_path.write_text(json.dumps(bare))
+    full_path.write_text(json.dumps(full))
+
+    with pytest.raises(SystemExit) as exc:
+        main(["compare", "--baseline", str(bare_path), "--candidate", str(full_path)])
+    assert exc.value.code != 0
+    msg = str(exc.value).lower()
+    assert "compare" in msg
+    assert any(tok in msg for tok in ("schema", "kind", "same-corpus", "not a caption", "protocol"))
+
+
+def test_cli_compare_rejects_pass_ungated_baseline(tmp_path):
+    """VLM6-A-02: baseline whose own verdict is not adoption-eligible pass is refused."""
+    # Match protocol (rubric_gate) so the adoption-eligible verdict check is reached.
+    baseline = _adoption_compare_report(verdict={"verdict": "pass_ungated", "rubric_gate": "enforce"})
+    candidate = _adoption_compare_report(verdict={"verdict": "pass", "rubric_gate": "enforce"})
+    base_path = tmp_path / "baseline.json"
+    cand_path = tmp_path / "candidate.json"
+    base_path.write_text(json.dumps(baseline))
+    cand_path.write_text(json.dumps(candidate))
+
+    with pytest.raises(SystemExit) as exc:
+        main(["compare", "--baseline", str(base_path), "--candidate", str(cand_path)])
+    assert exc.value.code != 0
+    assert "pass_ungated" in str(exc.value) or "adoption" in str(exc.value).lower()
+
+
+def test_cli_compare_rejects_manifest_digest_mismatch(tmp_path):
+    """VLM6-A-02 / EVAL-13: different score_manifest_sha256 is not same-corpus."""
+    baseline = _adoption_compare_report()
+    candidate = _adoption_compare_report(provenance={"score_manifest_sha256": "bb" * 32})
+    base_path = tmp_path / "baseline.json"
+    cand_path = tmp_path / "candidate.json"
+    base_path.write_text(json.dumps(baseline))
+    cand_path.write_text(json.dumps(candidate))
+
+    with pytest.raises(SystemExit) as exc:
+        main(["compare", "--baseline", str(base_path), "--candidate", str(cand_path)])
+    assert exc.value.code != 0
+    assert "score_manifest_sha256" in str(exc.value) or "manifest" in str(exc.value).lower()
+
+
+def test_cli_compare_vacuous_category_blocks_adoption(tmp_path):
+    """VLM6-A-03 / EVAL-23: None/vacuous adoption categories block PASS (fail closed)."""
+    baseline = _adoption_compare_report()
+    # Placement accuracy None with claims=0 is the 37-item harness shape.
+    candidate = _adoption_compare_report(
+        placement={"accuracy": None, "claims": 0, "correct": 0, "wrong": 0, "abstained": 0, "images_scored": 100}
+    )
+    base_path = tmp_path / "baseline.json"
+    cand_path = tmp_path / "candidate.json"
+    base_path.write_text(json.dumps(baseline))
+    cand_path.write_text(json.dumps(candidate))
+
+    with pytest.raises(SystemExit) as exc:
+        main(["compare", "--baseline", str(base_path), "--candidate", str(cand_path)])
+    assert exc.value.code != 0
+    msg = str(exc.value).lower()
+    assert "placement" in msg or "vacuous" in msg or "non_observable" in msg or "not_adoption" in msg
+
+
+def test_cli_compare_harness_37_refuses_adoption_pass(tmp_path):
+    """VLM6-A-03 / EVAL-04: 37-item harness corpus cannot emit adoption PASS."""
+    # Even with non-None numbers, n=37 is the golden.json harness anchor — not Golden-100.
+    baseline = _adoption_compare_report(
+        counts={"total": 37, "scored": 37, "failed": 0},
+        corpus={"manifest_entries": 37, "media_id_missing": 0, "media_id_extra": 0},
+    )
+    candidate = _adoption_compare_report(
+        counts={"total": 37, "scored": 37, "failed": 0},
+        corpus={"manifest_entries": 37, "media_id_missing": 0, "media_id_extra": 0},
+        caption={"insertion_rate": 0.05, "mean_gated_score": 0.6, "must_right_failed_images": 0},
+    )
+    base_path = tmp_path / "baseline.json"
+    cand_path = tmp_path / "candidate.json"
+    base_path.write_text(json.dumps(baseline))
+    cand_path.write_text(json.dumps(candidate))
+
+    with pytest.raises(SystemExit) as exc:
+        main(["compare", "--baseline", str(base_path), "--candidate", str(cand_path)])
+    assert exc.value.code != 0
+    msg = str(exc.value).lower()
+    assert "37" in msg or "harness" in msg or "golden-100" in msg or "not_adoption" in msg or "adoption" in msg
+
+
+def test_cli_compare_meet_or_beat_all_categories_pass(tmp_path, capsys):
+    """VLM6-A-03: meet-or-beat across the full adoption metric set exits 0."""
+    baseline = _adoption_compare_report()
+    candidate = _adoption_compare_report(
+        caption={"insertion_rate": 0.05, "mean_gated_score": 0.60, "must_right_failed_images": 0},
+        faces={
+            "detection": {"precision": 0.95, "recall": 0.90},
+            "identification": {
+                "precision": 0.95,
+                "recall": 0.93,
+                "positional": {"position_accuracy": 0.85, "exact_order_rate": 0.75},
+            },
+        },
+        placement={"accuracy": 0.90},
+        hallucination={"fabricated_fact_rate": 0.02, "fabricated_fact_rate_trapped": 0.05},
+    )
+    base_path = tmp_path / "baseline.json"
+    cand_path = tmp_path / "candidate.json"
+    base_path.write_text(json.dumps(baseline))
+    cand_path.write_text(json.dumps(candidate))
+
+    assert main(["compare", "--baseline", str(base_path), "--candidate", str(cand_path)]) is None
+    out = capsys.readouterr().out
+    assert "compare meet-or-beat: PASS" in out or "PASS" in out
+    # Adoption categories must appear in the comparison surface.
+    for token in (
+        "insertion_rate",
+        "mean_gated_score",
+        "detection.precision",
+        "identification.precision",
+        "position_accuracy",
+        "placement.accuracy",
+        "fabricated_fact_rate",
+    ):
+        assert token in out, f"missing adoption metric surface: {token}"
 
 
 def test_cmd_run_scores_all_records_despite_gate_failure(tmp_path, monkeypatch):
@@ -4045,3 +4264,236 @@ def test_cmd_run_scores_all_records_despite_gate_failure(tmp_path, monkeypatch):
     assert "run score gates failed" in msg
     assert "r1.json" in msg
     assert "must-right" in msg
+
+
+# ---------------------------------------------------------------------------
+# VLM-6 fx1 lane: score write-path + score-face + serialize (VLM6-F-03..A-08)
+# ---------------------------------------------------------------------------
+
+
+def test_cmd_score_manifest_drift_fails_closed(tmp_path, monkeypatch):
+    """VLM6-F-03 / EVAL-13 / TEST-15: manifest_matches_fetch=False fails the score gate.
+
+    Pre-fix only printed a WARNING and could exit 0 with verdict=pass; drifted
+    numbers then fed compare. After fix: SystemExit with a class-unique token.
+    """
+    from scripts.eval_harness import cli as cli_mod
+    from scripts.eval_harness.report import ScoreVerdict
+
+    manifest_path, record_path = _w1_audience_manifest_and_record(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    real_score = cli_mod.score_run_record
+
+    def _drifted(*args, **kwargs):
+        scored = real_score(*args, **kwargs)
+        prov = dict(scored.get("provenance") or {})
+        prov["manifest_matches_fetch"] = False
+        prov["score_manifest_sha256"] = "dd" * 32
+        scored["provenance"] = prov
+        return scored
+
+    monkeypatch.setattr(cli_mod, "score_run_record", _drifted)
+
+    with pytest.raises(SystemExit) as exc:
+        main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
+    assert exc.value.code != 0
+    msg = str(exc.value).lower()
+    assert "manifest" in msg
+    assert "drift" in msg or "mismatch" in msg or "matches_fetch" in msg
+    report = json.loads((tmp_path / "run-x-report.json").read_text())
+    # On the hard-fail path the written verdict must not remain a certifiable pass.
+    assert report["verdict"]["verdict"] != ScoreVerdict.PASS.value or "manifest" in str(exc.value).lower()
+
+
+def test_cmd_score_allow_manifest_relabel_marks_non_comparable(tmp_path, monkeypatch):
+    """VLM6-F-03: archival relabel opt-in persists non_comparable; compare rejects it."""
+    from scripts.eval_harness import cli as cli_mod
+
+    manifest_path, record_path = _w1_audience_manifest_and_record(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    real_score = cli_mod.score_run_record
+
+    def _drifted(*args, **kwargs):
+        scored = real_score(*args, **kwargs)
+        prov = dict(scored.get("provenance") or {})
+        prov["manifest_matches_fetch"] = False
+        prov["score_manifest_sha256"] = "ee" * 32
+        scored["provenance"] = prov
+        return scored
+
+    monkeypatch.setattr(cli_mod, "score_run_record", _drifted)
+
+    # Opt-in archival path skips the hard drift gate, writes non_comparable, then
+    # still exits non-zero so operators cannot mistake it for adoption-ready output.
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "score",
+                "--manifest",
+                str(manifest_path),
+                "--run-record",
+                str(record_path),
+                "--allow-manifest-relabel",
+            ]
+        )
+    assert exc.value.code != 0
+    assert "non_comparable" in str(exc.value) or "manifest-relabel" in str(exc.value)
+    report = json.loads((tmp_path / "run-x-report.json").read_text())
+    assert report["verdict"]["verdict"] == "non_comparable"
+    assert report["provenance"].get("manifest_matches_fetch") is False
+
+
+def test_cmd_score_does_not_clobber_committed_freeze_reports(tmp_path, monkeypatch):
+    """VLM6-E-05 / rg-002 / TEST-15: committed freeze reports are not clobbered.
+
+    Pre-fix: score always wrote ``{run-record-stem}-report.json`` beside the
+    record, so scoring the freeze run-record rewrote the committed report.
+    After fix: run-records under ``docs/tasks/vlm/bakeoff-results`` write reports
+    to OUT_DIR (or refuse overwrite), leaving the freeze sentinel intact.
+    """
+    from scripts.eval_harness import cli as cli_mod
+
+    freeze_dir = tmp_path / "docs" / "tasks" / "vlm" / "bakeoff-results"
+    freeze_dir.mkdir(parents=True)
+    manifest_path, record_path = _w1_audience_manifest_and_record(freeze_dir)
+    # Rename to freeze-shaped stem so sibling freeze reports match the layout.
+    freeze_record = freeze_dir / "S2A-determinism-anchor-run-20260811.json"
+    freeze_record.write_text(record_path.read_text())
+    record_path.unlink()
+    freeze_json = freeze_dir / "S2A-determinism-anchor-run-20260811-report.json"
+    freeze_md = freeze_dir / "S2A-determinism-anchor-run-20260811-report.md"
+    sentinel = '{"schema":"acx-eval/v1","kind":"report","freeze":"DO_NOT_CLOBBER"}\n'
+    freeze_json.write_text(sentinel)
+    freeze_md.write_text("# freeze sentinel\n")
+
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    monkeypatch.chdir(tmp_path)
+    # May exit non-zero on quality gates; freeze must still be untouched.
+    try:
+        main(["score", "--manifest", str(manifest_path), "--run-record", str(freeze_record)])
+    except SystemExit:
+        pass
+    assert freeze_json.read_text() == sentinel, "committed freeze report must not be clobbered"
+    assert freeze_md.read_text() == "# freeze sentinel\n"
+    # Primary write target is OUT_DIR, not the freeze tree.
+    out_report = tmp_path / "out" / "S2A-determinism-anchor-run-20260811-report.json"
+    assert out_report.exists(), "score must redirect freeze-tree writes to OUT_DIR"
+
+
+def test_cmd_score_public_carries_local_folded_verdict(tmp_path, monkeypatch):
+    """VLM6-A-04 / TEST-15: PUBLIC artifact cannot say pass when LOCAL says fail.
+
+    Schema/evidence folds used to apply only to LOCAL; PUBLIC was re-built without
+    the fold and could disagree. After fix both audiences share the folded verdict.
+    """
+    from scripts.eval_harness import cli as cli_mod
+    from scripts.eval_harness.report import ScoreVerdict
+
+    manifest_path, record_path = _w1_audience_manifest_and_record(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    real_score = cli_mod.score_run_record
+
+    def _zero_scored(*args, **kwargs):
+        scored = real_score(*args, **kwargs)
+        # Force the evidence fold path: scored=0 triggers fail verdict on LOCAL.
+        scored["counts"] = {"total": int(scored["counts"]["total"]), "scored": 0, "failed": int(scored["counts"]["total"])}
+        return scored
+
+    monkeypatch.setattr(cli_mod, "score_run_record", _zero_scored)
+
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "score",
+                "--manifest",
+                str(manifest_path),
+                "--run-record",
+                str(record_path),
+                "--audience",
+                "public",
+            ]
+        )
+    assert exc.value.code != 0
+    local = json.loads((tmp_path / "run-x-report.json").read_text())
+    public = json.loads((tmp_path / "run-x-report.public.json").read_text())
+    assert local["verdict"]["verdict"] == ScoreVerdict.FAIL.value
+    assert public["verdict"]["verdict"] == local["verdict"]["verdict"]
+    assert public["verdict"]["verdict"] != ScoreVerdict.PASS.value
+
+
+def test_cmd_score_face_public_uses_audience_suffix(tmp_path):
+    """VLM6-A-06 / TEST-15: --public must not clobber the unsuffixed LOCAL face report."""
+    record, manifest = _valid_face_manifest_and_record()
+    rec_path = tmp_path / "face-run.json"
+    rec_path.write_text(json.dumps(record))
+    man_path = tmp_path / "man.json"
+    man_path.write_text(json.dumps(manifest))
+
+    # LOCAL write first.
+    main(["score-face", "--run-record", str(rec_path), "--manifest", str(man_path)])
+    local_path = tmp_path / "face-run-face-report.json"
+    assert local_path.exists()
+    local_bytes = local_path.read_text()
+    local_bytes_before = local_bytes
+
+    # PUBLIC must land on a distinct suffix path.
+    main(["score-face", "--run-record", str(rec_path), "--manifest", str(man_path), "--public"])
+    public_path = tmp_path / "face-run-face-report.public.json"
+    assert public_path.exists(), "public face report must use .public suffix"
+    assert local_path.read_text() == local_bytes_before, "LOCAL face report must not be clobbered by --public"
+
+
+def test_cmd_score_face_gates_on_written_document(tmp_path, monkeypatch):
+    """VLM6-A-07 / TEST-15: face gate must read back the written artifact.
+
+    Pre-fix re-derived via score_face_run_record after write, so a serialisation
+    bug in the written document could not go red. After fix: gate uses read-back.
+    """
+    from scripts.eval_harness import cli as cli_mod
+
+    record, manifest = _valid_face_manifest_and_record()
+    rec_path = tmp_path / "face-run.json"
+    rec_path.write_text(json.dumps(record))
+    man_path = tmp_path / "man.json"
+    man_path.write_text(json.dumps(manifest))
+
+    real_face_once = cli_mod._face_score_once
+
+    def _corrupt_write(record_arg, manifest_arg, **kwargs):
+        json_doc, md_doc = real_face_once(record_arg, manifest_arg, **kwargs)
+        # Corrupt the serialised counts so a gate that re-derives from the record
+        # would still see scored>0, but a gate that reads the written doc goes red.
+        corrupted = json.loads(json_doc)
+        corrupted["counts"] = {"scored": 0, "total": corrupted.get("counts", {}).get("total", 0), "failed": 0}
+        return json.dumps(corrupted, indent=2, sort_keys=True) + "\n", md_doc
+
+    monkeypatch.setattr(cli_mod, "_face_score_once", _corrupt_write)
+
+    with pytest.raises(SystemExit) as exc:
+        main(["score-face", "--run-record", str(rec_path), "--manifest", str(man_path)])
+    assert exc.value.code != 0
+    assert "zero-scored" in str(exc.value) or "scored=0" in str(exc.value)
+
+
+def test_serialize_score_docs_propagates_renderer_errors(monkeypatch):
+    """VLM6-A-08 / sr-006 / TEST-15: renderer KeyError must not become a green stub."""
+    from scripts.eval_harness import cli as cli_mod
+
+    def _boom(_scored):
+        raise KeyError("verdict")
+
+    monkeypatch.setattr(cli_mod, "_score_report_markdown", _boom)
+    with pytest.raises(KeyError, match="verdict"):
+        cli_mod._serialize_score_docs(
+            {
+                "schema": "acx-eval/v1",
+                "kind": "report",
+                "caption": {"insertion_rate": 0.0},
+                "counts": {"scored": 1, "total": 1, "failed": 0},
+                "faces": {"identification": {"wrong_names": []}},
+                "verdict": {"verdict": "pass"},
+            }
+        )

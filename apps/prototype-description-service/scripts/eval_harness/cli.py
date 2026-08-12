@@ -67,7 +67,6 @@ from .report import (
     face_wrong_name_rate,
     identity_names,  # noqa: F401 — re-export for external callers; report owns it (VLM6-RH-07)
     occlusion_inputs_from_record,
-    score_face_run_record,
     score_run_record,
 )
 from .report import (
@@ -212,6 +211,47 @@ def _fold_evidence_gates_into_verdict(scored: dict[str, Any], record: Mapping[st
     verdict["reasons"] = merged
     scored["verdict"] = verdict
     return first_msg
+
+
+def _fold_manifest_drift_into_verdict(
+    scored: dict[str, Any],
+    *,
+    allow_manifest_relabel: bool,
+) -> str | None:
+    """Fold fetch/score manifest drift into the verdict (VLM6-F-03 / EVAL-13).
+
+    Default: hard-fail — numbers scored under a changed judging protocol are not
+    certifiable. Archival relabel (``--allow-manifest-relabel``) persists a
+    distinct ``non_comparable`` verdict that ``compare`` rejects; never ``pass``.
+    Returns an exit message when the hard-fail path applies; None when ok or
+    when archival relabel rewrote the verdict to non_comparable.
+    """
+    if scored.get("provenance", {}).get("manifest_matches_fetch") is not False:
+        return None
+    fetch_sha = (scored.get("provenance") or {}).get("manifest_sha256")
+    score_sha = (scored.get("provenance") or {}).get("score_manifest_sha256")
+    # Missing fetch-time sha is a distinct class token (manifest-mismatch gate);
+    # do not absorb it into the drift gate (OBS-04 / class uniqueness).
+    if not fetch_sha:
+        return None
+    if allow_manifest_relabel:
+        verdict = dict(scored.get("verdict") or {})
+        reason = (
+            f"manifest-relabel: scored under score_manifest_sha256={score_sha} but "
+            f"fetched under {fetch_sha}; numbers are not adoption-comparable (EVAL-13)"
+        )
+        prior = [r for r in (verdict.get("reasons") or []) if r != reason]
+        verdict["verdict"] = _VERDICT_NON_COMPARABLE
+        verdict["reasons"] = [reason] + prior
+        scored["verdict"] = verdict
+        return None
+    return (
+        f"score manifest-drift gate: scored against score_manifest_sha256={score_sha} "
+        f"but fetched under {fetch_sha} (manifest_matches_fetch=false); numbers are not "
+        f"comparable to a baseline scored on the fetch-time corpus (EVAL-13). "
+        f"Pass --allow-manifest-relabel only for archival relabelling (persists "
+        f"verdict={_VERDICT_NON_COMPARABLE}, rejected by compare)"
+    )
 
 
 RUBRIC_GATE_CHOICES = (RUBRIC_GATE_ENFORCE, RUBRIC_GATE_SKIP)
@@ -1175,14 +1215,84 @@ def _check_score_determinism_cross_process(
     return base_json, base_md
 
 
-def _serialize_score_docs(scored: dict[str, Any]) -> tuple[str, str]:
-    """Serialize a scored report dict to the on-disk JSON + markdown pair."""
+def _serialize_score_docs(
+    scored: dict[str, Any],
+    *,
+    tolerate_renderer_error: bool = False,
+) -> tuple[str, str]:
+    """Serialize a scored report dict to the on-disk JSON + markdown pair.
+
+    VLM6-A-08 / sr-006: renderer exceptions (KeyError / TypeError / AttributeError)
+    must not become a silent green-looking stub. Default: re-raise so a renderer
+    regression cannot green-exit. Schema-degraded fail paths may pass
+    ``tolerate_renderer_error=True`` to persist JSON with a loud **RENDERER ERROR**
+    markdown marker (verdict already fail) — never the pre-fix soft stub.
+    """
     json_doc = json.dumps(scored, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
     try:
         md_doc = _score_report_markdown(scored)
-    except (KeyError, TypeError, AttributeError):
-        md_doc = "# score report\n\n(markdown omitted: scored document is schema-degraded; see JSON verdict)\n"
+    except (KeyError, TypeError, AttributeError) as exc:
+        if not tolerate_renderer_error:
+            raise
+        md_doc = (
+            f"# score report\n\n"
+            f"**RENDERER ERROR** ({type(exc).__name__}: {exc}) — markdown omitted; "
+            f"JSON verdict is authoritative. Not a green report.\n"
+        )
     return json_doc, md_doc
+
+
+# Committed freeze tree: ordinary score must not write beside a run-record that
+# lives here (VLM6-E-05 / rg-002). Diagnostics already force out/; primary reports
+# must do the same so `make eval-anchor-check` cannot clobber the freeze.
+_COMMITTED_SCORE_REPORT_MARKERS: tuple[str, ...] = (
+    "/docs/tasks/vlm/bakeoff-results",
+    "docs/tasks/vlm/bakeoff-results",
+)
+# Distinct non-gated verdict for archival relabel (VLM6-F-03 / EVAL-13). compare
+# refuses this status — it is not an adoption-eligible pass.
+_VERDICT_NON_COMPARABLE = "non_comparable"
+# golden.json harness size — not Golden-100; adoption PASS is refused (EVAL-04).
+_HARNESS_ANCHOR_CORPUS_SIZE = 37
+
+
+def _is_committed_report_tree(path: Path) -> bool:
+    """True when ``path`` resolves under the committed bakeoff-results freeze tree."""
+    resolved = path.resolve().as_posix()
+    return any(marker in resolved for marker in _COMMITTED_SCORE_REPORT_MARKERS)
+
+
+def _score_report_base(record_path: Path) -> Path:
+    """Stem path for caption/face report artifacts written by score / score-face.
+
+    VLM6-E-05: when the run-record lives under the committed freeze tree, write
+    reports to git-ignored ``OUT_DIR`` instead of beside the freeze. Elsewhere
+    (tmp/out operator runs) keep the historical sibling-of-record layout.
+    """
+    record_path = Path(record_path)
+    if _is_committed_report_tree(record_path.parent):
+        OUT_DIR.mkdir(parents=True, exist_ok=True)
+        return OUT_DIR / record_path.stem
+    return record_path.with_suffix("")
+
+
+def _refuse_report_overwrite(paths: list[Path], *, allow: bool, label: str) -> None:
+    """Fail closed when an ordinary score would clobber a committed freeze (VLM6-E-05).
+
+    Operator tmp/out re-scores may overwrite freely. Only paths under the committed
+    bakeoff-results tree are protected (rg-002).
+    """
+    if allow:
+        return
+    protected = [p for p in paths if p.exists() and _is_committed_report_tree(p)]
+    if not protected:
+        return
+    listed = ", ".join(str(p) for p in protected)
+    _score_gate_fail(
+        f"{label} refuse-overwrite: existing committed report(s) would be clobbered "
+        f"({listed}); pass --allow-overwrite-report to opt in (freezes must not be "
+        f"rewritten by ordinary score; reports for freeze run-records default to OUT_DIR)"
+    )
 
 
 def _cmd_score(args: argparse.Namespace) -> None:
@@ -1216,6 +1326,8 @@ def _cmd_score(args: argparse.Namespace) -> None:
     if expect_report_raw and not args.check_determinism:
         sys.exit("score: --expect-report requires --check-determinism")
     expect_report = Path(expect_report_raw) if expect_report_raw else None
+    allow_manifest_relabel = bool(getattr(args, "allow_manifest_relabel", False))
+    allow_overwrite_report = bool(getattr(args, "allow_overwrite_report", False))
     if args.check_determinism:
         local_json, local_md = _check_score_determinism_cross_process(
             record_path,
@@ -1234,8 +1346,14 @@ def _cmd_score(args: argparse.Namespace) -> None:
         # normal determinism path.
         schema_exit = _fold_schema_errors_into_verdict(scored)
         evidence_exit = _fold_evidence_gates_into_verdict(scored, record)
-        if schema_exit is not None or evidence_exit is not None:
-            local_json, local_md = _serialize_score_docs(scored)
+        relabel_exit = _fold_manifest_drift_into_verdict(
+            scored, allow_manifest_relabel=allow_manifest_relabel
+        )
+        degraded = schema_exit is not None or evidence_exit is not None or relabel_exit is not None
+        if degraded:
+            # Schema-degraded docs may lack hard keys the MD renderer expects;
+            # tolerate only when verdict is already fail (JSON remains authoritative).
+            local_json, local_md = _serialize_score_docs(scored, tolerate_renderer_error=True)
         if is_public:
             # No --expect-report on PUBLIC: committed freeze is LOCAL only.
             public_json, public_md = _check_score_determinism_cross_process(
@@ -1258,7 +1376,11 @@ def _cmd_score(args: argparse.Namespace) -> None:
         )
         schema_exit = _fold_schema_errors_into_verdict(scored)
         evidence_exit = _fold_evidence_gates_into_verdict(scored, record)
-        local_json, local_md = _serialize_score_docs(scored)
+        relabel_exit = _fold_manifest_drift_into_verdict(
+            scored, allow_manifest_relabel=allow_manifest_relabel
+        )
+        degraded = schema_exit is not None or evidence_exit is not None or relabel_exit is not None
+        local_json, local_md = _serialize_score_docs(scored, tolerate_renderer_error=degraded)
         if is_public:
             public_json, public_md = build_reports(
                 record,
@@ -1269,8 +1391,25 @@ def _cmd_score(args: argparse.Namespace) -> None:
                 audience=Audience.PUBLIC,
                 rubric_gate=rubric_gate,
             )
-    base = record_path.with_suffix("")
+    # VLM6-A-04: PUBLIC must carry the same folded LOCAL verdict so the two
+    # artifacts can never disagree (schema/evidence/manifest-relabel folds).
+    if is_public and public_json is not None:
+        public_scored = json.loads(public_json)
+        public_scored["verdict"] = dict(scored.get("verdict") or {})
+        public_degraded = (scored.get("verdict") or {}).get("verdict") == ScoreVerdict.FAIL.value
+        public_json, public_md = _serialize_score_docs(
+            public_scored, tolerate_renderer_error=public_degraded
+        )
+    # VLM6-E-05: do not write beside a committed freeze by default; refuse
+    # overwrite of any existing report without an explicit opt-in.
+    base = _score_report_base(record_path)
     json_path, md_path = Path(f"{base}-report.json"), Path(f"{base}-report.md")
+    public_json_path = Path(f"{base}-report.public.json")
+    public_md_path = Path(f"{base}-report.public.md")
+    overwrite_targets = [json_path, md_path]
+    if is_public:
+        overwrite_targets.extend([public_json_path, public_md_path])
+    _refuse_report_overwrite(overwrite_targets, allow=allow_overwrite_report, label="score")
     # JSON is the load-bearing Slice-2 artifact (OBS-04). Write it first so a
     # schema-degraded document still leaves a fail verdict on disk even if the
     # human markdown renderer cannot tolerate missing hard-keyed fields.
@@ -1282,7 +1421,6 @@ def _cmd_score(args: argparse.Namespace) -> None:
     # publishable-only artifact. This is the sole sanctioned eval->public path,
     # the prerequisite that makes the rd.altcontext.com gallery (RND-1) safe.
     if is_public and public_json is not None and public_md is not None:
-        public_json_path, public_md_path = Path(f"{base}-report.public.json"), Path(f"{base}-report.public.md")
         public_json_path.write_text(public_json)
         public_md_path.write_text(public_md)
         print(public_md_path)
@@ -1299,9 +1437,13 @@ def _cmd_score(args: argparse.Namespace) -> None:
     )
     if schema_exit is not None:
         _score_gate_fail(schema_exit)
-    # evidence_exit is folded into the written verdict above; path-bearing
-    # messages below are the operator-facing class tokens (TEST-15).
+    # evidence_exit / relabel_exit are folded into the written verdict above;
+    # path-bearing messages below are the operator-facing class tokens (TEST-15).
     _ = evidence_exit
+    # VLM6-F-03 / EVAL-13: fetch/score manifest drift hard-fails unless the
+    # operator explicitly opted into archival relabel (non_comparable verdict).
+    if relabel_exit is not None:
+        _score_gate_fail(f"{relabel_exit} (see {json_path})")
     # VLM6-S2A-A-02: aborted records must never green-exit (partial evidence).
     if record.get("aborted"):
         _score_gate_fail(
@@ -1342,14 +1484,9 @@ def _cmd_score(args: argparse.Namespace) -> None:
             f"(missing={media_id_missing}, extra={media_id_extra}; "
             f"record_items={record_n}, manifest_entries={manifest_n}; see {json_path})"
         )
-    # F1-3 / r08116b50: do NOT hard-gate on score-time file sha vs fetch-time sha.
-    # _manifest_sha hashes model_dump(), so label edits (e.g. Slice 2 face_boxes)
-    # change the current-file hash and would permanently block re-scoring archived
-    # baselines. provenance.manifest_matches_fetch remains informational in the
-    # report (still hard-keyed above so a rename cannot go silent). Self-consistency:
-    # the run-record must carry its own fetch-time manifest_sha256 so the record is
-    # attributable to a fetch-time corpus. Media-id coverage vs the score-time
-    # manifest is the truncation gate above.
+    # Fetch-time provenance self-consistency (record must name its own manifest).
+    # Score-time vs fetch-time digest equality is the VLM6-F-03 hard gate above
+    # (relabel_exit / --allow-manifest-relabel); do not soft-warn here.
     fetch_manifest_sha = scored.get("provenance", {}).get("manifest_sha256")
     if not fetch_manifest_sha:
         _score_gate_fail(
@@ -1357,15 +1494,13 @@ def _cmd_score(args: argparse.Namespace) -> None:
             f"manifest_sha256 — record is not self-consistent with its fetch provenance "
             f"(see {json_path})"
         )
-    # R2-06: not a gate (see above), but it must not exit silently either. A drifted
-    # run previously printed a normal-looking pass with the fact buried in provenance.
-    if scored.get("provenance", {}).get("manifest_matches_fetch") is False:
-        print(
-            f"[score] WARNING manifest drift: scored against manifest "
-            f"{scored['provenance'].get('score_manifest_sha256')} but fetched under "
-            f"{fetch_manifest_sha} — these numbers are not comparable to a baseline "
-            f"scored on the fetch-time corpus (see {json_path})",
-            file=sys.stderr,
+    # Archival relabel path: verdict is non_comparable and must not green-exit as
+    # a certifiable pass (compare rejects it; process still exits non-zero so an
+    # operator cannot mistake it for adoption-ready output).
+    if (scored.get("verdict") or {}).get("verdict") == _VERDICT_NON_COMPARABLE:
+        _score_gate_fail(
+            f"score manifest-relabel gate: verdict={_VERDICT_NON_COMPARABLE} "
+            f"(archival relabel only; not adoption-comparable; see {json_path})"
         )
     # Empty rubric: Must-Right and Easy-Wrong vacuity are independent. Emptying
     # only must_right while easy_wrong remains used to leave the OR'd counter
@@ -1733,6 +1868,7 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
     manifest = load_manifest(args.manifest, skip_hash_verification=True)
     manifest_sha = _manifest_sha(manifest)
     public = bool(getattr(args, "public", False))
+    allow_overwrite_report = bool(getattr(args, "allow_overwrite_report", False))
     # F6 / B-06: --expect-report is opt-in frozen face-report JSON. Requires
     # --check-determinism (same coupling as caption score).
     expect_report_raw = getattr(args, "expect_report", None)
@@ -1749,31 +1885,29 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
         )
     else:
         json_doc, md_doc = _face_score_once(record, manifest, score_manifest_sha256=manifest_sha, public=public)
-    base = record_path.with_suffix("")
-    json_path, md_path = Path(f"{base}-face-report.json"), Path(f"{base}-face-report.md")
+    # VLM6-A-06: audience-suffixed face report paths (mirror caption reports).
+    # --public must not clobber the unsuffixed LOCAL artifact.
+    base = _score_report_base(record_path)
+    if public:
+        json_path = Path(f"{base}-face-report.public.json")
+        md_path = Path(f"{base}-face-report.public.md")
+    else:
+        json_path = Path(f"{base}-face-report.json")
+        md_path = Path(f"{base}-face-report.md")
+    _refuse_report_overwrite([json_path, md_path], allow=allow_overwrite_report, label="score-face")
     json_path.write_text(json_doc)
     md_path.write_text(md_doc)
-    synth_pairs, real_pairs = occlusion_inputs_from_record(record, manifest)
-    scored = score_face_run_record(
-        record,
-        manifest,
-        score_manifest_sha256=manifest_sha,
-        occlusion_pairs_by_tag=synth_pairs,
-        real_occlusion_pairs_by_tag=real_pairs,
-    )
-    occlusion_eligible = sum(
-        int((block.get("synthetic") or {}).get("n_eligible") or 0)
-        for block in (scored["slices"].get("occlusion") or {}).values()
-        if isinstance(block, dict)
-    )
-    print(md_path)
-    print(
-        f"scored={scored['counts']['scored']}/{scored['counts']['total']} "
-        f"matched_faces={scored['counts']['matched_faces']} "
-        f"occlusion_n_eligible={occlusion_eligible} "
-        f"directional_excluded={len(scored['gate_proposal']['excluded_directional'])}"
-    )
-    scored_n = int(scored["counts"]["scored"])
+    # VLM6-A-07 / TEST-15: gate on a read-back of the written artifact — never a
+    # second score_face_run_record re-derive. Serialisation bugs must go red.
+    try:
+        scored = json.loads(json_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        _score_gate_fail(f"score-face gate failed: cannot read back written face report {json_path}: {exc}")
+    if not isinstance(scored, dict):
+        _score_gate_fail(f"score-face gate failed: written face report is not a JSON object (see {json_path})")
+    scored_n = int((scored.get("counts") or {}).get("scored") or 0)
+    failed = int((scored.get("counts") or {}).get("failed") or 0)
+    total_n = int((scored.get("counts") or {}).get("total") or 0)
     if record.get("aborted"):
         _score_gate_fail(
             f"score-face aborted-record gate: run-record is aborted "
@@ -1781,43 +1915,216 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
         )
     if scored_n == 0:
         _score_gate_fail(
-            f"score-face zero-scored gate: scored=0 items (counts.total="
-            f"{scored['counts'].get('total', 0)}); no evidence to certify "
-            f"(see {json_path})"
+            f"score-face zero-scored gate: scored=0 items (counts.total={total_n}); "
+            f"no evidence to certify (see {json_path})"
         )
-    failed = int(scored["counts"]["failed"])
     if failed > 0:
         _score_gate_fail(f"score-face gate failed: {failed} item(s) not scored (see failures[] in {json_path})")
+    matched_faces = (scored.get("counts") or {}).get("matched_faces", "?")
+    occlusion_eligible = 0
+    slices = scored.get("slices") or {}
+    for block in (slices.get("occlusion") or {}).values():
+        if isinstance(block, dict):
+            occlusion_eligible += int((block.get("synthetic") or {}).get("n_eligible") or 0)
+    directional_excluded = len((scored.get("gate_proposal") or {}).get("excluded_directional") or [])
+    print(md_path)
+    print(
+        f"scored={scored_n}/{total_n} "
+        f"matched_faces={matched_faces} "
+        f"occlusion_n_eligible={occlusion_eligible} "
+        f"directional_excluded={directional_excluded}"
+    )
 
 
-# Metrics where higher candidate values meet-or-beat the baseline (VLM6-R2-08).
+# Adoption meet-or-beat metric tables (VLM6-E-01 / A-03 / EVAL-23).
+# insertion_rate is LOWER-is-better: inserted / (inserted + missing) counts
+# hallucinated identities (VLM6-E-01 polarity fix).
+# Higher candidate values meet-or-beat the baseline.
 _COMPARE_HIGHER_IS_BETTER: tuple[tuple[str, ...], ...] = (
-    ("caption", "insertion_rate"),
     ("caption", "mean_gated_score"),
+    ("faces", "detection", "precision"),
+    ("faces", "detection", "recall"),
+    ("faces", "identification", "precision"),
+    ("faces", "identification", "recall"),
+    ("faces", "identification", "positional", "position_accuracy"),
+    ("faces", "identification", "positional", "exact_order_rate"),
+    ("placement", "accuracy"),
+    ("faces", "identity_ordering", "positional_images"),
 )
-# Metrics where lower candidate values meet-or-beat the baseline.
+# Lower candidate values meet-or-beat the baseline.
 _COMPARE_LOWER_IS_BETTER: tuple[tuple[str, ...], ...] = (
+    ("caption", "insertion_rate"),
     ("caption", "must_right_failed_images"),
     ("verdict", "wrong_name_rate"),
+    ("hallucination", "fabricated_fact_rate"),
+    ("hallucination", "fabricated_fact_rate_trapped"),
+    ("faces", "identity_ordering", "degraded_images"),
+)
+# Baseline verdicts that may anchor an adoption decision (rg-005 / sr-007).
+_COMPARE_ADOPTION_ELIGIBLE_VERDICTS: frozenset[str] = frozenset({ScoreVerdict.PASS.value})
+# Protocol pins that must match across baseline and candidate (EVAL-13).
+_COMPARE_PROTOCOL_PATHS: tuple[tuple[str, ...], ...] = (
+    ("eval_mode",),
+    ("provenance", "score_manifest_sha256"),
+    ("verdict", "rubric_gate"),
+    ("provenance", "prompt_variant"),
+    ("provenance", "two_pass"),
+    ("provenance", "dual_length"),
+    ("provenance", "face_gate"),
 )
 
 
-def _nested_number(doc: Mapping[str, Any], path: tuple[str, ...]) -> float | None:
+def _nested_get(doc: Mapping[str, Any], path: tuple[str, ...]) -> Any:
     cur: Any = doc
     for key in path:
         if not isinstance(cur, Mapping) or key not in cur:
             return None
         cur = cur[key]
+    return cur
+
+
+def _nested_number(doc: Mapping[str, Any], path: tuple[str, ...]) -> float | None:
+    cur = _nested_get(doc, path)
     if isinstance(cur, bool) or not isinstance(cur, (int, float)):
         return None
     return float(cur)
 
 
-def _cmd_compare(args: argparse.Namespace) -> None:
-    """Meet-or-beat regression gate: candidate vs baseline report JSON (VLM6-R2-08).
+def _compare_require_caption_report(doc: Mapping[str, Any], *, role: str) -> list[str]:
+    """Structural checks for a caption score report (rg-005 / rg-008)."""
+    errors: list[str] = []
+    schema = doc.get("schema")
+    kind = doc.get("kind")
+    if schema != SCHEMA:
+        errors.append(f"{role}: not a caption score report (schema={schema!r}, expected {SCHEMA!r})")
+    if kind != DocKind.REPORT.value:
+        errors.append(f"{role}: not a caption score report (kind={kind!r}, expected {DocKind.REPORT.value!r})")
+    counts = doc.get("counts")
+    if not isinstance(counts, Mapping):
+        errors.append(f"{role}: counts missing or not an object")
+    else:
+        for key in ("total", "scored", "failed"):
+            if not isinstance(counts.get(key), int) or isinstance(counts.get(key), bool):
+                errors.append(f"{role}: counts.{key} missing or not an int")
+    if not isinstance(doc.get("provenance"), Mapping):
+        errors.append(f"{role}: provenance missing or not an object")
+    if not isinstance(doc.get("verdict"), Mapping):
+        errors.append(f"{role}: verdict missing or not an object")
+    if not isinstance(doc.get("caption"), Mapping):
+        errors.append(f"{role}: caption missing or not an object")
+    if not isinstance(doc.get("faces"), Mapping):
+        errors.append(f"{role}: faces missing or not an object")
+    return errors
 
-    Plan acceptance: no adapter flip without the candidate meeting-or-beating the
-    incumbent on the same-corpus score report. Exit non-zero on any regression.
+
+def _compare_non_degenerate_corpus(doc: Mapping[str, Any], *, role: str) -> list[str]:
+    """Refuse vacuous / truncated corpus counts (EVAL-04)."""
+    errors: list[str] = []
+    counts = doc.get("counts") or {}
+    total = counts.get("total")
+    scored = counts.get("scored")
+    failed = counts.get("failed")
+    if not isinstance(total, int) or total <= 0:
+        errors.append(f"{role}: non-degenerate corpus requires counts.total > 0 (got {total!r})")
+    if not isinstance(scored, int) or scored <= 0:
+        errors.append(f"{role}: non-degenerate corpus requires counts.scored > 0 (got {scored!r})")
+    if isinstance(failed, int) and failed > 0:
+        errors.append(f"{role}: non-degenerate corpus requires counts.failed == 0 (got {failed})")
+    corpus = doc.get("corpus") or {}
+    if isinstance(corpus, Mapping):
+        missing = corpus.get("media_id_missing")
+        extra = corpus.get("media_id_extra")
+        if isinstance(missing, int) and missing > 0:
+            errors.append(f"{role}: corpus.media_id_missing={missing} (truncated / partial record)")
+        if isinstance(extra, int) and extra > 0:
+            errors.append(f"{role}: corpus.media_id_extra={extra} (record not on manifest)")
+    return errors
+
+
+def _compare_protocol_mismatches(baseline: Mapping[str, Any], candidate: Mapping[str, Any]) -> list[str]:
+    """Pin judging protocol equality (EVAL-13): manifest digest / mode / audience keys."""
+    errors: list[str] = []
+    for path in _COMPARE_PROTOCOL_PATHS:
+        label = ".".join(path)
+        b = _nested_get(baseline, path)
+        c = _nested_get(candidate, path)
+        # Absent-on-both is fine (pre-Slice-2 anchors); present-on-one or diverge is not.
+        if b is None and c is None:
+            continue
+        if b != c:
+            errors.append(f"protocol mismatch {label}: baseline={b!r} candidate={c!r}")
+    # Audience redaction stamp (when either side is a PUBLIC export).
+    b_aud = ((baseline.get("redaction") or {}) if isinstance(baseline.get("redaction"), Mapping) else {}).get(
+        "audience"
+    )
+    c_aud = ((candidate.get("redaction") or {}) if isinstance(candidate.get("redaction"), Mapping) else {}).get(
+        "audience"
+    )
+    if b_aud != c_aud:
+        errors.append(f"protocol mismatch redaction.audience: baseline={b_aud!r} candidate={c_aud!r}")
+    return errors
+
+
+def _compare_vacuous_categories(doc: Mapping[str, Any], *, role: str) -> list[str]:
+    """Categories whose claim units have π=0 must block adoption (AUDIT-07 / EVAL-23).
+
+    A gate that cannot observe a category must not certify it. None metrics and
+    zero-denominator regimes (placement claims=0, positional compared=0, no
+    fabricated-fact traps, no positional ordering images) are non-observable.
+    """
+    vacuous: list[str] = []
+    place = doc.get("placement") if isinstance(doc.get("placement"), Mapping) else {}
+    if place.get("accuracy") is None or int(place.get("claims") or 0) == 0:
+        vacuous.append(f"{role}:placement (accuracy=None or claims=0; π=0 on spatial_facts)")
+    pos = (
+        ((doc.get("faces") or {}).get("identification") or {}).get("positional")
+        if isinstance(doc.get("faces"), Mapping)
+        else None
+    )
+    if not isinstance(pos, Mapping) or pos.get("position_accuracy") is None or int(pos.get("compared_images") or 0) == 0:
+        vacuous.append(f"{role}:positional_identification (position_accuracy=None or compared_images=0)")
+    ordering = (doc.get("faces") or {}).get("identity_ordering") if isinstance(doc.get("faces"), Mapping) else None
+    if not isinstance(ordering, Mapping) or int(ordering.get("positional_images") or 0) == 0:
+        vacuous.append(f"{role}:identity_ordering (positional_images=0; order metric non-observable)")
+    hall = doc.get("hallucination") if isinstance(doc.get("hallucination"), Mapping) else {}
+    if int(hall.get("images_with_traps") or 0) == 0 or hall.get("fabricated_fact_rate_trapped") is None:
+        vacuous.append(f"{role}:fabricated_fact (no trap denominator; images_with_traps=0)")
+    # Detection / identification P/R must be present numbers (None = not scored).
+    for path, label in (
+        (("faces", "detection", "precision"), "face_detection.precision"),
+        (("faces", "detection", "recall"), "face_detection.recall"),
+        (("faces", "identification", "precision"), "face_identification.precision"),
+        (("faces", "identification", "recall"), "face_identification.recall"),
+    ):
+        if _nested_number(doc, path) is None:
+            vacuous.append(f"{role}:{label} (None — category not observed)")
+    # Caption scalars that are None are likewise non-observable.
+    for path, label in (
+        (("caption", "insertion_rate"), "insertion_rate"),
+        (("caption", "mean_gated_score"), "mean_gated_score"),
+        (("caption", "must_right_failed_images"), "must_right_failed_images"),
+        (("verdict", "wrong_name_rate"), "wrong_name_rate"),
+    ):
+        if _nested_number(doc, path) is None:
+            vacuous.append(f"{role}:{label} (None — category not observed)")
+    return vacuous
+
+
+def _compare_harness_anchor_size(doc: Mapping[str, Any]) -> bool:
+    """True when counts match the 37-item golden.json harness (not Golden-100)."""
+    counts = doc.get("counts") or {}
+    scored = counts.get("scored")
+    total = counts.get("total")
+    return scored == _HARNESS_ANCHOR_CORPUS_SIZE and total == _HARNESS_ANCHOR_CORPUS_SIZE
+
+
+def _cmd_compare(args: argparse.Namespace) -> None:
+    """Meet-or-beat adoption gate: candidate vs baseline caption score report.
+
+    Fail-closed on protocol / corpus / vacuity / polarity (VLM6-E-01 / A-02 / A-03;
+    EVAL-13 / EVAL-23 / EVAL-04 / rg-005 / rg-008). Exit non-zero on any regression
+    or non-adoption status — never print adoption PASS for a category that was
+    not observed.
     """
     baseline_path = Path(args.baseline)
     candidate_path = Path(args.candidate)
@@ -1829,6 +2136,60 @@ def _cmd_compare(args: argparse.Namespace) -> None:
     if not isinstance(baseline, dict) or not isinstance(candidate, dict):
         sys.exit("compare: baseline and candidate must be JSON objects")
 
+    # --- same-corpus / schema / protocol hard checks (VLM6-A-02 / F-02) ---
+    structural: list[str] = []
+    structural.extend(_compare_require_caption_report(baseline, role="baseline"))
+    structural.extend(_compare_require_caption_report(candidate, role="candidate"))
+    if structural:
+        sys.exit("compare same-corpus gate: " + "; ".join(structural))
+
+    structural.extend(_compare_non_degenerate_corpus(baseline, role="baseline"))
+    structural.extend(_compare_non_degenerate_corpus(candidate, role="candidate"))
+    if structural:
+        sys.exit("compare same-corpus gate: " + "; ".join(structural))
+
+    protocol = _compare_protocol_mismatches(baseline, candidate)
+    if protocol:
+        sys.exit("compare same-corpus gate: " + "; ".join(protocol))
+
+    b_verdict = (baseline.get("verdict") or {}).get("verdict")
+    if b_verdict not in _COMPARE_ADOPTION_ELIGIBLE_VERDICTS:
+        sys.exit(
+            f"compare adoption gate: baseline verdict={b_verdict!r} is not adoption-eligible "
+            f"(require one of {sorted(_COMPARE_ADOPTION_ELIGIBLE_VERDICTS)}; "
+            f"pass_ungated / non_comparable / fail baselines cannot certify a candidate)"
+        )
+    c_verdict = (candidate.get("verdict") or {}).get("verdict")
+    if c_verdict == _VERDICT_NON_COMPARABLE:
+        sys.exit(
+            f"compare adoption gate: candidate verdict={_VERDICT_NON_COMPARABLE} "
+            f"(archival relabel; not adoption-comparable)"
+        )
+    # fail is still comparable for regression reporting; other statuses block.
+    if c_verdict not in _COMPARE_ADOPTION_ELIGIBLE_VERDICTS and c_verdict != ScoreVerdict.FAIL.value:
+        sys.exit(
+            f"compare adoption gate: candidate verdict={c_verdict!r} is not adoption-comparable"
+        )
+
+    # --- harness-37 / Golden-100 readiness (VLM6-A-03 / EVAL-04) ---
+    if _compare_harness_anchor_size(baseline) or _compare_harness_anchor_size(candidate):
+        sys.exit(
+            f"compare adoption: NOT_ADOPTION_ELIGIBLE corpus=harness-{_HARNESS_ANCHOR_CORPUS_SIZE} "
+            f"(golden.json anchor; Golden-100 required for adoption-shaped PASS; EVAL-04)"
+        )
+
+    # --- vacuous categories block adoption (VLM6-A-03 / EVAL-23) ---
+    vacuous = _compare_vacuous_categories(baseline, role="baseline") + _compare_vacuous_categories(
+        candidate, role="candidate"
+    )
+    if vacuous:
+        sys.exit(
+            "compare adoption: BLOCKED non_observable_categories — "
+            + "; ".join(vacuous)
+            + " (a gate that cannot observe a category must not certify it; EVAL-23)"
+        )
+
+    # --- polarity-correct meet-or-beat across every adoption category ---
     regressions: list[str] = []
     comparisons: list[str] = []
     for path in _COMPARE_HIGHER_IS_BETTER:
@@ -1836,7 +2197,7 @@ def _cmd_compare(args: argparse.Namespace) -> None:
         b = _nested_number(baseline, path)
         c = _nested_number(candidate, path)
         if b is None or c is None:
-            regressions.append(f"{label}: missing (baseline={b}, candidate={c})")
+            regressions.append(f"{label}: missing/vacuous (baseline={b}, candidate={c})")
             continue
         comparisons.append(f"{label}: baseline={b} candidate={c} (higher-better)")
         if c + 1e-12 < b:
@@ -1846,20 +2207,7 @@ def _cmd_compare(args: argparse.Namespace) -> None:
         b = _nested_number(baseline, path)
         c = _nested_number(candidate, path)
         if b is None or c is None:
-            # verdict.wrong_name_rate may be absent on pre-verdict anchors;
-            # fall back to counting wrong_names when present.
-            if path == ("verdict", "wrong_name_rate"):
-                b_names = ((baseline.get("faces") or {}).get("identification") or {}).get("wrong_names")
-                c_names = ((candidate.get("faces") or {}).get("identification") or {}).get("wrong_names")
-                if isinstance(b_names, list) and isinstance(c_names, list):
-                    b_n, c_n = float(len(b_names)), float(len(c_names))
-                    comparisons.append(
-                        f"faces.identification.wrong_names: baseline={b_n} candidate={c_n} (lower-better)"
-                    )
-                    if c_n > b_n:
-                        regressions.append(f"faces.identification.wrong_names: candidate {c_n} > baseline {b_n}")
-                    continue
-            regressions.append(f"{label}: missing (baseline={b}, candidate={c})")
+            regressions.append(f"{label}: missing/vacuous (baseline={b}, candidate={c})")
             continue
         comparisons.append(f"{label}: baseline={b} candidate={c} (lower-better)")
         if c > b + 1e-12:
@@ -1973,6 +2321,23 @@ def main(argv: list[str] | None = None) -> None:
             "scoring change — not seed FAILED and not environment ERROR"
         ),
     )
+    score_p.add_argument(
+        "--allow-manifest-relabel",
+        action="store_true",
+        help=(
+            "archival only (VLM6-F-03 / EVAL-13): allow scoring when "
+            "provenance.manifest_matches_fetch is false; persists verdict=non_comparable "
+            "(rejected by compare). Default: hard-fail the score gate on manifest drift"
+        ),
+    )
+    score_p.add_argument(
+        "--allow-overwrite-report",
+        action="store_true",
+        help=(
+            "permit overwriting an existing score report beside the run-record "
+            "(VLM6-E-05). Default: refuse so committed freezes cannot be clobbered"
+        ),
+    )
     score_p.set_defaults(func=_cmd_score)
 
     run_p = sub.add_parser("run", help="fetch then score")
@@ -2037,6 +2402,14 @@ def main(argv: list[str] | None = None) -> None:
         "--public",
         action="store_true",
         help="post-score redact via redact_face_report_for_public (never pre-score drop)",
+    )
+    score_face_p.add_argument(
+        "--allow-overwrite-report",
+        action="store_true",
+        help=(
+            "permit overwriting an existing face score report (VLM6-E-05). "
+            "Default: refuse so committed freezes cannot be clobbered"
+        ),
     )
     score_face_p.set_defaults(func=_cmd_score_face)
 

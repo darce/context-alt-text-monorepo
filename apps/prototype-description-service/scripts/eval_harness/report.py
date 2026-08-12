@@ -16,6 +16,8 @@ from __future__ import annotations
 import copy
 import json
 import math
+import re
+import unicodedata
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from enum import StrEnum
@@ -40,6 +42,7 @@ from .face_assignment import (
     FOLD_MEDIA_CORESIDENCY_DISCLOSURE,
     TAU_GRID,
     associate_detections,
+    gt_box_name,
     score_face_assignment,
 )
 from .face_metrics import (
@@ -196,16 +199,27 @@ class ScoreVerdict(StrEnum):
 WRONG_NAME_RATE_FLOOR = 0.0
 
 # S2-02 quality floors — named policy constants (sr-007), not magic numbers.
-# Conservative degenerate-extreme floors: breach only at total measured failure
-# of a critical scored slice. A floor breach is FAIL (measured and bad), never
-# not_ready (not measured) — preserves the honesty property fx6 established.
-POSITION_ACCURACY_FLOOR = 0.0  # fail when position_accuracy <= floor
-PLACEMENT_ACCURACY_FLOOR = 0.0  # fail when placement.accuracy <= floor
-FABRICATED_FACT_RATE_CEILING = 1.0  # fail when fabricated_fact_rate >= ceiling
+# RV1-04 / EVAL-04: threshold *bands*, not IEEE corners. Pre-fix floors of
+# 0.0 / 1.0 let position_accuracy=0.0001 and fabricated_fact_rate=0.9999 pass.
+# Derivation (adoption-shaped score policy):
+# - position / placement: fail when accuracy ≤ 0.5 — at-or-below chance on a
+#   binary L→R / spatial claim is measured-and-bad, not a working model.
+# - fabricated_fact: fail when rate ≥ 0.5 — majority of traps firing is
+#   measured-and-bad (ceiling was 1.0 = exact all-traps-fired only).
+# Floor breach is FAIL (measured and bad), never not_ready (not measured).
+POSITION_ACCURACY_FLOOR = 0.5  # fail when position_accuracy <= floor
+PLACEMENT_ACCURACY_FLOOR = 0.5  # fail when placement.accuracy <= floor
+FABRICATED_FACT_RATE_CEILING = 0.5  # fail when fabricated_fact_rate >= ceiling
 
-# S2-05 sample-size floor: a single measurable image is not adoption evidence.
+# S2-05 sample-size floor: undersized corpora cannot certify adoption-shaped pass.
 # not_ready (insufficient sample), not fail. Named constant (sr-007).
-SCORE_PASS_MIN_SCORED_IMAGES = 2
+# RV1-03 derivation: n=5 is the first integer where P(all-correct | p=0.5
+# independent Bernoulli) < 0.05 (0.5^5 = 0.03125). n=2 yields 0.25 — a lucky
+# pair still "passes" too often to gate adoption. Not a Wilson sizing (that is
+# Golden-100 / compare harness); this is the minimum score-verdict floor so
+# sparse corpora cannot certify pass. Enforced inside score_vacuous_category_labels
+# so score and compare cannot diverge (RV1-02).
+SCORE_PASS_MIN_SCORED_IMAGES = 5
 
 
 class ReportError(Exception):
@@ -442,32 +456,74 @@ def _collect_identity_names_for_public_scrub(
     return sorted((n for n in names if n), key=len, reverse=True)
 
 
+def _identity_name_match_patterns(name: str) -> list[re.Pattern[str]]:
+    """Build case/separator-folded matchers for one roster name (RV4-05).
+
+    Matches the literal (NFKC, case-insensitive), hyphen/underscore/space
+    variants between tokens, and the fully compacted slug (``JaneDoePrivate``).
+    """
+    folded = unicodedata.normalize("NFKC", name).strip()
+    if not folded:
+        return []
+    patterns: list[re.Pattern[str]] = [
+        re.compile(re.escape(folded), re.IGNORECASE),
+    ]
+    tokens = [t for t in re.split(r"[\s_\-]+", folded) if t]
+    if len(tokens) >= 2:
+        sep = r"[\s_\-]*".join(re.escape(t) for t in tokens)
+        patterns.append(re.compile(sep, re.IGNORECASE))
+        patterns.append(re.compile("".join(re.escape(t) for t in tokens), re.IGNORECASE))
+    return patterns
+
+
 def _scrub_identity_names(text: str, names: Sequence[str]) -> str:
+    """Scrub roster names from free text (RV4-05 / S2-03).
+
+    NFKC + case-insensitive; also hits hyphen/underscore/slug folds so
+    ``jane-doe-private`` / ``JaneDoePrivate`` cannot evade a spaced roster name.
+    """
+    if not text:
+        return text
     out = text
-    for name in names:
-        if name and name in out:
-            out = out.replace(name, "[redacted]")
+    # Longest first so multi-token names win over substrings.
+    for name in sorted((n for n in names if n), key=len, reverse=True):
+        for pat in _identity_name_match_patterns(str(name)):
+            out = pat.sub("[redacted]", out)
     return out
 
 
-def _public_list_path(path: str, names: Sequence[str] = ()) -> str:
-    """Opaque-or-safe path for nested PUBLIC path lists (excluded_images, …).
+def _public_list_path(
+    path: str,
+    names: Sequence[str] = (),
+    *,
+    media_id: object | None = None,
+    path_to_media: Mapping[str, int] | None = None,
+) -> str:
+    """Opaque path for nested PUBLIC path lists (excluded_images, …) (RV4-01).
 
-    Absolute → ``<absolute>`` (S2-04). Known identity names scrubbed. Basenames
-    containing spaces are treated as identity-bearing free text and opaqued —
-    operators put subject names in filenames (S2-03 shape, not key-by-key).
+    Same rule as per-image paths: prefer ``media_id:N``; otherwise never emit a
+    relative operator key. Absolute → ``<absolute>``. The space-bearing-basename
+    heuristic is deleted — it was a symptom patch, not a privacy boundary.
     """
-    safe = _public_safe_path(path)
-    if safe in ("", "<absolute>"):
+    text = str(path) if path is not None else ""
+    # Idempotent: already-redacted tokens from a prior pass must pass through.
+    if text.startswith("media_id:") or text in ("<path>", "<absolute>", "<error>", "<redacted>", ""):
+        return text
+    mid = media_id
+    if mid is None and path_to_media is not None and text in path_to_media:
+        mid = path_to_media[text]
+    if mid is not None and str(mid) != "":
+        return f"media_id:{mid}"
+    safe = _public_safe_path(text)
+    if safe == "":
         return safe
-    scrubbed = _scrub_identity_names(safe, names)
-    if scrubbed != safe:
-        return "<path>"
-    base = safe.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-    stem = base.rsplit(".", 1)[0] if "." in base else base
-    if " " in stem:
-        return "<path>"
-    return safe
+    if safe == "<absolute>":
+        return safe
+    # Relative keys without media_id: fail-closed opaque (never verbatim).
+    # names retained in signature for call-site compatibility; scrub not needed
+    # once the path is fully opaque.
+    _ = names
+    return "<path>"
 
 
 def _public_free_text_value(
@@ -476,18 +532,20 @@ def _public_free_text_value(
     *,
     media_id: object | None = None,
     names: Sequence[str] = (),
+    path_to_media: Mapping[str, int] | None = None,
 ) -> str:
-    """Scrub free-text admitted to the PUBLIC boundary (S2-03 / S2-04).
+    """Scrub free-text admitted to the PUBLIC boundary (S2-03 / S2-04 / RV4-05).
 
     Paths never emit operator basenames: prefer an opaque ``media_id:N`` token.
     Absolute paths without media_id collapse to ``<absolute>`` (not basename).
     Other free-text is name-scrubbed and never passes raw operator prose.
+    Default-deny: unclassified free-text keys are opaque even without a roster hit.
     """
     text = "" if value is None else str(value)
     if key == "path":
         if media_id is not None and str(media_id) != "":
             return f"media_id:{media_id}"
-        return _public_list_path(text, names) if text else text
+        return _public_list_path(text, names, path_to_media=path_to_media) if text else text
     if not text:
         return text
     scrubbed = _scrub_identity_names(text, names)
@@ -497,13 +555,16 @@ def _public_free_text_value(
     # a known roster hit — emit an opaque token (S2-03).
     if key in ("short_error", "error"):
         return "<error>"
-    return scrubbed
+    # RV4-05 default-deny: allow-listed string fields not typed as metric/bool
+    # never pass through raw operator prose.
+    return "<redacted>"
 
 
 def _public_per_image_row(
     row: Mapping[str, Any],
     *,
     names: Sequence[str] = (),
+    path_to_media: Mapping[str, int] | None = None,
 ) -> dict[str, Any]:
     """Build a PUBLIC per-image record from an explicit allow-list (VLM6-A-01).
 
@@ -511,7 +572,7 @@ def _public_per_image_row(
     are dropped. Nested ``long`` / ``placement`` / ``hallucination`` are themselves
     allow-listed so fact-string lists cannot carry roster names. Free-text keys
     on the allow-list are scrubbed (S2-03); paths never keep identifying basenames
-    (S2-04).
+    (S2-04). String values default-deny unless typed metric/bool (RV4-05).
     """
     out: dict[str, Any] = {}
     media_id = row.get("media_id")
@@ -525,8 +586,11 @@ def _public_per_image_row(
             out[key] = {k: value[k] for k in _PUBLIC_PER_IMAGE_PLACEMENT_ALLOW_FIELDS if k in value}
         elif key == "hallucination" and isinstance(value, Mapping):
             out[key] = {k: value[k] for k in _PUBLIC_PER_IMAGE_HALLUCINATION_ALLOW_FIELDS if k in value}
-        elif key in _PUBLIC_PER_IMAGE_FREE_TEXT_FIELDS:
-            out[key] = _public_free_text_value(key, value, media_id=media_id, names=names)
+        elif key in _PUBLIC_PER_IMAGE_FREE_TEXT_FIELDS or isinstance(value, str):
+            # RV4-05: any allow-listed string is free text (default-deny).
+            out[key] = _public_free_text_value(
+                key, value, media_id=media_id, names=names, path_to_media=path_to_media
+            )
         else:
             out[key] = value
     return out
@@ -536,6 +600,7 @@ def _public_failure_row(
     fail: Mapping[str, Any],
     *,
     names: Sequence[str] = (),
+    path_to_media: Mapping[str, int] | None = None,
 ) -> dict[str, Any]:
     """Fail-closed allow-list + free-text scrub for PUBLIC failures (S2-03)."""
     out: dict[str, Any] = {}
@@ -544,8 +609,10 @@ def _public_failure_row(
         if key not in fail:
             continue
         value = fail[key]
-        if key in _PUBLIC_FAILURE_FREE_TEXT_FIELDS:
-            out[key] = _public_free_text_value(key, value, media_id=media_id, names=names)
+        if key in _PUBLIC_FAILURE_FREE_TEXT_FIELDS or isinstance(value, str):
+            out[key] = _public_free_text_value(
+                key, value, media_id=media_id, names=names, path_to_media=path_to_media
+            )
         else:
             out[key] = value
     return out
@@ -605,6 +672,17 @@ def _redact_caption_report_for_public(
 
     scrub_names = _collect_identity_names_for_public_scrub(scored, manifest_entries, run_record)
     publishable_paths = {str(e["path"]) for e in manifest_entries if int(e["media_id"]) in publishable_ids}
+    # RV4-01: map relative corpus keys → media_id so path lists emit media_id:N.
+    path_to_media: dict[str, int] = {}
+    for e in manifest_entries:
+        path_to_media[str(e["path"])] = int(e["media_id"])
+    for item in items:
+        p = item.get("path")
+        if isinstance(p, str) and p:
+            path_to_media.setdefault(p, int(item["media_id"]))
+    for row in redacted.get("per_image") or []:
+        if isinstance(row, Mapping) and row.get("path") is not None and row.get("media_id") is not None:
+            path_to_media.setdefault(str(row["path"]), int(row["media_id"]))
 
     def _keep_publishable_paths(paths: list[Any]) -> list[Any]:
         kept: list[Any] = []
@@ -614,11 +692,11 @@ def _redact_caption_report_for_public(
         return kept
 
     def _public_path_list(paths: list[Any]) -> list[Any]:
-        # S2-03/S2-04: path lists are free text — scrub after publishable filter.
+        # RV4-01: path lists use media_id:N (or <path>) — never relative keys.
         out: list[Any] = []
         for p in _keep_publishable_paths(paths):
             if isinstance(p, str):
-                out.append(_public_list_path(p, scrub_names))
+                out.append(_public_list_path(p, scrub_names, path_to_media=path_to_media))
             else:
                 out.append(p)
         return out
@@ -653,7 +731,9 @@ def _redact_caption_report_for_public(
             continue
         if not isinstance(row, Mapping):
             continue
-        kept_rows.append(_public_per_image_row(row, names=scrub_names))
+        kept_rows.append(
+            _public_per_image_row(row, names=scrub_names, path_to_media=path_to_media)
+        )
     redacted["per_image"] = kept_rows
 
     # Quality title block may list hallucinated roster names — clear for PUBLIC.
@@ -672,7 +752,9 @@ def _redact_caption_report_for_public(
             continue
         media_id = int(fail.get("media_id", -1))
         if media_id not in entries or media_id in publishable_ids:
-            kept_failures.append(_public_failure_row(fail, names=scrub_names))
+            kept_failures.append(
+                _public_failure_row(fail, names=scrub_names, path_to_media=path_to_media)
+            )
     redacted["failures"] = kept_failures
 
     # Strata excluded_images are free-text path counts under difficulty/domain.
@@ -703,7 +785,7 @@ def _redact_caption_report_for_public(
             "stripped. unknown_media_items are corpus-integrity failures, not privacy."
         ),
     }
-    return _redact_public_paths(redacted, names=scrub_names)
+    return _redact_public_paths(redacted, names=scrub_names, path_to_media=path_to_media)
 
 
 def _public_safe_path(path: str) -> str:
@@ -759,11 +841,17 @@ def _parse_reference_facts(raw: Any) -> list[ReferenceFact]:
     return facts
 
 
-def _redact_public_paths(obj: Any, *, names: Sequence[str] = ()) -> Any:
+def _redact_public_paths(
+    obj: Any,
+    *,
+    names: Sequence[str] = (),
+    path_to_media: Mapping[str, int] | None = None,
+) -> Any:
     """Rewrite path strings nested in a scored report (render boundary).
 
     Absolute paths collapse without identifying basenames (S2-04). Nested path
-    lists also scrub known identity names / space-bearing basenames (S2-03).
+    lists emit ``media_id:N`` or ``<path>`` — never relative operator keys
+    (RV4-01).
     """
     if isinstance(obj, dict):
         out: dict[str, Any] = {}
@@ -773,25 +861,36 @@ def _redact_public_paths(obj: Any, *, names: Sequence[str] = ()) -> Any:
                 if value.startswith("media_id:") or value in ("<path>", "<absolute>", "<error>", "<redacted>"):
                     out[key] = value
                 else:
-                    out[key] = _public_list_path(value, names)
+                    out[key] = _public_list_path(value, names, path_to_media=path_to_media)
             elif key in ("excluded_images", "degraded_paths") and isinstance(value, list):
                 out[key] = [
-                    _public_list_path(v, names) if isinstance(v, str) else _redact_public_paths(v, names=names)
+                    (
+                        _public_list_path(v, names, path_to_media=path_to_media)
+                        if isinstance(v, str)
+                        else _redact_public_paths(v, names=names, path_to_media=path_to_media)
+                    )
                     for v in value
                 ]
             elif key in ("wrong_names", "ignored_wrong_names") and isinstance(value, list):
                 rewritten: list[Any] = []
                 for pair in value:
                     if isinstance(pair, list | tuple) and pair and isinstance(pair[0], str):
-                        rewritten.append([_public_list_path(str(pair[0]), names), *list(pair[1:])])
+                        rewritten.append(
+                            [
+                                _public_list_path(str(pair[0]), names, path_to_media=path_to_media),
+                                *list(pair[1:]),
+                            ]
+                        )
                     else:
-                        rewritten.append(_redact_public_paths(pair, names=names))
+                        rewritten.append(
+                            _redact_public_paths(pair, names=names, path_to_media=path_to_media)
+                        )
                 out[key] = rewritten
             else:
-                out[key] = _redact_public_paths(value, names=names)
+                out[key] = _redact_public_paths(value, names=names, path_to_media=path_to_media)
         return out
     if isinstance(obj, list):
-        return [_redact_public_paths(v, names=names) for v in obj]
+        return [_redact_public_paths(v, names=names, path_to_media=path_to_media) for v in obj]
     return obj
 
 
@@ -1078,8 +1177,15 @@ def score_vacuous_category_labels(
     ``baseline:`` / ``candidate:``. Key absence and zero-denominator regimes are
     both non-observable. ``include_verdict_fields=False`` when building the
     verdict block itself (``verdict.wrong_name_rate`` is not yet on the doc).
+
+    RV1-02: sample-size (``SCORE_PASS_MIN_SCORED_IMAGES``) lives here so score
+    and compare consult the same predicate and cannot diverge.
     """
     labels: list[str] = []
+    counts = doc.get("counts") if isinstance(doc.get("counts"), Mapping) else {}
+    scored_n = int(counts.get("scored") or 0)
+    if scored_n > 0 and scored_n < SCORE_PASS_MIN_SCORED_IMAGES:
+        labels.append("sample_size")
     place = doc.get("placement") if isinstance(doc.get("placement"), Mapping) else {}
     if place.get("accuracy") is None or int(place.get("claims") or 0) == 0:
         labels.append("placement")
@@ -1121,17 +1227,18 @@ def build_score_vacuity_reasons(scored: Mapping[str, Any], *, scored_n: int) -> 
 
     Uses the shared predicates in ``score_vacuous_category_labels`` /
     ``fabricated_fact_is_vacuous`` so score and compare cannot disagree on which
-    axes are non-observable (S2-01 / S2-06 / rg-005).
+    axes are non-observable (S2-01 / S2-06 / rg-005). Sample-size is owned by
+    the shared predicate (RV1-02); this helper only formats the operator reason.
     """
     vacuity_reasons: list[str] = []
     if scored_n <= 0:
         return vacuity_reasons
-    if scored_n < SCORE_PASS_MIN_SCORED_IMAGES:
+    labels = set(score_vacuous_category_labels(scored, include_verdict_fields=False))
+    if "sample_size" in labels:
         vacuity_reasons.append(
             f"sample-size: scored={scored_n} < min={SCORE_PASS_MIN_SCORED_IMAGES} "
             f"(undersized corpus cannot certify adoption-shaped pass; EVAL-04 / S2-05)"
         )
-    labels = set(score_vacuous_category_labels(scored, include_verdict_fields=False))
     faces = scored.get("faces") if isinstance(scored.get("faces"), Mapping) else {}
     ident = faces.get("identification") if isinstance(faces.get("identification"), Mapping) else {}
     placement = scored.get("placement") if isinstance(scored.get("placement"), Mapping) else {}
@@ -1962,12 +2069,15 @@ def score_run_record(
 
 
 def _fmt_prov(value: object, *, default: str = "unknown") -> str:
-    """Render provenance fields for markdown (S4-05).
+    """Render provenance fields for markdown (S4-05 / HARM-04).
 
     JSON null must read as ``null``, not the Python identifier ``None``.
+    Booleans render as JSON ``true``/``false``, not Python ``True``/``False``.
     """
     if value is None:
         return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
     if value == "":
         return default
     return str(value)
@@ -2555,14 +2665,6 @@ def _tau_by_identity_from_decisions(decisions: Sequence[Any]) -> dict[str, float
     return out
 
 
-def _gt_box_name(box: Any) -> str | None:
-    if isinstance(box, Mapping):
-        name = box.get("name")
-    else:
-        name = getattr(box, "name", None)
-    return None if name is None else str(name)
-
-
 def _association_counts_for_media(
     assignment: Any,
     media_ids: set[int],
@@ -2572,9 +2674,9 @@ def _association_counts_for_media(
 ) -> tuple[int, int, list[str]]:
     """Headline-scoped miss / unmatched-detection counts (FIR5RR-06).
 
-    - ``missed_gt`` counts only unmatched GT boxes with a non-None name: the
-      headline frame is NAMED probes, so an unmatched stranger box must not
-      inflate the miss count.
+    - ``missed_gt`` counts only unmatched GT boxes with a non-empty name
+      (``gt_box_name`` — HARM-06): the headline frame is NAMED probes, so an
+      unmatched stranger/empty-name box must not inflate the miss count.
     - ``unmatched_detections`` counts only on media that contributed at least
       one headline probe (``probe_media_ids``) — detections on images whose
       probes never entered the frame are not this frame's false detections.
@@ -2595,7 +2697,7 @@ def _association_counts_for_media(
         boxes = list(gt_by_media.get(mid, ()))
         assoc = by_media.get(mid)
         if assoc is None:
-            named = sum(1 for b in boxes if _gt_box_name(b) is not None)
+            named = sum(1 for b in boxes if gt_box_name(b) is not None)
             if named:
                 missed += named
                 notes.append(
@@ -2615,7 +2717,7 @@ def _association_counts_for_media(
                     f"for {len(boxes)} manifest GT box(es); counted "
                     "conservatively as missed_gt (association/manifest drift)"
                 )
-            elif _gt_box_name(boxes[gi]) is not None:
+            elif gt_box_name(boxes[gi]) is not None:
                 missed += 1
         if mid in probe_media_ids:
             unmatched += len(assoc.unmatched_detections)
@@ -2767,9 +2869,20 @@ def _validate_face_record_kind(face_run_record: dict[str, Any]) -> None:
 
 
 def _detection_from_assignment(assignment: Any) -> dict[str, Any]:
+    """Identity-agnostic detection P/R over **all** GT boxes (HARM-01 / EVAL-16).
+
+    Detection asks "was a box found at all?" — named and anonymous GT share one
+    population. ``assignment.missed_gt`` is named-only (identification FN fold-in);
+    stranger misses live on ``missed_stranger_gt``. FN = both. Identification is
+    the metric that legitimately excludes anonymous GT.
+
+    Invariant: ``tp + fn`` equals the number of GT boxes that reached association
+    (pairs + unmatched_gt across ``association_by_media``).
+    """
     tp = sum(len(a.pairs) for a in assignment.association_by_media.values())
     fp = int(assignment.false_detections)
-    fn = int(assignment.missed_gt)
+    # Detection FN = named misses + stranger misses (same population as tp pairs).
+    fn = int(assignment.missed_gt) + int(getattr(assignment, "missed_stranger_gt", 0) or 0)
     precision = (tp / (tp + fp)) if (tp + fp) else 0.0
     recall = (tp / (tp + fn)) if (tp + fn) else 0.0
     return {
@@ -3214,10 +3327,9 @@ def score_face_run_record(
             "sampling_frame": unknown.sampling_frame,
             "rate_numerator": unknown.rate_numerator,
             "rate_denominator": unknown.rate_denominator,
-            # missed_stranger_gt is required into face_unknown_rejection (S3-03) and
-            # is already embedded in rate_denominator / sampling_frame text. A new
-            # JSON key would move face freeze bytes; surface after wave-C regen
-            # (AUDIT-07 optional disclosure deferred for freeze stability).
+            # HARM-09 / AUDIT-07: disclose the stranger-miss term folded into
+            # rate_denominator (already required into face_unknown_rejection).
+            "missed_stranger_gt": int(assignment.missed_stranger_gt),
             **unknown_status,
         },
         "clustering": {
@@ -3517,25 +3629,28 @@ def _markdown_face(scored: dict[str, Any]) -> str:
     gp = scored.get("gate_proposal") or {}
     slices = scored.get("slices") or {}
     det = scored.get("detection") or {}
+    counts = scored.get("counts") or {}
     lines = [
         "# Face Bake-off Eval Report",
         "",
         f"- schema: `{scored.get('schema')}` kind: `{scored.get('kind')}` report_kind: `{scored.get('report_kind')}`",
         f"- model_ids: `{', '.join(model.get('model_ids') or []) or 'unknown'}` "
-        f"embedding_dims: `{model.get('embedding_dims')}` leg: `{model.get('leg')}`",
+        f"embedding_dims: `{_fmt_prov(model.get('embedding_dims'))}` leg: `{_fmt_prov(model.get('leg'))}`",
         f"- head_sha: `{_fmt_prov(prov.get('head_sha'))}`",
         f"- fetch manifest_sha256: `{_fmt_prov(prov.get('manifest_sha256'))}`",
         _manifest_drift_line(prov),
-        f"- canon_version: `{prov.get('canon_version', FACE_BAKEOFF_CANON_VERSION)}` "
-        f"protocol_id: `{prov.get('protocol_id', FACE_BAKEOFF_PROTOCOL_ID)}`",
-        f"- zero_box_corpus: {prov.get('zero_box_corpus')} total_gt_boxes: {prov.get('total_gt_boxes')}",
-        f"- images: {scored.get('counts', {}).get('scored')}/{scored.get('counts', {}).get('total')} scored, "
-        f"{scored.get('counts', {}).get('failed')} failed; matched_faces={scored.get('counts', {}).get('matched_faces')}",
+        f"- started_at: {_fmt_prov(prov.get('started_at'))}",
+        f"- canon_version: `{_fmt_prov(prov.get('canon_version'), default=FACE_BAKEOFF_CANON_VERSION)}` "
+        f"protocol_id: `{_fmt_prov(prov.get('protocol_id'), default=FACE_BAKEOFF_PROTOCOL_ID)}`",
+        f"- zero_box_corpus: {_fmt_prov(prov.get('zero_box_corpus'))} "
+        f"total_gt_boxes: {_fmt_prov(prov.get('total_gt_boxes'))}",
+        f"- images: {_fmt_prov(counts.get('scored'))}/{_fmt_prov(counts.get('total'))} scored, "
+        f"{_fmt_prov(counts.get('failed'))} failed; matched_faces={_fmt_prov(counts.get('matched_faces'))}",
         "",
         "## Detection",
         "",
         f"- precision: {_fmt(det.get('precision'))} recall: {_fmt(det.get('recall'))} "
-        f"(tp={det.get('tp')} fp={det.get('fp')} fn={det.get('fn')})",
+        f"(tp={_fmt_prov(det.get('tp'))} fp={_fmt_prov(det.get('fp'))} fn={_fmt_prov(det.get('fn'))})",
         "",
         "## Floor-gated slices",
         "",
@@ -3543,27 +3658,29 @@ def _markdown_face(scored: dict[str, Any]) -> str:
     hl = slices.get("headline_identification") or {}
     lines.append(
         f"- **headline_identification**: status=`{hl.get('status', hl.get('label', '?'))}` "
-        f"directional={hl.get('directional')} "
+        f"directional={_fmt_prov(hl.get('directional'))} "
         f"precision={_fmt_rate_n_over_n(hl.get('precision'), hl.get('precision_numerator'), hl.get('precision_denominator'))} "
         f"recall={_fmt_rate_n_over_n(hl.get('recall'), hl.get('recall_numerator'), hl.get('recall_denominator'))} "
-        f"n_recall_eligible={hl.get('n_recall_eligible')}/{hl.get('n_floor')} "
+        f"n_recall_eligible={_fmt_prov(hl.get('n_recall_eligible'))}/{_fmt_prov(hl.get('n_floor'))} "
         f"frame=`{hl.get('sampling_frame', '')}`"
     )
     unk = slices.get("unknown_rejection") or {}
     lines.append(
         f"- **unknown_rejection**: status=`{unk.get('status', unk.get('label', '?'))}` "
-        f"directional={unk.get('directional')} "
+        f"directional={_fmt_prov(unk.get('directional'))} "
         f"rate={_fmt_rate_n_over_n(unk.get('rate'), unk.get('rate_numerator', unk.get('correct_rejects')), unk.get('rate_denominator', unk.get('n')))} "
-        f"n={unk.get('n')}/{unk.get('n_floor')} "
+        f"n={_fmt_prov(unk.get('n'))}/{_fmt_prov(unk.get('n_floor'))} "
+        f"missed_stranger_gt={_fmt_prov(unk.get('missed_stranger_gt'))} "
         f"frame=`{unk.get('sampling_frame', '')}`"
     )
     cl = slices.get("clustering") or {}
     lines.append(
         f"- **clustering**: status=`{cl.get('status', cl.get('label', '?'))}` "
-        f"directional={cl.get('directional')} "
+        f"directional={_fmt_prov(cl.get('directional'))} "
         f"purity={_fmt(cl.get('purity'))} "
         f"false_merge={_fmt(cl.get('false_merge'))} false_split={_fmt(cl.get('false_split'))} "
-        f"P_same={cl.get('p_same')} P_diff={cl.get('p_diff')} M={cl.get('m_co_clustered')} "
+        f"P_same={_fmt_prov(cl.get('p_same'))} P_diff={_fmt_prov(cl.get('p_diff'))} "
+        f"M={_fmt_prov(cl.get('m_co_clustered'))} "
         f"frame=`{cl.get('sampling_frame', '')}`"
     )
     occ = slices.get("occlusion") or {}
@@ -3574,9 +3691,10 @@ def _markdown_face(scored: dict[str, Any]) -> str:
             synth = block.get("synthetic") or {}
             lines.append(
                 f"- **occlusion.{tag}**: status=`{synth.get('status', synth.get('label', '?'))}` "
-                f"directional={synth.get('directional')} "
+                f"directional={_fmt_prov(synth.get('directional'))} "
                 f"accuracy={_fmt_rate_n_over_n(synth.get('accuracy'), synth.get('rate_numerator', synth.get('n_correct')), synth.get('rate_denominator', synth.get('n_eligible')))} "
-                f"n_eligible={synth.get('n_eligible')}/{synth.get('n_floor', ELIGIBLE_PAIR_FLOOR)}"
+                f"n_eligible={_fmt_prov(synth.get('n_eligible'))}/"
+                f"{_fmt_prov(synth.get('n_floor'), default=str(ELIGIBLE_PAIR_FLOOR))}"
             )
     lines += ["", "## Gate proposal (excludes DIRECTIONAL)", ""]
     lines.append(f"- role: {gp.get('role')}")

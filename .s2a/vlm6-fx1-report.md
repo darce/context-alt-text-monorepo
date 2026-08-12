@@ -1,250 +1,223 @@
-# VLM-6 lane `fx1` fix report
+# Lane fx1 report — metrics correctness, rendering, PUBLIC redaction
 
-Branch: `feature/vlm-6-fx1` (this lane's branch). Base: `e2575b5ef09ed75de7f792546439d53624c9d344`.
+**Branch:** `fix/fx1`  
+**Base:** `b28e126e89bc41202e0168276f8493511212c80d` (`feature/vlm-6`)  
+**Commits:**
+- Slice 1: `e7d2d0c6c2468ca6fa745f427e75e1dcba537e5e` — HARM-01/06/07/09 + RV3-04
+- Slice 2: `3677f42c5d53de37bfec51745f8b3821ac36591a` — HARM-04 + RV1-02/03/04 + RV4-01/05
 
-Owned files only:
-- `apps/prototype-description-service/scripts/eval_harness/cli.py`
-- `apps/prototype-description-service/scene/tests/test_eval_harness_cli.py`
-- `.s2a/vlm6-fx1-report.md`
-
-TEST-15 method: write defect-reproducing tests → run against unfixed code (RED) → apply fix → re-run (GREEN). Final gate: **15 passed**.
-
----
-
-## VLM6-E-01 (high) — `insertion_rate` polarity inversion
-
-**Files:** `cli.py` (`_COMPARE_LOWER_IS_BETTER` / `_COMPARE_HIGHER_IS_BETTER`); `test_cli_compare_insertion_rate_lower_is_better`
-
-**Behaviour change:** `caption.insertion_rate` moved to lower-is-better (hallucinated-identity rate).
-
-**RED (unfixed):**
-```
-caption.insertion_rate: baseline=0.1 candidate=0.5 (higher-better)
-Failed: DID NOT RAISE SystemExit
-```
-Candidate with *more* insertions was treated as better; worse-case did not exit non-zero.
-
-Also:
-```
-SystemExit: compare regression gate: ... caption.insertion_rate: candidate 0.05 < baseline 0.1
-```
-(lower insertion_rate incorrectly failed meet-or-beat)
-
-**GREEN:**
-```
-test_cli_compare_insertion_rate_lower_is_better PASSED
-```
-Higher insertion_rate → `compare regression gate` + `insertion_rate`; lower → PASS with `lower-better` surface.
+**Worktree:** `/home/ubuntu/lane-gx2` only. No merge/rebase.
 
 ---
 
-## VLM6-A-02 / VLM6-F-02 (high) — `compare` claimed same-corpus without validation
+## 1. Per finding
 
-**Files:** `cli.py` (`_cmd_compare`, `_compare_require_caption_report`, `_compare_protocol_mismatches`, `_compare_non_degenerate_corpus`); tests `test_cli_compare_rejects_handwritten_four_field_json`, `test_cli_compare_rejects_pass_ungated_baseline`, `test_cli_compare_rejects_manifest_digest_mismatch`
+### HARM-01 (high) — detection FN drift — **FIXED**
 
-**Behaviour change:** Fail closed unless both inputs are `schema=acx-eval/v1` + `kind=report`, non-degenerate counts, matching protocol pins (`score_manifest_sha256`, `eval_mode`, `rubric_gate`, prompt/pipeline flags, audience), and baseline `verdict=pass`. `pass_ungated` / bare four-field JSON refused.
+**Change:** `_detection_from_assignment` sets `fn = missed_gt + missed_stranger_gt`. Detection is identity-agnostic (“was a box found?”); identification remains named-only for FN fold-in (`face_assignment.py` docstring unchanged — still correct for id).
 
-**RED:**
+**Why:** `tp` summed all association pairs (named+stranger) while `fn` used named-only `missed_gt` → recall over different populations.
+
+**RED/GREEN:**
 ```
-Failed: DID NOT RAISE SystemExit   # handwritten four-field JSON
-Failed: DID NOT RAISE SystemExit   # pass_ungated baseline
-Failed: DID NOT RAISE SystemExit   # manifest digest mismatch
+HARM-01 RED: broken fn=0 recall=1.0 (want fn=1 recall=0.5)
+HARM-01 GREEN: fixed fn=1 recall=0.5
+```
+Test: `test_detection_from_assignment_counts_stranger_fn` — also asserts `tp + fn == GT boxes in association`.
+
+Confirmed: `_detection_from_assignment` had **zero** prior test references (only production call site).
+
+### HARM-09 (low) — surface `missed_stranger_gt` — **FIXED**
+
+**Change:** `slices.unknown_rejection.missed_stranger_gt = int(assignment.missed_stranger_gt)`; deleted wave-C deferral comment.
+
+**RED/GREEN:** Key absence was the pre-fix state (deferred comment). GREEN: `test_score_face_unknown_rejection_surfaces_missed_stranger_gt` asserts key present and `== 1` when stranger detections dropped.
+
+### HARM-06 (medium) — named-GT predicate — **FIXED**
+
+**Change:** Single `gt_box_name()` in `face_assignment.py`: `None` / empty / whitespace → anonymous. Used by `_gt_fields`, `collect_matched_faces`, and report headline association counts. `_leftmost_unique_names` is the single leftmost-wins loop for both labeled and predicted paths.
+
+**RED/GREEN:**
+```
+HARM-06 RED: old_gt_box_name('')='' (non-None = wrong)
+HARM-06 GREEN: gt_box_name('')=None
+```
+Test: `test_gt_box_name_empty_string_is_anonymous` (empty name → stranger miss, not named `missed_gt`).
+
+### HARM-07 (low) — fabricated y=0.0 — **FIXED**
+
+**Change:** Never invent `y=0.0`. When all named boxes have `y`, sort via `normalized_centre_order_key(x,y,name)`. When any named box lacks `y`, sort by `(x, name)` only (real primary + name tertiary). Partial-x fixtures still order by real `x`.
+
+**RED/GREEN:**
+```
+HARM-07 RED: y-default order=['Alice', 'Bob'] (invented y=0.0 path)
+HARM-07 GREEN: no fabricated y; y-aware order ['Low','High'] at same x
+```
+Test: `test_labeled_left_to_right_tie_stable_across_input_order`.
+
+### RV3-04 (medium) — alias pin — **FIXED**
+
+**Change:** `predicted_names_for_positional = predicted_left_to_right` (object identity). Test requires strict `is`; drives alias through Zebra/Aardvark + centre-y fixtures.
+
+**RED/GREEN:**
+```
+RV3-04 RED soft-pin: soft_ok=True (mutant re-clone passes behavioural or-fallback)
+RV3-04 GREEN strict-is: real alias is=True; mutant strict_ok=False
 ```
 
-**GREEN:**
-```
-test_cli_compare_rejects_handwritten_four_field_json PASSED
-test_cli_compare_rejects_pass_ungated_baseline PASSED
-test_cli_compare_rejects_manifest_digest_mismatch PASSED
-```
-Exit text includes `compare same-corpus gate:` / `compare adoption gate:` with schema/kind/protocol/verdict detail.
+### HARM-04 (medium) — face MD nulls/bools — **FIXED**
 
-Heuristics: `rg-005`, `rg-008`, `EVAL-13`.
+**Change:** `_fmt_prov` renders bools as `true`/`false`. `_markdown_face` routes nullable/bool fields through `_fmt_prov`, adds `started_at` line. Test exercises **face** renderer.
+
+**RED/GREEN:**
+```
+HARM-04 RED str(False)= False
+HARM-04 GREEN _fmt_prov(False)= false
+```
+Test: `test_face_markdown_renders_null_and_bool_json_tokens`.
+
+### RV1-02 (high) — sample-size outside shared predicate — **FIXED**
+
+**Change:** `SCORE_PASS_MIN_SCORED_IMAGES` check moved into `score_vacuous_category_labels` (label `sample_size`). `build_score_vacuity_reasons` formats reason from that label. Compare already consults the shared predicate via `_compare_vacuous_categories` — **no cli.py edit required**.
+
+**RED/GREEN:**
+```
+RV1-02 RED old labels sample_size? False
+RV1-02 GREEN new labels ['sample_size', ...]
+```
+Test: `test_sample_size_in_shared_vacuity_predicate_blocks_compare` (forged `verdict=pass` + `scored=1`).
+
+### RV1-03 (medium) — floor n=2 unjustified — **FIXED**
+
+**Change:** `SCORE_PASS_MIN_SCORED_IMAGES = 5` with documented derivation: first n where `P(all-correct|p=0.5) = 0.5^n < 0.05` (`0.5^5 = 0.03125`; `n=2` yields `0.25`).
+
+**RED/GREEN:** n=2 measurable corpus now `not_ready` (`test_undersized_but_gt1_corpus_is_not_ready`). Pass fixtures expanded to n≥5.
+
+### RV1-04 (medium) — IEEE-corner floors — **FIXED**
+
+**Change:**
+- `POSITION_ACCURACY_FLOOR = 0.5`
+- `PLACEMENT_ACCURACY_FLOOR = 0.5`
+- `FABRICATED_FACT_RATE_CEILING = 0.5`
+
+Derivation: at-or-below chance on binary L→R/spatial claim, or majority of traps firing, is measured-and-bad. Boundary tests at threshold ± eps.
+
+**RED/GREEN:**
+```
+RV1-04 RED pos_acc=0.0001 vs old floor 0.0: would PASS; vs new 0.5 FAIL
+RV1-04 GREEN fab=0.9999 fails under ceiling 0.5
+```
+
+### RV4-01 (high) — PUBLIC path-list identity leak — **FIXED**
+
+**Change:** Nested path lists emit `media_id:N` when resolvable, else `<path>` / `<absolute>`. Deleted space-bearing-basename heuristic. Idempotent on already-redacted tokens (second `_redact_public_paths` pass).
+
+**RED/GREEN:**
+```
+RV4-01 RED old path celebs01/JaneDoePrivate-with-obama.jpg
+RV4-01 GREEN new path media_id:10
+```
+Test: `test_public_path_lists_opaque_no_space_identity_slug` — slug absent from whole PUBLIC blob; `excluded_images` / `degraded_paths` = `["media_id:10"]`.
+
+### RV4-05 (medium) — case-sensitive scrub — **FIXED**
+
+**Change:** `_scrub_identity_names` uses NFKC + case-insensitive regex; also hyphen/underscore/slug compacted forms. Allow-listed string fields default-deny (opaque unless free-text handler).
+
+**RED/GREEN:**
+```
+RV4-05 RED old jane doe private JaneDoePrivate
+RV4-05 GREEN new [redacted] [redacted]
+```
+Test: `test_public_scrubs_case_and_slug_identity_variants`.
 
 ---
 
-## VLM6-A-03 / VLM6-F-01 / VLM6-E-02 (high) — gate omitted every category that matters
+## 2. Disagreements
 
-**Files:** `cli.py` (full adoption metric tables + `_compare_vacuous_categories` + harness-37 block); tests `test_cli_compare_vacuous_category_blocks_adoption`, `test_cli_compare_harness_37_refuses_adoption_pass`, `test_cli_compare_meet_or_beat_all_categories_pass`
-
-**Behaviour change:** Compare surfaces detection/identification P/R, positional accuracy, identity ordering, placement, fabricated-fact rates, plus caption scalars. `None`/π=0 categories → `BLOCKED non_observable_categories`. Corpus `scored=total=37` → `NOT_ADOPTION_ELIGIBLE corpus=harness-37` (no adoption PASS).
-
-**RED:**
-```
-Failed: DID NOT RAISE SystemExit   # vacuous placement still comparable
-AssertionError: assert ('37' in 'compare regression gate: ... insertion_rate ...' ...)
-SystemExit: compare regression gate: ... insertion_rate: candidate 0.05 < baseline 0.1
-  # (false polarity; never reached adoption-category surface)
-```
-
-**GREEN:**
-```
-test_cli_compare_vacuous_category_blocks_adoption PASSED
-test_cli_compare_harness_37_refuses_adoption_pass PASSED
-test_cli_compare_meet_or_beat_all_categories_pass PASSED
-```
-Adoption PASS path prints all category labels including `detection.precision`, `position_accuracy`, `placement.accuracy`, `fabricated_fact_rate`.
-
-Heuristics: `EVAL-23`, `EVAL-04`, `AUDIT-07`.
+None. All 11 findings treated as real; each fixed with RED→GREEN evidence.
 
 ---
 
-## VLM6-F-03 (high) — manifest drift only warned
+## 3. Anchor tests broken (for lane fx5)
 
-**Files:** `cli.py` (`_fold_manifest_drift_into_verdict`, `--allow-manifest-relabel`); tests `test_cmd_score_manifest_drift_fails_closed`, `test_cmd_score_allow_manifest_relabel_marks_non_comparable`, `test_score_fetch_sha_drift_fails_closed_without_relabel_flag`
-
-**Behaviour change:** `manifest_matches_fetch=false` hard-fails (`score manifest-drift gate`). `--allow-manifest-relabel` persists `verdict=non_comparable` (compare rejects) and still exits non-zero. Missing fetch-time sha keeps distinct `manifest-mismatch` token.
-
-**RED:**
-```
-[score] WARNING manifest drift: scored against manifest ddd... but fetched under 9a49...
-Failed: DID NOT RAISE SystemExit
-# and: unrecognized arguments: --allow-manifest-relabel
-```
-
-**GREEN:**
-```
-test_cmd_score_manifest_drift_fails_closed PASSED
-test_cmd_score_allow_manifest_relabel_marks_non_comparable PASSED
-test_score_fetch_sha_drift_fails_closed_without_relabel_flag PASSED
-```
-Hard-fail message: `score manifest-drift gate: ... manifest_matches_fetch=false ... EVAL-13`. Relabel path writes `verdict=non_comparable`.
-
-Heuristic: `EVAL-13`.
-
----
-
-## VLM6-E-05 (high) — `score` rewrote committed freeze reports
-
-**Files:** `cli.py` (`_score_report_base`, `_refuse_report_overwrite`, `--allow-overwrite-report`); test `test_cmd_score_does_not_clobber_committed_freeze_reports`
-
-**Behaviour change:** Run-records under `docs/tasks/vlm/bakeoff-results` write reports to git-ignored `OUT_DIR`. Existing reports under that tree refuse overwrite without `--allow-overwrite-report`. Operator tmp/out may re-score freely.
-
-**RED:**
-```
-Failed: DID NOT RAISE SystemExit
-# freeze sentinel was overwritten by plain score
-```
-
-**GREEN:**
-```
-test_cmd_score_does_not_clobber_committed_freeze_reports PASSED
-```
-Freeze sentinel preserved; report lands in `OUT_DIR`.
-
-Heuristic: `rg-002`.
-
----
-
-## VLM6-A-04 (medium) — PUBLIC verdict folds only on LOCAL
-
-**Files:** `cli.py` (`_cmd_score` public path stamps LOCAL folded verdict); test `test_cmd_score_public_carries_local_folded_verdict`
-
-**Behaviour change:** After LOCAL schema/evidence/relabel folds, PUBLIC artifact receives the same `verdict` dict before write.
-
-**RED:**
-```
-AssertionError: assert 'pass' == 'fail'
-  - fail
-  + pass
-# LOCAL fail, PUBLIC still pass
-```
-
-**GREEN:**
-```
-test_cmd_score_public_carries_local_folded_verdict PASSED
-```
-Both audiences: `verdict=fail`.
-
----
-
-## VLM6-A-06 (medium) — `score-face --public` clobbered LOCAL
-
-**Files:** `cli.py` (`_cmd_score_face` audience-suffixed paths); test `test_cmd_score_face_public_uses_audience_suffix`
-
-**Behaviour change:** LOCAL → `{base}-face-report.json`; PUBLIC → `{base}-face-report.public.json` (same pattern as caption reports).
-
-**RED:**
-```
-AssertionError: public face report must use .public suffix
-assert False
-```
-
-**GREEN:**
-```
-test_cmd_score_face_public_uses_audience_suffix PASSED
-```
-PUBLIC lands on `.public.json`; LOCAL bytes unchanged.
-
----
-
-## VLM6-A-07 (low) — face gate re-derived instead of reading written artifact
-
-**Files:** `cli.py` (`_cmd_score_face` gates on `json.loads(json_path.read_text())`); test `test_cmd_score_face_gates_on_written_document`
-
-**Behaviour change:** After write, gate reads back the written document. No second `score_face_run_record` re-derive.
-
-**RED:**
-```
-Failed: DID NOT RAISE SystemExit
-# re-derived scored=3/3 while written counts.scored=0
-```
-
-**GREEN:**
-```
-test_cmd_score_face_gates_on_written_document PASSED
-```
-Exit: `score-face zero-scored gate: scored=0 items`.
-
-Heuristic: `TEST-15`.
-
----
-
-## VLM6-A-08 (low) — `_serialize_score_docs` swallowed renderer errors
-
-**Files:** `cli.py` (`_serialize_score_docs`); test `test_serialize_score_docs_propagates_renderer_errors`
-
-**Behaviour change:** Default re-raises `KeyError`/`TypeError`/`AttributeError`. Schema-degraded fail paths may set `tolerate_renderer_error=True` and emit loud `**RENDERER ERROR**` markdown (never the pre-fix soft stub).
-
-**RED:**
-```
-Failed: DID NOT RAISE KeyError
-# stub markdown absorbed the exception
-```
-
-**GREEN:**
-```
-test_serialize_score_docs_propagates_renderer_errors PASSED
-```
-
-Heuristic: `sr-006`.
-
----
-
-## Cross-lane requests
-
-None blocking. Related surfaces other lanes may care about:
-
-1. **Report builders / Golden-100 (other lanes):** `compare` now refuses adoption PASS on the 37-item harness and on vacuous placement/positional/fabricated-fact categories. When Golden-100 lands, those categories must become non-None with non-zero denominators or adoption will stay blocked by design.
-2. **Docs/README (not owned):** mention `--allow-manifest-relabel`, `--allow-overwrite-report`, and that freeze run-records score into `out/`.
-3. **`generate_determinism_anchor.py` (not owned):** uses `_serialize_score_docs`; default path still works for well-formed scored docs. If it scores freeze-tree paths, outputs now land in `OUT_DIR` unless `--allow-overwrite-report` is wired there separately.
-
----
-
-## Deferred
-
-| Item | Reason |
+| Test | Cause |
 |------|--------|
-| Golden-100 corpus population (`face_boxes`, `spatial_facts`, `reference_facts`) | Slice 1 work; not in this lane. Gate is honest *today* via vacuity/harness-37 blocks rather than pretending π>0. |
-| Making detection/identification P/R fail closed when identity is set-based only | Right-names-on-wrong-faces still can score clean on set-based P/R until positional labels exist; positional/`identity_ordering` vacuity already blocks adoption. |
-| New `ScoreVerdict` enum member in `report.py` | Not owned. Used string `non_comparable` in CLI fold + compare reject list; promoting to `report.ScoreVerdict` is a follow-up for the report-owning lane. |
+| `test_face_generator_regenerates_byte_identical_committed_anchor` | HARM-01 (detection fn/recall) + HARM-09 (`missed_stranger_gt` key) |
+| `test_face_expect_report_matches_committed_freeze_green` | same |
+| `test_cli_score_face_expect_report_end_to_end_green` | same |
+
+Diff artifact shows new `slices.unknown_rejection.missed_stranger_gt` and detection count shifts. **Do not regenerate from this lane** — fx5 owns freeze regen.
+
+No caption determinism-anchor failures observed from this lane.
 
 ---
 
-## Test evidence summary
+## 4. Full suite result
 
-| Phase | Command (literal paths) | Result |
-|-------|-------------------------|--------|
-| RED | 14 new finding tests vs unfixed `cli.py` | **14 failed** |
-| GREEN | 15 finding tests after fix | **15 passed** |
-| Regression | `test_eval_harness_cli.py -k "score and not determinism and not face_bakeoff and not buffalo"` | **47 passed** |
+```
+10 failed, 1268 passed, 4 skipped, 31 warnings in ~178s
+./.venv/bin/python -m pytest scene/tests/ -q -p no:randomly
+```
+
+### Expected-red (this lane — do not fix here)
+
+**fx5 — face freeze (HARM-01/09):**
+1. `scene/tests/test_eval_harness_face_determinism_anchor.py::test_face_generator_regenerates_byte_identical_committed_anchor`
+2. `...::test_face_expect_report_matches_committed_freeze_green`
+3. `...::test_cli_score_face_expect_report_end_to_end_green`
+
+**fx4 — CLI fixtures assume SCORE_PASS_MIN=2 (RV1-03):**
+4. `test_cmd_score_public_audience_emits_redacted_public_artifact`
+5. `test_cmd_score_default_local_emits_no_public_artifact`
+6. `test_cmd_score_exits_zero_when_no_wrong_names_and_no_failures`
+7. `test_cli_score_check_determinism_runs_cross_process_guard`
+8. `test_cli_score_determinism_certifies_written_rubric_gate`
+9. `test_cli_score_audience_public_check_determinism_covers_both_labels`
+10. `test_score_freeze_certification_exits_nonzero_on_anchor_mismatch` (likely sample-size / freeze interaction)
+
+Owned modules alone: **178 passed** (`test_eval_harness_report.py` + `test_eval_harness_face_metrics.py`).
+
+---
+
+## 5. `git diff --stat` vs `b28e126e`
+
+```
+ .../scene/tests/test_eval_harness_face_metrics.py  |  60 ++-
+ .../scene/tests/test_eval_harness_report.py        | 527 +++++++++++++--------
+ .../scripts/eval_harness/face_assignment.py        |  22 +-
+ .../scripts/eval_harness/face_metrics.py           |  67 +--
+ .../scripts/eval_harness/report.py                 | 288 +++++++----
+ 5 files changed, 620 insertions(+), 344 deletions(-)
+```
+
+---
+
+## 6. What could not be verified
+
+- End-to-end `_cmd_compare` CLI SystemExit path with forged files: verified via shared predicate + `_compare_vacuous_categories` (same call site compare uses). Did not shell out a full compare CLI process with temp JSON files.
+- Live corpus with real `wp-content/uploads/..._maryarce.jpg` paths: synthetic fixtures only (as required).
+- Whether fx4 caption freezes need regen solely from RV1-03 (suite showed no caption-anchor reds attributed to us; CLI fixture reds are sample-size).
+
+---
+
+## 7. Cross-lane requests
+
+### → fx4 (`cli.py` / CLI tests)
+- **RV1-03:** `SCORE_PASS_MIN_SCORED_IMAGES` is now **5**. Expand clean-score CLI fixtures to ≥5 scored images (or assert `not_ready` where intentional). Tests listed above currently expect exit 0 on 2-image corpora.
+- **RV1-02:** No cli.py change required — sample_size is in `score_vacuous_category_labels`. Optional: prettier message for `sample_size` in `_compare_vacuous_categories` (currently falls through to generic `None — category not observed` branch).
+
+### → fx5 (determinism anchors)
+- Regenerate **face** freeze after integrating HARM-01 + HARM-09 (`missed_stranger_gt` key + detection fn/recall). Tests named in §3.
+- Do **not** regenerate from pre-fix digests; re-score under new semantics.
+
+### → hx1
+- HARM-09 satisfied: `missed_stranger_gt` surfaced under `slices.unknown_rejection`.
+
+### Files not touched (as required)
+`cli.py`, `describe_baseline.py`, `fusion_runner.py`, determinism generators, `check_lane_report_shas.py`, `docs/tasks/vlm/bakeoff-results/**`, anchor test freezes.
+
+---
+
+## Heuristics cited
+
+TEST-15, AUDIT-07, EVAL-13, EVAL-16, EVAL-23, rg-005, rg-015, sr-001, sr-007.

@@ -37,7 +37,7 @@ Captions can name **people** (curated identity clusters → `ContextPack` → id
 
 1. **Rigid printed logos are the favorable case** for classical keypoint matching; non-rigid/stylized marks (products, vehicles) are **out of Tier A** (they are the GPU OWLv2 Tier B in the sibling scope).
 2. **Confirm-before-context** — a detected brand never enters a caption until a human confirms it (same human-in-the-loop stance as person naming). False positives on lookalike marks are mitigated by this, not by detector accuracy alone.
-3. **OpenCV 5 features module is a dependency-additive win, not a swap** — Tier A adds net-new capability (no incumbent); ORB works on the pinned OpenCV 4.x today, ALIKED/LightGlue require the OpenCV 5 spike to confirm ARM/A1 parity before adoption.
+3. **OpenCV 5 features module is a dependency-additive win, not a swap** — Tier A adds net-new capability (no incumbent); ORB worked on the then-pinned OpenCV 4.x (**superseded by CVUP-1** — service now pins OpenCV `5.0.0.93`); ALIKED/LightGlue still require the OpenCV 5 spike to confirm ARM/A1 parity before adoption.
 4. **`ContextPack.brands` sequences after `IdentityContext`** — the E20 context-pack contract (E20-9) must land first to avoid schema churn.
 5. **Greenfield schema** — no migrations; brand rows go directly into `001_identity_schema.py` (project has no production data).
 

@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace AltContext\Tests\Unit;
 
+use AltContext\Sovereign\Repositories\NormalizesMemberRows;
 use AltContext\Sovereign\Repositories\RosterEntryProjectionRepository;
 use AltContext\Tests\Stubs\NullSyncStateRepository;
 use AltContext\Tests\TestCase;
+
+require_once dirname(__DIR__, 2) . '/src/sovereign/repositories/trait-normalizes-member-rows.php';
 
 /**
  * @covers \AltContext\Sovereign\Repositories\RosterEntryProjectionRepository
@@ -73,6 +76,60 @@ class RosterEntryProjectionRepositoryTest extends TestCase
 		$this->assertSame('refreshing', $data[0]['projection_status']);
 		$this->assertSame('2026-05-07 17:00:00', $data[0]['projection_refreshed_at']);
 		$this->assertSame(34, $data[0]['source_version']);
+	}
+
+	/**
+	 * HARM-BR-03: last_sync_result resync_required (rekey / threshold) must surface
+	 * as projection_status 'stale', not 'current'. RosterPage gates workspace entry
+	 * and staleness notice on projectionStatus !== 'current'; reporting current while
+	 * the sync strip says "Re-sync required" hides an invalid projection.
+	 *
+	 * Exhaustive mapping (closed SyncStateRepository::SYNC_RESULT_* set): every
+	 * durable last_sync_result maps to its expected projection_status, including
+	 * inputs that must NOT map to 'stale'. assertNotSame('current') is entailed by
+	 * assertSame('stale') and does not catch resync_required → failed/refreshing.
+	 */
+	public function testListEntriesReportsStaleProjectionWhenResyncRequired(): void
+	{
+		$this->seedRosterRows();
+
+		// Closed-set mapping with lastUpdated set (so null-refresh is not the stale cause).
+		$expectedBySyncResult = [
+			'resync_required' => 'stale',
+			'ok' => 'current',
+			'failed' => 'failed',
+			'unreachable' => 'failed',
+		];
+
+		foreach ($expectedBySyncResult as $syncResult => $expectedProjection) {
+			$repository = new RosterEntryProjectionRepository(
+				new RosterEntryProjectionSyncStateSpy(
+					snapshotVersion: 42,
+					lastUpdated: '2026-05-07 16:00:00',
+					lastSyncResult: $syncResult
+				)
+			);
+
+			$data = $repository->list_entries(self::currentTenantId());
+
+			$this->assertSame(
+				$expectedProjection,
+				$data[0]['projection_status'],
+				"last_sync_result '{$syncResult}' must map to projection_status '{$expectedProjection}'"
+			);
+		}
+
+		// Fixture metadata for the resync_required arm (load-bearing stale contract).
+		$repository = new RosterEntryProjectionRepository(
+			new RosterEntryProjectionSyncStateSpy(
+				snapshotVersion: 42,
+				lastUpdated: '2026-05-07 16:00:00',
+				lastSyncResult: 'resync_required'
+			)
+		);
+		$data = $repository->list_entries(self::currentTenantId());
+		$this->assertSame('2026-05-07 16:00:00', $data[0]['projection_refreshed_at']);
+		$this->assertSame(42, $data[0]['source_version']);
 	}
 
 	public function testListEntriesIncludesProjectedClustersAndInstances(): void
@@ -451,6 +508,396 @@ class RosterEntryProjectionRepositoryTest extends TestCase
 
 		$this->assertSame(1, $asciiGroup['cluster_count']);
 		$this->assertSame('cluster-ascii', $asciiGroup['clusters'][0]['cluster_id']);
+	}
+
+	/**
+	 * Pixel-space bbox from the real encode_bbox_json envelope when media_url
+	 * comes from the attachment-URL path (scale-1 safe).
+	 */
+	public function testListEntriesEmitsPixelBboxFromProductionEnvelopeWhenAttachmentResolves(): void
+	{
+		global $wpdb;
+
+		$normalizer = new class() {
+			use NormalizesMemberRows;
+		};
+		$bbox_json = $normalizer->encode_bbox_json([
+			'bbox' => [
+				'pixels' => ['x' => 10, 'y' => 20, 'width' => 30, 'height' => 40],
+				'normalized' => ['x' => 0.1, 'y' => 0.2, 'width' => 0.3, 'height' => 0.4],
+			],
+		]);
+
+		$GLOBALS['__ac_attachment_urls'][101] = 'http://example.test/media/101.jpg';
+
+		$wpdb->tableRows['wp_acx_persons'] = [
+			[
+				'id' => 1,
+				'person_uuid' => '11111111-1111-1111-1111-111111111111',
+				'name' => 'Alice',
+				'tags' => '[]',
+				'updated_at' => '2026-05-07 14:00:00',
+			],
+		];
+		$wpdb->tableRows['wp_acx_clusters'] = [
+			[
+				'cluster_uuid' => 'cluster-1',
+				'person_id' => 1,
+				'identity_count' => 1,
+				'representative_id' => 'identity-1',
+				'updated_at' => '2026-05-07 14:30:00',
+			],
+		];
+		$wpdb->tableRows['wp_acx_identity_members'] = [
+			[
+				'identity_uuid' => 'identity-1',
+				'cluster_uuid' => 'cluster-1',
+				'attachment_id' => 101,
+				'bbox_json' => $bbox_json,
+				'thumb_path' => 'http://example.test/should-not-use-thumb.jpg',
+				'similarity' => '0.98',
+				'updated_at' => '2026-05-07 14:31:00',
+			],
+		];
+
+		$repository = new RosterEntryProjectionRepository(
+			new RosterEntryProjectionSyncStateSpy(
+				snapshotVersion: 1,
+				lastUpdated: '2026-05-07 18:00:00',
+				lastSyncResult: 'ok'
+			)
+		);
+
+		$data = $repository->list_entries(self::currentTenantId());
+		$instance = $data[0]['clusters'][0]['instances'][0];
+
+		$this->assertSame('http://example.test/media/101.jpg', $instance['media_url']);
+		$this->assertSame(
+			['x' => 10, 'y' => 20, 'width' => 30, 'height' => 40],
+			$instance['bbox'],
+			'Must unwrap pixels from encode_bbox_json envelope, not emit the raw envelope'
+		);
+		// Discrimination: raw envelope keys must not leak onto the wire.
+		$this->assertArrayNotHasKey('pixels', $instance['bbox']);
+		$this->assertArrayNotHasKey('normalized', $instance['bbox']);
+		$this->assertArrayNotHasKey('coordinate_space', $instance['bbox']);
+	}
+
+	public function testListEntriesEmitsNullBboxWhenBboxJsonAbsent(): void
+	{
+		global $wpdb;
+
+		$GLOBALS['__ac_attachment_urls'][101] = 'http://example.test/media/101.jpg';
+
+		$wpdb->tableRows['wp_acx_persons'] = [
+			[
+				'id' => 1,
+				'person_uuid' => '11111111-1111-1111-1111-111111111111',
+				'name' => 'Alice',
+				'tags' => '[]',
+				'updated_at' => '2026-05-07 14:00:00',
+			],
+		];
+		$wpdb->tableRows['wp_acx_clusters'] = [
+			[
+				'cluster_uuid' => 'cluster-1',
+				'person_id' => 1,
+				'identity_count' => 1,
+				'representative_id' => 'identity-1',
+				'updated_at' => '2026-05-07 14:30:00',
+			],
+		];
+		$wpdb->tableRows['wp_acx_identity_members'] = [
+			[
+				'identity_uuid' => 'identity-1',
+				'cluster_uuid' => 'cluster-1',
+				'attachment_id' => 101,
+				// no bbox_json key
+				'thumb_path' => 'http://example.test/thumb.jpg',
+				'similarity' => '0.98',
+				'updated_at' => '2026-05-07 14:31:00',
+			],
+		];
+
+		$repository = new RosterEntryProjectionRepository(
+			new RosterEntryProjectionSyncStateSpy(
+				snapshotVersion: 1,
+				lastUpdated: '2026-05-07 18:00:00',
+				lastSyncResult: 'ok'
+			)
+		);
+
+		$data = $repository->list_entries(self::currentTenantId());
+		$bbox = $data[0]['clusters'][0]['instances'][0]['bbox'];
+
+		$this->assertNull($bbox, 'Absent bbox_json must stay null, never a zero rect');
+	}
+
+	public function testListEntriesEmitsNullBboxWhenBboxJsonIsGarbage(): void
+	{
+		global $wpdb;
+
+		$GLOBALS['__ac_attachment_urls'][101] = 'http://example.test/media/101.jpg';
+
+		$wpdb->tableRows['wp_acx_persons'] = [
+			[
+				'id' => 1,
+				'person_uuid' => '11111111-1111-1111-1111-111111111111',
+				'name' => 'Alice',
+				'tags' => '[]',
+				'updated_at' => '2026-05-07 14:00:00',
+			],
+		];
+		$wpdb->tableRows['wp_acx_clusters'] = [
+			[
+				'cluster_uuid' => 'cluster-1',
+				'person_id' => 1,
+				'identity_count' => 1,
+				'representative_id' => 'identity-1',
+				'updated_at' => '2026-05-07 14:30:00',
+			],
+		];
+		$wpdb->tableRows['wp_acx_identity_members'] = [
+			[
+				'identity_uuid' => 'identity-1',
+				'cluster_uuid' => 'cluster-1',
+				'attachment_id' => 101,
+				'bbox_json' => 'not-valid-json{{{',
+				'thumb_path' => 'http://example.test/thumb.jpg',
+				'similarity' => '0.98',
+				'updated_at' => '2026-05-07 14:31:00',
+			],
+		];
+
+		$repository = new RosterEntryProjectionRepository(
+			new RosterEntryProjectionSyncStateSpy(
+				snapshotVersion: 1,
+				lastUpdated: '2026-05-07 18:00:00',
+				lastSyncResult: 'ok'
+			)
+		);
+
+		$data = $repository->list_entries(self::currentTenantId());
+		$bbox = $data[0]['clusters'][0]['instances'][0]['bbox'];
+
+		$this->assertNull($bbox, 'Undecodable bbox_json must stay null, never a zero rect');
+	}
+
+	public function testListEntriesAcceptsLegacyBarePixelPayloadWithoutPixelsWrapper(): void
+	{
+		global $wpdb;
+
+		$GLOBALS['__ac_attachment_urls'][101] = 'http://example.test/media/101.jpg';
+
+		$wpdb->tableRows['wp_acx_persons'] = [
+			[
+				'id' => 1,
+				'person_uuid' => '11111111-1111-1111-1111-111111111111',
+				'name' => 'Alice',
+				'tags' => '[]',
+				'updated_at' => '2026-05-07 14:00:00',
+			],
+		];
+		$wpdb->tableRows['wp_acx_clusters'] = [
+			[
+				'cluster_uuid' => 'cluster-1',
+				'person_id' => 1,
+				'identity_count' => 1,
+				'representative_id' => 'identity-1',
+				'updated_at' => '2026-05-07 14:30:00',
+			],
+		];
+		$wpdb->tableRows['wp_acx_identity_members'] = [
+			[
+				'identity_uuid' => 'identity-1',
+				'cluster_uuid' => 'cluster-1',
+				'attachment_id' => 101,
+				// Legacy bare rect — extract_bbox_pixels falls back to $decoded itself.
+				'bbox_json' => '{"x":5,"y":6,"width":7,"height":8}',
+				'thumb_path' => 'http://example.test/thumb.jpg',
+				'similarity' => '0.98',
+				'updated_at' => '2026-05-07 14:31:00',
+			],
+		];
+
+		$repository = new RosterEntryProjectionRepository(
+			new RosterEntryProjectionSyncStateSpy(
+				snapshotVersion: 1,
+				lastUpdated: '2026-05-07 18:00:00',
+				lastSyncResult: 'ok'
+			)
+		);
+
+		$data = $repository->list_entries(self::currentTenantId());
+		$bbox = $data[0]['clusters'][0]['instances'][0]['bbox'];
+
+		$this->assertSame(['x' => 5, 'y' => 6, 'width' => 7, 'height' => 8], $bbox);
+	}
+
+	/**
+	 * Feed one bbox_json envelope through the production projection path and
+	 * return the emitted instance bbox.
+	 *
+	 * @return array<string,int>|null
+	 */
+	private function projectedInstanceBboxFor(string $bbox_json): ?array
+	{
+		global $wpdb;
+
+		$GLOBALS['__ac_attachment_urls'][101] = 'http://example.test/media/101.jpg';
+
+		$wpdb->tableRows['wp_acx_persons'] = [
+			[
+				'id' => 1,
+				'person_uuid' => '11111111-1111-1111-1111-111111111111',
+				'name' => 'Alice',
+				'tags' => '[]',
+				'updated_at' => '2026-05-07 14:00:00',
+			],
+		];
+		$wpdb->tableRows['wp_acx_clusters'] = [
+			[
+				'cluster_uuid' => 'cluster-1',
+				'person_id' => 1,
+				'identity_count' => 1,
+				'representative_id' => 'identity-1',
+				'updated_at' => '2026-05-07 14:30:00',
+			],
+		];
+		$wpdb->tableRows['wp_acx_identity_members'] = [
+			[
+				'identity_uuid' => 'identity-1',
+				'cluster_uuid' => 'cluster-1',
+				'attachment_id' => 101,
+				'bbox_json' => $bbox_json,
+				'thumb_path' => 'http://example.test/thumb.jpg',
+				'similarity' => '0.98',
+				'updated_at' => '2026-05-07 14:31:00',
+			],
+		];
+
+		$repository = new RosterEntryProjectionRepository(
+			new RosterEntryProjectionSyncStateSpy(
+				snapshotVersion: 1,
+				lastUpdated: '2026-05-07 18:00:00',
+				lastSyncResult: 'ok'
+			)
+		);
+
+		$data = $repository->list_entries(self::currentTenantId());
+
+		return $data[0]['clusters'][0]['instances'][0]['bbox'];
+	}
+
+	/**
+	 * Normalized-only partial envelope (pixels absent) must not become {0,0,0,0}.
+	 * A zero-area rect is treated as a valid bbox by consumers and blank-squares.
+	 */
+	public function testListEntriesEmitsNullBboxForNormalizedOnlyEnvelopeWithoutPixels(): void
+	{
+		// Real partial envelope: normalized written, pixels key absent.
+		$bbox = $this->projectedInstanceBboxFor(
+			'{"normalized":{"x":0.1,"y":0.2,"width":0.3,"height":0.4},"coordinate_space":"original_image"}'
+		);
+
+		$this->assertNull(
+			$bbox,
+			'A pixels-less envelope must not become a 0x0 blank-square crop'
+		);
+	}
+
+	/**
+	 * Explicit zero-width pixels rect is not a face — must stay null.
+	 */
+	public function testListEntriesEmitsNullBboxForZeroWidthPixelsRect(): void
+	{
+		$bbox = $this->projectedInstanceBboxFor('{"pixels":{"x":5,"y":6,"width":0,"height":40}}');
+
+		$this->assertNull(
+			$bbox,
+			'Zero-width pixels rect must not become a valid blank-square crop bbox'
+		);
+	}
+
+	/**
+	 * Zero-height with non-zero width. Guards the other axis: a width-only
+	 * zero-area check would survive every other case in this suite.
+	 */
+	public function testListEntriesEmitsNullBboxForZeroHeightPixelsRect(): void
+	{
+		$bbox = $this->projectedInstanceBboxFor('{"pixels":{"x":5,"y":6,"width":40,"height":0}}');
+
+		$this->assertNull(
+			$bbox,
+			'Zero-height pixels rect must not become a valid blank-square crop bbox'
+		);
+	}
+
+	/**
+	 * Coordinate-space trap: thumb_path fallback is already a face crop (or not
+	 * original_image space). Emitting an original-image bbox would crop a crop.
+	 */
+	public function testListEntriesNullsBboxOnThumbPathFallbackWhenAttachmentDoesNotResolve(): void
+	{
+		global $wpdb;
+
+		// attachment_id present but does not resolve (no __ac_attachment_urls entry).
+		$normalizer = new class() {
+			use NormalizesMemberRows;
+		};
+		$bbox_json = $normalizer->encode_bbox_json([
+			'bbox' => [
+				'pixels' => ['x' => 10, 'y' => 20, 'width' => 30, 'height' => 40],
+			],
+		]);
+
+		$wpdb->tableRows['wp_acx_persons'] = [
+			[
+				'id' => 1,
+				'person_uuid' => '11111111-1111-1111-1111-111111111111',
+				'name' => 'Alice',
+				'tags' => '[]',
+				'updated_at' => '2026-05-07 14:00:00',
+			],
+		];
+		$wpdb->tableRows['wp_acx_clusters'] = [
+			[
+				'cluster_uuid' => 'cluster-1',
+				'person_id' => 1,
+				'identity_count' => 1,
+				'representative_id' => 'identity-1',
+				'updated_at' => '2026-05-07 14:30:00',
+			],
+		];
+		$wpdb->tableRows['wp_acx_identity_members'] = [
+			[
+				'identity_uuid' => 'identity-1',
+				'cluster_uuid' => 'cluster-1',
+				'attachment_id' => 6731,
+				'bbox_json' => $bbox_json,
+				'thumb_path' => 'file:///private/tmp/acx-recognition-blobs/tenant-x/job-y/6731.bin',
+				'similarity' => '0.98',
+				'updated_at' => '2026-05-07 14:31:00',
+			],
+		];
+
+		$repository = new RosterEntryProjectionRepository(
+			new RosterEntryProjectionSyncStateSpy(
+				snapshotVersion: 1,
+				lastUpdated: '2026-05-07 18:00:00',
+				lastSyncResult: 'ok'
+			)
+		);
+
+		$data = $repository->list_entries(self::currentTenantId());
+		$instance = $data[0]['clusters'][0]['instances'][0];
+		$parts = \parse_url($instance['media_url']);
+
+		$this->assertSame('/wp-json/acx/v1/recognition/blobs/job-y/6731', $parts['path']);
+		$this->assertNull(
+			$instance['bbox'],
+			'thumb_path media_url is not original_image space — bbox must be null'
+		);
 	}
 
 	private function seedRosterRows(): void

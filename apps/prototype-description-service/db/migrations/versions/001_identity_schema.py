@@ -43,6 +43,9 @@ TENANT_TABLES = [
     "image_description_run_items",
     "clustering_job_reports",
     "assignment_decisions",
+    "identity_atlas_runs",
+    "identity_atlas_points",
+    "identity_atlas_queue_dispositions",
 ]
 
 # Tables this migration creates via raw SQL only — no ORM model exists for
@@ -82,9 +85,15 @@ EXPECTED_SCHEMA_TABLES = [
     "image_description_run_items",
     "clustering_job_reports",
     "assignment_decisions",
+    "identity_atlas_runs",
+    "identity_atlas_points",
+    "identity_atlas_queue_dispositions",
 ]
 
 DOWNGRADE_TABLE_ORDER = [
+    "identity_atlas_queue_dispositions",
+    "identity_atlas_points",
+    "identity_atlas_runs",
     "assignment_decisions",
     "clustering_job_reports",
     "worker_capabilities",
@@ -187,6 +196,50 @@ def _ensure_columns(op, table_name: str, *columns) -> None:
         op.add_column(table_name, column)
 
 
+def _existing_constraint_names(op, table_name: str) -> set[str]:
+    """Named table-level constraints currently present on ``table_name``."""
+    return {
+        str(row[0])
+        for row in op.get_bind().execute(
+            sa.text(
+                "SELECT c.conname FROM pg_constraint c "
+                "JOIN pg_class t ON c.conrelid = t.oid "
+                "JOIN pg_namespace n ON t.relnamespace = n.oid "
+                "WHERE n.nspname = current_schema() AND t.relname = :t"
+            ),
+            {"t": table_name},
+        )
+    }
+
+
+def _ensure_table_constraints(op, table_name: str, *elements) -> None:
+    """Fail loudly when an existing table is missing declared table-level constraints.
+
+    ``_ensure_table`` cannot add UniqueConstraint / ForeignKeyConstraint /
+    CheckConstraint to an already-created table via create_table, and indexes
+    alone would leave a silent partial heal (new indexes land, composite FK
+    and unique targets do not). Greenfield: refuse the mismatch so operators
+    recreate or apply the constraints rather than running with a half-healed
+    schema (FL30-B-01).
+    """
+    declared: list[str] = []
+    for element in elements:
+        if isinstance(element, (sa.UniqueConstraint, sa.ForeignKeyConstraint, sa.CheckConstraint)):
+            name = getattr(element, "name", None)
+            if name:
+                declared.append(str(name))
+    if not declared:
+        return
+    existing = _existing_constraint_names(op, table_name)
+    missing = sorted(name for name in declared if name not in existing)
+    if missing:
+        raise RuntimeError(
+            f"{table_name} exists but is missing table-level constraints {missing}; "
+            "silent partial healing is forbidden — drop and recreate the table or "
+            "apply the constraints manually (operator action)"
+        )
+
+
 def _ensure_table(op, table_name: str, *columns, **kw) -> None:
     relkind = _relkind(op, table_name)
     if relkind is None:
@@ -202,6 +255,9 @@ def _ensure_table(op, table_name: str, *columns, **kw) -> None:
         # Table exists: reconcile additive column drift so an expand-first
         # column added after first creation still lands (MAINT-TPR-01 / PA-03).
         _ensure_columns(op, table_name, *columns)
+        # Table-level constraints are not additive via create_table; detect
+        # and refuse silent partial heals (FL30-B-01 / FIR-9 composite FK).
+        _ensure_table_constraints(op, table_name, *columns)
 
 
 def _ensure_index(op, index_name: str, table_name: str, columns, **kw) -> None:
@@ -1091,6 +1147,13 @@ def ensure_tables(op) -> None:
     )
     _ensure_index(
         op,
+        "idx_media_identities_embedding_model",
+        "media_identities",
+        ["embedding_model"],
+        postgresql_where=sa.text("embedding_model IS NOT NULL"),
+    )
+    _ensure_index(
+        op,
         "idx_media_identities_embedding",
         "media_identities",
         ["embedding"],
@@ -1570,6 +1633,128 @@ def ensure_tables(op) -> None:
     _ensure_index(op, "idx_assignment_decisions_decision", "assignment_decisions", ["decision"])
     _ensure_index(op, "idx_assignment_decisions_timestamp", "assignment_decisions", ["timestamp"])
 
+    # FIR-9: workbench curation atlas (batch projection of identity embeddings)
+    _ensure_table(
+        op,
+        "identity_atlas_runs",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("embedding_model", sa.Text(), nullable=False),
+        sa.Column("status", sa.Text(), nullable=False),
+        sa.Column("params", sa.dialects.postgresql.JSONB(), nullable=False),
+        sa.Column("point_count", sa.Integer(), nullable=False),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.CheckConstraint(
+            "status IN ('building', 'complete', 'failed')",
+            name="valid_atlas_run_status",
+        ),
+    )
+    _ensure_index(op, "idx_identity_atlas_runs_tenant", "identity_atlas_runs", ["tenant_id"])
+
+    _ensure_table(
+        op,
+        "identity_atlas_points",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "run_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("identity_atlas_runs.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "identity_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("media_identities.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("media_id", sa.Integer(), nullable=False),
+        sa.Column("cluster_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column("x", sa.Float(), nullable=False),
+        sa.Column("y", sa.Float(), nullable=False),
+        sa.Column("queue_rank", sa.Integer(), nullable=False),
+        sa.Column("uncertainty", sa.dialects.postgresql.JSONB(), nullable=False),
+        sa.UniqueConstraint("run_id", "identity_id", name="uq_identity_atlas_points_run_identity"),
+        # Target for composite FK from dispositions: forces disposition.run_id
+        # to match the referenced point's run_id (FIR-9 cross-run attach).
+        sa.UniqueConstraint("id", "run_id", name="uq_identity_atlas_points_id_run"),
+    )
+    _ensure_index(
+        op,
+        "idx_identity_atlas_points_run_queue_rank",
+        "identity_atlas_points",
+        ["run_id", "queue_rank"],
+    )
+    _ensure_index(op, "idx_identity_atlas_points_tenant", "identity_atlas_points", ["tenant_id"])
+    # Purge disposed scope filters points on (tenant_id, identity_id).
+    _ensure_index(
+        op,
+        "idx_identity_atlas_points_tenant_identity",
+        "identity_atlas_points",
+        ["tenant_id", "identity_id"],
+    )
+
+    _ensure_table(
+        op,
+        "identity_atlas_queue_dispositions",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "run_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("identity_atlas_runs.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "point_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            nullable=False,
+        ),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("action", sa.Text(), nullable=False),
+        sa.Column("actor", sa.Text(), nullable=False),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.UniqueConstraint("run_id", "point_id", name="uq_identity_atlas_dispositions_run_point"),
+        # Composite FK: disposition.run_id must equal the point's run_id.
+        sa.ForeignKeyConstraint(
+            ["point_id", "run_id"],
+            ["identity_atlas_points.id", "identity_atlas_points.run_id"],
+            ondelete="CASCADE",
+            name="fk_identity_atlas_dispositions_point_run",
+        ),
+        sa.CheckConstraint(
+            "action IN ('reviewed', 'skipped')",
+            name="valid_atlas_disposition_action",
+        ),
+    )
+    _ensure_index(
+        op,
+        "idx_identity_atlas_queue_dispositions_tenant",
+        "identity_atlas_queue_dispositions",
+        ["tenant_id"],
+    )
+    # Point-delete CASCADE looks up dispositions by point_id.
+    _ensure_index(
+        op,
+        "idx_identity_atlas_queue_dispositions_point",
+        "identity_atlas_queue_dispositions",
+        ["point_id"],
+    )
+
 
 def ensure_rls(op) -> None:
     """Enable+force RLS and (re)create the tenant-isolation policy per TENANT_TABLES."""
@@ -1882,6 +2067,7 @@ def downgrade() -> None:
     op.drop_index("idx_identity_clusters_tenant_type", table_name="identity_clusters")
     op.drop_index("idx_identity_clusters_tenant", table_name="identity_clusters")
     op.drop_index("idx_media_identities_embedding", table_name="media_identities")
+    op.drop_index("idx_media_identities_embedding_model", table_name="media_identities")
     op.drop_index("idx_media_identities_tenant_type", table_name="media_identities")
     op.drop_index("idx_media_identities_tenant", table_name="media_identities")
     op.drop_index("idx_media_identities_tenant_media", table_name="media_identities")

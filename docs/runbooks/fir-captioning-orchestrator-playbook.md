@@ -35,7 +35,7 @@ session; each is falsifiable in under five minutes.
 | VLM-6 Slice 1 is still open (Golden-100 not frozen) | `review_findings(list)` + plan checklist on `feature/vlm-6` | §3 changes become expensive; re-cost before proposing |
 | Curation tenant `4ddf8f36…` still live at `localhost:10018` | LocalWP admin | Slice 1 coordination items in the VLM-6 plan are blocked |
 | `acx-gpu-burst` still STOPPED | `oci-instance-state-and-cost.md` runbook | Billing is accruing — stop before anything else |
-| Occlusion baselines unchanged: detection recall 0.504, masked `a_s` 0.321, sunglasses 0.226, 54/84 masked re-detect misses on Golden-150 | FIR-7 plan baseline table | Re-derive the margin; §2 ordering assumes these |
+| **Occlusion baselines: all four numbers are retired.** `0.504` is QA v8 **M-05, withdrawn** — it measures agreement with buffalo's own proposals, not recall against truth, so re-running it does not repair it. `0.321` / `0.226` / `54-of-84` are **M-12, INADMISSIBLE** for any external claim and are pre-CVUP-1 (OpenCV 4.x), so they are not comparison arms either | QA report §Metrics register (M-05, M-12); FIR-7 plan Prerequisite + re-gate block | **Do not read a margin off these.** FIR-7 re-establishes detector-side and embedder-side baselines from scratch on the post-CVUP-1 5.x stack. <span>~~§2 ordering assumes these~~</span> — that assumption is **struck**; the ordering it referred to was withdrawn in QA v8 |
 
 ## 2. FIR occlusion track — ordered
 

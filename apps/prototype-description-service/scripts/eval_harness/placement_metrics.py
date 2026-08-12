@@ -5,6 +5,9 @@ curated face/object boxes. Deterministic + precision-first (LLM-judge is out of
 MVP). Placement accuracy is reported ALONGSIDE the fabricated-fact rate, never
 folded into it (a wrong placement is a distinct error class).
 
+Spatial relations are image/viewer-left (increasing centre-x is rightward), never
+the subject's anatomical left.
+
 Observables (MEAS-11 / VLM6-R4-03)
 ---------------------------------
 Define these before reading any number the metric emits:

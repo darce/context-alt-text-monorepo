@@ -201,9 +201,21 @@ WRONG_NAME_RATE_FLOOR = 0.0
 # S2-02 quality floors — named policy constants (sr-007), not magic numbers.
 # RV1-04 / EVAL-04: threshold *bands*, not IEEE corners. Pre-fix floors of
 # 0.0 / 1.0 let position_accuracy=0.0001 and fabricated_fact_rate=0.9999 pass.
-# Derivation (adoption-shaped score policy):
-# - position / placement: fail when accuracy ≤ 0.5 — at-or-below chance on a
-#   binary L→R / spatial claim is measured-and-bad, not a working model.
+#
+# Named frame for 0.5 (VLM6-R2-G-06 / RV1-04): binary chance on a two-way claim.
+# Position (L→R) and placement (spatial claim correct/incorrect) are binary once
+# a claim is scored. accuracy ≤ 0.5 means at-or-below coin-flip — measured-and-bad
+# for adoption, not a working model. Comparison is `<=` so the floor itself fails
+# (chance is not a pass). This is *not* a 5% false-pass sizing and is *not* the
+# worked example of "< 0.05" that motivated IEEE-corner rejection — that example
+# only showed why a floor of 0.0 was vacuous; the chosen magnitude is chance.
+#
+# Joint blast radius with the CLI quality-floor hard exit (fx4 / RV1-01): when
+# compared_images>0 or placement.claims>0 and accuracy ≤ 0.5, score stamps
+# verdict=fail *and* the CLI exits non-zero. Floors are dormant when the slice
+# is unmeasured (compared=0 / claims=0 / accuracy=None) — current S2A bake-off
+# anchors in docs/tasks/vlm/bakeoff-results/ report position_accuracy=None and
+# placement.claims=0, so the 0.5 floor does not fire on those artifacts.
 # - fabricated_fact: fail when rate ≥ 0.5 — majority of traps firing is
 #   measured-and-bad (ceiling was 1.0 = exact all-traps-fired only).
 # Floor breach is FAIL (measured and bad), never not_ready (not measured).
@@ -213,12 +225,18 @@ FABRICATED_FACT_RATE_CEILING = 0.5  # fail when fabricated_fact_rate >= ceiling
 
 # S2-05 sample-size floor: undersized corpora cannot certify adoption-shaped pass.
 # not_ready (insufficient sample), not fail. Named constant (sr-007).
-# RV1-03 derivation: n=5 is the first integer where P(all-correct | p=0.5
-# independent Bernoulli) < 0.05 (0.5^5 = 0.03125). n=2 yields 0.25 — a lucky
-# pair still "passes" too often to gate adoption. Not a Wilson sizing (that is
-# Golden-100 / compare harness); this is the minimum score-verdict floor so
-# sparse corpora cannot certify pass. Enforced inside score_vacuous_category_labels
-# so score and compare cannot diverge (RV1-02).
+#
+# Honesty (VLM6-R2-A-03 / RV1-03): n=5 is an *operational* minimum so sparse
+# corpora cannot certify adoption-shaped pass — not a 5% false-pass bound under
+# a realistic per-image clean probability. Arithmetic that must not be confused:
+# - Null coin-flip all-correct: P(5 clean | p=0.5) = 0.5^5 = 0.03125. That is
+#   "five fair coins all heads", not "this gate's false-pass rate".
+# - Realistic high-quality null: P(5 clean | p_ok=0.95) = 0.95^5 ≈ 0.774 — far
+#   above 0.05. For 0.95^n < 0.05 you need n ≈ 59 (Wilson / Golden-100 territory).
+# Keep n=5 as the score-verdict floor (sr-001: do not lower it); sizing for a
+# 5% false-pass under p_ok≈0.95 is a different harness (compare / Golden-100).
+# Enforced inside score_vacuous_category_labels so score and compare cannot
+# diverge (RV1-02).
 SCORE_PASS_MIN_SCORED_IMAGES = 5
 
 
@@ -229,8 +247,11 @@ class ReportError(Exception):
 
 # PUBLIC provenance is fail-closed: only these keys may leave the render boundary
 # (VLM6-R3-01 / VLM6-R4-07). Deny-lists leak on schema growth; an allow-list drops
-# unknown keys (tenant_id, images_dir, weave_bench_source, base_url, …) by default.
+# unknown keys (tenant_id, images_dir, weave_bench_source, base_url, cache_dir,
+# operator_note, run_record_path, …) by default.
 # Nested ``model`` is path-redacted separately so absolute GGUF paths collapse.
+# Caption *and* face PUBLIC paths share this set (VLM6-R2-A-02 / rg-015) — do not
+# fork a face-only allow-list; add face-safe protocol keys here with a comment.
 _PUBLIC_PROVENANCE_ALLOW_FIELDS: frozenset[str] = frozenset(
     {
         "head_sha",
@@ -245,6 +266,14 @@ _PUBLIC_PROVENANCE_ALLOW_FIELDS: frozenset[str] = frozenset(
         "two_pass",
         "dual_length",
         "face_gate",
+        # Face-bakeoff protocol aggregates (no operator paths / free-text).
+        "zero_box_corpus",
+        "total_gt_boxes",
+        "canon_version",
+        "protocol_id",
+        "k_folds",
+        "tau_fit_status",
+        "sampling_frames",
     }
 )
 
@@ -2073,6 +2102,12 @@ def _fmt_prov(value: object, *, default: str = "unknown") -> str:
 
     JSON null must read as ``null``, not the Python identifier ``None``.
     Booleans render as JSON ``true``/``false``, not Python ``True``/``False``.
+
+    Empty-string → default is intentionally live: producers may still emit ""
+    for free-text provenance (base_url, manifest_sha256, started_at, face model
+    fields) even if head_sha has been tightened to None. Do not delete this
+    branch without a producer-invariant test that fails when any producer
+    reintroduces "" (VLM6-R2-A-04).
     """
     if value is None:
         return "null"
@@ -3492,6 +3527,88 @@ def score_face_run_record(
     return _sort_nested_lists(report)
 
 
+def _face_private_identity_names_for_public_scrub(report: Mapping[str, Any]) -> list[str]:
+    """Private roster names from a face report for free-text scrub (VLM6-R2-A-02).
+
+    Face PUBLIC redaction has no separate manifest at the call site — names are
+    recovered from decision rows / wrong_names before those surfaces are stripped.
+    Publishable named decisions keep their true/predicted names on purpose; only
+    non-publishable rows contribute scrub targets.
+    """
+    names: set[str] = set()
+    for d in report.get("decisions") or []:
+        if not isinstance(d, Mapping):
+            continue
+        if d.get("publishable") is True and d.get("true_name") is not None:
+            continue
+        for key in ("true_name", "predicted_name", "name_star"):
+            val = d.get(key)
+            if isinstance(val, str) and val.strip():
+                names.add(val)
+    slices = report.get("slices") if isinstance(report.get("slices"), Mapping) else {}
+    for block_key in ("headline_identification", "full_corpus_identification"):
+        block = slices.get(block_key) if isinstance(slices, Mapping) else None
+        if not isinstance(block, Mapping):
+            continue
+        for pair in list(block.get("wrong_names") or []) + list(block.get("ignored_wrong_names") or []):
+            if not isinstance(pair, list | tuple):
+                continue
+            for cell in pair:
+                if isinstance(cell, str) and cell.strip() and "/" not in cell:
+                    lower = cell.lower()
+                    if not any(lower.endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".webp", ".gif")):
+                        names.add(cell)
+    # Operator free-text (operator_note, path basenames) may embed identity
+    # strings not present on decision rows — harvest path basenames from
+    # non-publishable decisions/failures as extra scrub targets.
+    for d in report.get("decisions") or []:
+        if not isinstance(d, Mapping) or d.get("publishable") is True:
+            continue
+        path = d.get("path")
+        if isinstance(path, str) and path:
+            base = path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+            stem = base.rsplit(".", 1)[0] if "." in base else base
+            if stem and not stem.startswith("media_id:"):
+                names.add(stem)
+    return sorted((n for n in names if n), key=len, reverse=True)
+
+
+def _scrub_face_public_free_text(obj: Any, names: Sequence[str]) -> Any:
+    """Apply shared ``_scrub_identity_names`` to free-text leaves (VLM6-R2-A-02).
+
+    Intentional identity fields on *kept* publishable decision rows
+    (true_name / predicted_name / name_star) are preserved. Every other string
+    leaf is scrubbed; a hit collapses to ``<redacted>`` (same shape as
+    ``_public_free_text_value`` for non-path free text).
+    """
+    # Name-bearing keys on decision rows that PUBLIC deliberately retains for
+    # publishable celebs — do not blank them after the decision filter.
+    _keep_name_keys = frozenset({"true_name", "predicted_name", "name_star"})
+
+    def _walk(node: Any, *, parent_is_decision: bool = False) -> Any:
+        if isinstance(node, dict):
+            is_decision = parent_is_decision or (
+                "publishable" in node and "true_name" in node and "media_id" in node
+            )
+            out: dict[str, Any] = {}
+            for key, value in node.items():
+                if is_decision and key in _keep_name_keys and isinstance(value, str):
+                    out[key] = value
+                elif isinstance(value, str):
+                    scrubbed = _scrub_identity_names(value, names)
+                    out[key] = value if scrubbed == value else "<redacted>"
+                else:
+                    out[key] = _walk(value, parent_is_decision=is_decision and key != "decisions")
+            return out
+        if isinstance(node, list):
+            return [_walk(v, parent_is_decision=parent_is_decision) for v in node]
+        return node
+
+    if not names:
+        return obj
+    return _walk(obj)
+
+
 def redact_face_report_for_public(report: dict[str, Any]) -> dict[str, Any]:
     """POST-SCORE public redaction (PROV-01) — provenance-grounded, fail-CLOSED.
 
@@ -3507,8 +3624,25 @@ def redact_face_report_for_public(report: dict[str, Any]) -> dict[str, Any]:
     publishability signal (clustering labels, wrong_names, failures) are stripped
     wholesale. Distinct from the pre-score ``_filter_for_public_audience`` /
     ``Audience.PUBLIC`` path.
+
+    Shared PUBLIC boundary (VLM6-R2-A-02 / rg-015): after face-specific detail
+    stripping, provenance goes through the same ``_public_provenance`` allow-list
+    as the caption path, paths through ``_redact_public_paths``, and free text
+    through ``_scrub_identity_names``. Do not fork a second allow-list here.
     """
     redacted = copy.deepcopy(report)
+
+    # Collect private names + path→media map from the *pre-strip* report so
+    # free-text scrub and media_id:N tokens still work after detail drop.
+    scrub_names = _face_private_identity_names_for_public_scrub(report)
+    path_to_media: dict[str, int] = {}
+    for row in list(report.get("decisions") or []) + list(report.get("failures") or []):
+        if not isinstance(row, Mapping):
+            continue
+        p = row.get("path")
+        mid = row.get("media_id")
+        if isinstance(p, str) and p and mid is not None:
+            path_to_media.setdefault(p, int(mid))
 
     # (1) Per-decision detail: keep ONLY publishable AND named (celebs01) rows.
     #     Fail-closed — a missing or False publishable flag drops the row. A
@@ -3599,6 +3733,13 @@ def redact_face_report_for_public(report: dict[str, Any]) -> dict[str, Any]:
         if occ_pres:
             preserved["occlusion"] = occ_pres
 
+    # (5) Shared PUBLIC boundary — same helpers as caption (rg-015). Allow-list
+    #     drops base_url / cache_dir / operator_note / run_record_path / …;
+    #     path redaction collapses absolute paths; identity scrub hits free text.
+    redacted["provenance"] = _public_provenance(redacted.get("provenance") or {})
+    redacted = _redact_public_paths(redacted, names=scrub_names, path_to_media=path_to_media)
+    redacted = _scrub_face_public_free_text(redacted, scrub_names)
+
     redacted["redaction"] = {
         "audience": "public",
         "mode": "post_score_redact_face_report_for_public",
@@ -3609,9 +3750,11 @@ def redact_face_report_for_public(report: dict[str, Any]) -> dict[str, Any]:
             "Aggregate rates (incl. unknown-rejection) preserved from full-corpus "
             "score with denominators retained under preserved_aggregate_denominators; "
             "every non-publishable per-face detail row + identity list "
-            "(clustering labels, wrong_names, failures) stripped. Fail-closed on "
-            "missing provenance. Distinct from pre-score _filter_for_public_audience "
-            "/ Audience.PUBLIC."
+            "(clustering labels, wrong_names, failures) stripped; provenance allow-list "
+            "+ path redaction + identity scrub shared with caption PUBLIC "
+            "(_public_provenance / _redact_public_paths / _scrub_identity_names). "
+            "Fail-closed on missing provenance. Distinct from pre-score "
+            "_filter_for_public_audience / Audience.PUBLIC."
         ),
     }
     # Do NOT drop unknown_rejection aggregates — they must stay.
@@ -3706,8 +3849,9 @@ def _markdown_face(scored: dict[str, Any]) -> str:
     lines.append(
         f"- id-recall: {_fmt(couple.get('identification_recall'))} "
         f"alongside detection-recall: {_fmt(couple.get('detection_recall'))} "
-        f"(coupling_flag={couple.get('detection_recall_coupling_flag')}, "
-        f"missed_gt={couple.get('missed_gt')}, unmatched_det={couple.get('unmatched_detections')}) "
+        f"(coupling_flag={_fmt_prov(couple.get('detection_recall_coupling_flag'))}, "
+        f"missed_gt={_fmt_prov(couple.get('missed_gt'))}, "
+        f"unmatched_det={_fmt_prov(couple.get('unmatched_detections'))}) "
         f"— {couple.get('flag', '')}"
     )
     lines.append(f"- p95 scan latency: {gp.get('p95_scan_latency')}")

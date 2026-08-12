@@ -106,6 +106,50 @@ uv run python -m scripts.eval_harness.cli run \
   are still reported under `ignored_wrong_names`. Never pruned.
 - Curated baselines are promoted by hand to `docs/tasks/vlm/`.
 
+## Corpus coverage boundary — what a green gate does *not* prove
+
+Every gate below scores only what the corpus authored. Where the corpus is
+silent the metric is not "passing"; it is **undefined and reported as a pass**.
+Read this section before quoting any number from a green run as evidence
+(VLM6-R2-03 / VLM6-GATE-04 / VLM6-S2A-F6-02).
+
+**Caption corpus** (`scene/tests/seed/golden.json`) — inventory as shipped:
+
+| Field | Populated | What its absence disables |
+| --- | --- | --- |
+| entries | **37** | the plan named a stratified Golden-100; this is 37 |
+| `difficulty` | 37/37 (easy 16 / medium 10 / hard 11) | — |
+| `domain` | 37/37 | thin tails: `low_light` n=1, `mirrors` n=2, `art` n=2, `occlusion` n=3 — per-stratum floors (VLM6-R4-05) are noise at those n |
+| `present_identities` | 34/37 | identity scoring on the other 3 |
+| `must_right` | 34/37 | the caption hard gate |
+| `easy_wrong` | 37/37 | — |
+| `tags` | 7/37 | tag-scoped slicing |
+| `face_boxes` | **0/37** | `labeled_order_known` is false everywhere, so `positional_identification` **never runs** |
+| `spatial_facts` | **0/37** | placement accuracy is **vacuous** (0 asserted claims) |
+| `reference_facts` | **0/37** | the fabricated-fact denominator |
+
+The two consequences worth stating outright:
+
+- **`wrong_names=0` does not mean names were placed correctly.** Identity
+  scoring is set-based (`sorted(set(predicted))` vs `sorted(set(present))`), so
+  naming exactly the right people onto exactly the wrong faces scores a clean
+  zero. The positional check that would catch it is gated on `face_boxes`,
+  which no entry has. Populating `face_boxes` is Slice 2 (VLM6-GATE-04).
+- **Placement accuracy is vacuous.** With no `spatial_facts`, `score_placement`
+  has nothing to assert against, and the committed caption report says so in
+  plain text (`⚠️ placement is VACUOUS`). Even with facts authored, matching is
+  near-verbatim: a paraphrase is dropped from the denominator rather than scored
+  wrong, so the denominator is published beside the number (VLM6-R4-03). A
+  validated-judge scorer is EVAL-11.
+
+**Face freeze** (`docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-run-20260811.json`)
+is a *byte-stability* anchor, not a recognition-quality result: 8 items of
+synthetic `dim=8` unit vectors, no real image or embedding ever computed
+(PROV-01). It proves the scoring path is deterministic and that corruption goes
+red. It proves nothing about recognition accuracy on photographs. Its own
+`provenance.coverage_gaps` names the regimes it does not reach
+(`failures`, `occlusion.occlusion_other`, `occlusion.sunglasses`).
+
 ## Score gates, verdict, and `--check-determinism`
 
 Operator reference for `score` exit semantics (VLM-6 S2A). Read a red line by

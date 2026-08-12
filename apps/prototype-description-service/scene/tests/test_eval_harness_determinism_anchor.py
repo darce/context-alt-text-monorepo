@@ -22,6 +22,7 @@ from scripts.eval_harness.cli import (
     _manifest_sha,
 )
 from scripts.eval_harness.generate_determinism_anchor import (
+    _coverage_gaps,
     _DEFAULT_STEM,
     write_anchor,
 )
@@ -48,9 +49,14 @@ _REPORT_MD = _ANCHOR_DIR / f"{_STEM}-report.md"
 # Regenerated again for VLM6-R4-03: the markdown now discloses that placement is
 # vacuous (claims=0). Run-record and report JSON digests are unchanged — only the
 # .md moved, which is the evidence that disclosure changed and scoring did not.
+# Regenerated again for VLM6-R2-03: provenance gained `note` + `coverage_gaps`
+# (derived from the manifest, not hand-stamped) so an operator reading the anchor
+# alone learns which scorers the corpus leaves nothing to assert against. Here the
+# .md digest is the one that did NOT move — the disclosure is in the two JSON
+# documents' provenance, and the scored markdown is byte-identical.
 _FROZEN_DIGESTS = {
-    _RUN.name: "4c80fdbf08d1599268d54e684505cdf6cfd33a91d2010151ea572f914e23573a",
-    _REPORT_JSON.name: "1c627ec2dd28c843082a871c1ac75b8999f2cae25eb1e4606e1b658893168f64",
+    _RUN.name: "978aefef41bca050b278a74c527f9e656367942fab67909e95fee47ff0a5957e",
+    _REPORT_JSON.name: "29f72112187b06d5ab21bba1660c6215c7f8bc1fa660b6dffe801c9a8522fc23",
     _REPORT_MD.name: "97d6132b6842175ec624776347af0596248fc702fc05564e6bbb04a5e3856dcb",
 }
 
@@ -202,3 +208,38 @@ def test_corrupt_run_record_alt_text_makes_determinism_gate_red(tmp_path: Path) 
     # Committed freeze and original run-record untouched.
     assert _sha256(_REPORT_JSON) == _FROZEN_DIGESTS[_REPORT_JSON.name]
     assert _sha256(_RUN) == _FROZEN_DIGESTS[_RUN.name]
+
+
+def test_committed_anchor_discloses_corpus_coverage_gaps():  # VLM6-R2-03
+    """The anchor must name what the corpus leaves unscored, in the anchor itself.
+
+    An operator handed only this file gets `verdict=pass_ungated` and 37/37 scored.
+    Without this block nothing in it says placement asserted zero claims or that
+    positional identification never ran, so the pass reads as far more coverage
+    than it has.
+    """
+    gaps = json.loads(_RUN.read_text())["provenance"]["coverage_gaps"]
+    assert set(gaps) == {"face_boxes", "spatial_facts", "reference_facts"}
+    assert all(g.startswith("0/37 entries") for g in gaps.values())
+    assert "right-names-on-wrong-faces" in gaps["face_boxes"]
+
+
+def test_coverage_gaps_drop_a_field_once_the_corpus_populates_it():  # VLM6-R2-03 / TEST-15
+    """Discrimination control: the disclosure is derived, not a hardcoded dict.
+
+    Slice 2 populates `face_boxes`. If that made no difference here, the anchor
+    would keep publishing a gap that no longer exists — the stale-lie failure mode
+    the derived form (rg-015) exists to prevent. RED against a literal dict.
+    """
+    manifest = load_manifest(str(_GOLDEN), skip_hash_verification=True)
+    assert "face_boxes" in _coverage_gaps(manifest.entries)
+
+    entries = list(manifest.entries)
+    entries[0] = entries[0].model_copy(
+        update={"face_boxes": [{"x": 0.0, "y": 0.0, "width": 0.1, "height": 0.1}]}
+    )
+    gaps = _coverage_gaps(entries)
+    assert "face_boxes" not in gaps
+    # The untouched fields must still be reported — a control that also fails if
+    # _coverage_gaps degenerates to returning {}.
+    assert {"spatial_facts", "reference_facts"} <= set(gaps)

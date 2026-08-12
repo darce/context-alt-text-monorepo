@@ -37,18 +37,18 @@ write_files:
     permissions: "0644"
     content: |
       # ------------------------------------------------------------------
-      # TODO(operator): VERIFY THE TWO MODEL URLS BEFORE LAUNCH.
-      # The repo (Qwen/Qwen3-VL-4B-Instruct-GGUF) and file names come from
-      # docs/tasks/vlm/VLM-2B-a1-serving-notes.md (latency table + bench.sh
-      # reproduce section) — the VLM-2B pinned artifacts — but the exact
-      # download URLs are not committed anywhere in this monorepo. Confirm
-      # both filenames on the Hugging Face repo page and fix any drift here
-      # (or pass a corrected file via launch user-data) before relying on a
-      # boot. A wrong URL fails the provision step loudly (curl -f), it does
-      # not fall back.
+      # Qwen3-VL-4B-Instruct GGUF + mmproj (VLM-2B A1 serving notes / HF repo
+      # Qwen/Qwen3-VL-4B-Instruct-GGUF). Filenames and LFS SHA-256 oids verified
+      # against the Hugging Face tree API (2026-08-12): both paths resolve
+      # (HTTP 302) and sha256sum -c fails closed on a wrong-but-200 body.
+      # Workload 2 (llama-server weave-bench cell) is scaffolding for the
+      # PARKED S3–S6 bake-off — not required for the S0–S2 regression gate.
       # ------------------------------------------------------------------
       ACX_GGUF_URL=https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF/resolve/main/Qwen3VL-4B-Instruct-Q4_K_M.gguf
       ACX_MMPROJ_URL=https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf
+      # HF LFS content SHA-256 (oid) for each artifact — pin, do not invent.
+      ACX_GGUF_SHA256=66358cb18bb6b3b1b6675aa412c7a88ef01d228f481184d13668e5201c730a0a
+      ACX_MMPROJ_SHA256=30ba2c7dd3127a4561b6cba9d13d0f711c91bdb38742e2f56d73c8cb596bd06d
       # llama.cpp pinned to the release the VLM-2B A1 bench ran (serving notes
       # metadata: "llama.cpp release b9893").
       ACX_LLAMA_CPP_REF=b9893
@@ -98,12 +98,18 @@ write_files:
       fi
 
       # --- Qwen3-VL-4B Q4_K_M weights + vision mmproj (~4 GB total; -C - resumes
-      # a partial pull on re-run). See the loud URL TODO in acx-cpu.env.
+      # a partial pull on re-run). SHA-256 pins in acx-cpu.env fail closed on a
+      # wrong-but-HTTP-200 body (rg-006: documented boot must not silent-pass).
       mkdir -p /opt/acx-cpu/models
       curl -fL --retry 5 --retry-delay 10 -C - \
         -o /opt/acx-cpu/models/qwen3-vl-4b-instruct-q4.gguf "${ACX_GGUF_URL}"
       curl -fL --retry 5 --retry-delay 10 -C - \
         -o /opt/acx-cpu/models/qwen3-vl-4b-instruct-mmproj.gguf "${ACX_MMPROJ_URL}"
+      echo "${ACX_GGUF_SHA256}  /opt/acx-cpu/models/qwen3-vl-4b-instruct-q4.gguf" | sha256sum -c -
+      echo "${ACX_MMPROJ_SHA256}  /opt/acx-cpu/models/qwen3-vl-4b-instruct-mmproj.gguf" | sha256sum -c -
+      # Sentinel for the idle-reaper timer: no poweroff backstop until provision
+      # has succeeded (cmake/curl/pip windows must not look "idle").
+      touch /opt/acx-cpu/.provisioned
       echo "acx-cpu provision complete"
 
   - path: /etc/systemd/system/acx-cpu-vlm.service
@@ -152,11 +158,19 @@ write_files:
       # pairs with a terminate; oci-vlm-batch-compute-learnings.md). The GPU
       # image's reaper decides on describe-load JSON + OCI STOP (300 s idle, needs
       # instance OCID + auth); this box is generic/no-credentials, so the backstop
-      # is simpler: sampled every 5 min by acx-cpu-idle-reaper.timer, it powers
-      # off after 6 consecutive idle samples (~30 min) with no llama-server /
-      # python batch CPU activity. In-OS poweroff moves the instance to STOPPED
-      # (E4.Flex compute billing stops); the operator still owes the terminate.
+      # is simpler: sampled every 5 min by acx-cpu-idle-reaper.timer (gated on
+      # /opt/acx-cpu/.provisioned so it cannot fire mid-provision), it powers
+      # off after 6 consecutive idle samples (~30 min) with no matched batch
+      # CPU activity. Activity covers llama-server + python batch PLUS provision
+      # and corpus-transfer processes (cmake/cc1plus/make/curl/rsync/sshd) so a
+      # long build, weight pull, or rsync is not misread as idle. In-OS poweroff
+      # moves the instance to STOPPED (E4.Flex compute billing stops); the
+      # operator still owes the terminate.
       set -euo pipefail
+      if [[ ! -e /opt/acx-cpu/.provisioned ]]; then
+        logger -t acx-cpu-idle-reaper "skip: provision sentinel missing"
+        exit 0
+      fi
       STATE_DIR=/run/acx-cpu
       mkdir -p "${STATE_DIR}"
       IDLE_LIMIT=6
@@ -164,7 +178,7 @@ write_files:
       # (30 s over 5 min = 10% of one core; real batch work saturates cores).
       MIN_DELTA=30
 
-      total=$(ps -eo comm=,cputimes= | awk '$1 ~ /llama-server|python3?/ {s+=$2} END {print s+0}')
+      total=$(ps -eo comm=,cputimes= | awk '$1 ~ /llama-server|python3?|cmake|cc1plus|make|curl|rsync|sshd/ {s+=$2} END {print s+0}')
       prev=$(cat "${STATE_DIR}/cpu_total" 2>/dev/null || echo 0)
       idle=$(cat "${STATE_DIR}/idle_count" 2>/dev/null || echo 0)
       echo "${total}" > "${STATE_DIR}/cpu_total"
@@ -186,6 +200,9 @@ write_files:
     content: |
       [Unit]
       Description=ACX CPU batch idle reaper (backstop poweroff, no credentials)
+      # Hard gate: unit is skipped until provision script writes the sentinel
+      # (after venv + llama.cpp build + weight download + sha256 verify).
+      ConditionPathExists=/opt/acx-cpu/.provisioned
 
       [Service]
       Type=oneshot
@@ -196,10 +213,11 @@ write_files:
     content: |
       [Unit]
       Description=Sample ACX CPU batch activity every 5 minutes
+      # Do not arm the reaper until first-boot provision has finished successfully.
+      ConditionPathExists=/opt/acx-cpu/.provisioned
 
       [Timer]
-      # First sample only after provisioning (venv + build + ~4 GB weights) has
-      # had time to start producing CPU activity of its own.
+      # First sample after boot once the provision sentinel exists; then every 5 min.
       OnBootSec=15min
       OnUnitActiveSec=5min
       Persistent=true

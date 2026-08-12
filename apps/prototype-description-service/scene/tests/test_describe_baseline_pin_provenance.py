@@ -194,8 +194,8 @@ def test_rv2_04_validate_live_head_sha_refuses_fabrications(bad: str) -> None:
 
 
 def test_rv2_04_validate_live_head_sha_accepts_real_hex() -> None:
-    assert validate_live_head_sha(_REAL_SHA) == _REAL_SHA
-    assert validate_live_head_sha(_REAL_SHA.upper()) == _REAL_SHA
+    assert validate_live_head_sha(_worktree_head_sha()) == _worktree_head_sha()
+    assert validate_live_head_sha(_worktree_head_sha().upper()) == _worktree_head_sha()
 
 
 def test_rv2_05_empty_live_head_sha_refused() -> None:
@@ -218,7 +218,7 @@ def test_rv2_05_pin_mode_gated_on_flag_not_none_sentinel(tmp_path: Path) -> None
         stem="pin-flag",
         pin_live_provenance=True,
         # Deliberately pass a value: pin flag must win (API ignores live under pin).
-        live_head_sha=_REAL_SHA,
+        live_head_sha=_worktree_head_sha(),
         live_started_at="2026-03-15T12:00:00Z",
     )
     for path in (run_path, report_json):
@@ -274,7 +274,7 @@ def test_rv2_05_cli_live_head_requires_no_pin(tmp_path: Path) -> None:
                 "--stem",
                 "cli-pin-conflict",
                 "--live-head-sha",
-                _REAL_SHA,
+                _worktree_head_sha(),
             ]
         )
 def test_rv2_06_cli_head_sha_returns_none_on_git_failure(

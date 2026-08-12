@@ -1226,3 +1226,106 @@ def test_cdx05_reserved_journal_name_refused(tmp_path: Path) -> None:
     (src / jname).write_text("{}")
     with pytest.raises(PromoteError, match="reserved promote name"):
         atomic_promote(src, dest, [jname], CAPTION_PROMOTE)
+
+
+def _stamped_run_record(generator_module: str, marker: str) -> str:
+    """Minimal acx-eval-shaped run-record body with provenance.generator stamp."""
+    return json.dumps(
+        {
+            "schema": "acx-eval/v1",
+            "kind": "run_record",
+            "provenance": {
+                "generator": generator_module,
+                "marker": marker,
+            },
+            "items": [],
+        },
+        sort_keys=True,
+    ) + "\n"
+
+
+def test_wf3_foreign_namespace_stamped_dest_refused(tmp_path: Path) -> None:
+    """wF3 / wE3 residual: stamped foreign dest basename must refuse, not LWW.
+
+    Caption and face both emit ``{stem}.json``. After caption installs a
+    provenance-stamped run-record, face promote of the same basename must raise
+    PromoteError and leave caption bytes intact (fail-closed; TEST-15).
+    """
+    dest = tmp_path / "dest"
+    src_face = tmp_path / "src-face"
+    dest.mkdir()
+    src_face.mkdir()
+    name = "shared-stem.json"
+    caption_body = _stamped_run_record(
+        "scripts.eval_harness.generate_determinism_anchor", "CAPTION"
+    )
+    face_body = _stamped_run_record(
+        "scripts.eval_harness.generate_face_determinism_anchor", "FACE"
+    )
+    (dest / name).write_text(caption_body)
+    (src_face / name).write_text(face_body)
+
+    with pytest.raises(PromoteError, match="foreign generator namespace"):
+        atomic_promote(src_face, dest, [name], FACE_PROMOTE)
+
+    assert (dest / name).read_text() == caption_body
+
+
+def test_wf3_same_namespace_regen_allowed(tmp_path: Path) -> None:
+    """Same-namespace regeneration of a stamped basename must still succeed."""
+    dest = tmp_path / "dest"
+    src = tmp_path / "src"
+    dest.mkdir()
+    src.mkdir()
+    name = "shared-stem.json"
+    old = _stamped_run_record(
+        "scripts.eval_harness.generate_determinism_anchor", "OLD"
+    )
+    new = _stamped_run_record(
+        "scripts.eval_harness.generate_determinism_anchor", "NEW"
+    )
+    (dest / name).write_text(old)
+    (src / name).write_text(new)
+    atomic_promote(src, dest, [name], CAPTION_PROMOTE)
+    assert (dest / name).read_text() == new
+
+
+def test_wf3_unstamped_dest_still_last_writer_wins(tmp_path: Path) -> None:
+    """Unstamped plain files remain LWW so CDX-04 concurrent hybrid guard holds."""
+    dest = tmp_path / "dest"
+    src = tmp_path / "src"
+    dest.mkdir()
+    src.mkdir()
+    name = "plain.json"
+    (dest / name).write_text("CAPTION_PLAIN")
+    (src / name).write_text("FACE_PLAIN")
+    atomic_promote(src, dest, [name], FACE_PROMOTE)
+    assert (dest / name).read_text() == "FACE_PLAIN"
+
+
+def test_wf3_caption_face_generators_same_stem_refuse(tmp_path: Path) -> None:
+    """End-to-end: both generators + identical stem → second promote refuses.
+
+    Drives real write_anchor / write_face_anchor into one out_dir (TEST-15).
+    """
+    out = tmp_path / "out"
+    out.mkdir()
+    stem = "shared-stem-collision"
+    man = Path("scene/tests/seed/golden.json")
+
+    cap.write_anchor(manifest_path=man, out_dir=out, stem=stem)
+    caption_run = (out / f"{stem}.json").read_text()
+    cap_gen = json.loads(caption_run)["provenance"]["generator"]
+    assert "generate_determinism_anchor" in cap_gen
+    assert "generate_face_determinism_anchor" not in cap_gen
+
+    with pytest.raises(PromoteError, match="foreign generator namespace"):
+        face.write_face_anchor(
+            out_dir=out, stem=stem, manifest_stem=f"{stem}-manifest"
+        )
+
+    # Caption run-record bytes preserved; no silent face clobber.
+    assert (out / f"{stem}.json").read_text() == caption_run
+    assert not (out / f"{stem}-face-report.json").is_file()
+
+

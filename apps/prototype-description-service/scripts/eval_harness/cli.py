@@ -445,7 +445,14 @@ def fetch_run_record(
             job_id = client.analyze([(entry.media_id, image_path.name, image_bytes)])
             client.wait_job(job_id)
             identities_payload = client.media_identities([entry.media_id])
-            identities, face_count, ordering_source = _extract_identities(identities_payload, entry.media_id)
+            # VLM6-B-03: pass capture size so wire extract uses centre-x order
+            # (same canonical rule as face_metrics / report positional path).
+            identities, face_count, ordering_source = _extract_identities(
+                identities_payload,
+                entry.media_id,
+                image_width=item.get("image_width"),
+                image_height=item.get("image_height"),
+            )
             item["identities"] = identities
             item["face_count"] = face_count
             item["identity_ordering"] = ordering_source
@@ -524,7 +531,13 @@ def _identity_row_from_wire(row: dict[str, Any], *, name: str, bbox: dict[str, i
     return stored
 
 
-def _extract_identities(payload: Any, media_id: int) -> tuple[list[dict[str, Any]], int, str]:
+def _extract_identities(
+    payload: Any,
+    media_id: int,
+    *,
+    image_width: float | None = None,
+    image_height: float | None = None,
+) -> tuple[list[dict[str, Any]], int, str]:
     """Normalize /media/identities rows for one media_id -> (identities, face_count, ordering).
 
     Wire shape (MediaIdentityService.list_by_media_ids): each row carries
@@ -532,22 +545,31 @@ def _extract_identities(payload: Any, media_id: int) -> tuple[list[dict[str, Any
     is no ``user_confirmed`` key on this route — filter confirmed labels via
     ``is_auto_label is not True`` (S8-01 / rg-005).
 
-    Confirmed names are bound to faces by left-to-right bbox position (ascending x,
-    then y, then name). Each entry carries its bbox and the wire ``identity_id``
-    when present (A-09). Rows with missing/malformed bbox are kept, marked
-    unpositioned, and sorted after positioned rows — never dropped and never given
-    a fabricated bbox (rg-015). When any confirmed row is unpositioned the
-    ordering_source is ``IdentityOrdering.DEGRADED`` so callers/report can
-    surface the fall-back rather than silently reinstating alphabetical order
-    (A-07 / VLM6-RH-06).
+    Confirmed names are bound to faces by **normalized centre-x** L→R order
+    (VLM6-B-03 / VLM6-RH-03) — the same ``sort_identity_rows_by_normalized_centre``
+    rule used by face_pass and report positional scoring. Corner-x and centre-x
+    disagree when face widths differ; this path must not fork a third sort key.
+    Each entry carries its bbox and the wire ``identity_id`` when present (A-09).
+    Rows with missing/malformed bbox are kept, marked unpositioned, and sorted
+    after positioned rows — never dropped and never given a fabricated bbox
+    (rg-015). When any confirmed row is unpositioned the ordering_source is
+    ``IdentityOrdering.DEGRADED`` so callers/report can surface the fall-back
+    rather than silently reinstating alphabetical order (A-07 / VLM6-RH-06).
+
+    ``image_width`` / ``image_height`` come from the capture stamp (A-08). When
+    either is missing, unit dims are used so absolute centre-x order within the
+    image is preserved (order-equivalent to normalized centre for one frame).
     """
+    # Late import: face_metrics is the single ordering owner (VLM6-B-03); keep
+    # cli free of a circular import at module load.
+    from scripts.eval_harness.face_metrics import sort_identity_rows_by_normalized_centre
+
     if not isinstance(payload, list):
         raise RemoteClientError(
             f"media_identities returned {type(payload).__name__}, expected a list of "
             "identity rows (rg-015) — per-item isolation records this as an item error"
         )
-    positioned: list[tuple[int | float, int | float, str, dict[str, Any]]] = []
-    unpositioned: list[tuple[str, dict[str, Any]]] = []
+    confirmed: list[dict[str, Any]] = []
     face_count = 0
     for row in payload:
         if not isinstance(row, dict) or int(row.get("media_id", -1)) != media_id:
@@ -560,17 +582,16 @@ def _extract_identities(payload: Any, media_id: int) -> tuple[list[dict[str, Any
             continue
         name = str(label)
         bbox = _parse_identity_bbox(row.get("bbox"))
-        stored = _identity_row_from_wire(row, name=name, bbox=bbox)
-        if bbox is None:
-            unpositioned.append((name, stored))
-        else:
-            positioned.append((bbox["x"], bbox["y"], name, stored))
-    positioned.sort(key=lambda t: (t[0], t[1], t[2]))
-    # Unpositioned rows keep a stable secondary order (name) but the overall
-    # ordering_source is degraded so report surfaces the loss of pure L→R.
-    unpositioned.sort(key=lambda t: t[0])
-    identities = [t[-1] for t in positioned] + [t[1] for t in unpositioned]
-    ordering_source = IdentityOrdering.DEGRADED.value if unpositioned else IdentityOrdering.POSITIONAL.value
+        confirmed.append(_identity_row_from_wire(row, name=name, bbox=bbox))
+    order_w = float(image_width) if image_width is not None else 1.0
+    order_h = float(image_height) if image_height is not None else 1.0
+    identities = sort_identity_rows_by_normalized_centre(
+        confirmed, image_width=order_w, image_height=order_h
+    )
+    has_unpositioned = any(bool(r.get("unpositioned")) for r in identities)
+    ordering_source = (
+        IdentityOrdering.DEGRADED.value if has_unpositioned else IdentityOrdering.POSITIONAL.value
+    )
     return identities, face_count, ordering_source
 
 
@@ -1571,6 +1592,18 @@ def _cmd_score(args: argparse.Namespace) -> None:
             f"score wrong-name floor gate: wrong_name_rate={display_rate} exceeds "
             f"floor={floor} (ignored_wrong_names={ignored_n}; see {json_path})"
         )
+    # VLM6-OBS-04: process exit must match the persisted artifact. A corpus with
+    # vacuous critical categories writes verdict=not_ready; green-exiting over
+    # that artifact re-opens the same class of defect one layer out (EVAL-23).
+    # Adoption-eligible exits remain pass / pass_ungated only.
+    verdict_value = (scored.get("verdict") or {}).get("verdict")
+    if verdict_value == ScoreVerdict.NOT_READY.value:
+        reasons = list((scored.get("verdict") or {}).get("reasons") or [])
+        reason_hint = "; ".join(reasons[:3]) if reasons else "category claim units π=0"
+        _score_gate_fail(
+            f"score category-vacuity gate: verdict={ScoreVerdict.NOT_READY.value} "
+            f"({reason_hint}; not adoption-eligible; see {json_path})"
+        )
 
 
 def _cmd_run(args: argparse.Namespace) -> None:
@@ -2087,8 +2120,17 @@ def _compare_vacuous_categories(doc: Mapping[str, Any], *, role: str) -> list[st
     if not isinstance(ordering, Mapping) or int(ordering.get("positional_images") or 0) == 0:
         vacuous.append(f"{role}:identity_ordering (positional_images=0; order metric non-observable)")
     hall = doc.get("hallucination") if isinstance(doc.get("hallucination"), Mapping) else {}
-    if int(hall.get("images_with_traps") or 0) == 0 or hall.get("fabricated_fact_rate_trapped") is None:
-        vacuous.append(f"{role}:fabricated_fact (no trap denominator; images_with_traps=0)")
+    # fx4 may emit fabricated_fact_rate=None when traps are absent; treat None
+    # as not measurable on either rate field (never a clean zero-hallucination).
+    if (
+        int(hall.get("images_with_traps") or 0) == 0
+        or hall.get("fabricated_fact_rate_trapped") is None
+        or hall.get("fabricated_fact_rate") is None
+    ):
+        vacuous.append(
+            f"{role}:fabricated_fact (no trap denominator or rate=None; "
+            f"images_with_traps={int(hall.get('images_with_traps') or 0)})"
+        )
     # Detection / identification P/R must be present numbers (None = not scored).
     for path, label in (
         (("faces", "detection", "precision"), "face_detection.precision"),

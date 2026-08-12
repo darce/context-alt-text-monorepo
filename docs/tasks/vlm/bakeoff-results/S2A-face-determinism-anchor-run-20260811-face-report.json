@@ -223,7 +223,7 @@
       "unknown_rejection": "stranger_probes_matched_plus_missed_gt: correct_reject=decision=reject; false_accept=decision=accept; missed_stranger_gt counted as failure in denominator (EVAL-16 / AUDIT-07); caller must pass missed_stranger_gt scoped to the same frame as decisions"
     },
     "score_manifest_sha256": "19861fede2ec99bc0a7ed8777bca25829bce0fdd65e948e8c0080407e84c18e4",
-    "started_at": "2026-08-11T00:00:00Z",
+    "started_at": null,
     "tau_fit_status": "fitted",
     "total_gt_boxes": 7,
     "zero_box_corpus": false

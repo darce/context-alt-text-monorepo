@@ -623,3 +623,63 @@ def test_ignore_next_block_alone_allows_fence_with_foreign_sha(report_dir: Path)
     rel = str(path.relative_to(REPO_ROOT))
     proc = _run_guard(rel)
     assert proc.returncode == 0, f"expected pass; stdout={proc.stdout!r} stderr={proc.stderr!r}"
+
+
+def test_ignore_next_block_requires_immediate_adjacency(report_dir: Path) -> None:
+    """VLM6-R2-G-05 / TEST-15: directive separated from fence by prose does NOT suppress.
+
+    Docstring says 'immediately before'; blank lines are allowed, intervening
+    non-blank content resets pending suppression (not 'anywhere earlier in file').
+    """
+    # Directive on line 3, seven lines of unrelated prose, fence on line 11.
+    path = _write(
+        report_dir / "ignore_block_nonadjacent.md",
+        "\n".join(
+            [
+                "line1",
+                "line2",
+                "<!-- sha-guard:ignore-next-block -->",
+                "prose a",
+                "prose b",
+                "prose c",
+                "prose d",
+                "prose e",
+                "prose f",
+                "prose g",
+                "```",
+                "synthetic head_sha='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+                "```",
+                "",
+            ]
+        ),
+    )
+    rel = str(path.relative_to(REPO_ROOT))
+    proc = _run_guard(rel)
+    assert proc.returncode != 0, (
+        f"non-adjacent ignore-next-block must NOT suppress fence; "
+        f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    )
+    assert "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" in proc.stderr
+
+
+def test_ignore_next_block_blank_lines_still_adjacent(report_dir: Path) -> None:
+    """VLM6-R2-G-05: blank lines between directive and fence remain adjacent."""
+    path = _write(
+        report_dir / "ignore_block_blanks.md",
+        "\n".join(
+            [
+                "<!-- sha-guard:ignore-next-block -->",
+                "",
+                "",
+                "```",
+                "synthetic head_sha='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+                "```",
+                "",
+            ]
+        ),
+    )
+    rel = str(path.relative_to(REPO_ROOT))
+    proc = _run_guard(rel)
+    assert proc.returncode == 0, (
+        f"blank lines must keep adjacency; stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    )

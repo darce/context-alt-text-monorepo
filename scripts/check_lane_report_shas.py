@@ -39,8 +39,10 @@ HTML comments are **not** a skip channel (S5-01). Unresolvable hex inside
 ``<!-- ... -->`` fails the same way as visible prose. Foreign SHAs that
 genuinely must be shown belong in **visible** prose with ``sha-guard:ignore``
 scoped to the nearest token (S5-07), or — for fenced verbatim output — an
-adjacent ``sha-guard:ignore-next-block`` directive **outside** the fence
-(HARM-08). An unclosed ``<!--`` is a hard violation (S5-02).
+``sha-guard:ignore-next-block`` directive on the line **immediately before**
+the fence opener (blank lines allowed; intervening non-blank content resets
+pending suppression — VLM6-R2-G-05 / HARM-08). An unclosed ``<!--`` is a hard
+violation (S5-02).
 
 Usage:
     scripts/check_lane_report_shas.py [path ...]   # default: **/.s2a/**/*.md
@@ -271,8 +273,10 @@ def scan_file(repo: Path, path: Path) -> tuple[list[str], int]:
     Raises OSError on unreadable paths — callers treat that as a hard failure.
     HTML comments are scanned (S5-01); an unclosed comment is itself a violation
     (S5-02). Lines are NFKC-normalised and Cf-stripped before token extraction
-    (RV4-03). Fenced blocks preceded by ``sha-guard:ignore-next-block`` are
-    skipped as a whole (HARM-08).
+    (RV4-03). Fenced blocks are skipped as a whole only when
+    ``sha-guard:ignore-next-block`` appears on the line immediately before the
+    fence opener (blank lines allowed; VLM6-R2-G-05 / HARM-08). Homoglyph
+    lookalikes are examined on every line (VLM6-R2-G-03).
     """
     violations: list[str] = []
     tokens_checked = 0
@@ -297,11 +301,14 @@ def scan_file(repo: Path, path: Path) -> tuple[list[str], int]:
             in_block_comment = _comment_state_after_line(raw_line, in_block_comment)
             continue
 
-        if not in_fence and _IGNORE_NEXT_BLOCK_RE.search(raw_line):
-            ignore_next_fence = True
-            # The directive line may also carry other content; still scan it below
-            # after stripping the directive so a citation on the same line is seen.
-            # (Directive-only lines typically have no hex tokens.)
+        if not in_fence:
+            if _IGNORE_NEXT_BLOCK_RE.search(raw_line):
+                # Pending suppression applies only to the next fence; adjacency
+                # is "immediately before" with blank lines allowed (VLM6-R2-G-05).
+                ignore_next_fence = True
+            elif ignore_next_fence and raw_line.strip():
+                # Intervening non-blank content severs adjacency.
+                ignore_next_fence = False
 
         if ignore_this_fence:
             # Verbatim capture block marked foreign — do not resolve interior tokens.
@@ -312,7 +319,6 @@ def scan_file(repo: Path, path: Path) -> tuple[list[str], int]:
         in_block_comment = _comment_state_after_line(line, in_block_comment)
 
         ignored = _ignored_token_spans(line)
-        ascii_tokens_on_line = 0
         for match in _HEX.finditer(line):
             token = match.group(1)
             start, end = match.start(1), match.end(1)
@@ -322,7 +328,6 @@ def scan_file(repo: Path, path: Path) -> tuple[list[str], int]:
                 continue
             if _is_content_digest(line, start, end):
                 continue
-            ascii_tokens_on_line += 1
             tokens_checked += 1
             if _resolves(repo, token):
                 continue

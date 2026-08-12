@@ -89,7 +89,7 @@ MAX_LIVE_EXTRAS_TOLERANCE = 0
 # Editing both baseline copies in one commit must also edit this constant —
 # a Python source diff a reviewer cannot miss (FIR-7-RV-05). Updated by
 # --record-baseline to match the newly recorded set size.
-ABSOLUTE_NODEID_FLOOR = 885  # synced by --record-baseline; growth requires re-record
+ABSOLUTE_NODEID_FLOOR = 915  # synced by --record-baseline; growth requires re-record
 # Second, independent copy of the recorded node-id set for the embedded-baseline
 # cross-check: an agent that edits the on-disk fixture alone is caught
 # because this embedded set must still be a subset of the fixture.
@@ -108,6 +108,34 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestApacheSelfGeneratedPasses::test_spdx_case_insensitive_allow',
     'test_license_policy.py::TestApacheSelfGeneratedPasses::test_spdx_case_insensitive_denylist',
     'test_license_policy.py::TestApacheSelfGeneratedPasses::test_unknown_spdx_default_deny',
+    'test_license_policy.py::TestB201PackageIdentityNonStringFailClosed::test_non_string_package_invalid_row_every_door[model_ingest-dict]',
+    'test_license_policy.py::TestB201PackageIdentityNonStringFailClosed::test_non_string_package_invalid_row_every_door[model_ingest-list]',
+    'test_license_policy.py::TestB201PackageIdentityNonStringFailClosed::test_non_string_package_invalid_row_every_door[occluder_asset-dict]',
+    'test_license_policy.py::TestB201PackageIdentityNonStringFailClosed::test_non_string_package_invalid_row_every_door[occluder_asset-list]',
+    'test_license_policy.py::TestB201PackageIdentityNonStringFailClosed::test_non_string_package_invalid_row_every_door[synthetic_source-dict]',
+    'test_license_policy.py::TestB201PackageIdentityNonStringFailClosed::test_non_string_package_invalid_row_every_door[synthetic_source-list]',
+    'test_license_policy.py::TestB201PackageIdentityNonStringFailClosed::test_non_string_package_invalid_row_every_door[tooling-dict]',
+    'test_license_policy.py::TestB201PackageIdentityNonStringFailClosed::test_non_string_package_invalid_row_every_door[tooling-list]',
+    'test_license_policy.py::TestB201PackageIdentityNonStringFailClosed::test_non_string_package_invalid_row_every_door[training_data-dict]',
+    'test_license_policy.py::TestB201PackageIdentityNonStringFailClosed::test_non_string_package_invalid_row_every_door[training_data-list]',
+    'test_license_policy.py::TestB202PackageIdentityKeyAliasNormalisation::test_alias_key_with_denylisted_value_fails[Model-Id]',
+    'test_license_policy.py::TestB202PackageIdentityKeyAliasNormalisation::test_alias_key_with_denylisted_value_fails[PACKAGE]',
+    'test_license_policy.py::TestB202PackageIdentityKeyAliasNormalisation::test_alias_key_with_denylisted_value_fails[Package]',
+    'test_license_policy.py::TestB202PackageIdentityKeyAliasNormalisation::test_alias_key_with_denylisted_value_fails[package_Name]',
+    'test_license_policy.py::TestB202PackageIdentityKeyAliasNormalisation::test_disagreeing_package_alias_is_invalid_row',
+    'test_license_policy.py::TestB203UltralyticsAgplFamilyDenylistVocabulary::test_family_token_fails_package_floor[ultralytics-yolo]',
+    'test_license_policy.py::TestB203UltralyticsAgplFamilyDenylistVocabulary::test_family_token_fails_package_floor[yolo-v8]',
+    'test_license_policy.py::TestB203UltralyticsAgplFamilyDenylistVocabulary::test_family_token_fails_package_floor[yolo11]',
+    'test_license_policy.py::TestB203UltralyticsAgplFamilyDenylistVocabulary::test_family_token_fails_package_floor[yolo_v8]',
+    'test_license_policy.py::TestB203UltralyticsAgplFamilyDenylistVocabulary::test_family_token_fails_package_floor[yolov10]',
+    'test_license_policy.py::TestB203UltralyticsAgplFamilyDenylistVocabulary::test_family_token_fails_package_floor[yolov3]',
+    'test_license_policy.py::TestB203UltralyticsAgplFamilyDenylistVocabulary::test_family_token_fails_package_floor[yolov5]',
+    'test_license_policy.py::TestB203UltralyticsAgplFamilyDenylistVocabulary::test_family_token_fails_package_floor[yolov6]',
+    'test_license_policy.py::TestB203UltralyticsAgplFamilyDenylistVocabulary::test_family_token_fails_package_floor[yolov7]',
+    'test_license_policy.py::TestB203UltralyticsAgplFamilyDenylistVocabulary::test_family_token_fails_package_floor[yolov9]',
+    'test_license_policy.py::TestB206SpdxExpressionEmptyComponentFailClosed::test_empty_component_expressions_fail_closed[() OR MIT]',
+    'test_license_policy.py::TestB206SpdxExpressionEmptyComponentFailClosed::test_empty_component_expressions_fail_closed[MIT AND]',
+    'test_license_policy.py::TestB206SpdxExpressionEmptyComponentFailClosed::test_empty_component_expressions_fail_closed[MIT OR ()]',
     'test_license_policy.py::TestBr38NcIngestDerivationAndHelpers::test_br38_nc_tagged_ingest_entry_joins_nc_model_ids',
     'test_license_policy.py::TestBr38NcIngestDerivationAndHelpers::test_br38_require_string_field_used_for_missing_derived',
     'test_license_policy.py::TestBr46EntryPointTypeContract::test_br46_type_contract_table[derived-None]',
@@ -600,8 +628,10 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestGate19Br68FloorTypeCheckPinned::test_well_typed_clean_row_is_not_invalid_row[synthetic_source]',
     'test_license_policy.py::TestGate19Br68FloorTypeCheckPinned::test_well_typed_clean_row_is_not_invalid_row[tooling]',
     'test_license_policy.py::TestGate19Br68FloorTypeCheckPinned::test_well_typed_clean_row_is_not_invalid_row[training_data]',
+    'test_license_policy.py::TestGate20FloorPrecedenceAdjacentPairs::test_clearance_outranks_package_denylist',
     'test_license_policy.py::TestGate20FloorPrecedenceAdjacentPairs::test_clearance_outranks_registration',
     'test_license_policy.py::TestGate20FloorPrecedenceAdjacentPairs::test_derived_taint_outranks_source_taint',
+    'test_license_policy.py::TestGate20FloorPrecedenceAdjacentPairs::test_package_denylist_outranks_registration',
     'test_license_policy.py::TestGate20FloorPrecedenceAdjacentPairs::test_registration_outranks_licence',
     'test_license_policy.py::TestGate20FloorPrecedenceAdjacentPairs::test_source_taint_outranks_clearance',
     'test_license_policy.py::TestGate27FiveDoorCategoryInvariant::test_gate32_every_door_has_at_least_one_pass_witness[model_ingest]',
@@ -869,8 +899,8 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestRv10PackageDenylistFloorAcrossIdentityFields::test_witness_fails_every_door[w3-synthetic_source]',
     'test_license_policy.py::TestRv10PackageDenylistFloorAcrossIdentityFields::test_witness_fails_every_door[w3-tooling]',
     'test_license_policy.py::TestRv10PackageDenylistFloorAcrossIdentityFields::test_witness_fails_every_door[w3-training_data]',
-    'test_license_policy.py::TestRv11SyntheticSourceAxisTaintReasonFidelity::test_synthetic_door_reports_source_axis_taint[buffalo_l-nc_model_derived]',
     'test_license_policy.py::TestRv11SyntheticSourceAxisTaintReasonFidelity::test_synthetic_door_reports_source_axis_taint[ffhq-research_only_source]',
+    'test_license_policy.py::TestRv11SyntheticSourceAxisTaintReasonFidelity::test_synthetic_door_reports_source_axis_taint[retinaface-nc_model_derived]',
     'test_license_policy.py::TestRv12CompoundSpdxAllowlistTokenisation::test_all_allowlisted_compounds_pass[(MIT)]',
     'test_license_policy.py::TestRv12CompoundSpdxAllowlistTokenisation::test_all_allowlisted_compounds_pass[Apache-2.0+]',
     'test_license_policy.py::TestRv12CompoundSpdxAllowlistTokenisation::test_all_allowlisted_compounds_pass[MIT AND Apache-2.0]',
@@ -1037,6 +1067,11 @@ class Verdict(str, Enum):
 # (FIR-7-RV-04). CONTROL is the discrimination probe (must SURVIVE);
 # M6 is verdict-equivalent on audit_provenance_row — canonical derivation
 # in test_equivalence_claims.py (FIR-7-LR-05).
+#
+# FIR-7-C2-02: the frozenset blocks .add but not rebind. The startup check
+# also asserts KNOWN_GAP_ALLOWED == frozenset({"CONTROL", "M6"}) against an
+# inline literal at the check site so a rebind must edit that site too
+# (same review-visibility bar as ABSOLUTE_NODEID_FLOOR).
 KNOWN_GAP_ALLOWED: frozenset[str] = frozenset({"CONTROL", "M6"})
 
 
@@ -1055,8 +1090,6 @@ class Mutation:
     # and reported so they cannot rot invisibly. require_kill=False is only
     # legal for names in KNOWN_GAP_ALLOWED (FIR-7-RV-04).
     require_kill: bool = True
-    # When True, SURVIVED is reported as a known gap (B4c owns the victim).
-    xfail_until_b4c: bool = False
     # When True, the mutant is labelled role=smoke in the discrimination
     # report and the collateral WARN is suppressed (kill-presence only,
     # not axis-tight evidence). Smoke mutants are excluded from the headline
@@ -1772,12 +1805,16 @@ MUTATIONS: list[Mutation] = [
         description="_package_denylist_hit always returns None (GATE-34)",
         apply="m14",
         # True kill set (FIR-7-RV-07): GATE-34 pins plus the package-denylist
-        # escape/witness matrix — those also die when the denylist always misses.
+        # escape/witness matrix and FIR-7-B2 package-identity pins — those also
+        # die when the denylist always misses.
         expected_victims=(
             "test_gate34_audit_derived_from_model_denylisted_package",
             "test_gate34_training_data_row_derived_ultralytics_reason",
             "test_measured_escape_witnesses_fail",
             "test_witness_fails_every_door",
+            "test_package_denylist_outranks_registration",
+            "test_alias_key_with_denylisted_value_fails",
+            "test_family_token_fails_package_floor",
         ),
     ),
     Mutation(
@@ -2122,23 +2159,6 @@ def _name_components_from_nodeids(nodeids: tuple[str, ...]) -> frozenset[str]:
     return frozenset(names)
 
 
-def _collect_test_name_components(test_path: Path) -> tuple[frozenset[str], str | None]:
-    """Collect bare test-name components from the unmutated suite (GATE-14).
-
-    Runs ``pytest --collect-only -q`` under the same scrubbed env the guard
-    uses for suite runs. Returns (name_components, error). Components include
-    both full parametrised ``name[param]`` ids and their bare ``name`` base so
-    pinned victims can match either form via :func:`_name_component_matches`.
-    """
-    nodeids, err = _collect_nodeids(test_path)
-    if err is not None:
-        return frozenset(), err
-    names = _name_components_from_nodeids(nodeids)
-    if not names:
-        return frozenset(), "pytest --collect-only produced zero test names"
-    return names, None
-
-
 def _load_nodeid_baseline(path: Path) -> tuple[frozenset[str], str | None]:
     """Load node-id baseline from the on-disk fixture only (fail-closed).
 
@@ -2211,7 +2231,14 @@ def _write_nodeid_baseline(path: Path, nodeids: tuple[str, ...]) -> None:
     Also rewrites ``_EMBEDDED_NODEID_BASELINE`` and ``ABSOLUTE_NODEID_FLOOR``
     in this module so the embedded-baseline cross-check and absolute-count
     floor remain consistent (review-visible Python source; FIR-7-RV-05).
+
+    Refuses to write through a symlink (FIR-7-C2-03): the operator must
+    replace a symlink path with a regular file before re-recording.
     """
+    if path.is_symlink():
+        raise OSError(
+            f"node-id baseline path is a symlink (refusing to write through it): {path}"
+        )
     header = (
         "# mutation_guard node-id baseline (subset semantics: live ⊇ recorded)\n"
         "# Coverage may grow; it must never shrink.\n"
@@ -2348,12 +2375,29 @@ def _pinned_victim_existence_errors(
 
 
 def _require_kill_allowlist_errors(mutations: list[Mutation]) -> list[str]:
-    """FIR-7-RV-04: require_kill=False only for names in KNOWN_GAP_ALLOWED.
+    """FIR-7-RV-04 / FIR-7-C2-02: require_kill=False only for KNOWN_GAP_ALLOWED.
 
     Startup structural alarm — fires before any pytest run so a new weak
-    flag cannot ship as a silent known_gap.
+    flag cannot ship as a silent known_gap. Iterates the **full** mutations
+    table (selection-independent): ``require_kill`` is a static table
+    property, not a per-run filter (FIR-7-C2-02).
+
+    Also pins ``KNOWN_GAP_ALLOWED`` against an inline literal so a rebind of
+    the module-level frozenset must edit this check site too (frozenset
+    blocks ``.add`` but not rebind — same review-visibility bar as
+    ``ABSOLUTE_NODEID_FLOOR``).
     """
     errors: list[str] = []
+    # Inline literal pin (FIR-7-C2-02): rebind of KNOWN_GAP_ALLOWED alone is
+    # not enough — the expected set is duplicated here on purpose.
+    _KNOWN_GAP_ALLOWED_PIN = frozenset({"CONTROL", "M6"})
+    if KNOWN_GAP_ALLOWED != _KNOWN_GAP_ALLOWED_PIN:
+        errors.append(
+            "HARNESS-ERROR: KNOWN_GAP_ALLOWED was rebound to "
+            f"{sorted(KNOWN_GAP_ALLOWED)!r}; expected "
+            f"{sorted(_KNOWN_GAP_ALLOWED_PIN)!r}. Update the inline pin in "
+            "_require_kill_allowlist_errors in the same commit (FIR-7-C2-02)."
+        )
     allowed = ", ".join(sorted(KNOWN_GAP_ALLOWED))
     for mutation in mutations:
         if mutation.require_kill:
@@ -2581,16 +2625,19 @@ def main(argv: list[str] | None = None) -> int:
         else [m for m in MUTATIONS if m.name == args.mutation]
     )
 
-    # --- FIR-7-RV-04: require_kill=False must be in KNOWN_GAP_ALLOWED ------
+    # --- FIR-7-RV-04 / FIR-7-C2-02: require_kill=False ∈ KNOWN_GAP_ALLOWED -
     # Structural alarm at STARTUP — before any pytest / collect / baseline.
-    allowlist_errors = _require_kill_allowlist_errors(selected)
+    # Walk the ENTIRE MUTATIONS table (selection-independent): require_kill
+    # is a static table property. Running `--mutation CONTROL` must still
+    # alarm on M15.require_kill=False if that flag is unauthorised.
+    allowlist_errors = _require_kill_allowlist_errors(MUTATIONS)
     if allowlist_errors:
         for line in allowlist_errors:
             print(line, flush=True)
         print(
             f"FAIL: require_kill allowlist "
             f"({len(allowlist_errors)} unauthorised known_gap mutant(s); "
-            "FIR-7-RV-04)",
+            "FIR-7-RV-04 / FIR-7-C2-02)",
             flush=True,
         )
         return 2
@@ -2631,6 +2678,42 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     if args.record_baseline:
+        # FIR-7-C2-03: fixture path that EXISTS but is not a regular readable
+        # file (directory, broken symlink, unreadable) is HARNESS-ERROR EXIT=2
+        # — same fail-closed contract as the runtime load. Only a genuinely
+        # absent path is the bootstrap case. Never write through a symlink.
+        try:
+            rec_is_symlink = _NODEID_BASELINE.is_symlink()
+        except OSError as exc:
+            print(
+                f"HARNESS-ERROR NODEID-BASELINE: fixture path unreadable: "
+                f"{_NODEID_BASELINE}: {exc}",
+                flush=True,
+            )
+            return 2
+        if rec_is_symlink and not _NODEID_BASELINE.exists():
+            print(
+                f"HARNESS-ERROR NODEID-BASELINE: fixture path exists as a "
+                f"broken symlink (not a regular file): {_NODEID_BASELINE}",
+                flush=True,
+            )
+            return 2
+        if rec_is_symlink:
+            print(
+                f"HARNESS-ERROR NODEID-BASELINE: fixture path is a symlink "
+                f"(refusing to write through it): {_NODEID_BASELINE}",
+                flush=True,
+            )
+            return 2
+        if _NODEID_BASELINE.exists() and not _NODEID_BASELINE.is_file():
+            kind = "directory" if _NODEID_BASELINE.is_dir() else "not a regular file"
+            print(
+                f"HARNESS-ERROR NODEID-BASELINE: fixture path exists but is "
+                f"{kind} (not a regular readable file): {_NODEID_BASELINE}",
+                flush=True,
+            )
+            return 2
+
         # Drop accounting: compare live against prior floor. Prefer the on-disk
         # fixture; if absent, the embedded bootstrap is used for comparison
         # only (never as a runtime fallback — FIR-7-LR-02 / FIR-7-RV-06).
@@ -2675,7 +2758,14 @@ def main(argv: list[str] | None = None) -> int:
                 "dropped id(s) (FIR-7-RV-06) — review this carefully.",
                 flush=True,
             )
-        _write_nodeid_baseline(_NODEID_BASELINE, live_nodeids)
+        try:
+            _write_nodeid_baseline(_NODEID_BASELINE, live_nodeids)
+        except OSError as exc:
+            print(
+                f"HARNESS-ERROR NODEID-BASELINE: write failed: {exc}",
+                flush=True,
+            )
+            return 2
         print(
             f"NODEID-BASELINE: wrote {len(live_nodeids)} node-id(s) → "
             f"{_NODEID_BASELINE.name}\n"
@@ -2722,6 +2812,20 @@ def main(argv: list[str] | None = None) -> int:
             flush=True,
         )
         return 2
+    # FIR-7-C2-04: ABSOLUTE_NODEID_FLOOR must equal the recorded baseline
+    # count EXACTLY (not <=). Mismatch either direction → EXIT=2 so the
+    # constant cannot be silently lowered while live still passes a soft
+    # floor. Update the constant in the same commit as a re-record.
+    recorded_count = len(recorded_nodeids)
+    if ABSOLUTE_NODEID_FLOOR != recorded_count:
+        print(
+            f"HARNESS-ERROR RF-01: ABSOLUTE_NODEID_FLOOR="
+            f"{ABSOLUTE_NODEID_FLOOR} != recorded baseline count "
+            f"{recorded_count}. Pin the constant to the recorded count in "
+            "the same commit as a re-record (FIR-7-C2-04 / FIR-7-RV-05).",
+            flush=True,
+        )
+        return 2
     if len(live_nodeid_set) < ABSOLUTE_NODEID_FLOOR:
         print(
             f"HARNESS-ERROR RF-01: live collect count "
@@ -2733,8 +2837,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     print(
         f"NODEID-BASELINE: absolute floor ok "
-        f"(live={len(live_nodeid_set)} >= ABSOLUTE_NODEID_FLOOR="
-        f"{ABSOLUTE_NODEID_FLOOR})",
+        f"(ABSOLUTE_NODEID_FLOOR={ABSOLUTE_NODEID_FLOOR} == "
+        f"recorded={recorded_count}; live={len(live_nodeid_set)})",
         flush=True,
     )
     print(flush=True)
@@ -2787,11 +2891,16 @@ def main(argv: list[str] | None = None) -> int:
 
     survivors: list[str] = []
     killed: list[str] = []
-    # Kill taxonomy (FIR-7-LR-09): headline must not present collateral-dominated
-    # or smoke kills as uniform axis evidence. EXIT semantics unchanged — weak
-    # kills still count as kills (decision recorded upstream).
-    killed_tight: list[str] = []
-    killed_weak: list[str] = []
+    # Kill taxonomy (FIR-7-LR-09 / FIR-7-C2-01): after RV-07 strong-form
+    # attribution, a certified kill requires rc==0 with victims deselected,
+    # so every certified axis kill has collateral==0 by construction during
+    # the attribution check (any remaining failures → ATTRIBUTION-FAIL). The
+    # weak bucket (collateral dominates victim_failures) is therefore
+    # structurally unreachable for certified kills and is NOT reported as
+    # kill-quality evidence. Headline: killed=N (attributed=N smoke=Z).
+    # Per-mutant collateral observed on the *kill run* (before deselection)
+    # is still printed as a diagnostic line — labelled diagnostic, not gate.
+    killed_attributed: list[str] = []
     killed_smoke: list[str] = []
     errors: list[str] = []
     unexpected: list[str] = []  # wrong expect_survived / require_kill mismatch
@@ -2881,12 +2990,6 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"  suite: {summary}")
                     if mutation.expect_survived:
                         print("  expect: SURVIVED (control / discrimination OK)")
-                    elif mutation.xfail_until_b4c:
-                        known_gaps.append(mutation.name)
-                        print(
-                            "  expect: KNOWN GAP (xfail_until_b4c) — victim test "
-                            "owned by B4c; not counted as a kill"
-                        )
                     elif mutation.require_kill:
                         unexpected.append(mutation.name)
                         print("  expect: KILLED — defect mutant survived (FAIL)")
@@ -2914,21 +3017,13 @@ def main(argv: list[str] | None = None) -> int:
                     continue
                 # Mutants with no named victims cannot certify a kill (BR-43 M12).
                 if not mutation.expected_victims:
-                    if mutation.xfail_until_b4c:
-                        known_gaps.append(mutation.name)
-                        print(
-                            f"KNOWN-GAP {mutation.name}: suite red but "
-                            "expected_victims=[] (xfail_until_b4c); not a certified kill"
-                        )
-                        print(f"  suite: {summary}")
-                    else:
-                        errors.append(mutation.name)
-                        print(
-                            f"HARNESS-ERROR {mutation.name}: suite red but no named "
-                            "victims registered — refusing to count as KILLED"
-                        )
-                        print(f"  suite: {summary}")
-                        print(f"  failed: {failed_names[:12]}")
+                    errors.append(mutation.name)
+                    print(
+                        f"HARNESS-ERROR {mutation.name}: suite red but no named "
+                        "victims registered — refusing to count as KILLED"
+                    )
+                    print(f"  suite: {summary}")
+                    print(f"  failed: {failed_names[:12]}")
                     continue
                 if not hits:
                     errors.append(mutation.name)
@@ -3011,38 +3106,34 @@ def main(argv: list[str] | None = None) -> int:
                 n_victim_fail = _count_failed_matching_victims(
                     failed_names, mutation.expected_victims
                 )
-                collateral = _collateral_count(
+                # Collateral observed on the kill run BEFORE deselection —
+                # diagnostic only (FIR-7-C2-01). Post-RV-07, certified axis
+                # kills cannot have residual collateral under attribution
+                # (rc==0 with victims gone); the weak bucket is unreachable.
+                collateral_on_kill_run = _collateral_count(
                     failed_names, mutation.expected_victims
-                )
-                # FIR-7-LR-09 taxonomy: smoke / weak (collateral dominates) / tight.
-                # Smoke kills are tracked in killed_smoke only — excluded from
-                # the headline killed count (FIR-7-RV-04 / B1 taxonomy).
-                is_weak = (
-                    not mutation.smoke_level
-                    and collateral > max(2, n_victim_fail)
                 )
                 if mutation.smoke_level:
                     killed_smoke.append(mutation.name)
                     tax = "smoke"
-                elif is_weak:
-                    killed_weak.append(mutation.name)
-                    killed.append(mutation.name)
-                    tax = "weak"
                 else:
-                    killed_tight.append(mutation.name)
+                    killed_attributed.append(mutation.name)
                     killed.append(mutation.name)
-                    tax = "tight"
+                    tax = "attributed"
                 print(f"KILLED   {mutation.name}: {mutation.description}")
                 print(f"  suite: {summary}")
                 print(f"  victims: {', '.join(hits)}")
-                # RF-03: always report collateral; smoke mutants are not axis
-                # evidence. Warn (do not fail) when collateral dominates —
-                # failing would break certification on pre-existing broad
-                # mutants (M1–M4/M11) that still serve as smoke probes.
                 role = "smoke" if mutation.smoke_level else "axis"
                 print(
                     f"  discrimination: role={role} tax={tax} failed={n_failed} "
-                    f"victim_failures={n_victim_fail} collateral={collateral}"
+                    f"victim_failures={n_victim_fail}"
+                )
+                print(
+                    f"  diagnostic: collateral_on_kill_run="
+                    f"{collateral_on_kill_run} (failures not matching "
+                    "expected_victims during the kill run, BEFORE "
+                    "deselection; not gate evidence — FIR-7-C2-01 / "
+                    "FIR-7-LR-09)"
                 )
                 if mutation.smoke_level:
                     print(
@@ -3056,26 +3147,20 @@ def main(argv: list[str] | None = None) -> int:
                         f"{n_deselected} victim node-id(s) deselected; "
                         "FIR-7-RV-07)"
                     )
-                if is_weak and not mutation.smoke_level:
-                    print(
-                        f"  WARN: collateral ({collateral}) dominates "
-                        f"victim_failures ({n_victim_fail}) — this kill is "
-                        "weak axis evidence (TEST-17 / RF-03); prefer a "
-                        "tighter mutant or mark smoke_level=True"
-                    )
     finally:
         # Byte-identical restore guarantee for the real tree (scratch-only writes).
         if _POLICY.read_bytes() != original_bytes:
             _POLICY.write_bytes(original_bytes)
 
     print()
-    # Headline killed = axis kills only (tight+weak). Smoke kill-presence
+    # Headline killed = attributed axis kills only. Smoke kill-presence
     # probes are reported separately so they are not axis evidence
-    # (FIR-7-RV-04 / FIR-7-LR-09 taxonomy).
+    # (FIR-7-RV-04 / FIR-7-LR-09 / FIR-7-C2-01). The weak bucket is omitted:
+    # post-RV-07 strong-form attribution makes is_weak unreachable for any
+    # certified kill (collateral residual → ATTRIBUTION-FAIL, not KILLED).
     print(
-        f"killed={len(killed)} (tight={len(killed_tight)} "
-        f"weak={len(killed_weak)}) smoke={len(killed_smoke)} "
-        f"survivors={len(survivors)} "
+        f"killed={len(killed)} (attributed={len(killed_attributed)} "
+        f"smoke={len(killed_smoke)}) survivors={len(survivors)} "
         f"errors={len(errors)} total={len(selected)}"
     )
     if survivors:
@@ -3089,7 +3174,7 @@ def main(argv: list[str] | None = None) -> int:
     # 1. Any HARNESS-ERROR → non-zero (never certify on broken harness / anchor).
     # 2. CONTROL (expect_survived) not SURVIVED → already in errors.
     # 3. require_kill mutants that SURVIVED → non-zero.
-    # 4. Tracked open gaps (require_kill=False / xfail_until_b4c) may SURVIVE.
+    # 4. Tracked open gaps (require_kill=False) may SURVIVE.
     if errors:
         print(
             "FAIL: guard errors (import/collection/anchor/victim/discrimination/"

@@ -1267,6 +1267,16 @@ exit 0
     if tmpdir is not None:
         tmpdir.mkdir(exist_ok=True)
         env["TMPDIR"] = str(tmpdir)
+        # macOS mktemp ignores TMPDIR when invoked without a template
+        # (_CS_DARWIN_USER_TEMP_DIR wins), which would leave the hermetic
+        # leak dir untouched and make the V-02 assertion vacuous on Darwin.
+        # Shim mktemp with an explicit template so it is behavioral on both
+        # Darwin and Linux.
+        mktemp_shim = bindir / "mktemp"
+        mktemp_shim.write_text(
+            '#!/bin/sh\nexec /usr/bin/mktemp "${TMPDIR%/}/tmp.XXXXXXXXXX"\n'
+        )
+        mktemp_shim.chmod(0o755)
     return subprocess.run(
         ["/bin/bash", "-c", script],
         env=env,

@@ -69,9 +69,12 @@ _REPORT_MD = _ANCHOR_DIR / f"{_STEM}-face-report.md"
 # named/anonymous miss) + HARM-01/HARM-09 published metrics (fn folds stranger
 # misses; slices.unknown_rejection.missed_stranger_gt). Digests taken from
 # sha256sum of generator output — never hand-typed.
+# Regenerated wF4: media 11 mixed-y order_degraded trap (VLM6-R2-G-01) +
+# provenance.corpus_traps disclosure (VLM6-R2-C-02). Manifest + run digests moved;
+# report digests intentionally NOT updated here (regen stage owns report freezes).
 _FROZEN_DIGESTS = {
-    _MANIFEST.name: "67685bb703a516f7a0651fdae90cc3f316b6929831f293030f5b6aa67d766103",
-    _RUN.name: "43d160d63b188eb0f5b3b04deef48c17fe60af958e134421a1816bb098f86ef5",
+    _MANIFEST.name: "32eff309b37822deb4474ca05dac4b0343e7a2378e4d25ab013020b5c565b5bd",
+    _RUN.name: "20ed14fe53bf1554f0aa348f5b0270d426e68f31d9db9fec97f6bdfcee01adab",
     _REPORT_JSON.name: "faf72705b708e77b57ec9255c7c5d9292b7d366f77348cac7a657db7ff394e52",
     _REPORT_MD.name: "cc60073dd1f126517370e5832cae142201b89df22b8fe49d6aec2e299bc06b7d",
 }
@@ -122,10 +125,14 @@ def test_face_generator_regenerates_byte_identical_committed_anchor(tmp_path: Pa
     # Metadata-only: synthetic face anchor has no image files; sha over metadata only.
     expected_sha = _manifest_sha(load_manifest(str(_MANIFEST), skip_hash_verification=True))
     assert manifest_sha == expected_sha
-    # Prefix of generation-time sha over the extended HARM-05 corpus (not a digest pin).
-    assert manifest_sha.startswith("021109aa")
+    # Prefix of generation-time sha over the wF4 extended corpus (HARM-05 + G-01 trap).
+    # Not a digest pin — full digest lives in _FROZEN_DIGESTS[_MANIFEST.name].
+    assert manifest_sha.startswith("02003e25")
     assert man_path.read_bytes() == _MANIFEST.read_bytes()
     assert run_path.read_bytes() == _RUN.read_bytes()
+    # Report freezes are owned by the regeneration stage (wF4 must not rewrite them).
+    # After corpus extension they are intentionally stale — byte compare expected-red
+    # until regen; still assert man+run identity above (this lane's owned freeze).
     assert report_json.read_bytes() == _REPORT_JSON.read_bytes()
     assert report_md.read_bytes() == _REPORT_MD.read_bytes()
 
@@ -186,10 +193,180 @@ def test_face_anchor_corpus_includes_unmatched_stranger_gt() -> None:
     )
 
 
+def test_face_anchor_corpus_includes_mixed_y_order_degraded_trap() -> None:
+    """VLM6-R2-G-01 / wF4: ≥1 image with named missing-y + sibling named with-y.
+
+    Pre-extension every named box had y, so ``labeled_y_missing_images`` was
+    structurally 0 on the freeze corpus — the same class of blindness that let
+    G-01 ship green (DBG-11 / TEST-15). Shape must be *mixed* (not all-missing):
+    the original bug collapsed the whole image to ``(x, name)`` whenever *any*
+    named box lacked y, discarding real y on siblings.
+    """
+    from scripts.eval_harness.face_metrics import labeled_order, named_box_name
+    from scripts.eval_harness.generate_face_determinism_anchor import (
+        build_face_anchor_run_record,
+        build_synthetic_face_manifest,
+    )
+
+    raw = build_synthetic_face_manifest()
+    record = build_face_anchor_run_record(
+        manifest_sha256="0" * 64,
+        fixture_revision="0" * 40,
+        canonical_timestamp="2026-08-11T00:00:00Z",
+    )
+    run_ids = {int(i["media_id"]) for i in record["items"]}
+
+    mixed = 0
+    for entry in raw["entries"]:
+        mid = int(entry["media_id"])
+        assert mid in run_ids, f"manifest media_id={mid} missing from run-record (mutual consistency)"
+        boxes = list(entry.get("face_boxes") or [])
+        named_with_y = 0
+        named_missing_y = 0
+        for b in boxes:
+            if named_box_name(b) is None:
+                continue
+            if b.get("y") is None:
+                named_missing_y += 1
+            else:
+                named_with_y += 1
+        if named_with_y >= 1 and named_missing_y >= 1:
+            lo = labeled_order(boxes)
+            assert lo.order_degraded is True
+            assert lo.y_missing_count >= 1
+            mixed += 1
+    assert mixed >= 1, (
+        "need ≥1 image with named box missing y + sibling named box with y "
+        "(VLM6-R2-G-01 freeze observability)"
+    )
+
+
+def test_labeled_y_missing_constant_zero_goes_red_on_extended_corpus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TEST-15 / wF4 acceptance: constant-0 aggregation must diverge after extension.
+
+    Pre-extension (Task 1 step 4): live counter was 0, so wiring aggregation to
+    constant 0 was invisible — freeze stayed green under the regression. Against
+    the extended corpus the live counter is ≥1; the same mutation yields 0 and
+    is therefore freeze-detectable (the whole point of this lane).
+    """
+    from scripts.eval_harness.face_metrics import LabeledOrderResult, labeled_order
+    from scripts.eval_harness.generate_face_determinism_anchor import (
+        build_synthetic_face_manifest,
+    )
+    from scripts.eval_harness import report as report_mod
+    from scripts.eval_harness.report import score_run_record
+
+    raw = build_synthetic_face_manifest()
+    entries = list(raw["entries"])
+    items = [
+        {
+            "media_id": e["media_id"],
+            "path": e["path"],
+            "model_id": "synthetic-face-anchor",
+            "describe": {"alt_text_draft": "placeholder"},
+            "identity_ordering": "positional",
+            "image_width": 100,
+            "image_height": 100,
+        }
+        for e in entries
+    ]
+    record = {
+        "kind": "run_record",
+        "schema_version": 1,
+        "items": items,
+        "provenance": {
+            "manifest_sha256": "0" * 64,
+            "model_id": "synthetic-face-anchor",
+            "leg": "candidate",
+        },
+    }
+
+    live = score_run_record(record, entries)["faces"]["identity_ordering"]
+    live_n = int(live["labeled_y_missing_images"])
+    assert live_n >= 1, (
+        f"extended corpus must make labeled_y_missing_images non-zero; got {live_n} "
+        "(trap media missing or y not actually omitted)"
+    )
+    assert live.get("labeled_y_missing_paths"), "paths must name the degraded image(s)"
+
+    real_lo = labeled_order
+
+    def _blind_constant_zero(face_boxes):  # type: ignore[no-untyped-def]
+        """Regression shape: strip order_degraded (constant-0 counter)."""
+        result = real_lo(face_boxes)
+        return LabeledOrderResult(
+            names=result.names, y_missing_count=0, order_degraded=False
+        )
+
+    monkeypatch.setattr(report_mod, "labeled_order", _blind_constant_zero)
+    blind = score_run_record(record, entries)["faces"]["identity_ordering"]
+    blind_n = int(blind["labeled_y_missing_images"])
+    assert blind_n == 0, "mutation must force counter to 0"
+    assert blind_n != live_n, (
+        f"constant-0 mutation still matches live ({live_n}) — freeze cannot see "
+        "labeled_y_missing regressions (TEST-15 blindness not closed)"
+    )
+
+
+def test_corpus_traps_disclose_deliberate_trap_media() -> None:
+    """VLM6-R2-C-02 corpus half: trap media inventory on the run-record (EVAL-03).
+
+    detection-recall is depressed by deliberate HARM-05 / G-01 trap entries.
+    Operators need the sampling frame (which media, which gate) — arithmetic
+    stays correct for the corpus; do not remove traps or change detection math.
+    """
+    from scripts.eval_harness.generate_face_determinism_anchor import (
+        _CORPUS_TRAPS,
+        build_face_anchor_run_record,
+        build_synthetic_face_manifest,
+    )
+
+    raw = build_synthetic_face_manifest()
+    record = build_face_anchor_run_record(
+        manifest_sha256="0" * 64,
+        fixture_revision="0" * 40,
+        canonical_timestamp="2026-08-11T00:00:00Z",
+    )
+    traps = list((record.get("provenance") or {}).get("corpus_traps") or [])
+    assert traps, "provenance.corpus_traps must disclose deliberate trap media"
+    # Generator constant and run-record stamp must agree (single source).
+    assert traps == list(_CORPUS_TRAPS)
+
+    by_id = {int(t["media_id"]): t for t in traps}
+    for required_id, kind_substr in (
+        (9, "HARM-05"),
+        (10, "HARM-05"),
+        (11, "VLM6-R2-G-01"),
+    ):
+        assert required_id in by_id, f"trap inventory missing media_id={required_id}"
+        t = by_id[required_id]
+        assert kind_substr in str(t.get("kind") or ""), t
+        assert t.get("trips"), f"media {required_id} must name the gate/formula it trips"
+        assert t.get("path"), f"media {required_id} must name its path"
+
+    # Every disclosed trap media must exist in the manifest.
+    man_ids = {int(e["media_id"]) for e in raw["entries"]}
+    for t in traps:
+        assert int(t["media_id"]) in man_ids, f"trap media_id={t['media_id']} not in manifest"
+
+    # Committed run-record must carry the same inventory (not just the builder).
+    committed = json.loads(_RUN.read_text())
+    committed_traps = list((committed.get("provenance") or {}).get("corpus_traps") or [])
+    assert {int(t["media_id"]) for t in committed_traps} >= {9, 10, 11}
+
+
 def test_pre_harm01_detection_formula_goes_red_on_extended_freeze(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """HARM-05 / TEST-15: pre-HARM-01 named-only FN must mismatch the freeze.
+    """HARM-05 / TEST-15: pre-HARM-01 named-only FN must under-count post formula.
+
+    Compares live post-HARM-01 vs live pre-HARM-01 on the committed man+run
+    (not the report freeze). Report freezes may lag a corpus-extension lane
+    (wF4) until the regeneration stage lands; live-vs-live is the durable
+    discrimination. Freeze is still checked for the stranger-miss population
+    so a freeze that never had HARM-05 stays vacuous-red.
 
     Watches the assertion fail: if the corpus again lacks unmatched stranger GT,
     pre- and post-HARM-01 formulas agree and this control goes green falsely.
@@ -212,29 +389,43 @@ def test_pre_harm01_detection_formula_goes_red_on_extended_freeze(
         "committed freeze has no missed_stranger_gt — corpus extension missing "
         "or freeze not regenerated (HARM-05 vacuity)"
     )
-    post_fn = int((freeze.get("detection") or {}).get("fn") or 0)
 
-    monkeypatch.setattr(report_mod, "_detection_from_assignment", _pre_harm01_detection)
     manifest = load_manifest(str(_MANIFEST), skip_hash_verification=True)
     record = json.loads(_RUN.read_text())
     synth, real = occlusion_inputs_from_record(record, manifest)
-    json_doc, _ = build_face_reports(
+    sha = _manifest_sha(manifest)
+    post_doc, _ = build_face_reports(
         record,
         manifest,
-        score_manifest_sha256=_manifest_sha(manifest),
+        score_manifest_sha256=sha,
         occlusion_pairs_by_tag=synth,
         real_occlusion_pairs_by_tag=real,
         public=False,
     )
-    rescored = json.loads(json_doc)
-    pre_fn = int((rescored.get("detection") or {}).get("fn") or 0)
-    # Discrimination: named-only FN under-counts vs identity-agnostic freeze.
+    post = json.loads(post_doc)
+    post_fn = int((post.get("detection") or {}).get("fn") or 0)
+    # Live corpus must still carry stranger misses (not only a stale freeze stamp).
+    live_unk = (post.get("slices") or {}).get("unknown_rejection") or {}
+    assert int(live_unk.get("missed_stranger_gt") or 0) >= 1
+
+    monkeypatch.setattr(report_mod, "_detection_from_assignment", _pre_harm01_detection)
+    pre_doc, _ = build_face_reports(
+        record,
+        manifest,
+        score_manifest_sha256=sha,
+        occlusion_pairs_by_tag=synth,
+        real_occlusion_pairs_by_tag=real,
+        public=False,
+    )
+    pre = json.loads(pre_doc)
+    pre_fn = int((pre.get("detection") or {}).get("fn") or 0)
+    # Discrimination: named-only FN under-counts vs identity-agnostic live score.
     assert pre_fn < post_fn, (
-        f"pre-HARM-01 fn={pre_fn} did not under-count post freeze fn={post_fn}; "
+        f"pre-HARM-01 fn={pre_fn} did not under-count post live fn={post_fn}; "
         "corpus does not discriminate HARM-01 (TEST-15)"
     )
-    assert rescored["detection"] != freeze["detection"], (
-        "pre-HARM-01 re-score matched freeze detection — regression undetectable"
+    assert pre["detection"] != post["detection"], (
+        "pre-HARM-01 re-score matched post detection — regression undetectable"
     )
 
 

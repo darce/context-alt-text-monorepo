@@ -149,11 +149,14 @@ def test_rv3_05_resolve_head_sha_refuses_arbitrary_40_hex() -> None:
 def test_rv3_05_resolve_head_sha_degrades_without_git(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When git binary is missing, format-valid SHA is accepted (sane degrade)."""
+    """When git binary is missing (FileNotFoundError), format-valid SHA is accepted.
+
+    VLM6-R2-D-02: only a hard no-binary signal degrades; generic OSError must not.
+    """
     import scripts.eval_harness.provenance_sha as prov
 
     def _no_git(*_a, **_k):
-        raise OSError("git missing")
+        raise FileNotFoundError("git missing")
 
     # Git probe lives in the shared provenance module (fx6 de-dupe).
     monkeypatch.setattr(prov.subprocess, "run", _no_git)
@@ -461,3 +464,161 @@ def test_vlm6_r2_d03_no_call_site_passes_verify_git() -> None:
         "call sites pass verify_git= into validate_live_head_sha: "
         f"{offenders} (VLM6-R2-D-03)"
     )
+
+
+# --- VLM6-R2-D-02: degrade only on hard missing-git-binary (ENOENT) ----------
+
+
+def _fake_40() -> str:
+    return "a" * 40
+
+
+class _Completed:
+    def __init__(self, returncode: int = 0, stdout: str = "", stderr: str = "") -> None:
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def test_vlm6_r2_d02_poisoned_git_dir_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GIT_DIR pointing at a nonexistent path must refuse, not format-only degrade."""
+    monkeypatch.setenv("GIT_DIR", "/nonexistent/path")
+    fake = _fake_40()
+    with pytest.raises(SystemExit) as excinfo:
+        validate_live_head_sha(fake)
+    msg = str(excinfo.value).lower()
+    assert "not a resolvable commit" in msg or "git" in msg
+    assert fake in str(excinfo.value) or "live-head-sha" in msg
+
+
+def test_vlm6_r2_d02_is_inside_timeout_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """is-inside-work-tree TimeoutExpired must refuse (not silent format-only)."""
+    import scripts.eval_harness.provenance_sha as prov
+
+    def _timeout(*_a, **_k):
+        raise subprocess.TimeoutExpired(cmd=["git"], timeout=5)
+
+    monkeypatch.setattr(prov.subprocess, "run", _timeout)
+    with pytest.raises(SystemExit, match="git"):
+        validate_live_head_sha(_fake_40())
+
+
+def test_vlm6_r2_d02_is_inside_rc128_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """is-inside-work-tree rc=128 (any git fatal) must refuse."""
+    import scripts.eval_harness.provenance_sha as prov
+
+    def _rc128(cmd, *_a, **_k):
+        if "--is-inside-work-tree" in cmd:
+            return _Completed(128, "", "fatal: not a git repository")
+        return _Completed(0, _fake_40() + "\n")
+
+    monkeypatch.setattr(prov.subprocess, "run", _rc128)
+    with pytest.raises(SystemExit, match="git"):
+        validate_live_head_sha(_fake_40())
+
+
+def test_vlm6_r2_d02_is_inside_empty_stdout_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """is-inside-work-tree stdout empty (not 'true') must refuse."""
+    import scripts.eval_harness.provenance_sha as prov
+
+    def _empty(cmd, *_a, **_k):
+        if "--is-inside-work-tree" in cmd:
+            return _Completed(0, "")
+        return _Completed(0, _fake_40() + "\n")
+
+    monkeypatch.setattr(prov.subprocess, "run", _empty)
+    with pytest.raises(SystemExit, match="git"):
+        validate_live_head_sha(_fake_40())
+
+
+def test_vlm6_r2_d02_bare_repo_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Bare-repo cwd (is-inside-work-tree → 'false') must refuse fabricated hex."""
+    import scripts.eval_harness.provenance_sha as prov
+
+    bare = tmp_path / "bare.git"
+    subprocess.run(["git", "init", "--bare", str(bare)], check=True, capture_output=True)
+
+    # Prefer real bare cwd; also cover via monkeypatch if init fails oddly.
+    try:
+        with pytest.raises(SystemExit, match="git|work.?tree|not a resolvable|not inside"):
+            validate_live_head_sha(_fake_40(), git_cwd=bare)
+    except TypeError:
+        # cx3 may drop kwargs; pass via normalize directly if signature shrinks.
+        from scripts.eval_harness.provenance_sha import normalize_head_sha
+
+        with pytest.raises(SystemExit):
+            normalize_head_sha(
+                _fake_40(), empty_policy="refuse", verify_git=True, git_cwd=bare, label="--live-head-sha"
+            )
+
+
+def test_vlm6_r2_d02_missing_git_binary_degrades(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Genuine missing git binary (FileNotFoundError) still format-only accepts."""
+    import scripts.eval_harness.provenance_sha as prov
+
+    def _missing(*_a, **_k):
+        raise FileNotFoundError(2, "No such file or directory", "git")
+
+    monkeypatch.setattr(prov.subprocess, "run", _missing)
+    fake = "deadbeef" * 5
+    assert validate_live_head_sha(fake) == fake
+    assert db.resolve_head_sha(fake) == fake
+
+
+def test_vlm6_r2_d02_enoent_oserror_degrades(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OSError with errno=ENOENT is the same hard missing-binary signal."""
+    import errno as errno_mod
+
+    import scripts.eval_harness.provenance_sha as prov
+
+    def _enoent(*_a, **_k):
+        raise OSError(errno_mod.ENOENT, "No such file or directory", "git")
+
+    monkeypatch.setattr(prov.subprocess, "run", _enoent)
+    fake = "cafebabe" * 5
+    assert validate_live_head_sha(fake) == fake
+
+
+def test_vlm6_r2_d02_non_enoent_oserror_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-ENOENT OSError on first probe must refuse (aligned with verify probe)."""
+    import scripts.eval_harness.provenance_sha as prov
+
+    def _eacces(*_a, **_k):
+        raise OSError(13, "Permission denied")
+
+    monkeypatch.setattr(prov.subprocess, "run", _eacces)
+    with pytest.raises(SystemExit, match="git|refuse|failed"):
+        validate_live_head_sha(_fake_40())
+
+
+def test_vlm6_r2_d02_verify_timeout_still_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Second probe (rev-parse --verify) timeout hard-fails — asymmetric no longer."""
+    import scripts.eval_harness.provenance_sha as prov
+
+    def _run(cmd, *_a, **_k):
+        if "--is-inside-work-tree" in cmd:
+            return _Completed(0, "true\n")
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=5)
+
+    monkeypatch.setattr(prov.subprocess, "run", _run)
+    with pytest.raises(SystemExit, match="git|failed|refuse"):
+        validate_live_head_sha(_fake_40())

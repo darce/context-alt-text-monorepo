@@ -376,7 +376,7 @@ $ uv run --extra dev python -m scripts.eval_harness.cli score-face \
     --freeze-certification
 determinism check passed [score-face]: cross-process re-score is bit-identical under varied PYTHONHASHSEED (baseline=randomized; child_seeds=0,1,42); matches --expect-report …/S2A-face-determinism-anchor-run-20260811-face-report.json
 …/S2A-face-determinism-anchor-run-20260811-face-report.md
-scored=8/8 matched_faces=6 occlusion_n_eligible=1 directional_excluded=…
+scored=10/10 matched_faces=6 occlusion_n_eligible=1 directional_excluded=6
 freeze-certification passed [score-face]: scoring-path is byte-stable (matches --expect-report); nothing certified about model quality, face recognition, or adoption readiness …
 # EXIT_CODE:0
 ```

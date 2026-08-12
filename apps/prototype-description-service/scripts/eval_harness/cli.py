@@ -92,8 +92,53 @@ RUBRIC_GATE_ENFORCE = "enforce"
 RUBRIC_GATE_SKIP = "skip"
 # F1-4 / r08116b50: hard-key gate inputs. Soft defaults (.get(..., 0) / is False)
 # fail open when report.py renames a field — the gate cannot go red (TEST-15).
-# Message token ``score schema error:`` is class-unique vs gate tokens.
-_SCORE_SCHEMA_ERROR_TOKEN = "score schema error"
+# ---------------------------------------------------------------------------
+# Class-unique score* gate prefixes (VLM6-R2-F-01 / F-03 / rg-006 / rg-015).
+# One constant per exit class — caption and face share the same prefix so a
+# single log grep catches both paths. Distinguishing tokens go in the suffix.
+# Documented in README.md § "Score non-zero exit prefixes"; the drift test
+# ``test_score_gate_prefixes_documented_in_readme`` fails if a constant is
+# added without a README entry.
+# ---------------------------------------------------------------------------
+SCORE_GATE_PREFIX_SCHEMA_ERROR = "score schema error:"
+SCORE_GATE_PREFIX_ABORTED_RECORD = "score aborted-record gate:"
+SCORE_GATE_PREFIX_ZERO_SCORED = "score zero-scored gate:"
+SCORE_GATE_PREFIX_FAILED_ITEMS = "score failed-items gate:"
+SCORE_GATE_PREFIX_TRUNCATION = "score truncation gate:"
+SCORE_GATE_PREFIX_MANIFEST_MISMATCH = "score manifest-mismatch gate:"
+SCORE_GATE_PREFIX_MANIFEST_DRIFT = "score manifest-drift gate:"
+SCORE_GATE_PREFIX_MANIFEST_RELABEL = "score manifest-relabel gate:"
+SCORE_GATE_PREFIX_EMPTY_RUBRIC = "score empty-rubric gate:"
+SCORE_GATE_PREFIX_MUST_RIGHT_FAILURES = "score must-right failures gate:"
+SCORE_GATE_PREFIX_WRONG_NAME_FLOOR_VACUITY = "score wrong-name floor vacuity gate:"
+SCORE_GATE_PREFIX_WRONG_NAME_FLOOR = "score wrong-name floor gate:"
+SCORE_GATE_PREFIX_QUALITY_FLOOR = "score quality-floor gate:"
+SCORE_GATE_PREFIX_CATEGORY_VACUITY = "score category-vacuity gate:"
+SCORE_GATE_PREFIX_FREEZE_CERT_REFUSED = "score freeze-certification refused:"
+SCORE_GATE_PREFIX_FACE_REPORT_READBACK = "score face-report-readback gate:"
+# Frozen set consumed by the README drift test (do not hand-copy strings there).
+SCORE_GATE_PREFIXES: frozenset[str] = frozenset(
+    {
+        SCORE_GATE_PREFIX_SCHEMA_ERROR,
+        SCORE_GATE_PREFIX_ABORTED_RECORD,
+        SCORE_GATE_PREFIX_ZERO_SCORED,
+        SCORE_GATE_PREFIX_FAILED_ITEMS,
+        SCORE_GATE_PREFIX_TRUNCATION,
+        SCORE_GATE_PREFIX_MANIFEST_MISMATCH,
+        SCORE_GATE_PREFIX_MANIFEST_DRIFT,
+        SCORE_GATE_PREFIX_MANIFEST_RELABEL,
+        SCORE_GATE_PREFIX_EMPTY_RUBRIC,
+        SCORE_GATE_PREFIX_MUST_RIGHT_FAILURES,
+        SCORE_GATE_PREFIX_WRONG_NAME_FLOOR_VACUITY,
+        SCORE_GATE_PREFIX_WRONG_NAME_FLOOR,
+        SCORE_GATE_PREFIX_QUALITY_FLOOR,
+        SCORE_GATE_PREFIX_CATEGORY_VACUITY,
+        SCORE_GATE_PREFIX_FREEZE_CERT_REFUSED,
+        SCORE_GATE_PREFIX_FACE_REPORT_READBACK,
+    }
+)
+# Back-compat alias (schema hard-key token without trailing colon was historical).
+_SCORE_SCHEMA_ERROR_TOKEN = SCORE_GATE_PREFIX_SCHEMA_ERROR.rstrip(":")
 
 
 class ScoreGateError(RuntimeError):
@@ -111,7 +156,7 @@ def _score_gate_fail(message: str) -> NoReturn:
 
 def _score_schema_error_message(dotted_path: str, expected: str) -> str:
     """Class-unique schema-error exit text (never soft-falls through)."""
-    return f"{_SCORE_SCHEMA_ERROR_TOKEN}: {dotted_path} missing or not a {expected}"
+    return f"{SCORE_GATE_PREFIX_SCHEMA_ERROR} {dotted_path} missing or not a {expected}"
 
 
 def _score_schema_error(dotted_path: str, expected: str) -> NoReturn:
@@ -195,11 +240,14 @@ def _fold_evidence_gates_into_verdict(scored: dict[str, Any], record: Mapping[st
     reasons: list[str] = []
     first_msg: str | None = None
     if record.get("aborted"):
-        first_msg = "score aborted-record gate: run-record is aborted (partial evidence only); refusing to certify"
+        first_msg = (
+            f"{SCORE_GATE_PREFIX_ABORTED_RECORD} run-record is aborted "
+            "(partial evidence only); refusing to certify"
+        )
         reasons.append("aborted-record: run was aborted before completion")
     scored_n = int((scored.get("counts") or {}).get("scored") or 0)
     if scored_n == 0:
-        msg = "score zero-scored gate: scored=0 items; no evidence to certify"
+        msg = f"{SCORE_GATE_PREFIX_ZERO_SCORED} scored=0 items; no evidence to certify"
         if first_msg is None:
             first_msg = msg
         reasons.append("zero-scored: no items scored — no evidence")
@@ -248,7 +296,8 @@ def _fold_manifest_drift_into_verdict(
         scored["verdict"] = verdict
         return None
     return (
-        f"score manifest-drift gate: scored against score_manifest_sha256={score_sha} "
+        f"{SCORE_GATE_PREFIX_MANIFEST_DRIFT} scored against "
+        f"score_manifest_sha256={score_sha} "
         f"but fetched under {fetch_sha} (manifest_matches_fetch=false); numbers are not "
         f"comparable to a baseline scored on the fetch-time corpus (EVAL-13). "
         f"Pass --allow-manifest-relabel only for archival relabelling (persists "
@@ -1497,7 +1546,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
     # VLM6-S2A-A-02: aborted records must never green-exit (partial evidence).
     if record.get("aborted"):
         _score_gate_fail(
-            f"score aborted-record gate: run-record is aborted "
+            f"{SCORE_GATE_PREFIX_ABORTED_RECORD} run-record is aborted "
             f"(partial evidence only; see {json_path}); refusing to certify"
         )
     # Fail loud when any item was skipped from scoring (S7-01): a "passing" run
@@ -1509,13 +1558,14 @@ def _cmd_score(args: argparse.Namespace) -> None:
     failed = int(scored["counts"]["failed"])
     if failed > 0:
         _score_gate_fail(
-            f"score failed-items gate: {failed} item(s) not scored (see failures[] in {json_path}); "
+            f"{SCORE_GATE_PREFIX_FAILED_ITEMS} {failed} item(s) not scored "
+            f"(see failures[] in {json_path}); "
             "refusing to treat a partial corpus as full eval evidence"
         )
     scored_n = int(scored["counts"]["scored"])
     if scored_n == 0:
         _score_gate_fail(
-            f"score zero-scored gate: scored=0 items (counts.total="
+            f"{SCORE_GATE_PREFIX_ZERO_SCORED} scored=0 items (counts.total="
             f"{scored['counts'].get('total', 0)}); no evidence to certify "
             f"(see {json_path})"
         )
@@ -1530,7 +1580,8 @@ def _cmd_score(args: argparse.Namespace) -> None:
         manifest_n = int(corpus.get("manifest_entries") or 0)
         record_n = int(scored.get("counts", {}).get("total") or 0)
         _score_gate_fail(
-            f"score truncation gate: run-record media-id multiset differs from manifest "
+            f"{SCORE_GATE_PREFIX_TRUNCATION} run-record media-id multiset differs "
+            f"from manifest "
             f"(missing={media_id_missing}, extra={media_id_extra}; "
             f"record_items={record_n}, manifest_entries={manifest_n}; see {json_path})"
         )
@@ -1540,7 +1591,8 @@ def _cmd_score(args: argparse.Namespace) -> None:
     fetch_manifest_sha = scored.get("provenance", {}).get("manifest_sha256")
     if not fetch_manifest_sha:
         _score_gate_fail(
-            f"score manifest-mismatch gate: run-record provenance missing fetch-time "
+            f"{SCORE_GATE_PREFIX_MANIFEST_MISMATCH} run-record provenance missing "
+            f"fetch-time "
             f"manifest_sha256 — record is not self-consistent with its fetch provenance "
             f"(see {json_path})"
         )
@@ -1549,7 +1601,8 @@ def _cmd_score(args: argparse.Namespace) -> None:
     # operator cannot mistake it for adoption-ready output).
     if (scored.get("verdict") or {}).get("verdict") == ScoreVerdict.NON_COMPARABLE.value:
         _score_gate_fail(
-            f"score manifest-relabel gate: verdict={ScoreVerdict.NON_COMPARABLE.value} "
+            f"{SCORE_GATE_PREFIX_MANIFEST_RELABEL} "
+            f"verdict={ScoreVerdict.NON_COMPARABLE.value} "
             f"(archival relabel only; not adoption-comparable; see {json_path})"
         )
     # fx8 / gx1 / EVAL-13 / TEST-15: under --freeze-certification the exit code
@@ -1564,7 +1617,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
     if freeze_certification:
         if degraded:
             _score_gate_fail(
-                "score freeze-certification refused: post-cert fold re-serialised "
+                f"{SCORE_GATE_PREFIX_FREEZE_CERT_REFUSED} post-cert fold re-serialised "
                 "the document (schema/evidence/relabel); certified bytes are not "
                 f"the written bytes (see {json_path}); not a frozen scoring path"
             )
@@ -1585,12 +1638,12 @@ def _cmd_score(args: argparse.Namespace) -> None:
     easy_wrong_defined = int(scored.get("caption", {}).get("easy_wrong_defined_images") or 0)
     if must_right_defined == 0:
         _score_gate_fail(
-            f"score empty-rubric gate: must_right is vacuous corpus-wide "
+            f"{SCORE_GATE_PREFIX_EMPTY_RUBRIC} must_right is vacuous corpus-wide "
             f"(must_right_defined_images=0); caption hard gate is vacuous (see {json_path})"
         )
     if easy_wrong_defined == 0:
         _score_gate_fail(
-            f"score empty-rubric gate: easy_wrong is vacuous corpus-wide "
+            f"{SCORE_GATE_PREFIX_EMPTY_RUBRIC} easy_wrong is vacuous corpus-wide "
             f"(easy_wrong_defined_images=0); wrong-name trap is vacuous (see {json_path})"
         )
     # Schema hard-keys already folded above (pre-write). Re-read gate inputs from
@@ -1609,7 +1662,8 @@ def _cmd_score(args: argparse.Namespace) -> None:
     # "harness-shakedown numbers, NOT a caption-model baseline."
     if rubric_gate == RUBRIC_GATE_ENFORCE and must_right_failed > 0:
         _score_gate_fail(
-            f"score must-right failures gate: {must_right_failed} image(s) failed Must-Right "
+            f"{SCORE_GATE_PREFIX_MUST_RIGHT_FAILURES} {must_right_failed} image(s) "
+            f"failed Must-Right "
             f"caption hard-gate (caption corruption / missing required names; see {json_path})"
         )
     # F1-5 / EVAL-19: wrong-name floor is vacuous when images were scored but zero
@@ -1620,7 +1674,8 @@ def _cmd_score(args: argparse.Namespace) -> None:
     if scored_n > 0 and identification_evaluated == 0:
         excluded_n = len(ident_block.get("excluded_images") or [])
         _score_gate_fail(
-            f"score wrong-name floor vacuity gate: identification denominator is empty "
+            f"{SCORE_GATE_PREFIX_WRONG_NAME_FLOOR_VACUITY} identification denominator "
+            f"is empty "
             f"(evaluated_images=0, excluded_images={excluded_n}); "
             f"wrong-name floor is vacuous — no image contributed to identification "
             f"(recognition_enabled false corpus-wide or none scored; see {json_path})"
@@ -1644,7 +1699,8 @@ def _cmd_score(args: argparse.Namespace) -> None:
         # but the breach decision above did not consume the rounded value.
         display_rate = verdict.get("wrong_name_rate", unrounded_rate)
         _score_gate_fail(
-            f"score wrong-name floor gate: wrong_name_rate={display_rate} exceeds "
+            f"{SCORE_GATE_PREFIX_WRONG_NAME_FLOOR} wrong_name_rate={display_rate} "
+            f"exceeds "
             f"floor={floor} (ignored_wrong_names={ignored_n}; see {json_path})"
         )
     # VLM6-OBS-04 (live path): process exit must match the persisted artifact.
@@ -1662,20 +1718,21 @@ def _cmd_score(args: argparse.Namespace) -> None:
     # exits non-zero; quality floors must use the same gate machinery so a
     # shell that keys on score's exit status cannot green-light a failing run.
     # Soft under --freeze-certification (return above). Class-unique prefix
-    # ``score quality-floor gate:`` matches the exit-prefix table in README.
+    # SCORE_GATE_PREFIX_QUALITY_FLOOR matches the exit-prefix table in README.
     verdict_reasons = list((scored.get("verdict") or {}).get("reasons") or [])
     quality_floor_reasons = [r for r in verdict_reasons if str(r).startswith("quality-floor:")]
     if quality_floor_reasons:
         reason_hint = "; ".join(quality_floor_reasons[:3])
         _score_gate_fail(
-            f"score quality-floor gate: {reason_hint} "
+            f"{SCORE_GATE_PREFIX_QUALITY_FLOOR} {reason_hint} "
             f"(verdict={ScoreVerdict.FAIL.value}; not adoption-eligible; see {json_path})"
         )
     if verdict_value == ScoreVerdict.NOT_READY.value:
         reasons = list((scored.get("verdict") or {}).get("reasons") or [])
         reason_hint = "; ".join(reasons[:3]) if reasons else "category claim units π=0"
         _score_gate_fail(
-            f"score category-vacuity gate: verdict={ScoreVerdict.NOT_READY.value} "
+            f"{SCORE_GATE_PREFIX_CATEGORY_VACUITY} "
+            f"verdict={ScoreVerdict.NOT_READY.value} "
             f"({reason_hint}; not adoption-eligible; see {json_path})"
         )
 
@@ -2014,9 +2071,15 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
     try:
         scored = json.loads(json_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        _score_gate_fail(f"score-face gate failed: cannot read back written face report {json_path}: {exc}")
+        _score_gate_fail(
+            f"{SCORE_GATE_PREFIX_FACE_REPORT_READBACK} cannot read back written "
+            f"face report {json_path}: {exc}"
+        )
     if not isinstance(scored, dict):
-        _score_gate_fail(f"score-face gate failed: written face report is not a JSON object (see {json_path})")
+        _score_gate_fail(
+            f"{SCORE_GATE_PREFIX_FACE_REPORT_READBACK} written face report is not "
+            f"a JSON object (see {json_path})"
+        )
     scored_n = int((scored.get("counts") or {}).get("scored") or 0)
     failed = int((scored.get("counts") or {}).get("failed") or 0)
     total_n = int((scored.get("counts") or {}).get("total") or 0)
@@ -2037,18 +2100,24 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
     # --- Measurement-integrity gates (always exit-determining; S1-01) ---
     # Face score has no adoption-quality gates today — freeze-certification only
     # softens a future adoption surface; integrity stays hard under the flag.
+    # Shared prefixes with caption score (VLM6-R2-F-03 / rg-015): face-specific
+    # tokens live in the suffix so one grep still catches both paths.
     if record.get("aborted"):
         _score_gate_fail(
-            f"score-face aborted-record gate: run-record is aborted "
+            f"{SCORE_GATE_PREFIX_ABORTED_RECORD} score-face: run-record is aborted "
             f"(partial evidence only; see {json_path}); refusing to certify"
         )
     if scored_n == 0:
         _score_gate_fail(
-            f"score-face zero-scored gate: scored=0 items (counts.total={total_n}); "
+            f"{SCORE_GATE_PREFIX_ZERO_SCORED} score-face: scored=0 items "
+            f"(counts.total={total_n}); "
             f"no evidence to certify (see {json_path})"
         )
     if failed > 0:
-        _score_gate_fail(f"score-face gate failed: {failed} item(s) not scored (see failures[] in {json_path})")
+        _score_gate_fail(
+            f"{SCORE_GATE_PREFIX_FAILED_ITEMS} score-face: {failed} item(s) not "
+            f"scored (see failures[] in {json_path})"
+        )
     # fx8 / gx1 / EVAL-13: under --freeze-certification exit = scoring-path
     # byte-stability after integrity gates above have passed.
     if freeze_certification:

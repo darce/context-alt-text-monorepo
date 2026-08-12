@@ -182,7 +182,7 @@ def build_run_record(
     if started_at is None:
         live_started: str | None = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     else:
-        live_started = started_at
+        live_started = started_at or None  # empty string → None (S4-04: never pin a fake clock)
     return {
         "schema": SCHEMA,
         "kind": DocKind.RUN_RECORD.value,
@@ -227,15 +227,131 @@ def _dumps(obj: dict[str, Any]) -> str:
     return json.dumps(obj, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
 
 
+# Journal + staging marker for set-atomic promote (S4-02 / rg-002).
+_PROMOTE_JOURNAL = ".vlm-anchor-promote.journal"
+_PROMOTE_STAGE_PREFIX = ".vlm-promote-stage-"
+
+
+def _fsync_path(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _write_promote_journal(dest_dir: Path, payload: dict[str, Any]) -> None:
+    path = dest_dir / _PROMOTE_JOURNAL
+    tmp = dest_dir / f".{_PROMOTE_JOURNAL}.tmp"
+    tmp.write_text(json.dumps(payload, sort_keys=True) + "\n")
+    _fsync_path(tmp)
+    os.replace(tmp, path)
+    _fsync_path(dest_dir)
+
+
+def _recover_promote(dest_dir: Path) -> None:
+    """Finish or abandon an interrupted set-promote so dest is never left mixed.
+
+    Phase ``staged``: no live paths touched → drop stage + journal (all-old).
+    Phase ``installing``: stage holds the full durable new set → complete every
+    name from stage (all-new). Either outcome is a consistent set (S4-02).
+    """
+    journal_path = dest_dir / _PROMOTE_JOURNAL
+    if not journal_path.is_file():
+        return
+    try:
+        journal = json.loads(journal_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        journal_path.unlink(missing_ok=True)
+        return
+    names = list(journal.get("names") or [])
+    stage = Path(journal["stage"]) if journal.get("stage") else None
+    phase = journal.get("phase")
+    if stage is None or not names:
+        journal_path.unlink(missing_ok=True)
+        return
+    if phase == "installing" and stage.is_dir():
+        for name in names:
+            src = stage / name
+            if not src.is_file():
+                continue
+            dest = dest_dir / name
+            tmp = dest_dir / f".{name}.promoting"
+            tmp.write_bytes(src.read_bytes())
+            _fsync_path(tmp)
+            os.replace(tmp, dest)
+        _fsync_path(dest_dir)
+    # staged (or incomplete stage): leave live paths alone → all-old
+    if stage.is_dir():
+        for child in stage.iterdir():
+            child.unlink(missing_ok=True)
+        stage.rmdir()
+    journal_path.unlink(missing_ok=True)
+
+
 def _atomic_promote(src_dir: Path, dest_dir: Path, names: list[str]) -> None:
-    """Promote verified artifacts with same-directory atomic replacements (rg-002)."""
+    """Promote a named freeze artifact *set* as one unit (rg-002 / VLM6-F-05 / S4-02).
+
+    Per-file ``os.replace`` is atomic, but a bare loop is not: a kill after the
+    first replace leaves a new artifact paired with stale siblings (the exact
+    failure the face-generator docstring used to forbid without guaranteeing).
+
+    *dest_dir* is a shared bakeoff-results tree, so a whole-directory rename of
+    the destination is not workable. Instead:
+
+    1. Recover any prior interrupted promote (journal).
+    2. Stage the complete new set under a unique sibling dir and fsync it.
+    3. Journal ``phase=installing`` (durable intent).
+    4. Install each name from the durable stage via ``os.replace``.
+    5. Drop journal + stage.
+
+    Guarantee: after return, or after crash + ``_recover_promote`` (automatic on
+    the next promote), every named path is fully old or fully new — never mixed.
+    A crash mid-install may leave a transient mixed tree until recovery runs.
+    """
     dest_dir.mkdir(parents=True, exist_ok=True)
-    for name in names:
-        src = src_dir / name
-        dest = dest_dir / name
-        tmp = dest_dir / f".{name}.tmp"
-        tmp.write_bytes(src.read_bytes())
-        os.replace(tmp, dest)
+    _recover_promote(dest_dir)
+
+    token = f"{os.getpid():x}-{id(names):x}-{len(names):x}"
+    # Unique sibling under dest_dir (same filesystem → rename/replace works).
+    stage = dest_dir / f"{_PROMOTE_STAGE_PREFIX}{token}"
+    # Avoid collision if a prior crash left an empty dir with same token (rare).
+    n = 0
+    while stage.exists():
+        n += 1
+        stage = dest_dir / f"{_PROMOTE_STAGE_PREFIX}{token}-{n}"
+    stage.mkdir()
+    try:
+        for name in names:
+            target = stage / name
+            target.write_bytes((src_dir / name).read_bytes())
+            _fsync_path(target)
+        _fsync_path(stage)
+
+        _write_promote_journal(
+            dest_dir,
+            {"stage": str(stage), "names": list(names), "phase": "staged"},
+        )
+        _write_promote_journal(
+            dest_dir,
+            {"stage": str(stage), "names": list(names), "phase": "installing"},
+        )
+
+        for name in names:
+            dest = dest_dir / name
+            tmp = dest_dir / f".{name}.promoting"
+            tmp.write_bytes((stage / name).read_bytes())
+            _fsync_path(tmp)
+            os.replace(tmp, dest)
+        _fsync_path(dest_dir)
+
+        (dest_dir / _PROMOTE_JOURNAL).unlink(missing_ok=True)
+        for child in stage.iterdir():
+            child.unlink(missing_ok=True)
+        stage.rmdir()
+    except BaseException:
+        # Leave journal + stage for _recover_promote; re-raise.
+        raise
 
 
 def write_anchor(
@@ -255,12 +371,15 @@ def write_anchor(
     """Generate run-record + scored report pair; return paths and computed manifest sha.
 
     Builds the full artifact set in a temporary directory, verifies cross-file
-    consistency, then promotes with atomic replacements (VLM6-F-05 / rg-002).
+    consistency, then promotes the named set via journaled stage install
+    (VLM6-F-05 / rg-002 / S4-02). After return (or crash + recover) the
+    destination is fully old or fully new — never a mixed pairing.
 
     When ``pin_live_provenance`` is True (default, for byte-stable regen), live
-    ``head_sha``/``started_at`` are fixed to None / canonical_timestamp so two
-    generator runs match. Pass ``pin_live_provenance=False`` (or ``--live-*``)
-    to record real git/wall-clock values.
+    ``head_sha``/``started_at`` are nulled so two generator runs match and no
+    contract wall-clock/git field holds a fabricated sentinel (S4-04 / rg-015).
+    Byte-stability comes only from ``fixture_revision`` / ``canonical_timestamp``.
+    Pass ``pin_live_provenance=False`` (or ``--live-*``) to record real values.
     """
     # Metadata-only: uses path/sha256/media_id/present_identities/face_count for synthetic
     # image material + scoring; never opens real fixture bytes (module docstring: no GOLDEN_IMAGES_DIR).
@@ -271,16 +390,17 @@ def write_anchor(
     can_ts = started_at if started_at is not None else canonical_timestamp
 
     if pin_live_provenance and live_head_sha is None and live_started_at is None:
-        # Byte-stable mode: no fabricated contract head_sha; pin started_at to sentinel.
+        # Byte-stable mode: null contract head_sha/started_at (never fabricate).
+        # Sentinels live only in fixture_revision / canonical_timestamp (S4-04).
         record = build_run_record(
             manifest,
             fixture_revision=fix_rev,
             canonical_timestamp=can_ts,
-            head_sha="",  # sentinel → overridden below
-            started_at=can_ts,
+            head_sha="",  # empty → None in build_run_record
+            started_at="",  # empty → overridden to None below
         )
         record["provenance"]["head_sha"] = None
-        record["provenance"]["started_at"] = can_ts
+        record["provenance"]["started_at"] = None
     else:
         record = build_run_record(
             manifest,

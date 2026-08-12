@@ -417,6 +417,8 @@ def test_nfc_nfd_name_drift_still_trips_gate():  # A-10
     scores = score_caption(nfc_caption, **_entry(easy_wrong=[nfd_name]))
     assert scores.wrong_name_hits == [nfd_name]
     assert scores.gated_score == 0.0
+
+
 # --- VLM-6 S1: fabricated-fact hallucination metric --------------------------
 
 from scripts.eval_harness.caption_metrics import (  # noqa: E402

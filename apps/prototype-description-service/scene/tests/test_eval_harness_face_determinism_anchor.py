@@ -143,9 +143,7 @@ def test_coverage_gaps_enumerate_every_vacuous_or_live_slice() -> None:
     assert (record.get("provenance") or {}).get("coverage_gaps") == declared
 
     computed = compute_coverage_gaps(report)
-    assert declared == computed, (
-        f"stale coverage_gaps: declared={declared} computed={computed}"
-    )
+    assert declared == computed, f"stale coverage_gaps: declared={declared} computed={computed}"
 
     live = _live_slice_names(report)
     # F7 must light up the previously vacuous hard cells (not merely declare them).
@@ -188,9 +186,7 @@ def test_corrupt_face_expect_report_makes_determinism_gate_red(tmp_path: Path) -
     payload = json.loads(_REPORT_JSON.read_text())
     payload.setdefault("counts", {})["matched_faces"] = 999
     corrupt_expect = tmp_path / "expect-corrupt-face-report.json"
-    corrupt_expect.write_text(
-        json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
-    )
+    corrupt_expect.write_text(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
     assert _sha256(corrupt_expect) != _FROZEN_DIGESTS[_REPORT_JSON.name]
 
     before_docs = {p.name: _sha256(p) for p in _ANCHOR_DIR.glob("S2A-face-*")}
@@ -231,9 +227,7 @@ def test_corrupt_face_run_record_embedding_makes_determinism_gate_red(tmp_path: 
     emb[0] = -abs(emb[0]) - 0.5
     face["embedding"] = _unit(emb)
     run_copy = tmp_path / "run-corrupt.json"
-    run_copy.write_text(
-        json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
-    )
+    run_copy.write_text(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
     expect_copy = tmp_path / _REPORT_JSON.name
     expect_copy.write_bytes(_REPORT_JSON.read_bytes())
 
@@ -273,9 +267,7 @@ def test_f7_clustering_corruption_goes_red(tmp_path: Path) -> None:
                 face["embedding"] = list(alice_axis)
 
     run_copy = tmp_path / "run-cluster-corrupt.json"
-    run_copy.write_text(
-        json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
-    )
+    run_copy.write_text(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
     expect_copy = tmp_path / _REPORT_JSON.name
     expect_copy.write_bytes(_REPORT_JSON.read_bytes())
 
@@ -301,9 +293,7 @@ def test_f7_clustering_corruption_goes_red(tmp_path: Path) -> None:
         public=False,
     )
     after = json.loads(json_doc)["slices"]["clustering"]
-    assert after["p_diff"] != before_p_diff or after["false_merge"] != report["slices"][
-        "clustering"
-    ]["false_merge"]
+    assert after["p_diff"] != before_p_diff or after["false_merge"] != report["slices"]["clustering"]["false_merge"]
 
 
 def test_f7_detection_fp_corruption_goes_red(tmp_path: Path) -> None:
@@ -317,9 +307,7 @@ def test_f7_detection_fp_corruption_goes_red(tmp_path: Path) -> None:
             item["faces"] = []
 
     run_copy = tmp_path / "run-fp-corrupt.json"
-    run_copy.write_text(
-        json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
-    )
+    run_copy.write_text(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
     expect_copy = tmp_path / _REPORT_JSON.name
     expect_copy.write_bytes(_REPORT_JSON.read_bytes())
 
@@ -355,9 +343,7 @@ def test_old_single_identity_corpus_cannot_detect_clustering_or_fp_bugs() -> Non
     lm = [[0.0, 0.0]] * 5
 
     def _face(e):
-        return build_face_detection(
-            bbox_px=bbox, landmarks_px=lm, embedding=e, det_score=0.95
-        )
+        return build_face_detection(bbox_px=bbox, landmarks_px=lm, embedding=e, det_score=0.95)
 
     def _old_record(alice_a_emb):
         items = [
@@ -413,9 +399,7 @@ def test_old_single_identity_corpus_cannot_detect_clustering_or_fp_bugs() -> Non
                 "must_right": [],
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
-                "face_boxes": [
-                    {"x": 0.4, "y": 0.4, "w": 0.4, "h": 0.4, "source": "iptc", "name": "Alice Example"}
-                ],
+                "face_boxes": [{"x": 0.4, "y": 0.4, "w": 0.4, "h": 0.4, "source": "iptc", "name": "Alice Example"}],
                 "provenance": {
                     "source": "celeb",
                     "license": "public_domain",
@@ -433,9 +417,7 @@ def test_old_single_identity_corpus_cannot_detect_clustering_or_fp_bugs() -> Non
                 "must_right": [],
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
-                "face_boxes": [
-                    {"x": 0.4, "y": 0.4, "w": 0.4, "h": 0.4, "source": "iptc", "name": "Alice Example"}
-                ],
+                "face_boxes": [{"x": 0.4, "y": 0.4, "w": 0.4, "h": 0.4, "source": "iptc", "name": "Alice Example"}],
                 "provenance": {
                     "source": "celeb",
                     "license": "public_domain",
@@ -453,9 +435,7 @@ def test_old_single_identity_corpus_cannot_detect_clustering_or_fp_bugs() -> Non
                 "must_right": [],
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
-                "face_boxes": [
-                    {"x": 0.4, "y": 0.4, "w": 0.4, "h": 0.4, "source": "iptc", "name": None}
-                ],
+                "face_boxes": [{"x": 0.4, "y": 0.4, "w": 0.4, "h": 0.4, "source": "iptc", "name": None}],
                 "provenance": {
                     "source": "localwp",
                     "license": "consented",
@@ -515,9 +495,7 @@ def test_corrupt_face_run_record_without_expect_report_passes_silently(
     emb[0] = -abs(emb[0]) - 0.5
     face["embedding"] = _unit(emb)
     run_copy = tmp_path / "run-corrupt-no-expect.json"
-    run_copy.write_text(
-        json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
-    )
+    run_copy.write_text(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
 
     _check_face_determinism_cross_process(
         run_copy,
@@ -531,9 +509,7 @@ def test_corrupt_face_run_record_without_expect_report_passes_silently(
     assert "ANCHOR_MISMATCH" not in out
 
 
-def test_face_expect_report_matches_committed_freeze_green(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_face_expect_report_matches_committed_freeze_green(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Clean --expect-report against the committed face freeze exits green."""
     run_copy = tmp_path / _RUN.name
     run_copy.write_bytes(_RUN.read_bytes())
@@ -576,9 +552,7 @@ def test_cli_score_face_expect_report_requires_check_determinism(tmp_path: Path)
     assert "--expect-report requires --check-determinism" in str(exc.value)
 
 
-def test_cli_score_face_expect_report_end_to_end_green(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cli_score_face_expect_report_end_to_end_green(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Shipped CLI: score-face --check-determinism --expect-report against freeze."""
     run_copy = tmp_path / _RUN.name
     run_copy.write_bytes(_RUN.read_bytes())
@@ -625,9 +599,7 @@ def test_f7_01_mismatch_artifact_never_dirties_bakeoff_results(
     payload = json.loads(_REPORT_JSON.read_text())
     payload.setdefault("counts", {})["matched_faces"] = 12345
     corrupt_expect = tmp_path / "corrupt-expect.json"
-    corrupt_expect.write_text(
-        json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
-    )
+    corrupt_expect.write_text(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
 
     before = {p.name for p in _ANCHOR_DIR.iterdir()}
     # Clear any stale mismatch artifact so existence is from this run.
@@ -652,9 +624,7 @@ def test_f7_01_mismatch_artifact_never_dirties_bakeoff_results(
     assert "determinism check ANCHOR_MISMATCH" in msg
     artifact = Path(msg.split("artifact=")[1].split(")")[0].split(";")[0].strip())
     assert artifact.is_file()
-    assert artifact.resolve().is_relative_to(OUT_DIR.resolve()) or str(
-        OUT_DIR.resolve()
-    ) in str(artifact.resolve())
+    assert artifact.resolve().is_relative_to(OUT_DIR.resolve()) or str(OUT_DIR.resolve()) in str(artifact.resolve())
     assert "bakeoff-results" not in str(artifact.resolve())
     after = {p.name for p in _ANCHOR_DIR.iterdir()}
     assert after == before

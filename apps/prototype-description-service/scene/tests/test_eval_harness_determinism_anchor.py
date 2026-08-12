@@ -110,9 +110,7 @@ def test_corrupt_expect_report_makes_determinism_gate_red(tmp_path: Path) -> Non
     before = (payload.get("verdict") or {}).get("verdict", "pass_ungated")
     payload.setdefault("verdict", {})["verdict"] = "CORRUPTED_FOR_TEST_15"
     corrupt_expect = tmp_path / "expect-corrupt-report.json"
-    corrupt_expect.write_text(
-        json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
-    )
+    corrupt_expect.write_text(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
     assert _sha256(corrupt_expect) != _FROZEN_DIGESTS[_REPORT_JSON.name]
 
     with pytest.raises(SystemExit) as exc:
@@ -177,9 +175,7 @@ def test_corrupt_run_record_alt_text_makes_determinism_gate_red(tmp_path: Path) 
     describe = dict(item.get("describe") or {})
     describe["alt_text_draft"] = "CORRUPTED ALT TEXT DRAFT FOR F5-01 INPUT CONTROL"
     item["describe"] = describe
-    run_copy.write_text(
-        json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
-    )
+    run_copy.write_text(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
     expect_copy = tmp_path / _REPORT_JSON.name
     expect_copy.write_bytes(_REPORT_JSON.read_bytes())
 

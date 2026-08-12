@@ -21,6 +21,7 @@ never pruned. Curated baselines are promoted to ``docs/tasks/vlm/`` by hand.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import importlib.util
 import json
@@ -30,11 +31,12 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from enum import StrEnum
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Mapping, NamedTuple, NoReturn
+from typing import Any, NamedTuple, NoReturn
 
 from scene.config.profiles import PROFILE_SPECS, DescriptionProfile
 from scene.domain.description import DescriptionAdapterKind
@@ -59,7 +61,6 @@ from .report import (
     Audience,
     ReportError,
     ScoreVerdict,
-    _markdown as _score_report_markdown,
     _total_wrong_name_count,
     build_face_reports,
     build_reports,
@@ -67,6 +68,9 @@ from .report import (
     occlusion_inputs_from_record,
     score_face_run_record,
     score_run_record,
+)
+from .report import (
+    _markdown as _score_report_markdown,
 )
 from .schema import SCHEMA, DocKind
 from .seed_roster import seed, seed_scenes
@@ -138,9 +142,7 @@ def _hard_key(container: Mapping[str, Any] | None, *path: str, expected: str, ch
     return cur
 
 
-def _schema_hard_key_error(
-    container: Mapping[str, Any] | None, *path: str, expected: str, check
-) -> str | None:
+def _schema_hard_key_error(container: Mapping[str, Any] | None, *path: str, expected: str, check) -> str | None:
     """Return schema-error message when ``path`` is missing/wrong-type; else None."""
     dotted = ".".join(path)
     cur: Any = container
@@ -194,9 +196,7 @@ def _fold_schema_errors_into_verdict(scored: dict[str, Any]) -> str | None:
     return first_msg
 
 
-def _fold_evidence_gates_into_verdict(
-    scored: dict[str, Any], record: Mapping[str, Any]
-) -> str | None:
+def _fold_evidence_gates_into_verdict(scored: dict[str, Any], record: Mapping[str, Any]) -> str | None:
     """Fold aborted / zero-scored evidence failures into the on-disk verdict (A-02).
 
     Returns the first gate exit message when evidence is vacuous; mutates
@@ -205,16 +205,11 @@ def _fold_evidence_gates_into_verdict(
     reasons: list[str] = []
     first_msg: str | None = None
     if record.get("aborted"):
-        first_msg = (
-            "score aborted-record gate: run-record is aborted "
-            "(partial evidence only); refusing to certify"
-        )
+        first_msg = "score aborted-record gate: run-record is aborted (partial evidence only); refusing to certify"
         reasons.append("aborted-record: run was aborted before completion")
     scored_n = int((scored.get("counts") or {}).get("scored") or 0)
     if scored_n == 0:
-        msg = (
-            "score zero-scored gate: scored=0 items; no evidence to certify"
-        )
+        msg = "score zero-scored gate: scored=0 items; no evidence to certify"
         if first_msg is None:
             first_msg = msg
         reasons.append("zero-scored: no items scored — no evidence")
@@ -421,9 +416,7 @@ def fetch_run_record(
             job_id = client.analyze([(entry.media_id, image_path.name, image_bytes)])
             client.wait_job(job_id)
             identities_payload = client.media_identities([entry.media_id])
-            identities, face_count, ordering_source = _extract_identities(
-                identities_payload, entry.media_id
-            )
+            identities, face_count, ordering_source = _extract_identities(identities_payload, entry.media_id)
             item["identities"] = identities
             item["face_count"] = face_count
             item["identity_ordering"] = ordering_source
@@ -473,9 +466,7 @@ def _parse_identity_bbox(raw: Any) -> dict[str, int | float] | None:
         x, y, width, height = raw["x"], raw["y"], raw["width"], raw["height"]
     except KeyError:
         return None
-    if not all(
-        isinstance(v, (int, float)) and not isinstance(v, bool) for v in (x, y, width, height)
-    ):
+    if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (x, y, width, height)):
         return None
     return {"x": x, "y": y, "width": width, "height": height}
 
@@ -502,9 +493,7 @@ def identity_names(identities: object) -> list[str]:
     empty ``name`` raise rather than being silently skipped.
     """
     if not isinstance(identities, list):
-        raise TypeError(
-            f"identities must be a list of dict rows, got {type(identities).__name__}"
-        )
+        raise TypeError(f"identities must be a list of dict rows, got {type(identities).__name__}")
     names: list[str] = []
     for index, entry in enumerate(identities):
         if not isinstance(entry, dict):
@@ -514,10 +503,7 @@ def identity_names(identities: object) -> list[str]:
             )
         name = entry.get("name")
         if not name:
-            raise ValueError(
-                f"identities[{index}] has empty/missing 'name' "
-                f"(keys present: {sorted(entry)!r})"
-            )
+            raise ValueError(f"identities[{index}] has empty/missing 'name' (keys present: {sorted(entry)!r})")
         names.append(str(name))
     return names
 
@@ -580,9 +566,7 @@ def _extract_identities(payload: Any, media_id: int) -> tuple[list[dict[str, Any
     # ordering_source is degraded so report surfaces the loss of pure L→R.
     unpositioned.sort(key=lambda t: t[0])
     identities = [t[-1] for t in positioned] + [t[1] for t in unpositioned]
-    ordering_source = (
-        IdentityOrdering.DEGRADED.value if unpositioned else IdentityOrdering.POSITIONAL.value
-    )
+    ordering_source = IdentityOrdering.DEGRADED.value if unpositioned else IdentityOrdering.POSITIONAL.value
     return identities, face_count, ordering_source
 
 
@@ -785,13 +769,14 @@ def _resolve_determinism_child_seeds(
     occupied: set[str] = {parent_fixed}
     out: list[str] = []
     placeholder_idxs: list[int] = []
-    for seed in requested:
-        if seed == parent_fixed:
+    # Not ``seed`` — that name is the module-level seed_roster import (F402).
+    for child_seed in requested:
+        if child_seed == parent_fixed:
             placeholder_idxs.append(len(out))
             out.append("")  # filled below
         else:
-            out.append(seed)
-            occupied.add(seed)
+            out.append(child_seed)
+            occupied.add(child_seed)
     next_i = 0
     for idx in placeholder_idxs:
         while str(next_i) in occupied:
@@ -879,11 +864,7 @@ def _run_determinism_children(
         # under ``python -c``: a hostile inherited PYTHONPATH entry must not
         # outrank the package root for non-cwd lookups.
         existing_pp = env.get("PYTHONPATH", "")
-        env["PYTHONPATH"] = (
-            str(import_root)
-            if not existing_pp
-            else f"{import_root}{os.pathsep}{existing_pp}"
-        )
+        env["PYTHONPATH"] = str(import_root) if not existing_pp else f"{import_root}{os.pathsep}{existing_pp}"
         # Allocate a unique path the child must create; do not pre-write content
         # (absence must be distinguishable from empty/unparseable). Do not place
         # under artifact_dir — that may be read-only and already owns FAILED diffs.
@@ -907,9 +888,7 @@ def _run_determinism_children(
                 stderr_snip = ""
                 if exc.stderr is not None:
                     stderr_snip = (
-                        exc.stderr
-                        if isinstance(exc.stderr, str)
-                        else exc.stderr.decode("utf-8", errors="replace")
+                        exc.stderr if isinstance(exc.stderr, str) else exc.stderr.decode("utf-8", errors="replace")
                     )
                 sys.exit(
                     f"determinism check ERROR [{label}]: subprocess timed out "
@@ -1017,10 +996,8 @@ def _run_determinism_children(
                 f"stderr={proc.stderr!r})"
             )
         finally:
-            try:
+            with contextlib.suppress(OSError):
                 payload_path.unlink(missing_ok=True)
-            except OSError:
-                pass
     if announce_pass:
         print(
             f"determinism check passed [{label}]: cross-process re-score is "
@@ -1032,12 +1009,8 @@ def _run_determinism_children(
 # Opt-in frozen-report regeneration commands named in ANCHOR_MISMATCH (OBS-04).
 # Caption and face freezes have distinct generators; _check_expect_report takes
 # regen_cmd so the remedy line names the right module (no helper fork).
-_DETERMINISM_ANCHOR_REGEN_CMD = (
-    "python -m scripts.eval_harness.generate_determinism_anchor"
-)
-_FACE_DETERMINISM_ANCHOR_REGEN_CMD = (
-    "python -m scripts.eval_harness.generate_face_determinism_anchor"
-)
+_DETERMINISM_ANCHOR_REGEN_CMD = "python -m scripts.eval_harness.generate_determinism_anchor"
+_FACE_DETERMINISM_ANCHOR_REGEN_CMD = "python -m scripts.eval_harness.generate_face_determinism_anchor"
 
 
 def _determinism_artifact_dir() -> Path:
@@ -1085,15 +1058,13 @@ def _check_expect_report(
     resolved = expect_report.resolve()
     if not resolved.is_file():
         sys.exit(
-            f"determinism check ERROR [{label}]: --expect-report path missing "
-            f"or not a file: {resolved} ({regime})"
+            f"determinism check ERROR [{label}]: --expect-report path missing or not a file: {resolved} ({regime})"
         )
     try:
         expected = resolved.read_text(encoding="utf-8")
     except OSError as read_exc:
         sys.exit(
-            f"determinism check ERROR [{label}]: --expect-report unreadable "
-            f"path={resolved}: {read_exc} ({regime})"
+            f"determinism check ERROR [{label}]: --expect-report unreadable path={resolved}: {read_exc} ({regime})"
         )
     if expected == base_json:
         print(
@@ -1246,10 +1217,7 @@ def _serialize_score_docs(scored: dict[str, Any]) -> tuple[str, str]:
     try:
         md_doc = _score_report_markdown(scored)
     except (KeyError, TypeError, AttributeError):
-        md_doc = (
-            "# score report\n\n"
-            "(markdown omitted: scored document is schema-degraded; see JSON verdict)\n"
-        )
+        md_doc = "# score report\n\n(markdown omitted: scored document is schema-degraded; see JSON verdict)\n"
     return json_doc, md_doc
 
 
@@ -1504,9 +1472,7 @@ def _cmd_run(args: argparse.Namespace) -> None:
     # Per-leg (not once) is deliberate: a single check would leave other legs
     # uncertified under a flag that claims certification.
     if getattr(args, "check_determinism", False):
-        providers: list[str | None] = (
-            list(dict.fromkeys(args.provider)) if args.provider else [None]
-        )
+        providers: list[str | None] = list(dict.fromkeys(args.provider)) if args.provider else [None]
         n_legs = len(providers)
         n_seeds = len(_DEFAULT_DETERMINISM_CHILD_SEEDS)
         is_public = getattr(args, "audience", Audience.LOCAL.value) == Audience.PUBLIC.value
@@ -1532,9 +1498,7 @@ def _cmd_run(args: argparse.Namespace) -> None:
             print(f"score gate failed for {record_path}: {exc}", file=sys.stderr)
     if gate_failures:
         summary = "; ".join(gate_failures)
-        sys.exit(
-            f"run score gates failed for {len(gate_failures)} record(s): {summary}"
-        )
+        sys.exit(f"run score gates failed for {len(gate_failures)} record(s): {summary}")
 
 
 def _cmd_seed_roster(args: argparse.Namespace) -> None:
@@ -1560,7 +1524,6 @@ def _cmd_seed_scenes(args: argparse.Namespace) -> None:
     print(json.dumps(summary.__dict__, indent=2, sort_keys=True))
     if summary.unverified_media_ids:
         sys.exit(f"seeding incomplete: no identity rows detected for media_ids {summary.unverified_media_ids}")
-
 
 
 class _FaceLegBundle(NamedTuple):
@@ -1739,9 +1702,7 @@ def _check_face_determinism_cross_process(
     # never opens image files (embeddings already in the face run-record).
     manifest = load_manifest(str(resolved_manifest), skip_hash_verification=True)
     manifest_sha = _manifest_sha(manifest)
-    base_json, base_md = _face_score_once(
-        record, manifest, score_manifest_sha256=manifest_sha, public=public
-    )
+    base_json, base_md = _face_score_once(record, manifest, score_manifest_sha256=manifest_sha, public=public)
 
     # Final argv entry is the parent-allocated payload path (F2b out-of-band).
     # build_reports_file carries build_face_reports provenance (F2c).
@@ -1813,9 +1774,7 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
             expect_report=expect_report,
         )
     else:
-        json_doc, md_doc = _face_score_once(
-            record, manifest, score_manifest_sha256=manifest_sha, public=public
-        )
+        json_doc, md_doc = _face_score_once(record, manifest, score_manifest_sha256=manifest_sha, public=public)
     base = record_path.with_suffix("")
     json_path, md_path = Path(f"{base}-face-report.json"), Path(f"{base}-face-report.md")
     json_path.write_text(json_doc)
@@ -1854,9 +1813,7 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
         )
     failed = int(scored["counts"]["failed"])
     if failed > 0:
-        _score_gate_fail(
-            f"score-face gate failed: {failed} item(s) not scored (see failures[] in {json_path})"
-        )
+        _score_gate_fail(f"score-face gate failed: {failed} item(s) not scored (see failures[] in {json_path})")
 
 
 # Metrics where higher candidate values meet-or-beat the baseline (VLM6-R2-08).
@@ -1918,22 +1875,15 @@ def _cmd_compare(args: argparse.Namespace) -> None:
             # verdict.wrong_name_rate may be absent on pre-verdict anchors;
             # fall back to counting wrong_names when present.
             if path == ("verdict", "wrong_name_rate"):
-                b_names = ((baseline.get("faces") or {}).get("identification") or {}).get(
-                    "wrong_names"
-                )
-                c_names = ((candidate.get("faces") or {}).get("identification") or {}).get(
-                    "wrong_names"
-                )
+                b_names = ((baseline.get("faces") or {}).get("identification") or {}).get("wrong_names")
+                c_names = ((candidate.get("faces") or {}).get("identification") or {}).get("wrong_names")
                 if isinstance(b_names, list) and isinstance(c_names, list):
                     b_n, c_n = float(len(b_names)), float(len(c_names))
                     comparisons.append(
-                        f"faces.identification.wrong_names: baseline={b_n} "
-                        f"candidate={c_n} (lower-better)"
+                        f"faces.identification.wrong_names: baseline={b_n} candidate={c_n} (lower-better)"
                     )
                     if c_n > b_n:
-                        regressions.append(
-                            f"faces.identification.wrong_names: candidate {c_n} > baseline {b_n}"
-                        )
+                        regressions.append(f"faces.identification.wrong_names: candidate {c_n} > baseline {b_n}")
                     continue
             regressions.append(f"{label}: missing (baseline={b}, candidate={c})")
             continue
@@ -1944,14 +1894,8 @@ def _cmd_compare(args: argparse.Namespace) -> None:
     for line in comparisons:
         print(line)
     if regressions:
-        sys.exit(
-            "compare regression gate: candidate fails meet-or-beat vs baseline — "
-            + "; ".join(regressions)
-        )
-    print(
-        f"compare meet-or-beat: PASS candidate={candidate_path} "
-        f"baseline={baseline_path}"
-    )
+        sys.exit("compare regression gate: candidate fails meet-or-beat vs baseline — " + "; ".join(regressions))
+    print(f"compare meet-or-beat: PASS candidate={candidate_path} baseline={baseline_path}")
 
 
 def main(argv: list[str] | None = None) -> None:

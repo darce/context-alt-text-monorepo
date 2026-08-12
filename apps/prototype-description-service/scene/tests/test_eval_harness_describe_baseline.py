@@ -14,7 +14,6 @@ import pytest
 from scripts.eval_harness import describe_baseline as db
 from scripts.eval_harness.face_pass import SeededTenantError
 
-
 # --- helpers -----------------------------------------------------------------
 
 
@@ -215,8 +214,9 @@ def test_main_happy_path_with_scratch_tenant(tmp_path, monkeypatch):
     img.parent.mkdir(parents=True, exist_ok=True)
     # Minimal PNG so PIL can open dimensions if code path needs it.
     try:
-        from PIL import Image
         import io
+
+        from PIL import Image
 
         buf = io.BytesIO()
         Image.new("RGB", (8, 8), color=(1, 2, 3)).save(buf, format="PNG")
@@ -257,8 +257,9 @@ def test_main_force_skips_tenant_guard(tmp_path, monkeypatch):
     img = paths["uploads"] / "2026" / "07" / "a.jpg"
     img.parent.mkdir(parents=True, exist_ok=True)
     try:
-        from PIL import Image
         import io
+
+        from PIL import Image
 
         buf = io.BytesIO()
         Image.new("RGB", (8, 8), color=(1, 2, 3)).save(buf, format="PNG")

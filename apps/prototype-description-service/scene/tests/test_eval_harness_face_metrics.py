@@ -191,10 +191,7 @@ def _dec(
 
 def test_face_id_forced_wrong_name_drops_precision_and_recall():
     """TEST-15: confusion is FP on name* AND FN on true (enrolled) — both P and R drop."""
-    good = [
-        _dec(media_id=i, true_name="Alice", decision="accept", predicted_name="Alice")
-        for i in range(4)
-    ]
+    good = [_dec(media_id=i, true_name="Alice", decision="accept", predicted_name="Alice") for i in range(4)]
     wrong = _dec(
         media_id=99,
         true_name="Alice",
@@ -252,10 +249,7 @@ def test_face_id_zero_over_zero_is_zero():
 
 def test_face_unknown_rejection_stranger_label_goes_red():
     """TEST-15 MANDATORY: candidate labels a stranger → unknown-rejection RED."""
-    clean = [
-        _dec(media_id=i, true_name=None, decision="reject", predicted_name=None)
-        for i in range(5)
-    ]
+    clean = [_dec(media_id=i, true_name=None, decision="reject", predicted_name=None) for i in range(5)]
     polluted = clean + [
         _dec(
             media_id=99,
@@ -593,9 +587,7 @@ def test_demographic_rollup_never_fabricates_zero_miss_fields():
         _dec(media_id=2, true_name="Bob", decision="accept", predicted_name="Bob"),
     ]
     cohorts = {"Alice": "cohort-a", "Bob": "cohort-b"}
-    inherited = demographic_rollup(
-        decisions, cohorts, parent_detection_coupling=True
-    )
+    inherited = demographic_rollup(decisions, cohorts, parent_detection_coupling=True)
     for pr in inherited.by_cohort.values():
         assert pr.missed_gt is None  # not 0 — the cohort frame cannot know
         assert pr.unmatched_detections is None
@@ -665,9 +657,7 @@ def test_unknown_rejection_error_target_discloses_trial_dependence():
     assert "n=43" in UNKNOWN_REJECTION_ERROR_TARGET
     assert "independent" in UNKNOWN_REJECTION_ERROR_TARGET
     assert "effective" in UNKNOWN_REJECTION_ERROR_TARGET
-    result = face_unknown_rejection(
-        [_dec(media_id=1, true_name=None, decision="reject")]
-    )
+    result = face_unknown_rejection([_dec(media_id=1, true_name=None, decision="reject")])
     assert "independent" in result.error_target
 
 

@@ -537,9 +537,7 @@ def write_face_anchor(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Generate a synthetic offline face determinism anchor (VLM-6 F6/F7)."
-    )
+    parser = argparse.ArgumentParser(description="Generate a synthetic offline face determinism anchor (VLM-6 F6/F7).")
     parser.add_argument(
         "--out-dir",
         type=Path,

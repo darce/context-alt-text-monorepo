@@ -514,8 +514,7 @@ def require_metric_backing(manifest: GoldenManifest, field: str) -> FieldPopulat
     """
     if field not in STRATIFICATION_INVENTORY_FIELDS:
         raise ManifestError(
-            f"unknown metric-backing field {field!r}; known fields are "
-            f"{', '.join(STRATIFICATION_INVENTORY_FIELDS)}"
+            f"unknown metric-backing field {field!r}; known fields are {', '.join(STRATIFICATION_INVENTORY_FIELDS)}"
         )
     pop = inventory_corpus_fields(manifest)[field]
     if pop.is_vacuous:
@@ -649,9 +648,7 @@ def load_manifest(
                 raise ManifestError(f"identity {name!r} in {entry.path} is not in the roster")
     for cohort_key in manifest.roster_cohorts:
         if cohort_key not in roster:
-            raise ManifestError(
-                f"roster_cohorts key {cohort_key!r} is not in the roster"
-            )
+            raise ManifestError(f"roster_cohorts key {cohort_key!r} is not in the roster")
 
     if not any(entry.must_right or entry.easy_wrong for entry in manifest.entries):
         warnings.warn(

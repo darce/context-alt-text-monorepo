@@ -84,10 +84,7 @@ def test_fetch_produces_run_record_with_provenance(images_dir):
     # A-08: every item stamps image dimensions (None when bytes are not a real image).
     assert all("image_width" in item and "image_height" in item for item in record["items"])
     # A-07 / RH-06: ordering source stamped once identities extracted.
-    assert all(
-        item.get("identity_ordering") == IdentityOrdering.POSITIONAL.value
-        for item in record["items"]
-    )
+    assert all(item.get("identity_ordering") == IdentityOrdering.POSITIONAL.value for item in record["items"])
 
 
 def test_fetch_persists_image_dimensions_from_pixels(tmp_path):
@@ -644,9 +641,7 @@ def _write_score_manifest(tmp_path, entries, roster, name="golden.json"):
     from scripts.eval_harness.manifest import load_manifest
 
     manifest_path = tmp_path / name
-    manifest_path.write_text(
-        json.dumps({"manifest_version": 2, "roster": roster, "entries": entries})
-    )
+    manifest_path.write_text(json.dumps({"manifest_version": 2, "roster": roster, "entries": entries}))
     # Metadata-only: computes score-time sha from roster/entries; never opens image bytes.
     return manifest_path, _manifest_sha(load_manifest(str(manifest_path), skip_hash_verification=True))
 
@@ -691,9 +686,7 @@ def _w1_audience_manifest_and_record(tmp_path, *, inject_wrong_name: bool = Fals
             "provenance": {"source": "localwp", "license": "consented", "publishable": False},
         },
     ]
-    manifest_path, manifest_sha = _write_score_manifest(
-        tmp_path, entries, [_W1_PUBLIC_NAME, _W1_LOCAL_NAME]
-    )
+    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, [_W1_PUBLIC_NAME, _W1_LOCAL_NAME])
     record_path = tmp_path / "run-x.json"
     record_path.write_text(
         json.dumps(
@@ -714,7 +707,13 @@ def _w1_audience_manifest_and_record(tmp_path, *, inject_wrong_name: bool = Fals
                             "alt_text_draft": f"{_W1_PUBLIC_NAME} at a podium.",
                             "visual_facts": {"objects": []},
                         },
-                        "identities": [{"name": _W1_PUBLIC_NAME, "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0}, "unpositioned": False}],
+                        "identities": [
+                            {
+                                "name": _W1_PUBLIC_NAME,
+                                "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                                "unpositioned": False,
+                            }
+                        ],
                         "face_count": 1,
                         "error": None,
                     },
@@ -725,7 +724,13 @@ def _w1_audience_manifest_and_record(tmp_path, *, inject_wrong_name: bool = Fals
                             "alt_text_draft": f"{_W1_LOCAL_NAME} at a party.",
                             "visual_facts": {"objects": []},
                         },
-                        "identities": [{"name": local_identity, "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0}, "unpositioned": False}],
+                        "identities": [
+                            {
+                                "name": local_identity,
+                                "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                                "unpositioned": False,
+                            }
+                        ],
                         "face_count": 1,
                         "error": None,
                     },
@@ -778,9 +783,7 @@ def test_cmd_score_public_audience_emits_redacted_public_artifact(tmp_path, monk
 
 def test_cmd_score_public_audience_redacts_wrong_names(tmp_path, monkeypatch):  # VLM6-S2A-A-06
     """Public artifact withholds wrong_names pairs even when floor exits non-zero."""
-    manifest_path, record_path = _w1_audience_manifest_and_record(
-        tmp_path, inject_wrong_name=True
-    )
+    manifest_path, record_path = _w1_audience_manifest_and_record(tmp_path, inject_wrong_name=True)
     monkeypatch.chdir(tmp_path)
     with pytest.raises(SystemExit) as excinfo:
         main(
@@ -826,9 +829,7 @@ def test_cmd_score_default_local_wrong_name_exits_nonzero(tmp_path, monkeypatch)
     Split from the green-path public-artifact guard so both paths stay watched
     (sr-001: do not convert a success test into a failure test).
     """
-    manifest_path, record_path = _w1_audience_manifest_and_record(
-        tmp_path, inject_wrong_name=True
-    )
+    manifest_path, record_path = _w1_audience_manifest_and_record(tmp_path, inject_wrong_name=True)
     monkeypatch.chdir(tmp_path)
     with pytest.raises(SystemExit) as excinfo:
         main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
@@ -857,9 +858,7 @@ def test_cmd_score_exits_nonzero_when_items_failed(tmp_path, monkeypatch):  # S7
             "policy": {"recognition_enabled": True},
         }
     ]
-    manifest_path, manifest_sha = _write_score_manifest(
-        tmp_path, entries, ["Alice Example", "Bob Builder"]
-    )
+    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, ["Alice Example", "Bob Builder"])
     record_path = tmp_path / "run-x.json"
     record_path.write_text(
         json.dumps(
@@ -932,9 +931,7 @@ def _wrong_name_everywhere_manifest_and_record(tmp_path):
             "policy": {"recognition_enabled": True},
         },
     ]
-    manifest_path, manifest_sha = _write_score_manifest(
-        tmp_path, entries, ["Alice Example", "Bob Builder"]
-    )
+    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, ["Alice Example", "Bob Builder"])
     record_path = tmp_path / "run-wrong.json"
     record_path.write_text(
         json.dumps(
@@ -1037,9 +1034,7 @@ def test_cmd_score_exits_zero_when_no_wrong_names_and_no_failures(tmp_path, monk
             "policy": {"recognition_enabled": True},
         }
     ]
-    manifest_path, manifest_sha = _write_score_manifest(
-        tmp_path, entries, ["Alice Example", "Bob Builder"]
-    )
+    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, ["Alice Example", "Bob Builder"])
     record_path = tmp_path / "run-clean.json"
     record_path.write_text(
         json.dumps(
@@ -1100,9 +1095,7 @@ def _clean_score_manifest_and_record(tmp_path):
             "policy": {"recognition_enabled": True},
         }
     ]
-    manifest_path, manifest_sha = _write_score_manifest(
-        tmp_path, entries, ["Alice Example", "Bob Builder"]
-    )
+    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, ["Alice Example", "Bob Builder"])
     record_path = tmp_path / "run-det.json"
     record_path.write_text(
         json.dumps(
@@ -1257,8 +1250,8 @@ def test_cli_score_determinism_seed_failed_not_anchor_mismatch(tmp_path, monkeyp
     manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
     # Expect file is whatever the clean score would produce after a successful
     # certify; seed mutation still fires first inside _run_determinism_children.
-    from scripts.eval_harness.report import Audience, build_reports
     from scripts.eval_harness.manifest import load_manifest
+    from scripts.eval_harness.report import Audience, build_reports
 
     record = json.loads(record_path.read_text())
     # Metadata-only: build_reports baseline for expect-report; never opens image bytes.
@@ -1433,9 +1426,7 @@ def test_cli_score_determinism_guard_errors_on_unreadable_payload(tmp_path, monk
     assert "determinism check FAILED" not in msg
 
 
-def test_cli_score_determinism_guard_survives_sentinel_in_freeform_text(
-    tmp_path, monkeypatch, capsys
-):
+def test_cli_score_determinism_guard_survives_sentinel_in_freeform_text(tmp_path, monkeypatch, capsys):
     """F2b / C-04 collision: free-form text that lands in the scored report docs
     and contains the old ``---MD---`` sentinel must NOT false-RED the gate.
 
@@ -1463,9 +1454,7 @@ def test_cli_score_determinism_guard_survives_sentinel_in_freeform_text(
             "policy": {"recognition_enabled": True},
         }
     ]
-    manifest_path, manifest_sha = _write_score_manifest(
-        tmp_path, entries, [name, "Bob Builder"]
-    )
+    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, [name, "Bob Builder"])
     caption = f"{name} outdoors."
     record_path = tmp_path / "run-sentinel.json"
     record_path.write_text(
@@ -1515,8 +1504,8 @@ def test_cli_score_determinism_guard_ignores_stdout_prefix_banner(tmp_path, monk
     the comparison. Parent reads the payload file, not stdout.
     """
     from scripts.eval_harness import cli as cli_mod
-    from scripts.eval_harness.report import build_reports
     from scripts.eval_harness.manifest import load_manifest
+    from scripts.eval_harness.report import build_reports
 
     manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
     monkeypatch.chdir(tmp_path)
@@ -1608,9 +1597,7 @@ def test_cli_determinism_guard_labels_distinguish_score_and_face(tmp_path, monke
     assert "[score-face]" not in score_msg
 
 
-def test_cli_score_determinism_guard_pins_import_root_against_cwd_decoy(
-    tmp_path, monkeypatch, capsys
-):
+def test_cli_score_determinism_guard_pins_import_root_against_cwd_decoy(tmp_path, monkeypatch, capsys):
     """F2c / C-01: child must bind the parent's build_reports, not a cwd decoy.
 
     Empirically (pre-pin): ``python -c`` puts cwd at sys.path[0], so a decoy
@@ -1679,17 +1666,15 @@ def test_cli_score_determinism_guard_pins_import_root_against_cwd_decoy(
     assert "decoy_root" not in Path(build_reports.__code__.co_filename).resolve().as_posix()
 
 
-def test_cli_score_determinism_guard_errors_on_build_reports_provenance_mismatch(
-    tmp_path, monkeypatch
-):
+def test_cli_score_determinism_guard_errors_on_build_reports_provenance_mismatch(tmp_path, monkeypatch):
     """F2c / OBS-04: child provenance ≠ parent is ERROR (env drift), not FAILED.
 
     Names both resolved paths and carries [score]. Operator remedy is fix the
     environment / import root, not hunt a build regression.
     """
     from scripts.eval_harness import cli as cli_mod
-    from scripts.eval_harness.report import build_reports
     from scripts.eval_harness.manifest import load_manifest
+    from scripts.eval_harness.report import build_reports
 
     manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
     monkeypatch.chdir(tmp_path)
@@ -1743,9 +1728,9 @@ def test_cli_score_determinism_certifies_written_rubric_gate(tmp_path, monkeypat
     certified verdict.rubric_gate=enforce while _cmd_score wrote skip. After
     fix the on-disk artifact and the certified baseline share skip.
     """
-    from scripts.eval_harness.report import build_reports, Audience
-    from scripts.eval_harness.manifest import load_manifest
     from scripts.eval_harness import cli as cli_mod
+    from scripts.eval_harness.manifest import load_manifest
+    from scripts.eval_harness.report import Audience, build_reports
 
     manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
     monkeypatch.chdir(tmp_path)
@@ -1803,17 +1788,13 @@ def test_cli_score_determinism_certifies_written_rubric_gate(tmp_path, monkeypat
     assert certified_json == (tmp_path / "run-det-report.json").read_text()
 
 
-def test_cli_score_audience_public_check_determinism_covers_both_labels(
-    tmp_path, monkeypatch, capsys
-):
+def test_cli_score_audience_public_check_determinism_covers_both_labels(tmp_path, monkeypatch, capsys):
     """F2d / TEST-15: --audience public --check-determinism certifies LOCAL + PUBLIC.
 
     Structural coverage proof: both labels print a passed line. Clean control
     still exits 0 (discrimination control — a battery of only reds proves nothing).
     """
-    manifest_path, record_path = _w1_audience_manifest_and_record(
-        tmp_path, inject_wrong_name=False
-    )
+    manifest_path, record_path = _w1_audience_manifest_and_record(tmp_path, inject_wrong_name=False)
     monkeypatch.chdir(tmp_path)
     main(
         [
@@ -1844,9 +1825,7 @@ def test_cli_score_determinism_public_label_fails_on_mismatch(tmp_path, monkeypa
     from scripts.eval_harness import cli as cli_mod
     from scripts.eval_harness.report import Audience
 
-    manifest_path, record_path = _w1_audience_manifest_and_record(
-        tmp_path, inject_wrong_name=False
-    )
+    manifest_path, record_path = _w1_audience_manifest_and_record(tmp_path, inject_wrong_name=False)
     monkeypatch.chdir(tmp_path)
 
     real_run = cli_mod.subprocess.run
@@ -1879,9 +1858,7 @@ def test_cli_score_determinism_public_label_fails_on_mismatch(tmp_path, monkeypa
     assert "determinism check ERROR" not in msg
 
 
-def test_cli_score_determinism_resolves_relative_paths_from_foreign_cwd(
-    tmp_path, monkeypatch, capsys
-):
+def test_cli_score_determinism_resolves_relative_paths_from_foreign_cwd(tmp_path, monkeypatch, capsys):
     """F2C-01: relative record/manifest paths survive package-root cwd pin.
 
     Parent may be invoked from a fixture directory with relative paths; the
@@ -1957,9 +1934,7 @@ def test_resolve_determinism_child_seeds_substitutes_parent_collision():
     assert len(set(resolved)) == 3
 
 
-def test_cli_score_determinism_pass_names_baseline_and_child_seeds(
-    tmp_path, monkeypatch, capsys
-):
+def test_cli_score_determinism_pass_names_baseline_and_child_seeds(tmp_path, monkeypatch, capsys):
     """C-05 / OBS-04: pass line names parent regime and exact child seed set."""
     from scripts.eval_harness import cli as cli_mod
 
@@ -1974,9 +1949,7 @@ def test_cli_score_determinism_pass_names_baseline_and_child_seeds(
     assert "child_seeds=0,1,42" in out
 
 
-def test_cli_score_determinism_collision_substitutes_seed_zero(
-    tmp_path, monkeypatch, capsys
-):
+def test_cli_score_determinism_collision_substitutes_seed_zero(tmp_path, monkeypatch, capsys):
     """C-05 collision: parent PYTHONHASHSEED=0 → child set substitutes 0→2.
 
     Pre-change behaviour: child seeds (0,1,42) with parent fixed:0 silently
@@ -1997,9 +1970,7 @@ def test_cli_score_determinism_collision_substitutes_seed_zero(
     assert "child_seeds=0,1,42" not in out
 
 
-def test_cli_score_determinism_fail_artifact_carries_baseline_regime(
-    tmp_path, monkeypatch
-):
+def test_cli_score_determinism_fail_artifact_carries_baseline_regime(tmp_path, monkeypatch):
     """C-05: FAILED message + mismatch artifact name baseline + child seeds.
 
     F8: isolate diagnostics to this test's tmp_path and read the exact seed
@@ -2046,9 +2017,7 @@ def test_cli_score_determinism_fail_artifact_carries_baseline_regime(
     assert "PYTHONHASHSEED=0\n" not in body
 
 
-def test_f8_determinism_artifact_content_ignores_shared_out_decoy(
-    tmp_path, monkeypatch
-):
+def test_f8_determinism_artifact_content_ignores_shared_out_decoy(tmp_path, monkeypatch):
     """F8 / TEST-15 / DBG-11: shared out/ decoy must not set suite colour.
 
     Pre-F8 the regime test selected ``artifacts[0]`` after a glob of shared
@@ -2065,14 +2034,8 @@ def test_f8_determinism_artifact_content_ignores_shared_out_decoy(
     decoy = shared / "determinism-mismatch-score-seed0.diff.txt"
     poison = shared / "determinism-mismatch-score-seed2.diff.txt"
     try:
-        decoy.write_text(
-            "gate=score\nbaseline_regime=randomized\nchild_seeds=0,1,42\n"
-            "PYTHONHASHSEED=0\n"
-        )
-        poison.write_text(
-            "gate=score\nbaseline_regime=randomized\nchild_seeds=0,1,42\n"
-            "POISONED_SHARED_OUT\n"
-        )
+        decoy.write_text("gate=score\nbaseline_regime=randomized\nchild_seeds=0,1,42\nPYTHONHASHSEED=0\n")
+        poison.write_text("gate=score\nbaseline_regime=randomized\nchild_seeds=0,1,42\nPOISONED_SHARED_OUT\n")
         # Prove the old selection form would be order-dependent against these files.
         globbed = list(shared.glob("determinism-mismatch-score-seed*.diff.txt"))
         assert decoy in globbed and poison in globbed
@@ -2277,9 +2240,7 @@ def test_score_guard_caption_corruption_fails_must_right_gate(tmp_path, monkeypa
     record = _score_run_record(
         entries,
         caption_fn=lambda _e: "xxxxx yyyyy zzzzz qqqqq",
-        identity_fn=lambda e: (
-            [_score_identity(e["present_identities"][0])] if e["present_identities"] else []
-        ),
+        identity_fn=lambda e: [_score_identity(e["present_identities"][0])] if e["present_identities"] else [],
         manifest_sha=manifest_sha,
     )
     record_path = tmp_path / "run-caption-corrupt.json"
@@ -2515,9 +2476,7 @@ def test_score_guard_fetch_limit_truncation_fails_coverage_gate(tmp_path, monkey
     asymmetry must exit non-zero (sha-match alone is not coverage).
     """
     roster, full_entries = _corpus_entries(37, with_rubric=True)
-    manifest_path, full_sha = _write_score_manifest(
-        tmp_path, full_entries, roster, name="golden.json"
-    )
+    manifest_path, full_sha = _write_score_manifest(tmp_path, full_entries, roster, name="golden.json")
     truncated_items = full_entries[:5]
     assert len(truncated_items) == 5
     record = _score_run_record(
@@ -2567,11 +2526,7 @@ def _real_golden_good_record() -> tuple[Path, dict]:
     for entry in entries:
         names = list(entry.get("present_identities") or [])
         must = list(entry.get("must_right") or [])
-        cap = (
-            " ".join(must + names + ["outdoors smiling."])
-            if (must or names)
-            else "A scenic outdoor photograph."
-        )
+        cap = " ".join(must + names + ["outdoors smiling."]) if (must or names) else "A scenic outdoor photograph."
         idents = [
             {
                 "name": n,
@@ -2723,11 +2678,7 @@ def _real_golden_wrong_name_record() -> tuple[Path, dict, list[list[str]]]:
     for entry in entries:
         names = list(entry.get("present_identities") or [])
         must = list(entry.get("must_right") or [])
-        cap = (
-            " ".join(must + names + ["outdoors smiling."])
-            if (must or names)
-            else "A scenic outdoor photograph."
-        )
+        cap = " ".join(must + names + ["outdoors smiling."]) if (must or names) else "A scenic outdoor photograph."
         wrong = "Definitely Wrong Person"
         for n in roster:
             if n not in names:
@@ -2805,9 +2756,7 @@ def test_score_ignore_list_cannot_defeat_wrong_name_floor(tmp_path, monkeypatch)
     assert report["verdict"]["wrong_name_rate"] == pytest.approx(1.0)
 
 
-def test_score_recognition_disabled_corpus_fails_wrong_name_floor_vacuity(
-    tmp_path, monkeypatch
-):
+def test_score_recognition_disabled_corpus_fails_wrong_name_floor_vacuity(tmp_path, monkeypatch):
     """F1-5 (b): recognition_enabled=false corpus-wide → floor vacuity gate.
 
     Pre-fix: identification_pr excluded every image → wrong_names=[], rate=0.0,
@@ -2837,11 +2786,7 @@ def test_score_recognition_disabled_corpus_fails_wrong_name_floor_vacuity(
     for entry in entries:
         names = list(entry.get("present_identities") or [])
         must = list(entry.get("must_right") or [])
-        cap = (
-            " ".join(must + names + ["outdoors smiling."])
-            if (must or names)
-            else "A scenic outdoor photograph."
-        )
+        cap = " ".join(must + names + ["outdoors smiling."]) if (must or names) else "A scenic outdoor photograph."
         wrong = "Definitely Wrong Person"
         for n in roster:
             if n not in names:
@@ -3318,9 +3263,7 @@ def test_score_rounding_cannot_hide_one_wrong_name_scaled(tmp_path, monkeypatch)
                 "error": None,
             }
         )
-    manifest_path, manifest_sha = _write_score_manifest(
-        tmp_path, entries, roster, name="scaled-20001.json"
-    )
+    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, roster, name="scaled-20001.json")
     record = {
         "schema": SCHEMA,
         "kind": DocKind.RUN_RECORD.value,
@@ -3469,15 +3412,30 @@ def _valid_face_manifest_and_record(dim: int = 8) -> tuple[dict, dict]:
             "embedding_dim": dim,
         },
         "items": [
-            {"media_id": 1, "path": "celebs01/alice-a.jpg", "model_id": "ort-yunet-sface",
-             "embedding_dim": dim, "image_size": [100, 100],
-             "faces": [_fd([20.0, 20.0, 40.0, 40.0], _unit([1.0] + [0.0] * (dim - 1)))]},
-            {"media_id": 2, "path": "celebs01/alice-b.jpg", "model_id": "ort-yunet-sface",
-             "embedding_dim": dim, "image_size": [100, 100],
-             "faces": [_fd([20.0, 20.0, 40.0, 40.0], _unit([0.98, 0.1] + [0.0] * (dim - 2)))]},
-            {"media_id": 3, "path": "localwp/uploads/stranger-party.jpg", "model_id": "ort-yunet-sface",
-             "embedding_dim": dim, "image_size": [100, 100],
-             "faces": [_fd([20.0, 20.0, 40.0, 40.0], _unit([0.0, 1.0] + [0.0] * (dim - 2)))]},
+            {
+                "media_id": 1,
+                "path": "celebs01/alice-a.jpg",
+                "model_id": "ort-yunet-sface",
+                "embedding_dim": dim,
+                "image_size": [100, 100],
+                "faces": [_fd([20.0, 20.0, 40.0, 40.0], _unit([1.0] + [0.0] * (dim - 1)))],
+            },
+            {
+                "media_id": 2,
+                "path": "celebs01/alice-b.jpg",
+                "model_id": "ort-yunet-sface",
+                "embedding_dim": dim,
+                "image_size": [100, 100],
+                "faces": [_fd([20.0, 20.0, 40.0, 40.0], _unit([0.98, 0.1] + [0.0] * (dim - 2)))],
+            },
+            {
+                "media_id": 3,
+                "path": "localwp/uploads/stranger-party.jpg",
+                "model_id": "ort-yunet-sface",
+                "embedding_dim": dim,
+                "image_size": [100, 100],
+                "faces": [_fd([20.0, 20.0, 40.0, 40.0], _unit([0.0, 1.0] + [0.0] * (dim - 2)))],
+            },
         ],
     }
     manifest = {
@@ -3658,8 +3616,7 @@ def test_face_bakeoff_wires_synthetic_occlusion_twins_end_to_end(tmp_path, monke
     assert record["provenance"]["occlusion_twin_pass"]["errors"] == []
     # Headline firewall intact: twins never entered items (EVAL-16).
     assert all(
-        not ({"occluded", "occlusion", "occlusion_kind", "twin", "twin_of"} & set(item))
-        for item in record["items"]
+        not ({"occluded", "occlusion", "occlusion_kind", "twin", "twin_of"} & set(item)) for item in record["items"]
     )
 
     cli_mod.main(["score-face", "--manifest", str(man_path), "--run-record", str(record_path)])
@@ -3739,8 +3696,7 @@ def test_face_bakeoff_passes_images_dir_not_skip(tmp_path, monkeypatch):
     assert captured, "load_manifest was never called"
     call = captured[0]
     assert call["images_dir"] == str(images), (
-        f"pixel path must pass images_dir= (got {call!r}); "
-        "skip_hash_verification alone re-opens VLM6-R2-05"
+        f"pixel path must pass images_dir= (got {call!r}); skip_hash_verification alone re-opens VLM6-R2-05"
     )
     assert call["skip_hash_verification"] is False
 
@@ -3870,9 +3826,7 @@ def test_cli_face_bakeoff_dispatches_buffalo_leg(tmp_path, monkeypatch):
         cache_detector=None,
     )
     monkeypatch.setattr(cli_mod, "_build_buffalo_leg", lambda: bundle)
-    monkeypatch.setattr(
-        cli_mod, "build_candidate_leg", lambda: pytest.fail("candidate leg built for --leg buffalo")
-    )
+    monkeypatch.setattr(cli_mod, "build_candidate_leg", lambda: pytest.fail("candidate leg built for --leg buffalo"))
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
     monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(tmp_path / "images"))
 
@@ -3893,9 +3847,7 @@ def test_cli_face_bakeoff_candidate_leg_never_touches_buffalo(tmp_path, monkeypa
     man_path = _leg_dispatch_manifest(tmp_path)
     leg = _FusedFakeLeg()  # shape-compatible mock; leg identity comes from dispatch args
     monkeypatch.setattr(cli_mod, "build_candidate_leg", lambda: (leg, FivePointAligner(), leg))
-    monkeypatch.setattr(
-        cli_mod, "_build_buffalo_leg", lambda: pytest.fail("buffalo leg built for --leg candidate")
-    )
+    monkeypatch.setattr(cli_mod, "_build_buffalo_leg", lambda: pytest.fail("buffalo leg built for --leg candidate"))
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
     monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(tmp_path / "images"))
 
@@ -3952,9 +3904,7 @@ def test_score_zero_scored_exits_nonzero(tmp_path, monkeypatch):
             "policy": {"recognition_enabled": True},
         }
     ]
-    manifest_path, manifest_sha = _write_score_manifest(
-        tmp_path, entries, ["Alice Example", "Bob Builder"]
-    )
+    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, ["Alice Example", "Bob Builder"])
     # Empty items → scored=0, failed=0 (distinct from all-error failed-items).
     record = {
         "schema": SCHEMA,
@@ -4061,10 +4011,7 @@ def test_cli_compare_meet_or_beat_pass_and_regression(tmp_path):
     good_path.write_text(json.dumps(better))
     bad_path.write_text(json.dumps(worse))
 
-    assert (
-        main(["compare", "--baseline", str(base_path), "--candidate", str(good_path)])
-        is None
-    )
+    assert main(["compare", "--baseline", str(base_path), "--candidate", str(good_path)]) is None
     with pytest.raises(SystemExit) as exc:
         main(["compare", "--baseline", str(base_path), "--candidate", str(bad_path)])
     assert exc.value.code != 0

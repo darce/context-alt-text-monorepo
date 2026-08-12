@@ -227,13 +227,7 @@ def _ordered_triple(caption: str, left: str, mids: Sequence[str], right: str) ->
     if not left or not right or not mids:
         return None
     for mid in mids:
-        pat = (
-            _wb(left)
-            + rf".{{0,{_STRUCT_WINDOW}}}"
-            + _wb(mid)
-            + rf".{{0,{_STRUCT_WINDOW}}}"
-            + _wb(right)
-        )
+        pat = _wb(left) + rf".{{0,{_STRUCT_WINDOW}}}" + _wb(mid) + rf".{{0,{_STRUCT_WINDOW}}}" + _wb(right)
         if re.search(pat, caption, flags=re.IGNORECASE | re.DOTALL):
             return mid
     return None
@@ -264,9 +258,7 @@ def _subject_near_absolute(caption: str, subject: str, direction: str) -> str | 
     return None
 
 
-def _pair_structural_verdict(
-    caption: str, fact: SpatialFact
-) -> tuple[Literal["correct", "wrong"], str] | None:
+def _pair_structural_verdict(caption: str, fact: SpatialFact) -> tuple[Literal["correct", "wrong"], str] | None:
     """Entity-pair + direction order for binary relations."""
     rel = fact.relation
     primary = _REL_PRIMARY_DIR.get(rel)
@@ -298,9 +290,7 @@ def _pair_structural_verdict(
     return None
 
 
-def _absolute_structural_verdict(
-    caption: str, fact: SpatialFact
-) -> tuple[Literal["correct", "wrong"], str] | None:
+def _absolute_structural_verdict(caption: str, fact: SpatialFact) -> tuple[Literal["correct", "wrong"], str] | None:
     """Subject-centric absolute placement (on the left / in the foreground / …)."""
     rel = fact.relation
     primary = _REL_PRIMARY_DIR.get(rel)
@@ -310,9 +300,7 @@ def _absolute_structural_verdict(
     opp_primary = _REL_PRIMARY_DIR.get(opp) if opp is not None else None
 
     correct_hit = _subject_near_absolute(caption, fact.subject, primary)
-    wrong_hit = (
-        _subject_near_absolute(caption, fact.subject, opp_primary) if opp_primary else None
-    )
+    wrong_hit = _subject_near_absolute(caption, fact.subject, opp_primary) if opp_primary else None
     if correct_hit and not wrong_hit:
         return "correct", f"structural-abs:{fact.subject} {correct_hit}"
     if wrong_hit and not correct_hit:
@@ -323,9 +311,7 @@ def _absolute_structural_verdict(
     return None
 
 
-def _structural_verdict(
-    caption: str, fact: SpatialFact
-) -> tuple[Literal["correct", "wrong"], str] | None:
+def _structural_verdict(caption: str, fact: SpatialFact) -> tuple[Literal["correct", "wrong"], str] | None:
     """Paraphrase path: pair order first, then absolute subject-centric cues."""
     if fact.relation is SpatialRelation.BETWEEN:
         for phrase in _between_correct_phrases(fact):

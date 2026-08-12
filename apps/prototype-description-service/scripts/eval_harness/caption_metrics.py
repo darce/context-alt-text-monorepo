@@ -353,6 +353,8 @@ def wrong_name_image_rate(scores: Sequence[CaptionScores]) -> float | None:
     if not scores:
         return None
     return sum(1 for s in scores if s.named_wrong_person) / len(scores)
+
+
 # --- Fabricated-fact hallucination metric (VLM-6 S1) -------------------------
 # HALLUCINATION-FIRST ranking axis. Precision-first + deterministic (LLM-judge is
 # out of MVP scope): the headline fires only on AUTHORED false-polarity reference

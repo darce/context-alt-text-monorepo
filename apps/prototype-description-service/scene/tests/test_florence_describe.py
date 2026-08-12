@@ -92,23 +92,14 @@ def test_done_ids_tolerates_torn_last_line(tmp_path):
     out = tmp_path / "out.jsonl"
     good = _ok_row(1)
     out.write_text(json.dumps(good) + "\n" + '{"attachment_id": 2, "capt')
-    assert done_ids(out) == {
-        (1, SPEC.model_id, SPEC.model_version, SPEC.revision, CAPTION_TASK)
-    }
+    assert done_ids(out) == {(1, SPEC.model_id, SPEC.model_version, SPEC.revision, CAPTION_TASK)}
 
 
 def test_done_ids_skips_error_rows(tmp_path):
     """A2: rows with error set are not complete — must be retried on rerun."""
     out = tmp_path / "out.jsonl"
-    out.write_text(
-        json.dumps(_ok_row(1, error="RuntimeError: boom"))
-        + "\n"
-        + json.dumps(_ok_row(2))
-        + "\n"
-    )
-    assert done_ids(out) == {
-        (2, SPEC.model_id, SPEC.model_version, SPEC.revision, CAPTION_TASK)
-    }
+    out.write_text(json.dumps(_ok_row(1, error="RuntimeError: boom")) + "\n" + json.dumps(_ok_row(2)) + "\n")
+    assert done_ids(out) == {(2, SPEC.model_id, SPEC.model_version, SPEC.revision, CAPTION_TASK)}
 
 
 def test_done_ids_requires_full_model_key(tmp_path):

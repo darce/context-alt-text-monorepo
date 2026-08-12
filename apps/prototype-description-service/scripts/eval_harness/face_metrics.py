@@ -57,8 +57,7 @@ SAMPLING_FRAME_FACE_ID = (
     "misses excluded from FN (EVAL-16)"
 )
 SAMPLING_FRAME_UNKNOWN_REJECTION = (
-    "stranger_probes_full_corpus_including_unpublishable: correct_reject="
-    "decision=reject; false_accept=decision=accept"
+    "stranger_probes_full_corpus_including_unpublishable: correct_reject=decision=reject; false_accept=decision=accept"
 )
 SAMPLING_FRAME_DEMOGRAPHIC_COHORT = (
     "named_matched_probes_in_cohort: roster_cohorts primary, single-subject "
@@ -212,9 +211,7 @@ def predicted_left_to_right(
             bbox = getattr(entry, "bbox", None)
         if name is None or name == "":
             continue
-        centre = wire_bbox_normalized_centre(
-            bbox, image_width=image_width, image_height=image_height
-        )
+        centre = wire_bbox_normalized_centre(bbox, image_width=image_width, image_height=image_height)
         if centre is None:
             unpositioned.append(str(name))
         else:
@@ -255,9 +252,7 @@ def sort_identity_rows_by_normalized_centre(
             continue
         row = dict(entry)
         name = str(row.get("name") or "")
-        centre = wire_bbox_normalized_centre(
-            row.get("bbox"), image_width=image_width, image_height=image_height
-        )
+        centre = wire_bbox_normalized_centre(row.get("bbox"), image_width=image_width, image_height=image_height)
         if centre is None:
             unpositioned.append((name, row))
         else:
@@ -603,9 +598,7 @@ def face_identification_pr(
             continue
         n_named += 1
         decision = d.decision if not isinstance(d, Mapping) else d["decision"]
-        predicted = (
-            d.predicted_name if not isinstance(d, Mapping) else d.get("predicted_name")
-        )
+        predicted = d.predicted_name if not isinstance(d, Mapping) else d.get("predicted_name")
         enrolled = d.enrolled if not isinstance(d, Mapping) else bool(d.get("enrolled"))
 
         if enrolled:
@@ -1022,8 +1015,7 @@ def clustering_sweep(
     # Stable unique cuts from the grid.
     cuts = sorted({round(1.0 - float(t), 4) for t in tau_grid})
     sweep = tuple(
-        clustering_metrics_at_cut(embeddings, identity_labels, d_cut, pair_floor=pair_floor)
-        for d_cut in cuts
+        clustering_metrics_at_cut(embeddings, identity_labels, d_cut, pair_floor=pair_floor) for d_cut in cuts
     )
     headline = clustering_metrics_at_cut(
         embeddings,

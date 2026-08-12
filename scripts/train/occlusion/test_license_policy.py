@@ -5116,4 +5116,34 @@ class TestRv03RepresentativeRowsDiscriminationFloor:
                 f"door {door.value} has no PASS witness in _REPRESENTATIVE_ROWS"
             )
 
+# ---------------------------------------------------------------------------
+# FIR-7-LR-04 — RD-07 reason preservation on occluder + research source
+# ---------------------------------------------------------------------------
+
+
+class TestLr04OccluderResearchSourceReasonPreservation:
+    """FIR-7-LR-04: occluder door + research source → RESEARCH_ONLY_SOURCE.
+
+    The floor path (_common_provenance_checks → _floor_taint_and_clearance →
+    _source_axis_taint → audit_source) is the reason-preserving mechanism
+    (SECD-06: shared predicate, not independent layers). Pin the exact reason
+    so a deleted door-local branch cannot silently collapse to a weaker code.
+    """
+
+    def test_occluder_ffhq_reports_research_only_source(self) -> None:
+        row = {
+            "source": "ffhq",
+            "license": "MIT",
+            "derived_from_model": "",
+            "photo_clearance": "cleared",
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.OCCLUDER_ASSET
+        )
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.RESEARCH_ONLY_SOURCE, (
+            f"occluder + source=ffhq expected RESEARCH_ONLY_SOURCE, got "
+            f"{result.reason} ({result.detail})"
+        )
+
 

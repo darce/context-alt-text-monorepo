@@ -38,9 +38,13 @@ Mutations:
   M18 derived non-str reason→UNKNOWN_SPDX (RF-02; M9 axis)
   M19 PASS-path category leak on training_data (RF-01; GATE-27 pin)
   M20 force PASS→FAIL to pin GATE-32 pass-witness (RF-01)
+  M21 denylist reason→RESEARCH_ONLY_SOURCE on BR-53 floor rows (RF-02)
+  M22 research reason→DENYLISTED_LICENSE on BR-53 research rows (RF-02)
 
 Also mediates a checked-in node-id baseline (subset: live ⊇ recorded),
-reports per-mutant collateral (RF-03), and prints certification scope (RF-05).
+reports per-mutant collateral (RF-03), strong-form victim attribution
+(FIR-7-RV-07: non-smoke axis kills re-run with victims deselected), and
+prints certification scope (RF-05).
 
 Paths resolve from __file__ (never cwd) so this script runs as documented from
 the repo root or from this directory (rg-006).
@@ -1028,6 +1032,14 @@ class Verdict(str, Enum):
     HARNESS_ERROR = "HARNESS-ERROR"
 
 
+# Mutants permitted to ship require_kill=False. Adding a new weak flag
+# requires editing this named constant with a review-bar comment
+# (FIR-7-RV-04). CONTROL is the discrimination probe (must SURVIVE);
+# M6 is verdict-equivalent on audit_provenance_row — canonical derivation
+# in test_equivalence_claims.py (FIR-7-LR-05).
+KNOWN_GAP_ALLOWED: frozenset[str] = frozenset({"CONTROL", "M6"})
+
+
 @dataclass(frozen=True)
 class Mutation:
     name: str
@@ -1040,14 +1052,16 @@ class Mutation:
     expect_survived: bool = False
     # When True, a SURVIVED result fails the guard. False for known open gaps
     # that stay green until a companion lane lands; they are still registered
-    # and reported so they cannot rot invisibly.
+    # and reported so they cannot rot invisibly. require_kill=False is only
+    # legal for names in KNOWN_GAP_ALLOWED (FIR-7-RV-04).
     require_kill: bool = True
     # When True, SURVIVED is reported as a known gap (B4c owns the victim).
     xfail_until_b4c: bool = False
     # When True, the mutant is labelled role=smoke in the discrimination
     # report and the collateral WARN is suppressed (kill-presence only,
-    # not axis-tight evidence). There is no "victims-removed must SURVIVE"
-    # discrimination re-run; that check is not implemented.
+    # not axis-tight evidence). Smoke mutants are excluded from the headline
+    # killed count and skip strong-form victim attribution (FIR-7-RV-04 /
+    # FIR-7-RV-07).
     smoke_level: bool = False
 
 
@@ -1218,13 +1232,15 @@ def _m6_empty_synthetic_token_loop(src: str) -> str:
     """Disable SYNTHETIC_SOURCE_ENTRIES routing via (source, derived) loop.
 
     Equivalence is **verdict-level on ``audit_provenance_row`` only**, not
-    path-level (RF-04 / SECD-06 layer masking). A 25,200-row grid over
-    ``audit_provenance_row`` shows 0 verdict/detail/category deltas, but
-    ``_synthetic_audit_targets`` over a 500-case grid still shows ~248
-    intermediate deltas — the BR-36 / disabled loop still changes targets;
-    downstream arms (content-triggered clearance floor, registration / NC
-    derivation for FORBIDDEN heads such as vec2face) mask those into a
-    verdict-identical result. If the masking arm is removed, this mutant
+    path-level (RF-04 / SECD-06 layer masking). Canonical re-derivation is
+    ``test_equivalence_claims.py`` (``EXPECTED_GRID_ROWS`` / the three
+    ``test_m6_*`` pins): any-delta=0 on ``(ok, reason)`` across the
+    deterministic grid; nonzero intermediate deltas on
+    ``_synthetic_audit_targets`` are allowed and expected. Do **not** re-quote
+    grid sizes here — re-run that suite (FIR-7-LR-05). Downstream arms
+    (content-triggered clearance floor, registration / NC derivation for
+    FORBIDDEN heads such as vec2face) mask intermediate target changes into
+    a verdict-identical result. If the masking arm is removed, this mutant
     may flip from expect_survived to a real kill. Retained as a
     discrimination control with ``expect_survived=True`` (RESULT-J.md /
     BRIEF-P RF-04).
@@ -1516,6 +1532,99 @@ def audit_provenance_row(row, category=PolicyCategory.TRAINING_DATA):  # type: i
 """
 
 
+def _m21_br53_denylist_reason_to_research(src: str) -> str:
+    """RF-02: keep DENYLISTED_LICENSE FAIL, swap reason only on BR-53 floor rows.
+
+    Surgical wrapper so only ``TestBr53CategoryIndependentFloor`` denylist
+    exact-reason pins carry the kill. A global reason swap would be killed by
+    off-axis denylist pins and would not prove the BR-53 floor axis
+    (FIR-7-RV-02 / TEST-15 / TEST-17).
+    """
+    return src + """
+
+_orig_apr_m21 = audit_provenance_row
+
+
+def _m21_is_br53_denylist_floor_row(row) -> bool:
+    # Require the derived key present-as-empty so key-absent AGPL rows
+    # (test_floor_still_runs_when_derived_key_absent) stay off-axis.
+    if "derived_from_model" not in row or row.get("derived_from_model") not in ("", None):
+        return False
+    lic = str(row.get("license", "") or "").casefold()
+    if lic != "agpl-3.0":
+        return False
+    package = row.get("package", "")
+    if package != "numba":
+        return False
+    # DENYLISTED_LICENSE_ROW: model_id=yunet, source=self-generated.
+    if row.get("model_id") == "yunet" and row.get("source") == "self-generated":
+        return True
+    # CLEARED_SYNTHETIC_ROW: source=dcface + operator clearance token.
+    if (
+        row.get("source") == "dcface"
+        and "clearance_decision" in row
+        and "model_id" not in row
+    ):
+        return True
+    return False
+
+
+def audit_provenance_row(row, category=PolicyCategory.TRAINING_DATA):  # type: ignore[no-redef]
+    r = _orig_apr_m21(row, category=category)
+    if (
+        not r.ok
+        and r.reason is RejectionReason.DENYLISTED_LICENSE
+        and _m21_is_br53_denylist_floor_row(row)
+    ):
+        return LicenseAuditResult(
+            verdict=r.verdict,
+            reason=RejectionReason.RESEARCH_ONLY_SOURCE,  # MUTATION M21
+            detail=r.detail,
+            category=r.category,
+        )
+    return r
+"""
+
+
+def _m22_br53_research_reason_to_denylist(src: str) -> str:
+    """RF-02: keep RESEARCH_ONLY_SOURCE FAIL, swap reason on BR-53 research rows.
+
+    Surgical wrapper targeting the BR-53 research-source exact-reason pin only
+    (FIR-7-RV-02 / TEST-15 / TEST-17).
+    """
+    return src + """
+
+_orig_apr_m22 = audit_provenance_row
+
+
+def _m22_is_br53_research_floor_row(row) -> bool:
+    return (
+        row.get("model_id") == "rt-detr"
+        and row.get("package") == "numba"
+        and row.get("source") == "self-generated"
+        and row.get("license") == "Apache-2.0"
+        and row.get("derived_from_model") == "ffhq"
+        and row.get("photo_clearance") == "cleared"
+    )
+
+
+def audit_provenance_row(row, category=PolicyCategory.TRAINING_DATA):  # type: ignore[no-redef]
+    r = _orig_apr_m22(row, category=category)
+    if (
+        not r.ok
+        and r.reason is RejectionReason.RESEARCH_ONLY_SOURCE
+        and _m22_is_br53_research_floor_row(row)
+    ):
+        return LicenseAuditResult(
+            verdict=r.verdict,
+            reason=RejectionReason.DENYLISTED_LICENSE,  # MUTATION M22
+            detail=r.detail,
+            category=r.category,
+        )
+    return r
+"""
+
+
 MUTATIONS: list[Mutation] = [
     Mutation(
         name="CONTROL",
@@ -1577,12 +1686,14 @@ MUTATIONS: list[Mutation] = [
         name="M6",
         description=(
             "_synthetic_audit_targets: for token in () — verdict-equivalent "
-            "on audit_provenance_row only (NOT path-equivalent; RF-04)"
+            "on audit_provenance_row only (NOT path-equivalent; RF-04; "
+            "canonical derivation: test_equivalence_claims.py)"
         ),
         apply="m6",
-        # Verdict-level equivalence only (RF-04): intermediate
-        # _synthetic_audit_targets still differ; downstream floor/registration
-        # arms mask them. Not a test gap — do not invent a victim (TEST-15).
+        # Verdict-level equivalence only (RF-04 / FIR-7-LR-05): re-derive via
+        # test_equivalence_claims.py. Intermediate _synthetic_audit_targets
+        # still differ; downstream floor/registration arms mask them. Not a
+        # test gap — do not invent a victim (TEST-15).
         expected_victims=(),
         expect_survived=True,
         require_kill=False,
@@ -1603,13 +1714,26 @@ MUTATIONS: list[Mutation] = [
         name="M9",
         description="audit_derived_from_model type guard → if False",
         apply="m9",
-        expected_victims=("test_br37_audit_derived_from_model_rejects_non_string",),
+        # True kill set (FIR-7-RV-07): br37 alone is collateral-carried by the
+        # BR-46 derived non-str contract pins; name the full set so strong-form
+        # attribution (victims deselected → must SURVIVE) holds.
+        expected_victims=(
+            "test_br37_audit_derived_from_model_rejects_non_string",
+            "test_br46_type_contract_table[derived-int]",
+            "test_br46_type_contract_table[derived-list]",
+            "test_br46_type_contract_table[derived-dict]",
+        ),
     ),
     Mutation(
         name="M10",
         description="disable has_generator_lineage synthetic routing (BR-16)",
         apply="m10",
-        expected_victims=("test_br16_lineage_sole_cause_of_synthetic_pending",),
+        # True kill set (FIR-7-RV-07): lineage pending pin + GATE-27 category
+        # backstop both carry the kill.
+        expected_victims=(
+            "test_br16_lineage_sole_cause_of_synthetic_pending",
+            "test_generator_lineage_backstop_keeps_training_data_category",
+        ),
     ),
     Mutation(
         name="M11",
@@ -1647,9 +1771,13 @@ MUTATIONS: list[Mutation] = [
         name="M14",
         description="_package_denylist_hit always returns None (GATE-34)",
         apply="m14",
+        # True kill set (FIR-7-RV-07): GATE-34 pins plus the package-denylist
+        # escape/witness matrix — those also die when the denylist always misses.
         expected_victims=(
             "test_gate34_audit_derived_from_model_denylisted_package",
             "test_gate34_training_data_row_derived_ultralytics_reason",
+            "test_measured_escape_witnesses_fail",
+            "test_witness_fails_every_door",
         ),
     ),
     Mutation(
@@ -1684,13 +1812,30 @@ MUTATIONS: list[Mutation] = [
         name="M18",
         description="derived non-str reason→UNKNOWN_SPDX (RF-02 / M9 axis)",
         apply="m18",
-        expected_victims=("test_br37_audit_derived_from_model_rejects_non_string",),
+        # Same true kill set as M9 (FIR-7-RV-07): br37 + BR-46 derived trio.
+        expected_victims=(
+            "test_br37_audit_derived_from_model_rejects_non_string",
+            "test_br46_type_contract_table[derived-int]",
+            "test_br46_type_contract_table[derived-list]",
+            "test_br46_type_contract_table[derived-dict]",
+        ),
     ),
     Mutation(
         name="M19",
         description="PASS-path category leak on training_data (RF-01 / GATE-27)",
         apply="m19",
-        expected_victims=("test_result_category_equals_asked_door",),
+        # True kill set (FIR-7-RV-07): five-door invariant plus every
+        # clean/ISC/Zlib/Unlicense/operator training_data category pin that
+        # asserts result.category on the PASS path.
+        expected_victims=(
+            "test_result_category_equals_asked_door",
+            "test_clean_training_data_row_still_reports_training_data",
+            "test_isc_spdx_passes_training_data",
+            "test_zlib_spdx_passes_training_data",
+            "test_unlicense_spdx_passes_training_data",
+            "test_operator_phone_source_passes_training_data",
+            "test_operator_render_source_passes_training_data",
+        ),
     ),
     Mutation(
         name="M20",
@@ -1700,6 +1845,30 @@ MUTATIONS: list[Mutation] = [
         # High collateral by design — pins the pass-witness test as mediated
         # evidence, not an axis-tight kill (RF-03 smoke rationale applies).
         smoke_level=True,
+    ),
+    Mutation(
+        name="M21",
+        description=(
+            "BR-53 denylist floor reason→RESEARCH_ONLY_SOURCE "
+            "(RF-02 / FIR-7-RV-02)"
+        ),
+        apply="m21",
+        expected_victims=(
+            "test_denylisted_license_rejected_by_every_door",
+            "test_clearance_does_not_waive_license_floor",
+            "test_license_floor_reason_is_exact",
+        ),
+    ),
+    Mutation(
+        name="M22",
+        description=(
+            "BR-53 research floor reason→DENYLISTED_LICENSE "
+            "(RF-02 / FIR-7-RV-02)"
+        ),
+        apply="m22",
+        expected_victims=(
+            "test_research_source_rejected_by_every_door",
+        ),
     ),
 ]
 
@@ -1725,6 +1894,8 @@ _APPLIERS = {
     "m18": _m18_derived_type_reason_swap,
     "m19": _m19_leak_category_training_data,
     "m20": _m20_gate32_pass_witness_probe,
+    "m21": _m21_br53_denylist_reason_to_research,
+    "m22": _m22_br53_research_reason_to_denylist,
 }
 
 
@@ -2176,8 +2347,66 @@ def _pinned_victim_existence_errors(
     return errors
 
 
-def _run_suite(scratch_dir: Path) -> SuiteReport:
-    """Run the license_policy suite against a scratch copy; parse junitxml."""
+def _require_kill_allowlist_errors(mutations: list[Mutation]) -> list[str]:
+    """FIR-7-RV-04: require_kill=False only for names in KNOWN_GAP_ALLOWED.
+
+    Startup structural alarm — fires before any pytest run so a new weak
+    flag cannot ship as a silent known_gap.
+    """
+    errors: list[str] = []
+    allowed = ", ".join(sorted(KNOWN_GAP_ALLOWED))
+    for mutation in mutations:
+        if mutation.require_kill:
+            continue
+        if mutation.name in KNOWN_GAP_ALLOWED:
+            continue
+        errors.append(
+            f"HARNESS-ERROR {mutation.name}: require_kill=False is not in "
+            f"KNOWN_GAP_ALLOWED={{{allowed}}}; a new known_gap requires "
+            "editing that named constant with a comment explaining the "
+            "review bar (FIR-7-RV-04)"
+        )
+    return errors
+
+
+def _resolve_victim_nodeids(
+    victims: tuple[str, ...],
+    live_nodeids: tuple[str, ...],
+    *,
+    kill_file: str | None = None,
+) -> list[str]:
+    """Map expected_victims name components to full kill-file nodeids.
+
+    Used by strong-form attribution (FIR-7-RV-07) to build ``--deselect``
+    arguments. Bare victim names expand to every matching parametrisation.
+    """
+    kill = kill_file if kill_file is not None else _TEST.name
+    prefix = f"{kill}::"
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for nid in live_nodeids:
+        if not nid.startswith(prefix):
+            continue
+        tname = _test_name_from_nodeid(nid)
+        for victim in victims:
+            if _name_component_matches(tname, victim):
+                if nid not in seen:
+                    resolved.append(nid)
+                    seen.add(nid)
+                break
+    return resolved
+
+
+def _run_suite(
+    scratch_dir: Path,
+    *,
+    deselect: list[str] | None = None,
+) -> SuiteReport:
+    """Run the license_policy suite against a scratch copy; parse junitxml.
+
+    ``deselect`` is an optional list of full nodeids passed as
+    ``--deselect=`` (FIR-7-RV-07 strong-form attribution re-run).
+    """
     test_path = scratch_dir / "test_license_policy.py"
     junit_path = scratch_dir / "report.xml"
     if junit_path.exists():
@@ -2193,6 +2422,9 @@ def _run_suite(scratch_dir: Path) -> SuiteReport:
         "no:cacheprovider",
         f"--junitxml={junit_path}",
     ]
+    if deselect:
+        for nid in deselect:
+            cmd.append(f"--deselect={nid}")
     env = _scrubbed_env()
     proc = subprocess.run(
         cmd,
@@ -2348,6 +2580,20 @@ def main(argv: list[str] | None = None) -> int:
         if args.mutation == "all"
         else [m for m in MUTATIONS if m.name == args.mutation]
     )
+
+    # --- FIR-7-RV-04: require_kill=False must be in KNOWN_GAP_ALLOWED ------
+    # Structural alarm at STARTUP — before any pytest / collect / baseline.
+    allowlist_errors = _require_kill_allowlist_errors(selected)
+    if allowlist_errors:
+        for line in allowlist_errors:
+            print(line, flush=True)
+        print(
+            f"FAIL: require_kill allowlist "
+            f"({len(allowlist_errors)} unauthorised known_gap mutant(s); "
+            "FIR-7-RV-04)",
+            flush=True,
+        )
+        return 2
 
     # --- RF-05: explicit certification scope (silence was the defect) -----
     # Kill decisions run against test_license_policy.py only; the node-id
@@ -2699,7 +2945,68 @@ def main(argv: list[str] | None = None) -> int:
                     )
                     continue
 
-                killed.append(mutation.name)
+                # FIR-7-RV-07 strong-form victim attribution (TEST-17): for every
+                # non-smoke AXIS mutant, re-run with named victims DESELECTED.
+                # If the mutant still dies, the kill was collateral — refuse to
+                # certify. Smoke mutants skip (kill-presence only).
+                n_deselected = 0
+                if not mutation.smoke_level and mutation.expected_victims:
+                    deselect_ids = _resolve_victim_nodeids(
+                        mutation.expected_victims, live_nodeids
+                    )
+                    n_deselected = len(deselect_ids)
+                    if not deselect_ids:
+                        errors.append(mutation.name)
+                        print(
+                            f"HARNESS-ERROR {mutation.name}: could not resolve "
+                            "any expected_victims to live node-ids for "
+                            "strong-form attribution (FIR-7-RV-07)"
+                        )
+                        print(f"  expected_victims: {mutation.expected_victims}")
+                        continue
+                    attr_report = _run_suite(occ, deselect=deselect_ids)
+                    # Attribution re-run intentionally executes fewer tests —
+                    # do NOT compare against baseline_executed.
+                    if attr_report.parse_error:
+                        errors.append(mutation.name)
+                        print(
+                            f"HARNESS-ERROR {mutation.name}: attribution re-run "
+                            f"parse failure: {attr_report.parse_error}"
+                        )
+                        continue
+                    if attr_report.rc == 1 and attr_report.failed_names:
+                        errors.append(mutation.name)
+                        print(
+                            f"ATTRIBUTION-FAIL {mutation.name}: dies without "
+                            "its victims (collateral kill)"
+                        )
+                        print(f"  suite: {attr_report.summary}")
+                        print(
+                            f"  deselected={n_deselected} "
+                            f"remaining_failures="
+                            f"{list(attr_report.failed_names)[:12]}"
+                        )
+                        print(
+                            "  expected_victims must include every test that "
+                            "actually carries the kill (FIR-7-RV-07 / TEST-17)"
+                        )
+                        continue
+                    if attr_report.rc != 0:
+                        errors.append(mutation.name)
+                        print(
+                            f"HARNESS-ERROR {mutation.name}: attribution re-run "
+                            f"unexpected rc={attr_report.rc} "
+                            f"executed={attr_report.executed}"
+                        )
+                        if attr_report.raw_out.strip():
+                            tail = "\n".join(
+                                attr_report.raw_out.strip().splitlines()[-5:]
+                            )
+                            print(f"  diag: {tail}")
+                        continue
+                    # rc==0: mutant SURVIVES when victims are gone — attribution OK.
+
+                # Certified kill (victims hit; strong-form attribution held).
                 n_failed = len(failed_names)
                 n_victim_fail = _count_failed_matching_victims(
                     failed_names, mutation.expected_victims
@@ -2708,6 +3015,8 @@ def main(argv: list[str] | None = None) -> int:
                     failed_names, mutation.expected_victims
                 )
                 # FIR-7-LR-09 taxonomy: smoke / weak (collateral dominates) / tight.
+                # Smoke kills are tracked in killed_smoke only — excluded from
+                # the headline killed count (FIR-7-RV-04 / B1 taxonomy).
                 is_weak = (
                     not mutation.smoke_level
                     and collateral > max(2, n_victim_fail)
@@ -2717,9 +3026,11 @@ def main(argv: list[str] | None = None) -> int:
                     tax = "smoke"
                 elif is_weak:
                     killed_weak.append(mutation.name)
+                    killed.append(mutation.name)
                     tax = "weak"
                 else:
                     killed_tight.append(mutation.name)
+                    killed.append(mutation.name)
                     tax = "tight"
                 print(f"KILLED   {mutation.name}: {mutation.description}")
                 print(f"  suite: {summary}")
@@ -2736,9 +3047,16 @@ def main(argv: list[str] | None = None) -> int:
                 if mutation.smoke_level:
                     print(
                         "  note: smoke-level mutant — kill-presence only; "
-                        "not counted as axis-tight evidence (RF-03)"
+                        "not counted as axis evidence / headline killed "
+                        "(RF-03 / FIR-7-RV-04)"
                     )
-                elif is_weak:
+                else:
+                    print(
+                        "  attribution: OK (survives when "
+                        f"{n_deselected} victim node-id(s) deselected; "
+                        "FIR-7-RV-07)"
+                    )
+                if is_weak and not mutation.smoke_level:
                     print(
                         f"  WARN: collateral ({collateral}) dominates "
                         f"victim_failures ({n_victim_fail}) — this kill is "
@@ -2751,9 +3069,12 @@ def main(argv: list[str] | None = None) -> int:
             _POLICY.write_bytes(original_bytes)
 
     print()
+    # Headline killed = axis kills only (tight+weak). Smoke kill-presence
+    # probes are reported separately so they are not axis evidence
+    # (FIR-7-RV-04 / FIR-7-LR-09 taxonomy).
     print(
         f"killed={len(killed)} (tight={len(killed_tight)} "
-        f"weak={len(killed_weak)} smoke={len(killed_smoke)}) "
+        f"weak={len(killed_weak)}) smoke={len(killed_smoke)} "
         f"survivors={len(survivors)} "
         f"errors={len(errors)} total={len(selected)}"
     )

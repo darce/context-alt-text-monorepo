@@ -4463,11 +4463,20 @@ def test_cli_compare_meet_or_beat_all_categories_pass(tmp_path, capsys):
         assert token in out, f"missing adoption metric surface: {token}"
 
 
-def test_cmd_run_scores_all_records_despite_gate_failure(tmp_path, monkeypatch):
-    """VLM6-S2A-B-10: run scores every record; exits once with per-record summary."""
+def test_cmd_run_scores_all_records_despite_gate_failure(tmp_path, monkeypatch, capsys):
+    """VLM6-S2A-B-10: run scores every record; exits once with per-record summary.
+
+    RF-05 / rg-006: per-record stderr and final SystemExit must use registered
+    fixed prefixes (path after the colon) so log scrapers can match without
+    knowing the record path.
+    """
     from argparse import Namespace
 
     from scripts.eval_harness import cli as cli_mod
+    from scripts.eval_harness.cli import (
+        SCORE_GATE_PREFIX_RUN_RECORD,
+        SCORE_GATE_PREFIX_RUN_SUMMARY,
+    )
 
     scored: list[str] = []
 
@@ -4486,9 +4495,18 @@ def test_cmd_run_scores_all_records_despite_gate_failure(tmp_path, monkeypatch):
         cli_mod._cmd_run(args)
     assert scored == ["r0.json", "r1.json", "r2.json"]
     msg = str(exc.value)
-    assert "run score gates failed" in msg
+    assert msg.startswith(SCORE_GATE_PREFIX_RUN_SUMMARY), (
+        f"run multi-record exit must start with {SCORE_GATE_PREFIX_RUN_SUMMARY!r}; got {msg!r}"
+    )
     assert "r1.json" in msg
     assert "must-right" in msg
+    err = capsys.readouterr().err
+    assert SCORE_GATE_PREFIX_RUN_RECORD in err, (
+        f"run per-record stderr must carry {SCORE_GATE_PREFIX_RUN_RECORD!r}; got {err!r}"
+    )
+    # Path is after the fixed prefix (not interpolated into it).
+    assert f"{SCORE_GATE_PREFIX_RUN_RECORD} r1.json:" in err
+    assert "score gate failed for " not in err
 
 
 # ---------------------------------------------------------------------------
@@ -5221,12 +5239,31 @@ def test_score_face_failed_items_shares_caption_gate_prefix(tmp_path, monkeypatc
     assert "score-face" in msg  # distinguishing suffix still present
 
 
-def test_score_gate_prefixes_documented_in_readme():
-    """VLM6-R2-F-01 / rg-006: every SCORE_GATE_PREFIX_* appears in the README.
+def _parse_readme_score_gate_prefix_table(readme: str) -> set[str]:
+    """Extract the Exit-message-prefix column from the operator gate table.
 
-    Load-bearing drift guard: a new gate prefix constant without a README row
-    fails this test. Reads the frozen set from cli.py — does not hard-code the
-    prefix list in the test body (would drift with the production set).
+    Bounded to the 'Score non-zero exit prefixes' section so the pre-gate
+    hard-failure table cannot silently satisfy (or pollute) set equality.
+    """
+    import re
+
+    start = readme.find("### Score non-zero exit prefixes")
+    assert start >= 0, "README missing § 'Score non-zero exit prefixes'"
+    rest = readme[start:]
+    end_m = re.search(r"\n(?:Integrity gates|Pre-gate hard failures)", rest)
+    section = rest[: end_m.start()] if end_m else rest
+    # Column 2 of each data row: | class | `prefix` | when | action |
+    return set(re.findall(r"^\| [^|\n]+ \| `([^`]+)` \|", section, re.MULTILINE))
+
+
+def test_score_gate_prefixes_documented_in_readme():
+    """VLM6-R2-F-01 / RF-06 / rg-006: README table ≡ SCORE_GATE_PREFIXES.
+
+    Bidirectional set equality (no ``>= N`` floor):
+    - undocumented constant → red (frozenset − table)
+    - stale README row → red (table − frozenset)
+    - deleted constant absorbed by a loose floor → red (floor-free)
+    Parses the operator-facing table only (not prose/code-comment substring).
     """
     from scripts.eval_harness.cli import SCORE_GATE_PREFIXES
 
@@ -5238,11 +5275,214 @@ def test_score_gate_prefixes_documented_in_readme():
     )
     assert readme_path.is_file(), f"missing eval-harness README at {readme_path}"
     readme = readme_path.read_text(encoding="utf-8")
-    missing = sorted(p for p in SCORE_GATE_PREFIXES if p not in readme)
-    assert not missing, (
-        "Undocumented score* gate prefix(es) — add each to README.md "
-        "§ 'Score non-zero exit prefixes' (rg-006):\n  - "
-        + "\n  - ".join(missing)
+    table = _parse_readme_score_gate_prefix_table(readme)
+    missing_from_readme = sorted(SCORE_GATE_PREFIXES - table)
+    stale_in_readme = sorted(table - SCORE_GATE_PREFIXES)
+    assert not missing_from_readme and not stale_in_readme, (
+        "SCORE_GATE_PREFIXES ↔ README table drift (rg-006 / RF-06):\n"
+        f"  missing from README table: {missing_from_readme}\n"
+        f"  stale in README table: {stale_in_readme}\n"
+        f"  frozenset={sorted(SCORE_GATE_PREFIXES)}\n"
+        f"  table={sorted(table)}"
     )
-    # Sanity: the frozenset is the durable contract surface (non-empty).
-    assert len(SCORE_GATE_PREFIXES) >= 15
+    # Count is derived from the frozenset (no hardcoded floor that tolerates
+    # deleting a documented prefix — RF-06).
+    assert len(table) == len(SCORE_GATE_PREFIXES)
+    assert len(SCORE_GATE_PREFIXES) >= 1
+
+
+def test_score_gate_fail_call_sites_use_prefix_constants():
+    """RE-04 / TEST-15: gate messages must be built from SCORE_GATE_PREFIX_*.
+
+    The README drift test alone stays green when a call site hardcodes a
+    divergent literal while the frozenset stays fully documented. This AST
+    scan locks call sites: ``_score_gate_fail`` / run-wrapper print+exit must
+    reference a ``SCORE_GATE_PREFIX_*`` name (or a known prebuilt ``*_exit`` /
+    ``msg`` variable that itself is built from those constants).
+    """
+    import ast
+    import re
+
+    from scripts.eval_harness.cli import SCORE_GATE_PREFIXES
+
+    cli_path = (
+        Path(__file__).resolve().parents[2]
+        / "scripts"
+        / "eval_harness"
+        / "cli.py"
+    )
+    src = cli_path.read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    # Every SCORE_GATE_PREFIX_* assignment value must be in the frozenset, and
+    # every frozenset member must have a matching assignment (single source).
+    assigned: dict[str, str] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name) or not target.id.startswith(
+            "SCORE_GATE_PREFIX_"
+        ):
+            continue
+        if target.id == "SCORE_GATE_PREFIXES":
+            continue
+        assert isinstance(node.value, ast.Constant) and isinstance(
+            node.value.value, str
+        ), f"{target.id} must be a string constant"
+        assigned[target.id] = node.value.value
+    assert set(assigned.values()) == set(SCORE_GATE_PREFIXES), (
+        "SCORE_GATE_PREFIX_* assignments ≠ SCORE_GATE_PREFIXES frozenset:\n"
+        f"  only in assignments: {sorted(set(assigned.values()) - set(SCORE_GATE_PREFIXES))}\n"
+        f"  only in frozenset: {sorted(set(SCORE_GATE_PREFIXES) - set(assigned.values()))}"
+    )
+
+    allowed_indirect = frozenset(
+        {
+            "schema_exit",
+            "relabel_exit",
+            "evidence_exit",
+            "first_msg",
+            "msg",
+            "err",
+        }
+    )
+    offenders: list[str] = []
+
+    def _names_in(expr: ast.AST) -> set[str]:
+        return {
+            n.id
+            for n in ast.walk(expr)
+            if isinstance(n, ast.Name)
+        }
+
+    def _arg_ok(arg: ast.AST) -> bool:
+        if isinstance(arg, ast.Name):
+            # Bare name: prebuilt message (schema_exit / relabel_exit / …).
+            return True
+        # _score_schema_error_message(...) is itself built from SCORE_GATE_PREFIX_SCHEMA_ERROR.
+        if isinstance(arg, ast.Call):
+            f = arg.func
+            if isinstance(f, ast.Name) and f.id == "_score_schema_error_message":
+                return True
+            if isinstance(f, ast.Attribute) and f.attr == "_score_schema_error_message":
+                return True
+        names = _names_in(arg)
+        if any(n.startswith("SCORE_GATE_PREFIX_") for n in names):
+            return True
+        if names & allowed_indirect:
+            return True
+        return False
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        func_name = None
+        if isinstance(func, ast.Name):
+            func_name = func.id
+        elif isinstance(func, ast.Attribute):
+            func_name = func.attr
+        if func_name == "_score_gate_fail":
+            if not node.args:
+                offenders.append(f"L{node.lineno}: _score_gate_fail() with no args")
+                continue
+            if not _arg_ok(node.args[0]):
+                offenders.append(
+                    f"L{node.lineno}: _score_gate_fail arg does not reference "
+                    f"SCORE_GATE_PREFIX_* (or allowed indirect); names="
+                    f"{sorted(_names_in(node.args[0]))}"
+                )
+        elif func_name == "print" and node.args:
+            # RF-05: run per-record stderr wrapper.
+            arg0 = node.args[0]
+            if isinstance(arg0, (ast.JoinedStr, ast.Constant)):
+                # Reconstruct static text for a cheap filter.
+                static = ""
+                if isinstance(arg0, ast.Constant) and isinstance(arg0.value, str):
+                    static = arg0.value
+                elif isinstance(arg0, ast.JoinedStr):
+                    static = "".join(
+                        v.value
+                        for v in arg0.values
+                        if isinstance(v, ast.Constant) and isinstance(v.value, str)
+                    )
+                if re.search(r"score gate failed|run score gate", static):
+                    if not _arg_ok(arg0):
+                        offenders.append(
+                            f"L{node.lineno}: print gate wrapper missing "
+                            f"SCORE_GATE_PREFIX_*; static={static!r}"
+                        )
+        elif func_name == "exit" and node.args:
+            # sys.exit(...) — run multi-record summary.
+            arg0 = node.args[0]
+            static = ""
+            if isinstance(arg0, ast.Constant) and isinstance(arg0.value, str):
+                static = arg0.value
+            elif isinstance(arg0, ast.JoinedStr):
+                static = "".join(
+                    v.value
+                    for v in arg0.values
+                    if isinstance(v, ast.Constant) and isinstance(v.value, str)
+                )
+            if re.search(r"run score gates failed|score gate failed", static):
+                if not _arg_ok(arg0):
+                    offenders.append(
+                        f"L{node.lineno}: sys.exit gate summary missing "
+                        f"SCORE_GATE_PREFIX_*; static={static!r}"
+                    )
+
+    assert not offenders, (
+        "Gate call sites must build messages from SCORE_GATE_PREFIX_* constants "
+        "(RE-04 / RF-04 / RF-05):\n  - " + "\n  - ".join(offenders)
+    )
+
+
+def test_refuse_overwrite_uses_stable_shared_prefix(tmp_path, monkeypatch):
+    """RF-04 / rg-015 / TEST-15: refuse-overwrite is label-independent.
+
+    Pre-fix emitted ``f"{label} refuse-overwrite: …"`` so caption vs face
+    diverged (``score refuse-overwrite:`` vs ``score-face refuse-overwrite:``)
+    and neither was in SCORE_GATE_PREFIXES. Shared constant lives in the
+    prefix; label is a suffix token.
+    """
+    from scripts.eval_harness import cli as cli_mod
+    from scripts.eval_harness.cli import (
+        SCORE_GATE_PREFIX_REFUSE_OVERWRITE,
+        SCORE_GATE_PREFIXES,
+        ScoreGateError,
+        _refuse_report_overwrite,
+    )
+
+    assert SCORE_GATE_PREFIX_REFUSE_OVERWRITE in SCORE_GATE_PREFIXES
+    target = tmp_path / "docs" / "tasks" / "vlm" / "bakeoff-results" / "x-report.json"
+    target.parent.mkdir(parents=True)
+    target.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(
+        cli_mod,
+        "_is_committed_report_tree",
+        lambda p: "bakeoff-results" in str(p),
+    )
+
+    with pytest.raises(ScoreGateError) as cap_score:
+        _refuse_report_overwrite([target], allow=False, label="score")
+    msg_score = str(cap_score.value)
+    assert msg_score.startswith(SCORE_GATE_PREFIX_REFUSE_OVERWRITE), (
+        f"caption refuse-overwrite must start with "
+        f"{SCORE_GATE_PREFIX_REFUSE_OVERWRITE!r}; got {msg_score!r}"
+    )
+    assert "score:" in msg_score  # label as suffix
+
+    with pytest.raises(ScoreGateError) as cap_face:
+        _refuse_report_overwrite([target], allow=False, label="score-face")
+    msg_face = str(cap_face.value)
+    assert msg_face.startswith(SCORE_GATE_PREFIX_REFUSE_OVERWRITE), (
+        f"face refuse-overwrite must start with "
+        f"{SCORE_GATE_PREFIX_REFUSE_OVERWRITE!r}; got {msg_face!r}"
+    )
+    assert "score-face" in msg_face
+    # Historical label-varying prefixes must not return as the class token.
+    assert not msg_face.startswith("score-face refuse-overwrite:")
+    assert not msg_score.startswith("score refuse-overwrite:")
+    # Allow-path is silent.
+    _refuse_report_overwrite([target], allow=True, label="score")

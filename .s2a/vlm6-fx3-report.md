@@ -215,29 +215,26 @@ None. All five reproduced with live probes before the fix; each has a RED captur
 
 ```
 $ python3 scripts/check_lane_report_shas.py
-lane report SHA citations: 50 file(s), 43 citation(s) resolved
+lane report SHA citations: 50 file(s), 44 citation(s) resolved
 EXIT:0
 ```
-
-(Count rises by one file once this report is committed; re-run after commit for the
-final line.)
 
 ## Test suite (post-fix)
 
 ```
 $ python3 -m pytest scripts/test_check_lane_report_shas.py -q -p no:randomly
 ................................                                         [100%]
-32 passed in 1.87s
+32 passed in 1.97s
 ```
 
 ## `git diff --stat` against fork point
 
 ```
- .s2a/vlm6-fx3-report.md                | 366 +++++++++++++++++++--------------
+ .s2a/vlm6-fx3-report.md                | 375 ++++++++++++++++++++-------------
  .s2a/vlm6-hx2-report.md                |   6 +-
- scripts/check_lane_report_shas.py      | 233 ++++++++++++++++++---
+ scripts/check_lane_report_shas.py      | 233 +++++++++++++++++---
  scripts/test_check_lane_report_shas.py | 273 +++++++++++++++++++++++-
- 4 files changed, 692 insertions(+), 186 deletions(-)
+ 4 files changed, 701 insertions(+), 186 deletions(-)
 ```
 
 (Against `b28e126e89bc41202e0168276f8493511212c80d`.)
@@ -260,4 +257,5 @@ Coordinator: integrate `fix/fx3` onto `feature/vlm-6` after review.
 
 ## Commits on `fix/fx3`
 
-Recorded below after `git commit` (full SHA resolves in this worktree).
+- `a21fa99610d0386e90e9b55bb813f2430b238bc5` — fix(fx3): close lane-report SHA guard evasion channels
+- (this report-footer commit follows)

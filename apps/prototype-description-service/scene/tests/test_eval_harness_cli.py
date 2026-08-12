@@ -4648,3 +4648,203 @@ def test_serialize_score_docs_propagates_renderer_errors(monkeypatch):
                 "verdict": {"verdict": "pass"},
             }
         )
+
+
+# --- fx8: freeze-certification separates byte-stability from adoption exit ---
+#
+# make eval-anchor-check must exit 0 when freezes match byte-for-byte, even when
+# the freeze is a deliberately imperfect non-evidential fixture (wrong names +
+# vacuous categories). Adoption gates stay hard for live score runs (sr-001).
+
+
+def test_score_freeze_certification_requires_expect_report(tmp_path, monkeypatch):
+    """TEST-15 / EVAL-13: --freeze-certification cannot skip gating alone."""
+    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "score",
+                "--manifest",
+                str(manifest_path),
+                "--run-record",
+                str(record_path),
+                "--check-determinism",
+                "--freeze-certification",
+            ]
+        )
+    msg = str(exc.value)
+    assert "--freeze-certification requires --expect-report" in msg
+    # Flag alone (no --check-determinism either) is still rejected the same way.
+    with pytest.raises(SystemExit) as exc2:
+        main(
+            [
+                "score",
+                "--manifest",
+                str(manifest_path),
+                "--run-record",
+                str(record_path),
+                "--freeze-certification",
+            ]
+        )
+    assert "--freeze-certification requires --expect-report" in str(exc2.value)
+
+
+def test_score_freeze_certification_exits_zero_when_bytes_match_despite_wrong_names(
+    tmp_path, monkeypatch, capsys
+):
+    """TEST-15: freeze-certification exit = byte-stability only (adoption visible).
+
+    Fixture has a wrong-name floor breach so live score exits non-zero. After a
+    freeze is captured, --freeze-certification must exit 0 while still printing
+    the adoption verdict so operators cannot misread it as model certification.
+    """
+    manifest_path, record_path = _w1_audience_manifest_and_record(
+        tmp_path, inject_wrong_name=True
+    )
+    monkeypatch.chdir(tmp_path)
+
+    # Capture a freeze of the imperfect fixture (adoption gates fire).
+    with pytest.raises(SystemExit) as live:
+        main(
+            [
+                "score",
+                "--manifest",
+                str(manifest_path),
+                "--run-record",
+                str(record_path),
+                "--check-determinism",
+            ]
+        )
+    assert live.value.code != 0
+    assert "wrong-name" in str(live.value).lower()
+    written = tmp_path / "run-x-report.json"
+    assert written.is_file()
+    expect = tmp_path / "freeze-expect.json"
+    expect.write_text(written.read_text(encoding="utf-8"), encoding="utf-8")
+    capsys.readouterr()  # clear capture buffer
+
+    # Byte-stable re-score of the same imperfect freeze must exit 0.
+    rc = main(
+        [
+            "score",
+            "--manifest",
+            str(manifest_path),
+            "--run-record",
+            str(record_path),
+            "--check-determinism",
+            "--expect-report",
+            str(expect),
+            "--freeze-certification",
+        ]
+    )
+    assert rc is None  # main returns None on success (no SystemExit)
+    out = capsys.readouterr().out
+    assert "determinism check passed" in out
+    assert "matches --expect-report" in out
+    # Adoption outcomes remain visible (not hidden).
+    assert "verdict=fail" in out
+    assert "wrong_name_rate=" in out
+    # Explicit non-adoption certification language (VLM6-E-08).
+    assert "freeze-certification" in out.lower()
+    assert "byte-stable" in out.lower() or "bit-identical" in out.lower()
+    assert "not" in out.lower() and (
+        "adoption" in out.lower() or "model quality" in out.lower()
+    )
+
+
+def test_score_freeze_certification_exits_nonzero_on_anchor_mismatch(
+    tmp_path, monkeypatch
+):
+    """TEST-15: freeze-certification still goes red on byte mismatch."""
+    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    # Produce a correct freeze first.
+    main(
+        [
+            "score",
+            "--manifest",
+            str(manifest_path),
+            "--run-record",
+            str(record_path),
+            "--check-determinism",
+        ]
+    )
+    written = tmp_path / "run-det-report.json"
+    expect = tmp_path / "freeze-expect-bad.json"
+    # Perturb one byte of the committed-shape freeze (tmp copy only).
+    body = written.read_text(encoding="utf-8")
+    # Flip a stable numeric field that cannot accidentally re-match.
+    if '"insertion_rate": 0.0' in body:
+        tampered = body.replace('"insertion_rate": 0.0', '"insertion_rate": 0.1', 1)
+    else:
+        tampered = body[:-2] + "X\n"  # last-resort single-byte corruption
+    assert tampered != body
+    expect.write_text(tampered, encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "score",
+                "--manifest",
+                str(manifest_path),
+                "--run-record",
+                str(record_path),
+                "--check-determinism",
+                "--expect-report",
+                str(expect),
+                "--freeze-certification",
+            ]
+        )
+    msg = str(exc.value)
+    assert "determinism check ANCHOR_MISMATCH" in msg
+    assert "matches --expect-report" not in msg or "does not match" in msg
+
+
+def test_score_live_wrong_name_still_exits_nonzero_without_freeze_certification(
+    tmp_path, monkeypatch
+):
+    """TEST-15 / sr-001: live score (no freeze-cert) keeps adoption gates hard.
+
+    Regression guard: freeze-certification must not soft-open the wrong-name floor
+    for ordinary score runs.
+    """
+    manifest_path, record_path = _w1_audience_manifest_and_record(
+        tmp_path, inject_wrong_name=True
+    )
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "score",
+                "--manifest",
+                str(manifest_path),
+                "--run-record",
+                str(record_path),
+            ]
+        )
+    assert exc.value.code != 0
+    assert "wrong-name" in str(exc.value).lower()
+
+
+def test_score_face_freeze_certification_requires_expect_report(tmp_path):
+    """score-face: --freeze-certification without --expect-report is rejected."""
+    record, manifest = _valid_face_manifest_and_record()
+    rec_path = tmp_path / "face-run.json"
+    rec_path.write_text(json.dumps(record))
+    man_path = tmp_path / "man.json"
+    man_path.write_text(json.dumps(manifest))
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "score-face",
+                "--run-record",
+                str(rec_path),
+                "--manifest",
+                str(man_path),
+                "--check-determinism",
+                "--freeze-certification",
+            ]
+        )
+    assert "--freeze-certification requires --expect-report" in str(exc.value)

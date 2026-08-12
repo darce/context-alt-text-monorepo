@@ -1344,6 +1344,13 @@ def _cmd_score(args: argparse.Namespace) -> None:
     # (PUBLIC has no committed caption anchor; face freeze is score-face path).
     # Requires --check-determinism.
     expect_report_raw = getattr(args, "expect_report", None)
+    # fx8: --freeze-certification is byte-stability certification only. It must
+    # pair with --expect-report (and therefore --check-determinism). Without an
+    # external freeze, the flag would silently skip adoption gates with no
+    # byte-stability claim left to certify (TEST-15 / EVAL-13).
+    freeze_certification = bool(getattr(args, "freeze_certification", False))
+    if freeze_certification and not expect_report_raw:
+        sys.exit("score: --freeze-certification requires --expect-report")
     if expect_report_raw and not args.check_determinism:
         sys.exit("score: --expect-report requires --check-determinism")
     expect_report = Path(expect_report_raw) if expect_report_raw else None
@@ -1456,6 +1463,22 @@ def _cmd_score(args: argparse.Namespace) -> None:
         f"wrong_name_rate_floor={verdict.get('wrong_name_rate_floor', WRONG_NAME_RATE_FLOOR)} "
         f"rubric_gate={rubric_gate}"
     )
+    # fx8 / EVAL-13 / TEST-15: under --freeze-certification the exit code means
+    # scoring-path byte-stability only (determinism + --expect-report already
+    # decided pass/fail above). Adoption gates stay computed and printed in the
+    # summary (verdict / wrong_name_rate / coverage gaps) but do not set exit
+    # status — the freeze is often a deliberately imperfect non-evidential
+    # fixture (predictions_source=ground_truth_derived_fixture). Live score
+    # without this flag keeps every gate hard (sr-001).
+    if freeze_certification:
+        print(
+            "freeze-certification passed [score]: scoring-path is byte-stable "
+            f"(matches --expect-report); nothing certified about model quality, "
+            f"face recognition, or adoption readiness "
+            f"(artifact verdict={verdict.get('verdict', 'unknown')}; "
+            "adoption gates computed above, not exit-determining)"
+        )
+        return
     if schema_exit is not None:
         _score_gate_fail(schema_exit)
     # evidence_exit / relabel_exit are folded into the written verdict above;
@@ -1905,6 +1928,11 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
     # F6 / B-06: --expect-report is opt-in frozen face-report JSON. Requires
     # --check-determinism (same coupling as caption score).
     expect_report_raw = getattr(args, "expect_report", None)
+    # fx8: same freeze-certification contract as caption score (byte-stability
+    # exit only; requires --expect-report).
+    freeze_certification = bool(getattr(args, "freeze_certification", False))
+    if freeze_certification and not expect_report_raw:
+        sys.exit("score-face: --freeze-certification requires --expect-report")
     if expect_report_raw and not args.check_determinism:
         sys.exit("score-face: --expect-report requires --check-determinism")
     expect_report = Path(expect_report_raw) if expect_report_raw else None
@@ -1941,18 +1969,6 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
     scored_n = int((scored.get("counts") or {}).get("scored") or 0)
     failed = int((scored.get("counts") or {}).get("failed") or 0)
     total_n = int((scored.get("counts") or {}).get("total") or 0)
-    if record.get("aborted"):
-        _score_gate_fail(
-            f"score-face aborted-record gate: run-record is aborted "
-            f"(partial evidence only; see {json_path}); refusing to certify"
-        )
-    if scored_n == 0:
-        _score_gate_fail(
-            f"score-face zero-scored gate: scored=0 items (counts.total={total_n}); "
-            f"no evidence to certify (see {json_path})"
-        )
-    if failed > 0:
-        _score_gate_fail(f"score-face gate failed: {failed} item(s) not scored (see failures[] in {json_path})")
     matched_faces = (scored.get("counts") or {}).get("matched_faces", "?")
     occlusion_eligible = 0
     slices = scored.get("slices") or {}
@@ -1967,6 +1983,29 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
         f"occlusion_n_eligible={occlusion_eligible} "
         f"directional_excluded={directional_excluded}"
     )
+    # fx8 / EVAL-13: under --freeze-certification the exit code means scoring-path
+    # byte-stability only (determinism + --expect-report already decided). Live
+    # score-face without the flag keeps integrity gates hard (sr-001).
+    if freeze_certification:
+        print(
+            "freeze-certification passed [score-face]: scoring-path is byte-stable "
+            "(matches --expect-report); nothing certified about model quality, "
+            "face recognition, or adoption readiness "
+            "(integrity gates not exit-determining under this flag)"
+        )
+        return
+    if record.get("aborted"):
+        _score_gate_fail(
+            f"score-face aborted-record gate: run-record is aborted "
+            f"(partial evidence only; see {json_path}); refusing to certify"
+        )
+    if scored_n == 0:
+        _score_gate_fail(
+            f"score-face zero-scored gate: scored=0 items (counts.total={total_n}); "
+            f"no evidence to certify (see {json_path})"
+        )
+    if failed > 0:
+        _score_gate_fail(f"score-face gate failed: {failed} item(s) not scored (see failures[] in {json_path})")
 
 
 # Adoption meet-or-beat metric tables (VLM6-E-01 / A-03 / EVAL-23).
@@ -2364,6 +2403,18 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     score_p.add_argument(
+        "--freeze-certification",
+        action="store_true",
+        help=(
+            "byte-stability certification mode (fx8 / EVAL-13): requires "
+            "--expect-report; exit code is determined solely by the determinism + "
+            "expect-report comparison. Adoption quality gates are still computed "
+            "and printed but do not set the exit status. Certifies scoring-path "
+            "byte-stability only — not model quality or adoption readiness. "
+            "Live score without this flag keeps every adoption gate hard (sr-001)"
+        ),
+    )
+    score_p.add_argument(
         "--allow-manifest-relabel",
         action="store_true",
         help=(
@@ -2438,6 +2489,17 @@ def main(argv: list[str] | None = None) -> None:
             "match this frozen report byte-for-byte (opt-in; no sibling inference). "
             "Mismatch is ANCHOR_MISMATCH — corrupt freeze/record or deliberate "
             "scoring change — not seed FAILED and not environment ERROR"
+        ),
+    )
+    score_face_p.add_argument(
+        "--freeze-certification",
+        action="store_true",
+        help=(
+            "byte-stability certification mode (fx8 / EVAL-13): requires "
+            "--expect-report; exit code is determined solely by the determinism + "
+            "expect-report comparison. Integrity/adoption gates are still printed "
+            "but do not set the exit status. Certifies scoring-path byte-stability "
+            "only — not model quality or adoption readiness"
         ),
     )
     score_face_p.add_argument(

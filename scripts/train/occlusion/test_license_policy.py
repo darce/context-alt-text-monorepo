@@ -4093,6 +4093,13 @@ class TestGate27FiveDoorCategoryInvariant:
             "derived_from_model": "",
             "clearance_decision": "dcface_operator_clearance_20260723",
         },
+        # FIR-7-RV-03: denylist-axis witness so the discrimination meta-test
+        # cannot stay green after a clean-duplicate hollow of the grid.
+        {
+            "source": "self-generated",
+            "license": "AGPL-3.0",
+            "derived_from_model": "",
+        },
     )
 
     @staticmethod
@@ -5053,5 +5060,60 @@ class TestRv13ClearanceAxesExactMatchNormalisation:
         assert cd_upper.ok is False
         assert cd_upper.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
         assert cd_lower.ok is True
+
+# ---------------------------------------------------------------------------
+# FIR-7-RV-03 — fixture grid discrimination meta-test
+# ---------------------------------------------------------------------------
+
+
+class TestRv03RepresentativeRowsDiscriminationFloor:
+    """FIR-7-RV-03: _REPRESENTATIVE_ROWS must discriminate rejection axes.
+
+    R1 replaced research/NC/lineage rows with clean duplicates (len unchanged
+    so node ids survived) while discrimination died. This meta-test runs the
+    whole grid through the five doors and requires at least one witness per
+    rejection axis plus at least one PASS per door.
+    """
+
+    def test_representative_rows_discriminate_rejection_axes(self) -> None:
+        rows = TestGate27FiveDoorCategoryInvariant._REPRESENTATIVE_ROWS
+        observed_reasons: set[policy.RejectionReason] = set()
+        pass_per_door: dict[policy.PolicyCategory, bool] = {
+            d: False for d in policy.PolicyCategory
+        }
+        for row in rows:
+            for door in policy.PolicyCategory:
+                result = policy.audit_provenance_row(dict(row), category=door)
+                if result.ok:
+                    pass_per_door[door] = True
+                elif result.reason is not None:
+                    observed_reasons.add(result.reason)
+
+        assert policy.RejectionReason.RESEARCH_ONLY_SOURCE in observed_reasons, (
+            "research_only_source axis has no witness in _REPRESENTATIVE_ROWS; "
+            f"observed={sorted(r.value for r in observed_reasons)}"
+        )
+        # NC / lineage axis (buffalo-style NC or unregistered lineage).
+        nc_or_lineage = {
+            policy.RejectionReason.NC_MODEL_DERIVED,
+            policy.RejectionReason.UNREGISTERED_DERIVED_MODEL,
+        }
+        assert observed_reasons & nc_or_lineage, (
+            "nc/lineage axis has no witness in _REPRESENTATIVE_ROWS; "
+            f"observed={sorted(r.value for r in observed_reasons)}"
+        )
+        # Denylist axis (package or licence).
+        denylist_axis = {
+            policy.RejectionReason.DENYLISTED_PACKAGE,
+            policy.RejectionReason.DENYLISTED_LICENSE,
+        }
+        assert observed_reasons & denylist_axis, (
+            "denylist axis has no witness in _REPRESENTATIVE_ROWS; "
+            f"observed={sorted(r.value for r in observed_reasons)}"
+        )
+        for door, saw_pass in pass_per_door.items():
+            assert saw_pass, (
+                f"door {door.value} has no PASS witness in _REPRESENTATIVE_ROWS"
+            )
 
 

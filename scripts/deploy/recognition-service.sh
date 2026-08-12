@@ -14,13 +14,14 @@
 #   build          [tag]              Build :SHA + :tag locally (no push). tag default = dev.
 #   build-remote   [tag]              Build :SHA + :tag on the OCI VM (no local docker).
 #   deploy <env>                      Build + push :SHA + :ENV_TAG + ssh restart + verify.
-#                                       'deploy prod' requires CONFIRM=PROMOTE.
+#                                       env = dev|dev-fir|staging|prod. 'deploy prod' requires CONFIRM=PROMOTE.
+#                                       dev-fir shares the :dev image tag with dev (isolated runtime, same image).
 #   promote <from> <to>               Retag :FROM_TAG -> :TO_TAG on OCIR + restart + verify.
 #                                       e.g. promote dev staging, promote staging prod (CONFIRM=PROMOTE),
-#                                       promote staging dev (rollback path).
+#                                       promote staging dev (rollback path; also rolls back dev-fir — shared :dev tag).
 #   verify         <env>              GET /health and compare commit_sha to GIT_REF (default HEAD).
 #                                       Retries up to ACX_VERIFY_ATTEMPTS times for warm-up. Fails closed.
-#   status                            Snapshot /health for dev, staging, prod.
+#   status                            Snapshot /health for dev, dev-fir, staging, prod.
 #   reset          <env>              Destructive: stop unit, clear env Postgres state, restart, verify
 #                                       /ready, run post-reset bootstrap (tenant + api_key creation).
 #                                       Requires CONFIRM_REMOTE_RESET=RESET and ACX_RESET_SITE_URL.
@@ -51,6 +52,9 @@
 #   ACX_BOOT_SMOKE           default 1: 'deploy' boots the freshly-built :SHA in a throwaway
 #                              container (import smoke + /health probe) before promoting/restarting,
 #                              aborting on failure with prod untouched. Set 0 to bypass.
+#   ACX_EDGE_APPLY           default 0: converge fails closed when the shared Caddy edge has
+#                              drifted (applying may reload/recreate the prod-serving edge).
+#                              Set 1 to explicitly allow the edge ship + reload/recreate.
 #   CONFIRM                  required for prod actions: CONFIRM=PROMOTE (applies to deploy prod and promote * prod)
 #
 # Reset-specific environment overrides (see do_reset()):

@@ -37,18 +37,20 @@ deploy-help:
 	@echo "  Full deploy (build + push + restart + verify) — remote build by default:"
 	@echo "    make deploy-dev                            Remote build on VM, push :dev + :SHA, restart acx-dev, verify"
 	@echo "    make deploy-dev REMOTE_BUILD=0             Same, built locally (requires colima / Docker Desktop)"
+	@echo "    make deploy-dev-fir                        Same image (:dev tag), restart acx-dev-fir (isolated FIR stack), verify"
 	@echo "    make deploy-staging                        Remote build on VM, push :staging + :SHA, restart acx-staging, verify"
 	@echo "    make deploy-prod CONFIRM=PROMOTE           Remote build on VM, push :latest + :SHA, restart acx-prod, verify"
 	@echo ""
 	@echo "  Promote / rollback (retag existing image — remote ssh by default):"
 	@echo "    make deploy-promote-staging                Retag :dev -> :staging, restart, verify"
 	@echo "    make deploy-promote-prod CONFIRM=PROMOTE   Retag :staging -> :latest, restart, verify"
-	@echo "    make deploy-rollback-dev                   Retag :staging -> :dev (rollback path)"
+	@echo "    make deploy-rollback-dev                   Retag :staging -> :dev (rollback path; also affects dev-fir — shared :dev tag)"
+	@echo "    make deploy-rollback-dev-fir               Refuses: FIR-only rollback impossible (shared :dev tag)"
 	@echo ""
 	@echo "  Verify / status:"
-	@echo "    make deploy-verify ENV=dev                 GET /health and compare commit_sha to local HEAD"
+	@echo "    make deploy-verify ENV=dev                 GET /health and compare commit_sha to local HEAD (dev|dev-fir|staging|prod)"
 	@echo "    make deploy-verify-dev|staging|prod        Same, fixed env"
-	@echo "    make deploy-status                         Snapshot /health for dev, staging, prod"
+	@echo "    make deploy-status                         Snapshot /health for dev, dev-fir, staging, prod"
 	@echo ""
 	@echo "  Destructive remote reset (stops unit, clears env Postgres state, restarts, verifies /ready):"
 	@echo "    ACX_RESET_SITE_URL is REQUIRED — the WordPress site URL the plugin will hit."
@@ -60,6 +62,7 @@ deploy-help:
 	@echo ""
 	@echo "  Schema-only remote DB reset (greenfield 001 drift; DROP SCHEMA public CASCADE; no prod path):"
 	@echo "    make db-reset-remote ENV=dev CONFIRM=RESET              Drop/recreate public schema on OCI dev, restart api, poll /health"
+	@echo "    make db-reset-remote ENV=dev-fir CONFIRM=RESET          Same for the isolated FIR stack (acx-dev-fir)"
 	@echo "    make db-reset-remote ENV=staging CONFIRM=RESET          Same for OCI staging"
 	@echo "    make db-reset-remote ENV=dev CONFIRM=RESET DRY_RUN=1    Print remote commands only (no SSH)"
 	@echo ""
@@ -176,7 +179,7 @@ reset-remote:
 # CONFIRM=RESET required; DRY_RUN=1 / --dry-run prints plan without SSH.
 db-reset-remote:
 	@if [ -z "$(ENV)" ]; then \
-		echo "db-reset-remote: ENV is required (dev|staging)" >&2; \
+		echo "db-reset-remote: ENV is required (dev|dev-fir|staging)" >&2; \
 		exit 2; \
 	fi
 	@ENV="$(ENV)" CONFIRM="$(CONFIRM)" DRY_RUN="$(DRY_RUN)" \

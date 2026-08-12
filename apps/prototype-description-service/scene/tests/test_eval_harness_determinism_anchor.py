@@ -54,18 +54,17 @@ _RUN = _ANCHOR_DIR / f"{_STEM}.json"
 _REPORT_JSON = _ANCHOR_DIR / f"{_STEM}-report.json"
 _REPORT_MD = _ANCHOR_DIR / f"{_STEM}-report.md"
 
-# File digests of the committed freeze set — update man+run when intentionally
-# regenerating the corpus; report digests are owned by the regen stage.
+# File digests of the committed freeze set — update when intentionally regenerating.
 # wG3: caption freeze corpus extended with media 39 G-01 mixed-y trap so
 # labeled_y_missing_images is freeze-observable (was structural 0 on golden).
-# Man+run digests moved; report digests deliberately unchanged (regen stage).
-# Prior run digest d105f3ad… was the pre-trap 37-item golden-scored record.
+# wI1: report JSON/MD regenerated against the wG3 man+run (labeled_y_missing_*
+# keys appear; counts 38; detection tp 53; wrong_name_rate 0.1053; …).
+# Prior report digests c2fcfa34… / dc7bf054… were the pre-wG3 37-image freeze.
 _FROZEN_DIGESTS = {
     _MAN.name: "2eae07326bd5a63834fe838de9fbc4e46ab71599ed213c6eacb1fd66757c57b7",
     _RUN.name: "b5c3040aad98939b71c2242ed2cdbd8efcdb4a51bd65ec8f5f45e8a1a70e58cf",
-    # Report digests still pin the pre-wG3 freeze (regen stage owns refresh).
-    _REPORT_JSON.name: "c2fcfa3407ff62254556201cc35dfcb25eb4a46105e0764fe4b25a347423b0e6",
-    _REPORT_MD.name: "dc7bf05496e37883bbe3e4cdf336f63a4e5bd489ed14aaf7bfcf439e04e14f3b",
+    _REPORT_JSON.name: "990e15178f9e0b2450d1f14099ea466e7dfad0c827897dc56862771279ce1394",
+    _REPORT_MD.name: "7c0e4ae779df28765f55f90e20e0dadc1702bcb4a1978e0a0b5b315336b281f9",
 }
 
 
@@ -189,9 +188,8 @@ def test_committed_anchor_digests_match_frozen(name: str, expected: str) -> None
 def test_generator_regenerates_byte_identical_committed_anchor(tmp_path: Path) -> None:
     """Generator is the source of truth — re-run must match the freeze byte-for-byte.
 
-    Man+run are this lane's pin (wG3 extended corpus). Report artifacts are owned
-    by the regen stage — until regen, report byte-identity is expected-red
-    (stale freeze vs live re-score of 38-entry man + pre-existing field drift).
+    Man+run pin the wG3 extended corpus; report JSON/MD pin the wI1 regeneration
+    of that corpus through the live scorer (TEST-15 base for every published field).
     """
     run_path, report_json, report_md, manifest_sha = write_anchor(
         manifest_path=_GOLDEN,
@@ -209,7 +207,6 @@ def test_generator_regenerates_byte_identical_committed_anchor(tmp_path: Path) -
     assert manifest_sha.startswith("7462d325")
     assert man_path.read_bytes() == _MAN.read_bytes()
     assert run_path.read_bytes() == _RUN.read_bytes()
-    # Report identity: expected-red until regen stage (do NOT regenerate here).
     assert report_json.read_bytes() == _REPORT_JSON.read_bytes()
     assert report_md.read_bytes() == _REPORT_MD.read_bytes()
 
@@ -276,9 +273,8 @@ def test_corrupt_expect_report_makes_determinism_gate_red(tmp_path: Path) -> Non
 def test_expect_report_matches_committed_freeze_green(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Clean --expect-report against the committed freeze still exits green (discrimination).
 
-    Pre-regen this is expected-red: committed report is stale vs the extended
-    corpus (and vs pre-existing scoring-field drift). The test remains so regen
-    restores green without rewriting the control.
+    Post-wI1 regen the expect-report path re-scores the wG3 man+run and must
+    match the committed report bytes (and pinned digests) exactly.
     """
     run_copy = tmp_path / _RUN.name
     run_copy.write_bytes(_RUN.read_bytes())

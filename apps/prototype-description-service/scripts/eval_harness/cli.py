@@ -116,6 +116,12 @@ SCORE_GATE_PREFIX_QUALITY_FLOOR = "score quality-floor gate:"
 SCORE_GATE_PREFIX_CATEGORY_VACUITY = "score category-vacuity gate:"
 SCORE_GATE_PREFIX_FREEZE_CERT_REFUSED = "score freeze-certification refused:"
 SCORE_GATE_PREFIX_FACE_REPORT_READBACK = "score face-report-readback gate:"
+# Pre-write freeze protection (VLM6-E-05 / RF-04): label is a *suffix* so caption
+# and face share one greppable class token (rg-015). Never f"{label} refuse-…".
+SCORE_GATE_PREFIX_REFUSE_OVERWRITE = "score refuse-overwrite gate:"
+# ``run`` multi-record wrapper (RF-05): fixed prefixes; record path after colon.
+SCORE_GATE_PREFIX_RUN_RECORD = "run score gate failed:"
+SCORE_GATE_PREFIX_RUN_SUMMARY = "run score gates failed:"
 # Frozen set consumed by the README drift test (do not hand-copy strings there).
 SCORE_GATE_PREFIXES: frozenset[str] = frozenset(
     {
@@ -135,6 +141,9 @@ SCORE_GATE_PREFIXES: frozenset[str] = frozenset(
         SCORE_GATE_PREFIX_CATEGORY_VACUITY,
         SCORE_GATE_PREFIX_FREEZE_CERT_REFUSED,
         SCORE_GATE_PREFIX_FACE_REPORT_READBACK,
+        SCORE_GATE_PREFIX_REFUSE_OVERWRITE,
+        SCORE_GATE_PREFIX_RUN_RECORD,
+        SCORE_GATE_PREFIX_RUN_SUMMARY,
     }
 )
 # Back-compat alias (schema hard-key token without trailing colon was historical).
@@ -1371,10 +1380,12 @@ def _refuse_report_overwrite(paths: list[Path], *, allow: bool, label: str) -> N
     if not protected:
         return
     listed = ", ".join(str(p) for p in protected)
+    # Stable class token first (RF-04 / rg-015); label is suffix only.
     _score_gate_fail(
-        f"{label} refuse-overwrite: existing committed report(s) would be clobbered "
-        f"({listed}); pass --allow-overwrite-report to opt in (freezes must not be "
-        f"rewritten by ordinary score; reports for freeze run-records default to OUT_DIR)"
+        f"{SCORE_GATE_PREFIX_REFUSE_OVERWRITE} {label}: existing committed "
+        f"report(s) would be clobbered ({listed}); pass --allow-overwrite-report "
+        f"to opt in (freezes must not be rewritten by ordinary score; reports "
+        f"for freeze run-records default to OUT_DIR)"
     )
 
 
@@ -1768,10 +1779,16 @@ def _cmd_run(args: argparse.Namespace) -> None:
             _cmd_score(args)
         except ScoreGateError as exc:
             gate_failures.append(f"{record_path}: {exc}")
-            print(f"score gate failed for {record_path}: {exc}", file=sys.stderr)
+            # Fixed prefix; path after colon (RF-05 / rg-006).
+            print(
+                f"{SCORE_GATE_PREFIX_RUN_RECORD} {record_path}: {exc}",
+                file=sys.stderr,
+            )
     if gate_failures:
         summary = "; ".join(gate_failures)
-        sys.exit(f"run score gates failed for {len(gate_failures)} record(s): {summary}")
+        sys.exit(
+            f"{SCORE_GATE_PREFIX_RUN_SUMMARY} {len(gate_failures)} record(s): {summary}"
+        )
 
 
 def _cmd_seed_roster(args: argparse.Namespace) -> None:

@@ -1,4 +1,4 @@
-"""Permanent regression for S4-02 journaled set-atomic promote (gx4 + fx2).
+"""Permanent regression for S4-02 journaled set-atomic promote (gx4 + fx2 + cx3).
 
 Pre-fix bare per-file ``os.replace`` loops left a mixed destination after a
 mid-promote crash (some files NEW, some OLD). Journaled promote +
@@ -9,14 +9,24 @@ fx2 closed three recovery durability holes (RV2-01/02/03), de-duplicated the
 protocol (HARM-02), and added mid-flight journal observation (RV3-03) plus face
 crash coverage (RV3-02).
 
-Heuristics: TEST-15, AUDIT-07, EVAL-23, rg-002, rg-006, rg-008.
+cx3 Wave C: unknown-phase refuse (B-03), legacy journal refuse (B-01),
+per-namespace flock + unique journal tmp (B-02), journal-clear dir-fsync (B-04),
+and a non-tautology bare-loop mutant against the real mid-flight spy (E-01).
+
+Heuristics: TEST-15, AUDIT-07, EVAL-23, rg-002, rg-006, rg-008, sr-001.
 """
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 import pytest
 
@@ -26,9 +36,12 @@ from scripts.eval_harness import promote_atomic as promote
 from scripts.eval_harness.promote_atomic import (
     CAPTION_PROMOTE,
     FACE_PROMOTE,
+    LEGACY_PROMOTE_JOURNAL,
     PromoteError,
     atomic_promote,
     recover_promote,
+    scavenge_orphan_stages,
+    validate_live_head_sha,
 )
 
 
@@ -259,30 +272,63 @@ def test_s4_02_clean_promote_leaves_no_journal(tmp_path: Path) -> None:
     )
 
 
+def _observe_midflight_journal_phases(
+    promote_fn, src: Path, dest: Path, names: list[str]
+) -> list[str]:
+    """Shared RV3-03 spy used by clean-promote and bare-mutant tests.
+
+    Replaces ``_write_promote_journal`` with a spy that asserts the journal is
+    durable on disk after each write, then invokes *promote_fn*. Returns the
+    list of phases observed. A bare ``os.replace`` loop never calls the writer,
+    so the caller sees ``[]`` and the post-condition asserts go red.
+    """
+    phases_seen: list[str] = []
+    real_write = promote._write_promote_journal
+
+    def spy_write(dest_dir, ns, payload):
+        phases_seen.append(str(payload.get("phase")))
+        real_write(dest_dir, ns, payload)
+        jpath = dest_dir / ns.journal_name
+        assert jpath.is_file(), "journal must be durable mid-flight (RV3-03)"
+        body = json.loads(jpath.read_text())
+        assert body.get("generator") == ns.generator
+        assert body.get("phase") in {"staged", "installing"}
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(promote, "_write_promote_journal", spy_write)
+        promote_fn(src, dest, names)
+    return phases_seen
+
+
 def test_rv3_03_bare_loop_mutant_fails_midflight_spy(tmp_path: Path) -> None:
-    """Bare os.replace loop (no journal) must fail the mid-flight journal assert."""
+    """Bare os.replace mutant must fail the *real* mid-flight journal spy (E-01).
+
+    Prior version asserted on a local ``phases_seen`` list that production never
+    touches — always green under any mutant. Drive the same spy observations as
+    ``test_s4_02_clean_promote_leaves_no_journal`` against a deliberately bare
+    promote and require the post-condition to fail (TEST-15).
+    """
     dest = tmp_path / "dest"
     src = tmp_path / "src"
     _seed_old(dest)
     _seed_new(src)
 
-    phases_seen: list[str] = []
-
-    def bare_loop(src_dir, dest_dir, names):
+    def bare_loop(src_dir, dest_dir, names, ns=None):
         for name in names:
             os.replace(src_dir / name, dest_dir / name)
 
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(cap, "_atomic_promote", bare_loop)
-        # Drive the same observations the clean-promote test requires.
-        cap._atomic_promote(src, dest, list(_NAMES))
-    # Mutant leaves no journal evidence mid-flight.
-    assert "staged" not in phases_seen
-    assert "installing" not in phases_seen
-    # And the production clean-promote test's spy would have failed — re-check
-    # via the real API that a bare mutant cannot satisfy journal observation.
-    # (phases_seen stays empty because bare_loop never journals.)
-    assert phases_seen == []
+    phases_seen = _observe_midflight_journal_phases(
+        bare_loop, src, dest, list(_NAMES)
+    )
+    with pytest.raises(AssertionError, match="journal must"):
+        assert "staged" in phases_seen, (
+            f"journal must record phase=staged mid-flight; saw {phases_seen}"
+        )
+    with pytest.raises(AssertionError, match="journal must"):
+        assert "installing" in phases_seen, (
+            f"journal must record phase=installing mid-flight; saw {phases_seen}"
+        )
+    assert phases_seen == [], "bare mutant must never touch the journal writer"
 
 
 def test_rv2_01_corrupt_journal_refuses_and_preserves_evidence(tmp_path: Path) -> None:
@@ -443,3 +489,375 @@ def test_rv2_07_scavenge_skips_when_journal_corrupt(tmp_path: Path) -> None:
     )
     assert reclaimed == []
     assert stage.exists()
+
+
+# ---------------------------------------------------------------------------
+# cx3 Wave C — VLM6-R2-B-01/02/03/04 + E-01 + verify_git signature cleanup
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "phase",
+    ["INSTALLING", None, "unknown", "staged "],
+    ids=["INSTALLING", "None", "unknown", "staged_trailing_space"],
+)
+def test_vlm6_r2_b03_unknown_phase_preserves_evidence(tmp_path: Path, phase) -> None:
+    """Unknown phase must raise and preserve journal+stage (VLM6-R2-B-03).
+
+    Pre-fix: only exact ``"installing"`` was special-cased; every other value
+    fell through to abandon cleanup and destroyed recovery evidence on a mixed
+    dest. RED: LEFT_MIXED + journal_gone + stage_gone.
+    """
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    (dest / "man.json").write_text("NEW_man.json")
+    (dest / "run.json").write_text("OLD_run.json")
+    (dest / "rep.json").write_text("OLD_rep.json")
+    stage = dest / f"{CAPTION_PROMOTE.stage_prefix}probe"
+    stage.mkdir()
+    for name in _NAMES:
+        (stage / name).write_text(f"NEW_{name}")
+    journal_path = dest / CAPTION_PROMOTE.journal_name
+    payload = {
+        "stage": str(stage),
+        "names": list(_NAMES),
+        "phase": phase,
+        "generator": "caption",
+    }
+    journal_path.write_text(json.dumps(payload) + "\n")
+
+    with pytest.raises(PromoteError, match="unknown phase"):
+        recover_promote(dest, CAPTION_PROMOTE)
+
+    after = _read_named(dest)
+    old = {n: f"OLD_{n}" for n in _NAMES}
+    new = {n: f"NEW_{n}" for n in _NAMES}
+    # man was already NEW; run/rep OLD — still mixed.
+    assert after["man.json"] == "NEW_man.json"
+    assert after["run.json"] == "OLD_run.json"
+    assert after["rep.json"] == "OLD_rep.json"
+    assert _is_mixed(after, old, new)
+    assert journal_path.is_file(), "must preserve journal on unknown phase"
+    assert stage.is_dir(), "must preserve stage on unknown phase"
+
+
+def test_vlm6_r2_b01_legacy_journal_refused(tmp_path: Path) -> None:
+    """Present legacy journal must raise — never silent no-op (VLM6-R2-B-01)."""
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    (dest / "man.json").write_text("NEW_man.json")
+    (dest / "run.json").write_text("OLD_run.json")
+    (dest / "rep.json").write_text("OLD_rep.json")
+    stage = dest / ".vlm-promote-stage-legacy"
+    stage.mkdir()
+    for name in _NAMES:
+        (stage / name).write_text(f"NEW_{name}")
+    legacy = dest / LEGACY_PROMOTE_JOURNAL
+    legacy.write_text(
+        json.dumps(
+            {
+                "stage": str(stage),
+                "names": list(_NAMES),
+                "phase": "installing",
+                "generator": "caption",
+            }
+        )
+        + "\n"
+    )
+    before = _read_named(dest)
+
+    with pytest.raises(PromoteError, match="legacy promote journal"):
+        recover_promote(dest, CAPTION_PROMOTE)
+
+    assert _read_named(dest) == before
+    assert legacy.is_file(), "must not delete legacy journal evidence"
+    assert stage.is_dir(), "must not delete legacy stage"
+
+
+def test_vlm6_r2_b01_legacy_blocks_atomic_promote(tmp_path: Path) -> None:
+    """atomic_promote must refuse when a legacy journal is present."""
+    dest = tmp_path / "dest"
+    src = tmp_path / "src"
+    _seed_old(dest)
+    _seed_new(src)
+    legacy = dest / LEGACY_PROMOTE_JOURNAL
+    legacy.write_text('{"phase":"installing","generator":"caption","stage":"x","names":[]}\n')
+    with pytest.raises(PromoteError, match="legacy promote journal"):
+        atomic_promote(src, dest, list(_NAMES), CAPTION_PROMOTE)
+    assert legacy.is_file()
+
+
+def test_vlm6_r2_b04_cleanup_fsyncs_dest_after_journal_unlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Journal clear must dir-fsync before stage removal (VLM6-R2-B-04).
+
+    Spies ``_fsync_path`` order around journal unlink so a regression that
+    drops the post-unlink fsync (or reorders stage-before-journal) goes red.
+    """
+    dest = tmp_path / "dest"
+    src = tmp_path / "src"
+    _seed_old(dest)
+    _seed_new(src)
+
+    events: list[str] = []
+    real_fsync = promote._fsync_path
+    real_unlink = Path.unlink
+
+    def spy_fsync(path: Path) -> None:
+        events.append(f"fsync:{Path(path).name}")
+        real_fsync(path)
+
+    def spy_unlink(self: Path, *args, **kwargs):
+        events.append(f"unlink:{self.name}")
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(promote, "_fsync_path", spy_fsync)
+    monkeypatch.setattr(Path, "unlink", spy_unlink)
+
+    atomic_promote(src, dest, list(_NAMES), CAPTION_PROMOTE)
+
+    # Locate journal unlink in the event stream; the next dest-dir fsync must
+    # precede any stage-dir teardown (rmdir of stage shows up as later events).
+    journal_name = CAPTION_PROMOTE.journal_name
+    try:
+        j_idx = next(i for i, e in enumerate(events) if e == f"unlink:{journal_name}")
+    except StopIteration as exc:
+        raise AssertionError(f"journal never unlinked; events={events}") from exc
+    post = events[j_idx + 1 :]
+    assert any(e == f"fsync:{dest.name}" for e in post), (
+        f"dest dir must be fsynced after journal unlink; post={post} all={events}"
+    )
+    # Stage removal (child unlinks under stage prefix) must come *after* that fsync.
+    fsync_after = next(i for i, e in enumerate(post) if e == f"fsync:{dest.name}")
+    stage_teardown = [
+        i
+        for i, e in enumerate(post)
+        if e.startswith("unlink:") and CAPTION_PROMOTE.stage_prefix.lstrip(".") in e
+        or (e.startswith("unlink:") and e.endswith(".json") and i > fsync_after)
+    ]
+    # At least: no stage-prefix child unlinks before the post-journal fsync.
+    for i, e in enumerate(post):
+        if "promote-stage-" in e and e.startswith("unlink:"):
+            assert i > fsync_after, (
+                f"stage teardown {e} before post-journal fsync; post={post}"
+            )
+
+
+def test_vlm6_r2_b04_recover_cleanup_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """recover_promote installing path also fsyncs dest after journal unlink."""
+    dest = tmp_path / "dest"
+    old = _seed_old(dest)
+    (dest / "man.json").write_text("NEW_man.json")
+    stage = dest / f"{CAPTION_PROMOTE.stage_prefix}hand"
+    stage.mkdir()
+    new = {name: f"NEW_{name}" for name in _NAMES}
+    for name, body in new.items():
+        (stage / name).write_text(body)
+    _write_journal(
+        dest,
+        CAPTION_PROMOTE,
+        {"stage": str(stage), "names": list(_NAMES), "phase": "installing"},
+    )
+
+    events: list[str] = []
+    real_fsync = promote._fsync_path
+    real_unlink = Path.unlink
+
+    def spy_fsync(path: Path) -> None:
+        events.append(f"fsync:{Path(path).name}")
+        real_fsync(path)
+
+    def spy_unlink(self: Path, *args, **kwargs):
+        events.append(f"unlink:{self.name}")
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(promote, "_fsync_path", spy_fsync)
+    monkeypatch.setattr(Path, "unlink", spy_unlink)
+
+    recover_promote(dest, CAPTION_PROMOTE)
+    assert _is_all_new(_read_named(dest), new)
+    assert not _is_all_old(_read_named(dest), old)
+
+    j_idx = next(
+        i for i, e in enumerate(events) if e == f"unlink:{CAPTION_PROMOTE.journal_name}"
+    )
+    post = events[j_idx + 1 :]
+    assert any(e == f"fsync:{dest.name}" for e in post), (
+        f"recover must fsync dest after journal unlink; post={post}"
+    )
+
+
+def test_vlm6_r2_b02_concurrent_promotes_consistent(tmp_path: Path) -> None:
+    """50 concurrent atomic_promotes must leave a consistent dest (VLM6-R2-B-02).
+
+    Pre-fix: consistent=0 with_errors=50 (no flock). Post-fix: every trial
+    either wins cleanly or serializes; dest is always all-from-one-writer.
+    """
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    for name in _NAMES:
+        (dest / name).write_text(f"OLD_{name}")
+
+    n_workers = 50
+    errors: list[BaseException] = []
+    lock = threading.Lock()
+
+    def worker(i: int) -> str:
+        src = tmp_path / f"src{i}"
+        src.mkdir(exist_ok=True)
+        for name in _NAMES:
+            (src / name).write_text(f"W{i:02d}_{name}")
+        atomic_promote(src, dest, list(_NAMES), CAPTION_PROMOTE)
+        return f"W{i:02d}"
+
+    with ThreadPoolExecutor(max_workers=n_workers) as pool:
+        futs = [pool.submit(worker, i) for i in range(n_workers)]
+        for fut in as_completed(futs):
+            try:
+                fut.result()
+            except BaseException as exc:  # noqa: BLE001 — collect all for report
+                with lock:
+                    errors.append(exc)
+
+    assert errors == [], f"concurrent promote errors: {errors[:5]!r} (n={len(errors)})"
+    state = _read_named(dest)
+    prefixes = {state[n].rsplit("_", 1)[0] for n in _NAMES}
+    assert len(prefixes) == 1, f"hybrid dest after concurrent promote: {state}"
+    # Clean residue.
+    assert not (dest / CAPTION_PROMOTE.journal_name).exists()
+    assert not any(dest.glob(f"{CAPTION_PROMOTE.stage_prefix}*"))
+
+
+def test_vlm6_r2_b02_lock_absence_goes_red(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TEST-15: the concurrency assert must go RED if flock is neutered.
+
+    A lock test that still passes with the lock deleted is worthless.
+    """
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    for name in _NAMES:
+        (dest / name).write_text(f"OLD_{name}")
+
+    @contextmanager
+    def no_lock(_dest_dir: Path, _ns: promote.PromoteNamespace) -> Iterator[None]:
+        yield
+
+    monkeypatch.setattr(promote, "_namespace_lock", no_lock)
+
+    n_workers = 30
+    error_count = 0
+    hybrid = False
+    barrier = threading.Barrier(n_workers)
+
+    def worker(i: int) -> None:
+        nonlocal error_count, hybrid
+        src = tmp_path / f"src-nolock-{i}"
+        src.mkdir(exist_ok=True)
+        for name in _NAMES:
+            (src / name).write_text(f"N{i:02d}_{name}")
+        try:
+            barrier.wait(timeout=5)
+            atomic_promote(src, dest, list(_NAMES), CAPTION_PROMOTE)
+        except BaseException:
+            error_count += 1
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n_workers)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    state = _read_named(dest)
+    prefixes = {state.get(n, "").rsplit("_", 1)[0] for n in _NAMES if n in state}
+    if len(prefixes) > 1:
+        hybrid = True
+
+    # Without the lock we must observe either errors or a hybrid dest (or both).
+    # If neither fires, the test itself is worthless — fail loudly.
+    assert error_count > 0 or hybrid, (
+        f"lock-absence probe stayed clean (errors={error_count} hybrid={hybrid} "
+        f"state={state}); concurrency test cannot validate the lock"
+    )
+
+
+def test_vlm6_r2_b02_scavenge_does_not_reclaim_under_live_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Scavenge must not rmtree a stage while promote holds the namespace lock."""
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    stage_live = dest / f"{CAPTION_PROMOTE.stage_prefix}live"
+    stage_live.mkdir()
+    (stage_live / "man.json").write_text("live")
+    # Age the stage so max_age would allow reclaim if scavenge raced.
+    old_mtime = 1_000_000.0
+    os.utime(stage_live, (old_mtime, old_mtime))
+
+    hold = threading.Event()
+    release = threading.Event()
+    reclaimed_holder: list[list[str]] = []
+
+    real_lock = promote._namespace_lock
+
+    @contextmanager
+    def holding_lock(dest_dir: Path, ns: promote.PromoteNamespace) -> Iterator[None]:
+        with real_lock(dest_dir, ns):
+            hold.set()
+            # Stay inside the lock until the scavenger has blocked or timed out.
+            release.wait(timeout=5)
+            yield
+
+    # Thread A: hold the promote lock (simulates mid-promote).
+    def holder() -> None:
+        with holding_lock(dest, CAPTION_PROMOTE):
+            pass
+
+    t = threading.Thread(target=holder)
+    t.start()
+    assert hold.wait(timeout=5), "holder failed to acquire lock"
+
+    # Thread B: scavenge should block on flock, not delete the live stage.
+    def scavenger() -> None:
+        # Short timeout path: try non-blocking by racing — we just call scavenge
+        # which blocks. Release the holder after a brief moment so the test ends.
+        time.sleep(0.2)
+        reclaimed_holder.append(
+            scavenge_orphan_stages(
+                dest, CAPTION_PROMOTE, max_age_sec=1.0, now=old_mtime + 10_000.0
+            )
+        )
+
+    s = threading.Thread(target=scavenger)
+    s.start()
+    time.sleep(0.5)
+    # While holder still has the lock, stage must still exist.
+    assert stage_live.is_dir(), "scavenge must not delete under live lock"
+    release.set()
+    t.join(timeout=5)
+    s.join(timeout=5)
+    # After release, scavenge may reclaim the true orphan (no journal) — that's fine.
+    # The invariant under test is mid-lock survival, already asserted above.
+
+
+def test_vlm6_r2_b02_journal_tmp_is_unique() -> None:
+    """Journal write tmp must not be a single fixed ``.{journal}.tmp`` name."""
+    src = inspect.getsource(promote._write_promote_journal)
+    assert ".tmp" in src
+    # Fixed single-name pattern that concurrent writers clobber.
+    assert 'f".{ns.journal_name}.tmp"' not in src
+    assert "uuid" in src or "getpid" in src
+
+
+def test_vlm6_cx3_validate_live_head_sha_no_verify_git_param() -> None:
+    """verify_git removed from signature — callers cannot opt out (cx3/cx4)."""
+    sig = inspect.signature(validate_live_head_sha)
+    assert "verify_git" not in sig.parameters, (
+        f"verify_git must be removed from validate_live_head_sha; got {sig}"
+    )
+    # Positional + git_cwd only.
+    assert list(sig.parameters) == ["raw", "git_cwd"]

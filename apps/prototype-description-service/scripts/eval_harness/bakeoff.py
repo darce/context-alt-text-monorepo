@@ -61,6 +61,7 @@ from .cli import (
     fetch_run_record,
     prune_out_dir,
 )
+from .face_metrics import named_box_name
 from .manifest import GoldenManifest, ManifestError, load_manifest
 from .remote_client import RemoteClientError, RemoteSceneClient
 from .report import EVAL_MODES
@@ -329,6 +330,34 @@ def _face_position(x: float) -> str:
     return "in the center"
 
 
+def _face_gate_norm_key(name: Any) -> str | None:
+    """Normalize a roster/box name via the shared namedness predicate."""
+    return named_box_name({"name": name})
+
+
+def _assert_no_roster_norm_collisions(known_names: list[str]) -> dict[str, str]:
+    """Map normalized name → first roster form; fail closed on collisions.
+
+    Keying the gate on normalized names fixes padded/BOM misses, but the inverse
+    hazard is silent merge of previously distinct roster strings (e.g. ``\"Alice\"``
+    and ``\"Alice \"``). Changing identity counts by merge is worse than the miss
+    it fixes — refuse loudly instead.
+    """
+    norm_to_roster: dict[str, str] = {}
+    for raw in known_names:
+        key = _face_gate_norm_key(raw)
+        if key is None:
+            continue
+        prev = norm_to_roster.get(key)
+        if prev is not None and prev != raw:
+            raise ValueError(
+                "face_gate roster name collision after normalize: "
+                f"{prev!r} and {raw!r} both normalize to {key!r}"
+            )
+        norm_to_roster[key] = raw
+    return norm_to_roster
+
+
 def _apply_face_gate(
     context_pack: dict[str, Any],
     face_boxes: list[dict[str, Any]],
@@ -344,19 +373,45 @@ def _apply_face_gate(
     boxes) ⇒ nothing eligible ⇒ no names reach the prompt. The gate only ever
     narrows (never adds a name the context did not supply), so never-guess is
     tightened, never loosened. Eligible names gain positional binding derived
-    from the box centre ("Ana, on the left")."""
-    matched: dict[str, dict[str, Any]] = {}
+    from the box centre ("Ana, on the left").
+
+    Intersection keys both sides via ``face_metrics.named_box_name`` (Cf drop +
+    strip) so padded/BOM/ZWSP box names still match a clean roster entry.
+    Roster collisions under that normalization raise (fail closed).
+    """
+    _assert_no_roster_norm_collisions(known_names)
+    matched: dict[str, dict[str, Any]] = {}  # normalized name → box
     for box in face_boxes:
-        name = box.get("name")
-        if name:
-            matched.setdefault(str(name), box)
+        key = named_box_name(box)
+        if key is not None:
+            matched.setdefault(key, box)
     _, in_context = _ablate_names(context_pack, known_names)
-    eligible = [n for n in in_context if n in matched]
-    suppressed = [n for n in in_context if n not in matched]
+    eligible: list[str] = []
+    suppressed: list[str] = []
+    for n in in_context:
+        key = _face_gate_norm_key(n)
+        if key is not None and key in matched:
+            eligible.append(n)
+        else:
+            suppressed.append(n)
     pack, _ = _ablate_names(context_pack, suppressed)
     if eligible:
-        ordered = sorted(eligible, key=lambda n: (float(matched[n].get("x", 0.5)), n))
-        pack["people_present"] = "; ".join(f"{n}, {_face_position(float(matched[n].get('x', 0.5)))}" for n in ordered)
+        def _box_for(roster_name: str) -> dict[str, Any]:
+            key = _face_gate_norm_key(roster_name)
+            if key is None or key not in matched:
+                raise RuntimeError(
+                    f"face_gate invariant broken: eligible name {roster_name!r} "
+                    f"has no matched box (norm={key!r})"
+                )
+            return matched[key]
+
+        ordered = sorted(
+            eligible,
+            key=lambda n: (float(_box_for(n).get("x", 0.5)), n),
+        )
+        pack["people_present"] = "; ".join(
+            f"{n}, {_face_position(float(_box_for(n).get('x', 0.5)))}" for n in ordered
+        )
     return pack, {"eligible_names": sorted(eligible), "suppressed_names": sorted(suppressed)}
 
 

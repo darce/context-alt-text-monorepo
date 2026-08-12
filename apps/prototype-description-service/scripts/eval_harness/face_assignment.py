@@ -25,6 +25,8 @@ from typing import Any, Literal
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
+from .face_metrics import named_box_name
+
 # §C
 IOU_MATCH_THRESHOLD = 0.5
 
@@ -124,18 +126,13 @@ class AssociationResult:
 def gt_box_name(gt: Any) -> str | None:
     """Canonical GT box name (HARM-06 / rg-005).
 
-    ``None`` and empty/whitespace-only strings are anonymous. One predicate
-    shared by association, detection, and identification paths — empty string
-    must not flip between "named" and "stranger" across modules.
+    Delegates to ``face_metrics.named_box_name`` — the single harness namedness
+    predicate (drop Unicode ``Cf`` format controls, then strip; empty →
+    anonymous). Association, face_metrics, bakeoff face-gate, and face_bakeoff
+    twin eligibility must not diverge on ZWSP/BOM/padding (Wave E residual /
+    Wave F wF2).
     """
-    if isinstance(gt, Mapping):
-        name = gt.get("name")
-    else:
-        name = getattr(gt, "name", None)
-    if name is None:
-        return None
-    text = str(name).strip()
-    return text if text else None
+    return named_box_name(gt)
 
 
 def _gt_fields(gt: Any) -> tuple[float, float, float, float, str | None]:

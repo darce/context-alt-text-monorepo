@@ -3272,6 +3272,29 @@ class TestBr65ClearanceAxesSeparated:
                 f"pc={photo_clearance!r}: expected {expected_reason!r}, "
                 f"got {result.reason}"
             )
+            # FIR-7-RV-08: pin the causal path, not only the enum. BASE has
+            # derived_from_model=dcface, so missing/wrong clearance_decision
+            # must report the real clearance obligation ("requires
+            # clearance_decision=..."). Correct DCFACE token + source=
+            # operator-photo on SYNTHETIC_SOURCE is the unknown-head path
+            # ("has no clearance entry") — never collapse them.
+            if expected_reason == "pending_legal_clearance":
+                if clearance_decision == "DCFACE":
+                    # Lineage axis satisfied; synthetic door rejects the
+                    # non-registry source head.
+                    assert "has no clearance entry" in result.detail, (
+                        f"{category.value} cd=DCFACE: expected unknown-head "
+                        f"detail, got {result.detail!r}"
+                    )
+                    assert "requires clearance_decision=" not in result.detail
+                else:
+                    # Clearance path: neutering _audit_clearance_decision must
+                    # RED these cells (they must not silently fall through to
+                    # the unknown-head phrasing).
+                    assert "requires clearance_decision=" in result.detail, (
+                        f"{category.value} cd={clearance_decision!r}: expected "
+                        f"clearance-path detail, got {result.detail!r}"
+                    )
             # The correct dcface token is never itself the rejection cause:
             # when we supplied it, the reason must not be a lineage miss
             # phrased as "got <dcface token>".
@@ -3316,6 +3339,7 @@ class TestBr65ClearanceAxesSeparated:
                 assert (
                     f"got {policy.DCFACE_CLEARANCE_DECISION!r}" not in result.detail
                 )
+                assert "has no clearance entry" in result.detail
             else:
                 assert result.ok is True, (
                     f"{category.value} rejected correct dual-axis row: "

@@ -38,17 +38,23 @@ uv run python -m scripts.eval_harness.cli run --limit 3 --check-determinism
 uv run python -m scripts.eval_harness.cli score \
   --run-record scripts/eval_harness/out/run-<stamp>.json
 
-# operator surface for the committed freeze (seed-stability + --expect-report):
+# operator surface for the committed freeze (byte-stability certification):
 # from monorepo root — this is the documented path; do not invent sibling paths.
 # make eval-anchor-check
 #
-# equivalent CLI (caption leg shown; face leg is the second half of the target):
+# equivalent CLI (caption leg shown; face leg is the second half of the target).
+# --freeze-certification: exit code means scoring-path byte-stability only.
+# The freeze is a deliberately imperfect non-evidential fixture; adoption gates
+# are still printed (verdict / wrong_name_rate) but do not set the exit status.
 uv run --extra dev python -m scripts.eval_harness.cli score \
   --manifest scene/tests/seed/golden.json \
   --run-record ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811.json \
-  --rubric-gate skip \
   --check-determinism \
-  --expect-report ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811-report.json
+  --expect-report ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811-report.json \
+  --rubric-gate skip \
+  --freeze-certification
+# --rubric-gate skip is freeze stamp parity (artifact carries rubric_gate=skip),
+# not an adoption softener under --freeze-certification.
 ```
 
 
@@ -193,15 +199,28 @@ Do not re-stamp their `provenance.manifest_sha256` to force a green gate
 (rg-015). The load-bearing re-scorable anchor is the S2A seeded artifact below
 (regenerate via `python -m scripts.eval_harness.generate_determinism_anchor`).
 
-**Working — committed S2A determinism anchor (exit 0).** Offline seeded stub over
-the full golden corpus (37 items); dict identity rows; `provenance.manifest_sha256`
-computed at generation time (read it from the artifact — do not hardcode the
-digest here; it moves whenever the generator or golden schema changes).
-Seeded-stub scoring requires `--rubric-gate skip` (vacuity exemption). Face and
-identity predictions in the freeze are **ground-truth-derived fixtures** with a
-fixed seeded deviation (`predictions_source=ground_truth_derived_fixture`,
-`face_metrics_evidential=false`) — they prove scoring-path byte-stability, not
-recognition quality.
+**Working — committed S2A determinism anchor (exit 0 under `--freeze-certification`).**
+Offline seeded stub over the full golden corpus (37 items); dict identity rows;
+`provenance.manifest_sha256` computed at generation time (read it from the
+artifact — do not hardcode the digest here; it moves whenever the generator or
+golden schema changes). Face and identity predictions in the freeze are
+**ground-truth-derived fixtures** with a fixed seeded deviation
+(`predictions_source=ground_truth_derived_fixture`, `face_metrics_evidential=false`)
+— they prove scoring-path byte-stability, not recognition quality. The fixture
+deliberately carries wrong-name deviations and vacuous categories
+(`verdict=fail`, `fabricated_fact_rate=None`) so the freeze is not a 1.000
+tautology.
+
+**Two contracts, two modes** (fx8):
+
+| Mode | Flags | Exit code means |
+| --- | --- | --- |
+| Live adoption scoring | `score` (default) | Adoption quality: wrong-name floor, category vacuity, must-right, … (EVAL-04 / EVAL-23). Hard gates. |
+| Freeze byte-stability | `score --check-determinism --expect-report PATH --freeze-certification` | Scoring-path byte-stability only. Adoption outcomes are still **printed** (`verdict=…`, rates) but do **not** set exit status. |
+
+`--freeze-certification` **requires** `--expect-report` (and therefore
+`--check-determinism`). Without an external freeze the flag would silently skip
+adoption gates with nothing left to certify (rejected).
 
 Seed-stability alone (`--check-determinism` without a freeze) proves the scorer
 is hash-stable; it does **not** detect a corrupted run-record or report (parent
@@ -216,14 +235,22 @@ $ cd apps/prototype-description-service
 $ uv run --extra dev python -m scripts.eval_harness.cli score \
     --manifest scene/tests/seed/golden.json \
     --run-record ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811.json \
-    --rubric-gate skip \
     --check-determinism \
-    --expect-report ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811-report.json
+    --expect-report ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811-report.json \
+    --rubric-gate skip \
+    --freeze-certification
 determinism check passed [score]: cross-process re-score is bit-identical under varied PYTHONHASHSEED (baseline=randomized; child_seeds=0,1,42); matches --expect-report …/S2A-determinism-anchor-run-20260811-report.json
+…/S2A-determinism-anchor-run-20260811-report.md
+scored=37/37 … wrong_names=4 verdict=fail wrong_name_rate=0.1081 …
+freeze-certification passed [score]: scoring-path is byte-stable (matches --expect-report); nothing certified about model quality, face recognition, or adoption readiness (artifact verdict=fail; …)
 # EXIT_CODE:0
-# Note: "determinism check passed" certifies scoring-path BYTE-STABILITY only.
-# It is not an adoption gate. Face P/R and fabricated-fact numbers in the freeze
-# are non-evidential / may be undefined (see provenance.coverage_gaps).
+# Note: EXIT 0 under --freeze-certification certifies scoring-path BYTE-STABILITY
+# only. The printed verdict=fail / wrong_name_rate are adoption signals, not
+# exit-determining here. Face P/R and fabricated-fact numbers in the freeze are
+# non-evidential / may be undefined (see provenance.coverage_gaps).
+# --rubric-gate skip matches the freeze stamp (rubric_gate=skip); it is not what
+# makes exit 0 — drop --freeze-certification and the wrong-name floor exits 1
+# (live adoption path stays hard — sr-001).
 ```
 
 Frozen triple (run-record + report JSON + report MD) lives under
@@ -337,10 +364,12 @@ $ uv run --extra dev python -m scripts.eval_harness.cli score-face \
     --manifest ../../docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-manifest-20260811.json \
     --run-record ../../docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-run-20260811.json \
     --check-determinism \
-    --expect-report ../../docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-run-20260811-face-report.json
+    --expect-report ../../docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-run-20260811-face-report.json \
+    --freeze-certification
 determinism check passed [score-face]: cross-process re-score is bit-identical under varied PYTHONHASHSEED (baseline=randomized; child_seeds=0,1,42); matches --expect-report …/S2A-face-determinism-anchor-run-20260811-face-report.json
 …/S2A-face-determinism-anchor-run-20260811-face-report.md
 scored=8/8 matched_faces=6 occlusion_n_eligible=1 directional_excluded=…
+freeze-certification passed [score-face]: scoring-path is byte-stable (matches --expect-report); nothing certified about model quality, face recognition, or adoption readiness …
 # EXIT_CODE:0
 ```
 

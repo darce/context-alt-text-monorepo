@@ -1,191 +1,237 @@
-# Lane `fx5` report — lane-report SHA guard + evidence trail
+# Lane `fx5` report — anchor corpus coverage, freeze regen, oracle independence
 
-**Lane:** `fx5`  
-**Task:** `VLM-6`  
-**Branch:** `feature/vlm-6-fx5` (this lane's branch)  
-**Base:** `e2575b5ef09ed75de7f792546439d53624c9d344`
+**Lane:** `fx5` (Wave B)  
+**Branch:** `fix/fx5`  
+**Base:** `7d868a34a86b3b9d25eb6a84b6dc909eb2185ccf`  
+**HEAD:** four commits on top of base (corpus / oracle / freeze / report)
 
-Owned paths only: `scripts/check_lane_report_shas.py`, `scripts/test_check_lane_report_shas.py`,
-`.s2a/**`, `docs/tasks/vlm/VLM-6-gpu-vlm-bakeoff-task-plan.md`.
+Heuristics: `TEST-15`, `AUDIT-07`, `EVAL-13`, `EVAL-23`, `rg-005`, `rg-015`, `sr-001`.
 
 ---
 
-## Guard redesign (D-03 / D-04 / D-05 / D-10)
+## 1. HARM-05 — corpus extension + discrimination proof
 
-### Behaviour change (one line)
+### What was added
 
-Extract every 7–40 hex token (case-insensitive), resolve against the repo, fail
-closed on missing paths and unresolvable tokens; exclude only per-token content
-digests / HTML-comment spans / `sha-guard:ignore` — never whole-line keyword vetoes.
+Face synthetic corpus lives in `generate_face_determinism_anchor.py` (not
+`golden.json`). Extended `build_synthetic_face_manifest` /
+`build_face_anchor_run_record`:
 
-### Files
+| media_id | path | GT | detections | purpose |
+| --- | --- | --- | --- | --- |
+| 9 | `localwp/uploads/stranger-fn-miss.jpg` | 1 anonymous box | 0 | pure unmatched stranger GT |
+| 10 | `localwp/uploads/mixed-fn-miss.jpg` | 1 named Alice + 1 anonymous | 0 | mixed named+anonymous miss |
 
-- `scripts/check_lane_report_shas.py` (redesign)
-- `scripts/test_check_lane_report_shas.py` (new; 9 tests)
-- Report text fixes so the strict guard can stay strict: `.s2a/vlm6-fix-f1a-report.md`,
-  `.s2a/vlm6-fix-f2b-report.md`, `.s2a/vlm6-la2-placement-metrics-report.md`
+Items: 8 → 10. Pre-extension the only stranger (media 3) was **matched**, so
+`missed_stranger_gt=0` and `fn = missed_gt` agreed with
+`fn = missed_gt + missed_stranger_gt`.
 
-### VLM6-D-03 — missing path fails open
+### **LOUD:** generator edit required for HARM-05
 
-| | |
-| --- | --- |
-| **Touch** | `scripts/check_lane_report_shas.py` `main()` target loop |
-| **RED** (unfixed) | `python3 scripts/check_lane_report_shas.py .s2a/does-not-exist-vlm6.md` → exit **0**, stdout `lane report SHA citations: 1 file(s) checked, all resolve` |
-| **Test RED** | `test_missing_path_fails_closed_and_does_not_claim_resolve` → `AssertionError: missing path must exit non-zero; got 0 with stdout='lane report SHA citations: 1 file(s) checked, all resolve\n' stderr=''` |
-| **GREEN** | same CLI → exit **1**, stderr contains `target is not a readable file — refusing to claim SHA citations resolve for an unopened path`; test **PASSED** |
-| **Change** | Missing/unreadable targets append a violation; success summary counts only opened files. |
+Lane brief said edit generators only if RV3-01 requires it. HARM-05 corpus
+source **is** the face generator — no external seed file. Edited
+`generate_face_determinism_anchor.py` for corpus body only (promote protocol /
+CLI / scoring path untouched). fx6 imports from that neighbourhood for promote
+tests only; no API renames.
 
-### VLM6-D-04 — uppercase hex invisible
+### Discrimination proof (mandatory RED #1)
 
-| | |
-| --- | --- |
-| **Touch** | `scripts/check_lane_report_shas.py` `_HEX = re.compile(r'\b([0-9a-fA-F]{7,40})\b')` |
-| **RED** | fixture `Landed at commit` + uppercase 7-hex token → exit **0**, `1 file(s) checked, all resolve` |
-| **Test RED** | `test_uppercase_sha_is_visible_and_flagged` → `AssertionError: expected fail, got stdout='lane report SHA citations: 1 file(s) checked, all resolve\n'` |
-| **GREEN** | exit **1**, stderr names the uppercase token / `does not resolve`; test **PASSED** |
-| **Change** | Case-insensitive token extraction. |
+**Pre-extension (control):** post and pre-HARM-01 formulas both produce
+`detection={tp:6, fp:1, fn:1}` — freeze cannot detect the bug.
 
-### VLM6-D-05 — citation shapes escape + live sandbox SHA
+**Post-extension + regenerated freeze:**
 
-| | |
-| --- | --- |
-| **Touch** | `scan_file` redesign (no `_CITATION_CONTEXT` gate; per-token digest exclusion; comment-span strip only) |
-| **RED** | `**Sandbox base:**` / `Landing SHA` bare hex / digest-line citation / outside-`<!--` citation → exit **0**; live `.s2a/vlm6-fix-f1a-report.md` sandbox base (unresolvable) → exit **0**, `1 file(s) checked, all resolve` |
-<!-- example tokens from RED fixtures deliberately omitted from prose so the guard stays strict -->
-| **Test RED** | `test_sandbox_base_phrasing_flags_unresolvable_token`, `test_citation_outside_html_comment_is_not_skipped`, `test_digest_keyword_does_not_veto_commit_citation` each → `AssertionError: expected fail, got stdout='lane report SHA citations: 1 file(s) checked, all resolve\n'` |
-| **GREEN** | all three tests **PASSED**; live f1a fixed (sandbox SHA moved into HTML comment); full tree `python3 scripts/check_lane_report_shas.py` → `34 file(s) checked, all resolve` exit 0 |
-| **Change** | Every non-excluded hex token is resolved; reports with genuine unresolvable sandbox SHAs were corrected (sr-001 — guard not weakened). |
+```
+freeze detection:     {'fn': 4, 'fp': 1, 'precision': 0.857…, 'recall': 0.6, 'tp': 6}
+freeze missed_stranger_gt: 2
+pre-HARM-01 detection: {'fn': 2, 'fp': 1, 'precision': 0.857…, 'recall': 0.75, 'tp': 6}
+RED (differs from freeze)? True
+pre_fn=2 < post_fn=4? True
+```
 
-### VLM6-D-10 — zero tests
+Pre-HARM-01 formula: `fn = int(assignment.missed_gt)` (named only).  
+Post-HARM-01: `fn = missed_gt + missed_stranger_gt` → 2 named + 2 stranger = 4.
 
-| | |
-| --- | --- |
-| **Touch** | `scripts/test_check_lane_report_shas.py` (new) |
-| **RED** | 5 discrimination tests **FAILED** against unfixed guard (see D-03/04/05 quotes); 4 pass-path tests already green |
-| **GREEN** | `9 passed in 0.56s` — collected count **9** (`--collect-only`) |
-| **Change** | Permanent TEST-15 surface for every escape class named above. |
+Permanent pin:
+`test_pre_harm01_detection_formula_goes_red_on_extended_freeze` (PASSED).
+Also: `test_face_anchor_corpus_includes_unmatched_stranger_gt` (PASSED).
 
-**Command:**
-```bash
-apps/prototype-description-service/.venv/bin/python -m pytest scripts/test_check_lane_report_shas.py -q
+---
+
+## 2. RV3-01 — independent oracle
+
+### What the oracle now computes
+
+- **Inlined** seed predicates (`_oracle_predicted_face_count`,
+  `_oracle_predicted_identity_names`) from the golden corpus alone.
+- Does **not** import `_predicted_face_count` / `_identity_rows` from the
+  generator under test.
+- Score path always uses real `score_run_record` (no hardwired scorer).
+- Shared `_assert_scored_matches_oracle` pins lower bounds **and** exact
+  equality (lower bounds alone let exaggerated records stay green).
+
+Generator itself **not** edited for RV3-01.
+
+### Mutant RED capture (mandatory RED #2)
+
+Reviewer mutant: `face_count = max(0, gt-2)` + inject `ALWAYS-WRONG` on every item.
+
+```
+MUTANT real scorer det= {'precision': 1.0, 'recall': 0.19298…, 'tp': 11, 'fp': 0, 'fn': 46}
+MUTANT wrong_names= 41
+ORACLE expected= {'det_tp': 51, 'det_fp': 3, 'det_fn': 6, 'wrong_name_count': 4, …}
+RED CAPTURE (AssertionError): detection fp=0 below oracle lower bound 3 (scorer may be GT-echoing; VLM6-S4-01)
+```
+
+Matches reviewer control (their wrong_names=37 → 41 after corpus drift; same RED class).
+
+Permanent pin:
+`test_exaggerated_record_mutant_goes_red_against_independent_oracle` (PASSED —
+asserts the AssertionError).
+
+Green path: `test_seeded_predictions_are_not_pure_gt_echo` (PASSED).
+
+---
+
+## 3. Freeze regen
+
+### Path
+
+1. HARM-05 corpus + RV3-01 oracle first.
+2. `python -m scripts.eval_harness.generate_face_determinism_anchor` (pin
+   head_sha/started_at sentinels).
+3. Caption generator re-run — **byte-identical** (digests unchanged; not rewritten).
+4. `_FROZEN_DIGESTS` from `sha256sum` of generator output — never hand-typed.
+5. Manifest content-digest prefix assert updated to match generation-time
+   `manifest_sha256` of the extended corpus (was pre-extension prefix).
+
+No pre-namespace `.vlm-anchor-promote.journal` found in bakeoff-results.
+
+### Digests (face)
+
+Content digests (file sha256sum — not git objects). Full 64-hex from generator output:
+
+sha-guard:ignore-next-block
+```
+# face freeze file digests (old → new)
+manifest   sha256:1209733ed2b62e837449855690c15931dc0e76fcb24be8a715668020e05c8958
+        →  sha256:67685bb703a516f7a0651fdae90cc3f316b6929831f293030f5b6aa67d766103
+run        sha256:a5264540eb1fe7aa12227d8c8da5776a4ae2790cf9b6f606899a0fc48c3685c5
+        →  sha256:43d160d63b188eb0f5b3b04deef48c17fe60af958e134421a1816bb098f86ef5
+report.json sha256:fbea3c228f527d657d85c511a093ec8c0959cbeed0850fe5f996b95b85037449
+        →   sha256:faf72705b708e77b57ec9255c7c5d9292b7d366f77348cac7a657db7ff394e52
+report.md  sha256:537446ccc8f96704a93aaeb9e027662b9995bc5daffddf4c876cb48ae97be760
+        →  sha256:cc60073dd1f126517370e5832cae142201b89df22b8fe49d6aec2e299bc06b7d
+
+# caption freeze — byte-identical (not rewritten)
+run        sha256:d105f3adccb2f5745e221d518649217562b836436569889b19a2c2471156dbe9
+report.json sha256:c2fcfa3407ff62254556201cc35dfcb25eb4a46105e0764fe4b25a347423b0e6
+report.md  sha256:dc7bf05496e37883bbe3e4cdf336f63a4e5bd489ed14aaf7bfcf439e04e14f3b
+```
+
+### Metric deltas (face report)
+
+| field | old freeze | new freeze |
+| --- | --- | --- |
+| detection.fn | 1 | **4** |
+| detection.recall | 0.857 | **0.6** |
+| detection.tp/fp | 6 / 1 | 6 / 1 |
+| unknown_rejection.missed_stranger_gt | *(key absent)* | **2** |
+| unknown_rejection.n / rate | 1 / 1.0 | **3 / 0.333…** |
+| full_corpus_id.fn / missed_gt | 2 / 1 | **3 / 2** |
+| counts.total / scored | 8 / 8 | **10 / 10** |
+
+### Anchor suite after regen
+
+`36 passed` across face + caption determinism anchor tests (incl. the three
+formerly-RED freeze tests).
+
+---
+
+## 4. Findings disagreed with
+
+None. Both HARM-05 and RV3-01 reproduced as stated.
+
+Note: RV3-01 equality pins already made the mutant fail on HEAD before this
+lane; independence was still incomplete (generator helper imports). Fixed both
+the import coupling and the permanent mutant pin.
+
+---
+
+## 5. Full suite result
+
+```
+7 failed, 1299 passed, 4 skipped, 32 warnings in 173.14s
+```
+
+Command:
+`./.venv/bin/python -m pytest scene/tests/ -q -p no:randomly`
+from `apps/prototype-description-service/`.
+
+### Expected-red (fx6 owns — not touched)
+
+All 7 in `test_eval_harness_cli.py` (category-vacuity gate / sample-size):
+
+1. `test_cmd_score_public_audience_emits_redacted_public_artifact`
+2. `test_cmd_score_default_local_emits_no_public_artifact`
+3. `test_cmd_score_exits_zero_when_no_wrong_names_and_no_failures`
+4. `test_cli_score_check_determinism_runs_cross_process_guard`
+5. `test_cli_score_determinism_certifies_written_rubric_gate`
+6. `test_cli_score_audience_public_check_determinism_covers_both_labels`
+7. `test_score_freeze_certification_exits_nonzero_on_anchor_mismatch`
+
+### Unexpected red
+
+**None.**
+
+### Formerly-red fx5 anchors — now green
+
+- `test_face_generator_regenerates_byte_identical_committed_anchor`
+- `test_face_expect_report_matches_committed_freeze_green`
+- `test_cli_score_face_expect_report_end_to_end_green`
+
+---
+
+## 6. `git diff --stat` vs base
+
+```
+ .../tests/test_eval_harness_determinism_anchor.py  | 189 +++++++++++++++------
+ .../test_eval_harness_face_determinism_anchor.py   | 106 +++++++++++-
+ .../generate_face_determinism_anchor.py            |  67 +++++++-
+ ...-face-determinism-anchor-manifest-20260811.json |  69 ++++++++
+ ...eterminism-anchor-run-20260811-face-report.json |  35 ++--
+ ...-determinism-anchor-run-20260811-face-report.md |  25 +--
+ .../S2A-face-determinism-anchor-run-20260811.json  |  26 ++-
+ 7 files changed, 429 insertions(+), 88 deletions(-)
+```
+
+sha-guard:ignore-next-block
+```
+b91722b7 fix(fx5): HARM-05 extend face anchor corpus with unmatched stranger GT
+191bef58 fix(fx5): RV3-01 make S4-01 oracle independent of generator helpers
+7d4afdb4 fix(fx5): regenerate face determinism freeze after HARM-05 corpus extension
 ```
 
 ---
 
-## Evidence trail
+## 7. What could not be verified
 
-### VLM6-D-01 — missing lc2 report
-
-| | |
-| --- | --- |
-| **Touch** | `.s2a/vlm6-lc2-cli-report.md` (new) |
-| **RED** | n/a executable — documentation defect; verified `git log --all -- '.s2a/*lc2*'` empty and no `*lc2*` under `.s2a/` at base |
-| **GREEN** | Report present; marked **reconstructed post-hoc by lane fx5**; claim table derived from `3e57f7e7` and re-checked symbols/tests at HEAD (`ScoreGateError`, evidence gates, `compare`, run multi-record scoring) |
-| **Change** | Audit surface for lc2 CLI residual gates exists without inventing closed finding IDs. |
-
-### VLM6-D-02 — missing lb2 report
-
-| | |
-| --- | --- |
-| **Touch** | `.s2a/vlm6-lb2-load-manifest-report.md` (new) |
-| **RED** | n/a executable — documentation defect; only sibling lb1 report existed |
-| **GREEN** | Report present; each classification verified at HEAD (`bakeoff.main` weave skip vs pixel `images_dir`, `fusion_runner.main` skip, four test helpers skip, `test_pixel_path_load_manifest_requires_hash_verification` TEST-15) |
-| **Change** | Non-CLI `load_manifest` skip decisions are auditable. |
-
-### VLM6-D-06 — s2a-guards false exact messages
-
-| | |
-| --- | --- |
-| **Touch** | `.s2a/vlm6-s2a-guards-report.md` |
-| **RED** | n/a executable — hand-verified: strings `score_manifest_sha256 differs from fetch-time manifest_sha256 — corpus truncation or post-fetch edit` and `golden corpus defines no Must-Right/Easy-Wrong rubric entries; caption hard gate is vacuous` absent from `cli.py` / tests at HEAD |
-| **GREEN** | Table re-derived: stable identity = test names; HEAD stems described (`run-record provenance missing fetch-time manifest_sha256…`, `must_right is vacuous corpus-wide` / `easy_wrong is vacuous corpus-wide`) |
-| **Change** | Report can no longer rot on the next message-edit by a sibling lane. |
-
-### VLM6-D-07 — lb1 line anchors wrong
-
-| | |
-| --- | --- |
-| **Touch** | `.s2a/vlm6-lb1-cli-hash-callsites-report.md` |
-| **RED** | n/a executable — hand-verified: prior line anchors (631/1536/1638/1693) land on unrelated statements; real calls are `_cmd_fetch`/`_cmd_face_bakeoff` with `images_dir=`, skips on score/face-score/determinism helpers |
-| **GREEN** | Table re-anchored on function name + kwargs; re-verified at HEAD |
-| **Change** | Reviewer following the table lands on the real classification (`rg-005`). |
-
-### VLM6-D-08 — invented VLM6-R3-06 closure
-
-| | |
-| --- | --- |
-| **Touch** | `.s2a/vlm6-lc1-report-report.md` row for R3-06 |
-| **RED** | n/a executable — hand-verified: ID appears only in this report + trailing comments on R3-01/R3-02 tests; no handoff record |
-| **GREEN** | Row marked **not a real finding ID**; points coverage at real **VLM6-R3-01** / **VLM6-R3-02** |
-| **Change** | False closure claim removed. |
-
-### VLM6-D-09 — task plan over-claims face baseline
-
-| | |
-| --- | --- |
-| **Touch** | `docs/tasks/vlm/VLM-6-gpu-vlm-bakeoff-task-plan.md` Slice 0 paragraph |
-| **RED** | n/a executable — hand-verified: prior text called face P/R "**real**" / baseline "**genuine**" while corpus boundary records face_boxes/spatial_facts/reference_facts on 0/37 and anchor generator self-stamps GT |
-| **GREEN** | Sampling frame rewritten (AUDIT-07): π=0 claim units named; S0 delivery stated as harness/determinism freeze, not adoption-grade face quality; checklist ticks left intact |
-| **Change** | Plan no longer over-claims the 37-image face numbers. |
-
-### VLM6-C-06 — `describe_baseline.py` no offline Δ (judgement)
-
-**Disposition: Cross-lane request** (not Deferred).
-
-Reason: Δ reporting is implementable on the current 37-image corpus and does not
-require Golden-100. Absolute counts alone cannot answer EVAL-01 ("did the
-candidate improve anything?"). The owning file is out of this lane's scope.
-
-Concrete requirement for the owning lane: see **Cross-lane requests** below.
+- Live MCP handoff write (lane worktree; no `make context` target in this
+  checkout). Report is the transport.
+- End-to-end ANCHOR_MISMATCH CLI path under monkeypatched pre-HARM-01 formula
+  (discrimination proven via direct re-score of detection dict + permanent unit
+  test; full CLI cross-process under patch not required for the bar).
+- Whether fx6's 7 CLI failures are solely category-vacuity (looks that way;
+  not investigated further).
 
 ---
 
-## Cross-lane requests
+## 8. Cross-lane requests
 
-### C-06 / EVAL-01 — `describe_baseline.py` offline baseline deltas
-
-Owner: lane that owns `apps/prototype-description-service/scripts/eval_harness/describe_baseline.py`
-(sibling; **not edited here**).
-
-Required behaviour:
-
-1. Load the real golden corpus (not fabricated empty-rubric transport stubs) when
-   computing a report that claims baseline status.
-2. Emit **Δ** columns vs at least one fixed reference:
-   - zero-rule / empty-caption captioner (lower bound), and/or
-   - current production Florence path when an offline freeze exists.
-3. Report absolute counts **and** deltas for the same metrics the bake-off ranks
-   on (at minimum insertion/gated caption metrics the compare gate already uses).
-4. Fail closed (non-zero or explicit `undefined`/non-adoption status) when the
-   reference arm cannot be scored — do not print a green absolute-only report as
-   if it answered "improved?".
-5. TEST-15: a fixture where the candidate is strictly worse than the reference
-   must go red on the Δ surface; a candidate that only matches absolute counts
-   of a vacuous stub must not look like a win.
-
-### Optional (informational)
-
-- Lane `fx1` may continue rephrasing score-gate operator messages; s2a-guards
-  report now keys stability on **test names**, not quoted literals.
-
----
-
-## Deferred
-
-Nothing deferred to Golden-100 for this lane's assigned findings. Vacuity of
-positional/placement/fabricated-fact on the 37-image corpus is **documented**
-in the task-plan rewrite (D-09) and remains Slice 1 work for producing those
-claim units — the gate-honesty fixes for those metrics belong to the scoring
-lanes, not this report/guard lane.
-
----
-
-## Verification summary
-
-```
-# RED battery (unfixed guard): 5 failed, 4 passed
-# GREEN battery (fixed guard): 9 passed in 0.56s  (9 collected)
-# Full-tree guard: lane report SHA citations: 34 file(s) checked, all resolve
-```
-
-Heuristics cited: TEST-15, AUDIT-07, sr-001, rg-005, EVAL-01 (C-06 disposition).
+- **fx6:** do not re-freeze face digests; our freeze already includes
+  HARM-01/HARM-09 + extended corpus. CLI fixtures that hardcode face
+  detection `fn=1` or `missed_stranger_gt` absence need their own update.
+- **Coordinator:** face generator corpus body changed — if any parallel lane
+  imported item counts (==8) or media_id layout, rebase onto this freeze.
+- **No request to edit** `cli.py` / `describe_baseline.py` / `promote_atomic.py`
+  from this lane.

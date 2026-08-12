@@ -7,8 +7,8 @@
 #   - docker daemon not running (local build mode)
 #   - OCIR auth token missing/expired (local or remote)
 #   - SSH key not loaded / public-IP allowlist drift
-#   - HEAD diverged from origin/main (staging/prod only)
-#   - dirty working tree (warned for dev, blocked for staging/prod)
+#   - HEAD diverged from origin/main (staging/prod only; skipped for dev + dev-fir)
+#   - dirty working tree (warned for dev/dev-fir, blocked for staging/prod)
 #
 # Subcommands:
 #   build          [tag]              Build :SHA + :tag locally (no push). tag default = dev.
@@ -42,7 +42,7 @@
 #   ACX_DEPLOY_PLATFORM      default linux/arm64 (matches A1 Always Free shape; ignored in remote-build)
 #   ACX_REMOTE_BUILD         set to 1 to build on the VM instead of locally
 #   ACX_REMOTE_BUILD_DIR     default /tmp/acx-build  (rsync target on the VM)
-#   ACX_ALLOW_DIRTY          set to 1 to skip dirty-tree check (dev only)
+#   ACX_ALLOW_DIRTY          set to 1 to skip dirty-tree check (dev and dev-fir only)
 #   ACX_VERIFY_ATTEMPTS      default 5  (post-deploy verify retry count for warm-up)
 #   ACX_VERIFY_SLEEP         default 5  (seconds between verify attempts)
 #   ACX_VERIFY_OPTIONAL      set to 1 to downgrade verify failure from fail to warn after deploy/promote
@@ -52,9 +52,12 @@
 #   ACX_BOOT_SMOKE           default 1: 'deploy' boots the freshly-built :SHA in a throwaway
 #                              container (import smoke + /health probe) before promoting/restarting,
 #                              aborting on failure with prod untouched. Set 0 to bypass.
-#   ACX_EDGE_APPLY           default 0: converge fails closed when the shared Caddy edge has
-#                              drifted (applying may reload/recreate the prod-serving edge).
-#                              Set 1 to explicitly allow the edge ship + reload/recreate.
+#   ACX_EDGE_APPLY           default 0: when the shared Caddy edge has drifted, behaviour is
+#                              env-scoped — dev-fir fails closed (the edge IS fir's ingress);
+#                              any other env warns and skips edge convergence so that env's
+#                              own runtime still converges. Set 1 to explicitly allow the
+#                              edge ship + reload/recreate from any env (applying may
+#                              reload/recreate the prod-serving edge).
 #   CONFIRM                  required for prod actions: CONFIRM=PROMOTE (applies to deploy prod and promote * prod)
 #
 # Reset-specific environment overrides (see do_reset()):
@@ -178,13 +181,14 @@ preflight_rsync() {
 }
 preflight_git_clean() {
   local env="$1"
+  # dev-fir is a dev-tier env (feature-branch workflow): same dirty-tree policy as dev.
   if ! git -C "${REPO_ROOT}" diff --quiet HEAD -- 2>/dev/null \
      || [[ -n "$(git -C "${REPO_ROOT}" status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
-    if [[ "$env" == "dev" && "${ACX_ALLOW_DIRTY:-0}" == "1" ]]; then
-      warn "Working tree is dirty (ACX_ALLOW_DIRTY=1, continuing for dev)."
-    elif [[ "$env" == "dev" ]]; then
+    if [[ "$env" == "dev" || "$env" == "dev-fir" ]] && [[ "${ACX_ALLOW_DIRTY:-0}" == "1" ]]; then
+      warn "Working tree is dirty (ACX_ALLOW_DIRTY=1, continuing for ${env})."
+    elif [[ "$env" == "dev" || "$env" == "dev-fir" ]]; then
       warn "Working tree is dirty. Re-run with ACX_ALLOW_DIRTY=1 to override."
-      fail "dirty tree (dev)"
+      fail "dirty tree (${env})"
     else
       fail "Working tree must be clean for ${env} deploys."
     fi
@@ -192,7 +196,8 @@ preflight_git_clean() {
 }
 preflight_branch_synced() {
   local env="$1"
-  [[ "$env" == "dev" ]] && return 0
+  # dev + dev-fir are developed from feature branches; skip origin/main sync.
+  [[ "$env" == "dev" || "$env" == "dev-fir" ]] && return 0
   local head upstream
   head="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
   git -C "${REPO_ROOT}" fetch origin main >/dev/null 2>&1 || warn "git fetch failed; skew check may be stale"
@@ -482,6 +487,7 @@ converge_runtime() {
   local env="$1" remote_dir unit edge_dir
   local repo_caddy_sum repo_compose_sum remote_caddy_sum remote_compose_sum
   local edge_caddy_drift=0 edge_compose_drift=0
+  local edge_apply_edge=0
   # Must match ACX_NETWORK_NAME in .env.fir.example and the external network
   # key on docker-compose.caddy.yml (shared edge hardcodes the name).
   local fir_net="acx-dev-fir-net"
@@ -489,7 +495,6 @@ converge_runtime() {
   unit="$(env_to_unit "$env")"
   edge_dir="/opt/acx-backend"
   log "Converging compose + unit + caddy edge for ${env} on ${SSH_TARGET}"
-  ssh "${SSH_TARGET}" "cp -f '${remote_dir}/docker-compose.env.yml' '${remote_dir}/docker-compose.env.yml.bak' 2>/dev/null || true; sudo cp -f '/etc/systemd/system/${unit}.service' '/etc/systemd/system/${unit}.service.bak' 2>/dev/null || true"
   # Ship via /tmp + sudo cp (same pattern as the unit file): the deployed
   # files can be root-owned (the E15-29 admin overlay was installed via sudo),
   # so a plain scp to the final path fails with Permission denied.
@@ -497,14 +502,13 @@ converge_runtime() {
     local src="$1" dest="$2" name; name="$(basename "$dest")"
     ssh "${SSH_TARGET}" "cat > '/tmp/${name}' && sudo cp '/tmp/${name}' '${dest}' && rm -f '/tmp/${name}'" < "$src"
   }
-  _ship_file "${SERVICE_DIR}/docker-compose.env.yml" "${remote_dir}/docker-compose.env.yml"
-  if [[ "$env" == "prod" ]]; then
-    # Back up the admin overlay too so a bad overlay is restorable from *.bak.
-    ssh "${SSH_TARGET}" "cp -f '${remote_dir}/docker-compose.admin.yml' '${remote_dir}/docker-compose.admin.yml.bak' 2>/dev/null || true"
-    _ship_file "${SERVICE_DIR}/docker-compose.admin.yml" "${remote_dir}/docker-compose.admin.yml"
-  fi
-  render_unit "$env" | ssh "${SSH_TARGET}" "cat > '/tmp/${unit}.service' && sudo cp '/tmp/${unit}.service' '/etc/systemd/system/${unit}.service' && rm -f '/tmp/${unit}.service' && sudo systemctl daemon-reload"
 
+  # ---- Edge probes + gate FIRST (before any remote mutation) --------------
+  # Ordering invariant (gate r08117ab7 RB-02): an ACX_EDGE_APPLY refusal must
+  # leave zero partial remote state — no env compose ship, no unit ship, no
+  # daemon-reload. Probe checksums + membership and decide the gate before
+  # any file is written.
+  #
   # Shared multi-env Caddy edge — mutate only when repo content differs.
   # Local hashing must use the same Linux/macOS fallback as verify_model_hashes;
   # sha256sum is absent on macOS before 15 and `set -e` would abort the deploy.
@@ -542,35 +546,61 @@ converge_runtime() {
     edge_compose_drift=1
   fi
 
-  if (( edge_caddy_drift == 0 && edge_compose_drift == 0 )); then
-    log "Caddy edge already matches repo; skipping ship/reload for ${env}"
-    log "Runtime converged for ${env} (compose + unit match repo; edge unchanged)"
-  else
-    # Mutating the shared edge can recreate the container that serves PROD as
-    # a side effect of any env's deploy (gate r0811864a G2-01). Make that an
-    # explicit operator decision instead of a silent side effect.
-    if [[ "${ACX_EDGE_APPLY:-0}" != "1" ]]; then
+  if (( edge_caddy_drift != 0 || edge_compose_drift != 0 )); then
+    # Scoping (gate r08117ab7 RA-02/RB-02):
+    #   - dev-fir: edge IS fir's ingress → fail-closed without ACX_EDGE_APPLY=1
+    #   - any other env: warn + skip edge so prod/staging hotfixes are not
+    #     coupled to FIR edge state; env runtime still converges
+    #   - ACX_EDGE_APPLY=1: any env may converge the edge
+    if [[ "${ACX_EDGE_APPLY:-0}" == "1" ]]; then
+      edge_apply_edge=1
+    elif [[ "$env" == "dev-fir" ]]; then
       fail "caddy edge drift detected for ${env} (caddyfile_drift=${edge_caddy_drift} compose_drift=${edge_compose_drift} membership=${edge_membership}). Applying may reload/recreate the shared prod-serving edge. Re-run with ACX_EDGE_APPLY=1 to converge the edge, or ACX_CONVERGE_RUNTIME=0 to skip convergence entirely."
-    fi
-    ssh "${SSH_TARGET}" "cp -f '${edge_dir}/Caddyfile' '${edge_dir}/Caddyfile.bak' 2>/dev/null || true; cp -f '${edge_dir}/docker-compose.caddy.yml' '${edge_dir}/docker-compose.caddy.yml.bak' 2>/dev/null || true"
-    if (( edge_caddy_drift )); then
-      _ship_file "${SERVICE_DIR}/Caddyfile" "${edge_dir}/Caddyfile"
-    fi
-    if (( edge_compose_drift )); then
-      _ship_file "${SERVICE_DIR}/docker-compose.caddy.yml" "${edge_dir}/docker-compose.caddy.yml"
-    fi
-    # Build only the apply path we need so a Caddyfile-only converge does not
-    # even mention `compose up -d` except as reload fallback (FL30C-GATE-02).
-    local edge_apply
-    if (( edge_compose_drift )); then
-      # Compose-level change (network membership etc.) needs container recreate.
-      edge_apply="docker compose -f docker-compose.caddy.yml up -d"
     else
-      # Caddyfile-only: reload in-place; fall back to up -d if container is down.
-      edge_apply="docker compose -f docker-compose.caddy.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile || docker compose -f docker-compose.caddy.yml up -d"
+      warn "edge drift present, skipping edge convergence; run deploy dev-fir with ACX_EDGE_APPLY=1 to converge"
     fi
-    # Expand locals into the remote script (fir_net / edge_apply).
-    ssh "${SSH_TARGET}" "bash -s" <<EDGE
+  fi
+
+  # ---- Env runtime mutation (only after gate decision) --------------------
+  ssh "${SSH_TARGET}" "cp -f '${remote_dir}/docker-compose.env.yml' '${remote_dir}/docker-compose.env.yml.bak' 2>/dev/null || true; sudo cp -f '/etc/systemd/system/${unit}.service' '/etc/systemd/system/${unit}.service.bak' 2>/dev/null || true"
+  _ship_file "${SERVICE_DIR}/docker-compose.env.yml" "${remote_dir}/docker-compose.env.yml"
+  if [[ "$env" == "prod" ]]; then
+    # Back up the admin overlay too so a bad overlay is restorable from *.bak.
+    ssh "${SSH_TARGET}" "cp -f '${remote_dir}/docker-compose.admin.yml' '${remote_dir}/docker-compose.admin.yml.bak' 2>/dev/null || true"
+    _ship_file "${SERVICE_DIR}/docker-compose.admin.yml" "${remote_dir}/docker-compose.admin.yml"
+  fi
+  render_unit "$env" | ssh "${SSH_TARGET}" "cat > '/tmp/${unit}.service' && sudo cp '/tmp/${unit}.service' '/etc/systemd/system/${unit}.service' && rm -f '/tmp/${unit}.service' && sudo systemctl daemon-reload"
+
+  # ---- Edge mutation (only when gated in) ---------------------------------
+  if (( edge_apply_edge == 0 )); then
+    if (( edge_caddy_drift == 0 && edge_compose_drift == 0 )); then
+      log "Caddy edge already matches repo; skipping ship/reload for ${env}"
+      log "Runtime converged for ${env} (compose + unit match repo; edge unchanged)"
+    else
+      log "Runtime converged for ${env} (compose + unit match repo; edge skipped)"
+    fi
+    return 0
+  fi
+
+  ssh "${SSH_TARGET}" "cp -f '${edge_dir}/Caddyfile' '${edge_dir}/Caddyfile.bak' 2>/dev/null || true; cp -f '${edge_dir}/docker-compose.caddy.yml' '${edge_dir}/docker-compose.caddy.yml.bak' 2>/dev/null || true"
+  if (( edge_caddy_drift )); then
+    _ship_file "${SERVICE_DIR}/Caddyfile" "${edge_dir}/Caddyfile"
+  fi
+  if (( edge_compose_drift )); then
+    _ship_file "${SERVICE_DIR}/docker-compose.caddy.yml" "${edge_dir}/docker-compose.caddy.yml"
+  fi
+  # Build only the apply path we need so a Caddyfile-only converge does not
+  # even mention `compose up -d` except as reload fallback (FL30C-GATE-02).
+  local edge_apply
+  if (( edge_compose_drift )); then
+    # Compose-level change (network membership etc.) needs container recreate.
+    edge_apply="docker compose -f docker-compose.caddy.yml up -d"
+  else
+    # Caddyfile-only: reload in-place; fall back to up -d if container is down.
+    edge_apply="docker compose -f docker-compose.caddy.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile || docker compose -f docker-compose.caddy.yml up -d"
+  fi
+  # Expand locals into the remote script (fir_net / edge_apply).
+  ssh "${SSH_TARGET}" "bash -s" <<EDGE
 set -euo pipefail
 cd /opt/acx-backend
 # FL30C-GATE-01: acx-dev-fir-net is external on the shared compose; create it
@@ -589,43 +619,88 @@ docker run --rm \\
   caddy validate --config /etc/caddy/Caddyfile
 ${edge_apply}
 EDGE
-    log "Runtime converged for ${env} (compose + unit + caddy edge match repo)"
-  fi
+  log "Runtime converged for ${env} (compose + unit + caddy edge match repo)"
 }
 
 # Read-only drift gate: diff the deployed compose/unit against the repo and exit
 # non-zero on any drift, without mutating the VM. Operator triage for `--check`.
+# Transport failures must never be misread as drift (gate r08117ab7 RA-03/RB-04):
+# each arm captures the ssh exit status before diffing; ssh rc=255 → fail with a
+# transport-error message. Missing remote files (cat exit 1) still count as drift.
 converge_check() {
   local env="$1" remote_dir unit drift=0 rendered
+  local remote_tmp ssh_rc fir_net="acx-dev-fir-net"
   remote_dir="$(env_to_remote_dir "$env")"
   unit="$(env_to_unit "$env")"
   log "Checking runtime drift for ${env} on ${SSH_TARGET} (read-only)"
-  if ! ssh "${SSH_TARGET}" "cat '${remote_dir}/docker-compose.env.yml' 2>/dev/null" \
-       | diff -u - "${SERVICE_DIR}/docker-compose.env.yml"; then
-    warn "drift: docker-compose.env.yml on ${env} differs from repo (or is missing)"; drift=1
-  fi
-  if [[ "$env" == "prod" ]]; then
-    if ! ssh "${SSH_TARGET}" "cat '${remote_dir}/docker-compose.admin.yml' 2>/dev/null" \
-         | diff -u - "${SERVICE_DIR}/docker-compose.admin.yml"; then
-      warn "drift: docker-compose.admin.yml on ${env} differs from repo (or is missing)"; drift=1
+  remote_tmp="$(mktemp)"
+  # shellcheck disable=SC2064
+  trap "rm -f '${remote_tmp}'" RETURN
+
+  _check_remote_file() {
+    # Fetch remote path into remote_tmp; compare to local. Sets drift on
+    # content/missing-file mismatch. Aborts on ssh transport failure.
+    local remote_path="$1" local_path="$2" label="$3"
+    ssh_rc=0
+    ssh "${SSH_TARGET}" "cat '${remote_path}'" >"${remote_tmp}" 2>/dev/null || ssh_rc=$?
+    if (( ssh_rc == 255 )); then
+      fail "cannot read remote ${label} on ${SSH_TARGET} (ssh exit ${ssh_rc}); refusing to treat transport failure as runtime drift"
     fi
+    if (( ssh_rc != 0 )); then
+      # Non-transport failure (typically cat exit 1 = missing file) → drift.
+      warn "drift: ${label} on ${env} differs from repo (or is missing)"; drift=1
+      return 0
+    fi
+    if ! diff -u "${remote_tmp}" "${local_path}" >/dev/null; then
+      diff -u "${remote_tmp}" "${local_path}" || true
+      warn "drift: ${label} on ${env} differs from repo (or is missing)"; drift=1
+    fi
+  }
+
+  _check_remote_file \
+    "${remote_dir}/docker-compose.env.yml" \
+    "${SERVICE_DIR}/docker-compose.env.yml" \
+    "docker-compose.env.yml"
+  if [[ "$env" == "prod" ]]; then
+    _check_remote_file \
+      "${remote_dir}/docker-compose.admin.yml" \
+      "${SERVICE_DIR}/docker-compose.admin.yml" \
+      "docker-compose.admin.yml"
   fi
   rendered="$(render_unit "$env")"
-  if ! ssh "${SSH_TARGET}" "cat '/etc/systemd/system/${unit}.service' 2>/dev/null" \
-       | diff -u - <(printf '%s\n' "$rendered"); then
+  ssh_rc=0
+  ssh "${SSH_TARGET}" "cat '/etc/systemd/system/${unit}.service'" >"${remote_tmp}" 2>/dev/null || ssh_rc=$?
+  if (( ssh_rc == 255 )); then
+    fail "cannot read remote ${unit}.service on ${SSH_TARGET} (ssh exit ${ssh_rc}); refusing to treat transport failure as runtime drift"
+  elif (( ssh_rc != 0 )); then
+    warn "drift: ${unit}.service on ${env} differs from repo template (or is missing)"; drift=1
+  elif ! diff -u "${remote_tmp}" <(printf '%s\n' "$rendered") >/dev/null; then
+    diff -u "${remote_tmp}" <(printf '%s\n' "$rendered") || true
     warn "drift: ${unit}.service on ${env} differs from repo template (or is missing)"; drift=1
   fi
   # Edge drift arm: converge_runtime now owns the shared caddy edge, so the
   # read-only gate must surface edge drift too or --check reports clean while
   # FIR routing / caddy net membership is stale (gate r0811864a B-04).
   local edge_dir="/opt/acx-backend"
-  if ! ssh "${SSH_TARGET}" "cat '${edge_dir}/Caddyfile' 2>/dev/null" \
-       | diff -u - "${SERVICE_DIR}/Caddyfile"; then
-    warn "drift: shared edge Caddyfile differs from repo (or is missing)"; drift=1
+  _check_remote_file \
+    "${edge_dir}/Caddyfile" \
+    "${SERVICE_DIR}/Caddyfile" \
+    "shared edge Caddyfile"
+  _check_remote_file \
+    "${edge_dir}/docker-compose.caddy.yml" \
+    "${SERVICE_DIR}/docker-compose.caddy.yml" \
+    "shared edge docker-compose.caddy.yml"
+  # Membership probe (gate r08117ab7 RB-01/RC-01): matching Caddyfile + compose
+  # files never attach newly-declared networks to a RUNNING container. Mirror
+  # converge_runtime's MEMBER|MISSING|NOCADDY inspect so --check catches the
+  # fir-502 case (caddy never recreated onto acx-dev-fir-net).
+  local edge_membership edge_member_rc=0
+  edge_membership="$(ssh "${SSH_TARGET}" "cd '${edge_dir}' && cid=\$(docker compose -f docker-compose.caddy.yml ps -q caddy 2>/dev/null); if [ -z \"\$cid\" ]; then echo NOCADDY; elif docker inspect -f '{{json .NetworkSettings.Networks}}' \"\$cid\" | grep -q '\"${fir_net}\"'; then echo MEMBER; else echo MISSING; fi")" || edge_member_rc=$?
+  if (( edge_member_rc != 0 )); then
+    fail "cannot inspect caddy edge network membership on ${SSH_TARGET} (ssh exit ${edge_member_rc}); refusing to treat transport failure as runtime drift"
   fi
-  if ! ssh "${SSH_TARGET}" "cat '${edge_dir}/docker-compose.caddy.yml' 2>/dev/null" \
-       | diff -u - "${SERVICE_DIR}/docker-compose.caddy.yml"; then
-    warn "drift: shared edge docker-compose.caddy.yml differs from repo (or is missing)"; drift=1
+  if [[ "${edge_membership}" != "MEMBER" ]]; then
+    warn "drift: caddy edge container is not attached to ${fir_net} (${edge_membership})"; drift=1
   fi
   if (( drift )); then
     fail "runtime drift detected for ${env}; run '$0 deploy ${env}' to converge"
@@ -778,6 +853,16 @@ do_deploy() {
 #---------------------------------------------------------------- promote
 do_promote() {
   local from_env="$1" to_env="$2"
+  # Fail closed: dev-fir shares the :dev image tag with acx-dev (env_to_tag maps
+  # both to "dev"). Promoting to dev-fir would retag the SHARED :dev image and
+  # only restart acx-dev-fir — blast radius onto acx-dev identity, incomplete
+  # apply (gate r08117ab7 RA-01/RB-03/RC-02). Mirror mk/deploy.mk's
+  # deploy-rollback-dev-fir refusal; name the real lever.
+  if [[ "$to_env" == "dev-fir" ]]; then
+    printf '%sxx%s %s\n' "${RED}" "${RESET}" \
+      "promote: refused. to_env=dev-fir shares the :dev image tag with acx-dev; a FIR-only image promote/retag does not exist. To retag the shared :dev image for BOTH stacks, run '$0 promote ${from_env} dev' or 'make deploy-rollback-dev' (and restart acx-dev-fir afterwards)." >&2
+    exit 2
+  fi
   local from_tag to_tag
   from_tag="$(env_to_tag "$from_env")"
   to_tag="$(env_to_tag "$to_env")"
@@ -1047,10 +1132,14 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     build-remote) do_build_remote "${1:-dev}" ;;
     deploy)       [[ -n "${1:-}" ]] || fail "deploy requires <env>"; do_deploy "$@" ;;
     promote)      [[ -n "${1:-}" && -n "${2:-}" ]] || fail "promote requires <from-env> <to-env>"; do_promote "$1" "$2" ;;
-    reset)        [[ -n "${1:-}" ]] || fail "reset requires <env> (dev|staging|prod)"; do_reset "$1" ;;
+    reset)        [[ -n "${1:-}" ]] || fail "reset requires <env> (dev|dev-fir|staging|prod)"; do_reset "$1" ;;
     verify)       do_verify "${1:-dev}" ;;
     status)       do_status ;;
-    ""|-h|--help|help) sed -n '2,40p' "$0" ;;
+    ""|-h|--help|help)
+      # Print the whole header comment block (line 2 until the first non-comment
+      # line) so ACX_EDGE_APPLY / reset docs stay visible as the header grows.
+      awk 'NR==1{next} /^#/{print; next} {exit}' "$0"
+      ;;
     *) fail "Unknown command: ${cmd}. Run '$0 help'." ;;
   esac
 fi

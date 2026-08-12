@@ -89,7 +89,7 @@ MAX_LIVE_EXTRAS_TOLERANCE = 0
 # Editing both baseline copies in one commit must also edit this constant —
 # a Python source diff a reviewer cannot miss (FIR-7-RV-05). Updated by
 # --record-baseline to match the newly recorded set size.
-ABSOLUTE_NODEID_FLOOR = 1484  # synced by --record-baseline; growth requires re-record
+ABSOLUTE_NODEID_FLOOR = 1529  # synced by --record-baseline; growth requires re-record
 # Second, independent copy of the recorded node-id set for the embedded-baseline
 # cross-check: an agent that edits the on-disk fixture alone is caught
 # because this embedded set must still be a subset of the fixture.
@@ -696,6 +696,50 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestB807DerivedDoorResidualNcParity::test_derived_rejects_residual_nc_compound[yolox_s_yolo_nas]',
     'test_license_policy.py::TestB807DerivedDoorResidualNcParity::test_tooling_ingest_still_nc_package_floor[yolox_s_buffalo_l]',
     'test_license_policy.py::TestB807DerivedDoorResidualNcParity::test_tooling_ingest_still_nc_package_floor[yolox_s_yolo_nas]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_buffalo_bill_admits_on_training_data_package_row',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_counter_pins_still_admit_on_weights_doors[blazeface_int8]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_counter_pins_still_admit_on_weights_doors[buffalo_bill_detector]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_counter_pins_still_admit_on_weights_doors[dcface/gen1]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_counter_pins_still_admit_on_weights_doors[mediapipe/blazeface]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_counter_pins_still_admit_on_weights_doors[not-insightface]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_counter_pins_still_admit_on_weights_doors[not_insightface]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_counter_pins_still_admit_on_weights_doors[notdcface/x]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_counter_pins_still_admit_on_weights_doors[sam]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_counter_pins_still_admit_on_weights_doors[sam_onnx]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_counter_pins_still_admit_on_weights_doors[timm]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_myarcface_compact_suffix_overblock_is_deliberate',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_new_floor_entry_note_names_own_lineage[antelopev2]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_new_floor_entry_note_names_own_lineage[arcface]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_new_floor_entry_note_names_own_lineage[buffalo_s]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_new_floor_entry_note_names_own_lineage[buffalo_sc]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_new_floor_entry_note_names_own_lineage[retinaface]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_new_floor_entry_note_names_own_lineage[vec2face]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_not_insightface_row_rejection_unchanged',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_prefix_witness_hits_package_floor_and_whole_component[checkpoints_vec2face_trt]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_prefix_witness_hits_package_floor_and_whole_component[myprefix_antelopev2]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_prefix_witness_hits_package_floor_and_whole_component[myprefix_arcface]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_prefix_witness_hits_package_floor_and_whole_component[myprefix_buffalo_s]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_prefix_witness_hits_package_floor_and_whole_component[myprefix_buffalo_sc]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_prefix_witness_hits_package_floor_and_whole_component[myprefix_retinaface]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_prefix_witness_hits_package_floor_and_whole_component[myprefix_vec2face]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_prefix_witness_hits_package_floor_and_whole_component[org_antelopev2_int8]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_prefix_witness_rejects_training_data_row[checkpoints_vec2face_trt]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_prefix_witness_rejects_training_data_row[myprefix_antelopev2]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_prefix_witness_rejects_training_data_row[myprefix_arcface]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_prefix_witness_rejects_training_data_row[myprefix_buffalo_s]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_prefix_witness_rejects_training_data_row[myprefix_buffalo_sc]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_prefix_witness_rejects_training_data_row[myprefix_retinaface]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_prefix_witness_rejects_training_data_row[myprefix_vec2face]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_prefix_witness_rejects_training_data_row[org_antelopev2_int8]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_prefix_witness_rejects_weights_doors[checkpoints_vec2face_trt]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_prefix_witness_rejects_weights_doors[myprefix_antelopev2]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_prefix_witness_rejects_weights_doors[myprefix_arcface]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_prefix_witness_rejects_weights_doors[myprefix_buffalo_s]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_prefix_witness_rejects_weights_doors[myprefix_buffalo_sc]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_prefix_witness_rejects_weights_doors[myprefix_retinaface]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_prefix_witness_rejects_weights_doors[myprefix_vec2face]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_prefix_witness_rejects_weights_doors[org_antelopev2_int8]',
+    'test_license_policy.py::TestB902PrefixShieldedNcFloor::test_red_proof_prefix_shield_component_suffix_flag',
     'test_license_policy.py::TestB903PpYoloHonestLineage::test_darknet_yolov2_still_denies_with_darknet_note[xyolov2]',
     'test_license_policy.py::TestB903PpYoloHonestLineage::test_darknet_yolov2_still_denies_with_darknet_note[yolov2]',
     'test_license_policy.py::TestB903PpYoloHonestLineage::test_darknet_yolov2_still_denies_with_darknet_note[yolov2_food]',
@@ -1468,8 +1512,8 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestRv10PackageDenylistFloorAcrossIdentityFields::test_witness_fails_every_door[w3-synthetic_source]',
     'test_license_policy.py::TestRv10PackageDenylistFloorAcrossIdentityFields::test_witness_fails_every_door[w3-tooling]',
     'test_license_policy.py::TestRv10PackageDenylistFloorAcrossIdentityFields::test_witness_fails_every_door[w3-training_data]',
+    'test_license_policy.py::TestRv11SyntheticSourceAxisTaintReasonFidelity::test_synthetic_door_reports_source_axis_taint[buffalo-nc_model_derived]',
     'test_license_policy.py::TestRv11SyntheticSourceAxisTaintReasonFidelity::test_synthetic_door_reports_source_axis_taint[ffhq-research_only_source]',
-    'test_license_policy.py::TestRv11SyntheticSourceAxisTaintReasonFidelity::test_synthetic_door_reports_source_axis_taint[retinaface-nc_model_derived]',
     'test_license_policy.py::TestRv12CompoundSpdxAllowlistTokenisation::test_all_allowlisted_compounds_pass[(MIT)]',
     'test_license_policy.py::TestRv12CompoundSpdxAllowlistTokenisation::test_all_allowlisted_compounds_pass[Apache-2.0+]',
     'test_license_policy.py::TestRv12CompoundSpdxAllowlistTokenisation::test_all_allowlisted_compounds_pass[MIT AND Apache-2.0]',
@@ -1554,7 +1598,8 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestUnregisteredSourceFailClosed::test_br22_unregistered_sources_pending[my-synthetic-gan]',
     'test_license_policy.py::TestUnregisteredSourceFailClosed::test_br22_unregistered_sources_pending[mysteryganv2]',
     'test_license_policy.py::TestUnregisteredSourceFailClosed::test_br22_unregistered_sources_pending[synthface3]',
-    'test_license_policy.py::TestUnregisteredSourceFailClosed::test_br22_unregistered_sources_pending[vec2face-successor]',
+    'test_license_policy.py::TestUnregisteredSourceFailClosed::test_br22_unregistered_sources_pending[unknown-synthetic-gan-v9]',
+    'test_license_policy.py::TestUnregisteredSourceFailClosed::test_br22_vec2face_successor_is_nc_package_floor',
     'test_license_policy_hardening.py::TestGate15StrSubclassMethodLaundering::test_forged_clearance_decision_rejected',
     'test_license_policy_hardening.py::TestGate15StrSubclassMethodLaundering::test_forged_license_agpl_rejected',
     'test_license_policy_hardening.py::TestGate15StrSubclassMethodLaundering::test_forged_license_on_tooling_rejected',
@@ -2496,6 +2541,18 @@ MUTATIONS: list[Mutation] = [
             # also die when the hit helper always misses (RV-07).
             "test_synthetic_overflow_bound_invariant_probe",
             "test_each_flag_flip_alone_changes_a_pinned_outcome",
+            # Wave F6b (B9-02 follow-up): prefix-shielded NC floor witnesses
+            # die when the hit helper always misses. Shape of
+            # _package_denylist_hit unchanged; new deny witnesses join the
+            # M14 victim set so attribution stays strong-form (RV-07).
+            # Re-anchored same commit as baseline growth.
+            "test_prefix_witness_hits_package_floor_and_whole_component",
+            "test_prefix_witness_rejects_training_data_row",
+            "test_myarcface_compact_suffix_overblock_is_deliberate",
+            "test_not_insightface_row_rejection_unchanged",
+            "test_br22_vec2face_successor_is_nc_package_floor",
+            "test_br23_synthetic_parity_with_audit_synthetic_source",
+            "test_red_proof_prefix_shield_component_suffix_flag",
             # model_ingest / tooling scalar / BR-24 package-floor pins
             # (expanded blast radius after folded lookup; FIR-7-B3-01/A3-01)
             "test_ultralytics_agpl_is_denylisted",

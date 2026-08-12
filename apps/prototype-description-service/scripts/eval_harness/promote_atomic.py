@@ -16,18 +16,13 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import shutil
-import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
-_FABRICATED_ZERO_SHA = "0" * 40
-_HEX40 = re.compile(r"^[0-9a-f]{40}$")
 
 # Default age for orphan stage scavenging (RV2-07): 1 hour.
 DEFAULT_ORPHAN_STAGE_MAX_AGE_SEC = 3600.0
@@ -296,53 +291,30 @@ def scavenge_orphan_stages(
 def validate_live_head_sha(
     raw: str | None,
     *,
-    verify_git: bool = False,
+    verify_git: bool = True,
     git_cwd: Path | None = None,
 ) -> str | None:
     """Validate ``--live-head-sha`` (S4-06 / RV2-04 / RV2-05).
 
-    Mirrors ``describe_baseline.resolve_head_sha`` format rules (local copy —
-    lane fx4 owns describe_baseline; cross-lane de-dupe requested in report):
+    Thin delegating wrapper over ``provenance_sha.normalize_head_sha`` — name
+    and signature retained so generators (fx5) keep importing this symbol.
 
     - ``None`` → ``None`` (caller omitted the flag)
     - empty / whitespace-only → refuse (RV2-05: do not silently exit pin mode)
     - forty-zero sentinel → refuse (S4-06)
-    - must be 40 lowercase hex chars
-    - optional ``git rev-parse --verify <sha>^{commit}`` when *verify_git*
+    - must be 40 lowercase hex chars (uppercased input accepted + lowercased)
+    - git verify is **always on** with degrade when git is missing / not a repo
+      (fx6 reconciliation with ``resolve_head_sha``; RV3-05 / rg-015). The
+      ``verify_git`` parameter is retained for signature stability but cannot
+      open the guard — both entry points share one policy.
     """
-    if raw is None:
-        return None
-    sha = str(raw).strip().lower()
-    if not sha:
-        raise SystemExit(
-            "--live-head-sha must not be empty; omit the flag (and use --pin) for "
-            "byte-stable pin mode, or pass a real 40-char git SHA with --no-pin "
-            "(RV2-05 / S4-04)"
-        )
-    if sha == _FABRICATED_ZERO_SHA:
-        raise SystemExit(
-            "--live-head-sha is the fabricated 40-zero sentinel; pass a real 40-char "
-            "git SHA or omit the flag for pin mode (S4-06 / RV2-04 / rg-015 / VLM6-F-04)"
-        )
-    if not _HEX40.fullmatch(sha):
-        raise SystemExit(
-            f"--live-head-sha must be a 40-char lowercase hex git SHA (got {raw!r}); "
-            "omit the flag for pin mode rather than fabricating a value (RV2-04 / S4-06)"
-        )
-    if verify_git:
-        cwd = str(git_cwd) if git_cwd is not None else None
-        try:
-            subprocess.check_output(
-                ["git", "rev-parse", "--verify", f"{sha}^{{commit}}"],
-                stderr=subprocess.DEVNULL,
-                text=True,
-                timeout=5,
-                cwd=cwd,
-            )
-        except (subprocess.SubprocessError, OSError, FileNotFoundError) as exc:
-            raise SystemExit(
-                f"--live-head-sha {sha} does not resolve as a git commit "
-                f"(git rev-parse --verify failed); refuse to stamp fabricated provenance "
-                f"(RV2-04 / S4-06): {exc}"
-            ) from exc
-    return sha
+    from scripts.eval_harness.provenance_sha import normalize_head_sha
+
+    del verify_git  # signature-stable; cannot opt out of shared git verify
+    return normalize_head_sha(
+        raw,
+        empty_policy="refuse",
+        verify_git=True,
+        git_cwd=git_cwd,
+        label="--live-head-sha",
+    )

@@ -1599,8 +1599,9 @@ def _floor_taint_and_clearance(
 
       1. ``derived_from_model`` type + taint (NC, research-corpus, invalid type)
       2. ``source`` type + axis taint (NC / research; SYNTHETIC_SOURCE exempt
-         so its door can report a more specific clearance reason, with a PASS
-         backstop re-applying the taint)
+         only for synthetic-registry heads so its door can report a more
+         specific clearance reason, with a PASS backstop re-applying the taint
+         — FIR-7-RV-11)
       3. content-triggered synthetic ``clearance_decision`` (GATE-11 / BR-65):
          fires on every door when source/derived resolves to a registry entry
          that carries a decision token
@@ -1650,11 +1651,26 @@ def _floor_taint_and_clearance(
     # tooling accepted an NC/research source outright while training_data has
     # always rejected it. Registry membership stays a category-specific rule, so
     # doors that legitimately accept an unregistered source are unaffected (the
-    # floor may only ADD). SYNTHETIC_SOURCE is exempt because its own door
-    # reports the more specific pending_legal_clearance for the same rows; the
-    # dispatcher re-applies this taint to any PASS from that door, so exempting
-    # it cannot widen a verdict.
-    if category is not PolicyCategory.SYNTHETIC_SOURCE:
+    # floor may only ADD).
+    #
+    # FIR-7-RV-11: SYNTHETIC_SOURCE is exempt *only* for tokens that resolve to
+    # a synthetic-registry head, so that door can report a more specific
+    # clearance reason. Research / NC sources that are not registry heads still
+    # report their source-axis taint (research_only_source / nc_model_derived)
+    # rather than the generic pending_legal_clearance unknown-head default.
+    # The dispatcher re-applies this taint to any PASS from that door, so
+    # exempting registry heads cannot widen a verdict.
+    if category is PolicyCategory.SYNTHETIC_SOURCE:
+        raw_for_taint = row.get("source") if "source" in row else None
+        if isinstance(raw_for_taint, str) and str.strip(raw_for_taint):
+            head = _resolve_registry_head(
+                str.strip(raw_for_taint), SYNTHETIC_SOURCE_ENTRIES
+            )
+            if head is None:
+                source_taint = _source_axis_taint(row, category=category)
+                if source_taint is not None:
+                    return source_taint
+    else:
         source_taint = _source_axis_taint(row, category=category)
         if source_taint is not None:
             return source_taint
@@ -1752,9 +1768,10 @@ def _common_provenance_checks(
     when a row trips multiple axes:
 
       1. ``derived_from_model`` type + taint (NC, research-corpus, invalid type)
-      2. ``source`` type + axis taint (NC / research; SYNTHETIC_SOURCE exempt so
-         its door can report a more specific clearance reason, with a PASS
-         backstop re-applying the taint)
+      2. ``source`` type + axis taint (NC / research; SYNTHETIC_SOURCE exempt
+         only for synthetic-registry heads so its door can report a more
+         specific clearance reason, with a PASS backstop re-applying the taint
+         — FIR-7-RV-11)
       3. content-triggered synthetic ``clearance_decision`` on every door
          (GATE-11 / BR-65); occluder photo-release is a separate additive axis
       4. unregistered ``derived_from_model`` registration (BR-33 / BR-66)

@@ -89,7 +89,7 @@ MAX_LIVE_EXTRAS_TOLERANCE = 0
 # Editing both baseline copies in one commit must also edit this constant —
 # a Python source diff a reviewer cannot miss (FIR-7-RV-05). Updated by
 # --record-baseline to match the newly recorded set size.
-ABSOLUTE_NODEID_FLOOR = 1222  # synced by --record-baseline; growth requires re-record
+ABSOLUTE_NODEID_FLOOR = 1314  # synced by --record-baseline; growth requires re-record
 # Second, independent copy of the recorded node-id set for the embedded-baseline
 # cross-check: an agent that edits the on-disk fixture alone is caught
 # because this embedded set must still be a subset of the fixture.
@@ -135,6 +135,29 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestA603YoloNasNcWeightsAndYolofNote::test_yolo_nas_not_on_exception_allowlist',
     'test_license_policy.py::TestA603YoloNasNcWeightsAndYolofNote::test_yolof_note_is_megvii_model_mit',
     'test_license_policy.py::TestA603YoloNasNcWeightsAndYolofNote::test_yolos_note_still_hustvl',
+    'test_license_policy.py::TestA701YoloNasVariantNcPins::test_red_proof_yolo_nas_m_pin',
+    'test_license_policy.py::TestA701YoloNasVariantNcPins::test_yolo_nas_variant_rejects_derived_from_model[yolo_nas_l]',
+    'test_license_policy.py::TestA701YoloNasVariantNcPins::test_yolo_nas_variant_rejects_derived_from_model[yolo_nas_m]',
+    'test_license_policy.py::TestA701YoloNasVariantNcPins::test_yolo_nas_variant_rejects_derived_from_model[yolo_nas_pose_l]',
+    'test_license_policy.py::TestA701YoloNasVariantNcPins::test_yolo_nas_variant_rejects_derived_from_model[yolo_nas_pose_m]',
+    'test_license_policy.py::TestA701YoloNasVariantNcPins::test_yolo_nas_variant_rejects_derived_from_model[yolo_nas_pose_n]',
+    'test_license_policy.py::TestA701YoloNasVariantNcPins::test_yolo_nas_variant_rejects_derived_from_model[yolo_nas_pose_s]',
+    'test_license_policy.py::TestA701YoloNasVariantNcPins::test_yolo_nas_variant_rejects_derived_from_model[yolo_nas_s]',
+    'test_license_policy.py::TestA701YoloNasVariantNcPins::test_yolo_nas_variant_rejects_derived_from_model[yolonas_l]',
+    'test_license_policy.py::TestA701YoloNasVariantNcPins::test_yolo_nas_variant_rejects_derived_from_model[yolonas_m]',
+    'test_license_policy.py::TestA701YoloNasVariantNcPins::test_yolo_nas_variant_rejects_derived_from_model[yolonas_pose_l]',
+    'test_license_policy.py::TestA701YoloNasVariantNcPins::test_yolo_nas_variant_rejects_derived_from_model[yolonas_s]',
+    'test_license_policy.py::TestA701YoloNasVariantNcPins::test_yolo_nas_variant_rejects_source[yolo_nas_l]',
+    'test_license_policy.py::TestA701YoloNasVariantNcPins::test_yolo_nas_variant_rejects_source[yolo_nas_m]',
+    'test_license_policy.py::TestA701YoloNasVariantNcPins::test_yolo_nas_variant_rejects_source[yolo_nas_pose_l]',
+    'test_license_policy.py::TestA701YoloNasVariantNcPins::test_yolo_nas_variant_rejects_source[yolo_nas_pose_m]',
+    'test_license_policy.py::TestA701YoloNasVariantNcPins::test_yolo_nas_variant_rejects_source[yolo_nas_pose_n]',
+    'test_license_policy.py::TestA701YoloNasVariantNcPins::test_yolo_nas_variant_rejects_source[yolo_nas_pose_s]',
+    'test_license_policy.py::TestA701YoloNasVariantNcPins::test_yolo_nas_variant_rejects_source[yolo_nas_s]',
+    'test_license_policy.py::TestA701YoloNasVariantNcPins::test_yolo_nas_variant_rejects_source[yolonas_l]',
+    'test_license_policy.py::TestA701YoloNasVariantNcPins::test_yolo_nas_variant_rejects_source[yolonas_m]',
+    'test_license_policy.py::TestA701YoloNasVariantNcPins::test_yolo_nas_variant_rejects_source[yolonas_pose_l]',
+    'test_license_policy.py::TestA701YoloNasVariantNcPins::test_yolo_nas_variant_rejects_source[yolonas_s]',
     'test_license_policy.py::TestApacheSelfGeneratedPasses::test_apache_self_generated_row_passes',
     'test_license_policy.py::TestApacheSelfGeneratedPasses::test_apache_spdx_allowlisted',
     'test_license_policy.py::TestApacheSelfGeneratedPasses::test_operator_cleared_is_not_spdx_pass',
@@ -443,6 +466,75 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestB602HonestLineageYolopDarknet::test_darknet_era_own_deny_entry[yolov4-yolov4]',
     'test_license_policy.py::TestB602HonestLineageYolopDarknet::test_yolop_family_admits[yolop]',
     'test_license_policy.py::TestB602HonestLineageYolopDarknet::test_yolop_family_admits[yolopv2]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_admit_pins_still_hold[myyolo]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_admit_pins_still_hold[numba]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_admit_pins_still_hold[sam]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_admit_pins_still_hold[timm]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_admit_pins_still_hold[yolodummy]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_admit_pins_still_hold[yolof_r50]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_admit_pins_still_hold[yolop]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_admit_pins_still_hold[yolopv2]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_admit_pins_still_hold[yolos-tiny]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_admit_pins_still_hold[yolox]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_admit_pins_still_hold[yolox_s]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_admit_pins_still_hold[yoloxs]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_double_exception_compounds_admit[yolop_yolox]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_double_exception_compounds_admit[yolox_yolop]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_red_proof_exception_residual_suffix_scan',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_agpl_witness_is_denylisted_package[vendor/yolox_s_ultralytics]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_agpl_witness_is_denylisted_package[yolof_r50_ultralytics]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_agpl_witness_is_denylisted_package[yolopv2_ultralytics]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_agpl_witness_is_denylisted_package[yolos_tiny_yolov8n]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_agpl_witness_is_denylisted_package[yolox_s_ultralytics]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_agpl_witness_is_denylisted_package[yolox_tiny_ultralytics]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_agpl_witness_is_denylisted_package[yoloxs_ultralytics]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_nc_witness_is_nc_model_derived[yolox_s_buffalo_l]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_nc_witness_is_nc_model_derived[yolox_s_yolo_nas]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_denies_on_row_doors[tooling-vendor/yolox_s_ultralytics]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_denies_on_row_doors[tooling-yolof_r50_ultralytics]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_denies_on_row_doors[tooling-yolopv2_ultralytics]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_denies_on_row_doors[tooling-yolos_tiny_yolov8n]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_denies_on_row_doors[tooling-yolox_s_buffalo_l]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_denies_on_row_doors[tooling-yolox_s_ultralytics]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_denies_on_row_doors[tooling-yolox_s_yolo_nas]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_denies_on_row_doors[tooling-yolox_tiny_ultralytics]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_denies_on_row_doors[tooling-yoloxs_ultralytics]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_denies_on_row_doors[training_data-vendor/yolox_s_ultralytics]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_denies_on_row_doors[training_data-yolof_r50_ultralytics]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_denies_on_row_doors[training_data-yolopv2_ultralytics]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_denies_on_row_doors[training_data-yolos_tiny_yolov8n]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_denies_on_row_doors[training_data-yolox_s_buffalo_l]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_denies_on_row_doors[training_data-yolox_s_ultralytics]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_denies_on_row_doors[training_data-yolox_s_yolo_nas]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_denies_on_row_doors[training_data-yolox_tiny_ultralytics]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_denies_on_row_doors[training_data-yoloxs_ultralytics]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_denies_on_scalar_doors[vendor/yolox_s_ultralytics]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_denies_on_scalar_doors[yolof_r50_ultralytics]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_denies_on_scalar_doors[yolopv2_ultralytics]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_denies_on_scalar_doors[yolos_tiny_yolov8n]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_denies_on_scalar_doors[yolox_s_buffalo_l]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_denies_on_scalar_doors[yolox_s_ultralytics]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_denies_on_scalar_doors[yolox_s_yolo_nas]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_denies_on_scalar_doors[yolox_tiny_ultralytics]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_denies_on_scalar_doors[yoloxs_ultralytics]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_hits_package_denylist[vendor/yolox_s_ultralytics]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_hits_package_denylist[yolof_r50_ultralytics]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_hits_package_denylist[yolopv2_ultralytics]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_hits_package_denylist[yolos_tiny_yolov8n]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_hits_package_denylist[yolox_s_buffalo_l]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_hits_package_denylist[yolox_s_ultralytics]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_hits_package_denylist[yolox_s_yolo_nas]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_hits_package_denylist[yolox_tiny_ultralytics]',
+    'test_license_policy.py::TestB701ResidualSuffixDenyScan::test_suffix_witness_hits_package_denylist[yoloxs_ultralytics]',
+    'test_license_policy.py::TestB704PerEntryNcDetailText::test_buffalo_detail_keeps_historical_wording',
+    'test_license_policy.py::TestB704PerEntryNcDetailText::test_nc_detail_names_own_lineage[buffalo_l-buffalo-must_not0]',
+    'test_license_policy.py::TestB704PerEntryNcDetailText::test_nc_detail_names_own_lineage[buffalo_s-buffalo-must_not1]',
+    'test_license_policy.py::TestB704PerEntryNcDetailText::test_nc_detail_names_own_lineage[insightface/buffalo_l-buffalo-must_not2]',
+    'test_license_policy.py::TestB704PerEntryNcDetailText::test_nc_detail_names_own_lineage[yolo-nas-deci-must_not4]',
+    'test_license_policy.py::TestB704PerEntryNcDetailText::test_nc_detail_names_own_lineage[yolo_nas-deci-must_not3]',
+    'test_license_policy.py::TestB704PerEntryNcDetailText::test_nc_detail_names_own_lineage[yolo_nas_m-deci-must_not6]',
+    'test_license_policy.py::TestB704PerEntryNcDetailText::test_nc_detail_names_own_lineage[yolonas-deci-must_not5]',
+    'test_license_policy.py::TestB704PerEntryNcDetailText::test_red_proof_yolo_nas_detail_not_buffalo',
     'test_license_policy.py::TestBr38NcIngestDerivationAndHelpers::test_br38_nc_tagged_ingest_entry_joins_nc_model_ids',
     'test_license_policy.py::TestBr38NcIngestDerivationAndHelpers::test_br38_require_string_field_used_for_missing_derived',
     'test_license_policy.py::TestBr46EntryPointTypeContract::test_br46_type_contract_table[derived-None]',
@@ -1732,12 +1824,14 @@ def _m14_package_denylist_always_miss(src: str) -> str:
     demotion on the row path. Victim set re-anchored for the structural-family
     test rename (``test_structural_family_token_denylisted_package``).
     """
-    # Anchor re-shaped for Wave F3 bounded residual re-scan +
-    # component-split-first docstring (FIR-7-B6-01 / A6-02).
+    # Anchor re-shaped for Wave F4 residual segment-suffix re-scan docstring
+    # (FIR-7-B7-01 / B6-01 / A6-02). _package_denylist_hit shape unchanged
+    # (still returns PackageDenylistEntry | None); docstring + victim pins
+    # re-anchored in the same commit as the F4 baseline growth.
     old = (
         "def _package_denylist_hit(value: str) -> PackageDenylistEntry | None:\n"
         '    """Structural family-boundary PACKAGE_DENYLIST lookup '
-        '(BR-51 / Wave F3).\n'
+        '(BR-51 / Wave F4).\n'
         "\n"
         "    Fold via :func:`canonical` (NFKC, casefold, unify "
         "``-``/``_``/``.``/space).\n"
@@ -1746,9 +1840,9 @@ def _m14_package_denylist_always_miss(src: str) -> str:
         "    full token — FIR-7-A6-02). Each component is matched against\n"
         "    exception-family seeds first (bounded admit: strip seed, "
         "re-scan residual\n"
-        "    against DENY — FIR-7-B6-01) then deny-family seeds. A "
-        "component hits a\n"
-        "    family seed under any of:\n"
+        "    via segment-aligned suffixes — FIR-7-B6-01 / B7-01) then "
+        "deny-family\n"
+        "    seeds. A component hits a family seed under any of:\n"
         "\n"
         "      (a) exact folded/compact match;\n"
         "      (b) separator-boundary prefix (``seed_`` + rest);\n"
@@ -1757,12 +1851,14 @@ def _m14_package_denylist_always_miss(src: str) -> str:
         "      (d) head-segment (leading segment hits via (a) or (c)).\n"
         "\n"
         "    ``yolo-v5`` / ``yolov8n_oiv7`` / ``yolov9t`` / ``yolov9t-seg`` /\n"
-        "    ``yolox_ultralytics`` deny; ``yolodummy`` / ``myyolo`` / pure\n"
-        "    exception-family tokens (``yolox``, ``yolos``) do not. Empty / "
-        "None\n"
-        "    canonical → no denylist hit (doors treat empty/None as "
-        "``invalid_row``\n"
-        "    separately — FIR-7-B4-01 / B5-04).\n"
+        "    ``yolox_ultralytics`` / ``yolox_s_ultralytics`` deny; "
+        "``yolodummy`` /\n"
+        "    ``myyolo`` / pure exception-family tokens (``yolox``, "
+        "``yolos``,\n"
+        "    ``yolop_yolox``) do not. Empty / None canonical → no denylist "
+        "hit\n"
+        "    (doors treat empty/None as ``invalid_row`` separately —\n"
+        "    FIR-7-B4-01 / B5-04).\n"
         '    """\n'
         "    c = canonical(value)"
     )
@@ -2181,6 +2277,15 @@ MUTATIONS: list[Mutation] = [
             "test_yolo_nas_nc_weights_denies",
             "test_yolo_nas_denies_on_row_doors",
             "test_red_proof_yolo_nas_deny_entry",
+            # Wave F4: residual segment-suffix deny scan pins (B7-01/02/03).
+            # Shape of _package_denylist_hit unchanged; new deny witnesses join
+            # the M14 victim set so attribution stays strong-form (RV-07).
+            "test_suffix_witness_hits_package_denylist",
+            "test_suffix_witness_denies_on_row_doors",
+            "test_suffix_witness_denies_on_scalar_doors",
+            "test_suffix_agpl_witness_is_denylisted_package",
+            "test_suffix_nc_witness_is_nc_model_derived",
+            "test_red_proof_exception_residual_suffix_scan",
             # model_ingest / tooling scalar / BR-24 package-floor pins
             # (expanded blast radius after folded lookup; FIR-7-B3-01/A3-01)
             "test_ultralytics_agpl_is_denylisted",

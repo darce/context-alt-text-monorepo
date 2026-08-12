@@ -5832,23 +5832,22 @@ class TestB501StructuralFamilyBoundary:
         "numba-seg",
     )
 
+    # yolo_nas moved to DENY (NC-weights axis, FIR-7-A6-03). Admit-side pins
+    # are pure exception-family tokens + size-style variants (yolox/yolos/
+    # yolof/yolop) and residual-clean compounds.
     EXCEPTION_ALLOWLIST: ClassVar[tuple[str, ...]] = (
-        "yolo-nas",
-        "yolo_nas",
-        "YOLO-NAS",
-        "yolo-nas-s",
-        "yolo_nas_s",
-        "yolonas",
         "yolox",
         "yolox_s",
         "yolos",
         "yolos-tiny",
         "yolof",
         "yolof_r50",
+        "yolop",
+        "yolopv2",
         # Exception check runs first at the component level (not per-rule):
         # head 'yolo' would be an exact deny seed via (d)/(a), but whole-token
-        # hits exception family yolo_nas via (b) before deny is consulted.
-        "yolo-nas-s-seg",
+        # hits exception family yolos via (b) before deny is consulted.
+        "yolos-tiny-seg",
     )
 
     @pytest.mark.parametrize(
@@ -6043,6 +6042,360 @@ class TestB501StructuralFamilyBoundary:
         assert policy._package_denylist_hit("yolov8n_oiv7") is not None  # (b)
         assert policy._package_denylist_hit("yolov8n") is not None  # (a)
         assert policy._package_denylist_hit("fastsamx") is not None  # (c)
+
+
+# ---------------------------------------------------------------------------
+# FIR-7 Wave F3 — bounded exception residual re-scan + honest lineage
+# ---------------------------------------------------------------------------
+
+
+class TestB601BoundedExceptionResidualRescan:
+    """FIR-7-B6-01 / FIR-7-A6-01: exception hit is not an admit short-circuit.
+
+    When a component matches an exception family, the exception seed is
+    stripped and the residual is re-scanned against DENY rules (a)-(d).
+    Residual deny → component DENIES with the residual seed's entry.
+    Empty/clean residual → admit (``yolox``, ``yolox_s``).
+
+    Red-proven: disable residual re-scan → ``yolox_ultralytics`` admits.
+    """
+
+    # Full-provenance witnesses that must DENY after residual re-scan (or,
+    # for yolo_nas_* compounds after FIR-7-A6-03, via the NC-weights deny
+    # seed itself). All previously PASS'd under unbounded exception admit.
+    RESIDUAL_DENY_WITNESSES: ClassVar[tuple[str, ...]] = (
+        "yolox_ultralytics",
+        "yolox-ultralytics",
+        "yolo_nas_ultralytics",
+        "yolos_yolov8",
+        "yolox_ultralytics_port",
+        "vendor/yolox_ultralytics",
+        "yolox-yolov8",
+        "yolo-nas-yolov8-distill",
+        "yolox_yolov8_distill",
+        "yolos-yolov5",
+    )
+
+    # Pure residual-path witnesses (exception seed + deny residual); reason
+    # is denylisted_package from the residual deny seed.
+    RESIDUAL_AGPL_WITNESSES: ClassVar[tuple[str, ...]] = (
+        "yolox_ultralytics",
+        "yolox-ultralytics",
+        "yolos_yolov8",
+        "yolox_ultralytics_port",
+        "vendor/yolox_ultralytics",
+        "yolox-yolov8",
+        "yolox_yolov8_distill",
+        "yolos-yolov5",
+    )
+
+    ADMIT_PINS: ClassVar[tuple[str, ...]] = (
+        "yolox",
+        "yolos",
+        "yolof",
+        "yolop",
+        "yolodummy",
+        "myyolo",
+        # size-style exception variants (yolo_nas moved to deny — A6-03)
+        "yolox_s",
+        "yolos-tiny",
+        "yolof_r50",
+        "yolopv2",
+    )
+
+    @pytest.mark.parametrize("token", RESIDUAL_DENY_WITNESSES)
+    def test_residual_witness_hits_package_denylist(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"{token!r} must DENY under bounded exception residual re-scan "
+            f"(or yolo_nas NC-weights deny)"
+        )
+
+    @pytest.mark.parametrize("token", RESIDUAL_DENY_WITNESSES)
+    @pytest.mark.parametrize(
+        "category",
+        (
+            policy.PolicyCategory.TRAINING_DATA,
+            policy.PolicyCategory.TOOLING,
+        ),
+        ids=("training_data", "tooling"),
+    )
+    def test_residual_witness_denylisted_on_row_doors(
+        self, token: str, category: policy.PolicyCategory
+    ) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "MIT",
+            "derived_from_model": "",
+            "package": token,
+        }
+        result = policy.audit_provenance_row(row, category=category)
+        assert result.ok is False, (
+            f"{token!r} admitted on {category.value}; residual re-scan missed"
+        )
+        # Residual AGPL seeds → denylisted_package; yolo_nas compounds →
+        # nc_model_derived (NC-weights axis). Never unknown_source / miss.
+        assert result.reason in (
+            policy.RejectionReason.DENYLISTED_PACKAGE,
+            policy.RejectionReason.NC_MODEL_DERIVED,
+        ), (
+            f"{token!r}/{category.value}: expected package-floor fail, got "
+            f"{result.reason} ({result.detail})"
+        )
+        assert result.reason is not policy.RejectionReason.UNKNOWN_SOURCE
+        assert result.reason is not policy.RejectionReason.MISSING_INGEST_ENTRY
+
+    @pytest.mark.parametrize("token", RESIDUAL_DENY_WITNESSES)
+    def test_residual_witness_denylisted_on_scalar_doors(self, token: str) -> None:
+        """Scalar doors report package-floor reason, not unknown/missing."""
+        tooling = policy.audit_tooling_dependency(token)
+        assert tooling.ok is False, f"tooling scalar admitted {token!r}"
+        assert tooling.reason in (
+            policy.RejectionReason.DENYLISTED_PACKAGE,
+            policy.RejectionReason.NC_MODEL_DERIVED,
+        ), (
+            f"tooling {token!r}: expected package-floor fail, got "
+            f"{tooling.reason} ({tooling.detail})"
+        )
+        assert tooling.reason is not policy.RejectionReason.UNKNOWN_SOURCE
+        ingest = policy.audit_model_ingest(token)
+        assert ingest.ok is False, f"model_ingest scalar admitted {token!r}"
+        assert ingest.reason in (
+            policy.RejectionReason.DENYLISTED_PACKAGE,
+            policy.RejectionReason.NC_MODEL_DERIVED,
+        ), (
+            f"model_ingest {token!r}: expected package-floor fail, got "
+            f"{ingest.reason} ({ingest.detail})"
+        )
+        assert ingest.reason is not policy.RejectionReason.MISSING_INGEST_ENTRY
+
+    @pytest.mark.parametrize("token", RESIDUAL_AGPL_WITNESSES)
+    def test_residual_agpl_witness_is_denylisted_package(self, token: str) -> None:
+        """Pure residual-path AGPL compounds report denylisted_package."""
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None
+        assert hit.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+        tooling = policy.audit_tooling_dependency(token)
+        assert tooling.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
+    @pytest.mark.parametrize("token", ADMIT_PINS)
+    def test_exception_and_counterexample_admit_pins(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"admit pin {token!r} must NOT hit package denylist"
+        )
+
+    def test_red_proof_exception_residual_rescan(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Disable residual re-scan → yolox_ultralytics admits (TEST-15)."""
+        token = "yolox_ultralytics"
+        assert policy._package_denylist_hit(token) is not None, (
+            f"precondition: {token!r} must deny with residual re-scan on"
+        )
+        monkeypatch.setattr(policy, "_EXCEPTION_RESIDUAL_RESCAN_ENABLED", False)
+        assert policy._package_denylist_hit(token) is None, (
+            f"red-proof: with residual re-scan disabled, {token!r} must admit"
+        )
+        # Pure deny seeds still deny without residual re-scan.
+        assert policy._package_denylist_hit("ultralytics") is not None
+        assert policy._package_denylist_hit("yolov8n") is not None
+        # Pure exception still admits.
+        assert policy._package_denylist_hit("yolox") is None
+
+
+class TestA602ComponentSplitFirst:
+    """FIR-7-A6-02: '/' present → family-test components only, never full token.
+
+    Pre-fix, ``yolo-nas/yolo-nas-l`` and ``yolo_nas/weights`` DENY'd via bare
+    ``yolo`` rule (b) bridging the path separator, while ``deci/yolo-nas-l``
+    admitted (component-level exception). Component-split-first makes path
+    outcomes match per-component policy.
+    """
+
+    @pytest.mark.parametrize(
+        "token",
+        (
+            "yolo-nas/yolo-nas-l",
+            "yolo_nas/weights",
+            "deci/yolo-nas-l",
+        ),
+    )
+    def test_yolo_nas_path_components_deny_nc_weights(self, token: str) -> None:
+        """After A6-03, yolo_nas components DENY on the NC-weights axis."""
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must deny via yolo_nas component"
+        assert hit.package_id == "yolo_nas", (
+            f"{token!r}: expected package_id yolo_nas (not bare yolo bridging "
+            f"'/'), got {hit.package_id!r}"
+        )
+        assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    @pytest.mark.parametrize(
+        "token",
+        (
+            "ultralytics/yolox",
+            "yolox/ultralytics",
+        ),
+    )
+    def test_mixed_path_deny_component_wins(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must DENY (deny component wins)"
+        assert hit.package_id == "ultralytics"
+
+    def test_pypi_yolov5_still_denies(self) -> None:
+        hit = policy._package_denylist_hit("pypi/yolov5")
+        assert hit is not None
+        assert hit.package_id == "yolov5"
+
+
+class TestB602HonestLineageYolopDarknet:
+    """FIR-7-B6-02: YOLOP admit + Darknet-era yolov2/yolov4 own deny entries."""
+
+    @pytest.mark.parametrize("token", ("yolop", "yolopv2"))
+    def test_yolop_family_admits(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"{token!r} must admit (hustvl YOLOP exception family)"
+        )
+        entry = policy.PACKAGE_EXCEPTION_ALLOWLIST["yolop"]
+        assert "hustvl" in entry.notes.casefold()
+        assert "BSD-3-Clause" in entry.spdx_id or "bsd-3-clause" in entry.notes.casefold()
+
+    @pytest.mark.parametrize(
+        "token,expected_id",
+        (
+            ("yolov4", "yolov4"),
+            ("yolov2", "yolov2"),
+            ("YOLOv4", "yolov4"),
+            ("yolo-v2", "yolov2"),
+        ),
+    )
+    def test_darknet_era_own_deny_entry(
+        self, token: str, expected_id: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must DENY"
+        assert hit.package_id == expected_id, (
+            f"{token!r}: expected own entry package_id={expected_id!r}, "
+            f"got {hit.package_id!r} (must not inherit bare 'yolo' "
+            f"Ultralytics-AGPL note)"
+        )
+        notes_cf = hit.notes.casefold()
+        assert "darknet" in notes_cf, (
+            f"{token!r} notes must name Darknet-era lineage; got {hit.notes!r}"
+        )
+        assert "ultralytics agpl family alias" not in notes_cf
+
+
+class TestA603YoloNasNcWeightsAndYolofNote:
+    """FIR-7-A6-03: yolo_nas NC-weights deny + yolof MIT/megvii-model note.
+
+    Deliberate policy correction: yolo_nas was mis-listed as Apache-2.0
+    exception; pretrained weights are non-commercial (Deci licence).
+    Red-proven: remove the deny entry → yolo-nas admits; restore.
+    """
+
+    YOLO_NAS_DENY_PINS: ClassVar[tuple[str, ...]] = (
+        "yolo-nas",
+        "yolo_nas",
+        "yolonas",
+        "YOLO-NAS",
+        "yolo-nas-s",
+        "yolo_nas_s",
+        "yolo-nas-s-seg",
+    )
+
+    @pytest.mark.parametrize("token", YOLO_NAS_DENY_PINS)
+    def test_yolo_nas_nc_weights_denies(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"{token!r} must DENY on NC-weights axis (policy correction)"
+        )
+        assert hit.package_id == "yolo_nas"
+        assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        notes_cf = hit.notes.casefold()
+        assert "non-commercial" in notes_cf or "nc-weights" in notes_cf
+        assert "buffalo" in notes_cf  # axis parallel named in note
+
+    @pytest.mark.parametrize("token", YOLO_NAS_DENY_PINS)
+    @pytest.mark.parametrize(
+        "category",
+        (
+            policy.PolicyCategory.TRAINING_DATA,
+            policy.PolicyCategory.TOOLING,
+        ),
+        ids=("training_data", "tooling"),
+    )
+    def test_yolo_nas_denies_on_row_doors(
+        self, token: str, category: policy.PolicyCategory
+    ) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "MIT",
+            "derived_from_model": "",
+            "package": token,
+        }
+        result = policy.audit_provenance_row(row, category=category)
+        assert result.ok is False, f"{token!r} admitted on {category.value}"
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED, (
+            f"{token!r}/{category.value}: expected nc_model_derived, got "
+            f"{result.reason} ({result.detail})"
+        )
+
+    def test_yolof_note_is_megvii_model_mit(self) -> None:
+        entry = policy.PACKAGE_EXCEPTION_ALLOWLIST["yolof"]
+        assert entry.spdx_id == "MIT", (
+            f"yolof spdx_id must be MIT, got {entry.spdx_id!r}"
+        )
+        notes_cf = entry.notes.casefold()
+        assert "megvii-model" in notes_cf or "megvii" in notes_cf
+        assert "mit" in notes_cf or entry.spdx_id == "MIT"
+
+    def test_yolos_note_still_hustvl(self) -> None:
+        entry = policy.PACKAGE_EXCEPTION_ALLOWLIST["yolos"]
+        assert "hustvl" in entry.notes.casefold()
+
+    def test_yolo_nas_not_on_exception_allowlist(self) -> None:
+        exc_keys = policy._folded_family_seed_keys(
+            policy.PACKAGE_EXCEPTION_ALLOWLIST
+        )
+        assert "yolo_nas" not in exc_keys
+        assert "yolonas" not in exc_keys
+
+    def test_red_proof_yolo_nas_deny_entry(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Undo the NC-weights deny listing → yolo-nas admits (TEST-15).
+
+        Bare ``yolo`` compact remainder (``nas``) would re-deny if the entry
+        were only deleted, so the red-proof restores the pre-correction
+        exception listing: remove deny seed + restore exception seed → admit.
+        That proves the policy flip (not bare-yolo fallthrough) is load-bearing.
+        """
+        token = "yolo-nas"
+        assert policy._package_denylist_hit(token) is not None, (
+            f"precondition: {token!r} must deny with yolo_nas entry present"
+        )
+        stripped = {
+            k: v
+            for k, v in policy.PACKAGE_DENYLIST.items()
+            if k != "yolo_nas"
+        }
+        restored_exc = dict(policy.PACKAGE_EXCEPTION_ALLOWLIST)
+        restored_exc["yolo_nas"] = policy.PackageExceptionEntry(
+            package_id="yolo_nas",
+            display_name="YOLO-NAS (Deci)",
+            spdx_id="Apache-2.0",
+            notes="temporary red-proof restore of pre-A6-03 exception",
+        )
+        monkeypatch.setattr(policy, "PACKAGE_DENYLIST", stripped)
+        monkeypatch.setattr(policy, "PACKAGE_EXCEPTION_ALLOWLIST", restored_exc)
+        assert policy._package_denylist_hit(token) is None, (
+            f"red-proof: with deny entry removed and exception restored, "
+            f"{token!r} must admit"
+        )
+        # Sibling deny seeds still deny.
+        assert policy._package_denylist_hit("ultralytics") is not None
+        assert policy._package_denylist_hit("yolov8") is not None
 
 
 # ---------------------------------------------------------------------------

@@ -40,6 +40,7 @@ from .face_assignment import (
     FOLD_MEDIA_CORESIDENCY_DISCLOSURE,
     TAU_GRID,
     associate_detections,
+    gt_box_name,
     score_face_assignment,
 )
 from .face_metrics import (
@@ -2555,14 +2556,6 @@ def _tau_by_identity_from_decisions(decisions: Sequence[Any]) -> dict[str, float
     return out
 
 
-def _gt_box_name(box: Any) -> str | None:
-    if isinstance(box, Mapping):
-        name = box.get("name")
-    else:
-        name = getattr(box, "name", None)
-    return None if name is None else str(name)
-
-
 def _association_counts_for_media(
     assignment: Any,
     media_ids: set[int],
@@ -2572,9 +2565,9 @@ def _association_counts_for_media(
 ) -> tuple[int, int, list[str]]:
     """Headline-scoped miss / unmatched-detection counts (FIR5RR-06).
 
-    - ``missed_gt`` counts only unmatched GT boxes with a non-None name: the
-      headline frame is NAMED probes, so an unmatched stranger box must not
-      inflate the miss count.
+    - ``missed_gt`` counts only unmatched GT boxes with a non-empty name
+      (``gt_box_name`` — HARM-06): the headline frame is NAMED probes, so an
+      unmatched stranger/empty-name box must not inflate the miss count.
     - ``unmatched_detections`` counts only on media that contributed at least
       one headline probe (``probe_media_ids``) — detections on images whose
       probes never entered the frame are not this frame's false detections.
@@ -2595,7 +2588,7 @@ def _association_counts_for_media(
         boxes = list(gt_by_media.get(mid, ()))
         assoc = by_media.get(mid)
         if assoc is None:
-            named = sum(1 for b in boxes if _gt_box_name(b) is not None)
+            named = sum(1 for b in boxes if gt_box_name(b) is not None)
             if named:
                 missed += named
                 notes.append(
@@ -2615,7 +2608,7 @@ def _association_counts_for_media(
                     f"for {len(boxes)} manifest GT box(es); counted "
                     "conservatively as missed_gt (association/manifest drift)"
                 )
-            elif _gt_box_name(boxes[gi]) is not None:
+            elif gt_box_name(boxes[gi]) is not None:
                 missed += 1
         if mid in probe_media_ids:
             unmatched += len(assoc.unmatched_detections)
@@ -2767,9 +2760,20 @@ def _validate_face_record_kind(face_run_record: dict[str, Any]) -> None:
 
 
 def _detection_from_assignment(assignment: Any) -> dict[str, Any]:
+    """Identity-agnostic detection P/R over **all** GT boxes (HARM-01 / EVAL-16).
+
+    Detection asks "was a box found at all?" — named and anonymous GT share one
+    population. ``assignment.missed_gt`` is named-only (identification FN fold-in);
+    stranger misses live on ``missed_stranger_gt``. FN = both. Identification is
+    the metric that legitimately excludes anonymous GT.
+
+    Invariant: ``tp + fn`` equals the number of GT boxes that reached association
+    (pairs + unmatched_gt across ``association_by_media``).
+    """
     tp = sum(len(a.pairs) for a in assignment.association_by_media.values())
     fp = int(assignment.false_detections)
-    fn = int(assignment.missed_gt)
+    # Detection FN = named misses + stranger misses (same population as tp pairs).
+    fn = int(assignment.missed_gt) + int(getattr(assignment, "missed_stranger_gt", 0) or 0)
     precision = (tp / (tp + fp)) if (tp + fp) else 0.0
     recall = (tp / (tp + fn)) if (tp + fn) else 0.0
     return {
@@ -3214,10 +3218,9 @@ def score_face_run_record(
             "sampling_frame": unknown.sampling_frame,
             "rate_numerator": unknown.rate_numerator,
             "rate_denominator": unknown.rate_denominator,
-            # missed_stranger_gt is required into face_unknown_rejection (S3-03) and
-            # is already embedded in rate_denominator / sampling_frame text. A new
-            # JSON key would move face freeze bytes; surface after wave-C regen
-            # (AUDIT-07 optional disclosure deferred for freeze stability).
+            # HARM-09 / AUDIT-07: disclose the stranger-miss term folded into
+            # rate_denominator (already required into face_unknown_rejection).
+            "missed_stranger_gt": int(assignment.missed_stranger_gt),
             **unknown_status,
         },
         "clustering": {

@@ -274,42 +274,11 @@ def predicted_left_to_right(
             positioned.append((centre[0], centre[1], str(name)))
     positioned.sort(key=lambda t: normalized_centre_order_key(t[0], t[1], t[2]))
     unpositioned.sort()
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for _, _, name in positioned:
-        if name in seen:
-            continue
-        seen.add(name)
-        ordered.append(name)
-    for name in unpositioned:
-        if name in seen:
-            continue
-        seen.add(name)
-        ordered.append(name)
-    return ordered
-
-
-def predicted_names_for_positional(
-    identities: Sequence[Any] | None,
-    *,
-    image_width: float | None = None,
-    image_height: float | None = None,
-) -> list[str] | None:
-    """Alias of ``predicted_left_to_right`` — the only approved predicted order API.
-
-    report.score_run_record / caption score path must call this (with captured
-    image_width/height) instead of ``identity_names`` for the positional metric
-    (VLM6-B-03). Corner-x path is intentionally not offered here.
-    """
-    return predicted_left_to_right(
-        identities,
-        image_width=image_width,
-        image_height=image_height,
-    )
+    return _leftmost_unique_names([name for _, _, name in positioned] + unpositioned)
 
 
 def _leftmost_unique_names(names: Sequence[str]) -> list[str]:
-    """Leftmost-wins name dedup (mirrors labeled_left_to_right / predicted_left_to_right)."""
+    """Leftmost-wins name dedup (single definition for labeled + predicted paths)."""
     ordered: list[str] = []
     seen: set[str] = set()
     for name in names:
@@ -318,6 +287,11 @@ def _leftmost_unique_names(names: Sequence[str]) -> list[str]:
         seen.add(name)
         ordered.append(name)
     return ordered
+
+
+# Canonical alias — one object identity (RV3-04 / TEST-15). report.py and tests
+# must import this name; a re-clone that agrees on one fixture must not pass.
+predicted_names_for_positional = predicted_left_to_right
 
 
 def sort_identity_rows_by_normalized_centre(
@@ -365,9 +339,11 @@ def labeled_left_to_right(face_boxes: Sequence[Any] | None) -> list[str] | None:
       established; the image must be excluded from positional scoring (never
       fall back to stored ``present_identities`` order).
     - ``None`` when boxes are present and at least one is named but **every**
-      named box lacks an ``x`` coordinate — malformed ground truth, not an
-      empty labeled order. Scoring as ``[]`` would charge every predicted name
-      as a positional miss (VLM6-R4-08).
+      named box lacks a complete ``(x, y)`` centre — malformed ground truth, not
+      an empty labeled order. Scoring as ``[]`` would charge every predicted
+      name as a positional miss (VLM6-R4-08). HARM-07: never invent ``y=0.0``;
+      incomplete coords match the predicted-side refuse-to-order policy
+      (rg-015).
     - Ordered unique names when boxes are present. Anonymous boxes (``name``
       None/empty) are skipped. **Duplicate names keep the leftmost occurrence
       only** so the sequence cardinality matches what ``predicted`` can hold
@@ -379,7 +355,7 @@ def labeled_left_to_right(face_boxes: Sequence[Any] | None) -> list[str] | None:
     if not face_boxes:
         return None
     named: list[tuple[float, float, str]] = []
-    named_missing_x = 0
+    named_missing_coord = 0
     for box in face_boxes:
         if isinstance(box, Mapping):
             name = box.get("name")
@@ -391,26 +367,18 @@ def labeled_left_to_right(face_boxes: Sequence[Any] | None) -> list[str] | None:
             y = getattr(box, "y", None)
         if name is None or name == "":
             continue
-        if x is None:
-            named_missing_x += 1
+        # Both centre coords required — same refuse-to-invent policy as
+        # wire_bbox_normalized_centre on the predicted side (HARM-07 / rg-015).
+        if x is None or y is None:
+            named_missing_coord += 1
             continue
-        # Missing y still participates: default 0.0 so name can break pure-x ties
-        # without depending on input-array stability (S3-02).
-        y_val = 0.0 if y is None else float(y)
-        named.append((float(x), y_val, str(name)))
-    # Named boxes exist but none carry x → manifest defect, not empty order.
-    if not named and named_missing_x > 0:
+        named.append((float(x), float(y), str(name)))
+    # Named boxes exist but none carry full centre → manifest defect, not empty order.
+    if not named and named_missing_coord > 0:
         return None
     # Boxes present but none named (all strangers): established empty order.
     named.sort(key=lambda t: normalized_centre_order_key(t[0], t[1], t[2]))
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for _, _, name in named:
-        if name in seen:
-            continue  # leftmost wins for duplicates
-        seen.add(name)
-        ordered.append(name)
-    return ordered
+    return _leftmost_unique_names([name for _, _, name in named])
 
 
 def _ratio(numerator: int, denominator: int) -> float | None:

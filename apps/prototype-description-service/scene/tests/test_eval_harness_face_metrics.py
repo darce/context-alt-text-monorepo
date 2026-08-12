@@ -847,17 +847,16 @@ def test_predicted_left_to_right_matches_centre_not_corner_order():
         "Narrow",
         "Wide",
     ]
-    # S3-06: canonical alias is a hard import and shares one implementation.
-    assert predicted_names_for_positional is predicted_left_to_right or (
-        predicted_names_for_positional(identities, image_width=400, image_height=200)
-        == predicted_left_to_right(identities, image_width=400, image_height=200)
-    )
+    # RV3-04 / TEST-15: alias is object identity — no behavioural fallback.
+    # A re-clone that agrees only on Wide/Narrow must not pass.
+    assert predicted_names_for_positional is predicted_left_to_right
     assert predicted_names_for_positional(identities, image_width=400, image_height=200) == [
         "Narrow",
         "Wide",
     ]
     # Without image size both fall to unpositioned → alpha: "Narrow" < "Wide".
     # Use names that reverse under alpha to prove the unpositioned path.
+    # Drive the ALIAS (not only predicted_left_to_right) through Zebra/Aardvark.
     swapped_names = [
         {
             "name": "Zebra",
@@ -868,11 +867,11 @@ def test_predicted_left_to_right_matches_centre_not_corner_order():
             "bbox": {"x": 150, "y": 0, "width": 50, "height": 100},
         },
     ]
-    assert predicted_left_to_right(swapped_names, image_width=400, image_height=200) == [
+    assert predicted_names_for_positional(swapped_names, image_width=400, image_height=200) == [
         "Aardvark",  # centre-left
         "Zebra",
     ]
-    assert predicted_left_to_right(swapped_names, image_width=None, image_height=None) == [
+    assert predicted_names_for_positional(swapped_names, image_width=None, image_height=None) == [
         "Aardvark",  # alpha fallback among unpositioned
         "Zebra",
     ]
@@ -884,12 +883,13 @@ def test_centre_x_tie_both_apis_share_one_order_key():
     Pre-fix: predicted_left_to_right sorted (cx, name) → [Alice, Bob] while
     sort_identity_rows_by_normalized_centre sorted (cx, cy, name) → [Bob, Alice].
     Post-fix: both use normalized_centre_order_key → same L→R sequence.
+    RV3-04: drive the alias itself through the centre-y tie fixture.
     """
     rows = [
         {"name": "Alice", "bbox": {"x": 90, "y": 200, "width": 20, "height": 20}},  # cx=100 cy=210
         {"name": "Bob", "bbox": {"x": 90, "y": 10, "width": 20, "height": 20}},  # cx=100 cy=20
     ]
-    predicted = predicted_left_to_right(rows, image_width=200, image_height=400)
+    predicted = predicted_names_for_positional(rows, image_width=200, image_height=400)
     sorted_rows = sort_identity_rows_by_normalized_centre(
         rows, image_width=200, image_height=400
     )
@@ -907,15 +907,52 @@ def test_labeled_left_to_right_tie_stable_across_input_order():
 
     Pre-fix: stable sort on x alone → input order wins on pure ties.
     Post-fix: (x, y, name) matches predicted path → same sequence either way.
+    HARM-07: missing y is unorderable (no fabricated y=0.0) — exclude image.
     """
     order_a = [{"name": "Bob", "x": 0.5, "y": 0.1}, {"name": "Alice", "x": 0.5, "y": 0.1}]
     order_b = [{"name": "Alice", "x": 0.5, "y": 0.1}, {"name": "Bob", "x": 0.5, "y": 0.1}]
     assert labeled_left_to_right(order_a) == labeled_left_to_right(order_b)
     assert labeled_left_to_right(order_a) == ["Alice", "Bob"]  # name tie-break
-    # Pure-x tie without y still name-stable (y defaults to 0.0).
+    # Pure-x tie without y: refuse to invent y=0.0 (HARM-07 / rg-015).
     bare_a = [{"name": "Bob", "x": 0.5}, {"name": "Alice", "x": 0.5}]
     bare_b = [{"name": "Alice", "x": 0.5}, {"name": "Bob", "x": 0.5}]
-    assert labeled_left_to_right(bare_a) == labeled_left_to_right(bare_b) == ["Alice", "Bob"]
+    assert labeled_left_to_right(bare_a) is None
+    assert labeled_left_to_right(bare_b) is None
+
+
+def test_gt_box_name_empty_string_is_anonymous():
+    """HARM-06 / rg-005: empty-string name is anonymous, not named.
+
+    Pre-fix: report._gt_box_name treated name='' as named (str('')) while
+    labeled_left_to_right skipped it. One predicate: gt_box_name.
+    """
+    from scripts.eval_harness.face_assignment import gt_box_name
+
+    assert gt_box_name({"name": None, "x": 0.1, "y": 0.1, "w": 0.1, "h": 0.1}) is None
+    assert gt_box_name({"name": "", "x": 0.1, "y": 0.1, "w": 0.1, "h": 0.1}) is None
+    assert gt_box_name({"name": "   ", "x": 0.1, "y": 0.1, "w": 0.1, "h": 0.1}) is None
+    assert gt_box_name({"name": "Alice", "x": 0.1, "y": 0.1, "w": 0.1, "h": 0.1}) == "Alice"
+    # Empty-name unmatched GT counts as stranger miss, not named missed_gt.
+    run_items = [
+        {
+            "media_id": 1,
+            "path": "a.jpg",
+            "image_size": [100, 100],
+            "faces": [],
+        }
+    ]
+    gt = {
+        1: [
+            {"x": 0.5, "y": 0.5, "w": 0.2, "h": 0.2, "name": ""},
+            {"x": 0.2, "y": 0.2, "w": 0.1, "h": 0.1, "name": None},
+        ]
+    }
+    _matched, _assoc, false_det, missed_named, missed_stranger = collect_matched_faces(
+        run_items, gt
+    )
+    assert false_det == 0
+    assert missed_named == 0
+    assert missed_stranger == 2
 
 
 def test_missed_gt_named_only_stranger_not_id_fn():

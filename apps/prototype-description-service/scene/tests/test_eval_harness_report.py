@@ -1032,6 +1032,72 @@ def _face_fixture_corpus() -> tuple[dict, dict]:
     return face_run, manifest
 
 
+def test_detection_from_assignment_counts_stranger_fn():  # HARM-01 / EVAL-16
+    """Detection recall must include anonymous GT misses (same population as tp).
+
+    Repro: 1 named GT detected + 1 anonymous GT missed → pre-fix published
+    recall=1.0 (fn=missed_gt named-only). True detection recall is 0.5.
+    Invariant: tp + fn reconciles to total GT boxes that reached association.
+    """
+    from scripts.eval_harness.face_assignment import AssignmentResult, AssociationResult
+    from scripts.eval_harness.report import _detection_from_assignment
+
+    # Named pair + unmatched stranger GT (no detections for the stranger).
+    class _Pair:
+        def __init__(self) -> None:
+            self.det_index = 0
+            self.gt_index = 0
+
+    assoc_named = AssociationResult(
+        pairs=(_Pair(),),
+        unmatched_detections=(),
+        unmatched_gt=(),
+        ious=(),
+    )
+    assoc_stranger_miss = AssociationResult(
+        pairs=(),
+        unmatched_detections=(),
+        unmatched_gt=(0,),
+        ious=(),
+    )
+    assignment = AssignmentResult(
+        matched=(),
+        decisions=(),
+        tau_k=(),
+        tau_op=0.5,
+        association_by_media={1: assoc_named, 2: assoc_stranger_miss},
+        false_detections=0,
+        missed_gt=0,  # named unmatched only
+        missed_stranger_gt=1,  # anonymous unmatched
+    )
+    det = _detection_from_assignment(assignment)
+    assert det["tp"] == 1
+    assert det["fp"] == 0
+    assert det["fn"] == 1  # stranger miss counted
+    assert det["precision"] == pytest.approx(1.0)
+    assert det["recall"] == pytest.approx(0.5)
+    # tp + fn == GT boxes that reached association (pairs + unmatched_gt).
+    gt_in_assoc = sum(
+        len(a.pairs) + len(a.unmatched_gt) for a in assignment.association_by_media.values()
+    )
+    assert det["tp"] + det["fn"] == gt_in_assoc == 2
+
+
+def test_score_face_unknown_rejection_surfaces_missed_stranger_gt():  # HARM-09
+    """slices.unknown_rejection must publish missed_stranger_gt (post wave-C)."""
+    face_run, manifest = _face_fixture_corpus()
+    # Drop all detections on the stranger image → missed_stranger_gt = 1.
+    for item in face_run["items"]:
+        if item["media_id"] == 3:
+            item["faces"] = []
+    scored = score_face_run_record(face_run, manifest, score_manifest_sha256="s" * 64)
+    unk = scored["slices"]["unknown_rejection"]
+    assert "missed_stranger_gt" in unk
+    assert unk["missed_stranger_gt"] == 1
+    # Detection FN includes the stranger miss (HARM-01 end-to-end).
+    assert scored["detection"]["fn"] >= 1
+
+
 def test_score_face_run_record_full_corpus_and_floor_gated_rollup():
     face_run, manifest = _face_fixture_corpus()
     scored = score_face_run_record(face_run, manifest, score_manifest_sha256="s" * 64)
@@ -1047,6 +1113,7 @@ def test_score_face_run_record_full_corpus_and_floor_gated_rollup():
     unk = scored["slices"]["unknown_rejection"]
     assert unk["n"] == 1  # private stranger counted
     assert unk["directional"] is True
+    assert unk.get("missed_stranger_gt") == 0  # HARM-09 key present when matched
     # Gate proposal EXCLUDES every DIRECTIONAL slice (SC4)
     gp = scored["gate_proposal"]
     assert gp["proposed_slices"] == {} or all(

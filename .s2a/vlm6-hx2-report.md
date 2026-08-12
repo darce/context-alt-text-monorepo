@@ -64,6 +64,7 @@ ASSERTION FAILED (RED as expected): pin mode must null started_at, got '2026-08-
 
 **GREEN** (live `write_anchor` pin + non-pin negative + face twin):
 
+<!-- sha-guard:ignore-next-block -->
 ```
 === S4-04 GREEN (pin mode nulls contract clocks) ===
 head_sha=None
@@ -71,7 +72,7 @@ started_at=None
 fixture_revision='0000000000000000000000000000000000000000'
 canonical_timestamp='2026-08-11T00:00:00Z'
 PASS: caption pin nulls contract clocks; sentinels in fixture_* only
-non-pin head_sha='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' started_at='2026-01-02T03:04:05Z'   (synthetic test fixture, not a git object) sha-guard:ignore
+non-pin head_sha='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' started_at='2026-01-02T03:04:05Z'   (synthetic test fixture, not a git object)
 PASS: non-pin keeps live provenance (negative guard)
 face head_sha=None started_at=None
 face fixture_revision='0000000000000000000000000000000000000000' canonical_timestamp='2026-08-11T00:00:00Z'
@@ -94,6 +95,7 @@ ASSERTION FAILED (RED as expected): DID NOT RAISE SystemExit matching 'fabricate
 
 **GREEN** (live `describe_baseline.resolve_head_sha`):
 
+<!-- sha-guard:ignore-next-block -->
 ```
 === S4-06 GREEN (resolve refuses zeros; accepts real SHA) ===
 module HEAD_SHA=None
@@ -103,7 +105,7 @@ report summary.head_sha=None
 PASS: report writes null without fabricating zeros
 write refuse zeros: HEAD_SHA is the fabricated 40-zero sentinel; pass a real 40-char git SHA via HEAD_SHA or unset it to record null (S4-06 / rg-015 / VLM6-F-04)
 PASS: S4-06 write refuses forty zeros
-PASS: genuine SHA accepted: aaaaaaaa…   (synthetic test fixture) sha-guard:ignore
+PASS: genuine SHA accepted: aaaaaaaa…   (synthetic test fixture)
 ```
 
 ### Permanent suite (GREEN)

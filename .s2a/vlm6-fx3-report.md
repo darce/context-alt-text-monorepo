@@ -1,188 +1,263 @@
-# VLM-6 lane `fx3` — face metrics and placement matching
+# VLM-6 lane `fx3` — lane-report SHA guard: close evasion channels
 
-**Branch:** `feature/vlm-6-fx3` (this lane's branch)  
-**Base:** `e2575b5ef09ed75de7f792546439d53624c9d344`  
-**Owned files:** `face_metrics.py`, `placement_metrics.py`, `test_eval_harness_face_metrics.py`, `test_eval_harness_placement*.py`, this report.
+**Branch:** `fix/fx3`  
+**Fork point:** `b28e126e89bc41202e0168276f8493511212c80d` (resolves in this worktree)  
+**Owned files:** `scripts/check_lane_report_shas.py`, `scripts/test_check_lane_report_shas.py`,
+`.s2a/vlm6-hx2-report.md` (HARM-08 markers only), this report.
 
-Targeted gate (68 tests):
+Heuristics: `TEST-15`, `AUDIT-07`, `EVAL-23`, `rg-006`, `rg-015`, `sr-001`.
+
+Foreign probe tokens in the RED/GREEN captures below are deliberately non-resolving;
+each capture fence is preceded by `sha-guard:ignore-next-block` so the guard does not
+re-flag documentation of the bug it closes (HARM-08 pattern).
+
+---
+
+## RV4-02 (high) — digest labels vetoed short hex without digest shape
+
+### What changed
+`_is_content_digest` no longer returns True on a `_BEFORE_DIGEST` label alone.
+Exclusion now requires digest **shape**:
+
+1. explicit `sha256:` prefix (any length), or
+2. digest label **and** (`len(token) >= 16` **or** ellipsis after the token), or
+3. sha256sum-style `hex…  path` remainder.
+
+Bare 7–12 hex after `golden sha is` / `fetch sha` / `manifest sha` / `freeze … sha`
+is treated as a commit citation and must resolve.
+
+### Why
+Lane prose already uses golden/fetch/manifest/freeze vocabulary next to real commit
+SHAs. Label-only veto stamped false certification (`0 citations found`) over foreign
+sandbox SHAs — worse than no guard (AUDIT-07 fail-closed).
+
+### RED (unfixed guard — verbatim)
+
 ```
-cd apps/prototype-description-service && .venv/bin/python -m pytest \
-  scene/tests/test_eval_harness_face_metrics.py \
-  scene/tests/test_eval_harness_placement_metrics.py -q
+$ python3 -m pytest scripts/test_check_lane_report_shas.py -q -p no:randomly \
+    -k 'digest_label_with_short'
+FAILED … golden_sha_is — short hex after digest label must fail closed;
+  stdout='lane report SHA citations: 1 file(s), 0 citations found (none to resolve)\n'
+FAILED … fetch_sha — same (exit 0, 0 citations)
+FAILED … manifest_sha_was — same
+FAILED … freeze_golden_sha_is — same
+FAILED … score_time_golden_sha_is — same
+FAILED … model_dump_sha_was — same
 ```
-**GREEN:** `68 passed in 0.78s`
+
+Live probe (unfixed, via `_is_content_digest`):
+
+<!-- sha-guard:ignore-next-block -->
+```
+digest=True:  'Sandbox golden sha is c9f7c6e (history-stripped clone).'
+digest=True:  'fetch sha c9f7c6e was the sandbox base'
+digest=True:  'manifest sha was c9f7c6e before rewrite'
+digest=True:  'The freeze golden sha is 7ad6d52 at score-time.'
+digest=False: 'Sandbox base was c9f7c6e (history-stripped clone).'  # control
+```
+
+### GREEN (fixed)
+
+<!-- sha-guard:ignore-next-block -->
+```
+exit=1 :: cited commit `c9f7c6e` does not resolve   # golden sha is
+exit=1 :: cited commit `c9f7c6e` does not resolve   # fetch sha
+exit=1 :: cited commit `c9f7c6e` does not resolve   # manifest sha was
+exit=1 :: cited commit `7ad6d52` does not resolve   # freeze golden sha is
+exit=1 :: cited commit `c9f7c6e` does not resolve   # control Sandbox base was
+```
+
+Happy-path digests still pass: `sha256:` prefix, labelled ≥16 hex, labelled+ellipsis,
+sha256sum listings (`test_content_digest_exclusions_do_not_flag`).
 
 ---
 
-## VLM6-B-01 (high) — fold `missed_gt` into identification FN
+## RV4-03 (medium) — ASCII-only hex extractor / unicode evasion
 
-- **Files:** `face_metrics.py` (`SAMPLING_FRAME_FACE_ID`, `face_identification_pr`)
-- **Behaviour change:** Attributed `missed_gt` is added to `false_negatives` (EVAL-16). Sampling-frame string no longer claims misses are excluded. Coupling flag retained as disclosure.
-- **RED** (`test_face_id_detection_recall_coupling_flag_computed` vs unfixed production):
-  ```
-  assert coupled.false_negatives == 2  # EVAL-16: missed_gt folded into FN
-  E   assert 0 == 2
-  E    +  where 0 = FaceLevelIdPr(..., false_negatives=0, ..., missed_gt=2, ...).false_negatives
-  ```
-- **GREEN:** same test; FN=2, recall≈1/3, recall_denominator=3.
+### What changed
+- `_normalize_scan_line`: NFKC-normalise each line, strip Unicode category `Cf`
+  (soft hyphen U+00AD, ZWSP U+200B, …) before `_HEX` scanning.
+- `_homoglyph_sha_runs`: fold Cyrillic/Greek confusables; if a 7–40 run looks like
+  hex only after folding and sits next to commit vocabulary, emit a hard violation
+  (do **not** resolve the folded form — that could false-pass).
 
-## VLM6-B-02 (medium) — EVAL-16 test asserts FN/recall, not only the flag
+### Why
+Soft-hyphen / ZWSP / fullwidth / Cyrillic-mixed tokens render as plausible short SHAs
+in Markdown viewers but were invisible to `_HEX`, yielding exit 0 with
+`0 citations found`.
 
-- **Files:** `test_eval_harness_face_metrics.py` (`test_face_id_detection_recall_coupling_flag_computed`)
-- **Behaviour change:** Test asserts `false_negatives`, `recall`, `recall_denominator` before flag/frame checks so a flag-only scorer goes red (TEST-15). RED evidence is the B-01 run above.
+### RED (unfixed)
 
-## VLM6-B-03 (high) — centre-based predicted L→R is the production path in this module
+```
+soft-hyphen: exit=0  stdout='… 0 citations found (none to resolve)'
+ZWSP:        exit=0  stdout='… 0 citations found (none to resolve)'
+fullwidth:   exit=0  stdout='… 0 citations found (none to resolve)'
+cyrillic:    exit=0  stdout='… 0 citations found (none to resolve)'
+```
 
-- **Files:** `face_metrics.py` (`predicted_left_to_right` docs, `predicted_names_for_positional`, `ImageIdentities.predicted_rows`/`image_width`/`image_height`, `_leftmost_unique_names`, `positional_identification`); tests.
-- **Behaviour change:**
-  1. `positional_identification` uses `predicted_left_to_right` when `predicted_rows` + dims are set (centre-x order).
-  2. Without rows, leftmost-wins name dedup still runs so `[Alice, Alice, Bob]` vs labeled `[Alice, Bob]` is exact (not 1/3).
-  3. `predicted_names_for_positional` is the only approved predicted-order API exported for report wiring.
-- **RED (dedupe path):**
-  ```
-  assert result.exact_order_images == 1
-  E   assert 0 == 1
-  +  where 0 = PositionalIdResult(position_hits=1, position_total=3, exact_order_images=0, ...).exact_order_images
-  ```
-- **RED (rows path vs unfixed):**
-  ```
-  TypeError: ImageIdentities.__init__() got an unexpected keyword argument 'predicted_rows'
-  ```
-- **GREEN:** both tests pass; centre-order fixture exact_order=1 / accuracy=1.0.
-- **Cross-lane:** report.py must wire rows (see below).
+### GREEN (fixed)
 
-## VLM6-B-06 (high) — bare left/right not placement mid-terms
-
-- **Files:** `placement_metrics.py` (`_PAIR_DIR_TERMS`, `_mid_pattern`); placement tests.
-- **Behaviour change:** Pair-order mids are `to the left of` / `left of` (and right analogues), not bare `left`/`right`. Departure verb no longer scores as perfect placement.
-- **RED:**
-  ```
-  assert s.correct == []
-  E   AssertionError: assert ['Alice left_of Bob'] == []
-  ```
-  (caption `"Alice left Bob at the station."` scored accuracy=1.0)
-- **GREEN:** departure → abstention (`accuracy is None`); `"Alice to the left of Bob"` / `"Alice is left of Bob"` / `"Bob to the right of Alice"` still correct.
-
-## VLM6-B-08 (medium) — missed stranger GT counts against unknown-rejection
-
-- **Files:** `face_metrics.py` (`SAMPLING_FRAME_UNKNOWN_REJECTION`, `UnknownRejectionResult.missed_stranger_gt`, `face_unknown_rejection`)
-- **Choice:** Count missed stranger GT against the rate (EVAL-16), not only rewrite the frame string. Rationale: a detector that skips hard strangers must not keep rate=1.0 by exclusion; AUDIT-07 requires naming the true observation unit and including units with non-zero sampling probability.
-- **Behaviour change:** `missed_stranger_gt` enters `n` and rate denominator as failures; frame string names matched+missed, not `full_corpus_including_unpublishable`.
-- **RED:**
-  ```
-  TypeError: face_unknown_rejection() got an unexpected keyword argument 'missed_stranger_gt'
-  ```
-  (pre-fix matched-only path: 3 rejects → rate=1.0, n=3 with 50 misses invisible)
-- **GREEN:** `face_unknown_rejection(matched, missed_stranger_gt=50)` → n=53, rate=3/53.
-- **Cross-lane:** report must pass frame-scoped missed stranger count.
-
-## VLM6-B-09 (medium) — determinism self-comparison without `--expect-report`
-
-- **Not fixable in owned files.** No determinism checker lives in `face_metrics.py` / `placement_metrics.py`. Root cause is CLI/check path (`score-face --check-determinism` without `--expect-report` re-scores the same corrupted bytes and agrees). See Cross-lane.
-- **Verified by reading** `test_corrupt_face_run_record_without_expect_report_passes_silently` (not owned; documents the hole). No executable assertion available inside this lane’s modules (TEST-15 N/A for production code here).
-
-## VLM6-B-10 (low) — positional vacuity signal when π=0
-
-- **Files:** `face_metrics.py` (`SAMPLING_FRAME_POSITIONAL`, `POSITIONAL_EVAL_*`, `POSITIONAL_VACUITY_SIGNAL`, `PositionalIdResult` fields, `positional_identification`); golden-corpus test.
-- **Behaviour change:** When `compared_images==0`, result emits `evaluable=False`, `status=not_evaluable`, `vacuity_signal="positional identification not evaluable on this corpus, π=0 for box-grounded identity claims"` (EVAL-23 / AUDIT-07). Proven on real `golden.json` (0/37 face_boxes).
-- **RED:**
-  ```
-  assert getattr(result, "evaluable", None) is False
-  E   AssertionError: assert None is False
-  ```
-  (`compared_images=0`, `position_accuracy=None`, no machine-readable block signal)
-- **GREEN:** same golden corpus run; status/signal set; 37 excluded.
-- **Cross-lane:** verdict layer must fail closed on `status=not_evaluable`.
+<!-- sha-guard:ignore-next-block -->
+```
+soft: exit=1  cited commit `c9f7c6e` does not resolve
+zwsp: exit=1  cited commit `c9f7c6e` does not resolve
+full: exit=1  cited commit `c9f7c6e` does not resolve
+cyrl: exit=1  homoglyph / non-ASCII hex-lookalike `с9f7с6е` adjacent to commit vocabulary
+```
 
 ---
+
+## RV4-04 (medium) — default walk one level; staged walk recursive
+
+### What changed
+- `_is_lane_report_relpath(name)` — single predicate: `"/.s2a/" in f"/{name}"` and
+  `.md` suffix (any depth).
+- `_default_report_paths(repo)` — recursive globs `.s2a/**/*.md` + `*/.s2a/**/*.md`.
+- `_staged_reports` uses the same predicate.
+
+### Why
+Default walk missed nested paths under `.s2a/` while `--scan-staged` and explicit
+path args would catch them — scope drift (rg-006).
+
+### RED (unfixed)
+
+<!-- sha-guard:ignore-next-block -->
+```
+$ echo 'Sandbox base was deadbee' > .s2a/_rv4_nested/lane-report.md
+$ python3 scripts/check_lane_report_shas.py
+lane report SHA citations: 50 file(s), 43 citation(s) resolved   # exit 0; deadbee absent
+$ python3 scripts/check_lane_report_shas.py .s2a/_rv4_nested/lane-report.md
+exit 1; names deadbee
+```
+
+Also: `AttributeError: module has no attribute '_is_lane_report_relpath'` on the
+parity unit test (API did not exist).
+
+### GREEN (fixed)
+
+<!-- sha-guard:ignore-next-block -->
+```
+$ python3 scripts/check_lane_report_shas.py   # with nested fixture present
+exit 1
+  - .s2a/_rv4_nested/lane-report.md:1: cited commit `deadbee` does not resolve
+test_default_walk_and_staged_predicate_agree_on_nested_paths PASSED
+```
+
+---
+
+## RV4-06 (low) — tests pinned only the happy path
+
+### What changed
+Added negative tests that fail closed for:
+
+- each exclusion label with bare 7–12 hex (no ellipsis, no `sha256:`) — parametrize
+- soft hyphen, ZWSP, fullwidth, Cyrillic homoglyph
+- nested `.s2a/` default walk
+- walker / staged predicate parity via shared helpers
+- block-scoped ignore (HARM-08)
+
+Updated `test_content_digest_exclusions_do_not_flag` so the labelled happy path uses
+≥16 hex / ellipsis (shape-correct digests), not bare 8-hex that the new rule correctly
+treats as a commit citation.
+
+Fixture dir renamed to `_fx3_guard_fixtures` with recursive cleanup.
+
+### RED → GREEN
+RED suite against unfixed guard: **14 failed, 1 passed** (the fence-without-ignore
+control, which already failed closed).  
+GREEN suite after fix: **32 passed**.
+
+---
+
+## HARM-08 (low) — `sha-guard:ignore` inside verbatim fenced output
+
+### What changed
+1. **Guard feature:** `sha-guard:ignore-next-block` (also as
+   `<!-- sha-guard:ignore-next-block -->`) immediately before a fenced block skips
+   all hex tokens inside the next fence only. Nearest-token `sha-guard:ignore` is
+   unchanged. The ignore-next-block string is excluded from nearest-token matching
+   so the `ignore` prefix cannot steal a token.
+2. **hx2 report:** moved markers **outside** the two GREEN fenced captures in
+   `.s2a/vlm6-hx2-report.md` (S4-04 and S4-06); restored interior lines to verbatim
+   program output (no marker text inside the fence).
+
+### Why
+A fenced block labelled as captured output must be exactly what the program printed.
+Editing `sha-guard:ignore` into it destroys evidentiary status.
+
+### RED (unfixed — no block directive)
+
+<!-- sha-guard:ignore-next-block -->
+```
+fence_with_ignore.md: exit=1
+  cited commit `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa` does not resolve
+  # HTML comment on previous line was not a skip channel (S5-01) and no block ignore existed
+```
+
+### GREEN (fixed)
+
+<!-- sha-guard:ignore-next-block -->
+```
+test_ignore_next_block_alone_allows_fence_with_foreign_sha PASSED
+test_ignore_next_block_skips_tokens_inside_following_fence PASSED
+  # beef001 after the fence still fails; synthetic a-run inside fence ignored
+```
+
+---
+
+## Findings disagreed with
+
+None. All five reproduced with live probes before the fix; each has a RED capture above.
+
+---
+
+## Whole-tree guard run (post-fix)
+
+```
+$ python3 scripts/check_lane_report_shas.py
+lane report SHA citations: 50 file(s), 43 citation(s) resolved
+EXIT:0
+```
+
+(Count rises by one file once this report is committed; re-run after commit for the
+final line.)
+
+## Test suite (post-fix)
+
+```
+$ python3 -m pytest scripts/test_check_lane_report_shas.py -q -p no:randomly
+................................                                         [100%]
+32 passed in 1.87s
+```
+
+## `git diff --stat` against fork point
+
+```
+ .s2a/vlm6-fx3-report.md                | 366 +++++++++++++++++++--------------
+ .s2a/vlm6-hx2-report.md                |   6 +-
+ scripts/check_lane_report_shas.py      | 233 ++++++++++++++++++---
+ scripts/test_check_lane_report_shas.py | 273 +++++++++++++++++++++++-
+ 4 files changed, 692 insertions(+), 186 deletions(-)
+```
+
+(Against `b28e126e89bc41202e0168276f8493511212c80d`.)
+
+## What could not be verified
+
+- Did not re-run the full monorepo CI / `make check-all` (out of scope; owned files only).
+- Homoglyph table covers Cyrillic аеорсх + Greek ο/Ο/α; other confusable scripts
+  (fullwidth already handled by NFKC) are not exhaustively enumerated — new scripts
+  would need table extensions. Stated limitation, not a silent skip.
+- Did not exercise `--scan-staged` against a real index entry for a nested path in
+  a dirty worktree (predicate unit-tested; staged path uses the same helper).
 
 ## Cross-lane requests
 
-### report.py (lane `fx2`) — B-03 wiring
-
-In `score_run_record` (where `predicted_names = identity_names(item.get("identities", []))` feeds `positional_items`):
-
-```python
-from scripts.eval_harness.face_metrics import predicted_names_for_positional
-
-# Prefer centre-ordered + leftmost-wins names for positional metric.
-identities = item.get("identities") or []
-image_w = item.get("image_width")  # or dims from run record / provenance
-image_h = item.get("image_height")
-pos_predicted = predicted_names_for_positional(
-    identities, image_width=image_w, image_height=image_h
-)
-# Fallback only if rows unusable:
-if pos_predicted is None:
-    pos_predicted = identity_names(identities)
-
-positional_items.append(
-    ImageIdentities(
-        image=path,
-        predicted=pos_predicted,
-        labeled=list(ordered_labeled) if order_known else [],
-        recognition_enabled=recognition_enabled,
-        stranger_faces=stranger_faces,
-        labeled_order_known=order_known,
-        predicted_rows=identities if order_known else None,
-        image_width=image_w,
-        image_height=image_h,
-    )
-)
-```
-
-Also surface positional vacuity in the report JSON (B-10):
-
-```python
-"positional": {
-    ...
-    "evaluable": positional.evaluable,
-    "status": positional.status,
-    "vacuity_signal": positional.vacuity_signal,
-    "sampling_frame": positional.sampling_frame,
-}
-```
-
-### report.py (lane `fx2`) — B-01 already wired counts
-
-`face_identification_pr(..., missed_gt=assignment.missed_gt, ...)` already passes counts; after this lane’s fix those counts lower FN/recall automatically. Ensure any freeze re-score or gate that expected FN-excluding-misses is updated. Do not re-introduce “misses excluded from FN” language in report copy.
-
-### report.py (lane `fx2`) — B-08 missed stranger GT
-
-```python
-# Count unmatched GT boxes with true_name is None (stranger), frame-scoped.
-missed_stranger_gt = ...  # mirror _association_counts_for_media but name is None
-unknown = face_unknown_rejection(
-    assignment.decisions,
-    missed_stranger_gt=missed_stranger_gt,
-)
-# Emit unknown["missed_stranger_gt"] in the slice payload.
-```
-
-### report.py / verdict (lane `fx2`) — B-10 gate
-
-When `identification.positional.status == "not_evaluable"` (or `evaluable is False`), block adoption pass for the identity/positional category (EVAL-23: readiness is the weakest category). Do not treat `position_accuracy is None` alone as a soft skip.
-
-### cli.py (lane `fx1`) — B-03 residual
-
-`_extract_identities` still sorts by corner-x. Either accept image dims and sort via `sort_identity_rows_by_normalized_centre` / centre-x, or rely on report re-ordering via `predicted_names_for_positional`. Prefer fixing extract so stored rows are already centre-ordered.
-
-### cli.py / face determinism (lane `fx1`) — B-09
-
-`score-face --check-determinism` without `--expect-report` must not print a bare “determinism check passed” for self-comparison of the same bytes. Either:
-1. Require `--expect-report` for the red path, or
-2. Change the success message to state it only proves seed-stability of the supplied run-record bytes (not integrity vs a pinned freeze).
-
-TEST-15: the red path must be reachable without an opt-in that operators routinely omit.
+None. Other lanes (fx1/fx2/fx4 service code, fx5 bakeoff docs) untouched.
+Coordinator: integrate `fix/fx3` onto `feature/vlm-6` after review.
 
 ---
 
-## Deferred
+## Commits on `fix/fx3`
 
-Nothing deferred for lack of Golden-100 among owned fixes. Vacuity is made loud today (B-10) without populating `face_boxes`. Full positional gate adoption still needs Golden-100 face_boxes (corpus work outside this lane) **and** the report/verdict wiring above.
-
----
-
-## Heuristics cited
-
-TEST-15, EVAL-16, EVAL-23, AUDIT-07, sr-001, sr-007.
+Recorded below after `git commit` (full SHA resolves in this worktree).

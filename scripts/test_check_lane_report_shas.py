@@ -48,12 +48,17 @@ def report_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     The guard resolves paths relative to ``git rev-parse --show-toplevel``, so
     fixtures must live inside the real repo. Clean up after each test.
     """
-    d = REPO_ROOT / ".s2a" / "_fx5_guard_fixtures"
+    d = REPO_ROOT / ".s2a" / "_fx3_guard_fixtures"
     d.mkdir(parents=True, exist_ok=True)
     yield d
-    for child in d.glob("*"):
-        child.unlink()
-    d.rmdir()
+    # Recursive cleanup so nested-path fixtures (RV4-04) cannot leak.
+    for child in sorted(d.rglob("*"), reverse=True):
+        if child.is_file():
+            child.unlink()
+        elif child.is_dir():
+            child.rmdir()
+    if d.exists():
+        d.rmdir()
 
 
 def test_missing_path_fails_closed_and_does_not_claim_resolve() -> None:
@@ -129,10 +134,11 @@ def test_digest_keyword_does_not_veto_commit_citation(report_dir: Path) -> None:
 
 
 def test_content_digest_exclusions_do_not_flag(report_dir: Path) -> None:
-    """Narrow digest exclusions: sha256:, manifest_sha256, msha=, sha256sum listings.
+    """Narrow digest exclusions: sha256:, labelled digests with shape, sha256sum listings.
 
-    S5-03 / TEST-15: bare commit + ellipsis is NOT excluded — only labelled digests
-    and sha256sum-style ``hex…  path`` listings. (Revisited: former loophole removed.)
+    RV4-02 / S5-03 / TEST-15: label alone is not enough — need sha256: prefix, ≥16 hex,
+    or ellipsis / sha256sum path remainder. Bare 7-12 hex after a digest label is a
+    commit citation (see test_digest_label_with_short_hex_is_not_excluded).
     """
     # Use tokens that definitely do not resolve as commits.
     path = _write(
@@ -140,7 +146,7 @@ def test_content_digest_exclusions_do_not_flag(report_dir: Path) -> None:
         "\n".join(
             [
                 "Content hash sha256: deadbeefcafebabe",
-                "freeze manifest_sha256 was `859a083e`",
+                "freeze manifest_sha256 was `859a083eabcdef01`",  # ≥16 hex + label
                 "trunc run msha=67040d45…",
                 "fetch sha `67040d45…` ≠ score-time golden sha `859a083e…`",
                 "sha256sum output:",
@@ -336,3 +342,254 @@ def test_summary_counts_only_opened_files(report_dir: Path) -> None:
     assert "1 file(s)" in proc.stdout
     assert "all resolve" not in proc.stdout
     assert "0 citations found" in proc.stdout or "none to resolve" in proc.stdout
+
+
+# ---------------------------------------------------------------------------
+# RV4-02 / RV4-06 — digest labels must not veto bare 7-12 hex commit citations
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "body,token",
+    [
+        ("Sandbox golden sha is c9f7c6e (history-stripped clone).\n", "c9f7c6e"),
+        ("fetch sha c9f7c6e was the sandbox base\n", "c9f7c6e"),
+        ("manifest sha was c9f7c6e before rewrite\n", "c9f7c6e"),
+        ("The freeze golden sha is 7ad6d52 at score-time.\n", "7ad6d52"),
+        ("score-time golden sha is deadbee without ellipsis\n", "deadbee"),
+        ("model_dump sha was cafebab in the freeze.\n", "cafebab"),
+    ],
+    ids=[
+        "golden_sha_is",
+        "fetch_sha",
+        "manifest_sha_was",
+        "freeze_golden_sha_is",
+        "score_time_golden_sha_is",
+        "model_dump_sha_was",
+    ],
+)
+def test_digest_label_with_short_hex_is_not_excluded(
+    report_dir: Path, body: str, token: str
+) -> None:
+    """RV4-02 / TEST-15: label vocabulary alone does not make 7-12 hex a digest.
+
+    A bare short token after golden/fetch/manifest/freeze wording is a commit
+    citation and must fail closed when unresolvable (AUDIT-07).
+    """
+    path = _write(report_dir / f"rv4_02_{token}.md", body)
+    rel = str(path.relative_to(REPO_ROOT))
+    proc = _run_guard(rel)
+    assert proc.returncode != 0, (
+        f"short hex after digest label must fail closed; body={body!r} "
+        f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    )
+    assert token in proc.stderr.lower()
+    assert "does not resolve" in proc.stderr
+
+
+def test_sandbox_base_control_still_flags(report_dir: Path) -> None:
+    """RV4-02 control: unlabelled Sandbox base phrasing still fails closed."""
+    path = _write(
+        report_dir / "rv4_02_control.md",
+        "Sandbox base was c9f7c6e (history-stripped clone).\n",
+    )
+    rel = str(path.relative_to(REPO_ROOT))
+    proc = _run_guard(rel)
+    assert proc.returncode != 0
+    assert "c9f7c6e" in proc.stderr
+
+
+# ---------------------------------------------------------------------------
+# RV4-03 / RV4-06 — unicode / homoglyph evasion must not go invisible
+# ---------------------------------------------------------------------------
+
+
+def test_soft_hyphen_in_sha_is_visible_and_flagged(report_dir: Path) -> None:
+    """RV4-03: U+00AD soft hyphen inside a SHA must not hide the citation."""
+    # c9f7 + soft-hyphen + c6e renders as c9f7c6e in Markdown viewers
+    body = "Sandbox base was c9f7\u00adc6e (history-stripped).\n"
+    path = _write(report_dir / "rv4_03_soft_hyphen.md", body)
+    rel = str(path.relative_to(REPO_ROOT))
+    proc = _run_guard(rel)
+    assert proc.returncode != 0, (
+        f"soft-hyphen SHA must fail closed; stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    )
+    combined = (proc.stdout + proc.stderr).lower()
+    assert "c9f7c6e" in combined or "does not resolve" in combined or "homoglyph" in combined
+    assert "0 citations found" not in proc.stdout
+
+
+def test_zwsp_in_sha_is_visible_and_flagged(report_dir: Path) -> None:
+    """RV4-03: U+200B zero-width space inside a SHA must not hide the citation."""
+    body = "Landed at commit `c9f7\u200bc6e`\n"
+    path = _write(report_dir / "rv4_03_zwsp.md", body)
+    rel = str(path.relative_to(REPO_ROOT))
+    proc = _run_guard(rel)
+    assert proc.returncode != 0, (
+        f"ZWSP SHA must fail closed; stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    )
+    combined = (proc.stdout + proc.stderr).lower()
+    assert "c9f7c6e" in combined or "does not resolve" in combined or "homoglyph" in combined
+
+
+def test_fullwidth_hex_is_visible_and_flagged(report_dir: Path) -> None:
+    """RV4-03: fullwidth hex digits must NFKC-normalize into a scanned token."""
+    # ｃ９ｆ７ｃ６ｅ (fullwidth) → c9f7c6e under NFKC
+    fullwidth = "\uff43\uff19\uff46\uff17\uff43\uff16\uff45"
+    body = f"Sandbox base was {fullwidth} (history-stripped).\n"
+    path = _write(report_dir / "rv4_03_fullwidth.md", body)
+    rel = str(path.relative_to(REPO_ROOT))
+    proc = _run_guard(rel)
+    assert proc.returncode != 0, (
+        f"fullwidth SHA must fail closed; stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    )
+    assert "c9f7c6e" in proc.stderr.lower() or "does not resolve" in proc.stderr
+
+
+def test_cyrillic_homoglyph_sha_fails_loudly(report_dir: Path) -> None:
+    """RV4-03: mixed Cyrillic/ASCII lookalike SHA must fail, not go invisible.
+
+    с9f7с6е uses U+0441 CYRILLIC SMALL LETTER ES and U+0435 CYRILLIC SMALL
+    LETTER IE — renders like c9f7c6e but is not ASCII hex.
+    """
+    # с = U+0441, е = U+0435
+    body = "Sandbox base was \u04419f7\u04416\u0435 (history-stripped).\n"
+    path = _write(report_dir / "rv4_03_cyrillic.md", body)
+    rel = str(path.relative_to(REPO_ROOT))
+    proc = _run_guard(rel)
+    assert proc.returncode != 0, (
+        f"homoglyph SHA must fail closed; stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    )
+    combined = (proc.stdout + proc.stderr).lower()
+    assert (
+        "homoglyph" in combined
+        or "lookalike" in combined
+        or "non-ascii" in combined
+        or "does not resolve" in combined
+    )
+    assert "0 citations found" not in proc.stdout
+    assert "citation(s) resolved" not in proc.stdout
+
+
+# ---------------------------------------------------------------------------
+# RV4-04 / RV4-06 — default walk must match staged depth (recursive)
+# ---------------------------------------------------------------------------
+
+
+def test_nested_s2a_path_is_scanned_by_default_walk(report_dir: Path) -> None:
+    """RV4-04: default walk must see ``.s2a/**/*.md``, not only one level deep."""
+    nested = report_dir / "_rv4_nested" / "lane-report.md"
+    _write(nested, "Sandbox base was deadbee\n")
+    # Invoke with no path args so main() uses the default walk.
+    proc = subprocess.run(
+        [sys.executable, str(GUARD)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode != 0, (
+        f"nested .s2a report must fail default walk; stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    )
+    assert "deadbee" in proc.stderr
+
+
+def test_default_walk_and_staged_predicate_agree_on_nested_paths() -> None:
+    """RV4-04 / rg-006: default walk and --scan-staged share one path predicate."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("check_lane_report_shas", GUARD)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    # Nested and shallow paths must both be accepted by the shared predicate.
+    assert mod._is_lane_report_relpath(".s2a/top.md") is True
+    assert mod._is_lane_report_relpath(".s2a/nested/deep.md") is True
+    assert mod._is_lane_report_relpath("pkg/.s2a/nested/deep.md") is True
+    assert mod._is_lane_report_relpath("docs/tasks/note.md") is False
+    assert mod._is_lane_report_relpath(".s2a/notes.txt") is False
+
+    # Default collector must include nested paths under .s2a/.
+    nested_dir = REPO_ROOT / ".s2a" / "_fx3_walk_parity"
+    nested_dir.mkdir(parents=True, exist_ok=True)
+    nested_file = nested_dir / "deep.md"
+    nested_file.write_text("no tokens here\n", encoding="utf-8")
+    try:
+        defaults = {p.resolve() for p in mod._default_report_paths(REPO_ROOT)}
+        assert nested_file.resolve() in defaults, (
+            f"default walk missed nested path {nested_file}; sample={sorted(defaults)[:5]}"
+        )
+    finally:
+        nested_file.unlink(missing_ok=True)
+        nested_dir.rmdir()
+
+
+# ---------------------------------------------------------------------------
+# HARM-08 — block-scoped ignore (outside fenced verbatim output)
+# ---------------------------------------------------------------------------
+
+
+def test_ignore_next_block_skips_tokens_inside_following_fence(report_dir: Path) -> None:
+    """HARM-08: sha-guard:ignore-next-block covers the next fenced block only."""
+    path = _write(
+        report_dir / "ignore_next_block.md",
+        "\n".join(
+            [
+                "Prose before the capture.",
+                "<!-- sha-guard:ignore-next-block -->",
+                "```",
+                "synthetic head_sha='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+                "PASS: genuine SHA accepted: aaaaaaaa…",
+                "```",
+                "After the fence, unresolvable beef001 must still fail.",
+                "",
+            ]
+        ),
+    )
+    rel = str(path.relative_to(REPO_ROOT))
+    proc = _run_guard(rel)
+    assert proc.returncode != 0, (
+        f"token after ignored fence must still fail; stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    )
+    assert "beef001" in proc.stderr
+    assert "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" not in proc.stderr
+
+
+def test_ignore_next_block_required_when_fence_has_foreign_sha(report_dir: Path) -> None:
+    """HARM-08 control: foreign SHA inside a fence without the directive fails."""
+    path = _write(
+        report_dir / "fence_no_ignore.md",
+        "\n".join(
+            [
+                "```",
+                "synthetic head_sha='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+                "```",
+                "",
+            ]
+        ),
+    )
+    rel = str(path.relative_to(REPO_ROOT))
+    proc = _run_guard(rel)
+    assert proc.returncode != 0
+    assert "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" in proc.stderr
+
+
+def test_ignore_next_block_alone_allows_fence_with_foreign_sha(report_dir: Path) -> None:
+    """HARM-08: directive outside the fence restores verbatim content and passes."""
+    path = _write(
+        report_dir / "fence_with_ignore.md",
+        "\n".join(
+            [
+                "<!-- sha-guard:ignore-next-block -->",
+                "```",
+                "synthetic head_sha='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+                "PASS: genuine SHA accepted: aaaaaaaa…   (synthetic test fixture)",
+                "```",
+                "",
+            ]
+        ),
+    )
+    rel = str(path.relative_to(REPO_ROOT))
+    proc = _run_guard(rel)
+    assert proc.returncode == 0, f"expected pass; stdout={proc.stdout!r} stderr={proc.stderr!r}"

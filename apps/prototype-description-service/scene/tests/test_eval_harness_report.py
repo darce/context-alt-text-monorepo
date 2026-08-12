@@ -166,12 +166,22 @@ def test_score_run_record_emits_verdict_fail_when_wrong_names_present():
     assert "must_right_failed_images" in verdict
 
 
+# False-polarity trap never asserted by clean fixture captions (EVAL-19 / AUDIT-07).
+_MEASURABLE_TRAP_FACT = {
+    "text": "purple zebra balloon",
+    "kind": "object",
+    "polarity": "false",
+    "phrases": ["purple zebra balloon"],
+}
+
+
 def test_score_run_record_emits_verdict_pass_when_no_wrong_names():
     """Clean identities + measurable categories → pass with empty reasons.
 
     Fixture is fully gate-clean (F1d-1 / VLM6-A-05): no failed items, non-empty
     must_right and easy_wrong, fetch-time sha present, recognition_enabled, and
-    face_boxes + spatial_facts so positional/placement claim units have π>0.
+    face_boxes + spatial_facts + reference_facts trap so all gated categories
+    have π>0 (including fabricated_fact; EVAL-19).
     """
     record = {
         "schema": "acx-eval/v1",
@@ -247,6 +257,7 @@ def test_score_run_record_emits_verdict_pass_when_no_wrong_names():
                     "phrases": ["left of Bob Builder"],
                 }
             ],
+            "reference_facts": [dict(_MEASURABLE_TRAP_FACT)],
         },
         {
             "path": "mock_images/bob-beach.jpg",
@@ -261,6 +272,7 @@ def test_score_run_record_emits_verdict_pass_when_no_wrong_names():
             ],
             # No spatial claim required on every image — corpus placement
             # claims aggregate; alice-pool already supplies π>0.
+            "reference_facts": [dict(_MEASURABLE_TRAP_FACT)],
         },
     ]
     scored = score_run_record(record, entries)
@@ -2745,7 +2757,12 @@ def test_score_run_record_positional_vacuity_signal_on_real_golden():  # VLM6-B-
 
 
 def test_score_run_record_positional_vacuity_absent_when_measurable():  # VLM6-B-10 control
-    """When face_boxes exist and order is known, vacuity signal clears and pass is allowed."""
+    """When all gated categories are measurable, vacuity signal clears and pass is allowed.
+
+    Control for B-10: face_boxes (positional) + spatial_facts (placement) +
+    reference_facts trap (fabricated_fact) so every category has π>0; proves
+    the gate can go green and is not a permanent brick (TEST-15).
+    """
     record = {
         "schema": "acx-eval/v1",
         "kind": "run_record",
@@ -2804,6 +2821,7 @@ def test_score_run_record_positional_vacuity_absent_when_measurable():  # VLM6-B
                     "phrases": ["left of Bob Builder"],
                 }
             ],
+            "reference_facts": [dict(_MEASURABLE_TRAP_FACT)],
         },
     ]
     scored = score_run_record(record, entries)
@@ -2812,7 +2830,9 @@ def test_score_run_record_positional_vacuity_absent_when_measurable():  # VLM6-B
     assert pos["evaluable"] is True
     assert pos["status"] == "scored"
     assert pos["vacuity_signal"] is None
-    assert scored["verdict"]["verdict"] == ScoreVerdict.PASS.value
+    assert scored["hallucination"]["fabricated_fact_rate"] == pytest.approx(0.0)
+    assert scored["hallucination"]["images_with_traps"] >= 1
+    assert scored["verdict"]["verdict"] == ScoreVerdict.PASS.value, scored["verdict"]["reasons"]
 
 
 def test_build_score_verdict_treats_fabricated_fact_rate_none_as_vacuous():  # VLM6-C-05 / fx4
@@ -2958,10 +2978,11 @@ def test_score_verdict_not_ready_when_positional_and_placement_vacuous():  # VLM
 
 
 def test_score_verdict_pass_when_positional_and_placement_measurable():  # VLM6-A-05 control
-    """Discrimination control: once claim units are measurable, verdict can pass.
+    """Discrimination control: once every gated claim unit is measurable, verdict can pass.
 
-    Same clean identities as the vacuity test, but face_boxes + spatial_facts
-    populate positional and placement denominators (π>0).
+    Same clean identities as the vacuity test, but face_boxes + spatial_facts +
+    reference_facts trap populate positional, placement, and fabricated_fact
+    denominators (π>0). Proves the gate can go green (TEST-15).
     """
     record = {
         "schema": "acx-eval/v1",
@@ -3019,12 +3040,15 @@ def test_score_verdict_pass_when_positional_and_placement_measurable():  # VLM6-
                     "phrases": ["left of Bob Builder"],
                 }
             ],
+            "reference_facts": [dict(_MEASURABLE_TRAP_FACT)],
         },
     ]
     scored = score_run_record(record, entries)
     assert scored["faces"]["identification"]["positional"]["compared_images"] >= 1
     assert scored["placement"]["claims"] >= 1
     assert scored["placement"]["accuracy"] is not None
+    assert scored["hallucination"]["fabricated_fact_rate"] == pytest.approx(0.0)
+    assert scored["hallucination"]["images_with_traps"] >= 1
     verdict = scored["verdict"]
     assert verdict["verdict"] == ScoreVerdict.PASS.value, verdict["reasons"]
     assert verdict["reasons"] == []

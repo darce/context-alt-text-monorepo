@@ -685,10 +685,22 @@ def _write_score_manifest(tmp_path, entries, roster, name="golden.json"):
     return manifest_path, _manifest_sha(load_manifest(str(manifest_path), skip_hash_verification=True))
 
 
+# False-polarity trap phrases that clean fixture captions never assert.
+# Unique object tokens so placement/name captions stay fabrication-clean (TEST-15).
+_MEASURABLE_TRAP_PHRASE = "purple zebra balloon"
+_MEASURABLE_TRAP_FACT = {
+    "text": _MEASURABLE_TRAP_PHRASE,
+    "kind": "object",
+    "polarity": "false",
+    "phrases": [_MEASURABLE_TRAP_PHRASE],
+}
+
+
 def _single_name_measurable_fields(name: str, *, x: float = 0.4) -> dict:
-    """face_boxes + spatial_facts so positional/placement claim units have π>0.
+    """face_boxes + spatial_facts + reference_facts trap so all gated categories have π>0.
 
     Caption must assert the foreground phrase for placement claims to fire.
+    Trap phrases must not appear in clean captions (rate → 0.0, not None; EVAL-19).
     FaceBox schema is centre-point {x,y,w,h,name,source} (rg-005).
     """
     return {
@@ -700,6 +712,9 @@ def _single_name_measurable_fields(name: str, *, x: float = 0.4) -> dict:
                 "phrases": ["in the foreground"],
             }
         ],
+        # At least one false-polarity trap so fabricated_fact_rate is measurable
+        # (None when traps=0 is category-vacuity → not_ready; AUDIT-07).
+        "reference_facts": [dict(_MEASURABLE_TRAP_FACT)],
     }
 
 
@@ -707,9 +722,9 @@ def _w1_audience_manifest_and_record(tmp_path, *, inject_wrong_name: bool = Fals
     """One publishable celeb (media 10) + one local-only personal photo (media 20).
 
     Default is a clean successful score (correct local identity) with measurable
-    positional + placement categories (π>0) so verdict can honestly be pass.
-    Pass ``inject_wrong_name=True`` when the case needs a wrong-name floor breach
-    (public redaction, wrong-name failure path).
+    positional + placement + fabricated-fact categories (π>0) so verdict can
+    honestly be pass. Pass ``inject_wrong_name=True`` when the case needs a
+    wrong-name floor breach (public redaction, wrong-name failure path).
     """
     from scripts.eval_harness.schema import SCHEMA, DocKind
 
@@ -1085,8 +1100,8 @@ def test_cmd_score_exits_nonzero_when_wrong_name_rate_breaches_floor(tmp_path, m
 def test_cmd_score_exits_zero_when_no_wrong_names_and_no_failures(tmp_path, monkeypatch):
     """Complementary green path: clean identities + measurable categories → exit 0 / pass.
 
-    Fixture supplies face_boxes + spatial_facts (π>0) so the honest verdict is
-    pass, not not_ready (VLM6-A-05 / OBS-04).
+    Fixture supplies face_boxes + spatial_facts + reference_facts trap (π>0)
+    so the honest verdict is pass, not not_ready (VLM6-A-05 / OBS-04).
     """
     from scripts.eval_harness.schema import SCHEMA, DocKind
 
@@ -1156,8 +1171,9 @@ def test_cmd_score_exits_zero_when_no_wrong_names_and_no_failures(tmp_path, monk
 def _clean_score_manifest_and_record(tmp_path):
     """Minimal clean caption run-record + manifest for score determinism tests.
 
-    Includes face_boxes + spatial_facts + asserted placement so score exits 0
-    with verdict=pass (OBS-04 / VLM6-A-05 — vacuous fixtures are not_ready).
+    Includes face_boxes + spatial_facts + reference_facts trap + asserted
+    placement so score exits 0 with verdict=pass (OBS-04 / VLM6-A-05 —
+    vacuous fixtures are not_ready).
     """
     from scripts.eval_harness.schema import SCHEMA, DocKind
 

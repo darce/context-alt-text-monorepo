@@ -1,186 +1,236 @@
-# VLM-6 fx6 — cross-lane wiring report
+# VLM-6 fx6 — CLI sample-size fixtures + SHA provenance de-dupe
 
-Lane: `fx6` · Branch: `feature/vlm-6-fx6` (this lane's branch) · Base: `e2575b5ef09ed75de7f792546439d53624c9d344`
+Lane: `fx6` · Branch: `fix/fx6` · Base: `7d868a34a86b3b9d25eb6a84b6dc909eb2185ccf`
 
-Scope: `report.py`, `cli.py`, `test_eval_harness_report.py`, `test_eval_harness_cli.py`.
+Commits:
+sha-guard:ignore-next-block
+```
+d33b66aa fix(fx6): expand CLI score fixtures to SCORE_PASS_MIN_SCORED_IMAGES=5
+723fb272 fix(fx6): de-duplicate HEAD-SHA provenance guard into provenance_sha
+```
 
-Heuristics: `TEST-15`, `EVAL-04`, `EVAL-13`, `EVAL-19`, `EVAL-23`, `AUDIT-07`, `rg-002`, `rg-005`, `rg-015`, `sr-001`, `sr-006`, `sr-007`.
+Heuristics: `TEST-15`, `AUDIT-07`, `EVAL-23`, `rg-006`, `rg-015`, `sr-001`, `sr-007`.
 
 ---
 
-## Findings fixed
+## 1. Task 1 — seven CLI tests vs sample-size floor
 
-### VLM6-B-03 — centre-based L→R on production positional path
+Wave A (fx1) raised `SCORE_PASS_MIN_SCORED_IMAGES` 2→5. All seven failed identically:
 
-**Files:** `report.py` (`score_run_record` positional wiring) · `cli.py` (`_extract_identities` + fetch call site)
-
-**Behaviour change:** Production positional scoring calls `predicted_names_for_positional` (centre-x + leftmost-wins) instead of raw `identity_names` list order; wire extract delegates to `sort_identity_rows_by_normalized_centre` so corner-x never forks a third rule. Unit dims fallback preserves absolute centre-x order when capture size is missing.
-
-**RED (unfixed `score_run_record` + corner extract):**
 ```
-position_accuracy 0.0
-position_hits 0 / 2
-exact_order 0.0 swaps 1
-corner-based names: ['Wide Right', 'Narrow Left'] ordering positional
-```
-Assertion target (GREEN): `pos["position_accuracy"] == 1.0` and extract names `['Narrow Left', 'Wide Right']`.
-
-**GREEN:**
-```
-test_score_run_record_positional_uses_centre_x_not_corner_x PASSED
-test_extract_identities_orders_by_centre_x_not_corner_x PASSED
-assert pos["position_accuracy"] == pytest.approx(1.0)
-assert names == ["Narrow Left", "Wide Right"]
+SystemExit: score category-vacuity gate: verdict=not_ready
+  (sample-size: scored=2 < min=5 (...); not adoption-eligible; ...)
 ```
 
----
+### Classification (all seven = **(a)**)
 
-### VLM6-B-10 — positional vacuity in report JSON + verdict consumption
+| # | Test | Class | Reasoning |
+|---|------|-------|-----------|
+| 1 | `test_cmd_score_public_audience_emits_redacted_public_artifact` | **(a)** | Subject is PUBLIC redaction (local name/path/base_url withheld). 2-image corpus was incidental. |
+| 2 | `test_cmd_score_default_local_emits_no_public_artifact` | **(a)** | Subject is default-audience byte-compat (no public artifact on success). |
+| 3 | `test_cmd_score_exits_zero_when_no_wrong_names_and_no_failures` | **(a)** | Subject is clean green path (pass, wrong_name_rate=0, measurable cats). Docstring mentioned n=2 only as floor clearance. |
+| 4 | `test_cli_score_check_determinism_runs_cross_process_guard` | **(a)** | Subject is cross-process determinism guard wiring. |
+| 5 | `test_cli_score_determinism_certifies_written_rubric_gate` | **(a)** | Subject is GATE-05: certified bytes share `rubric_gate=skip` with written artifact. |
+| 6 | `test_cli_score_audience_public_check_determinism_covers_both_labels` | **(a)** | Subject is dual-label determinism under `--audience public`. |
+| 7 | `test_score_freeze_certification_exits_nonzero_on_anchor_mismatch` | **(a)** | Subject is ANCHOR_MISMATCH on tampered `--expect-report`. **Critical:** first `main()` (check-determinism only) died on sample-size `not_ready` *before* the mismatch path. With n=2, the test could never exercise freeze-cert mismatch; a non-zero exit alone would be a false green. |
 
-**Files:** `report.py` (positional block fields; `build_score_verdict` status/evaluable; MD vacuity line)
+None were **(b)** (no test genuinely owns the small-corpus path — report tests already cover n=2 / n=4 `not_ready`). None were **(c)** (Wave A did not break production; fixtures lagged the floor).
 
-**Behaviour change:** Report emits `evaluable` / `status` / `vacuity_signal` / `sampling_frame` on `faces.identification.positional`. Verdict treats `status=not_evaluable` / `evaluable=False` / `compared_images=0` as category-vacuity → `not_ready` (one `ScoreVerdict` enum, sr-007).
+### Fix
 
-**RED (unfixed report JSON on real golden shape):**
+Shared helpers expanded (not bulk-renamed tests):
+
+- `_clean_score_manifest_and_record` → 5 measurable single-name images (pads if floor rises).
+- `_w1_audience_manifest_and_record` → 4 publishable + 1 local-only (`withheld_items=1` preserved; public `per_image` ids updated to `{10,11,12,13}`).
+
+`SCORE_PASS_MIN_SCORED_IMAGES` **not** lowered (`sr-001`).
+
+### RED / GREEN (verbatim)
+
+**RED (pre-fix base, all seven):**
 ```
-vacuity fields {'evaluable': None, 'status': None, 'vacuity_signal': None, 'sampling_frame': None}
-```
-(keys absent → `.get` yields None; no machine-readable block)
-
-**GREEN:**
-```
-test_score_run_record_positional_vacuity_signal_on_real_golden PASSED
-assert pos["evaluable"] is False
-assert pos["status"] == "not_evaluable"
-assert pos["vacuity_signal"]  # non-empty, names π=0
-assert scored["verdict"]["verdict"] == ScoreVerdict.NOT_READY.value
-
-test_score_run_record_positional_vacuity_absent_when_measurable PASSED
-assert pos["evaluable"] is True
-assert pos["status"] == "scored"
-assert pos["vacuity_signal"] is None
-assert scored["verdict"]["verdict"] == ScoreVerdict.PASS.value
-```
-
----
-
-### Reconcile seven CLI tests to honest `not_ready` / measurable pass
-
-**File:** `test_eval_harness_cli.py`
-
-All seven originally failed as `assert 'not_ready' == 'pass'` (or exit-0 assumed over vacuous fixture). **Did not weaken the verdict.**
-
-| Test (final name) | Old assertion | New assertion | Why honest |
-| --- | --- | --- | --- |
-| `test_cmd_score_public_audience_emits_redacted_public_artifact` | `verdict=="pass"`, exit 0 on vacuous W1 fixture | fixture gains face_boxes+spatial_facts+placement claim; still `verdict=="pass"`, exit 0 | Tests PUBLIC redaction happy path — needs a genuinely measurable clean run, not a dishonest pass |
-| `test_cmd_score_default_local_emits_no_public_artifact` | `verdict=="pass"` on vacuous W1 | same measurable W1 fixture; `verdict=="pass"` | Same — LOCAL default success must be real pass |
-| `test_cmd_score_exits_zero_when_no_wrong_names_and_no_failures` | `verdict=="pass"` without face_boxes | measurable single-image fixture; `verdict=="pass"`, compared_images≥1, claims≥1 | Name claims exit 0 — only valid with π>0 categories |
-| `test_score_guard_rubric_gate_skip_bypasses_must_right_gate` | skip → `pass_ungated` on vacuous corpus | measurable corpus; skip → `pass_ungated` exit 0; enforce still must-right fail | skip only exempts must-right; pass_ungated requires measurable categories |
-| `test_score_persisted_verdict_not_ready_on_real_golden` (was `…_control_pass_on_real_golden`) | `verdict=="pass"`, reasons=[], exit 0 | `verdict=="not_ready"`, positional+placement reasons, exit ≠0, B-10 fields present | Real golden has face_boxes/spatial_facts on **0/37** — pass is dishonest |
-| `test_score_persisted_verdict_skip_still_not_ready_on_real_golden` (was `…_pass_ungated_on_rubric_gate_skip`) | skip → `pass_ungated`, reasons=[], exit 0 | skip → `not_ready`, exit ≠0, rubric_gate=skip still recorded | skip does not clear category vacuity |
-| `test_score_f1d2_control_clean_real_golden_not_ready` (was `…_still_passes`) | `verdict=="pass"`, reasons=[] | `verdict=="not_ready"`, reasons non-empty, must_right_defined=34, scored=37 | Controls denominators while readiness correctly refuses pass |
-
-**RED (pre-test-update, post-fx2 merge):**
-```
-FAILED ...::test_score_persisted_verdict_control_pass_on_real_golden - AssertionError: assert 'not_ready' == 'pass'
-  - pass
-  + not_ready
+FAILED ... test_cmd_score_public_audience_emits_redacted_public_artifact
+  SystemExit: score category-vacuity gate: verdict=not_ready (sample-size: scored=2 < min=5 ...)
+FAILED ... test_cmd_score_default_local_emits_no_public_artifact  — same
+FAILED ... test_cmd_score_exits_zero_when_no_wrong_names_and_no_failures — same
+FAILED ... test_cli_score_check_determinism_runs_cross_process_guard — same
+FAILED ... test_cli_score_determinism_certifies_written_rubric_gate — same
+FAILED ... test_cli_score_audience_public_check_determinism_covers_both_labels — same
+FAILED ... test_score_freeze_certification_exits_nonzero_on_anchor_mismatch
+  (dies on first main() with not_ready; never reaches ANCHOR_MISMATCH)
+7 failed, 124 deselected in 25.98s
 ```
 
-**GREEN:** 7/7 updated tests pass (plus helpers `_single_name_measurable_fields`, measurable `_corpus_entries` / `_clean_score_manifest_and_record`).
-
----
-
-### VLM6-OBS-04 — process exit matches artifact
-
-**File:** `cli.py` (`_cmd_score` post-gate)
-
-**Behaviour change:** After existing integrity/quality gates, if persisted `verdict==not_ready`, raise `ScoreGateError` with class token `score category-vacuity gate` so process exit is non-zero. No silent green over unmeasurable corpus.
-
-**RED (artifact not_ready, process still green before gate):**
+**GREEN (post-fix):**
 ```
-# test_score_persisted_verdict_control_pass_on_real_golden (pre OBS-04 exit gate)
-assert main([...]) is None   # exit 0
-# stdout: verdict=not_ready ...
-AssertionError: assert 'not_ready' == 'pass'
+.......                                                                  [100%]
+7 passed, 124 deselected in 25.67s
 ```
 
-**GREEN:**
+### TEST-15 discrimination (expanded fixtures still load-bearing)
+
+**Probe 1 — public redaction still fails if local name leaks:**
 ```
-test_score_persisted_verdict_not_ready_on_real_golden PASSED
-with pytest.raises(SystemExit) as excinfo:
-    main(["score", ...])
-assert excinfo.value.code != 0
-assert "category-vacuity" in str(excinfo.value).lower() or "not_ready" in ...
-# message includes: score category-vacuity gate: verdict=not_ready (...)
+RED (expected): AssertionError — local name present in public artifact after simulated leak
+  local_name='Jane Doe Private' found_in_public=True
+```
+
+**Probe 2 — freeze cert fails on ANCHOR_MISMATCH, not sample-size:**
+```
+  first score verdict=pass scored=5
+RED (expected): SystemExit: determinism check ANCHOR_MISMATCH [score]: fresh re-score does not match --expect-report ...
+  confirmed ANCHOR_MISMATCH (not sample-size not_ready)
+```
+
+**Probe 3 — n=4 still `not_ready` (floor still binds):**
+```
+scored=4/4 ... verdict=not_ready
+RED at n-1 (expected): score category-vacuity gate: verdict=not_ready
+  (sample-size: scored=4 < min=5 (...))
 ```
 
 ---
 
-### fabricated_fact_rate `None` coupling (fx4 / VLM6-C-05)
+## 2. Task 2 — one SHA guard
 
-**Files:** `report.py` (`build_score_verdict`) · `cli.py` (`_compare_vacuous_categories`) · MD already None-safe via `_fmt`
+### Shared module
 
-**Behaviour change:** `fabricated_fact_rate is None` → category-vacuity reason → `not_ready` (not a clean 0.0 pass). Numeric `0.0` still allowed when traps exist and none fired. Compare treats `rate is None` as non-observable. Consumers accept both `0.0` and `None`.
+`scripts/eval_harness/provenance_sha.py` → `normalize_head_sha(...)`.
 
-**RED (inject None on otherwise-passable scored dict without vacuity fold):**
+Call sites:
+- `describe_baseline.resolve_head_sha` → `empty_policy="none"`, `verify_git=True`
+- `promote_atomic.validate_live_head_sha` → thin wrapper, **name+signature preserved** for fx5 generators; `empty_policy="refuse"`; always verifies (see below)
+
+### Reconciliation decisions
+
+| Difference | Decision | Why |
+|------------|----------|-----|
+| Empty / whitespace | Shared supports `empty_policy` ∈ {`none`,`refuse`}. `resolve_head_sha` → `none` (env/module unset). `validate_live_head_sha` → `refuse` (CLI flag must not silent-exit pin mode, RV2-05). Both agree empty is not a valid SHA; call-site policy differs because env-unset ≠ flag-present-empty. | Preserves both contracts without two format implementations. |
+| Uppercase | Shared `strip().lower()` then hex40. Both accept upper. | Already agreed; one path now. |
+| Git verify | **Always on**, with **degrade** when git missing or cwd not a work tree (fx4 shape). `verify_git` param retained on `validate_live_head_sha` for signature stability but **cannot open the guard** (`del verify_git`; always passes `True`). Hard-fail-only-when-flag (fx2) replaced by degrade. | One policy stops independent drift open (`rg-015`). Offline/non-repo still records format-valid SHAs. |
+
+### Divergence test
+
+`test_fx6_head_sha_entry_points_agree_on_accept_refuse_table` drives the same table through both entry points:
+
+- Shared accept/refuse: `None`, zero-sentinel, short/non-hex, arbitrary `"a"*40` (refuse when git answers), real HEAD, uppercase real HEAD.
+- Deliberate empty-policy difference asserted separately.
+- Git-absent degrade: both accept format-valid fake hex.
+
+### RED / GREEN (shared guard)
+
+**RED:**
 ```
-# Without fab None handling: verdict would be pass with empty reasons
-# (only positional/placement checked). After fix:
-assert verdict["verdict"] == ScoreVerdict.NOT_READY.value  # would fail as pass
+RED: HEAD_SHA is the fabricated 40-zero sentinel; ...
+RED: HEAD_SHA='aaaaaaaa...' is not a resolvable commit in this repository ...
+RED: HEAD_SHA must not be empty; omit the flag ...
 ```
 
 **GREEN:**
 ```
-test_build_score_verdict_treats_fabricated_fact_rate_none_as_vacuous PASSED
-assert verdict["verdict"] == ScoreVerdict.NOT_READY.value
-assert any("fabricated_fact" in r for r in verdict["reasons"])
-# control: rate=0.0 + traps>0 → pass
-assert verdict_ok["verdict"] == ScoreVerdict.PASS.value
+GREEN: both accept <real HEAD>
+GREEN empty: resolve→None; validate→refuse
+24 passed  (test_describe_baseline_pin_provenance.py, incl. divergence test)
 ```
 
----
-
-## Expected-red (not this lane)
-
-Determinism-anchor freeze tests remain red until the serialized regen lane rewrites frozen bytes (`sr-001` — do not loosen or skip):
-
-- `test_generator_regenerates_byte_identical_committed_anchor`
-- `test_expect_report_matches_committed_freeze_green`
-- `test_face_generator_regenerates_byte_identical_committed_anchor`
-- `test_face_expect_report_matches_committed_freeze_green`
-- `test_cli_score_face_expect_report_end_to_end_green`
-
-Owner: regen lane after fx4 + fx6 land.
+Collateral (not owned but required): `test_s4_04_non_pin_does_not_null_live_provenance` used `"b"*40`; under default-on verify that is correctly refused — switched to real worktree HEAD. Monkeypatch for degrade-without-git retargeted at `provenance_sha.subprocess`.
 
 ---
 
-## Cross-lane requests
+## 3. Task 3 — `_fmt_prov` empty-string branch
 
-None blocking for this lane's assigned work. Optional notes for others:
+**Do not edit `report.py` (unowned).** Evidence only.
 
-1. **fx4 / caption_metrics:** When `fabricated_fact_rate` returns `None` for no-trap corpora, consumers in this lane already treat it as vacuity. No further report/cli change expected.
-2. **Regen lane:** Re-freeze determinism anchors after this branch merges; vacuity fields + centre-ordered positional change report bytes.
-3. **Docs/README (not owned):** Document that `score` exits non-zero on `verdict=not_ready` (OBS-04) and that PUBLIC happy-path fixtures need measurable categories.
-
----
-
-## Deferred
-
-| Item | Reason |
-| --- | --- |
-| Real golden `verdict=pass` | Requires Golden-100 / Slice 1 population of `face_boxes` + `spatial_facts` (π>0). Gate is honest *today* via `not_ready` + non-zero exit. |
-| Set-based ID scoring right-names-on-wrong-faces | Positional path is now centre-correct; set-based P/R still order-blind until box-grounded identity claims exist corpus-wide (Slice 1). |
-
----
-
-## Verification summary
-
-```
-# RED evidence captured pre-fix (B-03, B-10, 7 CLI pass assertions, OBS-04 exit 0)
-# GREEN battery (finding tests): 12 passed
-# Owned modules full: scene/tests/test_eval_harness_cli.py + test_eval_harness_report.py
-#   → 230 passed in ~61s
+```python
+def _fmt_prov(value, *, default="unknown"):
+    if value is None: return "null"
+    if isinstance(value, bool): return "true"/"false"
+    if value == "": return default   # ← branch in question
+    return str(value)
 ```
 
-Commits: conventional `fix(vlm-6): ...` on this lane's branch (no Co-Authored-By).
+**For `provenance.head_sha` specifically — effectively dead after Wave A:**
+
+- `resolve_head_sha` / `_head_sha` paths return `None` or a 40-hex string, never `""` (`describe_baseline` comment: `# None when unset — never "" (HARM-03)`).
+- Anchor pin path: `head_sha=""` is an *input* to `build_run_record`, which does `live_head = head_sha or None` before writing provenance; pin mode then forces `record["provenance"]["head_sha"] = None`.
+- Direct probe: `_fmt_prov("") == "unknown"`, `_fmt_prov(None) == "null"`.
+
+**Not provably dead for all `_fmt_prov` call sites:** used for `base_url`, `manifest_sha256`, `started_at`, face model fields, etc. An empty string on any of those still hits the branch. Adversarial / hand-edited JSON could also present `""`.
+
+**Follow-up (not this lane):** either keep the branch as defence-in-depth, or assert at report-build that provenance string fields are `None | non-empty` and drop the `""` arm with a unit test that fails if a producer reintroduces `""`.
+
+---
+
+## 4. Disagreements / counter-probes
+
+- **fx1 n=5 derivation:** agreed. `0.5^5 = 0.03125 < 0.05`; n=2 was never justified. Did not reopen the constant.
+- **Empty-string "make both agree":** fully identical empty handling would either re-open RV2-05 (CLI empty → None) or break describe unset-via-empty-env. Parameterized policy on one shared core is the honest reconciliation; divergence test documents the deliberate difference.
+- **`verify_git` signature force-on:** generators still pass `verify_git=bool(args.verify_live_head_sha)` (default False). Wrapper ignores it so fx5 needs no edit this wave. Flag becomes a no-op until a follow-up removes it (`rg-006` doc sync).
+
+---
+
+## 5. Full suite
+
+```
+cd apps/prototype-description-service
+./.venv/bin/python -m pytest scene/tests/ -q -p no:randomly
+# 3 failed, 1301 passed, 4 skipped, 31 warnings in 179.66s
+```
+
+### Expected-red (fx5 owns — not fixed)
+
+1. `test_eval_harness_face_determinism_anchor.py::test_face_generator_regenerates_byte_identical_committed_anchor`
+2. `test_eval_harness_face_determinism_anchor.py::test_face_expect_report_matches_committed_freeze_green`
+3. `test_eval_harness_face_determinism_anchor.py::test_cli_score_face_expect_report_end_to_end_green`
+
+### Unexpected-red
+
+None.
+
+---
+
+## 6. `git diff --stat` against `7d868a34`
+
+```
+ .../tests/test_describe_baseline_pin_provenance.py |  72 ++++-
+ .../scene/tests/test_eval_harness_cli.py           | 329 ++++++++++++---------
+ .../scripts/eval_harness/describe_baseline.py      |  69 +----
+ .../scripts/eval_harness/promote_atomic.py         |  64 ++--
+ .../scripts/eval_harness/provenance_sha.py         | 121 ++++++++
+ 5 files changed, 407 insertions(+), 248 deletions(-)
+```
+
+(Report file committed separately; may add one more file to the stat.)
+
+---
+
+## 7. What I could not verify
+
+- Live generator CLI with `--live-head-sha` against a real promote (no network / no freeze rewrite this lane).
+- That fx5's face-anchor freezes are the sole cause of the 3 reds (assumed per brief; did not bisect scoring vs freeze).
+- Whether any non-head_sha provenance field still emits `""` in production paths (would need a full producer audit).
+
+---
+
+## 8. Cross-lane requests
+
+| To | Ask |
+|----|-----|
+| **fx5** | Own the 3 face-determinism-anchor failures. After regenerating freezes, consider dropping `--verify-live-head-sha` (now a no-op) or documenting always-on verify. |
+| **coord / docs** | README exit-prefix / flag docs may still describe verify as opt-in (`rg-006`). |
+| **follow-up** | `_fmt_prov` `""→unknown` branch: keep as defence or delete with a producer invariant test (unowned `report.py`). |
+
+---
+
+## Files touched
+
+Owned:
+- `scene/tests/test_eval_harness_cli.py` (task 1)
+- `scripts/eval_harness/describe_baseline.py`, `promote_atomic.py` (task 2 wrappers)
+- `scripts/eval_harness/provenance_sha.py` (new)
+- `.s2a/vlm6-fx6-report.md` (this)
+
+Collateral (required by task-2 default-on verify):
+- `scene/tests/test_describe_baseline_pin_provenance.py` (real HEAD fixture + degrade monkeypatch + divergence test)
+
+Not touched: fx5 generators, face anchor freezes/seeds, `report.py`.

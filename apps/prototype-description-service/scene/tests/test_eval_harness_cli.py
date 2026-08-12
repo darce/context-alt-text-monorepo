@@ -720,34 +720,90 @@ def _single_name_measurable_fields(name: str, *, x: float = 0.4) -> dict:
     }
 
 
+# Publishable padding for the W1 audience fixture. One public + one private is
+# enough for redaction semantics; RV1-03 raises the adoption sample-size floor to
+# SCORE_PASS_MIN_SCORED_IMAGES=5, so three extra publishable rows clear the floor
+# without changing withheld_items=1 (the single local-only photo).
+_W1_PUBLIC_PAD = (
+    (11, "celebs01/biden-flags.jpg", "Joe Biden"),
+    (12, "celebs01/harris-stage.jpg", "Kamala Harris"),
+    (13, "celebs01/clinton-desk.jpg", "Hillary Clinton"),
+)
+
+
 def _w1_audience_manifest_and_record(tmp_path, *, inject_wrong_name: bool = False):
-    """One publishable celeb (media 10) + one local-only personal photo (media 20).
+    """Four publishable celebs + one local-only personal photo (media 20).
 
     Default is a clean successful score (correct local identity) with measurable
     positional + placement + fabricated-fact categories (π>0) so verdict can
     honestly be pass. Pass ``inject_wrong_name=True`` when the case needs a
     wrong-name floor breach (public redaction, wrong-name failure path).
+
+    Five scored images clear SCORE_PASS_MIN_SCORED_IMAGES (RV1-03); the single
+    non-publishable row keeps public redaction assertions (withheld_items=1).
     """
+    from scripts.eval_harness.report import SCORE_PASS_MIN_SCORED_IMAGES
     from scripts.eval_harness.schema import SCHEMA, DocKind
 
     local_identity = "Wrong Celebrity" if inject_wrong_name else _W1_LOCAL_NAME
-    entries = [
-        {
-            "path": _W1_PUBLIC_PATH,
-            "sha256": "a" * 64,
-            "media_id": 10,
-            "face_count": 1,
-            "present_identities": [_W1_PUBLIC_NAME],
-            "context_pack": {},
-            "base_caption": "",
-            "must_right": [_W1_PUBLIC_NAME],
-            # Non-empty easy_wrong so independent vacuity gates do not fire before
-            # the wrong-name floor this fixture can exercise (F1-1).
-            "easy_wrong": [_W1_LOCAL_NAME],
-            "policy": {"recognition_enabled": True},
-            "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
-            **_single_name_measurable_fields(_W1_PUBLIC_NAME, x=0.3),
-        },
+    public_rows = [
+        (_W1_PUBLIC_PATH, "a" * 64, 10, _W1_PUBLIC_NAME, 0.3, "at a podium"),
+        *[
+            (path, f"{media_id:064x}", media_id, name, 0.3 + 0.05 * (i + 1), "outdoors")
+            for i, (media_id, path, name) in enumerate(_W1_PUBLIC_PAD)
+        ],
+    ]
+    entries: list[dict] = []
+    items: list[dict] = []
+    roster = [_W1_PUBLIC_NAME, _W1_LOCAL_NAME]
+    for path, sha, media_id, name, x, scene in public_rows:
+        if name not in roster:
+            roster.append(name)
+        entries.append(
+            {
+                "path": path,
+                "sha256": sha,
+                "media_id": media_id,
+                "face_count": 1,
+                "present_identities": [name],
+                "context_pack": {},
+                "base_caption": "",
+                "must_right": [name],
+                # Non-empty easy_wrong so independent vacuity gates do not fire before
+                # the wrong-name floor this fixture can exercise (F1-1).
+                "easy_wrong": [_W1_LOCAL_NAME],
+                "policy": {"recognition_enabled": True},
+                "provenance": {
+                    "source": "celeb",
+                    "license": "public_domain",
+                    "publishable": True,
+                },
+                **_single_name_measurable_fields(name, x=x),
+            }
+        )
+        items.append(
+            {
+                "media_id": media_id,
+                "path": path,
+                "describe": {
+                    "alt_text_draft": f"{name} in the foreground {scene}.",
+                    "visual_facts": {"objects": []},
+                },
+                "identities": [
+                    {
+                        "name": name,
+                        "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                        "unpositioned": False,
+                    }
+                ],
+                "face_count": 1,
+                "identity_ordering": "positional",
+                "image_width": 200,
+                "image_height": 200,
+                "error": None,
+            }
+        )
+    entries.append(
         {
             "path": _W1_LOCAL_PATH,
             "sha256": "b" * 64,
@@ -759,11 +815,38 @@ def _w1_audience_manifest_and_record(tmp_path, *, inject_wrong_name: bool = Fals
             "must_right": [_W1_LOCAL_NAME],
             "easy_wrong": [_W1_PUBLIC_NAME],
             "policy": {"recognition_enabled": True},
-            "provenance": {"source": "localwp", "license": "consented", "publishable": False},
+            "provenance": {
+                "source": "localwp",
+                "license": "consented",
+                "publishable": False,
+            },
             **_single_name_measurable_fields(_W1_LOCAL_NAME, x=0.5),
-        },
-    ]
-    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, [_W1_PUBLIC_NAME, _W1_LOCAL_NAME])
+        }
+    )
+    items.append(
+        {
+            "media_id": 20,
+            "path": _W1_LOCAL_PATH,
+            "describe": {
+                "alt_text_draft": f"{_W1_LOCAL_NAME} in the foreground at a party.",
+                "visual_facts": {"objects": []},
+            },
+            "identities": [
+                {
+                    "name": local_identity,
+                    "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                    "unpositioned": False,
+                }
+            ],
+            "face_count": 1,
+            "identity_ordering": "positional",
+            "image_width": 200,
+            "image_height": 200,
+            "error": None,
+        }
+    )
+    assert len(entries) >= SCORE_PASS_MIN_SCORED_IMAGES
+    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, roster)
     record_path = tmp_path / "run-x.json"
     record_path.write_text(
         json.dumps(
@@ -776,48 +859,7 @@ def _w1_audience_manifest_and_record(tmp_path, *, inject_wrong_name: bool = Fals
                     "head_sha": "f" * 40,
                     "started_at": "t",
                 },
-                "items": [
-                    {
-                        "media_id": 10,
-                        "path": _W1_PUBLIC_PATH,
-                        "describe": {
-                            "alt_text_draft": f"{_W1_PUBLIC_NAME} in the foreground at a podium.",
-                            "visual_facts": {"objects": []},
-                        },
-                        "identities": [
-                            {
-                                "name": _W1_PUBLIC_NAME,
-                                "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
-                                "unpositioned": False,
-                            }
-                        ],
-                        "face_count": 1,
-                        "identity_ordering": "positional",
-                        "image_width": 200,
-                        "image_height": 200,
-                        "error": None,
-                    },
-                    {
-                        "media_id": 20,
-                        "path": _W1_LOCAL_PATH,
-                        "describe": {
-                            "alt_text_draft": f"{_W1_LOCAL_NAME} in the foreground at a party.",
-                            "visual_facts": {"objects": []},
-                        },
-                        "identities": [
-                            {
-                                "name": local_identity,
-                                "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
-                                "unpositioned": False,
-                            }
-                        ],
-                        "face_count": 1,
-                        "identity_ordering": "positional",
-                        "image_width": 200,
-                        "image_height": 200,
-                        "error": None,
-                    },
-                ],
+                "items": items,
             }
         )
     )
@@ -850,8 +892,11 @@ def test_cmd_score_public_audience_emits_redacted_public_artifact(tmp_path, monk
     public_json = (tmp_path / "run-x-report.public.json").read_text()
     public_md = (tmp_path / "run-x-report.public.md").read_text()
     scored = json.loads(public_json)
-    assert {p["media_id"] for p in scored["per_image"]} == {10}  # only publishable scored
-    assert scored["redaction"]["withheld_items"] == 1
+    # Only publishable media_ids on the public surface; pad rows + Obama, never media 20.
+    public_ids = {10} | {mid for mid, _path, _name in _W1_PUBLIC_PAD}
+    assert {p["media_id"] for p in scored["per_image"]} == public_ids
+    assert 20 not in {p["media_id"] for p in scored["per_image"]}
+    assert scored["redaction"]["withheld_items"] == 1  # single local-only row
     for blob in (public_json, public_md):
         assert _W1_LOCAL_PATH not in blob
         assert _W1_LOCAL_NAME not in blob
@@ -1099,47 +1144,82 @@ def test_cmd_score_exits_nonzero_when_wrong_name_rate_breaches_floor(tmp_path, m
     assert report["verdict"]["reasons"]
 
 
+# Clean green-path person pairs. Length must clear SCORE_PASS_MIN_SCORED_IMAGES
+# (RV1-03 n=5); each row is independently measurable so sample-size is not the
+# only reason a clean score can pass.
+_CLEAN_SCORE_PERSONS = (
+    ("Alice Example", "Bob Builder", "alice", "outdoors"),
+    ("Bob Builder", "Alice Example", "bob", "outdoors"),
+    ("Carol Decoy", "Dana Friend", "carol", "park"),
+    ("Dana Friend", "Carol Decoy", "dana", "cafe"),
+    ("Eve Visitor", "Frank Guest", "eve", "beach"),
+)
+
+
 def _clean_score_manifest_and_record(tmp_path, *, stem: str = "run-det"):
     """Minimal clean caption run-record + manifest for score green-path tests.
 
     Includes face_boxes + spatial_facts + reference_facts trap + asserted
     placement so score exits 0 with verdict=pass (OBS-04 / VLM6-A-05 —
-    vacuous fixtures are not_ready). Two scored images clear the S2-05
-    sample-size floor (SCORE_PASS_MIN_SCORED_IMAGES=2).
+    vacuous fixtures are not_ready). Five scored images clear the RV1-03
+    sample-size floor (SCORE_PASS_MIN_SCORED_IMAGES=5).
     """
+    from scripts.eval_harness.report import SCORE_PASS_MIN_SCORED_IMAGES
     from scripts.eval_harness.schema import SCHEMA, DocKind
 
-    entries = [
-        {
-            "path": "mock_images/alice.jpg",
-            "sha256": "a" * 64,
-            "media_id": 1,
-            "face_count": 1,
-            "present_identities": ["Alice Example"],
-            "context_pack": {},
-            "base_caption": "",
-            "must_right": ["Alice Example"],
-            "easy_wrong": ["Bob Builder"],
-            "policy": {"recognition_enabled": True},
-            **_single_name_measurable_fields("Alice Example"),
-        },
-        {
-            "path": "mock_images/bob.jpg",
-            "sha256": "b" * 64,
-            "media_id": 2,
-            "face_count": 1,
-            "present_identities": ["Bob Builder"],
-            "context_pack": {},
-            "base_caption": "",
-            "must_right": ["Bob Builder"],
-            "easy_wrong": ["Alice Example"],
-            "policy": {"recognition_enabled": True},
-            **_single_name_measurable_fields("Bob Builder", x=0.5),
-        },
-    ]
-    manifest_path, manifest_sha = _write_score_manifest(
-        tmp_path, entries, ["Alice Example", "Bob Builder"]
-    )
+    persons = list(_CLEAN_SCORE_PERSONS)
+    while len(persons) < SCORE_PASS_MIN_SCORED_IMAGES:
+        i = len(persons) + 1
+        persons.append((f"Person{i}A", f"Person{i}B", f"p{i}", f"scene{i}"))
+
+    entries: list[dict] = []
+    items: list[dict] = []
+    roster: list[str] = []
+    for idx, (name, decoy, slug, scene) in enumerate(persons, start=1):
+        path = f"mock_images/{slug}.jpg"
+        if name not in roster:
+            roster.append(name)
+        if decoy not in roster:
+            roster.append(decoy)
+        entries.append(
+            {
+                "path": path,
+                "sha256": f"{idx:064x}",
+                "media_id": idx,
+                "face_count": 1,
+                "present_identities": [name],
+                "context_pack": {},
+                "base_caption": "",
+                "must_right": [name],
+                "easy_wrong": [decoy],
+                "policy": {"recognition_enabled": True},
+                **_single_name_measurable_fields(name, x=0.3 + 0.05 * ((idx - 1) % 5)),
+            }
+        )
+        items.append(
+            {
+                "media_id": idx,
+                "path": path,
+                "describe": {
+                    "alt_text_draft": f"{name} in the foreground {scene}.",
+                    "visual_facts": {"objects": []},
+                },
+                "identities": [
+                    {
+                        "name": name,
+                        "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                        "unpositioned": False,
+                    }
+                ],
+                "face_count": 1,
+                "identity_ordering": "positional",
+                "image_width": 200,
+                "image_height": 200,
+                "error": None,
+            }
+        )
+    assert len(entries) >= SCORE_PASS_MIN_SCORED_IMAGES
+    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, roster)
     record_path = tmp_path / f"{stem}.json"
     record_path.write_text(
         json.dumps(
@@ -1152,48 +1232,7 @@ def _clean_score_manifest_and_record(tmp_path, *, stem: str = "run-det"):
                     "head_sha": "f" * 40,
                     "started_at": "t",
                 },
-                "items": [
-                    {
-                        "media_id": 1,
-                        "path": "mock_images/alice.jpg",
-                        "describe": {
-                            "alt_text_draft": "Alice Example in the foreground outdoors.",
-                            "visual_facts": {"objects": []},
-                        },
-                        "identities": [
-                            {
-                                "name": "Alice Example",
-                                "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
-                                "unpositioned": False,
-                            }
-                        ],
-                        "face_count": 1,
-                        "identity_ordering": "positional",
-                        "image_width": 200,
-                        "image_height": 200,
-                        "error": None,
-                    },
-                    {
-                        "media_id": 2,
-                        "path": "mock_images/bob.jpg",
-                        "describe": {
-                            "alt_text_draft": "Bob Builder in the foreground outdoors.",
-                            "visual_facts": {"objects": []},
-                        },
-                        "identities": [
-                            {
-                                "name": "Bob Builder",
-                                "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
-                                "unpositioned": False,
-                            }
-                        ],
-                        "face_count": 1,
-                        "identity_ordering": "positional",
-                        "image_width": 200,
-                        "image_height": 200,
-                        "error": None,
-                    },
-                ],
+                "items": items,
             }
         )
     )
@@ -1204,9 +1243,11 @@ def test_cmd_score_exits_zero_when_no_wrong_names_and_no_failures(tmp_path, monk
     """Complementary green path: clean identities + measurable categories → exit 0 / pass.
 
     Fixture supplies face_boxes + spatial_facts + reference_facts trap (π>0)
-    so the honest verdict is pass, not not_ready (VLM6-A-05 / OBS-04). S2-05:
-    two scored images clear the sample-size floor.
+    so the honest verdict is pass, not not_ready (VLM6-A-05 / OBS-04). RV1-03:
+    five scored images clear the sample-size floor.
     """
+    from scripts.eval_harness.report import SCORE_PASS_MIN_SCORED_IMAGES
+
     manifest_path, record_path = _clean_score_manifest_and_record(tmp_path, stem="run-clean")
     monkeypatch.chdir(tmp_path)
     main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
@@ -1216,7 +1257,7 @@ def test_cmd_score_exits_zero_when_no_wrong_names_and_no_failures(tmp_path, monk
     assert report["verdict"]["reasons"] == []
     assert report["faces"]["identification"]["positional"]["compared_images"] >= 1
     assert report["placement"]["claims"] >= 1
-    assert report["counts"]["scored"] >= 2
+    assert report["counts"]["scored"] >= SCORE_PASS_MIN_SCORED_IMAGES
 
 
 def test_cmd_score_quality_floor_breach_exits_nonzero(tmp_path, monkeypatch):

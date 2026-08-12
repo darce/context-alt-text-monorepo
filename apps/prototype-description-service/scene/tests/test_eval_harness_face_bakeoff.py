@@ -961,11 +961,12 @@ def test_face_anchor_freeze_sees_labeled_y_missing_counter(
 ) -> None:
     """wG1 acceptance: face freeze surface publishes + pins labeled_y_missing_*.
 
-    Separates pre-existing freeze staleness from counter observability (TEST-15):
-    both live and constant-0-mutated re-scores mismatch the stale committed
-    report, but the *diff of their identity_ordering.labeled_y_missing_images*
-    is specifically 1 vs 0 — the field the freeze will pin after regeneration.
-    A wiring that omitted the field would make live==mutated on that cell.
+    Wave I regenerated the freeze, so the counter is now published AND pinned:
+    the committed report carries it, and lane wI2 showed wF4's original
+    constant-0 wiring turns the now-green freeze RED (TEST-15 satisfied at the
+    freeze level). This test pins the published value, asserts the freeze agrees
+    with a live re-score, and keeps the live-vs-mutated discrimination as a
+    second, independent guard.
     """
     import json
     from pathlib import Path
@@ -986,9 +987,16 @@ def test_face_anchor_freeze_sees_labeled_y_missing_counter(
         (anchor / "S2A-face-determinism-anchor-run-20260811-face-report.json").read_text()
     )
 
-    # Task-1 baseline: committed freeze has no counter field (blind).
-    assert "identity_ordering" not in committed
-    assert "labeled_y_missing_images" not in json.dumps(committed)
+    # Post-Wave-I: the freeze PUBLISHES and PINS the counter. This assertion was
+    # inverted (was `not in`) when regeneration closed the blindness it described
+    # — strengthened, never relaxed (sr-001). A freeze that dropped the field
+    # again, or pinned a stale value, fails here.
+    committed_io = committed["identity_ordering"]
+    assert committed_io["labeled_y_missing_images"] == 1
+    assert committed_io["labeled_y_missing_paths"] == [
+        "celebs01/y-missing-mixed-order.jpg"
+    ]
+    assert committed_io["order_unknown_excluded"] == 2
 
     live = score_face_run_record(face_run, man)
     live_io = live["identity_ordering"]
@@ -1000,6 +1008,10 @@ def test_face_anchor_freeze_sees_labeled_y_missing_counter(
     assert live_n <= live["counts"]["scored"]
     # GT-side order_unknown matches caption semantics (fp-only + y-missing).
     assert live_io["order_unknown_excluded"] == 2
+    # The freeze actually pins the live value — this is what "sees" means.
+    assert live_io["labeled_y_missing_images"] == committed_io["labeled_y_missing_images"]
+    assert live_io["labeled_y_missing_paths"] == committed_io["labeled_y_missing_paths"]
+    assert live_io["order_unknown_excluded"] == committed_io["order_unknown_excluded"]
 
     real_lo = labeled_order
 
@@ -1029,12 +1041,11 @@ def test_face_anchor_freeze_sees_geometry_incomplete_counter(
 ) -> None:
     """wH1 acceptance: face freeze surface publishes + pins geometry_incomplete_*.
 
-    Separates pre-existing freeze staleness from counter observability (TEST-15):
-    both live and constant-0-mutated re-scores mismatch the stale committed
-    report, but the *diff of their detection.geometry_incomplete_gt* is
-    specifically 1 vs 0 — the field the freeze will pin after regeneration.
-    A wiring that omitted the field or wired it to a constant would make
-    live==mutated on that cell.
+    Wave I regenerated the freeze, so geometry_incomplete_* is now published AND
+    pinned; lane wI2 showed the constant-0 stamp mutation turns the now-green
+    freeze RED (TEST-15 satisfied at the freeze level). This test pins the
+    published values, asserts the freeze agrees with a live re-score, and keeps
+    the live-vs-mutated discrimination as a second, independent guard.
     """
     import json
     from dataclasses import replace
@@ -1056,11 +1067,18 @@ def test_face_anchor_freeze_sees_geometry_incomplete_counter(
         (anchor / "S2A-face-determinism-anchor-run-20260811-face-report.json").read_text()
     )
 
-    # Task-1 baseline: committed freeze has no geometry_incomplete field (blind).
-    committed_det = committed.get("detection") or {}
-    assert "geometry_incomplete_gt" not in committed_det
-    assert "association_complete" not in committed_det
-    assert "geometry_incomplete" not in json.dumps(committed)
+    # Post-Wave-I: the freeze PUBLISHES and PINS the stamp. Inverted (was
+    # `not in`) when regeneration closed the blindness it described —
+    # strengthened, never relaxed (sr-001).
+    committed_det = committed["detection"]
+    assert committed_det["geometry_incomplete_gt"] == 1
+    assert committed_det["association_incomplete_media"] == 1
+    assert committed_det["association_complete"] is False
+    # Frozen arithmetic identity: tp + fn + geometry_incomplete == n_gt (wH1).
+    assert (
+        int(committed_det["tp"]) + int(committed_det["fn"])
+        + int(committed_det["geometry_incomplete_gt"]) == 12
+    )
 
     live = score_face_run_record(face_run, man)
     live_det = live["detection"]
@@ -1077,6 +1095,10 @@ def test_face_anchor_freeze_sees_geometry_incomplete_counter(
     # Incomplete not re-absorbed as FN: tp=6, fn=5 (not 6), incomplete=1.
     assert live_det["tp"] == 6
     assert live_det["fn"] == 5
+    # The freeze actually pins the live values — this is what "sees" means.
+    for _k in ("tp", "fn", "geometry_incomplete_gt", "association_incomplete_media"):
+        assert live_det[_k] == committed_det[_k], _k
+    assert live_det["association_complete"] == committed_det["association_complete"]
     # Sampling frame states the real post-wG2 identity.
     assert "tp+fn+geometry_incomplete_gt" in live_det["sampling_frame"]
     assert "tp+fn equals GT boxes that reached association" not in live_det["sampling_frame"]

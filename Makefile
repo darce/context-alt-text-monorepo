@@ -129,7 +129,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/logs.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts test-hooks test-deploy-contract test-vlm3 provision-customer provision-demo expire-demo
+.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-lane-reports lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts test-hooks test-deploy-contract test-vlm3 provision-customer provision-demo expire-demo
 
 # Default target
 help:
@@ -277,6 +277,7 @@ check-all:
 		else \
 			$(MAKE) lint-all; \
 			$(MAKE) lint-task-plans; \
+			$(MAKE) lint-lane-reports; \
 			$(MAKE) lint-dashboard-txt; \
 			$(MAKE) lint-scripts; \
 			$(MAKE) check-overrides-digest; \
@@ -402,6 +403,14 @@ test-all:
 # hooks are bypassed locally.
 lint-task-plans:
 	@python3 scripts/hooks/guard-task-plan-findings.py --scan-repo
+
+# VLM6-S2A-F3-02. Offload lanes cite `git rev-parse HEAD` from a sandbox clone
+# whose history is stripped, so the SHA is true there and unresolvable at the
+# destination. Four briefs' worth of warnings did not stop it; verify at the
+# destination instead. Deliberately foreign citations opt out with an HTML
+# comment or an inline `sha-guard:ignore` marker.
+lint-lane-reports:
+	@python3 scripts/check_lane_report_shas.py
 
 # E17-9 Slice 4 / E17-7 Slice 4 follow-up. Guard tracked files from
 # reintroducing the obsolete dashboard markdown name after the rename

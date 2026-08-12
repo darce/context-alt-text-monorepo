@@ -147,6 +147,10 @@ Brief named 687/3; this sandbox HEAD was already **686 passed, 4 skipped** post-
 
 ## Commit SHA
 
-- Docs + report land: `12b8cfd453c87fb616cc51c2750aa37287f27b82`
-- SHA pin in this file: `d6340e999f21f8ff31f6fc9f02710521289e71a7`
-- Verify: `git rev-parse --verify 12b8cfd453c87fb616cc51c2750aa37287f27b82^{commit}`
+- Docs + report land: `402b6a77eba9fb4ac1dfa47e3e51afec89881f2a`
+- Verify: `git rev-parse --verify 402b6a77eba9fb4ac1dfa47e3e51afec89881f2a^{commit}`
+
+<!-- Corrected (VLM6-S2A-F3-02): the lane cited `12b8cfd4…` and `d6340e99…`, sandbox-clone
+     SHAs that resolve nowhere here, and paired them with a verify command guaranteed to
+     fail. Replaced with the commit that actually landed this report. -->
+

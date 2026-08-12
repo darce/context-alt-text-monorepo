@@ -126,8 +126,14 @@ Digest gate should: load committed `…-report.json` (or a canonical score seria
 
 ## Commit SHA
 
-- F4 land (generator + freeze + README + tests + report): `add1aeb8c74c3d7249ed6e359d0f6bdd1635ba20`
+- F4 land (generator + freeze + README + tests + report): `439c8ee165b88a4f3a57592886d9f924a9798c1e`
 
-Verified: `git cat-file -t add1aeb8c74c3d7249ed6e359d0f6bdd1635ba20` → commit
+Verified: `git cat-file -t 439c8ee165b88a4f3a57592886d9f924a9798c1e` → commit
+
+<!-- Corrected (VLM6-S2A-F3-02 class, 4th instance): the lane cited `add1aeb8…` and its own
+     cat-file verification — both true in its sandbox clone, neither resolvable here. The
+     lane cannot know its destination SHA at write time; this is a harness gap, not lane
+     dishonesty. See scripts/check_lane_report_shas.py for the guard. -->
+
 
 Note: the report file itself is included in that commit; the SHA cites the landed tree. A follow-up docs-only tweak of this citation line may produce a different tip SHA — always prefer `git rev-parse HEAD` / `git log -1`.

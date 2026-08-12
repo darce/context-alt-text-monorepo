@@ -389,8 +389,15 @@ def main(argv: list[str] | None = None) -> int:
     else:
         from scripts.eval_harness.remote_client import RemoteSceneClient
 
+        # VLM-6-S2A-B-11: parity with cli.py and face_pass.py. Reading the key
+        # straight from os.environ silently misses vault-backed secrets under
+        # RECOGNITION_SECRET_BACKEND=oci_vault, where the provider deliberately
+        # refuses env fallback — and the seam guard in
+        # recognition/tests/unit/test_no_raw_secret_reads.py fails on the raw read.
+        from shared.secrets import get_secret_provider
+
         base = os.environ.get("ACX_EVAL_BASE_URL", "")
-        key = os.environ.get("ACX_EVAL_API_KEY", "")
+        key = get_secret_provider().get_secret_optional("ACX_EVAL_API_KEY", "") or ""
         tenant = os.environ.get("ACX_EVAL_TENANT_ID", "")
         if not (base and key and tenant):
             sys.exit("missing ACX_EVAL_BASE_URL / ACX_EVAL_API_KEY / ACX_EVAL_TENANT_ID")

@@ -116,7 +116,7 @@ CONTROL clean (real children): determinism check passed [score]: ... PASS
 
 ### DBG-11 (causation by absence)
 
-Sandbox history is stripped to a single base commit (`7ad6d52`); SHA `ec493295` is not present, so a literal `git checkout ec493295 -- cli.py` is impossible here.
+Sandbox history is stripped to a single base commit (`7ad6d52`); SHA `ec493295` is not present, so a literal `git checkout ec493295 -- cli.py` is impossible here. <!-- sha-guard:ignore — `7ad6d52` is the sandbox base, named here precisely because it does not exist in this repo. -->
 
 Equivalent proof:
 

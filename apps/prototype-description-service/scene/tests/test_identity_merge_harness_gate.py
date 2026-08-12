@@ -37,7 +37,9 @@ FACE_W, FACE_H = 0.06, 0.08  # synthetic face-box extent around each authored ce
 
 def _load_scenes():
     # S7-02: same v2 pin + schema as the live harness (not raw json.loads).
-    golden = load_manifest(str(SEED_DIR / "golden.json"))
+    # Metadata-only: present_identities/must_right/easy_wrong/policy/path/face_count/
+    # base_caption for merge scoring — faces are synthetic, never open image files.
+    golden = load_manifest(str(SEED_DIR / "golden.json"), skip_hash_verification=True)
     boxes = load_phrase_boxes(SEED_DIR / "phrase_boxes.json")
     by_media = {e.media_id: e.model_dump() for e in golden.entries}
     return [(scene, by_media[scene["media_id"]]) for scene in boxes["scenes"].values()]

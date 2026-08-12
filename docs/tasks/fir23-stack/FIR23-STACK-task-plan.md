@@ -37,7 +37,7 @@ Supersedes the dropped per-request header design (decision #2947).
   `${ACX_MODELS_PATH}:/data/cache` does NOT overlay the package dir — so the env var MUST point at the mount.
 - Deploy driver `recognition-service.sh` env-mapping case blocks: `env_to_tag`, `env_to_unit`,
   `env_to_remote_dir`, `env_to_health_url`, `env_to_ready_url`, `env_to_compose_files`.
-  Also `do_status()` hardcodes `for env in dev staging prod`. `sync-compose.sh:22` allow-list.
+  Also `do_status()` iterates `for env in dev dev-fir staging prod`. `sync-compose.sh:22` allow-list.
   `db-reset-remote.sh:66-83` arms hardcode PG_CONTAINER/API_CONTAINER/PG_USER/PG_DB/HEALTH_URL per env.
 - Systemd unit from `systemd/acx-env.service.template`; `WorkingDirectory=/opt/acx-backend/{{ENV}}`,
   `ExecStart=docker compose {{COMPOSE_FILES}} up`. `converge_runtime` ships compose to `env_to_remote_dir`.
@@ -93,7 +93,8 @@ Ordered (gates matter):
 1. Create `/opt/acx-backend/dev-fir/.env` from `.env.fir.example` (inline secrets, fir DB password).
 2. Ensure models land where `RECOGNITION_FACE_PIPELINE_MODELS_DIR=/data/cache/face_pipeline` reads them
    (BR-01): `fetch_face_pipeline_models.py --dest /opt/acx-backend/data/dev-fir-models/face_pipeline`
-   (or rely on `preflight_remote_face_pipeline_models` / boot smoke on first deploy).
+   is **mandatory** — `preflight_remote_face_pipeline_models` / boot smoke only verify/probe
+   existing weights; neither provisions them.
 3. **Operator adds DNS A/CNAME record `fir.dev.api.altcontext.com → VM`; CONFIRM it resolves** (BR-07)
    BEFORE public health verify.
 4. **First dev-fir deploy:** run `make deploy-dev-fir` with `ACX_EDGE_APPLY=1` so `converge_runtime`
@@ -118,4 +119,3 @@ Ordered (gates matter):
   DNS A/CNAME for `fir.dev.api.altcontext.com` remains operator-manual.
 - Model disk: SFace 38.7MB + YuNet ~0.2MB into dev-fir-models.
 - `do_status` cosmetic addition (BR-08) optional but included.
-```

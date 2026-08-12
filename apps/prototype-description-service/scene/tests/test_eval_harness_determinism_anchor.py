@@ -24,8 +24,6 @@ from scripts.eval_harness.cli import (
 from scripts.eval_harness.generate_determinism_anchor import (
     _coverage_gaps,
     _DEFAULT_STEM,
-    _identity_rows,
-    _predicted_face_count,
     build_run_record,
     write_anchor,
 )
@@ -83,25 +81,58 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _seeded_deviation_oracle(manifest: GoldenManifest) -> dict[str, int | float]:
-    """Independent oracle over the generator seed predicates + detection_pr math.
+def _oracle_predicted_face_count(*, face_count: int, seed_index: int) -> int:
+    """Independent reimplementation of the generator's face-count seed rules.
 
-    Re-implements the fixed seed rules from ``_predicted_face_count`` /
-    ``_identity_rows`` and the count-based detection formula
-    (TP=min(pred,labeled), FP/FN = |pred-labeled| sides). Does **not** read
-    freeze digests, committed report JSON, or score_run_record output — the
-    point of VLM6-S4-01 / C-04 is that these bounds can fail a GT-echo scorer
-    while the mere existence-of-deviations check stays green (TEST-15).
+    RV3-01: deliberately does **not** import ``_predicted_face_count`` from
+    ``generate_determinism_anchor`` — an oracle that shares private helpers with
+    the generator under test cannot catch the generator rewriting those helpers
+    into a pure GT echo or an exaggerated fixture (TEST-15 / AUDIT-07).
+    """
+    count = int(face_count)
+    if seed_index % 7 == 0 and count > 0:
+        return count - 1
+    if seed_index % 11 == 0:
+        return count + 1
+    return count
+
+
+def _oracle_predicted_identity_names(
+    *, present_identities: list[str], seed_index: int
+) -> list[str]:
+    """Independent reimplementation of the generator's identity seed rules."""
+    names = list(present_identities)
+    if names and seed_index % 5 == 0:
+        names = names[:-1]
+    if present_identities and seed_index % 9 == 0 and seed_index % 5 != 0:
+        names = names + [f"Fixture-Wrong-{seed_index}"]
+    return names
+
+
+def _seeded_deviation_oracle(manifest: GoldenManifest) -> dict[str, int | float]:
+    """Independent oracle over the golden corpus + count-based detection math.
+
+    Computes expected detection/wrong-name bounds **from the manifest alone**
+    via the inlined seed predicates above — not by importing generator helpers,
+    not by reading freeze digests, and not by hardwiring score numbers.
+    Score-side checks always run the real ``score_run_record`` (RV3-01 / S4-01).
     """
     det_tp = det_fp = det_fn = 0
     wrong_name_count = 0
     for index, entry in enumerate(manifest.entries):
-        pred_faces = _predicted_face_count(entry, seed_index=index)
+        pred_faces = _oracle_predicted_face_count(
+            face_count=int(entry.face_count), seed_index=index
+        )
         labeled_faces = int(entry.face_count)
         det_tp += min(pred_faces, labeled_faces)
         det_fp += max(pred_faces - labeled_faces, 0)
         det_fn += max(labeled_faces - pred_faces, 0)
-        pred_names = {row["name"] for row in _identity_rows(entry, seed_index=index)}
+        pred_names = set(
+            _oracle_predicted_identity_names(
+                present_identities=list(entry.present_identities),
+                seed_index=index,
+            )
+        )
         labeled_names = set(entry.present_identities)
         for name in pred_names:
             if name not in labeled_names:
@@ -118,6 +149,41 @@ def _seeded_deviation_oracle(manifest: GoldenManifest) -> dict[str, int | float]
         "det_precision": (det_tp / det_denom_p) if det_denom_p else 0.0,
         "det_recall": (det_tp / det_denom_r) if det_denom_r else 0.0,
     }
+
+
+def _assert_scored_matches_oracle(scored: dict, oracle: dict[str, int | float]) -> None:
+    """Shared equality/bound pin used by the green path and the mutant RED path."""
+    det = scored["faces"]["detection"]
+    ident = scored["faces"]["identification"]
+    wrong_names = list(ident.get("wrong_names") or [])
+
+    assert int(det["fn"]) >= int(oracle["det_fn"]), (
+        f"detection fn={det['fn']} below oracle lower bound {oracle['det_fn']} "
+        "(scorer may be GT-echoing; VLM6-S4-01)"
+    )
+    assert int(det["fp"]) >= int(oracle["det_fp"]), (
+        f"detection fp={det['fp']} below oracle lower bound {oracle['det_fp']} "
+        "(scorer may be GT-echoing; VLM6-S4-01)"
+    )
+    assert len(wrong_names) >= int(oracle["wrong_name_count"]), (
+        f"wrong_names={len(wrong_names)} below oracle lower bound "
+        f"{oracle['wrong_name_count']} (VLM6-S4-01)"
+    )
+    assert det["precision"] is not None and float(det["precision"]) < 1.0, (
+        f"detection precision={det['precision']} must be strictly below 1.0 "
+        f"(oracle precision={oracle['det_precision']}; VLM6-S4-01 / TEST-15)"
+    )
+    assert det["recall"] is not None and float(det["recall"]) < 1.0, (
+        f"detection recall={det['recall']} must be strictly below 1.0 "
+        f"(oracle recall={oracle['det_recall']}; VLM6-S4-01 / TEST-15)"
+    )
+    # Exact pin — lower bounds alone let an exaggerated record stay green (RV3-01).
+    assert int(det["tp"]) == int(oracle["det_tp"])
+    assert int(det["fp"]) == int(oracle["det_fp"])
+    assert int(det["fn"]) == int(oracle["det_fn"])
+    assert float(det["precision"]) == float(oracle["det_precision"])
+    assert float(det["recall"]) == float(oracle["det_recall"])
+    assert len(wrong_names) == int(oracle["wrong_name_count"])
 
 
 @pytest.mark.parametrize("name,expected", list(_FROZEN_DIGESTS.items()))
@@ -336,9 +402,10 @@ def test_seeded_predictions_are_not_pure_gt_echo():  # VLM6-C-04 / VLM6-S4-01 / 
 
     Existence-of-deviation alone is not enough (S4-01): a scorer that uses GT
     for both predicted and labeled stays green on existence while producing
-    perfect detection (P/R 1.0). After build_run_record we score once and pin
-    lower bounds from an *independent oracle* over the same seed predicates —
-    never from the freeze file / _FROZEN_DIGESTS (regen-coupling).
+    perfect detection (P/R 1.0). After build_run_record we score once with the
+    **real** scorer and pin bounds from an *independent* oracle over the
+    corpus — never from freeze digests, never from generator private helpers
+    (RV3-01 / TEST-15).
     """
     manifest = load_manifest(str(_GOLDEN), skip_hash_verification=True)
     record = build_run_record(
@@ -370,18 +437,25 @@ def test_seeded_predictions_are_not_pure_gt_echo():  # VLM6-C-04 / VLM6-S4-01 / 
     assert face_deviations > 0, "face_count must deviate on a seeded subset (TEST-15)"
     assert id_deviations > 0, "identities must deviate on a seeded subset (TEST-15)"
 
-    # Predicted helpers themselves must be able to go red vs pure echo.
+    # Independent seed predicates themselves must be able to go red vs pure echo.
     entry0 = manifest.entries[0]
-    assert _predicted_face_count(entry0, seed_index=0) != entry0.face_count or entry0.face_count == 0
-    # seed_index 0 with names → drop last
+    pred0 = _oracle_predicted_face_count(
+        face_count=int(entry0.face_count), seed_index=0
+    )
+    assert pred0 != entry0.face_count or entry0.face_count == 0
     if entry0.present_identities:
-        rows = _identity_rows(entry0, seed_index=0)
-        assert {r["name"] for r in rows} != set(entry0.present_identities) or len(entry0.present_identities) == 0
+        names0 = set(
+            _oracle_predicted_identity_names(
+                present_identities=list(entry0.present_identities),
+                seed_index=0,
+            )
+        )
+        assert names0 != set(entry0.present_identities) or len(entry0.present_identities) == 0
 
-    # --- VLM6-S4-01: oracle-pinned scoring bounds (not freeze-coupled) ---
+    # --- VLM6-S4-01 / RV3-01: independent oracle + real scorer ---
     oracle = _seeded_deviation_oracle(manifest)
     # Seed formula must itself produce imperfect detection / wrong names, else
-    # the lower-bound pin is vacuous (TEST-15: the assertion must be able to fail).
+    # the pin is vacuous (TEST-15: the assertion must be able to fail).
     assert int(oracle["det_fn"]) >= 1
     assert int(oracle["det_fp"]) >= 1
     assert int(oracle["wrong_name_count"]) >= 1
@@ -397,38 +471,51 @@ def test_seeded_predictions_are_not_pure_gt_echo():  # VLM6-C-04 / VLM6-S4-01 / 
         manifest_roster=roster,
         rubric_gate="skip",
     )
-    det = scored["faces"]["detection"]
-    ident = scored["faces"]["identification"]
-    wrong_names = list(ident.get("wrong_names") or [])
+    _assert_scored_matches_oracle(scored, oracle)
 
-    # Lower bounds from the oracle — a GT-echo scorer (fp=fn=0, P/R=1.0) fails here.
-    assert int(det["fn"]) >= int(oracle["det_fn"]), (
-        f"detection fn={det['fn']} below oracle lower bound {oracle['det_fn']} "
-        "(scorer may be GT-echoing; VLM6-S4-01)"
+
+def test_exaggerated_record_mutant_goes_red_against_independent_oracle():  # RV3-01 / TEST-15
+    """Reviewer's exaggerated-record mutant must FAIL the oracle pin.
+
+    Pre-fix hole: oracle imported generator helpers and/or hardwired the seed
+    scorer so an exaggerated record (face_count=max(0,gt-2), every item gets an
+    ALWAYS-WRONG name) still matched oracle-expected {tp:51,fp:3,fn:6,
+    wrong_names=4}. Real scorer on that input yields det≈{tp:11,fp:0,fn:46}
+    with many wrong_names — the control that proves independence.
+    """
+    manifest = load_manifest(str(_GOLDEN), skip_hash_verification=True)
+    record = build_run_record(
+        manifest,
+        fixture_revision="0" * 40,
+        canonical_timestamp="2026-08-11T00:00:00Z",
+        head_sha="",
+        started_at="2026-08-11T00:00:00Z",
     )
-    assert int(det["fp"]) >= int(oracle["det_fp"]), (
-        f"detection fp={det['fp']} below oracle lower bound {oracle['det_fp']} "
-        "(scorer may be GT-echoing; VLM6-S4-01)"
+    # Mutant: under-count faces by 2 and inject a never-present name on every item.
+    for entry, item in zip(manifest.entries, record["items"], strict=True):
+        item["face_count"] = max(0, int(entry.face_count) - 2)
+        rows = list(item.get("identities") or [])
+        rows.append({"name": "ALWAYS-WRONG", "unpositioned": True})
+        item["identities"] = rows
+
+    oracle = _seeded_deviation_oracle(manifest)
+    entries = [e.model_dump() for e in manifest.entries]
+    roster = sorted(set(getattr(manifest, "roster", []) or []))
+    scored = score_run_record(
+        record,
+        entries,
+        score_manifest_sha256=record["provenance"]["manifest_sha256"],
+        manifest_roster=roster,
+        rubric_gate="skip",
     )
-    assert len(wrong_names) >= int(oracle["wrong_name_count"]), (
-        f"wrong_names={len(wrong_names)} below oracle lower bound "
-        f"{oracle['wrong_name_count']} (VLM6-S4-01)"
-    )
-    assert det["precision"] is not None and float(det["precision"]) < 1.0, (
-        f"detection precision={det['precision']} must be strictly below 1.0 "
-        f"(oracle precision={oracle['det_precision']}; VLM6-S4-01 / TEST-15)"
-    )
-    assert det["recall"] is not None and float(det["recall"]) < 1.0, (
-        f"detection recall={det['recall']} must be strictly below 1.0 "
-        f"(oracle recall={oracle['det_recall']}; VLM6-S4-01 / TEST-15)"
-    )
-    # Equality against the oracle's own output is fine; freeze literals are not.
-    assert int(det["tp"]) == int(oracle["det_tp"])
-    assert int(det["fp"]) == int(oracle["det_fp"])
-    assert int(det["fn"]) == int(oracle["det_fn"])
-    assert float(det["precision"]) == float(oracle["det_precision"])
-    assert float(det["recall"]) == float(oracle["det_recall"])
-    assert len(wrong_names) == int(oracle["wrong_name_count"])
+    det = scored["faces"]["detection"]
+    wrong_n = len(list((scored["faces"]["identification"].get("wrong_names") or [])))
+    # Sanity: mutant really moved the real scorer away from the oracle.
+    assert int(det["tp"]) != int(oracle["det_tp"]) or int(det["fn"]) != int(oracle["det_fn"])
+    assert wrong_n != int(oracle["wrong_name_count"])
+
+    with pytest.raises(AssertionError):
+        _assert_scored_matches_oracle(scored, oracle)
 
 
 def test_generator_stamps_metric_backing_refusals():  # VLM6-C-07
